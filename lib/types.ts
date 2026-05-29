@@ -106,6 +106,20 @@ export interface WaterQualityData {
   sites: WaterQualitySite[];
 }
 
+// --- Per-spot weather (Open-Meteo current) --------------------------------
+export interface SpotWeatherData {
+  airTempF?: number;
+  apparentTempF?: number;
+  windSpeedMph?: number;
+  windGustMph?: number;
+  windDirDeg?: number;
+  windDirCardinal?: string;
+  humidity?: number; // %
+  weatherCode?: number; // WMO code
+  shortForecast?: string; // human-readable, derived from the WMO code
+  observedAt?: string; // ISO
+}
+
 // --- Snapshot --------------------------------------------------------------
 export interface ConditionsSnapshot {
   location: LocationPublic;
@@ -143,9 +157,20 @@ export interface Scores {
   surf: ScoreResult;
 }
 
+/** A cam plus the live weather/wind at its location (Open-Meteo, per spot). */
+export interface CamView {
+  name: string;
+  provider: string;
+  embedType: "iframe" | "image" | "link";
+  url: string;
+  attribution?: string;
+  weather: Wrapped<SpotWeatherData>;
+}
+
 export interface ConditionsResponse {
   snapshot: ConditionsSnapshot;
   scores: Scores;
+  cams: CamView[];
 }
 
 // --- Location config -------------------------------------------------------
@@ -156,6 +181,9 @@ export interface CamConfig {
   embedType: "iframe" | "image" | "link";
   url: string;
   attribution?: string;
+  /** Cam's own coordinates for per-spot weather; falls back to the town's lat/lon. */
+  lat?: number;
+  lon?: number;
 }
 
 export interface Location {
@@ -174,7 +202,16 @@ export interface Location {
    * (good for surf). Boca faces ~east, so offshore wind comes from the west (~270).
    */
   offshoreWindFromDeg: number;
-  healthyBeachesSites?: string[];
+  /**
+   * FL Healthy Beaches (DOH) water-quality config. `county` is the DOH county
+   * name exactly as published by the feed (e.g. "Palm Beach", "Broward");
+   * `sites` are the SPLocation sampling-site names (matched case-insensitively)
+   * that make up this town's beaches.
+   */
+  healthyBeaches?: {
+    county: string;
+    sites: string[];
+  };
   /** City/official conditions page to scrape (flags, lifeguard ratings, hazards). */
   cityConditionsUrl?: string;
   cams: CamConfig[];

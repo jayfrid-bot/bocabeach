@@ -1,0 +1,14 @@
+# Netlify deploy config for the Next.js (App Router) app.
+# The official @netlify/plugin-nextjs runtime handles SSG pages, the
+# /api/conditions/[slug] route handler, and per-source next.revalidate caching.
+# Netlify auto-installs the plugin referenced below — no devDependency needed.
+
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
