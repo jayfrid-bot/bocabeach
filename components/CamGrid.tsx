@@ -1,0 +1,78 @@
+import type { CamConfig } from "@/lib/types";
+
+function CamCard({ cam }: { cam: CamConfig }) {
+  if (cam.embedType === "iframe") {
+    return (
+      <div className="overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-white/10">
+        <div className="aspect-video">
+          <iframe
+            src={cam.url}
+            title={cam.name}
+            className="h-full w-full"
+            allowFullScreen
+            loading="lazy"
+          />
+        </div>
+        <div className="p-3">
+          <div className="text-sm font-medium text-white">{cam.name}</div>
+          <div className="text-xs text-slate-400">{cam.provider}</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (cam.embedType === "image") {
+    return (
+      <a
+        href={cam.url}
+        target="_blank"
+        rel="noreferrer"
+        className="overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-white/10"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src={cam.url} alt={cam.name} className="aspect-video w-full object-cover" />
+        <div className="p-3">
+          <div className="text-sm font-medium text-white">{cam.name}</div>
+          <div className="text-xs text-slate-400">{cam.provider}</div>
+        </div>
+      </a>
+    );
+  }
+
+  return (
+    <a
+      href={cam.url}
+      target="_blank"
+      rel="noreferrer"
+      className="group flex h-36 flex-col justify-between rounded-2xl bg-slate-900/70 p-4 ring-1 ring-white/10 transition hover:ring-ocean-500/50"
+    >
+      <div className="flex items-center justify-between">
+        <span className="text-2xl" aria-hidden>
+          📷
+        </span>
+        <span className="text-slate-500 transition group-hover:text-ocean-300">↗</span>
+      </div>
+      <div>
+        <div className="text-sm font-medium text-white">{cam.name}</div>
+        <div className="text-xs text-slate-400">{cam.provider}</div>
+        {cam.attribution ? (
+          <div className="mt-1 text-[11px] text-slate-500">{cam.attribution}</div>
+        ) : null}
+      </div>
+    </a>
+  );
+}
+
+export function CamGrid({ cams }: { cams: CamConfig[] }) {
+  if (cams.length === 0) return null;
+  return (
+    <section>
+      <h2 className="mb-3 text-lg font-semibold text-white">Beach &amp; surf cams</h2>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {cams.map((cam) => (
+          <CamCard key={cam.name} cam={cam} />
+        ))}
+      </div>
+    </section>
+  );
+}
