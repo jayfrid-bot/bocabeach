@@ -9,6 +9,8 @@ function CamCard({ cam }: { cam: CamConfig }) {
             src={cam.url}
             title={cam.name}
             className="h-full w-full"
+            allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
+            referrerPolicy="strict-origin-when-cross-origin"
             allowFullScreen
             loading="lazy"
           />

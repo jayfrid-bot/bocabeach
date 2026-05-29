@@ -21,7 +21,11 @@ export const LOCATIONS: Location[] = [
     ndbcBuoyId: "LKWF1", // Lake Worth Pier C-MAN (nearest)
     ndbcBuoyFallbackId: "FWYF1", // Fowey Rocks
     offshoreWindFromDeg: 270, // beach faces east; offshore wind blows from the west
-    healthyBeachesSites: ["South Beach Park", "Spanish River Park", "Red Reef Park"],
+    // SPLocation names as published by the FL Healthy Beaches feed (Palm Beach county).
+    healthyBeaches: {
+      county: "Palm Beach",
+      sites: ["SPANISH RIVER", "SOUTH INLET PARK", "RED REEF PARK"],
+    },
     cityConditionsUrl: "https://www.myboca.us/2464/Beach-Conditions",
     cams: [
       {
@@ -49,16 +53,68 @@ export const LOCATIONS: Location[] = [
         url: "https://www.livebeaches.com/webcams/city-of-boca-raton-cam/",
       },
       {
+        // City of Deerfield Beach publishes its cams as public YouTube live
+        // streams (framing-allowed), so the nearby pier cam can embed inline.
         name: "Deerfield Beach Pier Cam (nearby)",
-        provider: "City of Deerfield Beach",
-        embedType: "link",
-        url: "https://www.deerfield-beach.com/1474/Livestream-Cameras",
+        provider: "City of Deerfield Beach (YouTube)",
+        embedType: "iframe",
+        url: "https://www.youtube.com/embed/H33wtprQqSM",
       },
       {
         name: "Surfline — Boca Raton",
         provider: "Surfline",
         embedType: "link",
         url: "https://www.surfline.com/surf-reports-forecasts-cams/united-states/florida/palm-beach-county/boca-raton/4148411",
+        attribution: "Surfline (Premium cam, link only — no embedding/scraping)",
+      },
+    ],
+  },
+  {
+    slug: "deerfield-beach",
+    name: "Deerfield Beach",
+    region: "Broward County, FL",
+    lat: 26.317, // Deerfield Beach Pier
+    lon: -80.0748,
+    timezone: "America/New_York",
+    noaaTideStationId: "8722816", // Boca Raton (~3 mi north)
+    noaaTideStationFallbackId: "8722956", // South Port Everglades
+    ndbcBuoyId: "LKWF1", // Lake Worth Pier C-MAN (nearest north)
+    ndbcBuoyFallbackId: "FWYF1", // Fowey Rocks
+    offshoreWindFromDeg: 270, // east-facing beach; offshore wind from the west
+    healthyBeaches: {
+      county: "Broward",
+      sites: ["DEERFIELD BEACH PIER", "DEERFIELD BEACH SE 10TH ST"],
+    },
+    cams: [
+      {
+        name: "Deerfield Beach Camera",
+        provider: "City of Deerfield Beach (YouTube)",
+        embedType: "iframe",
+        url: "https://www.youtube.com/embed/rdeoEeJ00xA",
+      },
+      {
+        name: "Deerfield Beach Pier Camera",
+        provider: "City of Deerfield Beach (YouTube)",
+        embedType: "iframe",
+        url: "https://www.youtube.com/embed/H33wtprQqSM",
+      },
+      {
+        name: "Deerfield Beach Surf Camera",
+        provider: "City of Deerfield Beach (YouTube)",
+        embedType: "iframe",
+        url: "https://www.youtube.com/embed/hIeFPNHfuoY",
+      },
+      {
+        name: "City of Deerfield Beach — all live cams",
+        provider: "City of Deerfield Beach",
+        embedType: "link",
+        url: "https://www.deerfield-beach.com/1474/Livestream-Cameras",
+      },
+      {
+        name: "Surfline — Deerfield Beach",
+        provider: "Surfline",
+        embedType: "link",
+        url: "https://www.surfline.com/surf-reports-forecasts-cams/united-states/florida/broward-county/deerfield-beach/4153071",
         attribution: "Surfline (Premium cam, link only — no embedding/scraping)",
       },
     ],

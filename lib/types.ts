@@ -174,7 +174,16 @@ export interface Location {
    * (good for surf). Boca faces ~east, so offshore wind comes from the west (~270).
    */
   offshoreWindFromDeg: number;
-  healthyBeachesSites?: string[];
+  /**
+   * FL Healthy Beaches (DOH) water-quality config. `county` is the DOH county
+   * name exactly as published by the feed (e.g. "Palm Beach", "Broward");
+   * `sites` are the SPLocation sampling-site names (matched case-insensitively)
+   * that make up this town's beaches.
+   */
+  healthyBeaches?: {
+    county: string;
+    sites: string[];
+  };
   /** City/official conditions page to scrape (flags, lifeguard ratings, hazards). */
   cityConditionsUrl?: string;
   cams: CamConfig[];
