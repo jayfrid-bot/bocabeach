@@ -14,7 +14,8 @@ adding a new beach town is a single entry — the long-term goal is *every* beac
   marine life & hazards (scraped from the City of Boca Raton Ocean Rescue page)
 - **Water quality** — FL Healthy Beaches enterococci sampling, mapped to good/moderate/poor
 - **Beach & surf cams** — public cams for the area (embedded inline where the host allows
-  framing; Surfline and frame-blocking hosts link out)
+  framing; Surfline and frame-blocking hosts link out), each with **live weather & wind**
+  pulled from Open-Meteo at the cam's own coordinates
 
 Two composite scores (toggle in the UI):
 

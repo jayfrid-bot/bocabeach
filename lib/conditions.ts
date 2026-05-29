@@ -1,5 +1,6 @@
 import { getLocation, toPublicLocation } from "@/config/locations";
 import type { ConditionsResponse, ConditionsSnapshot } from "@/lib/types";
+import { buildCamViews } from "@/lib/cams";
 import { fetchBuoy } from "@/lib/sources/buoy";
 import { fetchCityOfficial } from "@/lib/sources/cityOfficial";
 import { fetchMarine } from "@/lib/sources/marine";
@@ -47,7 +48,7 @@ export async function getConditions(
 ): Promise<ConditionsResponse | null> {
   const loc = getLocation(slug);
   if (!loc) return null;
-  const snapshot = await getSnapshot(slug);
+  const [snapshot, cams] = await Promise.all([getSnapshot(slug), buildCamViews(loc)]);
   if (!snapshot) return null;
-  return { snapshot, scores: computeScores(snapshot, loc) };
+  return { snapshot, scores: computeScores(snapshot, loc), cams };
 }

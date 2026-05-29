@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import type { ConditionsResponse } from "@/lib/types";
-import { getLocation } from "@/config/locations";
 import { deriveMetrics } from "@/lib/score";
 import { scoreColor } from "@/lib/format";
 import { ScoreGauge } from "@/components/ScoreGauge";
@@ -38,7 +37,7 @@ export function ConditionsDashboard({
   const active = mode === "beachDay" ? res.scores.beachDay : res.scores.surf;
   const d = deriveMetrics(snap);
   const tz = snap.location.timezone;
-  const cams = getLocation(slug)?.cams ?? [];
+  const cams = res.cams;
   const ratings = snap.cityOfficial.data;
 
   const sources = [
