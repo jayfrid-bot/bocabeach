@@ -11,10 +11,13 @@ export async function buildCamViews(loc: Location): Promise<CamView[]> {
     loc.cams.map(async (cam): Promise<CamView> => {
       const weather = await fetchSpotWeather(cam.lat ?? loc.lat, cam.lon ?? loc.lon);
       return {
+        id: cam.id,
         name: cam.name,
         provider: cam.provider,
         embedType: cam.embedType,
         url: cam.url,
+        // Proxy the live still same-origin (https) when this cam has one.
+        imageUrl: cam.id && cam.snapshotUrl ? `/api/cam/${cam.id}` : undefined,
         attribution: cam.attribution,
         weather,
       };

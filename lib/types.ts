@@ -155,10 +155,14 @@ export interface ScoreResult {
 
 /** A cam plus the live weather/wind at its location (Open-Meteo, per spot). */
 export interface CamView {
+  /** Stable id (only set for cams with a proxied snapshot). */
+  id?: string;
   name: string;
   provider: string;
   embedType: "iframe" | "image" | "link";
   url: string;
+  /** Local proxy path for the live still (image cams only), e.g. /api/cam/boca-surf. */
+  imageUrl?: string;
   attribution?: string;
   weather: Wrapped<SpotWeatherData>;
 }
@@ -172,11 +176,23 @@ export interface ConditionsResponse {
 
 // --- Location config -------------------------------------------------------
 export interface CamConfig {
+  /**
+   * Stable id, required when `snapshotUrl` is set: it keys the /api/cam/[id]
+   * proxy allowlist so only configured upstreams can be fetched (no SSRF).
+   */
+  id?: string;
   name: string;
   provider: string;
   /** How to render: inline iframe, an auto-refreshing still image, or a link out. */
   embedType: "iframe" | "image" | "link";
+  /** Human-facing page (used for the link/click-through). */
   url: string;
+  /**
+   * Upstream live still-image URL, proxied server-side via /api/cam/[id] (so an
+   * http-only or hotlink-sensitive source is served same-origin over https).
+   * Only used when embedType is "image".
+   */
+  snapshotUrl?: string;
   attribution?: string;
   /** Cam's own coordinates for per-spot weather; falls back to the town's lat/lon. */
   lat?: number;

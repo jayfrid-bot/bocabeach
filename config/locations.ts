@@ -28,10 +28,15 @@ export const LOCATIONS: Location[] = [
     cityConditionsUrl: "https://www.myboca.us/2464/Beach-Conditions",
     cams: [
       {
+        // bocasurfcam.com publishes a fresh full-res JPEG at most_recent_image.php;
+        // proxied via /api/cam/boca-surf so it serves same-origin over https.
+        id: "boca-surf",
         name: "Boca Surf Cam",
         provider: "bocasurfcam.com",
-        embedType: "link",
+        embedType: "image",
         url: "http://www.bocasurfcam.com/",
+        snapshotUrl: "http://bocasurfcam.com/most_recent_image.php",
+        attribution: "Live still courtesy bocasurfcam.com",
         lat: 26.3492,
         lon: -80.0701,
       },

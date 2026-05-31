@@ -61,7 +61,9 @@ function CamCard({ cam }: { cam: CamView }) {
     );
   }
 
-  if (cam.embedType === "image") {
+  if (cam.embedType === "image" && cam.imageUrl) {
+    // Cache-bust per mount so the still refreshes with the dashboard's polling.
+    const src = `${cam.imageUrl}?t=${cam.weather.fetchedAt}`;
     return (
       <a
         href={cam.url}
@@ -70,7 +72,12 @@ function CamCard({ cam }: { cam: CamView }) {
         className="block overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-white/10"
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={cam.url} alt={cam.name} className="aspect-video w-full object-cover" />
+        <img
+          src={src}
+          alt={`${cam.name} — live`}
+          className="aspect-video w-full object-cover"
+          loading="lazy"
+        />
         <CamFooter cam={cam} />
       </a>
     );
