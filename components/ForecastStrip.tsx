@@ -1,5 +1,4 @@
 import type { ForecastDay, Wrapped } from "@/lib/types";
-import { Surface, SectionTitle } from "@/components/ui";
 
 /** 7-day outlook: one tile per day (sky emoji, hi/lo, rain %, max wind). */
 export function ForecastStrip({ forecast }: { forecast: Wrapped<ForecastDay[]> }) {
@@ -8,27 +7,28 @@ export function ForecastStrip({ forecast }: { forecast: Wrapped<ForecastDay[]> }
 
   return (
     <section>
-      <SectionTitle kicker="next 7 days">Outlook</SectionTitle>
+      <h2 className="mb-3 text-lg font-semibold text-white">7-day outlook</h2>
       <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
         {days.map((d) => (
-          <Surface key={d.date} className="p-2.5 text-center">
-            <div className="font-head text-xs font-semibold uppercase text-ink-soft">
-              {d.dow}
-            </div>
+          <div
+            key={d.date}
+            className="rounded-2xl bg-slate-900/70 p-2.5 text-center ring-1 ring-white/10"
+          >
+            <div className="text-xs font-medium uppercase text-slate-400">{d.dow}</div>
             <div className="my-1 text-2xl" title={d.sky} aria-label={d.sky}>
               {d.emoji}
             </div>
-            <div className="font-head text-sm font-bold text-ink">
+            <div className="text-sm font-semibold text-white">
               {d.hi != null ? `${d.hi}°` : "—"}
             </div>
-            <div className="text-xs text-ink-faint">{d.lo != null ? `${d.lo}°` : "—"}</div>
+            <div className="text-xs text-slate-500">{d.lo != null ? `${d.lo}°` : "—"}</div>
             {d.rain != null ? (
-              <div className="mt-1 text-[11px] font-semibold text-sea-deep">💧 {d.rain}%</div>
+              <div className="mt-1 text-[11px] font-medium text-ocean-300">💧 {d.rain}%</div>
             ) : null}
             {d.windMaxMph != null ? (
-              <div className="text-[11px] text-ink-faint">💨 {d.windMaxMph}</div>
+              <div className="text-[11px] text-slate-500">💨 {d.windMaxMph}</div>
             ) : null}
-          </Surface>
+          </div>
         ))}
       </div>
     </section>
