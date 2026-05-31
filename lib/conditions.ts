@@ -7,7 +7,7 @@ import { fetchMarine } from "@/lib/sources/marine";
 import { fetchTides } from "@/lib/sources/tides";
 import { fetchWaterQuality } from "@/lib/sources/waterQuality";
 import { fetchWeather } from "@/lib/sources/weather";
-import { computeScores } from "@/lib/score";
+import { computeScore } from "@/lib/score";
 import { nowIso } from "@/lib/util";
 
 /**
@@ -50,5 +50,5 @@ export async function getConditions(
   if (!loc) return null;
   const [snapshot, cams] = await Promise.all([getSnapshot(slug), buildCamViews(loc)]);
   if (!snapshot) return null;
-  return { snapshot, scores: computeScores(snapshot, loc), cams };
+  return { snapshot, score: computeScore(snapshot), cams };
 }

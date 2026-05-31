@@ -1,13 +1,11 @@
 import type {
   ConditionsSnapshot,
   FlagColor,
-  Location,
   ScoreResult,
-  Scores,
   SubScore,
   WaterQualityRating,
 } from "@/lib/types";
-import { angularDistance, clamp, degToCardinal, plateau } from "@/lib/util";
+import { clamp, degToCardinal, plateau } from "@/lib/util";
 
 // Consolidated, best-available values pulled across all sources.
 export interface Derived {
@@ -16,8 +14,6 @@ export interface Derived {
   windSpeedMph?: number;
   windDirDeg?: number;
   waveHeightFt?: number; // combined sea state (for swimming calmness)
-  surfHeightFt?: number; // swell height (for surf)
-  surfPeriodS?: number;
   precipProbability?: number;
   shortForecast?: string;
   uvIndex?: number;
@@ -38,8 +34,6 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     windSpeedMph: w?.windSpeedMph ?? b?.windSpeedMph,
     windDirDeg: w?.windDirDeg ?? b?.windDirDeg,
     waveHeightFt: b?.waveHeightFt ?? m?.waveHeightFt,
-    surfHeightFt: m?.swellHeightFt ?? m?.waveHeightFt ?? b?.waveHeightFt,
-    surfPeriodS: m?.swellPeriodS ?? b?.dominantPeriodS ?? m?.wavePeriodS,
     precipProbability: w?.precipProbability,
     shortForecast: w?.shortForecast,
     uvIndex: m?.uvIndex,
@@ -53,8 +47,6 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
 const windCalm = (mph: number) => clamp(100 - Math.max(0, mph - 6) * 6, 0, 100);
 const waveCalm = (ft: number) => clamp(100 - Math.max(0, ft - 1) * 25, 0, 100);
 const uvScore = (uv: number) => clamp(100 - Math.max(0, uv - 8) * 12, 0, 100);
-const surfSize = (ft: number) => plateau(ft, 2, 6, 3);
-const surfPeriod = (s: number) => clamp(((s - 4) / 8) * 100, 0, 100);
 
 function waterQualityScore(r: WaterQualityRating): number | null {
   switch (r) {
@@ -82,14 +74,6 @@ function skyScore(d: Derived): number | null {
     s = base;
   }
   return s;
-}
-
-function surfWind(d: Derived, offshoreFromDeg: number): number | null {
-  if (d.windDirDeg == null && d.windSpeedMph == null) return null;
-  if (d.windSpeedMph != null && d.windSpeedMph < 4) return 85; // glassy
-  if (d.windDirDeg == null) return 60;
-  const dist = angularDistance(d.windDirDeg, offshoreFromDeg);
-  return clamp(100 - (dist / 180) * 100, 0, 100);
 }
 
 // --- combination + caps ----------------------------------------------------
@@ -122,36 +106,35 @@ function sub(
   return { key, label, score: score == null ? null : Math.round(score), weight, display };
 }
 
-// --- public scoring --------------------------------------------------------
 export function scoreBeachDay(d: Derived): ScoreResult {
   const subs: SubScore[] = [
     sub(
       "airTemp",
       "Air temperature",
       d.airTempF != null ? plateau(d.airTempF, 78, 88, 18) : null,
-      0.2,
+      0.22,
       f1(d.airTempF, "°F"),
+    ),
+    sub("sky", "Sky / precipitation", skyScore(d), 0.22, d.shortForecast),
+    sub(
+      "wind",
+      "Wind (calmness)",
+      d.windSpeedMph != null ? windCalm(d.windSpeedMph) : null,
+      0.18,
+      d.windSpeedMph != null
+        ? `${d.windSpeedMph} mph${d.windDirDeg != null ? " " + degToCardinal(d.windDirDeg) : ""}`
+        : undefined,
     ),
     sub(
       "waterTemp",
       "Water temperature",
       d.waterTempF != null ? plateau(d.waterTempF, 77, 84, 15) : null,
-      0.2,
+      0.15,
       f1(d.waterTempF, "°F"),
     ),
     sub(
-      "wind",
-      "Wind (calmness)",
-      d.windSpeedMph != null ? windCalm(d.windSpeedMph) : null,
-      0.2,
-      d.windSpeedMph != null
-        ? `${d.windSpeedMph} mph${d.windDirDeg != null ? " " + degToCardinal(d.windDirDeg) : ""}`
-        : undefined,
-    ),
-    sub("sky", "Sky / precipitation", skyScore(d), 0.15, d.shortForecast),
-    sub(
       "waves",
-      "Surf (swim calmness)",
+      "Sea state (swim calmness)",
       d.waveHeightFt != null ? waveCalm(d.waveHeightFt) : null,
       0.1,
       f1(d.waveHeightFt, " ft"),
@@ -160,7 +143,7 @@ export function scoreBeachDay(d: Derived): ScoreResult {
       "waterQuality",
       "Water quality",
       waterQualityScore(d.waterRating),
-      0.1,
+      0.08,
       d.waterRating,
     ),
     sub(
@@ -177,62 +160,22 @@ export function scoreBeachDay(d: Derived): ScoreResult {
   return { score, rawScore, rating: ratingFor(score), subScores: subs, caps };
 }
 
-export function scoreSurf(d: Derived, offshoreFromDeg: number): ScoreResult {
-  const subs: SubScore[] = [
-    sub(
-      "size",
-      "Wave / swell size",
-      d.surfHeightFt != null ? surfSize(d.surfHeightFt) : null,
-      0.35,
-      f1(d.surfHeightFt, " ft"),
-    ),
-    sub(
-      "period",
-      "Swell period",
-      d.surfPeriodS != null ? surfPeriod(d.surfPeriodS) : null,
-      0.25,
-      d.surfPeriodS != null ? `${d.surfPeriodS}s` : undefined,
-    ),
-    sub(
-      "wind",
-      "Wind (offshore)",
-      surfWind(d, offshoreFromDeg),
-      0.25,
-      d.windSpeedMph != null
-        ? `${d.windSpeedMph} mph${d.windDirDeg != null ? " " + degToCardinal(d.windDirDeg) : ""}`
-        : undefined,
-    ),
-    sub("tide", "Tide", 65, 0.1, "generic (per-spot tuning TBD)"),
-    sub(
-      "waterTemp",
-      "Water temperature",
-      d.waterTempF != null ? plateau(d.waterTempF, 72, 86, 18) : null,
-      0.05,
-      f1(d.waterTempF, "°F"),
-    ),
-  ];
-
-  const rawScore = combine(subs);
-  const { score, caps } = applySurfCaps(rawScore, d);
-  return { score, rawScore, rating: ratingFor(score), subScores: subs, caps };
-}
-
 function applyBeachCaps(
   raw: number,
   d: Derived,
 ): { score: number; caps: string[] } {
   let score = raw;
   const caps: string[] = [];
+  // Lifeguard flags are authoritative safety overrides. Note: the purple
+  // (dangerous marine life) flag is intentionally NOT a score cap — it's a
+  // near-constant in South Florida, so it carries no day-to-day signal. It is
+  // still surfaced in the safety banner for awareness.
   if (d.flags.includes("double-red")) {
     score = Math.min(score, 5);
     caps.push("Double red flag — water access closed");
   } else if (d.flags.includes("red")) {
     score = Math.min(score, 40);
     caps.push("Red flag — high hazard, swimming discouraged");
-  }
-  if (d.flags.includes("purple")) {
-    score = Math.min(score, 60);
-    caps.push("Purple flag — dangerous marine life present");
   }
   if (d.waterAdvisory) {
     score = Math.min(score, 40);
@@ -241,23 +184,6 @@ function applyBeachCaps(
   return { score, caps };
 }
 
-function applySurfCaps(
-  raw: number,
-  d: Derived,
-): { score: number; caps: string[] } {
-  let score = raw;
-  const caps: string[] = [];
-  if (d.flags.includes("double-red")) {
-    score = Math.min(score, 10);
-    caps.push("Double red flag — water access closed");
-  }
-  return { score, caps };
-}
-
-export function computeScores(s: ConditionsSnapshot, loc: Location): Scores {
-  const d = deriveMetrics(s);
-  return {
-    beachDay: scoreBeachDay(d),
-    surf: scoreSurf(d, loc.offshoreWindFromDeg),
-  };
+export function computeScore(s: ConditionsSnapshot): ScoreResult {
+  return scoreBeachDay(deriveMetrics(s));
 }

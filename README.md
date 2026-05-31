@@ -1,8 +1,9 @@
 # Boca Beach Conditions 🏖️🌊
 
 Live local beach conditions for **Boca Raton** and **Deerfield Beach, FL**, consolidated
-into one page each with a composite **Surf** and **Beach Day** score. Built config-first so
-adding a new beach town is a single entry — the long-term goal is *every* beach town.
+into one page each with a single composite **Beach Day** score (for beachgoers — no
+surfing). Built config-first so adding a new beach town is a single entry — the long-term
+goal is *every* beach town.
 
 ## What it shows
 
@@ -10,20 +11,29 @@ adding a new beach town is a single entry — the long-term goal is *every* beac
 - **Water temperature & live wind** — nearest NDBC buoy (LKWF1)
 - **Air temp, wind, sky, rain chance** — NWS `api.weather.gov`
 - **Waves / swell / period / sea-surface temp / UV** — Open-Meteo
-- **Official lifeguard report** — beach warning **flags**, swim/snorkel/surf ratings,
+- **Official lifeguard report** — beach warning **flags**, swim/snorkel ratings,
   marine life & hazards (scraped from the City of Boca Raton Ocean Rescue page)
 - **Water quality** — FL Healthy Beaches enterococci sampling, mapped to good/moderate/poor
 - **Beach & surf cams** — public cams for the area (embedded inline where the host allows
   framing; Surfline and frame-blocking hosts link out), each with **live weather & wind**
   pulled from Open-Meteo at the cam's own coordinates
 
-Two composite scores (toggle in the UI):
+A single composite **Beach Day** score (0–100), weighted for beachgoers:
 
-- **Beach Day** — air/water warmth, calm wind & seas, sky, water quality, UV
-- **Surf** — wave/swell size, period, offshore wind, tide, water temp
+| Sub-score | Weight |
+|-----------|:------:|
+| Air temperature | 22% |
+| Sky / precipitation | 22% |
+| Wind (calmness) | 18% |
+| Water temperature | 15% |
+| Sea state (swim calmness) | 10% |
+| Water quality | 8% |
+| UV index | 5% |
 
-Official lifeguard **flags act as safety overrides**: a red flag caps the Beach Day score,
-double-red drives it to ~0, and a purple (marine-pest) flag caps it and shows a banner.
+Official lifeguard **flags act as safety overrides**: a red flag caps the score (≤40),
+double-red drives it to ~0, and a water-quality advisory caps it (≤40). The purple
+(marine-pest) flag is **shown in the safety banner for awareness but does not affect the
+score** — it's near-constant in South Florida, so it carries no day-to-day signal.
 
 ## Tech
 
@@ -35,7 +45,7 @@ CORS, centralizes caching) by isolated adapters in `lib/sources/*`, aggregated i
 config/locations.ts   # add a town here — drives everything
 lib/sources/*          # one adapter per data source (each degrades gracefully)
 lib/conditions.ts      # parallel fetch + assemble snapshot
-lib/score.ts           # Beach Day + Surf scores with breakdown & safety caps
+lib/score.ts           # Beach Day score with weighted breakdown & safety caps
 app/[slug]/page.tsx    # beach dashboard (client shell: ConditionsDashboard)
 app/page.tsx           # all-beaches landing
 app/api/conditions/... # cached JSON API (also a public endpoint)
