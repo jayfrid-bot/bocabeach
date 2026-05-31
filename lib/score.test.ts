@@ -43,6 +43,7 @@ function snapshot(over: {
     marine: wrap(over.marine ?? null),
     cityOfficial: wrap(over.city ?? null),
     waterQuality: wrap(over.water ?? null),
+    forecast: wrap(null),
   };
 }
 

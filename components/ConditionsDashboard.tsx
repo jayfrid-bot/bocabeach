@@ -13,6 +13,7 @@ import { TidePanel } from "@/components/TidePanel";
 import { SafetyBanner } from "@/components/SafetyBanner";
 import { SourceList } from "@/components/SourceBadge";
 import { CamGrid } from "@/components/CamGrid";
+import { ForecastStrip } from "@/components/ForecastStrip";
 
 const fetcher = (u: string) => fetch(u).then((r) => r.json());
 
@@ -44,6 +45,7 @@ export function ConditionsDashboard({
     snap.marine,
     snap.cityOfficial,
     snap.waterQuality,
+    snap.forecast,
   ];
 
   return (

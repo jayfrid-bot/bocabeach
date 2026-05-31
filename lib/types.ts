@@ -92,6 +92,19 @@ export interface CityOfficialData {
   updatedLabel?: string; // "Friday, May 29, 2026"
 }
 
+// --- 7-day outlook (Open-Meteo daily) -------------------------------------
+export interface ForecastDay {
+  date: string; // YYYY-MM-DD (local to the beach)
+  dow: string; // "Mon"
+  hi?: number; // °F
+  lo?: number; // °F
+  rain?: number; // precip probability %, 0-100
+  windMaxMph?: number;
+  weatherCode?: number; // WMO code
+  emoji: string; // sky emoji derived from the code
+  sky?: string; // short label derived from the code
+}
+
 // --- Water quality (FL Healthy Beaches) ------------------------------------
 export type WaterQualityRating = "good" | "moderate" | "poor" | "unknown";
 export interface WaterQualitySite {
@@ -130,6 +143,7 @@ export interface ConditionsSnapshot {
   marine: Wrapped<MarineData>;
   cityOfficial: Wrapped<CityOfficialData>;
   waterQuality: Wrapped<WaterQualityData>;
+  forecast: Wrapped<ForecastDay[]>;
 }
 
 // --- Scores ----------------------------------------------------------------
