@@ -1,8 +1,8 @@
 {
-  "name": "boca-beach-conditions",
+  "name": "boca-beach-rats",
   "version": "0.1.0",
   "private": true,
-  "description": "Live Boca Raton beach conditions with a composite Surf / Beach Day score. Built to expand to every beach town.",
+  "description": "Live South Florida beach conditions with a composite Beach Day score. Built to expand to every beach town.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

@@ -1,4 +1,4 @@
-# CLAUDE.md — Boca Beach Conditions
+# CLAUDE.md — Boca Beach Rats
 
 Next.js (App Router) + TypeScript + Tailwind app that consolidates live beach
 conditions and computes composite **Surf** and **Beach Day** scores. Designed to

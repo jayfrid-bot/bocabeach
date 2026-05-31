@@ -1,4 +1,4 @@
-# Boca Beach Conditions 🏖️🌊
+# Boca Beach Rats 🏖️🐀
 
 Live local beach conditions for **Boca Raton** and **Deerfield Beach, FL**, consolidated
 into one page each with a single composite **Beach Day** score (for beachgoers — no

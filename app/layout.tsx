@@ -3,9 +3,9 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Boca Beach Conditions",
+  title: "Boca Beach Rats",
   description:
-    "Live Boca Raton beach conditions — tides, water & air temp, wind, waves, cams — with a composite Surf / Beach Day score.",
+    "Live South Florida beach conditions — tides, water & air temp, wind, waves, water quality, cams — distilled into a single Beach Day score.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

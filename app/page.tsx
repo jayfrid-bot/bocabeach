@@ -32,7 +32,7 @@ export default async function Home() {
     <main className="mx-auto max-w-4xl px-4 py-12 sm:px-6">
       <header className="mb-10 text-center">
         <h1 className="text-4xl font-bold text-white sm:text-5xl">
-          Beach Conditions
+          Boca Beach Rats 🏖️🐀
         </h1>
         <p className="mt-3 text-slate-400">
           Live tides, water &amp; air temp, wind, waves, water quality, and cams —

@@ -18,9 +18,9 @@ export async function generateMetadata({
   const { slug } = await params;
   const loc = getLocation(slug);
   return {
-    title: loc ? `${loc.name} Beach Conditions` : "Beach Conditions",
+    title: loc ? `${loc.name} — Boca Beach Rats` : "Boca Beach Rats",
     description: loc
-      ? `Live ${loc.name} beach conditions and a composite Surf / Beach Day score.`
+      ? `Live ${loc.name} beach conditions and a composite Beach Day score.`
       : undefined,
   };
 }

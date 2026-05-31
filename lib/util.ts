@@ -73,7 +73,7 @@ export async function fetchWithTimeout(
       headers: {
         "User-Agent":
           process.env.CONDITIONS_USER_AGENT ??
-          "boca-beach-conditions (https://github.com/)",
+          "boca-beach-rats (https://github.com/)",
         ...(rest.headers ?? {}),
       },
     } as RequestInit);
