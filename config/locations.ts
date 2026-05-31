@@ -41,6 +41,19 @@ export const LOCATIONS: Location[] = [
         lon: -80.0701,
       },
       {
+        // Same operator/setup as bocasurfcam — live still at most_recent_image.php
+        // (view over Lake Boca Raton / the inlet). Proxied via /api/cam/lake-boca.
+        id: "lake-boca",
+        name: "Lake Boca Cam",
+        provider: "lakebocacam.com",
+        embedType: "image",
+        url: "http://lakebocacam.com/",
+        snapshotUrl: "http://lakebocacam.com/most_recent_image.php",
+        attribution: "Live still courtesy lakebocacam.com",
+        lat: 26.3387,
+        lon: -80.0716,
+      },
+      {
         name: "Boca Raton Inlet Cam",
         provider: "Palm Beach County ERM / video-monitoring.com",
         embedType: "link",
@@ -54,14 +67,6 @@ export const LOCATIONS: Location[] = [
         embedType: "link",
         url: "https://video-monitoring.com/beachcams/boca/",
         lat: 26.3456,
-        lon: -80.0701,
-      },
-      {
-        name: "City of Boca Raton Cam",
-        provider: "livebeaches.com",
-        embedType: "link",
-        url: "https://www.livebeaches.com/webcams/city-of-boca-raton-cam/",
-        lat: 26.3512,
         lon: -80.0701,
       },
       {
