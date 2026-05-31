@@ -35,8 +35,8 @@ export default async function Home() {
           Beach Conditions
         </h1>
         <p className="mt-3 text-slate-400">
-          Live tides, water &amp; air temp, wind, waves, and cams — distilled into a
-          composite Surf and Beach Day score.
+          Live tides, water &amp; air temp, wind, waves, water quality, and cams —
+          distilled into a single Beach Day score.
         </p>
       </header>
 
@@ -58,10 +58,7 @@ export default async function Home() {
             </div>
             <div className="mt-5 flex gap-6">
               {data ? (
-                <>
-                  <ScoreChip label="Beach Day" score={data.scores.beachDay.score} />
-                  <ScoreChip label="Surf" score={data.scores.surf.score} />
-                </>
+                <ScoreChip label="Beach Day" score={data.score.score} />
               ) : (
                 <span className="text-sm text-slate-500">Conditions unavailable</span>
               )}

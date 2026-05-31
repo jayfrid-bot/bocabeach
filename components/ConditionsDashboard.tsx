@@ -1,13 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
 import useSWR from "swr";
 import type { ConditionsResponse } from "@/lib/types";
 import { deriveMetrics } from "@/lib/score";
 import { scoreColor } from "@/lib/format";
 import { ScoreGauge } from "@/components/ScoreGauge";
-import { ScoreToggle, type ScoreMode } from "@/components/ScoreToggle";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { MetricCard } from "@/components/MetricCard";
 import { WindCompass } from "@/components/WindCompass";
@@ -30,11 +28,10 @@ export function ConditionsDashboard({
     fetcher,
     { fallbackData: initial, refreshInterval: 300_000 },
   );
-  const [mode, setMode] = useState<ScoreMode>("beachDay");
 
   const res = data ?? initial;
   const snap = res.snapshot;
-  const active = mode === "beachDay" ? res.scores.beachDay : res.scores.surf;
+  const active = res.score;
   const d = deriveMetrics(snap);
   const tz = snap.location.timezone;
   const cams = res.cams;
@@ -67,11 +64,10 @@ export function ConditionsDashboard({
 
       <section className="mb-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <div className="flex flex-col items-center gap-4 rounded-2xl bg-slate-900/70 p-6 ring-1 ring-white/10">
-          <ScoreToggle mode={mode} onChange={setMode} />
           <ScoreGauge
             score={active.score}
             rating={active.rating}
-            label={mode === "beachDay" ? "Beach Day score" : "Surf score"}
+            label="Beach Day score"
             accent={scoreColor(active.score)}
           />
           {ratings &&
@@ -111,12 +107,6 @@ export function ConditionsDashboard({
           label="Air temp"
           value={d.airTempF != null ? `${d.airTempF}°F` : "—"}
           sub={d.shortForecast}
-        />
-        <MetricCard
-          icon="🏄"
-          label="Swell"
-          value={d.surfHeightFt != null ? `${d.surfHeightFt} ft` : "—"}
-          sub={d.surfPeriodS != null ? `${d.surfPeriodS}s period` : undefined}
         />
         <MetricCard
           icon="〰️"

@@ -1,10 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { computeScores, deriveMetrics, scoreBeachDay } from "@/lib/score";
+import { computeScore, deriveMetrics, scoreBeachDay } from "@/lib/score";
 import type {
   BuoyData,
   CityOfficialData,
   ConditionsSnapshot,
-  Location,
   MarineData,
   WaterQualityData,
   WeatherData,
@@ -46,19 +45,6 @@ function snapshot(over: {
     waterQuality: wrap(over.water ?? null),
   };
 }
-
-const LOC: Location = {
-  slug: "boca-raton",
-  name: "Boca Raton",
-  region: "FL",
-  lat: 26.36,
-  lon: -80.07,
-  timezone: "America/New_York",
-  noaaTideStationId: "8722816",
-  ndbcBuoyId: "LKWF1",
-  offshoreWindFromDeg: 270,
-  cams: [],
-};
 
 const NICE = snapshot({
   buoy: { waterTempF: 82, windSpeedMph: 8, windDirDeg: 90 },

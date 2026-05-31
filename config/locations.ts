@@ -5,8 +5,8 @@ import type { Location, LocationPublic } from "@/lib/types";
  * Everything downstream (data fetching, scoring, routing, UI) is driven off this list.
  *
  * To add a town you need: lat/lon (beach-side), the nearest NOAA tide station id,
- * the nearest NDBC buoy id, its offshore wind bearing, optional FL Healthy Beaches
- * site names + a city conditions page to scrape, and its cams.
+ * the nearest NDBC buoy id, optional FL Healthy Beaches site names + a city
+ * conditions page to scrape, and its cams.
  */
 export const LOCATIONS: Location[] = [
   {
@@ -20,7 +20,6 @@ export const LOCATIONS: Location[] = [
     noaaTideStationFallbackId: "8722670", // Lake Worth Pier
     ndbcBuoyId: "LKWF1", // Lake Worth Pier C-MAN (nearest)
     ndbcBuoyFallbackId: "FWYF1", // Fowey Rocks
-    offshoreWindFromDeg: 270, // beach faces east; offshore wind blows from the west
     // SPLocation names as published by the FL Healthy Beaches feed (Palm Beach county).
     healthyBeaches: {
       county: "Palm Beach",
@@ -92,7 +91,6 @@ export const LOCATIONS: Location[] = [
     noaaTideStationFallbackId: "8722956", // South Port Everglades
     ndbcBuoyId: "LKWF1", // Lake Worth Pier C-MAN (nearest north)
     ndbcBuoyFallbackId: "FWYF1", // Fowey Rocks
-    offshoreWindFromDeg: 270, // east-facing beach; offshore wind from the west
     healthyBeaches: {
       county: "Broward",
       sites: ["DEERFIELD BEACH PIER", "DEERFIELD BEACH SE 10TH ST"],
