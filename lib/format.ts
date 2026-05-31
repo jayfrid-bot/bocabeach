@@ -18,10 +18,10 @@ export function fmtRelative(iso: string): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
-/** Accent color for a 0-100 score. */
+/** Accent color for a 0-100 score, matching the dial thresholds (40/60/80). */
 export function scoreColor(score: number): string {
-  if (score >= 80) return "#34d399"; // emerald-400
-  if (score >= 65) return "#a3e635"; // lime-400
-  if (score >= 45) return "#fbbf24"; // amber-400
-  return "#fb7185"; // rose-400
+  if (score >= 80) return "#06b6d4"; // epic
+  if (score >= 60) return "#22c55e"; // good
+  if (score >= 40) return "#f59e0b"; // fair
+  return "#ef4444"; // poor
 }

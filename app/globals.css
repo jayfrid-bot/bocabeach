@@ -2,12 +2,130 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   "Lifeguard Tower" theme tokens — light ("day") + dark ("night").
+   Everything is a CSS var so the same components support both themes.
+   ============================================================ */
+
 :root {
+  /* surfaces */
+  --sand: #f4e4c1;
+  --sand-deep: #e8d09a;
+  --sand-line: #d8b877;
+  --foam: #ffffff;
+  --paper: #fbf7ef;
+  --paper-alt: #f3ece0;
+
+  /* ink */
+  --ink: #0a2540;
+  --ink-soft: #33506b;
+  --ink-faint: #6b829b;
+
+  /* sea / accents */
+  --sea: #1b85f5;
+  --sea-deep: #0a66c2;
+  --sea-glow: #5bb8ff;
+  --teal: #00aaaa;
+  --coral: #ff6b5e;
+  --sun: #ffb020;
+
+  /* score colors (shared light/dark; thresholds 40/60/80) */
+  --score-poor: #ef4444;
+  --score-fair: #f59e0b;
+  --score-good: #22c55e;
+  --score-epic: #06b6d4;
+
+  /* dial */
+  --dial-track: #e3d3ad;
+  --dial-tick: #b9a06f;
+  --dial-tick-major: #7c6432;
+  --needle: #0a2540;
+  --hub: #0a2540;
+
+  /* layout tokens */
+  --radius-lg: 22px;
+  --radius-md: 14px;
+  --radius-sm: 9px;
+  --shadow-card: 0 10px 30px -12px rgba(10, 37, 64, 0.35);
+  --shadow-soft: 0 6px 18px -10px rgba(10, 37, 64, 0.3);
+  --maxw: 880px;
+
+  /* type (wired to next/font variables in layout.tsx) */
+  --font-display: var(--font-anton), "Arial Narrow", system-ui, sans-serif;
+  --font-head: var(--font-oswald), system-ui, sans-serif;
+  --font-body: var(--font-barlow), system-ui, sans-serif;
+
+  color-scheme: light;
+}
+
+[data-theme="night"] {
+  --sand: #14202e;
+  --sand-deep: #0f1a26;
+  --sand-line: #233140;
+  --foam: #16232f;
+  --paper: #0e1822;
+  --paper-alt: #0b131c;
+  --ink: #eaf2fb;
+  --ink-soft: #a8c0d8;
+  --ink-faint: #6f8aa3;
+  --sea: #38bdf8;
+  --sea-deep: #7dd3fc;
+  --sea-glow: #7dd3fc;
+
+  --dial-track: #1f2d3d;
+  --dial-tick: #3a4d63;
+  --dial-tick-major: #6f8aa3;
+  --needle: #eaf2fb;
+  --hub: #eaf2fb;
+
   color-scheme: dark;
 }
 
 body {
-  background:
-    radial-gradient(1200px 600px at 50% -10%, rgba(27, 133, 245, 0.18), transparent 60%),
-    #020617;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+
+/* keyframes for the dial refresh animation */
+@keyframes tower-ripple {
+  0% { opacity: 0; transform: scale(0.6); }
+  40% { opacity: 0.55; }
+  100% { opacity: 0; transform: scale(1.25); }
+}
+@keyframes tower-ping {
+  0% { transform: scale(1); opacity: 0.9; }
+  70% { transform: scale(1.8); opacity: 0; }
+  100% { opacity: 0; }
+}
+@keyframes tower-countup {
+  from { opacity: 0.3; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.tower-countup { animation: tower-countup 0.5s ease-out; }
+.tower-ripple { animation: tower-ripple 0.9s ease-out; }
+.tower-ping { animation: tower-ping 0.7s ease-out; }
+
+/* faux-sand banner texture */
+.tower-banner-tex {
+  background-image:
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.04) 0 2px, transparent 2px 7px),
+    linear-gradient(180deg, var(--sand), var(--sand-deep));
+}
+[data-theme="night"] .tower-banner-tex {
+  background-image:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.03) 0 2px, transparent 2px 7px),
+    linear-gradient(180deg, var(--sand), var(--sand-deep));
+}
+
+/* reduced motion: gate the dial sweep, refresh ripple, and all transitions */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }

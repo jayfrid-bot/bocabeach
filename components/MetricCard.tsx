@@ -1,3 +1,6 @@
+import { Surface } from "@/components/ui";
+
+/** A labeled metric tile (the "StatTile" of the Tower design). */
 export function MetricCard({
   icon,
   label,
@@ -10,13 +13,17 @@ export function MetricCard({
   sub?: string;
 }) {
   return (
-    <div className="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-white/10">
-      <div className="flex items-center gap-2 text-sm text-slate-400">
-        <span aria-hidden>{icon}</span>
-        <span className="truncate">{label}</span>
+    <Surface className="p-3.5">
+      <div className="flex items-center gap-2 text-ink-soft">
+        <span className="text-lg" aria-hidden>
+          {icon}
+        </span>
+        <span className="truncate font-head text-xs font-semibold uppercase tracking-[0.04em]">
+          {label}
+        </span>
       </div>
-      <div className="mt-1 text-xl font-semibold text-white sm:text-2xl">{value}</div>
-      {sub ? <div className="break-words text-xs text-slate-400">{sub}</div> : null}
-    </div>
+      <div className="mt-2 font-head text-2xl font-bold text-ink sm:text-3xl">{value}</div>
+      {sub ? <div className="mt-0.5 break-words text-xs text-ink-faint">{sub}</div> : null}
+    </Surface>
   );
 }

@@ -1,11 +1,10 @@
 import type { CamView } from "@/lib/types";
+import { Surface, SectionTitle } from "@/components/ui";
 
 function CamWeatherStrip({ cam }: { cam: CamView }) {
   const w = cam.weather.data;
   if (!w) {
-    return (
-      <div className="mt-2 text-[11px] text-slate-500">live weather unavailable</div>
-    );
+    return <div className="mt-2 text-[11px] text-ink-faint">live weather unavailable</div>;
   }
   const wind =
     w.windSpeedMph != null
@@ -13,7 +12,7 @@ function CamWeatherStrip({ cam }: { cam: CamView }) {
         (w.windGustMph != null ? ` · gusts ${w.windGustMph}` : "")
       : null;
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-300">
+    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-soft">
       {w.airTempF != null ? (
         <span title="Air temperature">
           🌡️ {w.airTempF}°F
@@ -23,21 +22,20 @@ function CamWeatherStrip({ cam }: { cam: CamView }) {
         </span>
       ) : null}
       {wind ? <span title="Wind">💨 {wind}</span> : null}
-      {w.shortForecast ? <span className="text-slate-400">{w.shortForecast}</span> : null}
+      {w.shortForecast ? <span className="text-ink-faint">{w.shortForecast}</span> : null}
     </div>
   );
 }
 
 /** Big "headline" still-image cam (live JPEG via the same-origin proxy). */
 function FeaturedCam({ cam }: { cam: CamView }) {
-  // Cache-bust per render so the still refreshes with the dashboard's polling.
   const src = `${cam.imageUrl}?t=${cam.weather.fetchedAt}`;
   return (
     <a
       href={cam.url}
       target="_blank"
       rel="noreferrer"
-      className="group block overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-white/10 transition hover:ring-ocean-500/50"
+      className="group block overflow-hidden rounded-md bg-foam shadow-card ring-1 ring-ink/10 transition hover:ring-sea/50"
     >
       <div className="aspect-video w-full overflow-hidden">
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -50,15 +48,23 @@ function FeaturedCam({ cam }: { cam: CamView }) {
       </div>
       <div className="p-3 sm:p-4">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-base font-semibold text-white sm:text-lg">{cam.name}</div>
-          <span className="shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-300">
+          <div className="font-head text-base font-semibold text-ink sm:text-lg">
+            {cam.name}
+          </div>
+          <span
+            className="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+            style={{
+              color: "var(--coral)",
+              background: "color-mix(in srgb, var(--coral) 14%, transparent)",
+            }}
+          >
             ● Live
           </span>
         </div>
-        <div className="text-xs text-slate-400">{cam.provider}</div>
+        <div className="text-xs text-ink-faint">{cam.provider}</div>
         <CamWeatherStrip cam={cam} />
         {cam.attribution ? (
-          <div className="mt-1 text-[11px] text-slate-500">{cam.attribution}</div>
+          <div className="mt-1 text-[11px] text-ink-faint">{cam.attribution}</div>
         ) : null}
       </div>
     </a>
@@ -68,7 +74,7 @@ function FeaturedCam({ cam }: { cam: CamView }) {
 /** Embedded live-video cam (e.g. a framing-allowed YouTube stream). */
 function VideoCam({ cam }: { cam: CamView }) {
   return (
-    <div className="overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-white/10">
+    <Surface className="overflow-hidden">
       <div className="aspect-video">
         <iframe
           src={cam.url}
@@ -81,11 +87,11 @@ function VideoCam({ cam }: { cam: CamView }) {
         />
       </div>
       <div className="p-3">
-        <div className="text-sm font-medium text-white">{cam.name}</div>
-        <div className="text-xs text-slate-400">{cam.provider}</div>
+        <div className="font-head text-sm font-medium text-ink">{cam.name}</div>
+        <div className="text-xs text-ink-faint">{cam.provider}</div>
         <CamWeatherStrip cam={cam} />
       </div>
-    </div>
+    </Surface>
   );
 }
 
@@ -96,13 +102,13 @@ function LinkChip({ cam }: { cam: CamView }) {
       href={cam.url}
       target="_blank"
       rel="noreferrer"
-      className="flex min-h-[44px] items-center justify-between gap-2 rounded-xl bg-slate-900/70 px-3 py-2.5 ring-1 ring-white/10 transition hover:ring-ocean-500/50"
+      className="flex min-h-[44px] items-center justify-between gap-2 rounded-sm bg-foam px-3 py-2.5 ring-1 ring-ink/10 transition hover:ring-sea/50"
     >
       <span className="min-w-0">
-        <span className="block truncate text-sm text-slate-200">{cam.name}</span>
-        <span className="block truncate text-[11px] text-slate-500">{cam.provider}</span>
+        <span className="block truncate text-sm text-ink">{cam.name}</span>
+        <span className="block truncate text-[11px] text-ink-faint">{cam.provider}</span>
       </span>
-      <span className="shrink-0 text-slate-500" aria-hidden>
+      <span className="shrink-0 text-ink-faint" aria-hidden>
         ↗
       </span>
     </a>
@@ -117,8 +123,8 @@ export function CamGrid({ cams }: { cams: CamView[] }) {
 
   return (
     <section>
-      <h2 className="text-lg font-semibold text-white">Beach &amp; surf cams</h2>
-      <p className="mb-4 mt-1 text-xs text-slate-500">
+      <SectionTitle kicker="live now">Beach &amp; surf cams</SectionTitle>
+      <p className="-mt-2 mb-4 text-xs text-ink-faint">
         Live weather &amp; wind shown per cam, from Open-Meteo at each spot.
       </p>
 
@@ -140,7 +146,7 @@ export function CamGrid({ cams }: { cams: CamView[] }) {
 
       {links.length ? (
         <div className="mt-5">
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-500">
+          <h3 className="mb-2 font-head text-xs font-medium uppercase tracking-wide text-ink-faint">
             More cams (link out)
           </h3>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
