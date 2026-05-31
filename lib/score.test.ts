@@ -49,40 +49,65 @@ function snapshot(over: {
 const NICE = snapshot({
   buoy: { waterTempF: 82, windSpeedMph: 8, windDirDeg: 90 },
   weather: { airTempF: 84, shortForecast: "Sunny", precipProbability: 10 },
-  marine: { swellHeightFt: 3, swellPeriodS: 9, waveHeightFt: 2, uvIndex: 7 },
+  marine: { waveHeightFt: 2, uvIndex: 7 },
   city: { flags: ["green"] },
   water: { overall: "good", advisory: false, sites: [] },
 });
 
 describe("deriveMetrics", () => {
-  it("prefers buoy water temp, marine swell, weather air temp", () => {
+  it("prefers buoy water temp, weather air temp, and combined sea state", () => {
     const d = deriveMetrics(NICE);
     expect(d.waterTempF).toBe(82);
     expect(d.airTempF).toBe(84);
-    expect(d.surfHeightFt).toBe(3);
-    expect(d.surfPeriodS).toBe(9);
+    expect(d.waveHeightFt).toBe(2);
   });
 });
 
-describe("scoring", () => {
+describe("scoring (Beach Day only — no surf)", () => {
+  it("uses the beachgoer sub-scores whose weights sum to 1", () => {
+    const { subScores } = computeScore(NICE);
+    const keys = subScores.map((s) => s.key).sort();
+    expect(keys).toEqual(
+      ["airTemp", "sky", "uv", "waterQuality", "waterTemp", "waves", "wind"].sort(),
+    );
+    const total = subScores.reduce((a, s) => a + s.weight, 0);
+    expect(total).toBeCloseTo(1, 5);
+  });
+
   it("gives nice conditions a strong Beach Day score with no caps", () => {
-    const { beachDay } = computeScores(NICE, LOC);
+    const beachDay = computeScore(NICE);
     expect(beachDay.score).toBeGreaterThanOrEqual(70);
     expect(beachDay.caps).toHaveLength(0);
   });
 
-  it("caps Beach Day at 60 under a purple flag", () => {
+  it("does NOT penalize for a purple (marine-pest) flag", () => {
     const snap = snapshot({
-      ...{ buoy: NICE.buoy.data, weather: NICE.weather.data, marine: NICE.marine.data, water: NICE.water?.data ?? undefined },
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
       city: { flags: ["yellow", "purple"] },
       water: { overall: "good", advisory: false, sites: [] },
     });
     const r = scoreBeachDay(deriveMetrics(snap));
-    expect(r.score).toBeLessThanOrEqual(60);
-    expect(r.caps.join(" ")).toMatch(/purple/i);
+    // Purple is near-constant in South FL, so it carries no day-to-day signal.
+    expect(r.caps.join(" ")).not.toMatch(/purple/i);
+    expect(r.score).toBeGreaterThanOrEqual(70);
   });
 
-  it("drives Beach Day to ~0 under a double-red flag", () => {
+  it("caps the score under a red flag", () => {
+    const snap = snapshot({
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
+      city: { flags: ["red"] },
+      water: { overall: "good", advisory: false, sites: [] },
+    });
+    const r = scoreBeachDay(deriveMetrics(snap));
+    expect(r.score).toBeLessThanOrEqual(40);
+    expect(r.caps.join(" ")).toMatch(/red flag/i);
+  });
+
+  it("drives the score to ~0 under a double-red flag", () => {
     const snap = snapshot({
       buoy: NICE.buoy.data,
       weather: NICE.weather.data,
@@ -94,11 +119,24 @@ describe("scoring", () => {
     expect(r.score).toBeLessThanOrEqual(5);
   });
 
+  it("caps the score under a water-quality advisory", () => {
+    const snap = snapshot({
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
+      city: { flags: ["green"] },
+      water: { overall: "poor", advisory: true, sites: [] },
+    });
+    const r = scoreBeachDay(deriveMetrics(snap));
+    expect(r.score).toBeLessThanOrEqual(40);
+    expect(r.caps.join(" ")).toMatch(/advisory/i);
+  });
+
   it("excludes unavailable inputs from the average", () => {
     const sparse = snapshot({ weather: { airTempF: 82 } });
-    const { beachDay } = computeScores(sparse, LOC);
+    const beachDay = computeScore(sparse);
     // Only one sub-score available, but it should still produce a valid number.
-    expect(Number.isFinite(beachDay.score)).toBe(true);
+    expect(beachDay.score).toBeGreaterThanOrEqual(0);
     expect(beachDay.subScores.some((s) => s.score == null)).toBe(true);
   });
 });

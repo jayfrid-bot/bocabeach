@@ -152,10 +152,6 @@ export interface ScoreResult {
   /** Explanations for any safety cap that lowered the score. */
   caps: string[];
 }
-export interface Scores {
-  beachDay: ScoreResult;
-  surf: ScoreResult;
-}
 
 /** A cam plus the live weather/wind at its location (Open-Meteo, per spot). */
 export interface CamView {
@@ -169,7 +165,8 @@ export interface CamView {
 
 export interface ConditionsResponse {
   snapshot: ConditionsSnapshot;
-  scores: Scores;
+  /** Single composite Beach Day score (0-100) with breakdown + safety caps. */
+  score: ScoreResult;
   cams: CamView[];
 }
 
