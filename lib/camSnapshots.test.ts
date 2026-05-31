@@ -2,14 +2,18 @@ import { describe, it, expect } from "vitest";
 import { CAM_SNAPSHOTS, snapshotUrlForId } from "@/lib/camSnapshots";
 
 describe("cam snapshot allowlist", () => {
-  it("derives the allowlist from configured cams (boca-surf included)", () => {
+  it("derives the allowlist from configured cams (proxied stills included)", () => {
     expect(CAM_SNAPSHOTS["boca-surf"]).toBe(
       "http://bocasurfcam.com/most_recent_image.php",
+    );
+    expect(CAM_SNAPSHOTS["lake-boca"]).toBe(
+      "http://lakebocacam.com/most_recent_image.php",
     );
   });
 
   it("resolves a known cam id to its upstream URL", () => {
     expect(snapshotUrlForId("boca-surf")).toMatch(/^https?:\/\//);
+    expect(snapshotUrlForId("lake-boca")).toMatch(/^https?:\/\//);
   });
 
   it("returns undefined for unknown ids (SSRF guard)", () => {

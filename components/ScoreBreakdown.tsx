@@ -22,9 +22,9 @@ export function ScoreBreakdown({ result }: { result: ScoreResult }) {
       <ul className="mt-3 space-y-2.5">
         {result.subScores.map((s) => (
           <li key={s.key}>
-            <div className="flex items-center justify-between text-xs">
-              <span className="text-slate-300">{s.label}</span>
-              <span className="text-slate-400">
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="min-w-0 truncate text-slate-300">{s.label}</span>
+              <span className="shrink-0 whitespace-nowrap text-slate-400">
                 {s.display ? `${s.display} · ` : ""}
                 {s.score == null ? "n/a" : `${s.score}`}
                 <span className="ml-1 text-slate-500">

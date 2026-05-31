@@ -47,9 +47,12 @@ export function ConditionsDashboard({
   ];
 
   return (
-    <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+    <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <header className="mb-6">
-        <Link href="/" className="text-sm text-ocean-300 hover:underline">
+        <Link
+          href="/"
+          className="inline-flex min-h-[36px] items-center text-sm text-ocean-300 hover:underline"
+        >
           ← all beaches
         </Link>
         <h1 className="mt-2 text-3xl font-bold text-white sm:text-4xl">
@@ -137,11 +140,12 @@ export function ConditionsDashboard({
         ) : null}
       </section>
 
-      <section className="mb-6 grid gap-4 lg:grid-cols-2">
+      <section className="mb-6">
         <TidePanel tides={snap.tides} tz={tz} />
-        <div className="lg:col-span-2">
-          <CamGrid cams={cams} />
-        </div>
+      </section>
+
+      <section className="mb-8">
+        <CamGrid cams={cams} />
       </section>
 
       <footer className="space-y-3">
