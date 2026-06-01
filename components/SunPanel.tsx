@@ -1,13 +1,20 @@
 import type { Wrapped, SunData } from "@/lib/types";
 import { fmtTime } from "@/lib/format";
 
-/** Daybreak (first light), sunrise and sunset for today, in local time. */
+/** Daybreak, sunrise, peak sun, sunset and dusk for today, in local time. */
 export function SunPanel({ sun, tz }: { sun: Wrapped<SunData>; tz: string }) {
   const d = sun.data;
   const rows = [
     { icon: "🌄", label: "Daybreak", iso: d?.daybreak, hint: "first light" },
-    { icon: "🌅", label: "Sunrise", iso: d?.sunrise },
-    { icon: "🌇", label: "Sunset", iso: d?.sunset },
+    { icon: "🌅", label: "Sunrise", iso: d?.sunrise, hint: undefined },
+    {
+      icon: "☀️",
+      label: "Peak sun",
+      iso: d?.solarNoon,
+      hint: d?.maxAltitudeDeg != null ? `${Math.round(d.maxAltitudeDeg)}° high` : "strongest",
+    },
+    { icon: "🌇", label: "Sunset", iso: d?.sunset, hint: undefined },
+    { icon: "🌆", label: "Dusk", iso: d?.dusk, hint: "last light" },
   ];
   const any = rows.some((r) => r.iso);
 

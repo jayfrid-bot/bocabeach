@@ -20,7 +20,7 @@ export async function fetchMarine(loc: Location): Promise<Wrapped<MarineData>> {
     `swell_wave_direction,sea_surface_temperature`;
   const uvUrl =
     `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
-    `&current=uv_index`;
+    `&current=uv_index,cloud_cover`;
 
   try {
     const [marineRes, uvRes] = await Promise.allSettled([
@@ -49,6 +49,8 @@ export async function fetchMarine(loc: Location): Promise<Wrapped<MarineData>> {
     if (uvRes.status === "fulfilled" && uvRes.value) {
       const uv = uvRes.value["uv_index"];
       if (typeof uv === "number") data.uvIndex = round(uv, 1);
+      const cloud = uvRes.value["cloud_cover"];
+      if (typeof cloud === "number") data.cloudCoverPct = round(cloud);
     }
 
     const hasAny = Object.keys(data).length > 0;

@@ -69,6 +69,8 @@ export interface MarineData {
   swellDirDeg?: number;
   seaSurfaceTempF?: number;
   uvIndex?: number;
+  /** Cloud cover, 0-100% (0 = full sun, 100 = overcast). */
+  cloudCoverPct?: number;
 }
 
 // --- Official local conditions (City of Boca Raton Ocean Rescue scrape) -----
@@ -113,8 +115,14 @@ export interface SunData {
   daybreak?: string;
   /** Sunrise (upper limb at the horizon, ISO). */
   sunrise?: string;
+  /** Solar noon — the sun at its highest and strongest, ISO. */
+  solarNoon?: string;
   /** Sunset (upper limb at the horizon, ISO). */
   sunset?: string;
+  /** Dusk / civil twilight end (sun 6° below horizon, evening), ISO. */
+  dusk?: string;
+  /** Sun's maximum altitude above the horizon at solar noon (degrees). */
+  maxAltitudeDeg?: number;
 }
 
 // --- Water quality (FL Healthy Beaches) ------------------------------------

@@ -126,6 +126,20 @@ export function ConditionsDashboard({
           value={d.uvIndex != null ? `${d.uvIndex}` : "—"}
         />
         <MetricCard
+          icon="☁️"
+          label="Cloud cover"
+          value={d.cloudCoverPct != null ? `${d.cloudCoverPct}%` : "—"}
+          sub={
+            d.cloudCoverPct != null
+              ? d.cloudCoverPct <= 15
+                ? "full sun"
+                : d.cloudCoverPct <= 60
+                  ? "partly cloudy"
+                  : "overcast"
+              : undefined
+          }
+        />
+        <MetricCard
           icon="🧫"
           label="Water quality"
           value={

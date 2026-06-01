@@ -153,6 +153,32 @@ describe("scoring (Beach Day only — no surf)", () => {
     expect(windSub(25)).toBe(0);
   });
 
+  it("rewards full sun and penalizes overcast/partly cloudy skies", () => {
+    // Isolate the cloud-cover signal: no forecast text, no precip probability.
+    const sky = (cloud: number) =>
+      scoreBeachDay(
+        deriveMetrics(snapshot({ marine: { cloudCoverPct: cloud } })),
+      ).subScores.find((s) => s.key === "sky")!.score;
+
+    expect(sky(0)).toBe(100); // full sun adds the most
+    expect(sky(50)).toBe(50); // partly cloudy is middling
+    expect(sky(100)).toBe(0); // overcast takes the most away
+    expect(sky(20)!).toBeGreaterThan(sky(80)!); // monotonic
+  });
+
+  it("blends cloud cover with rain chance in the sky sub-score", () => {
+    // 20% cloud (sunshine 80) + 50% rain chance (dry 50) -> 0.6*80 + 0.4*50 = 68.
+    const r = scoreBeachDay(
+      deriveMetrics(
+        snapshot({
+          marine: { cloudCoverPct: 20 },
+          weather: { precipProbability: 50 },
+        }),
+      ),
+    );
+    expect(r.subScores.find((s) => s.key === "sky")!.score).toBe(68);
+  });
+
   it("excludes unavailable inputs from the average", () => {
     const sparse = snapshot({ weather: { airTempF: 82 } });
     const beachDay = computeScore(sparse);

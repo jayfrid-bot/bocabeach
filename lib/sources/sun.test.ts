@@ -41,10 +41,39 @@ describe("computeSunTimes", () => {
     expect(localMinutes(sunset!)).toBeLessThanOrEqual(17 * 60 + 40);
   });
 
-  it("orders daybreak before sunrise before sunset", () => {
-    const { daybreak, sunrise, sunset } = computeSunTimes(LAT, LON, 2026, 6, 1);
-    expect(daybreak!.getTime()).toBeLessThan(sunrise!.getTime());
-    expect(sunrise!.getTime()).toBeLessThan(sunset!.getTime());
+  it("orders daybreak < sunrise < solar noon < sunset < dusk", () => {
+    const { daybreak, sunrise, solarNoon, sunset, dusk } = computeSunTimes(
+      LAT,
+      LON,
+      2026,
+      6,
+      1,
+    );
+    const ts = [daybreak, sunrise, solarNoon, sunset, dusk].map((x) =>
+      x!.getTime(),
+    );
+    expect(ts).toEqual([...ts].sort((a, b) => a - b));
+    // Dusk trails sunset by ~20-30 min (mirror of daybreak before sunrise).
+    expect((dusk!.getTime() - sunset!.getTime()) / 60000).toBeGreaterThan(15);
+    expect((dusk!.getTime() - sunset!.getTime()) / 60000).toBeLessThan(40);
+  });
+
+  it("projects solar noon and a high peak altitude in summer", () => {
+    const { solarNoon, maxAltitudeDeg } = computeSunTimes(LAT, LON, 2026, 6, 1);
+    // Solar noon for Boca (~80°W, EDT) lands near 1:20 PM.
+    expect(localMinutes(solarNoon!)).toBeGreaterThanOrEqual(13 * 60 + 10);
+    expect(localMinutes(solarNoon!)).toBeLessThanOrEqual(13 * 60 + 30);
+    // Near-overhead sun in June at this latitude.
+    expect(maxAltitudeDeg).toBeGreaterThanOrEqual(83);
+    expect(maxAltitudeDeg).toBeLessThanOrEqual(88);
+  });
+
+  it("has a much lower peak altitude in winter than summer", () => {
+    const summer = computeSunTimes(LAT, LON, 2026, 6, 1).maxAltitudeDeg;
+    const winter = computeSunTimes(LAT, LON, 2026, 12, 21).maxAltitudeDeg;
+    expect(winter).toBeLessThan(summer);
+    expect(winter).toBeGreaterThanOrEqual(38); // ~40° at Boca's latitude
+    expect(winter).toBeLessThanOrEqual(43);
   });
 
   it("returns null for events that don't occur (polar night)", () => {

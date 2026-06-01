@@ -32,17 +32,14 @@ function julianDay0h(year: number, month: number, day: number): number {
 }
 
 /**
- * Minutes past 0h UTC of a solar event on the given Julian day, using the NOAA
- * solar-position equations. `lon` is degrees east (negative = west). Returns
- * null when the sun never reaches that altitude (polar day/night).
+ * The sun's declination and the equation of time for a Julian day, via the NOAA
+ * solar-position equations. `lon` is degrees east (negative = west); it only
+ * nudges which instant we evaluate the slowly-varying terms at.
  */
-function eventMinutesUTC(
+function solarParams(
   jd0: number,
-  lat: number,
   lon: number,
-  zenith: number,
-  rising: boolean,
-): number | null {
+): { declin: number; eqTime: number } {
   // Julian century at ~solar noon UTC (good enough for declination / eq. of time).
   const t = (jd0 + (720 - 4 * lon) / 1440 - 2451545.0) / 36525;
 
@@ -74,27 +71,37 @@ function eventMinutesUTC(
         1.25 * e * e * Math.sin(2 * mr),
     ); // minutes
 
+  return { declin, eqTime };
+}
+
+/**
+ * Hour angle (degrees) at which the sun reaches `zenith` for a given latitude
+ * and declination. Null when it never does (polar day/night).
+ */
+function hourAngle(lat: number, declin: number, zenith: number): number | null {
   const latR = deg2rad(lat);
   const decR = deg2rad(declin);
   const cosH =
     (Math.cos(deg2rad(zenith)) - Math.sin(decR) * Math.sin(latR)) /
     (Math.cos(decR) * Math.cos(latR));
   if (cosH > 1 || cosH < -1) return null;
-  const ha = rad2deg(Math.acos(cosH)); // hour angle, degrees
-
-  const solarNoonUTC = 720 - 4 * lon - eqTime; // minutes past 0h UTC
-  return rising ? solarNoonUTC - 4 * ha : solarNoonUTC + 4 * ha;
+  return rad2deg(Math.acos(cosH));
 }
 
 export interface SunTimes {
   daybreak: Date | null;
   sunrise: Date | null;
+  solarNoon: Date | null;
   sunset: Date | null;
+  dusk: Date | null;
+  /** Sun's maximum altitude above the horizon at solar noon (degrees). */
+  maxAltitudeDeg: number;
 }
 
 /**
- * Civil dawn, sunrise and sunset for a calendar day at a coordinate, as UTC
- * instants. Pure and deterministic — accurate to ~1 minute, no network.
+ * Civil dawn, sunrise, solar noon, sunset and dusk for a calendar day at a
+ * coordinate, as UTC instants, plus the peak solar altitude. Pure and
+ * deterministic — accurate to ~1 minute, no network.
  */
 export function computeSunTimes(
   lat: number,
@@ -104,15 +111,23 @@ export function computeSunTimes(
   day: number,
 ): SunTimes {
   const jd0 = julianDay0h(year, month, day);
+  const { declin, eqTime } = solarParams(jd0, lon);
+  const solarNoonUTC = 720 - 4 * lon - eqTime; // minutes past 0h UTC
   const midnightUTC = Date.UTC(year, month - 1, day);
-  const at = (zenith: number, rising: boolean): Date | null => {
-    const min = eventMinutesUTC(jd0, lat, lon, zenith, rising);
-    return min == null ? null : new Date(midnightUTC + Math.round(min * 60000));
-  };
+  const at = (min: number): Date =>
+    new Date(midnightUTC + Math.round(min * 60000));
+
+  const haSun = hourAngle(lat, declin, ZENITH_SUNRISE);
+  const haCivil = hourAngle(lat, declin, ZENITH_CIVIL);
+
   return {
-    daybreak: at(ZENITH_CIVIL, true),
-    sunrise: at(ZENITH_SUNRISE, true),
-    sunset: at(ZENITH_SUNRISE, false),
+    daybreak: haCivil == null ? null : at(solarNoonUTC - 4 * haCivil),
+    sunrise: haSun == null ? null : at(solarNoonUTC - 4 * haSun),
+    solarNoon: at(solarNoonUTC),
+    sunset: haSun == null ? null : at(solarNoonUTC + 4 * haSun),
+    dusk: haCivil == null ? null : at(solarNoonUTC + 4 * haCivil),
+    // Altitude at solar noon = 90° − |latitude − declination|.
+    maxAltitudeDeg: Math.round((90 - Math.abs(lat - declin)) * 10) / 10,
   };
 }
 
@@ -145,7 +160,10 @@ export function fetchSun(loc: Location, now: Date = new Date()): Wrapped<SunData
       date: `${y}-${pad(m)}-${pad(d)}`,
       daybreak: t.daybreak?.toISOString(),
       sunrise: t.sunrise?.toISOString(),
+      solarNoon: t.solarNoon?.toISOString(),
       sunset: t.sunset?.toISOString(),
+      dusk: t.dusk?.toISOString(),
+      maxAltitudeDeg: t.maxAltitudeDeg,
     };
     const ok = Boolean(data.sunrise && data.sunset);
     return {

@@ -17,6 +17,7 @@ export interface Derived {
   precipProbability?: number;
   shortForecast?: string;
   uvIndex?: number;
+  cloudCoverPct?: number; // 0 = full sun, 100 = overcast
   flags: FlagColor[];
   waterAdvisory: boolean;
   waterRating: WaterQualityRating;
@@ -37,6 +38,7 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     precipProbability: w?.precipProbability,
     shortForecast: w?.shortForecast,
     uvIndex: m?.uvIndex,
+    cloudCoverPct: m?.cloudCoverPct,
     flags: c?.flags ?? ["unknown"],
     waterAdvisory: q?.advisory ?? false,
     waterRating: q?.overall ?? "unknown",
@@ -65,19 +67,39 @@ function waterQualityScore(r: WaterQualityRating): number | null {
   }
 }
 
+// Sky sub-score blends "sunshine" (from cloud cover) with "dryness" (from precip
+// probability): full sun + no rain → ~100; partly cloudy → mid; overcast or rainy
+// → low. Sunshine is weighted a bit higher (it drives the "is it a sunny beach
+// day" feel), while active storms/rain in the forecast text clamp it as a floor.
 function skyScore(d: Derived): number | null {
+  const sunshine =
+    d.cloudCoverPct != null ? clamp(100 - d.cloudCoverPct, 0, 100) : null;
+  const dry =
+    typeof d.precipProbability === "number"
+      ? clamp(100 - d.precipProbability, 0, 100)
+      : null;
+
+  let base: number | null;
+  if (sunshine != null && dry != null) base = 0.6 * sunshine + 0.4 * dry;
+  else base = sunshine ?? dry;
+
   const f = d.shortForecast?.toLowerCase() ?? "";
-  let s: number | null =
-    typeof d.precipProbability === "number" ? 100 - d.precipProbability : null;
-  if (f) {
-    let base = s ?? 75;
-    if (/thunder|storm/.test(f)) base = Math.min(base, 45);
-    else if (/rain|shower/.test(f)) base = Math.min(base, 60);
-    else if (/cloud|overcast/.test(f)) base = Math.min(base, 80);
-    else if (/sun|clear|fair/.test(f)) base = Math.max(base, 85);
-    s = base;
+  if (base == null) {
+    if (!f) return null; // no numeric or text signal at all
+    base = 75; // neutral default when only text is available
   }
-  return s;
+  if (/thunder|storm/.test(f)) base = Math.min(base, 45);
+  else if (/rain|shower/.test(f)) base = Math.min(base, 60);
+  else if (/overcast/.test(f)) base = Math.min(base, 60);
+  return clamp(base, 0, 100);
+}
+
+/** Human-readable summary of the sky inputs for the score breakdown. */
+function skyDisplay(d: Derived): string | undefined {
+  const parts: string[] = [];
+  if (d.shortForecast) parts.push(d.shortForecast);
+  if (d.cloudCoverPct != null) parts.push(`${d.cloudCoverPct}% cloud`);
+  return parts.length ? parts.join(" · ") : undefined;
 }
 
 // --- combination + caps ----------------------------------------------------
@@ -119,7 +141,7 @@ export function scoreBeachDay(d: Derived): ScoreResult {
       0.22,
       f1(d.airTempF, "°F"),
     ),
-    sub("sky", "Sky / precipitation", skyScore(d), 0.22, d.shortForecast),
+    sub("sky", "Sky (sun & rain)", skyScore(d), 0.22, skyDisplay(d)),
     sub(
       "wind",
       "Wind (sea breeze)",
