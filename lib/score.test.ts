@@ -44,6 +44,7 @@ function snapshot(over: {
     cityOfficial: wrap(over.city ?? null),
     waterQuality: wrap(over.water ?? null),
     forecast: wrap(null),
+    sun: wrap(null),
   };
 }
 

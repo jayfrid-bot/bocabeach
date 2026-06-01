@@ -5,6 +5,7 @@ import { fetchBuoy } from "@/lib/sources/buoy";
 import { fetchCityOfficial } from "@/lib/sources/cityOfficial";
 import { fetchForecast } from "@/lib/sources/forecast";
 import { fetchMarine } from "@/lib/sources/marine";
+import { fetchSun } from "@/lib/sources/sun";
 import { fetchTides } from "@/lib/sources/tides";
 import { fetchWaterQuality } from "@/lib/sources/waterQuality";
 import { fetchWeather } from "@/lib/sources/weather";
@@ -43,6 +44,7 @@ export async function getSnapshot(
     cityOfficial,
     waterQuality,
     forecast,
+    sun: fetchSun(loc),
   };
 }
 

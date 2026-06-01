@@ -10,6 +10,7 @@ import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { MetricCard } from "@/components/MetricCard";
 import { WindCompass } from "@/components/WindCompass";
 import { TidePanel } from "@/components/TidePanel";
+import { SunPanel } from "@/components/SunPanel";
 import { SafetyBanner } from "@/components/SafetyBanner";
 import { SourceList } from "@/components/SourceBadge";
 import { CamGrid } from "@/components/CamGrid";
@@ -46,6 +47,7 @@ export function ConditionsDashboard({
     snap.cityOfficial,
     snap.waterQuality,
     snap.forecast,
+    snap.sun,
   ];
 
   return (
@@ -142,8 +144,9 @@ export function ConditionsDashboard({
         ) : null}
       </section>
 
-      <section className="mb-6">
+      <section className="mb-6 grid gap-4 sm:grid-cols-2">
         <TidePanel tides={snap.tides} tz={tz} />
+        <SunPanel sun={snap.sun} tz={tz} />
       </section>
 
       <section className="mb-8">

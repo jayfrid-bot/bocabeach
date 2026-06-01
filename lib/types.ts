@@ -105,6 +105,18 @@ export interface ForecastDay {
   sky?: string; // short label derived from the code
 }
 
+// --- Sun times (computed locally from lat/lon/date) ------------------------
+export interface SunData {
+  /** Calendar day these events fall on, local to the beach (YYYY-MM-DD). */
+  date: string;
+  /** First light / civil dawn (sun 6° below horizon), ISO. */
+  daybreak?: string;
+  /** Sunrise (upper limb at the horizon, ISO). */
+  sunrise?: string;
+  /** Sunset (upper limb at the horizon, ISO). */
+  sunset?: string;
+}
+
 // --- Water quality (FL Healthy Beaches) ------------------------------------
 export type WaterQualityRating = "good" | "moderate" | "poor" | "unknown";
 export interface WaterQualitySite {
@@ -144,6 +156,7 @@ export interface ConditionsSnapshot {
   cityOfficial: Wrapped<CityOfficialData>;
   waterQuality: Wrapped<WaterQualityData>;
   forecast: Wrapped<ForecastDay[]>;
+  sun: Wrapped<SunData>;
 }
 
 // --- Scores ----------------------------------------------------------------
