@@ -133,6 +133,25 @@ describe("scoring (Beach Day only — no surf)", () => {
     expect(r.caps.join(" ")).toMatch(/advisory/i);
   });
 
+  it("scores wind as a band: 5-13 mph ideal, calm and gusty both demerit", () => {
+    const windSub = (mph: number) =>
+      scoreBeachDay(deriveMetrics(snapshot({ weather: { windSpeedMph: mph } })))
+        .subScores.find((s) => s.key === "wind")!.score;
+
+    // The 5-13 mph sea-breeze band is full marks.
+    expect(windSub(5)).toBe(100);
+    expect(windSub(8)).toBe(100);
+    expect(windSub(13)).toBe(100);
+
+    // Too little wind (stagnant) demerits; dead calm is clearly off-peak.
+    expect(windSub(3)!).toBeLessThan(100);
+    expect(windSub(0)!).toBeLessThan(windSub(3)!);
+
+    // Too much wind (choppy/sandblasting) demerits; a gale bottoms out.
+    expect(windSub(20)!).toBeLessThan(100);
+    expect(windSub(25)).toBe(0);
+  });
+
   it("excludes unavailable inputs from the average", () => {
     const sparse = snapshot({ weather: { airTempF: 82 } });
     const beachDay = computeScore(sparse);

@@ -44,7 +44,11 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
 }
 
 // --- individual curves -----------------------------------------------------
-const windCalm = (mph: number) => clamp(100 - Math.max(0, mph - 6) * 6, 0, 100);
+// Wind: a light sea breeze is the sweet spot, not dead calm. Under ~5 mph is
+// stagnant/buggy/hot; 5-13 mph is ideal; above ~13 mph turns choppy and starts
+// blowing sand. Plateau across [5, 13], tapering to 0 over 12 mph on each side
+// (so dead calm ≈ 58, a 25 mph gale ≈ 0).
+const windScore = (mph: number) => plateau(mph, 5, 13, 12);
 const waveCalm = (ft: number) => clamp(100 - Math.max(0, ft - 1) * 25, 0, 100);
 const uvScore = (uv: number) => clamp(100 - Math.max(0, uv - 8) * 12, 0, 100);
 
@@ -118,8 +122,8 @@ export function scoreBeachDay(d: Derived): ScoreResult {
     sub("sky", "Sky / precipitation", skyScore(d), 0.22, d.shortForecast),
     sub(
       "wind",
-      "Wind (calmness)",
-      d.windSpeedMph != null ? windCalm(d.windSpeedMph) : null,
+      "Wind (sea breeze)",
+      d.windSpeedMph != null ? windScore(d.windSpeedMph) : null,
       0.18,
       d.windSpeedMph != null
         ? `${d.windSpeedMph} mph${d.windDirDeg != null ? " " + degToCardinal(d.windDirDeg) : ""}`
