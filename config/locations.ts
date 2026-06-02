@@ -100,16 +100,6 @@ export const LOCATIONS: Location[] = [
         lon: -80.0701,
       },
       {
-        // City of Deerfield Beach publishes its cams as public YouTube live
-        // streams (framing-allowed), so the nearby pier cam can embed inline.
-        name: "Deerfield Beach Pier Cam (nearby)",
-        provider: "City of Deerfield Beach (YouTube)",
-        embedType: "iframe",
-        url: "https://www.youtube.com/embed/H33wtprQqSM",
-        lat: 26.317,
-        lon: -80.0748,
-      },
-      {
         name: "Surfline — Boca Raton",
         provider: "Surfline",
         embedType: "link",
