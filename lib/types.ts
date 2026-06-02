@@ -239,8 +239,8 @@ export interface ConditionsResponse {
 // --- Location config -------------------------------------------------------
 export interface CamConfig {
   /**
-   * Stable id, required when `snapshotUrl` is set: it keys the /api/cam/[id]
-   * proxy allowlist so only configured upstreams can be fetched (no SSRF).
+   * Stable id, required when `snapshotUrl` or `snapshotFeed` is set: it keys the
+   * /api/cam/[id] proxy allowlist so only configured upstreams can be fetched (no SSRF).
    */
   id?: string;
   name: string;
@@ -255,6 +255,19 @@ export interface CamConfig {
    * Only used when embedType is "image".
    */
   snapshotUrl?: string;
+  /**
+   * Live still resolved from a video-monitoring.com "latest.json" feed: we read
+   * the most-recent frame path for `view` and proxy it via /api/cam/[id]. Use this
+   * (instead of snapshotUrl) when the freshest frame lives at a rotating path.
+   */
+  snapshotFeed?: {
+    /** Cam base directory, e.g. http://video-monitoring.com/beachcams/bocainlet */
+    base: string;
+    /** View key within latest.json, e.g. "s4". */
+    view: string;
+    /** Frame resolution to serve (default "mr" ≈ 1920px; "hr" is the full original). */
+    res?: "mr" | "hr";
+  };
   attribution?: string;
   /** Cam's own coordinates for per-spot weather; falls back to the town's lat/lon. */
   lat?: number;

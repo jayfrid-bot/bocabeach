@@ -16,8 +16,12 @@ export async function buildCamViews(loc: Location): Promise<CamView[]> {
         provider: cam.provider,
         embedType: cam.embedType,
         url: cam.url,
-        // Proxy the live still same-origin (https) when this cam has one.
-        imageUrl: cam.id && cam.snapshotUrl ? `/api/cam/${cam.id}` : undefined,
+        // Proxy the live still same-origin (https) when this cam has one
+        // (a fixed snapshot URL or a resolved latest.json feed).
+        imageUrl:
+          cam.id && (cam.snapshotUrl || cam.snapshotFeed)
+            ? `/api/cam/${cam.id}`
+            : undefined,
         attribution: cam.attribution,
         weather,
       };

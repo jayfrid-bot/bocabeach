@@ -54,18 +54,33 @@ export const LOCATIONS: Location[] = [
         lon: -80.0716,
       },
       {
+        // Live still resolved from video-monitoring.com's latest.json (view s4 =
+        // the main inlet shot), proxied same-origin via /api/cam/boca-inlet.
+        id: "boca-inlet",
         name: "Boca Raton Inlet Cam",
         provider: "Palm Beach County ERM / video-monitoring.com",
-        embedType: "link",
+        embedType: "image",
         url: "https://video-monitoring.com/beachcams/bocainlet/",
+        snapshotFeed: {
+          base: "http://video-monitoring.com/beachcams/bocainlet",
+          view: "s4",
+        },
+        attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
         lat: 26.3354,
         lon: -80.0703,
       },
       {
+        // view s4 = "Main Shot" on video-monitoring.com/beachcams/boca/.
+        id: "boca-south",
         name: "Boca Raton South Beach Cam",
         provider: "Palm Beach County ERM / video-monitoring.com",
-        embedType: "link",
+        embedType: "image",
         url: "https://video-monitoring.com/beachcams/boca/",
+        snapshotFeed: {
+          base: "http://video-monitoring.com/beachcams/boca",
+          view: "s4",
+        },
+        attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
         lat: 26.3456,
         lon: -80.0701,
       },
