@@ -55,6 +55,18 @@ function detectList(text: string, terms: Record<string, RegExp>): string[] {
   return found;
 }
 
+/**
+ * Pull the City's own posted update label, e.g.
+ * "Tuesday June 2, 2026 (Update 10:00 am)" — the authoritative "last updated"
+ * (their HTML carries it, so it's truthful regardless of our fetch cache).
+ */
+function detectUpdatedLabel(text: string): string | undefined {
+  const m = text.match(
+    /(?:Sun|Mon|Tues|Wednes|Thurs|Fri|Satur)day\s+[A-Za-z]+\s+\d{1,2},?\s+\d{4}(?:\s*\(Updated?[^)]*\))?/,
+  );
+  return m ? m[0].replace(/\s+/g, " ").trim() : undefined;
+}
+
 /** Heuristic parser for the manually-compiled City conditions page. Best-effort. */
 export function parseCityConditions(html: string): CityOfficialData {
   const text = htmlToText(html);
@@ -78,6 +90,7 @@ export function parseCityConditions(html: string): CityOfficialData {
     surfingRating: ratingFor(text, "surfing"),
     marineLife,
     hazards,
+    updatedLabel: detectUpdatedLabel(text),
     summary: text.slice(0, 280),
   };
 }
@@ -98,7 +111,10 @@ export async function fetchCityOfficial(
   }
   try {
     const res = await fetchWithTimeout(loc.cityConditionsUrl, {
-      next: { revalidate: 21600 }, // 6h — page is updated daily
+      // Flags are the authoritative safety override and the City changes them
+      // intra-day, so keep this the freshest scrape (1h). The page also posts its
+      // own "Update HH:MM" label, surfaced in the UI for true last-updated time.
+      next: { revalidate: 3600 }, // 1h
     });
     if (!res.ok) throw new Error(`city page -> ${res.status}`);
     const data = parseCityConditions(await res.text());

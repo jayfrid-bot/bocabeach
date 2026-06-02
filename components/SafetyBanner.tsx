@@ -58,7 +58,9 @@ export function SafetyBanner({
       ) : null}
 
       <div className="mt-2 text-xs text-slate-500">
-        Official report from {city.attribution}. Always heed posted signs and lifeguards.
+        Official report from {city.attribution}
+        {data.updatedLabel ? ` · ${data.updatedLabel}` : ""}. Always heed posted
+        signs and lifeguards.
       </div>
     </div>
   );

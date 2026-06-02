@@ -5,6 +5,7 @@ import { parseCityConditions } from "@/lib/sources/cityOfficial";
 const HTML = `
 <html><body>
   <h1>Beach Conditions</h1>
+  <p>Tuesday June 2, 2026 (Update 10:00 am)</p>
   <p>Today's flags: Yellow (Medium) and Purple (Sea Pest).</p>
   <p>Swimming rated 'Fair'. Snorkeling rated 'Fair'. Surfing rated 'Poor: Unrideable'.</p>
   <p>Jellyfish reported. Seaweed along the shoreline. Underlying rip currents present.</p>
@@ -40,5 +41,13 @@ describe("parseCityConditions", () => {
     expect(d.marineLife).toContain("jellyfish");
     expect(d.marineLife).toContain("seaweed");
     expect(d.hazards).toContain("rip currents");
+  });
+
+  it("extracts the City's posted update label", () => {
+    expect(parseCityConditions(HTML).updatedLabel).toBe(
+      "Tuesday June 2, 2026 (Update 10:00 am)",
+    );
+    // Absent label -> undefined, not a crash.
+    expect(parseCityConditions("<p>Flags: Green</p>").updatedLabel).toBeUndefined();
   });
 });
