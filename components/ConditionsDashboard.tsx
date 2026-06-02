@@ -170,7 +170,7 @@ export function ConditionsDashboard({
       </section>
 
       <section className="mb-8">
-        <CamGrid cams={cams} />
+        <CamGrid cams={cams} tz={tz} />
       </section>
 
       <footer className="space-y-3">

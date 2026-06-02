@@ -1,4 +1,23 @@
 import type { CamView } from "@/lib/types";
+import { fmtRelative, fmtTime } from "@/lib/format";
+
+/**
+ * Time of the still being shown: the source's exact capture time when published
+ * (feed cams), otherwise the moment we last refreshed the frame.
+ */
+function CamStamp({ cam, tz }: { cam: CamView; tz: string }) {
+  const exact = cam.capturedAt != null;
+  const t = cam.capturedAt ?? cam.weather.fetchedAt;
+  return (
+    <div
+      className="mt-1 text-[11px] text-slate-500"
+      title={exact ? "Image capture time" : "Frame last refreshed (no capture time published)"}
+    >
+      📷 {exact ? "" : "as of "}
+      {fmtTime(t, tz)} · {fmtRelative(t)}
+    </div>
+  );
+}
 
 function CamWeatherStrip({ cam }: { cam: CamView }) {
   const w = cam.weather.data;
@@ -29,9 +48,9 @@ function CamWeatherStrip({ cam }: { cam: CamView }) {
 }
 
 /** Big "headline" still-image cam (live JPEG via the same-origin proxy). */
-function FeaturedCam({ cam }: { cam: CamView }) {
-  // Cache-bust per render so the still refreshes with the dashboard's polling.
-  const src = `${cam.imageUrl}?t=${cam.weather.fetchedAt}`;
+function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
+  // Cache-bust on a new capture (feed cams) or each poll, so the still refreshes.
+  const src = `${cam.imageUrl}?t=${cam.capturedAt ?? cam.weather.fetchedAt}`;
   return (
     <a
       href={cam.url}
@@ -56,6 +75,7 @@ function FeaturedCam({ cam }: { cam: CamView }) {
           </span>
         </div>
         <div className="text-xs text-slate-400">{cam.provider}</div>
+        <CamStamp cam={cam} tz={tz} />
         <CamWeatherStrip cam={cam} />
         {cam.attribution ? (
           <div className="mt-1 text-[11px] text-slate-500">{cam.attribution}</div>
@@ -109,7 +129,7 @@ function LinkChip({ cam }: { cam: CamView }) {
   );
 }
 
-export function CamGrid({ cams }: { cams: CamView[] }) {
+export function CamGrid({ cams, tz }: { cams: CamView[]; tz: string }) {
   const featured = cams.filter((c) => c.embedType === "image" && c.imageUrl);
   const videos = cams.filter((c) => c.embedType === "iframe");
   const links = cams.filter((c) => c.embedType === "link");
@@ -125,7 +145,7 @@ export function CamGrid({ cams }: { cams: CamView[] }) {
       {featured.length ? (
         <div className="grid gap-4 sm:grid-cols-2">
           {featured.map((cam) => (
-            <FeaturedCam key={cam.name} cam={cam} />
+            <FeaturedCam key={cam.name} cam={cam} tz={tz} />
           ))}
         </div>
       ) : null}

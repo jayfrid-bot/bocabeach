@@ -223,6 +223,8 @@ export interface CamView {
   url: string;
   /** Local proxy path for the live still (image cams only), e.g. /api/cam/boca-surf. */
   imageUrl?: string;
+  /** Capture time of the displayed still (ISO), when the source publishes one. */
+  capturedAt?: string;
   attribution?: string;
   weather: Wrapped<SpotWeatherData>;
 }

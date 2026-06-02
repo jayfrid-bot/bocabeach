@@ -44,6 +44,15 @@ export function pickFeedFramePath(
   return typeof path === "string" && path.length > 0 ? path : undefined;
 }
 
+/** Pull the capture time (unix `timestamp`) for a view out of a latest.json, as ISO. */
+export function pickFeedTimestamp(json: unknown, view: string): string | undefined {
+  const entry = (json as Record<string, Record<string, unknown>> | null)?.[view];
+  const ts = entry?.timestamp;
+  return typeof ts === "number" && Number.isFinite(ts)
+    ? new Date(ts * 1000).toISOString()
+    : undefined;
+}
+
 /**
  * Resolve a feed's (relative) frame path against its base dir, rejecting anything
  * that escapes that dir — so a tampered latest.json can't redirect the proxy to

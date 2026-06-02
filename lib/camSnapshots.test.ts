@@ -3,6 +3,7 @@ import {
   CAM_SOURCES,
   camSourceForId,
   pickFeedFramePath,
+  pickFeedTimestamp,
   resolveFeedImageUrl,
 } from "@/lib/camSnapshots";
 
@@ -71,6 +72,14 @@ describe("latest.json feed resolution", () => {
     expect(pickFeedFramePath(FEED, "s99", "mr")).toBeUndefined();
     expect(pickFeedFramePath({}, "s4", "mr")).toBeUndefined();
     expect(pickFeedFramePath(null, "s4", "mr")).toBeUndefined();
+  });
+
+  it("reads the capture timestamp (unix seconds) as ISO", () => {
+    const feed = { s4: { mr: "x.jpg", timestamp: 1780361972 } };
+    expect(pickFeedTimestamp(feed, "s4")).toBe("2026-06-02T00:59:32.000Z");
+    expect(pickFeedTimestamp(feed, "s99")).toBeUndefined();
+    expect(pickFeedTimestamp({ s4: { mr: "x.jpg" } }, "s4")).toBeUndefined();
+    expect(pickFeedTimestamp(null, "s4")).toBeUndefined();
   });
 
   it("resolves a relative frame path against the base dir", () => {
