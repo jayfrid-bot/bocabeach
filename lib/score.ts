@@ -1,6 +1,7 @@
 import type {
   ConditionsSnapshot,
   FlagColor,
+  HourlyScore,
   ScoreResult,
   SubScore,
   WaterQualityRating,
@@ -18,6 +19,7 @@ export interface Derived {
   shortForecast?: string;
   uvIndex?: number;
   cloudCoverPct?: number; // 0 = full sun, 100 = overcast
+  weatherCode?: number; // WMO code (hourly path); drives the rain cap
   flags: FlagColor[];
   waterAdvisory: boolean;
   waterRating: WaterQualityRating;
@@ -71,6 +73,7 @@ function waterQualityScore(r: WaterQualityRating): number | null {
 // probability): full sun + no rain → ~100; partly cloudy → mid; overcast or rainy
 // → low. Sunshine is weighted a bit higher (it drives the "is it a sunny beach
 // day" feel), while active storms/rain in the forecast text clamp it as a floor.
+// (Confirmed rain ALSO hard-caps the whole composite score — see applyBeachCaps.)
 function skyScore(d: Derived): number | null {
   const sunshine =
     d.cloudCoverPct != null ? clamp(100 - d.cloudCoverPct, 0, 100) : null;
@@ -186,6 +189,28 @@ export function scoreBeachDay(d: Derived): ScoreResult {
   return { score, rawScore, rating: ratingFor(score), subScores: subs, caps };
 }
 
+export type RainSeverity = "none" | "rain" | "thunder";
+
+/**
+ * Whether it's actively raining/stormy. WMO weather codes are authoritative when
+ * present (the hourly-forecast path); otherwise we read the forecast text but
+ * ignore hedged "chance/slight/possible" wording, so a mere *chance* of rain does
+ * not trip the cap (it still feeds skyScore via precip probability).
+ */
+export function rainSeverity(d: Derived): RainSeverity {
+  const c = d.weatherCode;
+  if (c != null) {
+    if (c >= 95 && c <= 99) return "thunder";
+    if ((c >= 51 && c <= 67) || (c >= 80 && c <= 82)) return "rain";
+    return "none"; // includes snow 71-86 — not relevant in S. FL, not a "rain" cap
+  }
+  const f = d.shortForecast?.toLowerCase() ?? "";
+  if (/chance|slight|possible|isolated/.test(f)) return "none";
+  if (/thunder|storm/.test(f)) return "thunder";
+  if (/rain|shower|drizzle/.test(f)) return "rain";
+  return "none";
+}
+
 function applyBeachCaps(
   raw: number,
   d: Derived,
@@ -207,9 +232,72 @@ function applyBeachCaps(
     score = Math.min(score, 40);
     caps.push("Water quality advisory in effect");
   }
+  // Rain is a hard ceiling on the whole day (not just the sky sub-score): an
+  // actively rainy/stormy hour is an unacceptable beach day regardless of how
+  // warm/calm it is otherwise.
+  const rain = rainSeverity(d);
+  if (rain === "thunder") {
+    score = Math.min(score, 15);
+    caps.push("Thunderstorm in the forecast");
+  } else if (rain === "rain") {
+    score = Math.min(score, 25);
+    caps.push("Rain in the forecast");
+  }
   return { score, caps };
 }
 
 export function computeScore(s: ConditionsSnapshot): ScoreResult {
   return scoreBeachDay(deriveMetrics(s));
+}
+
+const HOUR_MS = 3_600_000;
+
+/**
+ * Forecast the Beach Day score across today's daylight hours. Reuses the pure
+ * `scoreBeachDay` by combining each forecast hour's weather with the day-constant
+ * water / quality / flag inputs from the current snapshot. Bounded to the hours
+ * between sunrise and sunset. Returns [] when hourly data is unavailable.
+ */
+export function computeHourlyScores(s: ConditionsSnapshot): HourlyScore[] {
+  const hours = s.hourly.data;
+  if (!hours?.length) return [];
+
+  // Day-constant inputs (water temp/quality/flags/waves) reuse the snapshot.
+  const base = deriveMetrics(s);
+  const sun = s.sun.data;
+  const sunrise = sun?.sunrise ? new Date(sun.sunrise).getTime() : null;
+  const sunset = sun?.sunset ? new Date(sun.sunset).getTime() : null;
+
+  return hours
+    .filter((h) => {
+      if (sunrise == null || sunset == null) return true; // no bounds -> keep all
+      const t = new Date(h.time).getTime();
+      // Include the hour bucket that contains sunrise, through the last hour <= sunset.
+      return t + HOUR_MS > sunrise && t <= sunset;
+    })
+    .map((h) => {
+      const d: Derived = {
+        airTempF: h.airTempF,
+        waterTempF: base.waterTempF,
+        windSpeedMph: h.windSpeedMph,
+        windDirDeg: h.windDirDeg,
+        waveHeightFt: base.waveHeightFt,
+        precipProbability: h.precipProbability,
+        shortForecast: h.shortForecast,
+        uvIndex: h.uvIndex,
+        cloudCoverPct: h.cloudCoverPct,
+        weatherCode: h.weatherCode,
+        flags: base.flags,
+        waterAdvisory: base.waterAdvisory,
+        waterRating: base.waterRating,
+      };
+      const r = scoreBeachDay(d);
+      return {
+        time: h.time,
+        score: r.score,
+        rating: r.rating,
+        emoji: h.emoji ?? "",
+        raining: rainSeverity(d) !== "none",
+      };
+    });
 }

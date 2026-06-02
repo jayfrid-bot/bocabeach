@@ -7,6 +7,7 @@ import { deriveMetrics } from "@/lib/score";
 import { scoreColor } from "@/lib/format";
 import { ScoreGauge } from "@/components/ScoreGauge";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
+import { HourlyScoreStrip } from "@/components/HourlyScoreStrip";
 import { MetricCard } from "@/components/MetricCard";
 import { WindCompass } from "@/components/WindCompass";
 import { TidePanel } from "@/components/TidePanel";
@@ -48,6 +49,7 @@ export function ConditionsDashboard({
     snap.waterQuality,
     snap.forecast,
     snap.sun,
+    snap.hourly,
   ];
 
   return (
@@ -92,6 +94,10 @@ export function ConditionsDashboard({
           ) : null}
         </div>
         <ScoreBreakdown result={active} />
+      </section>
+
+      <section className="mb-6">
+        <HourlyScoreStrip hours={res.hourlyScores} tz={tz} />
       </section>
 
       <section className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">

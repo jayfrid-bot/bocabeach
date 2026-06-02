@@ -107,6 +107,30 @@ export interface ForecastDay {
   sky?: string; // short label derived from the code
 }
 
+// --- Hourly outlook (Open-Meteo hourly) -----------------------------------
+/** Raw per-hour metrics; `time` is an absolute UTC ISO string. */
+export interface HourlyMetrics {
+  time: string; // ISO (UTC)
+  airTempF?: number;
+  cloudCoverPct?: number;
+  precipProbability?: number; // 0-100
+  weatherCode?: number; // WMO code
+  windSpeedMph?: number;
+  windDirDeg?: number;
+  uvIndex?: number;
+  shortForecast?: string; // derived from the WMO code
+  emoji?: string; // sky emoji derived from the code
+}
+
+/** One scored daylight hour for the hourly score strip. */
+export interface HourlyScore {
+  time: string; // ISO (UTC)
+  score: number; // 0-100 after caps
+  rating: string; // "Excellent" | "Good" | "Fair" | "Poor"
+  emoji: string;
+  raining: boolean;
+}
+
 // --- Sun times (computed locally from lat/lon/date) ------------------------
 export interface SunData {
   /** Calendar day these events fall on, local to the beach (YYYY-MM-DD). */
@@ -165,6 +189,7 @@ export interface ConditionsSnapshot {
   waterQuality: Wrapped<WaterQualityData>;
   forecast: Wrapped<ForecastDay[]>;
   sun: Wrapped<SunData>;
+  hourly: Wrapped<HourlyMetrics[]>;
 }
 
 // --- Scores ----------------------------------------------------------------
@@ -206,6 +231,8 @@ export interface ConditionsResponse {
   snapshot: ConditionsSnapshot;
   /** Single composite Beach Day score (0-100) with breakdown + safety caps. */
   score: ScoreResult;
+  /** Beach Day score forecast across today's daylight hours (empty if unavailable). */
+  hourlyScores: HourlyScore[];
   cams: CamView[];
 }
 
