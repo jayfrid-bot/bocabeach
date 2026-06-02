@@ -31,6 +31,12 @@ describe("cam snapshot allowlist", () => {
       view: "s4",
       res: "mr",
     });
+    expect(CAM_SOURCES["boca-inlet-surf"]).toEqual({
+      kind: "feed",
+      base: "http://video-monitoring.com/beachcams/bocainlet",
+      view: "s16",
+      res: "mr",
+    });
   });
 
   it("returns undefined for unknown ids (SSRF guard)", () => {

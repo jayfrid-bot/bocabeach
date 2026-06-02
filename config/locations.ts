@@ -70,6 +70,21 @@ export const LOCATIONS: Location[] = [
         lon: -80.0703,
       },
       {
+        // Same bocainlet feed, view s16 = the surf & shoreline angle.
+        id: "boca-inlet-surf",
+        name: "Boca Raton Inlet — Surf & Shoreline",
+        provider: "Palm Beach County ERM / video-monitoring.com",
+        embedType: "image",
+        url: "https://video-monitoring.com/beachcams/bocainlet/",
+        snapshotFeed: {
+          base: "http://video-monitoring.com/beachcams/bocainlet",
+          view: "s16",
+        },
+        attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+        lat: 26.3354,
+        lon: -80.0703,
+      },
+      {
         // view s4 = "Main Shot" on video-monitoring.com/beachcams/boca/.
         id: "boca-south",
         name: "Boca Raton South Beach Cam",
