@@ -110,55 +110,6 @@ export const LOCATIONS: Location[] = [
       },
     ],
   },
-  {
-    slug: "deerfield-beach",
-    name: "Deerfield Beach",
-    region: "Broward County, FL",
-    lat: 26.317, // Deerfield Beach Pier
-    lon: -80.0748,
-    timezone: "America/New_York",
-    noaaTideStationId: "8722816", // Boca Raton (~3 mi north)
-    noaaTideStationFallbackId: "8722956", // South Port Everglades
-    ndbcBuoyId: "LKWF1", // Lake Worth Pier C-MAN (nearest north)
-    ndbcBuoyFallbackId: "FWYF1", // Fowey Rocks
-    healthyBeaches: {
-      county: "Broward",
-      sites: ["DEERFIELD BEACH PIER", "DEERFIELD BEACH SE 10TH ST"],
-    },
-    cams: [
-      {
-        name: "Deerfield Beach Camera",
-        provider: "City of Deerfield Beach (YouTube)",
-        embedType: "iframe",
-        url: "https://www.youtube.com/embed/rdeoEeJ00xA",
-      },
-      {
-        name: "Deerfield Beach Pier Camera",
-        provider: "City of Deerfield Beach (YouTube)",
-        embedType: "iframe",
-        url: "https://www.youtube.com/embed/H33wtprQqSM",
-      },
-      {
-        name: "Deerfield Beach Surf Camera",
-        provider: "City of Deerfield Beach (YouTube)",
-        embedType: "iframe",
-        url: "https://www.youtube.com/embed/hIeFPNHfuoY",
-      },
-      {
-        name: "City of Deerfield Beach — all live cams",
-        provider: "City of Deerfield Beach",
-        embedType: "link",
-        url: "https://www.deerfield-beach.com/1474/Livestream-Cameras",
-      },
-      {
-        name: "Surfline — Deerfield Beach",
-        provider: "Surfline",
-        embedType: "link",
-        url: "https://www.surfline.com/surf-reports-forecasts-cams/united-states/florida/broward-county/deerfield-beach/4153071",
-        attribution: "Surfline (Premium cam, link only — no embedding/scraping)",
-      },
-    ],
-  },
 ];
 
 export function listLocations(): Location[] {

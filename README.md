@@ -1,6 +1,6 @@
 # Boca Beach Rats 🏖️🐀
 
-Live local beach conditions for **Boca Raton** and **Deerfield Beach, FL**, consolidated
+Live local beach conditions for **Boca Raton, FL**, consolidated
 into one page each with a single composite **Beach Day** score (for beachgoers — no
 surfing). Built config-first so adding a new beach town is a single entry — the long-term
 goal is *every* beach town.
@@ -67,8 +67,8 @@ for the optional Stormglass key, the FL Healthy Beaches DataPage override, and t
 
 ## Add a beach town
 
-Add an entry to `LOCATIONS` in `config/locations.ts` (Deerfield Beach is the worked
-example already shipped there):
+Add an entry to `LOCATIONS` in `config/locations.ts` (illustrative example —
+Deerfield Beach, a second Broward town):
 
 ```ts
 {
@@ -95,8 +95,8 @@ That's it — the route, scoring, and UI all pick it up automatically. (Find the
 ## Known gaps / next steps
 
 - **Lifeguard flags for new towns**: Boca Raton scrapes its Ocean Rescue page for warning
-  flags; towns without a `cityConditionsUrl` (e.g. Deerfield Beach) show no flags and so
-  apply no safety caps. Add a flag source per town as one is found.
+  flags; towns added without a `cityConditionsUrl` show no flags and so apply no
+  safety caps. Add a flag source per town as one is found.
 - **Tide phase for surf**: the surf tide sub-score is a generic mid-tide constant;
   add per-spot tide preferences for real accuracy.
 
