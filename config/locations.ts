@@ -85,6 +85,36 @@ export const LOCATIONS: Location[] = [
         lon: -80.0703,
       },
       {
+        // Same bocainlet feed, view s12 = the rock jetty / inlet channel.
+        id: "boca-inlet-jetty",
+        name: "Boca Raton Inlet — Jetty",
+        provider: "Palm Beach County ERM / video-monitoring.com",
+        embedType: "image",
+        url: "https://video-monitoring.com/beachcams/bocainlet/",
+        snapshotFeed: {
+          base: "http://video-monitoring.com/beachcams/bocainlet",
+          view: "s12",
+        },
+        attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+        lat: 26.3354,
+        lon: -80.0703,
+      },
+      {
+        // Same bocainlet feed, view s8 = the north-side beach & shoreline.
+        id: "boca-inlet-north",
+        name: "Boca Raton Inlet — North Beach",
+        provider: "Palm Beach County ERM / video-monitoring.com",
+        embedType: "image",
+        url: "https://video-monitoring.com/beachcams/bocainlet/",
+        snapshotFeed: {
+          base: "http://video-monitoring.com/beachcams/bocainlet",
+          view: "s8",
+        },
+        attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+        lat: 26.3354,
+        lon: -80.0703,
+      },
+      {
         // view s4 = "Main Shot" on video-monitoring.com/beachcams/boca/.
         id: "boca-south",
         name: "Boca Raton South Beach Cam",
@@ -94,6 +124,21 @@ export const LOCATIONS: Location[] = [
         snapshotFeed: {
           base: "http://video-monitoring.com/beachcams/boca",
           view: "s4",
+        },
+        attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+        lat: 26.3456,
+        lon: -80.0701,
+      },
+      {
+        // Same boca feed, view s11 = the close shoreline & surf (swimmers/surfers).
+        id: "boca-south-surf",
+        name: "Boca Raton South Beach — Shoreline & Surf",
+        provider: "Palm Beach County ERM / video-monitoring.com",
+        embedType: "image",
+        url: "https://video-monitoring.com/beachcams/boca/",
+        snapshotFeed: {
+          base: "http://video-monitoring.com/beachcams/boca",
+          view: "s11",
         },
         attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
         lat: 26.3456,
