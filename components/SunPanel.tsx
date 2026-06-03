@@ -42,6 +42,18 @@ export function SunPanel({ sun, tz }: { sun: Wrapped<SunData>; tz: string }) {
           ))}
         </ul>
       )}
+      {d?.moonPhase ? (
+        <div className="mt-3 flex items-center justify-between border-t border-white/5 pt-2 text-sm">
+          <span className="flex items-center gap-1.5 text-slate-300">
+            <span aria-hidden>{d.moonPhase.emoji}</span>
+            Moon
+          </span>
+          <span className="text-white">
+            {d.moonPhase.phase}{" "}
+            <span className="text-xs text-slate-500">({d.moonPhase.illumination}%)</span>
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

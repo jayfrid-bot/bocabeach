@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  bestBeachWindow,
   computeHourlyScores,
   computeScore,
   deriveMetrics,
@@ -14,8 +15,10 @@ import type {
   ConditionsSnapshot,
   ForecastDay,
   HourlyMetrics,
+  HourlyScore,
   LightningData,
   MarineData,
+  NowcastData,
   NwsData,
   SargassumData,
   SunData,
@@ -61,6 +64,7 @@ function snapshot(over: {
     marine: wrap(over.marine ?? null),
     cityOfficial: wrap(over.city ?? null),
     waterQuality: wrap(over.water ?? null),
+    nowcast: wrap<NowcastData>(null),
     nws: wrap(over.nws ?? null),
     airQuality: wrap<AirQualityData>(null),
     lightning: wrap<LightningData>(null),
@@ -416,5 +420,34 @@ describe("computeHourlyScores", () => {
     const clear = hrs.find((h) => new Date(h.time).getUTCHours() === 15)!;
     expect(clear.raining).toBe(false);
     expect(clear.score).toBeGreaterThan(25);
+  });
+});
+
+describe("bestBeachWindow", () => {
+  const h = (hour: number, score: number): HourlyScore => ({
+    time: `2026-06-03T${String(hour).padStart(2, "0")}:00:00Z`,
+    score,
+    rating: "x",
+    emoji: "",
+    raining: false,
+  });
+
+  it("finds the longest contiguous run within 8 of the day's peak", () => {
+    const w = bestBeachWindow([
+      h(8, 40),
+      h(9, 55),
+      h(10, 80),
+      h(11, 82),
+      h(12, 78),
+      h(13, 50),
+      h(14, 84),
+    ])!;
+    expect(w.startIso).toBe("2026-06-03T10:00:00Z");
+    expect(w.endIso).toBe("2026-06-03T13:00:00.000Z"); // last hour (12:00) + 1h
+    expect(w.score).toBe(82);
+  });
+
+  it("returns null with no hours", () => {
+    expect(bestBeachWindow([])).toBeNull();
   });
 });

@@ -131,6 +131,31 @@ export function computeSunTimes(
   };
 }
 
+const SYNODIC = 29.530588853; // mean lunar month (days)
+const REF_NEW_MOON = Date.UTC(2000, 0, 6, 18, 14); // a known new moon
+const MOON_PHASES = [
+  { phase: "New moon", emoji: "🌑" },
+  { phase: "Waxing crescent", emoji: "🌒" },
+  { phase: "First quarter", emoji: "🌓" },
+  { phase: "Waxing gibbous", emoji: "🌔" },
+  { phase: "Full moon", emoji: "🌕" },
+  { phase: "Waning gibbous", emoji: "🌖" },
+  { phase: "Last quarter", emoji: "🌗" },
+  { phase: "Waning crescent", emoji: "🌘" },
+];
+
+/** Moon phase + illumination for an instant (good to ~a few %). Pure. */
+export function moonPhase(now: Date): {
+  phase: string;
+  emoji: string;
+  illumination: number;
+} {
+  const days = (now.getTime() - REF_NEW_MOON) / 86400000;
+  const frac = (((days % SYNODIC) + SYNODIC) % SYNODIC) / SYNODIC; // 0..1
+  const illumination = Math.round(((1 - Math.cos(2 * Math.PI * frac)) / 2) * 100);
+  return { ...MOON_PHASES[Math.round(frac * 8) % 8], illumination };
+}
+
 /** The calendar Y/M/D for `now` as observed in the given IANA timezone. */
 function localYMD(
   tz: string,
@@ -164,6 +189,7 @@ export function fetchSun(loc: Location, now: Date = new Date()): Wrapped<SunData
       sunset: t.sunset?.toISOString(),
       dusk: t.dusk?.toISOString(),
       maxAltitudeDeg: t.maxAltitudeDeg,
+      moonPhase: moonPhase(now),
     };
     const ok = Boolean(data.sunrise && data.sunset);
     return {

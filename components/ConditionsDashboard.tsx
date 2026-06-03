@@ -3,8 +3,8 @@
 import Link from "next/link";
 import useSWR from "swr";
 import type { ConditionsResponse } from "@/lib/types";
-import { deriveMetrics } from "@/lib/score";
-import { scoreColor } from "@/lib/format";
+import { bestBeachWindow, deriveMetrics } from "@/lib/score";
+import { fmtTime, scoreColor } from "@/lib/format";
 import { ScoreGauge } from "@/components/ScoreGauge";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { HourlyScoreGraph } from "@/components/HourlyScoreGraph";
@@ -45,6 +45,10 @@ export function ConditionsDashboard({
   const sg = snap.sargassum.data;
   const busy = snap.busyness.data;
   const rip = snap.nws.data?.ripCurrentRisk;
+  const nc = snap.nowcast.data;
+  const bw = bestBeachWindow(res.hourlyScores);
+  const uvBurn =
+    d.uvIndex != null && d.uvIndex >= 1 ? Math.round(200 / d.uvIndex) : undefined;
   const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
   const sources = [
@@ -54,6 +58,7 @@ export function ConditionsDashboard({
     snap.marine,
     snap.cityOfficial,
     snap.waterQuality,
+    snap.nowcast,
     snap.nws,
     snap.airQuality,
     snap.lightning,
@@ -113,6 +118,23 @@ export function ConditionsDashboard({
         <ScoreBreakdown result={active} />
       </section>
 
+      {nc || bw ? (
+        <section className="mb-4 flex flex-wrap gap-2 text-sm">
+          {nc ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-800/70 px-3 py-1 text-slate-200 ring-1 ring-white/10">
+              <span aria-hidden>{nc.state === "raining" ? "🌧️" : "☀️"}</span>
+              {nc.text}
+            </span>
+          ) : null}
+          {bw ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-800/70 px-3 py-1 text-slate-200 ring-1 ring-white/10">
+              <span aria-hidden>⭐</span>
+              Best window today: {fmtTime(bw.startIso, tz)}–{fmtTime(bw.endIso, tz)}
+            </span>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="mb-6">
         <HourlyScoreGraph hours={res.hourlyScores} tz={tz} />
       </section>
@@ -147,6 +169,13 @@ export function ConditionsDashboard({
           icon="🔆"
           label="UV index"
           value={d.uvIndex != null ? `${d.uvIndex}` : "—"}
+          sub={
+            uvBurn != null
+              ? `~${uvBurn} min to burn`
+              : d.uvIndex != null
+                ? "minimal burn risk"
+                : undefined
+          }
         />
         <MetricCard
           icon="☁️"

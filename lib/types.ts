@@ -140,6 +140,23 @@ export interface HourlyScore {
   windDirDeg?: number;
 }
 
+// --- Rain nowcast (Open-Meteo minutely_15 precipitation) -------------------
+export type NowcastState = "dry" | "raining";
+export interface NowcastData {
+  state: NowcastState;
+  /** Minutes until rain starts (when dry) or stops (when raining); undefined if no change in the window. */
+  changeInMin?: number;
+  /** Plain-English summary, e.g. "Dry — rain likely in ~25 min". */
+  text: string;
+}
+
+/** The best contiguous stretch of today's daylight hours by Beach Day score. */
+export interface BestWindow {
+  startIso: string;
+  endIso: string;
+  score: number;
+}
+
 // --- Sun times (computed locally from lat/lon/date) ------------------------
 export interface SunData {
   /** Calendar day these events fall on, local to the beach (YYYY-MM-DD). */
@@ -156,6 +173,8 @@ export interface SunData {
   dusk?: string;
   /** Sun's maximum altitude above the horizon at solar noon (degrees). */
   maxAltitudeDeg?: number;
+  /** Tonight's moon phase (computed from the date). */
+  moonPhase?: { phase: string; emoji: string; illumination: number };
 }
 
 // --- Water quality (FL Healthy Beaches) ------------------------------------
@@ -308,6 +327,7 @@ export interface ConditionsSnapshot {
   marine: Wrapped<MarineData>;
   cityOfficial: Wrapped<CityOfficialData>;
   waterQuality: Wrapped<WaterQualityData>;
+  nowcast: Wrapped<NowcastData>;
   nws: Wrapped<NwsData>;
   airQuality: Wrapped<AirQualityData>;
   lightning: Wrapped<LightningData>;

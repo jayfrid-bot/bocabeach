@@ -1,6 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { computeSunTimes, fetchSun } from "@/lib/sources/sun";
+import { computeSunTimes, fetchSun, moonPhase } from "@/lib/sources/sun";
 import type { Location } from "@/lib/types";
+
+describe("moonPhase", () => {
+  it("identifies a known full moon (2025-06-11) and a new moon (2025-06-25)", () => {
+    expect(moonPhase(new Date("2025-06-11T07:44:00Z")).phase).toBe("Full moon");
+    expect(moonPhase(new Date("2025-06-11T07:44:00Z")).illumination).toBeGreaterThan(95);
+    expect(moonPhase(new Date("2025-06-25T10:32:00Z")).phase).toBe("New moon");
+    expect(moonPhase(new Date("2025-06-25T10:32:00Z")).illumination).toBeLessThan(5);
+  });
+});
 
 // Boca Raton coordinates (matches config/locations.ts).
 const LAT = 26.3587;

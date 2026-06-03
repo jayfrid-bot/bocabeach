@@ -1,4 +1,5 @@
 import type {
+  BestWindow,
   ConditionsSnapshot,
   FlagColor,
   HourlyScore,
@@ -59,6 +60,45 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     noSwimAdvisory: !!c?.noSwimAdvisory,
     ripCurrentRisk: n?.ripCurrentRisk ?? "unknown",
     severeAlert: (n?.alerts ?? []).some((a) => SEVERE_ALERT.test(a.event)),
+  };
+}
+
+/**
+ * The longest contiguous run of today's scored daylight hours that stays within
+ * 8 points of the day's peak — i.e. "the best stretch to go". `endIso` is the
+ * end of the last hour in the run. Null when there are no hours.
+ */
+export function bestBeachWindow(hours: HourlyScore[]): BestWindow | null {
+  if (!hours.length) return null;
+  const max = Math.max(...hours.map((h) => h.score));
+  const threshold = max - 8;
+  let bestStart = -1;
+  let bestLen = 0;
+  let bestPeak = 0;
+  let curStart = -1;
+  let curLen = 0;
+  let curPeak = 0;
+  for (let i = 0; i < hours.length; i++) {
+    if (hours[i].score >= threshold) {
+      if (curLen === 0) curStart = i;
+      curLen += 1;
+      curPeak = Math.max(curPeak, hours[i].score);
+      if (curLen > bestLen) {
+        bestLen = curLen;
+        bestStart = curStart;
+        bestPeak = curPeak;
+      }
+    } else {
+      curLen = 0;
+      curPeak = 0;
+    }
+  }
+  if (bestStart < 0) return null;
+  const last = hours[bestStart + bestLen - 1];
+  return {
+    startIso: hours[bestStart].time,
+    endIso: new Date(new Date(last.time).getTime() + 3600000).toISOString(),
+    score: Math.round(bestPeak),
   };
 }
 
