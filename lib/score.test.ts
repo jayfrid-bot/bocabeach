@@ -151,6 +151,25 @@ describe("scoring (Beach Day only — no surf)", () => {
     expect(r.caps.join(" ")).toMatch(/advisory/i);
   });
 
+  it("caps the score under a City no-swim advisory", () => {
+    const snap = snapshot({
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
+      city: {
+        flags: ["green"],
+        noSwimAdvisory: {
+          title: "NO SWIM ADVISORY for Spanish River Beach",
+          url: "https://www.myboca.us/AlertCenter.aspx?AID=x",
+        },
+      },
+      water: { overall: "good", advisory: false, sites: [] },
+    });
+    const r = scoreBeachDay(deriveMetrics(snap));
+    expect(r.score).toBeLessThanOrEqual(40);
+    expect(r.caps.join(" ")).toMatch(/no-swim advisory/i);
+  });
+
   it("scores wind as a band: 5-13 mph ideal, calm and gusty both demerit", () => {
     const windSub = (mph: number) =>
       scoreBeachDay(deriveMetrics(snapshot({ weather: { windSpeedMph: mph } })))
@@ -254,6 +273,7 @@ describe("rainSeverity", () => {
       flags: ["unknown"],
       waterAdvisory: false,
       waterRating: "unknown",
+      noSwimAdvisory: false,
       ...over,
     });
 

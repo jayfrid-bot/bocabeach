@@ -23,6 +23,8 @@ export interface Derived {
   flags: FlagColor[];
   waterAdvisory: boolean;
   waterRating: WaterQualityRating;
+  /** City-issued no-swim/beach advisory is active (myboca AlertCenter). */
+  noSwimAdvisory: boolean;
 }
 
 export function deriveMetrics(s: ConditionsSnapshot): Derived {
@@ -44,6 +46,7 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     flags: c?.flags ?? ["unknown"],
     waterAdvisory: q?.advisory ?? false,
     waterRating: q?.overall ?? "unknown",
+    noSwimAdvisory: !!c?.noSwimAdvisory,
   };
 }
 
@@ -232,6 +235,11 @@ function applyBeachCaps(
     score = Math.min(score, 40);
     caps.push("Water quality advisory in effect");
   }
+  // A City-issued no-swim advisory is a direct swim-safety override.
+  if (d.noSwimAdvisory) {
+    score = Math.min(score, 40);
+    caps.push("City no-swim advisory in effect");
+  }
   // Rain is a hard ceiling on the whole day (not just the sky sub-score): an
   // actively rainy/stormy hour is an unacceptable beach day regardless of how
   // warm/calm it is otherwise.
@@ -290,6 +298,7 @@ export function computeHourlyScores(s: ConditionsSnapshot): HourlyScore[] {
         flags: base.flags,
         waterAdvisory: base.waterAdvisory,
         waterRating: base.waterRating,
+        noSwimAdvisory: base.noSwimAdvisory,
       };
       const r = scoreBeachDay(d);
       return {

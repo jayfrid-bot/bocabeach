@@ -67,6 +67,38 @@ function detectUpdatedLabel(text: string): string | undefined {
   return m ? m[0].replace(/\s+/g, " ").trim() : undefined;
 }
 
+/**
+ * Detect an active City swim/beach advisory from the CivicPlus alert bar that
+ * appears site-wide (links to /AlertCenter.aspx?AID=...). Runs on the raw HTML
+ * so it can read the anchor + href. Only surfaces swim/beach/water advisories
+ * or closures — not generic city alerts (sanitation, payments, etc.).
+ */
+export function detectNoSwimAdvisory(
+  html: string,
+): { title: string; url: string } | undefined {
+  const linkRe =
+    /<a\b[^>]*href="(\/AlertCenter\.aspx\?AID=[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = linkRe.exec(html)) !== null) {
+    const path = m[1];
+    const title = m[2]
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;/gi, " ")
+      .replace(/read on\.{0,3}/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!title) continue;
+    const swimRelated =
+      /no[\s-]*swim|do not swim|swim\s*advisory|water\s*(advisory|quality|contact)|beach\s*(advisory|closure|closed)/i.test(
+        title,
+      ) || /no-?swim/i.test(path);
+    if (swimRelated) {
+      return { title, url: `https://www.myboca.us${path}` };
+    }
+  }
+  return undefined;
+}
+
 /** Heuristic parser for the manually-compiled City conditions page. Best-effort. */
 export function parseCityConditions(html: string): CityOfficialData {
   const text = htmlToText(html);
@@ -91,6 +123,7 @@ export function parseCityConditions(html: string): CityOfficialData {
     marineLife,
     hazards,
     updatedLabel: detectUpdatedLabel(text),
+    noSwimAdvisory: detectNoSwimAdvisory(html),
     summary: text.slice(0, 280),
   };
 }

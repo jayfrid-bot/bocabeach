@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { parseCityConditions } from "@/lib/sources/cityOfficial";
+import {
+  detectNoSwimAdvisory,
+  parseCityConditions,
+} from "@/lib/sources/cityOfficial";
 
 // Mirrors the structure of myboca.us/2464/Beach-Conditions.
 const HTML = `
@@ -41,6 +44,29 @@ describe("parseCityConditions", () => {
     expect(d.marineLife).toContain("jellyfish");
     expect(d.marineLife).toContain("seaweed");
     expect(d.hazards).toContain("rip currents");
+  });
+
+  it("detects a City no-swim advisory from the AlertCenter bar", () => {
+    // Mirrors the real myboca.us site-wide alert bar markup.
+    const bar = `
+      <a href="/AlertCenter.aspx" id="1_lnkAlertText" class="alertText">
+        <span class="customAlert">NO SWIM Alert</span></a>
+      <span class="alertContainer"><a
+        href="/AlertCenter.aspx?AID=NO-SWIM-ADVISORY-for-Spanish-River-Beach-112"
+        class="alert"> NO SWIM ADVISORY for Spanish River Beach
+        <span style="color:#FC4C2F;">Read On...</span></a></span>`;
+    const adv = detectNoSwimAdvisory(bar);
+    expect(adv?.title).toBe("NO SWIM ADVISORY for Spanish River Beach");
+    expect(adv?.url).toBe(
+      "https://www.myboca.us/AlertCenter.aspx?AID=NO-SWIM-ADVISORY-for-Spanish-River-Beach-112",
+    );
+  });
+
+  it("ignores unrelated AlertCenter alerts and absence of any", () => {
+    const unrelated = `<a href="/AlertCenter.aspx?AID=Sanitation-Schedule-Change-9"
+      class="alert">Sanitation Schedule Change Read On...</a>`;
+    expect(detectNoSwimAdvisory(unrelated)).toBeUndefined();
+    expect(detectNoSwimAdvisory("<p>no alert bar here</p>")).toBeUndefined();
   });
 
   it("extracts the City's posted update label", () => {

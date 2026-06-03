@@ -31,16 +31,19 @@ export function SafetyBanner({
   const lt = lightning?.data;
   // Lightning within ~10 mi during the scanned window → get out of the water.
   const lightningDanger = (lt?.within10mi ?? 0) > 0;
+  const noSwim = data?.noSwimAdvisory;
   const flags = data?.flags.filter((f) => f !== "unknown") ?? [];
   const hasWarning =
     advisory ||
     lightningDanger ||
+    !!noSwim ||
     flags.some((f) => ["red", "double-red", "purple"].includes(f));
 
   // Nothing worth surfacing: no flags, no hazards, no advisory, no close strikes.
   if (
     !advisory &&
     !lightningDanger &&
+    !noSwim &&
     flags.length === 0 &&
     (data?.hazards?.length ?? 0) === 0
   ) {
@@ -72,6 +75,26 @@ export function SafetyBanner({
             {badSites.length ? ` at ${badSites.map((s) => s.name).join(", ")}` : ""}.
             {sampledAt ? ` Sampled ${fmtDate(sampledAt, "UTC")}.` : ""}{" "}
             {water?.attribution ?? "Florida Healthy Beaches"}.
+          </div>
+        </div>
+      ) : null}
+
+      {noSwim ? (
+        <div className="mb-3 rounded-xl bg-rose-500/15 p-3 ring-1 ring-rose-500/40">
+          <div className="flex items-center gap-2 text-sm font-semibold text-rose-200">
+            <span aria-hidden>🚫</span>
+            <span>{noSwim.title}</span>
+          </div>
+          <div className="mt-1 text-xs text-rose-100/80">
+            Active City of Boca Raton advisory.{" "}
+            <a
+              href={noSwim.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              Read the alert
+            </a>
           </div>
         </div>
       ) : null}

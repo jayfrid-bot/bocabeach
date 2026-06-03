@@ -92,6 +92,12 @@ export interface CityOfficialData {
   hazards?: string[]; // ["rip currents", "shoreline drop-offs"]
   summary?: string; // short human-readable snippet
   updatedLabel?: string; // "Friday, May 29, 2026"
+  /**
+   * Active City-issued swim/beach advisory from the myboca.us AlertCenter bar
+   * (e.g. "NO SWIM ADVISORY for Spanish River Beach"). The City posts these
+   * promptly — a timelier swim-safety signal than the county's weekly sampling.
+   */
+  noSwimAdvisory?: { title: string; url: string };
 }
 
 // --- 7-day outlook (Open-Meteo daily) -------------------------------------
