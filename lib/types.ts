@@ -178,6 +178,26 @@ export interface AirQualityData {
   observedAt?: string; // ISO
 }
 
+// --- Lightning (NOAA GOES-19 GLM, via an off-Netlify job) ------------------
+export interface LightningData {
+  /** Minutes of GLM data the upstream job scanned. */
+  windowMinutes: number;
+  /** Closest strike in the window (miles) + how long ago (minutes). */
+  nearestMi?: number;
+  nearestMinutesAgo?: number;
+  /** Most recent strike in the window (may differ from the closest). */
+  lastMinutesAgo?: number;
+  lastMi?: number;
+  /** Strike counts within radius bands over the window. */
+  within10mi: number;
+  within25mi: number;
+  within50mi: number;
+  /** Total strikes the job saw in its scanned area + window. */
+  totalInArea: number;
+  /** Age of the upstream GLM snapshot, in minutes (its end-to-end latency). */
+  dataAgeMinutes?: number;
+}
+
 // --- Per-spot weather (Open-Meteo current) --------------------------------
 export interface SpotWeatherData {
   airTempF?: number;
@@ -203,6 +223,7 @@ export interface ConditionsSnapshot {
   cityOfficial: Wrapped<CityOfficialData>;
   waterQuality: Wrapped<WaterQualityData>;
   airQuality: Wrapped<AirQualityData>;
+  lightning: Wrapped<LightningData>;
   forecast: Wrapped<ForecastDay[]>;
   sun: Wrapped<SunData>;
   hourly: Wrapped<HourlyMetrics[]>;

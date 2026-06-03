@@ -9,6 +9,7 @@ import { ScoreGauge } from "@/components/ScoreGauge";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { HourlyScoreGraph } from "@/components/HourlyScoreGraph";
 import { AirQualityMeter } from "@/components/AirQualityMeter";
+import { LightningCard } from "@/components/LightningCard";
 import { MetricCard } from "@/components/MetricCard";
 import { WindCompass } from "@/components/WindCompass";
 import { TidePanel } from "@/components/TidePanel";
@@ -49,6 +50,7 @@ export function ConditionsDashboard({
     snap.cityOfficial,
     snap.waterQuality,
     snap.airQuality,
+    snap.lightning,
     snap.forecast,
     snap.sun,
     snap.hourly,
@@ -70,7 +72,11 @@ export function ConditionsDashboard({
       </header>
 
       <div className="mb-6">
-        <SafetyBanner city={snap.cityOfficial} water={snap.waterQuality} />
+        <SafetyBanner
+          city={snap.cityOfficial}
+          water={snap.waterQuality}
+          lightning={snap.lightning}
+        />
       </div>
 
       <section className="mb-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
@@ -166,8 +172,9 @@ export function ConditionsDashboard({
         ) : null}
       </section>
 
-      <section className="mb-6">
+      <section className="mb-6 grid gap-4 sm:grid-cols-2">
         <AirQualityMeter air={snap.airQuality} />
+        <LightningCard lightning={snap.lightning} />
       </section>
 
       <section className="mb-6 grid gap-4 sm:grid-cols-2">

@@ -1,0 +1,55 @@
+name: GLM Lightning Feed
+
+# Builds a small lightning.json from NOAA GOES-19 GLM and publishes it to the
+# `lightning-data` branch (NOT main), so the heavy netCDF processing runs here
+# on free public-repo Actions minutes and never touches the Netlify build/bill.
+# The web app reads the published file via raw.githubusercontent.com.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *" # every 10 minutes
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: glm-lightning
+  cancel-in-progress: false
+
+jobs:
+  build-feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout (for the script)
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install --quiet --disable-pip-version-check h5py numpy
+
+      - name: Build lightning.json from GOES GLM
+        run: python scripts/glm_lightning.py
+        env:
+          GLM_OUT: ${{ runner.temp }}/lightning.json
+
+      - name: Publish to lightning-data branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          work="${{ runner.temp }}/pub"
+          mkdir -p "$work"
+          cp "${{ runner.temp }}/lightning.json" "$work/lightning.json"
+          cd "$work"
+          git init -q
+          git config user.name "glm-lightning-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -q -b lightning-data
+          git add lightning.json
+          git commit -q -m "GLM lightning feed $(date -u +%FT%TZ)"
+          # Force-push a single-commit orphan branch so history never grows.
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" lightning-data

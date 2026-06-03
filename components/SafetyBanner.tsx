@@ -1,6 +1,7 @@
 import type {
   CityOfficialData,
   FlagColor,
+  LightningData,
   WaterQualityData,
   Wrapped,
 } from "@/lib/types";
@@ -18,20 +19,28 @@ const FLAG_STYLE: Record<FlagColor, { bg: string; label: string }> = {
 export function SafetyBanner({
   city,
   water,
+  lightning,
 }: {
   city: Wrapped<CityOfficialData>;
   water?: Wrapped<WaterQualityData>;
+  lightning?: Wrapped<LightningData>;
 }) {
   const data = city.data;
   const wq = water?.data;
   const advisory = wq?.advisory ?? false;
+  const lt = lightning?.data;
+  // Lightning within ~10 mi during the scanned window → get out of the water.
+  const lightningDanger = (lt?.within10mi ?? 0) > 0;
   const flags = data?.flags.filter((f) => f !== "unknown") ?? [];
   const hasWarning =
-    advisory || flags.some((f) => ["red", "double-red", "purple"].includes(f));
+    advisory ||
+    lightningDanger ||
+    flags.some((f) => ["red", "double-red", "purple"].includes(f));
 
-  // Nothing worth surfacing: no flags, no hazards, and no advisory.
+  // Nothing worth surfacing: no flags, no hazards, no advisory, no close strikes.
   if (
     !advisory &&
+    !lightningDanger &&
     flags.length === 0 &&
     (data?.hazards?.length ?? 0) === 0
   ) {
@@ -63,6 +72,21 @@ export function SafetyBanner({
             {badSites.length ? ` at ${badSites.map((s) => s.name).join(", ")}` : ""}.
             {sampledAt ? ` Sampled ${fmtDate(sampledAt, "UTC")}.` : ""}{" "}
             {water?.attribution ?? "Florida Healthy Beaches"}.
+          </div>
+        </div>
+      ) : null}
+
+      {lightningDanger ? (
+        <div className="mb-3 rounded-xl bg-rose-500/15 p-3 ring-1 ring-rose-500/40">
+          <div className="flex items-center gap-2 text-sm font-semibold text-rose-200">
+            <span aria-hidden>⛈️</span>
+            <span>Lightning nearby — get out of the water and seek shelter</span>
+          </div>
+          <div className="mt-1 text-xs text-rose-100/80">
+            {lt?.within10mi} strike{(lt?.within10mi ?? 0) === 1 ? "" : "s"} within 10
+            mi in the last {lt?.windowMinutes ?? 30} min
+            {lt?.nearestMi != null ? ` (nearest ${lt.nearestMi} mi).` : "."} NOAA
+            GOES GLM.
           </div>
         </div>
       ) : null}
