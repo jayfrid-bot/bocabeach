@@ -26,6 +26,8 @@ export const LOCATIONS: Location[] = [
       sites: ["SPANISH RIVER", "SOUTH INLET PARK", "RED REEF PARK"],
     },
     cityConditionsUrl: "https://www.myboca.us/2464/Beach-Conditions",
+    surfZone: { office: "MFL", name: "Palm Beach" }, // NWS Miami Surf Zone Forecast
+
     cams: [
       {
         // bocasurfcam.com publishes a fresh full-res JPEG at most_recent_image.php;

@@ -9,6 +9,7 @@ import { fetchForecast } from "@/lib/sources/forecast";
 import { fetchHourlyForecast } from "@/lib/sources/hourlyForecast";
 import { fetchLightning } from "@/lib/sources/lightning";
 import { fetchMarine } from "@/lib/sources/marine";
+import { fetchNws } from "@/lib/sources/nws";
 import { fetchSargassum } from "@/lib/sources/sargassum";
 import { fetchSun } from "@/lib/sources/sun";
 import { fetchTides } from "@/lib/sources/tides";
@@ -35,6 +36,7 @@ export async function getSnapshot(
     marine,
     cityOfficial,
     waterQuality,
+    nws,
     airQuality,
     lightning,
     sargassum,
@@ -48,6 +50,7 @@ export async function getSnapshot(
     fetchMarine(loc),
     fetchCityOfficial(loc),
     fetchWaterQuality(loc),
+    fetchNws(loc),
     fetchAirQuality(loc),
     fetchLightning(loc),
     fetchSargassum(loc),
@@ -65,6 +68,7 @@ export async function getSnapshot(
     marine,
     cityOfficial,
     waterQuality,
+    nws,
     airQuality,
     lightning,
     sargassum,

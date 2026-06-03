@@ -16,6 +16,7 @@ import type {
   HourlyMetrics,
   LightningData,
   MarineData,
+  NwsData,
   SargassumData,
   SunData,
   TideData,
@@ -40,6 +41,7 @@ function snapshot(over: {
   marine?: MarineData | null;
   city?: CityOfficialData | null;
   water?: WaterQualityData | null;
+  nws?: NwsData | null;
   sun?: SunData | null;
   hourly?: HourlyMetrics[] | null;
 }): ConditionsSnapshot {
@@ -59,6 +61,7 @@ function snapshot(over: {
     marine: wrap(over.marine ?? null),
     cityOfficial: wrap(over.city ?? null),
     waterQuality: wrap(over.water ?? null),
+    nws: wrap(over.nws ?? null),
     airQuality: wrap<AirQualityData>(null),
     lightning: wrap<LightningData>(null),
     sargassum: wrap<SargassumData>(null),
@@ -174,6 +177,35 @@ describe("scoring (Beach Day only — no surf)", () => {
     expect(r.caps.join(" ")).toMatch(/no-swim advisory/i);
   });
 
+  it("caps the score under a HIGH NWS rip-current risk", () => {
+    const snap = snapshot({
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
+      city: { flags: ["green"] },
+      water: { overall: "good", advisory: false, sites: [] },
+      nws: { alerts: [], ripCurrentRisk: "high" },
+    });
+    const r = scoreBeachDay(deriveMetrics(snap));
+    expect(r.score).toBeLessThanOrEqual(40);
+    expect(r.caps.join(" ")).toMatch(/rip current/i);
+  });
+
+  it("drives the score very low under a severe NWS warning", () => {
+    const snap = snapshot({
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
+      nws: {
+        alerts: [{ event: "Hurricane Warning", severity: "Extreme" }],
+        ripCurrentRisk: "high",
+      },
+    });
+    const r = scoreBeachDay(deriveMetrics(snap));
+    expect(r.score).toBeLessThanOrEqual(15);
+    expect(r.caps.join(" ")).toMatch(/severe weather/i);
+  });
+
   it("scores wind as a band: 5-13 mph ideal, calm and gusty both demerit", () => {
     const windSub = (mph: number) =>
       scoreBeachDay(deriveMetrics(snapshot({ weather: { windSpeedMph: mph } })))
@@ -278,6 +310,8 @@ describe("rainSeverity", () => {
       waterAdvisory: false,
       waterRating: "unknown",
       noSwimAdvisory: false,
+      ripCurrentRisk: "unknown",
+      severeAlert: false,
       ...over,
     });
 

@@ -1,6 +1,7 @@
 import type {
   CityOfficialData,
   LightningData,
+  NwsData,
   WaterQualityData,
   Wrapped,
 } from "@/lib/types";
@@ -12,10 +13,12 @@ export function SafetyBanner({
   city,
   water,
   lightning,
+  nws,
 }: {
   city: Wrapped<CityOfficialData>;
   water?: Wrapped<WaterQualityData>;
   lightning?: Wrapped<LightningData>;
+  nws?: Wrapped<NwsData>;
 }) {
   const data = city.data;
   const wq = water?.data;
@@ -24,23 +27,32 @@ export function SafetyBanner({
   // Lightning within ~10 mi during the scanned window → get out of the water.
   const lightningDanger = (lt?.within10mi ?? 0) > 0;
   const noSwim = data?.noSwimAdvisory;
+  const rip = nws?.data?.ripCurrentRisk ?? "unknown";
+  const alerts = nws?.data?.alerts ?? [];
+  const ripWarn = rip === "high" || rip === "moderate";
   const flags = data?.flags.filter((f) => f !== "unknown") ?? [];
   const hasWarning =
     advisory ||
     lightningDanger ||
     !!noSwim ||
+    rip === "high" ||
+    alerts.length > 0 ||
     flags.some((f) => ["red", "double-red", "purple"].includes(f));
 
-  // Nothing worth surfacing: no flags, no hazards, no advisory, no close strikes.
+  // Nothing worth surfacing.
   if (
     !advisory &&
     !lightningDanger &&
     !noSwim &&
+    !ripWarn &&
+    alerts.length === 0 &&
     flags.length === 0 &&
     (data?.hazards?.length ?? 0) === 0
   ) {
     return null;
   }
+
+  const RIP_COLOR = { high: "#fb7185", moderate: "#fbbf24", low: "#34d399" } as const;
 
   // Sites driving the advisory + the most recent sample date among them.
   const badSites = (wq?.sites ?? []).filter((s) => s.rating === "poor");
@@ -107,6 +119,37 @@ export function SafetyBanner({
               : "."}{" "}
             NOAA GOES GLM.
           </div>
+        </div>
+      ) : null}
+
+      {ripWarn || alerts.length ? (
+        <div
+          className={`mb-3 rounded-xl p-3 ring-1 ${
+            rip === "high"
+              ? "bg-rose-500/15 ring-rose-500/40"
+              : "bg-amber-500/10 ring-amber-500/30"
+          }`}
+        >
+          {rip !== "unknown" ? (
+            <div
+              className="flex items-center gap-2 text-sm font-semibold"
+              style={{ color: RIP_COLOR[rip] }}
+            >
+              <span aria-hidden>🌊</span>
+              <span>Rip current risk: {rip.toUpperCase()}</span>
+            </div>
+          ) : null}
+          {alerts.length ? (
+            <ul className="mt-1 space-y-0.5 text-xs text-slate-300">
+              {alerts.map((a) => (
+                <li key={a.event + (a.ends ?? "")}>
+                  ⚠ {a.event}
+                  {a.ends ? ` — until ${fmtDate(a.ends, "America/New_York")}` : ""}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <div className="mt-1 text-[11px] text-slate-500">NOAA/NWS</div>
         </div>
       ) : null}
 

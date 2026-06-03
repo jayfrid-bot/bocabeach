@@ -2,6 +2,7 @@ import type {
   ConditionsSnapshot,
   FlagColor,
   HourlyScore,
+  RipRisk,
   ScoreResult,
   SubScore,
   WaterQualityRating,
@@ -25,7 +26,15 @@ export interface Derived {
   waterRating: WaterQualityRating;
   /** City-issued no-swim/beach advisory is active (myboca AlertCenter). */
   noSwimAdvisory: boolean;
+  /** NWS Surf Zone Forecast rip-current risk. */
+  ripCurrentRisk: RipRisk;
+  /** A severe NWS warning (hurricane/tropical storm/tsunami/high surf) is active. */
+  severeAlert: boolean;
 }
+
+/** Events that make the beach genuinely dangerous/closed — hard score cap. */
+const SEVERE_ALERT =
+  /hurricane warning|tropical storm warning|storm surge warning|tsunami|high surf warning/i;
 
 export function deriveMetrics(s: ConditionsSnapshot): Derived {
   const w = s.weather.data;
@@ -33,6 +42,7 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
   const m = s.marine.data;
   const c = s.cityOfficial.data;
   const q = s.waterQuality.data;
+  const n = s.nws.data;
   return {
     airTempF: w?.airTempF ?? b?.airTempF,
     waterTempF: b?.waterTempF ?? m?.seaSurfaceTempF,
@@ -47,6 +57,8 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     waterAdvisory: q?.advisory ?? false,
     waterRating: q?.overall ?? "unknown",
     noSwimAdvisory: !!c?.noSwimAdvisory,
+    ripCurrentRisk: n?.ripCurrentRisk ?? "unknown",
+    severeAlert: (n?.alerts ?? []).some((a) => SEVERE_ALERT.test(a.event)),
   };
 }
 
@@ -240,6 +252,16 @@ function applyBeachCaps(
     score = Math.min(score, 40);
     caps.push("City no-swim advisory in effect");
   }
+  // NWS rip-current risk: HIGH means life-threatening rip currents are likely.
+  if (d.ripCurrentRisk === "high") {
+    score = Math.min(score, 40);
+    caps.push("High rip current risk (NWS)");
+  }
+  // A severe NWS warning (hurricane/tropical storm/tsunami/high surf) closes the day.
+  if (d.severeAlert) {
+    score = Math.min(score, 15);
+    caps.push("Severe weather warning in effect");
+  }
   // Rain is a hard ceiling on the whole day (not just the sky sub-score): an
   // actively rainy/stormy hour is an unacceptable beach day regardless of how
   // warm/calm it is otherwise.
@@ -299,6 +321,8 @@ export function computeHourlyScores(s: ConditionsSnapshot): HourlyScore[] {
         waterAdvisory: base.waterAdvisory,
         waterRating: base.waterRating,
         noSwimAdvisory: base.noSwimAdvisory,
+        ripCurrentRisk: base.ripCurrentRisk,
+        severeAlert: base.severeAlert,
       };
       const r = scoreBeachDay(d);
       return {

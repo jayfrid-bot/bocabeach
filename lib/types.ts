@@ -261,6 +261,21 @@ export interface SargassumData {
   };
 }
 
+// --- NWS alerts + rip-current risk (api.weather.gov) -----------------------
+export type RipRisk = "low" | "moderate" | "high" | "unknown";
+export interface NwsAlert {
+  event: string; // "Rip Current Statement"
+  severity: string; // "Moderate" | "Severe" | ...
+  headline?: string;
+  ends?: string; // ISO
+}
+export interface NwsData {
+  /** Active NWS alerts for the beach point. */
+  alerts: NwsAlert[];
+  /** Today's rip-current risk from the Surf Zone Forecast. */
+  ripCurrentRisk: RipRisk;
+}
+
 // --- Per-spot weather (Open-Meteo current) --------------------------------
 export interface SpotWeatherData {
   airTempF?: number;
@@ -285,6 +300,7 @@ export interface ConditionsSnapshot {
   marine: Wrapped<MarineData>;
   cityOfficial: Wrapped<CityOfficialData>;
   waterQuality: Wrapped<WaterQualityData>;
+  nws: Wrapped<NwsData>;
   airQuality: Wrapped<AirQualityData>;
   lightning: Wrapped<LightningData>;
   sargassum: Wrapped<SargassumData>;
@@ -401,6 +417,12 @@ export interface Location {
   };
   /** City/official conditions page to scrape (flags, lifeguard ratings, hazards). */
   cityConditionsUrl?: string;
+  /**
+   * NWS Surf Zone Forecast lookup for rip-current risk: `office` is the issuing
+   * WFO (e.g. "MFL" = Miami), `name` is the zone block name in the SRF text
+   * (e.g. "Palm Beach"). Alerts use lat/lon and need no config.
+   */
+  surfZone?: { office: string; name: string };
   cams: CamConfig[];
 }
 

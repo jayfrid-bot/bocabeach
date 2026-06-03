@@ -43,6 +43,7 @@ export function ConditionsDashboard({
   const ratings = snap.cityOfficial.data;
   const sg = snap.sargassum.data;
   const busy = snap.busyness.data;
+  const rip = snap.nws.data?.ripCurrentRisk;
   const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
   const sources = [
@@ -52,6 +53,7 @@ export function ConditionsDashboard({
     snap.marine,
     snap.cityOfficial,
     snap.waterQuality,
+    snap.nws,
     snap.airQuality,
     snap.lightning,
     snap.sargassum,
@@ -81,6 +83,7 @@ export function ConditionsDashboard({
           city={snap.cityOfficial}
           water={snap.waterQuality}
           lightning={snap.lightning}
+          nws={snap.nws}
         />
       </div>
 
@@ -191,6 +194,12 @@ export function ConditionsDashboard({
                 : busy.note
               : undefined
           }
+        />
+        <MetricCard
+          icon="🌊"
+          label="Rip current risk"
+          value={!rip || rip === "unknown" ? "—" : cap(rip)}
+          sub={rip && rip !== "unknown" ? "NWS Surf Zone Forecast" : undefined}
         />
         {d.precipProbability != null ? (
           <MetricCard
