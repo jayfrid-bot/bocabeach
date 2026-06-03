@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { summarizeStrikes, type LightningFeed } from "@/lib/sources/lightning";
+import { degToCardinal } from "@/lib/util";
 
 const BOCA = { lat: 26.3587, lon: -80.0686 };
 const NOW = Date.parse("2026-06-03T12:00:00.000Z");
@@ -39,6 +40,32 @@ describe("summarizeStrikes", () => {
     expect(d.lastMinutesAgo).toBe(2); // B is the most recent
     expect(d.lastMi).toBeGreaterThan(30);
     expect(d.lastMi).toBeLessThan(40);
+  });
+
+  it("reports the compass bearing to the nearest strike", () => {
+    const north = summarizeStrikes(
+      feed([[nowSec - 60, BOCA.lat + 0.5, BOCA.lon]]),
+      BOCA.lat,
+      BOCA.lon,
+      NOW,
+    );
+    expect(degToCardinal(north.nearestBearingDeg!)).toBe("N");
+
+    const east = summarizeStrikes(
+      feed([[nowSec - 60, BOCA.lat, BOCA.lon + 0.5]]),
+      BOCA.lat,
+      BOCA.lon,
+      NOW,
+    );
+    expect(degToCardinal(east.nearestBearingDeg!)).toBe("E");
+
+    const south = summarizeStrikes(
+      feed([[nowSec - 60, BOCA.lat - 0.5, BOCA.lon]]),
+      BOCA.lat,
+      BOCA.lon,
+      NOW,
+    );
+    expect(degToCardinal(south.nearestBearingDeg!)).toBe("S");
   });
 
   it("counts strikes by radius band", () => {

@@ -1,20 +1,12 @@
 import type {
   CityOfficialData,
-  FlagColor,
   LightningData,
   WaterQualityData,
   Wrapped,
 } from "@/lib/types";
 import { fmtDate } from "@/lib/format";
-
-const FLAG_STYLE: Record<FlagColor, { bg: string; label: string }> = {
-  green: { bg: "#16a34a", label: "Green — low hazard" },
-  yellow: { bg: "#eab308", label: "Yellow — moderate surf/currents" },
-  red: { bg: "#dc2626", label: "Red — high hazard" },
-  "double-red": { bg: "#7f1d1d", label: "Double Red — water closed" },
-  purple: { bg: "#9333ea", label: "Purple — dangerous marine life" },
-  unknown: { bg: "#475569", label: "Flag status unavailable" },
-};
+import { degToCardinal } from "@/lib/util";
+import { LifeguardFlag } from "@/components/LifeguardFlag";
 
 export function SafetyBanner({
   city,
@@ -108,30 +100,26 @@ export function SafetyBanner({
           <div className="mt-1 text-xs text-rose-100/80">
             {lt?.within10mi} strike{(lt?.within10mi ?? 0) === 1 ? "" : "s"} within 10
             mi in the last {lt?.windowMinutes ?? 30} min
-            {lt?.nearestMi != null ? ` (nearest ${lt.nearestMi} mi).` : "."} NOAA
-            GOES GLM.
+            {lt?.nearestMi != null
+              ? ` (nearest ${lt.nearestMi} mi${
+                  lt.nearestBearingDeg != null ? " to the " + degToCardinal(lt.nearestBearingDeg) : ""
+                }).`
+              : "."}{" "}
+            NOAA GOES GLM.
           </div>
         </div>
       ) : null}
 
       {data ? (
         <>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <span className="text-sm font-medium text-slate-200">
               Lifeguard flags:
             </span>
             {flags.length === 0 ? (
               <span className="text-sm text-slate-400">none reported</span>
             ) : (
-              flags.map((f) => (
-                <span
-                  key={f}
-                  className="rounded-full px-2.5 py-0.5 text-xs font-semibold text-white"
-                  style={{ background: FLAG_STYLE[f].bg }}
-                >
-                  {FLAG_STYLE[f].label}
-                </span>
-              ))
+              flags.map((f) => <LifeguardFlag key={f} flag={f} />)
             )}
           </div>
 

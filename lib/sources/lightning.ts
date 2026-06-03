@@ -1,5 +1,5 @@
 import type { LightningData, Location, Wrapped } from "@/lib/types";
-import { fetchWithTimeout, haversineMiles, nowIso, round } from "@/lib/util";
+import { bearingDeg, fetchWithTimeout, haversineMiles, nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "NOAA GOES-19 GLM (lightning)";
 
@@ -36,6 +36,8 @@ export function summarizeStrikes(
 
   let nearestMi = Infinity;
   let nearestEpoch = 0;
+  let nearestLat = 0;
+  let nearestLon = 0;
   let lastEpoch = 0;
   let lastMi = Infinity;
   let within10 = 0;
@@ -47,6 +49,8 @@ export function summarizeStrikes(
     if (mi < nearestMi) {
       nearestMi = mi;
       nearestEpoch = epoch;
+      nearestLat = slat;
+      nearestLon = slon;
     }
     if (epoch > lastEpoch) {
       lastEpoch = epoch;
@@ -62,6 +66,7 @@ export function summarizeStrikes(
     windowMinutes: feed.windowMinutes,
     nearestMi: has ? round(nearestMi, 1) : undefined,
     nearestMinutesAgo: has ? minAgo(nearestEpoch) : undefined,
+    nearestBearingDeg: has ? round(bearingDeg(lat, lon, nearestLat, nearestLon)) : undefined,
     lastMinutesAgo: has ? minAgo(lastEpoch) : undefined,
     lastMi: has ? round(lastMi, 1) : undefined,
     within10mi: within10,

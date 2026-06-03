@@ -191,6 +191,8 @@ export interface LightningData {
   /** Closest strike in the window (miles) + how long ago (minutes). */
   nearestMi?: number;
   nearestMinutesAgo?: number;
+  /** Compass bearing FROM the beach TO the closest strike (deg, 0=N, 90=E). */
+  nearestBearingDeg?: number;
   /** Most recent strike in the window (may differ from the closest). */
   lastMinutesAgo?: number;
   lastMi?: number;

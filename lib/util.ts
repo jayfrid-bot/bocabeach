@@ -39,6 +39,22 @@ export function haversineMiles(
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
+/** Initial great-circle compass bearing FROM point 1 TO point 2 (deg, 0=N, 90=E). */
+export function bearingDeg(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const p1 = toRad(lat1);
+  const p2 = toRad(lat2);
+  const dl = toRad(lon2 - lon1);
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+}
+
 /** Smallest absolute difference between two compass bearings (0-180). */
 export function angularDistance(a: number, b: number): number {
   const d = Math.abs((a - b) % 360);

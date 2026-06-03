@@ -1,4 +1,5 @@
 import type { LightningData, Wrapped } from "@/lib/types";
+import { degToCardinal } from "@/lib/util";
 
 function ageLabel(min?: number): string {
   if (min == null) return "";
@@ -28,7 +29,8 @@ export function LightningCard({ lightning }: { lightning: Wrapped<LightningData>
     sub = `No strikes detected within range in the last ${win} min`;
   } else {
     const near = d.nearestMi ?? 0;
-    headline = `${near} mi · ${ageLabel(d.nearestMinutesAgo)}`;
+    const dir = d.nearestBearingDeg != null ? ` ${degToCardinal(d.nearestBearingDeg)}` : "";
+    headline = `${near} mi${dir} · ${ageLabel(d.nearestMinutesAgo)}`;
     sub =
       `${d.within10mi} within 10 mi · ${d.within25mi} within 25 mi` +
       ` (last ${win} min)`;
