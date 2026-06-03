@@ -24,7 +24,7 @@ import urllib.request
 from zoneinfo import ZoneInfo
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")  # 2.0-flash has no free tier
 OUT = os.environ.get("CAM_SEAWEED_OUT", "cam_seaweed.json")
 TZ = ZoneInfo(os.environ.get("CAM_TZ", "America/New_York"))
 PREV_URL = os.environ.get(
