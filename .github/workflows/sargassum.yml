@@ -15,7 +15,10 @@ on:
     - cron: "0 21 * * *" # ~5 PM EDT
   push:
     branches: [main]
-    paths: [".github/workflows/sargassum.yml", "scripts/sargassum_sir.py"]
+    paths:
+      - ".github/workflows/sargassum.yml"
+      - "scripts/sargassum_sir.py"
+      - "scripts/cam_seaweed.py"
   workflow_dispatch: {}
 
 permissions:
