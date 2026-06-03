@@ -19,6 +19,7 @@ import datetime as dt
 import json
 import os
 import sys
+import urllib.error
 import urllib.request
 from zoneinfo import ZoneInfo
 
@@ -77,7 +78,12 @@ def assess(img: bytes) -> dict:
            f"{MODEL}:generateContent?key={API_KEY}")
     req = urllib.request.Request(url, data=body,
                                  headers={"Content-Type": "application/json"})
-    resp = json.loads(urllib.request.urlopen(req, timeout=40).read())
+    try:
+        raw = urllib.request.urlopen(req, timeout=40).read()
+    except urllib.error.HTTPError as e:
+        # Surface Google's error detail (e.g. API_KEY_INVALID vs RESOURCE_EXHAUSTED).
+        raise RuntimeError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:200]}") from None
+    resp = json.loads(raw)
     out = json.loads(resp["candidates"][0]["content"]["parts"][0]["text"])
     level = str(out.get("level", "")).lower()
     if level not in ("none", "low", "moderate", "high"):
