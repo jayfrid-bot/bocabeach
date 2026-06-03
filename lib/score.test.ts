@@ -9,6 +9,7 @@ import {
 import type {
   AirQualityData,
   BuoyData,
+  BusynessData,
   CityOfficialData,
   ConditionsSnapshot,
   ForecastDay,
@@ -61,6 +62,7 @@ function snapshot(over: {
     airQuality: wrap<AirQualityData>(null),
     lightning: wrap<LightningData>(null),
     sargassum: wrap<SargassumData>(null),
+    busyness: wrap<BusynessData>(null),
     forecast: wrap<ForecastDay[]>(null),
     sun: wrap(over.sun ?? null),
     hourly: wrap(over.hourly ?? null),

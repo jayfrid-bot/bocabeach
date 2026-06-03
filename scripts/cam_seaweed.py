@@ -41,15 +41,25 @@ CAMS = [
      "feed": "http://video-monitoring.com/beachcams/bocainlet", "view": "s16"},
     {"id": "boca-south-surf", "name": "South Beach — Shoreline & Surf",
      "feed": "http://video-monitoring.com/beachcams/boca", "view": "s11"},
+    # Wide pavilion + parking-lot view — the best gauge of how busy the beach is.
+    {"id": "boca-south", "name": "South Beach — Pavilion & Lot",
+     "feed": "http://video-monitoring.com/beachcams/boca", "view": "s4"},
 ]
 
+SEAWEED = ("none", "low", "moderate", "high")
+CROWD = ("empty", "quiet", "moderate", "busy", "packed")
+
 PROMPT = (
-    "This is a live beach webcam photo. Assess the amount of sargassum seaweed "
-    "(brown/golden seaweed) visible on the sand and in the shallow water near "
-    "shore. Reply with strict JSON only: "
-    '{"level":"none|low|moderate|high","note":"<=10 word description"}. '
-    "none = clean sand; low = a thin wrack line or scattered patches; "
-    "moderate = clear bands of seaweed; high = heavy mats covering much of the shore."
+    "This is a live beach webcam photo. Return strict JSON only: "
+    '{"seaweed":"none|low|moderate|high","seaweed_note":"<=8 words",'
+    '"crowd":"empty|quiet|moderate|busy|packed","people":<approx visible people as integer>,'
+    '"crowd_note":"<=8 words"}. '
+    "Seaweed = brown/golden sargassum on the sand and in shallow water: "
+    "none=clean sand, low=thin wrack line or scattered patches, "
+    "moderate=clear bands, high=heavy mats over much of the shore. "
+    "Crowd = how busy the beach looks from people on the sand and in the water "
+    "(and cars in any visible parking lot): empty=nobody, quiet=a few people, "
+    "moderate=steady, busy=crowded, packed=very crowded."
 )
 
 
@@ -85,10 +95,18 @@ def assess(img: bytes) -> dict:
         raise RuntimeError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:200]}") from None
     resp = json.loads(raw)
     out = json.loads(resp["candidates"][0]["content"]["parts"][0]["text"])
-    level = str(out.get("level", "")).lower()
-    if level not in ("none", "low", "moderate", "high"):
-        raise ValueError(f"bad level: {level!r}")
-    return {"level": level, "note": str(out.get("note", ""))[:80]}
+    sw = str(out.get("seaweed", "")).lower()
+    if sw not in SEAWEED:
+        raise ValueError(f"bad seaweed: {sw!r}")
+    cr = str(out.get("crowd", "")).lower()
+    people = out.get("people")
+    return {
+        "level": sw,
+        "note": str(out.get("seaweed_note", ""))[:80],
+        "crowd": cr if cr in CROWD else None,
+        "people": int(people) if isinstance(people, (int, float)) else None,
+        "crowdNote": str(out.get("crowd_note", ""))[:80],
+    }
 
 
 def fetch_prev() -> dict:
@@ -104,7 +122,7 @@ def capture_now(now_local: dt.datetime) -> dict | None:
         try:
             r = assess(fetch_still(cam))
             readings.append({"id": cam["id"], "name": cam["name"], **r})
-            print(f"  {cam['id']}: {r['level']} ({r['note']})")
+            print(f"  {cam['id']}: seaweed={r['level']} crowd={r.get('crowd')} people={r.get('people')}")
         except Exception as e:  # noqa: BLE001
             print(f"  warn {cam['id']}: {e}", file=sys.stderr)
     if not readings:

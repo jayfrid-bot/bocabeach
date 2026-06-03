@@ -42,6 +42,7 @@ export function ConditionsDashboard({
   const cams = res.cams;
   const ratings = snap.cityOfficial.data;
   const sg = snap.sargassum.data;
+  const busy = snap.busyness.data;
   const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
   const sources = [
@@ -54,6 +55,7 @@ export function ConditionsDashboard({
     snap.airQuality,
     snap.lightning,
     snap.sargassum,
+    snap.busyness,
     snap.forecast,
     snap.sun,
     snap.hourly,
@@ -176,6 +178,18 @@ export function ConditionsDashboard({
               : sg?.sourceDate
                 ? `NOAA SIR · ${sg.sourceDate.slice(4, 6)}/${sg.sourceDate.slice(6, 8)}`
                 : undefined
+          }
+        />
+        <MetricCard
+          icon="👥"
+          label="Beach busyness"
+          value={!busy || busy.level === "unknown" ? "—" : cap(busy.level)}
+          sub={
+            busy && busy.level !== "unknown"
+              ? busy.peopleEstimate != null
+                ? `~${busy.peopleEstimate} people in view`
+                : busy.note
+              : undefined
           }
         />
         {d.precipProbability != null ? (

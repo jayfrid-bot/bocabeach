@@ -2,6 +2,7 @@ import { getLocation, toPublicLocation } from "@/config/locations";
 import type { ConditionsResponse, ConditionsSnapshot } from "@/lib/types";
 import { buildCamViews } from "@/lib/cams";
 import { fetchAirQuality } from "@/lib/sources/airQuality";
+import { fetchBusyness } from "@/lib/sources/busyness";
 import { fetchBuoy } from "@/lib/sources/buoy";
 import { fetchCityOfficial } from "@/lib/sources/cityOfficial";
 import { fetchForecast } from "@/lib/sources/forecast";
@@ -37,6 +38,7 @@ export async function getSnapshot(
     airQuality,
     lightning,
     sargassum,
+    busyness,
     forecast,
     hourly,
   ] = await Promise.all([
@@ -49,6 +51,7 @@ export async function getSnapshot(
     fetchAirQuality(loc),
     fetchLightning(loc),
     fetchSargassum(loc),
+    fetchBusyness(loc),
     fetchForecast(loc),
     fetchHourlyForecast(loc),
   ]);
@@ -65,6 +68,7 @@ export async function getSnapshot(
     airQuality,
     lightning,
     sargassum,
+    busyness,
     forecast,
     sun: fetchSun(loc),
     hourly,

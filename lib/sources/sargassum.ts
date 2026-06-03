@@ -40,7 +40,7 @@ async function fetchObserved(): Promise<SargassumData["observed"]> {
   try {
     const res = await fetchWithTimeout(CAM_FEED_URL, {
       timeoutMs: 6000,
-      next: { revalidate: 21600 },
+      next: { revalidate: 3600 }, // 1h — cam-vision job runs a few times/day
     });
     if (!res.ok) return undefined;
     const feed = (await res.json()) as CamFeed;

@@ -208,12 +208,34 @@ export interface LightningData {
 
 // --- Sargassum / seaweed (NOAA Sargassum Inundation Risk, via off-Netlify job) ---
 export type SargassumRisk = "none" | "low" | "moderate" | "high" | "unknown";
-/** One beach-cam's observed seaweed reading (from the vision job). */
+/** One beach-cam's observed reading (from the vision job): seaweed + crowd. */
 export interface CamSeaweedReading {
   name: string;
   level: SargassumRisk;
   note?: string;
   capturedAt?: string;
+  /** How busy the beach looks from this cam. */
+  crowd?: BusynessLevel;
+  /** Approx number of people visible. */
+  people?: number;
+  crowdNote?: string;
+}
+
+// --- Beach busyness (from the same cam-vision job) -------------------------
+export type BusynessLevel =
+  | "empty"
+  | "quiet"
+  | "moderate"
+  | "busy"
+  | "packed"
+  | "unknown";
+export interface BusynessData {
+  level: BusynessLevel;
+  /** Approx people visible at the busiest cam. */
+  peopleEstimate?: number;
+  note?: string;
+  capturedAtLocal?: string;
+  cams?: { name: string; crowd: BusynessLevel; people?: number }[];
 }
 export interface SargassumData {
   risk: SargassumRisk;
@@ -266,6 +288,7 @@ export interface ConditionsSnapshot {
   airQuality: Wrapped<AirQualityData>;
   lightning: Wrapped<LightningData>;
   sargassum: Wrapped<SargassumData>;
+  busyness: Wrapped<BusynessData>;
   forecast: Wrapped<ForecastDay[]>;
   sun: Wrapped<SunData>;
   hourly: Wrapped<HourlyMetrics[]>;
