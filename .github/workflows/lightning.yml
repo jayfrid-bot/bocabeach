@@ -14,6 +14,9 @@ name: GLM Lightning Feed
 on:
   schedule:
     - cron: "*/10 * * * *" # GitHub fires this sporadically; the loop bridges the gaps
+  push:
+    branches: [main] # also (re)start the loop on every deploy, so it self-bootstraps
+    paths: [".github/workflows/lightning.yml", "scripts/glm_lightning.py"]
   workflow_dispatch: {}
 
 permissions:
