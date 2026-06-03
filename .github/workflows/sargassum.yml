@@ -7,7 +7,12 @@ name: Sargassum Feed
 
 on:
   schedule:
-    - cron: "0 12,21 * * *" # twice a day (the SIR product updates daily)
+    # Capture the cam reading in the early morning (~6-8 AM ET) BEFORE the City's
+    # beach-cleaning tractor (~7-9 AM), so observed seaweed reflects the overnight
+    # wash-up; the afternoon run refreshes the SIR + current beach state.
+    - cron: "0 11 * * *" # ~7 AM EDT
+    - cron: "0 12 * * *" # ~8 AM EDT
+    - cron: "0 21 * * *" # ~5 PM EDT
   push:
     branches: [main]
     paths: [".github/workflows/sargassum.yml", "scripts/sargassum_sir.py"]
@@ -35,6 +40,12 @@ jobs:
         env:
           SARG_OUT: ${{ runner.temp }}/sargassum.json
 
+      - name: Read seaweed from beach cams (Gemini free tier — optional)
+        run: python scripts/cam_seaweed.py # no-op without GEMINI_API_KEY
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CAM_SEAWEED_OUT: ${{ runner.temp }}/cam_seaweed.json
+
       - name: Publish to sargassum-data branch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -42,6 +53,7 @@ jobs:
           work="${{ runner.temp }}/pub"
           mkdir -p "$work"
           cp "${{ runner.temp }}/sargassum.json" "$work/sargassum.json"
+          cp "${{ runner.temp }}/cam_seaweed.json" "$work/cam_seaweed.json" 2>/dev/null || true
           cd "$work"
           git init -q
           git config user.name "sargassum-bot"

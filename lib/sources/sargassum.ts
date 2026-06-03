@@ -1,4 +1,10 @@
-import type { Location, SargassumData, SargassumRisk, Wrapped } from "@/lib/types";
+import type {
+  CamSeaweedReading,
+  Location,
+  SargassumData,
+  SargassumRisk,
+  Wrapped,
+} from "@/lib/types";
 import { fetchWithTimeout, haversineMiles, nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "NOAA Sargassum Inundation Risk (SIR)";
@@ -7,6 +13,52 @@ const ATTRIBUTION = "NOAA Sargassum Inundation Risk (SIR)";
 const FEED_URL =
   process.env.SARGASSUM_FEED_URL ??
   "https://raw.githubusercontent.com/jayfrid-bot/bocabeach/sargassum-data/sargassum.json";
+
+/** Same off-Netlify job publishes the cam-vision seaweed reading here. */
+const CAM_FEED_URL =
+  process.env.CAM_SEAWEED_FEED_URL ??
+  "https://raw.githubusercontent.com/jayfrid-bot/bocabeach/sargassum-data/cam_seaweed.json";
+
+const RANK: Record<string, number> = { none: 0, low: 1, moderate: 2, high: 3 };
+
+interface CamGroup {
+  capturedAtLocal?: string;
+  hour?: number;
+  cams?: CamSeaweedReading[];
+}
+interface CamFeed {
+  morning?: CamGroup | null;
+  latest?: CamGroup | null;
+}
+
+/**
+ * Read the cam-vision seaweed feed and roll it up (worst cam wins). Prefers the
+ * early-morning (pre-tractor) reading — the City clears seaweed ~7-9 AM, so a
+ * later photo understates the wash-up. Best-effort.
+ */
+async function fetchObserved(): Promise<SargassumData["observed"]> {
+  try {
+    const res = await fetchWithTimeout(CAM_FEED_URL, {
+      timeoutMs: 6000,
+      next: { revalidate: 21600 },
+    });
+    if (!res.ok) return undefined;
+    const feed = (await res.json()) as CamFeed;
+    const group = feed?.morning ?? feed?.latest ?? undefined;
+    const cams = (group?.cams ?? []).filter((c) => c && c.level in RANK);
+    if (!cams.length) return undefined;
+    const worst = cams.reduce((a, b) => (RANK[b.level] > RANK[a.level] ? b : a));
+    return {
+      level: worst.level,
+      note: worst.note,
+      cams,
+      isMorning: !!feed?.morning && group === feed.morning,
+      capturedAtLocal: group?.capturedAtLocal,
+    };
+  } catch {
+    return undefined;
+  }
+}
 
 const LEVELS: SargassumRisk[] = ["none", "low", "moderate", "high"];
 /** Only trust a coastline segment within this distance of the beach. */
@@ -80,6 +132,7 @@ export async function fetchSargassum(
     if (!Array.isArray(feed?.segments)) throw new Error("malformed sargassum feed");
 
     const data = summarizeSargassum(feed, loc.lat, loc.lon, Date.now());
+    data.observed = await fetchObserved(); // on-the-ground cam reading, if available
     // The SIR product updates daily; flag it if the feed has gone several days stale.
     const stale = (data.dataAgeDays ?? 0) > 3;
     return {

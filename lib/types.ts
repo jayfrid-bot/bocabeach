@@ -208,6 +208,13 @@ export interface LightningData {
 
 // --- Sargassum / seaweed (NOAA Sargassum Inundation Risk, via off-Netlify job) ---
 export type SargassumRisk = "none" | "low" | "moderate" | "high" | "unknown";
+/** One beach-cam's observed seaweed reading (from the vision job). */
+export interface CamSeaweedReading {
+  name: string;
+  level: SargassumRisk;
+  note?: string;
+  capturedAt?: string;
+}
 export interface SargassumData {
   risk: SargassumRisk;
   /** 0 none · 1 low · 2 moderate · 3 high · -1 unknown. */
@@ -218,6 +225,18 @@ export interface SargassumData {
   sourceDate?: string;
   /** How old the SIR product is, in days. */
   dataAgeDays?: number;
+  /**
+   * Observed seaweed read from the beach-cam stills (Gemini vision job), if
+   * available — the on-the-ground complement to the SIR satellite forecast.
+   */
+  observed?: {
+    level: SargassumRisk;
+    note?: string;
+    cams: CamSeaweedReading[];
+    /** True when this is the early-morning, pre-beach-cleaning reading (weighted highest). */
+    isMorning: boolean;
+    capturedAtLocal?: string;
+  };
 }
 
 // --- Per-spot weather (Open-Meteo current) --------------------------------

@@ -1,0 +1,145 @@
+#!/usr/bin/env python3
+"""
+Read visible sargassum/seaweed from the close-up beach-cam stills using Google
+Gemini Flash (free tier). Runs OFF Netlify in the daily Action; writes a tiny
+cam_seaweed.json the web app reads. Pure stdlib (urllib/base64/json/zoneinfo).
+
+The City runs a tractor that clears beach seaweed every morning ~7-9 AM, so an
+afternoon photo shows a *cleaned* beach and understates what's washing ashore.
+We therefore weight the EARLY-MORNING (pre-tractor) capture highest: each run
+records the local capture time, and we merge with the previously published file
+to preserve today's earliest morning reading as the authoritative `morning`
+value (plus a `latest` reading for the current beach state).
+
+Needs a free GEMINI_API_KEY (Google AI Studio). Without it, it preserves any
+existing readings and exits 0 so the rest of the pipeline keeps working.
+"""
+import base64
+import datetime as dt
+import json
+import os
+import sys
+import urllib.request
+from zoneinfo import ZoneInfo
+
+API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+OUT = os.environ.get("CAM_SEAWEED_OUT", "cam_seaweed.json")
+TZ = ZoneInfo(os.environ.get("CAM_TZ", "America/New_York"))
+PREV_URL = os.environ.get(
+    "CAM_SEAWEED_PREV_URL",
+    "https://raw.githubusercontent.com/jayfrid-bot/bocabeach/sargassum-data/cam_seaweed.json",
+)
+# Local hours considered "morning, before/at the beach-cleaning tractor".
+MORNING = range(5, 10)
+
+CAMS = [
+    {"id": "boca-surf", "name": "Boca Surf Cam",
+     "still": "http://bocasurfcam.com/most_recent_image.php"},
+    {"id": "boca-inlet-surf", "name": "Boca Inlet — Surf & Shoreline",
+     "feed": "http://video-monitoring.com/beachcams/bocainlet", "view": "s16"},
+    {"id": "boca-south-surf", "name": "South Beach — Shoreline & Surf",
+     "feed": "http://video-monitoring.com/beachcams/boca", "view": "s11"},
+]
+
+PROMPT = (
+    "This is a live beach webcam photo. Assess the amount of sargassum seaweed "
+    "(brown/golden seaweed) visible on the sand and in the shallow water near "
+    "shore. Reply with strict JSON only: "
+    '{"level":"none|low|moderate|high","note":"<=10 word description"}. '
+    "none = clean sand; low = a thin wrack line or scattered patches; "
+    "moderate = clear bands of seaweed; high = heavy mats covering much of the shore."
+)
+
+
+def _get(url: str, timeout: int = 25) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": "boca-beach-rats"})
+    return urllib.request.urlopen(req, timeout=timeout).read()
+
+
+def fetch_still(cam: dict) -> bytes:
+    if cam.get("still"):
+        return _get(cam["still"])
+    feed = json.loads(_get(f"{cam['feed']}/latest.json").decode("utf-8", "replace"))
+    return _get(f"{cam['feed']}/{feed[cam['view']]['mr']}")
+
+
+def assess(img: bytes) -> dict:
+    body = json.dumps({
+        "contents": [{"parts": [
+            {"text": PROMPT},
+            {"inline_data": {"mime_type": "image/jpeg",
+                             "data": base64.b64encode(img).decode()}},
+        ]}],
+        "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
+    }).encode()
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+           f"{MODEL}:generateContent?key={API_KEY}")
+    req = urllib.request.Request(url, data=body,
+                                 headers={"Content-Type": "application/json"})
+    resp = json.loads(urllib.request.urlopen(req, timeout=40).read())
+    out = json.loads(resp["candidates"][0]["content"]["parts"][0]["text"])
+    level = str(out.get("level", "")).lower()
+    if level not in ("none", "low", "moderate", "high"):
+        raise ValueError(f"bad level: {level!r}")
+    return {"level": level, "note": str(out.get("note", ""))[:80]}
+
+
+def fetch_prev() -> dict:
+    try:
+        return json.loads(_get(PREV_URL).decode("utf-8", "replace"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def capture_now(now_local: dt.datetime) -> dict | None:
+    readings = []
+    for cam in CAMS:
+        try:
+            r = assess(fetch_still(cam))
+            readings.append({"id": cam["id"], "name": cam["name"], **r})
+            print(f"  {cam['id']}: {r['level']} ({r['note']})")
+        except Exception as e:  # noqa: BLE001
+            print(f"  warn {cam['id']}: {e}", file=sys.stderr)
+    if not readings:
+        return None
+    return {"capturedAtLocal": now_local.isoformat(timespec="minutes"),
+            "hour": now_local.hour, "cams": readings}
+
+
+def main() -> int:
+    now_local = dt.datetime.now(TZ)
+    today = now_local.date().isoformat()
+    prev = fetch_prev()
+    # Carry over today's morning reading; drop it if it's from a previous day.
+    prev_morning = prev.get("morning") if prev.get("dateLocal") == today else None
+
+    current = capture_now(now_local) if API_KEY else None
+    if current is None and not API_KEY:
+        print("no GEMINI_API_KEY — preserving any existing readings", file=sys.stderr)
+
+    # The earliest morning (pre-tractor) reading of the day is authoritative.
+    morning = prev_morning
+    if current and current["hour"] in MORNING:
+        if not prev_morning or current["hour"] < prev_morning.get("hour", 99):
+            morning = current
+    latest = current or prev.get("latest")
+
+    out = {
+        "generatedAt": dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        .isoformat().replace("+00:00", "Z"),
+        "model": MODEL if API_KEY else None,
+        "tz": str(TZ),
+        "dateLocal": today,
+        "morning": morning,  # earliest pre-cleaning reading (highest weight)
+        "latest": latest,    # most recent reading (current beach state)
+    }
+    with open(OUT, "w") as fh:
+        json.dump(out, fh, separators=(",", ":"))
+    mh = morning.get("hour") if morning else None
+    print(f"wrote {OUT}: morning={mh} latest={(latest or {}).get('hour')}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -41,6 +41,8 @@ export function ConditionsDashboard({
   const tz = snap.location.timezone;
   const cams = res.cams;
   const ratings = snap.cityOfficial.data;
+  const sg = snap.sargassum.data;
+  const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
   const sources = [
     snap.weather,
@@ -167,16 +169,13 @@ export function ConditionsDashboard({
         <MetricCard
           icon="🪸"
           label="Sargassum (seaweed)"
-          value={
-            !snap.sargassum.data || snap.sargassum.data.risk === "unknown"
-              ? "—"
-              : snap.sargassum.data.risk[0].toUpperCase() +
-                snap.sargassum.data.risk.slice(1)
-          }
+          value={!sg || sg.risk === "unknown" ? "—" : cap(sg.risk)}
           sub={
-            snap.sargassum.data?.sourceDate
-              ? `NOAA SIR · ${snap.sargassum.data.sourceDate.slice(4, 6)}/${snap.sargassum.data.sourceDate.slice(6, 8)}`
-              : undefined
+            sg?.observed
+              ? `📷 ${sg.observed.isMorning ? "AM cams (pre-clean)" : "cams"}: ${cap(sg.observed.level)}${sg.observed.note ? " — " + sg.observed.note : ""}`
+              : sg?.sourceDate
+                ? `NOAA SIR · ${sg.sourceDate.slice(4, 6)}/${sg.sourceDate.slice(6, 8)}`
+                : undefined
           }
         />
         {d.precipProbability != null ? (
