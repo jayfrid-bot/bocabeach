@@ -4,10 +4,16 @@ name: GLM Lightning Feed
 # `lightning-data` branch (NOT main), so the heavy netCDF processing runs here
 # on free public-repo Actions minutes and never touches the Netlify build/bill.
 # The web app reads the published file via raw.githubusercontent.com.
+#
+# GitHub's cron is best-effort and fires this sporadically (often hours apart),
+# which is too sparse for a near-real-time safety feature. So each run does NOT
+# refresh once and exit — it stays awake and republishes every ~10 min for ~5.5h.
+# Since GitHub re-fires more often than that, the runs overlap and the feed stays
+# continuously fresh, with zero external services or tokens.
 
 on:
   schedule:
-    - cron: "*/10 * * * *" # every 10 minutes
+    - cron: "*/10 * * * *" # GitHub fires this sporadically; the loop bridges the gaps
   workflow_dispatch: {}
 
 permissions:
@@ -15,12 +21,12 @@ permissions:
 
 concurrency:
   group: glm-lightning
-  cancel-in-progress: false
+  cancel-in-progress: true # a new firing restarts a fresh loop (only one ever runs)
 
 jobs:
   build-feed:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 345 # ~5h45m (GitHub's hard cap is 6h)
     steps:
       - name: Checkout (for the script)
         uses: actions/checkout@v4
@@ -32,24 +38,39 @@ jobs:
       - name: Install deps
         run: pip install --quiet --disable-pip-version-check h5py numpy
 
-      - name: Build lightning.json from GOES GLM
-        run: python scripts/glm_lightning.py
-        env:
-          GLM_OUT: ${{ runner.temp }}/lightning.json
-
-      - name: Publish to lightning-data branch
+      - name: Refresh + publish on a 10-minute loop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GLM_OUT: ${{ runner.temp }}/lightning.json
         run: |
-          work="${{ runner.temp }}/pub"
-          mkdir -p "$work"
-          cp "${{ runner.temp }}/lightning.json" "$work/lightning.json"
-          cd "$work"
-          git init -q
-          git config user.name "glm-lightning-bot"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -q -b lightning-data
-          git add lightning.json
-          git commit -q -m "GLM lightning feed $(date -u +%FT%TZ)"
-          # Force-push a single-commit orphan branch so history never grows.
-          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" lightning-data
+          set +e # one bad cycle (e.g. an S3 hiccup) must not kill the loop
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          work="${RUNNER_TEMP}/pub"
+          deadline=$(( $(date +%s) + 19800 )) # ~5.5 hours, then the next firing takes over
+
+          publish() {
+            rm -rf "$work"; mkdir -p "$work"
+            cp "${GLM_OUT}" "$work/lightning.json" || return 1
+            cd "$work" || return 1
+            git init -q
+            git config user.name "glm-lightning-bot"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout -q -b lightning-data
+            git add lightning.json
+            git commit -q -m "GLM lightning feed $(date -u +%FT%TZ)"
+            # Force-push a single-commit orphan branch so history never grows.
+            git push -f "$remote" lightning-data
+            cd - >/dev/null
+          }
+
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            start=$(date +%s)
+            if python scripts/glm_lightning.py; then
+              publish && echo "published $(date -u +%FT%TZ)"
+            else
+              echo "cycle failed; will retry next interval"
+            fi
+            rem=$(( 600 - ($(date +%s) - start) )) # pace to ~10-min cycles
+            [ "$rem" -lt 30 ] && rem=30
+            sleep "$rem"
+          done
