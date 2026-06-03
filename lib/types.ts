@@ -122,13 +122,16 @@ export interface HourlyMetrics {
   emoji?: string; // sky emoji derived from the code
 }
 
-/** One scored daylight hour for the hourly score strip. */
+/** One scored daylight hour for the hourly score graph. */
 export interface HourlyScore {
   time: string; // ISO (UTC)
   score: number; // 0-100 after caps
   rating: string; // "Excellent" | "Good" | "Fair" | "Poor"
   emoji: string;
   raining: boolean;
+  windSpeedMph?: number;
+  /** Direction the wind blows FROM, in degrees. */
+  windDirDeg?: number;
 }
 
 // --- Sun times (computed locally from lat/lon/date) ------------------------
@@ -163,6 +166,18 @@ export interface WaterQualityData {
   sites: WaterQualitySite[];
 }
 
+// --- Air quality (Open-Meteo Air Quality) ----------------------------------
+export interface AirQualityData {
+  /** US EPA AQI (0-500+); the headline number for the meter. */
+  usAqi?: number;
+  /** Pollutant driving the AQI, e.g. "PM2.5" | "PM10" | "Ozone". */
+  dominantPollutant?: string;
+  pm2_5?: number; // µg/m³
+  pm10?: number; // µg/m³
+  ozone?: number; // µg/m³
+  observedAt?: string; // ISO
+}
+
 // --- Per-spot weather (Open-Meteo current) --------------------------------
 export interface SpotWeatherData {
   airTempF?: number;
@@ -187,6 +202,7 @@ export interface ConditionsSnapshot {
   marine: Wrapped<MarineData>;
   cityOfficial: Wrapped<CityOfficialData>;
   waterQuality: Wrapped<WaterQualityData>;
+  airQuality: Wrapped<AirQualityData>;
   forecast: Wrapped<ForecastDay[]>;
   sun: Wrapped<SunData>;
   hourly: Wrapped<HourlyMetrics[]>;

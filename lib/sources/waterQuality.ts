@@ -33,7 +33,9 @@ const APPKEY =
 const CASPIO_BASE = "https://b3.caspio.com/dp";
 const PER_PAGE = 10; // Caspio default page size
 const MAX_PAGES = 8; // safety bound (~80 county sites)
-const REVALIDATE = 43200; // 12h — the program samples weekly
+// Sampling is weekly, but advisories can be issued/lifted on any day and feed a
+// safety override (banner + score cap), so refresh every 6h to pick them up sooner.
+const REVALIDATE = 21600; // 6h
 
 // --- enterococci -> rating -------------------------------------------------
 /**

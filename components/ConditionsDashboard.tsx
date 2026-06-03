@@ -7,7 +7,8 @@ import { deriveMetrics } from "@/lib/score";
 import { scoreColor } from "@/lib/format";
 import { ScoreGauge } from "@/components/ScoreGauge";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
-import { HourlyScoreStrip } from "@/components/HourlyScoreStrip";
+import { HourlyScoreGraph } from "@/components/HourlyScoreGraph";
+import { AirQualityMeter } from "@/components/AirQualityMeter";
 import { MetricCard } from "@/components/MetricCard";
 import { WindCompass } from "@/components/WindCompass";
 import { TidePanel } from "@/components/TidePanel";
@@ -47,6 +48,7 @@ export function ConditionsDashboard({
     snap.marine,
     snap.cityOfficial,
     snap.waterQuality,
+    snap.airQuality,
     snap.forecast,
     snap.sun,
     snap.hourly,
@@ -68,7 +70,7 @@ export function ConditionsDashboard({
       </header>
 
       <div className="mb-6">
-        <SafetyBanner city={snap.cityOfficial} />
+        <SafetyBanner city={snap.cityOfficial} water={snap.waterQuality} />
       </div>
 
       <section className="mb-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
@@ -97,7 +99,7 @@ export function ConditionsDashboard({
       </section>
 
       <section className="mb-6">
-        <HourlyScoreStrip hours={res.hourlyScores} tz={tz} />
+        <HourlyScoreGraph hours={res.hourlyScores} tz={tz} />
       </section>
 
       <section className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -162,6 +164,10 @@ export function ConditionsDashboard({
             value={`${d.precipProbability}%`}
           />
         ) : null}
+      </section>
+
+      <section className="mb-6">
+        <AirQualityMeter air={snap.airQuality} />
       </section>
 
       <section className="mb-6 grid gap-4 sm:grid-cols-2">

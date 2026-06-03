@@ -8,6 +8,15 @@ export function fmtTime(iso: string, tz: string): string {
   }).format(new Date(iso));
 }
 
+/** Short calendar date, e.g. "May 26", in the given timezone. */
+export function fmtDate(iso: string, tz: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: tz,
+  }).format(new Date(iso));
+}
+
 export function fmtRelative(iso: string): string {
   const diffMs = Date.now() - new Date(iso).getTime();
   const m = Math.round(diffMs / 60000);
@@ -25,3 +34,30 @@ export function scoreColor(score: number): string {
   if (score >= 45) return "#fbbf24"; // amber-400
   return "#fb7185"; // rose-400
 }
+
+// --- US EPA Air Quality Index bands ----------------------------------------
+export interface AqiBand {
+  /** Inclusive upper bound of the band. */
+  max: number;
+  label: string;
+  color: string;
+}
+
+/** Standard US EPA AQI categories (0-50 Good … 301+ Hazardous). */
+export const AQI_BANDS: AqiBand[] = [
+  { max: 50, label: "Good", color: "#34d399" }, // emerald-400
+  { max: 100, label: "Moderate", color: "#fbbf24" }, // amber-400
+  { max: 150, label: "Unhealthy for sensitive groups", color: "#fb923c" }, // orange-400
+  { max: 200, label: "Unhealthy", color: "#fb7185" }, // rose-400
+  { max: 300, label: "Very unhealthy", color: "#c084fc" }, // purple-400
+  { max: Infinity, label: "Hazardous", color: "#9f1239" }, // rose-800
+];
+
+/** Top of the meter's plotted scale; AQI above this pins to the end. */
+export const AQI_SCALE_MAX = 300;
+
+export function aqiBand(aqi: number): AqiBand {
+  return AQI_BANDS.find((b) => aqi <= b.max) ?? AQI_BANDS[AQI_BANDS.length - 1];
+}
+export const aqiCategory = (aqi: number): string => aqiBand(aqi).label;
+export const aqiColor = (aqi: number): string => aqiBand(aqi).color;

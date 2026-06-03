@@ -1,6 +1,7 @@
 import { getLocation, toPublicLocation } from "@/config/locations";
 import type { ConditionsResponse, ConditionsSnapshot } from "@/lib/types";
 import { buildCamViews } from "@/lib/cams";
+import { fetchAirQuality } from "@/lib/sources/airQuality";
 import { fetchBuoy } from "@/lib/sources/buoy";
 import { fetchCityOfficial } from "@/lib/sources/cityOfficial";
 import { fetchForecast } from "@/lib/sources/forecast";
@@ -24,17 +25,27 @@ export async function getSnapshot(
   const loc = getLocation(slug);
   if (!loc) return null;
 
-  const [tides, buoy, weather, marine, cityOfficial, waterQuality, forecast, hourly] =
-    await Promise.all([
-      fetchTides(loc),
-      fetchBuoy(loc),
-      fetchWeather(loc),
-      fetchMarine(loc),
-      fetchCityOfficial(loc),
-      fetchWaterQuality(loc),
-      fetchForecast(loc),
-      fetchHourlyForecast(loc),
-    ]);
+  const [
+    tides,
+    buoy,
+    weather,
+    marine,
+    cityOfficial,
+    waterQuality,
+    airQuality,
+    forecast,
+    hourly,
+  ] = await Promise.all([
+    fetchTides(loc),
+    fetchBuoy(loc),
+    fetchWeather(loc),
+    fetchMarine(loc),
+    fetchCityOfficial(loc),
+    fetchWaterQuality(loc),
+    fetchAirQuality(loc),
+    fetchForecast(loc),
+    fetchHourlyForecast(loc),
+  ]);
 
   return {
     location: toPublicLocation(loc),
@@ -45,6 +56,7 @@ export async function getSnapshot(
     marine,
     cityOfficial,
     waterQuality,
+    airQuality,
     forecast,
     sun: fetchSun(loc),
     hourly,

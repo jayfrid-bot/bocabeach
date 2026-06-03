@@ -1,4 +1,10 @@
-import type { CityOfficialData, FlagColor, Wrapped } from "@/lib/types";
+import type {
+  CityOfficialData,
+  FlagColor,
+  WaterQualityData,
+  Wrapped,
+} from "@/lib/types";
+import { fmtDate } from "@/lib/format";
 
 const FLAG_STYLE: Record<FlagColor, { bg: string; label: string }> = {
   green: { bg: "#16a34a", label: "Green — low hazard" },
@@ -11,17 +17,34 @@ const FLAG_STYLE: Record<FlagColor, { bg: string; label: string }> = {
 
 export function SafetyBanner({
   city,
+  water,
 }: {
   city: Wrapped<CityOfficialData>;
+  water?: Wrapped<WaterQualityData>;
 }) {
   const data = city.data;
-  if (!data) return null;
-  const flags = data.flags.filter((f) => f !== "unknown");
-  const hasWarning = flags.some((f) =>
-    ["red", "double-red", "purple"].includes(f),
-  );
+  const wq = water?.data;
+  const advisory = wq?.advisory ?? false;
+  const flags = data?.flags.filter((f) => f !== "unknown") ?? [];
+  const hasWarning =
+    advisory || flags.some((f) => ["red", "double-red", "purple"].includes(f));
 
-  if (flags.length === 0 && (data.hazards?.length ?? 0) === 0) return null;
+  // Nothing worth surfacing: no flags, no hazards, and no advisory.
+  if (
+    !advisory &&
+    flags.length === 0 &&
+    (data?.hazards?.length ?? 0) === 0
+  ) {
+    return null;
+  }
+
+  // Sites driving the advisory + the most recent sample date among them.
+  const badSites = (wq?.sites ?? []).filter((s) => s.rating === "poor");
+  const sampledAt = badSites
+    .map((s) => s.sampledAt)
+    .filter(Boolean)
+    .sort()
+    .pop();
 
   return (
     <div
@@ -29,39 +52,58 @@ export function SafetyBanner({
         hasWarning ? "bg-rose-500/10 ring-rose-500/40" : "bg-slate-900/70 ring-white/10"
       }`}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-medium text-slate-200">
-          Lifeguard flags:
-        </span>
-        {flags.length === 0 ? (
-          <span className="text-sm text-slate-400">none reported</span>
-        ) : (
-          flags.map((f) => (
-            <span
-              key={f}
-              className="rounded-full px-2.5 py-0.5 text-xs font-semibold text-white"
-              style={{ background: FLAG_STYLE[f].bg }}
-            >
-              {FLAG_STYLE[f].label}
-            </span>
-          ))
-        )}
-      </div>
-
-      {(data.marineLife?.length || data.hazards?.length) ? (
-        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
-          {data.marineLife?.length ? (
-            <span>🪼 {data.marineLife.join(", ")}</span>
-          ) : null}
-          {data.hazards?.length ? <span>⚠ {data.hazards.join(", ")}</span> : null}
+      {advisory ? (
+        <div className="mb-3 rounded-xl bg-rose-500/15 p-3 ring-1 ring-rose-500/40">
+          <div className="flex items-center gap-2 text-sm font-semibold text-rose-200">
+            <span aria-hidden>🧫</span>
+            <span>Water quality advisory — swimming not recommended</span>
+          </div>
+          <div className="mt-1 text-xs text-rose-100/80">
+            High enterococci bacteria
+            {badSites.length ? ` at ${badSites.map((s) => s.name).join(", ")}` : ""}.
+            {sampledAt ? ` Sampled ${fmtDate(sampledAt, "UTC")}.` : ""}{" "}
+            {water?.attribution ?? "Florida Healthy Beaches"}.
+          </div>
         </div>
       ) : null}
 
-      <div className="mt-2 text-xs text-slate-500">
-        Official report from {city.attribution}
-        {data.updatedLabel ? ` · ${data.updatedLabel}` : ""}. Always heed posted
-        signs and lifeguards.
-      </div>
+      {data ? (
+        <>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-slate-200">
+              Lifeguard flags:
+            </span>
+            {flags.length === 0 ? (
+              <span className="text-sm text-slate-400">none reported</span>
+            ) : (
+              flags.map((f) => (
+                <span
+                  key={f}
+                  className="rounded-full px-2.5 py-0.5 text-xs font-semibold text-white"
+                  style={{ background: FLAG_STYLE[f].bg }}
+                >
+                  {FLAG_STYLE[f].label}
+                </span>
+              ))
+            )}
+          </div>
+
+          {data.marineLife?.length || data.hazards?.length ? (
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
+              {data.marineLife?.length ? (
+                <span>🪼 {data.marineLife.join(", ")}</span>
+              ) : null}
+              {data.hazards?.length ? <span>⚠ {data.hazards.join(", ")}</span> : null}
+            </div>
+          ) : null}
+
+          <div className="mt-2 text-xs text-slate-500">
+            Official report from {city.attribution}
+            {data.updatedLabel ? ` · ${data.updatedLabel}` : ""}. Always heed posted
+            signs and lifeguards.
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }

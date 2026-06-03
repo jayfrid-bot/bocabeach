@@ -298,6 +298,8 @@ export function computeHourlyScores(s: ConditionsSnapshot): HourlyScore[] {
         rating: r.rating,
         emoji: h.emoji ?? "",
         raining: rainSeverity(d) !== "none",
+        windSpeedMph: h.windSpeedMph,
+        windDirDeg: h.windDirDeg,
       };
     });
 }
