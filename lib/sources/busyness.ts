@@ -1,4 +1,10 @@
-import type { BusynessData, BusynessLevel, Location, Wrapped } from "@/lib/types";
+import type {
+  BusynessByHour,
+  BusynessData,
+  BusynessLevel,
+  Location,
+  Wrapped,
+} from "@/lib/types";
 import { fetchWithTimeout, nowIso } from "@/lib/util";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
@@ -26,9 +32,44 @@ interface CamGroup {
   capturedAtLocal?: string;
   cams?: CamReading[];
 }
+interface HistoryEntry {
+  hour?: number;
+  level?: string;
+  people?: number;
+}
 export interface CamFeed {
   latest?: CamGroup | null;
   morning?: CamGroup | null;
+  history?: HistoryEntry[];
+}
+
+const LEVELS: BusynessLevel[] = ["empty", "quiet", "moderate", "busy", "packed"];
+
+/** Average the rolling history into a typical busyness per local hour. */
+function byHourFromHistory(history: HistoryEntry[]): BusynessByHour[] | undefined {
+  const buckets = new Map<number, { rank: number; people: number; pN: number; n: number }>();
+  for (const e of history) {
+    if (typeof e.hour !== "number" || typeof e.level !== "string" || !(e.level in RANK)) {
+      continue;
+    }
+    const b = buckets.get(e.hour) ?? { rank: 0, people: 0, pN: 0, n: 0 };
+    b.rank += RANK[e.level];
+    b.n += 1;
+    if (typeof e.people === "number") {
+      b.people += e.people;
+      b.pN += 1;
+    }
+    buckets.set(e.hour, b);
+  }
+  if (!buckets.size) return undefined;
+  return [...buckets.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([hour, b]) => ({
+      hour,
+      level: LEVELS[Math.round(b.rank / b.n)],
+      people: b.pN ? Math.round(b.people / b.pN) : undefined,
+      samples: b.n,
+    }));
 }
 
 /**
@@ -37,13 +78,14 @@ export interface CamFeed {
  * busiest cam as the headline. Pure (unit-tested).
  */
 export function summarizeBusyness(feed: CamFeed): BusynessData {
+  const byHour = byHourFromHistory(feed?.history ?? []);
   const group = feed?.latest ?? feed?.morning ?? undefined;
   const cams = (group?.cams ?? []).filter(
     (c): c is CamReading & { crowd: BusynessLevel } =>
       !!c && typeof c.crowd === "string" && c.crowd in RANK,
   );
   if (!cams.length) {
-    return { level: "unknown", capturedAtLocal: group?.capturedAtLocal };
+    return { level: "unknown", capturedAtLocal: group?.capturedAtLocal, byHour };
   }
   const busiest = cams.reduce((a, b) => (RANK[b.crowd] > RANK[a.crowd] ? b : a));
   return {
@@ -52,6 +94,7 @@ export function summarizeBusyness(feed: CamFeed): BusynessData {
     note: busiest.crowdNote,
     capturedAtLocal: group?.capturedAtLocal,
     cams: cams.map((c) => ({ name: c.name, crowd: c.crowd, people: c.people })),
+    byHour,
   };
 }
 

@@ -48,6 +48,8 @@ CAMS = [
 
 SEAWEED = ("none", "low", "moderate", "high")
 CROWD = ("empty", "quiet", "moderate", "busy", "packed")
+CROWD_RANK = {c: i for i, c in enumerate(CROWD)}
+MAX_HISTORY = 480  # ~30 days of readings for the "busyness by hour" pattern
 
 PROMPT = (
     "This is a live beach webcam photo. Return strict JSON only: "
@@ -109,6 +111,15 @@ def assess(img: bytes) -> dict:
     }
 
 
+def busiest_crowd(group: dict | None) -> dict | None:
+    """Aggregate a capture's per-cam crowd into the busiest reading."""
+    cams = [c for c in (group or {}).get("cams", []) if c.get("crowd") in CROWD_RANK]
+    if not cams:
+        return None
+    b = max(cams, key=lambda c: CROWD_RANK[c["crowd"]])
+    return {"level": b["crowd"], "people": b.get("people")}
+
+
 def fetch_prev() -> dict:
     try:
         return json.loads(_get(PREV_URL).decode("utf-8", "replace"))
@@ -149,6 +160,15 @@ def main() -> int:
             morning = current
     latest = current or prev.get("latest")
 
+    # Rolling history of busyness readings -> the app builds a by-hour pattern.
+    history = prev.get("history") if isinstance(prev.get("history"), list) else []
+    agg = busiest_crowd(current)
+    if current and agg:
+        history = history + [
+            {"t": current["capturedAtLocal"], "hour": current["hour"], **agg}
+        ]
+        history = history[-MAX_HISTORY:]
+
     out = {
         "generatedAt": dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
         .isoformat().replace("+00:00", "Z"),
@@ -157,6 +177,7 @@ def main() -> int:
         "dateLocal": today,
         "morning": morning,  # earliest pre-cleaning reading (highest weight)
         "latest": latest,    # most recent reading (current beach state)
+        "history": history,  # [{t, hour, level, people}] for the busyness-by-hour chart
     }
     with open(OUT, "w") as fh:
         json.dump(out, fh, separators=(",", ":"))

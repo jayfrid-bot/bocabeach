@@ -10,6 +10,7 @@ import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { HourlyScoreGraph } from "@/components/HourlyScoreGraph";
 import { AirQualityMeter } from "@/components/AirQualityMeter";
 import { LightningCard } from "@/components/LightningCard";
+import { BusynessChart } from "@/components/BusynessChart";
 import { MetricCard } from "@/components/MetricCard";
 import { WindCompass } from "@/components/WindCompass";
 import { TidePanel } from "@/components/TidePanel";
@@ -214,6 +215,12 @@ export function ConditionsDashboard({
         <AirQualityMeter air={snap.airQuality} />
         <LightningCard lightning={snap.lightning} />
       </section>
+
+      {busy?.byHour?.length ? (
+        <section className="mb-6">
+          <BusynessChart byHour={busy.byHour} tz={tz} />
+        </section>
+      ) : null}
 
       <section className="mb-6 grid gap-4 sm:grid-cols-2">
         <TidePanel tides={snap.tides} tz={tz} />

@@ -26,4 +26,20 @@ describe("summarizeBusyness", () => {
     );
     expect(summarizeBusyness({}).level).toBe("unknown");
   });
+
+  it("averages the history into a typical busyness-by-hour", () => {
+    const d = summarizeBusyness({
+      history: [
+        { hour: 9, level: "quiet", people: 5 },
+        { hour: 9, level: "moderate", people: 15 },
+        { hour: 12, level: "busy", people: 40 },
+        { hour: 12, level: "packed", people: 60 },
+      ],
+    });
+    const at = (h: number) => d.byHour?.find((x) => x.hour === h);
+    expect(at(9)).toMatchObject({ level: "moderate", people: 10, samples: 2 });
+    expect(at(12)).toMatchObject({ level: "packed", people: 50, samples: 2 });
+    // chronological order
+    expect(d.byHour?.map((x) => x.hour)).toEqual([9, 12]);
+  });
 });

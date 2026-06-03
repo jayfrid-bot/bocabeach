@@ -229,6 +229,12 @@ export type BusynessLevel =
   | "busy"
   | "packed"
   | "unknown";
+export interface BusynessByHour {
+  hour: number; // local hour 0-23
+  level: BusynessLevel;
+  people?: number;
+  samples: number;
+}
 export interface BusynessData {
   level: BusynessLevel;
   /** Approx people visible at the busiest cam. */
@@ -236,6 +242,8 @@ export interface BusynessData {
   note?: string;
   capturedAtLocal?: string;
   cams?: { name: string; crowd: BusynessLevel; people?: number }[];
+  /** Typical busyness by local hour, learned from the rolling cam history. */
+  byHour?: BusynessByHour[];
 }
 export interface SargassumData {
   risk: SargassumRisk;
