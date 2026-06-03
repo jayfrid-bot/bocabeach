@@ -8,6 +8,7 @@ import { fetchForecast } from "@/lib/sources/forecast";
 import { fetchHourlyForecast } from "@/lib/sources/hourlyForecast";
 import { fetchLightning } from "@/lib/sources/lightning";
 import { fetchMarine } from "@/lib/sources/marine";
+import { fetchSargassum } from "@/lib/sources/sargassum";
 import { fetchSun } from "@/lib/sources/sun";
 import { fetchTides } from "@/lib/sources/tides";
 import { fetchWaterQuality } from "@/lib/sources/waterQuality";
@@ -35,6 +36,7 @@ export async function getSnapshot(
     waterQuality,
     airQuality,
     lightning,
+    sargassum,
     forecast,
     hourly,
   ] = await Promise.all([
@@ -46,6 +48,7 @@ export async function getSnapshot(
     fetchWaterQuality(loc),
     fetchAirQuality(loc),
     fetchLightning(loc),
+    fetchSargassum(loc),
     fetchForecast(loc),
     fetchHourlyForecast(loc),
   ]);
@@ -61,6 +64,7 @@ export async function getSnapshot(
     waterQuality,
     airQuality,
     lightning,
+    sargassum,
     forecast,
     sun: fetchSun(loc),
     hourly,

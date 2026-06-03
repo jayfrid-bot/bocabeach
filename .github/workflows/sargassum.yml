@@ -1,0 +1,52 @@
+name: Sargassum Feed
+
+# Builds a small sargassum.json from NOAA's daily Sargassum Inundation Risk (SIR)
+# KMZ and publishes it to the `sargassum-data` branch (NOT main), so the heavy
+# KMZ parsing runs here on free public-repo Actions and never touches Netlify.
+# Sargassum is a slow daily signal, so a short daily run is plenty (no loop).
+
+on:
+  schedule:
+    - cron: "0 12,21 * * *" # twice a day (the SIR product updates daily)
+  push:
+    branches: [main]
+    paths: [".github/workflows/sargassum.yml", "scripts/sargassum_sir.py"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sargassum
+  cancel-in-progress: true
+
+jobs:
+  build-feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sargassum.json from NOAA SIR
+        run: python scripts/sargassum_sir.py # stdlib only — no deps
+        env:
+          SARG_OUT: ${{ runner.temp }}/sargassum.json
+
+      - name: Publish to sargassum-data branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          work="${{ runner.temp }}/pub"
+          mkdir -p "$work"
+          cp "${{ runner.temp }}/sargassum.json" "$work/sargassum.json"
+          cd "$work"
+          git init -q
+          git config user.name "sargassum-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -q -b sargassum-data
+          git add sargassum.json
+          git commit -q -m "Sargassum SIR feed $(date -u +%FT%TZ)"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" sargassum-data

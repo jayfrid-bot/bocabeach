@@ -206,6 +206,20 @@ export interface LightningData {
   dataAgeMinutes?: number;
 }
 
+// --- Sargassum / seaweed (NOAA Sargassum Inundation Risk, via off-Netlify job) ---
+export type SargassumRisk = "none" | "low" | "moderate" | "high" | "unknown";
+export interface SargassumData {
+  risk: SargassumRisk;
+  /** 0 none · 1 low · 2 moderate · 3 high · -1 unknown. */
+  riskLevel: number;
+  /** Distance to the nearest scored coastline segment (mi). */
+  nearestMi?: number;
+  /** Date of the SIR product (yyyymmdd). */
+  sourceDate?: string;
+  /** How old the SIR product is, in days. */
+  dataAgeDays?: number;
+}
+
 // --- Per-spot weather (Open-Meteo current) --------------------------------
 export interface SpotWeatherData {
   airTempF?: number;
@@ -232,6 +246,7 @@ export interface ConditionsSnapshot {
   waterQuality: Wrapped<WaterQualityData>;
   airQuality: Wrapped<AirQualityData>;
   lightning: Wrapped<LightningData>;
+  sargassum: Wrapped<SargassumData>;
   forecast: Wrapped<ForecastDay[]>;
   sun: Wrapped<SunData>;
   hourly: Wrapped<HourlyMetrics[]>;

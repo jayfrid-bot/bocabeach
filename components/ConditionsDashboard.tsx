@@ -51,6 +51,7 @@ export function ConditionsDashboard({
     snap.waterQuality,
     snap.airQuality,
     snap.lightning,
+    snap.sargassum,
     snap.forecast,
     snap.sun,
     snap.hourly,
@@ -162,6 +163,21 @@ export function ConditionsDashboard({
               : d.waterRating[0].toUpperCase() + d.waterRating.slice(1)
           }
           sub={d.waterAdvisory ? "advisory in effect" : undefined}
+        />
+        <MetricCard
+          icon="🪸"
+          label="Sargassum (seaweed)"
+          value={
+            !snap.sargassum.data || snap.sargassum.data.risk === "unknown"
+              ? "—"
+              : snap.sargassum.data.risk[0].toUpperCase() +
+                snap.sargassum.data.risk.slice(1)
+          }
+          sub={
+            snap.sargassum.data?.sourceDate
+              ? `NOAA SIR · ${snap.sargassum.data.sourceDate.slice(4, 6)}/${snap.sargassum.data.sourceDate.slice(6, 8)}`
+              : undefined
+          }
         />
         {d.precipProbability != null ? (
           <MetricCard
