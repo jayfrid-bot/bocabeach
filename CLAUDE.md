@@ -33,3 +33,7 @@ npm run build
 ## Guardrails
 - Don't embed Surfline cams or scrape their video (link out only).
 - Keep scores as guidance; lifeguard flags are authoritative safety overrides.
+
+## Communication
+- The owner prefers plain-English explanations. Explain technical concepts in
+  plain language (define jargon, use analogies) rather than assuming expertise.
