@@ -7,6 +7,7 @@ cams are http:// so no extra deps.
 """
 import csv
 import datetime as dt
+import glob
 import json
 import os
 import sys
@@ -29,6 +30,13 @@ def get(url: str, timeout: int = 25) -> bytes:
 
 
 def main() -> int:
+    # Stop growing once we have enough labeled-able photos (keeps the repo bounded).
+    cap = int(os.environ.get("EVAL_MAX_IMAGES", "0"))
+    have = len(glob.glob(os.path.join(IMG, "*.jpg")))
+    if cap and have >= cap:
+        print(f"at cap ({have}/{cap}) — skipping capture")
+        return 0
+
     rows = []
     for base, view in CAMS:
         try:

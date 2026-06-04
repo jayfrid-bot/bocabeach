@@ -1,0 +1,62 @@
+name: Vision Eval
+
+# Two jobs in one:
+#  - on a schedule (and the "Run workflow" button): collect fresh cam photos,
+#    run the production vision model on the new ones, and rebuild the review.
+#  - when you edit eval/labels.csv (your answers): just re-grade — no model calls.
+# Everything is committed back to main so you review/correct it on GitHub.
+
+on:
+  schedule:
+    - cron: "0 16,22 * * *" # ~noon & 6 PM ET — grow the test set over the week
+  push:
+    branches: [main]
+    paths: ["eval/labels.csv"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: eval
+  cancel-in-progress: false
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Collect fresh cam photos (not on a labels edit)
+        if: github.event_name != 'push'
+        run: python eval/archive_stills.py
+        env:
+          EVAL_MAX_IMAGES: "60" # stop growing here so the repo stays small
+
+      - name: Run the production vision model on new photos (not on a labels edit)
+        if: github.event_name != 'push'
+        run: python eval/run_eval.py
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          EVAL_DELAY: "7"
+
+      - name: Rebuild the review page + grade
+        run: |
+          python eval/make_review.py
+          python eval/score_eval.py || true
+
+      - name: Commit eval updates
+        run: |
+          git config user.name "eval-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add eval
+          if git diff --cached --quiet; then
+            echo "nothing changed"
+          else
+            git commit -m "eval: refresh $(date -u +%FT%TZ)"
+            git push
+          fi
