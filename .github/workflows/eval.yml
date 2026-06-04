@@ -1,18 +1,25 @@
 name: Vision Eval
 
-# Two jobs in one:
-#  - on a schedule (and the "Run workflow" button): collect fresh cam photos,
-#    run the production vision model on the new ones, and rebuild the review.
+# Three jobs in one:
+#  - on a schedule: collect fresh cam photos (all views, every 2 h during daylight),
+#    run the production vision model on new ones, and rebuild the review.
 #  - when you edit eval/labels.csv (your answers): just re-grade — no model calls.
+#  - workflow_dispatch with backfill=true: one-shot grab of ALL live views right now.
 # Everything is committed back to main so you review/correct it on GitHub.
 
 on:
   schedule:
-    - cron: "0 16,22 * * *" # ~noon & 6 PM ET — grow the test set over the week
+    # Every 2 hours 7 AM–9 PM ET (11:00–01:00 UTC); covers full Boca daylight.
+    - cron: "0 11,13,15,17,19,21,23,1 * * *"
   push:
     branches: [main]
     paths: ["eval/labels.csv"]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: "Backfill: grab all live views right now (ignores cap)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -24,18 +31,24 @@ concurrency:
 jobs:
   eval:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Collect fresh cam photos (not on a labels edit)
-        if: github.event_name != 'push'
+      - name: Backfill — grab ALL live cam views right now (manual trigger only)
+        if: github.event_name == 'workflow_dispatch' && inputs.backfill == 'true'
+        run: python eval/backfill_stills.py
+
+      - name: Collect fresh cam photos (scheduled, not labels edit, not backfill)
+        if: >
+          github.event_name != 'push' &&
+          !(github.event_name == 'workflow_dispatch' && inputs.backfill == 'true')
         run: python eval/archive_stills.py
         env:
-          EVAL_MAX_IMAGES: "60" # stop growing here so the repo stays small
+          EVAL_MAX_IMAGES: "300"  # ~300 images keeps the repo manageable
 
       - name: Run the production vision model on new photos (not on a labels edit)
         if: github.event_name != 'push'

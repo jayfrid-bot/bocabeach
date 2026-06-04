@@ -17,10 +17,10 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 IMG = os.path.join(DIR, "images")
 os.makedirs(IMG, exist_ok=True)
 
-# (cam base dir, view) pairs to sample — a spread of beach sections.
+# All live views (v13 is a parking/overhead cam; excluded).
 CAMS = (
-    [("http://video-monitoring.com/beachcams/boca", v) for v in ("s4", "s11", "s22")]
-    + [("http://video-monitoring.com/beachcams/bocainlet", v) for v in ("s8", "s12", "s16")]
+    [("http://video-monitoring.com/beachcams/boca", v) for v in ("s4", "s8", "s11", "s19", "s22")]
+    + [("http://video-monitoring.com/beachcams/bocainlet", v) for v in ("s4", "s8", "s12", "s16")]
 )
 
 
