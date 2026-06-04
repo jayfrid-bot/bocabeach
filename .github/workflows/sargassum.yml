@@ -1,21 +1,19 @@
-name: Sargassum Feed
+name: Cam Vision Feed
 
-# Builds a small sargassum.json from NOAA's daily Sargassum Inundation Risk (SIR)
-# KMZ and publishes it to the `sargassum-data` branch (NOT main), so the heavy
-# KMZ parsing runs here on free public-repo Actions and never touches Netlify.
-# Sargassum is a slow daily signal, so a short daily run is plenty (no loop).
+# Reads seaweed (sargassum) + crowd from the beach cams with Gemini vision and
+# publishes cam_seaweed.json to the `sargassum-data` branch (NOT main), so the
+# AI calls run here on free public-repo Actions and never touch Netlify.
 
 on:
   schedule:
     # Capture through the day (~7 AM-7 PM ET) to build the busyness-by-hour
-    # pattern; the ~7 AM run also captures observed seaweed BEFORE the City's
+    # pattern; the ~7 AM run also captures seaweed BEFORE the City's
     # beach-cleaning tractor (~7-9 AM), which is weighted highest.
     - cron: "0 11,13,15,17,19,21,23 * * *" # ~7 AM,9,11,1 PM,3,5,7 ET
   push:
     branches: [main]
     paths:
       - ".github/workflows/sargassum.yml"
-      - "scripts/sargassum_sir.py"
       - "scripts/cam_seaweed.py"
   workflow_dispatch: {}
 
@@ -36,12 +34,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Build sargassum.json from NOAA SIR
-        run: python scripts/sargassum_sir.py # stdlib only — no deps
-        env:
-          SARG_OUT: ${{ runner.temp }}/sargassum.json
-
-      - name: Read seaweed from beach cams (Gemini free tier — optional)
+      - name: Read seaweed + crowd from beach cams (Gemini free tier)
         run: python scripts/cam_seaweed.py # no-op without GEMINI_API_KEY
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -53,13 +46,12 @@ jobs:
         run: |
           work="${{ runner.temp }}/pub"
           mkdir -p "$work"
-          cp "${{ runner.temp }}/sargassum.json" "$work/sargassum.json"
-          cp "${{ runner.temp }}/cam_seaweed.json" "$work/cam_seaweed.json" 2>/dev/null || true
+          cp "${{ runner.temp }}/cam_seaweed.json" "$work/cam_seaweed.json"
           cd "$work"
           git init -q
-          git config user.name "sargassum-bot"
+          git config user.name "cam-vision-bot"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git checkout -q -b sargassum-data
-          git add -A # both sargassum.json and cam_seaweed.json
-          git commit -q -m "Sargassum + cam feed $(date -u +%FT%TZ)"
+          git add -A
+          git commit -q -m "Cam vision feed $(date -u +%FT%TZ)"
           git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" sargassum-data

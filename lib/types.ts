@@ -264,28 +264,18 @@ export interface BusynessData {
   /** Typical busyness by local hour, learned from the rolling cam history. */
   byHour?: BusynessByHour[];
 }
+/**
+ * Seaweed (sargassum) read entirely from the beach cams by the vision job —
+ * the worst level seen across the cams, preferring the early-morning shot
+ * (taken before the City's beach-cleaning tractor, so most representative).
+ */
 export interface SargassumData {
-  risk: SargassumRisk;
-  /** 0 none · 1 low · 2 moderate · 3 high · -1 unknown. */
-  riskLevel: number;
-  /** Distance to the nearest scored coastline segment (mi). */
-  nearestMi?: number;
-  /** Date of the SIR product (yyyymmdd). */
-  sourceDate?: string;
-  /** How old the SIR product is, in days. */
-  dataAgeDays?: number;
-  /**
-   * Observed seaweed read from the beach-cam stills (Gemini vision job), if
-   * available — the on-the-ground complement to the SIR satellite forecast.
-   */
-  observed?: {
-    level: SargassumRisk;
-    note?: string;
-    cams: CamSeaweedReading[];
-    /** True when this is the early-morning, pre-beach-cleaning reading (weighted highest). */
-    isMorning: boolean;
-    capturedAtLocal?: string;
-  };
+  level: SargassumRisk;
+  note?: string;
+  /** True when this is the early-morning, pre-beach-cleaning reading (most reliable). */
+  isMorning: boolean;
+  capturedAtLocal?: string;
+  cams: CamSeaweedReading[];
 }
 
 // --- NWS alerts + rip-current risk (api.weather.gov) -----------------------

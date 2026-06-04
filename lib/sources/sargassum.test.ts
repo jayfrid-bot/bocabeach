@@ -1,39 +1,38 @@
 import { describe, it, expect } from "vitest";
-import { summarizeSargassum, type SargassumFeed } from "@/lib/sources/sargassum";
+import { summarizeSeaweed, type CamSeaweedFeed } from "@/lib/sources/sargassum";
 
-const BOCA = { lat: 26.3587, lon: -80.0686 };
-const NOW = Date.parse("2026-06-03T12:00:00.000Z");
-
-function feed(segments: [number, number, number][]): SargassumFeed {
-  return { generatedAt: "2026-06-03T12:00:00Z", sourceDate: "20260602", segments };
-}
-
-describe("summarizeSargassum", () => {
-  it("maps the nearest coastline segment's risk to a category", () => {
-    const d = summarizeSargassum(
-      feed([
-        [26.36, -80.07, 2], // ~0.6 mi from Boca -> the match
-        [25.0, -80.3, 3], // far south, higher risk -> ignored
-      ]),
-      BOCA.lat,
-      BOCA.lon,
-      NOW,
-    );
-    expect(d.risk).toBe("moderate");
-    expect(d.riskLevel).toBe(2);
-    expect(d.nearestMi).toBeLessThan(2);
-    expect(d.dataAgeDays).toBe(1); // 20260602 vs 2026-06-03
+describe("summarizeSeaweed", () => {
+  it("takes the worst cam and prefers the morning (pre-tractor) reading", () => {
+    const feed: CamSeaweedFeed = {
+      morning: {
+        capturedAtLocal: "2026-06-03T07:10:00-04:00",
+        cams: [
+          { name: "South", level: "low", note: "thin wrack line" },
+          { name: "Inlet", level: "moderate", note: "bands by the jetty" },
+        ],
+      },
+      latest: {
+        capturedAtLocal: "2026-06-03T16:00:00-04:00",
+        cams: [{ name: "South", level: "none" }],
+      },
+    };
+    const d = summarizeSeaweed(feed)!;
+    expect(d.level).toBe("moderate"); // worst of the morning cams
+    expect(d.isMorning).toBe(true);
+    expect(d.note).toBe("bands by the jetty");
+    expect(d.cams).toHaveLength(2);
   });
 
-  it("returns 'unknown' when the nearest segment is too far away", () => {
-    const d = summarizeSargassum(feed([[20.0, -75.0, 3]]), BOCA.lat, BOCA.lon, NOW);
-    expect(d.risk).toBe("unknown");
-    expect(d.riskLevel).toBe(-1);
+  it("falls back to the latest reading when there is no morning one", () => {
+    const d = summarizeSeaweed({
+      latest: { capturedAtLocal: "x", cams: [{ name: "A", level: "high" }] },
+    })!;
+    expect(d.level).toBe("high");
+    expect(d.isMorning).toBe(false);
   });
 
-  it("handles an empty feed", () => {
-    const d = summarizeSargassum(feed([]), BOCA.lat, BOCA.lon, NOW);
-    expect(d.risk).toBe("unknown");
-    expect(d.nearestMi).toBeUndefined();
+  it("returns null when no cam has a usable reading", () => {
+    expect(summarizeSeaweed({})).toBeNull();
+    expect(summarizeSeaweed({ latest: { cams: [{ name: "A", level: "unknown" }] } })).toBeNull();
   });
 });

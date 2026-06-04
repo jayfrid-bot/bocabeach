@@ -204,13 +204,11 @@ export function ConditionsDashboard({
         <MetricCard
           icon="🪸"
           label="Sargassum (seaweed)"
-          value={!sg || sg.risk === "unknown" ? "—" : cap(sg.risk)}
+          value={!sg || sg.level === "unknown" ? "—" : cap(sg.level)}
           sub={
-            sg?.observed
-              ? `📷 ${sg.observed.isMorning ? "AM cams (pre-clean)" : "cams"}: ${cap(sg.observed.level)}${sg.observed.note ? " — " + sg.observed.note : ""}`
-              : sg?.sourceDate
-                ? `NOAA SIR · ${sg.sourceDate.slice(4, 6)}/${sg.sourceDate.slice(6, 8)}`
-                : undefined
+            sg
+              ? `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}${sg.note ? " — " + sg.note : ""}`
+              : undefined
           }
         />
         <MetricCard
