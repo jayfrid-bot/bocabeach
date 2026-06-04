@@ -51,6 +51,12 @@ function CamWeatherStrip({ cam }: { cam: CamView }) {
 function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
   // Cache-bust on a new capture (feed cams) or each poll, so the still refreshes.
   const src = `${cam.imageUrl}?t=${cam.capturedAt ?? cam.weather.fetchedAt}`;
+  // Feed cams publish a capture time; if it's well past the usual ~1-min cadence
+  // the upstream still-feed has frozen — don't claim it's "Live".
+  const ageMin = cam.capturedAt
+    ? (Date.now() - Date.parse(cam.capturedAt)) / 60000
+    : null;
+  const stale = ageMin != null && ageMin > 15;
   return (
     <a
       href={cam.url}
@@ -58,24 +64,45 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
       rel="noreferrer"
       className="group block overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-white/10 transition hover:ring-ocean-500/50"
     >
-      <div className="aspect-video w-full overflow-hidden">
+      <div className="relative aspect-video w-full overflow-hidden">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={src}
           alt={`${cam.name} — live`}
-          className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+          className={`h-full w-full object-cover transition duration-300 group-hover:scale-[1.02] ${
+            stale ? "opacity-80" : ""
+          }`}
           loading="lazy"
         />
+        {stale ? (
+          <div className="absolute inset-x-0 bottom-0 bg-slate-950/70 px-2 py-1 text-center text-[11px] text-amber-200">
+            Still image paused {fmtRelative(cam.capturedAt as string)} — tap for live video
+          </div>
+        ) : null}
       </div>
       <div className="p-3 sm:p-4">
         <div className="flex items-center justify-between gap-2">
           <div className="text-base font-semibold text-white sm:text-lg">{cam.name}</div>
-          <span className="shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-300">
-            ● Live
-          </span>
+          {stale ? (
+            <span
+              className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300"
+              title="The still-image feed hasn't updated recently — open the cam for live video."
+            >
+              ⏸ {fmtRelative(cam.capturedAt as string)}
+            </span>
+          ) : (
+            <span className="shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-300">
+              ● Live
+            </span>
+          )}
         </div>
         <div className="text-xs text-slate-400">{cam.provider}</div>
         <CamStamp cam={cam} tz={tz} />
+        {stale ? (
+          <div className="mt-1 text-[11px] text-amber-400/80">
+            ⚠ Still‑image feed paused upstream — tap for the live view.
+          </div>
+        ) : null}
         <CamWeatherStrip cam={cam} />
         {cam.attribution ? (
           <div className="mt-1 text-[11px] text-slate-500">{cam.attribution}</div>
