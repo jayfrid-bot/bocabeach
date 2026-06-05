@@ -39,7 +39,9 @@ def load(name):
 def run_provider(name, images):
     """Score all images with one provider, caching to predictions_<name>.csv."""
     fname = f"predictions_{name}.csv"
-    done = load(fname)
+    # Keep good cached rows, but DROP errored/blank ones so they get retried
+    # (e.g. after fixing the Groq 403 or once Gemini's daily quota resets).
+    done = {im: r for im, r in load(fname).items() if r.get("seaweed") not in ("", "ERROR")}
     todo = [p for p in images if os.path.basename(p) not in done]
     print(f"[{name}] {len(todo)} to score ({len(done)} cached)", flush=True)
     for i, path in enumerate(todo):

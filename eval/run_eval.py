@@ -29,11 +29,16 @@ def main() -> int:
         return 1
 
     # Only predict photos we haven't scored yet (cheap + keeps the free tier happy).
+    # Errored/blank rows are dropped so they're retried on the next run.
     out = os.path.join(DIR, "predictions.csv")
     done = {}
     if os.path.exists(out):
         with open(out) as fh:
-            done = {r["image"]: r for r in csv.DictReader(fh)}
+            done = {
+                r["image"]: r
+                for r in csv.DictReader(fh)
+                if r.get("seaweed") not in ("", "ERROR")
+            }
     todo = [p for p in images if os.path.basename(p) not in done]
     print(f"{len(todo)} new image(s) to score ({len(done)} already done)")
 

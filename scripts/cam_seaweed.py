@@ -42,6 +42,14 @@ TZ = ZoneInfo(os.environ.get("CAM_TZ", "America/New_York"))
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 MAX_RETRIES = int(os.environ.get("GEMINI_RETRIES", "3"))
 CAM_GAP_S = float(os.environ.get("CAM_GAP", "5"))
+# api.groq.com sits behind Cloudflare, which blocks the default "Python-urllib"
+# User-Agent with a 403 (error 1010). Send a normal browser UA so API calls go
+# through. Other providers ignore the UA, so one value is safe everywhere.
+HTTP_UA = os.environ.get(
+    "HTTP_UA",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+)
 
 # --- vision providers ------------------------------------------------------
 # Reliability comes from a FALLBACK CHAIN: try each configured provider in order
@@ -136,7 +144,7 @@ def fetch_still(cam: dict) -> bytes:
 
 def _post(url: str, body: bytes, headers: dict | None = None, timeout: int = 40) -> bytes:
     """POST JSON, retrying transient quota (429) / overload (5xx) with backoff."""
-    hdrs = {"Content-Type": "application/json", **(headers or {})}
+    hdrs = {"Content-Type": "application/json", "User-Agent": HTTP_UA, **(headers or {})}
     delay = 2.0
     for attempt in range(MAX_RETRIES + 1):
         req = urllib.request.Request(url, data=body, headers=hdrs)
