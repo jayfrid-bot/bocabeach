@@ -11,10 +11,32 @@ const PT = 18; // top (headroom for the "now" label)
 const PB = 30; // bottom (hour labels)
 const PLOT_W = W - PL - PR;
 const PLOT_H = H - PT - PB;
-const BASE_Y = PT + PLOT_H; // y of score 0
+const BASE_Y = PT + PLOT_H; // y of the bottom of the plot (domain low)
 
-const yFor = (score: number) =>
-  PT + (1 - Math.max(0, Math.min(100, score)) / 100) * PLOT_H;
+/**
+ * Auto-zoom the y-axis to the day's score range so the line actually rises and
+ * falls instead of hugging the bottom of a fixed 0–100 axis. We pad the range,
+ * keep a minimum visible span (so a flat day isn't exaggerated), snap to 5s, and
+ * clamp to 0–100. Returns the [low, high] domain + three gridline values.
+ */
+function scoreDomain(scores: number[]): { lo: number; hi: number; grid: number[] } {
+  const dMin = Math.min(...scores);
+  const dMax = Math.max(...scores);
+  const pad = Math.max(6, (dMax - dMin) * 0.25);
+  let lo = dMin - pad;
+  let hi = dMax + pad;
+  if (hi - lo < 24) {
+    const mid = (hi + lo) / 2;
+    lo = mid - 12;
+    hi = mid + 12;
+  }
+  lo = Math.max(0, Math.floor(lo / 5) * 5);
+  hi = Math.min(100, Math.ceil(hi / 5) * 5);
+  if (hi - lo < 10) hi = Math.min(100, lo + 10); // degenerate guard
+  const mid = Math.round((lo + hi) / 2 / 5) * 5;
+  const grid = [...new Set([lo, mid, hi])];
+  return { lo, hi, grid };
+}
 
 /**
  * Beach Day score across today's daylight hours as a line graph that rises and
@@ -29,6 +51,10 @@ export function HourlyScoreGraph({
   tz: string;
 }) {
   if (hours.length === 0) return null;
+
+  const { lo, hi, grid } = scoreDomain(hours.map((h) => h.score));
+  const yFor = (score: number) =>
+    PT + (1 - (Math.max(lo, Math.min(hi, score)) - lo) / (hi - lo)) * PLOT_H;
 
   const pts = hours.map((h) => ({ t: new Date(h.time).getTime(), s: h.score, h }));
   const t0 = pts[0].t;
@@ -85,8 +111,8 @@ export function HourlyScoreGraph({
             </linearGradient>
           </defs>
 
-          {/* horizontal gridlines + scale labels at 0 / 50 / 100 */}
-          {[0, 50, 100].map((g) => (
+          {/* horizontal gridlines + scale labels at the auto-zoomed bounds */}
+          {grid.map((g, i) => (
             <g key={g}>
               <line
                 x1={PL}
@@ -95,7 +121,7 @@ export function HourlyScoreGraph({
                 y2={yFor(g)}
                 stroke="#334155"
                 strokeWidth="1"
-                strokeDasharray={g === 0 ? undefined : "3 4"}
+                strokeDasharray={i === 0 ? undefined : "3 4"}
               />
               <text x={PL} y={yFor(g) - 3} fill="#475569" fontSize="10">
                 {g}
@@ -165,13 +191,16 @@ export function HourlyScoreGraph({
           )}
         </svg>
 
-        {/* per-hour wind speed + direction */}
-        <div className="mt-2 flex gap-1 overflow-x-auto border-t border-white/5 pt-2">
+        {/* per-hour wind speed + direction — equal columns that fit the width */}
+        <div
+          className="mt-2 grid gap-0.5 border-t border-white/5 pt-2"
+          style={{ gridTemplateColumns: `repeat(${hours.length}, minmax(0, 1fr))` }}
+        >
           {hours.map((h) => {
             const known = typeof h.windDirDeg === "number";
             return (
-              <div key={h.time} className="w-12 shrink-0 text-center">
-                <div className="text-[10px] uppercase text-slate-500">
+              <div key={h.time} className="min-w-0 overflow-hidden text-center">
+                <div className="truncate text-[10px] uppercase text-slate-500">
                   {fmtTime(h.time, tz).replace(":00", "")}
                 </div>
                 <div className="my-0.5 text-sm" aria-hidden>
@@ -194,10 +223,10 @@ export function HourlyScoreGraph({
                     </text>
                   )}
                 </svg>
-                <div className="text-[11px] font-medium text-slate-300">
+                <div className="truncate text-[11px] font-medium text-slate-300">
                   {typeof h.windSpeedMph === "number" ? h.windSpeedMph : "–"}
                 </div>
-                <div className="text-[9px] text-slate-500">
+                <div className="truncate text-[9px] text-slate-500">
                   {known ? degToCardinal(h.windDirDeg as number) : ""}
                   {h.raining ? " 💧" : ""}
                 </div>

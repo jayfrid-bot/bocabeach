@@ -18,7 +18,9 @@ import base64
 import datetime as dt
 import json
 import os
+import random
 import sys
+import time
 import urllib.error
 import urllib.request
 from zoneinfo import ZoneInfo
@@ -27,6 +29,13 @@ API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")  # 2.0-flash has no free tier
 OUT = os.environ.get("CAM_SEAWEED_OUT", "cam_seaweed.json")
 TZ = ZoneInfo(os.environ.get("CAM_TZ", "America/New_York"))
+
+# Gemini's free tier returns 429 (quota/rate) and 503 (model overloaded) under
+# load; both are usually transient, so we retry with exponential backoff. We also
+# space the per-cam calls so a burst doesn't trip the per-minute limit.
+RETRY_STATUSES = {429, 500, 502, 503, 504}
+MAX_RETRIES = int(os.environ.get("GEMINI_RETRIES", "3"))
+CAM_GAP_S = float(os.environ.get("CAM_GAP", "5"))
 PREV_URL = os.environ.get(
     "CAM_SEAWEED_PREV_URL",
     "https://raw.githubusercontent.com/jayfrid-bot/bocabeach/sargassum-data/cam_seaweed.json",
@@ -77,6 +86,32 @@ def fetch_still(cam: dict) -> bytes:
     return _get(f"{cam['feed']}/{feed[cam['view']]['mr']}")
 
 
+def _post(url: str, body: bytes, timeout: int = 40) -> bytes:
+    """POST JSON, retrying transient quota (429) / overload (5xx) with backoff."""
+    delay = 2.0
+    for attempt in range(MAX_RETRIES + 1):
+        req = urllib.request.Request(
+            url, data=body, headers={"Content-Type": "application/json"}
+        )
+        try:
+            return urllib.request.urlopen(req, timeout=timeout).read()
+        except urllib.error.HTTPError as e:
+            # Surface Google's error detail (e.g. API_KEY_INVALID vs RESOURCE_EXHAUSTED).
+            detail = e.read().decode("utf-8", "replace")[:200]
+            if e.code in RETRY_STATUSES and attempt < MAX_RETRIES:
+                time.sleep(delay + random.uniform(0, 0.75))
+                delay *= 2.2
+                continue
+            raise RuntimeError(f"HTTP {e.code}: {detail}") from None
+        except urllib.error.URLError as e:
+            if attempt < MAX_RETRIES:
+                time.sleep(delay + random.uniform(0, 0.75))
+                delay *= 2.2
+                continue
+            raise RuntimeError(f"network error: {e}") from None
+    raise RuntimeError("unreachable")  # pragma: no cover
+
+
 def assess(img: bytes) -> dict:
     body = json.dumps({
         "contents": [{"parts": [
@@ -88,13 +123,7 @@ def assess(img: bytes) -> dict:
     }).encode()
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
            f"{MODEL}:generateContent?key={API_KEY}")
-    req = urllib.request.Request(url, data=body,
-                                 headers={"Content-Type": "application/json"})
-    try:
-        raw = urllib.request.urlopen(req, timeout=40).read()
-    except urllib.error.HTTPError as e:
-        # Surface Google's error detail (e.g. API_KEY_INVALID vs RESOURCE_EXHAUSTED).
-        raise RuntimeError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:200]}") from None
+    raw = _post(url, body)
     resp = json.loads(raw)
     out = json.loads(resp["candidates"][0]["content"]["parts"][0]["text"])
     sw = str(out.get("seaweed", "")).lower()
@@ -129,7 +158,9 @@ def fetch_prev() -> dict:
 
 def capture_now(now_local: dt.datetime) -> dict | None:
     readings = []
-    for cam in CAMS:
+    for i, cam in enumerate(CAMS):
+        if i:
+            time.sleep(CAM_GAP_S)  # space calls to respect the per-minute limit
         try:
             r = assess(fetch_still(cam))
             readings.append({"id": cam["id"], "name": cam["name"], **r})
@@ -169,9 +200,12 @@ def main() -> int:
         ]
         history = history[-MAX_HISTORY:]
 
+    now_iso = (dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+               .isoformat().replace("+00:00", "Z"))
     out = {
-        "generatedAt": dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
-        .isoformat().replace("+00:00", "Z"),
+        # Bump the timestamp only on a fresh capture; otherwise keep prev's so a
+        # failed run that re-publishes the last good data doesn't look "fresh".
+        "generatedAt": now_iso if current else (prev.get("generatedAt") or now_iso),
         "model": MODEL if API_KEY else None,
         "tz": str(TZ),
         "dateLocal": today,
@@ -179,10 +213,21 @@ def main() -> int:
         "latest": latest,    # most recent reading (current beach state)
         "history": history,  # [{t, hour, level, people}] for the busyness-by-hour chart
     }
+
+    # Non-destructive: never overwrite the published feed with an empty document.
+    # `latest`/`morning` already carry forward prev's good data, so `out` is empty
+    # only when this run got nothing AND there was no prior reading — in that case
+    # write nothing so the publish step leaves the last good feed untouched.
+    if not (out["morning"] or out["latest"]):
+        print("no fresh readings and no prior good data — leaving published feed "
+              "unchanged (not writing output)", file=sys.stderr)
+        return 0
+
     with open(OUT, "w") as fh:
         json.dump(out, fh, separators=(",", ":"))
     mh = morning.get("hour") if morning else None
-    print(f"wrote {OUT}: morning={mh} latest={(latest or {}).get('hour')}")
+    fresh = "fresh" if current else "preserved (no fresh capture this run)"
+    print(f"wrote {OUT} [{fresh}]: morning={mh} latest={(latest or {}).get('hour')}")
     return 0
 
 

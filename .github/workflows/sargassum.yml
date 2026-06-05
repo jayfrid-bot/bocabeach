@@ -27,7 +27,7 @@ concurrency:
 jobs:
   build-feed:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 12  # headroom for per-cam spacing + retry backoff
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -44,9 +44,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          feed="${{ runner.temp }}/cam_seaweed.json"
+          if [ ! -f "$feed" ]; then
+            echo "no feed written (no fresh readings and no prior good data) — leaving last good sargassum-data in place"
+            exit 0
+          fi
           work="${{ runner.temp }}/pub"
           mkdir -p "$work"
-          cp "${{ runner.temp }}/cam_seaweed.json" "$work/cam_seaweed.json"
+          cp "$feed" "$work/cam_seaweed.json"
           cd "$work"
           git init -q
           git config user.name "cam-vision-bot"
