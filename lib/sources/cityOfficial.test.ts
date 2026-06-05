@@ -62,6 +62,20 @@ describe("parseCityConditions", () => {
     );
   });
 
+  it("does NOT treat a lifted/rescinded advisory as active", () => {
+    // The real myboca.us bar when the advisory is over — must not surface it.
+    const lifted = `
+      <span class="alertContainer"><a
+        href="/AlertCenter.aspx?AID=SWIM-ADVISORY-LIFTED-for-Spanish-River-B-113"
+        class="alert"> SWIM ADVISORY LIFTED for Spanish River Beach
+        <span style="color:#FC4C2F;">Read On...</span></a></span>`;
+    expect(detectNoSwimAdvisory(lifted)).toBeUndefined();
+
+    const rescinded = `<a href="/AlertCenter.aspx?AID=water-advisory-9"
+      class="alert">Water Contact Advisory Rescinded Read On...</a>`;
+    expect(detectNoSwimAdvisory(rescinded)).toBeUndefined();
+  });
+
   it("ignores unrelated AlertCenter alerts and absence of any", () => {
     const unrelated = `<a href="/AlertCenter.aspx?AID=Sanitation-Schedule-Change-9"
       class="alert">Sanitation Schedule Change Read On...</a>`;

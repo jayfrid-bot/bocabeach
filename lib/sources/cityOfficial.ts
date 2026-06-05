@@ -88,6 +88,16 @@ export function detectNoSwimAdvisory(
       .replace(/\s+/g, " ")
       .trim();
     if (!title) continue;
+    // "SWIM ADVISORY LIFTED …", "… Rescinded", "… Reopened" announce that an
+    // advisory is OVER — that's good news, not an active advisory. Skip these so
+    // they don't show the red banner or cap the Beach Day score.
+    if (
+      /\b(lifted|rescind(?:ed)?|cancel(?:l?ed)?|cleared|re-?open(?:ed)?|removed|ended|expired|no longer)\b/i.test(
+        title,
+      )
+    ) {
+      continue;
+    }
     const swimRelated =
       /no[\s-]*swim|do not swim|swim\s*advisory|water\s*(advisory|quality|contact)|beach\s*(advisory|closure|closed)/i.test(
         title,
@@ -144,10 +154,12 @@ export async function fetchCityOfficial(
   }
   try {
     const res = await fetchWithTimeout(loc.cityConditionsUrl, {
-      // Flags are the authoritative safety override and the City changes them
-      // intra-day, so keep this the freshest scrape (1h). The page also posts its
-      // own "Update HH:MM" label, surfaced in the UI for true last-updated time.
-      next: { revalidate: 3600 }, // 1h
+      // Flags + advisories are the authoritative safety override and the City
+      // re-posts the report each morning (and can change flags intra-day), so keep
+      // this the freshest scrape — 15 min — so a stale overnight copy isn't served
+      // for long after they update. The page also posts its own dated "Update"
+      // label, surfaced in the UI as the true last-updated time.
+      next: { revalidate: 900 }, // 15 min
     });
     if (!res.ok) throw new Error(`city page -> ${res.status}`);
     const data = parseCityConditions(await res.text());
