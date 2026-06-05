@@ -94,6 +94,53 @@ def people_mae(pairs):
     return sum(abs(a - b) for a, b in pts) / len(pts) if pts else None
 
 
+def agreement_block(configured, preds_by, labels):
+    """Inter-provider agreement across ALL images (no labels needed) + the
+    disagreements, which are the highest-value images to label next."""
+    if len(configured) < 2:
+        return ""
+    # Images every provider scored without error.
+    images = sorted(
+        set.intersection(*[
+            {im for im, r in preds_by[n].items() if r["seaweed"] not in ("", "ERROR")}
+            for n in configured
+        ])
+    )
+    if not images:
+        return "## Agreement\n\n_No images scored by all providers yet._\n"
+
+    def all_agree(im, field):
+        vals = {(preds_by[n][im].get(field) or "") for n in configured}
+        return len(vals) == 1
+
+    sea_agree = sum(all_agree(im, "seaweed") for im in images)
+    crowd_agree = sum(all_agree(im, "crowd") for im in images)
+    n = len(images)
+
+    out = [
+        "## Agreement (all providers, no labels needed)",
+        "",
+        f"Across **{n}** images all providers scored:",
+        f"- **Seaweed agreement:** {sea_agree}/{n} ({sea_agree / n:.0%})",
+        f"- **Crowd agreement:** {crowd_agree}/{n} ({crowd_agree / n:.0%})",
+        "",
+    ]
+    disagree = [im for im in images if not all_agree(im, "seaweed")]
+    if disagree:
+        out += [
+            f"### Seaweed disagreements ({len(disagree)}) — best images to label next",
+            "",
+            "| image | " + " | ".join(configured) + " | labeled? |",
+            "|---|" + "---|" * (len(configured) + 1),
+        ]
+        for im in disagree[:40]:
+            cells = " | ".join(preds_by[n][im].get("seaweed", "—") for n in configured)
+            have = "✅" if (labels.get(im, {}).get("seaweed") or "").strip() else "❓"
+            out.append(f"| {im} | {cells} | {have} |")
+        out.append("")
+    return "\n".join(out)
+
+
 def main() -> int:
     configured = [p for p in PROVIDERS if cs._provider_configured(p)]
     skipped = [p for p in PROVIDERS if p not in configured]
@@ -148,6 +195,7 @@ def main() -> int:
         )
     if skipped:
         lines += ["", f"_Not configured (skipped): {', '.join(skipped)}._"]
+    lines += ["", "---", "", agreement_block(configured, preds_by, labels)]
     lines += ["", "---", ""] + detail
 
     text = "\n".join(lines)
