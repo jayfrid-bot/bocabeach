@@ -228,16 +228,36 @@ def _enabled_providers() -> list[tuple[str, str]]:
     return out
 
 
+def _provider_configured(name: str) -> bool:
+    if name == "gemini":
+        return bool(API_KEY)
+    cfg = OPENAI_PROVIDERS.get(name)
+    return bool(cfg and cfg["key"])
+
+
+def assess_with(name: str, img: bytes) -> dict:
+    """Read one image with exactly ONE named provider (for per-provider eval)."""
+    if name == "gemini":
+        if not API_KEY:
+            raise RuntimeError("gemini not configured")
+        raw, model = _gemini_out(img), MODEL
+    else:
+        cfg = OPENAI_PROVIDERS.get(name)
+        if not cfg or not cfg["key"]:
+            raise RuntimeError(f"{name} not configured")
+        raw, model = _openai_out(cfg, img), cfg["model"]
+    result = _parse_out(raw)
+    result["provider"] = name
+    result["model"] = model
+    return result
+
+
 def assess(img: bytes) -> dict:
     """Read one image, falling through the provider chain until one succeeds."""
     errors = []
-    for name, model in _enabled_providers():
+    for name, _model in _enabled_providers():
         try:
-            raw = _gemini_out(img) if name == "gemini" else _openai_out(OPENAI_PROVIDERS[name], img)
-            result = _parse_out(raw)
-            result["provider"] = name
-            result["model"] = model
-            return result
+            return assess_with(name, img)
         except Exception as e:  # noqa: BLE001 — try the next provider
             errors.append(f"{name}: {e}")
     if not errors:

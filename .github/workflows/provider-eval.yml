@@ -1,0 +1,53 @@
+name: Vision Provider Comparison
+
+# Manually-run head-to-head: score each configured vision provider over the
+# labeled eval images and commit eval/providers_report.md. Run it from the
+# Actions tab ("Run workflow"); pick which providers to compare.
+
+on:
+  workflow_dispatch:
+    inputs:
+      providers:
+        description: "Providers to compare (comma-separated)"
+        type: string
+        default: "gemini,groq"
+
+permissions:
+  contents: write
+  models: read # lets GitHub Models be one of the compared providers
+
+concurrency:
+  group: provider-eval
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run each provider over the labeled eval set + score
+        run: python eval/compare_providers.py
+        env:
+          EVAL_PROVIDERS: ${{ inputs.providers }}
+          EVAL_DELAY: "3"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit the comparison report
+        run: |
+          git config user.name "eval-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add eval/providers_report.md eval/predictions_*.csv
+          if git diff --cached --quiet; then
+            echo "nothing changed"
+          else
+            git commit -m "eval: provider comparison $(date -u +%FT%TZ)"
+            git push
+          fi
