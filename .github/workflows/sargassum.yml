@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: write
+  models: read # lets the job's GITHUB_TOKEN call GitHub Models (free vision fallback)
 
 concurrency:
   group: sargassum
@@ -34,10 +35,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Read seaweed + crowd from beach cams (Gemini free tier)
-        run: python scripts/cam_seaweed.py # no-op without GEMINI_API_KEY
+      - name: Read seaweed + crowd from beach cams (free vision, with fallback)
+        # Falls through providers in order until one answers; no-op if none configured.
+        run: python scripts/cam_seaweed.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }} # optional free fallback (14.4k/day)
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }} # optional free fallback
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GitHub Models fallback (no signup)
           CAM_SEAWEED_OUT: ${{ runner.temp }}/cam_seaweed.json
 
       - name: Publish to sargassum-data branch

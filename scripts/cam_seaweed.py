@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """
-Read visible sargassum/seaweed from the close-up beach-cam stills using Google
-Gemini Flash (free tier). Runs OFF Netlify in the daily Action; writes a tiny
+Read visible sargassum/seaweed + crowd from the close-up beach-cam stills using a
+FALLBACK CHAIN of free vision APIs. Runs OFF Netlify in the Action; writes a tiny
 cam_seaweed.json the web app reads. Pure stdlib (urllib/base64/json/zoneinfo).
+
+Reliability: each image is tried against each configured provider in order until
+one answers, so one provider being rate-limited/down doesn't blank the feed. A
+provider is "configured" only if its key is present (see OPENAI_PROVIDERS below):
+  gemini · groq · openrouter · github (GitHub Models)
+All are free tiers; set GEMINI_API_KEY and/or any of GROQ_API_KEY,
+OPENROUTER_API_KEY, GITHUB_MODELS_TOKEN (GITHUB_TOKEN with `models: read` in CI).
+With none configured it preserves existing readings and exits 0.
 
 The City runs a tractor that clears beach seaweed every morning ~7-9 AM, so an
 afternoon photo shows a *cleaned* beach and understates what's washing ashore.
@@ -10,15 +18,13 @@ We therefore weight the EARLY-MORNING (pre-tractor) capture highest: each run
 records the local capture time, and we merge with the previously published file
 to preserve today's earliest morning reading as the authoritative `morning`
 value (plus a `latest` reading for the current beach state).
-
-Needs a free GEMINI_API_KEY (Google AI Studio). Without it, it preserves any
-existing readings and exits 0 so the rest of the pipeline keeps working.
 """
 import base64
 import datetime as dt
 import json
 import os
 import random
+import re
 import sys
 import time
 import urllib.error
@@ -30,12 +36,54 @@ MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")  # 2.0-flash has no f
 OUT = os.environ.get("CAM_SEAWEED_OUT", "cam_seaweed.json")
 TZ = ZoneInfo(os.environ.get("CAM_TZ", "America/New_York"))
 
-# Gemini's free tier returns 429 (quota/rate) and 503 (model overloaded) under
-# load; both are usually transient, so we retry with exponential backoff. We also
-# space the per-cam calls so a burst doesn't trip the per-minute limit.
+# Free vision APIs return 429 (quota/rate) and 503 (overloaded) under load; both
+# are usually transient, so we retry with exponential backoff. We also space the
+# per-cam calls so a burst doesn't trip a per-minute limit.
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 MAX_RETRIES = int(os.environ.get("GEMINI_RETRIES", "3"))
 CAM_GAP_S = float(os.environ.get("CAM_GAP", "5"))
+
+# --- vision providers ------------------------------------------------------
+# Reliability comes from a FALLBACK CHAIN: try each configured provider in order
+# until one returns a valid reading. A provider is "configured" only if its key is
+# present, so the script works with just Gemini today and lights up more providers
+# as you add free keys (no code change). All but Gemini are OpenAI chat-compatible
+# (image as a base64 data URI), so they share one adapter. Free tiers (mid-2026):
+#   gemini      GEMINI_API_KEY       ~250 req/day  (Google AI Studio)
+#   groq        GROQ_API_KEY         ~14,400/day   (Llama 4 Scout; no credit card)
+#   openrouter  OPENROUTER_API_KEY   ~20 req/min   (many :free vision models)
+#   github      GITHUB_MODELS_TOKEN  ~50 req/day   (uses the Action's own token)
+# Override the order with VISION_PROVIDERS="groq,gemini,openrouter,github".
+PROVIDER_ORDER = [
+    p.strip()
+    for p in os.environ.get("VISION_PROVIDERS", "gemini,groq,openrouter,github").split(",")
+    if p.strip()
+]
+OPENAI_PROVIDERS = {
+    "groq": {
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "model": os.environ.get("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"),
+        "key": os.environ.get("GROQ_API_KEY", "").strip(),
+    },
+    "openrouter": {
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "model": os.environ.get(
+            "OPENROUTER_MODEL", "meta-llama/llama-3.2-11b-vision-instruct:free"
+        ),
+        "key": os.environ.get("OPENROUTER_API_KEY", "").strip(),
+    },
+    "github": {
+        # GitHub Models — free with a token that has `models: read`. In Actions the
+        # job's GITHUB_TOKEN works once `permissions: models: read` is set.
+        "url": os.environ.get(
+            "GITHUB_MODELS_URL", "https://models.github.ai/inference/chat/completions"
+        ),
+        "model": os.environ.get("GITHUB_MODELS_MODEL", "openai/gpt-4o-mini"),
+        "key": (os.environ.get("GITHUB_MODELS_TOKEN", "").strip()
+                or os.environ.get("GITHUB_TOKEN", "").strip()),
+    },
+}
+
 PREV_URL = os.environ.get(
     "CAM_SEAWEED_PREV_URL",
     "https://raw.githubusercontent.com/jayfrid-bot/bocabeach/sargassum-data/cam_seaweed.json",
@@ -86,17 +134,16 @@ def fetch_still(cam: dict) -> bytes:
     return _get(f"{cam['feed']}/{feed[cam['view']]['mr']}")
 
 
-def _post(url: str, body: bytes, timeout: int = 40) -> bytes:
+def _post(url: str, body: bytes, headers: dict | None = None, timeout: int = 40) -> bytes:
     """POST JSON, retrying transient quota (429) / overload (5xx) with backoff."""
+    hdrs = {"Content-Type": "application/json", **(headers or {})}
     delay = 2.0
     for attempt in range(MAX_RETRIES + 1):
-        req = urllib.request.Request(
-            url, data=body, headers={"Content-Type": "application/json"}
-        )
+        req = urllib.request.Request(url, data=body, headers=hdrs)
         try:
             return urllib.request.urlopen(req, timeout=timeout).read()
         except urllib.error.HTTPError as e:
-            # Surface Google's error detail (e.g. API_KEY_INVALID vs RESOURCE_EXHAUSTED).
+            # Surface the provider's error detail (e.g. API_KEY_INVALID vs quota).
             detail = e.read().decode("utf-8", "replace")[:200]
             if e.code in RETRY_STATUSES and attempt < MAX_RETRIES:
                 time.sleep(delay + random.uniform(0, 0.75))
@@ -112,20 +159,19 @@ def _post(url: str, body: bytes, timeout: int = 40) -> bytes:
     raise RuntimeError("unreachable")  # pragma: no cover
 
 
-def assess(img: bytes) -> dict:
-    body = json.dumps({
-        "contents": [{"parts": [
-            {"text": PROMPT},
-            {"inline_data": {"mime_type": "image/jpeg",
-                             "data": base64.b64encode(img).decode()}},
-        ]}],
-        "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
-    }).encode()
-    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{MODEL}:generateContent?key={API_KEY}")
-    raw = _post(url, body)
-    resp = json.loads(raw)
-    out = json.loads(resp["candidates"][0]["content"]["parts"][0]["text"])
+def _extract_json(text: str) -> dict:
+    """Parse a model's text reply into JSON, tolerating ```json fences / prose."""
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-zA-Z]*\s*", "", t).rstrip("`").strip()
+    i, j = t.find("{"), t.rfind("}")
+    if i != -1 and j > i:
+        t = t[i : j + 1]
+    return json.loads(t)
+
+
+def _parse_out(out: dict) -> dict:
+    """Validate a raw model reply and normalize to our reading shape."""
     sw = str(out.get("seaweed", "")).lower()
     if sw not in SEAWEED:
         raise ValueError(f"bad seaweed: {sw!r}")
@@ -138,6 +184,65 @@ def assess(img: bytes) -> dict:
         "people": int(people) if isinstance(people, (int, float)) else None,
         "crowdNote": str(out.get("crowd_note", ""))[:80],
     }
+
+
+def _gemini_out(img: bytes) -> dict:
+    body = json.dumps({
+        "contents": [{"parts": [
+            {"text": PROMPT},
+            {"inline_data": {"mime_type": "image/jpeg",
+                             "data": base64.b64encode(img).decode()}},
+        ]}],
+        "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
+    }).encode()
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+           f"{MODEL}:generateContent?key={API_KEY}")
+    resp = json.loads(_post(url, body))
+    return _extract_json(resp["candidates"][0]["content"]["parts"][0]["text"])
+
+
+def _openai_out(cfg: dict, img: bytes) -> dict:
+    """One adapter for every OpenAI chat-compatible vision API (Groq/OpenRouter/GitHub)."""
+    data_uri = "data:image/jpeg;base64," + base64.b64encode(img).decode()
+    body = json.dumps({
+        "model": cfg["model"],
+        "temperature": 0,
+        "messages": [{"role": "user", "content": [
+            {"type": "text", "text": PROMPT},
+            {"type": "image_url", "image_url": {"url": data_uri}},
+        ]}],
+    }).encode()
+    resp = json.loads(_post(cfg["url"], body, headers={"Authorization": f"Bearer {cfg['key']}"}))
+    return _extract_json(resp["choices"][0]["message"]["content"])
+
+
+def _enabled_providers() -> list[tuple[str, str]]:
+    """[(name, model)] for each configured provider, in fallback order."""
+    out = []
+    for name in PROVIDER_ORDER:
+        if name == "gemini":
+            if API_KEY:
+                out.append((name, MODEL))
+        elif name in OPENAI_PROVIDERS and OPENAI_PROVIDERS[name]["key"]:
+            out.append((name, OPENAI_PROVIDERS[name]["model"]))
+    return out
+
+
+def assess(img: bytes) -> dict:
+    """Read one image, falling through the provider chain until one succeeds."""
+    errors = []
+    for name, model in _enabled_providers():
+        try:
+            raw = _gemini_out(img) if name == "gemini" else _openai_out(OPENAI_PROVIDERS[name], img)
+            result = _parse_out(raw)
+            result["provider"] = name
+            result["model"] = model
+            return result
+        except Exception as e:  # noqa: BLE001 — try the next provider
+            errors.append(f"{name}: {e}")
+    if not errors:
+        raise RuntimeError("no vision providers configured (set GEMINI_API_KEY or another key)")
+    raise RuntimeError("all vision providers failed -> " + " | ".join(errors))
 
 
 def busiest_crowd(group: dict | None) -> dict | None:
@@ -164,7 +269,8 @@ def capture_now(now_local: dt.datetime) -> dict | None:
         try:
             r = assess(fetch_still(cam))
             readings.append({"id": cam["id"], "name": cam["name"], **r})
-            print(f"  {cam['id']}: seaweed={r['level']} crowd={r.get('crowd')} people={r.get('people')}")
+            print(f"  {cam['id']}: seaweed={r['level']} crowd={r.get('crowd')} "
+                  f"people={r.get('people')} via {r.get('provider')}")
         except Exception as e:  # noqa: BLE001
             print(f"  warn {cam['id']}: {e}", file=sys.stderr)
     if not readings:
@@ -176,13 +282,17 @@ def capture_now(now_local: dt.datetime) -> dict | None:
 def main() -> int:
     now_local = dt.datetime.now(TZ)
     today = now_local.date().isoformat()
+    providers = _enabled_providers()
     prev = fetch_prev()
     # Carry over today's morning reading; drop it if it's from a previous day.
     prev_morning = prev.get("morning") if prev.get("dateLocal") == today else None
 
-    current = capture_now(now_local) if API_KEY else None
-    if current is None and not API_KEY:
-        print("no GEMINI_API_KEY — preserving any existing readings", file=sys.stderr)
+    if providers:
+        print(f"vision providers (in order): {', '.join(n for n, _ in providers)}")
+    current = capture_now(now_local) if providers else None
+    if current is None and not providers:
+        print("no vision providers configured — preserving any existing readings",
+              file=sys.stderr)
 
     # The earliest morning (pre-tractor) reading of the day is authoritative.
     morning = prev_morning
@@ -206,7 +316,10 @@ def main() -> int:
         # Bump the timestamp only on a fresh capture; otherwise keep prev's so a
         # failed run that re-publishes the last good data doesn't look "fresh".
         "generatedAt": now_iso if current else (prev.get("generatedAt") or now_iso),
-        "model": MODEL if API_KEY else None,
+        # Label with the providers actually in play (each reading also records the
+        # exact provider/model that produced it). Keep prev's label on a no-op run.
+        "model": (",".join(n for n, _ in providers) if current
+                  else prev.get("model")) or (providers[0][1] if providers else None),
         "tz": str(TZ),
         "dateLocal": today,
         "morning": morning,  # earliest pre-cleaning reading (highest weight)
