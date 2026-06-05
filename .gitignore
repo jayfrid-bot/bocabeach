@@ -33,3 +33,7 @@ yarn-error.log*
 
 # test
 /coverage
+
+# python
+__pycache__/
+*.pyc
