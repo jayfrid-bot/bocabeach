@@ -1,6 +1,6 @@
 # Eye‑test: your answer vs the AI
 
-**71 photos · 5 have your answer filled in · 3 disagree (of the reviewed ones).**
+**78 photos · 5 have your answer filled in · 3 disagree (of the reviewed ones).**
 
 For each photo below, **You** is the correct answer and **AI said** is what the model guessed. If you disagree, just change the word in `labels.csv` — the grade updates itself.
 
@@ -78,6 +78,16 @@ Legend: ✅ you and the AI agree · ⚠️ you differ · ❓ you haven't answere
 | **Crowd** | — | quiet | ❓ |
 | **People** | — | 13 |  |
 
+### boca_s11_1780847393.jpg
+
+![photo](images/boca_s11_1780847393.jpg)
+
+| | You (the truth) | AI said | |
+|---|---|---|---|
+| **Seaweed** | — | high | ❓ |
+| **Crowd** | — | quiet | ❓ |
+| **People** | — | 10 |  |
+
 ### boca_s19_1780597089.jpg
 
 ![photo](images/boca_s19_1780597089.jpg)
@@ -127,6 +137,16 @@ Legend: ✅ you and the AI agree · ⚠️ you differ · ❓ you haven't answere
 | **Seaweed** | — | high | ❓ |
 | **Crowd** | — | quiet | ❓ |
 | **People** | — | 20 |  |
+
+### boca_s19_1780847510.jpg
+
+![photo](images/boca_s19_1780847510.jpg)
+
+| | You (the truth) | AI said | |
+|---|---|---|---|
+| **Seaweed** | — | moderate | ❓ |
+| **Crowd** | — | moderate | ❓ |
+| **People** | — | 25 |  |
 
 ### boca_s22_1780594066.jpg
 
@@ -278,6 +298,16 @@ Legend: ✅ you and the AI agree · ⚠️ you differ · ❓ you haven't answere
 | **Crowd** | — | quiet | ❓ |
 | **People** | — | 15 |  |
 
+### boca_s4_1780847116.jpg
+
+![photo](images/boca_s4_1780847116.jpg)
+
+| | You (the truth) | AI said | |
+|---|---|---|---|
+| **Seaweed** | — | high | ❓ |
+| **Crowd** | — | quiet | ❓ |
+| **People** | — | 11 |  |
+
 ### boca_s8_1780597661.jpg
 
 ![photo](images/boca_s8_1780597661.jpg)
@@ -337,6 +367,16 @@ Legend: ✅ you and the AI agree · ⚠️ you differ · ❓ you haven't answere
 | **Seaweed** | — | high | ❓ |
 | **Crowd** | — | quiet | ❓ |
 | **People** | — | 25 |  |
+
+### boca_s8_1780847236.jpg
+
+![photo](images/boca_s8_1780847236.jpg)
+
+| | You (the truth) | AI said | |
+|---|---|---|---|
+| **Seaweed** | — | high | ❓ |
+| **Crowd** | — | moderate | ❓ |
+| **People** | — | 13 |  |
 
 ### bocainlet_s12_1780593701.jpg
 
@@ -437,6 +477,16 @@ Legend: ✅ you and the AI agree · ⚠️ you differ · ❓ you haven't answere
 | **Seaweed** | — | low | ❓ |
 | **Crowd** | — | quiet | ❓ |
 | **People** | — | 7 |  |
+
+### bocainlet_s12_1780848043.jpg
+
+![photo](images/bocainlet_s12_1780848043.jpg)
+
+| | You (the truth) | AI said | |
+|---|---|---|---|
+| **Seaweed** | — | low | ❓ |
+| **Crowd** | — | quiet | ❓ |
+| **People** | — | 6 |  |
 
 ### bocainlet_s16_1780593930.jpg
 
@@ -618,6 +668,16 @@ Legend: ✅ you and the AI agree · ⚠️ you differ · ❓ you haven't answere
 | **Crowd** | — | moderate | ❓ |
 | **People** | — | 12 |  |
 
+### bocainlet_s4_1780847582.jpg
+
+![photo](images/bocainlet_s4_1780847582.jpg)
+
+| | You (the truth) | AI said | |
+|---|---|---|---|
+| **Seaweed** | — | none | ❓ |
+| **Crowd** | — | quiet | ❓ |
+| **People** | — | 10 |  |
+
 ### bocainlet_s8_1780593482.jpg
 
 ![photo](images/bocainlet_s8_1780593482.jpg)
@@ -717,3 +777,13 @@ Legend: ✅ you and the AI agree · ⚠️ you differ · ❓ you haven't answere
 | **Seaweed** | — | moderate | ❓ |
 | **Crowd** | — | moderate | ❓ |
 | **People** | — | 26 |  |
+
+### bocainlet_s8_1780847813.jpg
+
+![photo](images/bocainlet_s8_1780847813.jpg)
+
+| | You (the truth) | AI said | |
+|---|---|---|---|
+| **Seaweed** | — | moderate | ❓ |
+| **Crowd** | — | moderate | ❓ |
+| **People** | — | 22 |  |
