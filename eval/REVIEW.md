@@ -1,6 +1,6 @@
 # Eye‑test: your answer vs the AI
 
-**104 photos · 5 have your answer filled in · 3 disagree (of the reviewed ones).**
+**108 photos · 5 have your answer filled in · 3 disagree (of the reviewed ones).**
 
 For each photo below, **You** is the correct answer and **AI said** is what the model guessed. If you disagree, just change the word in `labels.csv` — the grade updates itself.
 
@@ -658,6 +658,16 @@ Legend: ✅ you and the AI agree · ⚠️ you differ · ❓ you haven't answere
 | **Crowd** | — | quiet | ❓ |
 | **People** | — | 10 |  |
 
+### bocainlet_s12_1780876509.jpg
+
+![photo](images/bocainlet_s12_1780876509.jpg)
+
+| | You (the truth) | AI said | |
+|---|---|---|---|
+| **Seaweed** | — | moderate | ❓ |
+| **Crowd** | — | quiet | ❓ |
+| **People** | — | 8 |  |
+
 ### bocainlet_s16_1780593930.jpg
 
 ![photo](images/bocainlet_s16_1780593930.jpg)
@@ -788,6 +798,16 @@ Legend: ✅ you and the AI agree · ⚠️ you differ · ❓ you haven't answere
 | **Crowd** | — | moderate | ❓ |
 | **People** | — | 21 |  |
 
+### bocainlet_s16_1780875071.jpg
+
+![photo](images/bocainlet_s16_1780875071.jpg)
+
+| | You (the truth) | AI said | |
+|---|---|---|---|
+| **Seaweed** | — | moderate | ❓ |
+| **Crowd** | — | quiet | ❓ |
+| **People** | — | 10 |  |
+
 ### bocainlet_s4_1780596611.jpg
 
 ![photo](images/bocainlet_s4_1780596611.jpg)
@@ -907,6 +927,16 @@ Legend: ✅ you and the AI agree · ⚠️ you differ · ❓ you haven't answere
 | **Seaweed** | — | none | ❓ |
 | **Crowd** | — | quiet | ❓ |
 | **People** | — | 7 |  |
+
+### bocainlet_s4_1780876056.jpg
+
+![photo](images/bocainlet_s4_1780876056.jpg)
+
+| | You (the truth) | AI said | |
+|---|---|---|---|
+| **Seaweed** | — | low | ❓ |
+| **Crowd** | — | quiet | ❓ |
+| **People** | — | 9 |  |
 
 ### bocainlet_s8_1780593482.jpg
 
@@ -1047,3 +1077,13 @@ Legend: ✅ you and the AI agree · ⚠️ you differ · ❓ you haven't answere
 | **Seaweed** | — | low | ❓ |
 | **Crowd** | — | quiet | ❓ |
 | **People** | — | 15 |  |
+
+### bocainlet_s8_1780876283.jpg
+
+![photo](images/bocainlet_s8_1780876283.jpg)
+
+| | You (the truth) | AI said | |
+|---|---|---|---|
+| **Seaweed** | — | low | ❓ |
+| **Crowd** | — | empty | ❓ |
+| **People** | — | 0 |  |
