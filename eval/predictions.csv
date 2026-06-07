@@ -5,10 +5,12 @@ boca_s11_1780678449.jpg,high,quiet,8
 boca_s11_1780685439.jpg,high,quiet,8
 boca_s11_1780691900.jpg,high,quiet,9
 boca_s11_1780694111.jpg,high,quiet,10
+boca_s11_1780846675.jpg,high,quiet,13
 boca_s19_1780597089.jpg,moderate,moderate,28
 boca_s19_1780678553.jpg,moderate,quiet,6
 boca_s19_1780692120.jpg,high,quiet,14
 boca_s19_1780694229.jpg,high,quiet,5
+boca_s19_1780846070.jpg,high,quiet,20
 boca_s22_1780594066.jpg,moderate,quiet,8
 boca_s22_1780597315.jpg,moderate,quiet,6
 boca_s22_1780607335.jpg,moderate,quiet,3
@@ -16,6 +18,7 @@ boca_s22_1780678656.jpg,moderate,quiet,5
 boca_s22_1780685063.jpg,moderate,moderate,7
 boca_s22_1780691469.jpg,moderate,moderate,7
 boca_s22_1780694450.jpg,moderate,quiet,7
+boca_s22_1780846271.jpg,high,quiet,13
 boca_s4_1780594218.jpg,moderate,quiet,15
 boca_s4_1780597536.jpg,moderate,quiet,10
 boca_s4_1780608131.jpg,moderate,quiet,2
@@ -28,6 +31,7 @@ boca_s8_1780679007.jpg,low,quiet,8
 boca_s8_1780685321.jpg,moderate,quiet,6
 boca_s8_1780691783.jpg,low,moderate,10
 boca_s8_1780694010.jpg,moderate,quiet,7
+boca_s8_1780845849.jpg,high,quiet,25
 bocainlet_s12_1780593701.jpg,moderate,quiet,2
 bocainlet_s12_1780597073.jpg,low,quiet,6
 bocainlet_s12_1780612343.jpg,moderate,empty,0
@@ -37,6 +41,7 @@ bocainlet_s12_1780691787.jpg,low,empty,0
 bocainlet_s12_1780696850.jpg,low,quiet,3
 bocainlet_s12_1780701930.jpg,moderate,quiet,7
 bocainlet_s12_1780707664.jpg,low,empty,0
+bocainlet_s12_1780846352.jpg,low,quiet,7
 bocainlet_s16_1780593930.jpg,high,quiet,4
 bocainlet_s16_1780597456.jpg,moderate,empty,0
 bocainlet_s16_1780612569.jpg,low,quiet,5
@@ -46,6 +51,7 @@ bocainlet_s16_1780690336.jpg,moderate,empty,0
 bocainlet_s16_1780697076.jpg,low,quiet,1
 bocainlet_s16_1780702156.jpg,moderate,quiet,5
 bocainlet_s16_1780707890.jpg,low,empty,0
+bocainlet_s16_1780846583.jpg,low,quiet,12
 bocainlet_s4_1780596611.jpg,none,quiet,3
 bocainlet_s4_1780677551.jpg,low,quiet,2
 bocainlet_s4_1780684580.jpg,none,empty,0
@@ -53,6 +59,7 @@ bocainlet_s4_1780691328.jpg,none,empty,0
 bocainlet_s4_1780696403.jpg,low,quiet,3
 bocainlet_s4_1780703150.jpg,none,quiet,8
 bocainlet_s4_1780707198.jpg,none,empty,0
+bocainlet_s4_1780845879.jpg,moderate,moderate,12
 bocainlet_s8_1780593482.jpg,moderate,empty,0
 bocainlet_s8_1780596849.jpg,moderate,quiet,7
 bocainlet_s8_1780613799.jpg,low,empty,0
@@ -62,3 +69,4 @@ bocainlet_s8_1780691561.jpg,low,quiet,4
 bocainlet_s8_1780694940.jpg,low,quiet,6
 bocainlet_s8_1780703545.jpg,moderate,quiet,7
 bocainlet_s8_1780707431.jpg,low,quiet,1
+bocainlet_s8_1780846123.jpg,moderate,moderate,26
