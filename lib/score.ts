@@ -272,15 +272,21 @@ function applyBeachCaps(
 ): { score: number; caps: string[] } {
   let score = raw;
   const caps: string[] = [];
-  // Lifeguard flags are authoritative safety overrides. Note: the purple
-  // (dangerous marine life) flag is intentionally NOT a score cap — it's a
-  // near-constant in South Florida, so it carries no day-to-day signal. It is
-  // still surfaced in the safety banner for awareness.
+  // Lifeguard flags are safety signals. We distinguish a true closure from a
+  // swim-hazard warning:
+  //  - DOUBLE-RED means the water is closed — there's no beach day to be had, so
+  //    it bottoms the score out.
+  //  - A single RED flag means rough/hazardous surf where swimming is
+  //    discouraged. That's a swimmer-safety issue, not a beach-day-killer: you
+  //    can still have a great day on the sand, so it only caps at 85 (and stays
+  //    surfaced in the safety banner regardless).
+  // The purple (dangerous marine life) flag is intentionally NOT a score cap —
+  // it's a near-constant in South Florida, so it carries no day-to-day signal.
   if (d.flags.includes("double-red")) {
     score = Math.min(score, 5);
     caps.push("Double red flag — water access closed");
   } else if (d.flags.includes("red")) {
-    score = Math.min(score, 40);
+    score = Math.min(score, 85);
     caps.push("Red flag — high hazard, swimming discouraged");
   }
   if (d.waterAdvisory) {
@@ -293,8 +299,10 @@ function applyBeachCaps(
     caps.push("City no-swim advisory in effect");
   }
   // NWS rip-current risk: HIGH means life-threatening rip currents are likely.
+  // Like a red flag, this is a swimmer-safety hazard rather than a beach-day
+  // killer — you can still enjoy the sand — so it caps at 85, not lower.
   if (d.ripCurrentRisk === "high") {
-    score = Math.min(score, 40);
+    score = Math.min(score, 85);
     caps.push("High rip current risk (NWS)");
   }
   // A severe NWS warning (hurricane/tropical storm/tsunami/high surf) closes the day.

@@ -124,7 +124,7 @@ describe("scoring (Beach Day only — no surf)", () => {
     expect(r.score).toBeGreaterThanOrEqual(70);
   });
 
-  it("caps the score under a red flag", () => {
+  it("caps the score at 85 under a red flag (still a great beach day)", () => {
     const snap = snapshot({
       buoy: NICE.buoy.data,
       weather: NICE.weather.data,
@@ -133,7 +133,9 @@ describe("scoring (Beach Day only — no surf)", () => {
       water: { overall: "good", advisory: false, sites: [] },
     });
     const r = scoreBeachDay(deriveMetrics(snap));
-    expect(r.score).toBeLessThanOrEqual(40);
+    // A rough-surf red flag is a swimmer-safety warning, not a day-killer.
+    expect(r.score).toBeLessThanOrEqual(85);
+    expect(r.score).toBeGreaterThan(40);
     expect(r.caps.join(" ")).toMatch(/red flag/i);
   });
 
@@ -181,7 +183,7 @@ describe("scoring (Beach Day only — no surf)", () => {
     expect(r.caps.join(" ")).toMatch(/no-swim advisory/i);
   });
 
-  it("caps the score under a HIGH NWS rip-current risk", () => {
+  it("caps the score at 85 under a HIGH NWS rip-current risk (still a great beach day)", () => {
     const snap = snapshot({
       buoy: NICE.buoy.data,
       weather: NICE.weather.data,
@@ -191,7 +193,9 @@ describe("scoring (Beach Day only — no surf)", () => {
       nws: { alerts: [], ripCurrentRisk: "high" },
     });
     const r = scoreBeachDay(deriveMetrics(snap));
-    expect(r.score).toBeLessThanOrEqual(40);
+    // High rip-current risk is a swimmer-safety warning, not a day-killer.
+    expect(r.score).toBeLessThanOrEqual(85);
+    expect(r.score).toBeGreaterThan(40);
     expect(r.caps.join(" ")).toMatch(/rip current/i);
   });
 
@@ -399,7 +403,8 @@ describe("computeHourlyScores", () => {
       snapshot({ ...niceBase, city: { flags: ["red"] }, hourly: hourlyDay(), sun: SUN }),
     );
     expect(hrs.length).toBeGreaterThan(0);
-    expect(hrs.every((h) => h.score <= 40)).toBe(true);
+    // Red flag caps each hour at 85 (swimmer-safety warning, not a day-killer).
+    expect(hrs.every((h) => h.score <= 85)).toBe(true);
   });
 
   it("caps a stormy hour to ~15 and flags it as raining", () => {
