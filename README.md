@@ -30,10 +30,13 @@ A single composite **Beach Day** score (0–100), weighted for beachgoers:
 | Water quality | 8% |
 | UV index | 5% |
 
-Official lifeguard **flags act as safety overrides**: a red flag caps the score (≤40),
-double-red drives it to ~0, and a water-quality advisory caps it (≤40). The purple
-(marine-pest) flag is **shown in the safety banner for awareness but does not affect the
-score** — it's near-constant in South Florida, so it carries no day-to-day signal.
+Official lifeguard **flags and hazards act as safety overrides**. We separate a true
+closure from a swim-only hazard: a **double-red** flag (water closed) drives the score to
+~0, while a **red flag** or **high rip-current risk** caps it at ≤85 — these warn swimmers
+but you can still have a great day on the sand. A **water-quality** or **city no-swim
+advisory** caps it at ≤40. The purple (marine-pest) flag is **shown in the safety banner
+for awareness but does not affect the score** — it's near-constant in South Florida, so it
+carries no day-to-day signal.
 
 ## Tech
 

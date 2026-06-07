@@ -11,10 +11,17 @@ function CamStamp({ cam, tz }: { cam: CamView; tz: string }) {
   return (
     <div
       className="mt-1 text-[11px] text-slate-500"
-      title={exact ? "Image capture time" : "Frame last refreshed (no capture time published)"}
+      title={
+        exact
+          ? "Image capture time"
+          : "This cam publishes no capture time — we can't confirm how current the still is."
+      }
     >
-      📷 {exact ? "" : "as of "}
-      {fmtTime(t, tz)} · {fmtRelative(t)}
+      {exact ? (
+        <>📷 {fmtTime(t, tz)} · {fmtRelative(t)}</>
+      ) : (
+        <>📷 capture time unknown · fetched {fmtTime(t, tz)}</>
+      )}
     </div>
   );
 }
@@ -51,12 +58,18 @@ function CamWeatherStrip({ cam }: { cam: CamView }) {
 function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
   // Cache-bust on a new capture (feed cams) or each poll, so the still refreshes.
   const src = `${cam.imageUrl}?t=${cam.capturedAt ?? cam.weather.fetchedAt}`;
-  // Feed cams publish a capture time; if it's well past the usual ~1-min cadence
-  // the upstream still-feed has frozen — don't claim it's "Live".
+  // Three honesty states:
+  //  - verified + fresh  → "● Live" (feed published a recent capture time)
+  //  - verified + old     → "⏸ paused" (feed's still-image has frozen upstream)
+  //  - unverified         → "Snapshot" (no capture time at all, e.g. the
+  //    most_recent_image.php cams send no Last-Modified) — we can't confirm it's
+  //    current, so we must NOT claim it's live.
   const ageMin = cam.capturedAt
     ? (Date.now() - Date.parse(cam.capturedAt)) / 60000
     : null;
-  const stale = ageMin != null && ageMin > 15;
+  const verified = ageMin != null;
+  const stale = verified && ageMin > 15;
+  const dim = stale;
   return (
     <a
       href={cam.url}
@@ -70,13 +83,17 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
           src={src}
           alt={`${cam.name} — live`}
           className={`h-full w-full object-cover transition duration-300 group-hover:scale-[1.02] ${
-            stale ? "opacity-80" : ""
+            dim ? "opacity-80" : ""
           }`}
           loading="lazy"
         />
         {stale ? (
           <div className="absolute inset-x-0 bottom-0 bg-slate-950/70 px-2 py-1 text-center text-[11px] text-amber-200">
             Still image paused {fmtRelative(cam.capturedAt as string)} — tap for live video
+          </div>
+        ) : !verified ? (
+          <div className="absolute inset-x-0 bottom-0 bg-slate-950/65 px-2 py-1 text-center text-[11px] text-slate-200">
+            Snapshot — may be delayed · tap for live video
           </div>
         ) : null}
       </div>
@@ -90,9 +107,16 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
             >
               ⏸ {fmtRelative(cam.capturedAt as string)}
             </span>
-          ) : (
+          ) : verified ? (
             <span className="shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-300">
               ● Live
+            </span>
+          ) : (
+            <span
+              className="shrink-0 rounded-full bg-slate-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300"
+              title="This cam publishes no capture time, so we can't confirm the still is current — tap for the live video."
+            >
+              📷 Snapshot
             </span>
           )}
         </div>
