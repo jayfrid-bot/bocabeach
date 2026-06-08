@@ -1,4 +1,5 @@
 import type {
+  BusynessByDay,
   BusynessByHour,
   BusynessData,
   BusynessLevel,
@@ -33,8 +34,9 @@ interface CamGroup {
   cams?: CamReading[];
 }
 interface HistoryEntry {
+  t?: string; // local capture time, ISO (the date prefix drives the by-day chart)
   hour?: number;
-  level?: string;
+  level?: string; // busiest crowd at this capture
   people?: number;
 }
 export interface CamFeed {
@@ -42,6 +44,8 @@ export interface CamFeed {
   morning?: CamGroup | null;
   history?: HistoryEntry[];
 }
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 const LEVELS: BusynessLevel[] = ["empty", "quiet", "moderate", "busy", "packed"];
 
@@ -72,6 +76,31 @@ function byHourFromHistory(history: HistoryEntry[]): BusynessByHour[] | undefine
     }));
 }
 
+/** Take each day's PEAK (busiest) crowd from the rolling history. */
+function byDayFromHistory(history: HistoryEntry[]): BusynessByDay[] | undefined {
+  const byDate = new Map<string, { rank: number; level: BusynessLevel; people?: number }>();
+  for (const e of history) {
+    if (typeof e.t !== "string" || typeof e.level !== "string" || !(e.level in RANK)) {
+      continue;
+    }
+    const date = e.t.slice(0, 10);
+    if (!DATE_RE.test(date)) continue;
+    const rank = RANK[e.level];
+    const cur = byDate.get(date);
+    if (!cur || rank > cur.rank) {
+      byDate.set(date, {
+        rank,
+        level: e.level as BusynessLevel,
+        people: typeof e.people === "number" ? e.people : undefined,
+      });
+    }
+  }
+  if (!byDate.size) return undefined;
+  return [...byDate.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, b]) => ({ date, level: b.level, people: b.people }));
+}
+
 /**
  * Roll up the per-cam crowd reads into one busyness level. Uses the LATEST
  * capture (busyness is time-of-day dependent, unlike seaweed) and takes the
@@ -79,13 +108,14 @@ function byHourFromHistory(history: HistoryEntry[]): BusynessByHour[] | undefine
  */
 export function summarizeBusyness(feed: CamFeed): BusynessData {
   const byHour = byHourFromHistory(feed?.history ?? []);
+  const byDay = byDayFromHistory(feed?.history ?? []);
   const group = feed?.latest ?? feed?.morning ?? undefined;
   const cams = (group?.cams ?? []).filter(
     (c): c is CamReading & { crowd: BusynessLevel } =>
       !!c && typeof c.crowd === "string" && c.crowd in RANK,
   );
   if (!cams.length) {
-    return { level: "unknown", capturedAtLocal: group?.capturedAtLocal, byHour };
+    return { level: "unknown", capturedAtLocal: group?.capturedAtLocal, byHour, byDay };
   }
   const busiest = cams.reduce((a, b) => (RANK[b.crowd] > RANK[a.crowd] ? b : a));
   return {
@@ -95,6 +125,7 @@ export function summarizeBusyness(feed: CamFeed): BusynessData {
     capturedAtLocal: group?.capturedAtLocal,
     cams: cams.map((c) => ({ name: c.name, crowd: c.crowd, people: c.people })),
     byHour,
+    byDay,
   };
 }
 
