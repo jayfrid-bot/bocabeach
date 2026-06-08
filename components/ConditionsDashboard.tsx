@@ -10,7 +10,12 @@ import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { HourlyScoreGraph } from "@/components/HourlyScoreGraph";
 import { AirQualityMeter } from "@/components/AirQualityMeter";
 import { LightningCard } from "@/components/LightningCard";
-import { BusynessChart } from "@/components/BusynessChart";
+import {
+  BusynessByHourChart,
+  BusynessByDayChart,
+  SeaweedByHourChart,
+  SeaweedByDayChart,
+} from "@/components/HistoryCharts";
 import { MetricCard } from "@/components/MetricCard";
 import { WindCompass } from "@/components/WindCompass";
 import { TidePanel } from "@/components/TidePanel";
@@ -243,9 +248,17 @@ export function ConditionsDashboard({
         <LightningCard lightning={snap.lightning} />
       </section>
 
-      {busy?.byHour?.length ? (
-        <section className="mb-6">
-          <BusynessChart byHour={busy.byHour} tz={tz} />
+      {busy?.byHour?.length ||
+      busy?.byDay?.length ||
+      sg?.byHour?.length ||
+      sg?.byDay?.length ? (
+        <section className="mb-6 grid gap-6 lg:grid-cols-2">
+          {busy?.byHour?.length ? (
+            <BusynessByHourChart byHour={busy.byHour} tz={tz} />
+          ) : null}
+          {busy?.byDay?.length ? <BusynessByDayChart byDay={busy.byDay} tz={tz} /> : null}
+          {sg?.byHour?.length ? <SeaweedByHourChart byHour={sg.byHour} tz={tz} /> : null}
+          {sg?.byDay?.length ? <SeaweedByDayChart byDay={sg.byDay} tz={tz} /> : null}
         </section>
       ) : null}
 

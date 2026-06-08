@@ -42,4 +42,19 @@ describe("summarizeBusyness", () => {
     // chronological order
     expect(d.byHour?.map((x) => x.hour)).toEqual([9, 12]);
   });
+
+  it("takes each day's PEAK crowd as busyness-by-day", () => {
+    const d = summarizeBusyness({
+      history: [
+        { t: "2026-06-03T09:00-04:00", hour: 9, level: "quiet", people: 5 },
+        { t: "2026-06-03T16:00-04:00", hour: 16, level: "busy", people: 40 },
+        { t: "2026-06-04T12:00-04:00", hour: 12, level: "moderate", people: 12 },
+        { t: "nope", hour: 1, level: "packed" }, // bad date -> dropped
+      ],
+    });
+    expect(d.byDay).toEqual([
+      { date: "2026-06-03", level: "busy", people: 40 },
+      { date: "2026-06-04", level: "moderate", people: 12 },
+    ]);
+  });
 });

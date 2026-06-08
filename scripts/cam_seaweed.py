@@ -112,9 +112,10 @@ CAMS = [
 ]
 
 SEAWEED = ("none", "low", "moderate", "high")
+SEAWEED_RANK = {s: i for i, s in enumerate(SEAWEED)}
 CROWD = ("empty", "quiet", "moderate", "busy", "packed")
 CROWD_RANK = {c: i for i, c in enumerate(CROWD)}
-MAX_HISTORY = 480  # ~30 days of readings for the "busyness by hour" pattern
+MAX_HISTORY = 480  # rolling raw reads (~1+ month) for the by-hour & by-day charts
 
 PROMPT = (
     "This is a live beach webcam photo. Return strict JSON only: "
@@ -282,6 +283,14 @@ def busiest_crowd(group: dict | None) -> dict | None:
     return {"level": b["crowd"], "people": b.get("people")}
 
 
+def worst_seaweed(group: dict | None) -> str | None:
+    """The worst (highest) seaweed level across a capture's per-cam reads."""
+    cams = [c for c in (group or {}).get("cams", []) if c.get("level") in SEAWEED_RANK]
+    if not cams:
+        return None
+    return max(cams, key=lambda c: SEAWEED_RANK[c["level"]])["level"]
+
+
 def fetch_prev() -> dict:
     try:
         return json.loads(_get(PREV_URL).decode("utf-8", "replace"))
@@ -329,13 +338,20 @@ def main() -> int:
             morning = current
     latest = current or prev.get("latest")
 
-    # Rolling history of busyness readings -> the app builds a by-hour pattern.
+    # Rolling RAW history of cam reads -> the app derives all four views from it:
+    # busyness by-hour & by-day, and seaweed by-hour & by-day. Each entry records
+    # the busiest crowd and the worst seaweed seen across the cams in that capture,
+    # plus the local timestamp/hour so the app can bucket by hour and by date.
     history = prev.get("history") if isinstance(prev.get("history"), list) else []
-    agg = busiest_crowd(current)
-    if current and agg:
-        history = history + [
-            {"t": current["capturedAtLocal"], "hour": current["hour"], **agg}
-        ]
+    if current:
+        crowd = busiest_crowd(current) or {}
+        history = history + [{
+            "t": current["capturedAtLocal"],
+            "hour": current["hour"],
+            "level": crowd.get("level"),       # busiest crowd across the cams
+            "people": crowd.get("people"),
+            "seaweed": worst_seaweed(current),  # worst seaweed across the cams
+        }]
         history = history[-MAX_HISTORY:]
 
     now_iso = (dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
@@ -352,7 +368,8 @@ def main() -> int:
         "dateLocal": today,
         "morning": morning,  # earliest pre-cleaning reading (highest weight)
         "latest": latest,    # most recent reading (current beach state)
-        "history": history,  # [{t, hour, level, people}] for the busyness-by-hour chart
+        # [{t, hour, level(crowd), people, seaweed}] -> by-hour & by-day charts.
+        "history": history,
     }
 
     # Non-destructive: never overwrite the published feed with an empty document.

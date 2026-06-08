@@ -239,6 +239,17 @@ export interface CamSeaweedReading {
   people?: number;
   crowdNote?: string;
 }
+/** Typical seaweed by local hour, learned from the rolling cam history. */
+export interface SargassumByHour {
+  hour: number; // local hour 0-23
+  level: SargassumRisk; // none | low | moderate | high
+  samples: number;
+}
+/** One day's worst seaweed reading, for the seaweed-by-day chart. */
+export interface SargassumByDay {
+  date: string; // local calendar date, YYYY-MM-DD
+  level: SargassumRisk; // none | low | moderate | high
+}
 
 // --- Beach busyness (from the same cam-vision job) -------------------------
 export type BusynessLevel =
@@ -254,6 +265,12 @@ export interface BusynessByHour {
   people?: number;
   samples: number;
 }
+/** One day's peak (busiest) crowd, for the busyness-by-day chart. */
+export interface BusynessByDay {
+  date: string; // local calendar date, YYYY-MM-DD
+  level: BusynessLevel;
+  people?: number;
+}
 export interface BusynessData {
   level: BusynessLevel;
   /** Approx people visible at the busiest cam. */
@@ -263,6 +280,8 @@ export interface BusynessData {
   cams?: { name: string; crowd: BusynessLevel; people?: number }[];
   /** Typical busyness by local hour, learned from the rolling cam history. */
   byHour?: BusynessByHour[];
+  /** Peak busyness per day, learned from the rolling cam history. */
+  byDay?: BusynessByDay[];
 }
 /**
  * Seaweed (sargassum) read entirely from the beach cams by the vision job —
@@ -276,6 +295,10 @@ export interface SargassumData {
   isMorning: boolean;
   capturedAtLocal?: string;
   cams: CamSeaweedReading[];
+  /** Typical seaweed by local hour, learned from the rolling cam history. */
+  byHour?: SargassumByHour[];
+  /** Worst seaweed per day, learned from the rolling cam history. */
+  byDay?: SargassumByDay[];
 }
 
 // --- NWS alerts + rip-current risk (api.weather.gov) -----------------------

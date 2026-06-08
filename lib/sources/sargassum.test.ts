@@ -35,4 +35,38 @@ describe("summarizeSeaweed", () => {
     expect(summarizeSeaweed({})).toBeNull();
     expect(summarizeSeaweed({ latest: { cams: [{ name: "A", level: "unknown" }] } })).toBeNull();
   });
+
+  it("derives byHour (avg) and byDay (worst) from the rolling history", () => {
+    const d = summarizeSeaweed({
+      latest: { cams: [{ name: "A", level: "low" }] },
+      history: [
+        { t: "2026-06-01T07:00-04:00", hour: 7, seaweed: "high" },
+        { t: "2026-06-01T15:00-04:00", hour: 15, seaweed: "low" },
+        { t: "2026-06-02T07:00-04:00", hour: 7, seaweed: "moderate" },
+        { t: "2026-06-02T15:00-04:00", hour: 15, seaweed: "none" },
+        { t: "bad", seaweed: "high" }, // bad date -> dropped by byDay; no hour -> not in byHour
+        { hour: 7 }, // no seaweed -> ignored entirely
+      ],
+    })!;
+    // by-hour: avg rank per hour. 7: (3+2)/2=2.5→high; 15: (1+0)/2=0.5→low
+    expect(d.byHour).toEqual([
+      { hour: 7, level: "high", samples: 2 },
+      { hour: 15, level: "low", samples: 2 },
+    ]);
+    // by-day: worst seaweed each day, sorted ascending
+    expect(d.byDay).toEqual([
+      { date: "2026-06-01", level: "high" },
+      { date: "2026-06-02", level: "moderate" },
+    ]);
+  });
+
+  it("still surfaces the history charts even with no current cam reading", () => {
+    const d = summarizeSeaweed({
+      history: [{ t: "2026-06-01T07:00-04:00", hour: 7, seaweed: "moderate" }],
+    })!;
+    expect(d.level).toBe("unknown");
+    expect(d.cams).toHaveLength(0);
+    expect(d.byDay).toHaveLength(1);
+    expect(d.byHour).toHaveLength(1);
+  });
 });
