@@ -11,6 +11,7 @@ import { HourlyScoreGraph } from "@/components/HourlyScoreGraph";
 import { AirQualityMeter } from "@/components/AirQualityMeter";
 import { LightningCard } from "@/components/LightningCard";
 import { BusynessChart } from "@/components/BusynessChart";
+import { SeaweedChart } from "@/components/SeaweedChart";
 import { MetricCard } from "@/components/MetricCard";
 import { WindCompass } from "@/components/WindCompass";
 import { TidePanel } from "@/components/TidePanel";
@@ -246,6 +247,12 @@ export function ConditionsDashboard({
       {busy?.byHour?.length ? (
         <section className="mb-6">
           <BusynessChart byHour={busy.byHour} tz={tz} />
+        </section>
+      ) : null}
+
+      {sg?.byDay?.length ? (
+        <section className="mb-6">
+          <SeaweedChart byDay={sg.byDay} tz={tz} />
         </section>
       ) : null}
 

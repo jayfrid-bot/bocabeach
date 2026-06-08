@@ -35,4 +35,30 @@ describe("summarizeSeaweed", () => {
     expect(summarizeSeaweed({})).toBeNull();
     expect(summarizeSeaweed({ latest: { cams: [{ name: "A", level: "unknown" }] } })).toBeNull();
   });
+
+  it("surfaces the per-day history as byDay: de-duped by date, sorted, junk dropped", () => {
+    const d = summarizeSeaweed({
+      latest: { cams: [{ name: "A", level: "low" }] },
+      seaweedHistory: [
+        { date: "2026-06-03", level: "high", isMorning: true },
+        { date: "2026-06-01", level: "none" },
+        { date: "2026-06-02", level: "bogus" }, // dropped (bad level)
+        { date: "2026-06-03", level: "moderate" }, // later entry wins for the dup date
+        { level: "low" }, // dropped (no date)
+      ],
+    })!;
+    expect(d.byDay).toEqual([
+      { date: "2026-06-01", level: "none", isMorning: undefined },
+      { date: "2026-06-03", level: "moderate", isMorning: undefined },
+    ]);
+  });
+
+  it("still surfaces byDay even when there is no current cam reading", () => {
+    const d = summarizeSeaweed({
+      seaweedHistory: [{ date: "2026-06-01", level: "moderate" }],
+    })!;
+    expect(d.level).toBe("unknown");
+    expect(d.cams).toHaveLength(0);
+    expect(d.byDay).toHaveLength(1);
+  });
 });

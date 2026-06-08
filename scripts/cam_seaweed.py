@@ -112,9 +112,11 @@ CAMS = [
 ]
 
 SEAWEED = ("none", "low", "moderate", "high")
+SEAWEED_RANK = {s: i for i, s in enumerate(SEAWEED)}
 CROWD = ("empty", "quiet", "moderate", "busy", "packed")
 CROWD_RANK = {c: i for i, c in enumerate(CROWD)}
 MAX_HISTORY = 480  # ~30 days of readings for the "busyness by hour" pattern
+MAX_SEAWEED_DAYS = 30  # ~1 month of daily readings for the "seaweed by day" chart
 
 PROMPT = (
     "This is a live beach webcam photo. Return strict JSON only: "
@@ -282,6 +284,14 @@ def busiest_crowd(group: dict | None) -> dict | None:
     return {"level": b["crowd"], "people": b.get("people")}
 
 
+def worst_seaweed(group: dict | None) -> str | None:
+    """The worst (highest) seaweed level across a capture's per-cam reads."""
+    cams = [c for c in (group or {}).get("cams", []) if c.get("level") in SEAWEED_RANK]
+    if not cams:
+        return None
+    return max(cams, key=lambda c: SEAWEED_RANK[c["level"]])["level"]
+
+
 def fetch_prev() -> dict:
     try:
         return json.loads(_get(PREV_URL).decode("utf-8", "replace"))
@@ -338,6 +348,26 @@ def main() -> int:
         ]
         history = history[-MAX_HISTORY:]
 
+    # Rolling per-DAY seaweed history -> the app builds a "seaweed by day" chart.
+    # Seaweed is a day-level thing (the tractor clears it daily), so we keep ONE
+    # authoritative entry per local date: the morning (pre-tractor) reading when
+    # we have it, else the worst capture seen today. Re-runs upsert today's entry.
+    seaweed_history = (prev.get("seaweedHistory")
+                       if isinstance(prev.get("seaweedHistory"), list) else [])
+    daily_group = morning or current  # both, when present, are today's captures
+    daily_level = worst_seaweed(daily_group)
+    if daily_level is not None:
+        seaweed_history = [e for e in seaweed_history
+                           if isinstance(e, dict) and e.get("date") != today]
+        seaweed_history.append({
+            "date": today,
+            "level": daily_level,
+            "isMorning": bool(morning) and daily_group is morning,
+        })
+        seaweed_history = sorted(
+            seaweed_history, key=lambda e: e.get("date", "")
+        )[-MAX_SEAWEED_DAYS:]
+
     now_iso = (dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
                .isoformat().replace("+00:00", "Z"))
     out = {
@@ -353,6 +383,7 @@ def main() -> int:
         "morning": morning,  # earliest pre-cleaning reading (highest weight)
         "latest": latest,    # most recent reading (current beach state)
         "history": history,  # [{t, hour, level, people}] for the busyness-by-hour chart
+        "seaweedHistory": seaweed_history,  # [{date, level, isMorning}] for the seaweed-by-day chart
     }
 
     # Non-destructive: never overwrite the published feed with an empty document.

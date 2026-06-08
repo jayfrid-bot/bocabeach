@@ -239,6 +239,13 @@ export interface CamSeaweedReading {
   people?: number;
   crowdNote?: string;
 }
+/** One day's authoritative seaweed reading, for the seaweed-by-day chart. */
+export interface SargassumByDay {
+  date: string; // local calendar date, YYYY-MM-DD
+  level: SargassumRisk; // none | low | moderate | high
+  /** True when this came from the morning (pre-beach-cleaning) capture. */
+  isMorning?: boolean;
+}
 
 // --- Beach busyness (from the same cam-vision job) -------------------------
 export type BusynessLevel =
@@ -276,6 +283,8 @@ export interface SargassumData {
   isMorning: boolean;
   capturedAtLocal?: string;
   cams: CamSeaweedReading[];
+  /** Recent daily seaweed levels, learned from the rolling cam history. */
+  byDay?: SargassumByDay[];
 }
 
 // --- NWS alerts + rip-current risk (api.weather.gov) -----------------------

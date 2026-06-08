@@ -1,7 +1,9 @@
 import type {
   CamSeaweedReading,
   Location,
+  SargassumByDay,
   SargassumData,
+  SargassumRisk,
   Wrapped,
 } from "@/lib/types";
 import { fetchWithTimeout, nowIso } from "@/lib/util";
@@ -19,23 +21,52 @@ interface CamGroup {
   capturedAtLocal?: string;
   cams?: CamSeaweedReading[];
 }
+interface SeaweedDayEntry {
+  date?: string;
+  level?: string;
+  isMorning?: boolean;
+}
 export interface CamSeaweedFeed {
   morning?: CamGroup | null;
   latest?: CamGroup | null;
+  /** One authoritative seaweed reading per local day (for the by-day chart). */
+  seaweedHistory?: SeaweedDayEntry[];
+}
+
+/** Sanitize the rolling per-day history: drop junk, de-dupe by date, sort ascending. */
+function byDayFromHistory(history: SeaweedDayEntry[]): SargassumByDay[] | undefined {
+  const byDate = new Map<string, SargassumByDay>();
+  for (const e of history) {
+    if (!e || typeof e.date !== "string" || typeof e.level !== "string" || !(e.level in RANK)) {
+      continue;
+    }
+    byDate.set(e.date, {
+      date: e.date,
+      level: e.level as SargassumRisk,
+      isMorning: e.isMorning,
+    });
+  }
+  if (!byDate.size) return undefined;
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
 }
 
 /**
  * Roll the per-cam seaweed reads into one level (the worst cam), preferring the
- * early-morning, pre-tractor reading; falls back to the latest. Pure + tested.
+ * early-morning, pre-tractor reading; falls back to the latest. Also surfaces the
+ * recent per-day history for the by-day chart. Pure + tested.
  */
 export function summarizeSeaweed(feed: CamSeaweedFeed): SargassumData | null {
+  const byDay = byDayFromHistory(feed?.seaweedHistory ?? []);
   const morning = feed?.morning ?? null;
   const group = morning ?? feed?.latest ?? null;
   const cams = (group?.cams ?? []).filter(
     (c): c is CamSeaweedReading =>
       !!c && typeof c.level === "string" && c.level in RANK,
   );
-  if (!cams.length) return null;
+  if (!cams.length) {
+    // No current reading, but still surface the historical chart if we have one.
+    return byDay ? { level: "unknown", isMorning: false, cams: [], byDay } : null;
+  }
   const worst = cams.reduce((a, b) => (RANK[b.level] > RANK[a.level] ? b : a));
   return {
     level: worst.level,
@@ -43,6 +74,7 @@ export function summarizeSeaweed(feed: CamSeaweedFeed): SargassumData | null {
     isMorning: !!morning && group === morning,
     capturedAtLocal: group?.capturedAtLocal,
     cams,
+    byDay,
   };
 }
 
