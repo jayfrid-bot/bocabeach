@@ -73,9 +73,26 @@ const fmtDayLong = (date: string) =>
     timeZone: "UTC",
   }) ?? date;
 
-/** Keep only hours within [sunrise, sunset] (when those bounds are known). */
-function daylight<T extends { hour: number }>(rows: T[], lo?: number, hi?: number): T[] {
-  return rows.filter((b) => (lo == null || b.hour >= lo) && (hi == null || b.hour <= hi));
+/**
+ * Build the by-hour axis across the daylight window: start at sunrise, end at
+ * sunset, and emit a placeholder (no `level`) for any hour without a reading yet
+ * so the axis truly begins at sunrise even before the dawn cams have populated.
+ * Falls back to the data's own min..max when sun times are unknown.
+ */
+function spanDaylight<T extends { hour: number }>(
+  rows: T[],
+  lo?: number,
+  hi?: number,
+): (T | { hour: number })[] {
+  if (!rows.length) return [];
+  const present = rows.map((r) => r.hour);
+  const start = lo ?? Math.min(...present);
+  const end = hi ?? Math.max(...present);
+  if (end < start) return rows;
+  const byHour = new Map(rows.map((r) => [r.hour, r]));
+  const out: (T | { hour: number })[] = [];
+  for (let h = start; h <= end; h++) out.push(byHour.get(h) ?? { hour: h });
+  return out;
 }
 
 interface HourProps {
@@ -92,16 +109,28 @@ export function BusynessByHourChart({
   sunsetHour,
 }: { byHour: BusynessByHour[] } & HourProps) {
   const now = nowHour(tz);
-  const hours = daylight(byHour, sunriseHour, sunsetHour);
+  const hours = spanDaylight(byHour, sunriseHour, sunsetHour);
   if (!hours.length) return null;
-  const bars: LevelBar[] = hours.map((b) => ({
-    key: String(b.hour),
-    rank: BUSY_RANK[b.level] ?? 0,
-    color: BUSY_COLOR[b.level] ?? "#475569",
-    label: hourLabel(b.hour),
-    highlight: b.hour === now,
-    tooltip: `${hourLabel(b.hour)}: ${b.level}${b.people != null ? ` (~${b.people})` : ""}`,
-  }));
+  const bars: LevelBar[] = hours.map((b) => {
+    if (!("level" in b) || !(b.level in BUSY_RANK)) {
+      return {
+        key: String(b.hour),
+        rank: 0,
+        color: "#475569",
+        muted: true,
+        label: hourLabel(b.hour),
+        tooltip: `${hourLabel(b.hour)}: no reading yet`,
+      };
+    }
+    return {
+      key: String(b.hour),
+      rank: BUSY_RANK[b.level] ?? 0,
+      color: BUSY_COLOR[b.level] ?? "#475569",
+      label: hourLabel(b.hour),
+      highlight: b.hour === now,
+      tooltip: `${hourLabel(b.hour)}: ${b.level}${b.people != null ? ` (~${b.people})` : ""}`,
+    };
+  });
   return (
     <LevelBarChart
       title="Beach busyness by time of day"
@@ -122,16 +151,28 @@ export function SeaweedByHourChart({
   sunsetHour,
 }: { byHour: SargassumByHour[] } & HourProps) {
   const now = nowHour(tz);
-  const hours = daylight(byHour, sunriseHour, sunsetHour);
+  const hours = spanDaylight(byHour, sunriseHour, sunsetHour);
   if (!hours.length) return null;
-  const bars: LevelBar[] = hours.map((b) => ({
-    key: String(b.hour),
-    rank: SEA_RANK[b.level] ?? 0,
-    color: SEA_COLOR[b.level] ?? "#475569",
-    label: hourLabel(b.hour),
-    highlight: b.hour === now,
-    tooltip: `${hourLabel(b.hour)}: ${b.level}`,
-  }));
+  const bars: LevelBar[] = hours.map((b) => {
+    if (!("level" in b) || !(b.level in SEA_RANK)) {
+      return {
+        key: String(b.hour),
+        rank: 0,
+        color: "#475569",
+        muted: true,
+        label: hourLabel(b.hour),
+        tooltip: `${hourLabel(b.hour)}: no reading yet`,
+      };
+    }
+    return {
+      key: String(b.hour),
+      rank: SEA_RANK[b.level] ?? 0,
+      color: SEA_COLOR[b.level] ?? "#475569",
+      label: hourLabel(b.hour),
+      highlight: b.hour === now,
+      tooltip: `${hourLabel(b.hour)}: ${b.level}`,
+    };
+  });
   return (
     <LevelBarChart
       title="Seaweed by time of day"

@@ -7,6 +7,7 @@ export interface LevelBar {
   subLabel?: string; // optional second line under the label (e.g. the date)
   tooltip: string;
   highlight?: boolean; // outline + full opacity (e.g. "now" / "today")
+  muted?: boolean; // a "no reading yet" placeholder (faint stub, no real value)
 }
 
 const W = 720;
@@ -64,12 +65,12 @@ export function LevelBarChart({
                   width={barW}
                   height={h}
                   rx="2"
-                  fill={b.color}
-                  opacity={b.highlight ? 1 : 0.85}
+                  fill={b.muted ? "#334155" : b.color}
+                  opacity={b.muted ? 0.35 : b.highlight ? 1 : 0.85}
                 >
                   <title>{b.tooltip}</title>
                 </rect>
-                {b.highlight ? (
+                {b.highlight && !b.muted ? (
                   <rect
                     x={x - 2}
                     y={BASE_Y - h - 2}
