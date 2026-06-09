@@ -17,6 +17,8 @@ const FIXTURE = {
     wind_speed_10m: [6.3, 9.1, 12.7, 18.4],
     wind_direction_10m: [90, 110, 130, 200],
     uv_index: [3.2, 6.7, 8.1, 2.0],
+    relative_humidity_2m: [72, 68, null, 80],
+    dew_point_2m: [69.4, 70.1, 72.8, 74.2],
   },
 };
 
@@ -32,6 +34,9 @@ describe("parseOpenMeteoHourly", () => {
     expect(r0.windDirDeg).toBe(90);
     expect(r0.uvIndex).toBe(3.2);
     expect(r0.weatherCode).toBe(0);
+    expect(r0.humidityPct).toBe(72);
+    expect(r0.dewPointF).toBe(69); // rounded
+    expect(rows[2].humidityPct).toBeUndefined(); // null humidity -> missing
   });
 
   it("normalizes the GMT time to an absolute UTC ISO string", () => {

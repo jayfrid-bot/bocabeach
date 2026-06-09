@@ -78,7 +78,13 @@ function snapshot(over: {
 
 const NICE = snapshot({
   buoy: { waterTempF: 82, windSpeedMph: 8, windDirDeg: 90 },
-  weather: { airTempF: 84, shortForecast: "Sunny", precipProbability: 10 },
+  weather: {
+    airTempF: 84,
+    shortForecast: "Sunny",
+    precipProbability: 10,
+    humidityPct: 60,
+    dewPointF: 62,
+  },
   marine: { waveHeightFt: 2, uvIndex: 7 },
   city: { flags: ["green"] },
   water: { overall: "good", advisory: false, sites: [] },
@@ -98,10 +104,35 @@ describe("scoring (Beach Day only — no surf)", () => {
     const { subScores } = computeScore(NICE);
     const keys = subScores.map((s) => s.key).sort();
     expect(keys).toEqual(
-      ["airTemp", "sky", "uv", "waterQuality", "waterTemp", "waves", "wind"].sort(),
+      ["airTemp", "comfort", "sky", "uv", "waterQuality", "waterTemp", "waves", "wind"].sort(),
     );
     const total = subScores.reduce((a, s) => a + s.weight, 0);
     expect(total).toBeCloseTo(1, 5);
+  });
+
+  it("scores comfort from dew point (mugginess), with a humidity penalty at extremes", () => {
+    const comfort = (w: WeatherData) =>
+      scoreBeachDay(deriveMetrics(snapshot({ weather: w }))).subScores.find(
+        (s) => s.key === "comfort",
+      )!.score;
+    expect(comfort({ dewPointF: 58 })).toBe(100); // dry & comfortable
+    expect(comfort({ dewPointF: 68 })).toBe(60); // sticky
+    expect(comfort({ dewPointF: 75 })).toBe(25); // oppressive
+    // 65°F dew pt = 75, then -(95-85)*1.5 = -15 for very high humidity
+    expect(comfort({ dewPointF: 65, humidityPct: 95 })).toBe(60);
+    expect(comfort({})).toBeNull(); // no dew point -> excluded from the average
+  });
+
+  it("a muggy dew point drags the Beach Day score below a comfortable one", () => {
+    const goodSnap = (dewPointF: number) =>
+      snapshot({
+        buoy: { waterTempF: 82, windSpeedMph: 8, windDirDeg: 90 },
+        weather: { airTempF: 84, shortForecast: "Sunny", precipProbability: 10, dewPointF },
+        marine: { waveHeightFt: 2, uvIndex: 7 },
+        city: { flags: ["green"] },
+        water: { overall: "good", advisory: false, sites: [] },
+      });
+    expect(computeScore(goodSnap(78)).score).toBeLessThan(computeScore(goodSnap(58)).score);
   });
 
   it("gives nice conditions a strong Beach Day score with no caps", () => {

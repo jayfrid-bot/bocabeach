@@ -8,7 +8,7 @@ import type {
   SubScore,
   WaterQualityRating,
 } from "@/lib/types";
-import { clamp, degToCardinal, plateau } from "@/lib/util";
+import { clamp, degToCardinal, dewPointFromTempRH, plateau, round } from "@/lib/util";
 
 // Consolidated, best-available values pulled across all sources.
 export interface Derived {
@@ -21,6 +21,8 @@ export interface Derived {
   shortForecast?: string;
   uvIndex?: number;
   cloudCoverPct?: number; // 0 = full sun, 100 = overcast
+  humidityPct?: number; // relative humidity, 0-100
+  dewPointF?: number; // °F — the comfort/mugginess driver
   weatherCode?: number; // WMO code (hourly path); drives the rain cap
   flags: FlagColor[];
   waterAdvisory: boolean;
@@ -44,6 +46,11 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
   const c = s.cityOfficial.data;
   const q = s.waterQuality.data;
   const n = s.nws.data;
+  // Dew point drives the comfort score; fall back to computing it from temp + RH.
+  const dpFallback =
+    w?.airTempF != null && w?.humidityPct != null
+      ? dewPointFromTempRH(w.airTempF, w.humidityPct)
+      : undefined;
   return {
     airTempF: w?.airTempF ?? b?.airTempF,
     waterTempF: b?.waterTempF ?? m?.seaSurfaceTempF,
@@ -54,6 +61,8 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     shortForecast: w?.shortForecast,
     uvIndex: m?.uvIndex,
     cloudCoverPct: m?.cloudCoverPct,
+    humidityPct: w?.humidityPct,
+    dewPointF: w?.dewPointF ?? (dpFallback != null ? round(dpFallback) : undefined),
     flags: c?.flags ?? ["unknown"],
     waterAdvisory: q?.advisory ?? false,
     waterRating: q?.overall ?? "unknown",
@@ -190,44 +199,67 @@ function sub(
   return { key, label, score: score == null ? null : Math.round(score), weight, display };
 }
 
+/**
+ * Comfort (mugginess) from dew point — the real "how heavy does the air feel"
+ * signal (sweat can't evaporate as the dew point climbs). <=60°F feels great;
+ * each °F above subtracts ~5 (≈68°F→60, 72°F→40, ≥80°F→0). Very high relative
+ * humidity (>85%) adds a small extra penalty. Null when no dew point is known.
+ */
+function comfortScore(d: Derived): number | null {
+  if (d.dewPointF == null) return null;
+  let s = clamp(100 - Math.max(0, d.dewPointF - 60) * 5, 0, 100);
+  if (d.humidityPct != null && d.humidityPct > 85) {
+    s = clamp(s - (d.humidityPct - 85) * 1.5, 0, 100);
+  }
+  return s;
+}
+
+function comfortDisplay(d: Derived): string | undefined {
+  if (d.dewPointF == null) return undefined;
+  const parts = [`${d.dewPointF}°F dew pt`];
+  if (d.humidityPct != null) parts.push(`${d.humidityPct}% RH`);
+  return parts.join(" · ");
+}
+
 export function scoreBeachDay(d: Derived): ScoreResult {
   const subs: SubScore[] = [
     sub(
       "airTemp",
       "Air temperature",
       d.airTempF != null ? plateau(d.airTempF, 78, 88, 18) : null,
-      0.22,
+      0.2,
       f1(d.airTempF, "°F"),
     ),
-    sub("sky", "Sky (sun & rain)", skyScore(d), 0.22, skyDisplay(d)),
+    sub("sky", "Sky (sun & rain)", skyScore(d), 0.2, skyDisplay(d)),
     sub(
       "wind",
       "Wind (sea breeze)",
       d.windSpeedMph != null ? windScore(d.windSpeedMph) : null,
-      0.18,
+      0.16,
       d.windSpeedMph != null
         ? `${d.windSpeedMph} mph${d.windDirDeg != null ? " " + degToCardinal(d.windDirDeg) : ""}`
         : undefined,
     ),
+    sub("comfort", "Comfort (mugginess)", comfortScore(d), 0.1, comfortDisplay(d)),
     sub(
       "waterTemp",
       "Water temperature",
       d.waterTempF != null ? plateau(d.waterTempF, 77, 84, 15) : null,
-      0.15,
+      0.13,
       f1(d.waterTempF, "°F"),
     ),
     sub(
       "waves",
       "Sea state (swim calmness)",
       d.waveHeightFt != null ? waveCalm(d.waveHeightFt) : null,
-      0.1,
+      0.09,
       f1(d.waveHeightFt, " ft"),
     ),
     sub(
       "waterQuality",
       "Water quality",
       waterQualityScore(d.waterRating),
-      0.08,
+      0.07,
       d.waterRating,
     ),
     sub(
@@ -364,6 +396,8 @@ export function computeHourlyScores(s: ConditionsSnapshot): HourlyScore[] {
         shortForecast: h.shortForecast,
         uvIndex: h.uvIndex,
         cloudCoverPct: h.cloudCoverPct,
+        humidityPct: h.humidityPct,
+        dewPointF: h.dewPointF,
         weatherCode: h.weatherCode,
         flags: base.flags,
         waterAdvisory: base.waterAdvisory,

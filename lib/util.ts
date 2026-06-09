@@ -85,6 +85,21 @@ export function plateau(
 export const clamp = (n: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, n));
 
+/**
+ * Dew point (°F) from air temperature (°F) and relative humidity (%), via the
+ * Magnus-Tetens approximation. A fallback for sources that report temp + humidity
+ * but no dew point. Returns undefined for out-of-range humidity.
+ */
+export function dewPointFromTempRH(tempF: number, rh: number): number | undefined {
+  if (!(rh > 0) || rh > 100) return undefined;
+  const tc = ((tempF - 32) * 5) / 9;
+  const a = 17.625;
+  const b = 243.04;
+  const gamma = Math.log(rh / 100) + (a * tc) / (b + tc);
+  const dpC = (b * gamma) / (a - gamma);
+  return (dpC * 9) / 5 + 32;
+}
+
 /** Loosened init type so Next.js's `next.revalidate` caching option type-checks everywhere. */
 export type FetchInit = RequestInit & {
   timeoutMs?: number;

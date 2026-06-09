@@ -32,7 +32,7 @@ const SEA_RANK: Record<string, number> = { none: 0, low: 1, moderate: 2, high: 3
 const MAX_DAYS = 21; // keep the by-day axis readable
 
 const hourLabel = (h: number) => `${h % 12 === 0 ? 12 : h % 12}${h < 12 ? "a" : "p"}`;
-const dayNum = (date: string) => date.slice(8, 10).replace(/^0/, "");
+const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
 /** Current local hour at the beach (for the "now" highlight). */
 function nowHour(tz: string): number {
@@ -53,32 +53,88 @@ function todayLocal(tz: string): string {
     day: "2-digit",
   }).format(new Date());
 }
-/** "2026-06-07" → "Jun 7" (the date is already local; render tz-agnostically). */
-function fmtDay(date: string): string {
+
+// The dates are already local YYYY-MM-DD; render them tz-agnostically off UTC.
+function asDate(date: string): Date | null {
   const [y, m, d] = date.split("-").map(Number);
-  if (!y || !m || !d) return date;
-  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString("en-US", {
+  return y && m && d ? new Date(Date.UTC(y, m - 1, d)) : null;
+}
+const fmtWeekday = (date: string) =>
+  asDate(date)?.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" }) ?? "";
+const fmtMD = (date: string) => {
+  const [, m, d] = date.split("-").map(Number);
+  return m && d ? `${m}/${d}` : date;
+};
+const fmtDayLong = (date: string) =>
+  asDate(date)?.toLocaleDateString("en-US", {
+    weekday: "short",
     month: "short",
     day: "numeric",
     timeZone: "UTC",
-  });
-}
-const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+  }) ?? date;
 
-export function BusynessByHourChart({ byHour, tz }: { byHour: BusynessByHour[]; tz: string }) {
+/**
+ * Build the by-hour axis across the daylight window: start at sunrise, end at
+ * sunset, and emit a placeholder (no `level`) for any hour without a reading yet
+ * so the axis truly begins at sunrise even before the dawn cams have populated.
+ * Falls back to the data's own min..max when sun times are unknown.
+ */
+function spanDaylight<T extends { hour: number }>(
+  rows: T[],
+  lo?: number,
+  hi?: number,
+): (T | { hour: number })[] {
+  if (!rows.length) return [];
+  const present = rows.map((r) => r.hour);
+  const start = lo ?? Math.min(...present);
+  const end = hi ?? Math.max(...present);
+  if (end < start) return rows;
+  const byHour = new Map(rows.map((r) => [r.hour, r]));
+  const out: (T | { hour: number })[] = [];
+  for (let h = start; h <= end; h++) out.push(byHour.get(h) ?? { hour: h });
+  return out;
+}
+
+interface HourProps {
+  tz: string;
+  /** Local hour of sunrise / sunset; the by-hour axis is bounded to this window. */
+  sunriseHour?: number;
+  sunsetHour?: number;
+}
+
+export function BusynessByHourChart({
+  byHour,
+  tz,
+  sunriseHour,
+  sunsetHour,
+}: { byHour: BusynessByHour[] } & HourProps) {
   const now = nowHour(tz);
-  const bars: LevelBar[] = byHour.map((b) => ({
-    key: String(b.hour),
-    rank: BUSY_RANK[b.level] ?? 0,
-    color: BUSY_COLOR[b.level] ?? "#475569",
-    label: hourLabel(b.hour),
-    highlight: b.hour === now,
-    tooltip: `${hourLabel(b.hour)}: ${b.level}${b.people != null ? ` (~${b.people})` : ""}`,
-  }));
+  const hours = spanDaylight(byHour, sunriseHour, sunsetHour);
+  if (!hours.length) return null;
+  const bars: LevelBar[] = hours.map((b) => {
+    if (!("level" in b) || !(b.level in BUSY_RANK)) {
+      return {
+        key: String(b.hour),
+        rank: 0,
+        color: "#475569",
+        muted: true,
+        label: hourLabel(b.hour),
+        tooltip: `${hourLabel(b.hour)}: no reading yet`,
+      };
+    }
+    return {
+      key: String(b.hour),
+      rank: BUSY_RANK[b.level] ?? 0,
+      color: BUSY_COLOR[b.level] ?? "#475569",
+      label: hourLabel(b.hour),
+      highlight: b.hour === now,
+      tooltip: `${hourLabel(b.hour)}: ${b.level}${b.people != null ? ` (~${b.people})` : ""}`,
+    };
+  });
   return (
     <LevelBarChart
       title="Beach busyness by time of day"
-      subtitle="Typical crowd from the cams (builds up over time). Outlined bar = now."
+      subtitle="Typical crowd by daylight hour (builds up over time). Outlined bar = now."
       ariaLabel="Busyness by hour"
       bars={bars}
       maxRank={4}
@@ -88,18 +144,77 @@ export function BusynessByHourChart({ byHour, tz }: { byHour: BusynessByHour[]; 
   );
 }
 
-export function BusynessByDayChart({ byDay, tz }: { byDay: BusynessByDay[]; tz: string }) {
+export function SeaweedByHourChart({
+  byHour,
+  tz,
+  sunriseHour,
+  sunsetHour,
+}: { byHour: SargassumByHour[] } & HourProps) {
+  const now = nowHour(tz);
+  const hours = spanDaylight(byHour, sunriseHour, sunsetHour);
+  if (!hours.length) return null;
+  const bars: LevelBar[] = hours.map((b) => {
+    if (!("level" in b) || !(b.level in SEA_RANK)) {
+      return {
+        key: String(b.hour),
+        rank: 0,
+        color: "#475569",
+        muted: true,
+        label: hourLabel(b.hour),
+        tooltip: `${hourLabel(b.hour)}: no reading yet`,
+      };
+    }
+    return {
+      key: String(b.hour),
+      rank: SEA_RANK[b.level] ?? 0,
+      color: SEA_COLOR[b.level] ?? "#475569",
+      label: hourLabel(b.hour),
+      highlight: b.hour === now,
+      tooltip: `${hourLabel(b.hour)}: ${b.level}`,
+    };
+  });
+  return (
+    <LevelBarChart
+      title="Seaweed by time of day"
+      subtitle="Typical sargassum by daylight hour — heaviest at dawn, eased after the morning beach-cleaning."
+      ariaLabel="Seaweed by hour"
+      bars={bars}
+      maxRank={3}
+      axisLow="none"
+      axisHigh="high"
+    />
+  );
+}
+
+/** Shared bar-builder for the by-day charts (weekday + date labels). */
+function dayBars(
+  byDay: { date: string; level: string; people?: number }[],
+  tz: string,
+  color: Record<string, string>,
+  rank: Record<string, number>,
+  fmtValue: (level: string, people?: number) => string,
+): LevelBar[] {
   const today = todayLocal(tz);
   const days = byDay.slice(-MAX_DAYS);
   const every = days.length > 16 ? 3 : days.length > 10 ? 2 : 1;
-  const bars: LevelBar[] = days.map((b, i) => ({
-    key: b.date,
-    rank: BUSY_RANK[b.level] ?? 0,
-    color: BUSY_COLOR[b.level] ?? "#475569",
-    label: i % every === 0 || b.date === today ? dayNum(b.date) : "",
-    highlight: b.date === today,
-    tooltip: `${fmtDay(b.date)}: ${cap(b.level)}${b.people != null ? ` (~${b.people})` : ""}`,
-  }));
+  return days.map((b, i) => {
+    const show = i % every === 0 || b.date === today;
+    return {
+      key: b.date,
+      rank: rank[b.level] ?? 0,
+      color: color[b.level] ?? "#475569",
+      label: show ? fmtWeekday(b.date) : "",
+      subLabel: show ? fmtMD(b.date) : "",
+      highlight: b.date === today,
+      tooltip: `${fmtDayLong(b.date)}: ${fmtValue(b.level, b.people)}`,
+    };
+  });
+}
+
+export function BusynessByDayChart({ byDay, tz }: { byDay: BusynessByDay[]; tz: string }) {
+  const bars = dayBars(byDay, tz, BUSY_COLOR, BUSY_RANK, (lvl, people) =>
+    `${cap(lvl)}${people != null ? ` (~${people})` : ""}`,
+  );
   return (
     <LevelBarChart
       title="Beach busyness by day"
@@ -113,41 +228,8 @@ export function BusynessByDayChart({ byDay, tz }: { byDay: BusynessByDay[]; tz: 
   );
 }
 
-export function SeaweedByHourChart({ byHour, tz }: { byHour: SargassumByHour[]; tz: string }) {
-  const now = nowHour(tz);
-  const bars: LevelBar[] = byHour.map((b) => ({
-    key: String(b.hour),
-    rank: SEA_RANK[b.level] ?? 0,
-    color: SEA_COLOR[b.level] ?? "#475569",
-    label: hourLabel(b.hour),
-    highlight: b.hour === now,
-    tooltip: `${hourLabel(b.hour)}: ${b.level}`,
-  }));
-  return (
-    <LevelBarChart
-      title="Seaweed by time of day"
-      subtitle="Typical sargassum by hour — heaviest at dawn, eased after the morning beach-cleaning."
-      ariaLabel="Seaweed by hour"
-      bars={bars}
-      maxRank={3}
-      axisLow="none"
-      axisHigh="high"
-    />
-  );
-}
-
 export function SeaweedByDayChart({ byDay, tz }: { byDay: SargassumByDay[]; tz: string }) {
-  const today = todayLocal(tz);
-  const days = byDay.slice(-MAX_DAYS);
-  const every = days.length > 16 ? 3 : days.length > 10 ? 2 : 1;
-  const bars: LevelBar[] = days.map((b, i) => ({
-    key: b.date,
-    rank: SEA_RANK[b.level] ?? 0,
-    color: SEA_COLOR[b.level] ?? "#475569",
-    label: i % every === 0 || b.date === today ? dayNum(b.date) : "",
-    highlight: b.date === today,
-    tooltip: `${fmtDay(b.date)}: ${b.level}`,
-  }));
+  const bars = dayBars(byDay, tz, SEA_COLOR, SEA_RANK, (lvl) => lvl);
   return (
     <LevelBarChart
       title="Seaweed by day"

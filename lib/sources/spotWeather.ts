@@ -46,6 +46,7 @@ export function parseOpenMeteoCurrent(
   const windSpeed = num("wind_speed_10m");
   const gust = num("wind_gusts_10m");
   const humidity = num("relative_humidity_2m");
+  const dewPoint = num("dew_point_2m");
   const code = num("weather_code");
 
   if (temp !== undefined) out.airTempF = round(temp);
@@ -57,6 +58,7 @@ export function parseOpenMeteoCurrent(
     out.windDirCardinal = degToCardinal(windDir);
   }
   if (humidity !== undefined) out.humidity = round(humidity);
+  if (dewPoint !== undefined) out.dewPointF = round(dewPoint);
   if (code !== undefined) {
     out.weatherCode = code;
     out.shortForecast = wmoText(code);
@@ -83,7 +85,7 @@ export async function fetchSpotWeather(
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${la}&longitude=${lo}` +
     `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,` +
-    `wind_speed_10m,wind_direction_10m,wind_gusts_10m` +
+    `dew_point_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m` +
     `&temperature_unit=fahrenheit&wind_speed_unit=mph`;
   try {
     const res = await fetchWithTimeout(url, {

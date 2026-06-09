@@ -41,9 +41,13 @@ async function fetchLatestObservation(
   const temp = pr.temperature?.value;
   const wspd = pr.windSpeed?.value;
   const wdir = pr.windDirection?.value;
+  const rh = pr.relativeHumidity?.value; // percent
+  const dew = pr.dewpoint?.value; // Celsius
   if (typeof temp === "number") out.airTempF = round(cToF(temp));
   if (typeof wspd === "number") out.windSpeedMph = round(kmhToMph(wspd));
   if (typeof wdir === "number") out.windDirDeg = wdir;
+  if (typeof rh === "number") out.humidityPct = round(rh);
+  if (typeof dew === "number") out.dewPointF = round(cToF(dew));
   if (typeof pr.textDescription === "string") out.shortForecast = pr.textDescription;
   if (typeof pr.timestamp === "string") out.observedAt = pr.timestamp;
   return out;

@@ -27,6 +27,26 @@ import { ForecastStrip } from "@/components/ForecastStrip";
 
 const fetcher = (u: string) => fetch(u).then((r) => r.json());
 
+/** Plain-English comfort note for a dew point (°F) — the mugginess driver. */
+function dewComfort(f?: number): string | undefined {
+  if (f == null) return undefined;
+  if (f < 55) return "crisp & dry";
+  if (f < 60) return "very comfortable";
+  if (f < 65) return "comfortable";
+  if (f < 70) return "a bit sticky";
+  if (f < 75) return "muggy";
+  return "oppressive";
+}
+/** Plain-English note for relative humidity (%). */
+function humidityNote(p?: number): string | undefined {
+  if (p == null) return undefined;
+  if (p < 40) return "dry";
+  if (p < 60) return "comfortable";
+  if (p < 75) return "humid";
+  if (p < 90) return "muggy";
+  return "saturated";
+}
+
 export function ConditionsDashboard({
   slug,
   initial,
@@ -49,9 +69,22 @@ export function ConditionsDashboard({
   const ratings = snap.cityOfficial.data;
   const sg = snap.sargassum.data;
   const busy = snap.busyness.data;
+  const traffic = snap.traffic.data;
   const rip = snap.nws.data?.ripCurrentRisk;
   const nc = snap.nowcast.data;
   const bw = bestBeachWindow(res.hourlyScores);
+  // Bound the by-hour charts to daylight: local hour of sunrise / sunset.
+  const localHour = (iso?: string) => {
+    if (!iso) return undefined;
+    const h = Number(
+      new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", hour12: false }).format(
+        new Date(iso),
+      ),
+    );
+    return Number.isFinite(h) ? h % 24 : undefined;
+  };
+  const sunriseHour = localHour(snap.sun.data?.sunrise);
+  const sunsetHour = localHour(snap.sun.data?.sunset);
   const uvBurn =
     d.uvIndex != null && d.uvIndex >= 1 ? Math.round(200 / d.uvIndex) : undefined;
   const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
@@ -69,6 +102,7 @@ export function ConditionsDashboard({
     snap.lightning,
     snap.sargassum,
     snap.busyness,
+    snap.traffic,
     snap.forecast,
     snap.sun,
     snap.hourly,
@@ -166,6 +200,18 @@ export function ConditionsDashboard({
           sub={d.shortForecast}
         />
         <MetricCard
+          icon="💧"
+          label="Humidity"
+          value={d.humidityPct != null ? `${d.humidityPct}%` : "—"}
+          sub={humidityNote(d.humidityPct)}
+        />
+        <MetricCard
+          icon="🌫️"
+          label="Dew point"
+          value={d.dewPointF != null ? `${d.dewPointF}°F` : "—"}
+          sub={dewComfort(d.dewPointF)}
+        />
+        <MetricCard
           icon="〰️"
           label="Sea state"
           value={d.waveHeightFt != null ? `${d.waveHeightFt} ft` : "—"}
@@ -229,6 +275,18 @@ export function ConditionsDashboard({
           }
         />
         <MetricCard
+          icon="🚗"
+          label="Traffic"
+          value={!traffic || traffic.level === "unknown" ? "—" : cap(traffic.level)}
+          sub={
+            traffic && traffic.level !== "unknown"
+              ? traffic.congestion != null
+                ? `${traffic.congestion}% congestion near the beach`
+                : "near the beach"
+              : undefined
+          }
+        />
+        <MetricCard
           icon="🌊"
           label="Rip current risk"
           value={!rip || rip === "unknown" ? "—" : cap(rip)}
@@ -254,10 +312,22 @@ export function ConditionsDashboard({
       sg?.byDay?.length ? (
         <section className="mb-6 grid gap-6 lg:grid-cols-2">
           {busy?.byHour?.length ? (
-            <BusynessByHourChart byHour={busy.byHour} tz={tz} />
+            <BusynessByHourChart
+              byHour={busy.byHour}
+              tz={tz}
+              sunriseHour={sunriseHour}
+              sunsetHour={sunsetHour}
+            />
           ) : null}
           {busy?.byDay?.length ? <BusynessByDayChart byDay={busy.byDay} tz={tz} /> : null}
-          {sg?.byHour?.length ? <SeaweedByHourChart byHour={sg.byHour} tz={tz} /> : null}
+          {sg?.byHour?.length ? (
+            <SeaweedByHourChart
+              byHour={sg.byHour}
+              tz={tz}
+              sunriseHour={sunriseHour}
+              sunsetHour={sunsetHour}
+            />
+          ) : null}
           {sg?.byDay?.length ? <SeaweedByDayChart byDay={sg.byDay} tz={tz} /> : null}
         </section>
       ) : null}
