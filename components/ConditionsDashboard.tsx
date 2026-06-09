@@ -4,7 +4,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import type { ConditionsResponse } from "@/lib/types";
 import { bestBeachWindow, deriveMetrics } from "@/lib/score";
-import { fmtTime, scoreColor } from "@/lib/format";
+import { fmtDate, fmtTime, scoreColor } from "@/lib/format";
 import { ScoreGauge } from "@/components/ScoreGauge";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { HourlyScoreGraph } from "@/components/HourlyScoreGraph";
@@ -26,6 +26,10 @@ import { CamGrid } from "@/components/CamGrid";
 import { ForecastStrip } from "@/components/ForecastStrip";
 
 const fetcher = (u: string) => fetch(u).then((r) => r.json());
+
+// Stamped into the bundle at build time (see next.config.mjs) for the footer.
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "dev";
+const BUILD_TIME = process.env.NEXT_PUBLIC_BUILD_TIME;
 
 /** Plain-English comfort note for a dew point (°F) — the mugginess driver. */
 function dewComfort(f?: number): string | undefined {
@@ -351,6 +355,17 @@ export function ConditionsDashboard({
         <p className="text-center text-xs text-slate-500">
           Composite scores are an automated estimate for general guidance only —
           not a safety determination. Always follow posted flags and lifeguards.
+        </p>
+        <p className="text-center text-xs text-slate-500">
+          v{APP_VERSION}
+          <span className="mx-1.5 text-slate-600">·</span>
+          data updated {fmtDate(snap.generatedAt, tz)}, {fmtTime(snap.generatedAt, tz)}
+          {BUILD_TIME && (
+            <>
+              <span className="mx-1.5 text-slate-600">·</span>
+              built {fmtDate(BUILD_TIME, tz)}, {fmtTime(BUILD_TIME, tz)}
+            </>
+          )}
         </p>
       </footer>
     </main>
