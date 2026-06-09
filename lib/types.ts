@@ -55,6 +55,8 @@ export interface WeatherData {
   windSpeedMph?: number;
   shortForecast?: string; // "Mostly Sunny"
   precipProbability?: number; // 0-100
+  humidityPct?: number; // relative humidity, 0-100
+  dewPointF?: number; // °F — the comfort/mugginess driver
   isDaytime?: boolean;
   observedAt?: string; // ISO
 }
@@ -124,6 +126,8 @@ export interface HourlyMetrics {
   windSpeedMph?: number;
   windDirDeg?: number;
   uvIndex?: number;
+  humidityPct?: number; // relative humidity, 0-100
+  dewPointF?: number; // °F — the comfort/mugginess driver
   shortForecast?: string; // derived from the WMO code
   emoji?: string; // sky emoji derived from the code
 }
@@ -325,9 +329,21 @@ export interface SpotWeatherData {
   windDirDeg?: number;
   windDirCardinal?: string;
   humidity?: number; // %
+  dewPointF?: number; // °F
   weatherCode?: number; // WMO code
   shortForecast?: string; // human-readable, derived from the WMO code
   observedAt?: string; // ISO
+}
+
+// --- Traffic (area congestion near the beach, HERE Traffic v7 flow) --------
+export type TrafficLevel = "light" | "moderate" | "heavy" | "severe" | "unknown";
+export interface TrafficData {
+  /** Congestion band derived from HERE jamFactor. */
+  level: TrafficLevel;
+  /** 0-100 congestion index (jamFactor × 10); undefined when unknown. */
+  congestion?: number;
+  /** Number of usable road segments that fed the aggregate. */
+  segments: number;
 }
 
 // --- Snapshot --------------------------------------------------------------
@@ -346,6 +362,7 @@ export interface ConditionsSnapshot {
   lightning: Wrapped<LightningData>;
   sargassum: Wrapped<SargassumData>;
   busyness: Wrapped<BusynessData>;
+  traffic: Wrapped<TrafficData>;
   forecast: Wrapped<ForecastDay[]>;
   sun: Wrapped<SunData>;
   hourly: Wrapped<HourlyMetrics[]>;
@@ -464,6 +481,8 @@ export interface Location {
    * (e.g. "Palm Beach"). Alerts use lat/lon and need no config.
    */
   surfZone?: { office: string; name: string };
+  /** Optional override for the HERE traffic sampling radius (km). Defaults to ~2 km. */
+  trafficRadiusKm?: number;
   cams: CamConfig[];
 }
 

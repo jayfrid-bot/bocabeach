@@ -10,6 +10,7 @@ const FIXTURE = {
     temperature_2m: 82.6,
     relative_humidity_2m: 86,
     apparent_temperature: 91.9,
+    dew_point_2m: 78.4,
     weather_code: 95,
     wind_speed_10m: 8.3,
     wind_direction_10m: 114,
@@ -27,6 +28,7 @@ describe("parseOpenMeteoCurrent", () => {
     expect(d.windDirDeg).toBe(114);
     expect(d.windDirCardinal).toBe("ESE");
     expect(d.humidity).toBe(86);
+    expect(d.dewPointF).toBe(78);
     expect(d.weatherCode).toBe(95);
     expect(d.shortForecast).toBe("Thunderstorm");
     expect(d.observedAt).toBe("2026-05-29T18:15:00.000Z");

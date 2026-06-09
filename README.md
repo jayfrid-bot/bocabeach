@@ -22,13 +22,19 @@ A single composite **Beach Day** score (0–100), weighted for beachgoers:
 
 | Sub-score | Weight |
 |-----------|:------:|
-| Air temperature | 22% |
-| Sky / precipitation | 22% |
-| Wind (calmness) | 18% |
-| Water temperature | 15% |
-| Sea state (swim calmness) | 10% |
-| Water quality | 8% |
+| Air temperature | 20% |
+| Sky / precipitation | 20% |
+| Wind (calmness) | 16% |
+| Water temperature | 13% |
+| Comfort (mugginess) | 10% |
+| Sea state (swim calmness) | 9% |
+| Water quality | 7% |
 | UV index | 5% |
+
+**Comfort** is driven by the **dew point** — the real "how heavy does the air feel" signal
+(sweat can't evaporate as it climbs): ≤60°F is comfortable, 65–69°F gets sticky, ≥70°F is
+oppressive. Relative humidity is shown alongside it (and adds a small extra penalty above
+85%), but the score leans on dew point because humidity alone is ambiguous.
 
 Official lifeguard **flags and hazards act as safety overrides**. We separate a true
 closure from a swim-only hazard: a **double-red** flag (water closed) drives the score to
