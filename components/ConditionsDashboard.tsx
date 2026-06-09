@@ -52,6 +52,18 @@ export function ConditionsDashboard({
   const rip = snap.nws.data?.ripCurrentRisk;
   const nc = snap.nowcast.data;
   const bw = bestBeachWindow(res.hourlyScores);
+  // Bound the by-hour charts to daylight: local hour of sunrise / sunset.
+  const localHour = (iso?: string) => {
+    if (!iso) return undefined;
+    const h = Number(
+      new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", hour12: false }).format(
+        new Date(iso),
+      ),
+    );
+    return Number.isFinite(h) ? h % 24 : undefined;
+  };
+  const sunriseHour = localHour(snap.sun.data?.sunrise);
+  const sunsetHour = localHour(snap.sun.data?.sunset);
   const uvBurn =
     d.uvIndex != null && d.uvIndex >= 1 ? Math.round(200 / d.uvIndex) : undefined;
   const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
@@ -254,10 +266,22 @@ export function ConditionsDashboard({
       sg?.byDay?.length ? (
         <section className="mb-6 grid gap-6 lg:grid-cols-2">
           {busy?.byHour?.length ? (
-            <BusynessByHourChart byHour={busy.byHour} tz={tz} />
+            <BusynessByHourChart
+              byHour={busy.byHour}
+              tz={tz}
+              sunriseHour={sunriseHour}
+              sunsetHour={sunsetHour}
+            />
           ) : null}
           {busy?.byDay?.length ? <BusynessByDayChart byDay={busy.byDay} tz={tz} /> : null}
-          {sg?.byHour?.length ? <SeaweedByHourChart byHour={sg.byHour} tz={tz} /> : null}
+          {sg?.byHour?.length ? (
+            <SeaweedByHourChart
+              byHour={sg.byHour}
+              tz={tz}
+              sunriseHour={sunriseHour}
+              sunsetHour={sunsetHour}
+            />
+          ) : null}
           {sg?.byDay?.length ? <SeaweedByDayChart byDay={sg.byDay} tz={tz} /> : null}
         </section>
       ) : null}

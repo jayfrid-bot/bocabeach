@@ -4,6 +4,7 @@ export interface LevelBar {
   rank: number; // 0..maxRank
   color: string;
   label: string; // x-axis label ("" to omit, e.g. to thin a crowded axis)
+  subLabel?: string; // optional second line under the label (e.g. the date)
   tooltip: string;
   highlight?: boolean; // outline + full opacity (e.g. "now" / "today")
 }
@@ -13,7 +14,7 @@ const H = 150;
 const PL = 30;
 const PR = 12;
 const PT = 12;
-const PB = 24;
+const PB = 30; // room for an optional two-line (weekday + date) x-axis label
 const PLOT_W = W - PL - PR;
 const PLOT_H = H - PT - PB;
 const BASE_Y = PT + PLOT_H;
@@ -83,12 +84,23 @@ export function LevelBarChart({
                 {b.label ? (
                   <text
                     x={xCenter(i)}
-                    y={H - 8}
+                    y={b.subLabel ? H - 18 : H - 10}
                     textAnchor="middle"
                     fill={b.highlight ? "#e2e8f0" : "#64748b"}
                     fontSize="10"
                   >
                     {b.label}
+                  </text>
+                ) : null}
+                {b.subLabel ? (
+                  <text
+                    x={xCenter(i)}
+                    y={H - 6}
+                    textAnchor="middle"
+                    fill={b.highlight ? "#e2e8f0" : "#64748b"}
+                    fontSize="10"
+                  >
+                    {b.subLabel}
                   </text>
                 ) : null}
               </g>
