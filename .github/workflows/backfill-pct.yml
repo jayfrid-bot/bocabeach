@@ -25,7 +25,7 @@ concurrency:
 jobs:
   backfill:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -36,11 +36,18 @@ jobs:
         run: python eval/run_eval.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }} # free fallback if Gemini throttles
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GitHub Models fallback
           EVAL_RESCORE: "1"
-          EVAL_DELAY: "6"
+          # Bulk re-score: Gemini's free tier (~250/day, ~10 RPM) throttles fast and
+          # burns ~16s of per-image retry-backoff before falling through, which blew
+          # the previous run past its timeout. Groq (~14,400/day, high RPM) is the
+          # right primary for a 168-image batch, so put it first; keep Gemini et al.
+          # as fallbacks. Cap retries so a throttled provider yields quickly.
+          VISION_PROVIDERS: "groq,gemini,openrouter,github"
+          GEMINI_RETRIES: "1"
+          EVAL_DELAY: "4"
 
       - name: Commit refreshed predictions.csv to main
         run: |
