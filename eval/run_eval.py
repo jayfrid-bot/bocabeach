@@ -17,6 +17,9 @@ sys.path.insert(0, os.path.join(DIR, "..", "scripts"))
 from cam_seaweed import assess  # noqa: E402  -- the production vision call
 
 DELAY = float(os.environ.get("EVAL_DELAY", "6"))
+# EVAL_RESCORE=1 forces every image to be re-scored (ignores prior predictions) —
+# used for the one-time backfill after the prompt gains new fields (e.g. pct).
+RESCORE = os.environ.get("EVAL_RESCORE") == "1"
 
 
 def main() -> int:
@@ -32,7 +35,7 @@ def main() -> int:
     # Errored/blank rows are dropped so they're retried on the next run.
     out = os.path.join(DIR, "predictions.csv")
     done = {}
-    if os.path.exists(out):
+    if os.path.exists(out) and not RESCORE:
         with open(out) as fh:
             done = {
                 r["image"]: r

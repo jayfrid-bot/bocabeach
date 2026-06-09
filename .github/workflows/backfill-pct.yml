@@ -1,0 +1,79 @@
+name: Backfill seaweed/crowd %
+
+# ONE-TIME backfill: re-score the archived eval stills with the updated vision
+# prompt so historical readings get numeric seaweed_pct/crowd_pct, then merge
+# those numbers into cam_seaweed.json on the sargassum-data branch. Reuses the
+# same free-vision provider chain and the publish pattern as the Cam Vision Feed.
+#
+# Triggers: manually (workflow_dispatch) OR automatically when this file is first
+# pushed to main (so the one-time run kicks off without needing dispatch perms).
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths: [".github/workflows/backfill-pct.yml"]
+
+permissions:
+  contents: write
+  models: read # GitHub Models as a free vision fallback
+
+concurrency:
+  group: backfill-pct
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Re-score ALL archived stills with the updated prompt (numeric pct)
+        run: python eval/run_eval.py
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }} # free fallback if Gemini throttles
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GitHub Models fallback
+          EVAL_RESCORE: "1"
+          EVAL_DELAY: "6"
+
+      - name: Commit refreshed predictions.csv to main
+        run: |
+          git config user.name "eval-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add eval/predictions.csv
+          if git diff --cached --quiet; then
+            echo "predictions unchanged"
+          else
+            git commit -m "eval: backfill seaweed/crowd pct $(date -u +%FT%TZ)"
+            git push
+          fi
+
+      - name: Merge the pct numbers into the history feed
+        run: python eval/backfill_history.py
+        env:
+          # Defaults inside the script: PREV_URL = live raw feed, merges by date/hour.
+          CAM_SEAWEED_OUT: ${{ runner.temp }}/cam_seaweed.json
+
+      - name: Publish enriched feed to sargassum-data branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          feed="${{ runner.temp }}/cam_seaweed.json"
+          [ -f "$feed" ] || { echo "no feed produced"; exit 1; }
+          work="${{ runner.temp }}/pub"
+          mkdir -p "$work"
+          cp "$feed" "$work/cam_seaweed.json"
+          cd "$work"
+          git init -q
+          git config user.name "cam-vision-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -q -b sargassum-data
+          git add -A
+          git commit -q -m "Backfill seaweed/crowd pct into history $(date -u +%FT%TZ)"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" sargassum-data
