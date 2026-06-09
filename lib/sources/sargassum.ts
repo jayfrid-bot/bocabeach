@@ -94,9 +94,14 @@ export function summarizeSeaweed(feed: CamSeaweedFeed): SargassumData | null {
       ? { level: "unknown", isMorning: false, cams: [], byHour, byDay }
       : null;
   }
-  const worst = cams.reduce((a, b) => (RANK[b.level] > RANK[a.level] ? b : a));
+  // Worst by category rank; tie-broken by the finer coverage % when present.
+  const worst = cams.reduce((a, b) => {
+    if (RANK[b.level] !== RANK[a.level]) return RANK[b.level] > RANK[a.level] ? b : a;
+    return (b.coveragePct ?? -1) > (a.coveragePct ?? -1) ? b : a;
+  });
   return {
     level: worst.level,
+    coveragePct: worst.coveragePct,
     note: worst.note,
     isMorning: !!morning && group === morning,
     capturedAtLocal: group?.capturedAtLocal,

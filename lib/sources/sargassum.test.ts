@@ -23,6 +23,20 @@ describe("summarizeSeaweed", () => {
     expect(d.cams).toHaveLength(2);
   });
 
+  it("surfaces the worst cam's coverage %, tie-breaking equal levels by coverage", () => {
+    const d = summarizeSeaweed({
+      latest: {
+        cams: [
+          { name: "A", level: "high", coveragePct: 55 },
+          { name: "B", level: "high", coveragePct: 80 },
+          { name: "C", level: "moderate", coveragePct: 95 },
+        ],
+      },
+    })!;
+    expect(d.level).toBe("high");
+    expect(d.coveragePct).toBe(80); // the worse of the two "high" cams, not the moderate's 95
+  });
+
   it("falls back to the latest reading when there is no morning one", () => {
     const d = summarizeSeaweed({
       latest: { capturedAtLocal: "x", cams: [{ name: "A", level: "high" }] },

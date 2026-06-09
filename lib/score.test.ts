@@ -47,6 +47,7 @@ function snapshot(over: {
   water?: WaterQualityData | null;
   nws?: NwsData | null;
   sargassum?: SargassumData | null;
+  busyness?: BusynessData | null;
   sun?: SunData | null;
   hourly?: HourlyMetrics[] | null;
 }): ConditionsSnapshot {
@@ -71,7 +72,7 @@ function snapshot(over: {
     airQuality: wrap<AirQualityData>(null),
     lightning: wrap<LightningData>(null),
     sargassum: wrap(over.sargassum ?? null),
-    busyness: wrap<BusynessData>(null),
+    busyness: wrap(over.busyness ?? null),
     forecast: wrap<ForecastDay[]>(null),
     sun: wrap(over.sun ?? null),
     hourly: wrap(over.hourly ?? null),
@@ -106,7 +107,7 @@ describe("scoring (Beach Day only — no surf)", () => {
     const { subScores } = computeScore(NICE);
     const keys = subScores.map((s) => s.key).sort();
     expect(keys).toEqual(
-      ["airTemp", "comfort", "sargassum", "sky", "uv", "waterQuality", "waterTemp", "waves", "wind"].sort(),
+      ["airTemp", "comfort", "crowds", "sargassum", "sky", "uv", "waterQuality", "waterTemp", "waves", "wind"].sort(),
     );
     const total = subScores.reduce((a, s) => a + s.weight, 0);
     expect(total).toBeCloseTo(1, 5);
@@ -122,6 +123,35 @@ describe("scoring (Beach Day only — no surf)", () => {
     expect(sg("moderate")).toBe(55);
     expect(sg("high")).toBe(20);
     expect(sg("unknown")).toBeNull(); // no signal -> excluded from the average
+  });
+
+  it("refines the seaweed sub-score from coverage % (anchors match the categories)", () => {
+    const sg = (coveragePct: number) =>
+      scoreBeachDay(
+        deriveMetrics(
+          snapshot({ sargassum: { level: "moderate", coveragePct, isMorning: true, cams: [] } }),
+        ),
+      ).subScores.find((s) => s.key === "sargassum")!.score;
+    expect(sg(0)).toBe(100);
+    expect(sg(10)).toBe(85);
+    expect(sg(20)).toBe(70); // interpolated between the 10 and 30 anchors
+    expect(sg(30)).toBe(55);
+    expect(sg(60)).toBe(20);
+  });
+
+  it("scores crowds (emptier is better) and degrades to null when unknown", () => {
+    const crowds = (busy: BusynessData | null) =>
+      scoreBeachDay(deriveMetrics(snapshot({ busyness: busy }))).subScores.find(
+        (s) => s.key === "crowds",
+      )!.score;
+    const at = (crowdPct: number) =>
+      crowds({ level: "moderate", crowdPct } as BusynessData);
+    expect(at(0)).toBe(100);
+    expect(at(50)).toBe(70);
+    expect(at(100)).toBe(25);
+    // Falls back to the categorical level when no crowdPct is present.
+    expect(crowds({ level: "packed" } as BusynessData)).toBe(crowds({ level: "packed", crowdPct: 95 } as BusynessData));
+    expect(crowds(null)).toBeNull();
   });
 
   it("caps the score at 65 under HIGH sargassum and 85 under MODERATE", () => {
@@ -150,6 +180,22 @@ describe("scoring (Beach Day only — no surf)", () => {
     // none/low never cap, and don't add a seaweed cap message.
     expect(withSeaweed("none").caps.join(" ")).not.toMatch(/sargassum|seaweed/i);
     expect(withSeaweed("low").caps.join(" ")).not.toMatch(/sargassum|seaweed/i);
+
+    // The CATEGORY trips the cap — a "high" call with a low coverage % still caps at 65.
+    const highLowPct = scoreBeachDay(
+      deriveMetrics(
+        snapshot({
+          buoy: NICE.buoy.data,
+          weather: NICE.weather.data,
+          marine: NICE.marine.data,
+          city: { flags: ["green"] },
+          water: { overall: "good", advisory: false, sites: [] },
+          sargassum: { level: "high", coveragePct: 12, isMorning: true, cams: [] },
+        }),
+      ),
+    );
+    expect(highLowPct.score).toBeLessThanOrEqual(65);
+    expect(highLowPct.caps.join(" ")).toMatch(/sargassum|seaweed/i);
   });
 
   it("scores comfort from dew point (mugginess), with a humidity penalty at extremes", () => {
@@ -469,6 +515,21 @@ describe("computeHourlyScores", () => {
     expect(Math.min(...hours)).toBe(6); // sunrise hour (6 AM EDT)
     expect(Math.max(...hours)).toBe(20); // last hour <= sunset (8 PM EDT)
     expect(hours.every((h) => h >= 6 && h <= 20)).toBe(true);
+  });
+
+  it("crowds vary by hour: a packed afternoon scores below a quiet morning", () => {
+    const busyness = {
+      level: "moderate",
+      byHour: [
+        { hour: 7, level: "quiet", crowdPct: 10, samples: 3 },
+        { hour: 15, level: "packed", crowdPct: 95, samples: 3 },
+      ],
+    } as BusynessData;
+    const hrs = computeHourlyScores(
+      snapshot({ ...niceBase, city: { flags: ["green"] }, busyness, hourly: hourlyDay(), sun: SUN }),
+    );
+    const at = (localHour: number) => hrs.find((h) => nyHour(h.time) === localHour)!;
+    expect(at(15).score).toBeLessThan(at(7).score);
   });
 
   it("carries day-constant safety caps into every forecast hour", () => {

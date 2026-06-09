@@ -235,12 +235,16 @@ export type SargassumRisk = "none" | "low" | "moderate" | "high" | "unknown";
 export interface CamSeaweedReading {
   name: string;
   level: SargassumRisk;
+  /** 0-100 % of visible sand/shore covered by sargassum (refines the score). */
+  coveragePct?: number;
   note?: string;
   capturedAt?: string;
   /** How busy the beach looks from this cam. */
   crowd?: BusynessLevel;
   /** Approx number of people visible. */
   people?: number;
+  /** 0-100 how full the beach looks. */
+  crowdPct?: number;
   crowdNote?: string;
 }
 /** Typical seaweed by local hour, learned from the rolling cam history. */
@@ -267,6 +271,8 @@ export interface BusynessByHour {
   hour: number; // local hour 0-23
   level: BusynessLevel;
   people?: number;
+  /** Avg 0-100 fullness for this hour (refines the hourly crowd sub-score). */
+  crowdPct?: number;
   samples: number;
 }
 /** One day's peak (busiest) crowd, for the busyness-by-day chart. */
@@ -279,6 +285,8 @@ export interface BusynessData {
   level: BusynessLevel;
   /** Approx people visible at the busiest cam. */
   peopleEstimate?: number;
+  /** 0-100 fullness at the busiest cam. */
+  crowdPct?: number;
   note?: string;
   capturedAtLocal?: string;
   cams?: { name: string; crowd: BusynessLevel; people?: number }[];
@@ -294,6 +302,8 @@ export interface BusynessData {
  */
 export interface SargassumData {
   level: SargassumRisk;
+  /** 0-100 % coverage at the worst cam (morning-preferred); refines the score. */
+  coveragePct?: number;
   note?: string;
   /** True when this is the early-morning, pre-beach-cleaning reading (most reliable). */
   isMorning: boolean;
