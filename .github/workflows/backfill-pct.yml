@@ -25,26 +25,29 @@ concurrency:
 jobs:
   backfill:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # ~168 token-heavy vision requests in one batch outrun every free tier's
+    # per-minute limit, so the job is inherently slow (provider churn + backoff).
+    # This is a public repo (unlimited Actions minutes), so give it generous time
+    # rather than fight the rate limits; the re-score is resumable regardless.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Re-score ALL archived stills with the updated prompt (numeric pct)
+      - name: Backfill numeric pct onto the archived stills (resumable)
         run: python eval/run_eval.py
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GitHub Models fallback
-          EVAL_RESCORE: "1"
-          # Bulk re-score: Gemini's free tier (~250/day, ~10 RPM) throttles fast and
-          # burns ~16s of per-image retry-backoff before falling through, which blew
-          # the previous run past its timeout. Groq (~14,400/day, high RPM) is the
-          # right primary for a 168-image batch, so put it first; keep Gemini et al.
-          # as fallbacks. Cap retries so a throttled provider yields quickly.
+          # Only (re)score rows still missing the numeric pct; resumes if interrupted.
+          EVAL_BACKFILL_PCT: "1"
+          # Groq (~14,400/day, high RPM) leads for the bulk batch; Gemini (~250/day,
+          # ~10 RPM) throttles fast and is kept as a fallback. Cap retries so a
+          # throttled provider yields quickly instead of burning long backoff.
           VISION_PROVIDERS: "groq,gemini,openrouter,github"
           GEMINI_RETRIES: "1"
           EVAL_DELAY: "4"

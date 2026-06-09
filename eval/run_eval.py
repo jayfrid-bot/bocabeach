@@ -17,9 +17,15 @@ sys.path.insert(0, os.path.join(DIR, "..", "scripts"))
 from cam_seaweed import assess  # noqa: E402  -- the production vision call
 
 DELAY = float(os.environ.get("EVAL_DELAY", "6"))
-# EVAL_RESCORE=1 forces every image to be re-scored (ignores prior predictions) —
-# used for the one-time backfill after the prompt gains new fields (e.g. pct).
+# EVAL_RESCORE=1 forces every image to be re-scored (ignores prior predictions).
 RESCORE = os.environ.get("EVAL_RESCORE") == "1"
+# EVAL_BACKFILL_PCT=1 (re)scores only rows that predate the numeric seaweed_pct/
+# crowd_pct fields, leaving already-numbered rows alone. This makes the one-time
+# backfill RESUMABLE: a run that's interrupted just continues where it left off.
+BACKFILL_PCT = os.environ.get("EVAL_BACKFILL_PCT") == "1"
+# Save progress every SAVE_EVERY images so an interrupted run keeps what it scored.
+SAVE_EVERY = int(os.environ.get("EVAL_SAVE_EVERY", "10"))
+FIELDS = ["image", "seaweed", "seaweed_pct", "crowd", "crowd_pct", "people"]
 
 
 def main() -> int:
@@ -31,19 +37,32 @@ def main() -> int:
         print("no images — run archive_stills.py first", file=sys.stderr)
         return 1
 
-    # Only predict photos we haven't scored yet (cheap + keeps the free tier happy).
-    # Errored/blank rows are dropped so they're retried on the next run.
+    # Load prior predictions so we carry them forward (and can resume a backfill).
     out = os.path.join(DIR, "predictions.csv")
     done = {}
     if os.path.exists(out) and not RESCORE:
         with open(out) as fh:
-            done = {
-                r["image"]: r
-                for r in csv.DictReader(fh)
-                if r.get("seaweed") not in ("", "ERROR")
-            }
-    todo = [p for p in images if os.path.basename(p) not in done]
-    print(f"{len(todo)} new image(s) to score ({len(done)} already done)")
+            done = {r["image"]: r for r in csv.DictReader(fh)}
+
+    def needs_scoring(name: str) -> bool:
+        # Score photos we haven't scored yet; errored/blank rows are retried.
+        row = done.get(name)
+        if row is None or row.get("seaweed") in ("", "ERROR"):
+            return True
+        # Backfill: also (re)score rows that predate the numeric pct fields.
+        if BACKFILL_PCT and (row.get("seaweed_pct") or "").strip() in ("", "None"):
+            return True
+        return False
+
+    def flush() -> None:
+        with open(out, "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=FIELDS)
+            w.writeheader()
+            for name in sorted(done):
+                w.writerow({k: done[name].get(k, "") for k in FIELDS})
+
+    todo = [p for p in images if needs_scoring(os.path.basename(p))]
+    print(f"{len(todo)} image(s) to score ({len(done)} already on file)")
 
     for i, path in enumerate(todo):
         name = os.path.basename(path)
@@ -63,15 +82,12 @@ def main() -> int:
         except Exception as e:  # noqa: BLE001
             done[name] = {"image": name, "seaweed": "ERROR", "crowd": "", "people": ""}
             print(f"  {name}: ERROR {e}", file=sys.stderr)
+        if (i + 1) % SAVE_EVERY == 0:
+            flush()  # persist progress so an interrupted run isn't wasted
         if i < len(todo) - 1:
             time.sleep(DELAY)
 
-    fields = ["image", "seaweed", "seaweed_pct", "crowd", "crowd_pct", "people"]
-    with open(out, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=fields)
-        w.writeheader()
-        for name in sorted(done):
-            w.writerow({k: done[name].get(k, "") for k in fields})
+    flush()
     print(f"wrote {out} ({len(done)} rows)")
     return 0
 
