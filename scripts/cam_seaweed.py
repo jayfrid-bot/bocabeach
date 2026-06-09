@@ -119,15 +119,19 @@ MAX_HISTORY = 480  # rolling raw reads (~1+ month) for the by-hour & by-day char
 
 PROMPT = (
     "This is a live beach webcam photo. Return strict JSON only: "
-    '{"seaweed":"none|low|moderate|high","seaweed_note":"<=8 words",'
-    '"crowd":"empty|quiet|moderate|busy|packed","people":<approx visible people as integer>,'
+    '{"seaweed":"none|low|moderate|high","seaweed_pct":<integer 0-100>,'
+    '"seaweed_note":"<=8 words","crowd":"empty|quiet|moderate|busy|packed",'
+    '"crowd_pct":<integer 0-100>,"people":<approx visible people as integer>,'
     '"crowd_note":"<=8 words"}. '
     "Seaweed = brown/golden sargassum on the sand and in shallow water: "
     "none=clean sand, low=thin wrack line or scattered patches, "
     "moderate=clear bands, high=heavy mats over much of the shore. "
+    "seaweed_pct = percent of the visible sand/shoreline covered by sargassum "
+    "(0=clean, 5=thin wrack line, 30=clear bands, 60=heavy mats, 90+=nearly all covered). "
     "Crowd = how busy the beach looks from people on the sand and in the water "
     "(and cars in any visible parking lot): empty=nobody, quiet=a few people, "
-    "moderate=steady, busy=crowded, packed=very crowded."
+    "moderate=steady, busy=crowded, packed=very crowded. "
+    "crowd_pct = how full the beach looks, 0=empty to 100=packed holiday peak."
 )
 
 
@@ -179,6 +183,13 @@ def _extract_json(text: str) -> dict:
     return json.loads(t)
 
 
+def _pct(v: object) -> int | None:
+    """A 0-100 integer percent, or None when missing/invalid."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    return max(0, min(100, int(round(v))))
+
+
 def _parse_out(out: dict) -> dict:
     """Validate a raw model reply and normalize to our reading shape."""
     sw = str(out.get("seaweed", "")).lower()
@@ -188,8 +199,10 @@ def _parse_out(out: dict) -> dict:
     people = out.get("people")
     return {
         "level": sw,
+        "coveragePct": _pct(out.get("seaweed_pct")),  # 0-100 coverage, refines the score
         "note": str(out.get("seaweed_note", ""))[:80],
         "crowd": cr if cr in CROWD else None,
+        "crowdPct": _pct(out.get("crowd_pct")),  # 0-100 fullness
         "people": int(people) if isinstance(people, (int, float)) else None,
         "crowdNote": str(out.get("crowd_note", ""))[:80],
     }
@@ -279,16 +292,19 @@ def busiest_crowd(group: dict | None) -> dict | None:
     cams = [c for c in (group or {}).get("cams", []) if c.get("crowd") in CROWD_RANK]
     if not cams:
         return None
-    b = max(cams, key=lambda c: CROWD_RANK[c["crowd"]])
-    return {"level": b["crowd"], "people": b.get("people")}
+    # Busiest by category, tie-broken by crowd_pct then people.
+    b = max(cams, key=lambda c: (CROWD_RANK[c["crowd"]],
+                                 c.get("crowdPct") or -1, c.get("people") or -1))
+    return {"level": b["crowd"], "people": b.get("people"), "crowdPct": b.get("crowdPct")}
 
 
-def worst_seaweed(group: dict | None) -> str | None:
-    """The worst (highest) seaweed level across a capture's per-cam reads."""
+def worst_seaweed(group: dict | None) -> dict | None:
+    """The worst seaweed across a capture's cams: {level, pct} (rank, then coverage)."""
     cams = [c for c in (group or {}).get("cams", []) if c.get("level") in SEAWEED_RANK]
     if not cams:
         return None
-    return max(cams, key=lambda c: SEAWEED_RANK[c["level"]])["level"]
+    b = max(cams, key=lambda c: (SEAWEED_RANK[c["level"]], c.get("coveragePct") or -1))
+    return {"level": b["level"], "pct": b.get("coveragePct")}
 
 
 def fetch_prev() -> dict:
@@ -306,7 +322,8 @@ def capture_now(now_local: dt.datetime) -> dict | None:
         try:
             r = assess(fetch_still(cam))
             readings.append({"id": cam["id"], "name": cam["name"], **r})
-            print(f"  {cam['id']}: seaweed={r['level']} crowd={r.get('crowd')} "
+            print(f"  {cam['id']}: seaweed={r['level']}({r.get('coveragePct')}%) "
+                  f"crowd={r.get('crowd')}({r.get('crowdPct')}%) "
                   f"people={r.get('people')} via {r.get('provider')}")
         except Exception as e:  # noqa: BLE001
             print(f"  warn {cam['id']}: {e}", file=sys.stderr)
@@ -345,12 +362,15 @@ def main() -> int:
     history = prev.get("history") if isinstance(prev.get("history"), list) else []
     if current:
         crowd = busiest_crowd(current) or {}
+        ws = worst_seaweed(current) or {}
         history = history + [{
             "t": current["capturedAtLocal"],
             "hour": current["hour"],
             "level": crowd.get("level"),       # busiest crowd across the cams
             "people": crowd.get("people"),
-            "seaweed": worst_seaweed(current),  # worst seaweed across the cams
+            "crowdPct": crowd.get("crowdPct"),  # 0-100 fullness (busiest cam)
+            "seaweed": ws.get("level"),         # worst seaweed across the cams
+            "cov": ws.get("pct"),               # 0-100 seaweed coverage (worst cam)
         }]
         history = history[-MAX_HISTORY:]
 

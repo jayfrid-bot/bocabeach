@@ -20,6 +20,23 @@ describe("summarizeBusyness", () => {
     expect(d.capturedAtLocal).toBe("2026-06-03T16:00:00-04:00");
   });
 
+  it("surfaces the busiest cam's fullness % and averages it by hour", () => {
+    const d = summarizeBusyness({
+      latest: {
+        cams: [
+          { name: "A", crowd: "quiet", people: 5, crowdPct: 20 },
+          { name: "B", crowd: "busy", people: 40, crowdPct: 78 },
+        ],
+      },
+      history: [
+        { hour: 9, level: "quiet", people: 5, crowdPct: 10 },
+        { hour: 9, level: "moderate", people: 15, crowdPct: 40 },
+      ],
+    });
+    expect(d.crowdPct).toBe(78); // busiest cam
+    expect(d.byHour?.find((x) => x.hour === 9)?.crowdPct).toBe(25); // (10+40)/2
+  });
+
   it("ignores cams without a valid crowd read, and degrades to unknown", () => {
     expect(summarizeBusyness(feed([{ name: "A" }, { name: "B", crowd: "n/a" }])).level).toBe(
       "unknown",

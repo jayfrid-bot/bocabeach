@@ -27,6 +27,7 @@ interface CamReading {
   name: string;
   crowd?: string;
   people?: number;
+  crowdPct?: number;
   crowdNote?: string;
 }
 interface CamGroup {
@@ -38,6 +39,7 @@ interface HistoryEntry {
   hour?: number;
   level?: string; // busiest crowd at this capture
   people?: number;
+  crowdPct?: number; // 0-100 fullness at the busiest cam
 }
 export interface CamFeed {
   latest?: CamGroup | null;
@@ -51,17 +53,24 @@ const LEVELS: BusynessLevel[] = ["empty", "quiet", "moderate", "busy", "packed"]
 
 /** Average the rolling history into a typical busyness per local hour. */
 function byHourFromHistory(history: HistoryEntry[]): BusynessByHour[] | undefined {
-  const buckets = new Map<number, { rank: number; people: number; pN: number; n: number }>();
+  const buckets = new Map<
+    number,
+    { rank: number; people: number; pN: number; pct: number; cN: number; n: number }
+  >();
   for (const e of history) {
     if (typeof e.hour !== "number" || typeof e.level !== "string" || !(e.level in RANK)) {
       continue;
     }
-    const b = buckets.get(e.hour) ?? { rank: 0, people: 0, pN: 0, n: 0 };
+    const b = buckets.get(e.hour) ?? { rank: 0, people: 0, pN: 0, pct: 0, cN: 0, n: 0 };
     b.rank += RANK[e.level];
     b.n += 1;
     if (typeof e.people === "number") {
       b.people += e.people;
       b.pN += 1;
+    }
+    if (typeof e.crowdPct === "number") {
+      b.pct += e.crowdPct;
+      b.cN += 1;
     }
     buckets.set(e.hour, b);
   }
@@ -72,6 +81,7 @@ function byHourFromHistory(history: HistoryEntry[]): BusynessByHour[] | undefine
       hour,
       level: LEVELS[Math.round(b.rank / b.n)],
       people: b.pN ? Math.round(b.people / b.pN) : undefined,
+      crowdPct: b.cN ? Math.round(b.pct / b.cN) : undefined,
       samples: b.n,
     }));
 }
@@ -117,10 +127,14 @@ export function summarizeBusyness(feed: CamFeed): BusynessData {
   if (!cams.length) {
     return { level: "unknown", capturedAtLocal: group?.capturedAtLocal, byHour, byDay };
   }
-  const busiest = cams.reduce((a, b) => (RANK[b.crowd] > RANK[a.crowd] ? b : a));
+  const busiest = cams.reduce((a, b) => {
+    if (RANK[b.crowd] !== RANK[a.crowd]) return RANK[b.crowd] > RANK[a.crowd] ? b : a;
+    return (b.crowdPct ?? -1) > (a.crowdPct ?? -1) ? b : a;
+  });
   return {
     level: busiest.crowd,
     peopleEstimate: typeof busiest.people === "number" ? busiest.people : undefined,
+    crowdPct: typeof busiest.crowdPct === "number" ? busiest.crowdPct : undefined,
     note: busiest.crowdNote,
     capturedAtLocal: group?.capturedAtLocal,
     cams: cams.map((c) => ({ name: c.name, crowd: c.crowd, people: c.people })),

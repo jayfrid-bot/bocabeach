@@ -50,21 +50,25 @@ def main() -> int:
             done[name] = {
                 "image": name,
                 "seaweed": r["level"],
+                "seaweed_pct": r.get("coveragePct") if r.get("coveragePct") is not None else "",
                 "crowd": r.get("crowd") or "",
+                "crowd_pct": r.get("crowdPct") if r.get("crowdPct") is not None else "",
                 "people": r.get("people") if r.get("people") is not None else "",
             }
-            print(f"  {name}: seaweed={r['level']} crowd={r.get('crowd')} people={r.get('people')}")
+            print(f"  {name}: seaweed={r['level']}({r.get('coveragePct')}%) "
+                  f"crowd={r.get('crowd')}({r.get('crowdPct')}%) people={r.get('people')}")
         except Exception as e:  # noqa: BLE001
             done[name] = {"image": name, "seaweed": "ERROR", "crowd": "", "people": ""}
             print(f"  {name}: ERROR {e}", file=sys.stderr)
         if i < len(todo) - 1:
             time.sleep(DELAY)
 
+    fields = ["image", "seaweed", "seaweed_pct", "crowd", "crowd_pct", "people"]
     with open(out, "w", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=["image", "seaweed", "crowd", "people"])
+        w = csv.DictWriter(fh, fieldnames=fields)
         w.writeheader()
         for name in sorted(done):
-            w.writerow({k: done[name].get(k, "") for k in ["image", "seaweed", "crowd", "people"]})
+            w.writerow({k: done[name].get(k, "") for k in fields})
     print(f"wrote {out} ({len(done)} rows)")
     return 0
 

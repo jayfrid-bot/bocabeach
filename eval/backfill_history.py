@@ -39,6 +39,14 @@ def load_csv(path):
         return list(csv.DictReader(fh))
 
 
+def _pct(v):
+    """A 0-100 int from a CSV cell, or None when blank/invalid (old CSVs lack pct)."""
+    try:
+        return max(0, min(100, int(round(float(v)))))
+    except (TypeError, ValueError):
+        return None
+
+
 def fetch_prev():
     try:
         req = urllib.request.Request(PREV_URL, headers={"User-Agent": "boca-beach-rats"})
@@ -60,20 +68,31 @@ def main() -> int:
             continue
         local = dt.datetime.fromisoformat(ts).astimezone(TZ)
         key = (local.date().isoformat(), local.hour)
-        b = buckets.setdefault(key, {"crowd": None, "people": None, "seaweed": None,
+        b = buckets.setdefault(key, {"crowd": None, "people": None, "crowdPct": None,
+                                      "seaweed": None, "cov": None,
                                       "local": local.replace(minute=0, second=0, microsecond=0)})
+        # Worst seaweed by (category rank, coverage %); carry the winner's coverage.
         sw = (p.get("seaweed") or "").lower()
-        if sw in SEAWEED_RANK and (b["seaweed"] is None
-                                   or SEAWEED_RANK[sw] > SEAWEED_RANK[b["seaweed"]]):
-            b["seaweed"] = sw
+        if sw in SEAWEED_RANK:
+            cov = _pct(p.get("seaweed_pct"))
+            cand = (SEAWEED_RANK[sw], cov if cov is not None else -1)
+            cur = (SEAWEED_RANK.get(b["seaweed"], -1),
+                   b["cov"] if b["cov"] is not None else -1)
+            if b["seaweed"] is None or cand > cur:
+                b["seaweed"], b["cov"] = sw, cov
+        # Busiest crowd by (category rank, fullness %); carry fullness + people.
         cr = (p.get("crowd") or "").lower()
-        if cr in CROWD_RANK and (b["crowd"] is None
-                                 or CROWD_RANK[cr] > CROWD_RANK[b["crowd"]]):
-            b["crowd"] = cr
-            try:
-                b["people"] = int(float(p["people"]))
-            except (TypeError, ValueError):
-                b["people"] = None
+        if cr in CROWD_RANK:
+            cpct = _pct(p.get("crowd_pct"))
+            cand = (CROWD_RANK[cr], cpct if cpct is not None else -1)
+            cur = (CROWD_RANK.get(b["crowd"], -1),
+                   b["crowdPct"] if b["crowdPct"] is not None else -1)
+            if b["crowd"] is None or cand > cur:
+                b["crowd"], b["crowdPct"] = cr, cpct
+                try:
+                    b["people"] = int(float(p["people"]))
+                except (TypeError, ValueError):
+                    b["people"] = None
 
     backfill = {}
     for (date, hour), b in buckets.items():
@@ -82,7 +101,9 @@ def main() -> int:
             "hour": hour,
             "level": b["crowd"],
             "people": b["people"],
+            "crowdPct": b["crowdPct"],
             "seaweed": b["seaweed"],
+            "cov": b["cov"],
         }
 
     # Merge into the live feed: backfill wins per (date, hour); keep live-only buckets.

@@ -258,7 +258,9 @@ export function ConditionsDashboard({
           value={!sg || sg.level === "unknown" ? "—" : cap(sg.level)}
           sub={
             sg
-              ? `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}${sg.note ? " — " + sg.note : ""}`
+              ? `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
+                (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "") +
+                (sg.note ? ` — ${sg.note}` : "")
               : undefined
           }
         />
@@ -268,9 +270,12 @@ export function ConditionsDashboard({
           value={!busy || busy.level === "unknown" ? "—" : cap(busy.level)}
           sub={
             busy && busy.level !== "unknown"
-              ? busy.peopleEstimate != null
-                ? `~${busy.peopleEstimate} people in view`
-                : busy.note
+              ? [
+                  busy.peopleEstimate != null ? `~${busy.peopleEstimate} people` : busy.note,
+                  busy.crowdPct != null ? `~${busy.crowdPct}% full` : undefined,
+                ]
+                  .filter(Boolean)
+                  .join(" · ") || undefined
               : undefined
           }
         />

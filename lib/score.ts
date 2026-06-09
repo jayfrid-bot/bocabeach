@@ -27,6 +27,10 @@ export interface Derived {
   weatherCode?: number; // WMO code (hourly path); drives the rain cap
   /** Worst-of-cams seaweed level (morning-preferred); day-constant. */
   sargassumLevel?: SargassumRisk;
+  /** 0-100 seaweed coverage at the worst cam; refines the seaweed sub-score. */
+  sargassumCoveragePct?: number;
+  /** 0-100 beach fullness (busiest cam now, or the hour's history); 0=empty. */
+  crowdPct?: number;
   flags: FlagColor[];
   waterAdvisory: boolean;
   waterRating: WaterQualityRating;
@@ -65,6 +69,8 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     uvIndex: m?.uvIndex,
     cloudCoverPct: m?.cloudCoverPct,
     sargassumLevel: s.sargassum.data?.level,
+    sargassumCoveragePct: s.sargassum.data?.coveragePct,
+    crowdPct: s.busyness.data?.crowdPct ?? crowdLevelPct(s.busyness.data?.level),
     humidityPct: w?.humidityPct,
     dewPointF: w?.dewPointF ?? (dpFallback != null ? round(dpFallback) : undefined),
     flags: c?.flags ?? ["unknown"],
@@ -225,15 +231,67 @@ function comfortDisplay(d: Derived): string | undefined {
   return parts.join(" · ");
 }
 
+/** Piecewise-linear interpolation through sorted (x,y) anchors, clamped to the ends. */
+function lerpCurve(x: number, anchors: [number, number][]): number {
+  if (x <= anchors[0][0]) return anchors[0][1];
+  const last = anchors[anchors.length - 1];
+  if (x >= last[0]) return last[1];
+  for (let i = 1; i < anchors.length; i++) {
+    const [x1, y1] = anchors[i];
+    if (x <= x1) {
+      const [x0, y0] = anchors[i - 1];
+      return y0 + ((x - x0) / (x1 - x0)) * (y1 - y0);
+    }
+  }
+  return last[1];
+}
+
 /**
- * Seaweed (sargassum) as a beach-quality sub-score. A clean beach is best; a
- * thin wrack line (low) is a minor ding; moderate bands and heavy mats (high)
- * make the sand/water genuinely unpleasant. Unknown → null (no signal, excluded
- * from the average). Moderate/high ALSO cap the score (see applyBeachCaps).
+ * Seaweed (sargassum) as a beach-quality sub-score. When the vision job reports a
+ * 0-100 coverage %, we interpolate a fine score through anchors that match the
+ * categorical values exactly (so nothing regresses); otherwise we fall back to the
+ * category map. Unknown → null (excluded from the average). Moderate/high ALSO cap
+ * the score by category (see applyBeachCaps).
  */
 const SARGASSUM_SCORE: Record<string, number> = { none: 100, low: 85, moderate: 55, high: 20 };
-function sargassumScore(level: SargassumRisk | undefined): number | null {
+const SEAWEED_COVER_CURVE: [number, number][] = [
+  [0, 100],
+  [10, 85],
+  [30, 55],
+  [60, 20],
+  [100, 0],
+];
+function sargassumScore(level: SargassumRisk | undefined, pct?: number): number | null {
+  if (pct != null) return lerpCurve(pct, SEAWEED_COVER_CURVE);
   return level && level in SARGASSUM_SCORE ? SARGASSUM_SCORE[level] : null;
+}
+function sargassumDisplay(d: Derived): string | undefined {
+  if (!d.sargassumLevel || d.sargassumLevel === "unknown") return undefined;
+  const label = d.sargassumLevel[0].toUpperCase() + d.sargassumLevel.slice(1);
+  return d.sargassumCoveragePct != null ? `${label} · ~${d.sargassumCoveragePct}% covered` : label;
+}
+
+/** Representative fullness % for a categorical crowd level (fallback when no pct). */
+const CROWD_LEVEL_PCT: Record<string, number> = {
+  empty: 5,
+  quiet: 25,
+  moderate: 50,
+  busy: 75,
+  packed: 95,
+};
+function crowdLevelPct(level: string | undefined): number | undefined {
+  return level && level in CROWD_LEVEL_PCT ? CROWD_LEVEL_PCT[level] : undefined;
+}
+/** Crowds as a beach-quality sub-score: emptier is better, packed is worst. */
+const CROWD_CURVE: [number, number][] = [
+  [0, 100],
+  [25, 90],
+  [50, 70],
+  [75, 45],
+  [100, 25],
+];
+function crowdScore(pct: number | undefined): number | null {
+  return pct == null ? null : lerpCurve(pct, CROWD_CURVE);
 }
 
 export function scoreBeachDay(d: Derived): ScoreResult {
@@ -242,25 +300,25 @@ export function scoreBeachDay(d: Derived): ScoreResult {
       "airTemp",
       "Air temperature",
       d.airTempF != null ? plateau(d.airTempF, 78, 88, 18) : null,
-      0.19,
+      0.18,
       f1(d.airTempF, "°F"),
     ),
-    sub("sky", "Sky (sun & rain)", skyScore(d), 0.19, skyDisplay(d)),
+    sub("sky", "Sky (sun & rain)", skyScore(d), 0.18, skyDisplay(d)),
     sub(
       "wind",
       "Wind (sea breeze)",
       d.windSpeedMph != null ? windScore(d.windSpeedMph) : null,
-      0.15,
+      0.14,
       d.windSpeedMph != null
         ? `${d.windSpeedMph} mph${d.windDirDeg != null ? " " + degToCardinal(d.windDirDeg) : ""}`
         : undefined,
     ),
-    sub("comfort", "Comfort (mugginess)", comfortScore(d), 0.1, comfortDisplay(d)),
+    sub("comfort", "Comfort (mugginess)", comfortScore(d), 0.09, comfortDisplay(d)),
     sub(
       "waterTemp",
       "Water temperature",
       d.waterTempF != null ? plateau(d.waterTempF, 77, 84, 15) : null,
-      0.12,
+      0.11,
       f1(d.waterTempF, "°F"),
     ),
     sub(
@@ -280,11 +338,16 @@ export function scoreBeachDay(d: Derived): ScoreResult {
     sub(
       "sargassum",
       "Seaweed (sargassum)",
-      sargassumScore(d.sargassumLevel),
+      sargassumScore(d.sargassumLevel, d.sargassumCoveragePct),
       0.07,
-      d.sargassumLevel && d.sargassumLevel !== "unknown"
-        ? d.sargassumLevel[0].toUpperCase() + d.sargassumLevel.slice(1)
-        : undefined,
+      sargassumDisplay(d),
+    ),
+    sub(
+      "crowds",
+      "Crowds",
+      crowdScore(d.crowdPct),
+      0.05,
+      d.crowdPct != null ? `~${d.crowdPct}% full` : undefined,
     ),
     sub(
       "uv",
@@ -405,11 +468,24 @@ export function computeHourlyScores(s: ConditionsSnapshot): HourlyScore[] {
   const hours = s.hourly.data;
   if (!hours?.length) return [];
 
-  // Day-constant inputs (water temp/quality/flags/waves) reuse the snapshot.
+  // Day-constant inputs (water temp/quality/flags/waves/seaweed) reuse the snapshot.
   const base = deriveMetrics(s);
   const sun = s.sun.data;
   const sunrise = sun?.sunrise ? new Date(sun.sunrise).getTime() : null;
   const sunset = sun?.sunset ? new Date(sun.sunset).getTime() : null;
+
+  // Crowds vary through the day: map each LOCAL hour to its typical fullness.
+  const tz = s.location.timezone;
+  const localHourOf = (iso: string) =>
+    Number(
+      new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", hour12: false }).format(
+        new Date(iso),
+      ),
+    ) % 24;
+  const crowdByHour = new Map<number, number | undefined>();
+  for (const bh of s.busyness.data?.byHour ?? []) {
+    crowdByHour.set(bh.hour, bh.crowdPct ?? crowdLevelPct(bh.level));
+  }
 
   return hours
     .filter((h) => {
@@ -433,6 +509,8 @@ export function computeHourlyScores(s: ConditionsSnapshot): HourlyScore[] {
         dewPointF: h.dewPointF,
         weatherCode: h.weatherCode,
         sargassumLevel: base.sargassumLevel,
+        sargassumCoveragePct: base.sargassumCoveragePct,
+        crowdPct: crowdByHour.get(localHourOf(h.time)),
         flags: base.flags,
         waterAdvisory: base.waterAdvisory,
         waterRating: base.waterRating,
