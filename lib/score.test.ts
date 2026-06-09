@@ -21,6 +21,7 @@ import type {
   NowcastData,
   NwsData,
   SargassumData,
+  SargassumRisk,
   SunData,
   TideData,
   WaterQualityData,
@@ -45,6 +46,7 @@ function snapshot(over: {
   city?: CityOfficialData | null;
   water?: WaterQualityData | null;
   nws?: NwsData | null;
+  sargassum?: SargassumData | null;
   sun?: SunData | null;
   hourly?: HourlyMetrics[] | null;
 }): ConditionsSnapshot {
@@ -68,7 +70,7 @@ function snapshot(over: {
     nws: wrap(over.nws ?? null),
     airQuality: wrap<AirQualityData>(null),
     lightning: wrap<LightningData>(null),
-    sargassum: wrap<SargassumData>(null),
+    sargassum: wrap(over.sargassum ?? null),
     busyness: wrap<BusynessData>(null),
     forecast: wrap<ForecastDay[]>(null),
     sun: wrap(over.sun ?? null),
@@ -104,10 +106,50 @@ describe("scoring (Beach Day only — no surf)", () => {
     const { subScores } = computeScore(NICE);
     const keys = subScores.map((s) => s.key).sort();
     expect(keys).toEqual(
-      ["airTemp", "comfort", "sky", "uv", "waterQuality", "waterTemp", "waves", "wind"].sort(),
+      ["airTemp", "comfort", "sargassum", "sky", "uv", "waterQuality", "waterTemp", "waves", "wind"].sort(),
     );
     const total = subScores.reduce((a, s) => a + s.weight, 0);
     expect(total).toBeCloseTo(1, 5);
+  });
+
+  it("scores seaweed (sargassum) as a sub-score: none best, high worst", () => {
+    const sg = (level: SargassumRisk) =>
+      scoreBeachDay(
+        deriveMetrics(snapshot({ sargassum: { level, isMorning: true, cams: [] } })),
+      ).subScores.find((s) => s.key === "sargassum")!.score;
+    expect(sg("none")).toBe(100);
+    expect(sg("low")).toBe(85);
+    expect(sg("moderate")).toBe(55);
+    expect(sg("high")).toBe(20);
+    expect(sg("unknown")).toBeNull(); // no signal -> excluded from the average
+  });
+
+  it("caps the score at 65 under HIGH sargassum and 85 under MODERATE", () => {
+    const withSeaweed = (level: SargassumRisk) =>
+      scoreBeachDay(
+        deriveMetrics(
+          snapshot({
+            buoy: NICE.buoy.data,
+            weather: NICE.weather.data,
+            marine: NICE.marine.data,
+            city: { flags: ["green"] },
+            water: { overall: "good", advisory: false, sites: [] },
+            sargassum: { level, isMorning: true, cams: [] },
+          }),
+        ),
+      );
+    const high = withSeaweed("high");
+    expect(high.score).toBeLessThanOrEqual(65);
+    expect(high.score).toBeGreaterThan(40); // a beach day, not a closure
+    expect(high.caps.join(" ")).toMatch(/sargassum|seaweed/i);
+
+    const moderate = withSeaweed("moderate");
+    expect(moderate.score).toBeLessThanOrEqual(85);
+    expect(moderate.caps.join(" ")).toMatch(/sargassum|seaweed/i);
+
+    // none/low never cap, and don't add a seaweed cap message.
+    expect(withSeaweed("none").caps.join(" ")).not.toMatch(/sargassum|seaweed/i);
+    expect(withSeaweed("low").caps.join(" ")).not.toMatch(/sargassum|seaweed/i);
   });
 
   it("scores comfort from dew point (mugginess), with a humidity penalty at extremes", () => {
@@ -436,6 +478,20 @@ describe("computeHourlyScores", () => {
     expect(hrs.length).toBeGreaterThan(0);
     // Red flag caps each hour at 85 (swimmer-safety warning, not a day-killer).
     expect(hrs.every((h) => h.score <= 85)).toBe(true);
+  });
+
+  it("carries day-constant HIGH sargassum into every forecast hour (cap 65)", () => {
+    const hrs = computeHourlyScores(
+      snapshot({
+        ...niceBase,
+        city: { flags: ["green"] },
+        sargassum: { level: "high", isMorning: true, cams: [] },
+        hourly: hourlyDay(),
+        sun: SUN,
+      }),
+    );
+    expect(hrs.length).toBeGreaterThan(0);
+    expect(hrs.every((h) => h.score <= 65)).toBe(true);
   });
 
   it("caps a stormy hour to ~15 and flags it as raining", () => {

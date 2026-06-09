@@ -22,14 +22,15 @@ A single composite **Beach Day** score (0–100), weighted for beachgoers:
 
 | Sub-score | Weight |
 |-----------|:------:|
-| Air temperature | 20% |
-| Sky / precipitation | 20% |
-| Wind (calmness) | 16% |
-| Water temperature | 13% |
+| Air temperature | 19% |
+| Sky / precipitation | 19% |
+| Wind (calmness) | 15% |
+| Water temperature | 12% |
 | Comfort (mugginess) | 10% |
-| Sea state (swim calmness) | 9% |
-| Water quality | 7% |
-| UV index | 5% |
+| Sea state (swim calmness) | 8% |
+| Seaweed (sargassum) | 7% |
+| Water quality | 6% |
+| UV index | 4% |
 
 **Comfort** is driven by the **dew point** — the real "how heavy does the air feel" signal
 (sweat can't evaporate as it climbs): ≤60°F is comfortable, 65–69°F gets sticky, ≥70°F is
@@ -40,7 +41,9 @@ Official lifeguard **flags and hazards act as safety overrides**. We separate a 
 closure from a swim-only hazard: a **double-red** flag (water closed) drives the score to
 ~0, while a **red flag** or **high rip-current risk** caps it at ≤85 — these warn swimmers
 but you can still have a great day on the sand. A **water-quality** or **city no-swim
-advisory** caps it at ≤40. The purple (marine-pest) flag is **shown in the safety banner
+advisory** caps it at ≤40. **Seaweed** is both a sub-score and a ceiling: heavy mats
+(**high**) cap the day at ≤65 and **moderate** bands at ≤85 — unpleasant, but not a closure.
+The purple (marine-pest) flag is **shown in the safety banner
 for awareness but does not affect the score** — it's near-constant in South Florida, so it
 carries no day-to-day signal.
 

@@ -4,6 +4,7 @@ import type {
   FlagColor,
   HourlyScore,
   RipRisk,
+  SargassumRisk,
   ScoreResult,
   SubScore,
   WaterQualityRating,
@@ -24,6 +25,8 @@ export interface Derived {
   humidityPct?: number; // relative humidity, 0-100
   dewPointF?: number; // °F — the comfort/mugginess driver
   weatherCode?: number; // WMO code (hourly path); drives the rain cap
+  /** Worst-of-cams seaweed level (morning-preferred); day-constant. */
+  sargassumLevel?: SargassumRisk;
   flags: FlagColor[];
   waterAdvisory: boolean;
   waterRating: WaterQualityRating;
@@ -61,6 +64,7 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     shortForecast: w?.shortForecast,
     uvIndex: m?.uvIndex,
     cloudCoverPct: m?.cloudCoverPct,
+    sargassumLevel: s.sargassum.data?.level,
     humidityPct: w?.humidityPct,
     dewPointF: w?.dewPointF ?? (dpFallback != null ? round(dpFallback) : undefined),
     flags: c?.flags ?? ["unknown"],
@@ -221,21 +225,32 @@ function comfortDisplay(d: Derived): string | undefined {
   return parts.join(" · ");
 }
 
+/**
+ * Seaweed (sargassum) as a beach-quality sub-score. A clean beach is best; a
+ * thin wrack line (low) is a minor ding; moderate bands and heavy mats (high)
+ * make the sand/water genuinely unpleasant. Unknown → null (no signal, excluded
+ * from the average). Moderate/high ALSO cap the score (see applyBeachCaps).
+ */
+const SARGASSUM_SCORE: Record<string, number> = { none: 100, low: 85, moderate: 55, high: 20 };
+function sargassumScore(level: SargassumRisk | undefined): number | null {
+  return level && level in SARGASSUM_SCORE ? SARGASSUM_SCORE[level] : null;
+}
+
 export function scoreBeachDay(d: Derived): ScoreResult {
   const subs: SubScore[] = [
     sub(
       "airTemp",
       "Air temperature",
       d.airTempF != null ? plateau(d.airTempF, 78, 88, 18) : null,
-      0.2,
+      0.19,
       f1(d.airTempF, "°F"),
     ),
-    sub("sky", "Sky (sun & rain)", skyScore(d), 0.2, skyDisplay(d)),
+    sub("sky", "Sky (sun & rain)", skyScore(d), 0.19, skyDisplay(d)),
     sub(
       "wind",
       "Wind (sea breeze)",
       d.windSpeedMph != null ? windScore(d.windSpeedMph) : null,
-      0.16,
+      0.15,
       d.windSpeedMph != null
         ? `${d.windSpeedMph} mph${d.windDirDeg != null ? " " + degToCardinal(d.windDirDeg) : ""}`
         : undefined,
@@ -245,28 +260,37 @@ export function scoreBeachDay(d: Derived): ScoreResult {
       "waterTemp",
       "Water temperature",
       d.waterTempF != null ? plateau(d.waterTempF, 77, 84, 15) : null,
-      0.13,
+      0.12,
       f1(d.waterTempF, "°F"),
     ),
     sub(
       "waves",
       "Sea state (swim calmness)",
       d.waveHeightFt != null ? waveCalm(d.waveHeightFt) : null,
-      0.09,
+      0.08,
       f1(d.waveHeightFt, " ft"),
     ),
     sub(
       "waterQuality",
       "Water quality",
       waterQualityScore(d.waterRating),
-      0.07,
+      0.06,
       d.waterRating,
+    ),
+    sub(
+      "sargassum",
+      "Seaweed (sargassum)",
+      sargassumScore(d.sargassumLevel),
+      0.07,
+      d.sargassumLevel && d.sargassumLevel !== "unknown"
+        ? d.sargassumLevel[0].toUpperCase() + d.sargassumLevel.slice(1)
+        : undefined,
     ),
     sub(
       "uv",
       "UV index",
       d.uvIndex != null ? uvScore(d.uvIndex) : null,
-      0.05,
+      0.04,
       d.uvIndex != null ? `${d.uvIndex}` : undefined,
     ),
   ];
@@ -329,6 +353,15 @@ function applyBeachCaps(
   if (d.noSwimAdvisory) {
     score = Math.min(score, 40);
     caps.push("City no-swim advisory in effect");
+  }
+  // Heavy/moderate seaweed isn't a safety hazard but it genuinely degrades the
+  // beach (smelly brown mats, murky water) — so it caps how good the day can be.
+  if (d.sargassumLevel === "high") {
+    score = Math.min(score, 65);
+    caps.push("Heavy sargassum (seaweed) on the beach");
+  } else if (d.sargassumLevel === "moderate") {
+    score = Math.min(score, 85);
+    caps.push("Moderate sargassum (seaweed) on the beach");
   }
   // NWS rip-current risk: HIGH means life-threatening rip currents are likely.
   // Like a red flag, this is a swimmer-safety hazard rather than a beach-day
@@ -399,6 +432,7 @@ export function computeHourlyScores(s: ConditionsSnapshot): HourlyScore[] {
         humidityPct: h.humidityPct,
         dewPointF: h.dewPointF,
         weatherCode: h.weatherCode,
+        sargassumLevel: base.sargassumLevel,
         flags: base.flags,
         waterAdvisory: base.waterAdvisory,
         waterRating: base.waterRating,
