@@ -50,7 +50,7 @@ describe("summarizeSeaweed", () => {
     expect(summarizeSeaweed({ latest: { cams: [{ name: "A", level: "unknown" }] } })).toBeNull();
   });
 
-  it("derives byHour (avg) and byDay (worst) from the rolling history", () => {
+  it("derives byHour (avg) and byDay (cumulative) from the rolling history", () => {
     const d = summarizeSeaweed({
       latest: { cams: [{ name: "A", level: "low" }] },
       history: [
@@ -59,7 +59,7 @@ describe("summarizeSeaweed", () => {
         { t: "2026-06-02T07:00-04:00", hour: 7, seaweed: "moderate" },
         { t: "2026-06-02T15:00-04:00", hour: 15, seaweed: "none" },
         { t: "bad", seaweed: "high" }, // bad date -> dropped by byDay; no hour -> not in byHour
-        { hour: 7 }, // no seaweed -> ignored entirely
+        { hour: 7 }, // no seaweed/cov -> ignored entirely
       ],
     })!;
     // by-hour: avg rank per hour. 7: (3+2)/2=2.5→high; 15: (1+0)/2=0.5→low
@@ -67,10 +67,27 @@ describe("summarizeSeaweed", () => {
       { hour: 7, level: "high", samples: 2 },
       { hour: 15, level: "low", samples: 2 },
     ]);
-    // by-day: worst seaweed each day, sorted ascending
+    // by-day: cumulative coverage (high=70 + low=5 = 75; moderate=30 + none=0 = 30),
+    // colour from the day's average band, plus the worst single read.
     expect(d.byDay).toEqual([
-      { date: "2026-06-01", level: "high" },
-      { date: "2026-06-02", level: "moderate" },
+      { date: "2026-06-01", total: 75, samples: 2, level: "moderate", worst: "high" },
+      { date: "2026-06-02", total: 30, samples: 2, level: "low", worst: "moderate" },
+    ]);
+  });
+
+  it("uses measured coverage % when present and accumulates it per day", () => {
+    const d = summarizeSeaweed({
+      latest: { cams: [{ name: "A", level: "low" }] },
+      history: [
+        // measured cov overrides the category proxy; summed across the day
+        { t: "2026-06-01T08:00-04:00", hour: 8, seaweed: "moderate", cov: 40 },
+        { t: "2026-06-01T12:00-04:00", hour: 12, seaweed: "high", cov: 80 },
+        { t: "2026-06-01T16:00-04:00", hour: 16, seaweed: "low", cov: 0 },
+      ],
+    })!;
+    // total 40+80+0 = 120 across 3 reads; avg 40 -> "moderate"; worst read "high"
+    expect(d.byDay).toEqual([
+      { date: "2026-06-01", total: 120, samples: 3, level: "moderate", worst: "high" },
     ]);
   });
 

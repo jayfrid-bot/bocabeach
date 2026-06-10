@@ -253,10 +253,16 @@ export interface SargassumByHour {
   level: SargassumRisk; // none | low | moderate | high
   samples: number;
 }
-/** One day's worst seaweed reading, for the seaweed-by-day chart. */
+/** One day's accumulated seaweed, for the seaweed-by-day chart. */
 export interface SargassumByDay {
   date: string; // local calendar date, YYYY-MM-DD
-  level: SargassumRisk; // none | low | moderate | high
+  level: SargassumRisk; // the day's AVERAGE band — drives the bar colour
+  /** Cumulative coverage across the day's cam reads (sum of per-read %) — bar height. */
+  total: number;
+  /** Number of cam reads that fed the day. */
+  samples: number;
+  /** Worst single reading that day (for the tooltip). */
+  worst: SargassumRisk;
 }
 
 // --- Beach busyness (from the same cam-vision job) -------------------------
