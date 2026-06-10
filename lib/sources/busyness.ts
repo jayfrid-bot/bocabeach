@@ -86,29 +86,61 @@ function byHourFromHistory(history: HistoryEntry[]): BusynessByHour[] | undefine
     }));
 }
 
-/** Take each day's PEAK (busiest) crowd from the rolling history. */
+// Map a measured fullness % (0-100) to a continuous 0-4 crowd rank, using the
+// crowd band boundaries (empty<10, quiet<30, moderate<55, busy<80, packed).
+function pctToRank(pct: number): number {
+  const c = Math.max(0, Math.min(100, pct));
+  if (c < 10) return c / 10; // empty -> quiet
+  if (c < 30) return 1 + (c - 10) / 20; // quiet -> moderate
+  if (c < 55) return 2 + (c - 30) / 25; // moderate -> busy
+  if (c < 80) return 3 + (c - 55) / 25; // busy -> packed
+  return 4;
+}
+
+/** One read's crowd rank (0-4): the measured fullness when present, else category. */
+function readRank(e: HistoryEntry): number | undefined {
+  if (typeof e.crowdPct === "number" && Number.isFinite(e.crowdPct)) return pctToRank(e.crowdPct);
+  if (typeof e.level === "string" && e.level in RANK) return RANK[e.level];
+  return undefined;
+}
+
+/**
+ * Average each day's busyness from the rolling history (not the single peak), so
+ * days compare fairly regardless of how many reads they got. Each read uses its
+ * measured fullness % when present, else its category; the bar height is the
+ * day's AVERAGE level, the colour is that average rounded to a band, plus the
+ * day's average people estimate for the tooltip.
+ */
 function byDayFromHistory(history: HistoryEntry[]): BusynessByDay[] | undefined {
-  const byDate = new Map<string, { rank: number; level: BusynessLevel; people?: number }>();
+  const byDate = new Map<string, { sum: number; n: number; people: number; pN: number }>();
   for (const e of history) {
-    if (typeof e.t !== "string" || typeof e.level !== "string" || !(e.level in RANK)) {
-      continue;
-    }
+    if (typeof e.t !== "string") continue;
+    const r = readRank(e);
+    if (r === undefined) continue;
     const date = e.t.slice(0, 10);
     if (!DATE_RE.test(date)) continue;
-    const rank = RANK[e.level];
-    const cur = byDate.get(date);
-    if (!cur || rank > cur.rank) {
-      byDate.set(date, {
-        rank,
-        level: e.level as BusynessLevel,
-        people: typeof e.people === "number" ? e.people : undefined,
-      });
+    const b = byDate.get(date) ?? { sum: 0, n: 0, people: 0, pN: 0 };
+    b.sum += r;
+    b.n += 1;
+    if (typeof e.people === "number") {
+      b.people += e.people;
+      b.pN += 1;
     }
+    byDate.set(date, b);
   }
   if (!byDate.size) return undefined;
   return [...byDate.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([date, b]) => ({ date, level: b.level, people: b.people }));
+    .map(([date, b]) => {
+      const avg = b.sum / b.n;
+      return {
+        date,
+        avg: Math.round(avg * 100) / 100,
+        level: LEVELS[Math.round(avg)],
+        people: b.pN ? Math.round(b.people / b.pN) : undefined,
+        samples: b.n,
+      };
+    });
 }
 
 /**

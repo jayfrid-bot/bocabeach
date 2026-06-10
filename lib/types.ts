@@ -253,12 +253,12 @@ export interface SargassumByHour {
   level: SargassumRisk; // none | low | moderate | high
   samples: number;
 }
-/** One day's accumulated seaweed, for the seaweed-by-day chart. */
+/** One day's AVERAGE seaweed, for the seaweed-by-day chart. */
 export interface SargassumByDay {
   date: string; // local calendar date, YYYY-MM-DD
-  level: SargassumRisk; // the day's AVERAGE band — drives the bar colour
-  /** Cumulative coverage across the day's cam reads (sum of per-read %) — bar height. */
-  total: number;
+  level: SargassumRisk; // the day's average band — drives the bar colour
+  /** Average level on the 0-3 scale (continuous) — drives the bar height. */
+  avg: number;
   /** Number of cam reads that fed the day. */
   samples: number;
   /** Worst single reading that day (for the tooltip). */
@@ -281,11 +281,16 @@ export interface BusynessByHour {
   crowdPct?: number;
   samples: number;
 }
-/** One day's peak (busiest) crowd, for the busyness-by-day chart. */
+/** One day's AVERAGE crowd, for the busyness-by-day chart. */
 export interface BusynessByDay {
   date: string; // local calendar date, YYYY-MM-DD
-  level: BusynessLevel;
+  level: BusynessLevel; // the day's average band — drives the bar colour
+  /** Average level on the 0-4 scale (continuous) — drives the bar height. */
+  avg: number;
+  /** Average people across the day's reads (for the tooltip). */
   people?: number;
+  /** Number of cam reads that fed the day. */
+  samples: number;
 }
 export interface BusynessData {
   level: BusynessLevel;

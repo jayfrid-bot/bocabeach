@@ -186,13 +186,16 @@ export function SeaweedByHourChart({
   );
 }
 
-/** Shared bar-builder for the by-day charts (weekday + date labels). */
-function dayBars(
-  byDay: { date: string; level: string; people?: number }[],
+/**
+ * Shared bar-builder for the by-day charts: bar HEIGHT is the day's average level
+ * (continuous `avg` on the 0..maxRank scale) and COLOUR is that average's band,
+ * so the two by-day charts read consistently.
+ */
+function avgDayBars<T extends { date: string; avg: number; level: string; samples: number }>(
+  byDay: T[],
   tz: string,
   color: Record<string, string>,
-  rank: Record<string, number>,
-  fmtValue: (level: string, people?: number) => string,
+  tip: (b: T) => string,
 ): LevelBar[] {
   const today = todayLocal(tz);
   const days = byDay.slice(-MAX_DAYS);
@@ -201,24 +204,29 @@ function dayBars(
     const show = i % every === 0 || b.date === today;
     return {
       key: b.date,
-      rank: rank[b.level] ?? 0,
+      rank: b.avg,
       color: color[b.level] ?? "#475569",
       label: show ? fmtWeekday(b.date) : "",
       subLabel: show ? fmtMD(b.date) : "",
       highlight: b.date === today,
-      tooltip: `${fmtDayLong(b.date)}: ${fmtValue(b.level, b.people)}`,
+      tooltip: `${fmtDayLong(b.date)}: ${tip(b)}`,
     };
   });
 }
 
+const reads = (n: number) => `${n} read${n === 1 ? "" : "s"}`;
+
 export function BusynessByDayChart({ byDay, tz }: { byDay: BusynessByDay[]; tz: string }) {
-  const bars = dayBars(byDay, tz, BUSY_COLOR, BUSY_RANK, (lvl, people) =>
-    `${cap(lvl)}${people != null ? ` (~${people})` : ""}`,
+  const bars = avgDayBars(
+    byDay,
+    tz,
+    BUSY_COLOR,
+    (b) => `${cap(b.level)} avg${b.people != null ? ` (~${b.people})` : ""} · ${reads(b.samples)}`,
   );
   return (
     <LevelBarChart
       title="Beach busyness by day"
-      subtitle="Busiest the beach got each day. Outlined bar = today."
+      subtitle="Average crowd each day across the cam reads. Outlined bar = today."
       ariaLabel="Busyness by day"
       bars={bars}
       maxRank={4}
@@ -229,36 +237,21 @@ export function BusynessByDayChart({ byDay, tz }: { byDay: BusynessByDay[]; tz: 
 }
 
 export function SeaweedByDayChart({ byDay, tz }: { byDay: SargassumByDay[]; tz: string }) {
-  const today = todayLocal(tz);
-  const days = byDay.slice(-MAX_DAYS);
-  // Scale bar height to the heaviest day in view so the day-to-day differences
-  // (the whole point of "cumulative") are visible rather than all pinned high.
-  const maxTotal = Math.max(1, ...days.map((d) => d.total));
-  const every = days.length > 16 ? 3 : days.length > 10 ? 2 : 1;
-  const bars: LevelBar[] = days.map((b, i) => {
-    const show = i % every === 0 || b.date === today;
-    const avg = b.samples ? Math.round(b.total / b.samples) : 0;
-    return {
-      key: b.date,
-      rank: b.total, // cumulative coverage; maxRank below scales it to 0..1
-      color: SEA_COLOR[b.level] ?? "#475569",
-      label: show ? fmtWeekday(b.date) : "",
-      subLabel: show ? fmtMD(b.date) : "",
-      highlight: b.date === today,
-      tooltip:
-        `${fmtDayLong(b.date)}: worst ${cap(b.worst)}, ~${avg}% avg coverage ` +
-        `(${b.samples} read${b.samples === 1 ? "" : "s"})`,
-    };
-  });
+  const bars = avgDayBars(
+    byDay,
+    tz,
+    SEA_COLOR,
+    (b) => `${cap(b.level)} avg (worst ${cap(b.worst)}) · ${reads(b.samples)}`,
+  );
   return (
     <LevelBarChart
       title="Seaweed by day"
-      subtitle="Total sargassum across each day's cam reads — taller = more overall (today builds up through the day). Outlined bar = today."
+      subtitle="Average sargassum each day across the cam reads. Outlined bar = today."
       ariaLabel="Seaweed by day"
       bars={bars}
-      maxRank={maxTotal}
-      axisLow="light"
-      axisHigh="heavy"
+      maxRank={3}
+      axisLow="none"
+      axisHigh="high"
     />
   );
 }
