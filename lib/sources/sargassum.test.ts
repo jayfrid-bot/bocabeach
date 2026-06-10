@@ -50,7 +50,7 @@ describe("summarizeSeaweed", () => {
     expect(summarizeSeaweed({ latest: { cams: [{ name: "A", level: "unknown" }] } })).toBeNull();
   });
 
-  it("derives byHour (avg) and byDay (cumulative) from the rolling history", () => {
+  it("derives byHour (avg) and byDay (average) from the rolling history", () => {
     const d = summarizeSeaweed({
       latest: { cams: [{ name: "A", level: "low" }] },
       history: [
@@ -67,27 +67,26 @@ describe("summarizeSeaweed", () => {
       { hour: 7, level: "high", samples: 2 },
       { hour: 15, level: "low", samples: 2 },
     ]);
-    // by-day: cumulative coverage (high=70 + low=5 = 75; moderate=30 + none=0 = 30),
-    // colour from the day's average band, plus the worst single read.
+    // by-day: average rank ((3+1)/2=2→moderate; (2+0)/2=1→low), worst single read.
     expect(d.byDay).toEqual([
-      { date: "2026-06-01", total: 75, samples: 2, level: "moderate", worst: "high" },
-      { date: "2026-06-02", total: 30, samples: 2, level: "low", worst: "moderate" },
+      { date: "2026-06-01", avg: 2, samples: 2, level: "moderate", worst: "high" },
+      { date: "2026-06-02", avg: 1, samples: 2, level: "low", worst: "moderate" },
     ]);
   });
 
-  it("uses measured coverage % when present and accumulates it per day", () => {
+  it("uses measured coverage % when present and averages it per day", () => {
     const d = summarizeSeaweed({
       latest: { cams: [{ name: "A", level: "low" }] },
       history: [
-        // measured cov overrides the category proxy; summed across the day
+        // measured cov overrides the category; cov→rank: 40→2.33, 80→3, 0→0
         { t: "2026-06-01T08:00-04:00", hour: 8, seaweed: "moderate", cov: 40 },
         { t: "2026-06-01T12:00-04:00", hour: 12, seaweed: "high", cov: 80 },
         { t: "2026-06-01T16:00-04:00", hour: 16, seaweed: "low", cov: 0 },
       ],
     })!;
-    // total 40+80+0 = 120 across 3 reads; avg 40 -> "moderate"; worst read "high"
+    // avg (2.333+3+0)/3 = 1.78 → "moderate"; worst single read "high"
     expect(d.byDay).toEqual([
-      { date: "2026-06-01", total: 120, samples: 3, level: "moderate", worst: "high" },
+      { date: "2026-06-01", avg: 1.78, samples: 3, level: "moderate", worst: "high" },
     ]);
   });
 

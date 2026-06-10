@@ -60,7 +60,7 @@ describe("summarizeBusyness", () => {
     expect(d.byHour?.map((x) => x.hour)).toEqual([9, 12]);
   });
 
-  it("takes each day's PEAK crowd as busyness-by-day", () => {
+  it("averages each day's crowd as busyness-by-day", () => {
     const d = summarizeBusyness({
       history: [
         { t: "2026-06-03T09:00-04:00", hour: 9, level: "quiet", people: 5 },
@@ -69,9 +69,10 @@ describe("summarizeBusyness", () => {
         { t: "nope", hour: 1, level: "packed" }, // bad date -> dropped
       ],
     });
+    // 06-03: avg rank (1+3)/2=2→moderate, avg people (5+40)/2≈23; 06-04: single moderate
     expect(d.byDay).toEqual([
-      { date: "2026-06-03", level: "busy", people: 40 },
-      { date: "2026-06-04", level: "moderate", people: 12 },
+      { date: "2026-06-03", avg: 2, level: "moderate", people: 23, samples: 2 },
+      { date: "2026-06-04", avg: 2, level: "moderate", people: 12, samples: 1 },
     ]);
   });
 });

@@ -32,28 +32,21 @@ interface HistoryEntry {
   cov?: number; // 0-100 seaweed coverage % (finer than the category, when present)
 }
 
-// Representative coverage % for each category, so reads that predate the numeric
-// `cov` field still contribute a sensible amount (aligned with the vision prompt:
-// none=clean, low=thin wrack line, moderate=clear bands, high=heavy mats).
-const CAT_COVERAGE: Record<string, number> = { none: 0, low: 5, moderate: 30, high: 70 };
-
-/** Best coverage % for one read: the measured `cov`, else its category proxy. */
-function readCoverage(e: HistoryEntry): number | undefined {
-  if (typeof e.cov === "number" && Number.isFinite(e.cov)) {
-    return Math.max(0, Math.min(100, e.cov));
-  }
-  if (typeof e.seaweed === "string" && e.seaweed in CAT_COVERAGE) {
-    return CAT_COVERAGE[e.seaweed];
-  }
-  return undefined;
+// Map a measured coverage % (0-100) to a continuous 0-3 seaweed rank, using the
+// same band boundaries as the category scale (none<5, low<30, moderate<60, high).
+function covToRank(cov: number): number {
+  const c = Math.max(0, Math.min(100, cov));
+  if (c < 5) return c / 5; // none -> low
+  if (c < 30) return 1 + (c - 5) / 25; // low -> moderate
+  if (c < 60) return 2 + (c - 30) / 30; // moderate -> high
+  return 3;
 }
 
-/** Map an average coverage % back to a category band (for the bar colour). */
-function bandFor(coverage: number): SargassumRisk {
-  if (coverage >= 60) return "high";
-  if (coverage >= 30) return "moderate";
-  if (coverage >= 5) return "low";
-  return "none";
+/** One read's seaweed rank (0-3): the measured coverage when present, else category. */
+function readRank(e: HistoryEntry): number | undefined {
+  if (typeof e.cov === "number" && Number.isFinite(e.cov)) return covToRank(e.cov);
+  if (typeof e.seaweed === "string" && e.seaweed in RANK) return RANK[e.seaweed];
+  return undefined;
 }
 export interface CamSeaweedFeed {
   morning?: CamGroup | null;
@@ -81,37 +74,40 @@ function byHourFromHistory(history: HistoryEntry[]): SargassumByHour[] | undefin
 }
 
 /**
- * Accumulate each day's seaweed from the rolling history: the bar height is the
- * CUMULATIVE coverage (sum of every read's %), so a day that was heavy all day
- * reads higher than one with a single spike — and days actually differ instead
- * of all pinning to "high". Colour comes from the day's average band.
+ * Average each day's seaweed from the rolling history (not the single worst), so
+ * busy-sampled days compare fairly and days actually differ instead of all
+ * pinning to "high". Each read uses its measured coverage % when present, else
+ * its category; the bar height is the day's AVERAGE level and the colour is that
+ * average rounded to a band. Also tracks the worst single read for the tooltip.
  */
 function byDayFromHistory(history: HistoryEntry[]): SargassumByDay[] | undefined {
-  const byDate = new Map<string, { total: number; n: number; worstRank: number }>();
+  const byDate = new Map<string, { sum: number; n: number; worst: number }>();
   for (const e of history) {
     if (typeof e.t !== "string") continue;
-    const cov = readCoverage(e);
-    if (cov === undefined) continue;
+    const r = readRank(e);
+    if (r === undefined) continue;
     const date = e.t.slice(0, 10);
     if (!DATE_RE.test(date)) continue;
-    const b = byDate.get(date) ?? { total: 0, n: 0, worstRank: 0 };
-    b.total += cov;
+    const b = byDate.get(date) ?? { sum: 0, n: 0, worst: 0 };
+    b.sum += r;
     b.n += 1;
-    if (typeof e.seaweed === "string" && e.seaweed in RANK) {
-      b.worstRank = Math.max(b.worstRank, RANK[e.seaweed]);
-    }
+    const cat = typeof e.seaweed === "string" && e.seaweed in RANK ? RANK[e.seaweed] : Math.round(r);
+    b.worst = Math.max(b.worst, cat);
     byDate.set(date, b);
   }
   if (!byDate.size) return undefined;
   return [...byDate.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([date, b]) => ({
-      date,
-      total: Math.round(b.total),
-      samples: b.n,
-      level: bandFor(b.total / b.n), // average intensity -> colour
-      worst: LEVELS[b.worstRank],
-    }));
+    .map(([date, b]) => {
+      const avg = b.sum / b.n;
+      return {
+        date,
+        avg: Math.round(avg * 100) / 100,
+        level: LEVELS[Math.round(avg)],
+        samples: b.n,
+        worst: LEVELS[b.worst],
+      };
+    });
 }
 
 /**
