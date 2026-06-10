@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import type { HourlyScore } from "@/lib/types";
 import { fmtTime, scoreColor } from "@/lib/format";
 import { degToCardinal } from "@/lib/util";
@@ -50,6 +53,17 @@ export function HourlyScoreGraph({
   hours: HourlyScore[];
   tz: string;
 }) {
+  // The "now" marker depends on the wall clock, so it must be client-only:
+  // computing it during render makes the server HTML and the hydrating client
+  // disagree by a few milliseconds of x-position. Set after mount instead, and
+  // keep it fresh for long-lived tabs.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   if (hours.length === 0) return null;
 
   const { lo, hi, grid } = scoreDomain(hours.map((h) => h.score));
@@ -70,10 +84,9 @@ export function HourlyScoreGraph({
     xy.map((p) => `L${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ") +
     ` L${xy[xy.length - 1].x.toFixed(1)} ${BASE_Y} Z`;
 
-  // "Now" marker — only while the current moment falls within (or just around)
-  // today's plotted daylight window. Score is interpolated between hours.
-  const now = Date.now();
-  const showNow = now >= t0 - 36e5 && now <= tN + 36e5;
+  // "Now" marker — only after mount, and only while the current moment falls
+  // within (or just around) today's plotted daylight window. Score is
+  // interpolated between hours.
   const scoreAt = (ms: number) => {
     if (ms <= xy[0].t) return xy[0].s;
     if (ms >= xy[xy.length - 1].t) return xy[xy.length - 1].s;
@@ -85,10 +98,19 @@ export function HourlyScoreGraph({
     }
     return xy[xy.length - 1].s;
   };
-  const nowClamped = Math.max(t0, Math.min(tN, now));
-  const nowX = xFor(nowClamped);
-  const nowScore = Math.round(scoreAt(nowClamped));
-  const nowAnchor = nowX > W - 120 ? "end" : nowX < 120 ? "start" : "middle";
+  const nowMarker = (() => {
+    if (now == null || now < t0 - 36e5 || now > tN + 36e5) return null;
+    const clamped = Math.max(t0, Math.min(tN, now));
+    const x = xFor(clamped);
+    const anchor: "start" | "middle" | "end" =
+      x > W - 120 ? "end" : x < 120 ? "start" : "middle";
+    return {
+      x,
+      score: Math.round(scoreAt(clamped)),
+      label: fmtTime(new Date(now).toISOString(), tz),
+      anchor,
+    };
+  })();
 
   // Label ~6 hours across the axis (always include the last).
   const step = Math.max(1, Math.ceil(xy.length / 6));
@@ -130,11 +152,11 @@ export function HourlyScoreGraph({
           ))}
 
           {/* "now" marker */}
-          {showNow ? (
+          {nowMarker ? (
             <g>
               <line
-                x1={nowX}
-                x2={nowX}
+                x1={nowMarker.x}
+                x2={nowMarker.x}
                 y1={PT - 6}
                 y2={BASE_Y}
                 stroke="#e2e8f0"
@@ -142,14 +164,14 @@ export function HourlyScoreGraph({
                 strokeDasharray="2 3"
               />
               <text
-                x={nowX}
+                x={nowMarker.x}
                 y={PT - 9}
-                textAnchor={nowAnchor}
+                textAnchor={nowMarker.anchor}
                 fill="#e2e8f0"
                 fontSize="11"
                 fontWeight="600"
               >
-                Now · {fmtTime(new Date(now).toISOString(), tz)} · {nowScore}
+                Now · {nowMarker.label} · {nowMarker.score}
               </text>
             </g>
           ) : null}
@@ -163,12 +185,12 @@ export function HourlyScoreGraph({
           ))}
 
           {/* current-time dot on the line */}
-          {showNow ? (
+          {nowMarker ? (
             <circle
-              cx={nowX}
-              cy={yFor(nowScore)}
+              cx={nowMarker.x}
+              cy={yFor(nowMarker.score)}
               r="5"
-              fill={scoreColor(nowScore)}
+              fill={scoreColor(nowMarker.score)}
               stroke="#0f172a"
               strokeWidth="2"
             />
