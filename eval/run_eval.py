@@ -80,8 +80,17 @@ def main() -> int:
             print(f"  {name}: seaweed={r['level']}({r.get('coveragePct')}%) "
                   f"crowd={r.get('crowd')}({r.get('crowdPct')}%) people={r.get('people')}")
         except Exception as e:  # noqa: BLE001
-            done[name] = {"image": name, "seaweed": "ERROR", "crowd": "", "people": ""}
-            print(f"  {name}: ERROR {e}", file=sys.stderr)
+            # Don't clobber a previously-good reading when this attempt fails (e.g.
+            # all providers rate-limited): keep the prior row so its category survives
+            # and only the missing pct is deferred to a later run. Mark ERROR only if
+            # we had nothing good before, so it's retried next time.
+            prev = done.get(name) or {}
+            if prev.get("seaweed") not in (None, "", "ERROR"):
+                print(f"  {name}: kept prior ({prev.get('seaweed')}), pct deferred — {e}",
+                      file=sys.stderr)
+            else:
+                done[name] = {"image": name, "seaweed": "ERROR", "crowd": "", "people": ""}
+                print(f"  {name}: ERROR {e}", file=sys.stderr)
         if (i + 1) % SAVE_EVERY == 0:
             flush()  # persist progress so an interrupted run isn't wasted
         if i < len(todo) - 1:
