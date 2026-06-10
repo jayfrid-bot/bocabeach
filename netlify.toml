@@ -12,3 +12,10 @@
 
 [[plugins]]
   package = "@netlify/plugin-nextjs"
+
+# Send the old bocabeachrats.netlify.app address to the permanent domain.
+[[redirects]]
+  from = "https://bocabeachrats.netlify.app/*"
+  to = "https://isitbeachday.com/:splat"
+  status = 301
+  force = true
