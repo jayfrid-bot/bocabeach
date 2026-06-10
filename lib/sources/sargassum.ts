@@ -29,6 +29,31 @@ interface HistoryEntry {
   t?: string; // local capture time, ISO (date prefix -> by-day chart)
   hour?: number;
   seaweed?: string; // worst seaweed across the cams at this capture
+  cov?: number; // 0-100 seaweed coverage % (finer than the category, when present)
+}
+
+// Representative coverage % for each category, so reads that predate the numeric
+// `cov` field still contribute a sensible amount (aligned with the vision prompt:
+// none=clean, low=thin wrack line, moderate=clear bands, high=heavy mats).
+const CAT_COVERAGE: Record<string, number> = { none: 0, low: 5, moderate: 30, high: 70 };
+
+/** Best coverage % for one read: the measured `cov`, else its category proxy. */
+function readCoverage(e: HistoryEntry): number | undefined {
+  if (typeof e.cov === "number" && Number.isFinite(e.cov)) {
+    return Math.max(0, Math.min(100, e.cov));
+  }
+  if (typeof e.seaweed === "string" && e.seaweed in CAT_COVERAGE) {
+    return CAT_COVERAGE[e.seaweed];
+  }
+  return undefined;
+}
+
+/** Map an average coverage % back to a category band (for the bar colour). */
+function bandFor(coverage: number): SargassumRisk {
+  if (coverage >= 60) return "high";
+  if (coverage >= 30) return "moderate";
+  if (coverage >= 5) return "low";
+  return "none";
 }
 export interface CamSeaweedFeed {
   morning?: CamGroup | null;
@@ -55,23 +80,38 @@ function byHourFromHistory(history: HistoryEntry[]): SargassumByHour[] | undefin
     .map(([hour, b]) => ({ hour, level: LEVELS[Math.round(b.rank / b.n)], samples: b.n }));
 }
 
-/** Take each day's WORST seaweed from the rolling history. */
+/**
+ * Accumulate each day's seaweed from the rolling history: the bar height is the
+ * CUMULATIVE coverage (sum of every read's %), so a day that was heavy all day
+ * reads higher than one with a single spike — and days actually differ instead
+ * of all pinning to "high". Colour comes from the day's average band.
+ */
 function byDayFromHistory(history: HistoryEntry[]): SargassumByDay[] | undefined {
-  const byDate = new Map<string, { rank: number; level: SargassumRisk }>();
+  const byDate = new Map<string, { total: number; n: number; worstRank: number }>();
   for (const e of history) {
-    if (typeof e.t !== "string" || typeof e.seaweed !== "string" || !(e.seaweed in RANK)) {
-      continue;
-    }
+    if (typeof e.t !== "string") continue;
+    const cov = readCoverage(e);
+    if (cov === undefined) continue;
     const date = e.t.slice(0, 10);
     if (!DATE_RE.test(date)) continue;
-    const rank = RANK[e.seaweed];
-    const cur = byDate.get(date);
-    if (!cur || rank > cur.rank) byDate.set(date, { rank, level: e.seaweed as SargassumRisk });
+    const b = byDate.get(date) ?? { total: 0, n: 0, worstRank: 0 };
+    b.total += cov;
+    b.n += 1;
+    if (typeof e.seaweed === "string" && e.seaweed in RANK) {
+      b.worstRank = Math.max(b.worstRank, RANK[e.seaweed]);
+    }
+    byDate.set(date, b);
   }
   if (!byDate.size) return undefined;
   return [...byDate.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([date, b]) => ({ date, level: b.level }));
+    .map(([date, b]) => ({
+      date,
+      total: Math.round(b.total),
+      samples: b.n,
+      level: bandFor(b.total / b.n), // average intensity -> colour
+      worst: LEVELS[b.worstRank],
+    }));
 }
 
 /**

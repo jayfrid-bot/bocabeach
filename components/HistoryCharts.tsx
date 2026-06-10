@@ -229,16 +229,36 @@ export function BusynessByDayChart({ byDay, tz }: { byDay: BusynessByDay[]; tz: 
 }
 
 export function SeaweedByDayChart({ byDay, tz }: { byDay: SargassumByDay[]; tz: string }) {
-  const bars = dayBars(byDay, tz, SEA_COLOR, SEA_RANK, (lvl) => lvl);
+  const today = todayLocal(tz);
+  const days = byDay.slice(-MAX_DAYS);
+  // Scale bar height to the heaviest day in view so the day-to-day differences
+  // (the whole point of "cumulative") are visible rather than all pinned high.
+  const maxTotal = Math.max(1, ...days.map((d) => d.total));
+  const every = days.length > 16 ? 3 : days.length > 10 ? 2 : 1;
+  const bars: LevelBar[] = days.map((b, i) => {
+    const show = i % every === 0 || b.date === today;
+    const avg = b.samples ? Math.round(b.total / b.samples) : 0;
+    return {
+      key: b.date,
+      rank: b.total, // cumulative coverage; maxRank below scales it to 0..1
+      color: SEA_COLOR[b.level] ?? "#475569",
+      label: show ? fmtWeekday(b.date) : "",
+      subLabel: show ? fmtMD(b.date) : "",
+      highlight: b.date === today,
+      tooltip:
+        `${fmtDayLong(b.date)}: worst ${cap(b.worst)}, ~${avg}% avg coverage ` +
+        `(${b.samples} read${b.samples === 1 ? "" : "s"})`,
+    };
+  });
   return (
     <LevelBarChart
       title="Seaweed by day"
-      subtitle="Worst sargassum seen on the cams each day. Outlined bar = today."
+      subtitle="Total sargassum across each day's cam reads — taller = more overall (today builds up through the day). Outlined bar = today."
       ariaLabel="Seaweed by day"
       bars={bars}
-      maxRank={3}
-      axisLow="none"
-      axisHigh="high"
+      maxRank={maxTotal}
+      axisLow="light"
+      axisHigh="heavy"
     />
   );
 }
