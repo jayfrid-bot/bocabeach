@@ -1,5 +1,6 @@
 import type { Wrapped, TideData } from "@/lib/types";
 import { fmtTime } from "@/lib/format";
+import { TideCurve } from "@/components/TideCurve";
 
 export function TidePanel({ tides, tz }: { tides: Wrapped<TideData>; tz: string }) {
   const events = tides.data?.next ?? [];
@@ -19,7 +20,9 @@ export function TidePanel({ tides, tz }: { tides: Wrapped<TideData>; tz: string 
       {events.length === 0 ? (
         <div className="mt-2 text-sm text-slate-500">Unavailable</div>
       ) : (
-        <ul className="mt-2 space-y-1.5">
+        <>
+          <TideCurve events={events} tz={tz} />
+          <ul className="mt-2 space-y-1.5">
           {events.map((e, i) => (
             <li key={i} className="flex items-center justify-between text-sm">
               <span className="capitalize text-slate-300">
@@ -29,7 +32,8 @@ export function TidePanel({ tides, tz }: { tides: Wrapped<TideData>; tz: string 
               <span className="w-12 text-right text-slate-400">{e.heightFt} ft</span>
             </li>
           ))}
-        </ul>
+          </ul>
+        </>
       )}
     </div>
   );

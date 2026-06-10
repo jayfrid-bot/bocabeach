@@ -149,11 +149,16 @@ export function moonPhase(now: Date): {
   phase: string;
   emoji: string;
   illumination: number;
+  fraction: number;
 } {
   const days = (now.getTime() - REF_NEW_MOON) / 86400000;
   const frac = (((days % SYNODIC) + SYNODIC) % SYNODIC) / SYNODIC; // 0..1
   const illumination = Math.round(((1 - Math.cos(2 * Math.PI * frac)) / 2) * 100);
-  return { ...MOON_PHASES[Math.round(frac * 8) % 8], illumination };
+  return {
+    ...MOON_PHASES[Math.round(frac * 8) % 8],
+    illumination,
+    fraction: Math.round(frac * 1000) / 1000,
+  };
 }
 
 /** The calendar Y/M/D for `now` as observed in the given IANA timezone. */

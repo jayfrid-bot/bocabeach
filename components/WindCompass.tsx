@@ -1,4 +1,5 @@
 import { degToCardinal } from "@/lib/util";
+import { WindSpinner } from "@/components/WindSpinner";
 
 /**
  * Small compass. `fromDeg` is the direction the wind is blowing FROM;
@@ -28,6 +29,7 @@ export function WindCompass({
           </text>
         )}
       </svg>
+      <WindSpinner speedMph={speedMph} />
       <div>
         <div className="text-2xl font-semibold text-white">
           {typeof speedMph === "number" ? `${speedMph} mph` : "—"}
