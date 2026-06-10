@@ -106,7 +106,10 @@ def main() -> int:
             "cov": b["cov"],
         }
 
-    # Merge into the live feed: backfill wins per (date, hour); keep live-only buckets.
+    # Merge into the live feed: backfill wins per (date, hour) for the CATEGORY
+    # (the morning pre-tractor eval stills are authoritative for seaweed), but we
+    # never drop a numeric value (cov / crowdPct / people) the live feed already
+    # has and the backfill lacks — otherwise republishing would regress live reads.
     prev = fetch_prev()
     merged = dict(backfill)
     for e in (prev.get("history") or []):
@@ -116,8 +119,22 @@ def main() -> int:
         if not isinstance(t, str) or not isinstance(hour, int):
             continue
         key = (t[:10], hour)
-        if key not in merged:
-            merged[key] = e  # live-only bucket (crowd-only, pre-backfill)
+        b = merged.get(key)
+        if b is None:
+            merged[key] = e  # live-only bucket (no eval coverage for this hour)
+            continue
+        # Same hour in both: keep the backfill category, but fill any numeric gaps
+        # from the live reading so we don't lose real measurements.
+        if b.get("cov") is None and e.get("cov") is not None:
+            b["cov"] = e.get("cov")
+            if not b.get("seaweed"):
+                b["seaweed"] = e.get("seaweed")
+        if b.get("crowdPct") is None and e.get("crowdPct") is not None:
+            b["crowdPct"] = e.get("crowdPct")
+            if not b.get("level"):
+                b["level"] = e.get("level")
+        if b.get("people") is None and e.get("people") is not None:
+            b["people"] = e.get("people")
 
     history = sorted(merged.values(), key=lambda e: (e.get("t") or ""))[-MAX_HISTORY:]
 
