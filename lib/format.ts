@@ -27,6 +27,14 @@ export function fmtRelative(iso: string): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
+/** The brand's plain-English answer to "is it beach day?" for a 0-100 score. */
+export function beachDayVerdict(score: number): string {
+  if (score >= 80) return "Yes!";
+  if (score >= 65) return "Pretty much";
+  if (score >= 45) return "Maybe";
+  return "Not really";
+}
+
 /** Accent color for a 0-100 score. */
 export function scoreColor(score: number): string {
   if (score >= 80) return "#34d399"; // emerald-400

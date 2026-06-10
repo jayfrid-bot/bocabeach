@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Shared domain types for Boca Beach Rats.
+// Shared domain types for Is It Beach Day.
 // Every data source normalizes its payload into one of the *Data shapes below
 // and wraps it in `Wrapped<T>` so the UI gets a uniform { data, status } envelope.
 // ---------------------------------------------------------------------------

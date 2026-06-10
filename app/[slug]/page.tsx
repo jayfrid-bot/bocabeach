@@ -18,7 +18,7 @@ export async function generateMetadata({
   const { slug } = await params;
   const loc = getLocation(slug);
   return {
-    title: loc ? `${loc.name} — Boca Beach Rats` : "Boca Beach Rats",
+    title: loc ? `${loc.name} — Is It Beach Day?` : "Is It Beach Day?",
     description: loc
       ? `Live ${loc.name} beach conditions and a composite Beach Day score.`
       : undefined,

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- "Is It Beach Day" app icon: sun rising over layered waves. -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1758b6"/>
+      <stop offset="0.55" stop-color="#142f57"/>
+      <stop offset="1" stop-color="#061826"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="0.5" cy="0.4" r="0.75">
+      <stop offset="0" stop-color="#ffe9a8"/>
+      <stop offset="0.55" stop-color="#ffd76e"/>
+      <stop offset="1" stop-color="#fbbf24"/>
+    </radialGradient>
+    <linearGradient id="waveA" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#59c1ff"/>
+      <stop offset="1" stop-color="#1b85f5"/>
+    </linearGradient>
+    <linearGradient id="waveB" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b85f5"/>
+      <stop offset="1" stop-color="#146de1"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" fill="url(#sky)"/>
+
+  <!-- sun rays -->
+  <g stroke="#fbbf24" stroke-width="18" stroke-linecap="round" opacity="0.9">
+    <line x1="256" y1="64" x2="256" y2="104"/>
+    <line x1="146" y1="110" x2="174" y2="138"/>
+    <line x1="366" y1="110" x2="338" y2="138"/>
+    <line x1="100" y1="220" x2="140" y2="220"/>
+    <line x1="412" y1="220" x2="372" y2="220"/>
+  </g>
+
+  <!-- sun -->
+  <circle cx="256" cy="220" r="86" fill="url(#sun)"/>
+
+  <!-- waves -->
+  <path d="M0 312 Q 64 280 128 312 T 256 312 T 384 312 T 512 312 V 512 H 0 Z" fill="url(#waveA)"/>
+  <path d="M0 376 Q 64 344 128 376 T 256 376 T 384 376 T 512 376 V 512 H 0 Z" fill="url(#waveB)" opacity="0.95"/>
+  <path d="M0 440 Q 64 412 128 440 T 256 440 T 384 440 T 512 440 V 512 H 0 Z" fill="#142f57" opacity="0.9"/>
+</svg>
