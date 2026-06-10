@@ -17,6 +17,8 @@ boca_s11_1781011530.jpg,high,,empty,,1
 boca_s11_1781024635.jpg,high,,quiet,,5
 boca_s11_1781037713.jpg,moderate,30,quiet,20,6
 boca_s11_1781039822.jpg,moderate,30,quiet,20,5
+boca_s11_1781100641.jpg,high,45,quiet,8,4
+boca_s11_1781112964.jpg,high,65,quiet,15,10
 boca_s19_1780597089.jpg,moderate,,moderate,,28
 boca_s19_1780678553.jpg,moderate,,quiet,,6
 boca_s19_1780692120.jpg,high,,quiet,,14
@@ -34,6 +36,8 @@ boca_s19_1781011726.jpg,moderate,,quiet,,4
 boca_s19_1781024854.jpg,moderate,,quiet,,7
 boca_s19_1781037904.jpg,low,5,quiet,20,6
 boca_s19_1781039965.jpg,moderate,30,quiet,10,5
+boca_s19_1781100814.jpg,high,60,quiet,8,6
+boca_s19_1781113144.jpg,moderate,35,quiet,15,8
 boca_s22_1780594066.jpg,moderate,,quiet,,8
 boca_s22_1780597315.jpg,moderate,,quiet,,6
 boca_s22_1780607335.jpg,moderate,,quiet,,3
@@ -51,6 +55,7 @@ boca_s22_1780953927.jpg,moderate,,quiet,,12
 boca_s22_1781011186.jpg,high,,empty,,0
 boca_s22_1781024974.jpg,moderate,,quiet,,2
 boca_s22_1781038070.jpg,moderate,30,quiet,10,4
+boca_s22_1781113276.jpg,high,60,quiet,10,6
 boca_s4_1780594218.jpg,moderate,,quiet,,15
 boca_s4_1780597536.jpg,moderate,,quiet,,10
 boca_s4_1780608131.jpg,moderate,,quiet,,2
@@ -69,6 +74,8 @@ boca_s4_1781011970.jpg,high,,quiet,,6
 boca_s4_1781025106.jpg,moderate,,quiet,,6
 boca_s4_1781038176.jpg,low,5,quiet,20,7
 boca_s4_1781040198.jpg,moderate,30,quiet,20,5
+boca_s4_1781100422.jpg,moderate,30,quiet,10,8
+boca_s4_1781113407.jpg,high,65,moderate,20,15
 boca_s8_1780597661.jpg,moderate,,quiet,,3
 boca_s8_1780679007.jpg,low,,quiet,,8
 boca_s8_1780685321.jpg,moderate,,quiet,,6
@@ -87,6 +94,8 @@ boca_s8_1781011428.jpg,moderate,,quiet,,3
 boca_s8_1781025226.jpg,low,,quiet,,10
 boca_s8_1781037593.jpg,none,0,quiet,10,5
 boca_s8_1781039711.jpg,none,0,quiet,20,6
+boca_s8_1781100533.jpg,high,55,quiet,8,3
+boca_s8_1781113536.jpg,none,0,quiet,20,7
 bocainlet_s12_1780593701.jpg,moderate,,quiet,,2
 bocainlet_s12_1780597073.jpg,low,,quiet,,6
 bocainlet_s12_1780612343.jpg,moderate,,empty,,0
@@ -111,7 +120,10 @@ bocainlet_s12_1780967164.jpg,none,,empty,,0
 bocainlet_s12_1781012063.jpg,high,,quiet,,3
 bocainlet_s12_1781023730.jpg,moderate,,quiet,,8
 bocainlet_s12_1781037131.jpg,low,5,quiet,10,2
-bocainlet_s12_1781042268.jpg,ERROR,,,,
+bocainlet_s12_1781042268.jpg,moderate,30,quiet,5,6
+bocainlet_s12_1781052399.jpg,none,0,empty,0,0
+bocainlet_s12_1781099944.jpg,high,65,empty,0,1
+bocainlet_s12_1781112468.jpg,moderate,30,quiet,5,2
 bocainlet_s16_1780593930.jpg,high,,quiet,,4
 bocainlet_s16_1780597456.jpg,moderate,,empty,,0
 bocainlet_s16_1780612569.jpg,low,,quiet,,5
@@ -136,6 +148,9 @@ bocainlet_s16_1781010623.jpg,moderate,,quiet,,1
 bocainlet_s16_1781023954.jpg,moderate,,quiet,,3
 bocainlet_s16_1781037353.jpg,low,5,quiet,20,6
 bocainlet_s16_1781042487.jpg,none,0,quiet,10,4
+bocainlet_s16_1781052630.jpg,none,0,empty,0,0
+bocainlet_s16_1781100166.jpg,high,65,quiet,2,1
+bocainlet_s16_1781112694.jpg,low,5,quiet,10,3
 bocainlet_s4_1780596611.jpg,none,,quiet,,3
 bocainlet_s4_1780677551.jpg,low,,quiet,,2
 bocainlet_s4_1780684580.jpg,none,,empty,,0
@@ -158,7 +173,10 @@ bocainlet_s4_1780966703.jpg,none,,empty,,0
 bocainlet_s4_1781011610.jpg,moderate,,quiet,,1
 bocainlet_s4_1781024946.jpg,low,,quiet,,4
 bocainlet_s4_1781036667.jpg,none,0,empty,0,0
-bocainlet_s4_1781041823.jpg,ERROR,,,,
+bocainlet_s4_1781041823.jpg,low,10,quiet,1,1
+bocainlet_s4_1781051933.jpg,none,0,empty,0,0
+bocainlet_s4_1781099494.jpg,high,65,quiet,5,2
+bocainlet_s4_1781113689.jpg,low,5,empty,0,0
 bocainlet_s8_1780593482.jpg,moderate,,empty,,0
 bocainlet_s8_1780596849.jpg,moderate,,quiet,,7
 bocainlet_s8_1780613799.jpg,low,,empty,,0
@@ -183,4 +201,7 @@ bocainlet_s8_1780966936.jpg,low,,empty,,0
 bocainlet_s8_1781011839.jpg,high,,quiet,,10
 bocainlet_s8_1781025168.jpg,high,,quiet,,2
 bocainlet_s8_1781036903.jpg,moderate,30,quiet,10,2
-bocainlet_s8_1781042053.jpg,ERROR,,,,
+bocainlet_s8_1781042053.jpg,moderate,30,quiet,5,2
+bocainlet_s8_1781052168.jpg,low,5,empty,0,0
+bocainlet_s8_1781099723.jpg,high,70,empty,0,0
+bocainlet_s8_1781112244.jpg,moderate,30,quiet,5,2
