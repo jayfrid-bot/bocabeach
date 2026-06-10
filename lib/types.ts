@@ -178,7 +178,13 @@ export interface SunData {
   /** Sun's maximum altitude above the horizon at solar noon (degrees). */
   maxAltitudeDeg?: number;
   /** Tonight's moon phase (computed from the date). */
-  moonPhase?: { phase: string; emoji: string; illumination: number };
+  moonPhase?: {
+    phase: string;
+    emoji: string;
+    illumination: number;
+    /** Position in the ~29.5-day synodic cycle: 0 = new, 0.5 = full, →1 = next new. */
+    fraction: number;
+  };
 }
 
 // --- Water quality (FL Healthy Beaches) ------------------------------------
