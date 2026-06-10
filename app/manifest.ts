@@ -3,10 +3,10 @@ import type { MetadataRoute } from "next";
 // Served at /manifest.webmanifest; Next injects the <link> automatically.
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Boca Beach Rats",
-    short_name: "Beach Rats",
+    name: "Is It Beach Day",
+    short_name: "Beach Day",
     description:
-      "Live South Florida beach conditions — tides, water & air temp, wind, waves, water quality, cams — distilled into a single Beach Day score.",
+      "One answer to one question: is it a beach day? Live beach conditions distilled into a single 0–100 Beach Day score.",
     start_url: "/",
     scope: "/",
     display: "standalone",

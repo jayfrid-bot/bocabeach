@@ -1,23 +1,10 @@
 import Link from "next/link";
 import { listLocations } from "@/config/locations";
 import { getConditions } from "@/lib/conditions";
-import { scoreColor } from "@/lib/format";
+import { beachDayVerdict, scoreColor } from "@/lib/format";
+import { LogoMark } from "@/components/Logo";
 
 export const revalidate = 300;
-
-function ScoreChip({ label, score }: { label: string; score: number }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span
-        className="flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold text-slate-950"
-        style={{ background: scoreColor(score) }}
-      >
-        {score}
-      </span>
-      <span className="text-xs text-slate-400">{label}</span>
-    </div>
-  );
-}
 
 export default async function Home() {
   const locations = listLocations();
@@ -30,13 +17,15 @@ export default async function Home() {
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-12 sm:px-6">
-      <header className="mb-10 text-center">
-        <h1 className="text-4xl font-bold text-white sm:text-5xl">
-          Boca Beach Rats 🏖️🐀
+      <header className="mb-10 flex flex-col items-center text-center">
+        <LogoMark size={72} />
+        <h1 className="mt-5 text-4xl font-bold tracking-tight text-white sm:text-5xl">
+          Is it beach day<span className="text-amber-400">?</span>
         </h1>
-        <p className="mt-3 text-slate-400">
-          Live tides, water &amp; air temp, wind, waves, water quality, and cams —
-          distilled into a single Beach Day score.
+        <p className="mt-3 max-w-xl text-slate-400">
+          One answer to one question. Live tides, water &amp; air temp, wind,
+          waves, water quality, and cams — distilled into a single Beach Day
+          score.
         </p>
       </header>
 
@@ -45,22 +34,42 @@ export default async function Home() {
           <Link
             key={loc.slug}
             href={`/${loc.slug}`}
-            className="group rounded-2xl bg-slate-900/70 p-5 ring-1 ring-white/10 transition hover:ring-ocean-500/50"
+            className="group rounded-2xl bg-slate-900/70 p-5 ring-1 ring-white/10 transition hover:ring-amber-400/40"
           >
             <div className="flex items-start justify-between">
               <div>
                 <h2 className="text-xl font-semibold text-white">{loc.name}</h2>
                 <p className="text-sm text-slate-400">{loc.region}</p>
               </div>
-              <span className="text-slate-500 transition group-hover:text-ocean-300">
+              <span className="text-slate-500 transition group-hover:text-amber-300">
                 →
               </span>
             </div>
-            <div className="mt-5 flex gap-6">
+            <div className="mt-5">
               {data ? (
-                <ScoreChip label="Beach Day" score={data.score.score} />
+                <div className="flex items-center gap-3">
+                  <span
+                    className="flex h-11 w-11 items-center justify-center rounded-full text-base font-bold text-slate-950"
+                    style={{ background: scoreColor(data.score.score) }}
+                  >
+                    {data.score.score}
+                  </span>
+                  <div>
+                    <div
+                      className="text-lg font-semibold leading-tight"
+                      style={{ color: scoreColor(data.score.score) }}
+                    >
+                      {beachDayVerdict(data.score.score)}
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      Beach Day score right now
+                    </div>
+                  </div>
+                </div>
               ) : (
-                <span className="text-sm text-slate-500">Conditions unavailable</span>
+                <span className="text-sm text-slate-500">
+                  Conditions unavailable
+                </span>
               )}
             </div>
           </Link>

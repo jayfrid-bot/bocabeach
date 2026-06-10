@@ -8,6 +8,7 @@
 
 body {
   background:
+    radial-gradient(900px 450px at 50% -16%, rgba(251, 191, 36, 0.07), transparent 55%),
     radial-gradient(1200px 600px at 50% -10%, rgba(27, 133, 245, 0.18), transparent 60%),
     #020617;
 }

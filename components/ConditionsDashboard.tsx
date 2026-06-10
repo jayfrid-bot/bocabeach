@@ -4,7 +4,8 @@ import Link from "next/link";
 import useSWR from "swr";
 import type { ConditionsResponse } from "@/lib/types";
 import { bestBeachWindow, deriveMetrics } from "@/lib/score";
-import { fmtDate, fmtTime, scoreColor } from "@/lib/format";
+import { beachDayVerdict, fmtDate, fmtTime, scoreColor } from "@/lib/format";
+import { Logo } from "@/components/Logo";
 import { ScoreGauge } from "@/components/ScoreGauge";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { HourlyScoreGraph } from "@/components/HourlyScoreGraph";
@@ -117,9 +118,10 @@ export function ConditionsDashboard({
       <header className="mb-6">
         <Link
           href="/"
-          className="inline-flex min-h-[36px] items-center text-sm text-ocean-300 hover:underline"
+          className="inline-flex min-h-[36px] items-center text-sm hover:opacity-80"
+          aria-label="Is It Beach Day — all beaches"
         >
-          ← all beaches
+          <Logo markSize={28} />
         </Link>
         <h1 className="mt-2 text-3xl font-bold text-white sm:text-4xl">
           {snap.location.name}
@@ -138,6 +140,17 @@ export function ConditionsDashboard({
 
       <section className="mb-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <div className="flex flex-col items-center gap-4 rounded-2xl bg-slate-900/70 p-6 ring-1 ring-white/10">
+          <div className="text-center">
+            <div className="text-xs uppercase tracking-widest text-slate-500">
+              Is it beach day?
+            </div>
+            <div
+              className="text-2xl font-bold"
+              style={{ color: scoreColor(active.score) }}
+            >
+              {beachDayVerdict(active.score)}
+            </div>
+          </div>
           <ScoreGauge
             score={active.score}
             rating={active.rating}

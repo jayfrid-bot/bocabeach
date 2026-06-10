@@ -1,4 +1,6 @@
-# Boca Beach Rats 🏖️🐀
+# Is It Beach Day? ☀️🌊
+
+> Formerly "Boca Beach Rats" — rebranded for the move to **isitbeachday.com**.
 
 Live local beach conditions for **Boca Raton, FL**, consolidated
 into one page each with a single composite **Beach Day** score (for beachgoers — no
