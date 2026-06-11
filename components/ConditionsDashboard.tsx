@@ -370,6 +370,15 @@ export function ConditionsDashboard({
           not a safety determination. Always follow posted flags and lifeguards.
         </p>
         <p className="text-center text-xs text-slate-500">
+          Spot something off or have an idea?{" "}
+          <a
+            href="mailto:hello@isitbeachday.com"
+            className="text-ocean-300 hover:underline"
+          >
+            hello@isitbeachday.com
+          </a>
+        </p>
+        <p className="text-center text-xs text-slate-500">
           v{APP_VERSION}
           <span className="mx-1.5 text-slate-600">·</span>
           data updated {fmtDate(snap.generatedAt, tz)}, {fmtTime(snap.generatedAt, tz)}

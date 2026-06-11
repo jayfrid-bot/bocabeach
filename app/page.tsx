@@ -80,6 +80,12 @@ export default async function Home() {
         Built to expand to every beach town — add a location in{" "}
         <code className="text-slate-400">config/locations.ts</code>.
       </p>
+      <p className="mt-3 text-center text-xs text-slate-600">
+        Feedback or ideas?{" "}
+        <a href="mailto:hello@isitbeachday.com" className="text-ocean-300 hover:underline">
+          hello@isitbeachday.com
+        </a>
+      </p>
     </main>
   );
 }
