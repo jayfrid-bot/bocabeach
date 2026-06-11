@@ -447,10 +447,10 @@ function applyBeachCaps(
   // beach (smelly brown mats, murky water) — so it caps how good the day can be.
   if (d.sargassumLevel === "high") {
     score = Math.min(score, 65);
-    caps.push("Heavy sargassum (seaweed) on the beach");
+    caps.push("Heavy seaweed (sargassum) on the beach");
   } else if (d.sargassumLevel === "moderate") {
     score = Math.min(score, 85);
-    caps.push("Moderate sargassum (seaweed) on the beach");
+    caps.push("Moderate seaweed (sargassum) on the beach");
   }
   // NWS rip-current risk: HIGH means life-threatening rip currents are likely.
   // Like a red flag, this is a swimmer-safety hazard rather than a beach-day

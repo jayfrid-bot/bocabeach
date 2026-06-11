@@ -176,7 +176,7 @@ export function SeaweedByHourChart({
   return (
     <LevelBarChart
       title="Seaweed by time of day"
-      subtitle="Typical sargassum by daylight hour — heaviest at dawn, eased after the morning beach-cleaning."
+      subtitle="Typical seaweed by daylight hour — heaviest at dawn, eased after the morning beach-cleaning."
       ariaLabel="Seaweed by hour"
       bars={bars}
       maxRank={3}
@@ -246,7 +246,7 @@ export function SeaweedByDayChart({ byDay, tz }: { byDay: SargassumByDay[]; tz: 
   return (
     <LevelBarChart
       title="Seaweed by day"
-      subtitle="Average sargassum each day across the cam reads. Outlined bar = today."
+      subtitle="Average seaweed each day across the cam reads. Outlined bar = today."
       ariaLabel="Seaweed by day"
       bars={bars}
       maxRank={3}
