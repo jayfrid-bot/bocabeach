@@ -489,8 +489,16 @@ const HOUR_MS = 3_600_000;
  * `scoreBeachDay` by combining each forecast hour's weather with the day-constant
  * water / quality / flag inputs from the current snapshot. Bounded to the hours
  * between sunrise and sunset. Returns [] when hourly data is unavailable.
+ *
+ * Seaweed is point-in-time: hours that have already passed score with the cam
+ * read that was in effect at that hour (today's read log), so a later change
+ * never retroactively rewrites the morning. Current and future hours use the
+ * latest read. `nowMs` is injectable for tests.
  */
-export function computeHourlyScores(s: ConditionsSnapshot): HourlyScore[] {
+export function computeHourlyScores(
+  s: ConditionsSnapshot,
+  nowMs: number = Date.now(),
+): HourlyScore[] {
   const hours = s.hourly.data;
   if (!hours?.length) return [];
 
@@ -512,6 +520,14 @@ export function computeHourlyScores(s: ConditionsSnapshot): HourlyScore[] {
   for (const bh of s.busyness.data?.byHour ?? []) {
     crowdByHour.set(bh.hour, bh.crowdPct ?? crowdLevelPct(bh.level));
   }
+
+  // The seaweed read in effect at a given past local hour: the last of today's
+  // reads at-or-before that hour, else the day's first read (closest we have).
+  const reads = s.sargassum.data?.todayReads ?? [];
+  const seaweedAtHour = (localHour: number) => {
+    const prior = reads.filter((r) => r.hour <= localHour);
+    return prior.length ? prior[prior.length - 1] : reads[0];
+  };
 
   // Per-hour sand estimate (recent rain = that hour + the two before it),
   // computed against the full hourly array before the daylight filter.
@@ -536,6 +552,9 @@ export function computeHourlyScores(s: ConditionsSnapshot): HourlyScore[] {
       return t + HOUR_MS > sunrise && t <= sunset;
     })
     .map((h) => {
+      // Past hours keep the read that was current then; now/future use latest.
+      const isPast = new Date(h.time).getTime() + HOUR_MS <= nowMs;
+      const histRead = isPast ? seaweedAtHour(localHourOf(h.time)) : undefined;
       const d: Derived = {
         airTempF: h.airTempF,
         waterTempF: base.waterTempF,
@@ -549,8 +568,8 @@ export function computeHourlyScores(s: ConditionsSnapshot): HourlyScore[] {
         humidityPct: h.humidityPct,
         dewPointF: h.dewPointF,
         weatherCode: h.weatherCode,
-        sargassumLevel: base.sargassumLevel,
-        sargassumCoveragePct: base.sargassumCoveragePct,
+        sargassumLevel: histRead?.level ?? base.sargassumLevel,
+        sargassumCoveragePct: histRead ? histRead.coveragePct : base.sargassumCoveragePct,
         crowdPct: crowdByHour.get(localHourOf(h.time)),
         sandTempF: sandByTime.get(h.time),
         flags: base.flags,
