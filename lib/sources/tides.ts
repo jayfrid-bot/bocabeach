@@ -1,5 +1,5 @@
 import type { Location, TideData, Wrapped } from "@/lib/types";
-import { fetchWithTimeout, nowIso, round } from "@/lib/util";
+import { fetchWithTimeout, fetchedAtOf, nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "NOAA Tides & Currents (tidesandcurrents.noaa.gov)";
 
@@ -36,7 +36,9 @@ function yyyymmdd(d: Date): string {
   return d.toISOString().slice(0, 10).replace(/-/g, "");
 }
 
-async function fetchOne(stationId: string): Promise<TideData | null> {
+async function fetchOne(
+  stationId: string,
+): Promise<{ data: TideData | null; at: string }> {
   const begin = yyyymmdd(new Date(Date.now() - 6 * 3600_000)); // small lookback
   const url =
     `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?product=predictions` +
@@ -44,7 +46,7 @@ async function fetchOne(stationId: string): Promise<TideData | null> {
     `&station=${stationId}&time_zone=gmt&units=english&interval=hilo&format=json`;
   const res = await fetchWithTimeout(url, { next: { revalidate: 21600 } }); // 6h
   if (!res.ok) throw new Error(`NOAA tides ${stationId} -> ${res.status}`);
-  return parseNoaaPredictions(await res.json());
+  return { data: parseNoaaPredictions(await res.json()), at: fetchedAtOf(res) };
 }
 
 export async function fetchTides(loc: Location): Promise<Wrapped<TideData>> {
@@ -54,12 +56,12 @@ export async function fetchTides(loc: Location): Promise<Wrapped<TideData>> {
   ) as string[];
   for (const id of ids) {
     try {
-      const data = await fetchOne(id);
+      const { data, at } = await fetchOne(id);
       if (data && data.next.length > 0) {
         return {
           source: `NOAA CO-OPS (${id})`,
           status: id === loc.noaaTideStationId ? "ok" : "stale",
-          fetchedAt,
+          fetchedAt: at,
           attribution: ATTRIBUTION,
           data,
           note:

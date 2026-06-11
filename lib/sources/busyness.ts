@@ -6,7 +6,7 @@ import type {
   Location,
   Wrapped,
 } from "@/lib/types";
-import { fetchWithTimeout, nowIso } from "@/lib/util";
+import { fetchedAtOf, fetchWithTimeout, nowIso } from "@/lib/util";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
 
@@ -178,12 +178,13 @@ export function summarizeBusyness(feed: CamFeed): BusynessData {
 export async function fetchBusyness(
   _loc: Location,
 ): Promise<Wrapped<BusynessData>> {
-  const fetchedAt = nowIso();
+  let fetchedAt = nowIso();
   try {
     const res = await fetchWithTimeout(CAM_FEED_URL, {
       timeoutMs: 6000,
       next: { revalidate: 3600 }, // 1h — the cam-vision job runs a few times/day
     });
+    fetchedAt = fetchedAtOf(res);
     if (res.status === 404) {
       return {
         source: ATTRIBUTION,

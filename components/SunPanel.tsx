@@ -1,6 +1,5 @@
 import type { Wrapped, SunData } from "@/lib/types";
 import { fmtTime } from "@/lib/format";
-import { MoonCycle } from "@/components/MoonCycle";
 import { SunArc } from "@/components/SunArc";
 
 /** Daybreak, sunrise, peak sun, sunset and dusk for today, in local time. */
@@ -47,7 +46,6 @@ export function SunPanel({ sun, tz }: { sun: Wrapped<SunData>; tz: string }) {
           </ul>
         </>
       )}
-      {d?.moonPhase ? <MoonCycle moon={d.moonPhase} /> : null}
     </div>
   );
 }

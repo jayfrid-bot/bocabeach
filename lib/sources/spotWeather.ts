@@ -1,5 +1,5 @@
 import type { SpotWeatherData, Wrapped } from "@/lib/types";
-import { degToCardinal, fetchWithTimeout, nowIso, round } from "@/lib/util";
+import { fetchedAtOf, degToCardinal, fetchWithTimeout, nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo (open-meteo.com)";
 
@@ -78,7 +78,7 @@ export async function fetchSpotWeather(
   lat: number,
   lon: number,
 ): Promise<Wrapped<SpotWeatherData>> {
-  const fetchedAt = nowIso();
+  let fetchedAt = nowIso();
   // Round to ~1km so nearby cams share a cached request.
   const la = round(lat, 2);
   const lo = round(lon, 2);
@@ -92,6 +92,7 @@ export async function fetchSpotWeather(
       timeoutMs: 6000,
       next: { revalidate: 900 }, // 15 min
     });
+    fetchedAt = fetchedAtOf(res);
     if (!res.ok) throw new Error(`Open-Meteo current -> ${res.status}`);
     const data = parseOpenMeteoCurrent(await res.json());
     return {

@@ -1,5 +1,5 @@
 import type { Location, TrafficData, Wrapped } from "@/lib/types";
-import { clamp, fetchWithTimeout, nowIso, round } from "@/lib/util";
+import { fetchedAtOf, clamp, fetchWithTimeout, nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "HERE Traffic";
 const DEFAULT_RADIUS_KM = 2;
@@ -55,7 +55,7 @@ export function summarizeTraffic(json: HereFlowResponse): TrafficData {
 }
 
 export async function fetchTraffic(loc: Location): Promise<Wrapped<TrafficData>> {
-  const fetchedAt = nowIso();
+  let fetchedAt = nowIso();
   const key = process.env.HERE_API_KEY;
   if (!key) {
     return {
@@ -73,6 +73,7 @@ export async function fetchTraffic(loc: Location): Promise<Wrapped<TrafficData>>
     `&locationReferencing=shape&apiKey=${encodeURIComponent(key)}`;
   try {
     const res = await fetchWithTimeout(url, { timeoutMs: 7000, next: { revalidate: REVALIDATE } });
+    fetchedAt = fetchedAtOf(res);
     // A rejected/over-quota key should degrade quietly, not read as a hard error.
     if (res.status === 401 || res.status === 403 || res.status === 429) {
       return {

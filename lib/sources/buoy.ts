@@ -1,5 +1,5 @@
 import type { BuoyData, Location, Wrapped } from "@/lib/types";
-import { cToF, fetchWithTimeout, msToMph, mToFt, nowIso, round } from "@/lib/util";
+import { cToF, fetchWithTimeout, fetchedAtOf, msToMph, mToFt, nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "NOAA National Data Buoy Center (ndbc.noaa.gov)";
 const MISSING = "MM";
@@ -55,13 +55,15 @@ export function parseNdbcRealtime(text: string): BuoyData | null {
   return out;
 }
 
-async function fetchOne(id: string): Promise<BuoyData | null> {
+async function fetchOne(
+  id: string,
+): Promise<{ data: BuoyData | null; at: string }> {
   const res = await fetchWithTimeout(
     `https://www.ndbc.noaa.gov/data/realtime2/${id}.txt`,
     { next: { revalidate: 600 } },
   );
   if (!res.ok) throw new Error(`NDBC ${id} -> ${res.status}`);
-  return parseNdbcRealtime(await res.text());
+  return { data: parseNdbcRealtime(await res.text()), at: fetchedAtOf(res) };
 }
 
 export async function fetchBuoy(loc: Location): Promise<Wrapped<BuoyData>> {
@@ -69,12 +71,12 @@ export async function fetchBuoy(loc: Location): Promise<Wrapped<BuoyData>> {
   const ids = [loc.ndbcBuoyId, loc.ndbcBuoyFallbackId].filter(Boolean) as string[];
   for (const id of ids) {
     try {
-      const data = await fetchOne(id);
+      const { data, at } = await fetchOne(id);
       if (data && Object.keys(data).length > 1) {
         return {
           source: `NOAA NDBC (${id})`,
           status: id === loc.ndbcBuoyId ? "ok" : "stale",
-          fetchedAt,
+          fetchedAt: at,
           attribution: ATTRIBUTION,
           data,
           note: id === loc.ndbcBuoyId ? undefined : `primary buoy unavailable; using ${id}`,

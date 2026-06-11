@@ -1,5 +1,6 @@
 import type { CamView } from "@/lib/types";
-import { fmtRelative, fmtTime } from "@/lib/format";
+import { fmtTime } from "@/lib/format";
+import { RelativeTime } from "@/components/RelativeTime";
 
 /**
  * Time of the still being shown: the source's exact capture time when published
@@ -18,7 +19,7 @@ function CamStamp({ cam, tz }: { cam: CamView; tz: string }) {
       }
     >
       {exact ? (
-        <>📷 {fmtTime(t, tz)} · {fmtRelative(t)}</>
+        <>📷 {fmtTime(t, tz)} · <RelativeTime iso={t} /></>
       ) : (
         <>📷 capture time unknown · fetched {fmtTime(t, tz)}</>
       )}
@@ -89,7 +90,7 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
         />
         {stale ? (
           <div className="absolute inset-x-0 bottom-0 bg-slate-950/70 px-2 py-1 text-center text-[11px] text-amber-200">
-            Still image paused {fmtRelative(cam.capturedAt as string)} — tap for live video
+            Still image paused <RelativeTime iso={cam.capturedAt as string} /> — tap for live video
           </div>
         ) : !verified ? (
           <div className="absolute inset-x-0 bottom-0 bg-slate-950/65 px-2 py-1 text-center text-[11px] text-slate-200">
@@ -105,7 +106,7 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
               className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300"
               title="The still-image feed hasn't updated recently — open the cam for live video."
             >
-              ⏸ {fmtRelative(cam.capturedAt as string)}
+              ⏸ <RelativeTime iso={cam.capturedAt as string} />
             </span>
           ) : verified ? (
             <span className="shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-300">

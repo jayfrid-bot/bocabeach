@@ -7,7 +7,7 @@ import type {
   SargassumRisk,
   Wrapped,
 } from "@/lib/types";
-import { fetchWithTimeout, nowIso } from "@/lib/util";
+import { fetchedAtOf, fetchWithTimeout, nowIso } from "@/lib/util";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
 
@@ -150,12 +150,13 @@ export function summarizeSeaweed(feed: CamSeaweedFeed): SargassumData | null {
 export async function fetchSargassum(
   _loc: Location,
 ): Promise<Wrapped<SargassumData>> {
-  const fetchedAt = nowIso();
+  let fetchedAt = nowIso();
   try {
     const res = await fetchWithTimeout(CAM_FEED_URL, {
       timeoutMs: 7000,
       next: { revalidate: 3600 }, // 1h — the cam-vision job runs a few times/day
     });
+    fetchedAt = fetchedAtOf(res);
     if (res.status === 404) {
       return {
         source: ATTRIBUTION,

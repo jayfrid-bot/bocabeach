@@ -131,3 +131,25 @@ export async function fetchWithTimeout(
 }
 
 export const nowIso = (): string => new Date().toISOString();
+
+/**
+ * When an HTTP response was actually produced, from its `Date` header. Next's
+ * fetch cache (`next.revalidate`) stores responses with their original headers,
+ * so a cache hit keeps the upstream's timestamp — using this for `fetchedAt`
+ * means the "data sources" footer reports real freshness instead of restamping
+ * cached data as new on every request. Falls back to now when absent/invalid.
+ */
+export function fetchedAtOf(res: Response): string {
+  const d = res.headers.get("date");
+  if (d) {
+    const t = new Date(d);
+    if (Number.isFinite(t.getTime())) return t.toISOString();
+  }
+  return nowIso();
+}
+
+/** The oldest of several fetch timestamps — honest freshness for multi-request sources. */
+export function oldestIso(...isos: (string | undefined)[]): string {
+  const ts = isos.filter((s): s is string => !!s).map((s) => new Date(s).getTime());
+  return ts.length ? new Date(Math.min(...ts)).toISOString() : nowIso();
+}

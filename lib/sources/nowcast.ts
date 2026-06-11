@@ -1,5 +1,5 @@
 import type { Location, NowcastData, Wrapped } from "@/lib/types";
-import { fetchWithTimeout, nowIso } from "@/lib/util";
+import { fetchedAtOf, fetchWithTimeout, nowIso } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo (open-meteo.com)";
 const WET_MM = 0.1; // precipitation at/above this (per 15 min) counts as "raining"
@@ -62,7 +62,7 @@ export function parseNowcast(
 }
 
 export async function fetchNowcast(loc: Location): Promise<Wrapped<NowcastData>> {
-  const fetchedAt = nowIso();
+  let fetchedAt = nowIso();
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
     `&minutely_15=precipitation&forecast_days=1`;
@@ -71,6 +71,7 @@ export async function fetchNowcast(loc: Location): Promise<Wrapped<NowcastData>>
       timeoutMs: 7000,
       next: { revalidate: 900 }, // 15m — nowcast is short-term
     });
+    fetchedAt = fetchedAtOf(res);
     if (!res.ok) throw new Error(`Open-Meteo minutely -> ${res.status}`);
     const data = parseNowcast(await res.json(), Date.now());
     return {

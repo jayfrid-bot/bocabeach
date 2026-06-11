@@ -21,6 +21,7 @@ import { MetricCard } from "@/components/MetricCard";
 import { WindCompass } from "@/components/WindCompass";
 import { TidePanel } from "@/components/TidePanel";
 import { SunPanel } from "@/components/SunPanel";
+import { MoonPanel } from "@/components/MoonPanel";
 import { SafetyBanner } from "@/components/SafetyBanner";
 import { SandTempPanel } from "@/components/SandTempPanel";
 import { sandVerdict } from "@/lib/sandTemp";
@@ -376,6 +377,7 @@ export function ConditionsDashboard({
       <section className="mb-6 grid gap-4 sm:grid-cols-2">
         <TidePanel tides={snap.tides} tz={tz} />
         <SunPanel sun={snap.sun} tz={tz} />
+        <MoonPanel sun={snap.sun} />
       </section>
 
       <section className="mb-8">

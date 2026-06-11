@@ -1,6 +1,6 @@
 import type { ForecastDay, Location, Wrapped } from "@/lib/types";
 import { wmoText } from "@/lib/sources/spotWeather";
-import { fetchWithTimeout, nowIso, round } from "@/lib/util";
+import { fetchedAtOf, fetchWithTimeout, nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo (open-meteo.com)";
 
@@ -77,7 +77,7 @@ export function parseOpenMeteoDaily(json: OpenMeteoDaily): ForecastDay[] | null 
 export async function fetchForecast(
   loc: Location,
 ): Promise<Wrapped<ForecastDay[]>> {
-  const fetchedAt = nowIso();
+  let fetchedAt = nowIso();
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
     `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,` +
@@ -88,6 +88,7 @@ export async function fetchForecast(
       timeoutMs: 7000,
       next: { revalidate: 3600 }, // 1h
     });
+    fetchedAt = fetchedAtOf(res);
     if (!res.ok) throw new Error(`Open-Meteo daily -> ${res.status}`);
     const data = parseOpenMeteoDaily(await res.json());
     return {

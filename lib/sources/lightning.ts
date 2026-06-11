@@ -1,5 +1,5 @@
 import type { LightningData, Location, Wrapped } from "@/lib/types";
-import { bearingDeg, fetchWithTimeout, haversineMiles, nowIso, round } from "@/lib/util";
+import { fetchedAtOf, bearingDeg, fetchWithTimeout, haversineMiles, nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "NOAA GOES-19 GLM (lightning)";
 
@@ -82,12 +82,13 @@ export function summarizeStrikes(
 export async function fetchLightning(
   loc: Location,
 ): Promise<Wrapped<LightningData>> {
-  const fetchedAt = nowIso();
+  let fetchedAt = nowIso();
   try {
     const res = await fetchWithTimeout(FEED_URL, {
       timeoutMs: 7000,
       next: { revalidate: 300 }, // 5m — the upstream job refreshes every ~10m
     });
+    fetchedAt = fetchedAtOf(res);
     // The feed branch may not exist yet (first deploy) — degrade quietly.
     if (res.status === 404) {
       return {
