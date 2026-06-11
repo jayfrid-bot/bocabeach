@@ -81,6 +81,27 @@ export function TideCurve({ events, tz }: { events: TideEvent[]; tz: string }) {
     .join(" ");
 
   const nowVisible = now != null && now >= t0 && now <= tN;
+  // The "now" word shares the chart's top band with the high-tide time labels,
+  // so when the marker sits near a high tide (the most interesting moment!)
+  // the two print on top of each other. Detect that and slide "now" to the
+  // side of its dashed line, away from the colliding time label.
+  const nowX = nowVisible ? xFor(now as number) : 0;
+  const collidingHigh = nowVisible
+    ? next.find((e) => e.type === "high" && Math.abs(xFor(e.t) - nowX) < 34)
+    : undefined;
+  const nowAnchor = collidingHigh
+    ? xFor(collidingHigh.t) > nowX
+      ? "end"
+      : "start"
+    : "middle";
+  // Slide far enough to clear the time label itself (half a "12:57PM" plus
+  // breathing room), not just the dashed line.
+  const EVENT_HALF = 22;
+  const nowTextX = collidingHigh
+    ? xFor(collidingHigh.t) > nowX
+      ? Math.min(nowX - 4, xFor(collidingHigh.t) - EVENT_HALF)
+      : Math.max(nowX + 4, xFor(collidingHigh.t) + EVENT_HALF)
+    : nowX;
 
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="mt-2 w-full" role="img" aria-label="Tide cycle">
@@ -136,9 +157,9 @@ export function TideCurve({ events, tz }: { events: TideEvent[]; tz: string }) {
             strokeWidth="2"
           />
           <text
-            x={xFor(now)}
+            x={nowTextX}
             y={PT - 13}
-            textAnchor="middle"
+            textAnchor={nowAnchor}
             fill="#fbbf24"
             fontSize="8.5"
             fontWeight="600"
