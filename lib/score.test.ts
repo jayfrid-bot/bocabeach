@@ -107,10 +107,21 @@ describe("scoring (Beach Day only — no surf)", () => {
     const { subScores } = computeScore(NICE);
     const keys = subScores.map((s) => s.key).sort();
     expect(keys).toEqual(
-      ["airTemp", "comfort", "crowds", "sargassum", "sky", "uv", "waterQuality", "waterTemp", "waves", "wind"].sort(),
+      ["airTemp", "comfort", "crowds", "sandTemp", "sargassum", "sky", "uv", "waterQuality", "waterTemp", "waves", "wind"].sort(),
     );
     const total = subScores.reduce((a, s) => a + s.weight, 0);
     expect(total).toBeCloseTo(1, 5);
+  });
+
+  it("scores sand barefoot comfort: cool sand best, scorching sand drags the score", () => {
+    const base = deriveMetrics(snapshot({}));
+    const at = (f?: number) => scoreBeachDay({ ...base, sandTempF: f });
+    const sandSub = (f?: number) => at(f).subScores.find((s) => s.key === "sandTemp")!.score;
+    expect(sandSub(90)).toBe(100);
+    expect(sandSub(120)).toBeLessThan(70);
+    expect(sandSub(140)).toBeLessThan(20);
+    expect(sandSub(undefined)).toBeNull(); // unknown sand is excluded, not penalized
+    expect(at(90).score).toBeGreaterThan(at(140).score);
   });
 
   it("scores seaweed (sargassum) as a sub-score: none best, high worst", () => {

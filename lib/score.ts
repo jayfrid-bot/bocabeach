@@ -10,6 +10,7 @@ import type {
   WaterQualityRating,
 } from "@/lib/types";
 import { clamp, degToCardinal, dewPointFromTempRH, plateau, round } from "@/lib/util";
+import { currentSandTempF, estimateSandTempF } from "@/lib/sandTemp";
 
 // Consolidated, best-available values pulled across all sources.
 export interface Derived {
@@ -31,6 +32,8 @@ export interface Derived {
   sargassumCoveragePct?: number;
   /** 0-100 beach fullness (busiest cam now, or the hour's history); 0=empty. */
   crowdPct?: number;
+  /** Estimated dry-sand surface temp (°F) — barefoot comfort (lib/sandTemp). */
+  sandTempF?: number;
   flags: FlagColor[];
   waterAdvisory: boolean;
   waterRating: WaterQualityRating;
@@ -71,6 +74,7 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     sargassumLevel: s.sargassum.data?.level,
     sargassumCoveragePct: s.sargassum.data?.coveragePct,
     crowdPct: s.busyness.data?.crowdPct ?? crowdLevelPct(s.busyness.data?.level),
+    sandTempF: s.hourly.data ? currentSandTempF(s.hourly.data) : undefined,
     humidityPct: w?.humidityPct,
     dewPointF: w?.dewPointF ?? (dpFallback != null ? round(dpFallback) : undefined),
     flags: c?.flags ?? ["unknown"],
@@ -294,16 +298,31 @@ function crowdScore(pct: number | undefined): number | null {
   return pct == null ? null : lerpCurve(pct, CROWD_CURVE);
 }
 
+/**
+ * Sand barefoot-comfort as a sub-score: fine under ~95°F, sandals territory
+ * through the low 100s-120s, burn-risk sand near worthless. Mirrors the
+ * verdict bands in lib/sandTemp.ts.
+ */
+const SAND_CURVE: [number, number][] = [
+  [95, 100],
+  [115, 70],
+  [130, 35],
+  [145, 5],
+];
+function sandScore(tempF: number | undefined): number | null {
+  return tempF == null ? null : lerpCurve(tempF, SAND_CURVE);
+}
+
 export function scoreBeachDay(d: Derived): ScoreResult {
   const subs: SubScore[] = [
     sub(
       "airTemp",
       "Air temperature",
       d.airTempF != null ? plateau(d.airTempF, 78, 88, 18) : null,
-      0.18,
+      0.17,
       f1(d.airTempF, "°F"),
     ),
-    sub("sky", "Sky (sun & rain)", skyScore(d), 0.18, skyDisplay(d)),
+    sub("sky", "Sky (sun & rain)", skyScore(d), 0.17, skyDisplay(d)),
     sub(
       "wind",
       "Wind (sea breeze)",
@@ -313,12 +332,12 @@ export function scoreBeachDay(d: Derived): ScoreResult {
         ? `${d.windSpeedMph} mph${d.windDirDeg != null ? " " + degToCardinal(d.windDirDeg) : ""}`
         : undefined,
     ),
-    sub("comfort", "Comfort (mugginess)", comfortScore(d), 0.09, comfortDisplay(d)),
+    sub("comfort", "Comfort (mugginess)", comfortScore(d), 0.08, comfortDisplay(d)),
     sub(
       "waterTemp",
       "Water temperature",
       d.waterTempF != null ? plateau(d.waterTempF, 77, 84, 15) : null,
-      0.11,
+      0.10,
       f1(d.waterTempF, "°F"),
     ),
     sub(
@@ -355,6 +374,13 @@ export function scoreBeachDay(d: Derived): ScoreResult {
       d.uvIndex != null ? uvScore(d.uvIndex) : null,
       0.04,
       d.uvIndex != null ? `${d.uvIndex}` : undefined,
+    ),
+    sub(
+      "sandTemp",
+      "Sand temperature (barefoot)",
+      sandScore(d.sandTempF),
+      0.04,
+      d.sandTempF != null ? `~${d.sandTempF}°F est.` : undefined,
     ),
   ];
 
@@ -487,6 +513,21 @@ export function computeHourlyScores(s: ConditionsSnapshot): HourlyScore[] {
     crowdByHour.set(bh.hour, bh.crowdPct ?? crowdLevelPct(bh.level));
   }
 
+  // Per-hour sand estimate (recent rain = that hour + the two before it),
+  // computed against the full hourly array before the daylight filter.
+  const sandByTime = new Map<string, number | undefined>();
+  hours.forEach((h, i) => {
+    sandByTime.set(
+      h.time,
+      estimateSandTempF({
+        soilTempF: h.soilTempF,
+        solarWm2: h.solarWm2,
+        windSpeedMph: h.windSpeedMph,
+        recentRainIn: [i, i - 1, i - 2].reduce((a, j) => a + (hours[j]?.precipIn ?? 0), 0),
+      }),
+    );
+  });
+
   return hours
     .filter((h) => {
       if (sunrise == null || sunset == null) return true; // no bounds -> keep all
@@ -511,6 +552,7 @@ export function computeHourlyScores(s: ConditionsSnapshot): HourlyScore[] {
         sargassumLevel: base.sargassumLevel,
         sargassumCoveragePct: base.sargassumCoveragePct,
         crowdPct: crowdByHour.get(localHourOf(h.time)),
+        sandTempF: sandByTime.get(h.time),
         flags: base.flags,
         waterAdvisory: base.waterAdvisory,
         waterRating: base.waterRating,

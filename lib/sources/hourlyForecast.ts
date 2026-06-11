@@ -17,6 +17,9 @@ interface OpenMeteoHourly {
     uv_index?: (number | null)[];
     relative_humidity_2m?: (number | null)[];
     dew_point_2m?: (number | null)[];
+    soil_temperature_0cm?: (number | null)[];
+    shortwave_radiation?: (number | null)[];
+    precipitation?: (number | null)[];
   };
 }
 
@@ -50,6 +53,9 @@ export function parseOpenMeteoHourly(
     const uv = num(h.uv_index, i);
     const rh = num(h.relative_humidity_2m, i);
     const dew = num(h.dew_point_2m, i);
+    const soil = num(h.soil_temperature_0cm, i);
+    const solar = num(h.shortwave_radiation, i);
+    const precip = num(h.precipitation, i);
     out.push({
       time: t.toISOString(),
       airTempF: air !== undefined ? round(air) : undefined,
@@ -61,6 +67,9 @@ export function parseOpenMeteoHourly(
       uvIndex: uv !== undefined ? round(uv, 1) : undefined,
       humidityPct: rh !== undefined ? round(rh) : undefined,
       dewPointF: dew !== undefined ? round(dew) : undefined,
+      soilTempF: soil !== undefined ? round(soil) : undefined,
+      solarWm2: solar !== undefined ? round(solar) : undefined,
+      precipIn: precip !== undefined ? round(precip, 2) : undefined,
       shortForecast: wmoText(code),
       emoji: wmoEmoji(code),
     });
@@ -80,8 +89,10 @@ export async function fetchHourlyForecast(
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
     `&hourly=temperature_2m,cloud_cover,precipitation_probability,weather_code,` +
-    `wind_speed_10m,wind_direction_10m,uv_index,relative_humidity_2m,dew_point_2m` +
-    `&temperature_unit=fahrenheit&wind_speed_unit=mph&past_days=1&forecast_days=2`;
+    `wind_speed_10m,wind_direction_10m,uv_index,relative_humidity_2m,dew_point_2m,` +
+    `soil_temperature_0cm,shortwave_radiation,precipitation` +
+    `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch` +
+    `&past_days=1&forecast_days=2`;
   try {
     const res = await fetchWithTimeout(url, {
       timeoutMs: 7000,
