@@ -1,7 +1,7 @@
 import type { HourlyMetrics, Location, Wrapped } from "@/lib/types";
 import { wmoEmoji } from "@/lib/sources/forecast";
 import { wmoText } from "@/lib/sources/spotWeather";
-import { fetchWithTimeout, nowIso, round } from "@/lib/util";
+import { fetchedAtOf, fetchWithTimeout, nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo (open-meteo.com)";
 
@@ -80,7 +80,7 @@ export function parseOpenMeteoHourly(
 export async function fetchHourlyForecast(
   loc: Location,
 ): Promise<Wrapped<HourlyMetrics[]>> {
-  const fetchedAt = nowIso();
+  let fetchedAt = nowIso();
   // No `timezone=auto`: times come back in GMT, which we pin to UTC in the parser
   // so they line up with the (UTC) sun times and `fmtTime`.
   // `past_days=1` + `forecast_days=2` so the data window always spans the beach's
@@ -98,6 +98,7 @@ export async function fetchHourlyForecast(
       timeoutMs: 7000,
       next: { revalidate: 3600 }, // 1h
     });
+    fetchedAt = fetchedAtOf(res);
     if (!res.ok) throw new Error(`Open-Meteo hourly -> ${res.status}`);
     const data = parseOpenMeteoHourly(await res.json());
     return {

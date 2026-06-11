@@ -1,5 +1,5 @@
 import type { AirQualityData, Location, Wrapped } from "@/lib/types";
-import { fetchWithTimeout, nowIso, round } from "@/lib/util";
+import { fetchedAtOf, fetchWithTimeout, nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo Air Quality (open-meteo.com)";
 
@@ -52,7 +52,7 @@ export function parseAirQuality(json: OpenMeteoAir): AirQualityData | null {
 export async function fetchAirQuality(
   loc: Location,
 ): Promise<Wrapped<AirQualityData>> {
-  const fetchedAt = nowIso();
+  let fetchedAt = nowIso();
   const url =
     `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${loc.lat}` +
     `&longitude=${loc.lon}` +
@@ -62,6 +62,7 @@ export async function fetchAirQuality(
       timeoutMs: 7000,
       next: { revalidate: 3600 }, // 1h — the model updates hourly
     });
+    fetchedAt = fetchedAtOf(res);
     if (!res.ok) throw new Error(`Open-Meteo air-quality -> ${res.status}`);
     const data = parseAirQuality(await res.json());
     return {

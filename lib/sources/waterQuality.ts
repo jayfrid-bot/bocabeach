@@ -5,7 +5,7 @@ import type {
   WaterQualitySite,
   Wrapped,
 } from "@/lib/types";
-import { fetchWithTimeout, nowIso } from "@/lib/util";
+import { fetchWithTimeout, fetchedAtOf, nowIso } from "@/lib/util";
 
 const ATTRIBUTION = "Florida Healthy Beaches Program (floridahealth.gov)";
 
@@ -185,7 +185,10 @@ export function summarizeWaterQuality(
 }
 
 // --- fetch -----------------------------------------------------------------
-async function fetchCountyPage(county: string, page: number): Promise<string> {
+async function fetchCountyPage(
+  county: string,
+  page: number,
+): Promise<{ html: string; at: string }> {
   const url =
     `${CASPIO_BASE}/${APPKEY}?County=${encodeURIComponent(county)}&CPIpage=${page}`;
   const res = await fetchWithTimeout(url, {
@@ -193,7 +196,7 @@ async function fetchCountyPage(county: string, page: number): Promise<string> {
     next: { revalidate: REVALIDATE },
   });
   if (!res.ok) throw new Error(`Healthy Beaches ${county} p${page} -> ${res.status}`);
-  return res.text();
+  return { html: await res.text(), at: fetchedAtOf(res) };
 }
 
 export async function fetchWaterQuality(
@@ -215,7 +218,7 @@ export async function fetchWaterQuality(
   try {
     // Page 1 tells us the total record count; fetch the rest in parallel so a
     // far-down (alphabetical) site doesn't serialize many round-trips.
-    const first = await fetchCountyPage(cfg.county, 1);
+    const { html: first, at } = await fetchCountyPage(cfg.county, 1);
     const samples = parseHealthyBeaches(first);
 
     const wanted = new Set(cfg.sites.map((s) => s.trim().toUpperCase()));
@@ -230,7 +233,9 @@ export async function fetchWaterQuality(
     if (wanted.size > 0 && totalPages > 1) {
       const pages = await Promise.all(
         Array.from({ length: totalPages - 1 }, (_, i) =>
-          fetchCountyPage(cfg.county, i + 2).then(parseHealthyBeaches).catch(() => []),
+          fetchCountyPage(cfg.county, i + 2)
+            .then((p) => parseHealthyBeaches(p.html))
+            .catch(() => []),
         ),
       );
       for (const rows of pages) samples.push(...rows);
@@ -241,7 +246,7 @@ export async function fetchWaterQuality(
     return {
       source: `FL Healthy Beaches (${cfg.county} County)`,
       status: known ? "ok" : "best-effort",
-      fetchedAt,
+      fetchedAt: at,
       attribution: ATTRIBUTION,
       data,
       note: known

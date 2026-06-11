@@ -1,19 +1,22 @@
 import type { Location, MarineData, Wrapped } from "@/lib/types";
-import { cToF, fetchWithTimeout, mToFt, nowIso, round } from "@/lib/util";
+import { cToF, fetchWithTimeout, fetchedAtOf, mToFt, nowIso, oldestIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo (open-meteo.com) — marine & weather models";
 
 type Current = Record<string, number | string | undefined>;
 
-async function getCurrent(url: string, revalidate: number): Promise<Current | null> {
+async function getCurrent(
+  url: string,
+  revalidate: number,
+): Promise<{ current: Current | null; at: string }> {
   const res = await fetchWithTimeout(url, { next: { revalidate } });
   if (!res.ok) throw new Error(`${url} -> ${res.status}`);
   const json = (await res.json()) as { current?: Current };
-  return json.current ?? null;
+  return { current: json.current ?? null, at: fetchedAtOf(res) };
 }
 
 export async function fetchMarine(loc: Location): Promise<Wrapped<MarineData>> {
-  const fetchedAt = nowIso();
+  let fetchedAt = nowIso();
   const marineUrl =
     `https://marine-api.open-meteo.com/v1/marine?latitude=${loc.lat}&longitude=${loc.lon}` +
     `&current=wave_height,wave_direction,wave_period,swell_wave_height,swell_wave_period,` +
@@ -28,9 +31,14 @@ export async function fetchMarine(loc: Location): Promise<Wrapped<MarineData>> {
       getCurrent(uvUrl, 3600),
     ]);
 
+    fetchedAt = oldestIso(
+      marineRes.status === "fulfilled" ? marineRes.value.at : undefined,
+      uvRes.status === "fulfilled" ? uvRes.value.at : undefined,
+    );
+
     const data: MarineData = {};
-    if (marineRes.status === "fulfilled" && marineRes.value) {
-      const m = marineRes.value;
+    if (marineRes.status === "fulfilled" && marineRes.value.current) {
+      const m = marineRes.value.current;
       const n = (k: string): number | undefined =>
         typeof m[k] === "number" ? (m[k] as number) : undefined;
       const waveM = n("wave_height");
@@ -46,10 +54,10 @@ export async function fetchMarine(loc: Location): Promise<Wrapped<MarineData>> {
         data.swellDirDeg = n("swell_wave_direction");
       if (sstC !== undefined) data.seaSurfaceTempF = round(cToF(sstC));
     }
-    if (uvRes.status === "fulfilled" && uvRes.value) {
-      const uv = uvRes.value["uv_index"];
+    if (uvRes.status === "fulfilled" && uvRes.value.current) {
+      const uv = uvRes.value.current["uv_index"];
       if (typeof uv === "number") data.uvIndex = round(uv, 1);
-      const cloud = uvRes.value["cloud_cover"];
+      const cloud = uvRes.value.current["cloud_cover"];
       if (typeof cloud === "number") data.cloudCoverPct = round(cloud);
     }
 

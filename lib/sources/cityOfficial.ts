@@ -1,5 +1,5 @@
 import type { CityOfficialData, FlagColor, Location, Wrapped } from "@/lib/types";
-import { fetchWithTimeout, nowIso } from "@/lib/util";
+import { fetchedAtOf, fetchWithTimeout, nowIso } from "@/lib/util";
 
 const ATTRIBUTION = "City of Boca Raton Ocean Rescue (myboca.us)";
 
@@ -141,7 +141,7 @@ export function parseCityConditions(html: string): CityOfficialData {
 export async function fetchCityOfficial(
   loc: Location,
 ): Promise<Wrapped<CityOfficialData>> {
-  const fetchedAt = nowIso();
+  let fetchedAt = nowIso();
   if (!loc.cityConditionsUrl) {
     return {
       source: ATTRIBUTION,
@@ -161,6 +161,7 @@ export async function fetchCityOfficial(
       // label, surfaced in the UI as the true last-updated time.
       next: { revalidate: 900 }, // 15 min
     });
+    fetchedAt = fetchedAtOf(res);
     if (!res.ok) throw new Error(`city page -> ${res.status}`);
     const data = parseCityConditions(await res.text());
     return {

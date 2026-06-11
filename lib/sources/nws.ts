@@ -1,5 +1,5 @@
 import type { Location, NwsAlert, NwsData, RipRisk, Wrapped } from "@/lib/types";
-import { fetchWithTimeout, nowIso } from "@/lib/util";
+import { fetchWithTimeout, fetchedAtOf, nowIso, oldestIso } from "@/lib/util";
 
 const ATTRIBUTION = "NOAA/NWS (api.weather.gov)";
 
@@ -45,23 +45,29 @@ export function parseRipRisk(productText: string, zone: string): RipRisk {
 }
 
 // --- fetch -----------------------------------------------------------------
-async function fetchRipRisk(office: string, zone: string): Promise<RipRisk> {
+async function fetchRipRisk(
+  office: string,
+  zone: string,
+): Promise<{ risk: RipRisk; at?: string }> {
   try {
     const list = await fetchWithTimeout(
       `https://api.weather.gov/products/types/SRF/locations/${office}`,
       { timeoutMs: 7000, next: { revalidate: 3600 } },
     );
-    if (!list.ok) return "unknown";
+    if (!list.ok) return { risk: "unknown" };
     const graph = ((await list.json())["@graph"] ?? []) as { id?: string }[];
-    if (!graph.length || !graph[0].id) return "unknown";
+    if (!graph.length || !graph[0].id) return { risk: "unknown" };
     const prod = await fetchWithTimeout(
       `https://api.weather.gov/products/${graph[0].id}`,
       { timeoutMs: 7000, next: { revalidate: 3600 } },
     );
-    if (!prod.ok) return "unknown";
-    return parseRipRisk((await prod.json()).productText ?? "", zone);
+    if (!prod.ok) return { risk: "unknown" };
+    return {
+      risk: parseRipRisk((await prod.json()).productText ?? "", zone),
+      at: fetchedAtOf(prod),
+    };
   } catch {
-    return "unknown";
+    return { risk: "unknown" };
   }
 }
 
@@ -69,20 +75,22 @@ export async function fetchNws(loc: Location): Promise<Wrapped<NwsData>> {
   const fetchedAt = nowIso();
   const sz = loc.surfZone;
   try {
-    const [alertsRes, ripCurrentRisk] = await Promise.all([
+    const [alertsRes, rip] = await Promise.all([
       fetchWithTimeout(
         `https://api.weather.gov/alerts/active?point=${loc.lat},${loc.lon}`,
         { timeoutMs: 7000, next: { revalidate: 900 } }, // 15m — alerts change
       ),
-      sz ? fetchRipRisk(sz.office, sz.name) : Promise.resolve<RipRisk>("unknown"),
+      sz
+        ? fetchRipRisk(sz.office, sz.name)
+        : Promise.resolve<{ risk: RipRisk; at?: string }>({ risk: "unknown" }),
     ]);
     const alerts = alertsRes.ok ? parseAlerts(await alertsRes.json()) : [];
     return {
       source: "NWS (alerts + Surf Zone Forecast)",
       status: "ok",
-      fetchedAt,
+      fetchedAt: oldestIso(alertsRes.ok ? fetchedAtOf(alertsRes) : undefined, rip.at),
       attribution: ATTRIBUTION,
-      data: { alerts, ripCurrentRisk },
+      data: { alerts, ripCurrentRisk: rip.risk },
     };
   } catch (e) {
     return {
