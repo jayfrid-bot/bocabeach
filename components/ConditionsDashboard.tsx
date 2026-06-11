@@ -280,7 +280,7 @@ export function ConditionsDashboard({
         />
         <MetricCard
           icon="🪸"
-          label="Sargassum (seaweed)"
+          label="Seaweed (sargassum)"
           value={!sg || sg.level === "unknown" ? "—" : cap(sg.level)}
           sub={
             sg
