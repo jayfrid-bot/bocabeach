@@ -22,6 +22,7 @@ import { WindCompass } from "@/components/WindCompass";
 import { TidePanel } from "@/components/TidePanel";
 import { SunPanel } from "@/components/SunPanel";
 import { SafetyBanner } from "@/components/SafetyBanner";
+import { SandTempPanel } from "@/components/SandTempPanel";
 import { SourceList } from "@/components/SourceBadge";
 import { CamGrid } from "@/components/CamGrid";
 import { ForecastStrip } from "@/components/ForecastStrip";
@@ -322,6 +323,17 @@ export function ConditionsDashboard({
           />
         ) : null}
       </section>
+
+      {snap.hourly.data?.length ? (
+        <section className="mb-6">
+          <SandTempPanel
+            hours={snap.hourly.data}
+            sunriseIso={snap.sun.data?.sunrise}
+            sunsetIso={snap.sun.data?.sunset}
+            tz={tz}
+          />
+        </section>
+      ) : null}
 
       <section className="mb-6 grid gap-4 sm:grid-cols-2">
         <AirQualityMeter air={snap.airQuality} />

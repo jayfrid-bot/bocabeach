@@ -1,6 +1,7 @@
 import type { Wrapped, SunData } from "@/lib/types";
 import { fmtTime } from "@/lib/format";
 import { MoonCycle } from "@/components/MoonCycle";
+import { SunArc } from "@/components/SunArc";
 
 /** Daybreak, sunrise, peak sun, sunset and dusk for today, in local time. */
 export function SunPanel({ sun, tz }: { sun: Wrapped<SunData>; tz: string }) {
@@ -28,7 +29,9 @@ export function SunPanel({ sun, tz }: { sun: Wrapped<SunData>; tz: string }) {
       {!any ? (
         <div className="mt-2 text-sm text-slate-500">Unavailable</div>
       ) : (
-        <ul className="mt-2 space-y-1.5">
+        <>
+          {d ? <SunArc sun={d} tz={tz} /> : null}
+          <ul className="mt-2 space-y-1.5">
           {rows.map((r) => (
             <li key={r.label} className="flex items-center justify-between text-sm">
               <span className="flex items-center gap-1.5 text-slate-300">
@@ -41,7 +44,8 @@ export function SunPanel({ sun, tz }: { sun: Wrapped<SunData>; tz: string }) {
               <span className="text-white">{r.iso ? fmtTime(r.iso, tz) : "—"}</span>
             </li>
           ))}
-        </ul>
+          </ul>
+        </>
       )}
       {d?.moonPhase ? <MoonCycle moon={d.moonPhase} /> : null}
     </div>

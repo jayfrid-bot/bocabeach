@@ -128,6 +128,12 @@ export interface HourlyMetrics {
   uvIndex?: number;
   humidityPct?: number; // relative humidity, 0-100
   dewPointF?: number; // °F — the comfort/mugginess driver
+  /** Modeled ground-surface temperature (°F) — the basis of the sand estimate. */
+  soilTempF?: number;
+  /** Solar energy hitting the ground (W/m²); drives how much hotter sand runs. */
+  solarWm2?: number;
+  /** Precipitation that hour (inches) — wet sand stays near air temp. */
+  precipIn?: number;
   shortForecast?: string; // derived from the WMO code
   emoji?: string; // sky emoji derived from the code
 }
