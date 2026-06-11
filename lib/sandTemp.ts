@@ -57,3 +57,43 @@ export function sandVerdict(tempF: number): SandVerdict {
 /** Scale bounds for the visual barefoot meter. */
 export const SAND_SCALE_MIN_F = 70;
 export const SAND_SCALE_MAX_F = 145;
+
+/**
+ * The sand estimate for the hour bucket nearest `nowMs`, with recent rain
+ * summed over that hour and the two before it. This is the "right now" value
+ * used by the metric card and the Beach Day score.
+ */
+export function currentSandTempF(
+  hours: Array<{
+    time: string;
+    soilTempF?: number;
+    solarWm2?: number;
+    windSpeedMph?: number;
+    precipIn?: number;
+  }>,
+  nowMs: number = Date.now(),
+): number | undefined {
+  if (!hours.length) return undefined;
+  let best = -1;
+  let bestDist = Infinity;
+  for (let i = 0; i < hours.length; i++) {
+    const dist = Math.abs(new Date(hours[i].time).getTime() - nowMs);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = i;
+    }
+  }
+  // Only trust a bucket within 2h of now (stale/misaligned data → no estimate).
+  if (best < 0 || bestDist > 2 * 3600_000) return undefined;
+  const h = hours[best];
+  const recentRainIn = [best, best - 1, best - 2].reduce(
+    (a, j) => a + (hours[j]?.precipIn ?? 0),
+    0,
+  );
+  return estimateSandTempF({
+    soilTempF: h.soilTempF,
+    solarWm2: h.solarWm2,
+    windSpeedMph: h.windSpeedMph,
+    recentRainIn,
+  });
+}
