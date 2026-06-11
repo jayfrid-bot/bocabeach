@@ -30,30 +30,49 @@ export const LOCATIONS: Location[] = [
 
     cams: [
       {
-        // bocasurfcam.com publishes a fresh full-res JPEG at most_recent_image.php;
-        // proxied via /api/cam/boca-surf so it serves same-origin over https.
-        id: "boca-surf",
-        name: "Boca Surf Cam",
-        provider: "bocasurfcam.com",
+        // view s4 = "Main Shot" on video-monitoring.com/beachcams/boca/.
+        id: "boca-south",
+        name: "Boca Raton South Beach Cam",
+        provider: "Palm Beach County ERM / video-monitoring.com",
         embedType: "image",
-        url: "http://www.bocasurfcam.com/",
-        snapshotUrl: "http://bocasurfcam.com/most_recent_image.php",
-        attribution: "Live still courtesy bocasurfcam.com",
-        lat: 26.3492,
+        url: "https://video-monitoring.com/beachcams/boca/",
+        snapshotFeed: {
+          base: "http://video-monitoring.com/beachcams/boca",
+          view: "s4",
+        },
+        attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+        lat: 26.3456,
         lon: -80.0701,
       },
       {
-        // Same operator/setup as bocasurfcam — live still at most_recent_image.php
-        // (view over Lake Boca Raton / the inlet). Proxied via /api/cam/lake-boca.
-        id: "lake-boca",
-        name: "Lake Boca Cam",
-        provider: "lakebocacam.com",
+        // Same bocainlet feed, view s8 = the north-side beach & shoreline.
+        id: "boca-inlet-north",
+        name: "Boca Raton Inlet — North Beach",
+        provider: "Palm Beach County ERM / video-monitoring.com",
         embedType: "image",
-        url: "http://lakebocacam.com/",
-        snapshotUrl: "http://lakebocacam.com/most_recent_image.php",
-        attribution: "Live still courtesy lakebocacam.com",
-        lat: 26.3387,
-        lon: -80.0716,
+        url: "https://video-monitoring.com/beachcams/bocainlet/",
+        snapshotFeed: {
+          base: "http://video-monitoring.com/beachcams/bocainlet",
+          view: "s8",
+        },
+        attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+        lat: 26.3354,
+        lon: -80.0703,
+      },
+      {
+        // Same boca feed, view s11 = the close shoreline & surf (swimmers/surfers).
+        id: "boca-south-surf",
+        name: "Boca Raton South Beach — Shoreline & Surf",
+        provider: "Palm Beach County ERM / video-monitoring.com",
+        embedType: "image",
+        url: "https://video-monitoring.com/beachcams/boca/",
+        snapshotFeed: {
+          base: "http://video-monitoring.com/beachcams/boca",
+          view: "s11",
+        },
+        attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+        lat: 26.3456,
+        lon: -80.0701,
       },
       {
         // Live still resolved from video-monitoring.com's latest.json (view s4 =
@@ -102,49 +121,32 @@ export const LOCATIONS: Location[] = [
         lon: -80.0703,
       },
       {
-        // Same bocainlet feed, view s8 = the north-side beach & shoreline.
-        id: "boca-inlet-north",
-        name: "Boca Raton Inlet — North Beach",
-        provider: "Palm Beach County ERM / video-monitoring.com",
+        // Parked at the bottom with lake-boca: both feeds currently return
+        // 0-byte stills (checked 2026-06-11). Promote them back up if they revive.
+        // bocasurfcam.com publishes a fresh full-res JPEG at most_recent_image.php;
+        // proxied via /api/cam/boca-surf so it serves same-origin over https.
+        id: "boca-surf",
+        name: "Boca Surf Cam",
+        provider: "bocasurfcam.com",
         embedType: "image",
-        url: "https://video-monitoring.com/beachcams/bocainlet/",
-        snapshotFeed: {
-          base: "http://video-monitoring.com/beachcams/bocainlet",
-          view: "s8",
-        },
-        attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
-        lat: 26.3354,
-        lon: -80.0703,
-      },
-      {
-        // view s4 = "Main Shot" on video-monitoring.com/beachcams/boca/.
-        id: "boca-south",
-        name: "Boca Raton South Beach Cam",
-        provider: "Palm Beach County ERM / video-monitoring.com",
-        embedType: "image",
-        url: "https://video-monitoring.com/beachcams/boca/",
-        snapshotFeed: {
-          base: "http://video-monitoring.com/beachcams/boca",
-          view: "s4",
-        },
-        attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
-        lat: 26.3456,
+        url: "http://www.bocasurfcam.com/",
+        snapshotUrl: "http://bocasurfcam.com/most_recent_image.php",
+        attribution: "Live still courtesy bocasurfcam.com",
+        lat: 26.3492,
         lon: -80.0701,
       },
       {
-        // Same boca feed, view s11 = the close shoreline & surf (swimmers/surfers).
-        id: "boca-south-surf",
-        name: "Boca Raton South Beach — Shoreline & Surf",
-        provider: "Palm Beach County ERM / video-monitoring.com",
+        // Same operator/setup as bocasurfcam — live still at most_recent_image.php
+        // (view over Lake Boca Raton / the inlet). Proxied via /api/cam/lake-boca.
+        id: "lake-boca",
+        name: "Lake Boca Cam",
+        provider: "lakebocacam.com",
         embedType: "image",
-        url: "https://video-monitoring.com/beachcams/boca/",
-        snapshotFeed: {
-          base: "http://video-monitoring.com/beachcams/boca",
-          view: "s11",
-        },
-        attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
-        lat: 26.3456,
-        lon: -80.0701,
+        url: "http://lakebocacam.com/",
+        snapshotUrl: "http://lakebocacam.com/most_recent_image.php",
+        attribution: "Live still courtesy lakebocacam.com",
+        lat: 26.3387,
+        lon: -80.0716,
       },
       {
         name: "Surfline — Boca Raton",
