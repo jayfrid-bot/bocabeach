@@ -1,5 +1,5 @@
 import type { SourceMeta } from "@/lib/types";
-import { fmtRelative } from "@/lib/format";
+import { RelativeTime } from "@/components/RelativeTime";
 
 const STATUS_COLOR: Record<string, string> = {
   ok: "#34d399",
@@ -21,7 +21,7 @@ export function SourceList({ sources }: { sources: SourceMeta[] }) {
               title={s.status}
             />
             <span className="text-slate-300">{s.source}</span>
-            <span className="text-slate-500">· {fmtRelative(s.fetchedAt)}</span>
+            <span className="text-slate-500">· <RelativeTime iso={s.fetchedAt} /></span>
           </li>
         ))}
       </ul>
