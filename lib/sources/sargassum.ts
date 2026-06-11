@@ -114,6 +114,10 @@ function byDayFromHistory(history: HistoryEntry[]): SargassumByDay[] | undefined
  * Roll the per-cam seaweed reads into one level (the worst cam), preferring the
  * early-morning, pre-tractor reading; falls back to the latest. Also surfaces the
  * by-hour and by-day history from the rolling cam reads. Pure + tested.
+ *
+ * When no morning read exists (GitHub cron ticks get skipped), the level holds
+ * the WORST read of the local day so far rather than just the latest frame —
+ * otherwise one post-cleaning afternoon read erases a heavy-seaweed morning.
  */
 export function summarizeSeaweed(feed: CamSeaweedFeed): SargassumData | null {
   const byHour = byHourFromHistory(feed?.history ?? []);
@@ -135,10 +139,44 @@ export function summarizeSeaweed(feed: CamSeaweedFeed): SargassumData | null {
     if (RANK[b.level] !== RANK[a.level]) return RANK[b.level] > RANK[a.level] ? b : a;
     return (b.coveragePct ?? -1) > (a.coveragePct ?? -1) ? b : a;
   });
+
+  // Day-worst fallback: with no authoritative morning read, scan today's
+  // earlier history reads and keep the heaviest one when it outranks "latest".
+  let level = worst.level;
+  let coveragePct = worst.coveragePct;
+  let note = worst.note;
+  const today = group?.capturedAtLocal?.slice(0, 10);
+  if (!morning && today) {
+    const dayWorst = (feed?.history ?? [])
+      .filter(
+        (e) =>
+          e.t?.slice(0, 10) === today &&
+          typeof e.seaweed === "string" &&
+          e.seaweed in RANK,
+      )
+      .reduce<HistoryEntry | null>((a, b) => {
+        if (!a) return b;
+        const ra = RANK[a.seaweed as string];
+        const rb = RANK[b.seaweed as string];
+        if (rb !== ra) return rb > ra ? b : a;
+        return (b.cov ?? -1) > (a.cov ?? -1) ? b : a;
+      }, null);
+    if (
+      dayWorst &&
+      (RANK[dayWorst.seaweed as string] > RANK[level] ||
+        (RANK[dayWorst.seaweed as string] === RANK[level] &&
+          (dayWorst.cov ?? -1) > (coveragePct ?? -1)))
+    ) {
+      level = dayWorst.seaweed as SargassumRisk;
+      coveragePct = dayWorst.cov;
+      note = `worst read today (${String(dayWorst.hour ?? "?")}:00 capture)`;
+    }
+  }
+
   return {
-    level: worst.level,
-    coveragePct: worst.coveragePct,
-    note: worst.note,
+    level,
+    coveragePct,
+    note,
     isMorning: !!morning && group === morning,
     capturedAtLocal: group?.capturedAtLocal,
     cams,

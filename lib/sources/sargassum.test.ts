@@ -45,6 +45,49 @@ describe("summarizeSeaweed", () => {
     expect(d.isMorning).toBe(false);
   });
 
+  it("with no morning read, holds the day's worst earlier read over a lighter latest", () => {
+    // The 2026-06-11 regression: cron skipped the morning window, the 10:32 read
+    // was high/65%, then a post-cleaning 14:08 read of moderate/30% became
+    // "latest" and erased the day's high. The level must hold the day-worst.
+    const d = summarizeSeaweed({
+      latest: {
+        capturedAtLocal: "2026-06-11T14:08-04:00",
+        cams: [{ name: "Inlet", level: "moderate", coveragePct: 30, note: "brown seaweed line" }],
+      },
+      history: [
+        { t: "2026-06-10T20:10-04:00", hour: 20, seaweed: "high", cov: 70 }, // yesterday — ignored
+        { t: "2026-06-11T10:32-04:00", hour: 10, seaweed: "high", cov: 65 },
+        { t: "2026-06-11T14:08-04:00", hour: 14, seaweed: "moderate", cov: 30 },
+      ],
+    })!;
+    expect(d.level).toBe("high");
+    expect(d.coveragePct).toBe(65); // today's worst, not yesterday's 70
+    expect(d.note).toMatch(/worst read today/);
+  });
+
+  it("does not let yesterday's reads leak into the day-worst fallback", () => {
+    const d = summarizeSeaweed({
+      latest: {
+        capturedAtLocal: "2026-06-11T09:00-04:00",
+        cams: [{ name: "A", level: "low", coveragePct: 10 }],
+      },
+      history: [{ t: "2026-06-10T10:00-04:00", hour: 10, seaweed: "high", cov: 80 }],
+    })!;
+    expect(d.level).toBe("low");
+  });
+
+  it("ignores the day-worst fallback when a morning read exists", () => {
+    const d = summarizeSeaweed({
+      morning: {
+        capturedAtLocal: "2026-06-11T07:00-04:00",
+        cams: [{ name: "A", level: "low", coveragePct: 8 }],
+      },
+      history: [{ t: "2026-06-11T06:00-04:00", hour: 6, seaweed: "high", cov: 70 }],
+    })!;
+    expect(d.level).toBe("low"); // morning is authoritative by design
+    expect(d.isMorning).toBe(true);
+  });
+
   it("returns null when no cam has a usable reading", () => {
     expect(summarizeSeaweed({})).toBeNull();
     expect(summarizeSeaweed({ latest: { cams: [{ name: "A", level: "unknown" }] } })).toBeNull();
