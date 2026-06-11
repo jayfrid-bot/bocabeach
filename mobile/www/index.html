@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Is It Beach Day?</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #020617;
+        color: #e2e8f0;
+        font-family: -apple-system, system-ui, sans-serif;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Offline fallback; the app normally loads https://isitbeachday.com -->
+    <div>
+      <div style="font-size: 56px">☀️🌊</div>
+      <h1>Is it beach day?</h1>
+      <p>Can&rsquo;t reach the ocean right now &mdash; check your connection.</p>
+      <p><button onclick="location.reload()" style="font-size:16px;padding:10px 18px;border-radius:10px;border:0;background:#1b85f5;color:#fff">Try again</button></p>
+    </div>
+  </body>
+</html>
