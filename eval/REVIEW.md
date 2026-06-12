@@ -1,6 +1,6 @@
 # Eye‑test: your answer vs the AI
 
-**260 photos · 5 have your answer filled in · 3 disagree (of the reviewed ones).**
+**264 photos · 5 have your answer filled in · 3 disagree (of the reviewed ones).**
 
 For each photo below, **You** is the correct answer and **AI said** is what the model guessed. If you disagree, just change the word in `labels.csv` — the grade updates itself.
 
@@ -1588,6 +1588,16 @@ Legend: ✅ you and the AI agree · ⚠️ you differ · ❓ you haven't answere
 | **Crowd** | — | empty | ❓ |
 | **People** | — | 0 |  |
 
+### bocainlet_s12_1781226493.jpg
+
+![photo](images/bocainlet_s12_1781226493.jpg)
+
+| | You (the truth) | AI said | |
+|---|---|---|---|
+| **Seaweed** | — | none | ❓ |
+| **Crowd** | — | empty | ❓ |
+| **People** | — | 0 |  |
+
 ### bocainlet_s16_1780593930.jpg
 
 ![photo](images/bocainlet_s16_1780593930.jpg)
@@ -1928,6 +1938,16 @@ Legend: ✅ you and the AI agree · ⚠️ you differ · ❓ you haven't answere
 | **Crowd** | — | quiet | ❓ |
 | **People** | — | 3 |  |
 
+### bocainlet_s16_1781226710.jpg
+
+![photo](images/bocainlet_s16_1781226710.jpg)
+
+| | You (the truth) | AI said | |
+|---|---|---|---|
+| **Seaweed** | — | none | ❓ |
+| **Crowd** | — | empty | ❓ |
+| **People** | — | 0 |  |
+
 ### bocainlet_s4_1780596611.jpg
 
 ![photo](images/bocainlet_s4_1780596611.jpg)
@@ -2251,6 +2271,16 @@ Legend: ✅ you and the AI agree · ⚠️ you differ · ❓ you haven't answere
 ### bocainlet_s4_1781222614.jpg
 
 ![photo](images/bocainlet_s4_1781222614.jpg)
+
+| | You (the truth) | AI said | |
+|---|---|---|---|
+| **Seaweed** | — | none | ❓ |
+| **Crowd** | — | empty | ❓ |
+| **People** | — | 0 |  |
+
+### bocainlet_s4_1781226034.jpg
+
+![photo](images/bocainlet_s4_1781226034.jpg)
 
 | | You (the truth) | AI said | |
 |---|---|---|---|
@@ -2605,5 +2635,15 @@ Legend: ✅ you and the AI agree · ⚠️ you differ · ❓ you haven't answere
 | | You (the truth) | AI said | |
 |---|---|---|---|
 | **Seaweed** | — | moderate | ❓ |
+| **Crowd** | — | empty | ❓ |
+| **People** | — | 0 |  |
+
+### bocainlet_s8_1781226265.jpg
+
+![photo](images/bocainlet_s8_1781226265.jpg)
+
+| | You (the truth) | AI said | |
+|---|---|---|---|
+| **Seaweed** | — | none | ❓ |
 | **Crowd** | — | empty | ❓ |
 | **People** | — | 0 |  |
