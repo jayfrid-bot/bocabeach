@@ -21,14 +21,23 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#061826",
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#f3f7fb" },
+    { media: "(prefers-color-scheme: dark)", color: "#061826" },
+  ],
   viewportFit: "cover",
 };
 
+// Applies the saved (or system) theme before first paint — no wrong-theme flash.
+const THEME_SCRIPT = `(function(){try{var t=localStorage.getItem("theme");var d=t==="dark"||(t!=="light"&&matchMedia("(prefers-color-scheme: dark)").matches);document.documentElement.classList.toggle("dark",d);}catch(e){}})();`;
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen text-slate-100 antialiased">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
+      <body className="min-h-screen text-slate-900 antialiased dark:text-slate-100">
         {children}
         <ServiceWorkerRegister />
       </body>

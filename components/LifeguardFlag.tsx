@@ -35,7 +35,7 @@ export function LifeguardFlag({ flag }: { flag: FlagColor }) {
           {m.double ? <span className={patch} style={{ background: m.color }} /> : null}
         </span>
       </div>
-      <span className="text-center text-[10px] font-medium leading-tight text-slate-300">
+      <span className="text-center text-[10px] font-medium leading-tight text-slate-700 dark:text-slate-300">
         {m.label}
       </span>
     </div>

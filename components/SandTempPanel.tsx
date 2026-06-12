@@ -96,12 +96,12 @@ export function SandTempPanel({
   const step = Math.max(1, Math.ceil(pts.length / 5));
 
   return (
-    <div className="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-white/10">
+    <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-sm text-slate-400">
+        <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
           <span aria-hidden>🦶</span>
           <span>Sand temperature</span>
-          <span className="text-[10px] text-slate-600">(estimated)</span>
+          <span className="text-[10px] text-slate-400 dark:text-slate-600">(estimated)</span>
         </div>
         {verdict ? (
           <span
@@ -114,7 +114,7 @@ export function SandTempPanel({
       </div>
 
       <div className="mt-2 flex items-baseline gap-2">
-        <span className="text-2xl font-semibold text-white">
+        <span className="text-2xl font-semibold text-slate-900 dark:text-white">
           {current
             ? current.surf !== current.sand
               ? `~${current.surf}–${current.sand}°F`
@@ -124,7 +124,7 @@ export function SandTempPanel({
         {current && current.surf !== current.sand ? (
           <span className="text-xs text-slate-500">water&rsquo;s edge → dunes</span>
         ) : null}
-        {verdict ? <span className="text-xs text-slate-400">{verdict.advice}</span> : null}
+        {verdict ? <span className="text-xs text-slate-600 dark:text-slate-400">{verdict.advice}</span> : null}
       </div>
 
       {/* barefoot comfort meter */}
@@ -165,7 +165,7 @@ export function SandTempPanel({
               x2={xFor(now)}
               y1={PT - 6}
               y2={H - PB}
-              stroke="#e2e8f0"
+              className="stroke-slate-700 dark:stroke-slate-200"
               strokeWidth="1.2"
               strokeDasharray="2 3"
             />
@@ -173,8 +173,7 @@ export function SandTempPanel({
               cx={xFor(now)}
               cy={yFor(current.sand)}
               r="4.5"
-              fill="#e2e8f0"
-              stroke="#0f172a"
+              className="fill-slate-700 dark:fill-slate-200 stroke-white dark:stroke-slate-950"
               strokeWidth="2"
             />
           </g>
@@ -195,7 +194,7 @@ export function SandTempPanel({
         )}
       </svg>
 
-      <p className="mt-1 text-[10px] text-slate-600">
+      <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-600">
         Estimated from modeled ground temp, sun strength, wind, and recent rain —
         calibrated against on-the-beach IR thermometer readings. The curve tracks
         the hotter dune-side sand; firmer sand near the water runs ~10°F cooler.

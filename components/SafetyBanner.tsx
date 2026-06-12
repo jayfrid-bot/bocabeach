@@ -65,7 +65,7 @@ export function SafetyBanner({
   return (
     <div
       className={`rounded-2xl p-4 ring-1 ${
-        hasWarning ? "bg-rose-500/10 ring-rose-500/40" : "bg-slate-900/70 ring-white/10"
+        hasWarning ? "bg-rose-500/10 ring-rose-500/40" : "bg-white/80 dark:bg-slate-900/70 ring-slate-900/10 dark:ring-white/10"
       }`}
     >
       {advisory ? (
@@ -140,7 +140,7 @@ export function SafetyBanner({
             </div>
           ) : null}
           {alerts.length ? (
-            <ul className="mt-1 space-y-0.5 text-xs text-slate-300">
+            <ul className="mt-1 space-y-0.5 text-xs text-slate-700 dark:text-slate-300">
               {alerts.map((a) => (
                 <li key={a.event + (a.ends ?? "")}>
                   ⚠ {a.event}
@@ -156,18 +156,18 @@ export function SafetyBanner({
       {data ? (
         <>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <span className="text-sm font-medium text-slate-200">
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
               Lifeguard flags:
             </span>
             {flags.length === 0 ? (
-              <span className="text-sm text-slate-400">none reported</span>
+              <span className="text-sm text-slate-600 dark:text-slate-400">none reported</span>
             ) : (
               flags.map((f) => <LifeguardFlag key={f} flag={f} />)
             )}
           </div>
 
           {data.marineLife?.length || data.hazards?.length ? (
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600 dark:text-slate-400">
               {data.marineLife?.length ? (
                 <span>🪼 {data.marineLife.join(", ")}</span>
               ) : null}

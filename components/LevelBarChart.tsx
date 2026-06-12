@@ -45,9 +45,9 @@ export function LevelBarChart({
 
   return (
     <section>
-      <h2 className="mb-1 text-lg font-semibold text-white">{title}</h2>
+      <h2 className="mb-1 text-lg font-semibold text-slate-900 dark:text-white">{title}</h2>
       <p className="mb-3 text-xs text-slate-500">{subtitle}</p>
-      <div className="rounded-2xl bg-slate-900/70 p-3 ring-1 ring-white/10">
+      <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-3 ring-1 ring-slate-900/10 dark:ring-white/10">
         <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label={ariaLabel}>
           {[axisLow, axisHigh].map((cap, i) => (
             <text key={cap + i} x={4} y={i === 0 ? BASE_Y : PT + 8} fill="#475569" fontSize="9">
@@ -78,7 +78,7 @@ export function LevelBarChart({
                     height={h + 2}
                     rx="3"
                     fill="none"
-                    stroke="#e2e8f0"
+                    className="stroke-slate-700 dark:stroke-slate-200"
                     strokeWidth="1.5"
                   />
                 ) : null}
@@ -87,7 +87,7 @@ export function LevelBarChart({
                     x={xCenter(i)}
                     y={b.subLabel ? H - 18 : H - 10}
                     textAnchor="middle"
-                    fill={b.highlight ? "#e2e8f0" : "#64748b"}
+                    className={b.highlight ? "fill-slate-800 dark:fill-slate-200" : "fill-slate-500"}
                     fontSize="10"
                   >
                     {b.label}
@@ -98,7 +98,7 @@ export function LevelBarChart({
                     x={xCenter(i)}
                     y={H - 6}
                     textAnchor="middle"
-                    fill={b.highlight ? "#e2e8f0" : "#64748b"}
+                    className={b.highlight ? "fill-slate-800 dark:fill-slate-200" : "fill-slate-500"}
                     fontSize="10"
                   >
                     {b.subLabel}

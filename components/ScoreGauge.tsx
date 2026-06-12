@@ -17,7 +17,7 @@ export function ScoreGauge({
   return (
     <div className="flex flex-col items-center">
       <svg viewBox="0 0 200 200" className="h-48 w-48">
-        <circle cx="100" cy="100" r={r} fill="none" stroke="#1e293b" strokeWidth="16" />
+        <circle cx="100" cy="100" r={r} fill="none" className="stroke-slate-200 dark:stroke-slate-800" strokeWidth="16" />
         <circle
           cx="100"
           cy="100"
@@ -35,20 +35,20 @@ export function ScoreGauge({
           x="100"
           y="96"
           textAnchor="middle"
-          fill="white"
+          className="fill-slate-900 dark:fill-white"
           fontSize="52"
           fontWeight="700"
         >
           {score}
         </text>
-        <text x="100" y="126" textAnchor="middle" fill="#94a3b8" fontSize="15">
+        <text x="100" y="126" textAnchor="middle" className="fill-slate-500 dark:fill-slate-400" fontSize="15">
           out of 100
         </text>
       </svg>
       <div className="mt-1 text-xl font-semibold" style={{ color: accent }}>
         {rating}
       </div>
-      <div className="text-sm text-slate-400">{label}</div>
+      <div className="text-sm text-slate-600 dark:text-slate-400">{label}</div>
     </div>
   );
 }

@@ -3,8 +3,8 @@ import { scoreColor } from "@/lib/format";
 
 export function ScoreBreakdown({ result }: { result: ScoreResult }) {
   return (
-    <div className="rounded-2xl bg-slate-900/70 p-5 ring-1 ring-white/10">
-      <h3 className="text-sm font-medium text-slate-300">Why this score</h3>
+    <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-5 ring-1 ring-slate-900/10 dark:ring-white/10">
+      <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300">Why this score</h3>
 
       {result.caps.length > 0 ? (
         <ul className="mt-3 space-y-1">
@@ -23,8 +23,8 @@ export function ScoreBreakdown({ result }: { result: ScoreResult }) {
         {result.subScores.map((s) => (
           <li key={s.key}>
             <div className="flex items-center justify-between gap-2 text-xs">
-              <span className="min-w-0 truncate text-slate-300">{s.label}</span>
-              <span className="shrink-0 whitespace-nowrap text-slate-400">
+              <span className="min-w-0 truncate text-slate-700 dark:text-slate-300">{s.label}</span>
+              <span className="shrink-0 whitespace-nowrap text-slate-600 dark:text-slate-400">
                 {s.display ? `${s.display} · ` : ""}
                 {s.score == null ? "n/a" : `${s.score}`}
                 <span className="ml-1 text-slate-500">
@@ -32,7 +32,7 @@ export function ScoreBreakdown({ result }: { result: ScoreResult }) {
                 </span>
               </span>
             </div>
-            <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+            <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
               <div
                 className="h-full rounded-full"
                 style={{

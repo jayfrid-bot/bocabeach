@@ -24,14 +24,14 @@ export function MoonPanel({ sun }: { sun: Wrapped<SunData> }) {
   const moon = sun.data?.moonPhase;
 
   return (
-    <div className="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-white/10">
+    <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-sm text-slate-400">
+        <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
           <span aria-hidden>{moon?.emoji ?? "🌙"}</span>
           <span>Moon</span>
         </div>
         {moon ? (
-          <span className="text-sm text-white">
+          <span className="text-sm text-slate-900 dark:text-white">
             {moon.phase}{" "}
             <span className="text-xs text-slate-500">({moon.illumination}% lit)</span>
           </span>
@@ -62,7 +62,7 @@ function MoonCycleBody({ moon }: { moon: NonNullable<SunData["moonPhase"]> }) {
             title={PHASE_NAMES[i]}
             className={
               i === activeIdx
-                ? "scale-125 rounded-full bg-slate-700/60 px-1 text-lg ring-1 ring-amber-400/60"
+                ? "scale-125 rounded-full bg-slate-300/60 dark:bg-slate-700/60 px-1 text-lg ring-1 ring-amber-400/60"
                 : "px-1 text-lg opacity-40"
             }
           >
@@ -72,7 +72,7 @@ function MoonCycleBody({ moon }: { moon: NonNullable<SunData["moonPhase"]> }) {
       </div>
 
       {/* progress through the ~29.5-day cycle */}
-      <div className="relative mt-3 h-1.5 rounded-full bg-slate-800">
+      <div className="relative mt-3 h-1.5 rounded-full bg-slate-200 dark:bg-slate-800">
         <div
           className="h-1.5 rounded-full bg-gradient-to-r from-slate-600 to-amber-400/80"
           style={{ width: `${frac * 100}%` }}
