@@ -108,6 +108,7 @@ export function ConditionsDashboard({
     snap.nowcast,
     snap.nws,
     snap.airQuality,
+    snap.metno,
     snap.lightning,
     snap.sargassum,
     snap.busyness,

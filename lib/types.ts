@@ -208,6 +208,17 @@ export interface WaterQualityData {
 }
 
 // --- Air quality (Open-Meteo Air Quality) ----------------------------------
+// --- MET Norway current conditions (consensus second opinion) --------------
+export interface MetnoCurrent {
+  airTempF?: number;
+  windSpeedMph?: number;
+  /** Direction the wind is coming FROM, in degrees. */
+  windDirDeg?: number;
+  humidityPct?: number;
+  dewPointF?: number;
+  cloudCoverPct?: number;
+}
+
 export interface AirQualityData {
   /** US EPA AQI (0-500+); the headline number for the meter. */
   usAqi?: number;
@@ -395,6 +406,8 @@ export interface ConditionsSnapshot {
   nowcast: Wrapped<NowcastData>;
   nws: Wrapped<NwsData>;
   airQuality: Wrapped<AirQualityData>;
+  /** MET Norway current conditions — independent consensus voice. */
+  metno: Wrapped<MetnoCurrent>;
   lightning: Wrapped<LightningData>;
   sargassum: Wrapped<SargassumData>;
   busyness: Wrapped<BusynessData>;
