@@ -8,8 +8,15 @@
 
 /** Full Florida midsummer noon sun is ~900-1000 W/m²; treat 900 as "full". */
 const FULL_SUN_WM2 = 900;
-/** Max extra °F dry sand runs above the modeled ground surface in full sun. */
-const MAX_SUN_BOOST_F = 18;
+/**
+ * Max extra °F dry sand runs above the modeled ground surface in full sun.
+ * Calibrated against IR-thermometer ground truth at Boca on 2026-06-11
+ * (~2 PM: soil 98°F, ~980 W/m², 11 mph): measured 140°F by the dunes and
+ * 130°F near the surf, vs the original model's 109°F.
+ */
+const MAX_SUN_BOOST_F = 50;
+/** Near-surf sand is firmer/damper; it keeps ~75% of the dry-sand boost. */
+const SURF_BOOST_FRACTION = 0.75;
 
 export interface SandTempInput {
   /** Modeled ground-surface temp (°F), e.g. Open-Meteo soil_temperature_0cm. */
@@ -21,22 +28,44 @@ export interface SandTempInput {
   recentRainIn?: number;
 }
 
-/** Estimated dry-sand surface temperature (°F), or undefined without a basis. */
-export function estimateSandTempF(input: SandTempInput): number | undefined {
+/** The sun/wind/rain boost (°F) dry sand carries above the modeled ground. */
+function sandBoostF(input: SandTempInput): number | undefined {
   const { soilTempF, solarWm2, windSpeedMph, recentRainIn } = input;
   if (soilTempF == null) return undefined;
 
   const sunFrac = Math.min(1, Math.max(0, (solarWm2 ?? 0) / FULL_SUN_WM2));
   let boost = sunFrac * MAX_SUN_BOOST_F;
 
-  // A steady breeze strips heat off the surface: -50% by ~15 mph, floor -65%.
+  // A breeze takes some edge off the surface, but radiative heating dominates:
+  // the 140°F dune reading was taken in an 11 mph sea breeze.
   const wind = Math.max(0, windSpeedMph ?? 0);
-  boost *= Math.max(0.35, 1 - wind / 30);
+  boost *= Math.max(0.6, 1 - wind / 60);
 
   // Rain in the last few hours keeps the top layer damp and conductive.
   if ((recentRainIn ?? 0) >= 0.05) boost *= 0.3;
 
-  return Math.round(soilTempF + boost);
+  return boost;
+}
+
+/**
+ * Estimated dry-sand (dune-side) surface temperature (°F) — the hottest sand
+ * a barefoot walk crosses — or undefined without a basis.
+ */
+export function estimateSandTempF(input: SandTempInput): number | undefined {
+  const boost = sandBoostF(input);
+  return boost == null ? undefined : Math.round(input.soilTempF! + boost);
+}
+
+/** The surf-to-dunes range: damp firm sand by the water vs dry loose sand. */
+export function estimateSandRangeF(
+  input: SandTempInput,
+): { surfF: number; dunesF: number } | undefined {
+  const boost = sandBoostF(input);
+  if (boost == null) return undefined;
+  return {
+    surfF: Math.round(input.soilTempF! + boost * SURF_BOOST_FRACTION),
+    dunesF: Math.round(input.soilTempF! + boost),
+  };
 }
 
 export interface SandVerdict {
@@ -56,7 +85,7 @@ export function sandVerdict(tempF: number): SandVerdict {
 
 /** Scale bounds for the visual barefoot meter. */
 export const SAND_SCALE_MIN_F = 70;
-export const SAND_SCALE_MAX_F = 145;
+export const SAND_SCALE_MAX_F = 155;
 
 /**
  * The sand estimate for the hour bucket nearest `nowMs`, with recent rain
