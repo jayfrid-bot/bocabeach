@@ -11,6 +11,7 @@ import type {
 } from "@/lib/types";
 import { clamp, degToCardinal, dewPointFromTempRH, plateau, round } from "@/lib/util";
 import { currentSandTempF, estimateSandTempF } from "@/lib/sandTemp";
+import { seaState } from "@/lib/format";
 
 // Consolidated, best-available values pulled across all sources.
 export interface Derived {
@@ -319,15 +320,15 @@ export function scoreBeachDay(d: Derived): ScoreResult {
       "airTemp",
       "Air temperature",
       d.airTempF != null ? plateau(d.airTempF, 78, 88, 18) : null,
-      0.17,
+      0.16,
       f1(d.airTempF, "°F"),
     ),
-    sub("sky", "Sky (sun & rain)", skyScore(d), 0.17, skyDisplay(d)),
+    sub("sky", "Sky (sun & rain)", skyScore(d), 0.16, skyDisplay(d)),
     sub(
       "wind",
       "Wind (sea breeze)",
       d.windSpeedMph != null ? windScore(d.windSpeedMph) : null,
-      0.14,
+      0.13,
       d.windSpeedMph != null
         ? `${d.windSpeedMph} mph${d.windDirDeg != null ? " " + degToCardinal(d.windDirDeg) : ""}`
         : undefined,
@@ -337,7 +338,7 @@ export function scoreBeachDay(d: Derived): ScoreResult {
       "waterTemp",
       "Water temperature",
       d.waterTempF != null ? plateau(d.waterTempF, 77, 84, 15) : null,
-      0.10,
+      0.09,
       f1(d.waterTempF, "°F"),
     ),
     sub(
@@ -345,7 +346,9 @@ export function scoreBeachDay(d: Derived): ScoreResult {
       "Sea state (swim calmness)",
       d.waveHeightFt != null ? waveCalm(d.waveHeightFt) : null,
       0.08,
-      f1(d.waveHeightFt, " ft"),
+      d.waveHeightFt != null
+        ? `${f1(d.waveHeightFt, " ft")} · ${seaState(d.waveHeightFt).label.toLowerCase()}`
+        : undefined,
     ),
     sub(
       "waterQuality",
@@ -379,7 +382,7 @@ export function scoreBeachDay(d: Derived): ScoreResult {
       "sandTemp",
       "Sand temperature (barefoot)",
       sandScore(d.sandTempF),
-      0.04,
+      0.08,
       d.sandTempF != null ? `~${d.sandTempF}°F est.` : undefined,
     ),
   ];

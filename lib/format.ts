@@ -27,6 +27,23 @@ export function fmtRelative(iso: string): string {
   return `${Math.round(h / 24)}d ago`;
 }
 
+/**
+ * Plain-English sea state for a combined wave height (ft) — what the water
+ * actually feels like, not just a number. Bands follow how SoFla beach days
+ * read in practice: under a foot is flat; swimming gets pushy past ~3 ft;
+ * 6 ft+ is surf, not swimming. Descriptive only — flags rule safety.
+ */
+export function seaState(waveHeightFt: number): { label: string; note: string } {
+  const ft = Math.max(0, waveHeightFt);
+  if (ft < 1) return { label: "Calm", note: "flat, glassy water" };
+  if (ft < 2) return { label: "Gentle", note: "small lapping waves" };
+  if (ft < 3) return { label: "Light chop", note: "a little texture, easy swim" };
+  if (ft < 4.5) return { label: "Choppy", note: "noticeable waves and push" };
+  if (ft < 6) return { label: "Really choppy", note: "strong push — heads-up swimming" };
+  if (ft < 9) return { label: "Big waves", note: "powerful surf — watch the flags" };
+  return { label: "Very rough", note: "heavy surf — follow lifeguard flags" };
+}
+
 /** The brand's plain-English answer to "is it beach day?" for a 0-100 score. */
 export function beachDayVerdict(score: number): string {
   if (score >= 80) return "Yes!";
