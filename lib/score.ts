@@ -1,5 +1,6 @@
 import type {
   BestWindow,
+  HourlyMetrics,
   ConditionsSnapshot,
   FlagColor,
   HourlyScore,
@@ -50,6 +51,32 @@ export interface Derived {
 const SEVERE_ALERT =
   /hurricane warning|tropical storm warning|storm surge warning|tsunami|high surf warning/i;
 
+/** The hourly-forecast entry whose bucket contains "now" (within 2h), if any. */
+function currentHourOf(hours: HourlyMetrics[], nowMs: number = Date.now()) {
+  let best: HourlyMetrics | undefined;
+  let bestDist = 2 * 3600_000;
+  for (const h of hours) {
+    const dist = Math.abs(new Date(h.time).getTime() - nowMs);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = h;
+    }
+  }
+  return best;
+}
+
+/**
+ * Consensus across independent sources: the median when 2+ report (so one
+ * outlier model can't skew the metric), else whichever single value exists.
+ */
+export function median(...vals: (number | undefined)[]): number | undefined {
+  const xs = vals.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  if (!xs.length) return undefined;
+  xs.sort((a, b) => a - b);
+  const mid = Math.floor(xs.length / 2);
+  return xs.length % 2 ? xs[mid] : round((xs[mid - 1] + xs[mid]) / 2, 1);
+}
+
 export function deriveMetrics(s: ConditionsSnapshot): Derived {
   const w = s.weather.data;
   const b = s.buoy.data;
@@ -57,27 +84,35 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
   const c = s.cityOfficial.data;
   const q = s.waterQuality.data;
   const n = s.nws.data;
+  const mn = s.metno.data;
+  // Open-Meteo's reading for the current hour — the third consensus voice.
+  const om = currentHourOf(s.hourly.data ?? []);
   // Dew point drives the comfort score; fall back to computing it from temp + RH.
   const dpFallback =
     w?.airTempF != null && w?.humidityPct != null
       ? dewPointFromTempRH(w.airTempF, w.humidityPct)
       : undefined;
   return {
-    airTempF: w?.airTempF ?? b?.airTempF,
+    // Shared metrics are the MEDIAN of NWS (real station obs), MET Norway, and
+    // Open-Meteo, so no single provider or model can skew the dashboard.
+    airTempF: median(w?.airTempF, mn?.airTempF, om?.airTempF) ?? b?.airTempF,
     waterTempF: b?.waterTempF ?? m?.seaSurfaceTempF,
-    windSpeedMph: w?.windSpeedMph ?? b?.windSpeedMph,
-    windDirDeg: w?.windDirDeg ?? b?.windDirDeg,
+    windSpeedMph:
+      median(w?.windSpeedMph, mn?.windSpeedMph, om?.windSpeedMph) ?? b?.windSpeedMph,
+    windDirDeg: w?.windDirDeg ?? mn?.windDirDeg ?? b?.windDirDeg,
     waveHeightFt: b?.waveHeightFt ?? m?.waveHeightFt,
-    precipProbability: w?.precipProbability,
+    precipProbability: w?.precipProbability ?? om?.precipProbability,
     shortForecast: w?.shortForecast,
     uvIndex: m?.uvIndex,
-    cloudCoverPct: m?.cloudCoverPct,
+    cloudCoverPct: median(m?.cloudCoverPct, mn?.cloudCoverPct, om?.cloudCoverPct),
     sargassumLevel: s.sargassum.data?.level,
     sargassumCoveragePct: s.sargassum.data?.coveragePct,
     crowdPct: s.busyness.data?.crowdPct ?? crowdLevelPct(s.busyness.data?.level),
     sandTempF: s.hourly.data ? currentSandTempF(s.hourly.data) : undefined,
-    humidityPct: w?.humidityPct,
-    dewPointF: w?.dewPointF ?? (dpFallback != null ? round(dpFallback) : undefined),
+    humidityPct: median(w?.humidityPct, mn?.humidityPct, om?.humidityPct),
+    dewPointF:
+      median(w?.dewPointF, mn?.dewPointF, om?.dewPointF) ??
+      (dpFallback != null ? round(dpFallback) : undefined),
     flags: c?.flags ?? ["unknown"],
     waterAdvisory: q?.advisory ?? false,
     waterRating: q?.overall ?? "unknown",

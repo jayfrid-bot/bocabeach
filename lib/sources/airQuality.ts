@@ -49,9 +49,63 @@ export function parseAirQuality(json: OpenMeteoAir): AirQualityData | null {
   };
 }
 
+// --- EPA AirNow (actual monitor network; preferred when a key is set) ------
+interface AirNowObs {
+  ParameterName?: string; // "PM2.5" | "O3" | "PM10"
+  AQI?: number;
+  DateObserved?: string;
+  HourObserved?: number;
+  LocalTimeZone?: string;
+}
+
+/** Parse AirNow current observations: overall AQI = the worst pollutant. Pure. */
+export function parseAirNow(rows: AirNowObs[]): AirQualityData | null {
+  const valid = (rows ?? []).filter(
+    (r) => typeof r.AQI === "number" && r.AQI >= 0 && typeof r.ParameterName === "string",
+  );
+  if (!valid.length) return null;
+  const worst = valid.reduce((a, b) => ((b.AQI as number) > (a.AQI as number) ? b : a));
+  const label = worst.ParameterName === "O3" ? "Ozone" : worst.ParameterName;
+  return { usAqi: round(worst.AQI as number), dominantPollutant: label };
+}
+
+async function fetchAirNow(
+  loc: Location,
+  key: string,
+): Promise<Wrapped<AirQualityData> | null> {
+  const url =
+    `https://www.airnowapi.org/aq/observation/latLong/current/?format=application/json` +
+    `&latitude=${loc.lat}&longitude=${loc.lon}&distance=25&API_KEY=${encodeURIComponent(key)}`;
+  try {
+    const res = await fetchWithTimeout(url, {
+      timeoutMs: 7000,
+      next: { revalidate: 1800 }, // 30m — monitors report hourly
+    });
+    if (!res.ok) return null;
+    const data = parseAirNow((await res.json()) as AirNowObs[]);
+    if (!data) return null;
+    return {
+      source: "EPA AirNow",
+      status: "ok",
+      fetchedAt: fetchedAtOf(res),
+      attribution: "US EPA AirNow (airnow.gov) — official monitor network",
+      data,
+    };
+  } catch {
+    return null; // fall through to the Open-Meteo model
+  }
+}
+
 export async function fetchAirQuality(
   loc: Location,
 ): Promise<Wrapped<AirQualityData>> {
+  // Actual EPA monitors beat a model — use AirNow when a key is configured,
+  // quietly falling back to Open-Meteo if it errors or has no nearby monitor.
+  const airNowKey = process.env.AIRNOW_API_KEY;
+  if (airNowKey) {
+    const observed = await fetchAirNow(loc, airNowKey);
+    if (observed) return observed;
+  }
   let fetchedAt = nowIso();
   const url =
     `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${loc.lat}` +
