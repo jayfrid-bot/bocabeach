@@ -92,7 +92,7 @@ export function SunArc({ sun, tz }: { sun: SunData; tz: string }) {
         {/* solar noon tick */}
         <line x1={noon.x} y1={APEX_Y - 6} x2={noon.x} y2={APEX_Y + 2} stroke="#64748b" strokeWidth="1" />
         {sun.solarNoon ? (
-          <text x={noon.x} y={APEX_Y - 10} textAnchor="middle" fill="#94a3b8" fontSize="9">
+          <text x={noon.x} y={APEX_Y - 10} textAnchor="middle" className="fill-slate-600 dark:fill-slate-400" fontSize="9">
             peak {fmtTime(sun.solarNoon, tz)}
           </text>
         ) : null}
@@ -113,16 +113,16 @@ export function SunArc({ sun, tz }: { sun: SunData; tz: string }) {
         ) : null}
 
         {/* sunrise / sunset labels */}
-        <text x={PX} y={HORIZON_Y + 16} textAnchor="start" fill="#94a3b8" fontSize="9.5">
+        <text x={PX} y={HORIZON_Y + 16} textAnchor="start" className="fill-slate-600 dark:fill-slate-400" fontSize="9.5">
           🌅 {fmtTime(sun.sunrise!, tz)}
         </text>
-        <text x={W - PX} y={HORIZON_Y + 16} textAnchor="end" fill="#94a3b8" fontSize="9.5">
+        <text x={W - PX} y={HORIZON_Y + 16} textAnchor="end" className="fill-slate-600 dark:fill-slate-400" fontSize="9.5">
           {fmtTime(sun.sunset!, tz)} 🌇
         </text>
 
         {/* phase caption */}
         {phase ? (
-          <text x={W / 2} y={HORIZON_Y + 16} textAnchor="middle" fill="#e2e8f0" fontSize="10" fontWeight="600">
+          <text x={W / 2} y={HORIZON_Y + 16} textAnchor="middle" className="fill-slate-800 dark:fill-slate-200" fontSize="10" fontWeight="600">
             {phase}
           </text>
         ) : null}

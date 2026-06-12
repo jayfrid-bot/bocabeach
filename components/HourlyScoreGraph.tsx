@@ -118,13 +118,13 @@ export function HourlyScoreGraph({
 
   return (
     <section>
-      <h2 className="mb-1 text-lg font-semibold text-white">Today&apos;s hourly score</h2>
+      <h2 className="mb-1 text-lg font-semibold text-slate-900 dark:text-white">Today&apos;s hourly score</h2>
       <p className="mb-3 text-xs text-slate-500">
         Beach Day score through the day — sunrise to sunset. The marker is the
         current local time.
       </p>
 
-      <div className="rounded-2xl bg-slate-900/70 p-3 ring-1 ring-white/10">
+      <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-3 ring-1 ring-slate-900/10 dark:ring-white/10">
         <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Hourly Beach Day score">
           <defs>
             <linearGradient id="hsg-fill" x1="0" y1="0" x2="0" y2="1">
@@ -159,7 +159,7 @@ export function HourlyScoreGraph({
                 x2={nowMarker.x}
                 y1={PT - 6}
                 y2={BASE_Y}
-                stroke="#e2e8f0"
+                className="stroke-slate-700 dark:stroke-slate-200"
                 strokeWidth="1.5"
                 strokeDasharray="2 3"
               />
@@ -167,7 +167,7 @@ export function HourlyScoreGraph({
                 x={nowMarker.x}
                 y={PT - 9}
                 textAnchor={nowMarker.anchor}
-                fill="#e2e8f0"
+                className="fill-slate-700 dark:fill-slate-200"
                 fontSize="11"
                 fontWeight="600"
               >
@@ -191,7 +191,7 @@ export function HourlyScoreGraph({
               cy={yFor(nowMarker.score)}
               r="5"
               fill={scoreColor(nowMarker.score)}
-              stroke="#0f172a"
+              className="stroke-white dark:stroke-slate-950"
               strokeWidth="2"
             />
           ) : null}
@@ -215,7 +215,7 @@ export function HourlyScoreGraph({
 
         {/* per-hour wind speed + direction — equal columns that fit the width */}
         <div
-          className="mt-2 grid gap-0.5 border-t border-white/5 pt-2"
+          className="mt-2 grid gap-0.5 border-t border-slate-900/10 dark:border-white/5 pt-2"
           style={{ gridTemplateColumns: `repeat(${hours.length}, minmax(0, 1fr))` }}
         >
           {hours.map((h) => {
@@ -245,7 +245,7 @@ export function HourlyScoreGraph({
                     </text>
                   )}
                 </svg>
-                <div className="truncate text-[11px] font-medium text-slate-300">
+                <div className="truncate text-[11px] font-medium text-slate-700 dark:text-slate-300">
                   {typeof h.windSpeedMph === "number" ? h.windSpeedMph : "–"}
                 </div>
                 <div className="truncate text-[9px] text-slate-500">
@@ -256,7 +256,7 @@ export function HourlyScoreGraph({
             );
           })}
         </div>
-        <p className="mt-1 text-center text-[10px] text-slate-600">
+        <p className="mt-1 text-center text-[10px] text-slate-400 dark:text-slate-600">
           wind mph · arrow points the way it blows
         </p>
       </div>

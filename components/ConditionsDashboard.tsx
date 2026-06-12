@@ -6,6 +6,7 @@ import type { ConditionsResponse } from "@/lib/types";
 import { bestBeachWindow, deriveMetrics } from "@/lib/score";
 import { beachDayVerdict, fmtDate, fmtTime, scoreColor, seaState } from "@/lib/format";
 import { Logo } from "@/components/Logo";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { ScoreGauge } from "@/components/ScoreGauge";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { HourlyScoreGraph } from "@/components/HourlyScoreGraph";
@@ -119,17 +120,20 @@ export function ConditionsDashboard({
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <header className="mb-6">
-        <Link
-          href="/"
-          className="inline-flex min-h-[36px] items-center text-sm hover:opacity-80"
-          aria-label="Is It Beach Day — all beaches"
-        >
-          <Logo markSize={28} />
-        </Link>
-        <h1 className="mt-2 text-3xl font-bold text-white sm:text-4xl">
+        <div className="flex items-center justify-between">
+          <Link
+            href="/"
+            className="inline-flex min-h-[36px] items-center text-sm hover:opacity-80"
+            aria-label="Is It Beach Day — all beaches"
+          >
+            <Logo markSize={28} />
+          </Link>
+          <ThemeToggle />
+        </div>
+        <h1 className="mt-2 text-3xl font-bold text-slate-900 dark:text-white sm:text-4xl">
           {snap.location.name}
         </h1>
-        <p className="text-slate-400">{snap.location.region}</p>
+        <p className="text-slate-600 dark:text-slate-400">{snap.location.region}</p>
       </header>
 
       <div className="mb-6">
@@ -142,7 +146,7 @@ export function ConditionsDashboard({
       </div>
 
       <section className="mb-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-        <div className="flex flex-col items-center gap-4 rounded-2xl bg-slate-900/70 p-6 ring-1 ring-white/10">
+        <div className="flex flex-col items-center gap-4 rounded-2xl bg-white/80 dark:bg-slate-900/70 p-6 ring-1 ring-slate-900/10 dark:ring-white/10">
           <div className="text-center">
             <div className="text-xs uppercase tracking-widest text-slate-500">
               Is it beach day?
@@ -162,7 +166,7 @@ export function ConditionsDashboard({
           />
           {ratings &&
           (ratings.swimmingRating || ratings.surfingRating || ratings.snorkelingRating) ? (
-            <div className="text-center text-xs text-slate-400">
+            <div className="text-center text-xs text-slate-600 dark:text-slate-400">
               Lifeguard rating:{" "}
               {[
                 ratings.swimmingRating && `swim ${ratings.swimmingRating}`,
@@ -180,13 +184,13 @@ export function ConditionsDashboard({
       {nc || bw ? (
         <section className="mb-4 flex flex-wrap gap-2 text-sm">
           {nc ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-800/70 px-3 py-1 text-slate-200 ring-1 ring-white/10">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-200/80 dark:bg-slate-800/70 px-3 py-1 text-slate-700 dark:text-slate-200 ring-1 ring-slate-900/10 dark:ring-white/10">
               <span aria-hidden>{nc.state === "raining" ? "🌧️" : "☀️"}</span>
               {nc.text}
             </span>
           ) : null}
           {bw ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-800/70 px-3 py-1 text-slate-200 ring-1 ring-white/10">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-200/80 dark:bg-slate-800/70 px-3 py-1 text-slate-700 dark:text-slate-200 ring-1 ring-slate-900/10 dark:ring-white/10">
               <span aria-hidden>⭐</span>
               Best window today: {fmtTime(bw.startIso, tz)}–{fmtTime(bw.endIso, tz)}
             </span>
@@ -199,8 +203,8 @@ export function ConditionsDashboard({
       </section>
 
       <section className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <div className="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-white/10">
-          <div className="flex items-center gap-2 text-sm text-slate-400">
+        <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
+          <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
             <span aria-hidden>💨</span>
             <span>Wind</span>
           </div>
@@ -399,18 +403,18 @@ export function ConditionsDashboard({
           Spot something off or have an idea?{" "}
           <a
             href="mailto:hello@isitbeachday.com"
-            className="text-ocean-300 hover:underline"
+            className="text-ocean-700 dark:text-ocean-300 hover:underline"
           >
             hello@isitbeachday.com
           </a>
         </p>
         <p className="text-center text-xs text-slate-500">
           v{APP_VERSION}
-          <span className="mx-1.5 text-slate-600">·</span>
+          <span className="mx-1.5 text-slate-400 dark:text-slate-600">·</span>
           data updated {fmtDate(snap.generatedAt, tz)}, {fmtTime(snap.generatedAt, tz)}
           {BUILD_TIME && (
             <>
-              <span className="mx-1.5 text-slate-600">·</span>
+              <span className="mx-1.5 text-slate-400 dark:text-slate-600">·</span>
               built {fmtDate(BUILD_TIME, tz)}, {fmtTime(BUILD_TIME, tz)}
             </>
           )}

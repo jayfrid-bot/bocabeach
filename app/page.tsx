@@ -3,6 +3,7 @@ import { listLocations } from "@/config/locations";
 import { getConditions } from "@/lib/conditions";
 import { beachDayVerdict, scoreColor } from "@/lib/format";
 import { LogoMark } from "@/components/Logo";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 export const revalidate = 300;
 
@@ -17,12 +18,15 @@ export default async function Home() {
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-12 sm:px-6">
+      <div className="mb-2 flex justify-end">
+        <ThemeToggle />
+      </div>
       <header className="mb-10 flex flex-col items-center text-center">
         <LogoMark size={72} />
-        <h1 className="mt-5 text-4xl font-bold tracking-tight text-white sm:text-5xl">
+        <h1 className="mt-5 text-4xl font-bold tracking-tight text-slate-900 dark:text-white sm:text-5xl">
           Is it beach day<span className="text-amber-400">?</span>
         </h1>
-        <p className="mt-3 max-w-xl text-slate-400">
+        <p className="mt-3 max-w-xl text-slate-600 dark:text-slate-400">
           One answer to one question. Live tides, water &amp; air temp, wind,
           waves, water quality, and cams — distilled into a single Beach Day
           score.
@@ -34,12 +38,12 @@ export default async function Home() {
           <Link
             key={loc.slug}
             href={`/${loc.slug}`}
-            className="group rounded-2xl bg-slate-900/70 p-5 ring-1 ring-white/10 transition hover:ring-amber-400/40"
+            className="group rounded-2xl bg-white/80 dark:bg-slate-900/70 p-5 ring-1 ring-slate-900/10 dark:ring-white/10 transition hover:ring-amber-400/40"
           >
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-xl font-semibold text-white">{loc.name}</h2>
-                <p className="text-sm text-slate-400">{loc.region}</p>
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-white">{loc.name}</h2>
+                <p className="text-sm text-slate-600 dark:text-slate-400">{loc.region}</p>
               </div>
               <span className="text-slate-500 transition group-hover:text-amber-300">
                 →
@@ -76,13 +80,13 @@ export default async function Home() {
         ))}
       </div>
 
-      <p className="mt-10 text-center text-xs text-slate-600">
+      <p className="mt-10 text-center text-xs text-slate-400 dark:text-slate-600">
         Built to expand to every beach town — add a location in{" "}
-        <code className="text-slate-400">config/locations.ts</code>.
+        <code className="text-slate-600 dark:text-slate-400">config/locations.ts</code>.
       </p>
-      <p className="mt-3 text-center text-xs text-slate-600">
+      <p className="mt-3 text-center text-xs text-slate-400 dark:text-slate-600">
         Feedback or ideas?{" "}
-        <a href="mailto:hello@isitbeachday.com" className="text-ocean-300 hover:underline">
+        <a href="mailto:hello@isitbeachday.com" className="text-ocean-700 dark:text-ocean-300 hover:underline">
           hello@isitbeachday.com
         </a>
       </p>

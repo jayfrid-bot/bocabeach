@@ -54,7 +54,7 @@ export function Logo({ markSize = 36 }: { markSize?: number }) {
   return (
     <span className="inline-flex items-center gap-2.5">
       <LogoMark size={markSize} />
-      <span className="whitespace-nowrap font-bold tracking-tight text-white">
+      <span className="whitespace-nowrap font-bold tracking-tight text-slate-900 dark:text-white">
         Is it beach day<span className="text-amber-400">?</span>
       </span>
     </span>

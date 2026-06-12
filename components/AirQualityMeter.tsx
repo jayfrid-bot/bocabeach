@@ -25,9 +25,9 @@ export function AirQualityMeter({ air }: { air: Wrapped<AirQualityData> }) {
     : "Air quality data unavailable";
 
   return (
-    <div className="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-white/10">
+    <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
       <div className="flex items-end justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm text-slate-400">
+        <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
           <span aria-hidden>🌫️</span>
           <span>Air quality (US AQI)</span>
         </div>
@@ -62,7 +62,7 @@ export function AirQualityMeter({ air }: { air: Wrapped<AirQualityData> }) {
         <span>{AQI_SCALE_MAX}+</span>
       </div>
 
-      <div className="mt-2 break-words text-xs text-slate-400">{detail}</div>
+      <div className="mt-2 break-words text-xs text-slate-600 dark:text-slate-400">{detail}</div>
     </div>
   );
 }

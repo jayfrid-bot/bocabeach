@@ -58,7 +58,7 @@ function CamWeatherStrip({ cam }: { cam: CamView }) {
         (w.windGustMph != null ? ` · gusts ${w.windGustMph}` : "")
       : null;
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-300">
+    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-700 dark:text-slate-300">
       {w.airTempF != null ? (
         <span title="Air temperature">
           🌡️ {w.airTempF}°F
@@ -68,7 +68,7 @@ function CamWeatherStrip({ cam }: { cam: CamView }) {
         </span>
       ) : null}
       {wind ? <span title="Wind">💨 {wind}</span> : null}
-      {w.shortForecast ? <span className="text-slate-400">{w.shortForecast}</span> : null}
+      {w.shortForecast ? <span className="text-slate-600 dark:text-slate-400">{w.shortForecast}</span> : null}
     </div>
   );
 }
@@ -97,7 +97,7 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
       href={cam.url}
       target="_blank"
       rel="noreferrer"
-      className="group block overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-white/10 transition hover:ring-ocean-500/50"
+      className="group block overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-slate-900/10 dark:ring-white/10 transition hover:ring-ocean-500/50"
     >
       <div className="relative aspect-video w-full overflow-hidden">
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -121,10 +121,10 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
       </div>
       <div className="p-3 sm:p-4">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-base font-semibold text-white sm:text-lg">{cam.name}</div>
+          <div className="text-base font-semibold text-slate-900 dark:text-white sm:text-lg">{cam.name}</div>
           {stale ? (
             <span
-              className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300"
+              className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300"
               title="The still-image feed hasn't updated recently — open the cam for live video."
             >
               ⏸ <RelativeTime iso={cam.capturedAt as string} />
@@ -135,14 +135,14 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
             </span>
           ) : (
             <span
-              className="shrink-0 rounded-full bg-slate-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-300"
+              className="shrink-0 rounded-full bg-slate-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-300"
               title="This cam publishes no capture time, so we can't confirm the still is current — tap for the live video."
             >
               📷 Snapshot
             </span>
           )}
         </div>
-        <div className="text-xs text-slate-400">{cam.provider}</div>
+        <div className="text-xs text-slate-600 dark:text-slate-400">{cam.provider}</div>
         <CamStamp cam={cam} tz={tz} />
         {stale ? (
           <div className="mt-1 text-[11px] text-amber-400/80">
@@ -161,7 +161,7 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
 /** Embedded live-video cam (e.g. a framing-allowed YouTube stream). */
 function VideoCam({ cam }: { cam: CamView }) {
   return (
-    <div className="overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-white/10">
+    <div className="overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-slate-900/10 dark:ring-white/10">
       <div className="aspect-video">
         <iframe
           src={cam.url}
@@ -174,8 +174,8 @@ function VideoCam({ cam }: { cam: CamView }) {
         />
       </div>
       <div className="p-3">
-        <div className="text-sm font-medium text-white">{cam.name}</div>
-        <div className="text-xs text-slate-400">{cam.provider}</div>
+        <div className="text-sm font-medium text-slate-900 dark:text-white">{cam.name}</div>
+        <div className="text-xs text-slate-600 dark:text-slate-400">{cam.provider}</div>
         <CamWeatherStrip cam={cam} />
       </div>
     </div>
@@ -189,10 +189,10 @@ function LinkChip({ cam }: { cam: CamView }) {
       href={cam.url}
       target="_blank"
       rel="noreferrer"
-      className="flex min-h-[44px] items-center justify-between gap-2 rounded-xl bg-slate-900/70 px-3 py-2.5 ring-1 ring-white/10 transition hover:ring-ocean-500/50"
+      className="flex min-h-[44px] items-center justify-between gap-2 rounded-xl bg-white/80 dark:bg-slate-900/70 px-3 py-2.5 ring-1 ring-slate-900/10 dark:ring-white/10 transition hover:ring-ocean-500/50"
     >
       <span className="min-w-0">
-        <span className="block truncate text-sm text-slate-200">{cam.name}</span>
+        <span className="block truncate text-sm text-slate-700 dark:text-slate-200">{cam.name}</span>
         <span className="block truncate text-[11px] text-slate-500">{cam.provider}</span>
       </span>
       <span className="shrink-0 text-slate-500" aria-hidden>
@@ -210,7 +210,7 @@ export function CamGrid({ cams, tz }: { cams: CamView[]; tz: string }) {
 
   return (
     <section>
-      <h2 className="text-lg font-semibold text-white">Beach &amp; surf cams</h2>
+      <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Beach &amp; surf cams</h2>
       <p className="mb-4 mt-1 text-xs text-slate-500">
         Live weather &amp; wind shown per cam, from Open-Meteo at each spot.
       </p>

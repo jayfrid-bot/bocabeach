@@ -20,8 +20,8 @@ export function SunPanel({ sun, tz }: { sun: Wrapped<SunData>; tz: string }) {
   const any = rows.some((r) => r.iso);
 
   return (
-    <div className="rounded-2xl bg-slate-900/70 p-4 ring-1 ring-white/10">
-      <div className="flex items-center gap-2 text-sm text-slate-400">
+    <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
+      <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
         <span aria-hidden>☀️</span>
         <span>Sun</span>
       </div>
@@ -33,14 +33,14 @@ export function SunPanel({ sun, tz }: { sun: Wrapped<SunData>; tz: string }) {
           <ul className="mt-2 space-y-1.5">
           {rows.map((r) => (
             <li key={r.label} className="flex items-center justify-between text-sm">
-              <span className="flex items-center gap-1.5 text-slate-300">
+              <span className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
                 <span aria-hidden>{r.icon}</span>
                 {r.label}
                 {r.hint ? (
                   <span className="text-xs text-slate-500">({r.hint})</span>
                 ) : null}
               </span>
-              <span className="text-white">{r.iso ? fmtTime(r.iso, tz) : "—"}</span>
+              <span className="text-slate-900 dark:text-white">{r.iso ? fmtTime(r.iso, tz) : "—"}</span>
             </li>
           ))}
           </ul>

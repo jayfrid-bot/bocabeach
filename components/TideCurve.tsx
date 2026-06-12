@@ -127,7 +127,7 @@ export function TideCurve({ events, tz }: { events: TideEvent[]; tz: string }) {
               x={x}
               y={above ? y - 8 : y + 14}
               textAnchor="middle"
-              fill={above ? "#bce7ff" : "#64748b"}
+              className={above ? "fill-ocean-700 dark:fill-[#bce7ff]" : "fill-slate-500"}
               fontSize="8.5"
             >
               {fmtTime(e.time, tz).replace(" ", "")}

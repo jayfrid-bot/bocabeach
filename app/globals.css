@@ -2,7 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme is class-driven (html.dark); an inline script in layout.tsx applies the
+   stored/system choice before paint so there's no flash of the wrong theme. */
 :root {
+  color-scheme: light;
+}
+.dark {
   color-scheme: dark;
 }
 
@@ -18,7 +23,15 @@
   to { transform: rotate(var(--wobble, 0deg)); }
 }
 
+/* Daylight beach: warm sun glow over a pale sky-blue wash. */
 body {
+  background:
+    radial-gradient(900px 450px at 50% -16%, rgba(251, 191, 36, 0.18), transparent 55%),
+    radial-gradient(1200px 600px at 50% -10%, rgba(27, 133, 245, 0.12), transparent 60%),
+    #f3f7fb;
+}
+/* Night ocean: the original dark gradient. */
+.dark body {
   background:
     radial-gradient(900px 450px at 50% -16%, rgba(251, 191, 36, 0.07), transparent 55%),
     radial-gradient(1200px 600px at 50% -10%, rgba(27, 133, 245, 0.18), transparent 60%),
