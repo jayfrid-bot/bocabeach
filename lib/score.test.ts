@@ -116,6 +116,19 @@ describe("scoring (Beach Day only — no surf)", () => {
     expect(total).toBeCloseTo(1, 5);
   });
 
+  it("vetoes a rain/thunder weather code its own precip probability contradicts", () => {
+    // 2026-06-12: Open-Meteo gave code 95 (Thunderstorm) at 11 AM & 1 PM ET
+    // alongside 1% rain probability and satellite-observed full sun.
+    const base = deriveMetrics(snapshot({}));
+    const at = (code: number, prob?: number) =>
+      rainSeverity({ ...base, weatherCode: code, precipProbability: prob });
+    expect(at(95, 1)).toBe("none"); // phantom storm — vetoed
+    expect(at(80, 10)).toBe("none"); // phantom shower — vetoed
+    expect(at(95, 60)).toBe("thunder"); // corroborated — cap stands
+    expect(at(61, 45)).toBe("rain");
+    expect(at(95, undefined)).toBe("thunder"); // no probability -> fail safe
+  });
+
   it("scores sand barefoot comfort: cool sand best, scorching sand drags the score", () => {
     const base = deriveMetrics(snapshot({}));
     const at = (f?: number) => scoreBeachDay({ ...base, sandTempF: f });
@@ -603,6 +616,7 @@ describe("computeHourlyScores", () => {
     rows[idx] = {
       ...rows[idx],
       weatherCode: 95,
+      precipProbability: 80, // corroborated — a real storm, not a phantom code
       shortForecast: "Thunderstorm",
       emoji: "⛈️",
     };
