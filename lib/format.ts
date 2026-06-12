@@ -37,10 +37,10 @@ export function seaState(waveHeightFt: number): { label: string; note: string } 
   const ft = Math.max(0, waveHeightFt);
   if (ft < 1) return { label: "Calm", note: "flat, glassy water" };
   if (ft < 2) return { label: "Gentle", note: "small lapping waves" };
-  if (ft < 3) return { label: "Light chop", note: "a little texture, easy swim" };
-  if (ft < 4.5) return { label: "Choppy", note: "noticeable waves and push" };
-  if (ft < 6) return { label: "Really choppy", note: "strong push — heads-up swimming" };
-  if (ft < 9) return { label: "Big waves", note: "powerful surf — watch the flags" };
+  if (ft < 2.5) return { label: "Light chop", note: "a little texture, easy swim" };
+  if (ft < 3) return { label: "Choppy", note: "noticeable waves and push" };
+  if (ft < 4.5) return { label: "Really choppy", note: "strong push — heads-up swimming" };
+  if (ft < 7) return { label: "Big waves", note: "powerful surf — watch the flags" };
   return { label: "Very rough", note: "heavy surf — follow lifeguard flags" };
 }
 
