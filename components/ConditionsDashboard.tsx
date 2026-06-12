@@ -126,7 +126,7 @@ export function ConditionsDashboard({
           <Link
             href="/"
             className="inline-flex min-h-[36px] items-center text-sm hover:opacity-80"
-            aria-label="Is It Beach Day — all beaches"
+            aria-label="Is It Beach Day — home"
           >
             <Logo markSize={28} />
           </Link>

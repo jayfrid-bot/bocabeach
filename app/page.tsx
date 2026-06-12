@@ -1,14 +1,39 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { listLocations } from "@/config/locations";
 import { getConditions } from "@/lib/conditions";
 import { beachDayVerdict, scoreColor } from "@/lib/format";
 import { LogoMark } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { ConditionsDashboard } from "@/components/ConditionsDashboard";
 
 export const revalidate = 300;
 
+/**
+ * When there's only one beach, the homepage IS that beach — no intermediate
+ * card click. The multi-location card grid below is kept for the day a second
+ * location is added to config/locations.ts.
+ */
+export async function generateMetadata(): Promise<Metadata> {
+  const locs = listLocations();
+  if (locs.length === 1) {
+    return {
+      title: `${locs[0].name} — Is It Beach Day?`,
+      description: `Live ${locs[0].name} beach conditions and a composite Beach Day score.`,
+    };
+  }
+  return {};
+}
+
 export default async function Home() {
   const locations = listLocations();
+
+  // Single-location mode: render the full dashboard directly.
+  if (locations.length === 1) {
+    const data = await getConditions(locations[0].slug);
+    if (data) return <ConditionsDashboard slug={locations[0].slug} initial={data} />;
+  }
+
   const cards = await Promise.all(
     locations.map(async (loc) => ({
       loc,
