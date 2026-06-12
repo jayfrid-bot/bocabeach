@@ -439,8 +439,16 @@ export type RainSeverity = "none" | "rain" | "thunder";
 export function rainSeverity(d: Derived): RainSeverity {
   const c = d.weatherCode;
   if (c != null) {
-    if (c >= 95 && c <= 99) return "thunder";
-    if ((c >= 51 && c <= 67) || (c >= 80 && c <= 82)) return "rain";
+    // Corroboration rule: a rain/thunder code must be backed by the same
+    // model's own precipitation probability. Open-Meteo has emitted code 95
+    // ("Thunderstorm") for hours it simultaneously gave 1% rain probability,
+    // 0.00" precip, and satellite-observed near-full sun (2026-06-12, 11 AM
+    // & 1 PM ET) — a lone uncorroborated code must not cap the score. When
+    // probability is unavailable the code stands (fail safe).
+    const corroborated = d.precipProbability == null || d.precipProbability >= 25;
+    if (c >= 95 && c <= 99) return corroborated ? "thunder" : "none";
+    if ((c >= 51 && c <= 67) || (c >= 80 && c <= 82))
+      return corroborated ? "rain" : "none";
     return "none"; // includes snow 71-86 — not relevant in S. FL, not a "rain" cap
   }
   const f = d.shortForecast?.toLowerCase() ?? "";
@@ -619,12 +627,27 @@ export function computeHourlyScores(
         severeAlert: base.severeAlert,
       };
       const r = scoreBeachDay(d);
+      const raining = rainSeverity(d) !== "none";
+      // When the corroboration rule vetoes a phantom rain/thunder code, don't
+      // show its storm emoji either — fall back to a cloud-cover sky.
+      const codeClaimsRain =
+        d.weatherCode != null &&
+        ((d.weatherCode >= 51 && d.weatherCode <= 67) ||
+          (d.weatherCode >= 80 && d.weatherCode <= 99));
+      const emoji =
+        !raining && codeClaimsRain
+          ? (h.cloudCoverPct ?? 0) <= 30
+            ? "☀️"
+            : (h.cloudCoverPct ?? 0) <= 70
+              ? "⛅"
+              : "☁️"
+          : (h.emoji ?? "");
       return {
         time: h.time,
         score: r.score,
         rating: r.rating,
-        emoji: h.emoji ?? "",
-        raining: rainSeverity(d) !== "none",
+        emoji,
+        raining,
         windSpeedMph: h.windSpeedMph,
         windDirDeg: h.windDirDeg,
       };
