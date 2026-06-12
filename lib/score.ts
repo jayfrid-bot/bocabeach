@@ -85,6 +85,7 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
   const q = s.waterQuality.data;
   const n = s.nws.data;
   const mn = s.metno.data;
+  const g = s.gfs.data;
   // Open-Meteo's reading for the current hour — the third consensus voice.
   const om = currentHourOf(s.hourly.data ?? []);
   // Dew point drives the comfort score; fall back to computing it from temp + RH.
@@ -95,23 +96,23 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
   return {
     // Shared metrics are the MEDIAN of NWS (real station obs), MET Norway, and
     // Open-Meteo, so no single provider or model can skew the dashboard.
-    airTempF: median(w?.airTempF, mn?.airTempF, om?.airTempF) ?? b?.airTempF,
+    airTempF: median(w?.airTempF, mn?.airTempF, om?.airTempF, g?.airTempF) ?? b?.airTempF,
     waterTempF: b?.waterTempF ?? m?.seaSurfaceTempF,
     windSpeedMph:
-      median(w?.windSpeedMph, mn?.windSpeedMph, om?.windSpeedMph) ?? b?.windSpeedMph,
+      median(w?.windSpeedMph, mn?.windSpeedMph, om?.windSpeedMph, g?.windSpeedMph) ?? b?.windSpeedMph,
     windDirDeg: w?.windDirDeg ?? mn?.windDirDeg ?? b?.windDirDeg,
     waveHeightFt: b?.waveHeightFt ?? m?.waveHeightFt,
     precipProbability: w?.precipProbability ?? om?.precipProbability,
     shortForecast: w?.shortForecast,
     uvIndex: m?.uvIndex,
-    cloudCoverPct: median(m?.cloudCoverPct, mn?.cloudCoverPct, om?.cloudCoverPct),
+    cloudCoverPct: median(m?.cloudCoverPct, mn?.cloudCoverPct, om?.cloudCoverPct, w?.cloudCoverPct, g?.cloudCoverPct),
     sargassumLevel: s.sargassum.data?.level,
     sargassumCoveragePct: s.sargassum.data?.coveragePct,
     crowdPct: s.busyness.data?.crowdPct ?? crowdLevelPct(s.busyness.data?.level),
     sandTempF: s.hourly.data ? currentSandTempF(s.hourly.data) : undefined,
-    humidityPct: median(w?.humidityPct, mn?.humidityPct, om?.humidityPct),
+    humidityPct: median(w?.humidityPct, mn?.humidityPct, om?.humidityPct, g?.humidityPct),
     dewPointF:
-      median(w?.dewPointF, mn?.dewPointF, om?.dewPointF) ??
+      median(w?.dewPointF, mn?.dewPointF, om?.dewPointF, g?.dewPointF) ??
       (dpFallback != null ? round(dpFallback) : undefined),
     flags: c?.flags ?? ["unknown"],
     waterAdvisory: q?.advisory ?? false,

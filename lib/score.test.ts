@@ -72,6 +72,7 @@ function snapshot(over: {
     nws: wrap(over.nws ?? null),
     airQuality: wrap<AirQualityData>(null),
     metno: wrap<MetnoCurrent>(null),
+    gfs: wrap<MetnoCurrent>(null),
     lightning: wrap<LightningData>(null),
     sargassum: wrap(over.sargassum ?? null),
     busyness: wrap(over.busyness ?? null),

@@ -61,6 +61,29 @@ async function fetchLatestObservation(
   return { data: out, at };
 }
 
+/**
+ * The NWS gridpoint (NDFD) skyCover % in effect at `nowMs`. Grid values carry
+ * ISO-8601 validTime spans like "2026-06-12T18:00:00+00:00/PT2H". Pure.
+ */
+export function skyCoverNow(
+  grid: Json,
+  nowMs: number,
+): number | undefined {
+  const values = ((grid.properties as Record<string, unknown> | undefined)?.skyCover as
+    | { values?: Array<{ validTime?: string; value?: number | null }> }
+    | undefined)?.values;
+  if (!Array.isArray(values)) return undefined;
+  for (const v of values) {
+    if (typeof v.value !== "number" || !v.validTime) continue;
+    const [startIso, dur] = v.validTime.split("/");
+    const start = Date.parse(startIso);
+    const h = /PT(\d+)H/.exec(dur ?? "");
+    const span = h ? Number(h[1]) * 3600_000 : 3600_000;
+    if (Number.isFinite(start) && nowMs >= start && nowMs < start + span) return v.value;
+  }
+  return undefined;
+}
+
 export async function fetchWeather(loc: Location): Promise<Wrapped<WeatherData>> {
   let fetchedAt = nowIso();
   try {
@@ -70,9 +93,10 @@ export async function fetchWeather(loc: Location): Promise<Wrapped<WeatherData>>
     );
     const p = (points.properties ?? {}) as Record<string, string>;
 
-    const [obs, hourly] = await Promise.allSettled([
+    const [obs, hourly, grid] = await Promise.allSettled([
       fetchLatestObservation(p.observationStations),
       getJsonAt(p.forecastHourly, 3600),
+      getJsonAt(p.forecastGridData, 3600),
     ]);
 
     // Honest freshness: the oldest of the live data responses (the 24h-cached
@@ -103,6 +127,11 @@ export async function fetchWeather(loc: Location): Promise<Wrapped<WeatherData>>
           data.airTempF = period.temperature as number;
         }
       }
+    }
+
+    if (grid.status === "fulfilled") {
+      const sky = skyCoverNow(grid.value.json, Date.now());
+      if (sky != null) data.cloudCoverPct = round(sky);
     }
 
     if (data.windDirDeg != null && !data.windDirCardinal) {

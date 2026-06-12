@@ -57,6 +57,8 @@ export interface WeatherData {
   precipProbability?: number; // 0-100
   humidityPct?: number; // relative humidity, 0-100
   dewPointF?: number; // °F — the comfort/mugginess driver
+  /** NWS gridpoint (NDFD) sky cover % for the current hour — forecaster-curated. */
+  cloudCoverPct?: number;
   isDaytime?: boolean;
   observedAt?: string; // ISO
 }
@@ -408,6 +410,8 @@ export interface ConditionsSnapshot {
   airQuality: Wrapped<AirQualityData>;
   /** MET Norway current conditions — independent consensus voice. */
   metno: Wrapped<MetnoCurrent>;
+  /** Explicit NOAA GFS model voice (via Open-Meteo) for the consensus. */
+  gfs: Wrapped<MetnoCurrent>;
   lightning: Wrapped<LightningData>;
   sargassum: Wrapped<SargassumData>;
   busyness: Wrapped<BusynessData>;

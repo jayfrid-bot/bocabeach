@@ -14,15 +14,9 @@ export function AirQualityMeter({ air }: { air: Wrapped<AirQualityData> }) {
   const band = known ? aqiBand(aqi as number) : null;
   const pct = known ? Math.min(100, ((aqi as number) / AQI_SCALE_MAX) * 100) : 0;
 
-  const detail = known
-    ? [
-        d?.dominantPollutant && `${d.dominantPollutant} dominant`,
-        d?.pm2_5 != null && `PM2.5 ${d.pm2_5} µg/m³`,
-        d?.ozone != null && `O₃ ${d.ozone} µg/m³`,
-      ]
-        .filter(Boolean)
-        .join(" · ")
-    : "Air quality data unavailable";
+  // Keep it simple: the number, the band, and the meter. (Per-pollutant
+  // concentrations were noise for beachgoers.)
+  const detail = known ? null : "Air quality data unavailable";
 
   return (
     <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
@@ -62,7 +56,9 @@ export function AirQualityMeter({ air }: { air: Wrapped<AirQualityData> }) {
         <span>{AQI_SCALE_MAX}+</span>
       </div>
 
-      <div className="mt-2 break-words text-xs text-slate-600 dark:text-slate-400">{detail}</div>
+      {detail ? (
+        <div className="mt-2 break-words text-xs text-slate-600 dark:text-slate-400">{detail}</div>
+      ) : null}
     </div>
   );
 }
