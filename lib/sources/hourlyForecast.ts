@@ -77,6 +77,37 @@ export function parseOpenMeteoHourly(
   return out.length ? out : null;
 }
 
+/**
+ * Overlay GOES satellite-OBSERVED radiation onto elapsed hours. The weather
+ * model sometimes hallucinates clouds (or misses them): on 2026-06-11 it said
+ * 437 W/m² for a 1 PM hour the satellite saw at 918 — a ~24°F sand-temp error.
+ * Only hours that have fully elapsed are overridden; the satellite endpoint's
+ * future rows are clear-sky estimates, not observations, so the forecast model
+ * keeps future hours. Mutates and returns `hours`. Pure given its inputs.
+ */
+export function overlaySatelliteRadiation(
+  hours: HourlyMetrics[],
+  sat: { time?: string[]; shortwave_radiation?: (number | null)[] },
+  nowMs: number,
+): HourlyMetrics[] {
+  const times = sat?.time;
+  const values = sat?.shortwave_radiation;
+  if (!Array.isArray(times) || !Array.isArray(values)) return hours;
+  const byIso = new Map<string, number>();
+  for (let i = 0; i < times.length; i++) {
+    const v = values[i];
+    if (typeof v === "number" && Number.isFinite(v)) {
+      byIso.set(new Date(`${times[i]}:00Z`).toISOString(), v);
+    }
+  }
+  for (const h of hours) {
+    const elapsed = new Date(h.time).getTime() + 3600_000 <= nowMs;
+    const observed = byIso.get(h.time);
+    if (elapsed && observed != null) h.solarWm2 = round(observed);
+  }
+  return hours;
+}
+
 export async function fetchHourlyForecast(
   loc: Location,
 ): Promise<Wrapped<HourlyMetrics[]>> {
@@ -93,16 +124,37 @@ export async function fetchHourlyForecast(
     `soil_temperature_0cm,shortwave_radiation,precipitation` +
     `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch` +
     `&past_days=1&forecast_days=2`;
+  // GOES satellite-observed radiation for elapsed hours (best effort; the
+  // forecast model's values stand wherever this is missing or fails).
+  const satUrl =
+    `https://satellite-api.open-meteo.com/v1/archive?latitude=${loc.lat}` +
+    `&longitude=${loc.lon}&hourly=shortwave_radiation&past_days=1&forecast_days=1`;
   try {
-    const res = await fetchWithTimeout(url, {
-      timeoutMs: 7000,
-      next: { revalidate: 3600 }, // 1h
-    });
-    fetchedAt = fetchedAtOf(res);
-    if (!res.ok) throw new Error(`Open-Meteo hourly -> ${res.status}`);
-    const data = parseOpenMeteoHourly(await res.json());
+    const [res, satRes] = await Promise.allSettled([
+      fetchWithTimeout(url, { timeoutMs: 7000, next: { revalidate: 3600 } }), // 1h
+      fetchWithTimeout(satUrl, { timeoutMs: 7000, next: { revalidate: 1800 } }), // 30m
+    ]);
+    if (res.status === "rejected") throw res.reason;
+    fetchedAt = fetchedAtOf(res.value);
+    if (!res.value.ok) throw new Error(`Open-Meteo hourly -> ${res.value.status}`);
+    const data = parseOpenMeteoHourly(await res.value.json());
+
+    let satOk = false;
+    if (data && satRes.status === "fulfilled" && satRes.value.ok) {
+      try {
+        const sat = (await satRes.value.json()) as {
+          hourly?: { time?: string[]; shortwave_radiation?: (number | null)[] };
+        };
+        if (sat.hourly) {
+          overlaySatelliteRadiation(data, sat.hourly, Date.now());
+          satOk = true;
+        }
+      } catch {
+        // keep model radiation
+      }
+    }
     return {
-      source: "Open-Meteo (hourly)",
+      source: satOk ? "Open-Meteo (hourly + GOES radiation)" : "Open-Meteo (hourly)",
       status: data ? "ok" : "error",
       fetchedAt,
       attribution: ATTRIBUTION,
