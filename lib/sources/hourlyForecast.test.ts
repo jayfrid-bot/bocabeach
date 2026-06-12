@@ -70,3 +70,29 @@ describe("parseOpenMeteoHourly", () => {
     expect(parseOpenMeteoHourly({ hourly: { time: [] } })).toBeNull();
   });
 });
+
+describe("overlaySatelliteRadiation", () => {
+  const mk = (iso: string, solar: number) => ({ time: iso, solarWm2: solar });
+  const NOW = Date.parse("2026-06-11T18:30:00.000Z");
+
+  it("overrides elapsed hours with satellite-observed values", async () => {
+    const { overlaySatelliteRadiation } = await import("@/lib/sources/hourlyForecast");
+    // Model hallucinated a cloud at 17:00Z; satellite saw near-full sun.
+    const hours = [mk("2026-06-11T17:00:00.000Z", 437), mk("2026-06-11T19:00:00.000Z", 832)];
+    overlaySatelliteRadiation(hours, {
+      time: ["2026-06-11T17:00", "2026-06-11T19:00"],
+      shortwave_radiation: [918, 700],
+    }, NOW);
+    expect(hours[0].solarWm2).toBe(918); // elapsed -> observed wins
+    expect(hours[1].solarWm2).toBe(832); // future -> forecast model stands
+  });
+
+  it("leaves hours untouched when satellite data is missing or null", async () => {
+    const { overlaySatelliteRadiation } = await import("@/lib/sources/hourlyForecast");
+    const hours = [mk("2026-06-11T16:00:00.000Z", 905)];
+    overlaySatelliteRadiation(hours, { time: ["2026-06-11T16:00"], shortwave_radiation: [null] }, NOW);
+    expect(hours[0].solarWm2).toBe(905);
+    overlaySatelliteRadiation(hours, {}, NOW);
+    expect(hours[0].solarWm2).toBe(905);
+  });
+});
