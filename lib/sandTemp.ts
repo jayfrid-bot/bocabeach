@@ -6,8 +6,13 @@
 // by wind (convective cooling) and recent rain (wet sand conducts heat away).
 // Guidance only — calibrated to "is it comfortable barefoot", not lab accuracy.
 
-/** Full Florida midsummer noon sun is ~900-1000 W/m²; treat 900 as "full". */
-const FULL_SUN_WM2 = 900;
+/**
+ * Full Florida midsummer peak sun is ~1000 W/m². Setting "full" any lower
+ * clips the true early-afternoon peak (real days hit 950-1000) and makes a
+ * light-wind late morning at ~890 W/m² read hotter than peak sun — a false
+ * midday dip in the curve.
+ */
+const FULL_SUN_WM2 = 1000;
 /**
  * Max extra °F dry sand runs above the modeled ground surface in full sun.
  * Calibrated against IR-thermometer ground truth at Boca on 2026-06-11
