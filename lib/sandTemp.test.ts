@@ -7,7 +7,7 @@ describe("estimateSandTempF", () => {
   });
 
   it("adds the full boost in calm full sun", () => {
-    expect(estimateSandTempF({ soilTempF: 100, solarWm2: 900, windSpeedMph: 0 })).toBe(150);
+    expect(estimateSandTempF({ soilTempF: 100, solarWm2: 1000, windSpeedMph: 0 })).toBe(150);
   });
 
   it("adds no boost at night (zero radiation)", () => {
@@ -15,13 +15,13 @@ describe("estimateSandTempF", () => {
   });
 
   it("scales the boost with partial sun", () => {
-    expect(estimateSandTempF({ soilTempF: 100, solarWm2: 450, windSpeedMph: 0 })).toBe(125);
+    expect(estimateSandTempF({ soilTempF: 100, solarWm2: 500, windSpeedMph: 0 })).toBe(125);
   });
 
   it("damps the boost in wind but keeps a floor", () => {
-    const calm = estimateSandTempF({ soilTempF: 100, solarWm2: 900, windSpeedMph: 0 })!;
-    const breezy = estimateSandTempF({ soilTempF: 100, solarWm2: 900, windSpeedMph: 15 })!;
-    const gale = estimateSandTempF({ soilTempF: 100, solarWm2: 900, windSpeedMph: 40 })!;
+    const calm = estimateSandTempF({ soilTempF: 100, solarWm2: 1000, windSpeedMph: 0 })!;
+    const breezy = estimateSandTempF({ soilTempF: 100, solarWm2: 1000, windSpeedMph: 15 })!;
+    const gale = estimateSandTempF({ soilTempF: 100, solarWm2: 1000, windSpeedMph: 40 })!;
     expect(breezy).toBeLessThan(calm);
     expect(gale).toBe(Math.round(100 + 50 * 0.6)); // wind floor, not zero
   });
