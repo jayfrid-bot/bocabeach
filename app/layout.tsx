@@ -36,6 +36,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
     <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+        {/* Cloudflare Web Analytics — privacy-friendly, cookieless page views. */}
+        <script
+          defer
+          src="https://static.cloudflareinsights.com/beacon.min.js"
+          data-cf-beacon='{"token": "32074e9abf544275a8851422ee2356b6"}'
+        />
       </head>
       <body className="min-h-screen text-slate-900 antialiased dark:text-slate-100">
         {children}
