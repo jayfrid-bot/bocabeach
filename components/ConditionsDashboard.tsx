@@ -4,7 +4,7 @@ import Link from "next/link";
 import useSWR from "swr";
 import type { ConditionsResponse } from "@/lib/types";
 import { bestBeachWindow, deriveMetrics } from "@/lib/score";
-import { beachDayVerdict, fmtDate, fmtTime, scoreColor } from "@/lib/format";
+import { beachDayVerdict, fmtDate, fmtTime, scoreColor, seaState } from "@/lib/format";
 import { Logo } from "@/components/Logo";
 import { ScoreGauge } from "@/components/ScoreGauge";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
@@ -234,7 +234,12 @@ export function ConditionsDashboard({
         <MetricCard
           icon="〰️"
           label="Sea state"
-          value={d.waveHeightFt != null ? `${d.waveHeightFt} ft` : "—"}
+          value={
+            d.waveHeightFt != null
+              ? `${d.waveHeightFt} ft · ${seaState(d.waveHeightFt).label}`
+              : "—"
+          }
+          sub={d.waveHeightFt != null ? seaState(d.waveHeightFt).note : undefined}
         />
         <MetricCard
           icon="🔆"

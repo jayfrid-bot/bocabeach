@@ -517,6 +517,34 @@ describe("computeHourlyScores", () => {
     expect(computeHourlyScores(snapshot({ ...niceBase, sun: SUN }))).toEqual([]);
   });
 
+  it("scores past hours with the seaweed read in effect then — later reads never rewrite them", () => {
+    // 10 AM ET read was high/65%; the 2 PM ET read (current) is moderate/30%.
+    // With "now" at 3:30 PM ET, morning hours must keep scoring against high.
+    const s = snapshot({
+      ...niceBase,
+      sun: SUN,
+      hourly: hourlyDay(),
+      sargassum: {
+        level: "moderate",
+        coveragePct: 30,
+        isMorning: false,
+        cams: [],
+        todayReads: [
+          { hour: 10, level: "high", coveragePct: 65 },
+          { hour: 14, level: "moderate", coveragePct: 30 },
+        ],
+      },
+    });
+    const now = Date.parse("2026-06-01T19:30:00.000Z"); // 3:30 PM ET
+    const scores = computeHourlyScores(s, now);
+    const at = (h: number) => scores.find((x) => nyHour(x.time) === h)!;
+    // Past morning hour: high seaweed cap (65) held; current hour: moderate (85 cap).
+    expect(at(11).score).toBeLessThan(at(16).score);
+    expect(at(11).score).toBeLessThanOrEqual(65);
+    // Early hours before the first read fall back to the day's first read (high).
+    expect(at(8).score).toBeLessThanOrEqual(65);
+  });
+
   it("bounds the forecast to daylight hours in the local timezone", () => {
     const hrs = computeHourlyScores(
       snapshot({ ...niceBase, city: { flags: ["green"] }, hourly: hourlyDay(), sun: SUN }),

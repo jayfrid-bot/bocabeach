@@ -325,13 +325,16 @@ export interface BusynessData {
  */
 export interface SargassumData {
   level: SargassumRisk;
-  /** 0-100 % coverage at the worst cam (morning-preferred); refines the score. */
+  /** 0-100 % coverage at the worst cam in the most recent capture. */
   coveragePct?: number;
   note?: string;
-  /** True when this is the early-morning, pre-beach-cleaning reading (most reliable). */
+  /** True when the most recent capture is from the early-morning window. */
   isMorning: boolean;
   capturedAtLocal?: string;
   cams: CamSeaweedReading[];
+  /** Today's actual reads in capture order — past hours score with the read
+   * in effect at that time, so later changes never rewrite earlier hours. */
+  todayReads?: { hour: number; level: SargassumRisk; coveragePct?: number }[];
   /** Typical seaweed by local hour, learned from the rolling cam history. */
   byHour?: SargassumByHour[];
   /** Worst seaweed per day, learned from the rolling cam history. */

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { HourlyMetrics } from "@/lib/types";
 import {
-  estimateSandTempF,
+  estimateSandRangeF,
   sandVerdict,
   SAND_SCALE_MIN_F,
   SAND_SCALE_MAX_F,
@@ -48,18 +48,22 @@ export function SandTempPanel({
   const rainBefore = (i: number) =>
     [i, i - 1, i - 2].reduce((a, j) => a + (hours[j]?.precipIn ?? 0), 0);
   const pts = hours
-    .map((h, i) => ({
-      t: new Date(h.time).getTime(),
-      time: h.time,
-      sand: estimateSandTempF({
+    .map((h, i) => {
+      const range = estimateSandRangeF({
         soilTempF: h.soilTempF,
         solarWm2: h.solarWm2,
         windSpeedMph: h.windSpeedMph,
         recentRainIn: rainBefore(i),
-      }),
-    }))
+      });
+      return {
+        t: new Date(h.time).getTime(),
+        time: h.time,
+        sand: range?.dunesF,
+        surf: range?.surfF,
+      };
+    })
     .filter(
-      (p): p is { t: number; time: string; sand: number } =>
+      (p): p is { t: number; time: string; sand: number; surf: number } =>
         p.sand != null && (t0 == null || tN == null || (p.t >= t0 && p.t <= tN)),
     );
 
@@ -111,8 +115,15 @@ export function SandTempPanel({
 
       <div className="mt-2 flex items-baseline gap-2">
         <span className="text-2xl font-semibold text-white">
-          {current ? `~${current.sand}°F` : "—"}
+          {current
+            ? current.surf !== current.sand
+              ? `~${current.surf}–${current.sand}°F`
+              : `~${current.sand}°F`
+            : "—"}
         </span>
+        {current && current.surf !== current.sand ? (
+          <span className="text-xs text-slate-500">water&rsquo;s edge → dunes</span>
+        ) : null}
         {verdict ? <span className="text-xs text-slate-400">{verdict.advice}</span> : null}
       </div>
 
@@ -185,9 +196,9 @@ export function SandTempPanel({
       </svg>
 
       <p className="mt-1 text-[10px] text-slate-600">
-        Estimated from modeled ground temp, sun strength, wind, and recent rain.
-        Dry loose sand near the dunes runs hottest; wet sand by the water stays
-        close to air temperature.
+        Estimated from modeled ground temp, sun strength, wind, and recent rain —
+        calibrated against on-the-beach IR thermometer readings. The curve tracks
+        the hotter dune-side sand; firmer sand near the water runs ~10°F cooler.
       </p>
     </div>
   );

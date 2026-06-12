@@ -1,6 +1,24 @@
+import { useEffect, useState } from "react";
 import type { CamView } from "@/lib/types";
 import { fmtTime } from "@/lib/format";
 import { RelativeTime } from "@/components/RelativeTime";
+
+/**
+ * Wall-clock "now", client-only: null on the server and for the first client
+ * render so the prerendered HTML and hydration agree. (Computing freshness from
+ * Date.now() during render was a real hydration mismatch — React #418 — once
+ * the statically generated page was a minute old.) Ticks each minute after
+ * mount, same contract as RelativeTime.
+ */
+function useNowMs(): number | null {
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    setNow(Date.now());
+    const id = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+  return now;
+}
 
 /**
  * Time of the still being shown: the source's exact capture time when published
@@ -65,8 +83,11 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
   //  - unverified         → "Snapshot" (no capture time at all, e.g. the
   //    most_recent_image.php cams send no Last-Modified) — we can't confirm it's
   //    current, so we must NOT claim it's live.
-  const ageMin = cam.capturedAt
-    ? (Date.now() - Date.parse(cam.capturedAt)) / 60000
+  // Freshness is judged against the client clock only (null until mounted), so
+  // the server renders the honest "unverified" state and hydration matches it.
+  const now = useNowMs();
+  const ageMin = now != null && cam.capturedAt
+    ? (now - Date.parse(cam.capturedAt)) / 60000
     : null;
   const verified = ageMin != null;
   const stale = verified && ageMin > 15;

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { summarizeSeaweed, type CamSeaweedFeed } from "@/lib/sources/sargassum";
 
 describe("summarizeSeaweed", () => {
-  it("takes the worst cam and prefers the morning (pre-tractor) reading", () => {
+  it("scores point-in-time: the latest capture wins, morning gets no extra weight", () => {
     const feed: CamSeaweedFeed = {
       morning: {
         capturedAtLocal: "2026-06-03T07:10:00-04:00",
@@ -13,14 +13,24 @@ describe("summarizeSeaweed", () => {
       },
       latest: {
         capturedAtLocal: "2026-06-03T16:00:00-04:00",
-        cams: [{ name: "South", level: "none" }],
+        cams: [{ name: "South", level: "none", note: "clean sand" }],
       },
     };
     const d = summarizeSeaweed(feed)!;
-    expect(d.level).toBe("moderate"); // worst of the morning cams
+    expect(d.level).toBe("none"); // the beach is clean NOW — that's the level
+    expect(d.isMorning).toBe(false);
+    expect(d.note).toBe("clean sand");
+  });
+
+  it("uses the morning group only when there is no latest capture at all", () => {
+    const d = summarizeSeaweed({
+      morning: {
+        capturedAtLocal: "2026-06-03T07:10:00-04:00",
+        cams: [{ name: "Inlet", level: "moderate" }],
+      },
+    })!;
+    expect(d.level).toBe("moderate");
     expect(d.isMorning).toBe(true);
-    expect(d.note).toBe("bands by the jetty");
-    expect(d.cams).toHaveLength(2);
   });
 
   it("surfaces the worst cam's coverage %, tie-breaking equal levels by coverage", () => {
@@ -45,47 +55,39 @@ describe("summarizeSeaweed", () => {
     expect(d.isMorning).toBe(false);
   });
 
-  it("with no morning read, holds the day's worst earlier read over a lighter latest", () => {
-    // The 2026-06-11 regression: cron skipped the morning window, the 10:32 read
-    // was high/65%, then a post-cleaning 14:08 read of moderate/30% became
-    // "latest" and erased the day's high. The level must hold the day-worst.
+  it("an earlier heavier read never outranks the latest capture", () => {
+    // Point-in-time semantics: the 14:08 moderate read IS the current level,
+    // even though the 10:32 read was high/65%.
     const d = summarizeSeaweed({
       latest: {
         capturedAtLocal: "2026-06-11T14:08-04:00",
         cams: [{ name: "Inlet", level: "moderate", coveragePct: 30, note: "brown seaweed line" }],
       },
       history: [
-        { t: "2026-06-10T20:10-04:00", hour: 20, seaweed: "high", cov: 70 }, // yesterday — ignored
         { t: "2026-06-11T10:32-04:00", hour: 10, seaweed: "high", cov: 65 },
         { t: "2026-06-11T14:08-04:00", hour: 14, seaweed: "moderate", cov: 30 },
       ],
     })!;
-    expect(d.level).toBe("high");
-    expect(d.coveragePct).toBe(65); // today's worst, not yesterday's 70
-    expect(d.note).toMatch(/worst read today/);
+    expect(d.level).toBe("moderate");
+    expect(d.coveragePct).toBe(30);
   });
 
-  it("does not let yesterday's reads leak into the day-worst fallback", () => {
+  it("exposes today's reads in capture order (yesterday's excluded) for per-hour scoring", () => {
     const d = summarizeSeaweed({
       latest: {
-        capturedAtLocal: "2026-06-11T09:00-04:00",
-        cams: [{ name: "A", level: "low", coveragePct: 10 }],
+        capturedAtLocal: "2026-06-11T14:08-04:00",
+        cams: [{ name: "Inlet", level: "moderate", coveragePct: 30 }],
       },
-      history: [{ t: "2026-06-10T10:00-04:00", hour: 10, seaweed: "high", cov: 80 }],
+      history: [
+        { t: "2026-06-10T20:10-04:00", hour: 20, seaweed: "high", cov: 70 }, // yesterday
+        { t: "2026-06-11T10:32-04:00", hour: 10, seaweed: "high", cov: 65 },
+        { t: "2026-06-11T14:08-04:00", hour: 14, seaweed: "moderate", cov: 30 },
+      ],
     })!;
-    expect(d.level).toBe("low");
-  });
-
-  it("ignores the day-worst fallback when a morning read exists", () => {
-    const d = summarizeSeaweed({
-      morning: {
-        capturedAtLocal: "2026-06-11T07:00-04:00",
-        cams: [{ name: "A", level: "low", coveragePct: 8 }],
-      },
-      history: [{ t: "2026-06-11T06:00-04:00", hour: 6, seaweed: "high", cov: 70 }],
-    })!;
-    expect(d.level).toBe("low"); // morning is authoritative by design
-    expect(d.isMorning).toBe(true);
+    expect(d.todayReads).toEqual([
+      { hour: 10, level: "high", coveragePct: 65 },
+      { hour: 14, level: "moderate", coveragePct: 30 },
+    ]);
   });
 
   it("returns null when no cam has a usable reading", () => {
