@@ -1,6 +1,6 @@
 # Vision accuracy report
 
-_291 labeled images compared._ Edit `labels.csv` (ground truth) and re-run `score_eval.py`.
+_300 labeled images compared._ Edit `labels.csv` (ground truth) and re-run `score_eval.py`.
 
 ### Seaweed  (n=5)
 
@@ -55,5 +55,5 @@ Confusion (rows = truth, cols = predicted):
 
 ### Seaweed exact-accuracy by time of day
 
-- day (7–19 ET): 2/247 (1%)
+- day (7–19 ET): 2/256 (1%)
 - low-light: 0/44 (0%)
