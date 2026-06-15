@@ -129,6 +129,34 @@ describe("scoring (Beach Day only — no surf)", () => {
     expect(at(95, undefined)).toBe("thunder"); // no probability -> fail safe
   });
 
+  it("observed live rain caps the score even when the forecast code is vetoed", () => {
+    // The 2026-06-15 bug: it was raining (nowcast) with lightning nearby, but the
+    // hour's code-95 was vetoed by the corroboration rule (precip prob 6%), so the
+    // score stayed 77. Observed nowcast rain must cap regardless of the forecast.
+    const base = deriveMetrics(snapshot({}));
+    const r = scoreBeachDay({
+      ...base,
+      weatherCode: 95,
+      precipProbability: 6, // would be vetoed by rainSeverity
+      nowcastRaining: true,
+    });
+    expect(r.score).toBeLessThanOrEqual(25);
+    expect(r.caps.join(" ")).toMatch(/raining right now/i);
+  });
+
+  it("nearby lightning bottoms the score as a get-out-of-the-water safety override", () => {
+    const base = deriveMetrics(snapshot({}));
+    const r = scoreBeachDay({ ...base, lightningWithin10mi: 61, lightningLastMinutesAgo: 4 });
+    expect(r.score).toBeLessThanOrEqual(10);
+    expect(r.caps.join(" ")).toMatch(/lightning within 10 miles/i);
+  });
+
+  it("does not cap for lightning when strikes are absent", () => {
+    const base = deriveMetrics(snapshot({}));
+    const r = scoreBeachDay({ ...base, lightningWithin10mi: 0 });
+    expect(r.caps.join(" ")).not.toMatch(/lightning/i);
+  });
+
   it("scores sand barefoot comfort: cool sand best, scorching sand drags the score", () => {
     const base = deriveMetrics(snapshot({}));
     const at = (f?: number) => scoreBeachDay({ ...base, sandTempF: f });
