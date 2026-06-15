@@ -35,11 +35,20 @@ function reasonsFor(d: Derived, result: ScoreResult): {
   const helping: Reason[] = [];
   const hurting: Reason[] = [];
   const by = new Map(result.subScores.map((s) => [s.key, s]));
+  // Sub-scores whose category is already explained by a hard cap — skip the
+  // duplicate sub-score reason so the user doesn't see the same thing twice.
+  const capCovers = new Set<string>();
+  for (const c of result.caps) {
+    const lc = c.toLowerCase();
+    if (/seaweed|sargassum/.test(lc)) capCovers.add("sargassum");
+    if (/thunder|storm|rain/.test(lc)) capCovers.add("sky");
+  }
   const push = (key: string, helpText: string, hurtText: string, hurtEmoji?: string, helpEmoji?: string) => {
     const s = by.get(key);
     if (!s || s.score == null) return;
     if (s.score >= HELP_AT && helpText) helping.push(r(helpEmoji ?? defaults[key].help, helpText));
-    else if (s.score < HURT_AT && hurtText) hurting.push(r(hurtEmoji ?? defaults[key].hurt, hurtText));
+    else if (s.score < HURT_AT && hurtText && !capCovers.has(key))
+      hurting.push(r(hurtEmoji ?? defaults[key].hurt, hurtText));
   };
   const defaults: Record<string, { help: string; hurt: string }> = {
     airTemp: { help: "🌡️", hurt: "🌡️" },

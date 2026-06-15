@@ -8,6 +8,7 @@ import { beachDayVerdict, fmtDate, fmtTime, scoreColor, seaState } from "@/lib/f
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ScoreGauge } from "@/components/ScoreGauge";
+import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { ScoreExplainer } from "@/components/ScoreExplainer";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { HourlyScoreGraph } from "@/components/HourlyScoreGraph";
@@ -182,6 +183,10 @@ export function ConditionsDashboard({
             </div>
           ) : null}
         </div>
+        <ScoreBreakdown result={active} />
+      </section>
+
+      <section className="mb-6">
         <ScoreExplainer derived={d} result={active} />
       </section>
 

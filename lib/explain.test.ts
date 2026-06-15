@@ -83,6 +83,29 @@ describe("explainScore", () => {
     expect(sand!.text).toMatch(/burn|shoes|wear/i);
   });
 
+  it("does not mention seaweed twice when a seaweed cap is active", () => {
+    // The 2026-06-15 dup: the cap said 'Heavy seaweed (sargassum) on the beach'
+    // AND the sub-score reason said 'Heavy seaweed mats along the shore (~65%)'.
+    // The cap should subsume — only one seaweed line.
+    const d: Derived = {
+      ...baseDerived,
+      sargassumLevel: "high",
+      sargassumCoveragePct: 65,
+    };
+    const r = explainScore(
+      d,
+      mkResult(
+        [sub("sargassum", "Seaweed (sargassum)", 20, 0.07, "High · ~65% covered")],
+        ["Heavy seaweed (sargassum) on the beach"],
+      ),
+    );
+    const seaweedHits = r.hurting.filter((x) =>
+      /seaweed|sargassum/i.test(x.text),
+    );
+    expect(seaweedHits).toHaveLength(1);
+    expect(seaweedHits[0].text).toMatch(/Heavy seaweed/);
+  });
+
   it("always returns a non-empty summary explaining the score model", () => {
     const r = explainScore(baseDerived, mkResult([]));
     expect(r.summary.length).toBeGreaterThan(30);
