@@ -45,6 +45,12 @@ export interface Derived {
   ripCurrentRisk: RipRisk;
   /** A severe NWS warning (hurricane/tropical storm/tsunami/high surf) is active. */
   severeAlert: boolean;
+  /** Live nowcast says it's precipitating RIGHT NOW (observed, beats the forecast). */
+  nowcastRaining?: boolean;
+  /** GOES GLM lightning strikes within 10 mi in the recent window (now-only). */
+  lightningWithin10mi?: number;
+  /** Minutes since the most recent strike in the scanned area (now-only). */
+  lightningLastMinutesAgo?: number;
 }
 
 /** Events that make the beach genuinely dangerous/closed — hard score cap. */
@@ -120,6 +126,10 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     noSwimAdvisory: !!c?.noSwimAdvisory,
     ripCurrentRisk: n?.ripCurrentRisk ?? "unknown",
     severeAlert: (n?.alerts ?? []).some((a) => SEVERE_ALERT.test(a.event)),
+    // Observed "now" signals — they override the forecast-based rain logic.
+    nowcastRaining: s.nowcast.data?.state === "raining",
+    lightningWithin10mi: s.lightning.data?.within10mi,
+    lightningLastMinutesAgo: s.lightning.data?.lastMinutesAgo,
   };
 }
 
@@ -511,13 +521,24 @@ function applyBeachCaps(
     score = Math.min(score, 15);
     caps.push("Severe weather warning in effect");
   }
-  // Rain is a hard ceiling on the whole day (not just the sky sub-score): an
-  // actively rainy/stormy hour is an unacceptable beach day regardless of how
-  // warm/calm it is otherwise.
+  // OBSERVED lightning (GOES GLM) within 10 mi in the recent scan window is a
+  // get-out-of-the-water emergency — the single most dangerous beach condition.
+  // This is observed data, so it bottoms the score regardless of the forecast.
+  if ((d.lightningWithin10mi ?? 0) > 0) {
+    score = Math.min(score, 10);
+    caps.push("Lightning within 10 miles — get out of the water");
+  }
+  // Rain is a hard ceiling on the whole day. We trust OBSERVATION over forecast:
+  // the live nowcast ("it's raining right now") overrides the forecast-code path,
+  // which can miss a real storm when the model's precip probability is low (the
+  // corroboration rule in rainSeverity would otherwise veto it).
   const rain = rainSeverity(d);
   if (rain === "thunder") {
     score = Math.min(score, 15);
     caps.push("Thunderstorm in the forecast");
+  } else if (d.nowcastRaining) {
+    score = Math.min(score, 25);
+    caps.push("Raining right now");
   } else if (rain === "rain") {
     score = Math.min(score, 25);
     caps.push("Rain in the forecast");

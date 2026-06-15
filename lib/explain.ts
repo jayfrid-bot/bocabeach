@@ -202,7 +202,9 @@ function capReasons(result: ScoreResult): Reason[] {
   return result.caps.map((c): Reason => {
     const lower = c.toLowerCase();
     if (lower.includes("seaweed") || lower.includes("sargassum")) return r("🪸", c);
+    if (lower.includes("lightning")) return r("⚡", c);
     if (lower.includes("thunder")) return r("⛈️", c);
+    if (lower.includes("raining")) return r("🌧️", c);
     if (lower.includes("rain")) return r("🌧️", c);
     if (lower.includes("flag") || lower.includes("closed")) return r("🚩", c);
     if (lower.includes("advisory") || lower.includes("no swim")) return r("🚫", c);
