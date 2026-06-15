@@ -72,7 +72,9 @@ export function SunArc({ sun, tz }: { sun: SunData; tz: string }) {
 
   return (
     <div className="mt-2">
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Sun's path across today">
+      {/* Decorative: the sunrise/solar-noon/sunset data is read out by the
+          accessible list in SunPanel, so hide this SVG from assistive tech. */}
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" aria-hidden="true">
         <defs>
           <radialGradient id="sunarc-glow" cx="0.5" cy="0.5" r="0.5">
             <stop offset="0%" stopColor="#fbbf24" stopOpacity="0.55" />
@@ -86,8 +88,8 @@ export function SunArc({ sun, tz }: { sun: SunData; tz: string }) {
 
         {/* sky under the arc + horizon */}
         <path d={`${arc} L${W - PX} ${HORIZON_Y} L${PX} ${HORIZON_Y} Z`} fill="url(#sunarc-sky)" />
-        <path d={arc} fill="none" stroke="#475569" strokeWidth="1.5" strokeDasharray="3 4" />
-        <line x1={8} y1={HORIZON_Y} x2={W - 8} y2={HORIZON_Y} stroke="#334155" strokeWidth="1.5" />
+        <path d={arc} fill="none" className="stroke-slate-300 dark:stroke-slate-700" strokeWidth="1.5" strokeDasharray="3 4" />
+        <line x1={8} y1={HORIZON_Y} x2={W - 8} y2={HORIZON_Y} className="stroke-slate-300 dark:stroke-slate-700" strokeWidth="1.5" />
 
         {/* solar noon tick */}
         <line x1={noon.x} y1={APEX_Y - 6} x2={noon.x} y2={APEX_Y + 2} stroke="#64748b" strokeWidth="1" />

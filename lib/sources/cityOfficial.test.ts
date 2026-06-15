@@ -29,6 +29,23 @@ describe("parseCityConditions", () => {
     expect(d.surfingRating).toBe("Poor");
   });
 
+  it("does not manufacture a red flag from same-sentence 'red tide' / 'red' adjectives", () => {
+    // The flag color must read like a posted list item, not an adjective.
+    for (const html of [
+      `<p>Flags: Green, but watch for red tide and jellyfish.</p>`,
+      `<p>Today's flag: Green, calm surf, no red tide reported.</p>`,
+      `<p>Flags flying: yellow, red drum running along the pier.</p>`,
+      `<p>Flags: yellow and purple, currents strong near Red Rock jetty.</p>`,
+    ]) {
+      expect(parseCityConditions(html).flags).not.toContain("red");
+    }
+    // ...but a genuinely posted red flag (and double-red) is still detected.
+    expect(parseCityConditions(`<p>Today's flags: Red (High).</p>`).flags).toContain("red");
+    expect(
+      parseCityConditions(`<p>Double red flag flying — water closed.</p>`).flags,
+    ).toContain("double-red");
+  });
+
   it("does not mistake 'Red Reef Beach' for a red flag", () => {
     const html = `
       <p>Flags flying: Yellow (Medium) and Purple (Sea Pest).</p>

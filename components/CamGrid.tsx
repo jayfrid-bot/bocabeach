@@ -58,7 +58,7 @@ function CamWeatherStrip({ cam }: { cam: CamView }) {
         (w.windGustMph != null ? ` · gusts ${w.windGustMph}` : "")
       : null;
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-700 dark:text-slate-300">
+    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-300">
       {w.airTempF != null ? (
         <span title="Air temperature">
           🌡️ {w.airTempF}°F
@@ -68,7 +68,7 @@ function CamWeatherStrip({ cam }: { cam: CamView }) {
         </span>
       ) : null}
       {wind ? <span title="Wind">💨 {wind}</span> : null}
-      {w.shortForecast ? <span className="text-slate-600 dark:text-slate-400">{w.shortForecast}</span> : null}
+      {w.shortForecast ? <span className="text-slate-400">{w.shortForecast}</span> : null}
     </div>
   );
 }
@@ -121,7 +121,7 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
       </div>
       <div className="p-3 sm:p-4">
         <div className="flex items-center justify-between gap-2">
-          <div className="text-base font-semibold text-slate-900 dark:text-white sm:text-lg">{cam.name}</div>
+          <div className="text-base font-semibold text-white sm:text-lg">{cam.name}</div>
           {stale ? (
             <span
               className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300"
@@ -142,7 +142,7 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
             </span>
           )}
         </div>
-        <div className="text-xs text-slate-600 dark:text-slate-400">{cam.provider}</div>
+        <div className="text-xs text-slate-300">{cam.provider}</div>
         <CamStamp cam={cam} tz={tz} />
         {stale ? (
           <div className="mt-1 text-[11px] text-amber-400/80">
@@ -174,8 +174,8 @@ function VideoCam({ cam }: { cam: CamView }) {
         />
       </div>
       <div className="p-3">
-        <div className="text-sm font-medium text-slate-900 dark:text-white">{cam.name}</div>
-        <div className="text-xs text-slate-600 dark:text-slate-400">{cam.provider}</div>
+        <div className="text-sm font-medium text-white">{cam.name}</div>
+        <div className="text-xs text-slate-300">{cam.provider}</div>
         <CamWeatherStrip cam={cam} />
       </div>
     </div>

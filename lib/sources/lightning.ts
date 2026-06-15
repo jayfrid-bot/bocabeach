@@ -1,5 +1,5 @@
 import type { LightningData, Location, Wrapped } from "@/lib/types";
-import { fetchedAtOf, bearingDeg, fetchWithTimeout, haversineMiles, nowIso, round } from "@/lib/util";
+import { fetchedAtOf, bearingDeg, fetchWithTimeout, haversineMiles, nowIso, oldestIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "NOAA GOES-19 GLM (lightning)";
 
@@ -63,7 +63,9 @@ export function summarizeStrikes(
 
   const has = feed.strikes.length > 0;
   return {
-    windowMinutes: feed.windowMinutes,
+    // Only emit windowMinutes when the feed actually carried it — don't pass
+    // undefined through (consumers fall back to a default).
+    ...(Number.isFinite(feed.windowMinutes) ? { windowMinutes: feed.windowMinutes } : {}),
     nearestMi: has ? round(nearestMi, 1) : undefined,
     nearestMinutesAgo: has ? minAgo(nearestEpoch) : undefined,
     nearestBearingDeg: has ? round(bearingDeg(lat, lon, nearestLat, nearestLon)) : undefined,
@@ -104,9 +106,16 @@ export async function fetchLightning(
     const feed = (await res.json()) as LightningFeed;
     if (!Array.isArray(feed?.strikes)) throw new Error("malformed lightning feed");
 
+    // The GitHub CDN's Date header is serve-time, not when the job generated the
+    // snapshot — report the older of the two so RelativeTime matches the card.
+    fetchedAt = oldestIso(feed.generatedAt, fetchedAtOf(res));
+
     const data = summarizeStrikes(feed, loc.lat, loc.lon, Date.now());
     // If the upstream snapshot is much older than its own window, flag it stale.
-    const stale = (data.dataAgeMinutes ?? 0) > feed.windowMinutes + 30;
+    // Skip the comparison when windowMinutes is absent so we don't test against NaN.
+    const stale =
+      Number.isFinite(feed.windowMinutes) &&
+      (data.dataAgeMinutes ?? 0) > feed.windowMinutes + 30;
     return {
       source: ATTRIBUTION,
       status: stale ? "stale" : "ok",

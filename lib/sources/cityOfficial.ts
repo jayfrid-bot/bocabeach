@@ -16,25 +16,55 @@ function htmlToText(html: string): string {
 }
 
 function detectFlags(text: string): FlagColor[] {
-  // Only inspect text within ~70 chars of the word "flag" so place names like
-  // "Red Reef Beach" in the hazards section aren't mistaken for a red flag.
+  // A posted flag color caps the Beach Day score (red -> 85, double-red -> 5),
+  // so we only trust assignment-like phrasings: either a color directly before
+  // "flag(s)", or colors listed in the clause a "flags" anchor introduces
+  // ("Today's flags: Yellow and Purple"). Within that clause we count a color
+  // only when it is "terminated" like a list item — directly followed (after an
+  // optional "(severity)" note) by a list separator, sentence punctuation, or
+  // the clause end. That is what stops the adjective "red" in "watch for red
+  // tide", "red drum", or "near Red Rock jetty" from manufacturing a false red
+  // flag, while still capturing real one- and multi-color postings. "Red Reef"
+  // is neutralized up front. Nothing matching => "unknown" (does not cap).
   const t = text.toLowerCase().replace(/red reef/g, "reef");
-  const windows: string[] = [];
-  const re = /flags?/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(t)) !== null) {
-    windows.push(t.slice(Math.max(0, m.index - 70), m.index + 70));
-  }
-  const ctx = windows.join(" | ");
 
-  const flags: FlagColor[] = [];
-  // Order matters: check double-red before red.
-  if (/double\s*red/.test(ctx)) flags.push("double-red");
-  if (/\bpurple\b/.test(ctx)) flags.push("purple");
-  if (!/double\s*red/.test(ctx) && /\bred\b/.test(ctx)) flags.push("red");
-  if (/\byellow\b/.test(ctx)) flags.push("yellow");
-  if (/\bgreen\b/.test(ctx)) flags.push("green");
-  return flags.length ? flags : ["unknown"];
+  // A color token, double-red first so "red" doesn't shadow it.
+  const COLOR = "(double\\s*red|red|yellow|green|purple)";
+
+  const found = new Set<FlagColor>();
+  const add = (raw: string) => {
+    const c = raw.replace(/\s+/g, "");
+    if (c === "doublered") found.add("double-red");
+    else found.add(c as FlagColor);
+  };
+
+  // Form 1: "<color> flag(s)" — color immediately before flag(s).
+  const beforeRe = new RegExp(`\\b${COLOR}\\s+flags?\\b`, "g");
+  let m: RegExpExecArray | null;
+  while ((m = beforeRe.exec(t)) !== null) add(m[1]);
+
+  // Form 2: a "flags" anchor introducing a color list — "flags: yellow and
+  // purple", "flags flying: ...", "today's flags are ...". We scan the flags
+  // sentence but only accept a color that is list-terminated (lookahead for a
+  // separator / punctuation / end), so an adjective like "red tide" later in the
+  // same sentence is ignored.
+  const listColor = new RegExp(
+    `\\b${COLOR}\\b(?:\\s*\\([^)]*\\))?(?=\\s*(?:[,;.&/]|and\\b|or\\b|$))`,
+    "g",
+  );
+  const anchorRe = /\bflags?\b(?:\s+(?:are|is|flying|posted|currently|today))?\s*[:\-–—]?\s*([^.;\n]*)/g;
+  while ((m = anchorRe.exec(t)) !== null) {
+    const clause = m[1] ?? "";
+    let c: RegExpExecArray | null;
+    listColor.lastIndex = 0;
+    while ((c = listColor.exec(clause)) !== null) add(c[1]);
+  }
+
+  // If a double-red was posted, drop a bare "red" so we don't emit both for the
+  // same "double red flag" phrasing.
+  if (found.has("double-red")) found.delete("red");
+
+  return found.size ? [...found] : ["unknown"];
 }
 
 function ratingFor(text: string, activity: string): string | undefined {

@@ -26,14 +26,11 @@ export function AirQualityMeter({ air }: { air: Wrapped<AirQualityData> }) {
           <span>Air quality (US AQI)</span>
         </div>
         <div className="text-right leading-none">
-          <span
-            className="text-2xl font-bold sm:text-3xl"
-            style={{ color: band?.color ?? "#94a3b8" }}
-          >
+          <span className="text-2xl font-bold text-slate-900 dark:text-white sm:text-3xl">
             {known ? aqi : "—"}
           </span>
           {band ? (
-            <span className="ml-2 text-xs font-medium" style={{ color: band.color }}>
+            <span className="ml-2 text-xs font-medium text-slate-900 dark:text-white">
               {band.label}
             </span>
           ) : null}

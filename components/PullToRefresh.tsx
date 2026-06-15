@@ -28,9 +28,19 @@ export function PullToRefresh({
   const pulling = useRef(false);
   const [pull, setPull] = useState(0); // 0..MAX_PULL_PX visual offset
   const [refreshing, setRefreshing] = useState(false);
+  // Mirror the live pull distance so onTouchEnd can read it without the effect
+  // re-subscribing every frame — listeners are wired up once on mount.
+  const pullRef = useRef(0);
+  pullRef.current = pull;
+  // True once the user has interacted, so the first-load hint fades away.
+  const [hinted, setHinted] = useState(false);
+  // Only show the discoverability hint on touch-capable, first-load clients.
+  const [showHint, setShowHint] = useState(false);
 
   useEffect(() => {
     const onTouchStart = (e: TouchEvent) => {
+      // First touch anywhere retires the discoverability hint.
+      setHinted(true);
       // Only engage when we're at the very top — otherwise it's a normal scroll.
       if (window.scrollY > 0) return;
       // Don't fight other gestures (multi-touch zoom/swipe).
@@ -68,7 +78,8 @@ export function PullToRefresh({
       }
       pulling.current = false;
       startY.current = null;
-      const shouldFire = pull >= TRIGGER_PX;
+      // Read the live pull from the ref, not a closed-over state value.
+      const shouldFire = pullRef.current >= TRIGGER_PX;
       if (shouldFire) {
         setRefreshing(true);
         setPull(TRIGGER_PX); // hold the indicator in place during the spinner
@@ -95,13 +106,52 @@ export function PullToRefresh({
       window.removeEventListener("touchend", onTouchEnd);
       window.removeEventListener("touchcancel", onTouchEnd);
     };
-  }, [onRefresh, pull, refreshing]);
+  }, [onRefresh, refreshing]);
+
+  // Arm the first-load hint only on coarse-pointer (touch) clients. Runs once
+  // after mount so server and client markup match (the hint never renders SSR).
+  useEffect(() => {
+    const coarse =
+      typeof window !== "undefined" &&
+      (window.matchMedia?.("(pointer: coarse)").matches ||
+        "ontouchstart" in window ||
+        navigator.maxTouchPoints > 0);
+    if (coarse) setShowHint(true);
+  }, []);
 
   const progress = Math.min(1, pull / TRIGGER_PX);
   const visible = pull > 0 || refreshing;
+  // The hint shows until the first interaction, and yields the moment a real
+  // pull begins so the two affordances never overlap.
+  const hintVisible = showHint && !hinted && !visible;
 
   return (
     <>
+      {/* Faint first-load affordance so the pull gesture is discoverable on
+          touch devices. Fades out for good after the first interaction. */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-x-0 top-0 z-40 flex justify-center"
+        style={{
+          opacity: hintVisible ? 1 : 0,
+          transform: `translateY(${hintVisible ? 0 : -6}px)`,
+          transition: "opacity 500ms ease, transform 500ms ease",
+        }}
+      >
+        <div className="mt-3 flex items-center gap-1.5 rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-slate-500 shadow-sm ring-1 ring-slate-900/5 backdrop-blur dark:bg-slate-900/70 dark:text-slate-400 dark:ring-white/10">
+          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden>
+            <path
+              d="M12 4v14M6 14l6 6 6-6"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          Pull to refresh
+        </div>
+      </div>
       {/* Indicator floats above the page; the page content doesn't shift. */}
       <div
         aria-hidden={!visible}

@@ -25,7 +25,11 @@ export function SafetyBanner({
   const advisory = wq?.advisory ?? false;
   const lt = lightning?.data;
   // Lightning within ~10 mi during the scanned window → get out of the water.
-  const lightningDanger = (lt?.within10mi ?? 0) > 0;
+  // Gate on a fresh "ok" snapshot so a stale feed never shows the red block.
+  const lightningDanger =
+    (lt?.within10mi ?? 0) > 0 &&
+    lightning?.status === "ok" &&
+    (lt?.lastMinutesAgo == null || lt.lastMinutesAgo <= 30);
   const noSwim = data?.noSwimAdvisory;
   const rip = nws?.data?.ripCurrentRisk ?? "unknown";
   const alerts = nws?.data?.alerts ?? [];
@@ -37,7 +41,7 @@ export function SafetyBanner({
     !!noSwim ||
     rip === "high" ||
     alerts.length > 0 ||
-    flags.some((f) => ["red", "double-red", "purple"].includes(f));
+    flags.some((f) => ["red", "double-red"].includes(f));
 
   // Nothing worth surfacing in the safety header. Marine life and posted
   // hazards now live in their own LifeguardReport card lower on the page —
@@ -53,7 +57,13 @@ export function SafetyBanner({
     return null;
   }
 
-  const RIP_COLOR = { high: "#fb7185", moderate: "#fbbf24", low: "#34d399" } as const;
+  // Theme-aware rip-risk text colors. The 400-level low/moderate tints are
+  // invisible on the light amber card, so use darker shades in light mode.
+  const RIP_TEXT = {
+    high: "text-rose-700 dark:text-rose-300",
+    moderate: "text-amber-700 dark:text-amber-300",
+    low: "text-emerald-700 dark:text-emerald-300",
+  } as const;
 
   // Sites driving the advisory + the most recent sample date among them.
   const badSites = (wq?.sites ?? []).filter((s) => s.rating === "poor");
@@ -71,11 +81,11 @@ export function SafetyBanner({
     >
       {advisory ? (
         <div className="mb-3 rounded-xl bg-rose-500/15 p-3 ring-1 ring-rose-500/40">
-          <div className="flex items-center gap-2 text-sm font-semibold text-rose-200">
+          <div className="flex items-center gap-2 text-sm font-semibold text-rose-800 dark:text-rose-200">
             <span aria-hidden>🧫</span>
             <span>Water quality advisory — swimming not recommended</span>
           </div>
-          <div className="mt-1 text-xs text-rose-100/80">
+          <div className="mt-1 text-xs text-rose-700/90 dark:text-rose-100/80">
             High enterococci bacteria
             {badSites.length ? ` at ${badSites.map((s) => s.name).join(", ")}` : ""}.
             {sampledAt ? ` Sampled ${fmtDate(sampledAt, "UTC")}.` : ""}{" "}
@@ -86,11 +96,11 @@ export function SafetyBanner({
 
       {noSwim ? (
         <div className="mb-3 rounded-xl bg-rose-500/15 p-3 ring-1 ring-rose-500/40">
-          <div className="flex items-center gap-2 text-sm font-semibold text-rose-200">
+          <div className="flex items-center gap-2 text-sm font-semibold text-rose-800 dark:text-rose-200">
             <span aria-hidden>🚫</span>
             <span>{noSwim.title}</span>
           </div>
-          <div className="mt-1 text-xs text-rose-100/80">
+          <div className="mt-1 text-xs text-rose-700/90 dark:text-rose-100/80">
             Active City of Boca Raton advisory.{" "}
             <a
               href={noSwim.url}
@@ -106,11 +116,11 @@ export function SafetyBanner({
 
       {lightningDanger ? (
         <div className="mb-3 rounded-xl bg-rose-500/15 p-3 ring-1 ring-rose-500/40">
-          <div className="flex items-center gap-2 text-sm font-semibold text-rose-200">
+          <div className="flex items-center gap-2 text-sm font-semibold text-rose-800 dark:text-rose-200">
             <span aria-hidden>⛈️</span>
             <span>Lightning nearby — get out of the water and seek shelter</span>
           </div>
-          <div className="mt-1 text-xs text-rose-100/80">
+          <div className="mt-1 text-xs text-rose-700/90 dark:text-rose-100/80">
             {lt?.within10mi} strike{(lt?.within10mi ?? 0) === 1 ? "" : "s"} within 10
             mi in the last {lt?.windowMinutes ?? 30} min
             {lt?.nearestMi != null
@@ -133,8 +143,7 @@ export function SafetyBanner({
         >
           {rip !== "unknown" ? (
             <div
-              className="flex items-center gap-2 text-sm font-semibold"
-              style={{ color: RIP_COLOR[rip] }}
+              className={`flex items-center gap-2 text-sm font-semibold ${RIP_TEXT[rip]}`}
             >
               <span aria-hidden>🌊</span>
               <span>Rip current risk: {rip.toUpperCase()}</span>

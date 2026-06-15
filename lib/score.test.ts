@@ -4,6 +4,7 @@ import {
   computeHourlyScores,
   computeScore,
   deriveMetrics,
+  median,
   rainSeverity,
   scoreBeachDay,
 } from "@/lib/score";
@@ -13,6 +14,7 @@ import type {
   BusynessData,
   CityOfficialData,
   ConditionsSnapshot,
+  FlagColor,
   ForecastDay,
   HourlyMetrics,
   HourlyScore,
@@ -25,6 +27,7 @@ import type {
   SargassumRisk,
   SunData,
   TideData,
+  TrafficData,
   WaterQualityData,
   WeatherData,
   Wrapped,
@@ -51,7 +54,15 @@ function snapshot(over: {
   busyness?: BusynessData | null;
   sun?: SunData | null;
   hourly?: HourlyMetrics[] | null;
+  nowcast?: NowcastData | null;
+  /** Pass a pre-wrapped lightning result to exercise the freshness gate
+   * (status + lastMinutesAgo); plain data wraps to status "ok". */
+  lightning?: LightningData | Wrapped<LightningData> | null;
 }): ConditionsSnapshot {
+  const lightning =
+    over.lightning && "status" in over.lightning
+      ? (over.lightning as Wrapped<LightningData>)
+      : wrap<LightningData>((over.lightning as LightningData | null) ?? null);
   return {
     location: {
       slug: "boca-raton",
@@ -68,12 +79,13 @@ function snapshot(over: {
     marine: wrap(over.marine ?? null),
     cityOfficial: wrap(over.city ?? null),
     waterQuality: wrap(over.water ?? null),
-    nowcast: wrap<NowcastData>(null),
+    nowcast: wrap(over.nowcast ?? null),
     nws: wrap(over.nws ?? null),
+    traffic: wrap<TrafficData>(null),
     airQuality: wrap<AirQualityData>(null),
     metno: wrap<MetnoCurrent>(null),
     gfs: wrap<MetnoCurrent>(null),
-    lightning: wrap<LightningData>(null),
+    lightning,
     sargassum: wrap(over.sargassum ?? null),
     busyness: wrap(over.busyness ?? null),
     forecast: wrap<ForecastDay[]>(null),
@@ -140,8 +152,30 @@ describe("scoring (Beach Day only — no surf)", () => {
       precipProbability: 6, // would be vetoed by rainSeverity
       nowcastRaining: true,
     });
-    expect(r.score).toBeLessThanOrEqual(25);
-    expect(r.caps.join(" ")).toMatch(/raining right now/i);
+    // A vetoed code-95 (thunderstorm) IS a storm signal, so observed rain
+    // alongside it upgrades to the tougher thunder tier (<=15), not plain rain.
+    expect(r.score).toBeLessThanOrEqual(15);
+    expect(r.caps.join(" ")).toMatch(/thunder|raining/i);
+  });
+
+  it("a thunder signal alongside observed rain caps to 15, not 25", () => {
+    // Use the nice base so a real sub-score exists (rawScore well above any cap),
+    // isolating the difference to the cap tier itself.
+    const base = deriveMetrics(NICE);
+    // Plain observed rain, no storm corroboration -> the 25 rain ceiling.
+    const plain = scoreBeachDay({ ...base, nowcastRaining: true });
+    expect(plain.score).toBeLessThanOrEqual(25);
+    expect(plain.score).toBeGreaterThan(15);
+    expect(plain.caps.join(" ")).toMatch(/raining right now/i);
+    expect(plain.caps.join(" ")).not.toMatch(/thunder/i);
+    // Observed rain + a corroborating storm signal (text) -> the tougher 15 cap.
+    const stormy = scoreBeachDay({
+      ...base,
+      nowcastRaining: true,
+      shortForecast: "Thunderstorm",
+    });
+    expect(stormy.score).toBeLessThanOrEqual(15);
+    expect(stormy.caps.join(" ")).toMatch(/thunder/i);
   });
 
   it("nearby lightning bottoms the score as a get-out-of-the-water safety override", () => {
@@ -155,6 +189,47 @@ describe("scoring (Beach Day only — no surf)", () => {
     const base = deriveMetrics(snapshot({}));
     const r = scoreBeachDay({ ...base, lightningWithin10mi: 0 });
     expect(r.caps.join(" ")).not.toMatch(/lightning/i);
+  });
+
+  it("ignores stale lightning (errored feed or last strike > 30 min ago) but caps on a fresh strike", () => {
+    const niceBase = {
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
+      city: { flags: ["green"] as FlagColor[] },
+      water: { overall: "good" as const, advisory: false, sites: [] },
+    };
+    const ld = (over: Partial<LightningData>): LightningData => ({
+      windowMinutes: 30,
+      within10mi: 5,
+      within25mi: 5,
+      within50mi: 5,
+      totalInArea: 5,
+      ...over,
+    });
+    // Feed errored (status !== "ok") even though strikes are present -> no cap.
+    const errored = scoreBeachDay(
+      deriveMetrics(
+        snapshot({
+          ...niceBase,
+          lightning: { ...wrap(ld({ lastMinutesAgo: 4 })), status: "error" },
+        }),
+      ),
+    );
+    expect(errored.caps.join(" ")).not.toMatch(/lightning/i);
+    expect(errored.score).toBeGreaterThan(40);
+    // Feed OK but the most recent strike is older than 30 min -> stale, no cap.
+    const stale = scoreBeachDay(
+      deriveMetrics(snapshot({ ...niceBase, lightning: ld({ lastMinutesAgo: 45 }) })),
+    );
+    expect(stale.caps.join(" ")).not.toMatch(/lightning/i);
+    expect(stale.score).toBeGreaterThan(40);
+    // Feed OK and a strike within the last 30 min -> get-out-of-the-water cap.
+    const fresh = scoreBeachDay(
+      deriveMetrics(snapshot({ ...niceBase, lightning: ld({ lastMinutesAgo: 4 }) })),
+    );
+    expect(fresh.score).toBeLessThanOrEqual(10);
+    expect(fresh.caps.join(" ")).toMatch(/lightning within 10 miles/i);
   });
 
   it("scores sand barefoot comfort: cool sand best, scorching sand drags the score", () => {
@@ -388,6 +463,63 @@ describe("scoring (Beach Day only — no surf)", () => {
     expect(r.caps.join(" ")).toMatch(/severe weather/i);
   });
 
+  it("caps the score to <= 15 for each life-threatening *-Warning event", () => {
+    const withWarning = (event: string) =>
+      scoreBeachDay(
+        deriveMetrics(
+          snapshot({
+            buoy: NICE.buoy.data,
+            weather: NICE.weather.data,
+            marine: NICE.marine.data,
+            city: { flags: ["green"] },
+            water: { overall: "good", advisory: false, sites: [] },
+            // severity "Minor" so the cap rides on the event NAME, not the tier.
+            nws: { alerts: [{ event, severity: "Minor" }], ripCurrentRisk: "unknown" },
+          }),
+        ),
+      );
+    for (const event of ["Tornado Warning", "Flash Flood Warning", "Coastal Flood Warning"]) {
+      const r = withWarning(event);
+      expect(r.score).toBeLessThanOrEqual(15);
+      expect(r.caps.join(" ")).toMatch(/severe weather/i);
+    }
+  });
+
+  it("caps the score at 92 under a MODERATE NWS rip-current risk", () => {
+    const snap = snapshot({
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
+      city: { flags: ["green"] },
+      water: { overall: "good", advisory: false, sites: [] },
+      nws: { alerts: [], ripCurrentRisk: "moderate" },
+    });
+    const r = scoreBeachDay(deriveMetrics(snap));
+    expect(r.score).toBeLessThanOrEqual(92);
+    expect(r.score).toBeGreaterThan(40); // still a good beach day
+    expect(r.caps.join(" ")).toContain("Moderate rip current risk (NWS)");
+  });
+
+  it("soft-caps the score at 85 under a high-surf / coastal-flood ADVISORY", () => {
+    const snap = snapshot({
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
+      city: { flags: ["green"] },
+      water: { overall: "good", advisory: false, sites: [] },
+      // ADVISORY tier (not a *-Warning): a soft swim cap, not a day-killer.
+      nws: { alerts: [{ event: "Coastal Flood Advisory", severity: "Moderate" }], ripCurrentRisk: "unknown" },
+    });
+    const r = scoreBeachDay(deriveMetrics(snap));
+    expect(r.score).toBeLessThanOrEqual(85);
+    expect(r.score).toBeGreaterThan(40);
+    expect(r.caps.join(" ")).toContain(
+      "High surf or coastal-flood advisory — swimming discouraged",
+    );
+    // An advisory is NOT a severe-warning closure.
+    expect(r.caps.join(" ")).not.toMatch(/severe weather/i);
+  });
+
   it("scores wind as a band: 5-13 mph ideal, calm and gusty both demerit", () => {
     const windSub = (mph: number) =>
       scoreBeachDay(deriveMetrics(snapshot({ weather: { windSpeedMph: mph } })))
@@ -439,6 +571,17 @@ describe("scoring (Beach Day only — no surf)", () => {
     // Only one sub-score available, but it should still produce a valid number.
     expect(beachDay.score).toBeGreaterThanOrEqual(0);
     expect(beachDay.subScores.some((s) => s.score == null)).toBe(true);
+  });
+
+  it("flags a total data outage with dataAvailable=false instead of a confident 0", () => {
+    // Empty snapshot: every source is null, so no sub-score is available.
+    const out = computeScore(snapshot({}));
+    expect(out.subScores.every((s) => s.score == null)).toBe(true);
+    expect(out.dataAvailable).toBe(false);
+    expect(out.score).toBe(0); // 0 here means "unknown", not "confidently bad"
+    expect(out.caps).toHaveLength(0); // nothing to cap when there's no data
+    // A normal score keeps dataAvailable truthy (omitted or true).
+    expect(computeScore(NICE).dataAvailable).not.toBe(false);
   });
 
   it("hard-caps the live score to Poor when it's actively raining", () => {
@@ -513,6 +656,19 @@ describe("rainSeverity", () => {
 
   it("prefers the WMO code over the text when both are present", () => {
     expect(sev({ weatherCode: 0, shortForecast: "Rain" })).toBe("none");
+  });
+});
+
+describe("median", () => {
+  it("rounds an even-count midpoint to a whole number (no .5 leak)", () => {
+    // (70 + 71) / 2 = 70.5 — must round to 71, not surface a fractional metric.
+    expect(median(70, 71)).toBe(71);
+  });
+
+  it("takes the middle value for an odd count and ignores non-finite inputs", () => {
+    expect(median(70, 72, 74)).toBe(72);
+    expect(median(undefined, 80)).toBe(80); // single voice -> that value
+    expect(median(undefined, undefined)).toBeUndefined(); // no voices -> undefined
   });
 });
 
@@ -636,6 +792,63 @@ describe("computeHourlyScores", () => {
     );
     expect(hrs.length).toBeGreaterThan(0);
     expect(hrs.every((h) => h.score <= 65)).toBe(true);
+  });
+
+  it("copies observed lightning/rain into the CURRENT-hour bucket only", () => {
+    // now = 11 AM EDT (inside the 15:00Z bucket) — a daylight hour.
+    const now = Date.parse("2026-06-01T15:00:00.000Z");
+    const s = snapshot({
+      ...niceBase,
+      city: { flags: ["green"] },
+      hourly: hourlyDay(),
+      sun: SUN,
+      // Observed "now" signals: it's raining and lightning is fresh & nearby.
+      nowcast: { state: "raining", text: "Raining now" },
+      lightning: {
+        windowMinutes: 30,
+        within10mi: 7,
+        within25mi: 7,
+        within50mi: 7,
+        totalInArea: 7,
+        lastMinutesAgo: 3,
+      },
+    });
+    const hrs = computeHourlyScores(s, now);
+    const at = (utcHour: number) => hrs.find((h) => new Date(h.time).getUTCHours() === utcHour)!;
+    // The current hour (15:00Z) inherits the observed signals -> get-out cap.
+    expect(at(15).score).toBeLessThanOrEqual(10);
+    // A later, forecast-only hour (16:00Z) is clear and uncapped by those signals.
+    expect(at(16).score).toBeGreaterThan(25);
+    // (The hourly `raining` flag tracks the forecast code, not the nowcast, so
+    // both hours read clear there — the scoping shows up purely in the score.)
+    expect(at(16).raining).toBe(false);
+  });
+
+  it("scopes 'now' signals to the bucket that CONTAINS now, not the nearest-start one", () => {
+    // now = 15:50Z sits inside the 15:00Z bucket, but is only 10 min from the
+    // 16:00Z bucket's start vs 50 min from 15:00Z's. A nearest-START selector
+    // would wrongly tag 16:00Z as current; containment must pick 15:00Z.
+    const now = Date.parse("2026-06-01T15:50:00.000Z");
+    const s = snapshot({
+      ...niceBase,
+      city: { flags: ["green"] },
+      hourly: hourlyDay(),
+      sun: SUN,
+      lightning: {
+        windowMinutes: 30,
+        within10mi: 7,
+        within25mi: 7,
+        within50mi: 7,
+        totalInArea: 7,
+        lastMinutesAgo: 3,
+      },
+    });
+    const hrs = computeHourlyScores(s, now);
+    const at = (utcHour: number) => hrs.find((h) => new Date(h.time).getUTCHours() === utcHour)!;
+    // The CONTAINING bucket (15:00Z) takes the lightning cap...
+    expect(at(15).score).toBeLessThanOrEqual(10);
+    // ...and the nearer-by-start bucket (16:00Z) does not.
+    expect(at(16).score).toBeGreaterThan(25);
   });
 
   it("caps a stormy hour to ~15 and flags it as raining", () => {

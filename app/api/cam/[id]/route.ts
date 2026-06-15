@@ -27,7 +27,10 @@ async function resolveImageUrl(id: string): Promise<string | null> {
 }
 
 /**
- * Proxy a configured cam's live snapshot JPEG, same-origin over https.
+ * Proxy a configured cam's live snapshot JPEG. The browser only ever sees a
+ * same-origin response; the upstream hop is https where the host supports it,
+ * but a couple of cam hosts (bocasurfcam.com, lakebocacam.com) are http-only,
+ * so the guarantee here is same-origin, not https end-to-end.
  * Only ids present in the CAM_SOURCES allowlist are fetchable (no SSRF), and
  * we re-encode nothing — just stream the upstream image bytes through.
  */
@@ -63,6 +66,11 @@ export async function GET(
       },
     });
   } catch (e) {
-    return NextResponse.json({ error: String(e) }, { status: 502 });
+    // Keep the detail server-side; don't leak upstream URLs/errors to the client.
+    console.error(`cam ${id} proxy failed:`, e);
+    return NextResponse.json(
+      { error: "Upstream cam fetch failed" },
+      { status: 502 },
+    );
   }
 }

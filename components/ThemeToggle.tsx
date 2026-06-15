@@ -7,6 +7,19 @@ const systemPrefersDark = () =>
 const resolvedIsDark = () =>
   document.documentElement.classList.contains("dark");
 
+// Keep the PWA chrome (<meta name="theme-color">) in sync with the RESOLVED
+// theme — the pre-paint script in layout.tsx seeds it; we re-sync on every
+// toggle / device change so a manual override doesn't desync from the OS.
+const syncThemeColor = (dark: boolean) => {
+  let m = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (!m) {
+    m = document.createElement("meta");
+    m.name = "theme-color";
+    document.head.appendChild(m);
+  }
+  m.setAttribute("content", dark ? "#020617" : "#f3f7fb");
+};
+
 /**
  * Theme toggle. Shows what clicking will switch you TO (a sun when the page is
  * dark, a moon when it's light) — the standard toggle affordance.
@@ -29,6 +42,7 @@ export function ThemeToggle() {
       if (!localStorage.getItem("theme")) {
         document.documentElement.classList.toggle("dark", mq.matches);
         setIsDark(mq.matches);
+        syncThemeColor(mq.matches);
       }
     };
     mq.addEventListener("change", onChange);
@@ -39,6 +53,7 @@ export function ThemeToggle() {
     const next = !resolvedIsDark();
     document.documentElement.classList.toggle("dark", next);
     setIsDark(next);
+    syncThemeColor(next);
     // Match the device → back to auto-follow; otherwise pin the explicit choice.
     if (next === systemPrefersDark()) localStorage.removeItem("theme");
     else localStorage.setItem("theme", next ? "dark" : "light");

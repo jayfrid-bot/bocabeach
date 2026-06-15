@@ -97,6 +97,17 @@ export function SandTempPanel({
   // Label ~5 hours across the x-axis (always the last).
   const step = Math.max(1, Math.ceil(pts.length / 5));
 
+  // Decimate the per-point temperature labels like the x-axis (else they
+  // collide). Beyond the evenly-spaced ticks, always keep the peak, the
+  // trough, and the "now" bucket so the readable numbers are the useful ones.
+  let maxI = 0;
+  let minI = 0;
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i].sand > pts[maxI].sand) maxI = i;
+    if (pts[i].sand < pts[minI].sand) minI = i;
+  }
+  const nowI = current ? pts.indexOf(current) : -1;
+
   return (
     <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
       <div className="flex items-center justify-between">
@@ -144,7 +155,8 @@ export function SandTempPanel({
         ) : null}
       </div>
       <div className="mt-1 flex justify-between text-[10px] text-slate-500">
-        <span>barefoot fine · 80°F</span>
+        <span>barefoot fine · &lt;95°F</span>
+        <span>warm · 95°F</span>
         <span>sandals · 115°F</span>
         <span>burn risk · 130°F+</span>
       </div>
@@ -180,18 +192,28 @@ export function SandTempPanel({
           const x = xFor(p.t);
           const anchor: "start" | "middle" | "end" =
             i === 0 ? "start" : i === pts.length - 1 ? "end" : "middle";
+          // Thin the numeric labels (same cadence as the x-axis) but always
+          // keep the peak, the trough, and the "now" bucket. Dots stay.
+          const showLabel =
+            i % step === 0 ||
+            i === pts.length - 1 ||
+            i === maxI ||
+            i === minI ||
+            i === nowI;
           return (
             <g key={p.t}>
-              <text
-                x={x}
-                y={yFor(p.sand) - 6}
-                textAnchor={anchor}
-                className="fill-slate-600 dark:fill-slate-300"
-                fontSize="7.5"
-                fontWeight="600"
-              >
-                {p.sand}°
-              </text>
+              {showLabel ? (
+                <text
+                  x={x}
+                  y={yFor(p.sand) - 6}
+                  textAnchor={anchor}
+                  className="fill-slate-600 dark:fill-slate-300"
+                  fontSize="7.5"
+                  fontWeight="600"
+                >
+                  {p.sand}°
+                </text>
+              ) : null}
               <circle cx={x} cy={yFor(p.sand)} r="2.6" fill={sandVerdict(p.sand).color} />
             </g>
           );
@@ -213,7 +235,7 @@ export function SandTempPanel({
               x={xFor(p.t)}
               y={H - 8}
               textAnchor="middle"
-              fill="#64748b"
+              className="fill-slate-500 dark:fill-slate-400"
               fontSize="9"
             >
               {fmtTime(p.time, tz).replace(":00 ", "")}

@@ -50,7 +50,13 @@ export function LevelBarChart({
       <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-3 ring-1 ring-slate-900/10 dark:ring-white/10">
         <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label={ariaLabel}>
           {[axisLow, axisHigh].map((cap, i) => (
-            <text key={cap + i} x={4} y={i === 0 ? BASE_Y : PT + 8} fill="#475569" fontSize="9">
+            <text
+              key={cap + i}
+              x={4}
+              y={i === 0 ? BASE_Y : PT + 8}
+              className="fill-slate-500 dark:fill-slate-400"
+              fontSize="9"
+            >
               {cap}
             </text>
           ))}
@@ -65,7 +71,10 @@ export function LevelBarChart({
                   width={barW}
                   height={h}
                   rx="2"
-                  fill={b.muted ? "#334155" : b.color}
+                  // Real bars carry a data-driven categorical colour; the muted
+                  // "no reading yet" stub uses a theme-aware slate instead.
+                  fill={b.muted ? undefined : b.color}
+                  className={b.muted ? "fill-slate-400 dark:fill-slate-600" : undefined}
                   opacity={b.muted ? 0.35 : b.highlight ? 1 : 0.85}
                 >
                   <title>{b.tooltip}</title>
@@ -108,6 +117,14 @@ export function LevelBarChart({
             );
           })}
         </svg>
+        {/* The bars only expose their values via SVG hover <title>s, which screen
+            readers skip; mirror them in an sr-only list so each hour/day-to-level
+            reading is actually announced. */}
+        <ul className="sr-only" aria-label={`${ariaLabel} — reading per bar`}>
+          {bars.map((b) => (
+            <li key={b.key}>{b.tooltip}</li>
+          ))}
+        </ul>
       </div>
     </section>
   );

@@ -1,3 +1,6 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import type {
   BusynessByDay,
   BusynessByHour,
@@ -108,7 +111,11 @@ export function BusynessByHourChart({
   sunriseHour,
   sunsetHour,
 }: { byHour: BusynessByHour[] } & HourProps) {
-  const now = nowHour(tz);
+  // The "now" highlight depends on the wall clock, so computing it during render
+  // makes the server HTML and the hydrating client disagree. Defer to post-mount
+  // (null = no highlight) so the first server + client renders are identical.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => setNow(nowHour(tz)), [tz]);
   const hours = spanDaylight(byHour, sunriseHour, sunsetHour);
   if (!hours.length) return null;
   const bars: LevelBar[] = hours.map((b) => {
@@ -150,7 +157,10 @@ export function SeaweedByHourChart({
   sunriseHour,
   sunsetHour,
 }: { byHour: SargassumByHour[] } & HourProps) {
-  const now = nowHour(tz);
+  // See BusynessByHourChart: defer the "now" highlight to post-mount so the
+  // first server + client renders match (null = no highlight).
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => setNow(nowHour(tz)), [tz]);
   const hours = spanDaylight(byHour, sunriseHour, sunsetHour);
   if (!hours.length) return null;
   const bars: LevelBar[] = hours.map((b) => {
@@ -193,11 +203,10 @@ export function SeaweedByHourChart({
  */
 function avgDayBars<T extends { date: string; avg: number; level: string; samples: number }>(
   byDay: T[],
-  tz: string,
+  today: string | null,
   color: Record<string, string>,
   tip: (b: T) => string,
 ): LevelBar[] {
-  const today = todayLocal(tz);
   const days = byDay.slice(-MAX_DAYS);
   const every = days.length > 16 ? 3 : days.length > 10 ? 2 : 1;
   return days.map((b, i) => {
@@ -216,10 +225,21 @@ function avgDayBars<T extends { date: string; avg: number; level: string; sample
 
 const reads = (n: number) => `${n} read${n === 1 ? "" : "s"}`;
 
+/**
+ * Today's local date, deferred to post-mount so the "today" highlight can't
+ * desync the server HTML from the hydrating client (null = no highlight yet).
+ */
+function useToday(tz: string): string | null {
+  const [today, setToday] = useState<string | null>(null);
+  useEffect(() => setToday(todayLocal(tz)), [tz]);
+  return today;
+}
+
 export function BusynessByDayChart({ byDay, tz }: { byDay: BusynessByDay[]; tz: string }) {
+  const today = useToday(tz);
   const bars = avgDayBars(
     byDay,
-    tz,
+    today,
     BUSY_COLOR,
     (b) => `${cap(b.level)} avg${b.people != null ? ` (~${b.people})` : ""} · ${reads(b.samples)}`,
   );
@@ -237,9 +257,10 @@ export function BusynessByDayChart({ byDay, tz }: { byDay: BusynessByDay[]; tz: 
 }
 
 export function SeaweedByDayChart({ byDay, tz }: { byDay: SargassumByDay[]; tz: string }) {
+  const today = useToday(tz);
   const bars = avgDayBars(
     byDay,
-    tz,
+    today,
     SEA_COLOR,
     (b) => `${cap(b.level)} avg (worst ${cap(b.worst)}) · ${reads(b.samples)}`,
   );

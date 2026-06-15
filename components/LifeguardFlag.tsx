@@ -8,7 +8,7 @@ const FLAG_META: Record<
   yellow: { color: "#facc15", label: "Medium hazard" },
   red: { color: "#dc2626", label: "High hazard" },
   "double-red": { color: "#dc2626", label: "Water closed", double: true },
-  purple: { color: "#9333ea", label: "Marine pests" },
+  purple: { color: "#9333ea", label: "Dangerous marine life" },
   unknown: { color: "#64748b", label: "Unavailable" },
 };
 
@@ -35,7 +35,7 @@ export function LifeguardFlag({ flag }: { flag: FlagColor }) {
           {m.double ? <span className={patch} style={{ background: m.color }} /> : null}
         </span>
       </div>
-      <span className="text-center text-[10px] font-medium leading-tight text-slate-700 dark:text-slate-300">
+      <span className="text-center text-xs font-medium leading-tight text-slate-700 dark:text-slate-300">
         {m.label}
       </span>
     </div>

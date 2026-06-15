@@ -42,6 +42,11 @@ function reasonsFor(d: Derived, result: ScoreResult): {
     const lc = c.toLowerCase();
     if (/seaweed|sargassum/.test(lc)) capCovers.add("sargassum");
     if (/thunder|storm|rain/.test(lc)) capCovers.add("sky");
+    // Match only the water-quality caps ("Water quality advisory…", "…no-swim
+    // advisory…") — NOT a bare "advisory", which would also catch the unrelated
+    // surf/coastal-flood advisory cap and wrongly suppress a real poor-water
+    // reason (the two are independent signals).
+    if (/water quality|no.?swim/.test(lc)) capCovers.add("waterQuality");
   }
   const push = (key: string, helpText: string, hurtText: string, hurtEmoji?: string, helpEmoji?: string) => {
     const s = by.get(key);
@@ -79,6 +84,17 @@ function reasonsFor(d: Derived, result: ScoreResult): {
     const f = d.shortForecast?.toLowerCase() ?? "";
     const cloudy = d.cloudCoverPct != null && d.cloudCoverPct > 60;
     const rainy = /rain|shower|drizzle|thunder|storm/.test(f);
+    // Fallback when the low sky score isn't from forecast-text rain or heavy
+    // cloud: surface whatever data actually dragged the score down. A low sky
+    // score with thin cloud is precip-driven, so lead with the rain chance;
+    // otherwise describe the real cloud cover. Never claim "Mostly cloudy" on
+    // a clear sky.
+    const skyFallback =
+      d.precipProbability != null && d.precipProbability >= 25
+        ? `Rain is possible (${d.precipProbability}% chance)`
+        : d.cloudCoverPct != null
+          ? `Partly cloudy (${d.cloudCoverPct}% cloud)`
+          : "Unsettled skies in the forecast";
     push(
       "sky",
       rainy ? "" : "Sunshine and no rain in the forecast",
@@ -86,7 +102,7 @@ function reasonsFor(d: Derived, result: ScoreResult): {
         ? `Wet weather in the forecast (${d.shortForecast})`
         : cloudy
           ? `Overcast skies (${d.cloudCoverPct}% cloud)`
-          : "Mostly cloudy",
+          : skyFallback,
     );
   }
 
@@ -170,24 +186,33 @@ function reasonsFor(d: Derived, result: ScoreResult): {
     );
   }
 
-  // UV.
+  // UV — read straight off the raw index per EPA bands, NOT the sky-style
+  // score-band push helper (routing through the inverted/clamped uv sub-score
+  // made "extreme" copy unreachable and "manageable" fire for very-high UV).
+  // We only list UV as a score *driver* at the extremes: manageable (<=7) helps,
+  // extreme (11+) hurts. The middle "very high" band (8-10) keeps the uv
+  // sub-score bar healthy (76-100), so flagging it as "holding it back" would
+  // contradict the gauge — the dedicated UV card already shows the index and
+  // burn time for that range, so the explainer stays quiet here.
   if (d.uvIndex != null) {
     const uv = d.uvIndex;
-    push(
-      "uv",
-      `UV is manageable (index ${uv})`,
-      uv >= 11
-        ? `UV is extreme (${uv}) — heavy sunscreen, cover up`
-        : `UV is high (${uv}) — wear sunscreen`,
-    );
+    if (uv <= 7) {
+      helping.push(r(defaults.uv.help, `UV is manageable (index ${uv})`));
+    } else if (uv >= 11) {
+      hurting.push(r(defaults.uv.hurt, `UV is extreme (${uv}) — heavy sunscreen, cover up`));
+    }
   }
 
-  // Sand temp — use the verdict bands directly.
+  // Sand temp — use the verdict bands directly. "Warm" sand (95-114°F) scores
+  // high enough to land in the help branch, so the help copy has to track the
+  // verdict label too — only true "Barefoot fine" sand is comfortable barefoot.
   if (d.sandTempF != null) {
     const v = sandVerdict(d.sandTempF);
     push(
       "sandTemp",
-      `Sand is comfortable barefoot (~${d.sandTempF}°F)`,
+      v.label === "Barefoot fine"
+        ? `Sand is comfortable barefoot (~${d.sandTempF}°F)`
+        : `Sand is warm (~${d.sandTempF}°F) — quick barefoot walks OK`,
       v.label === "Scorching"
         ? `Sand is scorching (~${d.sandTempF}°F) — wear shoes, real burn risk`
         : `Sand is hot (~${d.sandTempF}°F) — sandals recommended`,

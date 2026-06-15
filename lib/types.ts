@@ -234,8 +234,9 @@ export interface AirQualityData {
 
 // --- Lightning (NOAA GOES-19 GLM, via an off-Netlify job) ------------------
 export interface LightningData {
-  /** Minutes of GLM data the upstream job scanned. */
-  windowMinutes: number;
+  /** Minutes of GLM data the upstream job scanned. Omitted when the upstream
+   * payload doesn't report it (rather than passing a bogus value through). */
+  windowMinutes?: number;
   /** Closest strike in the window (miles) + how long ago (minutes). */
   nearestMi?: number;
   nearestMinutesAgo?: number;
@@ -440,6 +441,8 @@ export interface ScoreResult {
   subScores: SubScore[];
   /** Explanations for any safety cap that lowered the score. */
   caps: string[];
+  /** false only when zero sub-scores were available (total data outage) so the UI can show "Conditions unavailable". */
+  dataAvailable?: boolean;
 }
 
 /** A cam plus the live weather/wind at its location (Open-Meteo, per spot). */
