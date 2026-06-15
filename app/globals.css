@@ -23,6 +23,12 @@
   to { transform: rotate(var(--wobble, 0deg)); }
 }
 
+/* Suppress the browser's native pull-to-refresh so our custom one can drive
+   the SWR revalidation instead of forcing a full page reload. */
+html, body {
+  overscroll-behavior-y: contain;
+}
+
 /* Daylight beach: warm sun glow over a pale sky-blue wash. */
 body {
   background:
