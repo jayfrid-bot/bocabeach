@@ -10,11 +10,13 @@ import {
 } from "@/lib/sandTemp";
 import { fmtTime } from "@/lib/format";
 
-// viewBox geometry for the daylight curve.
+// viewBox geometry for the daylight curve. PT leaves headroom for the
+// per-point temperature labels (and the "now" label) so they aren't clipped
+// by the top edge.
 const W = 320;
-const H = 110;
+const H = 124;
 const PX = 14;
-const PT = 14;
+const PT = 30;
 const PB = 22;
 
 /**
@@ -160,45 +162,50 @@ export function SandTempPanel({
           fill="url(#sand-fill)"
         />
         <path d={line} fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" />
-        {pts.map((p) => (
-          <circle key={p.t} cx={xFor(p.t)} cy={yFor(p.sand)} r="2.6" fill={sandVerdict(p.sand).color} />
-        ))}
-        {nowVisible && current ? (() => {
-          const cx = xFor(now);
-          // Keep the label inside the viewBox no matter where "now" sits.
-          const labelAnchor: "start" | "middle" | "end" =
-            cx > W - 40 ? "end" : cx < 40 ? "start" : "middle";
+        {/* "now" marker drawn first so the dots + temperature labels sit on top */}
+        {nowVisible && current ? (
+          <line
+            x1={xFor(now)}
+            x2={xFor(now)}
+            y1={PT - 12}
+            y2={H - PB}
+            className="stroke-slate-700 dark:stroke-slate-200"
+            strokeWidth="1.2"
+            strokeDasharray="2 3"
+          />
+        ) : null}
+        {pts.map((p, i) => {
+          // Temperature printed above each circle; clamp the anchor at the ends
+          // so the first/last labels stay inside the viewBox.
+          const x = xFor(p.t);
+          const anchor: "start" | "middle" | "end" =
+            i === 0 ? "start" : i === pts.length - 1 ? "end" : "middle";
           return (
-            <g>
-              <line
-                x1={cx}
-                x2={cx}
-                y1={PT - 6}
-                y2={H - PB}
-                className="stroke-slate-700 dark:stroke-slate-200"
-                strokeWidth="1.2"
-                strokeDasharray="2 3"
-              />
+            <g key={p.t}>
               <text
-                x={cx}
-                y={PT - 8}
-                textAnchor={labelAnchor}
-                className="fill-slate-800 dark:fill-slate-100"
-                fontSize="10"
-                fontWeight="700"
+                x={x}
+                y={yFor(p.sand) - 6}
+                textAnchor={anchor}
+                className="fill-slate-600 dark:fill-slate-300"
+                fontSize="7.5"
+                fontWeight="600"
               >
-                ~{current.sand}°F
+                {p.sand}°
               </text>
-              <circle
-                cx={cx}
-                cy={yFor(current.sand)}
-                r="4.5"
-                className="fill-slate-700 dark:fill-slate-200 stroke-white dark:stroke-slate-950"
-                strokeWidth="2"
-              />
+              <circle cx={x} cy={yFor(p.sand)} r="2.6" fill={sandVerdict(p.sand).color} />
             </g>
           );
-        })() : null}
+        })}
+        {/* the current-moment dot, highlighted on the curve */}
+        {nowVisible && current ? (
+          <circle
+            cx={xFor(now)}
+            cy={yFor(current.sand)}
+            r="4.5"
+            className="fill-slate-700 dark:fill-slate-200 stroke-white dark:stroke-slate-950"
+            strokeWidth="2"
+          />
+        ) : null}
         {pts.map((p, i) =>
           i % step === 0 || i === pts.length - 1 ? (
             <text
