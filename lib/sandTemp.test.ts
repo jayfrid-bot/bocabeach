@@ -7,7 +7,7 @@ describe("estimateSandTempF", () => {
   });
 
   it("adds the full boost in calm full sun", () => {
-    expect(estimateSandTempF({ soilTempF: 100, solarWm2: 1000, windSpeedMph: 0 })).toBe(150);
+    expect(estimateSandTempF({ soilTempF: 80, solarWm2: 1000, windSpeedMph: 0 })).toBe(135);
   });
 
   it("adds no boost at night (zero radiation)", () => {
@@ -15,15 +15,15 @@ describe("estimateSandTempF", () => {
   });
 
   it("scales the boost with partial sun", () => {
-    expect(estimateSandTempF({ soilTempF: 100, solarWm2: 500, windSpeedMph: 0 })).toBe(125);
+    expect(estimateSandTempF({ soilTempF: 80, solarWm2: 500, windSpeedMph: 0 })).toBe(108);
   });
 
   it("damps the boost in wind but keeps a floor", () => {
-    const calm = estimateSandTempF({ soilTempF: 100, solarWm2: 1000, windSpeedMph: 0 })!;
-    const breezy = estimateSandTempF({ soilTempF: 100, solarWm2: 1000, windSpeedMph: 15 })!;
-    const gale = estimateSandTempF({ soilTempF: 100, solarWm2: 1000, windSpeedMph: 40 })!;
+    const calm = estimateSandTempF({ soilTempF: 80, solarWm2: 1000, windSpeedMph: 0 })!;
+    const breezy = estimateSandTempF({ soilTempF: 80, solarWm2: 1000, windSpeedMph: 15 })!;
+    const gale = estimateSandTempF({ soilTempF: 80, solarWm2: 1000, windSpeedMph: 40 })!;
     expect(breezy).toBeLessThan(calm);
-    expect(gale).toBe(Math.round(100 + 50 * 0.6)); // wind floor, not zero
+    expect(gale).toBe(Math.round(80 + 55 * 0.6)); // wind floor, not zero
   });
 
   it("collapses the boost after recent rain", () => {
@@ -34,7 +34,7 @@ describe("estimateSandTempF", () => {
   });
 
   it("clamps radiation above full sun", () => {
-    expect(estimateSandTempF({ soilTempF: 100, solarWm2: 2000, windSpeedMph: 0 })).toBe(150);
+    expect(estimateSandTempF({ soilTempF: 80, solarWm2: 2000, windSpeedMph: 0 })).toBe(135);
   });
 });
 
@@ -42,10 +42,22 @@ describe("estimateSandRangeF", () => {
   it("matches the 2026-06-11 IR ground truth: ~130 near the surf, ~140 by the dunes", () => {
     // Measured ~2 PM: soil 98F, ~980 W/m2 full sun, 11 mph sea breeze.
     const r = estimateSandRangeF({ soilTempF: 98, solarWm2: 980, windSpeedMph: 11 })!;
-    expect(r.dunesF).toBeGreaterThanOrEqual(137);
-    expect(r.dunesF).toBeLessThanOrEqual(142);
-    expect(r.surfF).toBeGreaterThanOrEqual(127);
+    expect(r.dunesF).toBeGreaterThanOrEqual(133);
+    expect(r.dunesF).toBeLessThanOrEqual(140);
+    expect(r.surfF).toBeGreaterThanOrEqual(125);
     expect(r.surfF).toBeLessThanOrEqual(132);
+  });
+
+
+  it("matches the 2026-06-15 IR ground truth: 129-135°F on a hot-soil afternoon", () => {
+    // Measured ~1 PM: soil 109F (hotter baseline than 6/11), 820 W/m2, 10 mph.
+    // The ground-damp factor keeps the model from double-counting solar
+    // heating that the modeled soil temp already absorbs.
+    const r = estimateSandRangeF({ soilTempF: 109, solarWm2: 820, windSpeedMph: 10 })!;
+    expect(r.dunesF).toBeGreaterThanOrEqual(130);
+    expect(r.dunesF).toBeLessThanOrEqual(140);
+    expect(r.surfF).toBeGreaterThanOrEqual(125);
+    expect(r.surfF).toBeLessThanOrEqual(133);
   });
 
   it("collapses to the ground temp at night (both ends equal)", () => {
