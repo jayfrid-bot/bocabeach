@@ -15,13 +15,13 @@
 const FULL_SUN_WM2 = 1000;
 /**
  * Max extra °F dry sand runs above the modeled ground surface in full sun.
- * Calibrated against IR-thermometer ground truth at Boca on 2026-06-11
- * (~2 PM: soil 98°F, ~980 W/m², 11 mph): measured 140°F by the dunes and
- * 130°F near the surf, vs the original model's 109°F.
+ * Calibrated against IR-thermometer ground truth at Boca:
+ *  - 2026-06-11 ~2 PM: soil 98°F, 980 W/m², 11 mph → 130-140°F measured
+ *  - 2026-06-15 ~1 PM: soil 109°F, 820 W/m², 10 mph → 129-135°F measured
  */
-const MAX_SUN_BOOST_F = 50;
-/** Near-surf sand is firmer/damper; it keeps ~75% of the dry-sand boost. */
-const SURF_BOOST_FRACTION = 0.75;
+const MAX_SUN_BOOST_F = 55;
+/** Near-surf sand is firmer/damper but warms more than expected. */
+const SURF_BOOST_FRACTION = 0.8;
 
 export interface SandTempInput {
   /** Modeled ground-surface temp (°F), e.g. Open-Meteo soil_temperature_0cm. */
@@ -45,6 +45,12 @@ function sandBoostF(input: SandTempInput): number | undefined {
   // the 140°F dune reading was taken in an 11 mph sea breeze.
   const wind = Math.max(0, windSpeedMph ?? 0);
   boost *= Math.max(0.6, 1 - wind / 60);
+
+  // The weather model's soil temp already absorbs some solar heating on hot
+  // afternoons (today: 109°F vs 98°F on the 6/11 calibration day). Shrink the
+  // boost as the modeled baseline climbs past ~90°F so we don't double-count
+  // the sun. Floor 0.4 — even very hot ground gets some dry-sand differential.
+  boost *= Math.max(0.4, Math.min(1, 1 - (soilTempF - 90) / 55));
 
   // Rain in the last few hours keeps the top layer damp and conductive.
   if ((recentRainIn ?? 0) >= 0.05) boost *= 0.3;
