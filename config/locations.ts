@@ -37,7 +37,7 @@ export const LOCATIONS: Location[] = [
         embedType: "image",
         url: "https://video-monitoring.com/beachcams/boca/",
         snapshotFeed: {
-          base: "http://video-monitoring.com/beachcams/boca",
+          base: "https://video-monitoring.com/beachcams/boca",
           view: "s4",
         },
         attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
@@ -52,7 +52,7 @@ export const LOCATIONS: Location[] = [
         embedType: "image",
         url: "https://video-monitoring.com/beachcams/bocainlet/",
         snapshotFeed: {
-          base: "http://video-monitoring.com/beachcams/bocainlet",
+          base: "https://video-monitoring.com/beachcams/bocainlet",
           view: "s8",
         },
         attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
@@ -67,7 +67,7 @@ export const LOCATIONS: Location[] = [
         embedType: "image",
         url: "https://video-monitoring.com/beachcams/boca/",
         snapshotFeed: {
-          base: "http://video-monitoring.com/beachcams/boca",
+          base: "https://video-monitoring.com/beachcams/boca",
           view: "s11",
         },
         attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
@@ -83,7 +83,7 @@ export const LOCATIONS: Location[] = [
         embedType: "image",
         url: "https://video-monitoring.com/beachcams/bocainlet/",
         snapshotFeed: {
-          base: "http://video-monitoring.com/beachcams/bocainlet",
+          base: "https://video-monitoring.com/beachcams/bocainlet",
           view: "s4",
         },
         attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
@@ -98,7 +98,7 @@ export const LOCATIONS: Location[] = [
         embedType: "image",
         url: "https://video-monitoring.com/beachcams/bocainlet/",
         snapshotFeed: {
-          base: "http://video-monitoring.com/beachcams/bocainlet",
+          base: "https://video-monitoring.com/beachcams/bocainlet",
           view: "s16",
         },
         attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
@@ -113,7 +113,7 @@ export const LOCATIONS: Location[] = [
         embedType: "image",
         url: "https://video-monitoring.com/beachcams/bocainlet/",
         snapshotFeed: {
-          base: "http://video-monitoring.com/beachcams/bocainlet",
+          base: "https://video-monitoring.com/beachcams/bocainlet",
           view: "s12",
         },
         attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
@@ -123,8 +123,9 @@ export const LOCATIONS: Location[] = [
       {
         // Parked at the bottom with lake-boca: both feeds currently return
         // 0-byte stills (checked 2026-06-11). Promote them back up if they revive.
-        // bocasurfcam.com publishes a fresh full-res JPEG at most_recent_image.php;
-        // proxied via /api/cam/boca-surf so it serves same-origin over https.
+        // bocasurfcam.com publishes a fresh full-res JPEG at most_recent_image.php.
+        // Host is http-only (self-signed TLS), so the upstream hop stays plaintext
+        // http; proxied via /api/cam/boca-surf so the browser only sees same-origin.
         id: "boca-surf",
         name: "Boca Surf Cam",
         provider: "bocasurfcam.com",

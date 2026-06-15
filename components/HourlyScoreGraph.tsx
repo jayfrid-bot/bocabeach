@@ -141,11 +141,11 @@ export function HourlyScoreGraph({
                 x2={W - PR}
                 y1={yFor(g)}
                 y2={yFor(g)}
-                stroke="#334155"
+                className="stroke-slate-300 dark:stroke-slate-700"
                 strokeWidth="1"
                 strokeDasharray={i === 0 ? undefined : "3 4"}
               />
-              <text x={PL} y={yFor(g) - 3} fill="#475569" fontSize="10">
+              <text x={PL} y={yFor(g) - 3} className="fill-slate-500 dark:fill-slate-400" fontSize="10">
                 {g}
               </text>
             </g>
@@ -213,15 +213,38 @@ export function HourlyScoreGraph({
           )}
         </svg>
 
-        {/* per-hour wind speed + direction — equal columns that fit the width */}
+        {/* Screen-reader equivalent of the line graph: the hour→score
+            trajectory isn't exposed by the SVG's single aria-label and lives
+            nowhere else, so spell it out as a visually-hidden list. */}
+        <ul className="sr-only">
+          {hours.map((h) => (
+            <li key={h.time}>
+              {fmtTime(h.time, tz)}: Beach Day score {h.score}, {h.rating}
+            </li>
+          ))}
+        </ul>
+
+        {/* per-hour wind speed + direction — equal columns that fit the width.
+            One column per daylight hour is ~21px on a phone, so on small
+            screens we thin to the same ~6 columns the axis labels use (reusing
+            labelAt); every hour stays in the DOM with its full aria-label, just
+            hidden below sm. */}
         <div
-          className="mt-2 grid gap-0.5 border-t border-slate-900/10 dark:border-white/5 pt-2"
-          style={{ gridTemplateColumns: `repeat(${hours.length}, minmax(0, 1fr))` }}
+          className="mt-2 grid gap-0.5 border-t border-slate-900/10 dark:border-white/5 pt-2 [grid-template-columns:repeat(var(--wind-cols),minmax(0,1fr))] sm:[grid-template-columns:repeat(var(--wind-cols-full),minmax(0,1fr))]"
+          style={
+            {
+              "--wind-cols": hours.filter((_, i) => labelAt(i)).length,
+              "--wind-cols-full": hours.length,
+            } as React.CSSProperties
+          }
         >
-          {hours.map((h) => {
+          {hours.map((h, i) => {
             const known = typeof h.windDirDeg === "number";
             return (
-              <div key={h.time} className="min-w-0 overflow-hidden text-center">
+              <div
+                key={h.time}
+                className={`min-w-0 overflow-hidden text-center ${labelAt(i) ? "" : "hidden sm:block"}`}
+              >
                 <div className="truncate text-[10px] uppercase text-slate-500">
                   {fmtTime(h.time, tz).replace(":00", "")}
                 </div>
@@ -231,8 +254,12 @@ export function HourlyScoreGraph({
                 <svg
                   viewBox="0 0 24 24"
                   className="mx-auto h-4 w-4"
+                  role="img"
                   aria-label={
-                    known ? `wind from ${degToCardinal(h.windDirDeg as number)}` : "wind direction n/a"
+                    `${fmtTime(h.time, tz)}: ` +
+                    (typeof h.windSpeedMph === "number" ? `${h.windSpeedMph} mph ` : "") +
+                    (known ? `wind from ${degToCardinal(h.windDirDeg as number)}` : "wind direction n/a") +
+                    (h.raining ? ", raining" : "")
                   }
                 >
                   {known ? (

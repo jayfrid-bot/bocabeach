@@ -1,14 +1,15 @@
+import { scoreTextClass } from "@/lib/format";
 import { clamp } from "@/lib/util";
 
 export function ScoreGauge({
   score,
   rating,
-  label,
   accent,
 }: {
   score: number;
   rating: string;
-  label: string;
+  /** Caption under the gauge — no longer rendered (dashboard headline names it); kept for caller compatibility. */
+  label?: string;
   accent: string;
 }) {
   const r = 80;
@@ -45,10 +46,9 @@ export function ScoreGauge({
           out of 100
         </text>
       </svg>
-      <div className="mt-1 text-xl font-semibold" style={{ color: accent }}>
+      <div className={`mt-1 text-xl font-semibold ${scoreTextClass(score)}`}>
         {rating}
       </div>
-      <div className="text-sm text-slate-600 dark:text-slate-400">{label}</div>
     </div>
   );
 }

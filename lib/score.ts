@@ -45,6 +45,8 @@ export interface Derived {
   ripCurrentRisk: RipRisk;
   /** A severe NWS warning (hurricane/tropical storm/tsunami/high surf) is active. */
   severeAlert: boolean;
+  /** A surf/coastal-flood ADVISORY (sub-warning tier) is active — soft swim cap. */
+  surfAdvisory?: boolean;
   /** Live nowcast says it's precipitating RIGHT NOW (observed, beats the forecast). */
   nowcastRaining?: boolean;
   /** GOES GLM lightning strikes within 10 mi in the recent window (now-only). */
@@ -55,10 +57,23 @@ export interface Derived {
 
 /** Events that make the beach genuinely dangerous/closed — hard score cap. */
 const SEVERE_ALERT =
-  /hurricane warning|tropical storm warning|storm surge warning|tsunami|high surf warning/i;
+  /hurricane warning|tropical storm warning|storm surge warning|tsunami|high surf warning|tornado warning|flash flood warning|special marine warning|extreme wind warning|coastal flood warning/i;
 
 /** The hourly-forecast entry whose bucket contains "now" (within 2h), if any. */
 function currentHourOf(hours: HourlyMetrics[], nowMs: number = Date.now()) {
+  // Prefer the bucket whose half-open interval [start, start+1h) CONTAINS now —
+  // i.e. the latest bucket that has already started (start <= now < start+1h).
+  let contained: HourlyMetrics | undefined;
+  let containedStart = -Infinity;
+  for (const h of hours) {
+    const start = new Date(h.time).getTime();
+    if (start <= nowMs && nowMs < start + 3600_000 && start > containedStart) {
+      containedStart = start;
+      contained = h;
+    }
+  }
+  if (contained) return contained;
+  // Fall back to the nearest bucket (within 2h) when none contains now.
   let best: HourlyMetrics | undefined;
   let bestDist = 2 * 3600_000;
   for (const h of hours) {
@@ -80,7 +95,7 @@ export function median(...vals: (number | undefined)[]): number | undefined {
   if (!xs.length) return undefined;
   xs.sort((a, b) => a - b);
   const mid = Math.floor(xs.length / 2);
-  return xs.length % 2 ? xs[mid] : round((xs[mid - 1] + xs[mid]) / 2, 1);
+  return xs.length % 2 ? round(xs[mid]) : round((xs[mid - 1] + xs[mid]) / 2);
 }
 
 export function deriveMetrics(s: ConditionsSnapshot): Derived {
@@ -125,10 +140,22 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     waterRating: q?.overall ?? "unknown",
     noSwimAdvisory: !!c?.noSwimAdvisory,
     ripCurrentRisk: n?.ripCurrentRisk ?? "unknown",
-    severeAlert: (n?.alerts ?? []).some((a) => SEVERE_ALERT.test(a.event)),
+    severeAlert:
+      // Match by event name OR by NWS severity tier (Severe/Extreme).
+      (n?.alerts ?? []).some((a) => SEVERE_ALERT.test(a.event)) ||
+      (n?.alerts ?? []).some((a) => /^(Severe|Extreme)$/i.test(a.severity)),
+    surfAdvisory: (n?.alerts ?? []).some((a) =>
+      /beach hazards|high surf advisory|coastal flood advisory/i.test(a.event),
+    ),
     // Observed "now" signals — they override the forecast-based rain logic.
     nowcastRaining: s.nowcast.data?.state === "raining",
-    lightningWithin10mi: s.lightning.data?.within10mi,
+    // Lightning counts only when the feed is OK and the most recent strike is
+    // fresh (<=30 min); a stale/errored scan must not trip the get-out cap.
+    lightningWithin10mi:
+      s.lightning.status === "ok" &&
+      (s.lightning.data?.lastMinutesAgo == null || s.lightning.data.lastMinutesAgo <= 30)
+        ? s.lightning.data?.within10mi
+        : 0,
     lightningLastMinutesAgo: s.lightning.data?.lastMinutesAgo,
   };
 }
@@ -138,7 +165,13 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
  * 8 points of the day's peak — i.e. "the best stretch to go". `endIso` is the
  * end of the last hour in the run. Null when there are no hours.
  */
-export function bestBeachWindow(hours: HourlyScore[]): BestWindow | null {
+export function bestBeachWindow(hours: HourlyScore[], nowMs?: number): BestWindow | null {
+  // When a `nowMs` is supplied, drop any hour whose bucket has already ended so
+  // the window only ever points at time still ahead. Caller passes a post-mount
+  // value (not defaulted here, which would desync SSR/client).
+  if (typeof nowMs === "number") {
+    hours = hours.filter((h) => new Date(h.time).getTime() + HOUR_MS > nowMs);
+  }
   if (!hours.length) return null;
   const max = Math.max(...hours.map((h) => h.score));
   const threshold = max - 8;
@@ -231,8 +264,11 @@ function skyDisplay(d: Derived): string | undefined {
 }
 
 // --- combination + caps ----------------------------------------------------
-function combine(subs: SubScore[]): number {
+// Returns null when NO sub-score was available (total data outage) so the
+// caller can surface an explicit "Unavailable" rather than a misleading 0.
+function combine(subs: SubScore[]): number | null {
   const avail = subs.filter((s) => s.score != null);
+  if (avail.length === 0) return null;
   const totalW = avail.reduce((a, s) => a + s.weight, 0);
   if (totalW === 0) return 0;
   const sum = avail.reduce((a, s) => a + (s.score as number) * s.weight, 0);
@@ -434,8 +470,24 @@ export function scoreBeachDay(d: Derived): ScoreResult {
   ];
 
   const rawScore = combine(subs);
+  // Total data outage: no weather sub-score was available. Surface it explicitly
+  // (score 0, "Unavailable", dataAvailable: false). We STILL run the safety caps
+  // so a hazard we genuinely observe — e.g. lightning within 10 mi from the GLM
+  // feed, which is independent of the weather pipeline — still registers as a cap
+  // reason even when every forecast feed is down. (Math.min keeps the score at 0.)
+  if (rawScore == null) {
+    const { caps } = applyBeachCaps(0, d);
+    return {
+      score: 0,
+      rawScore: 0,
+      rating: "Unavailable",
+      subScores: subs,
+      caps,
+      dataAvailable: false,
+    };
+  }
   const { score, caps } = applyBeachCaps(rawScore, d);
-  return { score, rawScore, rating: ratingFor(score), subScores: subs, caps };
+  return { score, rawScore, rating: ratingFor(score), subScores: subs, caps, dataAvailable: true };
 }
 
 export type RainSeverity = "none" | "rain" | "thunder";
@@ -515,6 +567,15 @@ function applyBeachCaps(
   if (d.ripCurrentRisk === "high") {
     score = Math.min(score, 85);
     caps.push("High rip current risk (NWS)");
+  } else if (d.ripCurrentRisk === "moderate") {
+    score = Math.min(score, 92);
+    caps.push("Moderate rip current risk (NWS)");
+  }
+  // A surf/coastal-flood ADVISORY (sub-warning tier) discourages swimming — a
+  // soft cap; the hard SEVERE_ALERT cap above already covers the *warning* tier.
+  if (d.surfAdvisory) {
+    score = Math.min(score, 85);
+    caps.push("High surf or coastal-flood advisory — swimming discouraged");
   }
   // A severe NWS warning (hurricane/tropical storm/tsunami/high surf) closes the day.
   if (d.severeAlert) {
@@ -537,8 +598,19 @@ function applyBeachCaps(
     score = Math.min(score, 15);
     caps.push("Thunderstorm in the forecast");
   } else if (d.nowcastRaining) {
-    score = Math.min(score, 25);
-    caps.push("Raining right now");
+    // It's observed-raining now. If an independent storm signal corroborates a
+    // thunderstorm (a vetoed thunder code, or storm/thunder in the forecast
+    // text), treat it as a storm cap (15) rather than plain rain (25).
+    const stormSignal =
+      (d.weatherCode != null && d.weatherCode >= 95 && d.weatherCode <= 99) ||
+      /thunder|storm/i.test(d.shortForecast ?? "");
+    if (stormSignal) {
+      score = Math.min(score, 15);
+      caps.push("Thunderstorm — raining now");
+    } else {
+      score = Math.min(score, 25);
+      caps.push("Raining right now");
+    }
   } else if (rain === "rain") {
     score = Math.min(score, 25);
     caps.push("Rain in the forecast");
@@ -621,8 +693,16 @@ export function computeHourlyScores(
     })
     .map((h) => {
       // Past hours keep the read that was current then; now/future use latest.
-      const isPast = new Date(h.time).getTime() + HOUR_MS <= nowMs;
+      const hStart = new Date(h.time).getTime();
+      const isPast = hStart + HOUR_MS <= nowMs;
       const histRead = isPast ? seaweedAtHour(localHourOf(h.time)) : undefined;
+      // The bucket that strictly CONTAINS now gets the observed-"now" signals
+      // (nowcast rain + fresh lightning); every other hour is forecast-only and
+      // leaves these unset. NOTE: surfAdvisory is NOT a now-only signal — it's a
+      // day-constant NWS alert like severeAlert, so it's applied to every hour
+      // below (otherwise an all-day advisory would only cap the current hour and
+      // bestBeachWindow could pick an uncapped future hour).
+      const isCurrentHour = hStart <= nowMs && nowMs < hStart + HOUR_MS;
       const d: Derived = {
         airTempF: h.airTempF,
         waterTempF: base.waterTempF,
@@ -646,6 +726,14 @@ export function computeHourlyScores(
         noSwimAdvisory: base.noSwimAdvisory,
         ripCurrentRisk: base.ripCurrentRisk,
         severeAlert: base.severeAlert,
+        surfAdvisory: base.surfAdvisory,
+        ...(isCurrentHour
+          ? {
+              nowcastRaining: base.nowcastRaining,
+              lightningWithin10mi: base.lightningWithin10mi,
+              lightningLastMinutesAgo: base.lightningLastMinutesAgo,
+            }
+          : {}),
       };
       const r = scoreBeachDay(d);
       const raining = rainSeverity(d) !== "none";

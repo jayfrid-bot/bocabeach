@@ -104,7 +104,9 @@ export function TideCurve({ events, tz }: { events: TideEvent[]; tz: string }) {
     : nowX;
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="mt-2 w-full" role="img" aria-label="Tide cycle">
+    // Decorative: the high/low tide times are read out by the accessible list
+    // in TidePanel, so hide this SVG from assistive tech.
+    <svg viewBox={`0 0 ${W} ${H}`} className="mt-2 w-full" aria-hidden="true">
       <defs>
         <linearGradient id="tide-fill" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#32a4ff" stopOpacity="0.3" />

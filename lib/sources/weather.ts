@@ -11,6 +11,8 @@ import {
 } from "@/lib/util";
 
 const ATTRIBUTION = "U.S. National Weather Service (weather.gov)";
+// Beyond this, the latest station observation is too old to call a live "ok" reading.
+const STALE_AFTER_MS = 120 * 60_000;
 
 // NWS responses are deeply nested; we read defensively with a loose type.
 type Json = Record<string, unknown> & { properties?: Record<string, unknown> };
@@ -139,12 +141,17 @@ export async function fetchWeather(loc: Location): Promise<Wrapped<WeatherData>>
     }
 
     const hasAny = Object.keys(data).length > 0;
+    // Downgrade a fresh HTTP response when the station observation itself is old:
+    // NWS keeps serving the last observation even when a station stops reporting.
+    const obsMs = data.observedAt ? new Date(data.observedAt).getTime() : NaN;
+    const aged = Number.isFinite(obsMs) && Date.now() - obsMs > STALE_AFTER_MS;
     return {
       source: "NWS api.weather.gov",
-      status: hasAny ? "ok" : "error",
-      fetchedAt,
+      status: !hasAny ? "error" : aged ? "stale" : "ok",
+      fetchedAt: hasAny && aged ? oldestIso(data.observedAt, fetchedAt) : fetchedAt,
       attribution: ATTRIBUTION,
       data: hasAny ? data : null,
+      note: hasAny && aged ? "station observation is stale" : undefined,
     };
   } catch (e) {
     return {

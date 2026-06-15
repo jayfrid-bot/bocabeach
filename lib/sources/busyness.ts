@@ -6,7 +6,7 @@ import type {
   Location,
   Wrapped,
 } from "@/lib/types";
-import { fetchedAtOf, fetchWithTimeout, nowIso } from "@/lib/util";
+import { fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
 
@@ -42,6 +42,8 @@ interface HistoryEntry {
   crowdPct?: number; // 0-100 fullness at the busiest cam
 }
 export interface CamFeed {
+  /** When the off-Netlify job generated this snapshot (ISO) — the real freshness. */
+  generatedAt?: string;
   latest?: CamGroup | null;
   morning?: CamGroup | null;
   history?: HistoryEntry[];
@@ -196,7 +198,11 @@ export async function fetchBusyness(
       };
     }
     if (!res.ok) throw new Error(`cam feed -> ${res.status}`);
-    const data = summarizeBusyness((await res.json()) as CamFeed);
+    const feed = (await res.json()) as CamFeed;
+    // The GitHub CDN's Date header is serve-time, not when the job generated the
+    // snapshot — report the older of the two so RelativeTime matches the card.
+    fetchedAt = oldestIso(feed.generatedAt, fetchedAtOf(res));
+    const data = summarizeBusyness(feed);
     return {
       source: ATTRIBUTION,
       status: data.level === "unknown" ? "best-effort" : "ok",

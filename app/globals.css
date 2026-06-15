@@ -23,6 +23,18 @@
   to { transform: rotate(var(--wobble, 0deg)); }
 }
 
+/* Honor the OS "reduce motion" setting: kill the wind spinner/wobble, gauge,
+   compass, and pull-to-refresh animations for users who opt out. Keyframes are
+   kept intact above so motion-tolerant users still get them. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Suppress the browser's native pull-to-refresh so our custom one can drive
    the SWR revalidation instead of forcing a full page reload. */
 html, body {

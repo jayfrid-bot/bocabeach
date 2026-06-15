@@ -26,8 +26,21 @@ export function WindCompass({
     <div className="flex items-center gap-3">
       <svg viewBox="0 0 80 80" className="h-16 w-16">
         {/* dial */}
-        <circle cx="40" cy="40" r="37" fill="#0f172a" stroke="#334155" strokeWidth="2" />
-        <circle cx="40" cy="40" r="30" fill="none" stroke="#1e293b" strokeWidth="1" />
+        <circle
+          cx="40"
+          cy="40"
+          r="37"
+          strokeWidth="2"
+          className="fill-slate-100 stroke-slate-300 dark:fill-slate-900 dark:stroke-slate-700"
+        />
+        <circle
+          cx="40"
+          cy="40"
+          r="30"
+          fill="none"
+          strokeWidth="1"
+          className="stroke-slate-300 dark:stroke-slate-700"
+        />
 
         {/* degree ticks: bold at cardinals, light at intercardinals */}
         {Array.from({ length: 8 }, (_, i) => {
@@ -39,18 +52,18 @@ export function WindCompass({
               y1={cardinal ? 4.5 : 6}
               x2="40"
               y2={cardinal ? 10.5 : 9.5}
-              stroke={cardinal ? "#64748b" : "#475569"}
               strokeWidth={cardinal ? 2 : 1}
               transform={`rotate(${i * 45} 40 40)`}
+              className="stroke-slate-300 dark:stroke-slate-700"
             />
           );
         })}
 
         {/* cardinal letters */}
-        <text x="40" y="19" textAnchor="middle" fill="#94a3b8" fontSize="9" fontWeight="700">N</text>
-        <text x="63.5" y="43" textAnchor="middle" fill="#64748b" fontSize="8">E</text>
-        <text x="40" y="66.5" textAnchor="middle" fill="#64748b" fontSize="8">S</text>
-        <text x="16.5" y="43" textAnchor="middle" fill="#64748b" fontSize="8">W</text>
+        <text x="40" y="19" textAnchor="middle" fontSize="9" fontWeight="700" className="fill-slate-600 dark:fill-slate-400">N</text>
+        <text x="63.5" y="43" textAnchor="middle" fontSize="8" className="fill-slate-600 dark:fill-slate-400">E</text>
+        <text x="40" y="66.5" textAnchor="middle" fontSize="8" className="fill-slate-600 dark:fill-slate-400">S</text>
+        <text x="16.5" y="43" textAnchor="middle" fontSize="8" className="fill-slate-600 dark:fill-slate-400">W</text>
 
         {known ? (
           <g
@@ -78,7 +91,7 @@ export function WindCompass({
             </g>
           </g>
         ) : (
-          <text x="40" y="45" textAnchor="middle" fill="#64748b" fontSize="12">?</text>
+          <text x="40" y="45" textAnchor="middle" fontSize="12" className="fill-slate-600 dark:fill-slate-400">?</text>
         )}
       </svg>
       <WindSpinner speedMph={speedMph} />

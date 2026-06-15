@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import type { ConditionsResponse } from "@/lib/types";
 import { bestBeachWindow, deriveMetrics } from "@/lib/score";
-import { beachDayVerdict, fmtDate, fmtTime, scoreColor, seaState } from "@/lib/format";
+import { beachDayVerdict, fmtDate, fmtTime, scoreColor, scoreTextClass, seaState } from "@/lib/format";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ScoreGauge } from "@/components/ScoreGauge";
@@ -33,7 +34,13 @@ import { SourceList } from "@/components/SourceBadge";
 import { CamGrid } from "@/components/CamGrid";
 import { ForecastStrip } from "@/components/ForecastStrip";
 
-const fetcher = (u: string) => fetch(u).then((r) => r.json());
+// Throw on non-OK so an error body (e.g. a 404 `{error}`) never replaces the
+// good snapshot — SWR keeps the last good data and the consumer guard holds.
+const fetcher = (u: string) =>
+  fetch(u).then((r) => {
+    if (!r.ok) throw new Error(String(r.status));
+    return r.json();
+  });
 
 // Stamped into the bundle at build time (see next.config.mjs) for the footer.
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "dev";
@@ -66,13 +73,15 @@ export function ConditionsDashboard({
   slug: string;
   initial: ConditionsResponse;
 }) {
-  const { data, mutate } = useSWR<ConditionsResponse>(
+  const { data, mutate, isValidating } = useSWR<ConditionsResponse>(
     `/api/conditions/${slug}`,
     fetcher,
     { fallbackData: initial, refreshInterval: 300_000 },
   );
 
-  const res = data ?? initial;
+  // Fall back to the SSR snapshot unless SWR has a fully-formed response — an
+  // error body lacking `.snapshot` must never shadow the good initial data.
+  const res = data && data.snapshot ? data : initial;
   const snap = res.snapshot;
   const active = res.score;
   const d = deriveMetrics(snap);
@@ -84,7 +93,16 @@ export function ConditionsDashboard({
   const traffic = snap.traffic.data;
   const rip = snap.nws.data?.ripCurrentRisk;
   const nc = snap.nowcast.data;
-  const bw = bestBeachWindow(res.hourlyScores);
+
+  // Post-mount wall clock. Read INSIDE the effect (never during render) so SSR
+  // and the first client render agree (nowMs === null → full day, no filter).
+  const [nowMs, setNowMs] = useState<number | null>(null);
+  useEffect(() => setNowMs(Date.now()), []);
+  const bw = bestBeachWindow(res.hourlyScores, nowMs ?? undefined);
+
+  // Single, stable handler shared by pull-to-refresh and the visible button.
+  const onRefresh = useCallback(() => mutate(), [mutate]);
+
   // Bound the by-hour charts to daylight: local hour of sunrise / sunset.
   const localHour = (iso?: string) => {
     if (!iso) return undefined;
@@ -123,7 +141,7 @@ export function ConditionsDashboard({
   ];
 
   return (
-    <PullToRefresh onRefresh={() => mutate()}>
+    <PullToRefresh onRefresh={onRefresh}>
     <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <header className="mb-6">
         <div className="flex items-center justify-between">
@@ -151,38 +169,55 @@ export function ConditionsDashboard({
         />
       </div>
 
-      <section className="mb-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+      <section className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <div className="flex flex-col items-center gap-4 rounded-2xl bg-white/80 dark:bg-slate-900/70 p-6 ring-1 ring-slate-900/10 dark:ring-white/10">
-          <div className="text-center">
-            <div className="text-xs uppercase tracking-widest text-slate-500">
-              Is it beach day?
+          {active.dataAvailable === false ? (
+            // Total data outage: every sub-score was unavailable, so a confident
+            // 0 / "Not really" would be misleading. Say so plainly instead.
+            <div className="flex flex-col items-center gap-2 py-8 text-center">
+              <span aria-hidden className="text-3xl">
+                📡
+              </span>
+              <div className="text-xl font-bold text-slate-900 dark:text-white">
+                Conditions unavailable
+              </div>
+              <div className="text-sm text-slate-600 dark:text-slate-400">
+                We could not reach the data sources right now. Try refreshing in
+                a few minutes.
+              </div>
             </div>
-            <div
-              className="text-2xl font-bold"
-              style={{ color: scoreColor(active.score) }}
-            >
-              {beachDayVerdict(active.score)}
-            </div>
-          </div>
-          <ScoreGauge
-            score={active.score}
-            rating={active.rating}
-            label="Beach Day score"
-            accent={scoreColor(active.score)}
-          />
-          {ratings &&
-          (ratings.swimmingRating || ratings.surfingRating || ratings.snorkelingRating) ? (
-            <div className="text-center text-xs text-slate-600 dark:text-slate-400">
-              Lifeguard rating:{" "}
-              {[
-                ratings.swimmingRating && `swim ${ratings.swimmingRating}`,
-                ratings.snorkelingRating && `snorkel ${ratings.snorkelingRating}`,
-                ratings.surfingRating && `surf ${ratings.surfingRating}`,
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-            </div>
-          ) : null}
+          ) : (
+            <>
+              {/* Verdict word is the headline; the gauge number supports it. */}
+              <div
+                className={`text-3xl font-bold ${scoreTextClass(active.score)}`}
+              >
+                {beachDayVerdict(active.score)}
+              </div>
+              <ScoreGauge
+                score={active.score}
+                rating={active.rating}
+                label="Beach Day score"
+                accent={scoreColor(active.score)}
+              />
+              {ratings &&
+              (ratings.swimmingRating ||
+                ratings.surfingRating ||
+                ratings.snorkelingRating) ? (
+                <div className="text-center text-xs text-slate-600 dark:text-slate-400">
+                  Lifeguard rating:{" "}
+                  {[
+                    ratings.swimmingRating && `swim ${ratings.swimmingRating}`,
+                    ratings.snorkelingRating &&
+                      `snorkel ${ratings.snorkelingRating}`,
+                    ratings.surfingRating && `surf ${ratings.surfingRating}`,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
         <ScoreBreakdown result={active} />
       </section>
@@ -202,7 +237,7 @@ export function ConditionsDashboard({
           {bw ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-200/80 dark:bg-slate-800/70 px-3 py-1 text-slate-700 dark:text-slate-200 ring-1 ring-slate-900/10 dark:ring-white/10">
               <span aria-hidden>⭐</span>
-              Best window today: {fmtTime(bw.startIso, tz)}–{fmtTime(bw.endIso, tz)}
+              Best remaining window today: {fmtTime(bw.startIso, tz)}–{fmtTime(bw.endIso, tz)}
             </span>
           ) : null}
         </section>
@@ -212,8 +247,16 @@ export function ConditionsDashboard({
         <HourlyScoreGraph hours={res.hourlyScores} tz={tz} />
       </section>
 
+      <section className="mb-6">
+        <ForecastStrip forecast={snap.forecast} />
+      </section>
+
+      <h2 className="mb-3 mt-2 text-lg font-semibold text-slate-900 dark:text-white">
+        Explore the details
+      </h2>
+
       <section className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
+        <div className="col-span-2 rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10 sm:col-span-1">
           <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
             <span aria-hidden>💨</span>
             <span>Wind</span>
@@ -226,24 +269,25 @@ export function ConditionsDashboard({
           icon="🌡️"
           label="Water temp"
           value={d.waterTempF != null ? `${d.waterTempF}°F` : "—"}
+          sub={d.waterTempF == null ? "not available" : undefined}
         />
         <MetricCard
           icon="☀️"
           label="Air temp"
           value={d.airTempF != null ? `${d.airTempF}°F` : "—"}
-          sub={d.shortForecast}
+          sub={d.airTempF != null ? d.shortForecast : "not available"}
         />
         <MetricCard
           icon="💧"
           label="Humidity"
           value={d.humidityPct != null ? `${d.humidityPct}%` : "—"}
-          sub={humidityNote(d.humidityPct)}
+          sub={d.humidityPct != null ? humidityNote(d.humidityPct) : "not available"}
         />
         <MetricCard
           icon="🌫️"
           label="Dew point"
           value={d.dewPointF != null ? `${d.dewPointF}°F` : "—"}
-          sub={dewComfort(d.dewPointF)}
+          sub={d.dewPointF != null ? dewComfort(d.dewPointF) : "not available"}
         />
         <MetricCard
           icon="〰️"
@@ -253,7 +297,9 @@ export function ConditionsDashboard({
               ? `${d.waveHeightFt} ft · ${seaState(d.waveHeightFt).label}`
               : "—"
           }
-          sub={d.waveHeightFt != null ? seaState(d.waveHeightFt).note : undefined}
+          sub={
+            d.waveHeightFt != null ? seaState(d.waveHeightFt).note : "not available"
+          }
         />
         <MetricCard
           icon="🔆"
@@ -264,7 +310,7 @@ export function ConditionsDashboard({
               ? `~${uvBurn} min to burn`
               : d.uvIndex != null
                 ? "minimal burn risk"
-                : undefined
+                : "not available"
           }
         />
         <MetricCard
@@ -278,14 +324,16 @@ export function ConditionsDashboard({
                 : d.cloudCoverPct <= 60
                   ? "partly cloudy"
                   : "overcast"
-              : undefined
+              : "not available"
           }
         />
         <MetricCard
           icon="🦶"
           label="Sand temp (est.)"
           value={d.sandTempF != null ? `~${d.sandTempF}°F` : "—"}
-          sub={d.sandTempF != null ? sandVerdict(d.sandTempF).advice : undefined}
+          sub={
+            d.sandTempF != null ? sandVerdict(d.sandTempF).advice : "not available"
+          }
         />
         <MetricCard
           icon="🧫"
@@ -295,18 +343,24 @@ export function ConditionsDashboard({
               ? "—"
               : d.waterRating[0].toUpperCase() + d.waterRating.slice(1)
           }
-          sub={d.waterAdvisory ? "advisory in effect" : undefined}
+          sub={
+            d.waterRating === "unknown"
+              ? "not available"
+              : d.waterAdvisory
+                ? "advisory in effect"
+                : undefined
+          }
         />
         <MetricCard
           icon="🪸"
           label="Seaweed (sargassum)"
           value={!sg || sg.level === "unknown" ? "—" : cap(sg.level)}
           sub={
-            sg
+            sg && sg.level !== "unknown"
               ? `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
                 (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "") +
                 (sg.note ? ` — ${sg.note}` : "")
-              : undefined
+              : "not available"
           }
         />
         <MetricCard
@@ -321,7 +375,7 @@ export function ConditionsDashboard({
                 ]
                   .filter(Boolean)
                   .join(" · ") || undefined
-              : undefined
+              : "not available"
           }
         />
         <MetricCard
@@ -333,14 +387,14 @@ export function ConditionsDashboard({
               ? traffic.congestion != null
                 ? `${traffic.congestion}% congestion near the beach`
                 : "near the beach"
-              : undefined
+              : "not available"
           }
         />
         <MetricCard
           icon="🌊"
           label="Rip current risk"
           value={!rip || rip === "unknown" ? "—" : cap(rip)}
-          sub={rip && rip !== "unknown" ? "NWS Surf Zone Forecast" : undefined}
+          sub={rip && rip !== "unknown" ? "NWS Surf Zone Forecast" : "not available"}
         />
         {d.precipProbability != null ? (
           <MetricCard
@@ -430,6 +484,21 @@ export function ConditionsDashboard({
             </>
           )}
         </p>
+        {/* Visible affordance for desktop, where pull-to-refresh isn't available. */}
+        <div className="flex justify-center">
+          <button
+            type="button"
+            onClick={() => onRefresh()}
+            disabled={isValidating}
+            className="inline-flex min-h-[36px] items-center gap-1.5 rounded-full bg-white/80 dark:bg-slate-900/70 px-3 py-1 text-xs text-slate-600 dark:text-slate-400 ring-1 ring-slate-900/10 dark:ring-white/10 transition hover:ring-amber-400/40 disabled:opacity-60"
+            aria-label="Refresh conditions"
+          >
+            <span aria-hidden className={isValidating ? "animate-spin" : undefined}>
+              ↻
+            </span>
+            {isValidating ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
       </footer>
     </main>
     </PullToRefresh>

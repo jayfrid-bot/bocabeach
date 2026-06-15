@@ -100,7 +100,10 @@ export async function getConditions(
 ): Promise<ConditionsResponse | null> {
   const loc = getLocation(slug);
   if (!loc) return null;
-  const [snapshot, cams] = await Promise.all([getSnapshot(slug), buildCamViews(loc)]);
+  const [snapshot, cams] = await Promise.all([
+    getSnapshot(slug),
+    buildCamViews(loc).catch(() => []),
+  ]);
   if (!snapshot) return null;
   return {
     snapshot,

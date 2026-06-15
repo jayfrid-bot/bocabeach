@@ -7,7 +7,7 @@ import type {
   SargassumRisk,
   Wrapped,
 } from "@/lib/types";
-import { fetchedAtOf, fetchWithTimeout, nowIso } from "@/lib/util";
+import { fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
 
@@ -49,6 +49,8 @@ function readRank(e: HistoryEntry): number | undefined {
   return undefined;
 }
 export interface CamSeaweedFeed {
+  /** When the off-Netlify job generated this snapshot (ISO) — the real freshness. */
+  generatedAt?: string;
   morning?: CamGroup | null;
   latest?: CamGroup | null;
   /** Rolling raw cam reads, shared with busyness; we read the `seaweed` field. */
@@ -190,7 +192,11 @@ export async function fetchSargassum(
       };
     }
     if (!res.ok) throw new Error(`cam seaweed feed -> ${res.status}`);
-    const data = summarizeSeaweed((await res.json()) as CamSeaweedFeed);
+    const feed = (await res.json()) as CamSeaweedFeed;
+    // The GitHub CDN's Date header is serve-time, not when the job generated the
+    // snapshot — report the older of the two so RelativeTime matches the card.
+    fetchedAt = oldestIso(feed.generatedAt, fetchedAtOf(res));
+    const data = summarizeSeaweed(feed);
     return {
       source: ATTRIBUTION,
       status: data ? "ok" : "best-effort",

@@ -52,12 +52,24 @@ export function beachDayVerdict(score: number): string {
   return "Not really";
 }
 
-/** Accent color for a 0-100 score. */
+/** Accent color for a 0-100 score. Used for the gauge arc fill. */
 export function scoreColor(score: number): string {
   if (score >= 80) return "#34d399"; // emerald-400
   if (score >= 65) return "#a3e635"; // lime-400
   if (score >= 45) return "#fbbf24"; // amber-400
   return "#fb7185"; // rose-400
+}
+
+/**
+ * Tailwind text color for a 0-100 score, mirroring scoreColor's bands but with
+ * light/dark variants for verdict/rating TEXT — the 400-level hex from
+ * scoreColor fails WCAG AA on a white background, so text uses 600/400.
+ */
+export function scoreTextClass(score: number): string {
+  if (score >= 80) return "text-emerald-600 dark:text-emerald-400";
+  if (score >= 65) return "text-lime-600 dark:text-lime-400";
+  if (score >= 45) return "text-amber-600 dark:text-amber-400";
+  return "text-rose-600 dark:text-rose-400";
 }
 
 // --- US EPA Air Quality Index bands ----------------------------------------

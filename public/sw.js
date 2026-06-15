@@ -68,9 +68,12 @@ async function networkFirst(req, cacheName) {
       if (home) return home;
       return new Response(
         "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width,initial-scale=1'>" +
-          "<body style='background:#061826;color:#e2e8f0;font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0;text-align:center'>" +
+          // Match the app's theme before paint: stored choice ("theme") wins, else
+          // fall back to the OS preference — same rule as the layout.tsx pre-paint script.
+          "<script>(function(){try{var t=localStorage.getItem('theme');var d=t==='dark'||(t!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches);var s=document.documentElement.style;s.background=d?'#020617':'#f3f7fb';s.color=d?'#e2e8f0':'#0f172a';}catch(e){}})();</script>" +
+          "<body style='font-family:system-ui;display:grid;place-items:center;height:100vh;margin:0;text-align:center'>" +
           "<div><h1 style='margin:0 0 .5rem'>You're offline</h1>" +
-          "<p style='color:#94a3b8'>Boca Beach Rats needs a connection to load fresh conditions.</p></div>",
+          "<p style='opacity:.65'>Is It Beach Day needs a connection to load fresh conditions.</p></div>",
         { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } },
       );
     }

@@ -106,6 +106,13 @@ export type FetchInit = RequestInit & {
   next?: { revalidate?: number | false; tags?: string[] };
 };
 
+/**
+ * Default descriptive User-Agent with a real contact, matching what metno.ts
+ * sends — several upstreams (api.met.no especially) require an identifiable
+ * contact. Overridable via CONDITIONS_USER_AGENT.
+ */
+const DEFAULT_USER_AGENT = "isitbeachday.com (hello@isitbeachday.com)";
+
 /** fetch() with a timeout and the project User-Agent applied. */
 export async function fetchWithTimeout(
   url: string,
@@ -119,9 +126,7 @@ export async function fetchWithTimeout(
       ...rest,
       signal: controller.signal,
       headers: {
-        "User-Agent":
-          process.env.CONDITIONS_USER_AGENT ??
-          "boca-beach-rats (https://github.com/)",
+        "User-Agent": process.env.CONDITIONS_USER_AGENT ?? DEFAULT_USER_AGENT,
         ...(rest.headers ?? {}),
       },
     } as RequestInit);
@@ -150,6 +155,9 @@ export function fetchedAtOf(res: Response): string {
 
 /** The oldest of several fetch timestamps — honest freshness for multi-request sources. */
 export function oldestIso(...isos: (string | undefined)[]): string {
-  const ts = isos.filter((s): s is string => !!s).map((s) => new Date(s).getTime());
+  const ts = isos
+    .filter((s): s is string => !!s)
+    .map((s) => new Date(s).getTime())
+    .filter((t) => Number.isFinite(t));
   return ts.length ? new Date(Math.min(...ts)).toISOString() : nowIso();
 }

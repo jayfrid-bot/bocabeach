@@ -1,8 +1,19 @@
 import type { BuoyData, Location, Wrapped } from "@/lib/types";
-import { cToF, fetchWithTimeout, fetchedAtOf, msToMph, mToFt, nowIso, round } from "@/lib/util";
+import {
+  cToF,
+  fetchWithTimeout,
+  fetchedAtOf,
+  msToMph,
+  mToFt,
+  nowIso,
+  oldestIso,
+  round,
+} from "@/lib/util";
 
 const ATTRIBUTION = "NOAA National Data Buoy Center (ndbc.noaa.gov)";
 const MISSING = "MM";
+// Beyond this, the latest buoy row is too old to call a live "ok" reading.
+const STALE_AFTER_MS = 120 * 60_000;
 
 /**
  * Parse an NDBC realtime2 (.txt) feed. Columns are fixed-position; the first
@@ -73,13 +84,22 @@ export async function fetchBuoy(loc: Location): Promise<Wrapped<BuoyData>> {
     try {
       const { data, at } = await fetchOne(id);
       if (data && Object.keys(data).length > 1) {
+        const isFallback = id !== loc.ndbcBuoyId;
+        // Downgrade a fresh-looking HTTP response when the observation itself is
+        // old: NDBC keeps serving the last row even when a buoy stops reporting.
+        const obsMs = data.observedAt ? new Date(data.observedAt).getTime() : NaN;
+        const aged = Number.isFinite(obsMs) && Date.now() - obsMs > STALE_AFTER_MS;
         return {
           source: `NOAA NDBC (${id})`,
-          status: id === loc.ndbcBuoyId ? "ok" : "stale",
-          fetchedAt: at,
+          status: isFallback || aged ? "stale" : "ok",
+          fetchedAt: aged ? oldestIso(data.observedAt, at) : at,
           attribution: ATTRIBUTION,
           data,
-          note: id === loc.ndbcBuoyId ? undefined : `primary buoy unavailable; using ${id}`,
+          note: isFallback
+            ? `primary buoy unavailable; using ${id}`
+            : aged
+              ? "buoy observation is stale"
+              : undefined,
         };
       }
     } catch {

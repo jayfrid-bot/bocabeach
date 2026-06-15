@@ -114,17 +114,29 @@ export function currentSandTempF(
   nowMs: number = Date.now(),
 ): number | undefined {
   if (!hours.length) return undefined;
+  // Prefer the bucket that actually contains now under half-open [start, start+1h)
+  // — matches score.ts's bucket convention so the card and the score agree on
+  // which hour is "now". Take the latest such bucket if buckets overlap.
   let best = -1;
   let bestDist = Infinity;
   for (let i = 0; i < hours.length; i++) {
-    const dist = Math.abs(new Date(hours[i].time).getTime() - nowMs);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = i;
+    const start = new Date(hours[i].time).getTime();
+    if (start <= nowMs && nowMs < start + 3600_000) best = i;
+    const dist = Math.abs(start - nowMs);
+    if (dist < bestDist) bestDist = dist;
+  }
+  // No bucket contains now → fall back to the nearest within the sanity window.
+  if (best < 0) {
+    for (let i = 0; i < hours.length; i++) {
+      if (Math.abs(new Date(hours[i].time).getTime() - nowMs) === bestDist) {
+        best = i;
+        break;
+      }
     }
   }
   // Only trust a bucket within 2h of now (stale/misaligned data → no estimate).
-  if (best < 0 || bestDist > 2 * 3600_000) return undefined;
+  if (best < 0 || Math.abs(new Date(hours[best].time).getTime() - nowMs) > 2 * 3600_000)
+    return undefined;
   const h = hours[best];
   const recentRainIn = [best, best - 1, best - 2].reduce(
     (a, j) => a + (hours[j]?.precipIn ?? 0),

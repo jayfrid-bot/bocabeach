@@ -22,19 +22,19 @@ describe("cam snapshot allowlist", () => {
   it("derives latest.json feed sources (inlet + south beach)", () => {
     expect(CAM_SOURCES["boca-inlet"]).toEqual({
       kind: "feed",
-      base: "http://video-monitoring.com/beachcams/bocainlet",
+      base: "https://video-monitoring.com/beachcams/bocainlet",
       view: "s4",
       res: "mr",
     });
     expect(CAM_SOURCES["boca-south"]).toEqual({
       kind: "feed",
-      base: "http://video-monitoring.com/beachcams/boca",
+      base: "https://video-monitoring.com/beachcams/boca",
       view: "s4",
       res: "mr",
     });
     expect(CAM_SOURCES["boca-inlet-surf"]).toEqual({
       kind: "feed",
-      base: "http://video-monitoring.com/beachcams/bocainlet",
+      base: "https://video-monitoring.com/beachcams/bocainlet",
       view: "s16",
       res: "mr",
     });
@@ -85,14 +85,14 @@ describe("latest.json feed resolution", () => {
   it("resolves a relative frame path against the base dir", () => {
     expect(
       resolveFeedImageUrl(
-        "http://video-monitoring.com/beachcams/bocainlet",
+        "https://video-monitoring.com/beachcams/bocainlet",
         "pics/s4/may3026o/u012059_.jpg",
       ),
-    ).toBe("http://video-monitoring.com/beachcams/bocainlet/pics/s4/may3026o/u012059_.jpg");
+    ).toBe("https://video-monitoring.com/beachcams/bocainlet/pics/s4/may3026o/u012059_.jpg");
   });
 
   it("rejects a path that escapes the allowlisted base dir (SSRF guard)", () => {
-    const base = "http://video-monitoring.com/beachcams/bocainlet";
+    const base = "https://video-monitoring.com/beachcams/bocainlet";
     expect(() => resolveFeedImageUrl(base, "../../../../etc/passwd")).toThrow();
     expect(() => resolveFeedImageUrl(base, "http://evil.example.com/x.jpg")).toThrow();
     expect(() => resolveFeedImageUrl(base, "//evil.example.com/x.jpg")).toThrow();
