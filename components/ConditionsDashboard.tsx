@@ -8,7 +8,8 @@ import { beachDayVerdict, fmtDate, fmtTime, scoreColor, seaState } from "@/lib/f
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ScoreGauge } from "@/components/ScoreGauge";
-import { ScoreBreakdown } from "@/components/ScoreBreakdown";
+import { ScoreExplainer } from "@/components/ScoreExplainer";
+import { PullToRefresh } from "@/components/PullToRefresh";
 import { HourlyScoreGraph } from "@/components/HourlyScoreGraph";
 import { AirQualityMeter } from "@/components/AirQualityMeter";
 import { LightningCard } from "@/components/LightningCard";
@@ -63,7 +64,7 @@ export function ConditionsDashboard({
   slug: string;
   initial: ConditionsResponse;
 }) {
-  const { data } = useSWR<ConditionsResponse>(
+  const { data, mutate } = useSWR<ConditionsResponse>(
     `/api/conditions/${slug}`,
     fetcher,
     { fallbackData: initial, refreshInterval: 300_000 },
@@ -120,6 +121,7 @@ export function ConditionsDashboard({
   ];
 
   return (
+    <PullToRefresh onRefresh={() => mutate()}>
     <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <header className="mb-6">
         <div className="flex items-center justify-between">
@@ -180,7 +182,7 @@ export function ConditionsDashboard({
             </div>
           ) : null}
         </div>
-        <ScoreBreakdown result={active} />
+        <ScoreExplainer derived={d} result={active} />
       </section>
 
       {nc || bw ? (
@@ -423,5 +425,6 @@ export function ConditionsDashboard({
         </p>
       </footer>
     </main>
+    </PullToRefresh>
   );
 }
