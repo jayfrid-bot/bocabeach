@@ -39,15 +39,16 @@ export function SafetyBanner({
     alerts.length > 0 ||
     flags.some((f) => ["red", "double-red", "purple"].includes(f));
 
-  // Nothing worth surfacing.
+  // Nothing worth surfacing in the safety header. Marine life and posted
+  // hazards now live in their own LifeguardReport card lower on the page —
+  // they don't gate this banner.
   if (
     !advisory &&
     !lightningDanger &&
     !noSwim &&
     !ripWarn &&
     alerts.length === 0 &&
-    flags.length === 0 &&
-    (data?.hazards?.length ?? 0) === 0
+    flags.length === 0
   ) {
     return null;
   }
@@ -166,20 +167,6 @@ export function SafetyBanner({
             )}
           </div>
 
-          {data.marineLife?.length || data.hazards?.length ? (
-            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600 dark:text-slate-400">
-              {data.marineLife?.length ? (
-                <span>🪼 {data.marineLife.join(", ")}</span>
-              ) : null}
-              {data.hazards?.length ? <span>⚠ {data.hazards.join(", ")}</span> : null}
-            </div>
-          ) : null}
-
-          <div className="mt-2 text-xs text-slate-500">
-            Official report from {city.attribution}
-            {data.updatedLabel ? ` · ${data.updatedLabel}` : ""}. Always heed posted
-            signs and lifeguards.
-          </div>
         </>
       ) : null}
     </div>
