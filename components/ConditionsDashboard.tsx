@@ -14,6 +14,7 @@ import { PullToRefresh } from "@/components/PullToRefresh";
 import { HourlyScoreGraph } from "@/components/HourlyScoreGraph";
 import { AirQualityMeter } from "@/components/AirQualityMeter";
 import { LightningCard } from "@/components/LightningCard";
+import { LifeguardReport } from "@/components/LifeguardReport";
 import {
   BusynessByHourChart,
   BusynessByDayChart,
@@ -361,9 +362,10 @@ export function ConditionsDashboard({
         </section>
       ) : null}
 
-      <section className="mb-6 grid gap-4 sm:grid-cols-2">
+      <section className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <AirQualityMeter air={snap.airQuality} />
         <LightningCard lightning={snap.lightning} />
+        <LifeguardReport city={snap.cityOfficial} />
       </section>
 
       {busy?.byHour?.length ||

@@ -121,25 +121,30 @@ export function SandTempPanel({
               : `~${current.sand}°F`
             : "—"}
         </span>
-        {current && current.surf !== current.sand ? (
-          <span className="text-xs text-slate-500">water&rsquo;s edge → dunes</span>
-        ) : null}
-        {verdict ? <span className="text-xs text-slate-600 dark:text-slate-400">{verdict.advice}</span> : null}
       </div>
 
-      {/* barefoot comfort meter */}
-      <div className="relative mt-2 h-1.5 rounded-full bg-gradient-to-r from-emerald-400 via-amber-400 via-60% to-rose-400">
+      {/* barefoot comfort meter — slider marker carries a live temperature
+          label so you can read the number without looking up at the headline. */}
+      <div className="relative mt-6 h-1.5 rounded-full bg-gradient-to-r from-emerald-400 via-amber-400 via-60% to-rose-400">
         {current ? (
-          <span
-            className="absolute -top-[3px] h-3 w-3 -translate-x-1/2 rounded-full bg-white ring-2 ring-slate-950"
-            style={{ left: `${meterFrac * 100}%` }}
-          />
+          <>
+            <span
+              className="absolute -top-6 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow ring-1 ring-slate-950/30 dark:bg-white dark:text-slate-900 dark:ring-white/20"
+              style={{ left: `${meterFrac * 100}%` }}
+            >
+              ~{current.sand}°F
+            </span>
+            <span
+              className="absolute -top-[3px] h-3 w-3 -translate-x-1/2 rounded-full bg-white ring-2 ring-slate-950"
+              style={{ left: `${meterFrac * 100}%` }}
+            />
+          </>
         ) : null}
       </div>
       <div className="mt-1 flex justify-between text-[10px] text-slate-500">
-        <span>barefoot fine</span>
-        <span>sandals</span>
-        <span>burn risk</span>
+        <span>barefoot fine · 80°F</span>
+        <span>sandals · 115°F</span>
+        <span>burn risk · 130°F+</span>
       </div>
 
       {/* today's heat-up / cool-down curve */}
@@ -158,26 +163,42 @@ export function SandTempPanel({
         {pts.map((p) => (
           <circle key={p.t} cx={xFor(p.t)} cy={yFor(p.sand)} r="2.6" fill={sandVerdict(p.sand).color} />
         ))}
-        {nowVisible && current ? (
-          <g>
-            <line
-              x1={xFor(now)}
-              x2={xFor(now)}
-              y1={PT - 6}
-              y2={H - PB}
-              className="stroke-slate-700 dark:stroke-slate-200"
-              strokeWidth="1.2"
-              strokeDasharray="2 3"
-            />
-            <circle
-              cx={xFor(now)}
-              cy={yFor(current.sand)}
-              r="4.5"
-              className="fill-slate-700 dark:fill-slate-200 stroke-white dark:stroke-slate-950"
-              strokeWidth="2"
-            />
-          </g>
-        ) : null}
+        {nowVisible && current ? (() => {
+          const cx = xFor(now);
+          // Keep the label inside the viewBox no matter where "now" sits.
+          const labelAnchor: "start" | "middle" | "end" =
+            cx > W - 40 ? "end" : cx < 40 ? "start" : "middle";
+          return (
+            <g>
+              <line
+                x1={cx}
+                x2={cx}
+                y1={PT - 6}
+                y2={H - PB}
+                className="stroke-slate-700 dark:stroke-slate-200"
+                strokeWidth="1.2"
+                strokeDasharray="2 3"
+              />
+              <text
+                x={cx}
+                y={PT - 8}
+                textAnchor={labelAnchor}
+                className="fill-slate-800 dark:fill-slate-100"
+                fontSize="10"
+                fontWeight="700"
+              >
+                ~{current.sand}°F
+              </text>
+              <circle
+                cx={cx}
+                cy={yFor(current.sand)}
+                r="4.5"
+                className="fill-slate-700 dark:fill-slate-200 stroke-white dark:stroke-slate-950"
+                strokeWidth="2"
+              />
+            </g>
+          );
+        })() : null}
         {pts.map((p, i) =>
           i % step === 0 || i === pts.length - 1 ? (
             <text
