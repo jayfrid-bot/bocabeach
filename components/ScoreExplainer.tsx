@@ -21,7 +21,7 @@ export function ScoreExplainer({
   return (
     <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-5 ring-1 ring-slate-900/10 dark:ring-white/10">
       <h3 className="text-sm font-medium text-slate-700 dark:text-slate-300">
-        Why this score
+        Why this score — in plain English
       </h3>
       <p className="mt-2 text-xs leading-relaxed text-slate-600 dark:text-slate-400">
         {summary}
