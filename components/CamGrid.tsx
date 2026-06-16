@@ -79,7 +79,8 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
   const src = `${cam.imageUrl}?t=${cam.capturedAt ?? cam.weather.fetchedAt}`;
   // Three honesty states:
   //  - verified + fresh  → "● Live" (feed published a recent capture time)
-  //  - verified + old     → "⏸ paused" (feed's still-image has frozen upstream)
+  //  - verified + old     → just state the last feed time + how long ago it was
+  //    captured (no alarm — the live video is one tap away)
   //  - unverified         → "Snapshot" (no capture time at all, e.g. the
   //    most_recent_image.php cams send no Last-Modified) — we can't confirm it's
   //    current, so we must NOT claim it's live.
@@ -110,12 +111,12 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
           loading="lazy"
         />
         {stale ? (
-          <div className="absolute inset-x-0 bottom-0 bg-slate-950/70 px-2 py-1 text-center text-[11px] text-amber-200">
-            Still image paused <RelativeTime iso={cam.capturedAt as string} /> — tap for live video
+          <div className="absolute inset-x-0 bottom-0 bg-slate-950/70 px-2 py-1 text-center text-[11px] text-slate-100">
+            Last feed {fmtTime(cam.capturedAt as string, tz)} · <RelativeTime iso={cam.capturedAt as string} />
           </div>
         ) : !verified ? (
           <div className="absolute inset-x-0 bottom-0 bg-slate-950/65 px-2 py-1 text-center text-[11px] text-slate-200">
-            Snapshot — may be delayed · tap for live video
+            Snapshot — may be delayed
           </div>
         ) : null}
       </div>
@@ -124,10 +125,10 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
           <div className="text-base font-semibold text-white sm:text-lg">{cam.name}</div>
           {stale ? (
             <span
-              className="shrink-0 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-300"
-              title="The still-image feed hasn't updated recently — open the cam for live video."
+              className="shrink-0 rounded-full bg-slate-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-200"
+              title="Time since the still image was last captured — tap for live video."
             >
-              ⏸ <RelativeTime iso={cam.capturedAt as string} />
+              📷 <RelativeTime iso={cam.capturedAt as string} />
             </span>
           ) : verified ? (
             <span className="shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-300">
@@ -144,11 +145,6 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
         </div>
         <div className="text-xs text-slate-300">{cam.provider}</div>
         <CamStamp cam={cam} tz={tz} />
-        {stale ? (
-          <div className="mt-1 text-[11px] text-amber-400/80">
-            ⚠ Still‑image feed paused upstream — tap for the live view.
-          </div>
-        ) : null}
         <CamWeatherStrip cam={cam} />
         {cam.attribution ? (
           <div className="mt-1 text-[11px] text-slate-500">{cam.attribution}</div>
