@@ -34,6 +34,8 @@ import { sandVerdict } from "@/lib/sandTemp";
 import { SourceList } from "@/components/SourceBadge";
 import { CamGrid } from "@/components/CamGrid";
 import { ForecastStrip } from "@/components/ForecastStrip";
+import { BestTimesStrip } from "@/components/BestTimesStrip";
+import { NotifyButton } from "@/components/NotifyButton";
 
 // Throw on non-OK so an error body (e.g. a 404 `{error}`) never replaces the
 // good snapshot — SWR keeps the last good data and the consumer guard holds.
@@ -176,16 +178,17 @@ export function ConditionsDashboard({
             ✨ Auto-resolved · core conditions live, some local data pending
           </span>
         ) : null}
-        {browseHref ? (
-          <div className="mt-3">
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {browseHref ? (
             <Link
               href={browseHref}
               className="inline-flex items-center gap-1.5 rounded-full bg-ocean-500/10 px-3 py-1 text-xs font-medium text-ocean-700 ring-1 ring-ocean-500/20 transition hover:bg-ocean-500/20 dark:text-ocean-300"
             >
               <span aria-hidden className="text-sm leading-none">＋</span> Other beaches
             </Link>
-          </div>
-        ) : null}
+          ) : null}
+          {!preview ? <NotifyButton slug={slug} /> : null}
+        </div>
       </header>
 
       <div className="mb-6">
@@ -275,6 +278,12 @@ export function ConditionsDashboard({
       <section className="mb-6">
         <HourlyScoreGraph hours={res.hourlyScores} tz={tz} />
       </section>
+
+      {res.multiDayWindows?.length ? (
+        <section className="mb-6">
+          <BestTimesStrip days={res.multiDayWindows} tz={tz} />
+        </section>
+      ) : null}
 
       <section className="mb-6">
         <ForecastStrip forecast={snap.forecast} />

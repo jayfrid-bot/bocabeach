@@ -24,6 +24,9 @@ yarn-error.log*
 .env
 .env*.local
 
+# local web-push subscription store (dev fallback for Netlify Blobs)
+.push-store.json
+
 # deploy
 .vercel
 .netlify

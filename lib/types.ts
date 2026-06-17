@@ -169,6 +169,24 @@ export interface BestWindow {
   score: number;
 }
 
+/**
+ * One upcoming day's beach-time outlook: the best contiguous daylight window by
+ * Beach Day score, the day's peak hourly score, and a representative sky emoji.
+ * Powers the "best beach times for the next few days" forecast. `best` is null
+ * when no daylight hours scored for that day (e.g. today already past sunset).
+ */
+export interface DayWindow {
+  /** YYYY-MM-DD in the beach's local time. */
+  date: string;
+  /** Short weekday label, e.g. "Mon" (or "Today"). */
+  dow: string;
+  best: BestWindow | null;
+  /** Peak hourly score across the day's daylight hours (0-100), or null. */
+  peakScore: number | null;
+  /** Representative sky emoji (around midday). */
+  emoji: string;
+}
+
 // --- Sun times (computed locally from lat/lon/date) ------------------------
 export interface SunData {
   /** Calendar day these events fall on, local to the beach (YYYY-MM-DD). */
@@ -467,6 +485,8 @@ export interface ConditionsResponse {
   score: ScoreResult;
   /** Beach Day score forecast across today's daylight hours (empty if unavailable). */
   hourlyScores: HourlyScore[];
+  /** Best beach-time window + peak score per upcoming day (today first). */
+  multiDayWindows: DayWindow[];
   cams: CamView[];
 }
 
