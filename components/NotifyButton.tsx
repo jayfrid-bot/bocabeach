@@ -7,6 +7,7 @@ import {
   subscribeToPush,
   unsubscribeFromPush,
 } from "@/lib/push/client";
+import { disableNative, enableNative, isNativePlatform, nativeStatus } from "@/lib/push/native";
 import { VAPID_PUBLIC_KEY } from "@/lib/push/vapid";
 
 type State = "init" | "hidden" | "off" | "on" | "denied" | "busy" | "error";
@@ -25,11 +26,21 @@ export function NotifyButton({ slug }: { slug: string }) {
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
+    let alive = true;
+    // Native iOS app (Capacitor/APNs) — its own permission + token flow.
+    if (isNativePlatform()) {
+      nativeStatus(slug)
+        .then((s) => alive && setState(s))
+        .catch(() => alive && setState("off"));
+      return () => {
+        alive = false;
+      };
+    }
+    // Web push: hide where unsupported or before VAPID is configured.
     if (!isPushSupported() || !VAPID_PUBLIC_KEY) {
       setState("hidden");
       return;
     }
-    let alive = true;
     // pushStatus() awaits navigator.serviceWorker.ready, which never resolves if
     // SW registration failed — race a timeout so we don't hang in "init" forever.
     const timeout = new Promise<"timeout">((res) => setTimeout(() => res("timeout"), 5000));
@@ -43,13 +54,14 @@ export function NotifyButton({ slug }: { slug: string }) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [slug]);
 
   const enable = async () => {
     setState("busy");
     setErr(null);
     try {
-      await subscribeToPush(slug, { morning: true, safety: true });
+      if (isNativePlatform()) await enableNative(slug, { morning: true, safety: true });
+      else await subscribeToPush(slug, { morning: true, safety: true });
       setState("on");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -61,7 +73,8 @@ export function NotifyButton({ slug }: { slug: string }) {
   const disable = async () => {
     setState("busy");
     try {
-      await unsubscribeFromPush();
+      if (isNativePlatform()) await disableNative(slug);
+      else await unsubscribeFromPush();
     } finally {
       setState("off");
     }

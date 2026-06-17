@@ -5,10 +5,19 @@
 
 import type { ConditionsResponse } from "@/lib/types";
 import { beachDayVerdict, fmtTime } from "@/lib/format";
-import type { StoredSub } from "@/lib/push/store";
 
 /** Local hour (0-23, beach time) at which the daily morning summary fires. */
 export const MORNING_HOUR = 7;
+
+/**
+ * The minimum a subscription must expose for the decision logic — satisfied by
+ * both the web `StoredSub` and the native `NativeSub`, so the same rules drive
+ * both transports.
+ */
+export interface Notifiable {
+  prefs: { morning: boolean; safety: boolean };
+  sent?: { morningDate?: string; safetyKey?: string };
+}
 
 /** Compact, notification-ready view of a beach's current conditions. */
 export interface PushSummary {
@@ -113,14 +122,14 @@ export interface PushDecision {
  *    one we sent (so it fires on a NEW hazard, not every run while it persists).
  */
 export function decideNotifications(
-  sub: StoredSub,
+  sub: Notifiable,
   summary: PushSummary,
   hour: number,
   date: string,
-): { sends: PushDecision[]; nextSent: NonNullable<StoredSub["sent"]> } {
+): { sends: PushDecision[]; nextSent: NonNullable<Notifiable["sent"]> } {
   const sent = sub.sent ?? {};
   const sends: PushDecision[] = [];
-  const nextSent: NonNullable<StoredSub["sent"]> = { ...sent };
+  const nextSent: NonNullable<Notifiable["sent"]> = { ...sent };
   const url = `/${summary.slug}`;
 
   if (sub.prefs.morning && hour === MORNING_HOUR && sent.morningDate !== date) {
