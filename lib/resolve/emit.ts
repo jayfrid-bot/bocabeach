@@ -46,6 +46,7 @@ export function emitLocationSnippet(r: ResolveResult): string {
   L.push(`  slug: ${q(loc.slug)},`);
   L.push(`  name: ${q(loc.name)},`);
   L.push(`  region: ${q(loc.region)},`);
+  if (loc.tier) L.push(`  tier: ${q(loc.tier)},`);
   L.push(`  lat: ${loc.lat}, ${provComment(prov.lat)}`);
   L.push(`  lon: ${loc.lon}, ${provComment(prov.lon)}`);
   L.push(`  timezone: ${q(loc.timezone)}, ${provComment(prov.timezone)}`);

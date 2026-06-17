@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   bestBeachWindow,
   computeHourlyScores,
+  computeMultiDayWindows,
   computeScore,
   deriveMetrics,
   median,
@@ -908,5 +909,80 @@ describe("bestBeachWindow", () => {
 
   it("returns null with no hours", () => {
     expect(bestBeachWindow([])).toBeNull();
+  });
+});
+
+describe("computeMultiDayWindows", () => {
+  // Boca: sunrise ~6:27 AM EDT (10:27Z), sunset ~8:08 PM EDT (00:08Z next day).
+  const SUN: SunData = {
+    date: "2026-06-01",
+    sunrise: "2026-06-01T10:27:00.000Z",
+    sunset: "2026-06-02T00:08:00.000Z",
+  };
+  const niceBase = {
+    buoy: NICE.buoy.data,
+    weather: NICE.weather.data,
+    marine: NICE.marine.data,
+    water: { overall: "good" as const, advisory: false, sites: [] },
+  };
+  // 72h of clear, pleasant weather from 2026-06-01T00:00Z → spans several local days.
+  function hourly72(): HourlyMetrics[] {
+    const start = Date.parse("2026-06-01T00:00:00.000Z");
+    return Array.from({ length: 72 }, (_, i) => ({
+      time: new Date(start + i * 3_600_000).toISOString(),
+      airTempF: 82,
+      cloudCoverPct: 10,
+      precipProbability: 0,
+      weatherCode: 0,
+      windSpeedMph: 8,
+      windDirDeg: 90,
+      uvIndex: 5,
+      shortForecast: "Clear",
+      emoji: "☀️",
+    }));
+  }
+  const nyHour = (iso: string) =>
+    Number(
+      new Intl.DateTimeFormat("en-GB", {
+        timeZone: "America/New_York",
+        hour: "2-digit",
+        hour12: false,
+      }).format(new Date(iso)),
+    );
+  const s = snapshot({ ...niceBase, city: { flags: ["green"] }, hourly: hourly72(), sun: SUN });
+  const now = Date.parse("2026-06-01T12:00:00.000Z"); // 8 AM EDT on 06-01
+
+  it("returns one entry per upcoming local day, today first, dropping past days", () => {
+    const days = computeMultiDayWindows(s, now);
+    expect(days.length).toBeGreaterThanOrEqual(2);
+    expect(days[0].dow).toBe("Today");
+    expect(days[0].date).toBe("2026-06-01");
+    // The early-UTC hours that fall on 05-31 local must not produce a past day.
+    expect(days.every((d) => d.date >= "2026-06-01")).toBe(true);
+    // Future days carry a weekday label, not "Today".
+    expect(days.slice(1).every((d) => d.dow !== "Today")).toBe(true);
+    // Dates are unique and ascending.
+    const dates = days.map((d) => d.date);
+    expect(new Set(dates).size).toBe(dates.length);
+    expect([...dates].sort()).toEqual(dates);
+  });
+
+  it("gives each day a peak score and a daylight best window", () => {
+    const days = computeMultiDayWindows(s, now);
+    for (const d of days) {
+      expect(d.peakScore).not.toBeNull();
+      expect(d.peakScore!).toBeGreaterThan(0);
+      expect(d.peakScore!).toBeLessThanOrEqual(100);
+      if (d.best) expect(nyHour(d.best.startIso)).toBeGreaterThanOrEqual(6); // not pre-sunrise
+    }
+    // A clear, pleasant future day yields a strong full-day window.
+    const future = days.find((d) => d.dow !== "Today")!;
+    expect(future.best).not.toBeNull();
+    expect(future.peakScore!).toBeGreaterThan(70);
+  });
+
+  it("respects maxDays and returns [] with no hourly data", () => {
+    expect(computeMultiDayWindows(s, now, 1).length).toBe(1);
+    expect(computeMultiDayWindows(snapshot({ ...niceBase, sun: SUN }), now)).toEqual([]);
   });
 });

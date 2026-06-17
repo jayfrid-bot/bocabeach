@@ -1,1 +1,616 @@
-[]
+[
+  {
+    "slug": "gulf-shores",
+    "name": "Gulf Shores",
+    "region": "Baldwin County, AL",
+    "tier": "auto",
+    "lat": 30.24604,
+    "lon": -87.70082,
+    "timezone": "America/Chicago",
+    "noaaTideStationId": "8731269",
+    "ndbcBuoyId": "ppta1",
+    "cams": [],
+    "noaaTideStationFallbackId": "8731439",
+    "ndbcBuoyFallbackId": "42012",
+    "surfZone": {
+      "office": "MOB",
+      "name": "Mobile Coastal-Baldwin Coastal"
+    }
+  },
+  {
+    "slug": "cocoa-beach",
+    "name": "Cocoa Beach",
+    "region": "Brevard County, FL",
+    "tier": "auto",
+    "lat": 28.32055,
+    "lon": -80.60922,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8721649",
+    "ndbcBuoyId": "trdf1",
+    "cams": [],
+    "noaaTideStationFallbackId": "8721727",
+    "ndbcBuoyFallbackId": "41113",
+    "surfZone": {
+      "office": "MLB",
+      "name": "Coastal Volusia-Mainland Northern Brevard"
+    }
+  },
+  {
+    "slug": "south-padre-island",
+    "name": "South Padre Island",
+    "region": "Cameron County, TX",
+    "tier": "auto",
+    "lat": 26.029246,
+    "lon": -97.152749,
+    "timezone": "America/Chicago",
+    "noaaTideStationId": "8779768",
+    "ndbcBuoyId": "bzst2",
+    "cams": [],
+    "noaaTideStationFallbackId": "8779749",
+    "ndbcBuoyFallbackId": "42020",
+    "surfZone": {
+      "office": "BRO",
+      "name": "Kenedy Island-Willacy Island-Cameron Island"
+    }
+  },
+  {
+    "slug": "cape-may",
+    "name": "Cape May",
+    "region": "Cape May, NJ",
+    "tier": "auto",
+    "lat": 38.948446,
+    "lon": -74.857392,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8535901",
+    "ndbcBuoyId": "cman4",
+    "cams": [],
+    "noaaTideStationFallbackId": "8535805",
+    "ndbcBuoyFallbackId": "44084",
+    "surfZone": {
+      "office": "PHI",
+      "name": "Atlantic Coastal Cape May"
+    }
+  },
+  {
+    "slug": "folly-beach",
+    "name": "Folly Beach",
+    "region": "Charleston County, SC",
+    "tier": "auto",
+    "lat": 32.661291,
+    "lon": -79.9237,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8666467",
+    "ndbcBuoyId": "chts1",
+    "cams": [],
+    "noaaTideStationFallbackId": "TEC3127",
+    "ndbcBuoyFallbackId": "41076",
+    "surfZone": {
+      "office": "CHS",
+      "name": "Coastal Bryan-Coastal Chatham-Coastal Liberty-Coastal McIntosh"
+    }
+  },
+  {
+    "slug": "tybee-island",
+    "name": "Tybee Island",
+    "region": "Chatham County, GA",
+    "tier": "auto",
+    "lat": 32.00022,
+    "lon": -80.84567,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "TEC3399",
+    "ndbcBuoyId": "fpkg1",
+    "cams": [],
+    "noaaTideStationFallbackId": "8670892",
+    "ndbcBuoyFallbackId": "41067",
+    "surfZone": {
+      "office": "CHS",
+      "name": "Coastal Bryan-Coastal Chatham-Coastal Liberty-Coastal McIntosh"
+    }
+  },
+  {
+    "slug": "cannon-beach",
+    "name": "Cannon Beach",
+    "region": "Clatsop County, OR",
+    "tier": "auto",
+    "lat": 45.89177,
+    "lon": -123.96153,
+    "timezone": "America/Los_Angeles",
+    "noaaTideStationId": "9437954",
+    "ndbcBuoyId": "46278",
+    "cams": [],
+    "noaaTideStationFallbackId": "9437908",
+    "ndbcBuoyFallbackId": "46243",
+    "surfZone": {
+      "office": "PQR",
+      "name": "SEASIDE AND CANNON BEACH OREGON"
+    }
+  },
+  {
+    "slug": "naples",
+    "name": "Naples",
+    "region": "Collier County, FL",
+    "tier": "auto",
+    "lat": 26.14234,
+    "lon": -81.79596,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8725114",
+    "ndbcBuoyId": "rkxf1",
+    "cams": [],
+    "noaaTideStationFallbackId": "8725110",
+    "ndbcBuoyFallbackId": "41122",
+    "surfZone": {
+      "office": "MFL",
+      "name": "Coastal Collier"
+    }
+  },
+  {
+    "slug": "hammonasset-beach",
+    "name": "Hammonasset Beach",
+    "region": "CT",
+    "tier": "auto",
+    "lat": 41.257877,
+    "lon": -72.555925,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8463701",
+    "ndbcBuoyId": "nwhc3",
+    "cams": [],
+    "noaaTideStationFallbackId": "8464041",
+    "ndbcBuoyFallbackId": "44025",
+    "surfZone": {
+      "office": "OKX",
+      "name": "Kings (Brooklyn)"
+    }
+  },
+  {
+    "slug": "nags-head",
+    "name": "Nags Head",
+    "region": "Dare County, NC",
+    "tier": "auto",
+    "lat": 35.834064,
+    "lon": -75.557668,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8652587",
+    "ndbcBuoyId": "orin7",
+    "cams": [],
+    "noaaTideStationFallbackId": "8652591",
+    "ndbcBuoyFallbackId": "44086",
+    "surfZone": {
+      "office": "MHX",
+      "name": "Northern Outer Banks"
+    }
+  },
+  {
+    "slug": "jacksonville-beach",
+    "name": "Jacksonville Beach",
+    "region": "Duval County, FL",
+    "tier": "auto",
+    "lat": 30.390177,
+    "lon": -81.394402,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8720214",
+    "ndbcBuoyId": "mypf1",
+    "cams": [],
+    "noaaTideStationFallbackId": "8720211",
+    "ndbcBuoyFallbackId": "41112",
+    "surfZone": {
+      "office": "JAX",
+      "name": "Nassau-Duval-Flagler-St. Johns"
+    }
+  },
+  {
+    "slug": "galveston",
+    "name": "Galveston",
+    "region": "Galveston, TX",
+    "tier": "auto",
+    "lat": 29.318014,
+    "lon": -94.752695,
+    "timezone": "America/Chicago",
+    "noaaTideStationId": "8771450",
+    "ndbcBuoyId": "gtot2",
+    "cams": [],
+    "noaaTideStationFallbackId": "8771510",
+    "ndbcBuoyFallbackId": "42035"
+  },
+  {
+    "slug": "ocean-shores",
+    "name": "Ocean Shores",
+    "region": "Grays Harbor County, WA",
+    "tier": "auto",
+    "lat": 46.9737,
+    "lon": -124.15629,
+    "timezone": "America/Los_Angeles",
+    "noaaTideStationId": "9441156",
+    "ndbcBuoyId": "wptw1",
+    "cams": [],
+    "noaaTideStationFallbackId": "9441102",
+    "ndbcBuoyFallbackId": "46211"
+  },
+  {
+    "slug": "biloxi",
+    "name": "Biloxi",
+    "region": "Harrison County, MS",
+    "tier": "auto",
+    "lat": 30.39603,
+    "lon": -88.88531,
+    "timezone": "America/Chicago",
+    "noaaTideStationId": "8744117",
+    "ndbcBuoyId": "pnlm6",
+    "cams": [],
+    "noaaTideStationFallbackId": "8743735",
+    "ndbcBuoyFallbackId": "42357"
+  },
+  {
+    "slug": "waikiki",
+    "name": "Waikīkī",
+    "region": "Honolulu County, HI",
+    "tier": "auto",
+    "lat": 21.281457,
+    "lon": -157.838741,
+    "timezone": "Pacific/Honolulu",
+    "noaaTideStationId": "1612340",
+    "ndbcBuoyId": "oouh1",
+    "cams": [],
+    "noaaTideStationFallbackId": "1612404",
+    "ndbcBuoyFallbackId": "51211",
+    "surfZone": {
+      "office": "HFO",
+      "name": "Big Island Leeward"
+    }
+  },
+  {
+    "slug": "myrtle-beach",
+    "name": "Myrtle Beach",
+    "region": "Horry County, SC",
+    "tier": "auto",
+    "lat": 33.680171,
+    "lon": -78.892806,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8661070",
+    "ndbcBuoyId": "mros1",
+    "cams": [],
+    "noaaTideStationFallbackId": "8660854",
+    "ndbcBuoyFallbackId": "ssbn7",
+    "surfZone": {
+      "office": "ILM",
+      "name": "Coastal Horry"
+    }
+  },
+  {
+    "slug": "grand-isle",
+    "name": "Grand Isle",
+    "region": "Jefferson County, LA",
+    "tier": "auto",
+    "lat": 29.23662,
+    "lon": -89.98729,
+    "timezone": "America/Chicago",
+    "noaaTideStationId": "TEC4455",
+    "ndbcBuoyId": "gisl1",
+    "cams": [],
+    "noaaTideStationFallbackId": "8761724",
+    "ndbcBuoyFallbackId": "42084"
+  },
+  {
+    "slug": "coney-island",
+    "name": "Coney Island",
+    "region": "Kings County, NY",
+    "tier": "auto",
+    "lat": 40.57205,
+    "lon": -73.981805,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8517741",
+    "ndbcBuoyId": "robn4",
+    "cams": [],
+    "noaaTideStationFallbackId": "8517811",
+    "ndbcBuoyFallbackId": "44065",
+    "surfZone": {
+      "office": "OKX",
+      "name": "Kings (Brooklyn)"
+    }
+  },
+  {
+    "slug": "long-beach",
+    "name": "Long Beach",
+    "region": "Los Angeles County, CA",
+    "tier": "auto",
+    "lat": 33.709464,
+    "lon": -118.282849,
+    "timezone": "America/Los_Angeles",
+    "noaaTideStationId": "9410650",
+    "ndbcBuoyId": "ohbc1",
+    "cams": [],
+    "noaaTideStationFallbackId": "9410660",
+    "ndbcBuoyFallbackId": "46256",
+    "surfZone": {
+      "office": "LOX",
+      "name": "Malibu Coast"
+    }
+  },
+  {
+    "slug": "santa-monica",
+    "name": "Santa Monica",
+    "region": "Los Angeles County, CA",
+    "tier": "auto",
+    "lat": 34.023343,
+    "lon": -118.513136,
+    "timezone": "America/Los_Angeles",
+    "noaaTideStationId": "9410840",
+    "ndbcBuoyId": "icac1",
+    "cams": [],
+    "noaaTideStationFallbackId": "9410777",
+    "ndbcBuoyFallbackId": "46268",
+    "surfZone": {
+      "office": "LOX",
+      "name": "Malibu Coast"
+    }
+  },
+  {
+    "slug": "miami-beach",
+    "name": "Miami Beach",
+    "region": "Miami-Dade County, FL",
+    "tier": "auto",
+    "lat": 25.734545,
+    "lon": -80.156991,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8723214",
+    "ndbcBuoyId": "vakf1",
+    "cams": [],
+    "noaaTideStationFallbackId": "8723155",
+    "ndbcBuoyFallbackId": "41122",
+    "surfZone": {
+      "office": "MFL",
+      "name": "Coastal Miami-Dade"
+    }
+  },
+  {
+    "slug": "asbury-park",
+    "name": "Asbury Park",
+    "region": "Monmouth County, NJ",
+    "tier": "auto",
+    "lat": 40.17849,
+    "lon": -74.033546,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8532339",
+    "ndbcBuoyId": "sdhn4",
+    "cams": [],
+    "noaaTideStationFallbackId": "8532371",
+    "ndbcBuoyFallbackId": "44065",
+    "surfZone": {
+      "office": "PHI",
+      "name": "Eastern Monmouth"
+    }
+  },
+  {
+    "slug": "seaside",
+    "name": "Seaside",
+    "region": "Monterey County, CA",
+    "tier": "auto",
+    "lat": 36.604127,
+    "lon": -121.871897,
+    "timezone": "America/Los_Angeles",
+    "noaaTideStationId": "9413450",
+    "ndbcBuoyId": "meyc1",
+    "cams": [],
+    "noaaTideStationFallbackId": "9413375",
+    "ndbcBuoyFallbackId": "46236",
+    "surfZone": {
+      "office": "MTR",
+      "name": "MONTEREY BAY AND BIG SUR COASTAL AREAS"
+    }
+  },
+  {
+    "slug": "wrightsville-beach",
+    "name": "Wrightsville Beach",
+    "region": "New Hanover County, NC",
+    "tier": "auto",
+    "lat": 34.2085,
+    "lon": -77.79637,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8658163",
+    "ndbcBuoyId": "jmpn7",
+    "cams": [],
+    "noaaTideStationFallbackId": "8658145",
+    "ndbcBuoyFallbackId": "41110",
+    "surfZone": {
+      "office": "ILM",
+      "name": "Coastal New Hanover"
+    }
+  },
+  {
+    "slug": "huntington-beach",
+    "name": "Huntington Beach",
+    "region": "Orange County, CA",
+    "tier": "auto",
+    "lat": 33.653353,
+    "lon": -117.998115,
+    "timezone": "America/Los_Angeles",
+    "noaaTideStationId": "9410599",
+    "ndbcBuoyId": "46253",
+    "cams": [],
+    "noaaTideStationFallbackId": "TWC0427",
+    "ndbcBuoyFallbackId": "46256",
+    "surfZone": {
+      "office": "SGX",
+      "name": "Orange County Coastal Areas"
+    }
+  },
+  {
+    "slug": "hampton-beach",
+    "name": "Hampton Beach",
+    "region": "Rockingham County, NH",
+    "tier": "auto",
+    "lat": 42.872313,
+    "lon": -70.816163,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8429489",
+    "ndbcBuoyId": "bgxn3",
+    "cams": [],
+    "noaaTideStationFallbackId": "8440452",
+    "ndbcBuoyFallbackId": "44098",
+    "surfZone": {
+      "office": "GYX",
+      "name": "Coastal Rockingham"
+    }
+  },
+  {
+    "slug": "la-jolla",
+    "name": "La Jolla",
+    "region": "San Diego County, CA",
+    "tier": "auto",
+    "lat": 32.861436,
+    "lon": -117.255315,
+    "timezone": "America/Los_Angeles",
+    "noaaTideStationId": "9410230",
+    "ndbcBuoyId": "ljac1",
+    "cams": [],
+    "noaaTideStationFallbackId": "9410196",
+    "ndbcBuoyFallbackId": "ljpc1",
+    "surfZone": {
+      "office": "SGX",
+      "name": "San Diego County Coastal Areas"
+    }
+  },
+  {
+    "slug": "pismo-beach",
+    "name": "Pismo Beach",
+    "region": "San Luis Obispo County, CA",
+    "tier": "auto",
+    "lat": 35.14275,
+    "lon": -120.64128,
+    "timezone": "America/Los_Angeles",
+    "noaaTideStationId": "9412110",
+    "ndbcBuoyId": "cpxc1",
+    "cams": [],
+    "noaaTideStationFallbackId": "TWC0473",
+    "ndbcBuoyFallbackId": "46215",
+    "surfZone": {
+      "office": "LOX",
+      "name": "San Luis Obispo County Beaches"
+    }
+  },
+  {
+    "slug": "santa-cruz",
+    "name": "Santa Cruz",
+    "region": "Santa Cruz County, CA",
+    "tier": "auto",
+    "lat": 36.963562,
+    "lon": -122.018574,
+    "timezone": "America/Los_Angeles",
+    "noaaTideStationId": "9413745",
+    "ndbcBuoyId": "46236",
+    "cams": [],
+    "noaaTideStationFallbackId": "9413663",
+    "ndbcBuoyFallbackId": "46042",
+    "surfZone": {
+      "office": "MTR",
+      "name": "SANTA CRUZ COUNTY COASTAL AREAS"
+    }
+  },
+  {
+    "slug": "montauk",
+    "name": "Montauk",
+    "region": "Suffolk County, NY",
+    "tier": "auto",
+    "lat": 41.03594,
+    "lon": -71.95451,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8510560",
+    "ndbcBuoyId": "mtkn6",
+    "cams": [],
+    "noaaTideStationFallbackId": "8510448",
+    "ndbcBuoyFallbackId": "44097",
+    "surfZone": {
+      "office": "OKX",
+      "name": "Southeastern Suffolk"
+    }
+  },
+  {
+    "slug": "rehoboth-beach",
+    "name": "Rehoboth Beach",
+    "region": "Sussex County, DE",
+    "tier": "auto",
+    "lat": 38.716779,
+    "lon": -75.076014,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8557863",
+    "ndbcBuoyId": "lwsd1",
+    "cams": [],
+    "noaaTideStationFallbackId": "8557380",
+    "ndbcBuoyFallbackId": "44084",
+    "surfZone": {
+      "office": "PHI",
+      "name": "Delaware Beaches"
+    }
+  },
+  {
+    "slug": "virginia-beach",
+    "name": "Virginia Beach",
+    "region": "Virginia Beach, VA",
+    "tier": "auto",
+    "lat": 36.85293,
+    "lon": -75.97799,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8639168",
+    "ndbcBuoyId": "chyv2",
+    "cams": [],
+    "noaaTideStationFallbackId": "8639207",
+    "ndbcBuoyFallbackId": "44099",
+    "surfZone": {
+      "office": "AKQ",
+      "name": "Virginia Beach"
+    }
+  },
+  {
+    "slug": "daytona-beach",
+    "name": "Daytona Beach",
+    "region": "Volusia County, FL",
+    "tier": "auto",
+    "lat": 29.21081,
+    "lon": -81.02283,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8720954",
+    "ndbcBuoyId": "41069",
+    "cams": [],
+    "noaaTideStationFallbackId": "8721120",
+    "ndbcBuoyFallbackId": "41070",
+    "surfZone": {
+      "office": "MLB",
+      "name": "Coastal Volusia-Mainland Northern Brevard"
+    }
+  },
+  {
+    "slug": "misquamicut",
+    "name": "Misquamicut",
+    "region": "Washington County, RI",
+    "tier": "auto",
+    "lat": 41.320656,
+    "lon": -71.813679,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8458694",
+    "ndbcBuoyId": "nlhc3",
+    "cams": [],
+    "noaaTideStationFallbackId": "8458022",
+    "ndbcBuoyFallbackId": "44085",
+    "surfZone": {
+      "office": "BOX",
+      "name": "Washington RI"
+    }
+  },
+  {
+    "slug": "old-orchard-beach",
+    "name": "Old Orchard Beach",
+    "region": "York County, ME",
+    "tier": "auto",
+    "lat": 43.52064,
+    "lon": -70.368105,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8418557",
+    "ndbcBuoyId": "casm1",
+    "cams": [],
+    "noaaTideStationFallbackId": "8418445",
+    "ndbcBuoyFallbackId": "44007",
+    "surfZone": {
+      "office": "GYX",
+      "name": "Coastal Rockingham"
+    }
+  }
+]

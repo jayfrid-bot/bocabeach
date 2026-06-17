@@ -14,11 +14,14 @@ export function SafetyBanner({
   water,
   lightning,
   nws,
+  timezone = "America/New_York",
 }: {
   city: Wrapped<CityOfficialData>;
   water?: Wrapped<WaterQualityData>;
   lightning?: Wrapped<LightningData>;
   nws?: Wrapped<NwsData>;
+  /** Beach IANA timezone, so alert end-times read in local time nationwide. */
+  timezone?: string;
 }) {
   const data = city.data;
   const wq = water?.data;
@@ -33,6 +36,16 @@ export function SafetyBanner({
   const noSwim = data?.noSwimAdvisory;
   const rip = nws?.data?.ripCurrentRisk ?? "unknown";
   const alerts = nws?.data?.alerts ?? [];
+  // A NWS Beach Hazards Statement is the national "is it safe to swim" signal —
+  // the honest substitute where local lifeguard flags aren't tracked. Pull it
+  // (and rip-current statements, the alert form of the rip signal) out of the
+  // generic alert list and give it its own elevated, swimmer-focused block.
+  const beachHazards = alerts.filter((a) =>
+    /beach hazard|rip current statement/i.test(a.event),
+  );
+  const otherAlerts = alerts.filter(
+    (a) => !/beach hazard|rip current statement/i.test(a.event),
+  );
   const ripWarn = rip === "high" || rip === "moderate";
   const flags = data?.flags.filter((f) => f !== "unknown") ?? [];
   const hasWarning =
@@ -129,7 +142,30 @@ export function SafetyBanner({
         </div>
       ) : null}
 
-      {ripWarn || alerts.length ? (
+      {beachHazards.length ? (
+        <div className="mb-3 rounded-xl bg-amber-500/15 p-3 ring-1 ring-amber-500/40">
+          <div className="flex items-center gap-2 text-sm font-semibold text-amber-800 dark:text-amber-200">
+            <span aria-hidden>🚩</span>
+            <span>
+              NWS Beach Hazards {beachHazards.length > 1 ? "Statements" : "Statement"} in effect
+            </span>
+          </div>
+          <ul className="mt-1 space-y-0.5 text-xs text-amber-800/90 dark:text-amber-100/80">
+            {beachHazards.map((a) => (
+              <li key={a.event + (a.ends ?? "")}>
+                {a.headline ?? a.event}
+                {a.ends ? ` — until ${fmtDate(a.ends, timezone)}` : ""}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-1 text-[11px] text-amber-700/80 dark:text-amber-200/70">
+            The National Weather Service has flagged hazardous conditions for swimmers here —
+            heed it where local lifeguard flags aren&apos;t posted. NOAA/NWS.
+          </div>
+        </div>
+      ) : null}
+
+      {ripWarn || otherAlerts.length ? (
         <div
           className={`mb-3 rounded-xl p-3 ring-1 ${
             rip === "high"
@@ -145,12 +181,12 @@ export function SafetyBanner({
               <span>Rip current risk: {rip.toUpperCase()}</span>
             </div>
           ) : null}
-          {alerts.length ? (
+          {otherAlerts.length ? (
             <ul className="mt-1 space-y-0.5 text-xs text-slate-700 dark:text-slate-300">
-              {alerts.map((a) => (
+              {otherAlerts.map((a) => (
                 <li key={a.event + (a.ends ?? "")}>
                   ⚠ {a.event}
-                  {a.ends ? ` — until ${fmtDate(a.ends, "America/New_York")}` : ""}
+                  {a.ends ? ` — until ${fmtDate(a.ends, timezone)}` : ""}
                 </li>
               ))}
             </ul>

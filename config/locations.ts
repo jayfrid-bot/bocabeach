@@ -193,5 +193,6 @@ export function toPublicLocation(l: Location): LocationPublic {
     lat: l.lat,
     lon: l.lon,
     timezone: l.timezone,
+    tier: l.tier,
   };
 }

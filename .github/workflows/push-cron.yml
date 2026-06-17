@@ -1,0 +1,38 @@
+name: Push notifications cron
+
+# Hourly trigger for the Web Push sender. It POSTs to /api/push/run on the live
+# site with the shared CRON_SECRET; the route fetches each subscribed beach's
+# conditions and sends the morning summary (at the beach's local 7 AM) and any
+# new safety alert. All the work runs in the Next app — this just pokes it on a
+# schedule, mirroring the lightning/sargassum data jobs.
+#
+# Setup (one time): add a repo SECRET `CRON_SECRET` (same value as the Netlify
+# env var) and, if not deploying to isitbeachday.com, a repo VARIABLE `SITE_URL`.
+
+on:
+  schedule:
+    - cron: "5 * * * *" # hourly at :05 (GitHub cron is best-effort)
+  workflow_dispatch: {}
+
+concurrency:
+  group: push-cron
+  cancel-in-progress: true
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger the push sender
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL: ${{ vars.SITE_URL }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "CRON_SECRET secret not set — nothing to do."; exit 0
+          fi
+          url="${SITE_URL:-https://isitbeachday.com}/api/push/run"
+          code=$(curl -sS -o /tmp/out.json -w "%{http_code}" -X POST "$url" -H "x-cron-secret: $CRON_SECRET")
+          echo "POST $url -> HTTP $code"
+          cat /tmp/out.json 2>/dev/null || true
+          echo
+          [ "$code" = "200" ]

@@ -16,6 +16,7 @@ import { HourlyScoreGraph } from "@/components/HourlyScoreGraph";
 import { AirQualityMeter } from "@/components/AirQualityMeter";
 import { LightningCard } from "@/components/LightningCard";
 import { LifeguardReport } from "@/components/LifeguardReport";
+import { LocalCoverage } from "@/components/LocalCoverage";
 import {
   BusynessByHourChart,
   BusynessByDayChart,
@@ -33,6 +34,8 @@ import { sandVerdict } from "@/lib/sandTemp";
 import { SourceList } from "@/components/SourceBadge";
 import { CamGrid } from "@/components/CamGrid";
 import { ForecastStrip } from "@/components/ForecastStrip";
+import { BestTimesStrip } from "@/components/BestTimesStrip";
+import { NotifyButton } from "@/components/NotifyButton";
 
 // Throw on non-OK so an error body (e.g. a 404 `{error}`) never replaces the
 // good snapshot — SWR keeps the last good data and the consumer guard holds.
@@ -70,6 +73,7 @@ export function ConditionsDashboard({
   slug,
   initial,
   preview = false,
+  browseHref,
 }: {
   slug: string;
   initial: ConditionsResponse;
@@ -78,6 +82,11 @@ export function ConditionsDashboard({
    * (there's no `/api/conditions/<slug>` for a not-yet-configured beach).
    */
   preview?: boolean;
+  /**
+   * When set, show a small "＋ Other beaches" link to the national picker. Used
+   * on the homepage (which stays the flagship beach) and on each beach page.
+   */
+  browseHref?: string;
 }) {
   const { data, mutate, isValidating } = useSWR<ConditionsResponse>(
     preview ? null : `/api/conditions/${slug}`,
@@ -164,6 +173,22 @@ export function ConditionsDashboard({
           {snap.location.name}
         </h1>
         <p className="text-slate-600 dark:text-slate-400">{snap.location.region}</p>
+        {snap.location.tier === "auto" ? (
+          <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-ocean-500/10 px-2.5 py-0.5 text-[11px] font-medium text-ocean-700 ring-1 ring-ocean-500/20 dark:text-ocean-300">
+            ✨ Auto-resolved · core conditions live, some local data pending
+          </span>
+        ) : null}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {browseHref ? (
+            <Link
+              href={browseHref}
+              className="inline-flex items-center gap-1.5 rounded-full bg-ocean-500/10 px-3 py-1 text-xs font-medium text-ocean-700 ring-1 ring-ocean-500/20 transition hover:bg-ocean-500/20 dark:text-ocean-300"
+            >
+              <span aria-hidden className="text-sm leading-none">＋</span> Other beaches
+            </Link>
+          ) : null}
+          {!preview ? <NotifyButton slug={slug} /> : null}
+        </div>
       </header>
 
       <div className="mb-6">
@@ -172,6 +197,7 @@ export function ConditionsDashboard({
           water={snap.waterQuality}
           lightning={snap.lightning}
           nws={snap.nws}
+          timezone={snap.location.timezone}
         />
       </div>
 
@@ -252,6 +278,12 @@ export function ConditionsDashboard({
       <section className="mb-6">
         <HourlyScoreGraph hours={res.hourlyScores} tz={tz} />
       </section>
+
+      {res.multiDayWindows?.length ? (
+        <section className="mb-6">
+          <BestTimesStrip days={res.multiDayWindows} tz={tz} />
+        </section>
+      ) : null}
 
       <section className="mb-6">
         <ForecastStrip forecast={snap.forecast} />
@@ -426,6 +458,7 @@ export function ConditionsDashboard({
         <AirQualityMeter air={snap.airQuality} />
         <LightningCard lightning={snap.lightning} />
         <LifeguardReport city={snap.cityOfficial} />
+        <LocalCoverage location={snap.location} hasCams={cams.length > 0} />
       </section>
 
       {busy?.byHour?.length ||

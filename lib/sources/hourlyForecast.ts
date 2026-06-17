@@ -114,16 +114,19 @@ export async function fetchHourlyForecast(
   let fetchedAt = nowIso();
   // No `timezone=auto`: times come back in GMT, which we pin to UTC in the parser
   // so they line up with the (UTC) sun times and `fmtTime`.
-  // `past_days=1` + `forecast_days=2` so the data window always spans the beach's
-  // LOCAL day: in the evening (US is behind UTC) the local morning/afternoon hours
-  // fall in the *previous* GMT day, which a forecast-only window would omit.
+  // `past_days=1` so the window always spans the beach's LOCAL day even in the
+  // evening (US is behind UTC, so the local morning falls in the previous GMT
+  // day). `forecast_days=6` gives ~7 local days of hourly data, which powers the
+  // multi-day "best beach times" forecast (computeMultiDayWindows). Today's
+  // hourly chart still shows only today — its daylight filter (today's sunrise/
+  // sunset) drops the extra days.
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
     `&hourly=temperature_2m,cloud_cover,precipitation_probability,weather_code,` +
     `wind_speed_10m,wind_direction_10m,uv_index,relative_humidity_2m,dew_point_2m,` +
     `soil_temperature_0cm,shortwave_radiation,precipitation` +
     `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch` +
-    `&past_days=1&forecast_days=2`;
+    `&past_days=1&forecast_days=6`;
   // GOES satellite-observed radiation for elapsed hours (best effort; the
   // forecast model's values stand wherever this is missing or fails).
   const satUrl =

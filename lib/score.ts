@@ -1,5 +1,6 @@
 import type {
   BestWindow,
+  DayWindow,
   HourlyMetrics,
   ConditionsSnapshot,
   FlagColor,
@@ -636,7 +637,14 @@ const HOUR_MS = 3_600_000;
  * never retroactively rewrites the morning. Current and future hours use the
  * latest read. `nowMs` is injectable for tests.
  */
-export function computeHourlyScores(
+/**
+ * Score EVERY fetched hourly bucket (no daylight filter), reusing day-constant
+ * inputs from the snapshot. Shared by `computeHourlyScores` (today's daylight
+ * chart) and `computeMultiDayWindows` (the multi-day best-times forecast).
+ * Observed-"now" signals (nowcast rain, fresh lightning) are applied ONLY to the
+ * bucket containing `nowMs`, so future days never inherit them.
+ */
+function scoreAllHours(
   s: ConditionsSnapshot,
   nowMs: number = Date.now(),
 ): HourlyScore[] {
@@ -645,9 +653,6 @@ export function computeHourlyScores(
 
   // Day-constant inputs (water temp/quality/flags/waves/seaweed) reuse the snapshot.
   const base = deriveMetrics(s);
-  const sun = s.sun.data;
-  const sunrise = sun?.sunrise ? new Date(sun.sunrise).getTime() : null;
-  const sunset = sun?.sunset ? new Date(sun.sunset).getTime() : null;
 
   // Crowds vary through the day: map each LOCAL hour to its typical fullness.
   const tz = s.location.timezone;
@@ -664,11 +669,22 @@ export function computeHourlyScores(
 
   // The seaweed read in effect at a given past local hour: the last of today's
   // reads at-or-before that hour, else the day's first read (closest we have).
+  // These reads belong to TODAY only, so they're applied only to today's hours
+  // (see `isToday` below) — never to yesterday's hours (from past_days=1) or to
+  // future days, which use the latest read instead.
   const reads = s.sargassum.data?.todayReads ?? [];
   const seaweedAtHour = (localHour: number) => {
     const prior = reads.filter((r) => r.hour <= localHour);
     return prior.length ? prior[prior.length - 1] : reads[0];
   };
+  const localDateOf = (iso: string) =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(iso));
+  const todayLocal = localDateOf(new Date(nowMs).toISOString());
 
   // Per-hour sand estimate (recent rain = that hour + the two before it),
   // computed against the full hourly array before the daylight filter.
@@ -686,17 +702,14 @@ export function computeHourlyScores(
   });
 
   return hours
-    .filter((h) => {
-      if (sunrise == null || sunset == null) return true; // no bounds -> keep all
-      const t = new Date(h.time).getTime();
-      // Include the hour bucket that contains sunrise, through the last hour <= sunset.
-      return t + HOUR_MS > sunrise && t <= sunset;
-    })
     .map((h) => {
       // Past hours keep the read that was current then; now/future use latest.
+      // Only TODAY's past hours map to historical reads — yesterday's hours and
+      // future days fall through to the latest read (base.sargassumLevel).
       const hStart = new Date(h.time).getTime();
       const isPast = hStart + HOUR_MS <= nowMs;
-      const histRead = isPast ? seaweedAtHour(localHourOf(h.time)) : undefined;
+      const isToday = localDateOf(h.time) === todayLocal;
+      const histRead = isPast && isToday ? seaweedAtHour(localHourOf(h.time)) : undefined;
       // The bucket that strictly CONTAINS now gets the observed-"now" signals
       // (nowcast rain + fresh lightning); every other hour is forecast-only and
       // leaves these unset. NOTE: surfAdvisory is NOT a now-only signal — it's a
@@ -762,4 +775,111 @@ export function computeHourlyScores(
         windDirDeg: h.windDirDeg,
       };
     });
+}
+
+/**
+ * Today's Beach Day score across daylight hours, for the hourly chart. Scores
+ * every fetched hour, then keeps only TODAY's daylight (the bucket containing
+ * sunrise through the last hour at/before sunset). With no sun data, keeps all.
+ */
+export function computeHourlyScores(
+  s: ConditionsSnapshot,
+  nowMs: number = Date.now(),
+): HourlyScore[] {
+  const scored = scoreAllHours(s, nowMs);
+  const sun = s.sun.data;
+  const sunrise = sun?.sunrise ? new Date(sun.sunrise).getTime() : null;
+  const sunset = sun?.sunset ? new Date(sun.sunset).getTime() : null;
+  if (sunrise == null || sunset == null) return scored;
+  return scored.filter((h) => {
+    const t = new Date(h.time).getTime();
+    // Include the hour bucket that contains sunrise, through the last hour <= sunset.
+    return t + HOUR_MS > sunrise && t <= sunset;
+  });
+}
+
+/** Local hour (0-23) of an instant in a given IANA timezone. */
+function localHourInTz(iso: string, tz: string): number {
+  return (
+    Number(
+      new Intl.DateTimeFormat("en-US", { timeZone: tz, hour: "2-digit", hour12: false }).format(
+        new Date(iso),
+      ),
+    ) % 24
+  );
+}
+
+/**
+ * Best beach-time window + peak score per upcoming day (today first), powering
+ * the multi-day "best beach times" forecast. Scores the whole multi-day hourly
+ * window, groups by the beach's LOCAL date, keeps daylight hours (today's
+ * sunrise/sunset local-hour bounds, which drift only minutes across a week),
+ * and finds each day's best contiguous window. For today the window only spans
+ * time still ahead; future days use the whole daylight span.
+ *
+ * The weather that varies hour-to-hour (sun, wind, rain, UV, heat) is the real
+ * per-day forecast; slowly-changing inputs (water temp, surf, advisories) are
+ * carried from the current snapshot — so treat future days as an estimate.
+ */
+export function computeMultiDayWindows(
+  s: ConditionsSnapshot,
+  nowMs: number = Date.now(),
+  maxDays = 7,
+): DayWindow[] {
+  const scored = scoreAllHours(s, nowMs);
+  if (!scored.length) return [];
+  const tz = s.location.timezone;
+
+  // Daylight bounds as LOCAL hours from today's sun (reused for every day).
+  const sun = s.sun.data;
+  const sunriseH = sun?.sunrise ? localHourInTz(sun.sunrise, tz) : 7;
+  const sunsetH = sun?.sunset ? localHourInTz(sun.sunset, tz) : 19;
+
+  const dateFmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }); // → YYYY-MM-DD
+  const dowFmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short" });
+  const todayKey = dateFmt.format(new Date(nowMs));
+
+  // Group scored hours by local date, daylight only, today and forward.
+  const groups = new Map<string, HourlyScore[]>();
+  for (const h of scored) {
+    const when = new Date(h.time);
+    const key = dateFmt.format(when);
+    if (key < todayKey) continue; // drop yesterday (from past_days=1)
+    const lh = localHourInTz(h.time, tz);
+    if (lh < sunriseH || lh > sunsetH) continue; // daylight only
+    const arr = groups.get(key);
+    if (arr) arr.push(h);
+    else groups.set(key, [h]);
+  }
+
+  const out: DayWindow[] = [];
+  for (const key of [...groups.keys()].sort().slice(0, maxDays)) {
+    const dayHours = groups.get(key)!;
+    const isToday = key === todayKey;
+    const best = bestBeachWindow(dayHours, isToday ? nowMs : undefined);
+    const peak = Math.max(...dayHours.map((h) => h.score));
+    // Representative emoji: the daylight hour nearest local 13:00.
+    let mid = dayHours[0];
+    let midDist = Math.abs(localHourInTz(mid.time, tz) - 13);
+    for (const h of dayHours) {
+      const dist = Math.abs(localHourInTz(h.time, tz) - 13);
+      if (dist < midDist) {
+        mid = h;
+        midDist = dist;
+      }
+    }
+    out.push({
+      date: key,
+      dow: isToday ? "Today" : dowFmt.format(new Date(dayHours[0].time)),
+      best,
+      peakScore: Math.round(peak),
+      emoji: mid.emoji,
+    });
+  }
+  return out;
 }

@@ -19,7 +19,7 @@ import { fetchTides } from "@/lib/sources/tides";
 import { fetchTraffic } from "@/lib/sources/traffic";
 import { fetchWaterQuality } from "@/lib/sources/waterQuality";
 import { fetchWeather } from "@/lib/sources/weather";
-import { computeHourlyScores, computeScore } from "@/lib/score";
+import { computeHourlyScores, computeMultiDayWindows, computeScore } from "@/lib/score";
 import { nowIso } from "@/lib/util";
 
 /**
@@ -129,6 +129,7 @@ export async function getConditionsForLocation(
     snapshot,
     score: computeScore(snapshot),
     hourlyScores: computeHourlyScores(snapshot),
+    multiDayWindows: computeMultiDayWindows(snapshot),
     cams,
   };
 }
