@@ -2,20 +2,14 @@
 //
 // Runs the free-text location resolver and returns its status, candidates,
 // warnings, a paste-ready Location snippet (when resolved), and a human report.
-// Authoring/curation tool — open in dev, and in production only behind the admin
-// token (so the admin console can use it). Not a public API.
+// Backs the /admin/yf console; read-only (only resolves names, no writes).
 
 import { resolveBeach } from "@/lib/resolve/resolveLocation";
 import { emitLocationSnippet, emitReport } from "@/lib/resolve/emit";
-import { adminApiAllowed } from "@/lib/admin/auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request): Promise<Response> {
-  if (!adminApiAllowed(req)) {
-    return new Response("Not found", { status: 404 });
-  }
-
   const { searchParams } = new URL(req.url);
   const q = searchParams.get("q")?.trim() ?? "";
   if (!q) {

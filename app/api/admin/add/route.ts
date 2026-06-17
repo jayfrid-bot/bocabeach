@@ -2,7 +2,6 @@
 // config/locations.generated.json on the repo, which Netlify auto-deploys. The
 // new beach is then a live, routable location. Gated; commit is rehearsable.
 
-import { adminApiAllowed } from "@/lib/admin/auth";
 import { addLocationCommit } from "@/lib/admin/github";
 import type { Location } from "@/lib/types";
 
@@ -29,8 +28,6 @@ function isLocation(v: unknown): v is Location {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  if (!adminApiAllowed(req)) return new Response("Not found", { status: 404 });
-
   const dryRun = new URL(req.url).searchParams.get("dryRun") !== null;
 
   let body: unknown;

@@ -42,7 +42,7 @@ const btn =
 const btnPrimary = `${btn} bg-ocean-600 text-white hover:bg-ocean-500`;
 const btnGhost = `${btn} bg-slate-900/5 text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-900/10 dark:bg-white/5 dark:text-slate-200 dark:ring-white/10 dark:hover:bg-white/10`;
 
-export function AdminConsole({ token }: { token: string }) {
+export function AdminConsole() {
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,11 +55,6 @@ export function AdminConsole({ token }: { token: string }) {
   const [add, setAdd] = useState<AddApi | null>(null);
   const [addBusy, setAddBusy] = useState(false);
 
-  const withTok = useCallback(
-    (path: string) => `${path}${path.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`,
-    [token],
-  );
-
   const runResolve = useCallback(
     async (q: string, pick?: number) => {
       setBusy(true);
@@ -67,7 +62,7 @@ export function AdminConsole({ token }: { token: string }) {
       setPreview(null);
       setAdd(null);
       try {
-        const url = withTok(`/api/resolve?q=${encodeURIComponent(q)}${pick !== undefined ? `&pick=${pick}` : ""}`);
+        const url = `/api/resolve?q=${encodeURIComponent(q)}${pick !== undefined ? `&pick=${pick}` : ""}`;
         const res = await fetch(url);
         if (!res.ok) throw new Error(`resolve failed (${res.status})`);
         const data: ResolveApi = await res.json();
@@ -81,7 +76,7 @@ export function AdminConsole({ token }: { token: string }) {
         setBusy(false);
       }
     },
-    [withTok],
+    [],
   );
 
   const runPreview = useCallback(async () => {
@@ -89,7 +84,7 @@ export function AdminConsole({ token }: { token: string }) {
     setPreviewBusy(true);
     setError(null);
     try {
-      const res = await fetch(withTok("/api/admin/preview"), {
+      const res = await fetch("/api/admin/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ location: loc }),
@@ -101,7 +96,7 @@ export function AdminConsole({ token }: { token: string }) {
     } finally {
       setPreviewBusy(false);
     }
-  }, [loc, withTok]);
+  }, [loc]);
 
   const runAdd = useCallback(
     async (dryRun: boolean) => {
@@ -110,7 +105,7 @@ export function AdminConsole({ token }: { token: string }) {
       setAddBusy(true);
       setError(null);
       try {
-        const res = await fetch(withTok(`/api/admin/add${dryRun ? "?dryRun=1" : ""}`), {
+        const res = await fetch(`/api/admin/add${dryRun ? "?dryRun=1" : ""}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ location: loc }),
@@ -122,7 +117,7 @@ export function AdminConsole({ token }: { token: string }) {
         setAddBusy(false);
       }
     },
-    [loc, withTok],
+    [loc],
   );
 
   const setField = (k: "name" | "region" | "slug", v: string) =>
