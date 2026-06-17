@@ -16,6 +16,7 @@ import { HourlyScoreGraph } from "@/components/HourlyScoreGraph";
 import { AirQualityMeter } from "@/components/AirQualityMeter";
 import { LightningCard } from "@/components/LightningCard";
 import { LifeguardReport } from "@/components/LifeguardReport";
+import { LocalCoverage } from "@/components/LocalCoverage";
 import {
   BusynessByHourChart,
   BusynessByDayChart,
@@ -164,6 +165,11 @@ export function ConditionsDashboard({
           {snap.location.name}
         </h1>
         <p className="text-slate-600 dark:text-slate-400">{snap.location.region}</p>
+        {snap.location.tier === "auto" ? (
+          <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-ocean-500/10 px-2.5 py-0.5 text-[11px] font-medium text-ocean-700 ring-1 ring-ocean-500/20 dark:text-ocean-300">
+            ✨ Auto-resolved · core conditions live, some local data pending
+          </span>
+        ) : null}
       </header>
 
       <div className="mb-6">
@@ -172,6 +178,7 @@ export function ConditionsDashboard({
           water={snap.waterQuality}
           lightning={snap.lightning}
           nws={snap.nws}
+          timezone={snap.location.timezone}
         />
       </div>
 
@@ -426,6 +433,7 @@ export function ConditionsDashboard({
         <AirQualityMeter air={snap.airQuality} />
         <LightningCard lightning={snap.lightning} />
         <LifeguardReport city={snap.cityOfficial} />
+        <LocalCoverage location={snap.location} hasCams={cams.length > 0} />
       </section>
 
       {busy?.byHour?.length ||

@@ -514,6 +514,14 @@ export interface Location {
   region: string;
   lat: number;
   lon: number;
+  /**
+   * Provenance tier. `"curated"` = a human filled in the local fields (cams,
+   * lifeguard-flag scrape, water-quality county). `"auto"` = produced by the
+   * beach auto-resolver from lat/lon, so the national data layers (weather,
+   * marine, tides, buoy, NWS alerts/rip, UV, air) are present but the curated
+   * locals are not yet. Absent ⇒ `"curated"` (every hand-written entry).
+   */
+  tier?: "curated" | "auto";
   timezone: string; // IANA, e.g. "America/New_York"
   noaaTideStationId: string;
   noaaTideStationFallbackId?: string;
@@ -544,5 +552,5 @@ export interface Location {
 
 export type LocationPublic = Pick<
   Location,
-  "slug" | "name" | "region" | "lat" | "lon" | "timezone"
+  "slug" | "name" | "region" | "lat" | "lon" | "timezone" | "tier"
 >;

@@ -466,6 +466,10 @@ export async function resolveBeach(
     slug,
     name: displayName,
     region,
+    // Auto-resolved from lat/lon — national data layers present, curated locals
+    // (cams, lifeguard-flag scrape, water-quality county) pending. Drives the
+    // "auto-resolved" badge + honest-coverage notes in the UI.
+    tier: "auto",
     lat: chosenBeach.lat,
     lon: chosenBeach.lon,
     timezone: tzValue ?? "",

@@ -28,12 +28,19 @@ import numpy as np
 BUCKET = os.environ.get("GLM_BUCKET", "https://noaa-goes19.s3.amazonaws.com")
 PREFIX = "GLM-L2-LCFA"
 WINDOW_MIN = int(os.environ.get("GLM_WINDOW_MIN", "30"))
-# Florida bounding box (covers Boca + neighboring towns); widen if towns expand.
+# CONUS bounding box (national coverage — every US coast). GOES-19 (East) sees
+# all of CONUS; the Pacific coast sits near its limb (slightly lower GLM
+# detection) — a GOES-18 (West) source is the planned follow-up for CA/OR/WA.
+# Per-beach distance filtering happens in lib/sources/lightning.ts, so one
+# national feed serves any beach. Override via GLM_* env to narrow.
 MIN_LAT = float(os.environ.get("GLM_MIN_LAT", "24.0"))
-MAX_LAT = float(os.environ.get("GLM_MAX_LAT", "29.0"))
-MIN_LON = float(os.environ.get("GLM_MIN_LON", "-83.0"))
-MAX_LON = float(os.environ.get("GLM_MAX_LON", "-79.0"))
-CAP = int(os.environ.get("GLM_CAP", "4000"))          # max strikes in output
+MAX_LAT = float(os.environ.get("GLM_MAX_LAT", "49.5"))
+MIN_LON = float(os.environ.get("GLM_MIN_LON", "-125.0"))
+MAX_LON = float(os.environ.get("GLM_MAX_LON", "-66.0"))
+# Cap keeps the most-recent strikes (so active, safety-critical lightning is
+# never evicted by older strikes). Sized for CONUS volume; the feed is fetched
+# server-side + cached, so size doesn't reach users directly.
+CAP = int(os.environ.get("GLM_CAP", "20000"))         # max strikes in output
 MAX_FILES = int(os.environ.get("GLM_MAX_FILES", "200"))  # runtime safety bound
 OUT = os.environ.get("GLM_OUT", "lightning.json")
 S3_NS = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
