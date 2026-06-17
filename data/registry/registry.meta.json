@@ -1,0 +1,128 @@
+{
+  "builtAt": "2026-06-17T01:39:37Z",
+  "version": 1,
+  "counts": {
+    "tideStations": 3450,
+    "buoys": 1930,
+    "beaches": 956
+  },
+  "sources": {
+    "tideStations": "https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations.json?type=tidepredictions",
+    "buoys": "https://www.ndbc.noaa.gov/data/stations/station_table.txt + https://www.ndbc.noaa.gov/data/realtime2/",
+    "beaches": "https://prd-tnm.s3.amazonaws.com/StagedProducts/GeographicNames/DomesticNames/DomesticNames_<ST>_Text.zip"
+  },
+  "coastalKm": 5.0,
+  "beachStateCoverage": {
+    "FL": {
+      "status": "ok",
+      "raw": 60,
+      "kept": 46
+    },
+    "GA": {
+      "status": "ok",
+      "raw": 7,
+      "kept": 4
+    },
+    "SC": {
+      "status": "ok",
+      "raw": 25,
+      "kept": 22
+    },
+    "NC": {
+      "status": "ok",
+      "raw": 36,
+      "kept": 12
+    },
+    "VA": {
+      "status": "ok",
+      "raw": 31,
+      "kept": 16
+    },
+    "MD": {
+      "status": "ok",
+      "raw": 35,
+      "kept": 25
+    },
+    "DE": {
+      "status": "ok",
+      "raw": 16,
+      "kept": 8
+    },
+    "NJ": {
+      "status": "ok",
+      "raw": 41,
+      "kept": 41
+    },
+    "NY": {
+      "status": "ok",
+      "raw": 137,
+      "kept": 89
+    },
+    "CT": {
+      "status": "ok",
+      "raw": 102,
+      "kept": 81
+    },
+    "RI": {
+      "status": "ok",
+      "raw": 92,
+      "kept": 68
+    },
+    "MA": {
+      "status": "ok",
+      "raw": 245,
+      "kept": 167
+    },
+    "NH": {
+      "status": "ok",
+      "raw": 24,
+      "kept": 1
+    },
+    "ME": {
+      "status": "ok",
+      "raw": 114,
+      "kept": 57
+    },
+    "AL": {
+      "status": "ok",
+      "raw": 3,
+      "kept": 2
+    },
+    "MS": {
+      "status": "ok",
+      "raw": 1,
+      "kept": 0
+    },
+    "LA": {
+      "status": "ok",
+      "raw": 7,
+      "kept": 3
+    },
+    "TX": {
+      "status": "ok",
+      "raw": 25,
+      "kept": 9
+    },
+    "CA": {
+      "status": "ok",
+      "raw": 275,
+      "kept": 123
+    },
+    "OR": {
+      "status": "ok",
+      "raw": 52,
+      "kept": 24
+    },
+    "WA": {
+      "status": "ok",
+      "raw": 62,
+      "kept": 41
+    },
+    "HI": {
+      "status": "ok",
+      "raw": 319,
+      "kept": 117
+    }
+  },
+  "failures": []
+}

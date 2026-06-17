@@ -180,18 +180,18 @@ describe("scoring (Beach Day only — no surf)", () => {
 
   it("nearby lightning bottoms the score as a get-out-of-the-water safety override", () => {
     const base = deriveMetrics(snapshot({}));
-    const r = scoreBeachDay({ ...base, lightningWithin10mi: 61, lightningLastMinutesAgo: 4 });
+    const r = scoreBeachDay({ ...base, lightningWithin5mi: true, lightningLastMinutesAgo: 4 });
     expect(r.score).toBeLessThanOrEqual(10);
-    expect(r.caps.join(" ")).toMatch(/lightning within 10 miles/i);
+    expect(r.caps.join(" ")).toMatch(/lightning within 5 miles/i);
   });
 
-  it("does not cap for lightning when strikes are absent", () => {
+  it("does not cap for lightning when no strike is within 5 mi", () => {
     const base = deriveMetrics(snapshot({}));
-    const r = scoreBeachDay({ ...base, lightningWithin10mi: 0 });
+    const r = scoreBeachDay({ ...base, lightningWithin5mi: false });
     expect(r.caps.join(" ")).not.toMatch(/lightning/i);
   });
 
-  it("ignores stale lightning (errored feed or last strike > 30 min ago) but caps on a fresh strike", () => {
+  it("caps only on a fresh strike within 5 mi (not stale, errored, or farther than 5 mi)", () => {
     const niceBase = {
       buoy: NICE.buoy.data,
       weather: NICE.weather.data,
@@ -201,6 +201,7 @@ describe("scoring (Beach Day only — no surf)", () => {
     };
     const ld = (over: Partial<LightningData>): LightningData => ({
       windowMinutes: 30,
+      nearestMi: 3, // closest strike within 5 mi by default
       within10mi: 5,
       within25mi: 5,
       within50mi: 5,
@@ -224,12 +225,18 @@ describe("scoring (Beach Day only — no surf)", () => {
     );
     expect(stale.caps.join(" ")).not.toMatch(/lightning/i);
     expect(stale.score).toBeGreaterThan(40);
-    // Feed OK and a strike within the last 30 min -> get-out-of-the-water cap.
+    // Feed OK and recent, but the closest strike is 8 mi away (> 5 mi) -> no cap.
+    const farOff = scoreBeachDay(
+      deriveMetrics(snapshot({ ...niceBase, lightning: ld({ lastMinutesAgo: 4, nearestMi: 8 }) })),
+    );
+    expect(farOff.caps.join(" ")).not.toMatch(/lightning/i);
+    expect(farOff.score).toBeGreaterThan(40);
+    // Feed OK, fresh, and a strike within 5 mi -> get-out-of-the-water cap.
     const fresh = scoreBeachDay(
       deriveMetrics(snapshot({ ...niceBase, lightning: ld({ lastMinutesAgo: 4 }) })),
     );
     expect(fresh.score).toBeLessThanOrEqual(10);
-    expect(fresh.caps.join(" ")).toMatch(/lightning within 10 miles/i);
+    expect(fresh.caps.join(" ")).toMatch(/lightning within 5 miles/i);
   });
 
   it("scores sand barefoot comfort: cool sand best, scorching sand drags the score", () => {
@@ -806,6 +813,7 @@ describe("computeHourlyScores", () => {
       nowcast: { state: "raining", text: "Raining now" },
       lightning: {
         windowMinutes: 30,
+        nearestMi: 3,
         within10mi: 7,
         within25mi: 7,
         within50mi: 7,
@@ -836,6 +844,7 @@ describe("computeHourlyScores", () => {
       sun: SUN,
       lightning: {
         windowMinutes: 30,
+        nearestMi: 3,
         within10mi: 7,
         within25mi: 7,
         within50mi: 7,

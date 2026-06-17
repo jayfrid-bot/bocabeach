@@ -49,8 +49,8 @@ export interface Derived {
   surfAdvisory?: boolean;
   /** Live nowcast says it's precipitating RIGHT NOW (observed, beats the forecast). */
   nowcastRaining?: boolean;
-  /** GOES GLM lightning strikes within 10 mi in the recent window (now-only). */
-  lightningWithin10mi?: number;
+  /** A fresh GOES GLM strike landed within 5 mi (now-only) — trips the get-out cap. */
+  lightningWithin5mi?: boolean;
   /** Minutes since the most recent strike in the scanned area (now-only). */
   lightningLastMinutesAgo?: number;
 }
@@ -149,13 +149,14 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     ),
     // Observed "now" signals — they override the forecast-based rain logic.
     nowcastRaining: s.nowcast.data?.state === "raining",
-    // Lightning counts only when the feed is OK and the most recent strike is
-    // fresh (<=30 min); a stale/errored scan must not trip the get-out cap.
-    lightningWithin10mi:
+    // Lightning trips the get-out cap only when the feed is OK, the activity is
+    // fresh (most recent strike <=30 min ago), AND the closest strike landed
+    // within 5 mi. A stale/errored scan, or strikes that are all farther than
+    // 5 mi away, must not bottom the score.
+    lightningWithin5mi:
       s.lightning.status === "ok" &&
-      (s.lightning.data?.lastMinutesAgo == null || s.lightning.data.lastMinutesAgo <= 30)
-        ? s.lightning.data?.within10mi
-        : 0,
+      (s.lightning.data?.lastMinutesAgo == null || s.lightning.data.lastMinutesAgo <= 30) &&
+      (s.lightning.data?.nearestMi ?? Infinity) <= 5,
     lightningLastMinutesAgo: s.lightning.data?.lastMinutesAgo,
   };
 }
@@ -472,7 +473,7 @@ export function scoreBeachDay(d: Derived): ScoreResult {
   const rawScore = combine(subs);
   // Total data outage: no weather sub-score was available. Surface it explicitly
   // (score 0, "Unavailable", dataAvailable: false). We STILL run the safety caps
-  // so a hazard we genuinely observe — e.g. lightning within 10 mi from the GLM
+  // so a hazard we genuinely observe — e.g. lightning within 5 mi from the GLM
   // feed, which is independent of the weather pipeline — still registers as a cap
   // reason even when every forecast feed is down. (Math.min keeps the score at 0.)
   if (rawScore == null) {
@@ -582,12 +583,12 @@ function applyBeachCaps(
     score = Math.min(score, 15);
     caps.push("Severe weather warning in effect");
   }
-  // OBSERVED lightning (GOES GLM) within 10 mi in the recent scan window is a
+  // OBSERVED lightning (GOES GLM) within 5 mi in the recent scan window is a
   // get-out-of-the-water emergency — the single most dangerous beach condition.
   // This is observed data, so it bottoms the score regardless of the forecast.
-  if ((d.lightningWithin10mi ?? 0) > 0) {
+  if (d.lightningWithin5mi) {
     score = Math.min(score, 10);
-    caps.push("Lightning within 10 miles — get out of the water");
+    caps.push("Lightning within 5 miles — get out of the water");
   }
   // Rain is a hard ceiling on the whole day. We trust OBSERVATION over forecast:
   // the live nowcast ("it's raining right now") overrides the forecast-code path,
@@ -730,7 +731,7 @@ export function computeHourlyScores(
         ...(isCurrentHour
           ? {
               nowcastRaining: base.nowcastRaining,
-              lightningWithin10mi: base.lightningWithin10mi,
+              lightningWithin5mi: base.lightningWithin5mi,
               lightningLastMinutesAgo: base.lightningLastMinutesAgo,
             }
           : {}),
