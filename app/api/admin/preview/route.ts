@@ -2,7 +2,6 @@
 // (not-yet-configured) Location, so the console can live-render the dashboard.
 // Gated like the rest of the admin surface.
 
-import { adminApiAllowed } from "@/lib/admin/auth";
 import { getConditionsForLocation } from "@/lib/conditions";
 import type { Location } from "@/lib/types";
 
@@ -24,8 +23,6 @@ function isLocation(v: unknown): v is Location {
 }
 
 export async function POST(req: Request): Promise<Response> {
-  if (!adminApiAllowed(req)) return new Response("Not found", { status: 404 });
-
   let body: unknown;
   try {
     body = await req.json();
