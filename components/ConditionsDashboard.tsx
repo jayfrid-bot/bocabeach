@@ -69,14 +69,20 @@ function humidityNote(p?: number): string | undefined {
 export function ConditionsDashboard({
   slug,
   initial,
+  preview = false,
 }: {
   slug: string;
   initial: ConditionsResponse;
+  /**
+   * Admin preview: render `initial` only — disable SWR refetch + auto-refresh
+   * (there's no `/api/conditions/<slug>` for a not-yet-configured beach).
+   */
+  preview?: boolean;
 }) {
   const { data, mutate, isValidating } = useSWR<ConditionsResponse>(
-    `/api/conditions/${slug}`,
+    preview ? null : `/api/conditions/${slug}`,
     fetcher,
-    { fallbackData: initial, refreshInterval: 300_000 },
+    { fallbackData: initial, refreshInterval: preview ? 0 : 300_000 },
   );
 
   // Fall back to the SSR snapshot unless SWR has a fully-formed response — an

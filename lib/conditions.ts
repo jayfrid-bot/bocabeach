@@ -1,5 +1,5 @@
 import { getLocation, toPublicLocation } from "@/config/locations";
-import type { ConditionsResponse, ConditionsSnapshot } from "@/lib/types";
+import type { ConditionsResponse, ConditionsSnapshot, Location } from "@/lib/types";
 import { buildCamViews } from "@/lib/cams";
 import { fetchAirQuality } from "@/lib/sources/airQuality";
 import { fetchBusyness } from "@/lib/sources/busyness";
@@ -32,7 +32,17 @@ export async function getSnapshot(
 ): Promise<ConditionsSnapshot | null> {
   const loc = getLocation(slug);
   if (!loc) return null;
+  return getSnapshotForLocation(loc);
+}
 
+/**
+ * The slug-free core of {@link getSnapshot}: fetch every source for an arbitrary
+ * `Location` (configured or not) and assemble a snapshot. Used by the admin
+ * console to preview a beach that isn't in the config yet.
+ */
+export async function getSnapshotForLocation(
+  loc: Location,
+): Promise<ConditionsSnapshot> {
   const [
     tides,
     buoy,
@@ -100,11 +110,21 @@ export async function getConditions(
 ): Promise<ConditionsResponse | null> {
   const loc = getLocation(slug);
   if (!loc) return null;
+  return getConditionsForLocation(loc);
+}
+
+/**
+ * The slug-free core of {@link getConditions}: build a full conditions response
+ * (snapshot + score + hourly + cams) for an arbitrary `Location`. Powers the
+ * admin live-preview of a beach before it's added to the config.
+ */
+export async function getConditionsForLocation(
+  loc: Location,
+): Promise<ConditionsResponse> {
   const [snapshot, cams] = await Promise.all([
-    getSnapshot(slug),
+    getSnapshotForLocation(loc),
     buildCamViews(loc).catch(() => []),
   ]);
-  if (!snapshot) return null;
   return {
     snapshot,
     score: computeScore(snapshot),

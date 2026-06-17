@@ -1,4 +1,12 @@
 import type { Location, LocationPublic } from "@/lib/types";
+import generatedRaw from "./locations.generated.json";
+
+/**
+ * Machine-added locations (from the admin console's "Add" → GitHub commit). Kept
+ * in a separate JSON so the hand-curated TS below stays the human source of truth
+ * while admin-added beaches are trivial to append programmatically.
+ */
+const GENERATED = generatedRaw as Location[];
 
 /**
  * The whole multi-town design lives here: adding a beach town = adding one entry.
@@ -162,12 +170,19 @@ export const LOCATIONS: Location[] = [
   },
 ];
 
+/** Hand-curated entries first, then admin-added (generated) ones; deduped by slug. */
+function allLocations(): Location[] {
+  const seen = new Set(LOCATIONS.map((l) => l.slug));
+  const added = GENERATED.filter((l) => l && l.slug && !seen.has(l.slug));
+  return [...LOCATIONS, ...added];
+}
+
 export function listLocations(): Location[] {
-  return LOCATIONS;
+  return allLocations();
 }
 
 export function getLocation(slug: string): Location | undefined {
-  return LOCATIONS.find((l) => l.slug === slug);
+  return allLocations().find((l) => l.slug === slug);
 }
 
 export function toPublicLocation(l: Location): LocationPublic {
