@@ -11,6 +11,7 @@
 // Google + a real device token, so they run only against the live service.
 
 import { createSign } from "node:crypto";
+import { readPemEnv } from "@/lib/push/pemEnv";
 
 export interface FcmConfig {
   projectId: string;
@@ -22,7 +23,7 @@ export interface FcmConfig {
 export function getFcm(): FcmConfig | null {
   const projectId = process.env.FCM_PROJECT_ID ?? "";
   const clientEmail = process.env.FCM_CLIENT_EMAIL ?? "";
-  const privateKey = (process.env.FCM_PRIVATE_KEY ?? "").replace(/\\n/g, "\n");
+  const privateKey = readPemEnv("FCM_PRIVATE_KEY"); // prefers FCM_PRIVATE_KEY_B64
   if (!projectId || !clientEmail || !privateKey) return null;
   return { projectId, clientEmail, privateKey };
 }
