@@ -11,8 +11,7 @@ export const MORNING_HOUR = 7;
 
 /**
  * The minimum a subscription must expose for the decision logic — satisfied by
- * both the web `StoredSub` and the native `NativeSub`, so the same rules drive
- * both transports.
+ * `NativeSub` (iOS APNs + Android FCM), so one rule set drives both platforms.
  */
 export interface Notifiable {
   prefs: { morning: boolean; safety: boolean };

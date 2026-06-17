@@ -1,18 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { decideNotifications, summarizeForPush, MORNING_HOUR } from "@/lib/push/notify";
-import type { StoredSub } from "@/lib/push/store";
+import {
+  decideNotifications,
+  summarizeForPush,
+  MORNING_HOUR,
+  type Notifiable,
+} from "@/lib/push/notify";
 import type { ConditionsResponse } from "@/lib/types";
 
-function sub(over: Partial<StoredSub> = {}): StoredSub {
-  return {
-    endpoint: "https://push.example/abc",
-    keys: { p256dh: "p", auth: "a" },
-    slug: "boca-raton",
-    tz: "America/New_York",
-    prefs: { morning: true, safety: true },
-    createdAt: "2026-06-01T00:00:00Z",
-    ...over,
-  };
+function sub(over: Partial<Notifiable> = {}): Notifiable {
+  return { prefs: { morning: true, safety: true }, ...over };
 }
 
 const SUMMARY = {

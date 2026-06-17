@@ -1,14 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  isPushSupported,
-  pushStatus,
-  subscribeToPush,
-  unsubscribeFromPush,
-} from "@/lib/push/client";
 import { disableNative, enableNative, isNativePlatform, nativeStatus } from "@/lib/push/native";
-import { VAPID_PUBLIC_KEY } from "@/lib/push/vapid";
 
 type State = "init" | "hidden" | "off" | "on" | "denied" | "busy" | "error";
 
@@ -16,40 +9,22 @@ const pill =
   "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 transition";
 
 /**
- * "Notify me" opt-in for a beach: a morning Beach Day summary + safety alerts
- * via Web Push. Renders nothing where push can't work (iOS WKWebView, older
- * browsers) or before VAPID keys are configured, so it never offers a dead
- * control.
+ * "Notify me" opt-in for a beach: a morning Beach Day summary + safety alerts,
+ * delivered as native push (APNs on iOS, FCM on Android) inside the app. Renders
+ * nothing in a normal browser — push is an app-only feature now.
  */
 export function NotifyButton({ slug }: { slug: string }) {
   const [state, setState] = useState<State>("init");
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    let alive = true;
-    // Native iOS app (Capacitor/APNs) — its own permission + token flow.
-    if (isNativePlatform()) {
-      nativeStatus(slug)
-        .then((s) => alive && setState(s))
-        .catch(() => alive && setState("off"));
-      return () => {
-        alive = false;
-      };
-    }
-    // Web push: hide where unsupported or before VAPID is configured.
-    if (!isPushSupported() || !VAPID_PUBLIC_KEY) {
-      setState("hidden");
+    if (!isNativePlatform()) {
+      setState("hidden"); // app-only; browsers don't get the button
       return;
     }
-    // pushStatus() awaits navigator.serviceWorker.ready, which never resolves if
-    // SW registration failed — race a timeout so we don't hang in "init" forever.
-    const timeout = new Promise<"timeout">((res) => setTimeout(() => res("timeout"), 5000));
-    Promise.race([pushStatus(), timeout])
-      .then((r) => {
-        if (!alive) return;
-        if (r === "timeout") return setState("hidden"); // no usable SW → don't offer
-        setState(r.permission === "denied" ? "denied" : r.subscribed ? "on" : "off");
-      })
+    let alive = true;
+    nativeStatus(slug)
+      .then((s) => alive && setState(s))
       .catch(() => alive && setState("off"));
     return () => {
       alive = false;
@@ -60,8 +35,7 @@ export function NotifyButton({ slug }: { slug: string }) {
     setState("busy");
     setErr(null);
     try {
-      if (isNativePlatform()) await enableNative(slug, { morning: true, safety: true });
-      else await subscribeToPush(slug, { morning: true, safety: true });
+      await enableNative(slug, { morning: true, safety: true });
       setState("on");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -73,8 +47,7 @@ export function NotifyButton({ slug }: { slug: string }) {
   const disable = async () => {
     setState("busy");
     try {
-      if (isNativePlatform()) await disableNative(slug);
-      else await unsubscribeFromPush();
+      await disableNative(slug);
     } finally {
       setState("off");
     }
@@ -86,7 +59,7 @@ export function NotifyButton({ slug }: { slug: string }) {
     return (
       <span
         className={`${pill} bg-slate-900/5 text-slate-500 ring-slate-900/10 dark:bg-white/5 dark:ring-white/10`}
-        title="Notifications are blocked for this site. Enable them in your browser settings."
+        title="Notifications are blocked. Enable them for Is It Beach Day in your device Settings."
       >
         🔕 Notifications blocked
       </span>

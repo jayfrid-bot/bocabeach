@@ -24,8 +24,7 @@ yarn-error.log*
 .env
 .env*.local
 
-# local push subscription stores (dev fallback for Netlify Blobs)
-.push-store.json
+# local native push token store (dev fallback for Netlify Blobs)
 .push-native-store.json
 
 # deploy

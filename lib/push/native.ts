@@ -71,10 +71,12 @@ export async function enableNative(
   prefs: { morning: boolean; safety: boolean },
 ): Promise<void> {
   const token = await registerForToken();
+  // "ios" → APNs token, "android" → FCM token; the server routes by platform.
+  const platform = Capacitor.getPlatform();
   const res = await fetch("/api/push/register-native", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ slug, token, platform: "ios", prefs }),
+    body: JSON.stringify({ slug, token, platform, prefs }),
   });
   if (!res.ok) throw new Error(`Couldn't save your registration (${res.status}).`);
   try {

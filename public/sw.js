@@ -11,7 +11,7 @@
  *  - Cam images (/api/cam/*) and any third-party host are left to the browser
  *    (large/own caching) — the SW doesn't touch them.
  */
-const VERSION = "v2";
+const VERSION = "v3";
 const STATIC_CACHE = `bbr-static-${VERSION}`;
 const RUNTIME_CACHE = `bbr-runtime-${VERSION}`;
 const KEEP = [STATIC_CACHE, RUNTIME_CACHE];
@@ -43,49 +43,6 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   event.respondWith(networkFirst(req, RUNTIME_CACHE));
-});
-
-// --- Web Push -------------------------------------------------------------
-// A push message carries a JSON payload { title, body, tag, url, ... }. We show
-// a notification; clicking it focuses an existing tab for that beach or opens one.
-self.addEventListener("push", (event) => {
-  let data = {};
-  try {
-    data = event.data ? event.data.json() : {};
-  } catch {
-    data = { title: "Is It Beach Day?", body: event.data ? event.data.text() : "" };
-  }
-  const title = data.title || "Is It Beach Day?";
-  const options = {
-    body: data.body || "",
-    tag: data.tag || "isitbeachday",
-    icon: "/icon.png",
-    badge: "/icon.png",
-    data: { url: data.url || "/" },
-    renotify: !!data.tag,
-  };
-  event.waitUntil(self.registration.showNotification(title, options));
-});
-
-self.addEventListener("notificationclick", (event) => {
-  event.notification.close();
-  const target = (event.notification.data && event.notification.data.url) || "/";
-  event.waitUntil(
-    (async () => {
-      const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      const url = new URL(target, self.location.origin).href;
-      for (const c of all) {
-        if (c.url === url && "focus" in c) return c.focus();
-      }
-      // Else focus any open tab and navigate it, or open a new one.
-      const existing = all.find((c) => "focus" in c);
-      if (existing && "navigate" in existing) {
-        await existing.focus();
-        return existing.navigate(url);
-      }
-      if (self.clients.openWindow) return self.clients.openWindow(url);
-    })(),
-  );
 });
 
 async function cacheFirst(req, cacheName) {
