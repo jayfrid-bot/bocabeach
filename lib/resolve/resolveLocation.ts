@@ -579,7 +579,19 @@ function surfPlaceHint(geo: GeoPoint | undefined, beach: BeachEntry): string | u
 /** Build "<County> County, <ST>" when the geocoder supplies a county, else "<State>, <ST>". */
 function buildRegion(geo: GeoPoint | undefined, beach: BeachEntry): string {
   const state = geo?.admin1Code ?? beach.state;
-  if (geo?.admin2 && state) return `${geo.admin2} County, ${state}`;
+  const a2 = geo?.admin2?.trim();
+  if (a2 && state) {
+    // An independent city (VA, MD, MO, NV) reports admin2 == the city name — it
+    // isn't a county, so don't pin "County" onto it.
+    if (geo?.name && a2.toLowerCase() === geo.name.trim().toLowerCase()) {
+      return `${a2}, ${state}`;
+    }
+    // Open-Meteo is inconsistent about whether admin2 already ends in "County"
+    // (e.g. "San Diego County" vs "Los Angeles") — only append when it doesn't,
+    // so we never emit "San Diego County County".
+    const withCounty = /\bcounty$/i.test(a2) ? a2 : `${a2} County`;
+    return `${withCounty}, ${state}`;
+  }
   const area = geo?.admin1;
   if (area && state && area !== state) return `${area}, ${state}`;
   return state ?? area ?? "";

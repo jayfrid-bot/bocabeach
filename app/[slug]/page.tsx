@@ -9,7 +9,13 @@ export const revalidate = 300;
 export function generateStaticParams() {
   // When there's only one beach, "/" is the canonical URL — don't prerender
   // the slug page, just let the redirect below handle any old link.
-  return listLocations().length === 1 ? [] : listLocations().map((l) => ({ slug: l.slug }));
+  const all = listLocations();
+  if (all.length === 1) return [];
+  // Prerender only curated beaches at build. Auto-resolved (seeded) beaches
+  // render on-demand via ISR (dynamicParams defaults true) and cache per the
+  // revalidate window — so build time stays flat as the national list grows
+  // into the hundreds, while crawlers still get fully server-rendered pages.
+  return all.filter((l) => l.tier !== "auto").map((l) => ({ slug: l.slug }));
 }
 
 export async function generateMetadata({
