@@ -11,11 +11,15 @@ export function generateStaticParams() {
   // the slug page, just let the redirect below handle any old link.
   const all = listLocations();
   if (all.length === 1) return [];
-  // Prerender only curated beaches at build. Auto-resolved (seeded) beaches
-  // render on-demand via ISR (dynamicParams defaults true) and cache per the
-  // revalidate window — so build time stays flat as the national list grows
-  // into the hundreds, while crawlers still get fully server-rendered pages.
-  return all.filter((l) => l.tier !== "auto").map((l) => ({ slug: l.slug }));
+  // Prerender only curated, non-flagship beaches at build (the flagship 301s to
+  // "/"). Auto-resolved (seeded) beaches render on-demand via ISR (dynamicParams
+  // defaults true) and cache per the revalidate window — so build time stays
+  // flat as the national list grows into the hundreds, while crawlers still get
+  // fully server-rendered pages.
+  const primary = all.find((l) => l.tier !== "auto") ?? all[0];
+  return all
+    .filter((l) => l.tier !== "auto" && l.slug !== primary?.slug)
+    .map((l) => ({ slug: l.slug }));
 }
 
 export async function generateMetadata({
@@ -39,11 +43,14 @@ export default async function BeachPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  // Single-location mode: "/" is canonical. Old "/boca-raton" links 301 home,
-  // consolidating analytics under one URL and preserving any shared links.
+  // "/" IS the flagship beach (the curated one, else the first), so its /<slug>
+  // 301s home — one canonical URL, no duplicate content, shared links preserved.
   const all = listLocations();
-  if (all.length === 1 && slug === all[0].slug) permanentRedirect("/");
+  const primary = all.find((l) => l.tier !== "auto") ?? all[0];
+  if (primary && slug === primary.slug) permanentRedirect("/");
   const data = await getConditions(slug);
   if (!data) notFound();
-  return <ConditionsDashboard slug={slug} initial={data} />;
+  // With more than the flagship, offer a way back to the national picker.
+  const browseHref = all.length > 1 ? "/find" : undefined;
+  return <ConditionsDashboard slug={slug} initial={data} browseHref={browseHref} />;
 }

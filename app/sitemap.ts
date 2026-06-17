@@ -10,16 +10,20 @@ export default function sitemap(): MetadataRoute.Sitemap {
   const now = new Date();
   const locs = listLocations();
 
-  // In single-beach mode "/" IS the beach, so don't also emit a /<slug> URL.
+  // The flagship beach is canonical at "/" (its /<slug> 301s home), so emit
+  // every OTHER beach's URL but not the flagship's.
+  const primary = locs.find((l) => l.tier !== "auto") ?? locs[0];
   const beaches: MetadataRoute.Sitemap =
     locs.length === 1
       ? []
-      : locs.map((l) => ({
-          url: `${BASE}/${l.slug}`,
-          lastModified: now,
-          changeFrequency: "daily" as const,
-          priority: 0.8,
-        }));
+      : locs
+          .filter((l) => l.slug !== primary?.slug)
+          .map((l) => ({
+            url: `${BASE}/${l.slug}`,
+            lastModified: now,
+            changeFrequency: "daily" as const,
+            priority: 0.8,
+          }));
 
   return [
     { url: BASE, lastModified: now, changeFrequency: "daily", priority: 1 },
