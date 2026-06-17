@@ -1,14 +1,16 @@
-// Native (APNs) device-token storage — the native-app sibling of store.ts.
-// Production: Netlify Blobs; dev/tests: a gitignored JSON file. Keyed by token.
+// Native push device-token storage (iOS APNs + Android FCM).
+// Production: Netlify Blobs; dev/tests: a gitignored JSON file. Keyed by a
+// base64url hash of the token (FCM tokens contain ':' and are long, so they
+// aren't safe as raw keys).
 
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
 /** One registered native device, with the beach + prefs + dedup state. */
 export interface NativeSub {
-  /** APNs device token (hex). */
+  /** Device push token — APNs (hex) on iOS, FCM registration token on Android. */
   token: string;
-  platform: "ios";
+  platform: "ios" | "android";
   slug: string;
   /** Beach IANA timezone — times the morning summary in local time. */
   tz: string;
@@ -19,6 +21,9 @@ export interface NativeSub {
 
 const STORE_NAME = "push-native-subscriptions";
 const FILE = path.join(process.cwd(), ".push-native-store.json");
+
+/** Key-safe id for a device token (FCM tokens contain ':' and run long). */
+const tokenKey = (token: string) => Buffer.from(token).toString("base64url");
 
 async function blobStore(): Promise<{
   get: (k: string) => Promise<NativeSub | null>;
@@ -62,24 +67,27 @@ async function writeFile(data: Record<string, NativeSub>): Promise<void> {
 }
 
 export async function getNativeSub(token: string): Promise<NativeSub | null> {
+  const k = tokenKey(token);
   const blob = await blobStore();
-  if (blob) return blob.get(token);
-  return (await readFile())[token] ?? null;
+  if (blob) return blob.get(k);
+  return (await readFile())[k] ?? null;
 }
 
 export async function putNativeSub(sub: NativeSub): Promise<void> {
+  const k = tokenKey(sub.token);
   const blob = await blobStore();
-  if (blob) return blob.set(sub.token, sub);
+  if (blob) return blob.set(k, sub);
   const data = await readFile();
-  data[sub.token] = sub;
+  data[k] = sub;
   await writeFile(data);
 }
 
 export async function removeNativeSub(token: string): Promise<void> {
+  const k = tokenKey(token);
   const blob = await blobStore();
-  if (blob) return blob.del(token);
+  if (blob) return blob.del(k);
   const data = await readFile();
-  delete data[token];
+  delete data[k];
   await writeFile(data);
 }
 
