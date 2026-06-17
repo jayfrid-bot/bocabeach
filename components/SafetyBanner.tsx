@@ -24,10 +24,10 @@ export function SafetyBanner({
   const wq = water?.data;
   const advisory = wq?.advisory ?? false;
   const lt = lightning?.data;
-  // Lightning within ~10 mi during the scanned window → get out of the water.
+  // A strike within 5 mi during the scanned window → get out of the water.
   // Gate on a fresh "ok" snapshot so a stale feed never shows the red block.
   const lightningDanger =
-    (lt?.within10mi ?? 0) > 0 &&
+    (lt?.nearestMi ?? Infinity) <= 5 &&
     lightning?.status === "ok" &&
     (lt?.lastMinutesAgo == null || lt.lastMinutesAgo <= 30);
   const noSwim = data?.noSwimAdvisory;
@@ -121,14 +121,10 @@ export function SafetyBanner({
             <span>Lightning nearby — get out of the water and seek shelter</span>
           </div>
           <div className="mt-1 text-xs text-rose-700/90 dark:text-rose-100/80">
-            {lt?.within10mi} strike{(lt?.within10mi ?? 0) === 1 ? "" : "s"} within 10
-            mi in the last {lt?.windowMinutes ?? 30} min
-            {lt?.nearestMi != null
-              ? ` (nearest ${lt.nearestMi} mi${
-                  lt.nearestBearingDeg != null ? " to the " + degToCardinal(lt.nearestBearingDeg) : ""
-                }).`
-              : "."}{" "}
-            NOAA GOES GLM.
+            Nearest strike {lt?.nearestMi} mi
+            {lt?.nearestBearingDeg != null ? ` to the ${degToCardinal(lt.nearestBearingDeg)}` : ""}
+            {lt?.nearestMinutesAgo != null ? ` · ${lt.nearestMinutesAgo} min ago` : ""}. NOAA GOES
+            GLM.
           </div>
         </div>
       ) : null}
