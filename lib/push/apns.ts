@@ -13,6 +13,7 @@
 
 import http2 from "node:http2";
 import { createPrivateKey, createSign } from "node:crypto";
+import { readPemEnv } from "@/lib/push/pemEnv";
 
 export interface ApnsConfig {
   keyId: string;
@@ -26,7 +27,7 @@ export interface ApnsConfig {
 export function getApns(): ApnsConfig | null {
   const keyId = process.env.APNS_KEY_ID ?? "";
   const teamId = process.env.APNS_TEAM_ID ?? "";
-  const privateKey = (process.env.APNS_PRIVATE_KEY ?? "").replace(/\\n/g, "\n");
+  const privateKey = readPemEnv("APNS_PRIVATE_KEY"); // prefers APNS_PRIVATE_KEY_B64
   if (!keyId || !teamId || !privateKey) return null;
   return {
     keyId,
