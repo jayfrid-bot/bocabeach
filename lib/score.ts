@@ -110,15 +110,19 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
   const g = s.gfs.data;
   // Open-Meteo's reading for the current hour — the third consensus voice.
   const om = currentHourOf(s.hourly.data ?? []);
-  // Dew point drives the comfort score; fall back to computing it from temp + RH.
+  // Consensus current values (median across sources), computed up front so the
+  // dew-point fallback derives from the SAME temp + humidity the UI shows — not a
+  // single provider, which previously made dew point inconsistent with the card.
+  const airTempF = median(w?.airTempF, mn?.airTempF, om?.airTempF, g?.airTempF) ?? b?.airTempF;
+  const humidityPct = median(w?.humidityPct, mn?.humidityPct, om?.humidityPct, g?.humidityPct);
+  // Dew point drives the comfort score; when no source reports it directly, derive
+  // it from the consensus temp + humidity above so it agrees with what's displayed.
   const dpFallback =
-    w?.airTempF != null && w?.humidityPct != null
-      ? dewPointFromTempRH(w.airTempF, w.humidityPct)
-      : undefined;
+    airTempF != null && humidityPct != null ? dewPointFromTempRH(airTempF, humidityPct) : undefined;
   return {
     // Shared metrics are the MEDIAN of NWS (real station obs), MET Norway, and
     // Open-Meteo, so no single provider or model can skew the dashboard.
-    airTempF: median(w?.airTempF, mn?.airTempF, om?.airTempF, g?.airTempF) ?? b?.airTempF,
+    airTempF,
     waterTempF: b?.waterTempF ?? m?.seaSurfaceTempF,
     windSpeedMph:
       median(w?.windSpeedMph, mn?.windSpeedMph, om?.windSpeedMph, g?.windSpeedMph) ?? b?.windSpeedMph,
@@ -126,13 +130,16 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     waveHeightFt: b?.waveHeightFt ?? m?.waveHeightFt,
     precipProbability: w?.precipProbability ?? om?.precipProbability,
     shortForecast: w?.shortForecast,
-    uvIndex: m?.uvIndex,
+    // The current hour's forecast UV — the SAME source the hourly chart + score
+    // use. The marine "/current" endpoint can lag hours behind (it once read 0.4
+    // at midday → a nonsense "minutes to burn"), so it's only a fallback now.
+    uvIndex: om?.uvIndex ?? m?.uvIndex,
     cloudCoverPct: median(m?.cloudCoverPct, mn?.cloudCoverPct, om?.cloudCoverPct, w?.cloudCoverPct, g?.cloudCoverPct),
     sargassumLevel: s.sargassum.data?.level,
     sargassumCoveragePct: s.sargassum.data?.coveragePct,
     crowdPct: s.busyness.data?.crowdPct ?? crowdLevelPct(s.busyness.data?.level),
     sandTempF: s.hourly.data ? currentSandTempF(s.hourly.data) : undefined,
-    humidityPct: median(w?.humidityPct, mn?.humidityPct, om?.humidityPct, g?.humidityPct),
+    humidityPct,
     dewPointF:
       median(w?.dewPointF, mn?.dewPointF, om?.dewPointF, g?.dewPointF) ??
       (dpFallback != null ? round(dpFallback) : undefined),

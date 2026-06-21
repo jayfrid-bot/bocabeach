@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import type { ConditionsResponse } from "@/lib/types";
-import { bestBeachWindow, deriveMetrics } from "@/lib/score";
+import { deriveMetrics } from "@/lib/score";
 import { beachDayVerdict, fmtDate, fmtTime, scoreColor, scoreTextClass, seaState } from "@/lib/format";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -119,7 +119,10 @@ export function ConditionsDashboard({
     const id = setInterval(() => setNowMs(Date.now()), 60_000);
     return () => clearInterval(id);
   }, []);
-  const bw = bestBeachWindow(res.hourlyScores, nowMs ?? undefined);
+  // "Best window today" pill — reuse the server-computed Today window from
+  // multiDayWindows[0] so the pill and the Best-times strip always show the SAME
+  // window (a client recompute used different daylight bounds + a different clock).
+  const bw = res.multiDayWindows?.[0]?.best ?? null;
   // Current sand range from the shared helper (same hour bucket as the score +
   // the SandTempPanel). Null until mounted, so SSR/first render show "—".
   const sandRange = nowMs != null ? currentSandRangeF(snap.hourly.data ?? [], nowMs) : null;
