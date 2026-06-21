@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "85018211622",
-    "project_id": "is-it-beach-day",
-    "storage_bucket": "is-it-beach-day.firebasestorage.app"
+    "project_number": "61113956928",
+    "project_id": "is-it-beach-day-4b85f",
+    "storage_bucket": "is-it-beach-day-4b85f.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:85018211622:android:00552f6ba59e07622efde7",
+        "mobilesdk_app_id": "1:61113956928:android:e72072bbc09c0660a17da5",
         "android_client_info": {
           "package_name": "com.isitbeachday.app"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyAYJGHnSQokdJYego00vCQZ1V1dA4sN90Q"
+          "current_key": "AIzaSyCJLIhG_pH1jedsygZk4T1E0ZTKA_igxnU"
         }
       ],
       "services": {
