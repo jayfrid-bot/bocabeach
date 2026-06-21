@@ -98,25 +98,25 @@ export function sandVerdict(tempF: number): SandVerdict {
 export const SAND_SCALE_MIN_F = 70;
 export const SAND_SCALE_MAX_F = 155;
 
+export type SandHour = {
+  time: string;
+  soilTempF?: number;
+  solarWm2?: number;
+  windSpeedMph?: number;
+  precipIn?: number;
+};
+
 /**
- * The sand estimate for the hour bucket nearest `nowMs`, with recent rain
- * summed over that hour and the two before it. This is the "right now" value
- * used by the metric card and the Beach Day score.
+ * The sand-model inputs for the hour bucket that contains `nowMs` (recent rain
+ * summed over that hour + the two before). One source of truth for "now" so the
+ * Beach Day score, the metric card, and the panel agree on which hour — and thus
+ * which value. Returns undefined when no bucket is within ~2h of now.
  */
-export function currentSandTempF(
-  hours: Array<{
-    time: string;
-    soilTempF?: number;
-    solarWm2?: number;
-    windSpeedMph?: number;
-    precipIn?: number;
-  }>,
-  nowMs: number = Date.now(),
-): number | undefined {
+function currentSandInput(hours: SandHour[], nowMs: number = Date.now()): SandTempInput | undefined {
   if (!hours.length) return undefined;
   // Prefer the bucket that actually contains now under half-open [start, start+1h)
-  // — matches score.ts's bucket convention so the card and the score agree on
-  // which hour is "now". Take the latest such bucket if buckets overlap.
+  // — matches score.ts's convention. Latest such bucket if any overlap; else the
+  // nearest bucket.
   let best = -1;
   let bestDist = Infinity;
   for (let i = 0; i < hours.length; i++) {
@@ -125,7 +125,6 @@ export function currentSandTempF(
     const dist = Math.abs(start - nowMs);
     if (dist < bestDist) bestDist = dist;
   }
-  // No bucket contains now → fall back to the nearest within the sanity window.
   if (best < 0) {
     for (let i = 0; i < hours.length; i++) {
       if (Math.abs(new Date(hours[i].time).getTime() - nowMs) === bestDist) {
@@ -138,14 +137,24 @@ export function currentSandTempF(
   if (best < 0 || Math.abs(new Date(hours[best].time).getTime() - nowMs) > 2 * 3600_000)
     return undefined;
   const h = hours[best];
-  const recentRainIn = [best, best - 1, best - 2].reduce(
-    (a, j) => a + (hours[j]?.precipIn ?? 0),
-    0,
-  );
-  return estimateSandTempF({
-    soilTempF: h.soilTempF,
-    solarWm2: h.solarWm2,
-    windSpeedMph: h.windSpeedMph,
-    recentRainIn,
-  });
+  const recentRainIn = [best, best - 1, best - 2].reduce((a, j) => a + (hours[j]?.precipIn ?? 0), 0);
+  return { soilTempF: h.soilTempF, solarWm2: h.solarWm2, windSpeedMph: h.windSpeedMph, recentRainIn };
+}
+
+/** The "right now" dry-sand (dunes) estimate — used by the Beach Day score. */
+export function currentSandTempF(hours: SandHour[], nowMs: number = Date.now()): number | undefined {
+  const input = currentSandInput(hours, nowMs);
+  return input ? estimateSandTempF(input) : undefined;
+}
+
+/**
+ * The "right now" surf-to-dunes range — used by BOTH the metric card and the
+ * SandTempPanel so they display the same value, from the same bucket as the score.
+ */
+export function currentSandRangeF(
+  hours: SandHour[],
+  nowMs: number = Date.now(),
+): { surfF: number; dunesF: number } | undefined {
+  const input = currentSandInput(hours, nowMs);
+  return input ? estimateSandRangeF(input) : undefined;
 }

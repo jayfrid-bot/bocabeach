@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { estimateSandRangeF, estimateSandTempF, sandVerdict } from "@/lib/sandTemp";
+import {
+  currentSandRangeF,
+  currentSandTempF,
+  estimateSandRangeF,
+  estimateSandTempF,
+  sandVerdict,
+} from "@/lib/sandTemp";
 
 describe("estimateSandTempF", () => {
   it("returns undefined without a ground-surface basis", () => {
@@ -73,5 +79,32 @@ describe("sandVerdict", () => {
     expect(sandVerdict(100).label).toBe("Warm");
     expect(sandVerdict(120).label).toBe("Hot");
     expect(sandVerdict(135).label).toBe("Scorching");
+  });
+});
+
+describe("current sand value: card and score agree", () => {
+  // The metric card (range) and the score (single dunes value) must read the
+  // SAME hour bucket, so the dunes end of the range equals the scored value.
+  const hours = Array.from({ length: 6 }, (_, i) => ({
+    time: new Date(Date.parse("2026-06-17T15:00:00Z") + i * 3600_000).toISOString(),
+    soilTempF: 90 + i,
+    solarWm2: 800,
+    windSpeedMph: 8,
+    precipIn: 0,
+  }));
+  const now = Date.parse("2026-06-17T16:30:00Z"); // inside the 16:00 bucket
+
+  it("range dunes end equals the single scored value", () => {
+    const single = currentSandTempF(hours, now);
+    const range = currentSandRangeF(hours, now);
+    expect(range).not.toBeUndefined();
+    expect(range!.dunesF).toBe(single);
+    expect(range!.surfF).toBeLessThanOrEqual(range!.dunesF); // surf never hotter than dunes
+  });
+
+  it("returns undefined together when no bucket is near now", () => {
+    const far = Date.parse("2026-06-20T16:30:00Z");
+    expect(currentSandTempF(hours, far)).toBeUndefined();
+    expect(currentSandRangeF(hours, far)).toBeUndefined();
   });
 });
