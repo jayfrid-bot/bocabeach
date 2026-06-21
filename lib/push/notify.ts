@@ -42,7 +42,9 @@ const SEVERE_ALERT =
 /**
  * Extract the single highest-priority active safety condition from a snapshot,
  * as a stable { key, text }. Priority: lightning → severe warning → water
- * advisory → beach hazards → high rip → red flag. Returns null when clear.
+ * advisory → beach hazards → high rip → red flag → moderate rip. Mirrors what
+ * SafetyBanner surfaces in-app (incl. moderate rip), so push never stays silent
+ * on a hazard the app is showing. Returns null when clear.
  */
 function activeSafety(res: ConditionsResponse): { key: string; text: string } | null {
   const s = res.snapshot;
@@ -53,7 +55,8 @@ function activeSafety(res: ConditionsResponse): { key: string; text: string } | 
     (lt.data?.lastMinutesAgo == null || lt.data.lastMinutesAgo <= 30) &&
     (lt.data?.nearestMi ?? Infinity) <= 5
   ) {
-    return { key: "lightning", text: "Lightning within 5 miles — get out of the water." };
+    // Match the in-app SafetyBanner wording exactly (incl. "seek shelter").
+    return { key: "lightning", text: "Lightning within 5 miles — get out of the water and seek shelter." };
   }
 
   const alerts = s.nws.data?.alerts ?? [];
@@ -76,6 +79,12 @@ function activeSafety(res: ConditionsResponse): { key: string; text: string } | 
   const flags = s.cityOfficial.data?.flags ?? [];
   if (flags.some((f) => f === "red" || f === "double-red")) {
     return { key: "flag:red", text: "Red flag flying — dangerous surf, stay out of the water." };
+  }
+
+  // Moderate rip current: the app shows it (amber), so alert on it too — lowest
+  // priority. Dedup means it fires once per occurrence, not repeatedly.
+  if (s.nws.data?.ripCurrentRisk === "moderate") {
+    return { key: "rip-moderate", text: "Moderate rip-current risk today — swim near a lifeguard." };
   }
 
   return null;

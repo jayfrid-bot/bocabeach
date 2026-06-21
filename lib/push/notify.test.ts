@@ -145,4 +145,9 @@ describe("summarizeForPush", () => {
     const s = summarizeForPush(res({ flags: ["red"] }), loc);
     expect(s.safetyKey).toBe("flag:red");
   });
+
+  it("alerts on moderate rip current, matching the in-app banner", () => {
+    const s = summarizeForPush(res({ rip: "moderate" }), loc);
+    expect(s.safetyKey).toBe("rip-moderate");
+  });
 });

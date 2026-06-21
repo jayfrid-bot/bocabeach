@@ -851,7 +851,11 @@ export function computeMultiDayWindows(
     const key = dateFmt.format(when);
     if (key < todayKey) continue; // drop yesterday (from past_days=1)
     const lh = localHourInTz(h.time, tz);
-    if (lh < sunriseH || lh > sunsetH) continue; // daylight only
+    // Daylight only. The sunset hour is EXCLUSIVE: a window's end is the top of
+    // its last hour, so including the sunset-hour bucket would push the window
+    // end to sunsetH+1 — past actual sunset, into the dark. Dropping it keeps
+    // the window end at/before sunset.
+    if (lh < sunriseH || lh >= sunsetH) continue;
     const arr = groups.get(key);
     if (arr) arr.push(h);
     else groups.set(key, [h]);
@@ -862,7 +866,10 @@ export function computeMultiDayWindows(
     const dayHours = groups.get(key)!;
     const isToday = key === todayKey;
     const best = bestBeachWindow(dayHours, isToday ? nowMs : undefined);
-    const peak = Math.max(...dayHours.map((h) => h.score));
+    // Headline score = the peak of the window we actually show, so the chip never
+    // claims a higher score than any hour in the displayed window. Only fall back
+    // to the day's max when there's no window (e.g. today already past sunset).
+    const peak = best ? best.score : Math.round(Math.max(...dayHours.map((h) => h.score)));
     // Representative emoji: the daylight hour nearest local 13:00.
     let mid = dayHours[0];
     let midDist = Math.abs(localHourInTz(mid.time, tz) - 13);
@@ -877,7 +884,7 @@ export function computeMultiDayWindows(
       date: key,
       dow: isToday ? "Today" : dowFmt.format(new Date(dayHours[0].time)),
       best,
-      peakScore: Math.round(peak),
+      peakScore: peak,
       emoji: mid.emoji,
     });
   }
