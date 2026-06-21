@@ -969,11 +969,16 @@ describe("computeMultiDayWindows", () => {
 
   it("gives each day a peak score and a daylight best window", () => {
     const days = computeMultiDayWindows(s, now);
+    const sunsetH = nyHour(SUN.sunset!); // 20 (8 PM EDT)
     for (const d of days) {
       expect(d.peakScore).not.toBeNull();
       expect(d.peakScore!).toBeGreaterThan(0);
       expect(d.peakScore!).toBeLessThanOrEqual(100);
-      if (d.best) expect(nyHour(d.best.startIso)).toBeGreaterThanOrEqual(6); // not pre-sunrise
+      if (d.best) {
+        expect(nyHour(d.best.startIso)).toBeGreaterThanOrEqual(6); // not pre-sunrise
+        expect(nyHour(d.best.endIso)).toBeLessThanOrEqual(sunsetH); // never past sunset, into the dark
+        expect(d.peakScore).toBe(d.best.score); // the chip never claims a higher score than the window shown
+      }
     }
     // A clear, pleasant future day yields a strong full-day window.
     const future = days.find((d) => d.dow !== "Today")!;

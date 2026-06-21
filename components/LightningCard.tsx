@@ -44,6 +44,16 @@ export function LightningCard({ lightning }: { lightning: Wrapped<LightningData>
     }
   }
 
+  // A stale/errored feed must NOT be presented as current — drop the alarm tone
+  // and flag the delay, mirroring how SafetyBanner suppresses its red block when
+  // the lightning status isn't "ok".
+  if (d && lightning.status !== "ok") {
+    bg = "bg-white/80 dark:bg-slate-900/70";
+    ring = "ring-slate-900/10 dark:ring-white/10";
+    accent = "text-slate-500 dark:text-slate-400";
+    sub = `${sub ? `${sub} · ` : ""}feed delayed — may be out of date`;
+  }
+
   return (
     <div className={`rounded-2xl ${bg} p-4 ring-1 ${ring}`}>
       <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">

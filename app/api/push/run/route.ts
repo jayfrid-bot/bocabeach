@@ -72,18 +72,35 @@ async function deliver(
   let sent = 0;
   let pruned = 0;
   let removed = false;
+  // Advance a channel's dedup state ONLY if its send actually succeeded — a
+  // transient failure must leave the old state so the next run retries (instead
+  // of marking it "already sent" and silently skipping the alert).
+  let morningFailed = false;
+  let safetyFailed = false;
   for (const msg of sends) {
     const r = await sendOne(msg);
-    if (r.ok) sent += 1;
-    else if (r.dead) {
-      await removeNativeSub(sub.token).catch(() => {});
+    if (r.ok) {
+      sent += 1;
+    } else if (r.dead) {
+      await removeNativeSub(sub.token).catch((e) => console.error("push: prune failed", e));
       removed = true;
       pruned += 1;
       break;
+    } else if (msg.tag === "morning") {
+      morningFailed = true;
+    } else if (msg.tag === "safety") {
+      safetyFailed = true;
     }
   }
-  if (!removed && JSON.stringify(nextSent) !== JSON.stringify(sub.sent ?? {})) {
-    await putNativeSub({ ...sub, sent: nextSent }).catch(() => {});
+  if (!removed) {
+    const next = { ...(sub.sent ?? {}) };
+    if (!morningFailed) next.morningDate = nextSent.morningDate;
+    if (!safetyFailed) next.safetyKey = nextSent.safetyKey; // also clears when hazard gone
+    if (JSON.stringify(next) !== JSON.stringify(sub.sent ?? {})) {
+      await putNativeSub({ ...sub, sent: next }).catch((e) =>
+        console.error("push: persist dedup failed for", sub.slug, e),
+      );
+    }
   }
   return { sent, pruned };
 }
