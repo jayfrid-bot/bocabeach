@@ -30,7 +30,7 @@ import { SunPanel } from "@/components/SunPanel";
 import { MoonPanel } from "@/components/MoonPanel";
 import { SafetyBanner } from "@/components/SafetyBanner";
 import { SandTempPanel } from "@/components/SandTempPanel";
-import { sandVerdict } from "@/lib/sandTemp";
+import { currentSandRangeF, sandVerdict } from "@/lib/sandTemp";
 import { SourceList } from "@/components/SourceBadge";
 import { CamGrid } from "@/components/CamGrid";
 import { ForecastStrip } from "@/components/ForecastStrip";
@@ -111,9 +111,18 @@ export function ConditionsDashboard({
 
   // Post-mount wall clock. Read INSIDE the effect (never during render) so SSR
   // and the first client render agree (nowMs === null → full day, no filter).
+  // Ticks each minute so time-sensitive readouts (best window, sand temp) stay
+  // current — and the sand card stays in lockstep with SandTempPanel's clock.
   const [nowMs, setNowMs] = useState<number | null>(null);
-  useEffect(() => setNowMs(Date.now()), []);
+  useEffect(() => {
+    setNowMs(Date.now());
+    const id = setInterval(() => setNowMs(Date.now()), 60_000);
+    return () => clearInterval(id);
+  }, []);
   const bw = bestBeachWindow(res.hourlyScores, nowMs ?? undefined);
+  // Current sand range from the shared helper (same hour bucket as the score +
+  // the SandTempPanel). Null until mounted, so SSR/first render show "—".
+  const sandRange = nowMs != null ? currentSandRangeF(snap.hourly.data ?? [], nowMs) : null;
 
   // Single, stable handler shared by pull-to-refresh and the visible button.
   const onRefresh = useCallback(() => mutate(), [mutate]);
@@ -368,9 +377,17 @@ export function ConditionsDashboard({
         <MetricCard
           icon="🦶"
           label="Sand temp (est.)"
-          value={d.sandTempF != null ? `~${d.sandTempF}°F` : "—"}
+          // Show the surf–dunes range from the SAME helper the SandTempPanel uses,
+          // so the two never disagree. Verdict tracks the dunes (hottest) end.
+          value={
+            sandRange
+              ? sandRange.surfF !== sandRange.dunesF
+                ? `~${sandRange.surfF}–${sandRange.dunesF}°F`
+                : `~${sandRange.dunesF}°F`
+              : "—"
+          }
           sub={
-            d.sandTempF != null ? sandVerdict(d.sandTempF).advice : "not available"
+            sandRange ? sandVerdict(sandRange.dunesF).advice : "not available"
           }
         />
         <MetricCard

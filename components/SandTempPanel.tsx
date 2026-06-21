@@ -80,8 +80,11 @@ export function SandTempPanel({
     .map((p, i) => `${i ? "L" : "M"}${xFor(p.t).toFixed(1)} ${yFor(p.sand).toFixed(1)}`)
     .join(" ");
 
-  // Headline = the hour bucket containing "now" (clamped to the plotted window).
+  // Headline = the hour bucket that CONTAINS now under half-open [start, start+1h),
+  // matching currentSandRangeF/currentSandTempF (the card + the score) so all
+  // three pick the same hour. Falls back to the nearest plotted point.
   const sandAt = (ms: number) => {
+    for (const p of pts) if (p.t <= ms && ms < p.t + 36e5) return p;
     const t = Math.max(pts[0].t, Math.min(pts[pts.length - 1].t, ms));
     let best = pts[0];
     for (const p of pts) if (Math.abs(p.t - t) < Math.abs(best.t - t)) best = p;
