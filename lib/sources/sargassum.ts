@@ -172,8 +172,22 @@ export function summarizeSeaweed(feed: CamSeaweedFeed): SargassumData | null {
 }
 
 export async function fetchSargassum(
-  _loc: Location,
+  loc: Location,
 ): Promise<Wrapped<SargassumData>> {
+  // Seaweed is read from the cam-vision job, which only covers beaches with
+  // configured cams (currently just Boca). For a cam-less beach there is no
+  // seaweed source here — don't serve another beach's reading. Return no data
+  // so the UI hides the card entirely (honest > a misleading global number).
+  if (!loc.cams?.length) {
+    return {
+      source: ATTRIBUTION,
+      status: "best-effort",
+      fetchedAt: nowIso(),
+      attribution: ATTRIBUTION,
+      data: null,
+      note: "no beach cams here — seaweed isn't tracked for this beach",
+    };
+  }
   let fetchedAt = nowIso();
   try {
     const res = await fetchWithTimeout(CAM_FEED_URL, {

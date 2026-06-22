@@ -178,8 +178,21 @@ export function summarizeBusyness(feed: CamFeed): BusynessData {
 }
 
 export async function fetchBusyness(
-  _loc: Location,
+  loc: Location,
 ): Promise<Wrapped<BusynessData>> {
+  // Crowd/busyness comes from the same cam-vision job — cam beaches only.
+  // Without cams there is no crowd source here; return no data so the UI hides
+  // it instead of showing another beach's (Boca's) crowd reading.
+  if (!loc.cams?.length) {
+    return {
+      source: ATTRIBUTION,
+      status: "best-effort",
+      fetchedAt: nowIso(),
+      attribution: ATTRIBUTION,
+      data: null,
+      note: "no beach cams here — crowd isn't tracked for this beach",
+    };
+  }
   let fetchedAt = nowIso();
   try {
     const res = await fetchWithTimeout(CAM_FEED_URL, {

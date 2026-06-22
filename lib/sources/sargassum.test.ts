@@ -1,5 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { summarizeSeaweed, type CamSeaweedFeed } from "@/lib/sources/sargassum";
+import { summarizeSeaweed, fetchSargassum, type CamSeaweedFeed } from "@/lib/sources/sargassum";
+import type { Location } from "@/lib/types";
+
+const CAMLESS_LOCATION: Location = {
+  slug: "test-beach",
+  name: "Test Beach",
+  region: "Test County, CA",
+  tier: "auto",
+  lat: 34.0,
+  lon: -118.5,
+  timezone: "America/Los_Angeles",
+  noaaTideStationId: "9410840",
+  ndbcBuoyId: "icac1",
+  cams: [],
+};
 
 describe("summarizeSeaweed", () => {
   it("scores point-in-time: the latest capture wins, morning gets no extra weight", () => {
@@ -143,5 +157,14 @@ describe("summarizeSeaweed", () => {
     expect(d.cams).toHaveLength(0);
     expect(d.byDay).toHaveLength(1);
     expect(d.byHour).toHaveLength(1);
+  });
+});
+
+describe("fetchSargassum — cam gating", () => {
+  it("returns no data for a cam-less beach (seaweed is cam-derived, not global)", async () => {
+    const w = await fetchSargassum(CAMLESS_LOCATION);
+    expect(w.data).toBeNull();
+    expect(w.status).toBe("best-effort");
+    expect(w.note).toMatch(/no beach cams/i);
   });
 });
