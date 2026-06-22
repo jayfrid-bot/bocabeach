@@ -6,13 +6,59 @@
 import { Capacitor } from "@capacitor/core";
 import type { Token, RegistrationError, ActionPerformed } from "@capacitor/push-notifications";
 
+/**
+ * Resolve the runtime platform robustly. We load the live site inside the
+ * Capacitor shell (server.url), and in that remote-URL setup the bundled
+ * @capacitor/core singleton can latch onto "web" before the native bridge is
+ * attached — so `Capacitor.getPlatform()` alone wrongly reports "web" and the
+ * Notify button hides itself. We therefore also re-probe the live native
+ * globals, which are present from webview creation and origin-independent:
+ *   - window.webkit.messageHandlers.bridge → iOS  (WKWebView native handler)
+ *   - window.androidBridge                  → Android
+ *   - a custom user-agent tag (appendUserAgent in capacitor.config) as a final,
+ *     build-stamped fallback that needs no Capacitor runtime at all.
+ */
+function detectPlatform(): "ios" | "android" | "web" {
+  // 1. Bundled runtime — authoritative in a normal (bundled-assets) build.
+  try {
+    const p = Capacitor?.getPlatform?.();
+    if (p === "ios" || p === "android") return p;
+  } catch {
+    /* fall through to live-global probes */
+  }
+  if (typeof window === "undefined") return "web";
+  const w = window as unknown as {
+    Capacitor?: { getPlatform?: () => string };
+    webkit?: { messageHandlers?: { bridge?: unknown } };
+    androidBridge?: unknown;
+  };
+  // 2. The injected bridge global (may differ from the bundled import on a
+  //    remote URL, where it attaches after the bundle initialized).
+  try {
+    const p = w.Capacitor?.getPlatform?.();
+    if (p === "ios" || p === "android") return p;
+  } catch {
+    /* ignore */
+  }
+  // 3. Raw native message-handler probes — independent of init timing.
+  if (w.webkit?.messageHandlers?.bridge) return "ios";
+  if (w.androidBridge) return "android";
+  // 4. User-agent tag stamped by the native shell (see capacitor.config.ts).
+  const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+  if (/IsItBeachDayApp\/(ios|android)/.test(ua)) {
+    return ua.includes("IsItBeachDayApp/android") ? "android" : "ios";
+  }
+  return "web";
+}
+
 /** True only inside the Capacitor native app (false in any browser). */
 export function isNativePlatform(): boolean {
-  try {
-    return Capacitor.isNativePlatform();
-  } catch {
-    return false;
-  }
+  return detectPlatform() !== "web";
+}
+
+/** "ios" | "android" inside the app; "web" in a browser. */
+export function nativePlatform(): "ios" | "android" | "web" {
+  return detectPlatform();
 }
 
 const tokenKey = (slug: string) => `native-push:${slug}`;
@@ -72,7 +118,7 @@ export async function enableNative(
 ): Promise<void> {
   const token = await registerForToken();
   // "ios" → APNs token, "android" → FCM token; the server routes by platform.
-  const platform = Capacitor.getPlatform();
+  const platform = nativePlatform();
   const res = await fetch("/api/push/register-native", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
