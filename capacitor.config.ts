@@ -13,6 +13,13 @@ const config: CapacitorConfig = {
   ios: {
     contentInset: "automatic",
     backgroundColor: "#f3f7fb",
+    // Build-stamped marker so the web app can detect the native shell even when
+    // the bundled @capacitor/core mis-detects "web" on the remote URL.
+    appendUserAgent: "IsItBeachDayApp/ios",
+  },
+  android: {
+    backgroundColor: "#f3f7fb",
+    appendUserAgent: "IsItBeachDayApp/android",
   },
 };
 
