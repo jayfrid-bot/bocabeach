@@ -144,24 +144,6 @@
     }
   },
   {
-    "slug": "hammonasset-beach",
-    "name": "Hammonasset Beach",
-    "region": "Middlesex County, CT",
-    "tier": "auto",
-    "lat": 41.257877,
-    "lon": -72.555925,
-    "timezone": "America/New_York",
-    "noaaTideStationId": "8463701",
-    "ndbcBuoyId": "nwhc3",
-    "cams": [],
-    "noaaTideStationFallbackId": "8464041",
-    "ndbcBuoyFallbackId": "44025",
-    "surfZone": {
-      "office": "OKX",
-      "name": "Kings (Brooklyn)"
-    }
-  },
-  {
     "slug": "nags-head",
     "name": "Nags Head",
     "region": "Dare County, NC",
@@ -308,6 +290,24 @@
     }
   },
   {
+    "slug": "crescent-bay-park",
+    "name": "Crescent Bay Park",
+    "region": "Los Angeles County, CA",
+    "tier": "auto",
+    "lat": 34.023343,
+    "lon": -118.513136,
+    "timezone": "America/Los_Angeles",
+    "noaaTideStationId": "9410840",
+    "ndbcBuoyId": "icac1",
+    "cams": [],
+    "noaaTideStationFallbackId": "9410777",
+    "ndbcBuoyFallbackId": "46268",
+    "surfZone": {
+      "office": "LOX",
+      "name": "Malibu Coast"
+    }
+  },
+  {
     "slug": "long-beach",
     "name": "Long Beach",
     "region": "Los Angeles County, CA",
@@ -359,6 +359,24 @@
     "surfZone": {
       "office": "MFL",
       "name": "Coastal Miami-Dade"
+    }
+  },
+  {
+    "slug": "hammonasset-beach",
+    "name": "Hammonasset Beach",
+    "region": "Middlesex County, CT",
+    "tier": "auto",
+    "lat": 41.257877,
+    "lon": -72.555925,
+    "timezone": "America/New_York",
+    "noaaTideStationId": "8463701",
+    "ndbcBuoyId": "nwhc3",
+    "cams": [],
+    "noaaTideStationFallbackId": "8464041",
+    "ndbcBuoyFallbackId": "44025",
+    "surfZone": {
+      "office": "OKX",
+      "name": "Kings (Brooklyn)"
     }
   },
   {
