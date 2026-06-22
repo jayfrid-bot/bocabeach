@@ -165,7 +165,7 @@ export function ConditionsDashboard({
     snap.forecast,
     snap.sun,
     snap.hourly,
-  ];
+  ].filter((s) => s.data != null); // list only sources that actually delivered data for this beach
 
   return (
     <PullToRefresh onRefresh={onRefresh}>
@@ -409,45 +409,48 @@ export function ConditionsDashboard({
                 : undefined
           }
         />
-        <MetricCard
-          icon="🪸"
-          label="Seaweed (sargassum)"
-          value={!sg || sg.level === "unknown" ? "—" : cap(sg.level)}
-          sub={
-            sg && sg.level !== "unknown"
-              ? `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
-                (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "") +
-                (sg.note ? ` — ${sg.note}` : "")
-              : "not available"
-          }
-        />
-        <MetricCard
-          icon="👥"
-          label="Beach busyness"
-          value={!busy || busy.level === "unknown" ? "—" : cap(busy.level)}
-          sub={
-            busy && busy.level !== "unknown"
-              ? [
-                  busy.peopleEstimate != null ? `~${busy.peopleEstimate} people` : busy.note,
-                  busy.crowdPct != null ? `~${busy.crowdPct}% full` : undefined,
-                ]
-                  .filter(Boolean)
-                  .join(" · ") || undefined
-              : "not available"
-          }
-        />
-        <MetricCard
-          icon="🚗"
-          label="Traffic"
-          value={!traffic || traffic.level === "unknown" ? "—" : cap(traffic.level)}
-          sub={
-            traffic && traffic.level !== "unknown"
-              ? traffic.congestion != null
+        {/* Cam-derived (seaweed, crowd) + traffic only render when this beach
+            actually has that source — no fake "not available" filler, and no
+            other beach's reading. See lib/sources/{sargassum,busyness}.ts. */}
+        {sg && sg.level !== "unknown" ? (
+          <MetricCard
+            icon="🪸"
+            label="Seaweed (sargassum)"
+            value={cap(sg.level)}
+            sub={
+              `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
+              (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "") +
+              (sg.note ? ` — ${sg.note}` : "")
+            }
+          />
+        ) : null}
+        {busy && busy.level !== "unknown" ? (
+          <MetricCard
+            icon="👥"
+            label="Beach busyness"
+            value={cap(busy.level)}
+            sub={
+              [
+                busy.peopleEstimate != null ? `~${busy.peopleEstimate} people` : busy.note,
+                busy.crowdPct != null ? `~${busy.crowdPct}% full` : undefined,
+              ]
+                .filter(Boolean)
+                .join(" · ") || undefined
+            }
+          />
+        ) : null}
+        {traffic && traffic.level !== "unknown" ? (
+          <MetricCard
+            icon="🚗"
+            label="Traffic"
+            value={cap(traffic.level)}
+            sub={
+              traffic.congestion != null
                 ? `${traffic.congestion}% congestion near the beach`
                 : "near the beach"
-              : "not available"
-          }
-        />
+            }
+          />
+        ) : null}
         <MetricCard
           icon="🌊"
           label="Rip current risk"
@@ -513,9 +516,11 @@ export function ConditionsDashboard({
         <MoonPanel sun={snap.sun} />
       </section>
 
-      <section className="mb-8">
-        <CamGrid cams={cams} tz={tz} />
-      </section>
+      {cams.length > 0 ? (
+        <section className="mb-8">
+          <CamGrid cams={cams} tz={tz} />
+        </section>
+      ) : null}
 
       <footer className="space-y-3">
         <SourceList sources={sources} />

@@ -20,33 +20,37 @@ export function ScoreBreakdown({ result }: { result: ScoreResult }) {
       ) : null}
 
       <ul className="mt-3 space-y-2.5">
-        {result.subScores.map((s) => (
-          <li key={s.key}>
-            <div className="flex items-center justify-between gap-2 text-xs">
-              <span className="min-w-0 truncate text-slate-700 dark:text-slate-300">{s.label}</span>
-              <span className="shrink-0 whitespace-nowrap text-slate-600 dark:text-slate-400">
-                {s.display ? `${s.display} · ` : ""}
-                {s.score == null ? "n/a" : `${s.score}/100`}
-                <span className="ml-1 text-slate-500">
-                  (weight {Math.round(s.weight * 100)}%)
+        {/* Only show factors that actually scored for THIS beach. A component
+            with no data source here (cam-derived seaweed/crowd on a cam-less
+            beach, traffic without a key, etc.) is omitted rather than listed as
+            "n/a", so the breakdown reflects only what shaped the score. */}
+        {result.subScores
+          .filter((s) => s.score != null)
+          .map((s) => (
+            <li key={s.key}>
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="min-w-0 truncate text-slate-700 dark:text-slate-300">
+                  {s.label}
                 </span>
-              </span>
-            </div>
-            {s.score == null ? (
-              <div className="mt-1 text-[10px] text-slate-500">no data</div>
-            ) : (
+                <span className="shrink-0 whitespace-nowrap text-slate-600 dark:text-slate-400">
+                  {s.display ? `${s.display} · ` : ""}
+                  {s.score}/100
+                  <span className="ml-1 text-slate-500">
+                    (weight {Math.round(s.weight * 100)}%)
+                  </span>
+                </span>
+              </div>
               <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
                 <div
                   className="h-full rounded-full"
                   style={{
                     width: `${s.score}%`,
-                    background: scoreColor(s.score),
+                    background: scoreColor(s.score as number),
                   }}
                 />
               </div>
-            )}
-          </li>
-        ))}
+            </li>
+          ))}
       </ul>
     </div>
   );

@@ -1,5 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { summarizeBusyness, type CamFeed } from "@/lib/sources/busyness";
+import { summarizeBusyness, fetchBusyness, type CamFeed } from "@/lib/sources/busyness";
+import type { Location } from "@/lib/types";
+
+const CAMLESS_LOCATION: Location = {
+  slug: "test-beach",
+  name: "Test Beach",
+  region: "Test County, CA",
+  tier: "auto",
+  lat: 34.0,
+  lon: -118.5,
+  timezone: "America/Los_Angeles",
+  noaaTideStationId: "9410840",
+  ndbcBuoyId: "icac1",
+  cams: [],
+};
 
 const feed = (cams: unknown[]): CamFeed => ({
   latest: { capturedAtLocal: "2026-06-03T16:00:00-04:00", cams: cams as never },
@@ -74,5 +88,14 @@ describe("summarizeBusyness", () => {
       { date: "2026-06-03", avg: 2, level: "moderate", people: 23, samples: 2 },
       { date: "2026-06-04", avg: 2, level: "moderate", people: 12, samples: 1 },
     ]);
+  });
+});
+
+describe("fetchBusyness — cam gating", () => {
+  it("returns no data for a cam-less beach (crowd is cam-derived, not global)", async () => {
+    const w = await fetchBusyness(CAMLESS_LOCATION);
+    expect(w.data).toBeNull();
+    expect(w.status).toBe("best-effort");
+    expect(w.note).toMatch(/no beach cams/i);
   });
 });
