@@ -13,12 +13,26 @@ const pill =
  * delivered as native push (APNs on iOS, FCM on Android) inside the app. Renders
  * nothing in a normal browser — push is an app-only feature now.
  */
-export function NotifyButton({ slug }: { slug: string }) {
-  const [state, setState] = useState<State>("init");
+export function NotifyButton({
+  slug,
+  serverNative = false,
+}: {
+  slug: string;
+  /**
+   * The server detected the native app shell from the request User-Agent. Trust
+   * it: this is cache-proof and works even when the bundled @capacitor/core
+   * mis-detects "web" on the remote URL. We still call the plugin on tap.
+   */
+  serverNative?: boolean;
+}) {
+  // When the server already knows we're in the app, start in "off" so the
+  // button is in the SSR HTML immediately (no init flash); the effect then
+  // refines it to on/denied. Browsers start "init" → render nothing.
+  const [state, setState] = useState<State>(serverNative ? "off" : "init");
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!isNativePlatform()) {
+    if (!serverNative && !isNativePlatform()) {
       setState("hidden"); // app-only; browsers don't get the button
       return;
     }
