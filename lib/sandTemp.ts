@@ -16,12 +16,18 @@ const FULL_SUN_WM2 = 1000;
 /**
  * Max extra °F dry sand runs above the modeled ground surface in full sun.
  * Calibrated against IR-thermometer ground truth at Boca:
- *  - 2026-06-11 ~2 PM: soil 98°F, 980 W/m², 11 mph → 130-140°F measured
- *  - 2026-06-15 ~1 PM: soil 109°F, 820 W/m², 10 mph → 129-135°F measured
+ *  - 2026-06-11 ~2 PM:   soil 98°F,  980 W/m², 11 mph → 130-140°F measured (dunes)
+ *  - 2026-06-15 ~1 PM:   soil 109°F, 820 W/m², 10 mph → 129-135°F measured (dunes)
+ *  - 2026-06-23 ~9:54 AM: soil 91°F, 380 W/m², 2 mph  → 113°F surf / 124°F dunes
  */
 const MAX_SUN_BOOST_F = 55;
-/** Near-surf sand is firmer/damper but warms more than expected. */
-const SURF_BOOST_FRACTION = 0.8;
+/**
+ * The wet/firm sand by the surf runs much cooler than the dry dune sand — a
+ * ~11°F surf-to-dunes spread measured at Boca (2026-06-23: 113°F surf → 124°F
+ * dunes). So the surf side carries ~0.65 of the dry-sand boost, the dunes the
+ * full boost. (Was 0.8, which made the two read nearly identical.)
+ */
+const SURF_BOOST_FRACTION = 0.65;
 
 export interface SandTempInput {
   /** Modeled ground-surface temp (°F), e.g. Open-Meteo soil_temperature_0cm. */
@@ -39,7 +45,12 @@ function sandBoostF(input: SandTempInput): number | undefined {
   if (soilTempF == null) return undefined;
 
   const sunFrac = Math.min(1, Math.max(0, (solarWm2 ?? 0) / FULL_SUN_WM2));
-  let boost = sunFrac * MAX_SUN_BOOST_F;
+  // Dry sand heats fast and holds it, so its surface temp responds CONCAVELY to
+  // instantaneous solar — even moderate morning sun drives the dry top layer
+  // hot. Scale by sqrt(sunFrac), not sunFrac. Calibrated to 2026-06-23 ~9:54 AM
+  // (soil 91°F, 380 W/m², 2 mph → 124°F dunes measured; linear scaling predicted
+  // only ~111°F), while still landing the high-sun afternoons (6/11, 6/15).
+  let boost = Math.sqrt(sunFrac) * MAX_SUN_BOOST_F;
 
   // A breeze takes some edge off the surface, but radiative heating dominates:
   // the 140°F dune reading was taken in an 11 mph sea breeze.
