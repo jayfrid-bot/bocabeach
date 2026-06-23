@@ -4,6 +4,7 @@
 // @capacitor/push-notifications plugin is only imported on the native path.
 
 import { Capacitor } from "@capacitor/core";
+import { PushNotifications } from "@capacitor/push-notifications";
 import type { Token, RegistrationError, ActionPerformed } from "@capacitor/push-notifications";
 
 /**
@@ -63,9 +64,12 @@ export function nativePlatform(): "ios" | "android" | "web" {
 
 const tokenKey = (slug: string) => `native-push:${slug}`;
 
+// Statically imported, NOT a lazy chunk: a tap-time dynamic import was timing
+// out in the WebView ("Loading the push module timed out"). The plugin's
+// registerPlugin() is inert in a browser, so bundling it for everyone is cheap
+// and harmless, and it's already loaded when the user taps.
 async function plugin() {
-  const mod = await import("@capacitor/push-notifications");
-  return mod.PushNotifications;
+  return PushNotifications;
 }
 
 /** "on" if registered for this beach, "denied" if perms blocked, else "off". */
