@@ -20,8 +20,9 @@ describe("estimateSandTempF", () => {
     expect(estimateSandTempF({ soilTempF: 80, solarWm2: 0, windSpeedMph: 0 })).toBe(80);
   });
 
-  it("scales the boost with partial sun", () => {
-    expect(estimateSandTempF({ soilTempF: 80, solarWm2: 500, windSpeedMph: 0 })).toBe(108);
+  it("scales the boost concavely with partial sun (sqrt, not linear)", () => {
+    // 50% sun → ~71% of the full boost: dry sand heats fast even at moderate sun.
+    expect(estimateSandTempF({ soilTempF: 80, solarWm2: 500, windSpeedMph: 0 })).toBe(119);
   });
 
   it("damps the boost in wind but keeps a floor", () => {
@@ -50,8 +51,9 @@ describe("estimateSandRangeF", () => {
     const r = estimateSandRangeF({ soilTempF: 98, solarWm2: 980, windSpeedMph: 11 })!;
     expect(r.dunesF).toBeGreaterThanOrEqual(133);
     expect(r.dunesF).toBeLessThanOrEqual(140);
-    expect(r.surfF).toBeGreaterThanOrEqual(125);
-    expect(r.surfF).toBeLessThanOrEqual(132);
+    expect(r.surfF).toBeGreaterThanOrEqual(119);
+    expect(r.surfF).toBeLessThanOrEqual(128);
+    expect(r.surfF).toBeLessThan(r.dunesF); // wet surf sand cooler than dry dunes
   });
 
 
@@ -64,6 +66,16 @@ describe("estimateSandRangeF", () => {
     expect(r.dunesF).toBeLessThanOrEqual(140);
     expect(r.surfF).toBeGreaterThanOrEqual(125);
     expect(r.surfF).toBeLessThanOrEqual(133);
+  });
+
+  it("matches the 2026-06-23 IR ground truth: 113°F surf / 124°F dunes (low morning sun)", () => {
+    // Measured ~9:54 AM: soil 91F, 380 W/m2 (moderate morning sun), 2 mph. The
+    // concave solar response captures dry sand running hot even below 40% sun.
+    const r = estimateSandRangeF({ soilTempF: 91, solarWm2: 380, windSpeedMph: 2 })!;
+    expect(r.surfF).toBeGreaterThanOrEqual(110);
+    expect(r.surfF).toBeLessThanOrEqual(116);
+    expect(r.dunesF).toBeGreaterThanOrEqual(120);
+    expect(r.dunesF).toBeLessThanOrEqual(127);
   });
 
   it("collapses to the ground temp at night (both ends equal)", () => {
