@@ -81,10 +81,29 @@ export async function nativeStatus(slug: string): Promise<"on" | "off" | "denied
   }
 }
 
+/** Reject after `ms` if the promise hasn't settled. Bridge round-trips on the
+ *  remote-URL shell can hang with no response — a clear error beats a spinner
+ *  stuck on "Enabling…" forever. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(label)), ms)),
+  ]);
+}
+
 /** Request permission, register with APNs, and resolve the device token. */
 async function registerForToken(): Promise<string> {
-  const PN = await plugin();
-  const perm = await PN.requestPermissions();
+  // If the native plugin isn't registered in this build, bridge calls hang with
+  // no response — fail fast with a readable reason instead of a stuck spinner.
+  if (typeof Capacitor.isPluginAvailable === "function" && !Capacitor.isPluginAvailable("PushNotifications")) {
+    throw new Error("PushNotifications plugin isn't registered in this app build.");
+  }
+  const PN = await withTimeout(plugin(), 8000, "Loading the push module timed out.");
+  const perm = await withTimeout(
+    PN.requestPermissions(),
+    8000,
+    "iOS never answered the permission request (bridge round-trip stalled).",
+  );
   if (perm.receive !== "granted") throw new Error("Notifications permission was not granted.");
   return new Promise<string>((resolve, reject) => {
     let done = false;

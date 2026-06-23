@@ -108,13 +108,20 @@ export function NotifyButton({
   }
 
   return (
-    <button
-      onClick={enable}
-      disabled={state === "busy"}
-      className={`${pill} bg-ocean-500/10 text-ocean-700 ring-ocean-500/20 hover:bg-ocean-500/20 disabled:opacity-60 dark:text-ocean-300`}
-      title={err ?? "Get a morning beach-day summary + safety alerts for this beach"}
-    >
-      🔔 {state === "busy" ? "Enabling…" : state === "error" ? "Try again" : "Notify me"}
-    </button>
+    <span className="inline-flex flex-col items-start gap-1">
+      <button
+        onClick={enable}
+        disabled={state === "busy"}
+        className={`${pill} bg-ocean-500/10 text-ocean-700 ring-ocean-500/20 hover:bg-ocean-500/20 disabled:opacity-60 dark:text-ocean-300`}
+        title={err ?? "Get a morning beach-day summary + safety alerts for this beach"}
+      >
+        🔔 {state === "busy" ? "Enabling…" : state === "error" ? "Try again" : "Notify me"}
+      </button>
+      {state === "error" && err ? (
+        <span className="max-w-[280px] text-[11px] leading-tight text-rose-600 dark:text-rose-400">
+          {err}
+        </span>
+      ) : null}
+    </span>
   );
 }
