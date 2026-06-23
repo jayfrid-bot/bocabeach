@@ -3,20 +3,23 @@
 import { useEffect } from "react";
 
 /**
- * Registers the PWA service worker (public/sw.js) in the browser. Production
- * only — registering in dev fights with hot-reload and caches stale chunks.
+ * The PWA service worker was retired: it cached the app shell and served stale
+ * JavaScript across deploys inside the Capacitor remote-URL shell (a real
+ * force-quit still ran old code). We now actively unregister any lingering
+ * worker. public/sw.js is a self-clearing kill-switch that wipes its caches,
+ * unregisters, and reloads the page for clients still controlled by the old
+ * worker — so this name (kept for the component contract) now means "ensure no
+ * service worker is in the way."
  */
 export function ServiceWorkerRegister() {
   useEffect(() => {
-    if (process.env.NODE_ENV !== "production") return;
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
-    const register = () => {
-      navigator.serviceWorker.register("/sw.js").catch(() => {
-        /* installability is a progressive enhancement; ignore failures */
+    navigator.serviceWorker
+      .getRegistrations()
+      .then((regs) => regs.forEach((r) => r.unregister()))
+      .catch(() => {
+        /* best effort */
       });
-    };
-    window.addEventListener("load", register);
-    return () => window.removeEventListener("load", register);
   }, []);
   return null;
 }
