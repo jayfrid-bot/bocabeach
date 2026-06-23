@@ -3,24 +3,13 @@ import { notFound, permanentRedirect } from "next/navigation";
 import { getConditions } from "@/lib/conditions";
 import { getLocation, listLocations } from "@/config/locations";
 import { ConditionsDashboard } from "@/components/ConditionsDashboard";
+import { isNativeAppRequest } from "@/lib/nativeRequest";
 
-export const revalidate = 300;
-
-export function generateStaticParams() {
-  // When there's only one beach, "/" is the canonical URL — don't prerender
-  // the slug page, just let the redirect below handle any old link.
-  const all = listLocations();
-  if (all.length === 1) return [];
-  // Prerender only curated, non-flagship beaches at build (the flagship 301s to
-  // "/"). Auto-resolved (seeded) beaches render on-demand via ISR (dynamicParams
-  // defaults true) and cache per the revalidate window — so build time stays
-  // flat as the national list grows into the hundreds, while crawlers still get
-  // fully server-rendered pages.
-  const primary = all.find((l) => l.tier !== "auto") ?? all[0];
-  return all
-    .filter((l) => l.tier !== "auto" && l.slug !== primary?.slug)
-    .map((l) => ({ slug: l.slug }));
-}
+// Dynamic so we can read the request User-Agent to detect the native app shell
+// and serve it fresh, uncached HTML (referencing the latest JS chunks). Source
+// data fetches keep their own caching, so render stays cheap; build time stays
+// flat since nothing is prerendered.
+export const dynamic = "force-dynamic";
 
 export async function generateMetadata({
   params,
@@ -48,9 +37,17 @@ export default async function BeachPage({
   const all = listLocations();
   const primary = all.find((l) => l.tier !== "auto") ?? all[0];
   if (primary && slug === primary.slug) permanentRedirect("/");
+  const isNativeApp = await isNativeAppRequest();
   const data = await getConditions(slug);
   if (!data) notFound();
   // With more than the flagship, offer a way back to the national picker.
   const browseHref = all.length > 1 ? "/find" : undefined;
-  return <ConditionsDashboard slug={slug} initial={data} browseHref={browseHref} />;
+  return (
+    <ConditionsDashboard
+      slug={slug}
+      initial={data}
+      browseHref={browseHref}
+      isNativeApp={isNativeApp}
+    />
+  );
 }

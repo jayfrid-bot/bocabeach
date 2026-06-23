@@ -4,8 +4,13 @@ import { getConditions } from "@/lib/conditions";
 import { LogoMark } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ConditionsDashboard } from "@/components/ConditionsDashboard";
+import { isNativeAppRequest } from "@/lib/nativeRequest";
 
-export const revalidate = 300;
+// Dynamic so we can read the request User-Agent to detect the native app shell
+// AND so the in-app WebView always gets fresh, uncached HTML (which references
+// the latest JS chunks) instead of a stale cached shell. Source data fetches
+// keep their own caching, so this stays cheap.
+export const dynamic = "force-dynamic";
 
 /** The flagship beach shown at "/": the curated one (Boca), else the first. */
 function primaryLocation() {
@@ -34,9 +39,17 @@ export default async function Home() {
   // partial/total source outage), so a non-null result always renders here.
   // A null result means we couldn't load conditions at all — handle that
   // explicitly rather than rendering a broken dashboard.
+  const isNativeApp = await isNativeAppRequest();
   const data = await getConditions(primary.slug);
   if (data) {
-    return <ConditionsDashboard slug={primary.slug} initial={data} browseHref={browseHref} />;
+    return (
+      <ConditionsDashboard
+        slug={primary.slug}
+        initial={data}
+        browseHref={browseHref}
+        isNativeApp={isNativeApp}
+      />
+    );
   }
   return (
     <main className="mx-auto flex min-h-screen max-w-2xl flex-col items-center justify-center gap-4 px-6 text-center">

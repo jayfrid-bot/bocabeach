@@ -74,6 +74,7 @@ export function ConditionsDashboard({
   initial,
   preview = false,
   browseHref,
+  isNativeApp = false,
 }: {
   slug: string;
   initial: ConditionsResponse;
@@ -87,6 +88,8 @@ export function ConditionsDashboard({
    * on the homepage (which stays the flagship beach) and on each beach page.
    */
   browseHref?: string;
+  /** Server-detected native shell (request UA) — drives the Notify button. */
+  isNativeApp?: boolean;
 }) {
   const { data, mutate, isValidating } = useSWR<ConditionsResponse>(
     preview ? null : `/api/conditions/${slug}`,
@@ -199,7 +202,7 @@ export function ConditionsDashboard({
               <span aria-hidden className="text-sm leading-none">＋</span> Other beaches
             </Link>
           ) : null}
-          {!preview ? <NotifyButton slug={slug} /> : null}
+          {!preview ? <NotifyButton slug={slug} serverNative={isNativeApp} /> : null}
         </div>
       </header>
 
