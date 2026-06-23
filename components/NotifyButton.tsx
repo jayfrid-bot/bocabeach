@@ -32,18 +32,34 @@ export function NotifyButton({
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!serverNative && !isNativePlatform()) {
-      setState("hidden"); // app-only; browsers don't get the button
-      return;
-    }
     let alive = true;
-    nativeStatus(slug)
-      .then((s) => alive && setState(s))
-      .catch(() => alive && setState("off"));
+    let tries = 0;
+    const check = () => {
+      if (!alive) return;
+      if (serverNative || isNativePlatform()) {
+        // Native confirmed — show the button NOW. Do NOT gate visibility on the
+        // async plugin call below: if checkPermissions is slow or never resolves
+        // (a flaky bridge round-trip), the button must still appear. nativeStatus
+        // then refines it to on/denied.
+        setState((s) => (s === "on" || s === "denied" ? s : "off"));
+        nativeStatus(slug)
+          .then((s) => alive && setState(s))
+          .catch(() => alive && setState("off"));
+        return;
+      }
+      // The Capacitor bridge can attach a beat after first paint on the remote
+      // URL — retry briefly before concluding this is a plain browser.
+      if (tries++ < 6) {
+        setTimeout(check, 300);
+        return;
+      }
+      setState("hidden"); // app-only; browsers don't get the button
+    };
+    check();
     return () => {
       alive = false;
     };
-  }, [slug]);
+  }, [slug, serverNative]);
 
   const enable = async () => {
     setState("busy");

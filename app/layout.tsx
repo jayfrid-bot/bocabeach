@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import { NativePushInit } from "@/components/NativePushInit";
-import { NativeDiag } from "@/components/NativeDiag";
 
 const SITE_URL = "https://isitbeachday.com";
 const DESCRIPTION =
@@ -66,7 +65,6 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       </head>
       <body className="min-h-screen text-slate-900 antialiased dark:text-slate-100">
         {children}
-        <NativeDiag />
         <ServiceWorkerRegister />
         <NativePushInit />
       </body>
