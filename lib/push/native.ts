@@ -94,18 +94,27 @@ function nativeBridge(): {
 
 // Resolve the PushNotifications plugin. Prefer the native-injected bridge proxy
 // (proven to reach APNs on the remote-URL shell); fall back to the bundled
-// import for normal bundled-asset builds and browsers. Statically referenced
-// (no lazy chunk) so it's ready the instant the user taps.
-async function plugin(): Promise<typeof PushNotifications> {
-  const native = nativeBridge()?.Plugins?.PushNotifications;
-  return native ?? PushNotifications;
+// import for normal bundled-asset builds and browsers.
+//
+// CRITICAL: this is SYNCHRONOUS, and callers must NOT pass its return value
+// through `await`, `Promise.race`, or `Promise.resolve`. Capacitor's plugin
+// proxy traps EVERY property access — including `.then` — as a native method
+// call. If the proxy reaches Promise-resolution machinery, JS sees a "thenable",
+// calls its `.then(resolve, reject)`, that routes to a non-existent native
+// "then" method which never calls back, and the await hangs forever. That was
+// the real "Loading the push module timed out" bug: returning the proxy from an
+// `async` function is enough to trigger it. Only the plugin's actual method
+// calls (requestPermissions / register / checkPermissions / addListener), which
+// return genuine Promises, may be awaited.
+function getPlugin(): typeof PushNotifications {
+  return nativeBridge()?.Plugins?.PushNotifications ?? PushNotifications;
 }
 
 /** "on" if registered for this beach, "denied" if perms blocked, else "off". */
 export async function nativeStatus(slug: string): Promise<"on" | "off" | "denied"> {
   if (!isNativePlatform()) return "off";
   try {
-    const PN = await plugin();
+    const PN = getPlugin();
     const perm = await PN.checkPermissions();
     if (perm.receive === "denied") return "denied";
     return typeof localStorage !== "undefined" && localStorage.getItem(tokenKey(slug)) ? "on" : "off";
@@ -138,7 +147,10 @@ async function registerForToken(): Promise<string> {
   } else if (typeof Capacitor.isPluginAvailable === "function" && !Capacitor.isPluginAvailable("PushNotifications")) {
     throw new Error("PushNotifications plugin isn't registered in this app build.");
   }
-  const PN = await withTimeout(plugin(), 8000, "Loading the push module timed out.");
+  // Resolve the plugin synchronously — NEVER `await` the proxy itself (see
+  // getPlugin: awaiting a plugin proxy hangs on its `.then` trap). Only its
+  // method calls below, which return real Promises, are awaited.
+  const PN = getPlugin();
   const perm = await withTimeout(
     PN.requestPermissions(),
     8000,
@@ -219,7 +231,7 @@ export async function initNativeTapHandling(): Promise<void> {
   if (!isNativePlatform() || tapInit) return;
   tapInit = true;
   try {
-    const PN = await plugin();
+    const PN = getPlugin();
     void PN.addListener("pushNotificationActionPerformed", (action: ActionPerformed) => {
       const url = (action?.notification?.data as { url?: string } | undefined)?.url;
       if (url) window.location.assign(url);
