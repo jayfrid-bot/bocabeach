@@ -46,6 +46,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GLM_OUT: ${{ runner.temp }}/lightning.json
+          # Trigger the safety-push check right after each fresh publish, so a
+          # <5 mi strike reaches subscribers in ~1 min instead of on the hourly cron.
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL: ${{ vars.SITE_URL }}
         run: |
           set +e # one bad cycle (e.g. an S3 hiccup) must not kill the loop
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
@@ -71,6 +75,13 @@ jobs:
             start=$(date +%s)
             if python scripts/glm_lightning.py; then
               publish && echo "published $(date -u +%FT%TZ)"
+              # Near-real-time safety push: the app re-checks each beach's fresh
+              # strikes and alerts subscribers (deduped per hazard). Non-fatal.
+              if [ -n "${CRON_SECRET}" ]; then
+                curl -fsS -m 30 -X POST "${SITE_URL:-https://isitbeachday.com}/api/push/run" \
+                  -H "x-cron-secret: ${CRON_SECRET}" >/dev/null 2>&1 \
+                  && echo "push checked" || echo "push check failed (non-fatal)"
+              fi
             else
               echo "cycle failed; will retry next interval"
             fi
