@@ -17,7 +17,7 @@ import {
   removeNativeSub,
   type NativeSub,
 } from "@/lib/push/nativeStore";
-import { decideNotifications, summarizeForPush, type PushDecision } from "@/lib/push/notify";
+import { decideNotifications, summarizeForPush, type PushDecision, type PushSummary } from "@/lib/push/notify";
 import { getApns, isDeadToken, openApnsSession } from "@/lib/push/apns";
 import { getFcm, getFcmAccessToken, isDeadFcmToken, sendFcm } from "@/lib/push/fcm";
 
@@ -45,16 +45,6 @@ function localHourAndDate(tz: string, now: Date): { hour: number; date: string }
   return { hour, date };
 }
 
-interface Summary {
-  slug: string;
-  name: string;
-  score: number;
-  verdict: string;
-  bestWindow?: string;
-  safetyKey?: string;
-  safetyText?: string;
-}
-
 /**
  * Decide + deliver for one device. `sendOne` sends a single message over its
  * transport and reports {ok, dead}; a dead token is pruned and its remaining
@@ -62,7 +52,7 @@ interface Summary {
  */
 async function deliver(
   sub: NativeSub,
-  summary: Summary,
+  summary: PushSummary,
   fallbackTz: string,
   now: Date,
   sendOne: (msg: PushDecision) => Promise<{ ok: boolean; dead: boolean }>,

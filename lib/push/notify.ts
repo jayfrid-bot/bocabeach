@@ -3,11 +3,11 @@
 // now. No I/O here — the /api/push/run route does the fetching and sending and
 // feeds these functions, which keeps the decision rules unit-testable.
 
-import type { ConditionsResponse } from "@/lib/types";
-import { beachDayVerdict, fmtTime } from "@/lib/format";
+import type { ConditionsResponse, SubScore, HourlyScore } from "@/lib/types";
+import { beachDayVerdict } from "@/lib/format";
 
 /** Local hour (0-23, beach time) at which the daily morning summary fires. */
-export const MORNING_HOUR = 7;
+export const MORNING_HOUR = 8;
 
 /**
  * The minimum a subscription must expose for the decision logic — satisfied by
@@ -23,9 +23,18 @@ export interface PushSummary {
   slug: string;
   name: string;
   score: number;
+  /** "Excellent" | "Good" | "Fair" | "Poor" — the score's rating band. */
+  rating: string;
+  /** Legacy short verdict ("Yes!" / "Maybe" …); kept for callers/tests. */
   verdict: string;
-  /** Today's best window, e.g. "10 AM–2 PM" — undefined if none ahead. */
+  /** Up to 4 standout positives, rendered qualitatively (e.g. "warm water"). */
+  pros: string[];
+  /** Up to 3 standout negatives (e.g. "muggy", "moderate seaweed"). */
+  cons: string[];
+  /** Today's best window, e.g. "4–8 PM" — undefined if none ahead. */
   bestWindow?: string;
+  /** A daylight stretch worth avoiding (a storm/rain dip), e.g. "2–3 PM". */
+  skipWindow?: string;
   /**
    * Stable key for the single most-urgent active safety condition (or undefined
    * when none). Stable so the sender only re-alerts when the condition CHANGES;
@@ -90,6 +99,154 @@ function activeSafety(res: ConditionsResponse): { key: string; text: string } | 
   return null;
 }
 
+// ---- Pros / cons lexicon --------------------------------------------------
+
+/**
+ * Qualitative phrase for each sub-score, as a positive (when it scores well) or
+ * a negative (when it scores poorly). Numbers are deliberately omitted — the
+ * notification should read like a friend's tip, not a data dump.
+ */
+const PHRASES: Record<string, { pro?: string; con?: string }> = {
+  waterTemp: { pro: "warm water", con: "cold water" },
+  waves: { pro: "calm surf", con: "rough surf" },
+  waterQuality: { pro: "clean", con: "murky water" },
+  crowds: { pro: "quiet", con: "crowded" },
+  sky: { pro: "sunny", con: "cloudy" },
+  airTemp: { pro: "warm", con: "chilly" },
+  wind: { pro: "light breeze", con: "windy" },
+  sargassum: { pro: "no seaweed", con: "seaweed" }, // con refined by level below
+  comfort: { pro: "comfortable", con: "muggy" },
+  sandTemp: { pro: "cool sand", con: "hot sand" },
+  uv: { pro: "low UV", con: "strong sun" },
+};
+
+/**
+ * Order positives are chosen + shown in — the most beach-defining first, so when
+ * many things are great we lead with water, surf, cleanliness, then quiet.
+ */
+const PRO_ORDER = [
+  "waterTemp", "waves", "waterQuality", "crowds", "sky",
+  "airTemp", "wind", "sargassum", "sandTemp", "comfort", "uv",
+];
+
+const PRO_MIN = 75; // a sub-score at/above this is a genuine selling point
+const CON_MAX = 55; // a sub-score at/below this is a genuine drawback
+
+/** Render one sub-score as a "con" phrase, refining seaweed by its level. */
+function conPhrase(s: SubScore): string {
+  if (s.key === "sargassum" && s.display) {
+    const level = s.display.split("·")[0]?.trim().toLowerCase();
+    if (level) return `${level} seaweed`;
+  }
+  return PHRASES[s.key]?.con ?? s.label.toLowerCase();
+}
+
+/** Pick the standout pros (≤4) and cons (≤3) from the sub-scores, qualitatively. */
+function prosAndCons(subScores: SubScore[]): { pros: string[]; cons: string[] } {
+  const byKey = new Map(subScores.map((s) => [s.key, s]));
+  const pros: string[] = [];
+  for (const key of PRO_ORDER) {
+    if (pros.length >= 4) break;
+    const s = byKey.get(key);
+    const phrase = PHRASES[key]?.pro;
+    if (s && s.score != null && s.score >= PRO_MIN && phrase) pros.push(phrase);
+  }
+  const cons = subScores
+    .filter((s) => s.score != null && s.score <= CON_MAX && (PHRASES[s.key]?.con || s.key === "sargassum"))
+    .sort((a, b) => (a.score ?? 0) - (b.score ?? 0)) // worst first
+    .slice(0, 3)
+    .map(conPhrase);
+  return { pros, cons };
+}
+
+/** Headline verdict by score band (the notification title). */
+function verdictPhrase(score: number): string {
+  if (score >= 80) return "Great beach day today";
+  if (score >= 65) return "Good beach day today";
+  if (score >= 45) return "So-so beach day today";
+  return "Rough beach day today";
+}
+
+/** Join phrases as "a, b, c & d", first letter capitalized. */
+function joinPhrases(items: string[]): string {
+  if (items.length === 0) return "";
+  const joined =
+    items.length === 1
+      ? items[0]
+      : `${items.slice(0, -1).join(", ")} & ${items[items.length - 1]}`;
+  return joined.charAt(0).toUpperCase() + joined.slice(1);
+}
+
+// ---- Time windows ---------------------------------------------------------
+
+/** Format a start/end ISO pair as "4–8 PM" (or "11 AM–2 PM" across noon). */
+function fmtWindow(startIso: string, endIso: string, tz: string): string {
+  const part = (iso: string) => {
+    const ps = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz, hour: "numeric", minute: "2-digit", hour12: true,
+    }).formatToParts(new Date(iso));
+    const get = (t: string) => ps.find((p) => p.type === t)?.value ?? "";
+    return { hour: get("hour"), minute: get("minute"), period: get("dayPeriod") };
+  };
+  const a = part(startIso);
+  const b = part(endIso);
+  const h = (p: { hour: string; minute: string }) => (p.minute === "00" ? p.hour : `${p.hour}:${p.minute}`);
+  return a.period === b.period
+    ? `${h(a)}–${h(b)} ${b.period}`
+    : `${h(a)} ${a.period}–${h(b)} ${b.period}`;
+}
+
+/**
+ * The longest contiguous daylight stretch worth avoiding (a storm/rain dip), as
+ * "2–3 PM" — but only on an otherwise-decent day (peak ≥ 60) and only for a
+ * localized dip (≤ 4 h), so a washed-out day doesn't read "skip all day".
+ */
+function findSkipWindow(hourly: HourlyScore[], tz: string): string | undefined {
+  if (!hourly.length) return undefined;
+  const peak = Math.max(...hourly.map((h) => h.score));
+  if (peak < 60) return undefined;
+  const DIP = 40;
+  let best: HourlyScore[] | null = null;
+  let cur: HourlyScore[] = [];
+  for (const h of hourly) {
+    if (h.score < DIP) {
+      cur.push(h);
+    } else {
+      if (cur.length && (!best || cur.length > best.length)) best = cur;
+      cur = [];
+    }
+  }
+  if (cur.length && (!best || cur.length > best.length)) best = cur;
+  if (!best || best.length === 0 || best.length > 4) return undefined;
+  return fmtWindow(best[0].time, best[best.length - 1].time, tz);
+}
+
+/**
+ * The day's best contiguous beach window from the hourly curve, as "4–8 PM" —
+ * the fallback when the forward-looking daily window is gone (e.g. a late-day
+ * run). Threshold = within 12 of the peak, so it stays on the genuinely good
+ * stretch; needs ≥2 h to count as a "window".
+ */
+function findBestWindow(hourly: HourlyScore[], tz: string): string | undefined {
+  if (!hourly.length) return undefined;
+  const peak = Math.max(...hourly.map((h) => h.score));
+  if (peak < 45) return undefined;
+  const thr = Math.max(45, peak - 12);
+  let best: HourlyScore[] | null = null;
+  let cur: HourlyScore[] = [];
+  for (const h of hourly) {
+    if (h.score >= thr) {
+      cur.push(h);
+    } else {
+      if (cur.length && (!best || cur.length > best.length)) best = cur;
+      cur = [];
+    }
+  }
+  if (cur.length && (!best || cur.length > best.length)) best = cur;
+  if (!best || best.length < 2) return undefined;
+  return fmtWindow(best[0].time, best[best.length - 1].time, tz);
+}
+
 /** Build a notification-ready summary from a full conditions response. */
 export function summarizeForPush(
   res: ConditionsResponse,
@@ -99,15 +256,21 @@ export function summarizeForPush(
   const today = res.multiDayWindows?.[0];
   const bw = today?.best ?? null;
   const bestWindow = bw
-    ? `${fmtTime(bw.startIso, loc.tz)}–${fmtTime(bw.endIso, loc.tz)}`
-    : undefined;
+    ? fmtWindow(bw.startIso, bw.endIso, loc.tz)
+    : findBestWindow(res.hourlyScores ?? [], loc.tz);
+  const skipWindow = findSkipWindow(res.hourlyScores ?? [], loc.tz);
+  const { pros, cons } = prosAndCons(res.score.subScores ?? []);
   const safety = activeSafety(res);
   return {
     slug: loc.slug,
     name: loc.name,
     score,
+    rating: res.score.rating ?? "",
     verdict: beachDayVerdict(score),
+    pros,
+    cons,
     bestWindow,
+    skipWindow,
     safetyKey: safety?.key,
     safetyText: safety?.text,
   };
@@ -125,7 +288,8 @@ export interface PushDecision {
  * Decide which notifications `sub` is due for, given the current `summary`, the
  * beach-local `hour` and ISO `date`. Returns the messages to send plus the new
  * dedup state to persist. Rules:
- *  - Morning summary: once per local day, at MORNING_HOUR, if opted in.
+ *  - Morning summary: once per local day, at MORNING_HOUR, if opted in. Rich
+ *    body: verdict + score, then ☀️ pros, ☁️ cons, 🕓 best/skip windows.
  *  - Safety alert: when an active safety condition's key differs from the last
  *    one we sent (so it fires on a NEW hazard, not every run while it persists).
  */
@@ -141,12 +305,21 @@ export function decideNotifications(
   const url = `/${summary.slug}`;
 
   if (sub.prefs.morning && hour === MORNING_HOUR && sent.morningDate !== date) {
+    const pros = summary.pros ?? [];
+    const cons = summary.cons ?? [];
+    const lines: string[] = [];
+    if (pros.length) lines.push(`☀️ ${joinPhrases(pros)}`);
+    if (cons.length) lines.push(`☁️ ${joinPhrases(cons)}`);
+    if (summary.bestWindow) {
+      lines.push(
+        `🕓 Best time: ${summary.bestWindow}` +
+          (summary.skipWindow ? ` (skip ${summary.skipWindow})` : ""),
+      );
+    }
     sends.push({
       tag: "morning",
-      title: `${summary.name} — Beach Day ${summary.score}`,
-      body:
-        `${summary.verdict} today.` +
-        (summary.bestWindow ? ` Best window ${summary.bestWindow}.` : ""),
+      title: `🏖️ ${verdictPhrase(summary.score)} · ${summary.score}/100`,
+      body: lines.join("\n"),
       url,
     });
     nextSent.morningDate = date;
