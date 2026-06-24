@@ -121,10 +121,10 @@ describe("summarizeSeaweed", () => {
         { hour: 7 }, // no seaweed/cov -> ignored entirely
       ],
     })!;
-    // by-hour: avg rank per hour. 7: (3+2)/2=2.5→high; 15: (1+0)/2=0.5→low
+    // by-hour: continuous avg rank per hour. 7: (3+2)/2=2.5→high; 15: (1+0)/2=0.5→low
     expect(d.byHour).toEqual([
-      { hour: 7, level: "high", samples: 2 },
-      { hour: 15, level: "low", samples: 2 },
+      { hour: 7, level: "high", avg: 2.5, samples: 2 },
+      { hour: 15, level: "low", avg: 0.5, samples: 2 },
     ]);
     // by-day: average rank ((3+1)/2=2→moderate; (2+0)/2=1→low), worst single read.
     expect(d.byDay).toEqual([
@@ -147,6 +147,8 @@ describe("summarizeSeaweed", () => {
     expect(d.byDay).toEqual([
       { date: "2026-06-01", avg: 1.78, samples: 3, level: "moderate", worst: "high" },
     ]);
+    // by-hour height is the coverage-driven continuous avg (granular), not the band
+    expect(d.byHour?.map((h) => h.avg)).toEqual([2.33, 3, 0]);
   });
 
   it("still surfaces the history charts even with no current cam reading", () => {

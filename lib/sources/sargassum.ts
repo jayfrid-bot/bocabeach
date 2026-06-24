@@ -61,18 +61,21 @@ export interface CamSeaweedFeed {
 function byHourFromHistory(history: HistoryEntry[]): SargassumByHour[] | undefined {
   const buckets = new Map<number, { rank: number; n: number }>();
   for (const e of history) {
-    if (typeof e.hour !== "number" || typeof e.seaweed !== "string" || !(e.seaweed in RANK)) {
-      continue;
-    }
+    if (typeof e.hour !== "number") continue;
+    const r = readRank(e); // continuous 0-3, coverage-aware (falls back to the category)
+    if (r == null) continue;
     const b = buckets.get(e.hour) ?? { rank: 0, n: 0 };
-    b.rank += RANK[e.seaweed];
+    b.rank += r;
     b.n += 1;
     buckets.set(e.hour, b);
   }
   if (!buckets.size) return undefined;
   return [...buckets.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([hour, b]) => ({ hour, level: LEVELS[Math.round(b.rank / b.n)], samples: b.n }));
+    .map(([hour, b]) => {
+      const avg = b.rank / b.n;
+      return { hour, level: LEVELS[Math.round(avg)], avg: Math.round(avg * 100) / 100, samples: b.n };
+    });
 }
 
 /**

@@ -84,6 +84,8 @@ function byHourFromHistory(history: HistoryEntry[]): BusynessByHour[] | undefine
       level: LEVELS[Math.round(b.rank / b.n)],
       people: b.pN ? Math.round(b.people / b.pN) : undefined,
       crowdPct: b.cN ? Math.round(b.pct / b.cN) : undefined,
+      // Granular height: fullness-aware when we have a crowd %, else the level rank.
+      avg: Math.round((b.cN ? pctToRank(b.pct / b.cN) : b.rank / b.n) * 100) / 100,
       samples: b.n,
     }));
 }

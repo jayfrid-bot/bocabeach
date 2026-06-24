@@ -131,7 +131,7 @@ export function BusynessByHourChart({
     }
     return {
       key: String(b.hour),
-      rank: BUSY_RANK[b.level] ?? 0,
+      rank: b.avg ?? BUSY_RANK[b.level] ?? 0,
       color: BUSY_COLOR[b.level] ?? "#475569",
       label: hourLabel(b.hour),
       highlight: b.hour === now,
@@ -176,7 +176,7 @@ export function SeaweedByHourChart({
     }
     return {
       key: String(b.hour),
-      rank: SEA_RANK[b.level] ?? 0,
+      rank: b.avg ?? SEA_RANK[b.level] ?? 0,
       color: SEA_COLOR[b.level] ?? "#475569",
       label: hourLabel(b.hour),
       highlight: b.hour === now,

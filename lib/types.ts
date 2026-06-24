@@ -294,7 +294,9 @@ export interface CamSeaweedReading {
 /** Typical seaweed by local hour, learned from the rolling cam history. */
 export interface SargassumByHour {
   hour: number; // local hour 0-23
-  level: SargassumRisk; // none | low | moderate | high
+  level: SargassumRisk; // none | low | moderate | high — the band, for the bar COLOUR
+  /** Continuous 0-3 rank (coverage-aware) — drives the bar HEIGHT (granular). */
+  avg?: number;
   samples: number;
 }
 /** One day's AVERAGE seaweed, for the seaweed-by-day chart. */
@@ -319,10 +321,12 @@ export type BusynessLevel =
   | "unknown";
 export interface BusynessByHour {
   hour: number; // local hour 0-23
-  level: BusynessLevel;
+  level: BusynessLevel; // the band, for the bar COLOUR
   people?: number;
   /** Avg 0-100 fullness for this hour (refines the hourly crowd sub-score). */
   crowdPct?: number;
+  /** Continuous 0-4 rank (fullness-aware) — drives the bar HEIGHT (granular). */
+  avg?: number;
   samples: number;
 }
 /** One day's AVERAGE crowd, for the busyness-by-day chart. */
