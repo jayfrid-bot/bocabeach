@@ -7,7 +7,8 @@ name: GLM Lightning Feed
 #
 # GitHub's cron is best-effort and fires this sporadically (often hours apart),
 # which is too sparse for a near-real-time safety feature. So each run does NOT
-# refresh once and exit — it stays awake and republishes every ~10 min for ~5.5h.
+# refresh once and exit — it stays awake and republishes every ~1 min for ~5.5h
+# (GLM publishes 20-second granules, so this is about as live as the source gets).
 # Since GitHub re-fires more often than that, the runs overlap and the feed stays
 # continuously fresh, with zero external services or tokens.
 
@@ -41,7 +42,7 @@ jobs:
       - name: Install deps
         run: pip install --quiet --disable-pip-version-check h5py numpy
 
-      - name: Refresh + publish on a 10-minute loop
+      - name: Refresh + publish on a ~1-minute loop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GLM_OUT: ${{ runner.temp }}/lightning.json
@@ -73,7 +74,7 @@ jobs:
             else
               echo "cycle failed; will retry next interval"
             fi
-            rem=$(( 600 - ($(date +%s) - start) )) # pace to ~10-min cycles
-            [ "$rem" -lt 30 ] && rem=30
+            rem=$(( 60 - ($(date +%s) - start) )) # pace to ~1-min cycles (near-real-time)
+            [ "$rem" -lt 5 ] && rem=5
             sleep "$rem"
           done

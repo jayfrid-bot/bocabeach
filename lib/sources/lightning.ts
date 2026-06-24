@@ -88,7 +88,7 @@ export async function fetchLightning(
   try {
     const res = await fetchWithTimeout(FEED_URL, {
       timeoutMs: 7000,
-      next: { revalidate: 300 }, // 5m — the upstream job refreshes every ~10m
+      next: { revalidate: 60 }, // 1m — near-real-time; the upstream job refreshes every ~1m
     });
     fetchedAt = fetchedAtOf(res);
     // The feed branch may not exist yet (first deploy) — degrade quietly.
