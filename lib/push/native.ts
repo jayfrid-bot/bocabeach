@@ -64,12 +64,41 @@ export function nativePlatform(): "ios" | "android" | "web" {
 
 const tokenKey = (slug: string) => `native-push:${slug}`;
 
-// Statically imported, NOT a lazy chunk: a tap-time dynamic import was timing
-// out in the WebView ("Loading the push module timed out"). The plugin's
-// registerPlugin() is inert in a browser, so bundling it for everyone is cheap
-// and harmless, and it's already loaded when the user taps.
-async function plugin() {
-  return PushNotifications;
+/**
+ * The native-injected Capacitor bridge (`window.Capacitor`), when present.
+ *
+ * This is the REAL bridge the WebView injects at creation time — it's what
+ * actually talks to APNs/FCM. Crucially it is NOT always the same object as the
+ * bundled `@capacitor/core` import: on the remote-URL shell the bundled
+ * singleton can initialize in "web" mode before the native bridge attaches and
+ * then never re-wire, so the BUNDLED `PushNotifications.requestPermissions()`
+ * silently hangs and `isPluginAvailable()` reports "web → unavailable". The
+ * injected bridge's plugin proxy does not have this problem (it captured a real
+ * APNs token and delivered a push in testing), so we prefer it for every call.
+ */
+function nativeBridge(): {
+  isPluginAvailable?: (n: string) => boolean;
+  Plugins?: { PushNotifications?: typeof PushNotifications };
+} | null {
+  if (typeof window === "undefined") return null;
+  const cap = (
+    window as unknown as {
+      Capacitor?: {
+        isPluginAvailable?: (n: string) => boolean;
+        Plugins?: { PushNotifications?: typeof PushNotifications };
+      };
+    }
+  ).Capacitor;
+  return cap ?? null;
+}
+
+// Resolve the PushNotifications plugin. Prefer the native-injected bridge proxy
+// (proven to reach APNs on the remote-URL shell); fall back to the bundled
+// import for normal bundled-asset builds and browsers. Statically referenced
+// (no lazy chunk) so it's ready the instant the user taps.
+async function plugin(): Promise<typeof PushNotifications> {
+  const native = nativeBridge()?.Plugins?.PushNotifications;
+  return native ?? PushNotifications;
 }
 
 /** "on" if registered for this beach, "denied" if perms blocked, else "off". */
@@ -97,9 +126,16 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 
 /** Request permission, register with APNs, and resolve the device token. */
 async function registerForToken(): Promise<string> {
-  // If the native plugin isn't registered in this build, bridge calls hang with
-  // no response — fail fast with a readable reason instead of a stuck spinner.
-  if (typeof Capacitor.isPluginAvailable === "function" && !Capacitor.isPluginAvailable("PushNotifications")) {
+  // If the native plugin genuinely isn't registered in this build, bridge calls
+  // hang with no response — fail fast with a readable reason. Check via the
+  // injected bridge first: the bundled core can report "web" and wrongly claim
+  // the plugin is unavailable even though the native shell has it registered.
+  const bridge = nativeBridge();
+  if (bridge?.isPluginAvailable) {
+    if (!bridge.isPluginAvailable("PushNotifications")) {
+      throw new Error("PushNotifications plugin isn't registered in this app build.");
+    }
+  } else if (typeof Capacitor.isPluginAvailable === "function" && !Capacitor.isPluginAvailable("PushNotifications")) {
     throw new Error("PushNotifications plugin isn't registered in this app build.");
   }
   const PN = await withTimeout(plugin(), 8000, "Loading the push module timed out.");
