@@ -56,9 +56,11 @@ export interface Derived {
   lightningLastMinutesAgo?: number;
 }
 
-/** Events that make the beach genuinely dangerous/closed — hard score cap. */
+/** Events that make the beach genuinely dangerous/closed — hard score cap.
+ *  Note `tsunami (warning|advisory)` not bare `tsunami`: a Tsunami WATCH or
+ *  (routine) INFORMATION STATEMENT is not a swim threat and must not cap. */
 const SEVERE_ALERT =
-  /hurricane warning|tropical storm warning|storm surge warning|tsunami|high surf warning|tornado warning|flash flood warning|special marine warning|extreme wind warning|coastal flood warning/i;
+  /hurricane warning|tropical storm warning|storm surge warning|tsunami (warning|advisory)|high surf warning|tornado warning|flash flood warning|special marine warning|extreme wind warning|coastal flood warning/i;
 
 /** The hourly-forecast entry whose bucket contains "now" (within 2h), if any. */
 function currentHourOf(hours: HourlyMetrics[], nowMs: number = Date.now()) {
@@ -719,10 +721,11 @@ function scoreAllHours(
       const histRead = isPast && isToday ? seaweedAtHour(localHourOf(h.time)) : undefined;
       // The bucket that strictly CONTAINS now gets the observed-"now" signals
       // (nowcast rain + fresh lightning); every other hour is forecast-only and
-      // leaves these unset. NOTE: surfAdvisory is NOT a now-only signal — it's a
-      // day-constant NWS alert like severeAlert, so it's applied to every hour
-      // below (otherwise an all-day advisory would only cap the current hour and
-      // bestBeachWindow could pick an uncapped future hour).
+      // leaves these unset. NWS alerts/flags (severeAlert, surfAdvisory, rip,
+      // flags) are TODAY-constant rather than now-only, so they apply to all of
+      // TODAY's hours (otherwise an all-day advisory would only cap the current
+      // hour and bestBeachWindow could pick an uncapped future hour today) — but
+      // NOT to future days; see the isToday gates below.
       const isCurrentHour = hStart <= nowMs && nowMs < hStart + HOUR_MS;
       const d: Derived = {
         airTempF: h.airTempF,
@@ -741,13 +744,18 @@ function scoreAllHours(
         sargassumCoveragePct: histRead ? histRead.coveragePct : base.sargassumCoveragePct,
         crowdPct: crowdByHour.get(localHourOf(h.time)),
         sandTempF: sandByTime.get(h.time),
-        flags: base.flags,
+        // Current NWS alerts/flags are TODAY-only conditions (most expire within
+        // the day) — apply them to TODAY's hours only, NEVER to future days, so a
+        // single warning/flag today can't flat-line the whole week's forecast.
+        // (Water quality + surf/seaweed are slowly-changing, so they stay carried
+        // forward as an estimate.)
+        flags: isToday ? base.flags : [],
         waterAdvisory: base.waterAdvisory,
         waterRating: base.waterRating,
         noSwimAdvisory: base.noSwimAdvisory,
-        ripCurrentRisk: base.ripCurrentRisk,
-        severeAlert: base.severeAlert,
-        surfAdvisory: base.surfAdvisory,
+        ripCurrentRisk: isToday ? base.ripCurrentRisk : "unknown",
+        severeAlert: isToday ? base.severeAlert : false,
+        surfAdvisory: isToday ? base.surfAdvisory : false,
         ...(isCurrentHour
           ? {
               nowcastRaining: base.nowcastRaining,

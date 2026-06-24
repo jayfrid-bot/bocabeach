@@ -49,4 +49,16 @@ describe("parseAlerts", () => {
     expect(a[0]).toMatchObject({ event: "Rip Current Statement", severity: "Moderate" });
     expect(a[1].event).toBe("Heat Advisory");
   });
+
+  it("drops NWS test/exercise products (status !== Actual) — e.g. the monthly tsunami test", () => {
+    const a = parseAlerts({
+      features: [
+        { properties: { event: "Tsunami Warning", severity: "Extreme", status: "Test", headline: "TEST Tsunami Warning" } },
+        { properties: { event: "Coastal Flood Advisory", severity: "Moderate", status: "Exercise" } },
+        { properties: { event: "Rip Current Statement", severity: "Moderate", status: "Actual" } },
+        { properties: { event: "Heat Advisory", severity: "Minor" } }, // no status → treated as Actual
+      ],
+    });
+    expect(a.map((x) => x.event)).toEqual(["Rip Current Statement", "Heat Advisory"]);
+  });
 });

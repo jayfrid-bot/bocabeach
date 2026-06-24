@@ -9,6 +9,8 @@ interface AlertsJson {
     properties?: {
       event?: string;
       severity?: string;
+      /** CAP status: "Actual" | "Test" | "Exercise" | "Draft" | "System". */
+      status?: string;
       headline?: string;
       ends?: string | null;
       expires?: string | null;
@@ -16,11 +18,17 @@ interface AlertsJson {
   }[];
 }
 
-/** Map the NWS active-alerts GeoJSON to a compact alert list. */
+// NWS issues routine TEST/exercise products (e.g. the monthly National Tsunami
+// Warning Center test) that carry a real event name + "Extreme" severity but a
+// status other than "Actual" (the headline starts "TEST"). They must never reach
+// the score, safety banner, or push, so drop anything non-"Actual" at the source.
+const NON_ACTUAL = new Set(["Test", "Exercise", "Draft", "System"]);
+
+/** Map the NWS active-alerts GeoJSON to a compact alert list (real alerts only). */
 export function parseAlerts(json: AlertsJson): NwsAlert[] {
   return (json.features ?? [])
     .map((f) => f.properties ?? {})
-    .filter((p) => p.event)
+    .filter((p) => p.event && !NON_ACTUAL.has(p.status ?? "Actual"))
     .map((p) => ({
       event: p.event as string,
       severity: p.severity ?? "Unknown",

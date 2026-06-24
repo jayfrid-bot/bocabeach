@@ -779,12 +779,14 @@ describe("computeHourlyScores", () => {
     expect(at(15).score).toBeLessThan(at(7).score);
   });
 
-  it("carries day-constant safety caps into every forecast hour", () => {
+  it("applies day-constant safety caps to all of TODAY's forecast hours", () => {
+    const now = Date.parse("2026-06-01T15:00:00.000Z"); // 11 AM EDT on the fixture day
     const hrs = computeHourlyScores(
       snapshot({ ...niceBase, city: { flags: ["red"] }, hourly: hourlyDay(), sun: SUN }),
+      now,
     );
     expect(hrs.length).toBeGreaterThan(0);
-    // Red flag caps each hour at 85 (swimmer-safety warning, not a day-killer).
+    // Red flag caps each of today's hours at 85 (swimmer-safety warning, not a day-killer).
     expect(hrs.every((h) => h.score <= 85)).toBe(true);
   });
 
@@ -989,5 +991,20 @@ describe("computeMultiDayWindows", () => {
   it("respects maxDays and returns [] with no hourly data", () => {
     expect(computeMultiDayWindows(s, now, 1).length).toBe(1);
     expect(computeMultiDayWindows(snapshot({ ...niceBase, sun: SUN }), now)).toEqual([]);
+  });
+
+  it("a current severe alert caps TODAY only — it never flat-lines the rest of the week", () => {
+    const withWarning = snapshot({
+      ...niceBase,
+      city: { flags: ["green"] },
+      hourly: hourly72(),
+      sun: SUN,
+      nws: { alerts: [{ event: "Tsunami Warning", severity: "Extreme" }], ripCurrentRisk: "low" },
+    });
+    const days = computeMultiDayWindows(withWarning, now);
+    expect(days[0].dow).toBe("Today");
+    expect(days[0].peakScore!).toBeLessThanOrEqual(20); // today is hard-capped by the warning
+    const future = days.find((d) => d.dow !== "Today")!;
+    expect(future.peakScore!).toBeGreaterThan(70); // future days are unaffected
   });
 });

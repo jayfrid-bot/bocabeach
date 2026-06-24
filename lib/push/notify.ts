@@ -46,7 +46,7 @@ export interface PushSummary {
 
 // The genuinely dangerous, beach-closing NWS warnings (mirrors score.ts).
 const SEVERE_ALERT =
-  /hurricane warning|tropical storm warning|storm surge warning|tsunami|high surf warning|tornado warning|flash flood warning|special marine warning|extreme wind warning|coastal flood warning/i;
+  /hurricane warning|tropical storm warning|storm surge warning|tsunami (warning|advisory)|high surf warning|tornado warning|flash flood warning|special marine warning|extreme wind warning|coastal flood warning/i;
 
 /**
  * Extract the single highest-priority active safety condition from a snapshot,
