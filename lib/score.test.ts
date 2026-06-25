@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  anchorCurrentHourScore,
   bestBeachWindow,
   computeHourlyScores,
   computeMultiDayWindows,
@@ -1006,5 +1007,43 @@ describe("computeMultiDayWindows", () => {
     expect(days[0].peakScore!).toBeLessThanOrEqual(20); // today is hard-capped by the warning
     const future = days.find((d) => d.dow !== "Today")!;
     expect(future.peakScore!).toBeGreaterThan(70); // future days are unaffected
+  });
+});
+
+describe("anchorCurrentHourScore", () => {
+  const H = (time: string, score: number): HourlyScore => ({
+    time,
+    score,
+    rating: "Fair",
+    emoji: "",
+    raining: false,
+  });
+
+  it("snaps the bucket containing now to the headline score + rating, leaving others", () => {
+    const hourly = [
+      H("2026-06-25T13:00:00.000Z", 70),
+      H("2026-06-25T14:00:00.000Z", 76),
+      H("2026-06-25T15:00:00.000Z", 75),
+    ];
+    const out = anchorCurrentHourScore(
+      hourly,
+      { score: 84, rating: "Excellent" },
+      Date.parse("2026-06-25T14:30:00.000Z"),
+    );
+    expect(out[1].score).toBe(84); // the 14:00 bucket contains 14:30
+    expect(out[1].rating).toBe("Excellent");
+    expect(out[0].score).toBe(70); // neighbours untouched
+    expect(out[2].score).toBe(75);
+    expect(hourly[1].score).toBe(76); // input not mutated
+  });
+
+  it("returns the array unchanged when no bucket contains now (e.g. before sunrise)", () => {
+    const hourly = [H("2026-06-25T13:00:00.000Z", 70)];
+    const out = anchorCurrentHourScore(
+      hourly,
+      { score: 84, rating: "Excellent" },
+      Date.parse("2026-06-25T20:00:00.000Z"),
+    );
+    expect(out).toBe(hourly);
   });
 });

@@ -19,7 +19,12 @@ import { fetchTides } from "@/lib/sources/tides";
 import { fetchTraffic } from "@/lib/sources/traffic";
 import { fetchWaterQuality } from "@/lib/sources/waterQuality";
 import { fetchWeather } from "@/lib/sources/weather";
-import { computeHourlyScores, computeMultiDayWindows, computeScore } from "@/lib/score";
+import {
+  anchorCurrentHourScore,
+  computeHourlyScores,
+  computeMultiDayWindows,
+  computeScore,
+} from "@/lib/score";
 import { nowIso } from "@/lib/util";
 
 /**
@@ -125,10 +130,14 @@ export async function getConditionsForLocation(
     getSnapshotForLocation(loc),
     buildCamViews(loc).catch(() => []),
   ]);
+  const score = computeScore(snapshot);
   return {
     snapshot,
-    score: computeScore(snapshot),
-    hourlyScores: computeHourlyScores(snapshot),
+    score,
+    // Anchor the chart's current hour to the headline (consensus) score so the
+    // graph's "now" point matches the big number instead of diverging by the
+    // single-source hourly-forecast gap.
+    hourlyScores: anchorCurrentHourScore(computeHourlyScores(snapshot), score),
     multiDayWindows: computeMultiDayWindows(snapshot),
     cams,
   };

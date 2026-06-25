@@ -813,6 +813,30 @@ export function computeHourlyScores(
   });
 }
 
+/**
+ * Snap the chart's CURRENT hour to the headline score. The headline
+ * (`computeScore`) is a multi-source consensus — NWS station obs + MET Norway +
+ * Open-Meteo + GFS — while the hourly curve is Open-Meteo's forecast alone, so the
+ * two routinely disagree by several points at the same moment. Anchoring the
+ * bucket that contains `now` to the headline makes the graph's "now" point match
+ * the big number the app displays; every other hour stays the forecast shape.
+ * Returns the array unchanged when no bucket contains `now` (e.g. before sunrise).
+ */
+export function anchorCurrentHourScore(
+  hourly: HourlyScore[],
+  headline: { score: number; rating: string },
+  nowMs: number = Date.now(),
+): HourlyScore[] {
+  const i = hourly.findIndex((h) => {
+    const t = new Date(h.time).getTime();
+    return t <= nowMs && nowMs < t + HOUR_MS;
+  });
+  if (i < 0) return hourly;
+  const next = hourly.slice();
+  next[i] = { ...next[i], score: headline.score, rating: headline.rating };
+  return next;
+}
+
 /** Local hour (0-23) of an instant in a given IANA timezone. */
 function localHourInTz(iso: string, tz: string): number {
   return (
