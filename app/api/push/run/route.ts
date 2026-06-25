@@ -46,6 +46,18 @@ function localHourAndDate(tz: string, now: Date): { hour: number; date: string }
 }
 
 /**
+ * How long APNs should STORE an undelivered push so an offline phone (airplane
+ * mode / off) still gets it on reconnect, instead of Apple discarding it. The
+ * morning summary stays relevant through the beach day; a safety alert goes
+ * stale fast. 0 = deliver-or-discard.
+ */
+function apnsExpiry(tag: string, nowSec: number): number {
+  if (tag === "morning") return nowSec + 8 * 3600; // through the beach day
+  if (tag === "safety") return nowSec + 30 * 60; // matches the lightning freshness window
+  return 0;
+}
+
+/**
  * Decide + deliver for one device. `sendOne` sends a single message over its
  * transport and reports {ok, dead}; a dead token is pruned and its remaining
  * sends skipped. Returns counts. Persists dedup state unless pruned.
@@ -56,9 +68,10 @@ async function deliver(
   fallbackTz: string,
   now: Date,
   sendOne: (msg: PushDecision) => Promise<{ ok: boolean; dead: boolean }>,
+  opts?: { force?: "morning" },
 ): Promise<{ sent: number; pruned: number }> {
   const { hour, date } = localHourAndDate(sub.tz || fallbackTz, now);
-  const { sends, nextSent } = decideNotifications(sub, summary, hour, date);
+  const { sends, nextSent } = decideNotifications(sub, summary, hour, date, opts);
   let sent = 0;
   let pruned = 0;
   let removed = false;
@@ -109,6 +122,13 @@ export async function POST(req: Request): Promise<Response> {
   if (!apns && !fcm) {
     return Response.json({ error: "no push transport configured (set APNs and/or FCM env)" }, { status: 503 });
   }
+
+  // `?force=morning` re-sends today's morning summary now (ignoring the 8 AM gate
+  // and the once-a-day dedup) — used to send an on-demand test of today's weather.
+  const force =
+    new URL(req.url).searchParams.get("force") === "morning"
+      ? ({ force: "morning" } as const)
+      : undefined;
 
   const now = new Date();
   const nowSec = Math.floor(now.getTime() / 1000);
@@ -162,9 +182,10 @@ export async function POST(req: Request): Promise<Response> {
               body: msg.body,
               url: msg.url,
               tag: msg.tag,
+              expiration: apnsExpiry(msg.tag, nowSec),
             });
             return { ok: r.ok, dead: isDeadToken(r) };
-          });
+          }, force);
         } else if (sub.platform === "android" && fcm && fcmAccessToken) {
           const token = fcmAccessToken;
           result = await deliver(sub, summary, loc.timezone, now, async (msg) => {
@@ -174,7 +195,7 @@ export async function POST(req: Request): Promise<Response> {
               url: msg.url,
             });
             return { ok: r.ok, dead: isDeadFcmToken(r) };
-          });
+          }, force);
         }
         if (result) {
           sent += result.sent;

@@ -298,13 +298,18 @@ export function decideNotifications(
   summary: PushSummary,
   hour: number,
   date: string,
+  opts?: { force?: "morning" },
 ): { sends: PushDecision[]; nextSent: NonNullable<Notifiable["sent"]> } {
   const sent = sub.sent ?? {};
   const sends: PushDecision[] = [];
   const nextSent: NonNullable<Notifiable["sent"]> = { ...sent };
   const url = `/${summary.slug}`;
 
-  if (sub.prefs.morning && hour === MORNING_HOUR && sent.morningDate !== date) {
+  // A forced send (the on-demand "test today's weather") bypasses the opt-in, the
+  // 8 AM gate and the once-a-day dedup so it always fires — and deliberately does
+  // NOT advance morningDate, so the real morning schedule is left untouched.
+  const forceMorning = opts?.force === "morning";
+  if (forceMorning || (sub.prefs.morning && hour === MORNING_HOUR && sent.morningDate !== date)) {
     const pros = summary.pros ?? [];
     const cons = summary.cons ?? [];
     const lines: string[] = [];
@@ -322,7 +327,7 @@ export function decideNotifications(
       body: lines.join("\n"),
       url,
     });
-    nextSent.morningDate = date;
+    if (!forceMorning) nextSent.morningDate = date;
   }
 
   if (sub.prefs.safety && summary.safetyKey && sent.safetyKey !== summary.safetyKey) {

@@ -76,6 +76,12 @@ export interface ApnsPayload {
   url: string;
   /** Collapse id — a later push with the same id replaces an undelivered one. */
   tag?: string;
+  /**
+   * Unix-seconds expiry. APNs STORES the push and retries until then if the
+   * device is offline. Omitted/0 means "deliver once, or discard" — which silently
+   * drops the notification when the phone is in airplane mode / off at send time.
+   */
+  expiration?: number;
 }
 
 export interface ApnsSession {
@@ -109,6 +115,7 @@ export function openApnsSession(cfg: ApnsConfig, nowSec: number): ApnsSession {
         "apns-topic": cfg.bundleId,
         "apns-push-type": "alert",
         "content-type": "application/json",
+        ...(payload.expiration ? { "apns-expiration": String(Math.floor(payload.expiration)) } : {}),
         ...(payload.tag ? { "apns-collapse-id": payload.tag.slice(0, 64) } : {}),
       });
       let status = 0;
