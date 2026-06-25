@@ -131,14 +131,23 @@ export async function getConditionsForLocation(
     buildCamViews(loc).catch(() => []),
   ]);
   const score = computeScore(snapshot);
-  return {
-    snapshot,
-    score,
-    // Anchor the chart's current hour to the headline (consensus) score so the
-    // graph's "now" point matches the big number instead of diverging by the
-    // single-source hourly-forecast gap.
-    hourlyScores: anchorCurrentHourScore(computeHourlyScores(snapshot), score),
-    multiDayWindows: computeMultiDayWindows(snapshot),
-    cams,
-  };
+  const nowMs = Date.now();
+  // The raw forecast curve (for the push's window analysis), and the same curve
+  // with the current hour anchored to the headline (consensus) score so the chart's
+  // "now" point matches the big number instead of diverging by the single-source gap.
+  const hourlyForecast = computeHourlyScores(snapshot, nowMs);
+  const hourlyScores = anchorCurrentHourScore(hourlyForecast, score, nowMs);
+  const multiDayWindows = computeMultiDayWindows(snapshot, nowMs);
+  // Keep the "Today" peak badge (BestTimesStrip) >= the chart's anchored now-dot:
+  // the live headline score IS part of today, so the day's advertised peak must
+  // never read below the now-point (they're otherwise computed on different curves).
+  const today = multiDayWindows[0];
+  const nowDot = hourlyScores.find((h) => {
+    const t = new Date(h.time).getTime();
+    return t <= nowMs && nowMs < t + 3_600_000;
+  });
+  if (today && today.dow === "Today" && nowDot && today.peakScore != null && today.peakScore < nowDot.score) {
+    multiDayWindows[0] = { ...today, peakScore: nowDot.score };
+  }
+  return { snapshot, score, hourlyScores, hourlyForecast, multiDayWindows, cams };
 }

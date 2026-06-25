@@ -71,7 +71,10 @@ async function deliver(
   opts?: { force?: "morning" },
 ): Promise<{ sent: number; pruned: number }> {
   const { hour, date } = localHourAndDate(sub.tz || fallbackTz, now);
-  const { sends, nextSent } = decideNotifications(sub, summary, hour, date, opts);
+  const { sends, nextSent } = decideNotifications(sub, summary, hour, date, {
+    force: opts?.force,
+    nowMs: now.getTime(),
+  });
   let sent = 0;
   let pruned = 0;
   let removed = false;
@@ -98,7 +101,10 @@ async function deliver(
   if (!removed) {
     const next = { ...(sub.sent ?? {}) };
     if (!morningFailed) next.morningDate = nextSent.morningDate;
-    if (!safetyFailed) next.safetyKey = nextSent.safetyKey; // also clears when hazard gone
+    if (!safetyFailed) {
+      next.safetyKey = nextSent.safetyKey; // also clears when hazard gone
+      next.safetyAt = nextSent.safetyAt; // last-alerted time → drives the 30m re-remind
+    }
     if (JSON.stringify(next) !== JSON.stringify(sub.sent ?? {})) {
       await putNativeSub({ ...sub, sent: next }).catch((e) =>
         console.error("push: persist dedup failed for", sub.slug, e),

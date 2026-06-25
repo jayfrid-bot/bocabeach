@@ -101,18 +101,17 @@ export function HourlyScoreGraph({
   const nowMarker = (() => {
     if (now == null || now < t0 - 36e5 || now > tN + 36e5) return null;
     const clamped = Math.max(t0, Math.min(tN, now));
-    const x = xFor(clamped);
+    // Snap the whole marker — dashed line, label AND dot — to the current hour's
+    // bucket vertex. That bucket is anchored to the headline score, so "Now · NN"
+    // matches the big number (not an interpolation), and keeping all three at one
+    // x means the dot sits exactly on the line instead of floating beside the line.
+    // Fall back to exact-now only outside the plotted hours (the ±1h grace window).
+    const bucket = xy.find((p) => now >= p.t && now < p.t + 36e5);
+    const x = bucket ? xFor(bucket.t) : xFor(clamped);
     const anchor: "start" | "middle" | "end" =
       x > W - 120 ? "end" : x < 120 ? "start" : "middle";
-    // Use the score of the hour bucket that CONTAINS now — that bucket is anchored
-    // to the headline score, so "Now · NN" matches the big number instead of an
-    // interpolation between two hours. The dot sits on that bucket's vertex so it
-    // lands exactly on the line. Fall back to interpolation only outside the
-    // plotted hours (the ±1h grace window at the edges).
-    const bucket = xy.find((p) => now >= p.t && now < p.t + 36e5);
     return {
       x,
-      dotX: bucket ? xFor(bucket.t) : x,
       score: bucket ? bucket.s : Math.round(scoreAt(clamped)),
       label: fmtTime(new Date(now).toISOString(), tz),
       anchor,
@@ -194,7 +193,7 @@ export function HourlyScoreGraph({
           {/* current-time dot on the line */}
           {nowMarker ? (
             <circle
-              cx={nowMarker.dotX}
+              cx={nowMarker.x}
               cy={yFor(nowMarker.score)}
               r="5"
               fill={scoreColor(nowMarker.score)}

@@ -3,7 +3,7 @@ name: Push notifications cron
 # Hourly trigger for the native push sender (APNs on iOS, FCM on Android). It
 # POSTs to /api/push/run on the live site with the shared CRON_SECRET; the route
 # fetches each subscribed beach's conditions and sends the morning summary (at
-# the beach's local 7 AM) and any new safety alert. All the work runs in the
+# the beach's local 8 AM, MORNING_HOUR) and any new safety alert. All the work runs in the
 # Next app — this just pokes it on a schedule, like the lightning/sargassum jobs.
 #
 # Setup (one time): add a repo SECRET `CRON_SECRET` (same value as the Netlify

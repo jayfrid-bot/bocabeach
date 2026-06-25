@@ -15,7 +15,7 @@ export const MORNING_HOUR = 8;
  */
 export interface Notifiable {
   prefs: { morning: boolean; safety: boolean };
-  sent?: { morningDate?: string; safetyKey?: string };
+  sent?: { morningDate?: string; safetyKey?: string; safetyAt?: string };
 }
 
 /** Compact, notification-ready view of a beach's current conditions. */
@@ -255,10 +255,14 @@ export function summarizeForPush(
   const score = res.score.score;
   const today = res.multiDayWindows?.[0];
   const bw = today?.best ?? null;
+  // res.hourlyScores has the chart's now-anchor baked in (one bucket forced to the
+  // headline), which would distort dip/best-stretch detection — prefer the raw
+  // unanchored forecast curve for window analysis (falls back when absent).
+  const forecast = res.hourlyForecast ?? res.hourlyScores ?? [];
   const bestWindow = bw
     ? fmtWindow(bw.startIso, bw.endIso, loc.tz)
-    : findBestWindow(res.hourlyScores ?? [], loc.tz);
-  const skipWindow = findSkipWindow(res.hourlyScores ?? [], loc.tz);
+    : findBestWindow(forecast, loc.tz);
+  const skipWindow = findSkipWindow(forecast, loc.tz);
   const { pros, cons } = prosAndCons(res.score.subScores ?? []);
   const safety = activeSafety(res);
   return {
@@ -298,18 +302,19 @@ export function decideNotifications(
   summary: PushSummary,
   hour: number,
   date: string,
-  opts?: { force?: "morning" },
+  opts?: { force?: "morning"; nowMs?: number },
 ): { sends: PushDecision[]; nextSent: NonNullable<Notifiable["sent"]> } {
   const sent = sub.sent ?? {};
+  const nowMs = opts?.nowMs ?? Date.now();
   const sends: PushDecision[] = [];
   const nextSent: NonNullable<Notifiable["sent"]> = { ...sent };
   const url = `/${summary.slug}`;
 
-  // A forced send (the on-demand "test today's weather") bypasses the opt-in, the
-  // 8 AM gate and the once-a-day dedup so it always fires — and deliberately does
-  // NOT advance morningDate, so the real morning schedule is left untouched.
+  // A forced send (the on-demand "test today's weather") bypasses the 8 AM gate
+  // and the once-a-day dedup so it always fires — but still respects the morning
+  // opt-out, and deliberately does NOT advance morningDate (real schedule untouched).
   const forceMorning = opts?.force === "morning";
-  if (forceMorning || (sub.prefs.morning && hour === MORNING_HOUR && sent.morningDate !== date)) {
+  if (sub.prefs.morning && (forceMorning || (hour === MORNING_HOUR && sent.morningDate !== date))) {
     const pros = summary.pros ?? [];
     const cons = summary.cons ?? [];
     const lines: string[] = [];
@@ -330,7 +335,17 @@ export function decideNotifications(
     if (!forceMorning) nextSent.morningDate = date;
   }
 
-  if (sub.prefs.safety && summary.safetyKey && sent.safetyKey !== summary.safetyKey) {
+  // Safety alert: fire on a NEW hazard, and RE-fire a still-active one every
+  // SAFETY_REPEAT_MS. The single-shot-on-change rule alone meant a phone offline
+  // when the alert first fired (then suppressed by the key dedup) never got a
+  // warning on reconnect — dangerous for a lightning "get out of the water" alert.
+  const SAFETY_REPEAT_MS = 30 * 60 * 1000;
+  const lastAt = sent.safetyAt ? Date.parse(sent.safetyAt) : NaN;
+  const safetyDue =
+    !!summary.safetyKey &&
+    (sent.safetyKey !== summary.safetyKey ||
+      (Number.isFinite(lastAt) && nowMs - lastAt >= SAFETY_REPEAT_MS));
+  if (sub.prefs.safety && safetyDue) {
     sends.push({
       tag: "safety",
       title: `⚠️ ${summary.name}`,
@@ -338,9 +353,17 @@ export function decideNotifications(
       url,
     });
   }
-  // Track the current safety key either way, so a cleared-then-returned hazard
-  // re-alerts and a persistent one doesn't repeat.
+  // Track the current key + when we last alerted, so a cleared-then-returned hazard
+  // re-alerts, a persistent one re-reminds every SAFETY_REPEAT_MS (not every run),
+  // and a cleared hazard resets the timer.
   nextSent.safetyKey = summary.safetyKey;
+  if (!summary.safetyKey) {
+    nextSent.safetyAt = undefined;
+  } else if (sub.prefs.safety && safetyDue) {
+    nextSent.safetyAt = new Date(nowMs).toISOString();
+  } else {
+    nextSent.safetyAt = sent.safetyAt;
+  }
 
   return { sends, nextSent };
 }

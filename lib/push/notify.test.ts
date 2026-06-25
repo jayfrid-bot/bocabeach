@@ -96,6 +96,41 @@ describe("decideNotifications", () => {
     );
     expect(r.sends.find((s) => s.tag === "safety")).toBeUndefined();
   });
+
+  it("a forced morning fires off-hours but does not advance the dedup date", () => {
+    const r = decideNotifications(sub(), SUMMARY, 14, "2026-06-15", { force: "morning" });
+    expect(r.sends.find((s) => s.tag === "morning")).toBeTruthy();
+    expect(r.nextSent.morningDate).toBeUndefined(); // real schedule left untouched
+  });
+
+  it("a forced morning still respects the morning opt-out", () => {
+    const r = decideNotifications(
+      sub({ prefs: { morning: false, safety: true } }),
+      SUMMARY,
+      14,
+      "2026-06-15",
+      { force: "morning" },
+    );
+    expect(r.sends.find((s) => s.tag === "morning")).toBeUndefined();
+  });
+
+  it("re-alerts a persistent hazard only after the 30-minute repeat interval", () => {
+    const danger = { ...SUMMARY, safetyKey: "lightning", safetyText: "Lightning within 5 miles." };
+    const t0 = Date.parse("2026-06-15T18:00:00Z");
+    const sentState = { safetyKey: "lightning", safetyAt: new Date(t0).toISOString() };
+    // 10 min later: still deduped, no re-alert
+    const soon = decideNotifications(sub({ sent: sentState }), danger, 14, "2026-06-15", {
+      nowMs: t0 + 10 * 60 * 1000,
+    });
+    expect(soon.sends.find((s) => s.tag === "safety")).toBeUndefined();
+    expect(soon.nextSent.safetyAt).toBe(sentState.safetyAt); // timer not reset
+    // 31 min later: re-alert, timer resets
+    const later = decideNotifications(sub({ sent: sentState }), danger, 14, "2026-06-15", {
+      nowMs: t0 + 31 * 60 * 1000,
+    });
+    expect(later.sends.find((s) => s.tag === "safety")).toBeTruthy();
+    expect(Date.parse(later.nextSent.safetyAt!)).toBe(t0 + 31 * 60 * 1000);
+  });
 });
 
 describe("summarizeForPush", () => {
@@ -107,6 +142,7 @@ describe("summarizeForPush", () => {
         subScores: (over.subScores as unknown[]) ?? [],
       },
       hourlyScores: (over.hourlyScores as unknown[]) ?? [],
+      hourlyForecast: (over.hourlyForecast as unknown[]) ?? undefined,
       multiDayWindows: [
         {
           date: "2026-06-15",
@@ -196,6 +232,28 @@ describe("summarizeForPush", () => {
       res({
         score: 78,
         hourlyScores: [
+          { time: "2026-06-15T15:00:00Z", score: 70 }, // 11 AM ET
+          { time: "2026-06-15T18:00:00Z", score: 15 }, // 2 PM ET
+          { time: "2026-06-15T19:00:00Z", score: 15 }, // 3 PM ET
+          { time: "2026-06-15T20:00:00Z", score: 75 }, // 4 PM ET
+        ],
+      }),
+      loc,
+    );
+    expect(s.skipWindow).toBe("2–3 PM");
+  });
+
+  it("derives the skip window from the unanchored forecast, not the anchored chart array", () => {
+    const s = summarizeForPush(
+      res({
+        score: 78,
+        // the anchored chart array has NO dip (the now-bucket was bumped up)…
+        hourlyScores: [
+          { time: "2026-06-15T15:00:00Z", score: 70 },
+          { time: "2026-06-15T18:00:00Z", score: 80 },
+        ],
+        // …but the raw forecast still carries the storm dip.
+        hourlyForecast: [
           { time: "2026-06-15T15:00:00Z", score: 70 }, // 11 AM ET
           { time: "2026-06-15T18:00:00Z", score: 15 }, // 2 PM ET
           { time: "2026-06-15T19:00:00Z", score: 15 }, // 3 PM ET

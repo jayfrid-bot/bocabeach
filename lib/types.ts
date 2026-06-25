@@ -487,8 +487,12 @@ export interface ConditionsResponse {
   snapshot: ConditionsSnapshot;
   /** Single composite Beach Day score (0-100) with breakdown + safety caps. */
   score: ScoreResult;
-  /** Beach Day score forecast across today's daylight hours (empty if unavailable). */
+  /** Beach Day score forecast across today's daylight hours (empty if unavailable).
+   *  The CURRENT hour is anchored to the headline `score` for chart display. */
   hourlyScores: HourlyScore[];
+  /** Same daylight curve WITHOUT the now-anchor — the raw forecast, for window
+   *  analysis (best/skip stretches) that must not be skewed by the anchored point. */
+  hourlyForecast?: HourlyScore[];
   /** Best beach-time window + peak score per upcoming day (today first). */
   multiDayWindows: DayWindow[];
   cams: CamView[];

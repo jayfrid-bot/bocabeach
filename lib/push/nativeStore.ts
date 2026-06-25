@@ -16,7 +16,7 @@ export interface NativeSub {
   tz: string;
   prefs: { morning: boolean; safety: boolean };
   createdAt: string; // ISO
-  sent?: { morningDate?: string; safetyKey?: string };
+  sent?: { morningDate?: string; safetyKey?: string; safetyAt?: string };
 }
 
 const STORE_NAME = "push-native-subscriptions";
