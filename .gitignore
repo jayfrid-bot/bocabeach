@@ -40,3 +40,10 @@ yarn-error.log*
 # python
 __pycache__/
 *.pyc
+
+# fastlane / Play publishing — the service-account key is a SECRET, never commit it
+fastlane/play-store-key.json
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/README.md
+fastlane/test_output/

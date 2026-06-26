@@ -1,0 +1,5 @@
+# Google Play publishing config for `fastlane supply` (upload_to_play_store).
+# The service-account key is git-ignored — never commit it. See PLAY_PUBLISHING.md
+# for how to create the service account and download the key.
+json_key_file(File.expand_path("play-store-key.json", __dir__))
+package_name("com.isitbeachday.app")

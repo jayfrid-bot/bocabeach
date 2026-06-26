@@ -1,0 +1,48 @@
+# One-command Google Play uploads for "Is It Beach Day" (Android).
+#
+# Prereqs (one-time): fastlane/play-store-key.json present (a Play service-account
+# key with release permissions — see ../PLAY_PUBLISHING.md). package_name +
+# json_key_file come from the Appfile.
+#
+# Build the signed AAB first, then upload:
+#   JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home \
+#   ANDROID_HOME=/opt/homebrew/share/android-commandlinetools \
+#   (cd android && ./gradlew bundleRelease)
+#   fastlane android internal     # → Internal testing track
+#   fastlane android closed       # → Closed testing (alpha) track
+#
+# Remember to bump versionCode in android/app/build.gradle before each new build.
+
+default_platform(:android)
+
+# Absolute path to the signed release bundle, resolved from this file's location
+# so the lanes work regardless of the directory fastlane is invoked from.
+AAB = File.expand_path(
+  "../android/app/build/outputs/bundle/release/app-release.aab", __dir__
+)
+
+def upload(track)
+  upload_to_play_store(
+    track: track,
+    aab: AAB,
+    release_status: "completed",
+    # We ship only the binary here; listing copy/graphics are managed in the
+    # Play Console, so skip all metadata uploads (otherwise supply expects files).
+    skip_upload_metadata: true,
+    skip_upload_images: true,
+    skip_upload_screenshots: true,
+    skip_upload_changelogs: true,
+  )
+end
+
+platform :android do
+  desc "Upload the signed release AAB to the Internal testing track"
+  lane :internal do
+    upload("internal")
+  end
+
+  desc "Upload the signed release AAB to the Closed testing (alpha) track"
+  lane :closed do
+    upload("alpha")
+  end
+end
