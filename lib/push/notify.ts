@@ -10,6 +10,16 @@ import { beachDayVerdict } from "@/lib/format";
 export const MORNING_HOUR = 8;
 
 /**
+ * Safety alerts (lightning / rip / hazards) are PAUSED for now. They should only
+ * fire when the user is physically at the beach, which needs presence-gating we
+ * haven't built yet — until then, sending them anywhere (e.g. lightning 5 mi from
+ * a beach you're nowhere near) is just noise. Only the morning summary ships.
+ * Default on so the logic + tests stay exercised; production sets
+ * PUSH_SAFETY_ALERTS=off to disable. Flip back on (with the presence gate) later.
+ */
+const SAFETY_ALERTS_ENABLED = process.env.PUSH_SAFETY_ALERTS !== "off";
+
+/**
  * The minimum a subscription must expose for the decision logic — satisfied by
  * `NativeSub` (iOS APNs + Android FCM), so one rule set drives both platforms.
  */
@@ -335,34 +345,36 @@ export function decideNotifications(
     if (!forceMorning) nextSent.morningDate = date;
   }
 
-  // Safety alert: fire on a NEW hazard, and RE-fire a still-active one every
-  // SAFETY_REPEAT_MS. The single-shot-on-change rule alone meant a phone offline
-  // when the alert first fired (then suppressed by the key dedup) never got a
-  // warning on reconnect — dangerous for a lightning "get out of the water" alert.
-  const SAFETY_REPEAT_MS = 30 * 60 * 1000;
-  const lastAt = sent.safetyAt ? Date.parse(sent.safetyAt) : NaN;
-  const safetyDue =
-    !!summary.safetyKey &&
-    (sent.safetyKey !== summary.safetyKey ||
-      (Number.isFinite(lastAt) && nowMs - lastAt >= SAFETY_REPEAT_MS));
-  if (sub.prefs.safety && safetyDue) {
-    sends.push({
-      tag: "safety",
-      title: `⚠️ ${summary.name}`,
-      body: summary.safetyText ?? "Beach safety alert.",
-      url,
-    });
-  }
-  // Track the current key + when we last alerted, so a cleared-then-returned hazard
-  // re-alerts, a persistent one re-reminds every SAFETY_REPEAT_MS (not every run),
-  // and a cleared hazard resets the timer.
-  nextSent.safetyKey = summary.safetyKey;
-  if (!summary.safetyKey) {
-    nextSent.safetyAt = undefined;
-  } else if (sub.prefs.safety && safetyDue) {
-    nextSent.safetyAt = new Date(nowMs).toISOString();
-  } else {
-    nextSent.safetyAt = sent.safetyAt;
+  // Safety alert (paused unless SAFETY_ALERTS_ENABLED): fire on a NEW hazard, and
+  // RE-fire a still-active one every SAFETY_REPEAT_MS. The single-shot-on-change
+  // rule alone meant a phone offline when the alert first fired (then suppressed by
+  // the key dedup) never got a warning on reconnect.
+  if (SAFETY_ALERTS_ENABLED) {
+    const SAFETY_REPEAT_MS = 30 * 60 * 1000;
+    const lastAt = sent.safetyAt ? Date.parse(sent.safetyAt) : NaN;
+    const safetyDue =
+      !!summary.safetyKey &&
+      (sent.safetyKey !== summary.safetyKey ||
+        (Number.isFinite(lastAt) && nowMs - lastAt >= SAFETY_REPEAT_MS));
+    if (sub.prefs.safety && safetyDue) {
+      sends.push({
+        tag: "safety",
+        title: `⚠️ ${summary.name}`,
+        body: summary.safetyText ?? "Beach safety alert.",
+        url,
+      });
+    }
+    // Track the current key + when we last alerted, so a cleared-then-returned
+    // hazard re-alerts, a persistent one re-reminds every SAFETY_REPEAT_MS (not
+    // every run), and a cleared hazard resets the timer.
+    nextSent.safetyKey = summary.safetyKey;
+    if (!summary.safetyKey) {
+      nextSent.safetyAt = undefined;
+    } else if (sub.prefs.safety && safetyDue) {
+      nextSent.safetyAt = new Date(nowMs).toISOString();
+    } else {
+      nextSent.safetyAt = sent.safetyAt;
+    }
   }
 
   return { sends, nextSent };
