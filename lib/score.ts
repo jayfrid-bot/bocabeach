@@ -764,8 +764,17 @@ function scoreAllHours(
         humidityPct: h.humidityPct,
         dewPointF: h.dewPointF,
         weatherCode: h.weatherCode,
-        sargassumLevel: histRead?.level ?? base.sargassumLevel,
-        sargassumCoveragePct: histRead ? histRead.coveragePct : base.sargassumCoveragePct,
+        // Seaweed is a TODAY-only observation (the cams see the beach right now,
+        // not next Tuesday) — past hours use the read in effect then, the rest of
+        // today uses the latest read, and FUTURE DAYS score with seaweed unknown
+        // (sub-score excluded + no cap), so a heavy-seaweed 65-cap today can't
+        // flat-line the whole week's forecast.
+        sargassumLevel: isToday ? (histRead?.level ?? base.sargassumLevel) : undefined,
+        sargassumCoveragePct: isToday
+          ? histRead
+            ? histRead.coveragePct
+            : base.sargassumCoveragePct
+          : undefined,
         crowdPct: crowdByHour.get(localHourOf(h.time)),
         sandTempF: sandByTime.get(h.time),
         // Current NWS alerts/flags are TODAY-only conditions (most expire within

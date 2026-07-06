@@ -12,7 +12,7 @@ import { ScoreGauge } from "@/components/ScoreGauge";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { ScoreExplainer } from "@/components/ScoreExplainer";
 import { PullToRefresh } from "@/components/PullToRefresh";
-import { HourlyScoreGraph } from "@/components/HourlyScoreGraph";
+import { ScoreWheel } from "@/components/ScoreWheel";
 import { AirQualityMeter } from "@/components/AirQualityMeter";
 import { LightningCard } from "@/components/LightningCard";
 import { LifeguardReport } from "@/components/LifeguardReport";
@@ -296,8 +296,10 @@ export function ConditionsDashboard({
         </section>
       ) : null}
 
+      {/* The hourly line graph was replaced by the interactive factor wheel —
+          hour-by-hour timing lives on in the Best-times strip below. */}
       <section className="mb-6">
-        <HourlyScoreGraph hours={res.hourlyScores} tz={tz} />
+        <ScoreWheel result={active} />
       </section>
 
       {res.multiDayWindows?.length ? (

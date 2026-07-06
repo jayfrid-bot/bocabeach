@@ -791,7 +791,10 @@ describe("computeHourlyScores", () => {
     expect(hrs.every((h) => h.score <= 85)).toBe(true);
   });
 
-  it("carries day-constant HIGH sargassum into every forecast hour (cap 65)", () => {
+  it("applies HIGH sargassum (cap 65) to all of TODAY's forecast hours", () => {
+    // Seaweed is a today-only observation — it caps today's hours, never future
+    // days (see the multi-day test: the week must not flat-line at the cap).
+    const now = Date.parse("2026-06-01T15:00:00.000Z"); // 11 AM EDT on the fixture day
     const hrs = computeHourlyScores(
       snapshot({
         ...niceBase,
@@ -800,6 +803,7 @@ describe("computeHourlyScores", () => {
         hourly: hourlyDay(),
         sun: SUN,
       }),
+      now,
     );
     expect(hrs.length).toBeGreaterThan(0);
     expect(hrs.every((h) => h.score <= 65)).toBe(true);
@@ -1007,6 +1011,24 @@ describe("computeMultiDayWindows", () => {
     expect(days[0].peakScore!).toBeLessThanOrEqual(20); // today is hard-capped by the warning
     const future = days.find((d) => d.dow !== "Today")!;
     expect(future.peakScore!).toBeGreaterThan(70); // future days are unaffected
+  });
+
+  it("heavy seaweed caps TODAY only — future days score with seaweed unknown", () => {
+    // The cams observe TODAY's beach; we know nothing about next week's seaweed,
+    // so the high-seaweed 65-cap must not flat-line the whole forecast.
+    const withSeaweed = snapshot({
+      ...niceBase,
+      city: { flags: ["green"] },
+      hourly: hourly72(),
+      sun: SUN,
+      sargassum: { level: "high", coveragePct: 80, isMorning: false, cams: [] },
+    });
+    const days = computeMultiDayWindows(withSeaweed, now);
+    expect(days[0].dow).toBe("Today");
+    expect(days[0].peakScore!).toBeLessThanOrEqual(65); // today wears the cap
+    for (const d of days.filter((x) => x.dow !== "Today")) {
+      expect(d.peakScore!).toBeGreaterThan(65); // the week is NOT pinned to the cap
+    }
   });
 });
 
