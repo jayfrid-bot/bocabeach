@@ -706,6 +706,7 @@ function scoreAllHours(
         solarWm2: h.solarWm2,
         windSpeedMph: h.windSpeedMph,
         recentRainIn: [i, i - 1, i - 2].reduce((a, j) => a + (hours[j]?.precipIn ?? 0), 0),
+        cloudCoverPct: h.cloudCoverPct,
       }),
     );
   });

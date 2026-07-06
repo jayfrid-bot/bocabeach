@@ -56,6 +56,7 @@ export function SandTempPanel({
         solarWm2: h.solarWm2,
         windSpeedMph: h.windSpeedMph,
         recentRainIn: rainBefore(i),
+        cloudCoverPct: h.cloudCoverPct,
       });
       return {
         t: new Date(h.time).getTime(),

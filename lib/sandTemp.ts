@@ -16,11 +16,25 @@ const FULL_SUN_WM2 = 1000;
 /**
  * Max extra °F dry sand runs above the modeled ground surface in full sun.
  * Calibrated against IR-thermometer ground truth at Boca:
- *  - 2026-06-11 ~2 PM:   soil 98°F,  980 W/m², 11 mph → 130-140°F measured (dunes)
- *  - 2026-06-15 ~1 PM:   soil 109°F, 820 W/m², 10 mph → 129-135°F measured (dunes)
- *  - 2026-06-23 ~9:54 AM: soil 91°F, 380 W/m², 2 mph  → 113°F surf / 124°F dunes
+ *  - 2026-06-11 ~2 PM:   soil 98°F,  980 W/m², 11 mph, 16% cloud → 130-140°F measured (dunes)
+ *  - 2026-06-15 ~1 PM:   soil 109°F, 820 W/m², 10 mph, 41% cloud → 129-135°F measured (dunes)
+ *  - 2026-06-23 ~9:54 AM: soil 91°F, 380 W/m², 2 mph, 63% broken → 113°F surf / 124°F dunes
+ *  - 2026-07-06 ~4-5 PM: soil 94°F, ~320 W/m², 2 mph, ~100% OVERCAST → 96°F measured
+ *    (twice, an hour apart — solid overcast pins sand to ground temp; see damping)
  */
 const MAX_SUN_BOOST_F = 55;
+/**
+ * Solid overcast kills the dry-sand boost. The boost is driven by DIRECT beam
+ * radiation: broken clouds (even ~63% cover, 6/23) still pass full beam between
+ * them and the sand runs hot, but a solid grey deck passes only diffuse light and
+ * the sand sits at ground temp. Ground truth 2026-07-06 ~4-5 PM: soil 94°F,
+ * ~100% cloud → 96°F measured (twice, an hour apart) vs ~121°F the un-damped
+ * model predicted. So: no damping through 70% cover, then a steep ramp to ~90%
+ * damping at full overcast. (Modeled W/m² alone can't tell — Open-Meteo still
+ * reported 259-418 W/m² "direct" under that 96-98% deck.)
+ */
+const OVERCAST_START_PCT = 70;
+const OVERCAST_MAX_DAMP = 0.9;
 /**
  * The wet/firm sand by the surf runs much cooler than the dry dune sand — a
  * ~11°F surf-to-dunes spread measured at Boca (2026-06-23: 113°F surf → 124°F
@@ -37,11 +51,13 @@ export interface SandTempInput {
   windSpeedMph?: number;
   /** Rain over the last few hours (inches) — wet sand barely heats. */
   recentRainIn?: number;
+  /** Cloud cover (0-100%) — solid overcast collapses the dry-sand boost. */
+  cloudCoverPct?: number;
 }
 
 /** The sun/wind/rain boost (°F) dry sand carries above the modeled ground. */
 function sandBoostF(input: SandTempInput): number | undefined {
-  const { soilTempF, solarWm2, windSpeedMph, recentRainIn } = input;
+  const { soilTempF, solarWm2, windSpeedMph, recentRainIn, cloudCoverPct } = input;
   if (soilTempF == null) return undefined;
 
   const sunFrac = Math.min(1, Math.max(0, (solarWm2 ?? 0) / FULL_SUN_WM2));
@@ -56,6 +72,17 @@ function sandBoostF(input: SandTempInput): number | undefined {
   // the 140°F dune reading was taken in an 11 mph sea breeze.
   const wind = Math.max(0, windSpeedMph ?? 0);
   boost *= Math.max(0.6, 1 - wind / 60);
+
+  // Solid overcast: no direct beam → the dry top layer barely runs above the
+  // modeled ground. No damping through OVERCAST_START_PCT (broken clouds still
+  // pass full sun between them — the 6/23 124°F reading was under 63% cover),
+  // then a steep ramp to OVERCAST_MAX_DAMP at a 100% grey deck (7/06: 96°F
+  // measured vs ~121°F undamped). Unknown cloud cover → no damping.
+  const cloud = Math.min(100, Math.max(0, cloudCoverPct ?? 0));
+  if (cloud > OVERCAST_START_PCT) {
+    const f = (cloud - OVERCAST_START_PCT) / (100 - OVERCAST_START_PCT);
+    boost *= 1 - OVERCAST_MAX_DAMP * Math.pow(f, 1.5);
+  }
 
   // The weather model's soil temp already absorbs some solar heating on hot
   // afternoons (today: 109°F vs 98°F on the 6/11 calibration day). Shrink the
@@ -115,6 +142,7 @@ export type SandHour = {
   solarWm2?: number;
   windSpeedMph?: number;
   precipIn?: number;
+  cloudCoverPct?: number;
 };
 
 /**
@@ -149,7 +177,13 @@ function currentSandInput(hours: SandHour[], nowMs: number = Date.now()): SandTe
     return undefined;
   const h = hours[best];
   const recentRainIn = [best, best - 1, best - 2].reduce((a, j) => a + (hours[j]?.precipIn ?? 0), 0);
-  return { soilTempF: h.soilTempF, solarWm2: h.solarWm2, windSpeedMph: h.windSpeedMph, recentRainIn };
+  return {
+    soilTempF: h.soilTempF,
+    solarWm2: h.solarWm2,
+    windSpeedMph: h.windSpeedMph,
+    recentRainIn,
+    cloudCoverPct: h.cloudCoverPct,
+  };
 }
 
 /** The "right now" dry-sand (dunes) estimate — used by the Beach Day score. */

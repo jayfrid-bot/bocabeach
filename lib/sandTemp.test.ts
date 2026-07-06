@@ -83,6 +83,43 @@ describe("estimateSandRangeF", () => {
     expect(r.surfF).toBe(80);
     expect(r.dunesF).toBe(80);
   });
+
+  it("matches the 2026-07-06 IR ground truth: ~96°F under a solid overcast deck", () => {
+    // Measured ~4-5 PM, twice an hour apart: soil 94F, ~320 W/m2, ~100% cloud →
+    // 96F. Solid overcast passes no direct beam, so the sand sits at ground
+    // temp; the undamped model read ~121F.
+    const r = estimateSandRangeF({
+      soilTempF: 94,
+      solarWm2: 320,
+      windSpeedMph: 2,
+      cloudCoverPct: 100,
+    })!;
+    expect(r.dunesF).toBeGreaterThanOrEqual(94);
+    expect(r.dunesF).toBeLessThanOrEqual(99);
+    expect(r.surfF).toBeGreaterThanOrEqual(94);
+    expect(r.surfF).toBeLessThanOrEqual(r.dunesF);
+  });
+
+  it("broken clouds do NOT damp the boost (6/23 stayed hot under 63% cover)", () => {
+    // Direct beam still lands between broken clouds — damping starts only past 70%.
+    const clear = estimateSandRangeF({ soilTempF: 91, solarWm2: 380, windSpeedMph: 2 })!;
+    const broken = estimateSandRangeF({
+      soilTempF: 91,
+      solarWm2: 380,
+      windSpeedMph: 2,
+      cloudCoverPct: 63,
+    })!;
+    expect(broken.dunesF).toBe(clear.dunesF);
+    // …and the damping ramps between: 85% cover cuts some but not all of it.
+    const partly = estimateSandRangeF({
+      soilTempF: 91,
+      solarWm2: 380,
+      windSpeedMph: 2,
+      cloudCoverPct: 85,
+    })!;
+    expect(partly.dunesF).toBeLessThan(clear.dunesF);
+    expect(partly.dunesF).toBeGreaterThan(94);
+  });
 });
 
 describe("sandVerdict", () => {
