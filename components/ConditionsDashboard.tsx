@@ -9,7 +9,6 @@ import { beachDayVerdict, fmtDate, fmtTime, scoreColor, scoreTextClass, seaState
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ScoreGauge } from "@/components/ScoreGauge";
-import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { ScoreExplainer } from "@/components/ScoreExplainer";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { ScoreWheel } from "@/components/ScoreWheel";
@@ -222,8 +221,10 @@ export function ConditionsDashboard({
         />
       </div>
 
-      <section className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
-        <div className="flex flex-col items-center gap-4 rounded-2xl bg-white/80 dark:bg-slate-900/70 p-6 ring-1 ring-slate-900/10 dark:ring-white/10">
+      {/* The verdict + gauge stand alone (the interactive ScoreWheel below carries
+          the factor-by-factor detail that the old breakdown bars duplicated). */}
+      <section className="mb-6">
+        <div className="mx-auto flex w-full max-w-md flex-col items-center gap-4 rounded-2xl bg-white/80 dark:bg-slate-900/70 p-6 ring-1 ring-slate-900/10 dark:ring-white/10">
           {active.dataAvailable === false ? (
             // Total data outage: every sub-score was unavailable, so a confident
             // 0 / "Not really" would be misleading. Say so plainly instead.
@@ -272,7 +273,6 @@ export function ConditionsDashboard({
             </>
           )}
         </div>
-        <ScoreBreakdown result={active} />
       </section>
 
       <section className="mb-6">
