@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import type { ConditionsResponse } from "@/lib/types";
-import { deriveMetrics } from "@/lib/score";
+import { consensusCloudPct, deriveMetrics } from "@/lib/score";
 import { beachDayVerdict, fmtDate, fmtTime, scoreColor, scoreTextClass, seaState } from "@/lib/format";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -128,7 +128,13 @@ export function ConditionsDashboard({
   const bw = res.multiDayWindows?.[0]?.best ?? null;
   // Current sand range from the shared helper (same hour bucket as the score +
   // the SandTempPanel). Null until mounted, so SSR/first render show "—".
-  const sandRange = nowMs != null ? currentSandRangeF(snap.hourly.data ?? [], nowMs) : null;
+  // "Now" cloud is the multi-source consensus (the Sky card's number) — a single
+  // model's hourly cloud flip-flops and mis-drives the overcast damping.
+  const nowCloudPct = consensusCloudPct(snap);
+  const sandRange =
+    nowMs != null
+      ? currentSandRangeF(snap.hourly.data ?? [], nowMs, { cloudCoverPct: nowCloudPct })
+      : null;
 
   // Single, stable handler shared by pull-to-refresh and the visible button.
   const onRefresh = useCallback(() => mutate(), [mutate]);
@@ -476,6 +482,7 @@ export function ConditionsDashboard({
             sunriseIso={snap.sun.data?.sunrise}
             sunsetIso={snap.sun.data?.sunset}
             tz={tz}
+            nowCloudCoverPct={nowCloudPct}
           />
         </section>
       ) : null}

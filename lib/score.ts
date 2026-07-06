@@ -101,6 +101,24 @@ export function median(...vals: (number | undefined)[]): number | undefined {
   return xs.length % 2 ? round(xs[mid]) : round((xs[mid - 1] + xs[mid]) / 2);
 }
 
+/**
+ * Consensus cloud cover RIGHT NOW: the median across NWS obs, MET Norway,
+ * Open-Meteo, marine and GFS — the same number the Sky card shows. One model's
+ * hourly forecast can flip-flop between refreshes (63% vs 100% for the same hour,
+ * observed 2026-07-06), so anything sensitive to "how grey is the sky now" (the
+ * sand-temp overcast damping) must read this consensus, not a single source.
+ */
+export function consensusCloudPct(s: ConditionsSnapshot): number | undefined {
+  const om = currentHourOf(s.hourly.data ?? []);
+  return median(
+    s.marine.data?.cloudCoverPct,
+    s.metno.data?.cloudCoverPct,
+    om?.cloudCoverPct,
+    s.weather.data?.cloudCoverPct,
+    s.gfs.data?.cloudCoverPct,
+  );
+}
+
 export function deriveMetrics(s: ConditionsSnapshot): Derived {
   const w = s.weather.data;
   const b = s.buoy.data;
@@ -112,6 +130,7 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
   const g = s.gfs.data;
   // Open-Meteo's reading for the current hour — the third consensus voice.
   const om = currentHourOf(s.hourly.data ?? []);
+  const cloudCoverPct = consensusCloudPct(s);
   // Consensus current values (median across sources), computed up front so the
   // dew-point fallback derives from the SAME temp + humidity the UI shows — not a
   // single provider, which previously made dew point inconsistent with the card.
@@ -136,11 +155,15 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     // use. The marine "/current" endpoint can lag hours behind (it once read 0.4
     // at midday → a nonsense "minutes to burn"), so it's only a fallback now.
     uvIndex: om?.uvIndex ?? m?.uvIndex,
-    cloudCoverPct: median(m?.cloudCoverPct, mn?.cloudCoverPct, om?.cloudCoverPct, w?.cloudCoverPct, g?.cloudCoverPct),
+    cloudCoverPct,
     sargassumLevel: s.sargassum.data?.level,
     sargassumCoveragePct: s.sargassum.data?.coveragePct,
     crowdPct: s.busyness.data?.crowdPct ?? crowdLevelPct(s.busyness.data?.level),
-    sandTempF: s.hourly.data ? currentSandTempF(s.hourly.data) : undefined,
+    // Sand "now" uses the consensus cloud (same as the Sky card) — see
+    // consensusCloudPct. The overcast damping must not hinge on one model's hour.
+    sandTempF: s.hourly.data
+      ? currentSandTempF(s.hourly.data, Date.now(), { cloudCoverPct })
+      : undefined,
     humidityPct,
     dewPointF:
       median(w?.dewPointF, mn?.dewPointF, om?.dewPointF, g?.dewPointF) ??

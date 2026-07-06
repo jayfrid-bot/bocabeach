@@ -151,7 +151,20 @@ export type SandHour = {
  * Beach Day score, the metric card, and the panel agree on which hour — and thus
  * which value. Returns undefined when no bucket is within ~2h of now.
  */
-function currentSandInput(hours: SandHour[], nowMs: number = Date.now()): SandTempInput | undefined {
+/**
+ * Optional "now" overrides for inputs where a live consensus beats the single
+ * hourly-forecast value (cloud cover: the median across NWS/MET/Open-Meteo/etc.,
+ * the same number the Sky card shows).
+ */
+export interface SandNowOverride {
+  cloudCoverPct?: number;
+}
+
+function currentSandInput(
+  hours: SandHour[],
+  nowMs: number = Date.now(),
+  override?: SandNowOverride,
+): SandTempInput | undefined {
   if (!hours.length) return undefined;
   // Prefer the bucket that actually contains now under half-open [start, start+1h)
   // — matches score.ts's convention. Latest such bucket if any overlap; else the
@@ -182,13 +195,17 @@ function currentSandInput(hours: SandHour[], nowMs: number = Date.now()): SandTe
     solarWm2: h.solarWm2,
     windSpeedMph: h.windSpeedMph,
     recentRainIn,
-    cloudCoverPct: h.cloudCoverPct,
+    cloudCoverPct: override?.cloudCoverPct ?? h.cloudCoverPct,
   };
 }
 
 /** The "right now" dry-sand (dunes) estimate — used by the Beach Day score. */
-export function currentSandTempF(hours: SandHour[], nowMs: number = Date.now()): number | undefined {
-  const input = currentSandInput(hours, nowMs);
+export function currentSandTempF(
+  hours: SandHour[],
+  nowMs: number = Date.now(),
+  override?: SandNowOverride,
+): number | undefined {
+  const input = currentSandInput(hours, nowMs, override);
   return input ? estimateSandTempF(input) : undefined;
 }
 
@@ -199,7 +216,8 @@ export function currentSandTempF(hours: SandHour[], nowMs: number = Date.now()):
 export function currentSandRangeF(
   hours: SandHour[],
   nowMs: number = Date.now(),
+  override?: SandNowOverride,
 ): { surfF: number; dunesF: number } | undefined {
-  const input = currentSandInput(hours, nowMs);
+  const input = currentSandInput(hours, nowMs, override);
   return input ? estimateSandRangeF(input) : undefined;
 }

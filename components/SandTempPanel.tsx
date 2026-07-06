@@ -30,11 +30,15 @@ export function SandTempPanel({
   sunriseIso,
   sunsetIso,
   tz,
+  nowCloudCoverPct,
 }: {
   hours: HourlyMetrics[];
   sunriseIso?: string;
   sunsetIso?: string;
   tz: string;
+  /** Consensus cloud cover for the CURRENT hour (the Sky card's number) — applied
+   *  to the bucket containing now so the curve's now-point matches the card. */
+  nowCloudCoverPct?: number;
 }) {
   // Clock is client-only (set after mount) so SSR and hydration HTML match.
   const [now, setNow] = useState<number | null>(null);
@@ -51,12 +55,16 @@ export function SandTempPanel({
     [i, i - 1, i - 2].reduce((a, j) => a + (hours[j]?.precipIn ?? 0), 0);
   const pts = hours
     .map((h, i) => {
+      // The bucket containing "now" uses the consensus cloud (see prop) so the
+      // curve's now-point agrees with the metric card + the score.
+      const t = new Date(h.time).getTime();
+      const isNowBucket = now != null && t <= now && now < t + 36e5;
       const range = estimateSandRangeF({
         soilTempF: h.soilTempF,
         solarWm2: h.solarWm2,
         windSpeedMph: h.windSpeedMph,
         recentRainIn: rainBefore(i),
-        cloudCoverPct: h.cloudCoverPct,
+        cloudCoverPct: isNowBucket ? (nowCloudCoverPct ?? h.cloudCoverPct) : h.cloudCoverPct,
       });
       return {
         t: new Date(h.time).getTime(),
