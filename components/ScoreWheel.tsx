@@ -168,7 +168,11 @@ export function ScoreWheel({ result }: { result: ScoreResult }) {
                   opacity={selected && !isSel ? 0.35 : 1}
                   stroke={isSel ? "currentColor" : "none"}
                   strokeWidth={isSel ? 2.5 : 0}
-                  className="cursor-pointer text-slate-900 transition-opacity dark:text-white"
+                  // outline-none drops the browser's rectangular focus ring (the
+                  // "blue square" around the slice's bounding box); keyboard users
+                  // still get a visible indicator via the focus-visible stroke,
+                  // which matches the selected-slice outline.
+                  className="cursor-pointer text-slate-900 outline-none transition-opacity focus-visible:[stroke:currentColor] focus-visible:[stroke-width:2.5] dark:text-white"
                   role="button"
                   tabIndex={0}
                   aria-pressed={isSel}
