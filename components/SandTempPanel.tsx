@@ -119,6 +119,12 @@ export function SandTempPanel({
     if (pts[i].sand < pts[minI].sand) minI = i;
   }
   const nowI = current ? pts.indexOf(current) : -1;
+  // Snap the "now" marker (line + dot) to the CURRENT hour's vertex, not xFor(now):
+  // `current` is the bucket containing now and its value is what the headline shows,
+  // but at xFor(now) the interpolated line has already sloped away from that value,
+  // so a dot at (xFor(now), current.sand) floats off the line. The vertex keeps the
+  // dot on the line and consistent with the reported number.
+  const nowX = current ? xFor(current.t) : 0;
 
   return (
     <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
@@ -189,8 +195,8 @@ export function SandTempPanel({
         {/* "now" marker drawn first so the dots + temperature labels sit on top */}
         {nowVisible && current ? (
           <line
-            x1={xFor(now)}
-            x2={xFor(now)}
+            x1={nowX}
+            x2={nowX}
             y1={PT - 12}
             y2={H - PB}
             className="stroke-slate-700 dark:stroke-slate-200"
@@ -233,7 +239,7 @@ export function SandTempPanel({
         {/* the current-moment dot, highlighted on the curve */}
         {nowVisible && current ? (
           <circle
-            cx={xFor(now)}
+            cx={nowX}
             cy={yFor(current.sand)}
             r="4.5"
             className="fill-slate-700 dark:fill-slate-200 stroke-white dark:stroke-slate-950"
