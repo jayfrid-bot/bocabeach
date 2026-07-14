@@ -45,7 +45,7 @@ const FACTOR_EXPLAIN: Record<string, string> = {
   sandTemp:
     "Estimated dry-sand surface temperature, modeled from ground temp, solar radiation, wind, recent rain and cloud cover — calibrated against real on-beach IR-thermometer readings.",
   sargassum:
-    "Seaweed on the beach, read live from the beach cams by AI vision and scored point-in-time (the beach gets credit as soon as it's cleaned). Heavy mats also cap the whole score at 65.",
+    "Seaweed on the beach, read live from the beach cams by AI vision and scored point-in-time (the beach gets credit as soon as it's cleaned). Very heavy coverage (50%+) puts a sliding ceiling on the whole score — bottoming out at 70 once coverage hits ~90%.",
   waterQuality:
     "Official water-quality ratings and advisories for this beach. An active advisory doesn't just lower this slice — it caps the whole score.",
   crowds:

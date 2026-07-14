@@ -297,8 +297,12 @@ describe("scoring (Beach Day only — no surf)", () => {
     expect(crowds({ level: "unknown" } as BusynessData)).toBeNull();
   });
 
-  it("caps the score at 65 under HIGH sargassum and 85 under MODERATE", () => {
-    const withSeaweed = (level: SargassumRisk) =>
+  it("seaweed ceiling slides with coverage %, not the category alone", () => {
+    // NOTE: the ceiling formula: c < 50 -> no ceiling at all; 50 <= c < 90 ->
+    // Math.round(100 - (c - 50) * 0.75) (65% -> 89, 75% -> 81, 85% -> 74);
+    // c >= 90 -> flat 70 (the owner explicitly wants 90-100% capped at 70, never
+    // lower, so a full blanket doesn't read as an outright closure).
+    const withSeaweed = (sargassum: SargassumData) =>
       scoreBeachDay(
         deriveMetrics(
           snapshot({
@@ -307,38 +311,50 @@ describe("scoring (Beach Day only — no surf)", () => {
             marine: NICE.marine.data,
             city: { flags: ["green"] },
             water: { overall: "good", advisory: false, sites: [] },
-            sargassum: { level, isMorning: true, cams: [] },
+            sargassum,
           }),
         ),
       );
-    const high = withSeaweed("high");
-    expect(high.score).toBeLessThanOrEqual(65);
-    expect(high.score).toBeGreaterThan(40); // a beach day, not a closure
-    expect(high.caps.join(" ")).toMatch(/sargassum|seaweed/i);
 
-    const moderate = withSeaweed("moderate");
-    expect(moderate.score).toBeLessThanOrEqual(85);
-    expect(moderate.caps.join(" ")).toMatch(/sargassum|seaweed/i);
+    // (a) A barely-high day (65% coverage) gets a much gentler ceiling (89) than
+    // the old flat 65 — it binds only if the raw score would otherwise exceed 89.
+    const barelyHigh = withSeaweed({ level: "high", coveragePct: 65, isMorning: true, cams: [] });
+    expect(barelyHigh.score).toBeLessThanOrEqual(89);
+    expect(barelyHigh.score).toBeGreaterThan(65); // NOT pinned to the old hard cap
+
+    // (b) A fully (or near-fully) blanketed beach hits the flat floor: 70, from
+    // 90% coverage all the way through 100% — never below 70.
+    const fullyBlanketed = withSeaweed({ level: "high", coveragePct: 100, isMorning: true, cams: [] });
+    expect(fullyBlanketed.score).toBeLessThanOrEqual(70);
+    expect(fullyBlanketed.score).toBeGreaterThan(40); // still not a closure
+    expect(fullyBlanketed.caps.join(" ")).toMatch(/seaweed/i);
+
+    const almostFull = withSeaweed({ level: "high", coveragePct: 90, isMorning: true, cams: [] });
+    expect(almostFull.score).toBeLessThanOrEqual(70);
+
+    // (c) A level-only "moderate" call (no coveragePct) falls back to 40%
+    // coverage — under the 50% threshold, so NO ceiling / cap message at all.
+    const moderateLevelOnly = withSeaweed({ level: "moderate", isMorning: true, cams: [] });
+    expect(moderateLevelOnly.caps.join(" ")).not.toMatch(/sargassum|seaweed/i);
 
     // none/low never cap, and don't add a seaweed cap message.
-    expect(withSeaweed("none").caps.join(" ")).not.toMatch(/sargassum|seaweed/i);
-    expect(withSeaweed("low").caps.join(" ")).not.toMatch(/sargassum|seaweed/i);
-
-    // The CATEGORY trips the cap — a "high" call with a low coverage % still caps at 65.
-    const highLowPct = scoreBeachDay(
-      deriveMetrics(
-        snapshot({
-          buoy: NICE.buoy.data,
-          weather: NICE.weather.data,
-          marine: NICE.marine.data,
-          city: { flags: ["green"] },
-          water: { overall: "good", advisory: false, sites: [] },
-          sargassum: { level: "high", coveragePct: 12, isMorning: true, cams: [] },
-        }),
-      ),
+    expect(withSeaweed({ level: "none", isMorning: true, cams: [] }).caps.join(" ")).not.toMatch(
+      /sargassum|seaweed/i,
     );
-    expect(highLowPct.score).toBeLessThanOrEqual(65);
-    expect(highLowPct.caps.join(" ")).toMatch(/sargassum|seaweed/i);
+    expect(withSeaweed({ level: "low", isMorning: true, cams: [] }).caps.join(" ")).not.toMatch(
+      /sargassum|seaweed/i,
+    );
+
+    // (d) "High" with NO coveragePct falls back to 70% -> ceiling
+    // round(100 - (70-50)*0.75) = 85.
+    const highNoPct = withSeaweed({ level: "high", isMorning: true, cams: [] });
+    expect(highNoPct.score).toBeLessThanOrEqual(85);
+    expect(highNoPct.caps.join(" ")).toMatch(/seaweed/i);
+
+    // Low coverage under a "high" category call no longer trips any ceiling —
+    // coverage, not category, governs now.
+    const highLowPct = withSeaweed({ level: "high", coveragePct: 12, isMorning: true, cams: [] });
+    expect(highLowPct.caps.join(" ")).not.toMatch(/sargassum|seaweed/i);
   });
 
   it("scores comfort from dew point (mugginess), with a humidity penalty at extremes", () => {
@@ -751,11 +767,12 @@ describe("computeHourlyScores", () => {
     const now = Date.parse("2026-06-01T19:30:00.000Z"); // 3:30 PM ET
     const scores = computeHourlyScores(s, now);
     const at = (h: number) => scores.find((x) => nyHour(x.time) === h)!;
-    // Past morning hour: high seaweed cap (65) held; current hour: moderate (85 cap).
+    // Past morning hour: high/65% seaweed ceiling (round(100-(65-50)*0.75)=89)
+    // held; current hour is moderate/30% — under the 50% threshold, no ceiling.
     expect(at(11).score).toBeLessThan(at(16).score);
-    expect(at(11).score).toBeLessThanOrEqual(65);
-    // Early hours before the first read fall back to the day's first read (high).
-    expect(at(8).score).toBeLessThanOrEqual(65);
+    expect(at(11).score).toBeLessThanOrEqual(89);
+    // Early hours before the first read fall back to the day's first read (high/65%).
+    expect(at(8).score).toBeLessThanOrEqual(89);
   });
 
   it("bounds the forecast to daylight hours in the local timezone", () => {
@@ -795,9 +812,11 @@ describe("computeHourlyScores", () => {
     expect(hrs.every((h) => h.score <= 85)).toBe(true);
   });
 
-  it("applies HIGH sargassum (cap 65) to all of TODAY's forecast hours", () => {
+  it("applies HIGH sargassum (level-only fallback ceiling 85) to all of TODAY's forecast hours", () => {
     // Seaweed is a today-only observation — it caps today's hours, never future
     // days (see the multi-day test: the week must not flat-line at the cap).
+    // Level-only "high" (no coveragePct) falls back to 70% coverage ->
+    // ceiling = round(100 - (70-50)*0.75) = 85.
     const now = Date.parse("2026-06-01T15:00:00.000Z"); // 11 AM EDT on the fixture day
     const hrs = computeHourlyScores(
       snapshot({
@@ -810,7 +829,7 @@ describe("computeHourlyScores", () => {
       now,
     );
     expect(hrs.length).toBeGreaterThan(0);
-    expect(hrs.every((h) => h.score <= 65)).toBe(true);
+    expect(hrs.every((h) => h.score <= 85)).toBe(true);
   });
 
   it("copies observed lightning/rain into the CURRENT-hour bucket only", () => {
@@ -1019,7 +1038,8 @@ describe("computeMultiDayWindows", () => {
 
   it("heavy seaweed caps TODAY only — future days score with seaweed unknown", () => {
     // The cams observe TODAY's beach; we know nothing about next week's seaweed,
-    // so the high-seaweed 65-cap must not flat-line the whole forecast.
+    // so today's seaweed ceiling must not flat-line the whole forecast.
+    // coveragePct 80 -> ceiling = round(100 - (80-50)*0.75) = 78.
     const withSeaweed = snapshot({
       ...niceBase,
       city: { flags: ["green"] },
@@ -1029,9 +1049,9 @@ describe("computeMultiDayWindows", () => {
     });
     const days = computeMultiDayWindows(withSeaweed, now);
     expect(days[0].dow).toBe("Today");
-    expect(days[0].peakScore!).toBeLessThanOrEqual(65); // today wears the cap
+    expect(days[0].peakScore!).toBeLessThanOrEqual(78); // today wears the ceiling
     for (const d of days.filter((x) => x.dow !== "Today")) {
-      expect(d.peakScore!).toBeGreaterThan(65); // the week is NOT pinned to the cap
+      expect(d.peakScore!).toBeGreaterThan(78); // the week is NOT pinned to the ceiling
     }
   });
 });
