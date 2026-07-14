@@ -21,6 +21,9 @@ const FULL_SUN_WM2 = 1000;
  *  - 2026-06-23 ~9:54 AM: soil 91°F, 380 W/m², 2 mph, 63% broken → 113°F surf / 124°F dunes
  *  - 2026-07-06 ~4-5 PM: soil 94°F, ~320 W/m², 2 mph, ~100% OVERCAST → 96°F measured
  *    (twice, an hour apart — solid overcast pins sand to ground temp; see damping)
+ *  - 2026-07-14 ~1 PM:  soil 105°F, 965 W/m², 11 mph, 0% cloud → 135-142°F measured
+ *    (model said 137 — inside the spread, ~1.5° under the midpoint. NOT retuned:
+ *    the 6/15 point already reads ~4° high, so a hot-day bump would overshoot it.)
  */
 const MAX_SUN_BOOST_F = 55;
 /**

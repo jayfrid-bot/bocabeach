@@ -45,34 +45,6 @@ function CamStamp({ cam, tz }: { cam: CamView; tz: string }) {
   );
 }
 
-function CamWeatherStrip({ cam }: { cam: CamView }) {
-  const w = cam.weather.data;
-  if (!w) {
-    return (
-      <div className="mt-2 text-[11px] text-slate-500">live weather unavailable</div>
-    );
-  }
-  const wind =
-    w.windSpeedMph != null
-      ? `${w.windSpeedMph} mph${w.windDirCardinal ? " " + w.windDirCardinal : ""}` +
-        (w.windGustMph != null ? ` · gusts ${w.windGustMph}` : "")
-      : null;
-  return (
-    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-300">
-      {w.airTempF != null ? (
-        <span title="Air temperature">
-          🌡️ {w.airTempF}°F
-          {w.apparentTempF != null && w.apparentTempF !== w.airTempF
-            ? ` (feels ${w.apparentTempF}°)`
-            : ""}
-        </span>
-      ) : null}
-      {wind ? <span title="Wind">💨 {wind}</span> : null}
-      {w.shortForecast ? <span className="text-slate-400">{w.shortForecast}</span> : null}
-    </div>
-  );
-}
-
 /** Big "headline" still-image cam (live JPEG via the same-origin proxy). */
 function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
   // Cache-bust on a new capture (feed cams) or each poll, so the still refreshes.
@@ -143,12 +115,7 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
             </span>
           )}
         </div>
-        <div className="text-xs text-slate-300">{cam.provider}</div>
         <CamStamp cam={cam} tz={tz} />
-        <CamWeatherStrip cam={cam} />
-        {cam.attribution ? (
-          <div className="mt-1 text-[11px] text-slate-500">{cam.attribution}</div>
-        ) : null}
       </div>
     </a>
   );
@@ -171,8 +138,6 @@ function VideoCam({ cam }: { cam: CamView }) {
       </div>
       <div className="p-3">
         <div className="text-sm font-medium text-white">{cam.name}</div>
-        <div className="text-xs text-slate-300">{cam.provider}</div>
-        <CamWeatherStrip cam={cam} />
       </div>
     </div>
   );
@@ -206,10 +171,7 @@ export function CamGrid({ cams, tz }: { cams: CamView[]; tz: string }) {
 
   return (
     <section>
-      <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Beach &amp; surf cams</h2>
-      <p className="mb-4 mt-1 text-xs text-slate-500">
-        Live weather &amp; wind shown per cam, from Open-Meteo at each spot.
-      </p>
+      <h2 className="mb-4 text-lg font-semibold text-slate-900 dark:text-white">Beach &amp; surf cams</h2>
 
       {featured.length ? (
         <div className="grid gap-4 sm:grid-cols-2">

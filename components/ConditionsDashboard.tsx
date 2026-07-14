@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import type { ConditionsResponse } from "@/lib/types";
-import { consensusCloudPct, deriveMetrics } from "@/lib/score";
+import { consensusCloudPct, currentHourOf, deriveMetrics } from "@/lib/score";
+import { computeStormActivity } from "@/lib/stormActivity";
 import { beachDayVerdict, fmtDate, fmtTime, scoreColor, scoreTextClass, seaState } from "@/lib/format";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -13,6 +14,7 @@ import { ScoreExplainer } from "@/components/ScoreExplainer";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { ScoreWheel } from "@/components/ScoreWheel";
 import { AirQualityMeter } from "@/components/AirQualityMeter";
+import { StormActivityMeter } from "@/components/StormActivityMeter";
 import { LightningCard } from "@/components/LightningCard";
 import { LifeguardReport } from "@/components/LifeguardReport";
 import { LocalCoverage } from "@/components/LocalCoverage";
@@ -130,6 +132,15 @@ export function ConditionsDashboard({
   // "Now" cloud is the multi-source consensus (the Sky card's number) — a single
   // model's hourly cloud flip-flops and mis-drives the overcast damping.
   const nowCloudPct = consensusCloudPct(snap);
+  // Storm activity: strike density + proximity (from the lightning feed) blended
+  // with the current hour's rain — see lib/stormActivity.ts for the scoring.
+  const currentHour = currentHourOf(snap.hourly.data ?? []);
+  const storm = computeStormActivity({
+    lightning: snap.lightning,
+    precipIn: currentHour?.precipIn,
+    weatherCode: currentHour?.weatherCode,
+    precipProbability: currentHour?.precipProbability,
+  });
   const sandRange =
     nowMs != null
       ? currentSandRangeF(snap.hourly.data ?? [], nowMs, { cloudCoverPct: nowCloudPct })
@@ -435,18 +446,20 @@ export function ConditionsDashboard({
             }
           />
         ) : null}
-        {busy && busy.level !== "unknown" ? (
+        {busy && (busy.level !== "unknown" || busy.note) ? (
           <MetricCard
             icon="👥"
             label="Beach busyness"
-            value={cap(busy.level)}
+            value={busy.level !== "unknown" ? cap(busy.level) : "—"}
             sub={
-              [
-                busy.peopleEstimate != null ? `~${busy.peopleEstimate} people` : busy.note,
-                busy.crowdPct != null ? `~${busy.crowdPct}% full` : undefined,
-              ]
-                .filter(Boolean)
-                .join(" · ") || undefined
+              busy.level !== "unknown"
+                ? [
+                    busy.peopleEstimate != null ? `~${busy.peopleEstimate} people` : busy.note,
+                    busy.crowdPct != null ? `~${busy.crowdPct}% full` : undefined,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || undefined
+                : busy.note
             }
           />
         ) : null}
@@ -491,6 +504,7 @@ export function ConditionsDashboard({
 
       <section className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <AirQualityMeter air={snap.airQuality} />
+        <StormActivityMeter storm={storm} />
         <LightningCard lightning={snap.lightning} />
         <LifeguardReport city={snap.cityOfficial} />
         <LocalCoverage location={snap.location} hasCams={cams.length > 0} />

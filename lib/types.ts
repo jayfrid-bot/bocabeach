@@ -271,6 +271,32 @@ export interface LightningData {
   totalInArea: number;
   /** Age of the upstream GLM snapshot, in minutes (its end-to-end latency). */
   dataAgeMinutes?: number;
+  /** Strike count within 20 mi over the window — feeds the Storm Activity metric.
+   *  Optional for backward compat with any cached/older payload shape. */
+  within20mi?: number;
+  /** Recency-weighted strike "energy" within 20 mi (Σ exp(-ageMinutes/12) per
+   *  strike) — feeds the Storm Activity metric's strike-density component.
+   *  Optional for backward compat with any cached/older payload shape. */
+  stormEnergy?: number;
+}
+
+// --- Storm activity (derived: lightning strikes + proximity + current rain) ---
+export type StormActivityBand = "Calm" | "Unsettled" | "Stormy" | "Severe";
+
+export interface StormActivityData {
+  /** 0-100 composite storm-activity score. */
+  score: number;
+  band: StormActivityBand;
+  /** Pre-weight sub-scores (0-100), or null when that input was unavailable —
+   *  mirrors the `SubScore.score` null-when-unknown convention used by ScoreResult. */
+  parts: {
+    /** Strike-density (stormEnergy) component. */
+    strikes: number | null;
+    /** Nearest-strike-proximity component. */
+    proximity: number | null;
+    /** Current-hour precipitation component. */
+    rain: number | null;
+  };
 }
 
 // --- Sargassum / seaweed (NOAA Sargassum Inundation Risk, via off-Netlify job) ---

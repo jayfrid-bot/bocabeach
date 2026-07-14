@@ -19,6 +19,8 @@ describe("summarizeStrikes", () => {
     const d = summarizeStrikes(feed([]), BOCA.lat, BOCA.lon, NOW);
     expect(d.totalInArea).toBe(0);
     expect(d.within10mi).toBe(0);
+    expect(d.within20mi).toBe(0);
+    expect(d.stormEnergy).toBe(0);
     expect(d.nearestMi).toBeUndefined();
     expect(d.nearestMinutesAgo).toBeUndefined();
     expect(d.dataAgeMinutes).toBe(5);
@@ -81,8 +83,37 @@ describe("summarizeStrikes", () => {
       NOW,
     );
     expect(d.within10mi).toBe(1);
+    expect(d.within20mi).toBe(1); // the ~20.7 mi strike is just outside 20 mi
     expect(d.within25mi).toBe(2);
     expect(d.within50mi).toBe(3);
     expect(d.totalInArea).toBe(4);
+  });
+
+  it("computes stormEnergy as a recency-weighted sum within 20 mi", () => {
+    // A: right at Boca, right now (age 0 -> weight 1). B: right at Boca, 12 min
+    // ago (age 12 -> weight exp(-1) ~= 0.3679). C: ~34.5 mi away (outside 20 mi,
+    // excluded regardless of age).
+    const d = summarizeStrikes(
+      feed([
+        [nowSec, BOCA.lat, BOCA.lon],
+        [nowSec - 720, BOCA.lat, BOCA.lon],
+        [nowSec - 60, BOCA.lat + 0.5, BOCA.lon],
+      ]),
+      BOCA.lat,
+      BOCA.lon,
+      NOW,
+    );
+    expect(d.within20mi).toBe(2);
+    expect(d.stormEnergy).toBeCloseTo(1 + Math.exp(-1), 2);
+  });
+
+  it("stormEnergy decays strikes older than the window toward zero", () => {
+    const d = summarizeStrikes(
+      feed([[nowSec - 3600, BOCA.lat, BOCA.lon]]), // 60 min ago
+      BOCA.lat,
+      BOCA.lon,
+      NOW,
+    );
+    expect(d.stormEnergy).toBeLessThanOrEqual(0.01);
   });
 });

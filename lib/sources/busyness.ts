@@ -7,8 +7,61 @@ import type {
   Wrapped,
 } from "@/lib/types";
 import { fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
+import { fetchSun } from "@/lib/sources/sun";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
+
+/** How far past sunset / before sunrise the cams are still considered readable. */
+const DAYLIGHT_BUFFER_MS = 30 * 60_000;
+/** Beyond this age, even a daytime capture is too stale to call "current". */
+const STALE_CAPTURE_MS = 3 * 60 * 60_000;
+
+const NIGHT_NOTE =
+  "cams can't read the beach in the dark — no live busyness reading overnight";
+const STALE_NOTE =
+  "latest cam capture is a few hours old — busyness reading paused until a fresher shot comes in";
+
+export interface BusynessGateOptions {
+  /** Instant to evaluate daylight/freshness against. Defaults to real now — pass
+   * an explicit value in tests for determinism. */
+  now?: Date;
+  /** Today's sunrise/sunset instants (ISO). Omit to skip the daylight gate
+   * (e.g. sun data unavailable) — the stale-capture check still applies. */
+  sunriseIso?: string;
+  sunsetIso?: string;
+}
+
+/**
+ * Why the current cam capture can't be trusted as a live busyness reading right
+ * now, if any. Night (outside sunrise/sunset ± a buffer) always wins over a
+ * stale-capture read, since a dark-frame read is nonsense regardless of age.
+ */
+function unreadableReason(
+  capturedAtLocal: string | undefined,
+  opts: BusynessGateOptions,
+): string | undefined {
+  const now = opts.now ?? new Date();
+  const nowMs = now.getTime();
+
+  if (opts.sunriseIso && opts.sunsetIso) {
+    const sunriseMs = new Date(opts.sunriseIso).getTime();
+    const sunsetMs = new Date(opts.sunsetIso).getTime();
+    if (Number.isFinite(sunriseMs) && Number.isFinite(sunsetMs)) {
+      if (nowMs < sunriseMs - DAYLIGHT_BUFFER_MS || nowMs > sunsetMs + DAYLIGHT_BUFFER_MS) {
+        return NIGHT_NOTE;
+      }
+    }
+  }
+
+  if (capturedAtLocal) {
+    const capturedMs = new Date(capturedAtLocal).getTime();
+    if (Number.isFinite(capturedMs) && nowMs - capturedMs > STALE_CAPTURE_MS) {
+      return STALE_NOTE;
+    }
+  }
+
+  return undefined;
+}
 
 /** Same off-Netlify cam-vision job publishes per-cam crowd reads here. */
 const CAM_FEED_URL =
@@ -150,12 +203,25 @@ function byDayFromHistory(history: HistoryEntry[]): BusynessByDay[] | undefined 
 /**
  * Roll up the per-cam crowd reads into one busyness level. Uses the LATEST
  * capture (busyness is time-of-day dependent, unlike seaweed) and takes the
- * busiest cam as the headline. Pure (unit-tested).
+ * busiest cam as the headline. Pure (unit-tested); `gate` is how the caller
+ * (fetchBusyness) tells it whether "now" is outside daylight or the capture
+ * is stale — both cases degrade the CURRENT reading to "unknown" (no
+ * level/people/crowdPct headline) while leaving the historical byHour/byDay
+ * charts untouched, since those are daytime aggregates that stay valid.
  */
-export function summarizeBusyness(feed: CamFeed): BusynessData {
+export function summarizeBusyness(feed: CamFeed, gate?: BusynessGateOptions): BusynessData {
   const byHour = byHourFromHistory(feed?.history ?? []);
   const byDay = byDayFromHistory(feed?.history ?? []);
   const group = feed?.latest ?? feed?.morning ?? undefined;
+
+  // No gate passed at all -> caller isn't opting into the daylight/freshness
+  // check (e.g. tests exercising cam-selection logic in isolation); only
+  // fetchBusyness's real callers pass one.
+  const note = gate ? unreadableReason(group?.capturedAtLocal, gate) : undefined;
+  if (note) {
+    return { level: "unknown", capturedAtLocal: group?.capturedAtLocal, note, byHour, byDay };
+  }
+
   const cams = (group?.cams ?? []).filter(
     (c): c is CamReading & { crowd: BusynessLevel } =>
       !!c && typeof c.crowd === "string" && c.crowd in RANK,
@@ -217,7 +283,11 @@ export async function fetchBusyness(
     // The GitHub CDN's Date header is serve-time, not when the job generated the
     // snapshot — report the older of the two so RelativeTime matches the card.
     fetchedAt = oldestIso(feed.generatedAt, fetchedAtOf(res));
-    const data = summarizeBusyness(feed);
+    // Sun times are a pure local computation (no network) — cheap to derive here
+    // so summarizeBusyness can gate the current reading to the beach's own
+    // daylight window without depending on lib/conditions.ts's fetch ordering.
+    const sun = fetchSun(loc).data;
+    const data = summarizeBusyness(feed, { sunriseIso: sun?.sunrise, sunsetIso: sun?.sunset });
     return {
       source: ATTRIBUTION,
       status: data.level === "unknown" ? "best-effort" : "ok",
