@@ -46,7 +46,12 @@ const fetcher = (u: string) =>
   });
 
 // Stamped into the bundle at build time (see next.config.mjs) for the footer.
+// BUILD_NUM is the git commit count (auto-increments every commit) and GIT_SHA
+// pins the exact commit, so "which build is this phone actually running?" is
+// answerable at a glance — pkg.version alone never changed.
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "dev";
+const BUILD_NUM = process.env.NEXT_PUBLIC_BUILD_NUM;
+const GIT_SHA = process.env.NEXT_PUBLIC_GIT_SHA;
 const BUILD_TIME = process.env.NEXT_PUBLIC_BUILD_TIME;
 
 /** Plain-English comfort note for a dew point (°F) — the mugginess driver. */
@@ -560,14 +565,16 @@ export function ConditionsDashboard({
         </p>
         <p className="text-center text-xs text-slate-500">
           v{APP_VERSION}
-          <span className="mx-1.5 text-slate-400 dark:text-slate-600">·</span>
-          data updated {fmtDate(snap.generatedAt, tz)}, {fmtTime(snap.generatedAt, tz)}
+          {BUILD_NUM && BUILD_NUM !== "0" ? ` · build ${BUILD_NUM}` : ""}
+          {GIT_SHA && GIT_SHA !== "dev" ? ` (${GIT_SHA})` : ""}
           {BUILD_TIME && (
             <>
               <span className="mx-1.5 text-slate-400 dark:text-slate-600">·</span>
-              built {fmtDate(BUILD_TIME, tz)}, {fmtTime(BUILD_TIME, tz)}
+              last built {fmtDate(BUILD_TIME, tz)}, {fmtTime(BUILD_TIME, tz)}
             </>
           )}
+          <span className="mx-1.5 text-slate-400 dark:text-slate-600">·</span>
+          data updated {fmtDate(snap.generatedAt, tz)}, {fmtTime(snap.generatedAt, tz)}
         </p>
         {/* Visible affordance for desktop, where pull-to-refresh isn't available. */}
         <div className="flex justify-center">
