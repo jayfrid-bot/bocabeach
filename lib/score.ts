@@ -588,12 +588,30 @@ function applyBeachCaps(
   }
   // Heavy/moderate seaweed isn't a safety hazard but it genuinely degrades the
   // beach (smelly brown mats, murky water) — so it caps how good the day can be.
-  if (d.sargassumLevel === "high") {
-    score = Math.min(score, 65);
-    caps.push("Heavy seaweed (sargassum) on the beach");
-  } else if (d.sargassumLevel === "moderate") {
-    score = Math.min(score, 85);
-    caps.push("Moderate seaweed (sargassum) on the beach");
+  // The OLD design hard-capped at 65 for ANY "high" day and 85 for "moderate" —
+  // that over-punished a barely-high ~65%-covered beach exactly as hard as one
+  // that's fully blanketed. The cam-vision coverage % is the honest "how heavy"
+  // signal (the weighted sargassumScore sub-score already scales with it — left
+  // as-is here), so the ceiling now slides with coverage instead of the category:
+  // below 50% coverage there's no extra ceiling at all (the sub-score alone
+  // carries the penalty); from 50% to 90% coverage the ceiling tightens linearly
+  // from 100 down to 70; at/above 90% coverage it's flat at 70 — the owner wants
+  // "90 to 100 percent capped at 70", never lower, so a full-on blanket doesn't
+  // read as a beach closure.
+  {
+    const SEAWEED_FALLBACK_PCT: Record<string, number> = { high: 70, moderate: 40, low: 15 };
+    const c =
+      typeof d.sargassumCoveragePct === "number" && Number.isFinite(d.sargassumCoveragePct)
+        ? d.sargassumCoveragePct
+        : (d.sargassumLevel && SEAWEED_FALLBACK_PCT[d.sargassumLevel]) ?? 0;
+    if (c >= 50) {
+      const ceiling = c >= 90 ? 70 : Math.round(100 - (c - 50) * 0.75);
+      if (ceiling < score) {
+        const severity = c >= 90 ? "Extremely heavy seaweed" : "Heavy seaweed";
+        caps.push(`${severity} — ~${Math.round(c)}% of the beach covered`);
+      }
+      score = Math.min(score, ceiling);
+    }
   }
   // NWS rip-current risk: HIGH means life-threatening rip currents are likely.
   // Like a red flag, this is a swimmer-safety hazard rather than a beach-day
