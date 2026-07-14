@@ -24,6 +24,10 @@ const FULL_SUN_WM2 = 1000;
  *  - 2026-07-14 ~1 PM:  soil 105°F, 965 W/m², 11 mph, 0% cloud → 135-142°F measured
  *    (model said 137 — inside the spread, ~1.5° under the midpoint. NOT retuned:
  *    the 6/15 point already reads ~4° high, so a hot-day bump would overshoot it.)
+ *  - 2026-07-14 ~2:20 PM: soil 107°F, 1006 W/m², 10 mph, 1% cloud → 130-145°F measured
+ *    (model said 139 vs midpoint 137.5. Across all six sessions the mean error is
+ *    +0.6°F and the average miss ~1.6°F — smaller than the spot-to-spot spread of
+ *    the readings themselves. Calibration confirmed; do not chase single hot spots.)
  */
 const MAX_SUN_BOOST_F = 55;
 /**
