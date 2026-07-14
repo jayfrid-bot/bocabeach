@@ -34,8 +34,7 @@ import { SandTempPanel } from "@/components/SandTempPanel";
 import { currentSandRangeF, sandVerdict } from "@/lib/sandTemp";
 import { SourceList } from "@/components/SourceBadge";
 import { CamGrid } from "@/components/CamGrid";
-import { ForecastStrip } from "@/components/ForecastStrip";
-import { BestTimesStrip } from "@/components/BestTimesStrip";
+import { DayOutlookStrip } from "@/components/DayOutlookStrip";
 import { NotifyButton } from "@/components/NotifyButton";
 
 // Throw on non-OK so an error body (e.g. a 404 `{error}`) never replaces the
@@ -313,15 +312,11 @@ export function ConditionsDashboard({
         <ScoreWheel result={active} />
       </section>
 
-      {res.multiDayWindows?.length ? (
+      {res.multiDayWindows?.length || snap.forecast.data?.length ? (
         <section className="mb-6">
-          <BestTimesStrip days={res.multiDayWindows} tz={tz} />
+          <DayOutlookStrip days={res.multiDayWindows ?? []} forecast={snap.forecast} tz={tz} />
         </section>
       ) : null}
-
-      <section className="mb-6">
-        <ForecastStrip forecast={snap.forecast} />
-      </section>
 
       <h2 className="mb-3 mt-2 text-lg font-semibold text-slate-900 dark:text-white">
         Explore the details
