@@ -8,8 +8,12 @@ import type {
   SargassumByHour,
 } from "@/lib/types";
 import { LevelBarChart, type LevelBar } from "@/components/LevelBarChart";
+import { interpolateColor } from "@/lib/format";
 
-// Shared palettes (clean/quiet = green … heavy/packed = rose).
+// Shared palettes (clean/quiet = green … heavy/packed = rose). Bar colour is
+// now driven continuously off `avg / maxRank` through these stops (see
+// interpolateColor) rather than jumping between the band's fixed color —
+// BUSY_COLOR/SEA_COLOR just name the stops in order.
 const BUSY_COLOR: Record<string, string> = {
   empty: "#475569",
   quiet: "#34d399",
@@ -17,6 +21,8 @@ const BUSY_COLOR: Record<string, string> = {
   busy: "#fbbf24",
   packed: "#fb7185",
 };
+const BUSY_PALETTE = Object.values(BUSY_COLOR);
+const BUSY_MAX_RANK = 4;
 const BUSY_RANK: Record<string, number> = {
   empty: 0,
   quiet: 1,
@@ -30,6 +36,8 @@ const SEA_COLOR: Record<string, string> = {
   moderate: "#fbbf24",
   high: "#fb7185",
 };
+const SEA_PALETTE = Object.values(SEA_COLOR);
+const SEA_MAX_RANK = 3;
 const SEA_RANK: Record<string, number> = { none: 0, low: 1, moderate: 2, high: 3 };
 
 const MAX_DAYS = 21; // keep the by-day axis readable
@@ -129,10 +137,11 @@ export function BusynessByHourChart({
         tooltip: `${hourLabel(b.hour)}: no reading yet`,
       };
     }
+    const rank = b.avg ?? BUSY_RANK[b.level] ?? 0;
     return {
       key: String(b.hour),
-      rank: b.avg ?? BUSY_RANK[b.level] ?? 0,
-      color: BUSY_COLOR[b.level] ?? "#475569",
+      rank,
+      color: interpolateColor(rank / BUSY_MAX_RANK, BUSY_PALETTE),
       label: hourLabel(b.hour),
       highlight: b.hour === now,
       tooltip: `${hourLabel(b.hour)}: ${b.level}${b.people != null ? ` (~${b.people})` : ""}`,
@@ -174,10 +183,11 @@ export function SeaweedByHourChart({
         tooltip: `${hourLabel(b.hour)}: no reading yet`,
       };
     }
+    const rank = b.avg ?? SEA_RANK[b.level] ?? 0;
     return {
       key: String(b.hour),
-      rank: b.avg ?? SEA_RANK[b.level] ?? 0,
-      color: SEA_COLOR[b.level] ?? "#475569",
+      rank,
+      color: interpolateColor(rank / SEA_MAX_RANK, SEA_PALETTE),
       label: hourLabel(b.hour),
       highlight: b.hour === now,
       tooltip: `${hourLabel(b.hour)}: ${b.level}`,
@@ -197,14 +207,16 @@ export function SeaweedByHourChart({
 }
 
 /**
- * Shared bar-builder for the by-day charts: bar HEIGHT is the day's average level
- * (continuous `avg` on the 0..maxRank scale) and COLOUR is that average's band,
- * so the two by-day charts read consistently.
+ * Shared bar-builder for the by-day charts: both bar HEIGHT and COLOUR are
+ * driven by the day's continuous average (`avg` on the 0..maxRank scale), so
+ * the two by-day charts read consistently and shade smoothly rather than
+ * jumping between the day's band color.
  */
 function avgDayBars<T extends { date: string; avg: number; level: string; samples: number }>(
   byDay: T[],
   today: string | null,
-  color: Record<string, string>,
+  palette: string[],
+  maxRank: number,
   tip: (b: T) => string,
 ): LevelBar[] {
   const days = byDay.slice(-MAX_DAYS);
@@ -214,7 +226,7 @@ function avgDayBars<T extends { date: string; avg: number; level: string; sample
     return {
       key: b.date,
       rank: b.avg,
-      color: color[b.level] ?? "#475569",
+      color: interpolateColor(b.avg / maxRank, palette),
       label: show ? fmtWeekday(b.date) : "",
       subLabel: show ? fmtMD(b.date) : "",
       highlight: b.date === today,
@@ -240,7 +252,8 @@ export function BusynessByDayChart({ byDay, tz }: { byDay: BusynessByDay[]; tz: 
   const bars = avgDayBars(
     byDay,
     today,
-    BUSY_COLOR,
+    BUSY_PALETTE,
+    BUSY_MAX_RANK,
     (b) => `${cap(b.level)} avg${b.people != null ? ` (~${b.people})` : ""} · ${reads(b.samples)}`,
   );
   return (
@@ -261,7 +274,8 @@ export function SeaweedByDayChart({ byDay, tz }: { byDay: SargassumByDay[]; tz: 
   const bars = avgDayBars(
     byDay,
     today,
-    SEA_COLOR,
+    SEA_PALETTE,
+    SEA_MAX_RANK,
     (b) => `${cap(b.level)} avg (worst ${cap(b.worst)}) · ${reads(b.samples)}`,
   );
   return (

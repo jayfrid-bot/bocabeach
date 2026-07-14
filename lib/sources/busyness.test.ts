@@ -99,3 +99,86 @@ describe("fetchBusyness — cam gating", () => {
     expect(w.note).toMatch(/no beach cams/i);
   });
 });
+
+describe("summarizeBusyness — daylight/freshness gate", () => {
+  const dayCams = [
+    { name: "A", crowd: "quiet", people: 5, crowdPct: 20 },
+    { name: "B", crowd: "busy", people: 40, crowdPct: 78 },
+  ];
+  const history = [
+    { t: "2026-07-13T09:00:00-04:00", hour: 9, level: "quiet", people: 5, crowdPct: 10 },
+    { t: "2026-07-13T12:00:00-04:00", hour: 12, level: "busy", people: 40, crowdPct: 78 },
+  ];
+  // A midsummer Boca Raton day: sunrise ~06:30, sunset ~20:00 local (both -04:00).
+  const sunriseIso = "2026-07-14T06:30:00-04:00";
+  const sunsetIso = "2026-07-14T20:00:00-04:00";
+
+  it("degrades a night capture to unknown with no headline, keeping the history charts", () => {
+    const feed: CamFeed = {
+      latest: { capturedAtLocal: "2026-07-13T17:00:00-04:00", cams: dayCams as never },
+      history: history as never,
+    };
+    // 11 PM local — well past sunset + buffer.
+    const now = new Date("2026-07-14T23:00:00-04:00");
+    const d = summarizeBusyness(feed, { now, sunriseIso, sunsetIso });
+
+    expect(d.level).toBe("unknown");
+    expect(d.peopleEstimate).toBeUndefined();
+    expect(d.crowdPct).toBeUndefined();
+    expect(d.cams).toBeUndefined();
+    expect(d.note).toMatch(/dark/i);
+    // Historical aggregates are untouched — still valid daytime data.
+    expect(d.byHour?.length).toBe(2);
+    expect(d.byDay?.length).toBe(1);
+  });
+
+  it("degrades a pre-dawn capture (before sunrise - buffer) to unknown", () => {
+    const feed: CamFeed = {
+      latest: { capturedAtLocal: "2026-07-13T17:00:00-04:00", cams: dayCams as never },
+    };
+    const now = new Date("2026-07-14T05:30:00-04:00"); // an hour before sunrise
+    const d = summarizeBusyness(feed, { now, sunriseIso, sunsetIso });
+    expect(d.level).toBe("unknown");
+    expect(d.note).toMatch(/dark/i);
+  });
+
+  it("leaves a fresh daytime capture unchanged", () => {
+    const feed: CamFeed = {
+      latest: { capturedAtLocal: "2026-07-14T12:30:00-04:00", cams: dayCams as never },
+      history: history as never,
+    };
+    const now = new Date("2026-07-14T13:00:00-04:00"); // 30 min after capture, midday
+    const d = summarizeBusyness(feed, { now, sunriseIso, sunsetIso });
+    expect(d.level).toBe("busy");
+    expect(d.peopleEstimate).toBe(40);
+    expect(d.crowdPct).toBe(78);
+    expect(d.cams).toHaveLength(2);
+    expect(d.note).toBeUndefined();
+  });
+
+  it("still works with no gate options passed at all (existing callers/tests)", () => {
+    const d = summarizeBusyness({
+      latest: { capturedAtLocal: "2026-07-14T12:30:00-04:00", cams: dayCams as never },
+    });
+    expect(d.level).toBe("busy");
+  });
+
+  it("degrades a stale daytime capture (>3h old) to unknown even mid-afternoon", () => {
+    const feed: CamFeed = {
+      latest: { capturedAtLocal: "2026-07-14T09:00:00-04:00", cams: dayCams as never },
+    };
+    const now = new Date("2026-07-14T13:00:00-04:00"); // 4h after capture, still daylight
+    const d = summarizeBusyness(feed, { now, sunriseIso, sunsetIso });
+    expect(d.level).toBe("unknown");
+    expect(d.note).toMatch(/stale|old/i);
+  });
+
+  it("does not flag a capture just under the staleness threshold", () => {
+    const feed: CamFeed = {
+      latest: { capturedAtLocal: "2026-07-14T10:30:00-04:00", cams: dayCams as never },
+    };
+    const now = new Date("2026-07-14T13:00:00-04:00"); // 2.5h after capture
+    const d = summarizeBusyness(feed, { now, sunriseIso, sunsetIso });
+    expect(d.level).toBe("busy");
+  });
+});

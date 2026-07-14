@@ -41,8 +41,13 @@ export function summarizeStrikes(
   let lastEpoch = 0;
   let lastMi = Infinity;
   let within10 = 0;
+  let within20 = 0;
   let within25 = 0;
   let within50 = 0;
+  // Recency-weighted strike density within 20 mi, for the Storm Activity metric:
+  // each strike contributes exp(-ageMinutes/12) (half-life ~8.3 min), so a burst
+  // of very recent close strikes reads as "energetic" while old ones decay away.
+  let stormEnergy = 0;
 
   for (const [epoch, slat, slon] of feed.strikes) {
     const mi = haversineMiles(lat, lon, slat, slon);
@@ -57,8 +62,13 @@ export function summarizeStrikes(
       lastMi = mi;
     }
     if (mi <= 10) within10++;
+    if (mi <= 20) within20++;
     if (mi <= 25) within25++;
     if (mi <= 50) within50++;
+    if (mi <= 20) {
+      const ageMinutes = Math.max(0, (nowSec - epoch) / 60);
+      stormEnergy += Math.exp(-ageMinutes / 12);
+    }
   }
 
   const has = feed.strikes.length > 0;
@@ -72,9 +82,11 @@ export function summarizeStrikes(
     lastMinutesAgo: has ? minAgo(lastEpoch) : undefined,
     lastMi: has ? round(lastMi, 1) : undefined,
     within10mi: within10,
+    within20mi: within20,
     within25mi: within25,
     within50mi: within50,
     totalInArea: feed.strikes.length,
+    stormEnergy: has ? round(stormEnergy, 2) : 0,
     dataAgeMinutes: feed.generatedAt
       ? Math.max(0, round((nowMs - Date.parse(feed.generatedAt)) / 60000))
       : undefined,

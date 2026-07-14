@@ -8,6 +8,25 @@ export function fmtTime(iso: string, tz: string): string {
   }).format(new Date(iso));
 }
 
+/**
+ * Ultra-compact time for tight spaces, e.g. "6a" or "6:30p" — drops the
+ * minutes when they're :00 and collapses AM/PM to a single letter. Used by
+ * the mobile best-times strip, where a full "6:00 AM" won't fit a ~45px tile.
+ */
+export function fmtTimeCompact(iso: string, tz: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: tz,
+  }).formatToParts(new Date(iso));
+  const hour = parts.find((p) => p.type === "hour")?.value ?? "";
+  const minute = parts.find((p) => p.type === "minute")?.value ?? "";
+  const dayPeriod = parts.find((p) => p.type === "dayPeriod")?.value ?? "";
+  const suffix = dayPeriod.toLowerCase().startsWith("p") ? "p" : "a";
+  return minute && minute !== "00" ? `${hour}:${minute}${suffix}` : `${hour}${suffix}`;
+}
+
 /** Short calendar date, e.g. "May 26", in the given timezone. */
 export function fmtDate(iso: string, tz: string): string {
   return new Intl.DateTimeFormat("en-US", {
@@ -70,6 +89,40 @@ export function scoreTextClass(score: number): string {
   if (score >= 65) return "text-lime-600 dark:text-lime-400";
   if (score >= 45) return "text-amber-600 dark:text-amber-400";
   return "text-rose-600 dark:text-rose-400";
+}
+
+// --- Continuous color interpolation ----------------------------------------
+
+function hexToRgb(hex: string): [number, number, number] {
+  const n = parseInt(hex.replace("#", ""), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  const c = (v: number) =>
+    Math.round(Math.min(255, Math.max(0, v)))
+      .toString(16)
+      .padStart(2, "0");
+  return `#${c(r)}${c(g)}${c(b)}`;
+}
+
+/**
+ * Linearly interpolate a hex color across an ordered list of stops for a
+ * fraction 0..1 (clamped, and out-of-range values pin to the nearest end
+ * stop). Lets bars driven by a continuous value (e.g. avg/maxRank) shade
+ * smoothly instead of jumping between a fixed set of categorical colors.
+ */
+export function interpolateColor(fraction: number, stops: string[]): string {
+  if (stops.length === 0) return "#000000";
+  if (stops.length === 1) return stops[0];
+  const t = Math.min(1, Math.max(0, fraction));
+  const segments = stops.length - 1;
+  const scaled = t * segments;
+  const i = Math.min(segments - 1, Math.floor(scaled));
+  const localT = scaled - i;
+  const [r1, g1, b1] = hexToRgb(stops[i]);
+  const [r2, g2, b2] = hexToRgb(stops[i + 1]);
+  return rgbToHex(r1 + (r2 - r1) * localT, g1 + (g2 - g1) * localT, b1 + (b2 - b1) * localT);
 }
 
 // --- US EPA Air Quality Index bands ----------------------------------------

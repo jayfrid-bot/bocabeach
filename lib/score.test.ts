@@ -291,6 +291,10 @@ describe("scoring (Beach Day only — no surf)", () => {
     // Falls back to the categorical level when no crowdPct is present.
     expect(crowds({ level: "packed" } as BusynessData)).toBe(crowds({ level: "packed", crowdPct: 95 } as BusynessData));
     expect(crowds(null)).toBeNull();
+    // Night gate (lib/sources/busyness.ts summarizeBusyness): data is present
+    // but degraded to "unknown" with no crowdPct — must drop out, not score a
+    // stale/dark cam read as if it were a real "packed" or "empty" beach.
+    expect(crowds({ level: "unknown" } as BusynessData)).toBeNull();
   });
 
   it("caps the score at 65 under HIGH sargassum and 85 under MODERATE", () => {

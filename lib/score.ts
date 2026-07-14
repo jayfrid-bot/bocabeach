@@ -63,7 +63,7 @@ const SEVERE_ALERT =
   /hurricane warning|tropical storm warning|storm surge warning|tsunami (warning|advisory)|high surf warning|tornado warning|flash flood warning|special marine warning|extreme wind warning|coastal flood warning/i;
 
 /** The hourly-forecast entry whose bucket contains "now" (within 2h), if any. */
-function currentHourOf(hours: HourlyMetrics[], nowMs: number = Date.now()) {
+export function currentHourOf(hours: HourlyMetrics[], nowMs: number = Date.now()) {
   // Prefer the bucket whose half-open interval [start, start+1h) CONTAINS now —
   // i.e. the latest bucket that has already started (start <= now < start+1h).
   let contained: HourlyMetrics | undefined;

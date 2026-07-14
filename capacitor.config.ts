@@ -8,13 +8,14 @@ const config: CapacitorConfig = {
   appName: "Is It Beach Day",
   webDir: "mobile/www",
   server: {
-    // The app shell loads the LIVE site from the stable production Netlify
-    // alias (always the latest `main` deploy) rather than the apex domain.
-    // Why: a device that loaded an old build kept a stuck service worker on
-    // isitbeachday.com that served stale JS even across reinstalls, breaking
-    // push. This origin is clean (and the SW is now retired), so the app always
-    // gets current code. No URL bar in the shell, so the origin is invisible.
-    url: "https://main--bocabeachrats.netlify.app",
+    // The app shell loads the LIVE site from a dedicated Cloudflare Worker origin
+    // (OpenNext). A Worker always serves the latest deploy, so web changes reach the
+    // app with no App Store resubmission — same property the old Netlify alias had.
+    // Why a FRESH hostname (not isitbeachday.com): the apex once had a stuck service
+    // worker serving stale JS across reinstalls; app.isitbeachday.com has no such
+    // history. Push tokens register to Workers KV via this origin. No URL bar in the
+    // shell, so the origin is invisible. (Migrated off Netlify 2026-07.)
+    url: "https://app.isitbeachday.com",
   },
   ios: {
     contentInset: "automatic",

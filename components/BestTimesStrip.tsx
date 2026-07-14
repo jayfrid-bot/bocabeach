@@ -1,5 +1,5 @@
 import type { DayWindow } from "@/lib/types";
-import { fmtTime, scoreColor } from "@/lib/format";
+import { fmtTime, fmtTimeCompact, scoreColor } from "@/lib/format";
 
 /**
  * "Best beach times" forecast: one tile per upcoming day showing the best
@@ -18,40 +18,53 @@ export function BestTimesStrip({ days, tz }: { days: DayWindow[]; tz: string }) 
         The best window to go each day, by Beach Day score. A forecast estimate —
         conditions can change.
       </p>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+      <div className="grid grid-cols-7 gap-1 sm:gap-2">
         {days.map((d) => (
           <div
             key={d.date}
-            className="rounded-2xl bg-white/80 p-3 text-center ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10"
+            className="min-w-0 rounded-xl bg-white/80 p-1.5 text-center ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10 sm:rounded-2xl sm:p-3"
           >
-            <div className="text-xs font-medium uppercase text-slate-600 dark:text-slate-400">
+            <div className="truncate text-[9px] font-medium uppercase text-slate-600 dark:text-slate-400 sm:text-xs">
               {d.dow}
             </div>
-            <div className="my-1 text-2xl" aria-hidden>
+            <div className="my-0.5 text-lg sm:my-1 sm:text-2xl" aria-hidden>
               {d.emoji || "🏖️"}
             </div>
             {d.peakScore != null ? (
               <div
-                className="mx-auto flex h-9 w-9 items-center justify-center rounded-full text-sm font-bold text-slate-950"
+                className="mx-auto flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-slate-950 sm:h-9 sm:w-9 sm:text-sm"
                 style={{ background: scoreColor(d.peakScore) }}
                 title={`Peak Beach Day score: ${d.peakScore}`}
               >
                 {d.peakScore}
               </div>
             ) : (
-              <div className="mx-auto flex h-9 w-9 items-center justify-center rounded-full bg-slate-200 text-sm font-bold text-slate-500 dark:bg-slate-800">
+              <div className="mx-auto flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-xs font-bold text-slate-500 dark:bg-slate-800 sm:h-9 sm:w-9 sm:text-sm">
                 —
               </div>
             )}
-            <div className="mt-2 text-[11px] leading-tight text-slate-600 dark:text-slate-300">
+            <div className="mt-1 break-words text-[9px] leading-tight text-slate-600 dark:text-slate-300 sm:mt-2 sm:text-[11px]">
               {d.best ? (
                 <>
-                  {fmtTime(d.best.startIso, tz)}
-                  <span className="text-slate-400">–</span>
-                  {fmtTime(d.best.endIso, tz)}
+                  <span className="sm:hidden">
+                    {fmtTimeCompact(d.best.startIso, tz)}
+                    <span className="text-slate-400">–</span>
+                    {fmtTimeCompact(d.best.endIso, tz)}
+                  </span>
+                  <span className="hidden sm:inline">
+                    {fmtTime(d.best.startIso, tz)}
+                    <span className="text-slate-400">–</span>
+                    {fmtTime(d.best.endIso, tz)}
+                  </span>
                 </>
               ) : (
-                <span className="text-slate-400">no good window</span>
+                <>
+                  <span className="text-slate-400 sm:hidden" aria-hidden>
+                    —
+                  </span>
+                  <span className="hidden text-slate-400 sm:inline">no good window</span>
+                  <span className="sr-only sm:hidden">no good window</span>
+                </>
               )}
             </div>
           </div>
