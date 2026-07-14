@@ -135,9 +135,14 @@ export function sandVerdict(tempF: number): SandVerdict {
   return { label: "Scorching", advice: "burn risk — wear shoes", color: "#fb7185" };
 }
 
-/** Scale bounds for the visual barefoot meter. */
-export const SAND_SCALE_MIN_F = 70;
-export const SAND_SCALE_MAX_F = 155;
+/**
+ * Scale bounds for the visual barefoot meter. 75–145°F spans real Boca ground
+ * truth (78°F dawn reads → 142°F peak-summer dunes) without dead headroom: the
+ * old 155°F max parked a scorching 139°F reading at ~81% of the bar, reading as
+ * "not that hot" when it's about as hot as the beach ever gets (~91% now).
+ */
+export const SAND_SCALE_MIN_F = 75;
+export const SAND_SCALE_MAX_F = 145;
 
 export type SandHour = {
   time: string;
