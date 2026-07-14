@@ -155,8 +155,18 @@ export function SandTempPanel({
       </div>
 
       {/* barefoot comfort meter — slider marker carries a live temperature
-          label so you can read the number without looking up at the headline. */}
-      <div className="relative mt-6 h-1.5 rounded-full bg-gradient-to-r from-emerald-400 via-amber-400 via-60% to-rose-400">
+          label so you can read the number without looking up at the headline.
+          The gradient bands sit at the TRUE scale positions of the comfort
+          boundaries (95/115/130°F on the 75-145 scale → 28.6/57.1/78.6%), so
+          the marker's spot on the bar matches the verdict — a 139°F read lands
+          deep in the red, not "middle of the bar". */}
+      <div
+        className="relative mt-6 h-1.5 rounded-full"
+        style={{
+          background:
+            "linear-gradient(to right, #34d399 0%, #34d399 24%, #fbbf24 33%, #fbbf24 53%, #fb923c 61%, #fb923c 75%, #fb7185 83%, #fb7185 100%)",
+        }}
+      >
         {current ? (
           <>
             <span
@@ -172,11 +182,22 @@ export function SandTempPanel({
           </>
         ) : null}
       </div>
-      <div className="mt-1 flex justify-between text-[10px] text-slate-500">
-        <span>barefoot fine · &lt;95°F</span>
-        <span>warm · 95°F</span>
-        <span>sandals · 115°F</span>
-        <span>burn risk · 130°F+</span>
+      {/* zone labels centered under their actual band on the scale (not
+          evenly spaced — even spacing made "burn risk" sit at the far right
+          while the true 130°F boundary is at ~79%). */}
+      <div className="relative mt-1 h-4 text-[10px] text-slate-500">
+        <span className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: "14%" }}>
+          barefoot · &lt;95°F
+        </span>
+        <span className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: "43%" }}>
+          warm · 95°F
+        </span>
+        <span className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: "68%" }}>
+          sandals · 115°F
+        </span>
+        <span className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: "89.5%" }}>
+          burn · 130°F+
+        </span>
       </div>
 
       {/* today's heat-up / cool-down curve */}

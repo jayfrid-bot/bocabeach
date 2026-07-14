@@ -138,7 +138,7 @@ export async function getConditionsForLocation(
   const hourlyForecast = computeHourlyScores(snapshot, nowMs);
   const hourlyScores = anchorCurrentHourScore(hourlyForecast, score, nowMs);
   const multiDayWindows = computeMultiDayWindows(snapshot, nowMs);
-  // Keep the "Today" peak badge (BestTimesStrip) >= the chart's anchored now-dot:
+  // Keep the "Today" peak badge (DayOutlookStrip) >= the chart's anchored now-dot:
   // the live headline score IS part of today, so the day's advertised peak must
   // never read below the now-point (they're otherwise computed on different curves).
   const today = multiDayWindows[0];
