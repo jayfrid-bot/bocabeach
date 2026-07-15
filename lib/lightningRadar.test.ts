@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   RADAR_BAND_DENSITY_CAP,
+  RADAR_BAND_MAX_OPACITY,
+  RADAR_BAND_MIN_OPACITY,
   RADAR_MAX_MI,
   bearingDistanceToPoint,
   radarBandCounts,
   radarBandDensity,
+  radarBandOpacity,
   radarRadiusFraction,
 } from "@/lib/lightningRadar";
 
@@ -145,5 +148,39 @@ describe("radarBandDensity", () => {
   it("respects a custom cap", () => {
     expect(radarBandDensity(5, 5)).toBe(1);
     expect(radarBandDensity(5, 10)).toBeCloseTo(0.5, 6);
+  });
+});
+
+describe("radarBandOpacity", () => {
+  it("is 0 for no strikes", () => {
+    expect(radarBandOpacity(0)).toBe(0);
+  });
+
+  it("never exceeds RADAR_BAND_MAX_OPACITY, even far beyond the density cap", () => {
+    expect(radarBandOpacity(RADAR_BAND_DENSITY_CAP)).toBeCloseTo(RADAR_BAND_MAX_OPACITY, 6);
+    expect(radarBandOpacity(RADAR_BAND_DENSITY_CAP * 20)).toBeCloseTo(RADAR_BAND_MAX_OPACITY, 6);
+  });
+
+  it("stays well under the old formula's ~0.62 max — a real 27/84-strike count must not look like a solid mass", () => {
+    const opacity = radarBandOpacity(84);
+    expect(opacity).toBeLessThanOrEqual(0.18);
+  });
+
+  it("is at least RADAR_BAND_MIN_OPACITY for any count above 0 — never fully invisible", () => {
+    expect(radarBandOpacity(1)).toBeGreaterThanOrEqual(RADAR_BAND_MIN_OPACITY);
+  });
+
+  it("is monotonic — more strikes never produce less opacity", () => {
+    expect(radarBandOpacity(2)).toBeLessThan(radarBandOpacity(6));
+    expect(radarBandOpacity(6)).toBeLessThan(radarBandOpacity(11));
+  });
+
+  it("treats negative/non-finite counts as 0 rather than propagating garbage", () => {
+    expect(radarBandOpacity(-4)).toBe(0);
+    expect(radarBandOpacity(Number.NaN)).toBe(0);
+  });
+
+  it("respects a custom cap", () => {
+    expect(radarBandOpacity(5, 5)).toBeCloseTo(RADAR_BAND_MAX_OPACITY, 6);
   });
 });

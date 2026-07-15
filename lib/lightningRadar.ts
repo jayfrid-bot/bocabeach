@@ -126,3 +126,27 @@ export function radarBandDensity(count: number, cap: number = RADAR_BAND_DENSITY
   if (!Number.isFinite(count) || count <= 0 || cap <= 0) return 0;
   return clamp(count / cap, 0, 1);
 }
+
+/** The band tint's opacity range — deliberately low on both ends so the fill
+ *  reads as a soft wash, never a solid mass, at any count. */
+export const RADAR_BAND_MIN_OPACITY = 0.03;
+export const RADAR_BAND_MAX_OPACITY = 0.18;
+
+/**
+ * Opacity (0..RADAR_BAND_MAX_OPACITY) for a band's background tint, derived
+ * from `radarBandDensity`.
+ *
+ * A single-digit strike count is common and shouldn't visually compete with
+ * anything — even a maxed-out band (at/beyond the density cap) is capped at
+ * RADAR_BAND_MAX_OPACITY, well short of the ~0.62 the old
+ * `0.12 + density * 0.5` formula produced at density 1. That old formula
+ * made a real (if unremarkable) 25-84 strike count read as a solid orange
+ * donut filling the whole radar — its own honesty problem (alarm inflation)
+ * on top of being illegible. The nearest-strike marker, not this tint, is
+ * the radar's one true positional fact and must stay the visual focal point.
+ */
+export function radarBandOpacity(count: number, cap: number = RADAR_BAND_DENSITY_CAP): number {
+  const density = radarBandDensity(count, cap);
+  if (density <= 0) return 0;
+  return round(RADAR_BAND_MIN_OPACITY + density * (RADAR_BAND_MAX_OPACITY - RADAR_BAND_MIN_OPACITY), 2);
+}

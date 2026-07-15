@@ -4,44 +4,68 @@ import { useEffect, useState } from "react";
 import type { TideEvent } from "@/lib/types";
 import { fmtTime } from "@/lib/format";
 import { computeTideLevel } from "@/lib/tideLevel";
+import { clamp } from "@/lib/util";
 
 // viewBox geometry. WIDTH/TILE match WaveHeightCard.tsx exactly so the
 // lapping-water layer can reuse its `wavescroll`/`wavescroll-rev` keyframes
 // from globals.css (a seamless scroll of exactly WIDTH px) without adding
-// any new CSS.
+// any new CSS. HEIGHT is a coordinate scale only — the SVG stretches to fill
+// the card's actual CSS box (`preserveAspectRatio="none"`), so what matters
+// is the RELATIVE proportion given to sky vs. water vs. sand below, not this
+// absolute number.
 const WIDTH = 400;
 const HEIGHT = 190;
 const TILE = WIDTH * 2;
 const WAVELENGTH = WIDTH / 2;
 const STEP = 10;
 
-// The sand slope: a straight profile from the deep-water corner (x=0, low
-// in the frame = physically low ground) up to the dune corner (x=WIDTH,
-// high in the frame). Kept as one straight line — a real beach profile has
-// bars and troughs, but a single honest slope reads instantly at a glance,
-// which is the point of this graphic.
-//
-// Tuned to a steeper rise than a literal beach profile (58->30 top, 168->176
-// bottom) and a shoreline range pulled in from the deep-water corner
-// (0.12->0.2) so the low-tide waterline is a legible band rather than a
-// near-invisible sliver in the corner — the frame is cropped for legibility,
-// the interpolated waterline fraction itself is unchanged/honest.
-const SAND_BOTTOM_Y = 176; // terrain y at x=0
-const SAND_TOP_Y = 30; // terrain y at x=WIDTH
-const SAND_RISE = SAND_BOTTOM_Y - SAND_TOP_Y;
-const terrainY = (x: number) => SAND_BOTTOM_Y - (x / WIDTH) * SAND_RISE;
-const terrainX = (y: number) =>
-  Math.min(WIDTH, Math.max(0, ((SAND_BOTTOM_Y - y) / SAND_RISE) * WIDTH));
+// A fixed horizon, the same at every tide level — real ocean horizons don't
+// move with the tide, only the LOCAL shoreline does. This is what fixes the
+// old design's core problem: that version's "sky" was whatever the terrain
+// line didn't cover, so at low tide (terrain riding high across most of the
+// frame) the sky ballooned to fill most of the card and the water was
+// squeezed into a sliver. Here the ocean below is a full-width, full-height
+// -below-horizon body that's ALWAYS present, so there's no gap for sky to
+// leak through at any tide level, and the water always reads as substantial.
+const HORIZON_Y = 40;
 
-// Where the shoreline sits on the slope at the lowest vs. highest known
-// tide in the current window — leaves a sliver of always-wet sand at the far
-// left (low tide) and a sliver of dry dune at the far right (high tide) so
-// the graphic never fills edge-to-edge.
-const SHORE_X_LOW = WIDTH * 0.2;
-const SHORE_X_HIGH = WIDTH * 0.78;
+// The dune/sand wedge only occupies the right portion of the frame — left of
+// SAND_X0 is permanently open ocean (no tide ever exposes sand there), which
+// is what makes the water read as a real sea rather than a band clinging to
+// one corner. The wedge itself is one straight slope (a real beach profile
+// has bars and troughs, but a single honest slope reads instantly at a
+// glance) from the always-wet inner edge (x=SAND_X0) up to the dry dune tip
+// (x=WIDTH, meeting the horizon exactly — no color gap between them).
+const SAND_X0 = 130;
+const SAND_BOTTOM_Y = HEIGHT; // terrain y at x = SAND_X0
+const SAND_TOP_Y = HORIZON_Y; // terrain y at x = WIDTH
+const SAND_RISE = SAND_BOTTOM_Y - SAND_TOP_Y;
+const terrainY = (x: number) => {
+  const cx = clamp(x, SAND_X0, WIDTH);
+  return SAND_BOTTOM_Y - ((cx - SAND_X0) / (WIDTH - SAND_X0)) * SAND_RISE;
+};
+const terrainX = (y: number) =>
+  clamp(SAND_X0 + ((SAND_BOTTOM_Y - y) / SAND_RISE) * (WIDTH - SAND_X0), SAND_X0, WIDTH);
+
+// Where the shoreline sits on the slope at the lowest vs. highest known tide
+// in the current window. Even at the LOW end most of the dune wedge is
+// already wet (0.30 of the way up) and at the HIGH end almost all of it is
+// (0.75), so the visible dry-sand strip shrinks to just the dune tip rather
+// than the water ever looking like a thin edge case.
+const SHORE_X_LOW = SAND_X0 + (WIDTH - SAND_X0) * 0.3;
+const SHORE_X_HIGH = SAND_X0 + (WIDTH - SAND_X0) * 0.75;
 const SHORE_Y_LOW = terrainY(SHORE_X_LOW);
 const SHORE_Y_HIGH = terrainY(SHORE_X_HIGH);
 const waterlineY = (fraction: number) => SHORE_Y_LOW + fraction * (SHORE_Y_HIGH - SHORE_Y_LOW);
+
+// Small unlabeled ticks on the always-dry dune (fixed spot, never covered by
+// water at any tide) marking the two ends of the current window's fractional
+// range — i.e. exactly where the waterline sits at fraction 0 and fraction 1
+// — so "where the water is now" reads against the full swing it moves
+// through today, not in isolation. No text: numbers here would either
+// duplicate the tide list below or collide with the next-event label.
+const REF_TICK_X1 = WIDTH - 4;
+const REF_TICK_X2 = WIDTH - 15;
 
 // Coordinates rounded to 2 decimals so SSR and client hydration paths agree
 // exactly (same convention as WaveHeightCard.tsx / ScoreWheel.tsx).
@@ -59,10 +83,11 @@ function rippleTopPath(waterY: number, amplitude: number, phaseRad: number): str
 }
 
 /**
- * The tide as a side-view beach cross-section: sky above, sand sloping from
- * deep water up to dry dune, and a gently lapping waterline positioned by
- * the current interpolated tide height. A tick marks where the water will
- * reach at the next high/low.
+ * The tide as a side-view beach cross-section: a cropped strip of sky over a
+ * full-width ocean, a foreground dune wedge on the right, and a gently
+ * lapping waterline positioned by the current interpolated tide height. A
+ * tick marks where the water will reach at the next high/low; two fainter
+ * static ticks mark the current window's low/high extremes for context.
  */
 export function TideCrossSection({
   events,
@@ -113,28 +138,48 @@ export function TideCrossSection({
         className="absolute inset-0 h-full w-full"
         aria-hidden
       >
-        {/* sky */}
+        {/* sky: a fixed, tightly cropped band — cropped hard so the ocean
+            below dominates the frame at every tide level */}
+        <rect x={0} y={0} width={WIDTH} height={HORIZON_Y} className="fill-sky-200 dark:fill-[#0f1f3d]" />
+
+        {/* ocean: always present for the full width below the horizon. The
+            richer/darker tone (vs. the brighter nearshore water below) reads
+            as depth — deep sea in the background, lighter shallows up close
+            — and guarantees there's never a sky-colored gap for any tide. */}
         <rect
           x={0}
-          y={0}
+          y={HORIZON_Y}
           width={WIDTH}
-          height={HEIGHT}
-          className="fill-sky-200 dark:fill-[#0f1f3d]"
+          height={HEIGHT - HORIZON_Y}
+          className="fill-ocean-800 dark:fill-ocean-950"
         />
 
-        {/* sand: the full slope profile down to the bottom of the frame */}
+        {/* dry sand: the fixed dune wedge silhouette, foreground only (right
+            side) — the part of it below the current waterline gets painted
+            over by the nearshore water layer below. */}
         <path
-          d={`M0,${SAND_BOTTOM_Y} L${WIDTH},${SAND_TOP_Y} L${WIDTH},${HEIGHT} L0,${HEIGHT} Z`}
+          d={`M${SAND_X0},${SAND_BOTTOM_Y} L${WIDTH},${SAND_TOP_Y} L${WIDTH},${HEIGHT} L${SAND_X0},${HEIGHT} Z`}
           className="fill-amber-100 dark:fill-[#4a3c26]"
         />
 
-        {/* water: the wedge between the waterline and the (wet) sand below it,
-            clipped to the actual waterline so it never spills onto dry sand */}
+        {/* Static low/high reference ticks — see REF_TICK_X1/2 comment above. */}
+        <g stroke="#0f172a" strokeOpacity={0.3} strokeWidth={1.25} className="dark:stroke-white/35">
+          <line x1={REF_TICK_X2} x2={REF_TICK_X1} y1={round2(SHORE_Y_LOW)} y2={round2(SHORE_Y_LOW)} />
+          <line x1={REF_TICK_X2} x2={REF_TICK_X1} y1={round2(SHORE_Y_HIGH)} y2={round2(SHORE_Y_HIGH)} />
+        </g>
+
+        {/* nearshore water: clipped to exactly the current tide's wet area —
+            re-covers whatever part of the dune wedge is submerged right now,
+            and carries the animated lapping ripples at today's waterline. */}
         <clipPath id="tidecs-water-clip">
-          <path d={`M0,${round2(waterY)} L${round2(shoreX)},${round2(waterY)} L0,${round2(SAND_BOTTOM_Y)} Z`} />
+          <rect x={0} y={round2(waterY)} width={round2(shoreX)} height={round2(HEIGHT - waterY)} />
         </clipPath>
         <g clipPath="url(#tidecs-water-clip)">
-          <rect x={0} y={0} width={WIDTH} height={HEIGHT} fill="#1b85f5" opacity={0.9} />
+          {/* Fixed color in both themes (matches WaveHeightCard's brightest
+              wave layer) — only the deep-ocean base and sky shift with theme,
+              so the nearshore water stays a consistent, legible "water" blue
+              rather than turning pastel-pale against a dark background. */}
+          <rect x={0} y={0} width={WIDTH} height={HEIGHT} fill="#32a4ff" opacity={0.92} />
           <path
             d={rippleTopPath(waterY, 2.2, 0.4)}
             fill="rgba(142, 216, 255, 0.55)"
