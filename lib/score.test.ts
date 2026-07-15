@@ -223,6 +223,29 @@ describe("scoring (Beach Day only — no surf)", () => {
       expect(deriveMetrics(s).nowcastRaining).toBe(true);
     });
 
+    it("a storm cell 11 mi inland does NOT corroborate rain at a sunny beach (2026-07-15)", () => {
+      // The live follow-up: the first gate used a 25 mi lightning radius, and a
+      // classic FL inland cell (nearest 11.4 mi, 42 strikes within 25) wrongly
+      // corroborated the phantom shower while the beach sat in full sun.
+      const s = snapshot({
+        weather: { airTempF: 88, shortForecast: "Clear", precipProbability: 6, cloudCoverPct: 16 },
+        hourly: [{ time: hourStart, weatherCode: 0, precipProbability: 2, precipIn: 0, cloudCoverPct: 0 }],
+        nowcast: RAINING,
+        lightning: {
+          windowMinutes: 30,
+          nearestMi: 11.4,
+          nearestMinutesAgo: 2,
+          lastMinutesAgo: 2,
+          within10mi: 0,
+          within25mi: 42,
+          within50mi: 80,
+          totalInArea: 120,
+        },
+      });
+      expect(deriveMetrics(s).nowcastRaining).toBe(false);
+      expect(computeScore(s).caps.join(" ")).not.toMatch(/raining right now/i);
+    });
+
     it("fails safe: with every corroborating signal unknown, the nowcast still counts", () => {
       // No weather, no hourly, no lightning — only positive evidence of a clear
       // sky may veto; total ignorance must not.
