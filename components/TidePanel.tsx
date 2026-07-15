@@ -1,6 +1,6 @@
 import type { Wrapped, TideData } from "@/lib/types";
 import { fmtTime } from "@/lib/format";
-import { TideCurve } from "@/components/TideCurve";
+import { TideCrossSection } from "@/components/TideCrossSection";
 
 export function TidePanel({ tides, tz }: { tides: Wrapped<TideData>; tz: string }) {
   const events = tides.data?.next ?? [];
@@ -21,17 +21,19 @@ export function TidePanel({ tides, tz }: { tides: Wrapped<TideData>; tz: string 
         <div className="mt-2 text-sm text-slate-500">Unavailable</div>
       ) : (
         <>
-          <TideCurve events={events} tz={tz} />
-          <ul className="mt-2 space-y-1.5">
-          {events.map((e, i) => (
-            <li key={i} className="flex items-center justify-between text-sm">
-              <span className="capitalize text-slate-700 dark:text-slate-300">
-                {e.type === "high" ? "High" : "Low"} tide
-              </span>
-              <span className="text-slate-900 dark:text-white">{fmtTime(e.time, tz)}</span>
-              <span className="w-12 text-right text-slate-600 dark:text-slate-400">{e.heightFt} ft</span>
-            </li>
-          ))}
+          <TideCrossSection events={events} trend={tides.data?.trend} tz={tz} />
+          {/* Secondary/compact — the cross-section above is the primary read;
+              this list is the precise backup (exact times + heights). */}
+          <ul className="mt-2 space-y-1 border-t border-slate-900/10 pt-2 dark:border-white/10">
+            {events.map((e, i) => (
+              <li key={i} className="flex items-center justify-between text-xs">
+                <span className="capitalize text-slate-600 dark:text-slate-400">
+                  {e.type === "high" ? "High" : "Low"} tide
+                </span>
+                <span className="text-slate-700 dark:text-slate-300">{fmtTime(e.time, tz)}</span>
+                <span className="w-10 text-right text-slate-500 dark:text-slate-500">{e.heightFt} ft</span>
+              </li>
+            ))}
           </ul>
         </>
       )}

@@ -36,9 +36,16 @@
   to { transform: translateX(0); }
 }
 
+/* Gentle glow pulse on the SunArc's sun dot — decorative only, the dot's
+   POSITION carries the real information, so this never moves it. */
+@keyframes sunglow {
+  0%, 100% { opacity: 0.65; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.12); }
+}
+
 /* Honor the OS "reduce motion" setting: kill the wind spinner/wobble, gauge,
-   compass, wave card, and pull-to-refresh animations for users who opt out.
-   Keyframes are kept intact above so motion-tolerant users still get them. */
+   compass, wave card, pull-to-refresh, and sun-glow animations for users who
+   opt out. Keyframes are kept intact above so motion-tolerant users still get them. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -67,4 +74,20 @@ body {
     radial-gradient(900px 450px at 50% -16%, rgba(251, 191, 36, 0.07), transparent 55%),
     radial-gradient(1200px 600px at 50% -10%, rgba(27, 133, 245, 0.18), transparent 60%),
     #020617;
+}
+
+/* Gentle pulse on LightningRadar's nearest-strike marker — a deliberately
+   soft "here's the last known position" cue, not a live sweep, so it doesn't
+   imply scanning we aren't doing. Covered by the reduced-motion rule above. */
+@keyframes lightningpulse {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.25); }
+}
+
+/* UvCard's sun-ray glow gently breathes; the card sets a faster inline
+   animation-duration for higher UV readings so the pulse itself reads as more
+   "intense". Covered by the reduced-motion rule above. */
+@keyframes sunraypulse {
+  0%, 100% { opacity: 0.82; }
+  50% { opacity: 1; }
 }
