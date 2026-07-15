@@ -119,6 +119,62 @@ export function consensusCloudPct(s: ConditionsSnapshot): number | undefined {
   );
 }
 
+/**
+ * Satellite-OBSERVED cloud cover right now (NOAA GOES-19 Clear Sky Mask,
+ * OVERHEAD box), when the feed is fresh and carries a valid reading for this
+ * beach.
+ *
+ * 2026-07-15 CALIBRATION NOTE: Open-Meteo's forecast cloud field read 11-24%
+ * (701-821 W/m2 "clear sky" solar) while the Boca beach sat under a real
+ * thunderstorm anvil — genuinely ~95-100% overcast. consensusCloudPct is a
+ * median of FORECAST models, so it inherited that same ~70-point miss; the
+ * sand-temp overcast damping in lib/sandTemp.ts never fired because its
+ * cloud INPUT was wrong, not because the damping curve itself was wrong (see
+ * that file's calibration log). This is one fix: an actual satellite
+ * observation of the sky, independent of any forecast model's guess. See
+ * satelliteBeamCloudPct below for the further 2026-07-15 refinement (beam-
+ * path, not overhead, cloud) that the sand model now prefers over this.
+ *
+ * Returns undefined when the feed is stale/missing/invalid — see
+ * GOES_CLOUD_STALE_MINUTES in lib/sources/goesCloud.ts for why "stale" has to
+ * be a fairly generous window (the feed itself gaps by 80+ minutes at times).
+ * Callers fall back to consensusCloudPct exactly as before in that case.
+ */
+export function satelliteCloudPct(s: ConditionsSnapshot): number | undefined {
+  const g = s.goesCloud;
+  if (g.status !== "ok" || g.data?.cloudPct == null) return undefined;
+  return g.data.cloudPct;
+}
+
+/**
+ * Satellite-OBSERVED cloud cover along the DIRECT SOLAR BEAM path (NOAA
+ * GOES-19 Clear Sky Mask, offset boxes stepped toward the sun — see
+ * scripts/goes_cloud.py's beam_cloud_pct()), when the feed is fresh and
+ * carries a valid beam reading for this beach.
+ *
+ * 2026-07-15 CONFIRMED FINDING: the overhead box (satelliteCloudPct) reads
+ * "is the sky grey above the beach", but dry-sand heating is driven by the
+ * DIRECT BEAM, which at low sun angle travels through air kilometres toward
+ * the sun before reaching the ground. The archived 20:16Z granule for Boca
+ * proved this directly: overhead read 31% cloud while boxes stepped along
+ * the solar azimuth read 58% at 3 km, 71% at 6 km, 86% at 10 km, 85-100% at
+ * 15-30 km — the beam was blocked by cloud the overhead box never saw. See
+ * lib/sandTemp.ts's 2026-07-15 calibration note (candidate (c), now
+ * CONFIRMED) for the full writeup and the resolved morning-vs-afternoon
+ * asymmetry.
+ *
+ * Returns undefined when the feed is stale/missing, this beach's beam
+ * reading is null (old-format feed, sun below ~5° elevation, or too few
+ * offset-box pixels — never fabricated upstream), or beamCloudPct is
+ * entirely absent (pre-beam-path cached feed). Callers should fall back to
+ * satelliteCloudPct (overhead), then consensusCloudPct, in that order.
+ */
+export function satelliteBeamCloudPct(s: ConditionsSnapshot): number | undefined {
+  const g = s.goesCloud;
+  if (g.status !== "ok" || g.data?.beamCloudPct == null) return undefined;
+  return g.data.beamCloudPct;
+}
+
 export function deriveMetrics(s: ConditionsSnapshot): Derived {
   const w = s.weather.data;
   const b = s.buoy.data;
@@ -188,10 +244,22 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     sargassumLevel: s.sargassum.data?.level,
     sargassumCoveragePct: s.sargassum.data?.coveragePct,
     crowdPct: s.busyness.data?.crowdPct ?? crowdLevelPct(s.busyness.data?.level),
-    // Sand "now" uses the consensus cloud (same as the Sky card) — see
-    // consensusCloudPct. The overcast damping must not hinge on one model's hour.
+    // Sand "now" prefers the satellite BEAM-PATH observation (fresh + valid),
+    // then the satellite OVERHEAD observation (fresh + valid), then the
+    // forecast consensus (same as the Sky card) — see satelliteBeamCloudPct's
+    // 2026-07-15 CONFIRMED-finding note above for why beam-path outranks
+    // overhead: at low sun angle the cloud that actually blocks the beam
+    // heating the sand can sit kilometres away from an overhead reading of
+    // "clear". This is deliberately surgical: it only changes sandCloudPct
+    // (the sand model's input), NOT the shared `cloudCoverPct` above, so the
+    // Sky sub-score, its display, and the rain-corroboration gate are
+    // untouched.
     sandTempF: s.hourly.data
-      ? currentSandTempF(s.hourly.data, Date.now(), { cloudCoverPct })
+      ? currentSandTempF(s.hourly.data, Date.now(), {
+          cloudCoverPct: satelliteBeamCloudPct(s) ?? satelliteCloudPct(s) ?? cloudCoverPct,
+          // Beam-path readings damp from 50% (sustained blockage), not 70%.
+          cloudIsBeamPath: satelliteBeamCloudPct(s) != null,
+        })
       : undefined,
     humidityPct,
     dewPointF:

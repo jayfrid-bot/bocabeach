@@ -165,6 +165,7 @@ export function ConditionsDashboard({
     snap.metno,
     snap.gfs,
     snap.lightning,
+    snap.goesCloud,
     snap.sargassum,
     snap.busyness,
     snap.traffic,

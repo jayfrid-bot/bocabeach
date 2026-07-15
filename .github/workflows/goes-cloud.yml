@@ -1,0 +1,67 @@
+name: GOES Cloud Feed
+
+# Builds a small goes_cloud.json of SATELLITE-OBSERVED cloud cover per beach
+# (NOAA GOES-19 ABI Clear Sky Mask) and publishes it to the `cloud-data`
+# branch (NOT main), mirroring lightning.yml — the netCDF/pixel work runs here
+# on free public-repo Actions minutes and never touches the Netlify build/bill.
+# The web app reads the published file via raw.githubusercontent.com
+# (lib/sources/goesCloud.ts).
+#
+# Unlike lightning.yml, this does NOT need a long-lived in-run loop: GLM's
+# near-real-time safety case (get-out-of-the-water alerts) needs to bridge
+# GitHub's sporadic cron with a ~1-min republish loop. Cloud cover changes on
+# a ~5-minute scale (the ACMC product's own cadence), so a plain ~15-min cron
+# plus workflow_dispatch is plenty — no loop required.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  push:
+    branches: [main]
+    paths: [".github/workflows/goes-cloud.yml", "scripts/goes_cloud.py"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: goes-cloud
+  cancel-in-progress: true
+
+jobs:
+  build-feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout (for the script + beach config)
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install --quiet --disable-pip-version-check h5py numpy
+
+      - name: Build the feed
+        env:
+          GOES_OUT: ${{ runner.temp }}/goes_cloud.json
+        run: python scripts/goes_cloud.py
+
+      - name: Publish to cloud-data branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          work="${RUNNER_TEMP}/pub"
+          rm -rf "$work"; mkdir -p "$work"
+          cp "${RUNNER_TEMP}/goes_cloud.json" "$work/goes_cloud.json"
+          cd "$work"
+          git init -q
+          git config user.name "goes-cloud-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -q -b cloud-data
+          git add goes_cloud.json
+          git commit -q -m "GOES-19 cloud feed $(date -u +%FT%TZ)"
+          # Force-push a single-commit orphan branch so history never grows.
+          git push -f "$remote" cloud-data

@@ -28,6 +28,72 @@ const FULL_SUN_WM2 = 1000;
  *    (model said 139 vs midpoint 137.5. Across all six sessions the mean error is
  *    +0.6°F and the average miss ~1.6°F — smaller than the spot-to-spot spread of
  *    the readings themselves. Calibration confirmed; do not chase single hot spots.)
+ *  - 2026-07-15 LATE-AFTERNOON MISS — the model's biggest error, RESOLVED (see below).
+ *    Two readings, same afternoon, dry sand, no rain all day:
+ *      ~4:15 PM: soil 104°F, 821 W/m², 7 mph, 11% cloud (forecast) → model ~135°F,
+ *                MEASURED 110-115°F  (miss +22)
+ *      ~5:30 PM: soil 100°F, 701 W/m², 7 mph, 24% cloud (forecast) → model 133°F,
+ *                MEASURED 100°F      (miss +33 — sand at EXACTLY ground temp, boost 0)
+ *    Working theory was "the forecast cloud lied; a storm anvil (~95-100%) sat over
+ *    the beach and the overcast damping never fired". That theory looked NOT
+ *    SUPPORTED at first: the GOES-19 Clear Sky Mask (satellite-OBSERVED, see
+ *    lib/sources/goesCloud.ts) read only ~31% cloud over Boca's 14 km box, CENTERED
+ *    ON THE BEACH, at 20:16Z — broken/scattered, which per the 6/23 point below
+ *    should still let full beam through and run the sand hot. So overhead cloud
+ *    truth did NOT account for the afternoon error — but "overhead" was the wrong
+ *    question to ask.
+ *
+ *    The unresolved contradiction, as it stood before the fix:
+ *      6/23  9:54 AM, 380 W/m², 63% broken cloud, sun elev ~43° → boost +33 (MEASURED)
+ *      7/15  5:30 PM, 701 W/m², ~31% cloud (sat, overhead), sun elev ~35° → boost 0 (MEASURED)
+ *    HALF the solar and MORE cloud in the morning produced a +33 boost; nearly double
+ *    the solar in the late afternoon produced nothing. No function of GHI or of sun
+ *    elevation alone fit both — the discriminator looked like morning-vs-afternoon
+ *    itself, which is physically backwards (sand should carry the day's accumulated
+ *    heat INTO the afternoon).
+ *
+ *    Candidate (c) is now CONFIRMED by direct measurement. Sampling the SAME 20:16Z
+ *    granule in 7x7 boxes stepped along the sun's true bearing (az 272°, el 51.1°)
+ *    instead of centered on the beach: overhead read 31% cloud, but the SUNWARD
+ *    gradient read 58% at 3 km, 71% at 6 km, 86% at 10 km, and 85-100% at 15-30 km —
+ *    while the ANTI-sun direction (out over the ocean) read 17%/4%/0%, i.e.
+ *    genuinely clear. The direct beam that heats the sand was blocked by real cloud
+ *    kilometres WEST of the beach, invisible to a box centered on the beach itself.
+ *    An overhead cloud fraction is simply the wrong input once the sun is low enough
+ *    that "toward the sun" and "overhead" are different patches of sky.
+ *
+ *    This also RESOLVES the morning-vs-afternoon asymmetry above: Boca's beach faces
+ *    EAST. A morning sun's beam path runs back out over the (usually clear) OCEAN;
+ *    a late-afternoon sun's beam path runs back over the (often convective, cloud-
+ *    building) LAND. So the same overhead cloud reading means something different
+ *    depending on time of day — morning beam-path cloud is typically LESS than
+ *    overhead, afternoon beam-path cloud can be dramatically MORE, exactly the
+ *    directional bias the 6/23-vs-7/15 comparison exposed.
+ *
+ *    THE FIX: scripts/goes_cloud.py now computes beamCloudPct per beach — cloud
+ *    fraction sampled along the solar azimuth at several altitude slots, combined as
+ *    max(overhead, mean(offset boxes)) — and lib/score.ts's sand-model input prefers
+ *    it (fresh + valid) over the overhead satelliteCloudPct, which in turn is
+ *    preferred over the forecast consensus. See satelliteBeamCloudPct in score.ts
+ *    and beam_cloud_pct() in goes_cloud.py for the full mechanics/estimator choice.
+ *
+ *    Candidates (a) [measurement-spot drift], (b) [building shading], and (d) [sqrt
+ *    curve too flat] remain POSSIBLE SECONDARY contributors — (c) explains a very
+ *    large fraction of the miss but wasn't isolated from the others with controlled
+ *    measurements. The clear-afternoon field experiment described below (dune-sand
+ *    readings on a VERIFIABLY CLEAR afternoon at ~4 PM and ~6 PM, same spot, noting
+ *    building shadow) is still the way to separate any residual (a)/(b)/(d) signal
+ *    from (c) now that (c) is confirmed and fixed at the input level.
+ *
+ *    DO NOT retune MAX_SUN_BOOST_F or the sqrt curve on this evidence: every point
+ *    from 9:54 AM-2:20 PM is accurate to ~1.6°F, the fix above corrects the cloud
+ *    INPUT rather than the transfer function, and a still-open (a)/(b)/(d) question
+ *    can't justify breaking six good calibration points on top of that. Re-run this
+ *    same 7/15 afternoon with beamCloudPct wired in before concluding whether any
+ *    curve retune is still warranted.
+ *
+ *    Note the error direction is at least the SAFE one: the app over-reports heat, so
+ *    it warns about burns that aren't there rather than missing burns that are.
  */
 const MAX_SUN_BOOST_F = 55;
 /**
@@ -42,6 +108,21 @@ const MAX_SUN_BOOST_F = 55;
  */
 const OVERCAST_START_PCT = 70;
 const OVERCAST_MAX_DAMP = 0.9;
+/**
+ * PROVISIONAL (n=1 afternoon — recalibrate with the next field session): where
+ * damping starts for a BEAM-PATH cloud reading (satelliteBeamCloudPct). The 70%
+ * overhead threshold encodes "broken clouds drift past overhead and full beam
+ * pours through the gaps most of the time" — but a beam-path fraction measured
+ * TOWARD a low sun means a standing wall between the sun and the sand, i.e.
+ * sustained blockage, not intermittent shadowing. The motivating case makes the
+ * difference concrete: 2026-07-15 4:15 PM read beamCloudPct 69 — one point
+ * UNDER the overhead threshold, zero damping, model ~135°F vs 110-115°F
+ * measured. Starting the same 1.5-power ramp at 50% instead puts that reading
+ * at ~128°F (damp ≈ 0.21) — directionally right while deliberately
+ * conservative, because the beam estimator itself (mean of altitude-slot boxes)
+ * likely under-reads a top-heavy anvil (the 9-12 km slots read 84-86%).
+ */
+const BEAM_OVERCAST_START_PCT = 50;
 /**
  * The wet/firm sand by the surf runs much cooler than the dry dune sand — a
  * ~11°F surf-to-dunes spread measured at Boca (2026-06-23: 113°F surf → 124°F
@@ -60,6 +141,13 @@ export interface SandTempInput {
   recentRainIn?: number;
   /** Cloud cover (0-100%) — solid overcast collapses the dry-sand boost. */
   cloudCoverPct?: number;
+  /**
+   * True when cloudCoverPct is a BEAM-PATH reading (sampled toward the sun,
+   * satelliteBeamCloudPct) rather than an overhead/forecast fraction. Beam-path
+   * cloud means sustained beam blockage, so damping starts earlier
+   * (BEAM_OVERCAST_START_PCT vs OVERCAST_START_PCT).
+   */
+  cloudIsBeamPath?: boolean;
 }
 
 /** The sun/wind/rain boost (°F) dry sand carries above the modeled ground. */
@@ -86,8 +174,12 @@ function sandBoostF(input: SandTempInput): number | undefined {
   // then a steep ramp to OVERCAST_MAX_DAMP at a 100% grey deck (7/06: 96°F
   // measured vs ~121°F undamped). Unknown cloud cover → no damping.
   const cloud = Math.min(100, Math.max(0, cloudCoverPct ?? 0));
-  if (cloud > OVERCAST_START_PCT) {
-    const f = (cloud - OVERCAST_START_PCT) / (100 - OVERCAST_START_PCT);
+  // A beam-path reading ramps from 50% (a wall toward the sun blocks
+  // continuously); an overhead/forecast reading keeps the calibrated 70%
+  // (broken cloud passes full beam through the gaps). Same ramp shape + max.
+  const dampStart = input.cloudIsBeamPath ? BEAM_OVERCAST_START_PCT : OVERCAST_START_PCT;
+  if (cloud > dampStart) {
+    const f = (cloud - dampStart) / (100 - dampStart);
     boost *= 1 - OVERCAST_MAX_DAMP * Math.pow(f, 1.5);
   }
 
@@ -170,6 +262,8 @@ export type SandHour = {
  */
 export interface SandNowOverride {
   cloudCoverPct?: number;
+  /** The override is a beam-path (toward-the-sun) reading — earlier damping. */
+  cloudIsBeamPath?: boolean;
 }
 
 function currentSandInput(
@@ -208,6 +302,8 @@ function currentSandInput(
     windSpeedMph: h.windSpeedMph,
     recentRainIn,
     cloudCoverPct: override?.cloudCoverPct ?? h.cloudCoverPct,
+    // Only meaningful when the cloud value itself came from the override.
+    cloudIsBeamPath: override?.cloudCoverPct != null ? override?.cloudIsBeamPath : undefined,
   };
 }
 
