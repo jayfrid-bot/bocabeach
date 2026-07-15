@@ -1016,6 +1016,50 @@ describe("computeMultiDayWindows", () => {
     expect(future.peakScore!).toBeGreaterThan(70);
   });
 
+  it("carries a peakBreakdown whose score matches the day's own peakScore, with non-empty consistent-weight subScores", () => {
+    const days = computeMultiDayWindows(s, now);
+    for (const d of days) {
+      expect(d.peakBreakdown).toBeDefined();
+      const b = d.peakBreakdown!;
+      // The breakdown is computed on computeMultiDayWindows's own output — not
+      // any later anchor bump applied elsewhere (lib/conditions.ts) — so it must
+      // agree with this function's own peakScore.
+      expect(b.score).toBe(d.peakScore);
+      expect(b.rating).toBeTruthy();
+      expect(b.subScores.length).toBeGreaterThan(0);
+      // Weights are the same fixed set scoreBeachDay always assigns.
+      const totalWeight = b.subScores.reduce((a, x) => a + x.weight, 0);
+      expect(totalWeight).toBeCloseTo(1, 5);
+      for (const sc of b.subScores) {
+        expect(sc.weight).toBeGreaterThan(0);
+        expect(typeof sc.label).toBe("string");
+      }
+      expect(Array.isArray(b.caps)).toBe(true);
+      expect(typeof b.time).toBe("string");
+    }
+  });
+
+  it("future days exclude today-only seaweed signal from the breakdown (unknown, not carried forward)", () => {
+    const withSignals = snapshot({
+      ...niceBase,
+      city: { flags: ["green"] },
+      hourly: hourly72(),
+      sun: SUN,
+      sargassum: { level: "low", coveragePct: 10, isMorning: true, cams: [] },
+    });
+    const days = computeMultiDayWindows(withSignals, now);
+    const today = days[0];
+    expect(today.dow).toBe("Today");
+    const todaySeaweed = today.peakBreakdown!.subScores.find((x) => x.key === "sargassum");
+    expect(todaySeaweed?.score).not.toBeNull(); // today knows the seaweed read
+
+    const future = days.find((d) => d.dow !== "Today")!;
+    const futureSeaweed = future.peakBreakdown!.subScores.find((x) => x.key === "sargassum");
+    // Future days score with today-only seaweed unknown (excluded from the
+    // average, not carried forward) — the sub-score is present but null.
+    expect(futureSeaweed?.score).toBeNull();
+  });
+
   it("respects maxDays and returns [] with no hourly data", () => {
     expect(computeMultiDayWindows(s, now, 1).length).toBe(1);
     expect(computeMultiDayWindows(snapshot({ ...niceBase, sun: SUN }), now)).toEqual([]);

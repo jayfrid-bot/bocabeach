@@ -687,17 +687,43 @@ const HOUR_MS = 3_600_000;
  * never retroactively rewrites the morning. Current and future hours use the
  * latest read. `nowMs` is injectable for tests.
  */
+/** One fully-scored hour: the compact `HourlyScore` plus the full breakdown
+ *  (sub-scores + caps) that produced it, for callers that need more than the
+ *  chart curve (e.g. the outlook strip's per-day "anticipated scoring"). */
+interface FullHourlyScore {
+  time: string;
+  result: ScoreResult;
+  emoji: string;
+  raining: boolean;
+  windSpeedMph?: number;
+  windDirDeg?: number;
+}
+
+function toHourlyScore(h: FullHourlyScore): HourlyScore {
+  return {
+    time: h.time,
+    score: h.result.score,
+    rating: h.result.rating,
+    emoji: h.emoji,
+    raining: h.raining,
+    windSpeedMph: h.windSpeedMph,
+    windDirDeg: h.windDirDeg,
+  };
+}
+
 /**
  * Score EVERY fetched hourly bucket (no daylight filter), reusing day-constant
  * inputs from the snapshot. Shared by `computeHourlyScores` (today's daylight
  * chart) and `computeMultiDayWindows` (the multi-day best-times forecast).
  * Observed-"now" signals (nowcast rain, fresh lightning) are applied ONLY to the
- * bucket containing `nowMs`, so future days never inherit them.
+ * bucket containing `nowMs`, so future days never inherit them. Returns the
+ * FULL per-hour breakdown (sub-scores + caps); `scoreAllHours` below projects
+ * it down to the compact `HourlyScore` shape used by the chart curve.
  */
-function scoreAllHours(
+function scoreAllHoursFull(
   s: ConditionsSnapshot,
   nowMs: number = Date.now(),
-): HourlyScore[] {
+): FullHourlyScore[] {
   const hours = s.hourly.data;
   if (!hours?.length) return [];
 
@@ -833,14 +859,19 @@ function scoreAllHours(
           : (h.emoji ?? "");
       return {
         time: h.time,
-        score: r.score,
-        rating: r.rating,
+        result: r,
         emoji,
         raining,
         windSpeedMph: h.windSpeedMph,
         windDirDeg: h.windDirDeg,
       };
     });
+}
+
+/** Compact-scores projection of `scoreAllHoursFull`, for callers (the hourly
+ *  chart) that only need the curve, not the per-hour breakdown. */
+function scoreAllHours(s: ConditionsSnapshot, nowMs: number = Date.now()): HourlyScore[] {
+  return scoreAllHoursFull(s, nowMs).map(toHourlyScore);
 }
 
 /**
@@ -916,8 +947,12 @@ export function computeMultiDayWindows(
   nowMs: number = Date.now(),
   maxDays = 7,
 ): DayWindow[] {
-  const scored = scoreAllHours(s, nowMs);
-  if (!scored.length) return [];
+  const scoredFull = scoreAllHoursFull(s, nowMs);
+  if (!scoredFull.length) return [];
+  const scored = scoredFull.map(toHourlyScore);
+  // Full breakdown per hour, keyed by time, so the day's peak hour can carry its
+  // sub-scores/caps into `peakBreakdown` alongside the compact score curve above.
+  const fullByTime = new Map<string, FullHourlyScore>(scoredFull.map((h) => [h.time, h]));
   const tz = s.location.timezone;
 
   // Daylight bounds as LOCAL hours from today's sun (reused for every day).
@@ -970,12 +1005,34 @@ export function computeMultiDayWindows(
         midDist = dist;
       }
     }
+    // The day's "peak hour" for the breakdown panel: the highest-scoring hour
+    // within the displayed best window (so the breakdown matches what's shown),
+    // or across the whole day when there's no window. First hour wins ties, to
+    // match the Math.max()/bestPeak conventions above.
+    const rangeStartMs = best ? new Date(best.startIso).getTime() : -Infinity;
+    const rangeEndMs = best ? new Date(best.endIso).getTime() : Infinity;
+    let peakHour: HourlyScore | undefined;
+    for (const h of dayHours) {
+      const t = new Date(h.time).getTime();
+      if (t < rangeStartMs || t >= rangeEndMs) continue;
+      if (!peakHour || h.score > peakHour.score) peakHour = h;
+    }
+    const peakFull = peakHour ? fullByTime.get(peakHour.time) : undefined;
     out.push({
       date: key,
       dow: isToday ? "Today" : dowFmt.format(new Date(dayHours[0].time)),
       best,
       peakScore: peak,
       emoji: mid.emoji,
+      peakBreakdown: peakFull
+        ? {
+            time: peakFull.time,
+            score: peakFull.result.score,
+            rating: peakFull.result.rating,
+            subScores: peakFull.result.subScores,
+            caps: peakFull.result.caps,
+          }
+        : undefined,
     });
   }
   return out;

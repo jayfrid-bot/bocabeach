@@ -1,15 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 import useSWR from "swr";
 import type { ConditionsResponse } from "@/lib/types";
 import { consensusCloudPct, currentHourOf, deriveMetrics } from "@/lib/score";
 import { computeStormActivity } from "@/lib/stormActivity";
-import { beachDayVerdict, fmtDate, fmtTime, scoreColor, scoreTextClass, seaState } from "@/lib/format";
+import { beachDayVerdict, fmtDate, fmtTime, scoreTextClass } from "@/lib/format";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { ScoreGauge } from "@/components/ScoreGauge";
 import { ScoreExplainer } from "@/components/ScoreExplainer";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { ScoreWheel } from "@/components/ScoreWheel";
@@ -26,12 +25,12 @@ import {
 } from "@/components/HistoryCharts";
 import { MetricCard } from "@/components/MetricCard";
 import { WindCompass } from "@/components/WindCompass";
+import { WaveHeightCard } from "@/components/WaveHeightCard";
 import { TidePanel } from "@/components/TidePanel";
 import { SunPanel } from "@/components/SunPanel";
 import { MoonPanel } from "@/components/MoonPanel";
 import { SafetyBanner } from "@/components/SafetyBanner";
 import { SandTempPanel } from "@/components/SandTempPanel";
-import { currentSandRangeF, sandVerdict } from "@/lib/sandTemp";
 import { SourceList } from "@/components/SourceBadge";
 import { CamGrid } from "@/components/CamGrid";
 import { DayOutlookStrip } from "@/components/DayOutlookStrip";
@@ -117,22 +116,10 @@ export function ConditionsDashboard({
   const rip = snap.nws.data?.ripCurrentRisk;
   const nc = snap.nowcast.data;
 
-  // Post-mount wall clock. Read INSIDE the effect (never during render) so SSR
-  // and the first client render agree (nowMs === null → full day, no filter).
-  // Ticks each minute so time-sensitive readouts (best window, sand temp) stay
-  // current — and the sand card stays in lockstep with SandTempPanel's clock.
-  const [nowMs, setNowMs] = useState<number | null>(null);
-  useEffect(() => {
-    setNowMs(Date.now());
-    const id = setInterval(() => setNowMs(Date.now()), 60_000);
-    return () => clearInterval(id);
-  }, []);
   // "Best window today" pill — reuse the server-computed Today window from
   // multiDayWindows[0] so the pill and the Best-times strip always show the SAME
   // window (a client recompute used different daylight bounds + a different clock).
   const bw = res.multiDayWindows?.[0]?.best ?? null;
-  // Current sand range from the shared helper (same hour bucket as the score +
-  // the SandTempPanel). Null until mounted, so SSR/first render show "—".
   // "Now" cloud is the multi-source consensus (the Sky card's number) — a single
   // model's hourly cloud flip-flops and mis-drives the overcast damping.
   const nowCloudPct = consensusCloudPct(snap);
@@ -145,10 +132,6 @@ export function ConditionsDashboard({
     weatherCode: currentHour?.weatherCode,
     precipProbability: currentHour?.precipProbability,
   });
-  const sandRange =
-    nowMs != null
-      ? currentSandRangeF(snap.hourly.data ?? [], nowMs, { cloudCoverPct: nowCloudPct })
-      : null;
 
   // Single, stable handler shared by pull-to-refresh and the visible button.
   const onRefresh = useCallback(() => mutate(), [mutate]);
@@ -236,60 +219,6 @@ export function ConditionsDashboard({
         />
       </div>
 
-      {/* The verdict + gauge stand alone (the interactive ScoreWheel below carries
-          the factor-by-factor detail that the old breakdown bars duplicated). */}
-      <section className="mb-6">
-        <div className="mx-auto flex w-full max-w-md flex-col items-center gap-4 rounded-2xl bg-white/80 dark:bg-slate-900/70 p-6 ring-1 ring-slate-900/10 dark:ring-white/10">
-          {active.dataAvailable === false ? (
-            // Total data outage: every sub-score was unavailable, so a confident
-            // 0 / "Not really" would be misleading. Say so plainly instead.
-            <div className="flex flex-col items-center gap-2 py-8 text-center">
-              <span aria-hidden className="text-3xl">
-                📡
-              </span>
-              <div className="text-xl font-bold text-slate-900 dark:text-white">
-                Conditions unavailable
-              </div>
-              <div className="text-sm text-slate-600 dark:text-slate-400">
-                We could not reach the data sources right now. Try refreshing in
-                a few minutes.
-              </div>
-            </div>
-          ) : (
-            <>
-              {/* Verdict word is the headline; the gauge number supports it. */}
-              <div
-                className={`text-3xl font-bold ${scoreTextClass(active.score)}`}
-              >
-                {beachDayVerdict(active.score)}
-              </div>
-              <ScoreGauge
-                score={active.score}
-                rating={active.rating}
-                label="Beach Day score"
-                accent={scoreColor(active.score)}
-              />
-              {ratings &&
-              (ratings.swimmingRating ||
-                ratings.surfingRating ||
-                ratings.snorkelingRating) ? (
-                <div className="text-center text-xs text-slate-600 dark:text-slate-400">
-                  Lifeguard rating:{" "}
-                  {[
-                    ratings.swimmingRating && `swim ${ratings.swimmingRating}`,
-                    ratings.snorkelingRating &&
-                      `snorkel ${ratings.snorkelingRating}`,
-                    ratings.surfingRating && `surf ${ratings.surfingRating}`,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </div>
-              ) : null}
-            </>
-          )}
-        </div>
-      </section>
-
       <section className="mb-6">
         <ScoreExplainer derived={d} result={active} />
       </section>
@@ -311,10 +240,51 @@ export function ConditionsDashboard({
         </section>
       ) : null}
 
-      {/* The hourly line graph was replaced by the interactive factor wheel —
-          hour-by-hour timing lives on in the Best-times strip below. */}
+      {/* Single score area: verdict headline, the interactive factor wheel (the
+          hourly line graph it replaced lives on in the Best-times strip below),
+          then the lifeguard rating line. */}
       <section className="mb-6">
-        <ScoreWheel result={active} />
+        {active.dataAvailable === false ? (
+          // Total data outage: every sub-score was unavailable, so a confident
+          // 0 / "Not really" would be misleading. Say so plainly instead.
+          <div className="mx-auto flex w-full max-w-md flex-col items-center gap-2 rounded-2xl bg-white/80 dark:bg-slate-900/70 p-6 text-center ring-1 ring-slate-900/10 dark:ring-white/10">
+            <span aria-hidden className="text-3xl">
+              📡
+            </span>
+            <div className="text-xl font-bold text-slate-900 dark:text-white">
+              Conditions unavailable
+            </div>
+            <div className="text-sm text-slate-600 dark:text-slate-400">
+              We could not reach the data sources right now. Try refreshing in a
+              few minutes.
+            </div>
+          </div>
+        ) : (
+          <>
+            <div
+              className={`mb-2 text-center text-3xl font-bold ${scoreTextClass(active.score)}`}
+            >
+              {beachDayVerdict(active.score)}
+            </div>
+            <ScoreWheel result={active} />
+            {ratings &&
+            (ratings.swimmingRating ||
+              ratings.surfingRating ||
+              ratings.snorkelingRating) ? (
+              <div className="mt-3 text-center text-xs text-slate-600 dark:text-slate-400">
+                Lifeguard rating:{" "}
+                {[
+                  ratings.swimmingRating && `swim ${ratings.swimmingRating}`,
+                  ratings.snorkelingRating &&
+                    `snorkel ${ratings.snorkelingRating}`,
+                  ratings.surfingRating && `surf ${ratings.surfingRating}`,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </div>
+            ) : null}
+          </>
+        )}
       </section>
 
       {res.multiDayWindows?.length || snap.forecast.data?.length ? (
@@ -328,14 +298,20 @@ export function ConditionsDashboard({
       </h2>
 
       <section className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <div className="col-span-2 rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10 sm:col-span-1">
-          <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-            <span aria-hidden>💨</span>
-            <span>Wind</span>
+        {/* Wind + the animated wave card share one grid cell (stacked) so the
+            wave card sits directly under the wider wind box with no orphan
+            gap in the row next to it. */}
+        <div className="col-span-2 flex flex-col gap-3 sm:col-span-2">
+          <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
+            <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+              <span aria-hidden>💨</span>
+              <span>Wind</span>
+            </div>
+            <div className="mt-2">
+              <WindCompass fromDeg={d.windDirDeg} speedMph={d.windSpeedMph} />
+            </div>
           </div>
-          <div className="mt-2">
-            <WindCompass fromDeg={d.windDirDeg} speedMph={d.windSpeedMph} />
-          </div>
+          <WaveHeightCard waveHeightFt={d.waveHeightFt} />
         </div>
         <MetricCard
           icon="🌡️"
@@ -362,18 +338,6 @@ export function ConditionsDashboard({
           sub={d.dewPointF != null ? dewComfort(d.dewPointF) : "not available"}
         />
         <MetricCard
-          icon="〰️"
-          label="Sea state"
-          value={
-            d.waveHeightFt != null
-              ? `${d.waveHeightFt} ft · ${seaState(d.waveHeightFt).label}`
-              : "—"
-          }
-          sub={
-            d.waveHeightFt != null ? seaState(d.waveHeightFt).note : "not available"
-          }
-        />
-        <MetricCard
           icon="🔆"
           label="UV index"
           value={d.uvIndex != null ? `${d.uvIndex}` : "—"}
@@ -397,22 +361,6 @@ export function ConditionsDashboard({
                   ? "partly cloudy"
                   : "overcast"
               : "not available"
-          }
-        />
-        <MetricCard
-          icon="🦶"
-          label="Sand temp (est.)"
-          // Show the surf–dunes range from the SAME helper the SandTempPanel uses,
-          // so the two never disagree. Verdict tracks the dunes (hottest) end.
-          value={
-            sandRange
-              ? sandRange.surfF !== sandRange.dunesF
-                ? `~${sandRange.surfF}–${sandRange.dunesF}°F`
-                : `~${sandRange.dunesF}°F`
-              : "—"
-          }
-          sub={
-            sandRange ? sandVerdict(sandRange.dunesF).advice : "not available"
           }
         />
         <MetricCard

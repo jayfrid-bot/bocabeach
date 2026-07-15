@@ -23,9 +23,22 @@
   to { transform: rotate(var(--wobble, 0deg)); }
 }
 
+/* Seamless horizontal scroll for the WaveHeightCard's layered wave paths.
+   Each path is tiled twice (2x the viewBox width) and scrolls exactly one
+   viewBox width, landing on an identical frame so the loop has no seam.
+   `-rev` runs the opposite direction for a subtle cross-current parallax. */
+@keyframes wavescroll {
+  from { transform: translateX(0); }
+  to { transform: translateX(-400px); }
+}
+@keyframes wavescroll-rev {
+  from { transform: translateX(-400px); }
+  to { transform: translateX(0); }
+}
+
 /* Honor the OS "reduce motion" setting: kill the wind spinner/wobble, gauge,
-   compass, and pull-to-refresh animations for users who opt out. Keyframes are
-   kept intact above so motion-tolerant users still get them. */
+   compass, wave card, and pull-to-refresh animations for users who opt out.
+   Keyframes are kept intact above so motion-tolerant users still get them. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
