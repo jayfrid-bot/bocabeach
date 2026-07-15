@@ -102,21 +102,27 @@ export function radarBandCounts(
   };
 }
 
+/** Strike count at/above which a band's ring renders at full visual weight. */
+export const RADAR_BAND_DENSITY_CAP = 12;
+
 /**
- * Deterministic angles (deg, 0-360) to scatter up to `maxDots` density dots
- * within a band. Uses the golden angle (~137.5°) so successive dots spread
- * evenly around the ring without clustering, with no randomness — the same
- * count always produces the same angles, so SSR/client markup matches.
+ * Normalized 0-1 "how dense is this band" fraction from a strike count, used
+ * to scale a band annulus's opacity/color weight rather than plotting
+ * individual dots at synthetic positions.
  *
- * These dots represent a COUNT, not real strike positions (we only know the
- * true bearing of the single nearest strike) — deliberately kept small/faint
- * in the component so they read as texture/density, not as plotted events.
+ * We only know per-band COUNTS, not where within the band those strikes
+ * happened (only the single nearest strike's true bearing is known) — on a
+ * radar, a dot reads as a real plotted location, so scattering one dot per
+ * strike at a deterministic-but-fake angle invents spatial information a
+ * user could easily mistake for "strikes are to the NE" when we have no idea.
+ * This maps a count to one non-positional weight instead, which the caller
+ * uses to darken/thicken the band's ring — honest about what we actually
+ * know (a total), not what we don't (where).
+ *
+ * Saturates at `cap` so one huge outbreak doesn't render indistinguishably
+ * from a merely-large one.
  */
-export function radarBandDotAngles(count: number, maxDots = 12): number[] {
-  const n = Math.min(Math.max(0, Math.floor(count)), maxDots);
-  const angles: number[] = [];
-  for (let i = 0; i < n; i++) {
-    angles.push(round((i * 137.5) % 360, 1));
-  }
-  return angles;
+export function radarBandDensity(count: number, cap: number = RADAR_BAND_DENSITY_CAP): number {
+  if (!Number.isFinite(count) || count <= 0 || cap <= 0) return 0;
+  return clamp(count / cap, 0, 1);
 }

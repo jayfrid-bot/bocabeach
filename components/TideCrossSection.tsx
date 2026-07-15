@@ -20,8 +20,14 @@ const STEP = 10;
 // high in the frame). Kept as one straight line — a real beach profile has
 // bars and troughs, but a single honest slope reads instantly at a glance,
 // which is the point of this graphic.
-const SAND_BOTTOM_Y = 168; // terrain y at x=0
-const SAND_TOP_Y = 58; // terrain y at x=WIDTH
+//
+// Tuned to a steeper rise than a literal beach profile (58->30 top, 168->176
+// bottom) and a shoreline range pulled in from the deep-water corner
+// (0.12->0.2) so the low-tide waterline is a legible band rather than a
+// near-invisible sliver in the corner — the frame is cropped for legibility,
+// the interpolated waterline fraction itself is unchanged/honest.
+const SAND_BOTTOM_Y = 176; // terrain y at x=0
+const SAND_TOP_Y = 30; // terrain y at x=WIDTH
 const SAND_RISE = SAND_BOTTOM_Y - SAND_TOP_Y;
 const terrainY = (x: number) => SAND_BOTTOM_Y - (x / WIDTH) * SAND_RISE;
 const terrainX = (y: number) =>
@@ -31,8 +37,8 @@ const terrainX = (y: number) =>
 // tide in the current window — leaves a sliver of always-wet sand at the far
 // left (low tide) and a sliver of dry dune at the far right (high tide) so
 // the graphic never fills edge-to-edge.
-const SHORE_X_LOW = WIDTH * 0.12;
-const SHORE_X_HIGH = WIDTH * 0.8;
+const SHORE_X_LOW = WIDTH * 0.2;
+const SHORE_X_HIGH = WIDTH * 0.78;
 const SHORE_Y_LOW = terrainY(SHORE_X_LOW);
 const SHORE_Y_HIGH = terrainY(SHORE_X_HIGH);
 const waterlineY = (fraction: number) => SHORE_Y_LOW + fraction * (SHORE_Y_HIGH - SHORE_Y_LOW);
@@ -98,7 +104,6 @@ export function TideCrossSection({
   }
 
   const mounted = nowMs != null;
-  const trendLabel = trend === "rising" ? "Rising" : trend === "falling" ? "Falling" : null;
 
   return (
     <div className="relative mt-2 h-40 w-full overflow-hidden rounded-xl bg-sky-100 dark:bg-slate-950/50 sm:h-48">
@@ -142,7 +147,13 @@ export function TideCrossSection({
           />
         </g>
 
-        {/* next high/low tick on the dry slope */}
+        {/* Next high/low tick on the dry slope. This is the ONLY text label
+            drawn inside the SVG — the rising/falling trend is shown once,
+            in the card header above (TidePanel.tsx), not duplicated here,
+            which is what used to collide with this label at near-low tide
+            (both landed in the lower-left corner). The label's y is clamped
+            away from the top/bottom frame edges and it carries a stroke
+            halo so it stays legible over sky, sand, or water. */}
         {nextTick ? (
           <g>
             <line
@@ -157,34 +168,18 @@ export function TideCrossSection({
             />
             <text
               x={Math.min(WIDTH - 4, Math.max(4, nextTick.x))}
-              y={nextTick.y - 13}
-              textAnchor={nextTick.x > WIDTH - 60 ? "end" : "middle"}
+              y={Math.min(HEIGHT - 5, Math.max(11, nextTick.y - 13))}
+              textAnchor={nextTick.x > WIDTH - 60 ? "end" : nextTick.x < 60 ? "start" : "middle"}
               fontSize="11"
-              fontWeight={600}
-              fill="#0f172a"
-              className="dark:fill-white"
-            >
-              {nextTick.label}
-            </text>
-          </g>
-        ) : null}
-
-        {/* rising/falling indicator at the waterline */}
-        {trendLabel ? (
-          <g transform={`translate(${round2(Math.max(24, shoreX - 20))}, ${round2(waterY)})`}>
-            <text
-              x={0}
-              y={-8}
-              textAnchor="middle"
-              fontSize="12"
               fontWeight={700}
-              fill="#ffffff"
-              stroke="#0f172a"
+              fill="#0f172a"
+              stroke="#ffffff"
               strokeWidth={3}
               strokeLinejoin="round"
               paintOrder="stroke"
+              className="dark:fill-white dark:stroke-slate-950"
             >
-              {trend === "rising" ? "↑" : "↓"} {trendLabel}
+              {nextTick.label}
             </text>
           </g>
         ) : null}

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  RADAR_BAND_DENSITY_CAP,
   RADAR_MAX_MI,
   bearingDistanceToPoint,
   radarBandCounts,
-  radarBandDotAngles,
+  radarBandDensity,
   radarRadiusFraction,
 } from "@/lib/lightningRadar";
 
@@ -116,29 +117,33 @@ describe("radarBandCounts", () => {
   });
 });
 
-describe("radarBandDotAngles", () => {
-  it("returns one angle per strike up to the cap", () => {
-    expect(radarBandDotAngles(0)).toEqual([]);
-    expect(radarBandDotAngles(3)).toHaveLength(3);
-    expect(radarBandDotAngles(12)).toHaveLength(12);
+describe("radarBandDensity", () => {
+  it("is 0 for no strikes", () => {
+    expect(radarBandDensity(0)).toBe(0);
   });
 
-  it("caps the dot count so a huge outbreak doesn't render unbounded markup", () => {
-    expect(radarBandDotAngles(500)).toHaveLength(12);
-    expect(radarBandDotAngles(500, 5)).toHaveLength(5);
+  it("is 1 at and beyond the cap", () => {
+    expect(radarBandDensity(RADAR_BAND_DENSITY_CAP)).toBe(1);
+    expect(radarBandDensity(RADAR_BAND_DENSITY_CAP * 10)).toBe(1);
   });
 
-  it("is deterministic — same count always produces the same angles", () => {
-    expect(radarBandDotAngles(7)).toEqual(radarBandDotAngles(7));
+  it("scales proportionally below the cap", () => {
+    expect(radarBandDensity(RADAR_BAND_DENSITY_CAP / 2)).toBeCloseTo(0.5, 6);
+    expect(radarBandDensity(3, 12)).toBeCloseTo(0.25, 6);
   });
 
-  it("spreads dots using the golden angle rather than clustering", () => {
-    const angles = radarBandDotAngles(4);
-    expect(angles).toEqual([0, 137.5, 275, 52.5]);
+  it("is monotonic — more strikes never produce less density", () => {
+    expect(radarBandDensity(2)).toBeLessThan(radarBandDensity(5));
+    expect(radarBandDensity(5)).toBeLessThan(radarBandDensity(9));
   });
 
-  it("floors fractional counts and never returns a negative count of dots", () => {
-    expect(radarBandDotAngles(3.9)).toHaveLength(3);
-    expect(radarBandDotAngles(-4)).toEqual([]);
+  it("treats negative/non-finite counts as 0 rather than propagating garbage", () => {
+    expect(radarBandDensity(-4)).toBe(0);
+    expect(radarBandDensity(Number.NaN)).toBe(0);
+  });
+
+  it("respects a custom cap", () => {
+    expect(radarBandDensity(5, 5)).toBe(1);
+    expect(radarBandDensity(5, 10)).toBeCloseTo(0.5, 6);
   });
 });

@@ -61,9 +61,49 @@ export function clumpLayout(cells: number = CLUMP_CELLS): ClumpShape[] {
   });
 }
 
-/** How many of `cells` slots (from the left) are "covered" for a coverage %. */
+/** How many of `cells` slots are "covered" for a coverage %. */
 export function coverageToClumpCount(coveragePct: number, cells: number = CLUMP_CELLS): number {
   return Math.round((clamp(coveragePct, 0, 100) / 100) * cells);
+}
+
+/** Reverses the low `bits` bits of `value` — e.g. bitReverse(0b001, 3) === 0b100. */
+function bitReverse(value: number, bits: number): number {
+  let result = 0;
+  for (let b = 0; b < bits; b++) {
+    result = (result << 1) | ((value >> b) & 1);
+  }
+  return result;
+}
+
+/**
+ * Deterministic order in which cell indices "reveal" as coverage % rises —
+ * a bit-reversal (van der Corput-style) permutation, the same low-discrepancy
+ * technique progressive image formats use so that ANY prefix of the sequence
+ * is already spread roughly evenly across the full range, not clustered at
+ * one end. No randomness: same `cells` always yields the same order.
+ */
+export function clumpRevealOrder(cells: number = CLUMP_CELLS): number[] {
+  const bits = Math.max(1, Math.ceil(Math.log2(cells)));
+  return Array.from({ length: cells }, (_, i) => i)
+    .map((i) => ({ i, key: bitReverse(i, bits) }))
+    .sort((a, b) => a.key - b.key || a.i - b.i)
+    .map((e) => e.i);
+}
+
+/**
+ * Which cell indices are "covered" for a coverage % — spread across the
+ * FULL width at density proportional to the %, not packed into the leftmost
+ * X% of the strip. A left-packed fill visually reads as "the seaweed is on
+ * the left part of the beach," which a coverage % never claims — it means
+ * "this fraction of the beach is covered," with no information about where.
+ * Same count as `coverageToClumpCount` (so the perceived covered area still
+ * tracks the %), just spread via `clumpRevealOrder` instead of a left slice.
+ */
+export function coveredCellIndices(coveragePct: number, cells: number = CLUMP_CELLS): number[] {
+  const n = coverageToClumpCount(coveragePct, cells);
+  return clumpRevealOrder(cells)
+    .slice(0, n)
+    .sort((a, b) => a - b);
 }
 
 /**

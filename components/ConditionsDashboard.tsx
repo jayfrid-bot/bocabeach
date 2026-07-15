@@ -301,7 +301,12 @@ export function ConditionsDashboard({
         Explore the details
       </h2>
 
-      <section className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+      <section className="mb-6 grid grid-cols-2 items-start gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        {/* items-start above: default grid stretching makes every card in a
+            row match the row's tallest cell. SeaweedStrip/BusynessCard grew
+            tall graphic bodies, which was ballooning short neighbors like the
+            Water quality / Rip current risk cards into huge empty boxes.
+            items-start lets each card size to its own content instead. */}
         {/* Wind + the animated wave card share one grid cell (stacked) so the
             wave card sits directly under the wider wind box with no orphan
             gap in the row next to it. */}

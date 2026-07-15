@@ -6,7 +6,7 @@ import {
   RADAR_SAFETY_RING_MI,
   bearingDistanceToPoint,
   radarBandCounts,
-  radarBandDotAngles,
+  radarBandDensity,
   radarRadiusFraction,
 } from "@/lib/lightningRadar";
 
@@ -68,6 +68,16 @@ export function LightningRadar({
 
   const ringOpacity = muted ? 0.35 : 1;
 
+  // The three annuli between the range rings, each carrying its own strike
+  // count. Only the nearest strike (below) has a real known bearing — these
+  // bands are rendered as non-positional visual weight (ring opacity), never
+  // as plotted dots, so the graphic can't be misread as strike locations.
+  const bands = [
+    { key: "inner", count: counts.inner, rIn: 0, rOut: radarRadiusFraction(10) * MAX_R },
+    { key: "mid", count: counts.mid, rIn: radarRadiusFraction(10) * MAX_R, rOut: radarRadiusFraction(25) * MAX_R },
+    { key: "outer", count: counts.outer, rIn: radarRadiusFraction(25) * MAX_R, rOut: radarRadiusFraction(50) * MAX_R },
+  ] as const;
+
   return (
     <div className="mt-3">
       <div className="relative mx-auto aspect-square w-full max-w-[220px]">
@@ -85,6 +95,33 @@ export function LightningRadar({
                   : "Strike radar"
           }
         >
+          {/* Band density: each annulus's visual weight (opacity) scales with
+              its strike COUNT only — never a plotted position, since we only
+              know the true bearing of the single nearest strike below. Drawn
+              first, underneath the range rings/labels, so those stay crisp. */}
+          {!muted && !isEmpty && (
+            <g>
+              {bands.map((band) => {
+                if (band.count <= 0) return null;
+                const density = radarBandDensity(band.count);
+                const midR = (band.rIn + band.rOut) / 2;
+                const bandWidth = Math.max(0, band.rOut - band.rIn);
+                return (
+                  <circle
+                    key={band.key}
+                    cx={CENTER}
+                    cy={CENTER}
+                    r={round(midR, 2)}
+                    fill="none"
+                    strokeWidth={round(bandWidth, 2)}
+                    className="stroke-amber-500 dark:stroke-amber-300"
+                    opacity={round(0.12 + density * 0.5, 2)}
+                  />
+                );
+              })}
+            </g>
+          )}
+
           {/* Range rings */}
           <g opacity={ringOpacity}>
             {RADAR_RINGS_MI.map((mi) => {
@@ -108,22 +145,28 @@ export function LightningRadar({
               );
             })}
 
-            {/* Ring labels, tucked into the SE quadrant to stay clear of N
-                and the density annotations. */}
+            {/* Ring labels: nudged just OUTSIDE each ring (not on top of the
+                ring line or the density fill) with a stroke halo so they stay
+                legible over sky, an annulus, or another ring underneath. */}
             {RADAR_RINGS_MI.map((mi) => {
               const r = round(radarRadiusFraction(mi) * MAX_R, 2);
-              const p = labelPoint(r, 150);
+              const p = labelPoint(r + 5, 150);
               return (
                 <text
                   key={mi}
                   x={p.x}
                   y={p.y}
                   fontSize={7}
+                  fontWeight={600}
                   textAnchor="middle"
+                  stroke="white"
+                  strokeWidth={2}
+                  strokeLinejoin="round"
+                  paintOrder="stroke"
                   className={
                     mi === RADAR_SAFETY_RING_MI
-                      ? "fill-rose-500/80 dark:fill-rose-400/80"
-                      : "fill-slate-400 dark:fill-white/40"
+                      ? "fill-rose-500/80 dark:fill-rose-400/80 dark:stroke-slate-950"
+                      : "fill-slate-500 dark:fill-white/50 dark:stroke-slate-950"
                   }
                 >
                   {mi}
@@ -146,57 +189,31 @@ export function LightningRadar({
             </g>
           </g>
 
-          {/* Band density: subtle per-annulus strike counts. Not real strike
-              positions (only the nearest strike's true bearing is known) —
-              deliberately faint so they read as texture, not events. */}
+          {/* Band count labels: the raw per-band total (a count, not a
+              location), placed just outside each band's own outer ring on
+              the opposite side from the mi ring labels above, with a stroke
+              halo so it reads cleanly over the density fill or ring lines. */}
           {!muted && !isEmpty && (
             <g>
-              {(
-                [
-                  { count: counts.inner, rIn: 0, rOut: radarRadiusFraction(10) * MAX_R, label: counts.inner },
-                  {
-                    count: counts.mid,
-                    rIn: radarRadiusFraction(10) * MAX_R,
-                    rOut: radarRadiusFraction(25) * MAX_R,
-                    label: counts.mid,
-                  },
-                  {
-                    count: counts.outer,
-                    rIn: radarRadiusFraction(25) * MAX_R,
-                    rOut: radarRadiusFraction(50) * MAX_R,
-                    label: counts.outer,
-                  },
-                ] as const
-              ).map((band, i) => {
+              {bands.map((band) => {
                 if (band.count <= 0) return null;
-                const midR = (band.rIn + band.rOut) / 2;
-                const angles = radarBandDotAngles(band.count);
+                const p = labelPoint(band.rOut + 5, 200);
                 return (
-                  <g key={i}>
-                    {angles.map((angle, j) => {
-                      const p = labelPoint(midR, angle);
-                      return (
-                        <circle
-                          key={j}
-                          cx={p.x}
-                          cy={p.y}
-                          r={1.4}
-                          className="fill-amber-500/50 dark:fill-amber-300/45"
-                        />
-                      );
-                    })}
-                    {/* Count label near the bottom of the band, out of the
-                        way of N and the nearest-strike marker. */}
-                    <text
-                      x={labelPoint(midR, 205).x}
-                      y={labelPoint(midR, 205).y}
-                      fontSize={7}
-                      textAnchor="middle"
-                      className="fill-slate-500 dark:fill-white/45"
-                    >
-                      {band.count}
-                    </text>
-                  </g>
+                  <text
+                    key={band.key}
+                    x={p.x}
+                    y={p.y}
+                    fontSize={7}
+                    fontWeight={600}
+                    textAnchor="middle"
+                    stroke="white"
+                    strokeWidth={2}
+                    strokeLinejoin="round"
+                    paintOrder="stroke"
+                    className="fill-amber-700 dark:fill-amber-300 dark:stroke-slate-950"
+                  >
+                    {band.count}
+                  </text>
                 );
               })}
             </g>
