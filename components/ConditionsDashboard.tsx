@@ -225,7 +225,11 @@ export function ConditionsDashboard({
 
       {nc || bw ? (
         <section className="mb-4 flex flex-wrap gap-2 text-sm">
-          {nc ? (
+          {/* Suppress a "Raining" pill the corroboration gate vetoed (see
+              deriveMetrics.nowcastRaining) — the minutely model hallucinates
+              showers under clear skies; showing "Raining" in bright sun burns
+              trust. The dry state and corroborated rain render as before. */}
+          {nc && (nc.state !== "raining" || d.nowcastRaining) ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-200/80 dark:bg-slate-800/70 px-3 py-1 text-slate-700 dark:text-slate-200 ring-1 ring-slate-900/10 dark:ring-white/10">
               <span aria-hidden>{nc.state === "raining" ? "🌧️" : "☀️"}</span>
               {nc.text}

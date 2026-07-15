@@ -140,6 +140,32 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
   // it from the consensus temp + humidity above so it agrees with what's displayed.
   const dpFallback =
     airTempF != null && humidityPct != null ? dewPointFromTempRH(airTempF, humidityPct) : undefined;
+  const precipProbability = w?.precipProbability ?? om?.precipProbability;
+  // Nowcast "raining" needs CORROBORATION before it caps the score. Open-Meteo's
+  // minutely_15 is a MODEL nowcast, not an observation, and FL sea-breeze
+  // convection makes it hallucinate showers (2026-07-15: "raining, easing in
+  // 14 min" under a verifiably clear sky — code 0, 2% prob, 16% cloud consensus,
+  // 0.00" measured — capping a sunny day at 25). Count it as observed rain only
+  // when at least ONE independent signal agrees: a rain/storm weather code this
+  // hour (even a prob-vetoed code 95 corroborates — the real 2026-06-15 rain),
+  // fresh lightning within 25 mi, cloud consensus >= 50% (rain requires clouds),
+  // precip probability >= 25, or measured precip this hour. Unknown signals do
+  // NOT veto (fail-safe: only positive evidence of a clear sky kills the cap).
+  const nowcastSaysRain = s.nowcast.data?.state === "raining";
+  const rainishCode =
+    om?.weatherCode != null &&
+    ((om.weatherCode >= 51 && om.weatherCode <= 67) ||
+      (om.weatherCode >= 80 && om.weatherCode <= 99));
+  const freshStrikesNear =
+    s.lightning.status === "ok" &&
+    (s.lightning.data?.lastMinutesAgo ?? Infinity) <= 30 &&
+    (s.lightning.data?.nearestMi ?? Infinity) <= 25;
+  const nowcastCorroborated =
+    rainishCode ||
+    freshStrikesNear ||
+    (cloudCoverPct ?? 100) >= 50 ||
+    (precipProbability ?? 100) >= 25 ||
+    (om?.precipIn ?? 0) > 0;
   return {
     // Shared metrics are the MEDIAN of NWS (real station obs), MET Norway, and
     // Open-Meteo, so no single provider or model can skew the dashboard.
@@ -149,7 +175,7 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
       median(w?.windSpeedMph, mn?.windSpeedMph, om?.windSpeedMph, g?.windSpeedMph) ?? b?.windSpeedMph,
     windDirDeg: w?.windDirDeg ?? mn?.windDirDeg ?? b?.windDirDeg,
     waveHeightFt: b?.waveHeightFt ?? m?.waveHeightFt,
-    precipProbability: w?.precipProbability ?? om?.precipProbability,
+    precipProbability,
     shortForecast: w?.shortForecast,
     // The current hour's forecast UV — the SAME source the hourly chart + score
     // use. The marine "/current" endpoint can lag hours behind (it once read 0.4
@@ -181,7 +207,9 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
       /beach hazards|high surf advisory|coastal flood advisory/i.test(a.event),
     ),
     // Observed "now" signals — they override the forecast-based rain logic.
-    nowcastRaining: s.nowcast.data?.state === "raining",
+    // (Corroboration-gated: see nowcastCorroborated above — a phantom model
+    // shower under a clear sky must not cap the day.)
+    nowcastRaining: nowcastSaysRain && nowcastCorroborated,
     // Lightning trips the get-out cap only when the feed is OK, the activity is
     // fresh (most recent strike <=30 min ago), AND the closest strike landed
     // within 5 mi. A stale/errored scan, or strikes that are all farther than

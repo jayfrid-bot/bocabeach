@@ -180,6 +180,57 @@ describe("scoring (Beach Day only — no surf)", () => {
     expect(stormy.caps.join(" ")).toMatch(/thunder/i);
   });
 
+  describe("nowcast rain corroboration (phantom-shower veto)", () => {
+    // Start of the CURRENT hour so currentHourOf() finds the bucket.
+    const hourStart = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000).toISOString();
+    const RAINING = { state: "raining" as const, text: "Raining — easing in ~14 min" };
+
+    it("vetoes a phantom nowcast shower under a verifiably clear sky (2026-07-15)", () => {
+      // Real incident: minutely model said "raining" while code 0 / 2% prob /
+      // 16% cloud consensus / 0.00" measured — a sunny day capped at 25.
+      const s = snapshot({
+        ...{},
+        weather: { airTempF: 88, shortForecast: "Clear", precipProbability: 6, cloudCoverPct: 16 },
+        hourly: [{ time: hourStart, weatherCode: 0, precipProbability: 2, precipIn: 0, cloudCoverPct: 0 }],
+        nowcast: RAINING,
+      });
+      expect(deriveMetrics(s).nowcastRaining).toBe(false);
+      expect(computeScore(s).caps.join(" ")).not.toMatch(/raining right now/i);
+    });
+
+    it("keeps the cap when a storm code corroborates — even a prob-vetoed code 95 (2026-06-15)", () => {
+      // The regression this gate must NOT reintroduce: real rain + code 95 whose
+      // own 6% prob vetoes it as a standalone cap. The code still corroborates
+      // the independent nowcast signal, so observed rain caps the day.
+      const s = snapshot({
+        weather: { airTempF: 85, precipProbability: 6 },
+        hourly: [{ time: hourStart, weatherCode: 95, precipProbability: 6, cloudCoverPct: 40 }],
+        nowcast: RAINING,
+      });
+      expect(deriveMetrics(s).nowcastRaining).toBe(true);
+      // The snapshot path applies the plain observed-rain ceiling (25); the
+      // tougher 15 thunder tier lives in the hourly path where the code rides
+      // along. What matters here: the corroborated rain still CAPS the day.
+      expect(computeScore(s).score).toBeLessThanOrEqual(25);
+      expect(computeScore(s).caps.join(" ")).toMatch(/raining right now/i);
+    });
+
+    it("keeps the cap under a heavily clouded sky (rain needs clouds — 90% corroborates)", () => {
+      const s = snapshot({
+        weather: { airTempF: 85, precipProbability: 10, cloudCoverPct: 90 },
+        nowcast: RAINING,
+      });
+      expect(deriveMetrics(s).nowcastRaining).toBe(true);
+    });
+
+    it("fails safe: with every corroborating signal unknown, the nowcast still counts", () => {
+      // No weather, no hourly, no lightning — only positive evidence of a clear
+      // sky may veto; total ignorance must not.
+      const s = snapshot({ nowcast: RAINING });
+      expect(deriveMetrics(s).nowcastRaining).toBe(true);
+    });
+  });
+
   it("nearby lightning bottoms the score as a get-out-of-the-water safety override", () => {
     const base = deriveMetrics(snapshot({}));
     const r = scoreBeachDay({ ...base, lightningWithin5mi: true, lightningLastMinutesAgo: 4 });
