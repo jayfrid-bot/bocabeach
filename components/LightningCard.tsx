@@ -1,5 +1,6 @@
 import type { LightningData, Wrapped } from "@/lib/types";
 import { degToCardinal } from "@/lib/util";
+import { LightningRadar } from "@/components/LightningRadar";
 
 function ageLabel(min?: number): string {
   if (min == null) return "";
@@ -64,6 +65,7 @@ export function LightningCard({ lightning }: { lightning: Wrapped<LightningData>
         {headline}
       </div>
       {sub ? <div className="mt-0.5 break-words text-xs text-slate-600 dark:text-slate-400">{sub}</div> : null}
+      {d ? <LightningRadar lightning={lightning} muted={lightning.status !== "ok"} /> : null}
       <div className="mt-2 text-[11px] text-slate-500">
         NOAA GOES-19 GLM
         {d?.dataAgeMinutes != null ? ` · as of ${ageLabel(d.dataAgeMinutes)}` : ""}
