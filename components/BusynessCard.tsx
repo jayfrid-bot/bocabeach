@@ -59,13 +59,10 @@ export function BusynessCard({ busy }: { busy?: BusynessData | null }) {
   }
 
   const filled = busynessFilledSlots(busy.crowdPct, busy.level);
-  const pct = Math.round((filled / BUSYNESS_SLOTS) * 100);
-  const sub = [
-    busy.peopleEstimate != null ? `~${busy.peopleEstimate} people` : undefined,
-    busy.crowdPct != null ? `~${busy.crowdPct}% full` : undefined,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  // One reading, said once: "N of SLOTS umbrellas" already carries the % full
+  // (it's the same ratio) — appending a separately-computed "X% full" repeated
+  // the same fact twice. The people estimate is the only additional number.
+  const sub = busy.peopleEstimate != null ? `~${busy.peopleEstimate} people` : undefined;
 
   return (
     <div className="rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
@@ -82,7 +79,7 @@ export function BusynessCard({ busy }: { busy?: BusynessData | null }) {
         ))}
       </div>
       <div className="mt-2 text-xs text-slate-600 dark:text-slate-400">
-        {filled} of {BUSYNESS_SLOTS} filled = {pct}% full
+        {filled} of {BUSYNESS_SLOTS} umbrellas
         {sub ? ` · ${sub}` : ""}
       </div>
     </div>
