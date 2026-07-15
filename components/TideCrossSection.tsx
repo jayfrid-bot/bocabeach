@@ -73,13 +73,26 @@ const round2 = (v: number) => Math.round(v * 100) / 100;
 
 /** A gentle lapping ripple riding along the waterline, tiled twice for a
  *  seamless `wavescroll` loop (identical technique to WaveHeightCard.tsx). */
-function rippleTopPath(waterY: number, amplitude: number, phaseRad: number): string {
+/**
+ * A ripple band hugging the water SURFACE: the sine crest down to `depth`
+ * below it — NOT down to the frame bottom. Closing these at HEIGHT (as they
+ * originally did) made each "ripple" a translucent sheet over the whole water
+ * body; two stacked at ~0.5 opacity washed the sea pale below the waterline
+ * and read as a hard seam against the deeper water above it.
+ */
+function rippleTopPath(
+  waterY: number,
+  amplitude: number,
+  phaseRad: number,
+  depth = 7,
+): string {
   const pts: string[] = [];
   for (let x = 0; x <= TILE; x += STEP) {
     const y = waterY + amplitude * Math.sin((2 * Math.PI * x) / WAVELENGTH + phaseRad);
     pts.push(`${x},${round2(y)}`);
   }
-  return `M0,${HEIGHT} L${pts.join(" L")} L${TILE},${HEIGHT} Z`;
+  const base = round2(waterY + depth);
+  return `M0,${base} L${pts.join(" L")} L${TILE},${base} Z`;
 }
 
 /**
@@ -138,6 +151,19 @@ export function TideCrossSection({
         className="absolute inset-0 h-full w-full"
         aria-hidden
       >
+        {/* One sea, graded by depth. The deep-ocean base and the nearshore
+            water used to be two flat, unrelated blues meeting at a hard edge at
+            the waterline — which read as two stacked bands (a rendering fault),
+            not as one body of water. This gradient runs the base from a deep
+            tone at the horizon down to EXACTLY the nearshore fill (#32a4ff), so
+            the two layers resolve into a single sea with an honest depth cue. */}
+        <defs>
+          <linearGradient id="tidecs-sea" x1="0" y1={HORIZON_Y} x2="0" y2={HEIGHT} gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor="#0b4f8f" />
+            <stop offset="1" stopColor="#32a4ff" />
+          </linearGradient>
+        </defs>
+
         {/* sky: a fixed, tightly cropped band — cropped hard so the ocean
             below dominates the frame at every tide level */}
         <rect x={0} y={0} width={WIDTH} height={HORIZON_Y} className="fill-sky-200 dark:fill-[#0f1f3d]" />
@@ -151,7 +177,7 @@ export function TideCrossSection({
           y={HORIZON_Y}
           width={WIDTH}
           height={HEIGHT - HORIZON_Y}
-          className="fill-ocean-800 dark:fill-ocean-950"
+          fill="url(#tidecs-sea)"
         />
 
         {/* dry sand: the fixed dune wedge silhouette, foreground only (right
@@ -175,11 +201,12 @@ export function TideCrossSection({
           <rect x={0} y={round2(waterY)} width={round2(shoreX)} height={round2(HEIGHT - waterY)} />
         </clipPath>
         <g clipPath="url(#tidecs-water-clip)">
-          {/* Fixed color in both themes (matches WaveHeightCard's brightest
-              wave layer) — only the deep-ocean base and sky shift with theme,
-              so the nearshore water stays a consistent, legible "water" blue
-              rather than turning pastel-pale against a dark background. */}
-          <rect x={0} y={0} width={WIDTH} height={HEIGHT} fill="#32a4ff" opacity={0.92} />
+          {/* Painted with the SAME sea gradient as the base, so there is no
+              colour discontinuity where the two layers meet — a flat fill here
+              left a hard horizontal seam at the waterline that read as a
+              rendering fault. The water is one graded body; the waterline is
+              legible where it meets the sand, plus the ripples below. */}
+          <rect x={0} y={0} width={WIDTH} height={HEIGHT} fill="url(#tidecs-sea)" />
           <path
             d={rippleTopPath(waterY, 2.2, 0.4)}
             fill="rgba(142, 216, 255, 0.55)"
