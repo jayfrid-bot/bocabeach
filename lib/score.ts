@@ -148,7 +148,10 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
   // 0.00" measured — capping a sunny day at 25). Count it as observed rain only
   // when at least ONE independent signal agrees: a rain/storm weather code this
   // hour (even a prob-vetoed code 95 corroborates — the real 2026-06-15 rain),
-  // fresh lightning within 25 mi, cloud consensus >= 50% (rain requires clouds),
+  // fresh lightning within 5 mi (NOT wider: FL storm cells routinely sit 10-20 mi
+  // inland while the beach is in full sun — a 25 mi radius wrongly corroborated
+  // the 2026-07-15 phantom with a cell 11.4 mi away; within 5 mi the lightning
+  // cap owns the score anyway), cloud consensus >= 50% (rain requires clouds),
   // precip probability >= 25, or measured precip this hour. Unknown signals do
   // NOT veto (fail-safe: only positive evidence of a clear sky kills the cap).
   const nowcastSaysRain = s.nowcast.data?.state === "raining";
@@ -159,7 +162,7 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
   const freshStrikesNear =
     s.lightning.status === "ok" &&
     (s.lightning.data?.lastMinutesAgo ?? Infinity) <= 30 &&
-    (s.lightning.data?.nearestMi ?? Infinity) <= 25;
+    (s.lightning.data?.nearestMi ?? Infinity) <= 5;
   const nowcastCorroborated =
     rainishCode ||
     freshStrikesNear ||
