@@ -119,6 +119,30 @@ export function consensusCloudPct(s: ConditionsSnapshot): number | undefined {
   );
 }
 
+/**
+ * Satellite-OBSERVED cloud cover right now (NOAA GOES-19 Clear Sky Mask),
+ * when the feed is fresh and carries a valid reading for this beach.
+ *
+ * 2026-07-15 CALIBRATION NOTE: Open-Meteo's forecast cloud field read 11-24%
+ * (701-821 W/m2 "clear sky" solar) while the Boca beach sat under a real
+ * thunderstorm anvil — genuinely ~95-100% overcast. consensusCloudPct is a
+ * median of FORECAST models, so it inherited that same ~70-point miss; the
+ * sand-temp overcast damping in lib/sandTemp.ts never fired because its
+ * cloud INPUT was wrong, not because the damping curve itself was wrong (see
+ * that file's calibration log). This is the fix: an actual satellite
+ * observation of the sky, independent of any forecast model's guess.
+ *
+ * Returns undefined when the feed is stale/missing/invalid — see
+ * GOES_CLOUD_STALE_MINUTES in lib/sources/goesCloud.ts for why "stale" has to
+ * be a fairly generous window (the feed itself gaps by 80+ minutes at times).
+ * Callers fall back to consensusCloudPct exactly as before in that case.
+ */
+export function satelliteCloudPct(s: ConditionsSnapshot): number | undefined {
+  const g = s.goesCloud;
+  if (g.status !== "ok" || g.data?.cloudPct == null) return undefined;
+  return g.data.cloudPct;
+}
+
 export function deriveMetrics(s: ConditionsSnapshot): Derived {
   const w = s.weather.data;
   const b = s.buoy.data;
@@ -188,10 +212,16 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     sargassumLevel: s.sargassum.data?.level,
     sargassumCoveragePct: s.sargassum.data?.coveragePct,
     crowdPct: s.busyness.data?.crowdPct ?? crowdLevelPct(s.busyness.data?.level),
-    // Sand "now" uses the consensus cloud (same as the Sky card) — see
-    // consensusCloudPct. The overcast damping must not hinge on one model's hour.
+    // Sand "now" prefers the satellite OBSERVATION (GOES-19 Clear Sky Mask)
+    // over the forecast consensus (same as the Sky card) when it's fresh and
+    // valid — see satelliteCloudPct's 2026-07-15 note above. This is
+    // deliberately surgical: it only changes sandCloudPct (the sand model's
+    // input), NOT the shared `cloudCoverPct` above, so the Sky sub-score, its
+    // display, and the rain-corroboration gate are untouched.
     sandTempF: s.hourly.data
-      ? currentSandTempF(s.hourly.data, Date.now(), { cloudCoverPct })
+      ? currentSandTempF(s.hourly.data, Date.now(), {
+          cloudCoverPct: satelliteCloudPct(s) ?? cloudCoverPct,
+        })
       : undefined,
     humidityPct,
     dewPointF:

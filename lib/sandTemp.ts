@@ -28,6 +28,18 @@ const FULL_SUN_WM2 = 1000;
  *    (model said 139 vs midpoint 137.5. Across all six sessions the mean error is
  *    +0.6°F and the average miss ~1.6°F — smaller than the spot-to-spot spread of
  *    the readings themselves. Calibration confirmed; do not chase single hot spots.)
+ *  - 2026-07-15 anvil MISS (not a curve problem — an INPUT problem): the beach sat
+ *    under a real thunderstorm anvil (~95-100% overcast) while Open-Meteo's
+ *    forecast cloud field reported 11-24% cloud / 701-821 W/m² "clear sky" solar.
+ *    The app said 133-135°F; IR-thermometer ground truth was 100-115°F. Re-running
+ *    those same hours with the REAL ~95-100% cloud through this exact model (no
+ *    changes below) lands ~105/109°F vs 100/112.5°F measured — i.e. the
+ *    OVERCAST_START_PCT/OVERCAST_MAX_DAMP damping was always correct, it just never
+ *    fired because its cloud INPUT was wrong by ~70 points. The fix is
+ *    lib/sources/goesCloud.ts + scripts/goes_cloud.py (a satellite-OBSERVED cloud
+ *    read from GOES-19's Clear Sky Mask, preferred over the forecast consensus in
+ *    score.ts's satelliteCloudPct when fresh) — NOT a change to MAX_SUN_BOOST_F or
+ *    the sqrt curve here. Don't retune this file to fix an upstream input bug.
  */
 const MAX_SUN_BOOST_F = 55;
 /**
