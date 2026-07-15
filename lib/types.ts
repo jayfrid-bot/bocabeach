@@ -185,6 +185,20 @@ export interface DayWindow {
   peakScore: number | null;
   /** Representative sky emoji (around midday). */
   emoji: string;
+  /**
+   * Full scoring breakdown at the day's peak hour (the hour behind `peakScore`):
+   * the anticipated rating, every sub-score that fed it, and any safety caps.
+   * Undefined when the day has no scored hours (e.g. a forecast-only appended
+   * day past the multi-day-window horizon). Future days honestly carry fewer
+   * factors than today (seaweed/crowds are today-only signals) — that's expected.
+   */
+  peakBreakdown?: {
+    time: string; // ISO (UTC) of the peak hour
+    score: number; // 0-100, matches peakScore
+    rating: string;
+    subScores: SubScore[];
+    caps: string[];
+  };
 }
 
 // --- Sun times (computed locally from lat/lon/date) ------------------------
