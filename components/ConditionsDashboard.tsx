@@ -24,11 +24,13 @@ import {
   SeaweedByDayChart,
 } from "@/components/HistoryCharts";
 import { MetricCard } from "@/components/MetricCard";
+import { UvCard } from "@/components/UvCard";
+import { BusynessCard } from "@/components/BusynessCard";
+import { SeaweedStrip } from "@/components/SeaweedStrip";
 import { WindCompass } from "@/components/WindCompass";
 import { WaveHeightCard } from "@/components/WaveHeightCard";
 import { TidePanel } from "@/components/TidePanel";
 import { SunPanel } from "@/components/SunPanel";
-import { MoonPanel } from "@/components/MoonPanel";
 import { SafetyBanner } from "@/components/SafetyBanner";
 import { SandTempPanel } from "@/components/SandTempPanel";
 import { SourceList } from "@/components/SourceBadge";
@@ -148,8 +150,6 @@ export function ConditionsDashboard({
   };
   const sunriseHour = localHour(snap.sun.data?.sunrise);
   const sunsetHour = localHour(snap.sun.data?.sunset);
-  const uvBurn =
-    d.uvIndex != null && d.uvIndex >= 1 ? Math.round(200 / d.uvIndex) : undefined;
   const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
   const sources = [
@@ -341,18 +341,11 @@ export function ConditionsDashboard({
           value={d.dewPointF != null ? `${d.dewPointF}°F` : "—"}
           sub={d.dewPointF != null ? dewComfort(d.dewPointF) : "not available"}
         />
-        <MetricCard
-          icon="🔆"
-          label="UV index"
-          value={d.uvIndex != null ? `${d.uvIndex}` : "—"}
-          sub={
-            uvBurn != null
-              ? `~${uvBurn} min to burn`
-              : d.uvIndex != null
-                ? "minimal burn risk"
-                : "not available"
-          }
-        />
+        {d.uvIndex != null ? (
+          <UvCard uvIndex={d.uvIndex} />
+        ) : (
+          <MetricCard icon="🔆" label="UV index" value="—" sub="not available" />
+        )}
         <MetricCard
           icon="☁️"
           label="Cloud cover"
@@ -386,35 +379,8 @@ export function ConditionsDashboard({
         {/* Cam-derived (seaweed, crowd) + traffic only render when this beach
             actually has that source — no fake "not available" filler, and no
             other beach's reading. See lib/sources/{sargassum,busyness}.ts. */}
-        {sg && sg.level !== "unknown" ? (
-          <MetricCard
-            icon="🪸"
-            label="Seaweed (sargassum)"
-            value={cap(sg.level)}
-            sub={
-              `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
-              (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "") +
-              (sg.note ? ` — ${sg.note}` : "")
-            }
-          />
-        ) : null}
-        {busy && (busy.level !== "unknown" || busy.note) ? (
-          <MetricCard
-            icon="👥"
-            label="Beach busyness"
-            value={busy.level !== "unknown" ? cap(busy.level) : "—"}
-            sub={
-              busy.level !== "unknown"
-                ? [
-                    busy.peopleEstimate != null ? `~${busy.peopleEstimate} people` : busy.note,
-                    busy.crowdPct != null ? `~${busy.crowdPct}% full` : undefined,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ") || undefined
-                : busy.note
-            }
-          />
-        ) : null}
+        <SeaweedStrip seaweed={sg} />
+        <BusynessCard busy={busy} />
         {traffic && traffic.level !== "unknown" ? (
           <MetricCard
             icon="🚗"
@@ -491,7 +457,6 @@ export function ConditionsDashboard({
       <section className="mb-6 grid gap-4 sm:grid-cols-2">
         <TidePanel tides={snap.tides} tz={tz} />
         <SunPanel sun={snap.sun} tz={tz} />
-        <MoonPanel sun={snap.sun} />
       </section>
 
       {cams.length > 0 ? (
