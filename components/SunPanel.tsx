@@ -18,6 +18,7 @@ export function SunPanel({ sun, tz }: { sun: Wrapped<SunData>; tz: string }) {
     { icon: "🌆", label: "Dusk", iso: d?.dusk, hint: "last light" },
   ];
   const any = rows.some((r) => r.iso);
+  const moon = d?.moonPhase;
 
   return (
     <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
@@ -43,6 +44,16 @@ export function SunPanel({ sun, tz }: { sun: Wrapped<SunData>; tz: string }) {
               <span className="text-slate-900 dark:text-white">{r.iso ? fmtTime(r.iso, tz) : "—"}</span>
             </li>
           ))}
+          {moon ? (
+            <li className="flex items-center justify-between text-sm">
+              <span className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
+                <span aria-hidden>{moon.emoji}</span>
+                Moon
+                <span className="text-xs text-slate-500">({moon.phase})</span>
+              </span>
+              <span className="text-slate-900 dark:text-white">{moon.illumination}% lit</span>
+            </li>
+          ) : null}
           </ul>
         </>
       )}
