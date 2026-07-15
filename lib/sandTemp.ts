@@ -28,18 +28,52 @@ const FULL_SUN_WM2 = 1000;
  *    (model said 139 vs midpoint 137.5. Across all six sessions the mean error is
  *    +0.6°F and the average miss ~1.6°F — smaller than the spot-to-spot spread of
  *    the readings themselves. Calibration confirmed; do not chase single hot spots.)
- *  - 2026-07-15 anvil MISS (not a curve problem — an INPUT problem): the beach sat
- *    under a real thunderstorm anvil (~95-100% overcast) while Open-Meteo's
- *    forecast cloud field reported 11-24% cloud / 701-821 W/m² "clear sky" solar.
- *    The app said 133-135°F; IR-thermometer ground truth was 100-115°F. Re-running
- *    those same hours with the REAL ~95-100% cloud through this exact model (no
- *    changes below) lands ~105/109°F vs 100/112.5°F measured — i.e. the
- *    OVERCAST_START_PCT/OVERCAST_MAX_DAMP damping was always correct, it just never
- *    fired because its cloud INPUT was wrong by ~70 points. The fix is
- *    lib/sources/goesCloud.ts + scripts/goes_cloud.py (a satellite-OBSERVED cloud
- *    read from GOES-19's Clear Sky Mask, preferred over the forecast consensus in
- *    score.ts's satelliteCloudPct when fresh) — NOT a change to MAX_SUN_BOOST_F or
- *    the sqrt curve here. Don't retune this file to fix an upstream input bug.
+ *  - 2026-07-15 LATE-AFTERNOON MISS — the model's biggest error, and STILL UNEXPLAINED.
+ *    Two readings, same afternoon, dry sand, no rain all day:
+ *      ~4:15 PM: soil 104°F, 821 W/m², 7 mph, 11% cloud (forecast) → model ~135°F,
+ *                MEASURED 110-115°F  (miss +22)
+ *      ~5:30 PM: soil 100°F, 701 W/m², 7 mph, 24% cloud (forecast) → model 133°F,
+ *                MEASURED 100°F      (miss +33 — sand at EXACTLY ground temp, boost 0)
+ *    Working theory was "the forecast cloud lied; a storm anvil (~95-100%) sat over
+ *    the beach and the overcast damping never fired". That theory is NOT SUPPORTED:
+ *    the GOES-19 Clear Sky Mask (satellite-OBSERVED, see lib/sources/goesCloud.ts)
+ *    read only ~31% cloud over Boca's 14 km box at 20:16Z — broken/scattered, which
+ *    per the 6/23 point below should still let full beam through and run the sand hot.
+ *    So cloud truth does NOT account for the afternoon error.
+ *
+ *    The unresolved contradiction, stated plainly for whoever picks this up:
+ *      6/23  9:54 AM, 380 W/m², 63% broken cloud, sun elev ~43° → boost +33 (MEASURED)
+ *      7/15  5:30 PM, 701 W/m², ~31% cloud (sat),  sun elev ~35° → boost   0 (MEASURED)
+ *    HALF the solar and MORE cloud in the morning produced a +33 boost; nearly double
+ *    the solar in the late afternoon produced nothing. No function of GHI or of sun
+ *    elevation alone fits both — the discriminator looks like morning-vs-afternoon
+ *    itself, which is physically backwards (sand should carry the day's accumulated
+ *    heat INTO the afternoon).
+ *
+ *    Candidate explanations, none yet tested:
+ *      (a) measurement spot drifted (dune sand midday vs firmer/wetter sand near the
+ *          water late) — worth ~10°F per the SURF_BOOST_FRAC note below, not ~25°F;
+ *      (b) local shading — Boca's beach faces EAST and the condo line sits west of it,
+ *          so a low western sun can put the sand in building shadow while the sky
+ *          overhead is clear (no data source can see this);
+ *      (c) direct-beam blocking OFF-BEACH: at low sun the cloud that shades the sand
+ *          is kilometres toward the sun, so a cloud fraction centred ON the beach can
+ *          read clear while the beam is blocked. goes_cloud.py samples a box, not the
+ *          solar azimuth — sampling along the sun's bearing at cloud height is the
+ *          obvious next experiment;
+ *      (d) the sqrt(sunFrac) curve really is too flat and the midday points only look
+ *          right because sqrt(x)≈1 near full sun (sqrt(.965)=.98 vs sqrt(.70)=.84 —
+ *          a 30% solar drop becomes a 15% boost drop).
+ *
+ *    DO NOT retune MAX_SUN_BOOST_F or the sqrt curve on this evidence: every point
+ *    from 9:54 AM-2:20 PM is accurate to ~1.6°F, and one confounded afternoon (two
+ *    correlated readings, not two independent ones) can't justify breaking six good
+ *    ones. NEEDED: dune-sand readings on a VERIFIABLY CLEAR afternoon at ~4 PM and
+ *    ~6 PM, same spot, noting whether the sand is in building shadow. That isolates
+ *    (b)/(c)/(d) from cloud and is the only thing that will settle this.
+ *
+ *    Note the error direction is at least the SAFE one: the app over-reports heat, so
+ *    it warns about burns that aren't there rather than missing burns that are.
  */
 const MAX_SUN_BOOST_F = 55;
 /**
