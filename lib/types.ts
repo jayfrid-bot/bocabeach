@@ -298,9 +298,27 @@ export interface LightningData {
 // off-Netlify job) — see scripts/goes_cloud.py + lib/sources/goesCloud.ts ---
 export interface GoesCloudData {
   /** 0-100 observed cloud fraction from the ACM 4-level mask neighborhood
-   *  around this beach (see scripts/goes_cloud.py for the level->fraction
-   *  mapping). Only present when enough good-quality pixels were available. */
+   *  DIRECTLY OVERHEAD this beach (see scripts/goes_cloud.py for the
+   *  level->fraction mapping). Only present when enough good-quality pixels
+   *  were available. Kept for the Sky sub-score/display — see beamCloudPct
+   *  for the sand model's input. */
   cloudPct: number;
+  /** 0-100 observed cloud fraction along the DIRECT SOLAR BEAM path (offset
+   *  boxes stepped toward the sun at several altitude slots — see
+   *  scripts/goes_cloud.py's beam_cloud_pct()). This is what actually blocks
+   *  the beam that heats dry sand; at low sun angle it can differ hugely
+   *  from the overhead cloudPct (2026-07-15 CONFIRMED: 31% overhead vs
+   *  58-100% sunward at 3-15+ km for the same granule — see lib/sandTemp.ts's
+   *  calibration note). Optional: absent on old-format feeds (pre this
+   *  field), and null when the sun is below ~5° elevation or too few offset
+   *  boxes had valid pixels (never fabricated — falls back to cloudPct
+   *  server-side in that case, so a present-but-equal-to-cloudPct value is
+   *  the honest "no beam-path signal" case, not a bug). */
+  beamCloudPct?: number | null;
+  /** Solar elevation (degrees) at the beach at the granule's own scan time —
+   *  carried through mainly for debugging/observability of beamCloudPct.
+   *  Optional for the same old-format-feed reason as beamCloudPct. */
+  sunElevDeg?: number | null;
   /** Good-quality (DQF==0) pixels that fed cloudPct, out of the neighborhood. */
   validPixels: number;
   totalPixels: number;

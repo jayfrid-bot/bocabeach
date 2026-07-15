@@ -66,9 +66,41 @@ A neighborhood (~GOES_BOX_KM km on a side, ~7x7 pixels at 2 km by default) is
 sampled rather than one pixel because "cloud cover %" is inherently an
 area concept, AND because at low sun angle the cloud actually shading the
 beach is horizontally OFFSET from the beach itself (the sun is not straight
-overhead). A future refinement could bias the sample box along the solar
-azimuth instead of centering it on the beach; that's noted here rather than
-implemented, to keep this version simple and auditable.
+overhead). This overhead box is still produced (as cloudPct, unchanged) — see
+BEAM-PATH CLOUD below for the offset-along-the-sun sampling this docstring
+used to describe as a future refinement.
+
+BEAM-PATH CLOUD (beamCloudPct) — 2026-07-15 CONFIRMED finding
+-----------------------------------------------------------------
+An overhead cloud box answers "is the sky grey above the beach", but the
+thing that actually heats dry sand is the DIRECT solar BEAM, and at low sun
+angle that beam travels through air kilometres toward the sun before it
+reaches the ground. On 2026-07-15 the archived 20:16Z granule proved this
+directly for Boca Raton (sun at that time: elevation 51.1 deg, azimuth 272
+deg): the beach-centered box read 31% cloud, but boxes stepped along the
+solar azimuth read 58% at 3 km, 71% at 6 km, 86% at 10 km, and 85-100% at
+15-30 km — while the ANTI-sun direction (out over the ocean) read 17% / 4% /
+0%. The cloud blocking the beam was real, and kilometres west of the beach;
+the overhead box completely missed it. See lib/sandTemp.ts's 2026-07-15
+calibration note for the full writeup (candidate (c), now confirmed).
+
+beamCloudPct estimates this per beach: for each of a handful of altitude
+"slots" (2, 4, 6, 9, 12 km — ACM has no cloud-top-height field, so this
+scans a spread of plausible deck heights rather than picking one), it
+projects a ground offset d = altitude / tan(solar elevation) along the solar
+azimuth, samples a same-sized DQF-gated box there, and combines the slots as
+beamCloudPct = max(overhead box, mean of the valid offset boxes). See
+beam_cloud_pct()'s docstring for why max-of-mean was chosen over a
+"probability any layer blocks the beam" combination (1 - PROD(1 - f_i)):
+with 5 correlated, height-blind slots the product form saturates toward
+100%-blocked almost any time a few slots see scattered cloud, which is far
+more aggressive than the physical situation of one deck sampled multiple
+times. Offsets beyond ~35 km are skipped (too far to be the relevant deck);
+above 65 deg elevation the offsets collapse inside the overhead box already,
+so beamCloudPct just equals cloudPct; below 5 deg elevation beamCloudPct is
+null (negligible beam heating at night/near-horizon sun anyway, and solar
+azimuth gets noisy). The estimator is swappable — see the single
+beam_cloud_pct() function.
 
 QUALITY
 --------
@@ -76,7 +108,10 @@ DQF (data quality flags) is respected: only DQF==0 ("good_quality_qf")
 pixels count as valid. Fill/space/bad/degraded/spare pixels are excluded.
 When too few valid pixels remain in a beach's neighborhood (fewer than
 GOES_MIN_VALID_PIXELS), that beach's cloudPct is emitted as null rather than
-a fabricated number — never guess.
+a fabricated number — never guess. The same rule applies per offset box for
+beamCloudPct; if too few of the offset boxes have enough valid pixels,
+beamCloudPct falls back to the overhead box rather than fabricating a beam
+reading from noise.
 
 ENV OVERRIDES (mirrors glm_lightning.py's style)
 ---------------------------------------------------
@@ -86,6 +121,8 @@ ENV OVERRIDES (mirrors glm_lightning.py's style)
   GOES_BOX_KM                 neighborhood side length in km (default 15)
   GOES_MIN_VALID_PIXELS       min good-quality pixels to emit a real % (default 5)
   GOES_SELFCHECK_MAX_M       max allowed navigation round-trip error, meters (default 2500)
+  GOES_GRANULE_KEY            force a specific S3 key instead of searching for the
+                               newest granule (testability/reproducing a known case)
   GOES_OUT                   output path (default goes_cloud.json)
 """
 import datetime as dt
@@ -113,7 +150,14 @@ PIXEL_KM = 2.0
 MIN_VALID_PIXELS = int(os.environ.get("GOES_MIN_VALID_PIXELS", "5"))
 SELFCHECK_MAX_M = float(os.environ.get("GOES_SELFCHECK_MAX_M", "2500"))
 OUT = os.environ.get("GOES_OUT", "goes_cloud.json")
+# Force a specific granule S3 key instead of searching for the newest one —
+# for testability and for reproducing a known case (e.g. the 2026-07-15
+# 20:16Z granule that confirmed beam-path cloud blocking).
+GRANULE_KEY_OVERRIDE = os.environ.get("GOES_GRANULE_KEY")
 SATELLITE = "GOES-19"
+# Feed schema version. Bumped for the beamCloudPct/sunElevDeg addition so
+# consumers can tell an old-format cached/stale feed apart from a new one.
+FEED_VERSION = 2
 S3_NS = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
 
 # ACM's 4-level cloud mask -> a 0-1 cloud fraction. See module docstring.
@@ -242,6 +286,121 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * r * math.asin(math.sqrt(a))
 
 
+# --- solar position (NOAA low-precision algorithm) --------------------------
+# Good to a few tenths of a degree, which is plenty for picking a ~2 km ABI
+# pixel a few km along the beam path — no need for a full ephemeris library.
+# Verified against a known value: Boca Raton (26.3587, -80.0707) at
+# 2026-07-15T20:16Z gives elevation ~51.1 deg, azimuth ~272 deg (see
+# scripts/goes_cloud.test equivalent in the vitest suite / this module's
+# self-test below), matching the archived-granule experiment that confirmed
+# beam-path cloud blocking (see module docstring).
+def solar_position(when: dt.datetime, lat: float, lon: float) -> tuple[float, float]:
+    """(elevation_deg, azimuth_deg from true north, clockwise) of the sun at
+    `when` (must be timezone-aware UTC) as seen from lat/lon."""
+    j2000 = dt.datetime(2000, 1, 1, 12, tzinfo=dt.timezone.utc)
+    n = (when - j2000).total_seconds() / 86400.0
+    mean_lon = (280.460 + 0.9856474 * n) % 360.0
+    mean_anom = math.radians((357.528 + 0.9856003 * n) % 360.0)
+    ecl_lon = math.radians(
+        mean_lon + 1.915 * math.sin(mean_anom) + 0.020 * math.sin(2 * mean_anom)
+    )
+    obliquity = math.radians(23.439 - 4.0e-7 * n)
+    dec = math.asin(math.sin(obliquity) * math.sin(ecl_lon))
+    ra = math.atan2(math.cos(obliquity) * math.sin(ecl_lon), math.cos(ecl_lon))
+    gmst_deg = (280.46061837 + 360.98564736629 * n) % 360.0
+    hour_angle = math.radians((gmst_deg + lon - math.degrees(ra)) % 360.0)
+    phi = math.radians(lat)
+    el = math.asin(
+        math.sin(phi) * math.sin(dec) + math.cos(phi) * math.cos(dec) * math.cos(hour_angle)
+    )
+    az_south_based = math.atan2(
+        math.sin(hour_angle), math.cos(hour_angle) * math.sin(phi) - math.tan(dec) * math.cos(phi)
+    )
+    az = (math.degrees(az_south_based) + 180.0) % 360.0  # from true north, clockwise
+    return math.degrees(el), az
+
+
+def offset_latlon(lat: float, lon: float, km: float, bearing_deg: float) -> tuple[float, float]:
+    """A point `km` from (lat, lon) along compass bearing `bearing_deg` (deg
+    from true north, clockwise), using a flat-earth approximation — fine at
+    the <=35 km ranges this script uses (error is well under a pixel)."""
+    b = math.radians(bearing_deg)
+    dlat = km * math.cos(b) / 111.32
+    dlon = km * math.sin(b) / (111.32 * math.cos(math.radians(lat)))
+    return lat + dlat, lon + dlon
+
+
+# --- beam-path cloud (beamCloudPct) — see module docstring ------------------
+# Altitude slots (km) to probe along the solar azimuth. ACM has no cloud-top
+# height, so this scans a spread of plausible deck heights rather than one.
+BEAM_ALTITUDES_KM = (2.0, 4.0, 6.0, 9.0, 12.0)
+# Beyond this ground offset, the offset box is far enough from the beach that
+# treating it as "the cloud shading this beach" stops being credible (limb of
+# usefulness) — skip it rather than sample something irrelevant.
+BEAM_MAX_OFFSET_KM = 35.0
+# Below this solar elevation, beam heating of dry sand is already negligible
+# (near-horizon/night) and azimuth becomes numerically noisy — emit null.
+BEAM_MIN_ELEV_DEG = 5.0
+# Above this elevation, every offset (even the 12 km/highest slot) collapses
+# to well under one box-width from the beach, so the offset sampling adds
+# nothing over the overhead box — just reuse it.
+BEAM_COLLAPSE_ELEV_DEG = 65.0
+
+
+def beam_cloud_pct(
+    beach_pct: float | None,
+    sample_fn,
+    lat: float,
+    lon: float,
+    el_deg: float | None,
+    az_deg: float | None,
+) -> float | None:
+    """Estimate the cloud fraction actually blocking the direct solar beam
+    reaching (lat, lon), given the overhead box's reading (`beach_pct`) and a
+    `sample_fn(lat, lon) -> (pct_or_None, valid_px, total_px)` callback for
+    sampling an arbitrary offset box (same DQF gating as the overhead box).
+
+    ESTIMATOR CHOICE: beamCloudPct = max(beach_pct, mean(valid offset boxes)).
+    A physically-motivated alternative would treat each altitude slot as an
+    independent chance to block the beam and combine them as
+    100 * (1 - PROD_i(1 - f_i)) — but that's too aggressive here: ACM carries
+    no cloud-top-height, so the 5 slots are really 5 correlated, noisy guesses
+    at the SAME deck's height, not 5 independent cloud layers. Treating them
+    as independent saturates toward "100% blocked" almost any time a few
+    slots see scattered cloud, which overstates the physical situation (one
+    deck, sampled several times). A plain mean of the offset boxes is a much
+    better-behaved "how cloudy is the sunward corridor, on average" estimate,
+    and taking max(...) with the overhead box means a beach that's already
+    cloudy overhead never gets a falsely-clear beam reading just because the
+    (also cloudy) sunward corridor happened to sample a gap. Swap this
+    function's body to change the estimator; every caller only depends on the
+    signature above.
+    """
+    if el_deg is None or az_deg is None or el_deg < BEAM_MIN_ELEV_DEG:
+        return None
+    if el_deg > BEAM_COLLAPSE_ELEV_DEG:
+        return beach_pct
+
+    offset_pcts: list[float] = []
+    for h_km in BEAM_ALTITUDES_KM:
+        d_km = h_km / math.tan(math.radians(el_deg))
+        if d_km > BEAM_MAX_OFFSET_KM:
+            continue
+        olat, olon = offset_latlon(lat, lon, d_km, az_deg)
+        pct, _valid_px, _total_px = sample_fn(olat, olon)
+        if pct is not None:
+            offset_pcts.append(pct)
+
+    if not offset_pcts:
+        # No offset box had enough good-quality pixels (or was off-grid) —
+        # never fabricate a beam reading from nothing; fall back to overhead.
+        return beach_pct
+    mean_offset = float(np.mean(offset_pcts))
+    if beach_pct is None:
+        return round(mean_offset, 1)
+    return round(max(beach_pct, mean_offset), 1)
+
+
 # --- beach list: config/locations.ts (hand-curated) + locations.generated.json
 def load_beaches() -> list[dict]:
     """Merge the hand-curated TS locations with the admin-added generated JSON,
@@ -293,7 +452,19 @@ def main() -> int:
         return 1
     print(f"loaded {len(beaches)} beaches from config")
 
-    found = find_latest_granule()
+    if GRANULE_KEY_OVERRIDE:
+        st = start_time(GRANULE_KEY_OVERRIDE)
+        if st is None:
+            print(
+                f"error: GOES_GRANULE_KEY={GRANULE_KEY_OVERRIDE!r} doesn't match the "
+                "expected _sYYYYDDDHHMMSSt granule-key pattern",
+                file=sys.stderr,
+            )
+            return 1
+        found = (st, GRANULE_KEY_OVERRIDE)
+        print(f"using GOES_GRANULE_KEY override: {GRANULE_KEY_OVERRIDE}")
+    else:
+        found = find_latest_granule()
     if found is None:
         print(
             f"error: no {PRODUCT} granule found within {MAX_LOOKBACK_HOURS}h lookback "
@@ -335,63 +506,77 @@ def main() -> int:
             # Defaults (15 km, 2 km) -> radius 3 -> a 7x7 box, as specified.
             box_radius_px = max(1, round((BOX_KM / PIXEL_KM - 1) / 2))
 
-            results: dict[str, dict] = {}
-            selfcheck_errors_m: list[float] = []
-
-            for b in beaches:
-                slug, lat, lon = b["slug"], b["lat"], b["lon"]
+            def sample_box(lat: float, lon: float) -> tuple[float | None, int, int]:
+                """DQF-gated cloud % for a box_radius_px-radius box centered on
+                the ABI pixel nearest (lat, lon). Returns (pct_or_None,
+                valid_px, total_px); pct is None if (lat, lon) is off the
+                CONUS grid entirely OR the box has too few good-quality
+                pixels — callers decide fallback behavior, this never
+                fabricates. Shared by the overhead box and every beamCloudPct
+                offset box, so both use identical gating."""
                 try:
                     x, y = nav.forward(lat, lon)
                 except (ValueError, ZeroDivisionError):
-                    results[slug] = {"cloudPct": None, "validPixels": 0, "totalPixels": 0}
-                    continue
-
+                    return None, 0, 0
                 if not (x_min <= x <= x_max and y_min <= y <= y_max):
-                    # Outside the CONUS ACMC grid entirely (shouldn't happen for
-                    # US coastal beaches, but fail safe rather than index OOB).
-                    results[slug] = {"cloudPct": None, "validPixels": 0, "totalPixels": 0}
-                    continue
-
+                    return None, 0, 0
                 col = int(round((x - x_off) / x_scale))
                 row = int(round((y - y_off) / y_scale))
                 if not (0 <= row < n_rows and 0 <= col < n_cols):
-                    results[slug] = {"cloudPct": None, "validPixels": 0, "totalPixels": 0}
-                    continue
-
-                # Self-check: inverse-transform this exact pixel's own center
-                # back to lat/lon and confirm it's within ~1 pixel of the
-                # beach's true coordinates. This validates the navigation math
-                # itself on every run, using real granule data (no hardcoded
-                # "known good" pixel needed) — see module docstring.
-                try:
-                    lat2, lon2 = nav.inverse(x_rad[col], y_rad[row])
-                    err_m = haversine_m(lat, lon, lat2, lon2)
-                    selfcheck_errors_m.append(err_m)
-                except (ValueError, ZeroDivisionError):
-                    err_m = float("inf")
-                    selfcheck_errors_m.append(err_m)
-
+                    return None, 0, 0
                 r0, r1 = max(0, row - box_radius_px), min(n_rows, row + box_radius_px + 1)
                 c0, c1 = max(0, col - box_radius_px), min(n_cols, col + box_radius_px + 1)
                 acm_sub = acm[r0:r1, c0:c1]
                 dqf_sub = dqf[r0:r1, c0:c1]
                 total_px = int(acm_sub.size)
-
-                # Respect DQF: only good_quality_qf (0) pixels count. Also guard
-                # against any ACM value outside the documented 0-3 flag range
-                # (255 is the fill value; DQF!=0 already excludes it, this is
-                # belt-and-suspenders).
+                # Respect DQF: only good_quality_qf (0) pixels count. Also
+                # guard against any ACM value outside the documented 0-3 flag
+                # range (255 is the fill value; DQF!=0 already excludes it,
+                # this is belt-and-suspenders).
                 valid_mask = (dqf_sub == 0) & (acm_sub <= 3)
                 valid_px = int(valid_mask.sum())
-
                 if valid_px < MIN_VALID_PIXELS:
-                    results[slug] = {"cloudPct": None, "validPixels": valid_px, "totalPixels": total_px}
-                    continue
-
+                    return None, valid_px, total_px
                 levels = acm_sub[valid_mask].astype(int)
                 frac = float(np.mean([ACM_WEIGHTS[int(v)] for v in levels]))
+                return round(frac * 100, 1), valid_px, total_px
+
+            results: dict[str, dict] = {}
+            selfcheck_errors_m: list[float] = []
+
+            for b in beaches:
+                slug, lat, lon = b["slug"], b["lat"], b["lon"]
+
+                beach_pct, valid_px, total_px = sample_box(lat, lon)
+
+                # Self-check: inverse-transform the beach's own nearest
+                # pixel center back to lat/lon and confirm it's within ~1
+                # pixel of the beach's true coordinates. This validates the
+                # navigation math itself on every run, using real granule
+                # data (no hardcoded "known good" pixel needed) — see module
+                # docstring. Only meaningful for in-domain beaches.
+                try:
+                    x, y = nav.forward(lat, lon)
+                    if x_min <= x <= x_max and y_min <= y <= y_max:
+                        col = int(round((x - x_off) / x_scale))
+                        row = int(round((y - y_off) / y_scale))
+                        if 0 <= row < n_rows and 0 <= col < n_cols:
+                            lat2, lon2 = nav.inverse(x_rad[col], y_rad[row])
+                            selfcheck_errors_m.append(haversine_m(lat, lon, lat2, lon2))
+                except (ValueError, ZeroDivisionError):
+                    selfcheck_errors_m.append(float("inf"))
+
+                # Sun position AT THE GRANULE'S OWN SCAN TIME (not "now") —
+                # the offset boxes need to know where the cloud that could be
+                # blocking THIS observation's beam would be, not the sun's
+                # current position if the granule is old.
+                el_deg, az_deg = solar_position(granule_start, lat, lon)
+                beam_pct = beam_cloud_pct(beach_pct, sample_box, lat, lon, el_deg, az_deg)
+
                 results[slug] = {
-                    "cloudPct": round(frac * 100, 1),
+                    "cloudPct": beach_pct,
+                    "beamCloudPct": beam_pct,
+                    "sunElevDeg": round(el_deg, 1),
                     "validPixels": valid_px,
                     "totalPixels": total_px,
                 }
@@ -418,6 +603,7 @@ def main() -> int:
                 print("self-check: no in-domain beaches to validate against (unexpected)")
 
     out = {
+        "version": FEED_VERSION,
         "generatedAt": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "granuleStartIso": granule_start.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "satellite": SATELLITE,
@@ -427,7 +613,11 @@ def main() -> int:
     with open(out_path, "w") as fh:
         json.dump(out, fh, separators=(",", ":"))
     n_ok = sum(1 for v in results.values() if v["cloudPct"] is not None)
-    print(f"wrote {out_path}: {n_ok}/{len(results)} beaches with a valid cloud %")
+    n_beam = sum(1 for v in results.values() if v["beamCloudPct"] is not None)
+    print(
+        f"wrote {out_path}: {n_ok}/{len(results)} beaches with a valid overhead cloud %, "
+        f"{n_beam}/{len(results)} with a valid beam-path cloud %"
+    )
     return 0
 
 

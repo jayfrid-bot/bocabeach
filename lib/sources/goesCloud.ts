@@ -30,11 +30,19 @@ export const GOES_CLOUD_STALE_MINUTES = 45;
 
 interface GoesCloudFeedBeach {
   cloudPct: number | null;
+  // Absent on an old-format feed (pre beam-path support) — old cached feeds
+  // and the very first deploy after this ships are the reason these are
+  // optional rather than required. See lib/types.ts's GoesCloudData for what
+  // each field means downstream.
+  beamCloudPct?: number | null;
+  sunElevDeg?: number | null;
   validPixels: number;
   totalPixels: number;
 }
 
 interface GoesCloudFeed {
+  // Absent on an old-format feed — never assumed present.
+  version?: number;
   generatedAt: string;
   granuleStartIso: string;
   satellite: string;
@@ -91,6 +99,12 @@ export async function fetchGoesCloud(loc: Location): Promise<Wrapped<GoesCloudDa
 
     const data: GoesCloudData = {
       cloudPct: b.cloudPct,
+      // b.beamCloudPct is absent (not just null) on an old-format feed —
+      // `?? null` normalizes both "old feed" and "computed, no signal" to
+      // the same null, which satelliteBeamCloudPct treats identically
+      // (fall through to the next input in the preference order).
+      beamCloudPct: b.beamCloudPct ?? null,
+      sunElevDeg: b.sunElevDeg ?? null,
       validPixels: b.validPixels,
       totalPixels: b.totalPixels,
       granuleAgeMinutes,

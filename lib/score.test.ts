@@ -8,6 +8,7 @@ import {
   deriveMetrics,
   median,
   rainSeverity,
+  satelliteBeamCloudPct,
   satelliteCloudPct,
   scoreBeachDay,
 } from "@/lib/score";
@@ -185,6 +186,74 @@ describe("satelliteCloudPct + sand-model cloud override (2026-07-15 GOES fix)", 
     });
   });
 
+  describe("satelliteBeamCloudPct (2026-07-15 beam-path CONFIRMED-finding fix)", () => {
+    it("returns the beam reading when the feed is fresh (status ok) with a non-null beamCloudPct", () => {
+      const s = snapshot({
+        goesCloud: {
+          cloudPct: 31.3,
+          beamCloudPct: 69.1,
+          sunElevDeg: 51.0,
+          validPixels: 49,
+          totalPixels: 49,
+          granuleAgeMinutes: 5,
+          granuleStartIso: freshGranule(),
+        },
+      });
+      expect(satelliteBeamCloudPct(s)).toBe(69.1);
+    });
+
+    it("returns undefined when beamCloudPct is null (old-format feed or no beam signal), even though cloudPct is present", () => {
+      const s = snapshot({
+        goesCloud: {
+          cloudPct: 31.3,
+          beamCloudPct: null,
+          validPixels: 49,
+          totalPixels: 49,
+          granuleAgeMinutes: 5,
+          granuleStartIso: freshGranule(),
+        },
+      });
+      expect(satelliteBeamCloudPct(s)).toBeUndefined();
+      // The overhead reading is still usable in this case.
+      expect(satelliteCloudPct(s)).toBe(31.3);
+    });
+
+    it("returns undefined when the feed is stale, even with a valid beamCloudPct", () => {
+      const s = snapshot({
+        goesCloud: {
+          source: "test",
+          status: "stale",
+          fetchedAt: new Date().toISOString(),
+          attribution: "test",
+          data: {
+            cloudPct: 31.3,
+            beamCloudPct: 69.1,
+            sunElevDeg: 51.0,
+            validPixels: 49,
+            totalPixels: 49,
+            granuleAgeMinutes: 90,
+            granuleStartIso: staleGranule(),
+          },
+        },
+      });
+      expect(satelliteBeamCloudPct(s)).toBeUndefined();
+    });
+
+    it("returns undefined when the feed errored or was never fetched", () => {
+      const errored = snapshot({
+        goesCloud: {
+          source: "test",
+          status: "error",
+          fetchedAt: new Date().toISOString(),
+          attribution: "test",
+          data: null,
+        },
+      });
+      expect(satelliteBeamCloudPct(errored)).toBeUndefined();
+      expect(satelliteBeamCloudPct(snapshot({}))).toBeUndefined();
+    });
+  });
+
   describe("sand-model input (deriveMetrics.sandTempF)", () => {
     it("2026-07-15 regression: a fresh satellite read overrides a wrong forecast cloud", () => {
       // Without satellite data: the model trusts the (wrong) 24% forecast cloud
@@ -209,7 +278,72 @@ describe("satelliteCloudPct + sand-model cloud override (2026-07-15 GOES fix)", 
       expect(d.cloudCoverPct).toBe(24);
     });
 
-    it("falls back to the forecast consensus when the satellite granule is stale", () => {
+    it("prefers a fresh BEAM reading over a fresh OVERHEAD reading (beam > overhead > consensus)", () => {
+      // Overhead alone (97%, heavy overcast damping) -> 108, per the test above.
+      // A fresh beamCloudPct of 85% must win over the overhead 97% and land on
+      // a THIRD, distinct value — proving the sand input actually reads
+      // beamCloudPct, not cloudPct, when both are present and fresh. Note the
+      // beam value also damps on the EARLIER beam ramp (BEAM_OVERCAST_START_PCT
+      // 50, not 70): a beam-path fraction means a standing wall toward the sun,
+      // i.e. sustained blockage, so 85% beam damps harder than 85% overhead would.
+      const s = snapshot({
+        hourly: [sandHour],
+        goesCloud: {
+          cloudPct: 97,
+          beamCloudPct: 85,
+          sunElevDeg: 51.0,
+          validPixels: 40,
+          totalPixels: 49,
+          granuleAgeMinutes: 5,
+          granuleStartIso: freshGranule(),
+        },
+      });
+      expect(deriveMetrics(s).sandTempF).toBe(116);
+    });
+
+    it("beam-path damping starts at 50% — the 2026-07-15 4:15 PM case damps where overhead would not", () => {
+      // The motivating reading: beamCloudPct 69 sat one point UNDER the 70%
+      // overhead threshold, so with overhead semantics the model kept its full
+      // boost (~135°F vs 110-115°F measured). On the beam ramp (start 50) the
+      // same 69 must produce real damping — the estimate must land BELOW what
+      // the identical cloud number produces via the forecast-consensus path.
+      const mk = (viaBeam: boolean) =>
+        snapshot({
+          hourly: [sandHour],
+          weather: viaBeam ? undefined : { cloudCoverPct: 69 },
+          goesCloud: viaBeam
+            ? {
+                cloudPct: 31,
+                beamCloudPct: 69,
+                sunElevDeg: 51.0,
+                validPixels: 49,
+                totalPixels: 49,
+                granuleAgeMinutes: 5,
+                granuleStartIso: freshGranule(),
+              }
+            : undefined,
+        });
+      const viaBeam = deriveMetrics(mk(true)).sandTempF!;
+      const viaForecast = deriveMetrics(mk(false)).sandTempF!;
+      expect(viaBeam).toBeLessThan(viaForecast);
+    });
+
+    it("falls back to the OVERHEAD reading when beamCloudPct is null (old-format feed / no beam signal)", () => {
+      const s = snapshot({
+        hourly: [sandHour],
+        goesCloud: {
+          cloudPct: 97,
+          beamCloudPct: null,
+          validPixels: 40,
+          totalPixels: 49,
+          granuleAgeMinutes: 5,
+          granuleStartIso: freshGranule(),
+        },
+      });
+      expect(deriveMetrics(s).sandTempF).toBe(108); // same as overhead-only
+    });
+
+    it("falls back to the forecast consensus when the satellite granule is stale — beam included", () => {
       const s = snapshot({
         hourly: [sandHour],
         goesCloud: {
@@ -217,10 +351,20 @@ describe("satelliteCloudPct + sand-model cloud override (2026-07-15 GOES fix)", 
           status: "stale",
           fetchedAt: new Date().toISOString(),
           attribution: "test",
-          data: { cloudPct: 97, validPixels: 40, totalPixels: 49, granuleAgeMinutes: 90, granuleStartIso: staleGranule() },
+          data: {
+            cloudPct: 97,
+            beamCloudPct: 85,
+            sunElevDeg: 51.0,
+            validPixels: 40,
+            totalPixels: 49,
+            granuleAgeMinutes: 90,
+            granuleStartIso: staleGranule(),
+          },
         },
       });
-      expect(deriveMetrics(s).sandTempF).toBe(133); // same as forecast-only
+      // Neither the stale beam (85 -> 123) nor the stale overhead (97 -> 108)
+      // reading may be used — only the forecast consensus (24 -> 133).
+      expect(deriveMetrics(s).sandTempF).toBe(133);
     });
 
     it("falls back to the forecast consensus when the satellite feed is missing/errored", () => {
