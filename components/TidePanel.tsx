@@ -11,9 +11,20 @@ export function TidePanel({ tides, tz }: { tides: Wrapped<TideData>; tz: string 
           <span aria-hidden>🌊</span>
           <span>Tides</span>
         </div>
+        {/* Prominent rising/falling status — the quick "which way is the water
+            going" read that the sparse pre-graphic card made obvious. Kept as a
+            bold color-coded pill (rising = ocean blue, falling = amber) so it
+            still stands out next to the cross-section graphic. */}
         {tides.data?.trend ? (
-          <span className="text-xs text-ocean-700 dark:text-ocean-300">
-            {tides.data.trend === "rising" ? "↑ rising" : "↓ falling"}
+          <span
+            className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-sm font-semibold ring-1 ${
+              tides.data.trend === "rising"
+                ? "bg-ocean-500/10 text-ocean-700 ring-ocean-500/25 dark:text-ocean-300"
+                : "bg-amber-500/10 text-amber-700 ring-amber-500/25 dark:text-amber-300"
+            }`}
+          >
+            <span aria-hidden>{tides.data.trend === "rising" ? "↑" : "↓"}</span>
+            {tides.data.trend === "rising" ? "Rising" : "Falling"}
           </span>
         ) : null}
       </div>
