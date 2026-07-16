@@ -26,7 +26,6 @@ import {
 import { MetricCard } from "@/components/MetricCard";
 import { UvCard } from "@/components/UvCard";
 import { BusynessCard } from "@/components/BusynessCard";
-import { SeaweedStrip } from "@/components/SeaweedStrip";
 import { WindCompass } from "@/components/WindCompass";
 import { WaveHeightCard } from "@/components/WaveHeightCard";
 import { TidePanel } from "@/components/TidePanel";
@@ -384,8 +383,22 @@ export function ConditionsDashboard({
         />
         {/* Cam-derived (seaweed, crowd) + traffic only render when this beach
             actually has that source — no fake "not available" filler, and no
-            other beach's reading. See lib/sources/{sargassum,busyness}.ts. */}
-        <SeaweedStrip seaweed={sg} />
+            other beach's reading. See lib/sources/{sargassum,busyness}.ts.
+            Seaweed is deliberately a PLAIN text card — two graphic treatments
+            (ellipse blobs, then a wrack-line scene) both got vetoed by the
+            owner; the reading works best as words + the coverage %. */}
+        {sg && sg.level !== "unknown" ? (
+          <MetricCard
+            icon="🪸"
+            label="Seaweed (sargassum)"
+            value={cap(sg.level)}
+            sub={
+              `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
+              (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "") +
+              (sg.note ? ` — ${sg.note}` : "")
+            }
+          />
+        ) : null}
         <BusynessCard busy={busy} />
         {traffic && traffic.level !== "unknown" ? (
           <MetricCard
