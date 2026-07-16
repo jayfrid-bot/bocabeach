@@ -130,6 +130,68 @@ describe("deriveMetrics", () => {
   });
 });
 
+describe("UV under a satellite-observed deck (2026-07-16 fix)", () => {
+  const hourStart = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000).toISOString();
+  const freshGranule = () => new Date(Date.now() - 5 * 60_000).toISOString();
+  const staleGranule = () => new Date(Date.now() - 90 * 60_000).toISOString();
+  // The real 2026-07-16 4 PM readings: Open-Meteo said uv 7.3 / clear-sky 7.4
+  // under "100% cloud" (a -1.4% discount) while GOES observed a genuine 99.3%
+  // deck. Real solid overcast transmits only ~25-45% of UV.
+  const uvHour = { time: hourStart, uvIndex: 7.3, uvClearSkyIndex: 7.4 };
+  const goes = (cloudPct: number, granuleStartIso: string) => ({
+    cloudPct,
+    validPixels: 49,
+    totalPixels: 49,
+    granuleAgeMinutes: 5,
+    granuleStartIso,
+  });
+
+  it("attenuates clear-sky UV by observed heavy cloud (the 7/16 case: 7.3 → 3.0)", () => {
+    const d = deriveMetrics(snapshot({ hourly: [uvHour], goesCloud: goes(99.3, freshGranule()) }));
+    // transmission = 1 - 0.6*((99.3-50)/50) = 0.4084 → 7.4 * 0.4084 ≈ 3.0
+    expect(d.uvIndex).toBe(3);
+  });
+
+  it("never RAISES the forecast UV (min rail): forecast already lower wins", () => {
+    const d = deriveMetrics(
+      snapshot({
+        hourly: [{ time: hourStart, uvIndex: 2.1, uvClearSkyIndex: 7.4 }],
+        goesCloud: goes(80, freshGranule()),
+      }),
+    );
+    expect(d.uvIndex).toBe(2.1); // sat would say 7.4*0.64=4.7 — forecast's 2.1 stands
+  });
+
+  it("floors transmission at 0.4 — a 100% deck still warns (you can burn through overcast)", () => {
+    const d = deriveMetrics(snapshot({ hourly: [uvHour], goesCloud: goes(100, freshGranule()) }));
+    expect(d.uvIndex).toBeCloseTo(7.4 * 0.4, 1);
+    expect(d.uvIndex!).toBeGreaterThan(2.5);
+  });
+
+  it("light/broken observed cloud (<50%) leaves the forecast UV untouched", () => {
+    const d = deriveMetrics(snapshot({ hourly: [uvHour], goesCloud: goes(35, freshGranule()) }));
+    expect(d.uvIndex).toBe(7.3);
+  });
+
+  it("stale satellite → forecast UV unchanged (never attenuate on old truth)", () => {
+    // Staleness is the Wrapped status (set by the fetcher's granule-age gate),
+    // so pass the pre-wrapped form like the sand-model stale test below.
+    const d = deriveMetrics(
+      snapshot({
+        hourly: [uvHour],
+        goesCloud: {
+          source: "test",
+          status: "stale",
+          fetchedAt: new Date().toISOString(),
+          attribution: "test",
+          data: { ...goes(99.3, staleGranule()), granuleAgeMinutes: 90 },
+        },
+      }),
+    );
+    expect(d.uvIndex).toBe(7.3);
+  });
+});
+
 describe("satelliteCloudPct + sand-model cloud override (2026-07-15 GOES fix)", () => {
   // Start of the CURRENT hour, same convention as the nowcast-corroboration
   // tests above, so currentHourOf()/currentSandTempF() find the bucket.

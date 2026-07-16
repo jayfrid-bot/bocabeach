@@ -128,6 +128,8 @@ export interface HourlyMetrics {
   windSpeedMph?: number;
   windDirDeg?: number;
   uvIndex?: number;
+  /** Hypothetical no-cloud UV — the base for satellite-observed attenuation. */
+  uvClearSkyIndex?: number;
   humidityPct?: number; // relative humidity, 0-100
   dewPointF?: number; // °F — the comfort/mugginess driver
   /** Modeled ground-surface temperature (°F) — the basis of the sand estimate. */
