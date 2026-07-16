@@ -210,6 +210,29 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
   // cap owns the score anyway), cloud consensus >= 50% (rain requires clouds),
   // precip probability >= 25, or measured precip this hour. Unknown signals do
   // NOT veto (fail-safe: only positive evidence of a clear sky kills the cap).
+  // UV under a satellite-OBSERVED deck. Open-Meteo's cloud-aware uv_index
+  // barely discounts decks its radiation model thinks are thin — 2026-07-16
+  // 4 PM: clear-sky 7.35 vs "100% cloud" 7.25 (-1.4%) while GOES read a real
+  // 99% deck (the same optical-depth blindness as the sand-temp saga; real
+  // solid overcast transmits only ~25-45% of UV). When the satellite sees
+  // heavy cloud (>=50%, fresh feed), attenuate the CLEAR-SKY UV by observed
+  // cover — linear to a 0.4 transmission floor at a 100% deck. Two safety
+  // rails, because a UV metric must never under-warn: (1) min() — we only
+  // ever LOWER the forecast number, so if Open-Meteo already discounted more
+  // than we would, theirs stands; (2) the 0.4 floor keeps "you can still burn
+  // through bright overcast" true (7.4 clear-sky → 3.0, ~67 min to burn — a
+  // warning, not an all-clear). Overhead cloud (not beam-path): UV reaching
+  // skin has a large diffuse/scattered component, so the sky above matters,
+  // unlike the sand model's direct-beam physics. Stale/missing satellite →
+  // forecast UV unchanged.
+  const uvForecast = om?.uvIndex ?? m?.uvIndex;
+  const satCloudForUv = satelliteCloudPct(s);
+  let uvIndex = uvForecast;
+  if (satCloudForUv != null && satCloudForUv >= 50 && om?.uvClearSkyIndex != null) {
+    const transmission = 1 - 0.6 * ((satCloudForUv - 50) / 50);
+    const satUv = round(om.uvClearSkyIndex * transmission, 1);
+    uvIndex = uvForecast != null ? Math.min(uvForecast, satUv) : satUv;
+  }
   const nowcastSaysRain = s.nowcast.data?.state === "raining";
   const rainishCode =
     om?.weatherCode != null &&
@@ -236,10 +259,11 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     waveHeightFt: b?.waveHeightFt ?? m?.waveHeightFt,
     precipProbability,
     shortForecast: w?.shortForecast,
-    // The current hour's forecast UV — the SAME source the hourly chart + score
-    // use. The marine "/current" endpoint can lag hours behind (it once read 0.4
-    // at midday → a nonsense "minutes to burn"), so it's only a fallback now.
-    uvIndex: om?.uvIndex ?? m?.uvIndex,
+    // The current hour's forecast UV (marine "/current" lags hours behind — a
+    // fallback only), attenuated by GOES-observed cloud when the satellite
+    // sees a real deck the forecast's radiation model doesn't — see the
+    // uvIndex block above the return.
+    uvIndex,
     cloudCoverPct,
     sargassumLevel: s.sargassum.data?.level,
     sargassumCoveragePct: s.sargassum.data?.coveragePct,
