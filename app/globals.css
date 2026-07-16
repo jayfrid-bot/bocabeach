@@ -91,3 +91,13 @@ body {
   0%, 100% { opacity: 0.82; }
   50% { opacity: 1; }
 }
+
+/* TideCrossSection: the whole water group drifts ±2px vertically on a slow
+   ease-in-out alternate loop so the sea reads as liquid even at a glance.
+   The honest tide waterline is the group's resting position; the guides and
+   labels outside the group stay fixed. Covered by the app-wide
+   prefers-reduced-motion rule above. */
+@keyframes tidebreathe {
+  from { transform: translateY(-2px); }
+  to { transform: translateY(2px); }
+}

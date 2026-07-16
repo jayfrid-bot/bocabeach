@@ -186,17 +186,19 @@ export function SandTempPanel({
           evenly spaced — even spacing made "burn risk" sit at the far right
           while the true 130°F boundary is at ~79%). */}
       <div className="relative mt-1 h-4 text-[10px] text-slate-500">
+        {/* "°" not "°F" — at 375px the full unit made the last two labels
+            (centered at 68% / 89.5%) run into each other. */}
         <span className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: "14%" }}>
-          barefoot · &lt;95°F
+          barefoot · &lt;95°
         </span>
         <span className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: "43%" }}>
-          warm · 95°F
+          warm · 95°
         </span>
         <span className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: "68%" }}>
-          sandals · 115°F
+          sandals · 115°
         </span>
         <span className="absolute -translate-x-1/2 whitespace-nowrap" style={{ left: "89.5%" }}>
-          burn · 130°F+
+          burn · 130°+
         </span>
       </div>
 
