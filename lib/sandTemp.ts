@@ -94,7 +94,15 @@ const FULL_SUN_WM2 = 1000;
  *
  *    Note the error direction is at least the SAFE one: the app over-reports heat, so
  *    it warns about burns that aren't there rather than missing burns that are.
- */
+ *  - 2026-07-16 ~3:38 PM: soil 104°F, 930 W/m² (modeled — nonsense under the deck),
+ *    10 mph, GOES-observed 99.3% cloud (overhead AND beam, fresh 32-min granule) →
+ *    model 108°F, MEASURED 113°F (-5). FIRST LIVE TEST of the satellite pipeline on
+ *    the exact failure class from 7/15 (blocked-sun afternoon): a 5° undershoot vs
+ *    the prior day's +22/+33 overshoot. Caveat: the forecast also said 100% cloud
+ *    today, so both inputs agreed — the satellite's unique win is on forecast-miss
+ *    days like 7/15. Measured boost was soil+9 vs the damped model's soil+4, i.e.
+ *    the ~88% damp at 99% beam may run a touch strong — but one point, -5°F, on the
+ *    conservative side: leave it. */
 const MAX_SUN_BOOST_F = 55;
 /**
  * Solid overcast kills the dry-sand boost. The boost is driven by DIRECT beam
