@@ -155,16 +155,20 @@ const SURF_BOOST_FRACTION = 0.65;
  * reading had HIGHER GHI). It's thermal hysteresis: dry sand's thin top layer
  * races ahead of the bulk-soil model while the sun is climbing, then bleeds that
  * heat back out through the afternoon regardless of how strong the sun still
- * looks. The clean proxy is HOURS AFTER SOLAR NOON. Boost stays full until ~2.4 h
- * past noon (protecting the genuinely-hot ~4 PM danger window), then smooth-steps
- * to a near-zero floor by ~3.8 h — matching every afternoon reading (backtest MAE
- * ~2.2 °F, max 4 °F, errors skewed to the SAFE over-warn side). The six
- * 9:54 AM–2:20 PM calibration points are untouched (factor = 1 there).
- * FL-July-calibrated; the afternoon-decay physics generalizes, the exact timing
- * should be re-checked at other latitudes/seasons when ground truth exists.
+ * looks. The clean proxy is HOURS AFTER SOLAR NOON. Boost stays full until ~1.4 h
+ * past noon, then smooth-steps down to a near-zero floor by ~4.4 h — a GRADUAL
+ * slope, not a cliff (an earlier 2.4→3.8 h window crashed a ~30 °F boost in a
+ * single hour and drew a visible cliff on the sand curve around 4-5 PM; there's
+ * no clear-sky ground truth between the 2:20 PM and 5:01 PM readings, so the
+ * softer slope is both better-looking and more honest). 4 PM sits mid-slope
+ * (~0.65) → still a hot ~124 °F that warns. Matches every afternoon reading
+ * (backtest MAE ~2.2 °F, max 5 °F, errors skewed to the SAFE over-warn side).
+ * The 9:54 AM–2:20 PM calibration points are untouched (factor = 1). FL-July-
+ * calibrated; the afternoon-decay physics generalizes, the exact timing should
+ * be re-checked at other latitudes/seasons when ground truth exists.
  */
-const AFTERNOON_DECAY_START_H = 2.4;
-const AFTERNOON_DECAY_END_H = 3.8;
+const AFTERNOON_DECAY_START_H = 1.4;
+const AFTERNOON_DECAY_END_H = 4.4;
 const AFTERNOON_FLOOR = 0.03;
 
 const DEG = Math.PI / 180;

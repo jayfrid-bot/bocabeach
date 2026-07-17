@@ -162,16 +162,21 @@ describe("current sand value: card and score agree", () => {
 
 describe("afternoon decay (2026-07-16 field session)", () => {
   describe("afternoonBoostFactor", () => {
-    it("is full (1.0) through the morning and the first ~2.4h past solar noon", () => {
+    it("is full (1.0) through the morning and the first ~1.4h past solar noon", () => {
       expect(afternoonBoostFactor(-3.5)).toBe(1); // 9:54 AM: +33 boost measured
       expect(afternoonBoostFactor(0)).toBe(1); // solar noon
       expect(afternoonBoostFactor(0.9)).toBe(1); // 2:20 PM: still +30 measured
-      expect(afternoonBoostFactor(2.4)).toBe(1); // protects the hot ~4 PM window
+      expect(afternoonBoostFactor(1.4)).toBe(1);
     });
 
-    it("smooth-steps to a near-zero floor by ~3.8h past noon and stays there", () => {
-      expect(afternoonBoostFactor(3.6)).toBeLessThan(0.15); // ~5 PM: +1 measured
-      expect(afternoonBoostFactor(3.8)).toBeCloseTo(0.03, 2);
+    it("eases down a GRADUAL slope — ~4 PM still substantial, no cliff", () => {
+      expect(afternoonBoostFactor(2.6)).toBeGreaterThan(0.5); // ~4 PM: still hot (warns)
+      expect(afternoonBoostFactor(2.6)).toBeLessThan(0.8);
+      expect(afternoonBoostFactor(3.6)).toBeLessThan(0.35); // ~5 PM: mostly gone
+    });
+
+    it("reaches a near-zero floor by ~4.4h past noon and stays there", () => {
+      expect(afternoonBoostFactor(4.4)).toBeCloseTo(0.03, 2);
       expect(afternoonBoostFactor(5.9)).toBeCloseTo(0.03, 2); // 7:23 PM: dead
     });
 
