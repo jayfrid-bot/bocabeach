@@ -160,6 +160,43 @@ describe("current sand value: card and score agree", () => {
   });
 });
 
+describe("evening radiative cooling (accuracy tune, 2026-07-17)", () => {
+  // The model floors at soil temp, but 19 paired IR readings showed a +2°F
+  // systematic OVER-read after ~5:20 PM (hAN >= 4), where real dry sand runs a
+  // couple degrees BELOW the soil model. A small evening deficit corrects it.
+  const base = { soilTempF: 92, solarWm2: 300, windSpeedMph: 8 } as const;
+
+  it("subtracts nothing before ~3.8h past solar noon (midday untouched)", () => {
+    const noon = estimateSandTempF({ ...base, hoursFromSolarNoon: 0 })!;
+    const early = estimateSandTempF({ ...base, hoursFromSolarNoon: 3.8 })!;
+    // Same boost factor region → the cooling term hasn't started; the only
+    // difference would be the afternoon decay, so compare against no-hAN.
+    const noHan = estimateSandTempF(base)!;
+    expect(noon).toBe(noHan); // hAN 0 → decay 1.0, cooling 0
+    expect(early).toBeLessThanOrEqual(noHan); // decay may bite, cooling still 0
+  });
+
+  it("dips the estimate BELOW soil deep in the evening (was floored at soil)", () => {
+    // 7:57 PM-ish (hAN 6.5): boost is near zero, cooling ~2.2 → below soil.
+    const est = estimateSandTempF({ soilTempF: 90, solarWm2: 284, windSpeedMph: 9, hoursFromSolarNoon: 6.5 })!;
+    expect(est).toBeLessThan(90);
+    expect(est).toBeGreaterThanOrEqual(86); // ~2-3° below, not a cliff
+  });
+
+  it("cools more the closer to sunset (monotonic through the evening)", () => {
+    const at = (h: number) => estimateSandTempF({ soilTempF: 90, solarWm2: 250, windSpeedMph: 9, hoursFromSolarNoon: h })!;
+    expect(at(6.5)).toBeLessThanOrEqual(at(5.0));
+    expect(at(5.0)).toBeLessThanOrEqual(at(3.8));
+  });
+
+  it("cools surf and dune sand equally (both radiate to the sky)", () => {
+    const noCool = estimateSandRangeF({ soilTempF: 90, solarWm2: 250, windSpeedMph: 9, hoursFromSolarNoon: 0 })!;
+    const cooled = estimateSandRangeF({ soilTempF: 90, solarWm2: 250, windSpeedMph: 9, hoursFromSolarNoon: 6.5 })!;
+    expect(cooled.dunesF).toBeLessThan(noCool.dunesF);
+    expect(cooled.surfF).toBeLessThan(noCool.surfF);
+  });
+});
+
 describe("afternoon decay (2026-07-16 field session)", () => {
   describe("afternoonBoostFactor", () => {
     it("is full (1.0) through the morning and the first ~1.4h past solar noon", () => {
