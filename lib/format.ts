@@ -65,8 +65,12 @@ export function seaState(waveHeightFt: number): { label: string; note: string } 
 
 /** The brand's plain-English answer to "is it beach day?" for a 0-100 score. */
 export function beachDayVerdict(score: number): string {
+  // The app's headline answer to "Is it beach day?" — five tiers so a genuinely
+  // good day gets real enthusiasm (a 76 used to read as a lukewarm "Pretty
+  // much"; owner wanted good days to SAY so).
+  if (score >= 90) return "Absolutely!";
   if (score >= 80) return "Yes!";
-  if (score >= 65) return "Pretty much";
+  if (score >= 65) return "Good beach day";
   if (score >= 45) return "Maybe";
   return "Not really";
 }

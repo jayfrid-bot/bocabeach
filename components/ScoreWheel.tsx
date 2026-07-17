@@ -13,7 +13,7 @@ const R_IN = 92;
 const R_OUT_SEL = 158; // the selected slice pops outward
 const LABEL_R = (R_OUT + R_IN) / 2;
 
-/** Emoji shown on a slice when it's wide enough to carry one. */
+/** Small neutral header emoji for the tap-detail card (NOT the slices). */
 const FACTOR_EMOJI: Record<string, string> = {
   airTemp: "🌡️",
   sky: "☀️",
@@ -27,6 +27,32 @@ const FACTOR_EMOJI: Record<string, string> = {
   crowds: "👥",
   uv: "🕶️",
 };
+
+/** Short TEXT label carried on the slice itself (replaces the old slice emoji). */
+const FACTOR_LABEL: Record<string, string> = {
+  airTemp: "Air",
+  sky: "Sky",
+  wind: "Wind",
+  waterTemp: "Water",
+  waves: "Waves",
+  comfort: "Humidity",
+  sandTemp: "Sand",
+  sargassum: "Seaweed",
+  waterQuality: "Quality",
+  crowds: "Crowds",
+  uv: "UV",
+};
+
+// Slice-label typography. Dark slate text with a white paint-order halo reads
+// cleanly on every slice fill (emerald / lime / amber / rose) in both themes,
+// since the slice colors are theme-independent.
+const LABEL_FONT = 11.5;
+// Deterministic width estimate for the fit test (must be SSR-safe — no DOM
+// measuring). ~6.5px of arc per character plus end padding; a slice only gets
+// its label when the arc at the label radius can hold the whole word without
+// crowding the slice edges.
+const LABEL_CHAR_W = 6.5;
+const LABEL_PAD = 9;
 
 /** Plain-English "what it measures + how it's calculated" per factor. */
 const FACTOR_EXPLAIN: Record<string, string> = {
@@ -138,6 +164,54 @@ export function ScoreWheel({ result }: { result: ScoreResult }) {
 
   const toggle = (key: string) => setSelected((k) => (k === key ? null : key));
 
+  // Center block: score number (hero) + rating (+ optional "capped from N"),
+  // laid out as ONE group that is optically centered in the donut hole. Each
+  // line reserves a fixed box height; we stack the boxes and center the whole
+  // stack on CY, so the capped line's presence never shifts the number off
+  // center — it just rebalances the group. dominant-baseline "central" then
+  // centers each line on its box center.
+  const centerLines: {
+    key: string;
+    box: number; // reserved vertical space for this line
+    size: number;
+    weight?: number;
+    fill?: string;
+    className?: string;
+    text: string;
+  }[] = [
+    {
+      key: "score",
+      box: 48,
+      size: 54,
+      weight: 700,
+      fill: scoreColor(result.score),
+      text: String(result.score),
+    },
+    {
+      key: "rating",
+      box: 20,
+      size: 15,
+      className: "fill-slate-600 dark:fill-slate-300",
+      text: result.rating,
+    },
+  ];
+  if (capped) {
+    centerLines.push({
+      key: "capped",
+      box: 15,
+      size: 11,
+      className: "fill-amber-600 dark:fill-amber-400",
+      text: `capped from ${result.rawScore}`,
+    });
+  }
+  const centerTotalH = centerLines.reduce((a, l) => a + l.box, 0);
+  let centerY = CY - centerTotalH / 2;
+  const centerRows = centerLines.map((l) => {
+    const y = round2(centerY + l.box / 2);
+    centerY += l.box;
+    return { ...l, y };
+  });
+
   return (
     <section>
       <h2 className="mb-1 text-lg font-semibold text-slate-900 dark:text-white">
@@ -159,7 +233,18 @@ export function ScoreWheel({ result }: { result: ScoreResult }) {
             const isSel = s.sub.key === selected;
             const mid = (s.startDeg + s.endDeg) / 2;
             const span = s.endDeg - s.startDeg;
-            const label = pt(LABEL_R, mid);
+            const at = pt(LABEL_R, mid);
+            // Tangential label: it follows the arc (rotate to the slice's
+            // mid-angle). Flip 180° on the bottom/left arc so text is never
+            // upside down. Show it only when the arc at the label radius can
+            // hold the word — thin slices stay clean; tap still reveals all.
+            const labelText = FACTOR_LABEL[s.sub.key] ?? "";
+            const arcLen = (span * Math.PI) / 180 * LABEL_R;
+            const showLabel =
+              labelText.length > 0 &&
+              arcLen >= labelText.length * LABEL_CHAR_W + LABEL_PAD;
+            const flip = mid > 90 && mid < 270;
+            const rot = round2(flip ? mid + 180 : mid);
             return (
               <g key={s.sub.key}>
                 <path
@@ -187,59 +272,52 @@ export function ScoreWheel({ result }: { result: ScoreResult }) {
                     }
                   }}
                 />
-                {span > 16 ? (
+                {showLabel ? (
                   <text
-                    x={label.x}
-                    y={label.y}
+                    x={at.x}
+                    y={at.y}
+                    transform={`rotate(${rot} ${at.x} ${at.y})`}
                     textAnchor="middle"
                     dominantBaseline="central"
-                    fontSize="16"
-                    className="pointer-events-none select-none"
+                    fontSize={LABEL_FONT}
+                    fontWeight={500}
+                    fill="#0f172a"
+                    stroke="#ffffff"
+                    strokeWidth={2.5}
+                    strokeLinejoin="round"
+                    paintOrder="stroke"
+                    opacity={selected && !isSel ? 0.35 : 1}
+                    className="pointer-events-none select-none transition-opacity"
                     aria-hidden
                   >
-                    {FACTOR_EMOJI[s.sub.key] ?? ""}
+                    {labelText}
                   </text>
                 ) : null}
               </g>
             );
           })}
 
-          {/* center: the score itself */}
+          {/* center: the score itself — one optically centered block */}
           <g
             className={selected ? "cursor-pointer" : undefined}
             onClick={() => setSelected(null)}
           >
             <circle cx={CX} cy={CY} r={R_IN - 6} fill="transparent" />
-            <text
-              x={CX}
-              y={CY - 12}
-              textAnchor="middle"
-              fontSize="52"
-              fontWeight="700"
-              fill={scoreColor(result.score)}
-            >
-              {result.score}
-            </text>
-            <text
-              x={CX}
-              y={CY + 22}
-              textAnchor="middle"
-              fontSize="15"
-              className="fill-slate-600 dark:fill-slate-300"
-            >
-              {result.rating}
-            </text>
-            {capped ? (
+            {centerRows.map((l) => (
               <text
+                key={l.key}
                 x={CX}
-                y={CY + 42}
+                y={l.y}
                 textAnchor="middle"
-                fontSize="11"
-                className="fill-amber-600 dark:fill-amber-400"
+                dominantBaseline="central"
+                fontSize={l.size}
+                fontWeight={l.weight}
+                fill={l.fill}
+                className={l.className}
               >
-                capped from {result.rawScore}
+                {l.text}
               </text>
-            ) : null}
+            ))}
           </g>
         </svg>
 
