@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   anchorCurrentHourScore,
   bestBeachWindow,
@@ -193,11 +193,17 @@ describe("UV under a satellite-observed deck (2026-07-16 fix)", () => {
 });
 
 describe("satelliteCloudPct + sand-model cloud override (2026-07-15 GOES fix)", () => {
-  // Start of the CURRENT hour, same convention as the nowcast-corroboration
-  // tests above, so currentHourOf()/currentSandTempF() find the bucket.
-  const hourStart = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000).toISOString();
-  const freshGranule = () => new Date(Date.now() - 5 * 60_000).toISOString(); // 5 min old
-  const staleGranule = () => new Date(Date.now() - 90 * 60_000).toISOString(); // 90 min old
+  // Pin the clock to a fixed MORNING instant so the sand-model afternoon decay
+  // (deriveMetrics keys it on the beach longitude + Date.now()) is a no-op here
+  // — factor 1.0 at 11:30 AM EDT, well before Boca's ~1:24 PM solar noon — and
+  // these tests isolate the CLOUD behavior instead of flaking with wall-clock.
+  const FIXED_NOW = new Date("2026-07-15T15:30:00.000Z").getTime();
+  beforeEach(() => vi.setSystemTime(FIXED_NOW));
+  afterEach(() => vi.useRealTimers());
+  // Start of the fixed hour, so currentHourOf()/currentSandTempF() find the bucket.
+  const hourStart = new Date(Math.floor(FIXED_NOW / 3_600_000) * 3_600_000).toISOString();
+  const freshGranule = () => new Date(FIXED_NOW - 5 * 60_000).toISOString(); // 5 min old
+  const staleGranule = () => new Date(FIXED_NOW - 90 * 60_000).toISOString(); // 90 min old
 
   // Real-world regression inputs from the 2026-07-15 anvil miss: soil 100°F,
   // 701 W/m² solar, 7 mph wind. Open-Meteo's forecast cloud read 24% (the

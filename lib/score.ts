@@ -12,7 +12,7 @@ import type {
   WaterQualityRating,
 } from "@/lib/types";
 import { clamp, degToCardinal, dewPointFromTempRH, plateau, round } from "@/lib/util";
-import { currentSandTempF, estimateSandTempF } from "@/lib/sandTemp";
+import { currentSandTempF, estimateSandTempF, hoursFromSolarNoon } from "@/lib/sandTemp";
 import { seaState } from "@/lib/format";
 
 // Consolidated, best-available values pulled across all sources.
@@ -279,11 +279,16 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     // Sky sub-score, its display, and the rain-corroboration gate are
     // untouched.
     sandTempF: s.hourly.data
-      ? currentSandTempF(s.hourly.data, Date.now(), {
-          cloudCoverPct: satelliteBeamCloudPct(s) ?? satelliteCloudPct(s) ?? cloudCoverPct,
-          // Beam-path readings damp from 50% (sustained blockage), not 70%.
-          cloudIsBeamPath: satelliteBeamCloudPct(s) != null,
-        })
+      ? currentSandTempF(
+          s.hourly.data,
+          Date.now(),
+          {
+            cloudCoverPct: satelliteBeamCloudPct(s) ?? satelliteCloudPct(s) ?? cloudCoverPct,
+            // Beam-path readings damp from 50% (sustained blockage), not 70%.
+            cloudIsBeamPath: satelliteBeamCloudPct(s) != null,
+          },
+          s.location.lon, // afternoon-decay term (hours from solar noon)
+        )
       : undefined,
     humidityPct,
     dewPointF:
@@ -897,6 +902,8 @@ function scoreAllHoursFull(
         windSpeedMph: h.windSpeedMph,
         recentRainIn: [i, i - 1, i - 2].reduce((a, j) => a + (hours[j]?.precipIn ?? 0), 0),
         cloudCoverPct: h.cloudCoverPct,
+        // Per-hour afternoon decay (each forecast hour tapers by its own phase).
+        hoursFromSolarNoon: hoursFromSolarNoon(s.location.lon, new Date(h.time)),
       }),
     );
   });
