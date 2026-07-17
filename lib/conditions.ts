@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { getLocation, toPublicLocation } from "@/config/locations";
 import type { ConditionsResponse, ConditionsSnapshot, Location } from "@/lib/types";
 import { buildCamViews } from "@/lib/cams";
@@ -114,12 +115,29 @@ export async function getSnapshotForLocation(
   };
 }
 
+/**
+ * The heavy pipeline — 18 source fetches + full scoring over 192 hourly buckets
+ * + multi-day windows — cached in the KV incremental cache (see
+ * open-next.config.ts) for 120 s, keyed by slug and SHARED across every request
+ * (page SSR + each client's `/api/conditions` poll). Before this, the
+ * force-dynamic pages re-ran it per request and ran the worker over its resource
+ * limit (Cloudflare 1102) under load. 120 s stale on the initial render is
+ * imperceptible — the client SWR-refetches every 5 min — and the near-real-time
+ * safety path (lightning push loop) is separate and unaffected.
+ */
+const cachedConditions = (slug: string) =>
+  unstable_cache(
+    () => getConditionsForLocation(getLocation(slug)!),
+    ["conditions", slug],
+    { revalidate: 120, tags: [`conditions-${slug}`] },
+  )();
+
 export async function getConditions(
   slug: string,
 ): Promise<ConditionsResponse | null> {
   const loc = getLocation(slug);
   if (!loc) return null;
-  return getConditionsForLocation(loc);
+  return cachedConditions(slug);
 }
 
 /**

@@ -9,7 +9,12 @@
     "binding": "ASSETS"
   },
   "kv_namespaces": [
-    { "binding": "PUSH_KV", "id": "4dab9a763f5c416ab8c97ff19f47cf40" }
+    { "binding": "PUSH_KV", "id": "4dab9a763f5c416ab8c97ff19f47cf40" },
+    // OpenNext incremental cache (ISR + unstable_cache) — backs the cached
+    // conditions pipeline so the worker doesn't re-run the full 18-source fetch
+    // + 192-hour scoring on every request (that ran it over its resource limit
+    // → 1102 under load). Reuses the same namespace; OpenNext prefixes its keys.
+    { "binding": "NEXT_INC_CACHE_KV", "id": "4dab9a763f5c416ab8c97ff19f47cf40" }
   ],
   // Safety push alerts are paused app-wide (only the morning summary ships) until
   // presence-gating lands — mirrors the Netlify PUSH_SAFETY_ALERTS=off so the CF
