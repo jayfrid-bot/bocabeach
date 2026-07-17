@@ -28,6 +28,8 @@ import { UvCard } from "@/components/UvCard";
 import { BusynessCard } from "@/components/BusynessCard";
 import { WindCompass } from "@/components/WindCompass";
 import { WaveHeightCard } from "@/components/WaveHeightCard";
+import { FlipCard, NerdBack } from "@/components/FlipCard";
+import { buildNerdInfo, type NerdContext } from "@/lib/nerdInfo";
 import { TidePanel } from "@/components/TidePanel";
 import { SunPanel } from "@/components/SunPanel";
 import { SafetyBanner } from "@/components/SafetyBanner";
@@ -116,6 +118,17 @@ export function ConditionsDashboard({
   const traffic = snap.traffic.data;
   const rip = snap.nws.data?.ripCurrentRisk;
   const nc = snap.nowcast.data;
+
+  // Shared context for the flip-card "data nerd" backs (the math + sources
+  // behind each card). Built once from the same derived metrics + snapshot the
+  // fronts render, so a back always matches its front. See lib/nerdInfo.ts.
+  const nerd: NerdContext = { d, snap };
+  const nerdBack = (key: Parameters<typeof buildNerdInfo>[0]) => (
+    <NerdBack info={buildNerdInfo(key, nerd)} />
+  );
+  // Busyness front hides itself (returns null) at night / with no note — mirror
+  // that here so we never render a blank flippable card.
+  const showBusyness = !!busy && !(busy.level === "unknown" && !busy.note);
 
   // "Best window today" pill — reuse the server-computed Today window from
   // multiDayWindows[0] so the pill and the Best-times strip always show the SAME
@@ -221,7 +234,7 @@ export function ConditionsDashboard({
 
       {/* The score is the headline answer, so it leads the page (right under any
           safety banner). Verdict word, the interactive factor wheel with the
-          number in its center, then the lifeguard rating. */}
+          number in its center. */}
       <section className="mb-6">
         {active.dataAvailable === false ? (
           // Total data outage: every sub-score was unavailable, so a confident
@@ -246,22 +259,8 @@ export function ConditionsDashboard({
               {beachDayVerdict(active.score)}
             </div>
             <ScoreWheel result={active} />
-            {ratings &&
-            (ratings.swimmingRating ||
-              ratings.surfingRating ||
-              ratings.snorkelingRating) ? (
-              <div className="mt-3 text-center text-xs text-slate-600 dark:text-slate-400">
-                Lifeguard rating:{" "}
-                {[
-                  ratings.swimmingRating && `swim ${ratings.swimmingRating}`,
-                  ratings.snorkelingRating &&
-                    `snorkel ${ratings.snorkelingRating}`,
-                  ratings.surfingRating && `surf ${ratings.surfingRating}`,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </div>
-            ) : null}
+            {/* (Lifeguard swim/snorkel/surf ratings live in the LifeguardReport
+                card below — a duplicate line here was removed.) */}
           </>
         )}
       </section>
@@ -302,117 +301,193 @@ export function ConditionsDashboard({
       </h2>
 
       {/* Instruments: the four graphic cards in one band so every row pairs
-          equal-height cards (default grid stretch + h-full on each card). */}
+          equal-height cards (default grid stretch + h-full on each card). Each
+          is a FlipCard — tap to reveal the math/sources on the back. */}
       <section className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <div className="flex h-full flex-col rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
-          <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-            <span aria-hidden>💨</span>
-            <span>Wind</span>
-          </div>
-          <div className="mt-2 flex flex-1 items-center justify-center">
-            <WindCompass fromDeg={d.windDirDeg} speedMph={d.windSpeedMph} />
-          </div>
-        </div>
-        <WaveHeightCard waveHeightFt={d.waveHeightFt} />
-        {d.uvIndex != null ? (
-          <UvCard uvIndex={d.uvIndex} />
-        ) : (
-          <MetricCard icon="🔆" label="UV index" value="—" sub="not available" />
-        )}
-        <BusynessCard busy={busy} />
+        <FlipCard
+          label="Wind"
+          back={nerdBack("wind")}
+          front={
+            <div className="flex h-full flex-col rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
+              <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+                <span aria-hidden>💨</span>
+                <span>Wind</span>
+              </div>
+              <div className="mt-2 flex flex-1 items-center justify-center">
+                <WindCompass fromDeg={d.windDirDeg} speedMph={d.windSpeedMph} />
+              </div>
+            </div>
+          }
+        />
+        {d.waveHeightFt != null ? (
+          <FlipCard
+            label="Waves"
+            back={nerdBack("waves")}
+            front={<WaveHeightCard waveHeightFt={d.waveHeightFt} />}
+          />
+        ) : null}
+        <FlipCard
+          label="UV index"
+          back={nerdBack("uv")}
+          front={
+            d.uvIndex != null ? (
+              <UvCard uvIndex={d.uvIndex} />
+            ) : (
+              <MetricCard icon="🔆" label="UV index" value="—" sub="not available" />
+            )
+          }
+        />
+        {showBusyness ? (
+          <FlipCard label="Busyness" back={nerdBack("busyness")} front={<BusynessCard busy={busy} />} />
+        ) : null}
       </section>
 
       {/* Readings: compact text tiles only — same shape per row (default grid
-          stretch equalizes rows; every tile is compact so nothing balloons). */}
+          stretch equalizes rows). Each tile is a FlipCard; the height floor
+          keeps the (taller) nerd back readable, and the band stays uniform. */}
       <section className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        <MetricCard
-          icon="☀️"
+        <FlipCard
           label="Air temp"
-          value={d.airTempF != null ? `${d.airTempF}°F` : "—"}
-          sub={d.airTempF != null ? d.shortForecast : "not available"}
+          back={nerdBack("airTemp")}
+          front={
+            <MetricCard
+              icon="☀️"
+              label="Air temp"
+              value={d.airTempF != null ? `${d.airTempF}°F` : "—"}
+              sub={d.airTempF != null ? d.shortForecast : "not available"}
+            />
+          }
         />
-        <MetricCard
-          icon="🌡️"
+        <FlipCard
           label="Water temp"
-          value={d.waterTempF != null ? `${d.waterTempF}°F` : "—"}
-          sub={d.waterTempF == null ? "not available" : undefined}
+          back={nerdBack("waterTemp")}
+          front={
+            <MetricCard
+              icon="🌡️"
+              label="Water temp"
+              value={d.waterTempF != null ? `${d.waterTempF}°F` : "—"}
+              sub={d.waterTempF == null ? "not available" : undefined}
+            />
+          }
         />
-        <MetricCard
-          icon="💧"
+        <FlipCard
           label="Humidity"
-          value={d.humidityPct != null ? `${d.humidityPct}%` : "—"}
-          sub={d.humidityPct != null ? humidityNote(d.humidityPct) : "not available"}
+          back={nerdBack("humidity")}
+          front={
+            <MetricCard
+              icon="💧"
+              label="Humidity"
+              value={d.humidityPct != null ? `${d.humidityPct}%` : "—"}
+              sub={d.humidityPct != null ? humidityNote(d.humidityPct) : "not available"}
+            />
+          }
         />
-        <MetricCard
-          icon="🌫️"
+        <FlipCard
           label="Dew point"
-          value={d.dewPointF != null ? `${d.dewPointF}°F` : "—"}
-          sub={d.dewPointF != null ? dewComfort(d.dewPointF) : "not available"}
+          back={nerdBack("dewPoint")}
+          front={
+            <MetricCard
+              icon="🌫️"
+              label="Dew point"
+              value={d.dewPointF != null ? `${d.dewPointF}°F` : "—"}
+              sub={d.dewPointF != null ? dewComfort(d.dewPointF) : "not available"}
+            />
+          }
         />
-        <MetricCard
-          icon="☁️"
+        <FlipCard
           label="Cloud cover"
-          value={d.cloudCoverPct != null ? `${d.cloudCoverPct}%` : "—"}
-          sub={
-            d.cloudCoverPct != null
-              ? d.cloudCoverPct <= 15
-                ? "full sun"
-                : d.cloudCoverPct <= 60
-                  ? "partly cloudy"
-                  : "overcast"
-              : "not available"
+          back={nerdBack("cloudCover")}
+          front={
+            <MetricCard
+              icon="☁️"
+              label="Cloud cover"
+              value={d.cloudCoverPct != null ? `${d.cloudCoverPct}%` : "—"}
+              sub={
+                d.cloudCoverPct != null
+                  ? d.cloudCoverPct <= 15
+                    ? "full sun"
+                    : d.cloudCoverPct <= 60
+                      ? "partly cloudy"
+                      : "overcast"
+                  : "not available"
+              }
+            />
           }
         />
         {d.precipProbability != null ? (
-          <MetricCard
-            icon="🌧️"
+          <FlipCard
             label="Rain chance"
-            value={`${d.precipProbability}%`}
+            back={nerdBack("rainChance")}
+            front={<MetricCard icon="🌧️" label="Rain chance" value={`${d.precipProbability}%`} />}
           />
         ) : null}
-        <MetricCard
-          icon="🧫"
+        <FlipCard
           label="Water quality"
-          value={
-            d.waterRating === "unknown"
-              ? "—"
-              : d.waterRating[0].toUpperCase() + d.waterRating.slice(1)
-          }
-          sub={
-            d.waterRating === "unknown"
-              ? "not available"
-              : d.waterAdvisory
-                ? "advisory in effect"
-                : undefined
+          back={nerdBack("waterQuality")}
+          front={
+            <MetricCard
+              icon="🧫"
+              label="Water quality"
+              value={
+                d.waterRating === "unknown"
+                  ? "—"
+                  : d.waterRating[0].toUpperCase() + d.waterRating.slice(1)
+              }
+              sub={
+                d.waterRating === "unknown"
+                  ? "not available"
+                  : d.waterAdvisory
+                    ? "advisory in effect"
+                    : undefined
+              }
+            />
           }
         />
-        <MetricCard
-          icon="🌊"
+        <FlipCard
           label="Rip current risk"
-          value={!rip || rip === "unknown" ? "—" : cap(rip)}
-          sub={rip && rip !== "unknown" ? "NWS Surf Zone Forecast" : "not available"}
+          back={nerdBack("ripCurrent")}
+          front={
+            <MetricCard
+              icon="🌊"
+              label="Rip current risk"
+              value={!rip || rip === "unknown" ? "—" : cap(rip)}
+              sub={rip && rip !== "unknown" ? "NWS Surf Zone Forecast" : "not available"}
+            />
+          }
         />
         {sg && sg.level !== "unknown" ? (
-          <MetricCard
-            icon="🪸"
-            label="Seaweed (sargassum)"
-            value={cap(sg.level)}
-            sub={
-              `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
-              (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "") +
-              (sg.note ? ` — ${sg.note}` : "")
+          <FlipCard
+            label="Seaweed"
+            back={nerdBack("seaweed")}
+            front={
+              <MetricCard
+                icon="🪸"
+                label="Seaweed (sargassum)"
+                value={cap(sg.level)}
+                sub={
+                  `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
+                  (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "") +
+                  (sg.note ? ` — ${sg.note}` : "")
+                }
+              />
             }
           />
         ) : null}
         {traffic && traffic.level !== "unknown" ? (
-          <MetricCard
-            icon="🚗"
+          <FlipCard
             label="Traffic"
-            value={cap(traffic.level)}
-            sub={
-              traffic.congestion != null
-                ? `${traffic.congestion}% congestion near the beach`
-                : "near the beach"
+            back={nerdBack("traffic")}
+            front={
+              <MetricCard
+                icon="🚗"
+                label="Traffic"
+                value={cap(traffic.level)}
+                sub={
+                  traffic.congestion != null
+                    ? `${traffic.congestion}% congestion near the beach`
+                    : "near the beach"
+                }
+              />
             }
           />
         ) : null}
