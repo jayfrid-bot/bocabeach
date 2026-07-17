@@ -495,21 +495,53 @@ export function ConditionsDashboard({
 
       {snap.hourly.data?.length ? (
         <section className="mb-6">
-          <SandTempPanel
-            hours={snap.hourly.data}
-            sunriseIso={snap.sun.data?.sunrise}
-            sunsetIso={snap.sun.data?.sunset}
-            tz={tz}
-            lon={snap.location.lon}
-            nowCloudCoverPct={nowCloudPct}
+          {/* Full-width flagship instrument: the front (SandTempPanel) sits in
+              normal flow and pins the height; the nerd back overlays it and
+              scrolls internally for the long story. */}
+          <FlipCard
+            label="Sand temperature"
+            back={nerdBack("sandTemp")}
+            front={
+              <SandTempPanel
+                hours={snap.hourly.data}
+                sunriseIso={snap.sun.data?.sunrise}
+                sunsetIso={snap.sun.data?.sunset}
+                tz={tz}
+                lon={snap.location.lon}
+                nowCloudCoverPct={nowCloudPct}
+              />
+            }
           />
         </section>
       ) : null}
 
       <section className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <AirQualityMeter air={snap.airQuality} />
-        <StormActivityMeter storm={storm} />
-        <LightningCard lightning={snap.lightning} />
+        {/* Storm + Lightning are flippable showpieces. The h-full wrapper +
+            child-stretch keeps the front card filling its grid cell (these two
+            components don't set their own height) so a flipped card matches the
+            row height of its neighbours. StormActivityMeter renders nothing when
+            the metric is null, so mirror that and skip the FlipCard entirely. */}
+        {storm ? (
+          <FlipCard
+            label="Storm activity"
+            back={nerdBack("storm")}
+            front={
+              <div className="h-full [&>div]:h-full">
+                <StormActivityMeter storm={storm} />
+              </div>
+            }
+          />
+        ) : null}
+        <FlipCard
+          label="Lightning"
+          back={nerdBack("lightning")}
+          front={
+            <div className="h-full [&>div]:h-full">
+              <LightningCard lightning={snap.lightning} />
+            </div>
+          }
+        />
         <LifeguardReport city={snap.cityOfficial} />
         <LocalCoverage location={snap.location} hasCams={cams.length > 0} />
       </section>

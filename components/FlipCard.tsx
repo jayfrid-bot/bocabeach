@@ -155,13 +155,18 @@ export function FlipCard({
  * Beach Day score, the live math, the real sources, and any caveats. Styled to
  * match the card chrome so the flip reads as the same tile turning over. The
  * header stays put; the body scrolls internally when it's long.
+ *
+ * Back order (top → bottom): header → plain-English EXPLAINER → RIGHT NOW →
+ * SOURCES → caveat notes → FORMULA (last, as a muted monospace footnote). The
+ * explainer leads so the friendliest sentence is what you read first; the raw
+ * formula is demoted to a footnote at the very bottom.
  */
 export function NerdBack({ info }: { info: NerdInfo }) {
+  const sectionLabel =
+    "text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500";
   return (
     <div className="flex h-full w-full flex-col rounded-2xl bg-white/95 p-3.5 text-left ring-1 ring-slate-900/10 dark:bg-slate-900/90 dark:ring-white/10">
-      <div className="pr-5 text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
-        How we compute this
-      </div>
+      <div className={`pr-5 ${sectionLabel}`}>How we compute this</div>
       <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-1 pr-5">
         <span className="text-[13px] font-semibold leading-tight text-slate-900 dark:text-white">
           {info.title}
@@ -178,19 +183,13 @@ export function NerdBack({ info }: { info: NerdInfo }) {
       </div>
 
       <div className="mt-1.5 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1 text-slate-600 dark:text-slate-300">
-        <section>
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
-            Formula
-          </div>
-          <code className="mt-0.5 block whitespace-pre-wrap break-words font-mono text-[11px] leading-snug text-slate-700 dark:text-slate-200">
-            {info.formula}
-          </code>
-        </section>
+        {/* Plain-English lead — first thing you read. */}
+        <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
+          {info.explainer}
+        </p>
 
         <section>
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
-            Right now
-          </div>
+          <div className={sectionLabel}>Right now</div>
           <div className="mt-0.5 space-y-0.5 text-xs leading-snug">
             {info.computation.map((line, i) => (
               <div key={i}>{line}</div>
@@ -199,9 +198,7 @@ export function NerdBack({ info }: { info: NerdInfo }) {
         </section>
 
         <section>
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
-            Sources
-          </div>
+          <div className={sectionLabel}>Sources</div>
           <ul className="mt-0.5 space-y-0.5 text-[11px] leading-snug">
             {info.sources.map((s, i) => (
               <li key={i} className="flex gap-1.5">
@@ -219,6 +216,14 @@ export function NerdBack({ info }: { info: NerdInfo }) {
             {info.notes}
           </p>
         ) : null}
+
+        {/* Formula last — a muted monospace footnote. */}
+        <section className="border-t border-slate-200/70 pt-2 dark:border-white/10">
+          <div className={sectionLabel}>Formula</div>
+          <code className="mt-0.5 block whitespace-pre-wrap break-words font-mono text-[10px] leading-snug text-slate-500 dark:text-slate-400">
+            {info.formula}
+          </code>
+        </section>
       </div>
     </div>
   );
