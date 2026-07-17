@@ -92,13 +92,13 @@ export function WaveHeightCard({
   ];
 
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
+    <div className="relative flex h-full flex-col overflow-hidden rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
       <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
         <span aria-hidden>〰️</span>
         <span>Waves</span>
       </div>
 
-      <div className="relative mt-2 h-24 w-full overflow-hidden rounded-xl bg-sky-50 dark:bg-slate-950/40 sm:h-28">
+      <div className="relative mt-2 min-h-24 w-full flex-1 overflow-hidden rounded-xl bg-sky-50 dark:bg-slate-950/40 sm:min-h-28">
         <svg
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
           preserveAspectRatio="none"

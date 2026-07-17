@@ -51,12 +51,12 @@ export function UvCard({ uvIndex }: { uvIndex?: number }) {
   const dashOffset = round2(CIRC * (1 - urgency));
 
   return (
-    <div className="rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
+    <div className="flex h-full flex-col rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
       <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
         <span aria-hidden>🔆</span>
         <span>UV index</span>
       </div>
-      <div className="mt-2 flex items-center gap-2">
+      <div className="mt-2 flex flex-1 items-center gap-2">
         <div className="relative h-14 w-14 shrink-0 sm:h-16 sm:w-16">
           <svg viewBox={`0 0 ${SIZE} ${SIZE}`} className="h-full w-full" aria-hidden>
             <circle

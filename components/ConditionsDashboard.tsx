@@ -301,38 +301,41 @@ export function ConditionsDashboard({
         Explore the details
       </h2>
 
-      <section className="mb-6 grid grid-cols-2 items-start gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        {/* items-start above: default grid stretching makes every card in a
-            row match the row's tallest cell. SeaweedStrip/BusynessCard grew
-            tall graphic bodies, which was ballooning short neighbors like the
-            Water quality / Rip current risk cards into huge empty boxes.
-            items-start lets each card size to its own content instead. */}
-        {/* Wind + the animated wave card share one grid cell (stacked) so the
-            wave card sits directly under the wider wind box with no orphan
-            gap in the row next to it. */}
-        <div className="col-span-2 flex flex-col gap-3 sm:col-span-2">
-          <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
-            <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-              <span aria-hidden>💨</span>
-              <span>Wind</span>
-            </div>
-            <div className="mt-2">
-              <WindCompass fromDeg={d.windDirDeg} speedMph={d.windSpeedMph} />
-            </div>
+      {/* Instruments: the four graphic cards in one band so every row pairs
+          equal-height cards (default grid stretch + h-full on each card). */}
+      <section className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="flex h-full flex-col rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
+          <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+            <span aria-hidden>💨</span>
+            <span>Wind</span>
           </div>
-          <WaveHeightCard waveHeightFt={d.waveHeightFt} />
+          <div className="mt-2 flex flex-1 items-center justify-center">
+            <WindCompass fromDeg={d.windDirDeg} speedMph={d.windSpeedMph} />
+          </div>
         </div>
-        <MetricCard
-          icon="🌡️"
-          label="Water temp"
-          value={d.waterTempF != null ? `${d.waterTempF}°F` : "—"}
-          sub={d.waterTempF == null ? "not available" : undefined}
-        />
+        <WaveHeightCard waveHeightFt={d.waveHeightFt} />
+        {d.uvIndex != null ? (
+          <UvCard uvIndex={d.uvIndex} />
+        ) : (
+          <MetricCard icon="🔆" label="UV index" value="—" sub="not available" />
+        )}
+        <BusynessCard busy={busy} />
+      </section>
+
+      {/* Readings: compact text tiles only — same shape per row (default grid
+          stretch equalizes rows; every tile is compact so nothing balloons). */}
+      <section className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         <MetricCard
           icon="☀️"
           label="Air temp"
           value={d.airTempF != null ? `${d.airTempF}°F` : "—"}
           sub={d.airTempF != null ? d.shortForecast : "not available"}
+        />
+        <MetricCard
+          icon="🌡️"
+          label="Water temp"
+          value={d.waterTempF != null ? `${d.waterTempF}°F` : "—"}
+          sub={d.waterTempF == null ? "not available" : undefined}
         />
         <MetricCard
           icon="💧"
@@ -346,11 +349,6 @@ export function ConditionsDashboard({
           value={d.dewPointF != null ? `${d.dewPointF}°F` : "—"}
           sub={d.dewPointF != null ? dewComfort(d.dewPointF) : "not available"}
         />
-        {d.uvIndex != null ? (
-          <UvCard uvIndex={d.uvIndex} />
-        ) : (
-          <MetricCard icon="🔆" label="UV index" value="—" sub="not available" />
-        )}
         <MetricCard
           icon="☁️"
           label="Cloud cover"
@@ -365,6 +363,13 @@ export function ConditionsDashboard({
               : "not available"
           }
         />
+        {d.precipProbability != null ? (
+          <MetricCard
+            icon="🌧️"
+            label="Rain chance"
+            value={`${d.precipProbability}%`}
+          />
+        ) : null}
         <MetricCard
           icon="🧫"
           label="Water quality"
@@ -381,12 +386,12 @@ export function ConditionsDashboard({
                 : undefined
           }
         />
-        {/* Cam-derived (seaweed, crowd) + traffic only render when this beach
-            actually has that source — no fake "not available" filler, and no
-            other beach's reading. See lib/sources/{sargassum,busyness}.ts.
-            Seaweed is deliberately a PLAIN text card — two graphic treatments
-            (ellipse blobs, then a wrack-line scene) both got vetoed by the
-            owner; the reading works best as words + the coverage %. */}
+        <MetricCard
+          icon="🌊"
+          label="Rip current risk"
+          value={!rip || rip === "unknown" ? "—" : cap(rip)}
+          sub={rip && rip !== "unknown" ? "NWS Surf Zone Forecast" : "not available"}
+        />
         {sg && sg.level !== "unknown" ? (
           <MetricCard
             icon="🪸"
@@ -399,7 +404,6 @@ export function ConditionsDashboard({
             }
           />
         ) : null}
-        <BusynessCard busy={busy} />
         {traffic && traffic.level !== "unknown" ? (
           <MetricCard
             icon="🚗"
@@ -410,19 +414,6 @@ export function ConditionsDashboard({
                 ? `${traffic.congestion}% congestion near the beach`
                 : "near the beach"
             }
-          />
-        ) : null}
-        <MetricCard
-          icon="🌊"
-          label="Rip current risk"
-          value={!rip || rip === "unknown" ? "—" : cap(rip)}
-          sub={rip && rip !== "unknown" ? "NWS Surf Zone Forecast" : "not available"}
-        />
-        {d.precipProbability != null ? (
-          <MetricCard
-            icon="🌧️"
-            label="Rain chance"
-            value={`${d.precipProbability}%`}
           />
         ) : null}
       </section>
