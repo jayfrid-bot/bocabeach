@@ -37,7 +37,7 @@ export function BusynessCard({ busy }: { busy?: BusynessData | null }) {
 
   if (isUnknown) {
     return (
-      <div className="rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
+      <div className="flex h-full flex-col rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
         <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
           <span aria-hidden>👥</span>
           <span>Beach busyness</span>
@@ -65,7 +65,7 @@ export function BusynessCard({ busy }: { busy?: BusynessData | null }) {
   const sub = busy.peopleEstimate != null ? `~${busy.peopleEstimate} people` : undefined;
 
   return (
-    <div className="rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
+    <div className="flex h-full flex-col rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
       <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
         <span aria-hidden>👥</span>
         <span>Beach busyness</span>
