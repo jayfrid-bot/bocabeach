@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  afternoonBoostFactor,
   currentSandRangeF,
   currentSandTempF,
   estimateSandRangeF,
   estimateSandTempF,
+  hoursFromSolarNoon,
   sandVerdict,
 } from "@/lib/sandTemp";
 
@@ -155,5 +157,94 @@ describe("current sand value: card and score agree", () => {
     const far = Date.parse("2026-06-20T16:30:00Z");
     expect(currentSandTempF(hours, far)).toBeUndefined();
     expect(currentSandRangeF(hours, far)).toBeUndefined();
+  });
+});
+
+describe("afternoon decay (2026-07-16 field session)", () => {
+  describe("afternoonBoostFactor", () => {
+    it("is full (1.0) through the morning and the first ~2.4h past solar noon", () => {
+      expect(afternoonBoostFactor(-3.5)).toBe(1); // 9:54 AM: +33 boost measured
+      expect(afternoonBoostFactor(0)).toBe(1); // solar noon
+      expect(afternoonBoostFactor(0.9)).toBe(1); // 2:20 PM: still +30 measured
+      expect(afternoonBoostFactor(2.4)).toBe(1); // protects the hot ~4 PM window
+    });
+
+    it("smooth-steps to a near-zero floor by ~3.8h past noon and stays there", () => {
+      expect(afternoonBoostFactor(3.6)).toBeLessThan(0.15); // ~5 PM: +1 measured
+      expect(afternoonBoostFactor(3.8)).toBeCloseTo(0.03, 2);
+      expect(afternoonBoostFactor(5.9)).toBeCloseTo(0.03, 2); // 7:23 PM: dead
+    });
+
+    it("decreases monotonically through the afternoon", () => {
+      let prev = 1;
+      for (let h = 2.4; h <= 6; h += 0.2) {
+        const f = afternoonBoostFactor(h);
+        expect(f).toBeLessThanOrEqual(prev + 1e-9);
+        prev = f;
+      }
+    });
+  });
+
+  describe("hoursFromSolarNoon (Boca lon -80.07)", () => {
+    const LON = -80.07;
+    it("is ~0 at local solar noon (~17:24 UTC in mid-July)", () => {
+      expect(hoursFromSolarNoon(LON, new Date("2026-07-16T17:24:00Z"))).toBeCloseTo(0, 1);
+    });
+    it("is negative in the morning, positive in the evening", () => {
+      expect(hoursFromSolarNoon(LON, new Date("2026-07-16T13:54:00Z"))).toBeLessThan(-2); // 9:54 AM
+      expect(hoursFromSolarNoon(LON, new Date("2026-07-16T23:23:00Z"))).toBeGreaterThan(5); // 7:23 PM
+    });
+  });
+
+  describe("boost vs the measured field points", () => {
+    // The discriminator the session proved: identical low sun, opposite boost.
+    it("keeps full boost for a LOW morning sun but kills it for the SAME low evening sun", () => {
+      // 9:54 AM, soil 91, 380 W/m², 2 mph → +33 measured (elev ~43°)
+      const morning = estimateSandTempF({
+        soilTempF: 91,
+        solarWm2: 380,
+        windSpeedMph: 2,
+        hoursFromSolarNoon: -3.5,
+      })!;
+      // 5:01 PM, soil 100, 664 W/m² (HIGHER sun-hour GHI) → +1 measured (elev ~41°)
+      const evening = estimateSandTempF({
+        soilTempF: 100,
+        solarWm2: 664,
+        windSpeedMph: 9,
+        hoursFromSolarNoon: 3.6,
+      })!;
+      expect(morning - 91).toBeGreaterThan(25); // big morning boost
+      expect(evening - 100).toBeLessThan(6); // near-zero evening boost
+    });
+
+    it("the 7:23 PM full-sun case lands ~soil, not scorching (was +23°F over)", () => {
+      // soil 90, 283 W/m², full sun, 6h past noon → 91 measured; old model said 114
+      const withDecay = estimateSandTempF({
+        soilTempF: 90,
+        solarWm2: 283,
+        windSpeedMph: 11,
+        hoursFromSolarNoon: 5.9,
+      })!;
+      const withoutDecay = estimateSandTempF({
+        soilTempF: 90,
+        solarWm2: 283,
+        windSpeedMph: 11,
+      })!;
+      expect(withDecay).toBeLessThanOrEqual(93);
+      expect(withoutDecay).toBeGreaterThan(105); // the bug this fixes
+    });
+
+    it("leaves the midday calibration untouched (no hoursFromSolarNoon → full boost)", () => {
+      // 1 PM 7/14: soil 105, 965 W/m², 11 mph → 138 (unchanged; decay term absent)
+      const noon = estimateSandTempF({ soilTempF: 105, solarWm2: 965, windSpeedMph: 11 })!;
+      const noonWithFactor = estimateSandTempF({
+        soilTempF: 105,
+        solarWm2: 965,
+        windSpeedMph: 11,
+        hoursFromSolarNoon: -0.4,
+      })!;
+      expect(noonWithFactor).toBe(noon); // factor 1.0 at h=-0.4
+      expect(noon).toBeGreaterThan(130);
+    });
   });
 });

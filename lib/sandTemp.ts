@@ -139,6 +139,68 @@ const BEAM_OVERCAST_START_PCT = 50;
  */
 const SURF_BOOST_FRACTION = 0.65;
 
+/**
+ * AFTERNOON DECAY — the term that fixes the model's late-day overshoot, from a
+ * 15-reading IR field session on 2026-07-16 (Boca, sunset 8:14 PM):
+ *
+ *   time    sun elev   full-sun boost (measured sand − modeled soil)
+ *   1:00 PM   82°        +33     ← peak
+ *   9:54 AM   43°        +33     ← FULL, at a LOW sun
+ *   5:01 PM   41°        +1      ← ~ZERO, at the SAME low sun
+ *   6:41 PM   19°        −2      ← below soil, in CONTINUOUS sun
+ *   7:23 PM   10°        +1      ← full sun, dead
+ *
+ * The 9:54 AM vs 5:01 PM pair (identical 41-43° elevation, boost +33 vs +1)
+ * PROVES the driver is NOT the sun's height, nor instantaneous solar (the 5 PM
+ * reading had HIGHER GHI). It's thermal hysteresis: dry sand's thin top layer
+ * races ahead of the bulk-soil model while the sun is climbing, then bleeds that
+ * heat back out through the afternoon regardless of how strong the sun still
+ * looks. The clean proxy is HOURS AFTER SOLAR NOON. Boost stays full until ~2.4 h
+ * past noon (protecting the genuinely-hot ~4 PM danger window), then smooth-steps
+ * to a near-zero floor by ~3.8 h — matching every afternoon reading (backtest MAE
+ * ~2.2 °F, max 4 °F, errors skewed to the SAFE over-warn side). The six
+ * 9:54 AM–2:20 PM calibration points are untouched (factor = 1 there).
+ * FL-July-calibrated; the afternoon-decay physics generalizes, the exact timing
+ * should be re-checked at other latitudes/seasons when ground truth exists.
+ */
+const AFTERNOON_DECAY_START_H = 2.4;
+const AFTERNOON_DECAY_END_H = 3.8;
+const AFTERNOON_FLOOR = 0.03;
+
+const DEG = Math.PI / 180;
+
+/**
+ * Hours after LOCAL SOLAR NOON for an instant (negative = morning), from the
+ * sun's hour angle via NOAA's low-precision solar-position algorithm. No
+ * timezone needed — works at any longitude/date (latitude doesn't affect the
+ * hour angle). Verified against a known value: Boca at 2026-07-15T20:16Z → the
+ * sun sits ~2.9 h before solar noon... (the sand model keys its afternoon decay
+ * on this — see AFTERNOON_DECAY_* above).
+ */
+export function hoursFromSolarNoon(lon: number, date: Date): number {
+  const n = (date.getTime() - Date.UTC(2000, 0, 1, 12)) / 86_400_000; // days since J2000
+  const L = (280.460 + 0.9856474 * n) % 360;
+  const g = ((357.528 + 0.9856003 * n) % 360) * DEG;
+  const lambda = (L + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * DEG;
+  const eps = (23.439 - 4e-7 * n) * DEG;
+  const ra = Math.atan2(Math.cos(eps) * Math.sin(lambda), Math.cos(lambda)) / DEG; // degrees
+  const gmst = (280.46061837 + 360.98564736629 * n) % 360;
+  let hourAngle = (((gmst + lon - ra) % 360) + 360) % 360; // 0..360, 0 = solar noon
+  if (hourAngle > 180) hourAngle -= 360; // -180..180
+  return hourAngle / 15; // 15° per hour
+}
+
+/** The afternoon-decay multiplier on the dry-sand boost (see AFTERNOON_DECAY_*). */
+export function afternoonBoostFactor(hoursFromNoon: number): number {
+  if (hoursFromNoon <= AFTERNOON_DECAY_START_H) return 1;
+  const x = Math.min(
+    1,
+    (hoursFromNoon - AFTERNOON_DECAY_START_H) / (AFTERNOON_DECAY_END_H - AFTERNOON_DECAY_START_H),
+  );
+  const smoothstep = x * x * (3 - 2 * x);
+  return Math.max(AFTERNOON_FLOOR, 1 - smoothstep);
+}
+
 export interface SandTempInput {
   /** Modeled ground-surface temp (°F), e.g. Open-Meteo soil_temperature_0cm. */
   soilTempF?: number;
@@ -156,6 +218,12 @@ export interface SandTempInput {
    * (BEAM_OVERCAST_START_PCT vs OVERCAST_START_PCT).
    */
   cloudIsBeamPath?: boolean;
+  /**
+   * Hours after local solar noon (negative = morning) for this hour. When set,
+   * the boost decays through the afternoon (see afternoonBoostFactor). Omit to
+   * skip the decay (full boost) — kept optional so bare unit tests still work.
+   */
+  hoursFromSolarNoon?: number;
 }
 
 /** The sun/wind/rain boost (°F) dry sand carries above the modeled ground. */
@@ -196,6 +264,13 @@ function sandBoostF(input: SandTempInput): number | undefined {
   // boost as the modeled baseline climbs past ~90°F so we don't double-count
   // the sun. Floor 0.4 — even very hot ground gets some dry-sand differential.
   boost *= Math.max(0.4, Math.min(1, 1 - (soilTempF - 90) / 55));
+
+  // Afternoon decay: dry sand sheds its dry-layer boost through the afternoon
+  // even under strong sun (thermal hysteresis — see AFTERNOON_DECAY_*). Full
+  // boost until ~2.4 h past solar noon, then a smooth-step to a near-zero floor.
+  if (input.hoursFromSolarNoon != null) {
+    boost *= afternoonBoostFactor(input.hoursFromSolarNoon);
+  }
 
   // Rain in the last few hours keeps the top layer damp and conductive.
   if ((recentRainIn ?? 0) >= 0.05) boost *= 0.3;
@@ -278,6 +353,7 @@ function currentSandInput(
   hours: SandHour[],
   nowMs: number = Date.now(),
   override?: SandNowOverride,
+  lon?: number,
 ): SandTempInput | undefined {
   if (!hours.length) return undefined;
   // Prefer the bucket that actually contains now under half-open [start, start+1h)
@@ -312,6 +388,8 @@ function currentSandInput(
     cloudCoverPct: override?.cloudCoverPct ?? h.cloudCoverPct,
     // Only meaningful when the cloud value itself came from the override.
     cloudIsBeamPath: override?.cloudCoverPct != null ? override?.cloudIsBeamPath : undefined,
+    // Afternoon decay keyed to "now" (the bucket ≈ now); omit without a longitude.
+    hoursFromSolarNoon: lon != null ? hoursFromSolarNoon(lon, new Date(nowMs)) : undefined,
   };
 }
 
@@ -320,8 +398,9 @@ export function currentSandTempF(
   hours: SandHour[],
   nowMs: number = Date.now(),
   override?: SandNowOverride,
+  lon?: number,
 ): number | undefined {
-  const input = currentSandInput(hours, nowMs, override);
+  const input = currentSandInput(hours, nowMs, override, lon);
   return input ? estimateSandTempF(input) : undefined;
 }
 
@@ -333,7 +412,8 @@ export function currentSandRangeF(
   hours: SandHour[],
   nowMs: number = Date.now(),
   override?: SandNowOverride,
+  lon?: number,
 ): { surfF: number; dunesF: number } | undefined {
-  const input = currentSandInput(hours, nowMs, override);
+  const input = currentSandInput(hours, nowMs, override, lon);
   return input ? estimateSandRangeF(input) : undefined;
 }
