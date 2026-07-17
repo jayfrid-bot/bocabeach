@@ -6,6 +6,7 @@ import type {
   Wrapped,
 } from "@/lib/types";
 import { fmtDate } from "@/lib/format";
+import { safetyTone } from "@/lib/safetyTone";
 import { degToCardinal } from "@/lib/util";
 import { LifeguardFlag } from "@/components/LifeguardFlag";
 
@@ -48,13 +49,16 @@ export function SafetyBanner({
   );
   const ripWarn = rip === "high" || rip === "moderate";
   const flags = data?.flags.filter((f) => f !== "unknown") ?? [];
-  const hasWarning =
-    advisory ||
-    lightningDanger ||
-    !!noSwim ||
-    rip === "high" ||
-    alerts.length > 0 ||
-    flags.some((f) => ["red", "double-red"].includes(f));
+  // The container's tone must match the WORST thing inside it — see safetyTone's
+  // doc for the alarm-over-all-clear bug this replaced. Pure + unit-tested there.
+  const tone = safetyTone({
+    advisory,
+    lightningDanger,
+    noSwim: !!noSwim,
+    ripCurrentRisk: rip,
+    flags,
+    alertEvents: alerts.map((a) => a.event),
+  });
 
   // Nothing worth surfacing in the safety header. Marine life and posted
   // hazards now live in their own LifeguardReport card lower on the page —
@@ -89,7 +93,11 @@ export function SafetyBanner({
   return (
     <div
       className={`rounded-2xl p-4 ring-1 ${
-        hasWarning ? "bg-rose-500/10 ring-rose-500/40" : "bg-white/80 dark:bg-slate-900/70 ring-slate-900/10 dark:ring-white/10"
+        tone === "danger"
+          ? "bg-rose-500/10 ring-rose-500/40"
+          : tone === "caution"
+            ? "bg-amber-500/10 ring-amber-500/30"
+            : "bg-white/80 dark:bg-slate-900/70 ring-slate-900/10 dark:ring-white/10"
       }`}
     >
       {advisory ? (
