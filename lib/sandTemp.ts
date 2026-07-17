@@ -92,8 +92,10 @@ const FULL_SUN_WM2 = 1000;
  *    same 7/15 afternoon with beamCloudPct wired in before concluding whether any
  *    curve retune is still warranted.
  *
- *    Note the error direction is at least the SAFE one: the app over-reports heat, so
- *    it warns about burns that aren't there rather than missing burns that are.
+ *    (Historically this residual leaned high — "over-warn is the safe direction".
+ *    That framing is retired: per the owner the model is tuned for ACCURACY, not
+ *    safety. The systematic late-afternoon over-read it left behind is corrected
+ *    by the evening-cooling term above; see EVENING_COOL_*.)
  *  - 2026-07-16 ~3:38 PM: soil 104°F, 930 W/m² (modeled — nonsense under the deck),
  *    10 mph, GOES-observed 99.3% cloud (overhead AND beam, fresh 32-min granule) →
  *    model 108°F, MEASURED 113°F (-5). FIRST LIVE TEST of the satellite pipeline on
@@ -140,6 +142,32 @@ const BEAM_OVERCAST_START_PCT = 50;
 const SURF_BOOST_FRACTION = 0.65;
 
 /**
+ * Late-afternoon radiative cooling (°F subtracted). TUNED FOR ACCURACY, not for
+ * over-warn safety (owner's directive 2026-07-17: "tune for accuracy, safety is
+ * not a concern"). The boost model floors the estimate at the modeled soil temp,
+ * but IR ground truth shows dry sand runs a couple degrees BELOW that soil model
+ * late in the day, as the low sun stops replacing what the sand radiates away.
+ * Across 19 paired readings the model had a +2.0°F systematic OVER-read after
+ * ~5:20 PM (hours-from-solar-noon ≥ 4) while the rest of the day was centered.
+ * A small deficit ramping from 0 at 3.8 h past solar noon to 2.2°F by ~sunset
+ * (6.5 h) removes it — late-afternoon mean bias +2.0 → +1.0, overall +1.2 → +0.7,
+ * MAE 2.5 → 2.2. Applied equally to surf and dune sand (both cool to the sky).
+ */
+const EVENING_COOL_START_H = 3.8;
+const EVENING_COOL_END_H = 6.5;
+const EVENING_COOL_MAX_F = 2.2;
+
+/** °F to subtract for end-of-day radiative cooling (see EVENING_COOL_*). */
+function eveningCoolingF(hoursFromSolarNoon: number | undefined): number {
+  if (hoursFromSolarNoon == null || hoursFromSolarNoon <= EVENING_COOL_START_H) return 0;
+  const x = Math.min(
+    1,
+    (hoursFromSolarNoon - EVENING_COOL_START_H) / (EVENING_COOL_END_H - EVENING_COOL_START_H),
+  );
+  return EVENING_COOL_MAX_F * x;
+}
+
+/**
  * AFTERNOON DECAY — the term that fixes the model's late-day overshoot, from a
  * 15-reading IR field session on 2026-07-16 (Boca, sunset 8:14 PM):
  *
@@ -161,8 +189,9 @@ const SURF_BOOST_FRACTION = 0.65;
  * single hour and drew a visible cliff on the sand curve around 4-5 PM; there's
  * no clear-sky ground truth between the 2:20 PM and 5:01 PM readings, so the
  * softer slope is both better-looking and more honest). 4 PM sits mid-slope
- * (~0.65) → still a hot ~124 °F that warns. Matches every afternoon reading
- * (backtest MAE ~2.2 °F, max 5 °F, errors skewed to the SAFE over-warn side).
+ * (~0.65) → still a hot ~124 °F. Matches every afternoon reading (backtest MAE
+ * ~2.2 °F, max 5 °F). The residual late-afternoon over-read this left is
+ * corrected by the evening-cooling term (see EVENING_COOL_*).
  * The 9:54 AM–2:20 PM calibration points are untouched (factor = 1). FL-July-
  * calibrated; the afternoon-decay physics generalizes, the exact timing should
  * be re-checked at other latitudes/seasons when ground truth exists.
@@ -288,7 +317,8 @@ function sandBoostF(input: SandTempInput): number | undefined {
  */
 export function estimateSandTempF(input: SandTempInput): number | undefined {
   const boost = sandBoostF(input);
-  return boost == null ? undefined : Math.round(input.soilTempF! + boost);
+  if (boost == null) return undefined;
+  return Math.round(input.soilTempF! + boost - eveningCoolingF(input.hoursFromSolarNoon));
 }
 
 /** The surf-to-dunes range: damp firm sand by the water vs dry loose sand. */
@@ -297,9 +327,10 @@ export function estimateSandRangeF(
 ): { surfF: number; dunesF: number } | undefined {
   const boost = sandBoostF(input);
   if (boost == null) return undefined;
+  const cool = eveningCoolingF(input.hoursFromSolarNoon); // both cool to the sky
   return {
-    surfF: Math.round(input.soilTempF! + boost * SURF_BOOST_FRACTION),
-    dunesF: Math.round(input.soilTempF! + boost),
+    surfF: Math.round(input.soilTempF! + boost * SURF_BOOST_FRACTION - cool),
+    dunesF: Math.round(input.soilTempF! + boost - cool),
   };
 }
 
