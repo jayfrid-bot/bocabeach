@@ -1,6 +1,7 @@
 import type { Wrapped, TideData } from "@/lib/types";
 import { fmtTime } from "@/lib/format";
 import { TideCrossSection } from "@/components/TideCrossSection";
+import { TideCurve } from "@/components/TideCurve";
 
 export function TidePanel({ tides, tz }: { tides: Wrapped<TideData>; tz: string }) {
   const events = tides.data?.next ?? [];
@@ -33,6 +34,13 @@ export function TidePanel({ tides, tz }: { tides: Wrapped<TideData>; tz: string 
       ) : (
         <>
           <TideCrossSection events={events} trend={tides.data?.trend} tz={tz} />
+          {/* The classic rise/fall curve over the cycle, restored alongside the
+              cross-section (owner wanted both) — a "you are here" marker rides
+              the curve so the trend is legible at a glance. */}
+          <div className="mt-3 border-t border-slate-900/10 pt-2 dark:border-white/10">
+            <div className="text-[11px] text-slate-500 dark:text-slate-500">Tide cycle</div>
+            <TideCurve events={events} tz={tz} />
+          </div>
           {/* Secondary/compact — the cross-section above is the primary read;
               this list is the precise backup (exact times + heights). */}
           <ul className="mt-2 space-y-1 border-t border-slate-900/10 pt-2 dark:border-white/10">
