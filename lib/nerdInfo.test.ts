@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildNerdInfo, SCORE_WEIGHTS_PCT, type NerdContext } from "@/lib/nerdInfo";
+import { buildNerdInfo, nerdBuilders, SCORE_WEIGHTS_PCT, type NerdContext } from "@/lib/nerdInfo";
 import type { ConditionsSnapshot, Wrapped } from "@/lib/types";
 import type { Derived } from "@/lib/score";
 
@@ -24,6 +24,15 @@ const snap = {
   nws: wrap("NWS (alerts + Surf Zone Forecast)", { alerts: [], ripCurrentRisk: "moderate" as const }),
   sargassum: wrap("Beach cams + Gemini vision"),
   traffic: wrap("HERE Traffic", { level: "moderate" as const, congestion: 45, segments: 8 }),
+  // Flagship instruments (sand/storm/lightning) read these:
+  lightning: wrap("NOAA GOES-19 GLM (lightning)", {
+    within10mi: 0,
+    within25mi: 0,
+    within50mi: 0,
+    totalInArea: 0,
+    windowMinutes: 30,
+  }),
+  location: { lat: 26.35, lon: -80.08, name: "Boca Raton", region: "FL", timezone: "America/New_York" },
 } as unknown as ConditionsSnapshot;
 
 const d: Derived = {
@@ -150,5 +159,51 @@ describe("display weights mirror the score.ts sub-score weights", () => {
   it("the 11 sub-score weights still sum to 100%", () => {
     const sum = Object.values(SCORE_WEIGHTS_PCT).reduce((a, b) => a + b, 0);
     expect(sum).toBe(100);
+  });
+});
+
+describe("flagship instrument backs quote the REAL sand/storm/lightning constants", () => {
+  it("sand temp: 8% weight, pins the boost/decay/surf constants", () => {
+    const info = buildNerdInfo("sandTemp", ctx);
+    expect(info.weightPct).toBe(SCORE_WEIGHTS_PCT.sandTemp);
+    expect(info.weightPct).toBe(8);
+    // MAX_SUN_BOOST_F (lib/sandTemp.ts) — the °F peak dry-sand boost.
+    expect(info.formula).toContain("55");
+    const text = [info.explainer, info.formula].join(" ");
+    // AFTERNOON_DECAY_START_H / _END_H — the thermal-memory taper window.
+    expect(text).toContain("1.4");
+    expect(text).toContain("4.4");
+    // SURF_BOOST_FRACTION — wet surf-side sand vs the dry dune boost.
+    expect(text).toContain("0.65");
+    // Proud-but-factual: the IR-thermometer calibration claim is present.
+    expect(info.explainer.toLowerCase()).toContain("infrared");
+  });
+
+  it("storm activity: not weighted, pins the 45/35/20 blend + e^(-age/12) + 90 floor", () => {
+    const info = buildNerdInfo("storm", ctx);
+    expect(info.weightPct).toBeNull();
+    const text = [info.explainer, info.formula].join(" ");
+    expect(text).toContain("45"); // STRIKE_WEIGHT
+    expect(text).toContain("35"); // PROXIMITY_WEIGHT
+    expect(text).toContain("20"); // RAIN_WEIGHT (and the ~20-mile radius)
+    expect(text).toContain("12"); // strike energy e^(-ageMinutes/12)
+    expect(text).toContain("90"); // fresh strike within 5 mi floors the gauge
+  });
+
+  it("lightning: not weighted, pins the 5-mile cap + 20-second granules", () => {
+    const info = buildNerdInfo("lightning", ctx);
+    expect(info.weightPct).toBeNull();
+    const text = [info.explainer, info.formula].join(" ");
+    expect(text).toContain("5"); // fresh strike ≤5 mi → get-out-of-the-water cap
+    expect(info.explainer).toContain("20-second"); // GLM granule cadence
+  });
+
+  it("every registry entry carries a non-empty plain-English explainer", () => {
+    const keys = Object.keys(nerdBuilders) as (keyof typeof nerdBuilders)[];
+    expect(keys).toHaveLength(17);
+    for (const k of keys) {
+      const info = buildNerdInfo(k, ctx);
+      expect(info.explainer.length).toBeGreaterThan(40);
+    }
   });
 });
