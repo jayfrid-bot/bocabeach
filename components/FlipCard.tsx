@@ -55,11 +55,13 @@ function FlipGlyph({ back = false }: { back?: boolean }) {
  * A reusable click-to-flip card. The FRONT keeps its exact look (the card you
  * pass as `front`) plus a small flip glyph; the BACK reveals `back`.
  *
- * Layout / no-jump: the front sits in normal flow and gives the card its height
- * (with a readable `minHeightRem` floor), and — because these live in a grid
- * with `items-stretch` + `h-full` faces — every card in a band shares the row's
- * height. The back is absolutely positioned over that same box and scrolls
- * internally when its content is taller, so flipping NEVER changes any height.
+ * Layout: flipping EXPANDS the card. Unflipped, the front sits in normal flow
+ * and sets a natural, compact height — no floor — so a grid of reading tiles
+ * stays tight and uniform (items-stretch equalizes each row). Flipped, the card
+ * spans the full grid width (`col-span-full`) and the BACK takes over normal
+ * flow, so the card auto-heights to fit the whole data-nerd story with no
+ * internal peephole scroll; siblings reflow below it, accordion-style. Whichever
+ * face is inactive is absolutely overlaid.
  *
  * Motion: a 3D rotateY spin by default; a plain opacity crossfade (no rotation)
  * when the OS asks to reduce motion. The app-wide reduced-motion rule in
@@ -71,14 +73,11 @@ export function FlipCard({
   label,
   front,
   back,
-  minHeightRem = 11.5,
 }: {
   /** Short name of the metric, woven into the aria-label. */
   label: string;
   front: ReactNode;
   back: ReactNode;
-  /** Readable height floor (rem) so short fronts still give the back room. */
-  minHeightRem?: number;
 }) {
   const [flipped, setFlipped] = useState(false);
   const reduced = usePrefersReducedMotion();
@@ -104,23 +103,29 @@ export function FlipCard({
       }
       onClick={toggle}
       onKeyDown={onKeyDown}
-      className="group relative h-full cursor-pointer rounded-2xl [perspective:1200px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ocean-500/70 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
-      style={{ minHeight: `${minHeightRem}rem` }}
+      // col-span-full when flipped: the card expands to the whole grid width so
+      // the back has room to breathe (a no-op for the full-width flagship
+      // sections). h-full otherwise, so unflipped it stretches to its band row.
+      className={`group relative cursor-pointer rounded-2xl [perspective:1200px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ocean-500/70 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent ${
+        flipped ? "col-span-full" : "h-full"
+      }`}
     >
       <div
         className={
-          "relative h-full w-full " +
+          "relative w-full " +
+          (flipped ? "" : "h-full ") +
           (spin
             ? "transition-transform duration-[450ms] ease-out [transform-style:preserve-3d] motion-reduce:transition-none"
             : "")
         }
         style={spin ? { transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)" } : undefined}
       >
-        {/* FRONT — in normal flow, so it sets the card's height. */}
+        {/* FRONT — in normal flow (sets height) when showing; overlaid when flipped. */}
         <div
           aria-hidden={flipped}
           className={
-            "relative h-full w-full " +
+            (flipped ? "absolute inset-0 " : "relative ") +
+            "h-full w-full " +
             (spin
               ? "[backface-visibility:hidden]"
               : "transition-opacity duration-200 " +
@@ -131,11 +136,12 @@ export function FlipCard({
           <FlipGlyph />
         </div>
 
-        {/* BACK — absolutely overlaid on the same box; never affects sizing. */}
+        {/* BACK — in normal flow (sets height) when flipped; overlaid otherwise. */}
         <div
           aria-hidden={!flipped}
           className={
-            "absolute inset-0 h-full w-full " +
+            (flipped ? "relative " : "absolute inset-0 ") +
+            "w-full " +
             (spin
               ? "[transform:rotateY(180deg)] [backface-visibility:hidden]"
               : "transition-opacity duration-200 " +
@@ -153,8 +159,9 @@ export function FlipCard({
 /**
  * The "data nerd" back face: how a card's number is computed, its weight in the
  * Beach Day score, the live math, the real sources, and any caveats. Styled to
- * match the card chrome so the flip reads as the same tile turning over. The
- * header stays put; the body scrolls internally when it's long.
+ * match the card chrome so the flip reads as the same tile turning over. Because
+ * a flipped card expands to full width and auto-heights (see FlipCard), the back
+ * lays the whole story out with no internal scroll — a comfortable ~62ch measure.
  *
  * Back order (top → bottom): header → plain-English EXPLAINER → RIGHT NOW →
  * SOURCES → caveat notes → FORMULA (last, as a muted monospace footnote). The
@@ -165,65 +172,67 @@ export function NerdBack({ info }: { info: NerdInfo }) {
   const sectionLabel =
     "text-[10px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500";
   return (
-    <div className="flex h-full w-full flex-col rounded-2xl bg-white/95 p-3.5 text-left ring-1 ring-slate-900/10 dark:bg-slate-900/90 dark:ring-white/10">
-      <div className={`pr-5 ${sectionLabel}`}>How we compute this</div>
-      <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-1 pr-5">
-        <span className="text-[13px] font-semibold leading-tight text-slate-900 dark:text-white">
-          {info.title}
-        </span>
-        {info.weightPct != null ? (
-          <span className="rounded-full bg-ocean-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-ocean-700 ring-1 ring-ocean-500/20 dark:text-ocean-300">
-            {info.weightPct}% of score
+    <div className="h-full w-full rounded-2xl bg-white/95 p-4 text-left ring-1 ring-slate-900/10 dark:bg-slate-900/90 dark:ring-white/10 sm:p-5">
+      <div className="mx-auto max-w-[62ch]">
+        <div className={`pr-5 ${sectionLabel}`}>How we compute this</div>
+        <div className="mt-0.5 flex flex-wrap items-baseline gap-x-2 gap-y-1 pr-5">
+          <span className="text-sm font-semibold leading-tight text-slate-900 dark:text-white">
+            {info.title}
           </span>
-        ) : (
-          <span className="rounded-full bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-slate-500/20 dark:text-slate-400">
-            not scored
-          </span>
-        )}
-      </div>
+          {info.weightPct != null ? (
+            <span className="rounded-full bg-ocean-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-ocean-700 ring-1 ring-ocean-500/20 dark:text-ocean-300">
+              {info.weightPct}% of score
+            </span>
+          ) : (
+            <span className="rounded-full bg-slate-500/10 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-slate-500/20 dark:text-slate-400">
+              not scored
+            </span>
+          )}
+        </div>
 
-      <div className="mt-1.5 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1 text-slate-600 dark:text-slate-300">
-        {/* Plain-English lead — first thing you read. */}
-        <p className="text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
-          {info.explainer}
-        </p>
-
-        <section>
-          <div className={sectionLabel}>Right now</div>
-          <div className="mt-0.5 space-y-0.5 text-xs leading-snug">
-            {info.computation.map((line, i) => (
-              <div key={i}>{line}</div>
-            ))}
-          </div>
-        </section>
-
-        <section>
-          <div className={sectionLabel}>Sources</div>
-          <ul className="mt-0.5 space-y-0.5 text-[11px] leading-snug">
-            {info.sources.map((s, i) => (
-              <li key={i} className="flex gap-1.5">
-                <span aria-hidden className="text-slate-400 dark:text-slate-500">
-                  ·
-                </span>
-                <span>{s}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        {info.notes ? (
-          <p className="text-[11px] italic leading-snug text-slate-500 dark:text-slate-400">
-            {info.notes}
+        <div className="mt-2 space-y-3 text-slate-600 dark:text-slate-300">
+          {/* Plain-English lead — first thing you read. */}
+          <p className="text-[12.5px] leading-relaxed text-slate-700 dark:text-slate-200">
+            {info.explainer}
           </p>
-        ) : null}
 
-        {/* Formula last — a muted monospace footnote. */}
-        <section className="border-t border-slate-200/70 pt-2 dark:border-white/10">
-          <div className={sectionLabel}>Formula</div>
-          <code className="mt-0.5 block whitespace-pre-wrap break-words font-mono text-[10px] leading-snug text-slate-500 dark:text-slate-400">
-            {info.formula}
-          </code>
-        </section>
+          <section>
+            <div className={sectionLabel}>Right now</div>
+            <div className="mt-1 space-y-0.5 text-xs leading-snug">
+              {info.computation.map((line, i) => (
+                <div key={i}>{line}</div>
+              ))}
+            </div>
+          </section>
+
+          <section>
+            <div className={sectionLabel}>Sources</div>
+            <ul className="mt-1 space-y-0.5 text-[11px] leading-snug">
+              {info.sources.map((s, i) => (
+                <li key={i} className="flex gap-1.5">
+                  <span aria-hidden className="text-slate-400 dark:text-slate-500">
+                    ·
+                  </span>
+                  <span>{s}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          {info.notes ? (
+            <p className="text-[11px] italic leading-snug text-slate-500 dark:text-slate-400">
+              {info.notes}
+            </p>
+          ) : null}
+
+          {/* Formula last — a muted monospace footnote. */}
+          <section className="border-t border-slate-200/70 pt-2.5 dark:border-white/10">
+            <div className={sectionLabel}>Formula</div>
+            <code className="mt-1 block whitespace-pre-wrap break-words font-mono text-[10.5px] leading-snug text-slate-500 dark:text-slate-400">
+              {info.formula}
+            </code>
+          </section>
+        </div>
       </div>
     </div>
   );
