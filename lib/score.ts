@@ -581,7 +581,12 @@ export function scoreBeachDay(d: Derived): ScoreResult {
     sub(
       "waterTemp",
       "Water temperature",
-      d.waterTempF != null ? plateau(d.waterTempF, 77, 84, 15) : null,
+      // Full credit 77-90°F. The old top end (84°F) treated warm summer ocean
+      // as a defect — 87°F Boca bathwater was quietly costing ~2 points. For a
+      // BEACHGOER, warmer is better right up until genuinely hot-tub territory;
+      // only past 90°F does it start to read as soup (and it also tracks coral
+      // bleaching / weaker cooling-off value).
+      d.waterTempF != null ? plateau(d.waterTempF, 77, 90, 15) : null,
       0.09,
       f1(d.waterTempF, "°F"),
     ),
