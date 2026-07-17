@@ -90,7 +90,9 @@ function ariaLabel(d: MergedDay, tz: string): string {
   bits.push(
     d.best
       ? `best window ${fmtTime(d.best.startIso, tz)} to ${fmtTime(d.best.endIso, tz)}`
-      : "no good window",
+      : d.peakScore == null
+        ? "hourly forecast not available for this day yet"
+        : "no good window",
   );
   bits.push(d.peakBreakdown ? "activate for anticipated scoring details" : "no scoring detail available");
   return bits.join(", ");
@@ -271,7 +273,14 @@ export function DayOutlookStrip({
                       {fmtTime(d.best.endIso, tz)}
                     </span>
                   </>
+                ) : d.peakScore == null ? (
+                  // No scored hours AT ALL for this day — we never looked, so
+                  // saying "no good window" would be a lie about the beach.
+                  // (Root cause was an hourly/daily fetch-window mismatch; this
+                  // stays as an honest guard if the hourly feed ever runs short.)
+                  <span className="text-slate-400">—</span>
                 ) : (
+                  // Scored, but nothing good left (e.g. today after sunset).
                   <>
                     <span className="text-slate-400 sm:hidden">—</span>
                     <span className="hidden text-slate-400 sm:inline">no good window</span>

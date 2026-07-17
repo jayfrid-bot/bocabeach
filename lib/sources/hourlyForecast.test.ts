@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import { parseOpenMeteoHourly } from "@/lib/sources/hourlyForecast";
 
 // Mirrors an Open-Meteo /v1/forecast `hourly` payload (imperial, GMT times).
@@ -94,5 +95,19 @@ describe("overlaySatelliteRadiation", () => {
     expect(hours[0].solarWm2).toBe(905);
     overlaySatelliteRadiation(hours, {}, NOW);
     expect(hours[0].solarWm2).toBe(905);
+  });
+});
+
+describe("fetch window (regression: 2026-07-17 'no good window' bug)", () => {
+  it("requests the same number of forecast days as the DAILY forecast source", () => {
+    // The outlook strip renders one tile per DAILY day, but each tile's peak
+    // score + best window come from the HOURLY hours. When these drifted apart
+    // (daily 7, hourly 6) the last tile had no hours to score, so it showed
+    // "no good window" for a day we had never actually looked at.
+    const hourlySrc = readFileSync(new URL("./hourlyForecast.ts", import.meta.url), "utf8");
+    const dailySrc = readFileSync(new URL("./forecast.ts", import.meta.url), "utf8");
+    const days = (src: string) => src.match(/forecast_days=(\d+)/)?.[1];
+    expect(days(hourlySrc)).toBeDefined();
+    expect(days(hourlySrc)).toBe(days(dailySrc));
   });
 });

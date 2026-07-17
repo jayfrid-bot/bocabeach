@@ -119,17 +119,20 @@ export async function fetchHourlyForecast(
   // so they line up with the (UTC) sun times and `fmtTime`.
   // `past_days=1` so the window always spans the beach's LOCAL day even in the
   // evening (US is behind UTC, so the local morning falls in the previous GMT
-  // day). `forecast_days=6` gives ~7 local days of hourly data, which powers the
-  // multi-day "best beach times" forecast (computeMultiDayWindows). Today's
-  // hourly chart still shows only today — its daylight filter (today's sunrise/
-  // sunset) drops the extra days.
+  // day). `forecast_days=7` MUST match forecast.ts's daily `forecast_days=7`:
+  // the outlook strip renders one tile per DAILY day, but each tile's score +
+  // best window come from these HOURLY hours. At 6 the last daily tile had no
+  // hours to score, so it fell through to a null window and the strip claimed
+  // "no good window" for a day we had simply never looked at. Keep these two in
+  // step. Today's hourly chart still shows only today — its daylight filter
+  // (today's sunrise/sunset) drops the extra days.
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
     `&hourly=temperature_2m,cloud_cover,precipitation_probability,weather_code,` +
     `wind_speed_10m,wind_direction_10m,uv_index,uv_index_clear_sky,relative_humidity_2m,dew_point_2m,` +
     `soil_temperature_0cm,shortwave_radiation,precipitation` +
     `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch` +
-    `&past_days=1&forecast_days=6`;
+    `&past_days=1&forecast_days=7`; // keep in step with forecast.ts's daily forecast_days
   // GOES satellite-observed radiation for elapsed hours (best effort; the
   // forecast model's values stand wherever this is missing or fails).
   const satUrl =
