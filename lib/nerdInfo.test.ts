@@ -32,6 +32,21 @@ const snap = {
     totalInArea: 0,
     windowMinutes: 30,
   }),
+  airQuality: wrap("Open-Meteo Air Quality", { usAqi: 60, dominantPollutant: "PM2.5", pm2_5: 15, pm10: 20, ozone: 40 }),
+  tides: wrap("NOAA Tides & Currents", {
+    trend: "rising" as const,
+    next: [
+      { type: "high" as const, time: "2026-07-17T18:00:00.000Z", heightFt: 2.6 },
+      { type: "low" as const, time: "2026-07-18T00:00:00.000Z", heightFt: 0.1 },
+    ],
+  }),
+  sun: wrap("Computed (NOAA solar position algorithm)", {
+    date: "2026-07-17",
+    sunrise: "2026-07-17T10:38:00.000Z",
+    solarNoon: "2026-07-17T17:24:00.000Z",
+    sunset: "2026-07-18T00:14:00.000Z",
+    maxAltitudeDeg: 85,
+  }),
   location: { lat: 26.35, lon: -80.08, name: "Boca Raton", region: "FL", timezone: "America/New_York" },
 } as unknown as ConditionsSnapshot;
 
@@ -200,7 +215,7 @@ describe("flagship instrument backs quote the REAL sand/storm/lightning constant
 
   it("every registry entry carries a non-empty plain-English explainer", () => {
     const keys = Object.keys(nerdBuilders) as (keyof typeof nerdBuilders)[];
-    expect(keys).toHaveLength(17);
+    expect(keys).toHaveLength(20); // +airQuality, +tides, +sun (2026-07-17 design pass)
     for (const k of keys) {
       const info = buildNerdInfo(k, ctx);
       expect(info.explainer.length).toBeGreaterThan(40);

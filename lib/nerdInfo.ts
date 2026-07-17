@@ -37,7 +37,10 @@ export type NerdKey =
   | "traffic"
   | "sandTemp"
   | "storm"
-  | "lightning";
+  | "lightning"
+  | "airQuality"
+  | "tides"
+  | "sun";
 
 export interface NerdInfo {
   /** Card title, e.g. "Water temperature". */
@@ -587,6 +590,80 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
       sources: src(snap.lightning.source, "Own GLM pipeline — GitHub Action reads raw netCDF, republishes ~1×/min"),
       notes:
         "A safety display: an unknown or stale feed is greyed out, never allowed to look like 'clear'.",
+    };
+  },
+
+  airQuality: ({ snap }) => {
+    const aq = snap.airQuality.data;
+    const computation = aq?.usAqi != null
+      ? src(
+          `US AQI ${aq.usAqi}${aq.dominantPollutant ? ` — driven by ${aq.dominantPollutant}` : ""}`,
+          aq.pm2_5 != null ? `PM2.5 ${aq.pm2_5} µg/m³` : null,
+          aq.pm10 != null ? `PM10 ${aq.pm10} µg/m³` : null,
+          aq.ozone != null ? `Ozone ${aq.ozone} µg/m³` : null,
+        )
+      : ["No air-quality reading for this beach right now."];
+    return {
+      title: "Air quality",
+      weightPct: null,
+      explainer:
+        "The US EPA's Air Quality Index — and it is not an average. Each pollutant is converted to its own 0-500 sub-index, and the headline AQI is whichever one is WORST, which is why we name the pollutant driving it: an AQI of 70 from ozone is a different afternoon than 70 from smoke. On a coast the sea breeze usually keeps this low; the classic Florida spike is Saharan dust drifting across the Atlantic in June-August, which shows up as PM2.5 or PM10. It doesn't change whether it's a beach day, so it stays out of the score — but if you have asthma or you're bringing kids, it's the number you actually want.",
+      formula:
+        "AQI = max(sub-index(PM2.5), sub-index(PM10), sub-index(Ozone)). Each sub-index is the EPA's piecewise-linear conversion from concentration to 0-500. Informational — not part of the Beach Day score.",
+      computation,
+      sources: src(`${snap.airQuality.source} — US EPA AQI + per-pollutant sub-indices`),
+      notes:
+        "Reported, never scored: we won't quietly dock your beach day for haze. The dominant pollutant is shown so the number means something.",
+    };
+  },
+
+  tides: ({ snap }) => {
+    const t = snap.tides.data;
+    const nextEvents = (t?.next ?? []).slice(0, 2);
+    const computation = nextEvents.length
+      ? src(
+          t?.trend ? `Tide is ${t.trend} right now` : null,
+          ...nextEvents.map((e) => `${cap(e.type)} tide ${e.heightFt} ft at ${e.time.slice(11, 16)} UTC`),
+          "Between events the waterline eases on a raised cosine, not a straight line",
+        )
+      : ["No tide predictions for this beach right now."];
+    return {
+      title: "Tides",
+      weightPct: null,
+      explainer:
+        "These aren't forecasts — they're astronomy. NOAA publishes harmonic predictions per tide station: the moon and sun's gravitational pull decomposed into constituents that are known years ahead, which is why a tide table for next August already exists. We take the published high/low times and heights, then fill in everything between them ourselves, because real tides move like simple harmonic motion — racing through mid-tide and lingering at the turns. A straight line between high and low would misplace the water at nearly every moment in between, so the living-shore graphic eases with a raised cosine instead. That interpolated height is what drives the waterline you see climbing the sand.",
+      formula:
+        "NOAA hilo predictions → between two events: height = h0 + (1 − cos(π × f)) / 2 × (h1 − h0), where f is the fraction of the interval elapsed. Trend is derived from the next events. Informational — not part of the Beach Day score.",
+      computation,
+      sources: src(`${snap.tides.source} — harmonic high/low predictions`, "Raised-cosine interpolation (lib/tideLevel.ts) for the waterline between events"),
+      notes:
+        "With only one known event we won't fake a height — the graphic falls back to a trend-only placement rather than inventing a number.",
+    };
+  },
+
+  sun: ({ snap }) => {
+    const s = snap.sun.data;
+    const hhmm = (iso?: string) => (iso ? `${iso.slice(11, 16)} UTC` : null);
+    const computation = s
+      ? src(
+          hhmm(s.sunrise) ? `Sunrise ${hhmm(s.sunrise)}` : null,
+          hhmm(s.solarNoon) ? `Solar noon ${hhmm(s.solarNoon)}` : null,
+          hhmm(s.sunset) ? `Sunset ${hhmm(s.sunset)}` : null,
+          s.maxAltitudeDeg != null ? `Sun peaks ${Math.round(s.maxAltitudeDeg)}° above the horizon` : null,
+          "Computed from this beach's latitude/longitude — zero network calls",
+        )
+      : ["No sun times for this beach right now."];
+    return {
+      title: "Sun & moon",
+      weightPct: null,
+      explainer:
+        "This is the one number on the page we don't fetch from anyone — we compute it. Given only the beach's latitude, longitude and the date, the NOAA solar-position algorithm gives the sun's declination and the equation of time (why solar noon drifts off clock noon by up to ~16 minutes through the year), and from those we solve the hour angle for each event's altitude: −0.833° for sunrise and sunset, which accounts for the sun's own width plus the atmosphere bending its light over the horizon, and −6° for civil dawn and dusk. No API, no key, works for any beach on Earth, instantly. It earns its keep elsewhere too: the sand model's afternoon decay is keyed to hours from solar noon, and the golden-hour shading on the arc is derived from these same times.",
+      formula:
+        "declination δ + equation of time from the Julian day → event = solar noon ± hourAngle(alt) / 15°/hr, with alt = −0.833° (sunrise/sunset) or −6° (civil dawn/dusk). Moon phase from the synodic cycle. Informational — not part of the Beach Day score.",
+      computation,
+      sources: src(snap.sun.source),
+      notes:
+        "Sun times are geometry, so they're exact; the moon's illumination is a standard synodic approximation, good to a percent or so.",
     };
   },
 };
