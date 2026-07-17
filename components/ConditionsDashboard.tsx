@@ -516,7 +516,15 @@ export function ConditionsDashboard({
       ) : null}
 
       <section className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <AirQualityMeter air={snap.airQuality} />
+        <FlipCard
+          label="Air quality"
+          back={nerdBack("airQuality")}
+          front={
+            <div className="h-full [&>div]:h-full">
+              <AirQualityMeter air={snap.airQuality} />
+            </div>
+          }
+        />
         {/* Storm + Lightning are flippable showpieces. The h-full wrapper +
             child-stretch keeps the front card filling its grid cell (these two
             components don't set their own height) so a flipped card matches the
@@ -573,8 +581,24 @@ export function ConditionsDashboard({
       ) : null}
 
       <section className="mb-6 grid gap-4 sm:grid-cols-2">
-        <TidePanel tides={snap.tides} tz={tz} />
-        <SunPanel sun={snap.sun} tz={tz} />
+        <FlipCard
+          label="Tides"
+          back={nerdBack("tides")}
+          front={
+            <div className="h-full [&>div]:h-full">
+              <TidePanel tides={snap.tides} tz={tz} />
+            </div>
+          }
+        />
+        <FlipCard
+          label="Sun & moon"
+          back={nerdBack("sun")}
+          front={
+            <div className="h-full [&>div]:h-full">
+              <SunPanel sun={snap.sun} tz={tz} />
+            </div>
+          }
+        />
       </section>
 
       {cams.length > 0 ? (

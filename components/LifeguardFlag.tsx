@@ -21,7 +21,9 @@ export function LifeguardFlag({ flag }: { flag: FlagColor }) {
   const patch = "block h-8 w-8 rounded-[2px] shadow-md ring-1 ring-black/30";
   return (
     <div
-      className="flex w-16 flex-col items-center gap-1"
+      // w-24, not w-16: at 64px even "Low hazard" wrapped to two lines under the
+      // flag, which read as a broken column next to the row's label.
+      className="flex w-24 flex-col items-center gap-1"
       title={m.label}
       aria-label={`${flag.replace("-", " ")} flag — ${m.label}`}
     >
