@@ -76,8 +76,7 @@ export const SCORE_WEIGHTS_PCT = {
   wind: 13,
   comfort: 8,
   waterTemp: 9,
-  waves: 8,
-  waterQuality: 6,
+  waves: 14, // absorbed water quality's old 6% (water quality is now cap-only)
   sargassum: 7,
   crowds: 5,
   uv: 4,
@@ -379,22 +378,22 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
   },
 
   waterQuality: ({ d, snap }) => {
-    const rating = d.waterRating;
-    const map: Record<string, number> = { good: 100, moderate: 60, poor: 0 };
-    const computation =
-      rating in map
-        ? [`${cap(rating)} → ${map[rating]}/100`, pts(map[rating], SCORE_WEIGHTS_PCT.waterQuality)]
-        : ["No recent sample — this factor is dropped from the weighted average."];
+    const advisory = d.waterAdvisory;
+    const computation = advisory
+      ? ["Advisory ACTIVE → whole score capped at 40"]
+      : d.waterRating === "unknown"
+        ? ["No recent sample — no advisory, no cap."]
+        : [`${cap(d.waterRating)} water · no advisory → no cap`];
     return {
       title: "Water quality",
-      weightPct: SCORE_WEIGHTS_PCT.waterQuality,
+      weightPct: null, // no longer a weighted factor — binary safe/not-safe cap
       explainer:
-        "This is the county's weekly enterococci bacteria test of the water — the real 'is it safe to swim' signal, not an estimate. Good water scores full marks, poor water zero, and a moderate sample lands in between. An active health advisory doesn't just lower this factor; it hard-caps the entire Beach Day score at 40, no matter how nice everything else is.",
-      formula: "good = 100, moderate = 60, poor = 0  (unknown → dropped from the average)",
+        "This is the county's weekly enterococci bacteria test — the real 'is the water safe to swim' signal, not an estimate. It's binary: the water is either safe or it isn't, so it no longer shaves points off the score. What it DOES do is decisive — an active health advisory hard-caps the entire Beach Day score at 40, no matter how perfect everything else is. No advisory, no effect on the number.",
+      formula: "Not a weighted factor — a safety CAP. An active bacteria advisory caps the whole score at 40.",
       computation,
       sources: src(snap.waterQuality.source),
       notes:
-        "From the county's weekly enterococci bacteria sampling. An active advisory ALSO hard-caps the whole score at 40, regardless of everything else.",
+        "From the county's weekly enterococci sampling. Binary by design: safe water is invisible to the score; an advisory caps it at 40.",
     };
   },
 

@@ -14,6 +14,7 @@ import type {
 import { clamp, degToCardinal, dewPointFromTempRH, plateau, round } from "@/lib/util";
 import { currentSandTempF, estimateSandTempF, hoursFromSolarNoon } from "@/lib/sandTemp";
 import { seaState } from "@/lib/format";
+import { scoreBand } from "@/lib/scoreBands";
 
 // Consolidated, best-available values pulled across all sources.
 export interface Derived {
@@ -376,18 +377,9 @@ const windScore = (mph: number) => plateau(mph, 5, 13, 12);
 const waveCalm = (ft: number) => clamp(100 - Math.max(0, ft - 1) * 25, 0, 100);
 const uvScore = (uv: number) => clamp(100 - Math.max(0, uv - 8) * 12, 0, 100);
 
-function waterQualityScore(r: WaterQualityRating): number | null {
-  switch (r) {
-    case "good":
-      return 100;
-    case "moderate":
-      return 60;
-    case "poor":
-      return 0;
-    default:
-      return null; // unknown -> excluded from the average
-  }
-}
+// Water quality is no longer a weighted sub-score — it's binary (safe vs. not),
+// so it only ever CAPS the score via an active advisory (see applyBeachCaps'
+// `d.waterAdvisory` branch). Its old 0.06 weight moved to sea state (waves).
 
 // Sky sub-score blends "sunshine" (from cloud cover) with "dryness" (from precip
 // probability): full sun + no rain → ~100; partly cloudy → mid; overcast or rainy
@@ -438,10 +430,7 @@ function combine(subs: SubScore[]): number | null {
 }
 
 function ratingFor(score: number): string {
-  if (score >= 80) return "Excellent";
-  if (score >= 65) return "Good";
-  if (score >= 45) return "Fair";
-  return "Poor";
+  return scoreBand(score).rating;
 }
 
 function f1(n: number | undefined, unit: string): string | undefined {
@@ -594,17 +583,12 @@ export function scoreBeachDay(d: Derived): ScoreResult {
       "waves",
       "Sea state (swim calmness)",
       d.waveHeightFt != null ? waveCalm(d.waveHeightFt) : null,
-      0.08,
+      // 0.14 = its own 0.08 + water quality's old 0.06 (water quality left the
+      // weighted score to become advisory-cap-only; owner 2026-07-17).
+      0.14,
       d.waveHeightFt != null
         ? `${f1(d.waveHeightFt, " ft")} · ${seaState(d.waveHeightFt).label.toLowerCase()}`
         : undefined,
-    ),
-    sub(
-      "waterQuality",
-      "Water quality",
-      waterQualityScore(d.waterRating),
-      0.06,
-      d.waterRating,
     ),
     sub(
       "sargassum",
@@ -766,6 +750,14 @@ function applyBeachCaps(
   if (d.severeAlert) {
     score = Math.min(score, 15);
     caps.push("Severe weather warning in effect");
+  }
+  // Strong wind is a day-wrecker regardless of how nice everything else is: blown
+  // sand, whitecapped water, umbrellas taking flight. Over 20 mph hard-caps at 15
+  // (owner 2026-07-17). Wind is also a weighted sub-score, but that only tapers;
+  // this is the ceiling on a genuinely windy day.
+  if ((d.windSpeedMph ?? 0) > 20) {
+    score = Math.min(score, 15);
+    caps.push("High wind — over 20 mph");
   }
   // OBSERVED lightning (GOES GLM) within 5 mi in the recent scan window is a
   // get-out-of-the-water emergency — the single most dangerous beach condition.

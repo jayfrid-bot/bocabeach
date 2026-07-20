@@ -213,8 +213,7 @@ describe("summarizeForPush", () => {
           { key: "wind", label: "Wind (sea breeze)", score: 100, weight: 0.13 },
           { key: "comfort", label: "Comfort (mugginess)", score: 10, weight: 0.08 },
           { key: "waterTemp", label: "Water temperature", score: 87, weight: 0.09 },
-          { key: "waves", label: "Sea state (swim calmness)", score: 100, weight: 0.08 },
-          { key: "waterQuality", label: "Water quality", score: 100, weight: 0.06 },
+          { key: "waves", label: "Sea state (swim calmness)", score: 100, weight: 0.14 },
           { key: "sargassum", label: "Seaweed (sargassum)", score: 55, weight: 0.07, display: "Moderate · ~30% covered" },
           { key: "crowds", label: "Crowds", score: 94, weight: 0.05 },
           { key: "uv", label: "UV index", score: 100, weight: 0.04 },
@@ -223,7 +222,9 @@ describe("summarizeForPush", () => {
       }),
       loc,
     );
-    expect(s.pros).toEqual(["warm water", "calm surf", "clean", "quiet"]);
+    // waterQuality is no longer a scored sub-score, so "clean" can't appear —
+    // the freed 4th slot now surfaces the next-ranked pro (warm air).
+    expect(s.pros).toEqual(["warm water", "calm surf", "quiet", "warm"]);
     expect(s.cons).toEqual(["muggy", "cloudy", "moderate seaweed"]);
   });
 

@@ -152,12 +152,9 @@ function reasonsFor(d: Derived, result: ScoreResult): {
     );
   }
 
-  // Water quality.
-  push(
-    "waterQuality",
-    "Water quality is clean",
-    `Water quality is ${d.waterRating}`,
-  );
+  // Water quality is no longer a weighted factor (advisory-cap only), so it's
+  // not a "helping/holding back" reason. An active advisory still surfaces as a
+  // CAP reason via capReasons (capCovers.add("waterQuality") above).
 
   // Seaweed.
   {
@@ -244,7 +241,7 @@ export function explainScore(d: Derived, result: ScoreResult): ScoreExplanation 
   const caps = capReasons(result);
   return {
     summary:
-      "We add points for sunshine, warm air, a sea breeze, dry feel, swimmable water, calm seas, clean water, an empty beach, and manageable UV. We take them away for rain, scorching sand, choppy seas, heavy seaweed, lifeguard flags, advisories, and severe weather.",
+      "We add points for sunshine, warm air, a sea breeze, dry feel, warm water, calm seas, an empty beach, and manageable UV. We take them away for rain, scorching sand, choppy seas, high wind, heavy seaweed, lifeguard flags, and severe weather — and a water-quality advisory hard-caps the whole score.",
     helping,
     // Caps come first — they're the most important reasons the score is what it is.
     hurting: [...caps, ...hurting],

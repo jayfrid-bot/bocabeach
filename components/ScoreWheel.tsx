@@ -23,7 +23,6 @@ const FACTOR_EMOJI: Record<string, string> = {
   comfort: "💧",
   sandTemp: "🦶",
   sargassum: "🌿",
-  waterQuality: "🧪",
   crowds: "👥",
   uv: "🕶️",
 };
@@ -38,7 +37,6 @@ const FACTOR_LABEL: Record<string, string> = {
   comfort: "Humidity",
   sandTemp: "Sand",
   sargassum: "Seaweed",
-  waterQuality: "Quality",
   crowds: "Crowds",
   uv: "UV",
 };
@@ -72,8 +70,6 @@ const FACTOR_EXPLAIN: Record<string, string> = {
     "Estimated dry-sand surface temperature, modeled from ground temp, solar radiation, wind, recent rain and cloud cover — calibrated against real on-beach IR-thermometer readings.",
   sargassum:
     "Seaweed on the beach, read live from the beach cams by AI vision and scored point-in-time (the beach gets credit as soon as it's cleaned). Very heavy coverage (50%+) puts a sliding ceiling on the whole score — bottoming out at 70 once coverage hits ~90%.",
-  waterQuality:
-    "Official water-quality ratings and advisories for this beach. An active advisory doesn't just lower this slice — it caps the whole score.",
   crowds:
     "How busy the sand is, read live from the beach cams. Quieter beach, higher score.",
   uv:

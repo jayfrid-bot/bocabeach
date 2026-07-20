@@ -1,5 +1,7 @@
 // Presentation helpers (safe to import on the client).
 
+import { scoreBand } from "@/lib/scoreBands";
+
 export function fmtTime(iso: string, tz: string): string {
   return new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
@@ -65,34 +67,20 @@ export function seaState(waveHeightFt: number): { label: string; note: string } 
 
 /** The brand's plain-English answer to "is it beach day?" for a 0-100 score. */
 export function beachDayVerdict(score: number): string {
-  // The app's headline answer to "Is it beach day?" — five tiers so a genuinely
-  // good day gets real enthusiasm (a 76 used to read as a lukewarm "Pretty
-  // much"; owner wanted good days to SAY so).
-  if (score >= 90) return "Absolutely!";
-  if (score >= 80) return "Yes!";
-  if (score >= 65) return "Good beach day";
-  if (score >= 45) return "Maybe";
-  return "Not really";
+  return scoreBand(score).verdict;
 }
 
-/** Accent color for a 0-100 score. Used for the gauge arc fill. */
+/** Accent color for a 0-100 score (wheel center, forecast badges, slices). */
 export function scoreColor(score: number): string {
-  if (score >= 80) return "#34d399"; // emerald-400
-  if (score >= 65) return "#a3e635"; // lime-400
-  if (score >= 45) return "#fbbf24"; // amber-400
-  return "#fb7185"; // rose-400
+  return scoreBand(score).color;
 }
 
 /**
- * Tailwind text color for a 0-100 score, mirroring scoreColor's bands but with
- * light/dark variants for verdict/rating TEXT — the 400-level hex from
- * scoreColor fails WCAG AA on a white background, so text uses 600/400.
+ * Tailwind text color for a 0-100 score. Uses 600/400 (not the raw accent hex)
+ * so verdict/rating TEXT clears WCAG AA on a white background.
  */
 export function scoreTextClass(score: number): string {
-  if (score >= 80) return "text-emerald-600 dark:text-emerald-400";
-  if (score >= 65) return "text-lime-600 dark:text-lime-400";
-  if (score >= 45) return "text-amber-600 dark:text-amber-400";
-  return "text-rose-600 dark:text-rose-400";
+  return scoreBand(score).text;
 }
 
 // --- Continuous color interpolation ----------------------------------------

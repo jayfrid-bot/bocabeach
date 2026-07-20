@@ -123,10 +123,11 @@ describe("nerdInfo registry quotes the REAL score.ts constants", () => {
     expect(info.computation.join(" ")).toContain(">85");
   });
 
-  it("water quality: 6% weight, good=100 mapping", () => {
+  it("water quality: NOT scored — an advisory caps at 40", () => {
     const info = buildNerdInfo("waterQuality", ctx);
-    expect(info.weightPct).toBe(6);
-    expect(info.computation.join(" ")).toContain("100");
+    expect(info.weightPct).toBeNull();
+    expect(info.formula).toContain("40");
+    expect(info.formula.toLowerCase()).toContain("cap");
   });
 
   it("pulls live per-beach source labels (buoy id) into attributions", () => {
@@ -171,9 +172,12 @@ describe("non-scored cards report null weight and what they feed", () => {
 });
 
 describe("display weights mirror the score.ts sub-score weights", () => {
-  it("the 11 sub-score weights still sum to 100%", () => {
+  it("the 10 sub-score weights still sum to 100%", () => {
     const sum = Object.values(SCORE_WEIGHTS_PCT).reduce((a, b) => a + b, 0);
     expect(sum).toBe(100);
+    expect(Object.keys(SCORE_WEIGHTS_PCT)).toHaveLength(10); // waterQuality removed
+    expect(SCORE_WEIGHTS_PCT).not.toHaveProperty("waterQuality");
+    expect(SCORE_WEIGHTS_PCT.waves).toBe(14);
   });
 });
 

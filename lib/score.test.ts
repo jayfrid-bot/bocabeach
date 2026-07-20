@@ -457,11 +457,15 @@ describe("scoring (Beach Day only — no surf)", () => {
   it("uses the beachgoer sub-scores whose weights sum to 1", () => {
     const { subScores } = computeScore(NICE);
     const keys = subScores.map((s) => s.key).sort();
+    // waterQuality left the weighted score (2026-07-17) — it's an advisory cap now.
     expect(keys).toEqual(
-      ["airTemp", "comfort", "crowds", "sandTemp", "sargassum", "sky", "uv", "waterQuality", "waterTemp", "waves", "wind"].sort(),
+      ["airTemp", "comfort", "crowds", "sandTemp", "sargassum", "sky", "uv", "waterTemp", "waves", "wind"].sort(),
     );
+    expect(keys).not.toContain("waterQuality");
     const total = subScores.reduce((a, s) => a + s.weight, 0);
     expect(total).toBeCloseTo(1, 5);
+    // Sea state absorbed water quality's 6% → 14%.
+    expect(subScores.find((s) => s.key === "waves")?.weight).toBeCloseTo(0.14, 5);
   });
 
   it("vetoes a rain/thunder weather code its own precip probability contradicts", () => {
@@ -848,6 +852,39 @@ describe("scoring (Beach Day only — no surf)", () => {
     const r = scoreBeachDay(deriveMetrics(snap));
     expect(r.score).toBeLessThanOrEqual(40);
     expect(r.caps.join(" ")).toMatch(/advisory/i);
+  });
+
+  it("caps the score at 15 when wind is over 20 mph (owner 2026-07-17)", () => {
+    // An otherwise-perfect NICE day, but howling wind — a day-wrecker.
+    const windy = scoreBeachDay(
+      deriveMetrics(
+        snapshot({
+          buoy: { waterTempF: 82, windSpeedMph: 25, windDirDeg: 90 },
+          weather: NICE.weather.data,
+          marine: NICE.marine.data,
+          city: { flags: ["green"] },
+          water: { overall: "good", advisory: false, sites: [] },
+        }),
+      ),
+    );
+    expect(windy.score).toBeLessThanOrEqual(15);
+    expect(windy.caps.join(" ")).toMatch(/high wind/i);
+  });
+
+  it("does NOT wind-cap at 20 mph or below (strictly over 20)", () => {
+    const breezy = scoreBeachDay(
+      deriveMetrics(
+        snapshot({
+          buoy: { waterTempF: 82, windSpeedMph: 18, windDirDeg: 90 },
+          weather: NICE.weather.data,
+          marine: NICE.marine.data,
+          city: { flags: ["green"] },
+          water: { overall: "good", advisory: false, sites: [] },
+        }),
+      ),
+    );
+    expect(breezy.score).toBeGreaterThan(15);
+    expect(breezy.caps.join(" ")).not.toMatch(/high wind/i);
   });
 
   it("caps the score under a City no-swim advisory", () => {

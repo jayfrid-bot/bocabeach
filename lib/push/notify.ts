@@ -5,6 +5,7 @@
 
 import type { ConditionsResponse, SubScore, HourlyScore } from "@/lib/types";
 import { beachDayVerdict } from "@/lib/format";
+import { scoreBand } from "@/lib/scoreBands";
 
 /** Local hour (0-23, beach time) at which the daily morning summary fires. */
 export const MORNING_HOUR = 8;
@@ -119,7 +120,8 @@ function activeSafety(res: ConditionsResponse): { key: string; text: string } | 
 const PHRASES: Record<string, { pro?: string; con?: string }> = {
   waterTemp: { pro: "warm water", con: "cold water" },
   waves: { pro: "calm surf", con: "rough surf" },
-  waterQuality: { pro: "clean", con: "murky water" },
+  // waterQuality is no longer a scored sub-score (advisory-cap only), so it can
+  // never appear here — removed to avoid a dead lookup.
   crowds: { pro: "quiet", con: "crowded" },
   sky: { pro: "sunny", con: "cloudy" },
   airTemp: { pro: "warm", con: "chilly" },
@@ -135,7 +137,7 @@ const PHRASES: Record<string, { pro?: string; con?: string }> = {
  * many things are great we lead with water, surf, cleanliness, then quiet.
  */
 const PRO_ORDER = [
-  "waterTemp", "waves", "waterQuality", "crowds", "sky",
+  "waterTemp", "waves", "crowds", "sky",
   "airTemp", "wind", "sargassum", "sandTemp", "comfort", "uv",
 ];
 
@@ -169,12 +171,10 @@ function prosAndCons(subScores: SubScore[]): { pros: string[]; cons: string[] } 
   return { pros, cons };
 }
 
-/** Headline verdict by score band (the notification title). */
+/** Headline verdict by score band (the notification title) — one source of
+ *  truth with the in-app verdict, so push titles can't drift from the app. */
 function verdictPhrase(score: number): string {
-  if (score >= 80) return "Great beach day today";
-  if (score >= 65) return "Good beach day today";
-  if (score >= 45) return "So-so beach day today";
-  return "Rough beach day today";
+  return scoreBand(score).push;
 }
 
 /** Join phrases as "a, b, c & d", first letter capitalized. */
