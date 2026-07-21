@@ -5,12 +5,16 @@ import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import { NativePushInit } from "@/components/NativePushInit";
 
 const SITE_URL = "https://isitbeachday.com";
+const DEFAULT_TITLE = "Is It Beach Day? — Live Beach Conditions & Score";
 const DESCRIPTION =
-  "One answer to one question: is it a beach day? Live tides, water & air temp, wind, waves, water quality, and cams — distilled into a single 0–100 Beach Day score.";
+  "Is it a beach day? Get the live Beach Day score for US beaches — water temperature, sand temperature, rip currents, seaweed/sargassum, lightning, crowds, and webcams, distilled into one 0–100 answer.";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
-  title: "Is It Beach Day?",
+  title: {
+    default: DEFAULT_TITLE,
+    template: "%s · Is It Beach Day?",
+  },
   description: DESCRIPTION,
   applicationName: "Is It Beach Day",
   appleWebApp: {
@@ -22,19 +26,46 @@ export const metadata: Metadata = {
   other: { "apple-mobile-web-app-capable": "yes" },
   formatDetection: { telephone: false },
   openGraph: {
-    title: "Is It Beach Day?",
+    type: "website",
+    title: DEFAULT_TITLE,
     description: DESCRIPTION,
     url: SITE_URL,
     siteName: "Is It Beach Day",
-    images: [{ url: "/icon-512.png", width: 512, height: 512, alt: "Is It Beach Day?" }],
+    images: [{ url: "/opengraph-image", width: 1200, height: 630, alt: "Is It Beach Day?" }],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Is It Beach Day?",
+    title: DEFAULT_TITLE,
     description: DESCRIPTION,
-    images: ["/icon-512.png"],
+    images: ["/opengraph-image"],
   },
 };
+
+// Site-wide structured data: identifies the site + publisher to search engines.
+// Kept honest — name, url, logo only; no fabricated ratings anywhere on the site.
+const JSON_LD = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      name: "Is It Beach Day?",
+      alternateName: "isitbeachday",
+      url: SITE_URL,
+    },
+    {
+      "@type": "Organization",
+      name: "Is It Beach Day?",
+      url: SITE_URL,
+      logo: `${SITE_URL}/icon-512.png`,
+    },
+  ],
+};
+
+// JSON.stringify, then neutralize any "</script>" sequence so the block can't
+// break out of its <script> tag (defence-in-depth; our data has no user input).
+function ldJson(data: unknown): string {
+  return JSON.stringify(data).replace(/</g, "\\u003c");
+}
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -61,6 +92,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           defer
           src="https://static.cloudflareinsights.com/beacon.min.js"
           data-cf-beacon='{"token": "32074e9abf544275a8851422ee2356b6"}'
+        />
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: ldJson(JSON_LD) }}
         />
       </head>
       <body className="min-h-screen text-slate-900 antialiased dark:text-slate-100">

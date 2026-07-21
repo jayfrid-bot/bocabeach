@@ -21,10 +21,14 @@ function primaryLocation() {
 // The homepage stays the flagship beach (Boca) for now; the full national
 // picker lives at /find, linked from the dashboard's "＋ Other beaches" pill.
 export async function generateMetadata(): Promise<Metadata> {
-  const loc = primaryLocation();
+  // The homepage RENDERS the flagship beach but is canonical at the root — the
+  // flagship's own /<slug> keeps its own canonical, so this is not a duplicate.
   return {
-    title: `${loc.name} — Is It Beach Day?`,
-    description: `Live ${loc.name} beach conditions and a composite Beach Day score.`,
+    alternates: { canonical: "https://isitbeachday.com/" },
+    openGraph: {
+      url: "https://isitbeachday.com/",
+      images: [{ url: "https://isitbeachday.com/opengraph-image", width: 1200, height: 630, alt: "Is It Beach Day?" }],
+    },
   };
 }
 

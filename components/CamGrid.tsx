@@ -81,6 +81,7 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
             dim ? "opacity-80" : ""
           }`}
           loading="lazy"
+          decoding="async"
         />
         {stale ? (
           <div className="absolute inset-x-0 bottom-0 bg-slate-950/70 px-2 py-1 text-center text-[11px] text-slate-100">

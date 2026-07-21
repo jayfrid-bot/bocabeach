@@ -8,9 +8,18 @@ import { BeachFinder } from "@/components/BeachFinder";
 export const revalidate = 300;
 
 export const metadata: Metadata = {
-  title: "Find your beach — Is It Beach Day?",
+  title: "Find your beach",
   description:
     "Search live beach conditions across the US or find the beaches nearest you. One Beach Day score per beach: tides, water & air temp, wind, waves, UV, water quality, and NWS safety alerts.",
+  alternates: { canonical: "https://isitbeachday.com/find" },
+  openGraph: {
+    title: "Find your beach · Is It Beach Day?",
+    description:
+      "Search live beach conditions across the US or find the beaches nearest you. One Beach Day score per beach.",
+    url: "https://isitbeachday.com/find",
+    // Next does not deep-merge openGraph, so re-declare the share image here.
+    images: [{ url: "https://isitbeachday.com/opengraph-image", width: 1200, height: 630, alt: "Is It Beach Day?" }],
+  },
 };
 
 export default function FindPage() {
