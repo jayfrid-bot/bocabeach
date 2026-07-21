@@ -3,40 +3,30 @@ import { listLocations } from "@/config/locations";
 
 const BASE = "https://isitbeachday.com";
 
-// Served at /sitemap.xml. Enumerates every live beach so crawlers discover the
-// on-demand (ISR) beach pages that aren't prerendered at build, plus the public
-// "find your beach" page.
+// Served at /sitemap.xml. All URLs live on the apex (canonical) domain so the
+// www/app duplicates never enter the index. Beach pages change with live
+// conditions, so they carry an "hourly" change frequency.
 export default function sitemap(): MetadataRoute.Sitemap {
   const now = new Date();
-  const locs = listLocations();
 
-  // The flagship beach is canonical at "/" (its /<slug> 301s home), so emit
-  // every OTHER beach's URL but not the flagship's.
-  const primary = locs.find((l) => l.tier !== "auto") ?? locs[0];
-  const beaches: MetadataRoute.Sitemap =
-    locs.length === 1
-      ? []
-      : locs
-          .filter((l) => l.slug !== primary?.slug)
-          .map((l) => ({
-            url: `${BASE}/${l.slug}`,
-            lastModified: now,
-            changeFrequency: "daily" as const,
-            priority: 0.8,
-          }));
+  // The flagship beach's /<slug> permanently redirects to "/" (see
+  // app/[slug]/page.tsx) — a sitemap must not list a redirecting URL, and the
+  // homepage entry below IS that page.
+  const all = listLocations();
+  const flagship = all.find((l) => l.tier !== "auto") ?? all[0];
+
+  const beaches: MetadataRoute.Sitemap = all
+    .filter((l) => l.slug !== flagship?.slug)
+    .map((l) => ({
+      url: `${BASE}/${l.slug}`,
+      lastModified: now,
+      changeFrequency: "hourly",
+      priority: 0.9,
+    }));
 
   return [
-    { url: BASE, lastModified: now, changeFrequency: "daily", priority: 1 },
-    ...(locs.length > 1
-      ? [
-          {
-            url: `${BASE}/find`,
-            lastModified: now,
-            changeFrequency: "weekly" as const,
-            priority: 0.7,
-          },
-        ]
-      : []),
+    { url: `${BASE}/`, lastModified: now, changeFrequency: "hourly", priority: 1.0 },
+    { url: `${BASE}/find`, lastModified: now, changeFrequency: "daily", priority: 0.8 },
     ...beaches,
   ];
 }
