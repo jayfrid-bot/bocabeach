@@ -76,6 +76,14 @@ function humidityNote(p?: number): string | undefined {
   if (p < 90) return "muggy";
   return "saturated";
 }
+/** Display word for a water-clarity grade. */
+function clarityGradeWord(g: string): string {
+  return g === "slightly_murky"
+    ? "Slightly murky"
+    : g === "churned"
+      ? "Churned up"
+      : g[0].toUpperCase() + g.slice(1);
+}
 
 export function ConditionsDashboard({
   slug,
@@ -116,6 +124,7 @@ export function ConditionsDashboard({
   const ratings = snap.cityOfficial.data;
   const sg = snap.sargassum.data;
   const busy = snap.busyness.data;
+  const clarity = snap.clarity.data;
   const traffic = snap.traffic.data;
   const rip = snap.nws.data?.ripCurrentRisk;
   const nc = snap.nowcast.data;
@@ -444,6 +453,32 @@ export function ConditionsDashboard({
             />
           }
         />
+        {clarity ? (
+          <FlipCard
+            label="Water clarity"
+            back={nerdBack("clarity")}
+            front={
+              <MetricCard
+                icon="🔍"
+                label="Water clarity"
+                value={clarity.level ? clarityGradeWord(clarity.level) : "—"}
+                sub={
+                  clarity.level
+                    ? [
+                        clarity.pct != null ? `~${clarity.pct}% clear` : null,
+                        clarity.note,
+                        clarity.capturedAtLocal
+                          ? `as of ${fmtTime(clarity.capturedAtLocal, tz)}`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")
+                    : clarity.note ?? "not available"
+                }
+              />
+            }
+          />
+        ) : null}
         <FlipCard
           label="Rip current risk"
           back={nerdBack("ripCurrent")}

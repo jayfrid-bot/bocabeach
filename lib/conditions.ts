@@ -4,6 +4,7 @@ import type { ConditionsResponse, ConditionsSnapshot, Location } from "@/lib/typ
 import { buildCamViews } from "@/lib/cams";
 import { fetchAirQuality } from "@/lib/sources/airQuality";
 import { fetchBusyness } from "@/lib/sources/busyness";
+import { fetchClarity } from "@/lib/sources/clarity";
 import { fetchBuoy } from "@/lib/sources/buoy";
 import { fetchCityOfficial } from "@/lib/sources/cityOfficial";
 import { fetchForecast } from "@/lib/sources/forecast";
@@ -66,6 +67,7 @@ export async function getSnapshotForLocation(
     goesCloud,
     sargassum,
     busyness,
+    clarity,
     traffic,
     forecast,
     hourly,
@@ -85,6 +87,7 @@ export async function getSnapshotForLocation(
     fetchGoesCloud(loc),
     fetchSargassum(loc),
     fetchBusyness(loc),
+    fetchClarity(loc),
     fetchTraffic(loc),
     fetchForecast(loc),
     fetchHourlyForecast(loc),
@@ -108,6 +111,7 @@ export async function getSnapshotForLocation(
     goesCloud,
     sargassum,
     busyness,
+    clarity,
     traffic,
     forecast,
     sun: fetchSun(loc),

@@ -34,6 +34,7 @@ export type NerdKey =
   | "waterQuality"
   | "ripCurrent"
   | "seaweed"
+  | "clarity"
   | "traffic"
   | "sandTemp"
   | "storm"
@@ -447,6 +448,37 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
       sources: src(snap.sargassum.source),
       notes:
         "Read from the cams, preferring the early-morning shot (before the City's beach-cleaning tractor). ≥50% coverage also slides a score ceiling from 100 down to 70 (flat 70 at ≥90%), so a heavy mat can't read as a full beach closure.",
+    };
+  },
+
+  clarity: ({ snap }) => {
+    const c = snap.clarity?.data;
+    const grade = (g: string) =>
+      g === "slightly_murky" ? "Slightly murky" : g === "churned" ? "Churned up" : cap(g);
+    let computation: string[];
+    if (c?.level) {
+      const camCount = c.perCam?.length ?? 0;
+      computation = [
+        `${grade(c.level)}${c.pct != null ? ` · ${c.pct}/100 clarity (100 = crystal clear)` : ""}`,
+        camCount > 1 ? `worst of ${camCount} cams that saw open water` : "read off the beach cam",
+      ];
+    } else if (c) {
+      computation = [
+        "Cams can't read the water right now (dark, stale, or no open water in frame) — informational only, so nothing is dropped from the score.",
+      ];
+    } else {
+      computation = ["No cam water-clarity read for this beach right now."];
+    }
+    return {
+      title: "Water clarity",
+      weightPct: null,
+      explainer:
+        "How clear the water looks right now, graded by the same vision model — off the same live beach-cam frames — that reads seaweed and busyness. It's a four-step scale (clear → slightly murky → murky → churned up) plus a 0-100 clarity number where 100 is crystal clear, and when several cams see the water we report the WORST (murkiest) one, since one churned-up stretch is what you'd actually wade into. It's purely informational: it does NOT feed the Beach Day score. At night, when a cam is stale, or when no open water is in frame, clarity reads 'unknown' rather than pretending the water is clear. Satellite nearshore clarity is coming for beaches without cams.",
+      formula: "Informational only — water clarity does NOT feed the Beach Day score. Headline = worst (murkiest) grade across the cams; clarity % 0-100 (100 = crystal clear).",
+      computation,
+      sources: src(snap.clarity?.source),
+      notes:
+        "Read from the beach cams by a vision model (worst cam of the latest capture). Not scored — shown for planning a swim/snorkel. Night/stale/no-open-water reads show 'unknown' rather than a false 'clear'. Satellite nearshore clarity is planned for cam-less beaches.",
     };
   },
 

@@ -477,6 +477,41 @@ export interface SargassumData {
   };
 }
 
+// --- Water clarity (Tier 1: cam-based, from the same vision job) -----------
+/** How clear the water looks, graded by the vision model. */
+export type WaterClarityGrade = "clear" | "slightly_murky" | "murky" | "churned";
+/** One beach-cam's water-clarity read (only cams that saw open water). */
+export interface CamWaterClarity {
+  /** Stable cam id, when the feed carries one. */
+  id?: string;
+  name: string;
+  water: WaterClarityGrade | null;
+  /** 0-100 clarity at this cam (100 = crystal clear); null when no open water. */
+  waterPct: number | null;
+  waterNote?: string;
+}
+/**
+ * Water clarity read entirely from the beach cams by the vision job — the WORST
+ * (murkiest) grade across the cams in the most recent capture. Informational
+ * only: it does NOT feed the Beach Day score. `level` is null when the reading
+ * is night-gated, stale, or the frame showed no open water (`status: "unknown"`),
+ * and the whole `data` is null (unavailable) for cam-less beaches / a feed that
+ * hasn't published clarity yet.
+ */
+export interface ClarityData {
+  /** Worst grade across the cams, or null when there's no live reading. */
+  level: WaterClarityGrade | null;
+  /** 0-100 clarity at the worst cam (100 = crystal clear), or null. */
+  pct: number | null;
+  note?: string;
+  capturedAtLocal?: string;
+  /** Per-cam reads for cams that saw open water. */
+  perCam?: CamWaterClarity[];
+  /** "unknown" when a capture exists but is night-gated, stale, or saw no open
+   *  water (distinguishes a gated no-read from a genuine reading). */
+  status?: "unknown";
+}
+
 // --- NWS alerts + rip-current risk (api.weather.gov) -----------------------
 export type RipRisk = "low" | "moderate" | "high" | "unknown";
 export interface NwsAlert {
@@ -542,6 +577,8 @@ export interface ConditionsSnapshot {
   goesCloud: Wrapped<GoesCloudData>;
   sargassum: Wrapped<SargassumData>;
   busyness: Wrapped<BusynessData>;
+  /** Cam-based water clarity (Tier 1). Informational — not part of the score. */
+  clarity: Wrapped<ClarityData>;
   traffic: Wrapped<TrafficData>;
   forecast: Wrapped<ForecastDay[]>;
   sun: Wrapped<SunData>;

@@ -219,7 +219,7 @@ describe("flagship instrument backs quote the REAL sand/storm/lightning constant
 
   it("every registry entry carries a non-empty plain-English explainer", () => {
     const keys = Object.keys(nerdBuilders) as (keyof typeof nerdBuilders)[];
-    expect(keys).toHaveLength(20); // +airQuality, +tides, +sun (2026-07-17 design pass)
+    expect(keys).toHaveLength(21); // +airQuality, +tides, +sun (2026-07-17); +clarity (2026-07-22)
     for (const k of keys) {
       const info = buildNerdInfo(k, ctx);
       expect(info.explainer.length).toBeGreaterThan(40);
