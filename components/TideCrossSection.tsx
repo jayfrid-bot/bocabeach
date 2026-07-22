@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { TideEvent } from "@/lib/types";
+import type { TideAberration } from "@/lib/tideAberration";
 import { fmtTime } from "@/lib/format";
 import { computeTideLevel } from "@/lib/tideLevel";
 import { clamp } from "@/lib/util";
@@ -125,10 +126,12 @@ export function TideCrossSection({
   events,
   trend,
   tz,
+  aberration,
 }: {
   events: TideEvent[];
   trend?: "rising" | "falling";
   tz: string;
+  aberration?: TideAberration;
 }) {
   // Clock is client-only (set after mount) so SSR and hydration HTML match;
   // pre-mount we render a static neutral mid-tide frame instead of guessing.
@@ -167,6 +170,30 @@ export function TideCrossSection({
   }
 
   const mounted = nowMs != null;
+
+  // "Normal tide" reference lines — drawn only on an aberrant day (nothing on a
+  // normal day, so the card never gets noisier for no reason). HIGH_Y/LOW_Y are
+  // exactly today's peak-high / lowest-low positions, so we calibrate an
+  // absolute-height→y map on those two anchors and drop a quiet dashed line at
+  // the top of the normal HIGH band (p90) and/or the bottom of the normal LOW
+  // band (p10). Today's animated waterline visibly escapes past it during a
+  // king tide (or an unusually low low). The lines ride over the open water,
+  // left of the shoreline contact, so they never touch the sand-side guides.
+  const bandLines: { y: number; x2: number; label: string; king: boolean }[] = [];
+  if (aberration) {
+    const hi = aberration.todayMaxHighFt;
+    const lo = aberration.todayMinLowFt;
+    const span = Math.max(hi - lo, 0.001);
+    const yForHeight = (h: number) => waterlineY(clamp((h - lo) / span, 0, 1));
+    if (aberration.highStatus !== "normal") {
+      const y = yForHeight(aberration.p90HighFt);
+      bandLines.push({ y, x2: bermXForY(y), label: "normal high", king: true });
+    }
+    if (aberration.lowStatus !== "normal") {
+      const y = yForHeight(aberration.p10LowFt);
+      bandLines.push({ y, x2: bermXForY(y), label: "normal low", king: false });
+    }
+  }
 
   return (
     <div className="relative mt-2 h-40 w-full overflow-hidden rounded-xl bg-sky-100 dark:bg-slate-950/50 sm:h-48">
@@ -368,6 +395,44 @@ export function TideCrossSection({
               className="dark:fill-white dark:stroke-slate-950"
             >
               {g.label}
+            </text>
+          </g>
+        ))}
+
+        {/* "Normal tide" band references — quiet dashed lines over open water,
+            only present on an aberrant day. Amber for the king-tide high (it can
+            flood A1A + parking), cyan for the unusually low low. Static + honest;
+            they do NOT breathe. Today's live waterline escapes past them. */}
+        {bandLines.map((b) => (
+          <g key={b.label}>
+            <line
+              x1={6}
+              x2={round2(Math.max(b.x2 - 4, 40))}
+              y1={b.y}
+              y2={b.y}
+              stroke={b.king ? "#d97706" : "#0891b2"}
+              strokeOpacity={0.55}
+              strokeWidth={1.25}
+              strokeDasharray="3 3"
+            />
+            <text
+              x={8}
+              y={round2(clamp(b.y - 4, 10, HEIGHT - 4))}
+              textAnchor="start"
+              fontSize={8}
+              fontWeight={700}
+              letterSpacing={0.3}
+              stroke="#ffffff"
+              strokeWidth={2.25}
+              strokeLinejoin="round"
+              paintOrder="stroke"
+              className={
+                b.king
+                  ? "fill-amber-700 dark:fill-amber-300 dark:stroke-slate-950"
+                  : "fill-cyan-700 dark:fill-cyan-300 dark:stroke-slate-950"
+              }
+            >
+              {b.label}
             </text>
           </g>
         ))}

@@ -650,25 +650,46 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
 
   tides: ({ snap }) => {
     const t = snap.tides.data;
+    const ab = t?.aberration;
     const nextEvents = (t?.next ?? []).slice(0, 2);
+    const abLines = ab
+      ? (() => {
+          const lines: string[] = [];
+          if (ab.highStatus !== "normal") {
+            lines.push(
+              `Today's high ${ab.todayMaxHighFt} ft vs median ${ab.medianHighFt} ft (p90 ${ab.p90HighFt} ft) → ${ab.highStatus === "king" ? "KING tide" : "elevated"}, ≈${Math.abs(ab.deltaHighFt).toFixed(1)} ft above normal`,
+            );
+          }
+          if (ab.lowStatus !== "normal") {
+            lines.push(
+              `Today's low ${ab.todayMinLowFt} ft vs median ${ab.medianLowFt} ft (p10 ${ab.p10LowFt} ft) → ${ab.lowStatus === "very-low" ? "very low" : "low"}, ≈${Math.abs(ab.deltaLowFt).toFixed(1)} ft below normal`,
+            );
+          }
+          if (lines.length === 0) {
+            lines.push(`Today's tides sit inside the normal band (${ab.windowDays}-day window)`);
+          }
+          return lines;
+        })()
+      : [];
     const computation = nextEvents.length
       ? src(
           t?.trend ? `Tide is ${t.trend} right now` : null,
           ...nextEvents.map((e) => `${cap(e.type)} tide ${e.heightFt} ft at ${e.time.slice(11, 16)} UTC`),
           "Between events the waterline eases on a raised cosine, not a straight line",
+          ...abLines,
         )
       : ["No tide predictions for this beach right now."];
     return {
       title: "Tides",
       weightPct: null,
       explainer:
-        "These aren't forecasts — they're astronomy. NOAA publishes harmonic predictions per tide station: the moon and sun's gravitational pull decomposed into constituents that are known years ahead, which is why a tide table for next August already exists. We take the published high/low times and heights, then fill in everything between them ourselves, because real tides move like simple harmonic motion — racing through mid-tide and lingering at the turns. A straight line between high and low would misplace the water at nearly every moment in between, so the living-shore graphic eases with a raised cosine instead. That interpolated height is what drives the waterline you see climbing the sand.",
+        "These aren't forecasts — they're astronomy. NOAA publishes harmonic predictions per tide station: the moon and sun's gravitational pull decomposed into constituents that are known years ahead, which is why a tide table for next August already exists. We take the published high/low times and heights, then fill in everything between them ourselves, because real tides move like simple harmonic motion — racing through mid-tide and lingering at the turns. A straight line between high and low would misplace the water at nearly every moment in between, so the living-shore graphic eases with a raised cosine instead. That interpolated height is what drives the waterline you see climbing the sand. Separately, we flag ABERRATIONS: today's peak high and lowest low are compared against a ±3-week window of the same station's predictions, so a king tide — a perigean spring high, when the sun and moon line up at the moon's closest approach (lunar perigee) and push the water far enough up to flood A1A and the beach parking — stands out, as does the fun flip side, an unusually low low that bares sandbars and tide pools.",
       formula:
-        "NOAA hilo predictions → between two events: height = h0 + (1 − cos(π × f)) / 2 × (h1 − h0), where f is the fraction of the interval elapsed. Trend is derived from the next events. Informational — not part of the Beach Day score.",
+        "NOAA hilo predictions → between two events: height = h0 + (1 − cos(π × f)) / 2 × (h1 − h0), where f is the fraction of the interval elapsed. Aberration: king when today's max high ≥ p90 of the ±21-day window's highs AND ≥ 0.5 ft over the median high (king ≥ p95, else near-king); mirror for unusually low lows (≤ p10 / p05, ≥ 0.5 ft under the median low). Trend is derived from the next events. Informational — not part of the Beach Day score.",
       computation,
-      sources: src(`${snap.tides.source} — harmonic high/low predictions`, "Raised-cosine interpolation (lib/tideLevel.ts) for the waterline between events"),
+      sources: src(`${snap.tides.source} — harmonic high/low predictions (±21-day window)`, "Raised-cosine interpolation (lib/tideLevel.ts) for the waterline; aberration band (lib/tideAberration.ts)"),
       notes:
-        "With only one known event we won't fake a height — the graphic falls back to a trend-only placement rather than inventing a number.",
+        "With only one known event we won't fake a height — the graphic falls back to a trend-only placement rather than inventing a number. Aberrations are honest-null: no king/low claim on a thin prediction window (< 14 days). Tides are NOT a scored factor — the aberration is a call-out, never a score change.",
     };
   },
 

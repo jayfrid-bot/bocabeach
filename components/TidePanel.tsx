@@ -5,6 +5,43 @@ import { TideCurve } from "@/components/TideCurve";
 
 export function TidePanel({ tides, tz }: { tides: Wrapped<TideData>; tz: string }) {
   const events = tides.data?.next ?? [];
+  const ab = tides.data?.aberration;
+
+  // Aberration call-outs — rendered ONLY when today's tides actually escape the
+  // normal band, so a normal day adds nothing here. King highs get an amber tone
+  // (they flood A1A + beach parking); unusually low lows get a cyan tone (the fun
+  // aberration: sandbars + tide pools). Highs and lows can both fire the same day
+  // (spring tides swing wider at both ends), so up to two lines can show.
+  const badges: { key: string; text: string; tone: string }[] = [];
+  if (ab) {
+    if (ab.highStatus === "king") {
+      badges.push({
+        key: "high",
+        text: `King tide — highs ≈${Math.abs(ab.deltaHighFt).toFixed(1)} ft above normal`,
+        tone: "bg-amber-500/10 text-amber-700 ring-amber-500/25 dark:text-amber-300",
+      });
+    } else if (ab.highStatus === "elevated") {
+      badges.push({
+        key: "high",
+        text: `Higher than normal tides — highs ≈${Math.abs(ab.deltaHighFt).toFixed(1)} ft up`,
+        tone: "bg-amber-500/10 text-amber-700 ring-amber-500/25 dark:text-amber-300",
+      });
+    }
+    if (ab.lowStatus === "very-low") {
+      badges.push({
+        key: "low",
+        text: `Unusually low tide today — ≈${Math.abs(ab.deltaLowFt).toFixed(1)} ft below normal`,
+        tone: "bg-cyan-500/10 text-cyan-700 ring-cyan-500/25 dark:text-cyan-300",
+      });
+    } else if (ab.lowStatus === "low") {
+      badges.push({
+        key: "low",
+        text: `Lower than normal low tides — ≈${Math.abs(ab.deltaLowFt).toFixed(1)} ft down`,
+        tone: "bg-cyan-500/10 text-cyan-700 ring-cyan-500/25 dark:text-cyan-300",
+      });
+    }
+  }
+
   return (
     <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
       <div className="flex items-center justify-between">
@@ -33,7 +70,20 @@ export function TidePanel({ tides, tz }: { tides: Wrapped<TideData>; tz: string 
         <div className="mt-2 text-sm text-slate-500">Unavailable</div>
       ) : (
         <>
-          <TideCrossSection events={events} trend={tides.data?.trend} tz={tz} />
+          {badges.length > 0 ? (
+            <div className="mt-2 flex flex-col gap-1">
+              {badges.map((b) => (
+                <span
+                  key={b.key}
+                  className={`inline-flex items-center gap-1.5 self-start rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ${b.tone}`}
+                >
+                  <span aria-hidden>{b.key === "high" ? "🌊" : "🏖️"}</span>
+                  {b.text}
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <TideCrossSection events={events} trend={tides.data?.trend} tz={tz} aberration={ab} />
           {/* The classic rise/fall curve over the cycle, restored alongside the
               cross-section (owner wanted both) — a "you are here" marker rides
               the curve so the trend is legible at a glance. */}

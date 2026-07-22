@@ -4,6 +4,8 @@
 // and wraps it in `Wrapped<T>` so the UI gets a uniform { data, status } envelope.
 // ---------------------------------------------------------------------------
 
+import type { TideAberration } from "@/lib/tideAberration";
+
 export type SourceStatus = "ok" | "stale" | "error" | "best-effort";
 
 export interface SourceMeta {
@@ -32,6 +34,13 @@ export interface TideData {
   next: TideEvent[];
   /** Whether the tide is currently rising or falling (derived from next events). */
   trend?: "rising" | "falling";
+  /**
+   * How today's tide extremes compare to normal over a ±3-week window of NOAA
+   * predictions — king tides (perigean spring highs) and unusually low lows.
+   * Absent (honest-null) when the window fetch failed or was too thin to judge.
+   * See lib/tideAberration.ts. Informational — does NOT feed the Beach Day score.
+   */
+  aberration?: TideAberration;
 }
 
 // --- Buoy (NOAA NDBC realtime2) -------------------------------------------
