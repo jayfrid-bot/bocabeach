@@ -113,13 +113,19 @@ SEAWEED = ("none", "low", "moderate", "high")
 SEAWEED_RANK = {s: i for i, s in enumerate(SEAWEED)}
 CROWD = ("empty", "quiet", "moderate", "busy", "packed")
 CROWD_RANK = {c: i for i, c in enumerate(CROWD)}
+# Water clarity, ordered clearest -> most turbid ("churned" = sand stirred
+# through the column, worse for visibility than plain murk).
+WATER = ("clear", "slightly_murky", "murky", "churned")
+WATER_RANK = {w: i for i, w in enumerate(WATER)}
 
 PROMPT = (
     "This is a live beach webcam photo. Return strict JSON only: "
     '{"seaweed":"none|low|moderate|high","seaweed_pct":<integer 0-100>,'
     '"seaweed_note":"<=8 words","crowd":"empty|quiet|moderate|busy|packed",'
     '"crowd_pct":<integer 0-100>,"people":<approx visible people as integer>,'
-    '"crowd_note":"<=8 words"}. '
+    '"crowd_note":"<=8 words",'
+    '"water":"clear|slightly_murky|murky|churned|unknown",'
+    '"water_pct":<integer 0-100 or null>,"water_note":"<=8 words"}. '
     "Seaweed = brown/golden sargassum on the sand and in shallow water: "
     "none=clean sand, low=thin wrack line or scattered patches, "
     "moderate=clear bands, high=heavy mats over much of the shore. "
@@ -128,7 +134,14 @@ PROMPT = (
     "Crowd = how busy the beach looks from people on the sand and in the water "
     "(and cars in any visible parking lot): empty=nobody, quiet=a few people, "
     "moderate=steady, busy=crowded, packed=very crowded. "
-    "crowd_pct = how full the beach looks, 0=empty to 100=packed holiday peak."
+    "crowd_pct = how full the beach looks, 0=empty to 100=packed holiday peak. "
+    "Water = how clear the OCEAN WATER looks where it is visible (judge color "
+    "and transparency of the water beyond the breaking surf, not whitewater "
+    "foam): clear=blue-green and transparent, slightly_murky=greenish with "
+    "some suspended sand, murky=brown/tea-colored, churned=heavily stirred-up "
+    "sand throughout. Use unknown (and water_pct null) if open water is not "
+    "clearly visible in this frame. "
+    "water_pct = water clarity 0-100 where 100=crystal clear and 0=opaque."
 )
 
 
@@ -202,6 +215,11 @@ def _parse_out(out: dict) -> dict:
         "crowdPct": _pct(out.get("crowd_pct")),  # 0-100 fullness
         "people": int(people) if isinstance(people, (int, float)) else None,
         "crowdNote": str(out.get("crowd_note", ""))[:80],
+        # Water clarity is best-effort: not every frame shows open water, so an
+        # unrecognized/unknown grade simply becomes None rather than an error.
+        "water": wt if (wt := str(out.get("water", "")).lower()) in WATER else None,
+        "waterPct": _pct(out.get("water_pct")),  # 0-100, 100 = crystal clear
+        "waterNote": str(out.get("water_note", ""))[:80],
     }
 
 
@@ -304,6 +322,21 @@ def worst_seaweed(group: dict | None) -> dict | None:
     return {"level": b["level"], "pct": b.get("coveragePct")}
 
 
+def murkiest_water(group: dict | None) -> dict | None:
+    """The murkiest water clarity across a capture's cams: {level, pct}.
+
+    Worst-of wins (like seaweed): a single cam angle showing churned water is
+    the honest read for a swimmer. Cams whose frame shows no open water report
+    water=None and are skipped; pct is 0-100 with 100 = crystal clear, so the
+    murkiest cam is the one with the LOWEST pct (rank first, pct as tiebreak)."""
+    cams = [c for c in (group or {}).get("cams", []) if c.get("water") in WATER_RANK]
+    if not cams:
+        return None
+    b = max(cams, key=lambda c: (WATER_RANK[c["water"]],
+                                 -(c.get("waterPct") if c.get("waterPct") is not None else 101)))
+    return {"level": b["water"], "pct": b.get("waterPct")}
+
+
 def fetch_prev() -> dict:
     try:
         return json.loads(_get(PREV_URL).decode("utf-8", "replace"))
@@ -360,6 +393,7 @@ def main() -> int:
     if current:
         crowd = busiest_crowd(current) or {}
         ws = worst_seaweed(current) or {}
+        wc = murkiest_water(current) or {}
         history = history + [{
             "t": current["capturedAtLocal"],
             "hour": current["hour"],
@@ -368,6 +402,8 @@ def main() -> int:
             "crowdPct": crowd.get("crowdPct"),  # 0-100 fullness (busiest cam)
             "seaweed": ws.get("level"),         # worst seaweed across the cams
             "cov": ws.get("pct"),               # 0-100 seaweed coverage (worst cam)
+            "water": wc.get("level"),           # murkiest water across the cams
+            "clr": wc.get("pct"),               # 0-100 clarity (100 = crystal clear)
         }]
         # No cap — keep every raw read forever. Growth is trivial: ~60 reads/day ×
         # ~110 bytes ≈ 7 KB/day ≈ 2.4 MB/year, negligible for years. The full
