@@ -113,7 +113,6 @@ SEAWEED = ("none", "low", "moderate", "high")
 SEAWEED_RANK = {s: i for i, s in enumerate(SEAWEED)}
 CROWD = ("empty", "quiet", "moderate", "busy", "packed")
 CROWD_RANK = {c: i for i, c in enumerate(CROWD)}
-MAX_HISTORY = 480  # rolling raw reads (~1+ month) for the by-hour & by-day charts
 
 PROMPT = (
     "This is a live beach webcam photo. Return strict JSON only: "
@@ -370,7 +369,12 @@ def main() -> int:
             "seaweed": ws.get("level"),         # worst seaweed across the cams
             "cov": ws.get("pct"),               # 0-100 seaweed coverage (worst cam)
         }]
-        history = history[-MAX_HISTORY:]
+        # No cap — keep every raw read forever. Growth is trivial: ~60 reads/day ×
+        # ~110 bytes ≈ 7 KB/day ≈ 2.4 MB/year, negligible for years. The full
+        # archive is wanted for future seasonality work. NOTE: this is only the
+        # RAW retention; the app's vs-average baselines still cap their own
+        # lookback at 56 days (see lib/vsAverage.ts), so "average" stays anchored
+        # to the recent season rather than drifting across all of history.
 
     now_iso = (dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
                .isoformat().replace("+00:00", "Z"))

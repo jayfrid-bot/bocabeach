@@ -6,13 +6,13 @@ name: Cam Vision Feed
 
 on:
   schedule:
-    # Capture through the day (~7 AM-7 PM ET) to build the busyness-by-hour
-    # pattern; the ~7 AM run also captures seaweed BEFORE the City's
+    # Every 10 minutes through daylight (~6 AM-8 PM ET). Budget: 3 cams/tick ×
+    # ~84 scheduled ticks = ~252 vision calls/day, right at Gemini's 250/day
+    # free cap — but GitHub skips ~30% of scheduled ticks, and any Gemini 429
+    # falls through to the Groq/GitHub-Models fallbacks, so real usage fits.
+    # Dense morning coverage also captures seaweed BEFORE the City's
     # beach-cleaning tractor (~7-9 AM), which is weighted highest.
-    # Extra 10 & 12 UTC ticks (~6 & 8 AM ET) add redundancy in the pre-tractor
-    # morning window — GitHub skips/delays scheduled ticks routinely, and a day
-    # with no morning capture loses its authoritative seaweed read.
-    - cron: "0 10,11,12,13,15,17,19,21,23 * * *" # ~6,7,8,9,11 AM,1 PM,3,5,7 ET
+    - cron: "*/10 10-23 * * *" # every 10 min, ~6 AM-7:50 PM ET (EDT)
   push:
     branches: [main]
     paths:
