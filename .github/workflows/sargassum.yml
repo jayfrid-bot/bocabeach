@@ -3,6 +3,9 @@ name: Cam Vision Feed
 # Reads seaweed (sargassum) + crowd from the beach cams with Gemini vision and
 # publishes cam_seaweed.json to the `sargassum-data` branch (NOT main), so the
 # AI calls run here on free public-repo Actions and never touch Netlify.
+# Also, at most once per hour during daylight, grabs a frame from the Deerfield
+# underwater sea-cam (yt-dlp -> ffmpeg) for a separate visibility read that
+# ground-truths the surface water-clarity grades (fully fail-soft — see script).
 
 on:
   schedule:
@@ -37,6 +40,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install yt-dlp (underwater sea-cam frame grab)
+        # yt-dlp resolves the Deerfield underwater YouTube livestream to an HLS
+        # URL that ffmpeg (preinstalled on ubuntu-latest, as is node — the JS
+        # runtime yt-dlp needs) frame-grabs. `|| true` keeps the job resilient:
+        # the script fail-softs if yt-dlp is missing, so a failed install must
+        # never fail the workflow — we just accrue no underwater readings.
+        run: pip install --quiet yt-dlp || true
 
       - name: Read seaweed + crowd from beach cams (free vision, with fallback)
         # Falls through providers in order until one answers; no-op if none configured.

@@ -18,6 +18,23 @@ We therefore weight the EARLY-MORNING (pre-tractor) capture highest: each run
 records the local capture time, and we merge with the previously published file
 to preserve today's earliest morning reading as the authoritative `morning`
 value (plus a `latest` reading for the current beach state).
+
+UNDERWATER CAM (calibration): Deerfield Beach runs "Spinner the Sea Cam", an
+underwater YouTube livestream on the International Fishing Pier ~7 mi up-coast.
+At most once per hour (local minute < 10) during daylight (hours 6-20) we grab a
+single frame (yt-dlp -g -> ffmpeg) and run a SEPARATE underwater-visibility
+vision read through the same provider fallback chain. This ground-truths the
+SURFACE water-clarity grades: later we correlate a tick's surface `clr` against
+the underwater `uw`. It fully fail-softs — YouTube sometimes blocks datacenter
+IPs, so if Actions can't reach the stream we simply accrue no `uw` fields and
+lose nothing; the main cam flow is never affected.
+
+Data shape (cam_seaweed.json):
+  top-level `uw`: {level, pct, note, capturedAtLocal} — latest underwater read,
+    carried forward on ticks that skip the underwater read (like morning/latest).
+  history[]: {t, hour, level(crowd), people, crowdPct, seaweed, cov, water, clr}
+    plus SPARSE `uw` (pct) + `uwLevel` fields present ONLY on the ~hourly ticks
+    that actually ran an underwater read (absent otherwise).
 """
 import base64
 import datetime as dt
@@ -25,7 +42,9 @@ import json
 import os
 import random
 import re
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -117,6 +136,18 @@ CROWD_RANK = {c: i for i, c in enumerate(CROWD)}
 # through the column, worse for visibility than plain murk).
 WATER = ("clear", "slightly_murky", "murky", "churned")
 WATER_RANK = {w: i for i, w in enumerate(WATER)}
+# Underwater visibility from the Deerfield sea-cam, ordered clearest -> murkiest.
+UW_CLARITY = ("clear", "slightly_hazy", "hazy", "murky")
+
+# Underwater sea-cam: Deerfield Beach "Spinner the Sea Cam" YouTube livestream.
+# yt-dlp -g resolves an HLS manifest URL (needs a JS runtime — node is on PATH in
+# GitHub ubuntu runners); ffmpeg then grabs one frame. See fetch_uw_frame().
+UW_STREAM_URL = os.environ.get(
+    "UW_STREAM_URL", "https://www.youtube.com/watch?v=SHfAtWHr9Ks"
+)
+# Only run the underwater read within these LOCAL hours (dark underwater at night)
+# and only in the first 10 minutes of the hour, so it fires at most ~once/hour.
+UW_HOURS = range(6, 21)  # 6 AM .. 8 PM local, inclusive
 
 PROMPT = (
     "This is a live beach webcam photo. Return strict JSON only: "
@@ -144,6 +175,22 @@ PROMPT = (
     "water_pct = water clarity 0-100 where 100=crystal clear and 0=opaque."
 )
 
+# Separate prompt for the UNDERWATER sea-cam frame — a different scene (below the
+# surface, looking through the water column), so it gets its own strict-JSON read.
+UW_PROMPT = (
+    "This is a frame from an UNDERWATER ocean webcam (a camera submerged off a "
+    "fishing pier, looking through the water). Return strict JSON only: "
+    '{"uw_clarity":"clear|slightly_hazy|hazy|murky",'
+    '"uw_pct":<integer 0-100 or null>,"uw_note":"<=8 words"}. '
+    "Judge how far you can SEE through the water: "
+    "clear=fish/structures/pilings crisp at distance, "
+    "slightly_hazy=objects visible but soft, "
+    "hazy=only near objects visible, "
+    "murky=heavy particulates, little visibility. "
+    "uw_pct = underwater visibility 0-100 where 100=gin-clear and 0=opaque. "
+    "If the frame is too dark to judge (night/no light), return uw_pct null."
+)
+
 
 def _get(url: str, timeout: int = 25) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "boca-beach-rats"})
@@ -155,6 +202,47 @@ def fetch_still(cam: dict) -> bytes:
         return _get(cam["still"])
     feed = json.loads(_get(f"{cam['feed']}/latest.json").decode("utf-8", "replace"))
     return _get(f"{cam['feed']}/{feed[cam['view']]['mr']}")
+
+
+def fetch_uw_frame() -> bytes:
+    """Grab a single JPEG frame from the Deerfield underwater YouTube livestream.
+
+    Two subprocess hops: `yt-dlp -g` resolves the live HLS manifest URL (needs a
+    JS runtime — node is preinstalled on GitHub ubuntu runners), then ffmpeg
+    pulls one frame. Kept fully self-contained with tight timeouts (~60s total).
+
+    CAVEAT: YouTube periodically blocks datacenter IPs, and the stream can be
+    offline. EVERY failure mode here (yt-dlp missing, IP block, offline stream,
+    ffmpeg error, timeout) raises — the caller catches it and the main cam flow
+    is unaffected; we simply accrue no `uw` field for that tick.
+    """
+    proc = subprocess.run(
+        ["yt-dlp", "-g", UW_STREAM_URL],
+        capture_output=True, text=True, timeout=40, check=True,
+    )
+    lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+    if not lines:
+        raise RuntimeError("yt-dlp returned no manifest URL")
+    manifest = lines[0]  # first line is the video/HLS URL
+
+    fd, tmp = tempfile.mkstemp(suffix=".jpg")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", manifest,
+             "-frames:v", "1", tmp],
+            capture_output=True, timeout=20, check=True,
+        )
+        with open(tmp, "rb") as fh:
+            data = fh.read()
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    if not data:
+        raise RuntimeError("ffmpeg produced an empty frame")
+    return data
 
 
 def _post(url: str, body: bytes, headers: dict | None = None, timeout: int = 40) -> bytes:
@@ -223,10 +311,22 @@ def _parse_out(out: dict) -> dict:
     }
 
 
-def _gemini_out(img: bytes) -> dict:
+def _parse_uw(out: dict) -> dict:
+    """Validate a raw underwater reply and normalize to our uw reading shape."""
+    cl = str(out.get("uw_clarity", "")).lower()
+    if cl not in UW_CLARITY:
+        raise ValueError(f"bad uw_clarity: {cl!r}")
+    return {
+        "level": cl,
+        "pct": _pct(out.get("uw_pct")),  # 0-100 visibility, 100 = gin-clear; None at night
+        "note": str(out.get("uw_note", ""))[:80],
+    }
+
+
+def _gemini_out(img: bytes, prompt: str = PROMPT) -> dict:
     body = json.dumps({
         "contents": [{"parts": [
-            {"text": PROMPT},
+            {"text": prompt},
             {"inline_data": {"mime_type": "image/jpeg",
                              "data": base64.b64encode(img).decode()}},
         ]}],
@@ -238,14 +338,14 @@ def _gemini_out(img: bytes) -> dict:
     return _extract_json(resp["candidates"][0]["content"]["parts"][0]["text"])
 
 
-def _openai_out(cfg: dict, img: bytes) -> dict:
+def _openai_out(cfg: dict, img: bytes, prompt: str = PROMPT) -> dict:
     """One adapter for every OpenAI chat-compatible vision API (Groq/OpenRouter/GitHub)."""
     data_uri = "data:image/jpeg;base64," + base64.b64encode(img).decode()
     body = json.dumps({
         "model": cfg["model"],
         "temperature": 0,
         "messages": [{"role": "user", "content": [
-            {"type": "text", "text": PROMPT},
+            {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": data_uri}},
         ]}],
     }).encode()
@@ -272,34 +372,61 @@ def _provider_configured(name: str) -> bool:
     return bool(cfg and cfg["key"])
 
 
-def assess_with(name: str, img: bytes) -> dict:
-    """Read one image with exactly ONE named provider (for per-provider eval)."""
+def assess_with(name: str, img: bytes, prompt: str = PROMPT, parse=_parse_out) -> dict:
+    """Read one image with exactly ONE named provider (for per-provider eval).
+
+    `prompt`/`parse` let the same provider plumbing serve both the beach read
+    (default) and the underwater read (UW_PROMPT + _parse_uw)."""
     if name == "gemini":
         if not API_KEY:
             raise RuntimeError("gemini not configured")
-        raw, model = _gemini_out(img), MODEL
+        raw, model = _gemini_out(img, prompt), MODEL
     else:
         cfg = OPENAI_PROVIDERS.get(name)
         if not cfg or not cfg["key"]:
             raise RuntimeError(f"{name} not configured")
-        raw, model = _openai_out(cfg, img), cfg["model"]
-    result = _parse_out(raw)
+        raw, model = _openai_out(cfg, img, prompt), cfg["model"]
+    result = parse(raw)
     result["provider"] = name
     result["model"] = model
     return result
 
 
-def assess(img: bytes) -> dict:
+def assess(img: bytes, prompt: str = PROMPT, parse=_parse_out) -> dict:
     """Read one image, falling through the provider chain until one succeeds."""
     errors = []
     for name, _model in _enabled_providers():
         try:
-            return assess_with(name, img)
+            return assess_with(name, img, prompt, parse)
         except Exception as e:  # noqa: BLE001 — try the next provider
             errors.append(f"{name}: {e}")
     if not errors:
         raise RuntimeError("no vision providers configured (set GEMINI_API_KEY or another key)")
     raise RuntimeError("all vision providers failed -> " + " | ".join(errors))
+
+
+def assess_uw(img: bytes) -> dict:
+    """Read the underwater frame through the SAME provider chain, own prompt/parser."""
+    return assess(img, UW_PROMPT, _parse_uw)
+
+
+def capture_uw(now_local: dt.datetime) -> dict | None:
+    """Grab + read one underwater frame; fail-soft to None so the cam flow is safe.
+
+    Returns {level, pct, note, capturedAtLocal, provider, model} or None on ANY
+    failure (unreachable stream, IP block, no providers, bad frame, timeout)."""
+    try:
+        r = assess_uw(fetch_uw_frame())
+    except Exception as e:  # noqa: BLE001 — underwater is best-effort calibration only
+        print(f"  warn underwater cam: {e}", file=sys.stderr)
+        return None
+    print(f"  underwater: clarity={r['level']}({r.get('pct')}%) via {r.get('provider')}")
+    return {
+        "level": r["level"],
+        "pct": r.get("pct"),
+        "note": r.get("note"),
+        "capturedAtLocal": now_local.isoformat(timespec="minutes"),
+    }
 
 
 def busiest_crowd(group: dict | None) -> dict | None:
@@ -378,6 +505,18 @@ def main() -> int:
         print("no vision providers configured — preserving any existing readings",
               file=sys.stderr)
 
+    # UNDERWATER read — quota-gated to AT MOST once per hour (the cron fires every
+    # 10 min and each tick already spends 3 vision calls; Gemini's free tier is
+    # 250/day). Only in the first 10 min of the hour and only during daylight
+    # hours (dark underwater at night) => ~14 extra calls/day. Carry the previous
+    # `uw` forward on skipped ticks, like morning/latest.
+    uw = prev.get("uw")
+    uw_reading = None
+    if providers and now_local.minute < 10 and now_local.hour in UW_HOURS:
+        uw_reading = capture_uw(now_local)
+        if uw_reading:
+            uw = uw_reading
+
     # The earliest morning (pre-tractor) reading of the day is authoritative.
     morning = prev_morning
     if current and current["hour"] in MORNING:
@@ -394,7 +533,7 @@ def main() -> int:
         crowd = busiest_crowd(current) or {}
         ws = worst_seaweed(current) or {}
         wc = murkiest_water(current) or {}
-        history = history + [{
+        entry = {
             "t": current["capturedAtLocal"],
             "hour": current["hour"],
             "level": crowd.get("level"),       # busiest crowd across the cams
@@ -404,7 +543,14 @@ def main() -> int:
             "cov": ws.get("pct"),               # 0-100 seaweed coverage (worst cam)
             "water": wc.get("level"),           # murkiest water across the cams
             "clr": wc.get("pct"),               # 0-100 clarity (100 = crystal clear)
-        }]
+        }
+        # SPARSE underwater fields — present ONLY on the ~hourly ticks that
+        # actually ran an underwater read, so we can later correlate surface
+        # `clr` vs underwater `uw` for calibration. Absent on every other tick.
+        if uw_reading:
+            entry["uw"] = uw_reading.get("pct")       # 0-100 underwater visibility
+            entry["uwLevel"] = uw_reading.get("level")  # clear|slightly_hazy|hazy|murky
+        history = history + [entry]
         # No cap — keep every raw read forever. Growth is trivial: ~60 reads/day ×
         # ~110 bytes ≈ 7 KB/day ≈ 2.4 MB/year, negligible for years. The full
         # archive is wanted for future seasonality work. NOTE: this is only the
@@ -426,7 +572,12 @@ def main() -> int:
         "dateLocal": today,
         "morning": morning,  # earliest pre-cleaning reading (highest weight)
         "latest": latest,    # most recent reading (current beach state)
-        # [{t, hour, level(crowd), people, seaweed}] -> by-hour & by-day charts.
+        # Latest underwater sea-cam read {level, pct, note, capturedAtLocal};
+        # carried forward on ticks that skip the ~hourly underwater read. None
+        # until the first successful underwater grab.
+        "uw": uw,
+        # [{t, hour, level(crowd), people, seaweed, ..., uw?, uwLevel?}] -> by-hour
+        # & by-day charts; uw/uwLevel present only on ticks that read underwater.
         "history": history,
     }
 
