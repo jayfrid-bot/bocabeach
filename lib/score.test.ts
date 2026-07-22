@@ -1193,6 +1193,50 @@ describe("computeHourlyScores", () => {
     expect(computeHourlyScores(snapshot({ ...niceBase, sun: SUN }))).toEqual([]);
   });
 
+  it("no-sun path returns today-forward only — prior days (past_days=2) never leak into scoring", () => {
+    // The hourly fetch spans two prior LOCAL days (for the man-o'-war trailing-
+    // wind lookback). With no sunrise/sunset to bound daylight, the no-sun path
+    // must still drop those prior-day buckets rather than score them forward.
+    const now = Date.parse("2026-06-03T16:00:00.000Z"); // 12:00 EDT -> local 2026-06-03
+    const nyDate = (iso: string) =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/New_York",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(new Date(iso));
+
+    // Hourly buckets across two prior local days + today.
+    const hourly: HourlyMetrics[] = [];
+    for (
+      let t = Date.parse("2026-06-01T12:00:00.000Z");
+      t <= Date.parse("2026-06-03T20:00:00.000Z");
+      t += 3_600_000
+    ) {
+      hourly.push({
+        time: new Date(t).toISOString(),
+        airTempF: 82,
+        cloudCoverPct: 10,
+        precipProbability: 0,
+        windSpeedMph: 8,
+        windDirDeg: 90,
+        uvIndex: 5,
+      });
+    }
+
+    const hrs = computeHourlyScores(snapshot({ ...niceBase, hourly, sun: null }), now);
+
+    // No prior-day buckets returned; only today's remain.
+    expect(hrs.length).toBeGreaterThan(0);
+    expect(hrs.every((h) => nyDate(h.time) >= "2026-06-03")).toBe(true);
+    expect(hrs.some((h) => nyDate(h.time) === "2026-06-01")).toBe(false);
+    expect(hrs.some((h) => nyDate(h.time) === "2026-06-02")).toBe(false);
+    // Today's buckets are all still present (the fix trims OUTPUT only — today's
+    // scores are computed against the full raw array, so they're unchanged).
+    const todayCount = hourly.filter((h) => nyDate(h.time) === "2026-06-03").length;
+    expect(hrs.length).toBe(todayCount);
+  });
+
   it("scores past hours with the seaweed read in effect then — later reads never rewrite them", () => {
     // 10 AM ET read was high/65%; the 2 PM ET read (current) is moderate/30%.
     // With "now" at 3:30 PM ET, morning hours must keep scoring against high.

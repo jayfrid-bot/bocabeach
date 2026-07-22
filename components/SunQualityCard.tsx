@@ -39,11 +39,16 @@ function eventLabel(event: SunEventKind): string {
   return event === "sunrise" ? "Sunrise" : "Sunset";
 }
 
+/** A COMPLETE low/mid/high split — the only case the level-based curve trusts
+ *  (see lib/sunQuality.ts). A partial split falls back to the total-cloud path. */
+function hasCompleteLevelSplit(cloud: CloudMix | undefined): boolean {
+  return !!cloud && cloud.lowPct != null && cloud.midPct != null && cloud.highPct != null;
+}
+
 function cloudLine(cloud: CloudMix | undefined): string {
   if (!cloud) return "No forecast cloud reading for this hour.";
-  const hasLevel = cloud.lowPct != null || cloud.midPct != null || cloud.highPct != null;
-  if (hasLevel) {
-    return `low ${cloud.lowPct ?? 0}% · mid ${cloud.midPct ?? 0}% · high ${cloud.highPct ?? 0}%`;
+  if (hasCompleteLevelSplit(cloud)) {
+    return `low ${cloud.lowPct}% · mid ${cloud.midPct}% · high ${cloud.highPct}%`;
   }
   if (cloud.totalPct != null) {
     return `${cloud.totalPct}% total cloud (level split not available)`;
@@ -64,12 +69,9 @@ function buildSunQualityNerdInfo(args: {
 }): NerdInfo {
   const { event, timeIso, tz, cloud, humidityPct, result } = args;
   const time = fmtTime(timeIso, tz);
-  const knownTotalOnly =
-    !!cloud &&
-    cloud.lowPct == null &&
-    cloud.midPct == null &&
-    cloud.highPct == null &&
-    cloud.totalPct != null;
+  // The total-only fallback path is taken whenever the level split is INCOMPLETE
+  // but total cover is available — matches lib/sunQuality.ts's hasTotalOnly.
+  const knownTotalOnly = !hasCompleteLevelSplit(cloud) && !!cloud && cloud.totalPct != null;
 
   const computation: string[] =
     result.score == null

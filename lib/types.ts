@@ -5,6 +5,10 @@
 // ---------------------------------------------------------------------------
 
 import type { TideAberration } from "@/lib/tideAberration";
+import type { WaterTrendResult } from "@/lib/waterTrend";
+import type { RipRiskCurve } from "@/lib/ripRiskCurve";
+import type { MarineStingerAdvisory } from "@/lib/marineStinger";
+import type { SharkContext } from "@/lib/sharkContext";
 
 export type SourceStatus = "ok" | "stale" | "error" | "best-effort";
 
@@ -54,6 +58,12 @@ export interface BuoyData {
   waveHeightFt?: number;
   dominantPeriodS?: number;
   observedAt?: string; // ISO
+  /**
+   * Trailing water-temperature observations (newest first, ≤1/hour, ≤7.5 days),
+   * feeding the water-"feel"-trend read (lib/waterTrend.ts). Absent when the
+   * buoy published no usable WTMP rows. Informational — never feeds the score.
+   */
+  waterTempHistory?: { t: string; waterTempF: number }[];
 }
 
 // --- Weather (NWS api.weather.gov) ----------------------------------------
@@ -84,6 +94,12 @@ export interface MarineData {
   uvIndex?: number;
   /** Cloud cover, 0-100% (0 = full sun, 100 = overcast). */
   cloudCoverPct?: number;
+  /**
+   * Hourly wave forecast (height ft + dominant/swell period s), absolute-UTC
+   * times — anchors the hourly rip-current risk curve (lib/ripRiskCurve.ts).
+   * Absent when the marine model returned no hourly block.
+   */
+  hourlyWaves?: { time: string; waveHeightFt?: number; wavePeriodS?: number }[];
 }
 
 // --- Official local conditions (City of Boca Raton Ocean Rescue scrape) -----
@@ -132,6 +148,12 @@ export interface HourlyMetrics {
   time: string; // ISO (UTC)
   airTempF?: number;
   cloudCoverPct?: number;
+  /** Low-level cloud cover, 0-100% (near-horizon deck — blocks a sky show). */
+  cloudCoverLowPct?: number;
+  /** Mid-level cloud cover, 0-100% (the classic sunrise/sunset color canvas). */
+  cloudCoverMidPct?: number;
+  /** High (cirrus) cloud cover, 0-100% (thin, high — also catches color). */
+  cloudCoverHighPct?: number;
   precipProbability?: number; // 0-100
   weatherCode?: number; // WMO code
   windSpeedMph?: number;
@@ -226,6 +248,9 @@ export interface SunData {
   sunset?: string;
   /** Dusk / civil twilight end (sun 6° below horizon, evening), ISO. */
   dusk?: string;
+  /** Tomorrow's sunrise (ISO) — the sky-show card looks ahead to it once
+   *  today's sunset has passed. See lib/sunQuality.ts's nextSunEvent. */
+  tomorrowSunrise?: string;
   /** Sun's maximum altitude above the horizon at solar noon (degrees). */
   maxAltitudeDeg?: number;
   /** Tonight's moon phase (computed from the date). */
@@ -592,6 +617,22 @@ export interface ConditionsSnapshot {
   forecast: Wrapped<ForecastDay[]>;
   sun: Wrapped<SunData>;
   hourly: Wrapped<HourlyMetrics[]>;
+  // --- Derived informational advisories (computed in lib/conditions.ts from the
+  // sources above; NONE feed the Beach Day score). Additive + optional so every
+  // existing snapshot literal (tests, cached payloads) still type-checks; each
+  // is `null` when honestly un-computable and omitted where it doesn't apply. ---
+  /** Water-"feel" trend — cold-upwelling / warming-fast read off the buoy's
+   *  trailing water-temp history. See lib/waterTrend.ts. */
+  waterTrend?: WaterTrendResult | null;
+  /** Hourly rip-current risk curve anchored on the official NWS word. General
+   *  (any beach with an official word + sun times). See lib/ripRiskCurve.ts. */
+  ripRisk?: RipRiskCurve | null;
+  /** Portuguese man-o'-war + sea-lice advisory. SE-US-Atlantic-oriented beaches
+   *  only (needs a real coastNormalDeg). See lib/marineStinger.ts. */
+  marineStinger?: MarineStingerAdvisory | null;
+  /** Seasonal shark CONTEXT note. SE-US-Atlantic-oriented beaches only. See
+   *  lib/sharkContext.ts. */
+  sharkContext?: SharkContext | null;
 }
 
 // --- Scores ----------------------------------------------------------------
@@ -701,6 +742,18 @@ export interface Location {
    */
   tier?: "curated" | "auto";
   timezone: string; // IANA, e.g. "America/New_York"
+  /**
+   * Onshore-source bearing: the compass bearing wind blows FROM when it blows
+   * straight onshore at this beach (a due-east-facing Atlantic beach = 90).
+   * Drives the man-o'-war onshore-wind advisory (lib/marineStinger.ts) and the
+   * rip-curve's minor onshore-chop nudge (lib/ripRiskCurve.ts). Left undefined
+   * for auto-generated beaches (unknown orientation) — those simply don't get
+   * the orientation-dependent stinger/shark advisories. Never fabricate it.
+   */
+  coastNormalDeg?: number;
+  /** Coarse coastline label. Gates the SE-US-Atlantic-only stinger + shark
+   *  advisories; only set on curated Atlantic beaches. */
+  coast?: "atlantic" | "gulf" | "pacific";
   noaaTideStationId: string;
   noaaTideStationFallbackId?: string;
   ndbcBuoyId: string;

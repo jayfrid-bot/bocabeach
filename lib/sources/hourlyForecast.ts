@@ -10,6 +10,9 @@ interface OpenMeteoHourly {
     time?: string[];
     temperature_2m?: (number | null)[];
     cloud_cover?: (number | null)[];
+    cloud_cover_low?: (number | null)[];
+    cloud_cover_mid?: (number | null)[];
+    cloud_cover_high?: (number | null)[];
     precipitation_probability?: (number | null)[];
     weather_code?: (number | null)[];
     wind_speed_10m?: (number | null)[];
@@ -48,6 +51,9 @@ export function parseOpenMeteoHourly(
     const code = num(h.weather_code, i);
     const air = num(h.temperature_2m, i);
     const cloud = num(h.cloud_cover, i);
+    const cloudLow = num(h.cloud_cover_low, i);
+    const cloudMid = num(h.cloud_cover_mid, i);
+    const cloudHigh = num(h.cloud_cover_high, i);
     const pop = num(h.precipitation_probability, i);
     const wind = num(h.wind_speed_10m, i);
     const wdir = num(h.wind_direction_10m, i);
@@ -62,6 +68,9 @@ export function parseOpenMeteoHourly(
       time: t.toISOString(),
       airTempF: air !== undefined ? round(air) : undefined,
       cloudCoverPct: cloud !== undefined ? round(cloud) : undefined,
+      cloudCoverLowPct: cloudLow !== undefined ? round(cloudLow) : undefined,
+      cloudCoverMidPct: cloudMid !== undefined ? round(cloudMid) : undefined,
+      cloudCoverHighPct: cloudHigh !== undefined ? round(cloudHigh) : undefined,
       precipProbability: pop !== undefined ? round(pop) : undefined,
       weatherCode: code,
       windSpeedMph: wind !== undefined ? round(wind) : undefined,
@@ -128,11 +137,15 @@ export async function fetchHourlyForecast(
   // (today's sunrise/sunset) drops the extra days.
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
-    `&hourly=temperature_2m,cloud_cover,precipitation_probability,weather_code,` +
+    `&hourly=temperature_2m,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,` +
+    `precipitation_probability,weather_code,` +
     `wind_speed_10m,wind_direction_10m,uv_index,uv_index_clear_sky,relative_humidity_2m,dew_point_2m,` +
     `soil_temperature_0cm,shortwave_radiation,precipitation` +
     `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch` +
-    `&past_days=1&forecast_days=7`; // keep in step with forecast.ts's daily forecast_days
+    // `past_days=2` (was 1) gives the marine-stinger man-o'-war advisory a safe
+    // >=24h trailing-wind margin regardless of local time-of-day; cloud_cover_low/
+    // mid/high feed the sunrise/sunset sky-show score's color-canvas model.
+    `&past_days=2&forecast_days=7`; // keep in step with forecast.ts's daily forecast_days
   // GOES satellite-observed radiation for elapsed hours (best effort; the
   // forecast model's values stand wherever this is missing or fails).
   const satUrl =

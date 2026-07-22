@@ -97,12 +97,22 @@ export interface RipRiskHour {
 }
 
 export interface RipRiskCurve {
-  /** Today's daylight hours (sunrise's bucket through sunset's), oldest first. */
+  /** Today's daylight hours (sunrise's bucket through sunset's), oldest first.
+   *  EMPTY when `unshaped` — there were no usable wave/tide inputs to place an
+   *  hourly curve, so no numbers are invented (see `unshaped`). */
   hours: RipRiskHour[];
   /** Always present, never silent. Either names the riskiest window (e.g.
    *  "riskiest 2-4 PM around low tide") or, when there's no wave/tide detail
-   *  to shape the day with, says plainly that this is a flat estimate. */
+   *  to shape the day with, says plainly that hourly detail is unavailable. */
   peakNote: string;
+  /** The official NWS band word for today — always present, even when
+   *  `unshaped` (no hourly curve). Equals every `hours[i].band` when shaped. */
+  level: BandedRipRisk;
+  /** True when NO usable wave sample (height AND period) and NO tide events were
+   *  available to shape the day: the card shows the official word + "hourly
+   *  detail unavailable" and NO numeric curve, rather than fabricating a flat
+   *  band-midpoint number that reads as false precision. */
+  unshaped: boolean;
 }
 
 // --- Band map (the anchor rule) -----------------------------------------
@@ -330,13 +340,37 @@ function rangeLabel(startMs: number, endMs: number, tz: string): string {
   return `${a.hour} ${a.period}-${b.hour} ${b.period}`;
 }
 
-function peakReason(peakMs: number, sortedTide: SortedTideEvent[], hasWaves: boolean): string {
+/** The per-hour modulation breakdown, captured so the peak hour can be
+ *  attributed to the factor that ACTUALLY drove it (not merely "waves exist"). */
+interface HourFactors {
+  wv: number;
+  td: number;
+  wd: number;
+  /** A real, usable wave sample (BOTH height and period) matched this hour —
+   *  only then may the peak be worded "as today's swell peaks". */
+  usableWave: boolean;
+}
+
+function peakReason(peakMs: number, sortedTide: SortedTideEvent[], parts: HourFactors): string {
   const nearLow = sortedTide.some(
     (e) => e.type === "low" && Math.abs(peakMs - e.t) <= LOW_TIDE_BUMP_MIN * 60_000,
   );
   if (nearLow) return "around low tide";
-  if (hasWaves) return "as today's swell peaks";
-  return "under today's official rip risk";
+
+  // Which factor actually LIFTED this hour above the rest? Compare each factor's
+  // weighted contribution ABOVE neutral; the largest positive one is the driver.
+  // Waves count ONLY when a usable sample (height AND period) drove the hour — a
+  // bare non-empty array must never be reported as "as today's swell peaks"
+  // (the wave factor falls back to neutral without a usable sample).
+  const waveDelta = parts.usableWave ? WAVE_WEIGHT * (parts.wv - NEUTRAL) : 0;
+  const tideDelta = TIDE_WEIGHT * (parts.td - NEUTRAL);
+  const windDelta = WIND_WEIGHT * (parts.wd - NEUTRAL);
+
+  const max = Math.max(waveDelta, tideDelta, windDelta);
+  if (max <= 0) return "under today's official rip risk"; // nothing meaningfully elevated
+  if (max === tideDelta) return "as the tide runs out";
+  if (max === waveDelta) return "as today's swell peaks";
+  return "with the onshore wind chop up";
 }
 
 function degradedNote(level: BandedRipRisk): string {
@@ -370,29 +404,39 @@ export function ripRiskCurve(input: RipRiskCurveInput): RipRiskCurve | null {
   if (!hourIsos.length) return null;
 
   const range = BAND_RANGE[level];
-  const hasWaves = !!waves && waves.length > 0;
+  // A USABLE wave sample needs BOTH height and period — a non-empty array of
+  // height-only (or period-only) samples can't shape anything, so it doesn't
+  // count as a shaping input (and never drives the peak wording — see peakReason).
+  const hasUsableWaves =
+    !!waves && waves.some((w) => w.waveHeightFt != null && w.wavePeriodS != null);
   const hasTide = !!tideEvents && tideEvents.length > 0;
   const sortedTide = toSortedTideEvents(tideEvents);
 
-  // Fully degraded: neither wave nor tide detail to shape the day with. An
-  // onshore-wind-only signal (a MINOR factor by design) isn't enough on its
-  // own to justify a shaped curve, so this stays flat too — see the module
-  // banner comment.
-  if (!hasWaves && !hasTide) {
-    const flatScore = round(range.min + 0.5 * (range.max - range.min));
+  // Fully degraded: no usable wave sample AND no tide events to shape the day
+  // with. Return an UNSHAPED result — the official NWS word with NO numeric
+  // curve — rather than inventing a flat band-midpoint number (which read as
+  // false precision "42/100 right now" off a single daily word). An onshore-
+  // wind-only signal (a MINOR factor by design) isn't enough to shape a curve.
+  if (!hasUsableWaves && !hasTide) {
     return {
-      hours: hourIsos.map((t) => ({ t, score: flatScore, band: level })),
+      hours: [],
       peakNote: degradedNote(level),
+      level,
+      unshaped: true,
     };
   }
 
   let peakIdx = 0;
   let peakScore = -Infinity;
+  const parts: HourFactors[] = [];
   const hours: RipRiskHour[] = hourIsos.map((iso, i) => {
     const tMs = Date.parse(iso);
+    const usableWave =
+      nearestWithin(tMs, waves, (w) => w.waveHeightFt != null && w.wavePeriodS != null) != null;
     const wv = waveFactorAt(tMs, waves);
     const td = tideFactorAt(tMs, sortedTide);
     const wd = windFactorAt(tMs, wind, coastNormalDeg);
+    parts.push({ wv, td, wd, usableWave });
     const factor = clamp(WAVE_WEIGHT * wv + TIDE_WEIGHT * td + WIND_WEIGHT * wd, 0, 1);
     const score = round(range.min + factor * (range.max - range.min));
     if (score > peakScore) {
@@ -404,8 +448,8 @@ export function ripRiskCurve(input: RipRiskCurveInput): RipRiskCurve | null {
 
   const peakMs = Date.parse(hourIsos[peakIdx]);
   const windowEndMs = Math.min(peakMs + 2 * HOUR_MS, sunsetMs > peakMs ? sunsetMs : peakMs + 2 * HOUR_MS);
-  const reason = peakReason(peakMs, sortedTide, hasWaves);
+  const reason = peakReason(peakMs, sortedTide, parts[peakIdx]);
   const peakNote = `riskiest ${rangeLabel(peakMs, windowEndMs, tz)} ${reason}`;
 
-  return { hours, peakNote };
+  return { hours, peakNote, level, unshaped: false };
 }

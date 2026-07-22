@@ -144,7 +144,12 @@ export function waterTrend(
   let note: string;
   if (deltaF48h <= UPWELLING_AT) {
     status = "upwelling";
-    note = `Cold upwelling — water dropped ${magnitude}°F over the last 2 days. N/NW winds pushing warm surface water offshore.`;
+    // This function sees ONLY timestamps + temperatures — no wind, no coastline
+    // orientation — so it must not assert the definitive "N/NW winds pushing
+    // surface water offshore" cause (a wind claim needs orientation-aware
+    // corroboration we don't have here). A drop this fast is CONSISTENT with
+    // upwelling; say so as a possibility, not an observed cause.
+    note = `Rapid cooling — water dropped ${magnitude}°F over the last 2 days, a possible upwelling signal (colder deep water surfacing).`;
   } else if (deltaF48h <= COOLING_AT) {
     status = "cooling";
     note = `Water cooling — down ${magnitude}°F over the last 2 days.`;

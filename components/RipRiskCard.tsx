@@ -124,19 +124,22 @@ function sentence(s: string): string {
  * MarineStingerCard's `buildInfo`.
  */
 function buildInfo(curve: RipRiskCurve, band: BandedRipRisk): NerdInfo {
-  const scores = curve.hours.map((h) => h.score);
-  const lo = Math.min(...scores);
-  const hi = Math.max(...scores);
   const { min, max } = BAND_RANGE[band];
-  const flat = lo === hi;
+  const scores = curve.hours.map((h) => h.score);
 
-  const computation = [
-    `Official NWS Surf Zone Forecast word today: ${BAND_LABEL[band]} → curve lives in ${min}-${max}`,
-    flat
-      ? `No wave/tide detail available today → flat at the band midpoint (${lo}/100)`
-      : `Today's curve ranges ${lo}-${hi}/100 across daylight hours`,
-    sentence(curve.peakNote),
-  ];
+  const computation = curve.unshaped
+    ? [
+        `Official NWS Surf Zone Forecast word today: ${BAND_LABEL[band]} → band ${min}-${max}`,
+        "No usable wave/tide detail today → hourly detail unavailable (no numeric curve invented)",
+        sentence(curve.peakNote),
+      ]
+    : [
+        `Official NWS Surf Zone Forecast word today: ${BAND_LABEL[band]} → curve lives in ${min}-${max}`,
+        Math.min(...scores) === Math.max(...scores)
+          ? `Modulators net flat today → ${scores[0]}/100 across daylight hours`
+          : `Today's curve ranges ${Math.min(...scores)}-${Math.max(...scores)}/100 across daylight hours`,
+        sentence(curve.peakNote),
+      ];
 
   return {
     title: "Rip current risk (hourly estimate)",
@@ -193,13 +196,24 @@ export function RipRiskCard({ curve }: RipRiskCardProps) {
     return () => clearInterval(id);
   }, []);
 
-  if (!curve || curve.hours.length === 0) return null;
+  if (!curve) return null;
 
-  // Every hour shares the same band (the anchor word never contradicts the
-  // official NWS level) — see lib/ripRiskCurve.ts.
-  const band = curve.hours[0].band;
-  const idx = nowMs != null ? currentHourIndex(curve.hours, nowMs) : 0;
-  const current = curve.hours[idx];
+  // The official NWS band word — always present, even with no hourly curve. The
+  // anchor word never contradicts the official level (see lib/ripRiskCurve.ts).
+  const band = curve.level;
+
+  // A live "/100 right now" is honest ONLY when the clock actually falls inside
+  // a represented daylight bucket. Before dawn / after the last bucket (and for
+  // an unshaped word-only curve) we show the official word WITHOUT a now-number,
+  // instead of silently pinning to the first/last bucket and still saying "now".
+  const HOUR_MS = 3_600_000;
+  const nowInWindow =
+    !curve.unshaped &&
+    nowMs != null &&
+    curve.hours.length > 0 &&
+    nowMs >= Date.parse(curve.hours[0].t) &&
+    nowMs < Date.parse(curve.hours[curve.hours.length - 1].t) + HOUR_MS;
+  const current = nowInWindow ? curve.hours[currentHourIndex(curve.hours, nowMs as number)] : null;
 
   const front = (
     <div className="flex h-full flex-col rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
@@ -212,10 +226,16 @@ export function RipRiskCard({ curve }: RipRiskCardProps) {
         <span className={`text-xl font-semibold sm:text-2xl ${BAND_TEXT_CLASS[band]}`}>
           {BAND_LABEL[band]}
         </span>
-        <span className="text-xs text-slate-500 dark:text-slate-400">{current.score}/100 right now</span>
+        {current ? (
+          <span className="text-xs text-slate-500 dark:text-slate-400">{current.score}/100 right now</span>
+        ) : (
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            {curve.unshaped ? "official NWS level · hourly detail unavailable" : "official NWS level today"}
+          </span>
+        )}
       </div>
 
-      <Sparkline hours={curve.hours} band={band} nowMs={nowMs} />
+      {curve.unshaped ? null : <Sparkline hours={curve.hours} band={band} nowMs={nowMs} />}
 
       <div className="mt-1 break-words text-xs text-slate-600 dark:text-slate-400">
         {sentence(curve.peakNote)} Estimate layered on the official NWS level — always follow the lifeguard flags.

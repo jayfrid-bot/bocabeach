@@ -23,7 +23,7 @@ export function WaterTrendCard({ trend }: { trend: WaterTrendResult | null }) {
   const magnitude = Math.abs(trend.deltaF48h).toFixed(1);
   const label =
     trend.status === "upwelling"
-      ? `Cold upwelling — water down ${magnitude}°F in 2 days`
+      ? `Rapid cooling — water down ${magnitude}°F in 2 days`
       : trend.status === "cooling"
         ? `Cooling — water down ${magnitude}°F in 2 days`
         : `Warming fast — water up ${magnitude}°F in 2 days`;

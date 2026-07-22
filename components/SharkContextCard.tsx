@@ -38,14 +38,15 @@ function buildInfo(context: SharkContext): NerdInfo {
       "Instead this card draws only on things we already know: the calendar, water temperature, recent weather, " +
       "time of day, and this beach's fixed latitude. Every fall, baitfish migrating south (the \"mullet run\") " +
       "pull blacktip and spinner sharks into the surf zone to feed — primarily September-October, with a " +
-      "shoulder from late August into November. Every winter, thousands of blacktip sharks gather within " +
-      "roughly 50 m of shore specifically along the Palm Beach/Boca Raton coast, part of a migration FAU's " +
-      "Shark Lab has documented for years — peaking late February-March, then moving on as the water warms.",
+      "shoulder from late August into November. Most winters, blacktip sharks aggregate near shore — sometimes " +
+      "in large numbers, within tens of metres — specifically along the Palm Beach/Boca Raton coast, part of a " +
+      "migration FAU's Shark Lab has documented for years — the window running roughly December-March, peaking " +
+      "late February-March, then moving on as the water warms (the scale varies year to year).",
     computation,
     sources: [
       "Florida Museum of Natural History — shark research & Florida bite statistics",
       "FAU Shark Lab — SE-Florida winter blacktip aggregation research",
-      "Seasonal climatology — SE-US Atlantic mullet run (Aug-Nov) and SE-Florida blacktip aggregation (Jan-Mar)",
+      "Seasonal climatology — SE-US Atlantic mullet run (Aug-Nov) and SE-Florida blacktip aggregation (Dec-Mar)",
     ],
     notes:
       "This is CONTEXT, not a forecast and not a live map — nothing here claims to know where any shark is " +
@@ -54,7 +55,7 @@ function buildInfo(context: SharkContext): NerdInfo {
       "flag means dangerous marine life has actually been seen) over any seasonal note here.",
     formula:
       "season = 'mullet-run' if month is Sep/Oct (peak), or Aug/Nov with water temp cooling to ≤81°F " +
-      "(shoulder); 'blacktip-aggregation' if month is Jan-Mar AND latitude is ~25.5-27.5°N (SE Florida only). " +
+      "(shoulder); 'blacktip-aggregation' if month is Dec-Mar AND latitude is ~25.5-27.5°N (SE Florida only). " +
       "Micro-factors (murky water, dawn/dusk, near an inlet) are independent and can raise this note's " +
       "awareness even outside a season when murky water and dawn/dusk both apply. No number, score, or shark " +
       "count is ever computed.",

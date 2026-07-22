@@ -72,6 +72,14 @@ describe("sharkContext — blacktip aggregation", () => {
     expect(r).not.toBeNull();
     expect(r!.season).toBe("blacktip-aggregation");
   });
+
+  it("December at Boca latitude reads blacktip-aggregation active (window starts Dec, not Jan)", () => {
+    const r = sharkContext({ month: 12, latDeg: BOCA_LAT });
+    expect(r).not.toBeNull();
+    expect(r!.season).toBe("blacktip-aggregation");
+    expect(r!.note).toMatch(/blacktip/i);
+    expect(r!.note).toMatch(/Dec/i);
+  });
 });
 
 describe("sharkContext — geographic gate", () => {
@@ -216,6 +224,14 @@ describe("sharkContext — rarity denominator is mandatory", () => {
     const r = sharkContext({ month: 3, latDeg: BOCA_LAT });
     expect(r!.rarityNote).toMatch(/volusia/i);
     expect(r!.rarityNote).toMatch(/brevard/i);
+  });
+
+  it("stays honest about local risk — does not dismiss Palm Beach bites as 'a handful'", () => {
+    const r = sharkContext({ month: 3, latDeg: BOCA_LAT })!;
+    // Non-alarmist but accurate: Palm Beach County is not a no-risk coast.
+    expect(r.rarityNote).not.toMatch(/a handful/i);
+    expect(r.rarityNote).toMatch(/palm beach/i);
+    expect(r.rarityNote).toMatch(/rare/i);
   });
 });
 

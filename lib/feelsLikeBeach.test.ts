@@ -73,6 +73,30 @@ describe("solarRadiantF", () => {
     expect(low).toBeLessThan(overhead);
     expect(low).toBeGreaterThan(0);
   });
+
+  // --- honesty: never fabricate a full-sun load from missing inputs ----------
+
+  it("OMITS the term (0) when there's no daytime, elevation, or irradiance signal at all", () => {
+    // Previously this assumed full overhead sun (+8°F even at night whenever
+    // isDaytime wasn't explicitly false). With nothing telling us the sun is up
+    // OR how strong it is, the honest contribution is zero.
+    expect(solarRadiantF({})).toBe(0);
+    expect(solarRadiantF({ cloudCoverPct: 0 })).toBe(0);
+  });
+
+  it("known daytime but no cloud/irradiance value still omits (needs something to scale)", () => {
+    expect(solarRadiantF({ isDaytime: true })).toBe(0);
+  });
+
+  it("applies a cloud-damped term once we positively know it's daytime and have a cloud reading", () => {
+    expect(solarRadiantF({ isDaytime: true, cloudCoverPct: 0 })).toBeCloseTo(8, 5);
+    expect(solarRadiantF({ isDaytime: true, cloudCoverPct: 50 })).toBeCloseTo(4, 5);
+  });
+
+  it("uses modeled irradiance as the daytime strength signal when present", () => {
+    // 500 W/m² of ~1000 full-sun → half strength; clear sky → 8 * 0.5 = 4.
+    expect(solarRadiantF({ solarWm2: 500, cloudCoverPct: 0 })).toBeCloseTo(4, 5);
+  });
 });
 
 describe("sandRadiantF", () => {
@@ -149,12 +173,19 @@ describe("feelsLikeBeach", () => {
   });
 
   it("with the sun term zeroed (night) and no sand/wind, reduces to the plain heat index", () => {
-    // Missing cloud data alone does NOT zero the solar term (same "unknown
-    // cloud → assume full sun" convention lib/sandTemp.ts uses for its own
-    // overcast damping), so night is forced explicitly here via isDaytime.
+    // Explicit night via isDaytime:false forces the solar term to 0.
     const r = feelsLikeBeach({ ...base, isDaytime: false })!;
     expect(r).toBeDefined();
     expect(r.tempF).toBe(Math.round(heatIndexF(90, 70)));
+  });
+
+  it("with NO daytime/elevation/irradiance signal, adds no sun (omits it) — no fabricated +8°F", () => {
+    // Even a clear-sky cloud reading alone is not enough to assume the sun is
+    // up: without a daytime/strength signal the solar term is omitted, so the
+    // number reduces to the plain heat index and carries no sun driver.
+    const r = feelsLikeBeach({ ...base, cloudCoverPct: 0 })!;
+    expect(r.tempF).toBe(Math.round(heatIndexF(90, 70)));
+    expect(r.drivers.some((d) => d.includes("sun"))).toBe(false);
   });
 
   it("the sun term moves the number up", () => {

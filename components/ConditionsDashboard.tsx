@@ -38,6 +38,12 @@ import { SourceList } from "@/components/SourceBadge";
 import { CamGrid } from "@/components/CamGrid";
 import { DayOutlookStrip } from "@/components/DayOutlookStrip";
 import { NotifyButton } from "@/components/NotifyButton";
+import { FeelsLikeCard } from "@/components/FeelsLikeCard";
+import { SunQualityCard } from "@/components/SunQualityCard";
+import { WaterTrendCard } from "@/components/WaterTrendCard";
+import { RipRiskCard } from "@/components/RipRiskCard";
+import { MarineStingerCard } from "@/components/MarineStingerCard";
+import { SharkContextCard } from "@/components/SharkContextCard";
 import { seaweedVsAvgPhrase } from "@/lib/vsAveragePhrase";
 
 // Throw on non-OK so an error body (e.g. a 404 `{error}`) never replaces the
@@ -156,6 +162,35 @@ export function ConditionsDashboard({
     weatherCode: currentHour?.weatherCode,
     precipProbability: currentHour?.precipProbability,
   });
+
+  // --- Informational advisories (computed server-side in lib/conditions.ts;
+  // NONE feed the Beach Day score). Each self-hides when it has nothing to say. ---
+  const wt = snap.waterTrend ?? null;
+  const ms = snap.marineStinger ?? null;
+  const shark = snap.sharkContext ?? null;
+  // Feels-like needs air + humidity (its two irreplaceable inputs) — hide the
+  // whole card when they're absent, matching how busyness/seaweed hide.
+  const showFeelsLike = d.airTempF != null && d.humidityPct != null;
+  // Mirror MarineStingerCard's own show logic so the advisory section only takes
+  // up room when a card will actually render (both cards self-hide otherwise).
+  const showMarineStinger =
+    !!ms &&
+    ((!!ms.manOWar && ms.manOWar.level !== "low") ||
+      (!!ms.seaLice && ms.seaLice.level !== "low"));
+  const showSharkContext = !!shark;
+  // Map the hourly forecast into the sky-show card's cloud/humidity points; the
+  // cloud-by-level fields (added to the hourly fetch) sharpen the color-canvas
+  // model, degrading to total cloud where a level split isn't available.
+  const sunQualityHourly = (snap.hourly.data ?? []).map((h) => ({
+    time: h.time,
+    cloud: {
+      lowPct: h.cloudCoverLowPct,
+      midPct: h.cloudCoverMidPct,
+      highPct: h.cloudCoverHighPct,
+      totalPct: h.cloudCoverPct,
+    },
+    humidityPct: h.humidityPct,
+  }));
 
   // Single, stable handler shared by pull-to-refresh and the visible button.
   const onRefresh = useCallback(() => mutate(), [mutate]);
@@ -347,6 +382,35 @@ export function ConditionsDashboard({
             )
           }
         />
+        {/* Feels-like beach temp — heat index + sun + hot-sand − wind. Self-wraps
+            its own FlipCard/NerdBack. Hidden when air temp / humidity are absent. */}
+        {showFeelsLike ? (
+          <FeelsLikeCard
+            airTempF={d.airTempF}
+            humidityPct={d.humidityPct}
+            windSpeedMph={d.windSpeedMph}
+            cloudCoverPct={nowCloudPct}
+            sandTempF={d.sandTempF}
+            // Real day/night + sun-strength signals so the solar term is never
+            // fabricated from missing inputs: the explicit daytime flag AND the
+            // current hour's modeled irradiance (0 overnight). Without these the
+            // solar load is omitted rather than assumed full-strength.
+            isDaytime={snap.weather.data?.isDaytime}
+            solarWm2={currentHour?.solarWm2}
+          />
+        ) : null}
+        {/* Sunrise/sunset "sky show" score — a sun-related scored instrument, so
+            it sits with UV here. `now` is pinned to the snapshot's generatedAt so
+            the next-event pick is identical on the server render and hydration. */}
+        {snap.sun.data && snap.hourly.data?.length ? (
+          <SunQualityCard
+            now={new Date(snap.generatedAt)}
+            tz={tz}
+            today={{ sunrise: snap.sun.data.sunrise, sunset: snap.sun.data.sunset }}
+            tomorrowSunrise={snap.sun.data.tomorrowSunrise}
+            hourly={sunQualityHourly}
+          />
+        ) : null}
         {showBusyness ? (
           <FlipCard label="Busyness" back={nerdBack("busyness")} front={<BusynessCard busy={busy} />} />
         ) : null}
@@ -372,12 +436,28 @@ export function ConditionsDashboard({
           label="Water temp"
           back={nerdBack("waterTemp")}
           front={
-            <MetricCard
-              icon="🌡️"
-              label="Water temp"
-              value={d.waterTempF != null ? `${d.waterTempF}°F` : "—"}
-              sub={d.waterTempF == null ? "not available" : undefined}
-            />
+            // Inline MetricCard markup so the water-"feel"-trend pill can sit in
+            // the reserved sub-line area. The pill self-hides on a "steady" (or
+            // absent) trend, so a normal day looks exactly like the plain tile.
+            <div className="flex h-full flex-col rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
+              <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+                <span aria-hidden>🌡️</span>
+                <span className="truncate">Water temp</span>
+              </div>
+              <div className="flex flex-1 flex-col justify-center">
+                <div className="text-xl font-semibold text-slate-900 dark:text-white sm:text-2xl">
+                  {d.waterTempF != null ? `${d.waterTempF}°F` : "—"}
+                </div>
+                <div className="min-h-4 break-words text-xs text-slate-600 dark:text-slate-400 line-clamp-3">
+                  {d.waterTempF == null ? "not available" : " "}
+                </div>
+                {wt && wt.status !== "steady" ? (
+                  <div className="mt-1.5">
+                    <WaterTrendCard trend={wt} />
+                  </div>
+                ) : null}
+              </div>
+            </div>
           }
         />
         <FlipCard
@@ -589,6 +669,10 @@ export function ConditionsDashboard({
             </div>
           }
         />
+        {/* Hourly rip-current risk curve — anchored on (and never contradicting)
+            the official NWS word, sitting in the safety cluster. Self-wraps its
+            FlipCard and renders nothing when there's no official word to anchor. */}
+        {snap.ripRisk ? <RipRiskCard curve={snap.ripRisk} /> : null}
         <LifeguardReport city={snap.cityOfficial} />
         <LocalCoverage location={snap.location} hasCams={cams.length > 0} />
       </section>
@@ -639,6 +723,18 @@ export function ConditionsDashboard({
           }
         />
       </section>
+
+      {/* Quiet, exception-only advisories (SE-US-Atlantic beaches only) — kept
+          low on the page like the tide-aberration badges. Both cards self-hide,
+          and the section only mounts when at least one has something to say. */}
+      {showMarineStinger || showSharkContext ? (
+        <section className="mb-6 grid gap-4 sm:grid-cols-2">
+          {showMarineStinger ? (
+            <MarineStingerCard manOWar={ms!.manOWar} seaLice={ms!.seaLice} />
+          ) : null}
+          {showSharkContext ? <SharkContextCard context={shark} /> : null}
+        </section>
+      ) : null}
 
       {cams.length > 0 ? (
         <section className="mb-8">

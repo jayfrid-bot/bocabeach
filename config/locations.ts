@@ -24,6 +24,10 @@ export const LOCATIONS: Location[] = [
     lat: 26.3587,
     lon: -80.0686,
     timezone: "America/New_York",
+    // Due-east-facing Atlantic shoreline: wind blowing straight onshore comes
+    // FROM ~90° (E). Enables the man-o'-war + shark SE-FL advisories here.
+    coastNormalDeg: 90,
+    coast: "atlantic",
     noaaTideStationId: "8722816", // Boca Raton
     noaaTideStationFallbackId: "8722670", // Lake Worth Pier
     ndbcBuoyId: "LKWF1", // Lake Worth Pier C-MAN (nearest)

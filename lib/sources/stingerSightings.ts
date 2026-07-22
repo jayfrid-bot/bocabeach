@@ -136,7 +136,12 @@ export async function fetchStingerSightings(
     if (!res.ok) throw new Error(`iNaturalist observations -> ${res.status}`);
 
     const json = (await res.json()) as INatObservationsResponse;
-    const results = Array.isArray(json?.results) ? json.results : [];
+    // A 200 body that lacks a `results` ARRAY is schema-invalid/malformed — NOT
+    // a genuine "checked, nothing nearby". Treat it as unavailable (null) so the
+    // caller stays "wind-only" rather than damping the man-o'-war read with a
+    // fabricated `count: 0`. `count: 0` is reserved for a real EMPTY array.
+    if (!Array.isArray(json?.results)) return null;
+    const results = json.results;
 
     let mostRecentMs: number | undefined;
     let mostRecentIso: string | undefined;

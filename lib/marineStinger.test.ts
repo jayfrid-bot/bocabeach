@@ -108,7 +108,52 @@ describe("manOWarRisk — wind + season", () => {
       }),
     ).toBeNull();
   });
+
+  it("returns null for two scattered samples that SPAN >=24h but lack hourly density (not 'sustained')", () => {
+    // One sample 1h ago + one 26h ago: clears the 24h coverage span, but two
+    // points can't establish a sustained multi-hour onshore push.
+    const scattered: HourlyWindSample[] = [1, 26].map((ageH) => ({
+      time: new Date(NOW.getTime() - ageH * 3_600_000).toISOString(),
+      windSpeedMph: 20,
+      windDirDeg: 90,
+    }));
+    expect(
+      manOWarRisk({
+        hourlyWind: scattered,
+        coastNormalDeg: COAST_NORMAL_DEG,
+        month: 1,
+        sightings: null,
+        now: NOW,
+      }),
+    ).toBeNull();
+  });
+
+  it("returns null when a dense window has a large mid-window gap (push not continuous)", () => {
+    // Dense samples for ages 0-8h and 22-35h (23 distinct hours), but a 14h
+    // hole in the middle — the onshore push can't be called continuous.
+    const gappy: HourlyWindSample[] = [];
+    for (let h = 0; h <= 8; h++) gappy.push(oneSample(h));
+    for (let h = 22; h <= 35; h++) gappy.push(oneSample(h));
+    expect(
+      manOWarRisk({
+        hourlyWind: gappy,
+        coastNormalDeg: COAST_NORMAL_DEG,
+        month: 1,
+        sightings: null,
+        now: NOW,
+      }),
+    ).toBeNull();
+  });
 });
+
+/** One onshore (easterly) wind sample `ageH` hours before NOW. */
+function oneSample(ageH: number): HourlyWindSample {
+  return {
+    time: new Date(NOW.getTime() - ageH * 3_600_000).toISOString(),
+    windSpeedMph: 20,
+    windDirDeg: 90,
+  };
+}
 
 describe("manOWarRisk — sightings gate", () => {
   const base = {

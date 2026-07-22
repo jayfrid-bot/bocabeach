@@ -28,8 +28,13 @@ describe("waterTrend", () => {
     expect(trend!.status).toBe("upwelling");
     expect(trend!.deltaF48h).toBe(-5);
     expect(trend!.deltaF7d).toBe(-5);
-    expect(trend!.note).toContain("Cold upwelling");
+    expect(trend!.note).toContain("Rapid cooling");
     expect(trend!.note).toContain("5.0");
+    // Honesty: from temperature alone we must not assert the definitive wind
+    // cause — "possible upwelling", never "N/NW winds pushing water offshore".
+    expect(trend!.note).toMatch(/possible upwelling/i);
+    expect(trend!.note).not.toMatch(/N\/NW winds/i);
+    expect(trend!.note).not.toMatch(/pushing.*offshore/i);
   });
 
   it("classifies a milder drop as 'cooling' (between -1.5 and -3F)", () => {

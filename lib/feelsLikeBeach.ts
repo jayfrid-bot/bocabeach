@@ -156,6 +156,7 @@ export interface SolarRadiantInput {
 export function solarRadiantF(input: SolarRadiantInput): number {
   const { cloudCoverPct, sunElevationDeg, solarWm2, isDaytime } = input;
 
+  // --- Positive NIGHT signals → no solar load at all. ---
   if (isDaytime === false) return 0;
   if (sunElevationDeg != null && sunElevationDeg <= 0) return 0;
   // No explicit elevation/isDaytime signal at all: a modeled irradiance of
@@ -165,17 +166,30 @@ export function solarRadiantF(input: SolarRadiantInput): number {
     return 0;
   }
 
-  const cloudFrac = 1 - clamp(cloudCoverPct ?? 0, 0, 100) / 100;
-  const elevFrac =
-    sunElevationDeg != null
-      ? elevationFraction(sunElevationDeg)
-      : solarWm2 != null
-        ? clamp(solarWm2 / FULL_SUN_WM2_FALLBACK, 0, 1)
-        : // Neither elevation nor irradiance given, but nothing says it's
-          // night either: don't invent a discount we have no signal for —
-          // let cloud cover alone govern the term.
-          1;
+  // --- Sun STRENGTH (elevation fraction) — needs a REAL signal. ---
+  // Without sun elevation OR modeled irradiance we don't know how strong the sun
+  // is, and we must NOT assume full overhead sun. The old fallback did exactly
+  // that (elevFrac = 1 whenever no signal was present), which silently added up
+  // to +8°F to a reading whose daytime/strength was entirely unknown — e.g. at
+  // night whenever `isDaytime` wasn't explicitly false. Only apply the solar
+  // load when we can establish strength from elevation/irradiance, or when we at
+  // least positively KNOW it's daytime and have a cloud value to damp it;
+  // otherwise omit the term rather than fabricate sun from nothing.
+  let elevFrac: number;
+  if (sunElevationDeg != null) {
+    elevFrac = elevationFraction(sunElevationDeg);
+  } else if (solarWm2 != null) {
+    elevFrac = clamp(solarWm2 / FULL_SUN_WM2_FALLBACK, 0, 1);
+  } else if (isDaytime === true && cloudCoverPct != null) {
+    // Known daytime with a cloud reading but no elevation/irradiance feed: we
+    // know the sun is up, just not how high — apply the cloud-damped term at
+    // full strength (the app's common wiring: isDaytime + consensus cloud%).
+    elevFrac = 1;
+  } else {
+    return 0; // no honest basis for a solar load — omit it
+  }
 
+  const cloudFrac = 1 - clamp(cloudCoverPct ?? 0, 0, 100) / 100;
   return MAX_SOLAR_RADIANT_F * cloudFrac * elevFrac;
 }
 

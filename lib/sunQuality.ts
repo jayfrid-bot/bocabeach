@@ -242,8 +242,15 @@ function buildNote(opts: {
  */
 export function sunEventQuality(input: SunEventQualityInput): SunEventQuality {
   const cloud = input.cloud;
+  // Require the COMPLETE low/mid/high split before trusting the level-based
+  // curve. A PARTIAL split (e.g. only `lowPct`) would let the missing levels
+  // default to 0 in combineMidHigh/lowCloudFactor and fabricate a "clear color
+  // canvas" we actually have no reading for — reading a possibly-vivid sky as
+  // plain. With an incomplete split, fall back to the flatter total-cloud curve
+  // (self-labeled "cloud mix unknown") when total cover is available, else the
+  // honest-null "no reading" state.
   const hasLevelSplit =
-    !!cloud && (cloud.lowPct != null || cloud.midPct != null || cloud.highPct != null);
+    !!cloud && cloud.lowPct != null && cloud.midPct != null && cloud.highPct != null;
   const hasTotalOnly = !hasLevelSplit && !!cloud && cloud.totalPct != null;
 
   if (!hasLevelSplit && !hasTotalOnly) {

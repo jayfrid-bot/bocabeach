@@ -148,7 +148,8 @@ export function MarineStingerCard({ manOWar, seaLice }: MarineStingerCardProps) 
         <div className="mt-2">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <span className={`text-xl font-semibold sm:text-2xl ${MAN_O_WAR_TONE[manOWar!.level]}`}>
-              {MAN_O_WAR_LABEL[manOWar!.level]} man-o'-war risk
+              {MAN_O_WAR_LABEL[manOWar!.level]}
+              {" man-o’-war advisory"}
             </span>
             <span
               className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${CONFIDENCE_BADGE[manOWar!.confidence].tone}`}

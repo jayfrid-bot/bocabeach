@@ -22,14 +22,17 @@
 //   water temperature here only corroborates the shoulder months, it never
 //   substitutes for a real prediction.
 //
-//   WINTER BLACKTIP AGGREGATION — every winter, thousands of blacktip sharks
-//   aggregate within roughly 50 m of shore along Palm Beach and Boca Raton's
-//   beaches, part of a documented seasonal migration studied by FAU's Shark
-//   Lab. The window runs roughly Jan-Mar, peaking late Feb-Mar, and is driven
-//   by water temperature — the aggregation is strongest at ~26-27°N (exactly
-//   the Palm Beach/Boca latitude) and the sharks move on north as the water
-//   warms in spring. This is geographically narrow: it is NOT a general
-//   Florida or SE-US phenomenon the way the mullet run is.
+//   WINTER BLACKTIP AGGREGATION — most winters, blacktip sharks aggregate near
+//   shore (sometimes in large numbers, within tens of metres) along Palm Beach
+//   and Boca Raton's beaches, part of a documented seasonal migration studied
+//   by FAU's Shark Lab. The scale varies year to year — recent winters have run
+//   smaller than the peak headlines — so this is worded as "can aggregate near
+//   shore", not a guaranteed annual spectacle. The window runs roughly Dec-Mar
+//   (the migration often begins with the first strong December cold fronts),
+//   peaking late Feb-Mar, and is driven by water temperature — strongest at
+//   ~26-27°N (exactly the Palm Beach/Boca latitude), the sharks moving north as
+//   the water warms in spring. This is geographically narrow: it is NOT a
+//   general Florida or SE-US phenomenon the way the mullet run is.
 //
 //   MICRO-FACTORS — independent of season, a few conditions are worth a bit of
 //   extra awareness (never alarm): murky/turbid water (storm runoff, high
@@ -40,11 +43,13 @@
 //   and the predators following them).
 //
 //   RARITY DENOMINATOR — always shown alongside any active reading. Shark
-//   bites are very rare events. Florida's nationally-leading bite count is
-//   driven overwhelmingly by Volusia and Brevard county inlets, more than 150
-//   miles NORTH of SE Florida. SE Florida (Miami-Dade, Broward, Palm Beach)
-//   sees only a handful of minor blacktip/spinner nips per year, spread across
-//   millions of beach visits.
+//   bites are rare events, and rarer still than sightings. Most of Florida's
+//   nationally-leading bite count is driven by Volusia and Brevard county
+//   inlets, more than 150 miles NORTH of SE Florida — but Palm Beach County is
+//   NOT bite-free (it ranks among the state's higher-count counties, around
+//   third historically), so the copy stays honest about local risk rather than
+//   dismissing it as "a handful". Local incidents are typically minor
+//   blacktip/spinner nips, across millions of beach visits.
 //
 // GEOGRAPHIC GATE: this entire module is SE-US-Atlantic-specific. `latDeg` is
 // required (no default) because both mechanisms are latitude-bound: the
@@ -177,9 +182,11 @@ function mulletRunCorroborated(waterTempF: number | undefined): boolean {
 
 // --- Blacktip aggregation -----------------------------------------------------
 
-/** Full blacktip-aggregation window: January through March. */
+/** Full blacktip-aggregation window: December through March. The SE-Florida
+ *  migration often begins with the first strong December cold fronts (not only
+ *  in the new year), so December is inside the window; peak stays late Feb-Mar. */
 function isBlacktipWindow(month: number): boolean {
-  return month === 1 || month === 2 || month === 3;
+  return month === 12 || month === 1 || month === 2 || month === 3;
 }
 
 /** Documented peak of the aggregation: late February through March. */
@@ -279,13 +286,13 @@ function seasonSentence(season: SharkSeason, month: number, waterTempF: number |
   // blacktip-aggregation
   if (isBlacktipPeak(month)) {
     return (
-      "It's peak blacktip shark aggregation season on this stretch of coast (roughly late Feb-Mar) — thousands " +
-      "of blacktips gather within about 50 m of shore each winter here, moving on as the water warms in spring."
+      "It's peak blacktip shark aggregation season on this stretch of coast (roughly late Feb-Mar) — in many " +
+      "winters large numbers of blacktips aggregate near shore here, moving on as the water warms in spring."
     );
   }
   return (
-    "SE Florida's winter blacktip aggregation window is open here (roughly Jan-Mar, peaking late Feb-Mar) — " +
-    "thousands of blacktips gather close to shore each winter along this stretch of coast."
+    "SE Florida's winter blacktip aggregation window is open here (roughly Dec-Mar, peaking late Feb-Mar) — " +
+    "some winters see blacktips aggregate close to shore along this stretch of coast."
   );
 }
 
@@ -304,11 +311,16 @@ function factorsSentence(factors: SharkFactor[]): string | null {
   return `Worth a bit of extra awareness: ${joined}.`;
 }
 
-/** The mandatory rarity denominator — always shown alongside any active read. */
+/** The mandatory rarity denominator — always shown alongside any active read.
+ *  Non-alarmist but honest: Palm Beach County is not a no-risk coast (it ranks
+ *  among Florida's higher-bite counties, historically around third statewide),
+ *  so we don't dismiss local bites as "a handful" or pin everything on the
+ *  counties to the north. */
 const RARITY_NOTE =
-  "Keep it in perspective: shark bites are very rare. Florida's nationally-leading count is driven mostly by " +
-  "Volusia and Brevard county inlets, 150+ miles north of here — SE Florida (Miami-Dade, Broward, Palm Beach) " +
-  "sees only a handful of minor blacktip/spinner nips a year, across millions of beach visits.";
+  "Keep it in perspective: a shark bite is rare, and far rarer than just seeing one. Most of Florida's " +
+  "nationally-leading bites happen at the Volusia and Brevard county inlets 150+ miles north — but Palm Beach " +
+  "County isn't bite-free either (it ranks among the state's higher counties, historically around third), and " +
+  "local incidents are typically minor blacktip/spinner nips. Normal water-smart caution is the right call, not alarm.";
 
 function buildNote(season: SharkSeason | null, factors: SharkFactor[], month: number, waterTempF: number | undefined): string {
   if (season) {

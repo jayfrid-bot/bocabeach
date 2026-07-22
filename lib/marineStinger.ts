@@ -109,14 +109,15 @@ const WIND_WINDOW_HOURS = 36;
  *  anything "sustained" — a handful of hours can't establish a multi-hour
  *  onshore push, and the low end of the "~24-36h" spec range is the floor. */
 const MIN_COVERAGE_HOURS = 24;
-/** Samples within this many hours of "now" count extra — the mechanism cares
- *  most about whether the push is CURRENTLY happening, not what it was doing
- *  36h ago. */
-const RECENT_HOURS = 12;
-/** Recent hours are weighted 1.5x a non-recent hour in the trailing mean —
- *  enough to tilt the average toward "right now" without letting one gusty
- *  hour dominate a genuinely calm day. */
-const RECENT_WEIGHT = 1.5;
+/** DENSITY floor: two scattered samples that merely SPAN >=24h (e.g. one 1h
+ *  ago and one 25h ago) clear MIN_COVERAGE_HOURS but say nothing about a
+ *  sustained multi-hour push. Require samples for at least this many DISTINCT
+ *  trailing clock-hours before calling the wind "sustained". */
+const MIN_DISTINCT_HOURS = 18;
+/** No single gap between consecutive in-window samples (including the gap from
+ *  "now" to the freshest sample) may exceed this — a hole this large means we
+ *  can't honestly claim the onshore push was continuous. */
+const MAX_SAMPLE_GAP_HOURS = 6;
 
 /**
  * The onshore-component peer-reviewed anchor: elevated Physalia stranding
@@ -176,9 +177,15 @@ function onshoreComponentMph(speedMph: number, windFromDeg: number, coastNormalD
 }
 
 /**
- * Recency-weighted mean onshore component over the trailing window, or `null`
- * when there isn't enough wall-clock coverage to honestly call anything
- * "sustained" (see MIN_COVERAGE_HOURS).
+ * Even (unweighted) mean onshore component over the trailing window, or `null`
+ * when there isn't enough coverage, density, or continuity to honestly call
+ * anything "sustained".
+ *
+ * The mean is deliberately UNWEIGHTED: an earlier version tilted the last 12h
+ * ~1.5x, biasing the read toward the CURRENT wind — which contradicts the
+ * ~1-day LAG the man-o'-war copy describes (a float responds to the sustained
+ * push over the preceding day, not to this hour's gust). A sustained-window
+ * read should weight the whole trailing day evenly.
  */
 function sustainedOnshoreMph(
   hourlyWind: HourlyWindSample[],
@@ -203,15 +210,25 @@ function sustainedOnshoreMph(
   const coverageHours = Math.max(...inWindow.map(({ ageH }) => ageH));
   if (coverageHours < MIN_COVERAGE_HOURS) return null;
 
-  let weightSum = 0;
-  let valueSum = 0;
-  for (const { h, ageH } of inWindow) {
-    const onshore = onshoreComponentMph(h.windSpeedMph as number, h.windDirDeg as number, coastNormalDeg);
-    const weight = ageH <= RECENT_HOURS ? RECENT_WEIGHT : 1;
-    weightSum += weight;
-    valueSum += weight * onshore;
+  // Density: enough DISTINCT trailing clock-hours must be covered — two scattered
+  // samples spanning >=24h must not read as a sustained push.
+  const distinctHours = new Set(inWindow.map(({ ageH }) => Math.floor(ageH))).size;
+  if (distinctHours < MIN_DISTINCT_HOURS) return null;
+
+  // Continuity: cap the largest gap, including the gap from "now" to the freshest
+  // sample (a stale feed) and between consecutive samples.
+  const agesAsc = inWindow.map(({ ageH }) => ageH).sort((a, b) => a - b);
+  let maxGap = agesAsc[0];
+  for (let i = 1; i < agesAsc.length; i++) {
+    maxGap = Math.max(maxGap, agesAsc[i] - agesAsc[i - 1]);
   }
-  return { meanOnshoreMph: valueSum / weightSum, coverageHours };
+  if (maxGap > MAX_SAMPLE_GAP_HOURS) return null;
+
+  let valueSum = 0;
+  for (const { h } of inWindow) {
+    valueSum += onshoreComponentMph(h.windSpeedMph as number, h.windDirDeg as number, coastNormalDeg);
+  }
+  return { meanOnshoreMph: valueSum / inWindow.length, coverageHours };
 }
 
 /** Nov-Apr: SE-Florida's winter cold-front / trade-wind easterly season, the

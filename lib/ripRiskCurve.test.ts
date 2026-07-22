@@ -158,7 +158,7 @@ describe("ripRiskCurve — honest null / degraded modes", () => {
     expect(curve).toBeNull();
   });
 
-  it("degrades to a flat curve at the band midpoint when both waves and tide are missing", () => {
+  it("is UNSHAPED (official word, no numeric curve) when both waves and tide are missing", () => {
     const curve = ripRiskCurve({
       officialLevel: "moderate",
       sunriseIso: SUNRISE,
@@ -167,21 +167,18 @@ describe("ripRiskCurve — honest null / degraded modes", () => {
       // no waves, no tideEvents
     });
     expect(curve).not.toBeNull();
-    expect(curve!.hours.length).toBeGreaterThan(0);
-
-    const scores = curve!.hours.map((h) => h.score);
-    const first = scores[0];
-    for (const s of scores) expect(s).toBe(first);
-    // moderate band midpoint: 30 + 0.5*(65-30) = 47.5 -> rounds to 48.
-    expect(first).toBe(48);
-
-    // Not silence — the note is honest about why it's flat.
+    // No fabricated flat band-midpoint number — the honest state is the official
+    // word with NO hourly curve at all.
+    expect(curve!.unshaped).toBe(true);
+    expect(curve!.hours).toHaveLength(0);
+    expect(curve!.level).toBe("moderate");
+    // Not silence — the note is honest about why hourly detail is missing.
     expect(curve!.peakNote.length).toBeGreaterThan(0);
-    expect(curve!.peakNote).toMatch(/flat|not available|anchored/i);
+    expect(curve!.peakNote).toMatch(/not available|anchored/i);
     expect(curve!.peakNote).toMatch(/moderate/i);
   });
 
-  it("an empty (but present) waves/tideEvents array is treated the same as absent", () => {
+  it("an empty (but present) waves/tideEvents array is treated the same as absent (unshaped)", () => {
     const curve = ripRiskCurve({
       officialLevel: "high",
       sunriseIso: SUNRISE,
@@ -191,7 +188,60 @@ describe("ripRiskCurve — honest null / degraded modes", () => {
       tideEvents: [],
     });
     expect(curve).not.toBeNull();
-    const scores = curve!.hours.map((h) => h.score);
-    for (const s of scores) expect(s).toBe(scores[0]);
+    expect(curve!.unshaped).toBe(true);
+    expect(curve!.hours).toHaveLength(0);
+    expect(curve!.level).toBe("high");
+  });
+
+  it("wave samples with height but NO period are unusable — no numeric curve unless tide shapes it", () => {
+    // hasWaves-as-'non-empty' used to be enough; a usable sample needs BOTH
+    // height and period. Height-only samples + no tide → unshaped.
+    const curve = ripRiskCurve({
+      officialLevel: "moderate",
+      sunriseIso: SUNRISE,
+      sunsetIso: SUNSET,
+      tz: TZ,
+      waves: [{ time: LOW_TIDE_ISO, waveHeightFt: 4 }], // no wavePeriodS
+    });
+    expect(curve).not.toBeNull();
+    expect(curve!.unshaped).toBe(true);
+    expect(curve!.hours).toHaveLength(0);
+  });
+});
+
+describe("ripRiskCurve — peak attribution (honest peakReason)", () => {
+  it("a usable-wave-driven peak (no tide) is worded 'as today's swell peaks'", () => {
+    const curve = ripRiskCurve({
+      officialLevel: "moderate",
+      sunriseIso: SUNRISE,
+      sunsetIso: SUNSET,
+      tz: TZ,
+      // One strong, long-period usable sample mid-afternoon; nothing else.
+      waves: [{ time: LOW_TIDE_ISO, waveHeightFt: 6, wavePeriodS: 16 }],
+    });
+    expect(curve).not.toBeNull();
+    expect(curve!.unshaped).toBe(false);
+    expect(curve!.peakNote).toMatch(/swell/i);
+  });
+
+  it("does NOT claim 'as today's swell peaks' when the peak was driven by tide and waves are unusable", () => {
+    // Height-only (unusable) waves + a falling tide whose mid-ebb (not a low)
+    // lands in daylight. Before the fix, the mere presence of a waves array made
+    // the peak read "as today's swell peaks"; now it must attribute to the tide.
+    const curve = ripRiskCurve({
+      officialLevel: "moderate",
+      sunriseIso: SUNRISE,
+      sunsetIso: SUNSET,
+      tz: TZ,
+      waves: [{ time: SUNRISE, waveHeightFt: 6 }], // height only -> unusable
+      tideEvents: [
+        { type: "high", time: "2026-07-15T12:00:00.000Z", heightFt: 3.0 },
+        { type: "low", time: "2026-07-16T02:00:00.000Z", heightFt: 0.0 }, // low is AFTER sunset
+      ],
+    });
+    expect(curve).not.toBeNull();
+    expect(curve!.unshaped).toBe(false);
+    expect(curve!.peakNote).not.toMatch(/swell/i);
+    expect(curve!.peakNote).toMatch(/tide/i);
   });
 });

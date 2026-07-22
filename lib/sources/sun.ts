@@ -186,6 +186,17 @@ export function fetchSun(loc: Location, now: Date = new Date()): Wrapped<SunData
   try {
     const { y, m, d } = localYMD(loc.timezone, now);
     const t = computeSunTimes(loc.lat, loc.lon, y, m, d);
+    // Tomorrow's sunrise — the sunrise/sunset "sky show" card (lib/sunQuality.ts)
+    // looks ahead to it once today's sunset has passed. Date.UTC normalizes the
+    // day/month/year rollover, so this is just "the next calendar day".
+    const tmr = new Date(Date.UTC(y, m - 1, d + 1));
+    const tomorrow = computeSunTimes(
+      loc.lat,
+      loc.lon,
+      tmr.getUTCFullYear(),
+      tmr.getUTCMonth() + 1,
+      tmr.getUTCDate(),
+    );
     const data: SunData = {
       date: `${y}-${pad(m)}-${pad(d)}`,
       daybreak: t.daybreak?.toISOString(),
@@ -193,6 +204,7 @@ export function fetchSun(loc: Location, now: Date = new Date()): Wrapped<SunData
       solarNoon: t.solarNoon?.toISOString(),
       sunset: t.sunset?.toISOString(),
       dusk: t.dusk?.toISOString(),
+      tomorrowSunrise: tomorrow.sunrise?.toISOString(),
       maxAltitudeDeg: t.maxAltitudeDeg,
       moonPhase: moonPhase(now),
     };

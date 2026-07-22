@@ -871,7 +871,7 @@ function scoreAllHoursFull(
   // The seaweed read in effect at a given past local hour: the last of today's
   // reads at-or-before that hour, else the day's first read (closest we have).
   // These reads belong to TODAY only, so they're applied only to today's hours
-  // (see `isToday` below) — never to yesterday's hours (from past_days=1) or to
+  // (see `isToday` below) — never to prior days' hours (from past_days=2) or to
   // future days, which use the latest read instead.
   const reads = s.sargassum.data?.todayReads ?? [];
   const seaweedAtHour = (localHour: number) => {
@@ -1014,7 +1014,26 @@ export function computeHourlyScores(
   const sun = s.sun.data;
   const sunrise = sun?.sunrise ? new Date(sun.sunrise).getTime() : null;
   const sunset = sun?.sunset ? new Date(sun.sunset).getTime() : null;
-  if (sunrise == null || sunset == null) return scored;
+  if (sunrise == null || sunset == null) {
+    // No daylight bounds to filter by. But the hourly fetch now spans TWO prior
+    // days (past_days=2, added for the man-o'-war trailing-wind lookback), so
+    // returning `scored` as-is would leak yesterday's + the day-before's scored
+    // buckets into the no-sun response (it used to carry only today +/- 1). Those
+    // prior buckets are raw inputs for the sand-rain lookback (hours[i-1]/[i-2],
+    // computed over the full array above) — NOT hours to score forward — so drop
+    // beach-local dates before today. Today's buckets are unchanged: they were
+    // scored with the full raw array intact; only the OUTPUT is trimmed. (The
+    // sun-available path below already drops prior days: they fall before today's
+    // sunrise.)
+    const dateFmt = new Intl.DateTimeFormat("en-CA", {
+      timeZone: s.location.timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+    const todayKey = dateFmt.format(new Date(nowMs));
+    return scored.filter((h) => dateFmt.format(new Date(h.time)) >= todayKey);
+  }
   return scored.filter((h) => {
     const t = new Date(h.time).getTime();
     // Include the hour bucket that contains sunrise, through the last hour <= sunset.
@@ -1101,7 +1120,7 @@ export function computeMultiDayWindows(
   for (const h of scored) {
     const when = new Date(h.time);
     const key = dateFmt.format(when);
-    if (key < todayKey) continue; // drop yesterday (from past_days=1)
+    if (key < todayKey) continue; // drop prior days (from past_days=2)
     const lh = localHourInTz(h.time, tz);
     // Daylight only. The sunset hour is EXCLUSIVE: a window's end is the top of
     // its last hour, so including the sunset-hour bucket would push the window

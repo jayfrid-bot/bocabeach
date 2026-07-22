@@ -87,6 +87,17 @@ describe("fetchStingerSightings", () => {
     expect(result!.nearestKm).toBeUndefined();
   });
 
+  it("returns null (unavailable) for a 200 body that lacks a results ARRAY — never a fabricated count:0", async () => {
+    // Schema-invalid successful responses must not read as "checked, nothing
+    // nearby" (which would damp the man-o'-war risk). count:0 is reserved for a
+    // genuinely empty `results: []`.
+    for (const body of [{ total_results: 5 }, { results: "boom" }, { results: null }, {}]) {
+      vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(body)));
+      const result = await fetchStingerSightings(LAT, LON);
+      expect(result).toBeNull();
+    }
+  });
+
   it("returns null on a non-200 response", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ error: "rate limited" }, 429)));
     const result = await fetchStingerSightings(LAT, LON);
