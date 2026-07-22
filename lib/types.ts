@@ -556,7 +556,7 @@ export interface CamView {
   provider: string;
   embedType: "iframe" | "image" | "link";
   url: string;
-  /** Local proxy path for the live still (image cams only), e.g. /api/cam/boca-surf. */
+  /** Local proxy path for the live still (image cams only), e.g. /api/cam/boca-south. */
   imageUrl?: string;
   /** Capture time of the displayed still (ISO), when the source publishes one. */
   capturedAt?: string;

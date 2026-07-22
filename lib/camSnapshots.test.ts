@@ -8,17 +8,6 @@ import {
 } from "@/lib/camSnapshots";
 
 describe("cam snapshot allowlist", () => {
-  it("derives direct-URL sources from configured cams", () => {
-    expect(CAM_SOURCES["boca-surf"]).toEqual({
-      kind: "direct",
-      url: "http://bocasurfcam.com/most_recent_image.php",
-    });
-    expect(CAM_SOURCES["lake-boca"]).toEqual({
-      kind: "direct",
-      url: "http://lakebocacam.com/most_recent_image.php",
-    });
-  });
-
   it("derives latest.json feed sources (inlet + south beach)", () => {
     expect(CAM_SOURCES["boca-inlet"]).toEqual({
       kind: "feed",
@@ -43,6 +32,8 @@ describe("cam snapshot allowlist", () => {
   it("returns undefined for unknown ids (SSRF guard)", () => {
     expect(camSourceForId("not-a-cam")).toBeUndefined();
     expect(camSourceForId("")).toBeUndefined();
+    expect(camSourceForId("boca-surf")).toBeUndefined();
+    expect(camSourceForId("lake-boca")).toBeUndefined();
     // must not resolve via prototype keys
     expect(camSourceForId("toString")).toBeUndefined();
     expect(camSourceForId("constructor")).toBeUndefined();

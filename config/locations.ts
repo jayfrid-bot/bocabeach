@@ -128,44 +128,6 @@ export const LOCATIONS: Location[] = [
         lat: 26.3354,
         lon: -80.0703,
       },
-      {
-        // Parked at the bottom with lake-boca: both feeds currently return
-        // 0-byte stills (checked 2026-06-11). Promote them back up if they revive.
-        // bocasurfcam.com publishes a fresh full-res JPEG at most_recent_image.php.
-        // Host is http-only (self-signed TLS), so the upstream hop stays plaintext
-        // http; proxied via /api/cam/boca-surf so the browser only sees same-origin.
-        id: "boca-surf",
-        name: "Boca Surf Cam",
-        provider: "bocasurfcam.com",
-        embedType: "image",
-        url: "http://www.bocasurfcam.com/",
-        snapshotUrl: "http://bocasurfcam.com/most_recent_image.php",
-        attribution: "Live still courtesy bocasurfcam.com",
-        lat: 26.3492,
-        lon: -80.0701,
-      },
-      {
-        // Same operator/setup as bocasurfcam — live still at most_recent_image.php
-        // (view over Lake Boca Raton / the inlet). Proxied via /api/cam/lake-boca.
-        id: "lake-boca",
-        name: "Lake Boca Cam",
-        provider: "lakebocacam.com",
-        embedType: "image",
-        url: "http://lakebocacam.com/",
-        snapshotUrl: "http://lakebocacam.com/most_recent_image.php",
-        attribution: "Live still courtesy lakebocacam.com",
-        lat: 26.3387,
-        lon: -80.0716,
-      },
-      {
-        name: "Surfline — Boca Raton",
-        provider: "Surfline",
-        embedType: "link",
-        url: "https://www.surfline.com/surf-reports-forecasts-cams/united-states/florida/palm-beach-county/boca-raton/4148411",
-        attribution: "Surfline (Premium cam, link only — no embedding/scraping)",
-        lat: 26.36,
-        lon: -80.07,
-      },
     ],
   },
 ];
