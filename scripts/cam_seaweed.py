@@ -100,8 +100,6 @@ PREV_URL = os.environ.get(
 MORNING = range(5, 10)
 
 CAMS = [
-    {"id": "boca-surf", "name": "Boca Surf Cam",
-     "still": "http://bocasurfcam.com/most_recent_image.php"},
     {"id": "boca-inlet-surf", "name": "Boca Inlet — Surf & Shoreline",
      "feed": "http://video-monitoring.com/beachcams/bocainlet", "view": "s16"},
     {"id": "boca-south-surf", "name": "South Beach — Shoreline & Surf",
