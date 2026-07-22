@@ -8,6 +8,7 @@ import type {
   Wrapped,
 } from "@/lib/types";
 import { fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
+import { vsAverage, type VsAverageEntry } from "@/lib/vsAverage";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
 
@@ -19,6 +20,10 @@ const CAM_FEED_URL =
 const RANK: Record<string, number> = { none: 0, low: 1, moderate: 2, high: 3 };
 const LEVELS: SargassumRisk[] = ["none", "low", "moderate", "high"];
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** Cap the serving-path by-day chart to the most recent N days. The raw feed
+ *  stays unlimited; this only bounds what we hand the UI (matches the vs-average
+ *  ~8-week lookback). */
+const BY_DAY_CAP_DAYS = 56;
 
 interface CamGroup {
   capturedAtLocal?: string;
@@ -103,6 +108,7 @@ function byDayFromHistory(history: HistoryEntry[]): SargassumByDay[] | undefined
   if (!byDate.size) return undefined;
   return [...byDate.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(-BY_DAY_CAP_DAYS) // most recent 56 days only (serving-path bound)
     .map(([date, b]) => {
       const avg = b.sum / b.n;
       return {
@@ -122,9 +128,28 @@ function byDayFromHistory(history: HistoryEntry[]): SargassumByDay[] | undefined
  * newer one. Today's reads are also surfaced in capture order so past hours
  * can score with the read that was in effect at that time. Pure + tested.
  */
-export function summarizeSeaweed(feed: CamSeaweedFeed): SargassumData | null {
-  const byHour = byHourFromHistory(feed?.history ?? []);
-  const byDay = byDayFromHistory(feed?.history ?? []);
+/**
+ * "≈20% more seaweed than average" — today's coverage vs a hour-matched rolling
+ * baseline, all weekdays (seaweed doesn't follow a work-week rhythm). Returns
+ * undefined when the caller didn't supply today's local date. See lib/vsAverage.ts.
+ */
+function seaweedVsAvg(
+  history: readonly VsAverageEntry[],
+  nowLocalDate?: string,
+): SargassumData["vsAvg"] {
+  if (!nowLocalDate) return undefined;
+  const r = vsAverage(history, nowLocalDate, { matchWeekday: false, minBaselineDays: 10 }, "cov");
+  return { deltaPct: r.deltaPct, deltaPts: r.deltaPts, baselineDays: r.baselineDays };
+}
+
+export function summarizeSeaweed(
+  feed: CamSeaweedFeed,
+  nowLocalDate?: string,
+): SargassumData | null {
+  const history = feed?.history ?? [];
+  const byHour = byHourFromHistory(history);
+  const byDay = byDayFromHistory(history);
+  const vsAvg = seaweedVsAvg(history, nowLocalDate);
   const morning = feed?.morning ?? null;
   const group = feed?.latest ?? morning ?? null;
   const cams = (group?.cams ?? []).filter(
@@ -134,7 +159,7 @@ export function summarizeSeaweed(feed: CamSeaweedFeed): SargassumData | null {
   if (!cams.length) {
     // No current reading, but still surface the historical charts if we have any.
     return byHour || byDay
-      ? { level: "unknown", isMorning: false, cams: [], byHour, byDay }
+      ? { level: "unknown", isMorning: false, cams: [], byHour, byDay, vsAvg }
       : null;
   }
   // Worst by category rank; tie-broken by the finer coverage % when present.
@@ -171,6 +196,7 @@ export function summarizeSeaweed(feed: CamSeaweedFeed): SargassumData | null {
     todayReads: todayReads?.length ? todayReads : undefined,
     byHour,
     byDay,
+    vsAvg,
   };
 }
 
@@ -195,7 +221,7 @@ export async function fetchSargassum(
   try {
     const res = await fetchWithTimeout(CAM_FEED_URL, {
       timeoutMs: 7000,
-      next: { revalidate: 3600 }, // 1h — the cam-vision job runs a few times/day
+      next: { revalidate: 600 }, // 10 min — the cam job now runs every 10 min during daylight
     });
     fetchedAt = fetchedAtOf(res);
     if (res.status === 404) {
@@ -213,7 +239,12 @@ export async function fetchSargassum(
     // The GitHub CDN's Date header is serve-time, not when the job generated the
     // snapshot — report the older of the two so RelativeTime matches the card.
     fetchedAt = oldestIso(feed.generatedAt, fetchedAtOf(res));
-    const data = summarizeSeaweed(feed);
+    // Today's local calendar date at the beach — anchors the vs-average baseline
+    // to "today" in the beach's own timezone (not the server's).
+    const nowLocalDate = new Intl.DateTimeFormat("en-CA", { timeZone: loc.timezone }).format(
+      new Date(),
+    );
+    const data = summarizeSeaweed(feed, nowLocalDate);
     return {
       source: ATTRIBUTION,
       status: data ? "ok" : "best-effort",

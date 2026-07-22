@@ -160,6 +160,57 @@ describe("summarizeSeaweed", () => {
     expect(d.byDay).toHaveLength(1);
     expect(d.byHour).toHaveLength(1);
   });
+
+  it("caps byDay to the most recent 56 days (serving-path bound)", () => {
+    // 70 distinct days of history → the chart keeps only the newest 56.
+    const history = Array.from({ length: 70 }, (_, i) => {
+      const date = new Date(Date.UTC(2026, 3, 1) + i * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      return { t: `${date}T07:00:00-04:00`, hour: 7, seaweed: "moderate" as const };
+    });
+    const d = summarizeSeaweed({ latest: { cams: [{ name: "A", level: "low" }] }, history })!;
+    expect(d.byDay).toHaveLength(56);
+    expect(d.byDay?.[0].date).toBe("2026-04-15"); // oldest 14 trimmed
+    expect(d.byDay?.at(-1)?.date).toBe("2026-06-09"); // newest kept
+  });
+});
+
+describe("summarizeSeaweed — vsAvg lands on the parsed data", () => {
+  const e = (date: string, hour: number, cov: number) => ({
+    t: `${date}T${String(hour).padStart(2, "0")}:00:00-04:00`,
+    hour,
+    seaweed: "moderate",
+    cov,
+  });
+  // Today's coverage (2026-07-21) runs lighter than prior days at the same hours,
+  // across every weekday (matchWeekday=false for seaweed).
+  const history = [
+    e("2026-07-21", 8, 20),
+    e("2026-07-21", 12, 20),
+    e("2026-07-21", 16, 20),
+    // Ten prior days, all three hours each → 30 baseline cells / 10 days
+    // (the seaweed call site requires ≥10 baseline days).
+    ...[20, 19, 18, 17, 16, 15, 14, 13, 12, 11].flatMap((day) => [
+      e(`2026-07-${day}`, 8, 40),
+      e(`2026-07-${day}`, 12, 40),
+      e(`2026-07-${day}`, 16, 40),
+    ]),
+  ];
+
+  it("attaches an all-weekday, hour-matched coverage comparison when given today's date", () => {
+    const d = summarizeSeaweed(
+      { latest: { cams: [{ name: "A", level: "low", coveragePct: 20 }] }, history: history as never },
+      "2026-07-21",
+    );
+    expect(d!.vsAvg?.baselineDays).toBe(10);
+    expect(Math.round(d!.vsAvg!.deltaPct!)).toBe(-50); // 20 vs 40
+  });
+
+  it("omits vsAvg entirely when today's date isn't supplied", () => {
+    const d = summarizeSeaweed({ latest: { cams: [{ name: "A", level: "low" }] } });
+    expect(d!.vsAvg).toBeUndefined();
+  });
 });
 
 describe("fetchSargassum — cam gating", () => {

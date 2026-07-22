@@ -89,6 +89,88 @@ describe("summarizeBusyness", () => {
       { date: "2026-06-04", avg: 2, level: "moderate", people: 12, samples: 1 },
     ]);
   });
+
+  it("caps byDay to the most recent 56 days (serving-path bound)", () => {
+    // 70 distinct days of history → the chart keeps only the newest 56.
+    const history = Array.from({ length: 70 }, (_, i) => {
+      const date = new Date(Date.UTC(2026, 3, 1) + i * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      return { t: `${date}T12:00:00-04:00`, hour: 12, level: "moderate" as const };
+    });
+    const d = summarizeBusyness({ history });
+    expect(d.byDay).toHaveLength(56);
+    // The oldest 14 days are dropped; the newest survives.
+    expect(d.byDay?.[0].date).toBe("2026-04-15"); // day 15 of 70 (first 14 trimmed)
+    expect(d.byDay?.at(-1)?.date).toBe("2026-06-09"); // day 70
+  });
+});
+
+describe("summarizeBusyness — vsAvg lands on the parsed data", () => {
+  // Today (2026-07-21, Tuesday) runs busier than prior Tuesdays at the same hours.
+  const c = (date: string, hour: number, crowdPct: number) => ({
+    t: `${date}T${String(hour).padStart(2, "0")}:00:00-04:00`,
+    hour,
+    level: "moderate",
+    crowdPct,
+  });
+  const history = [
+    c("2026-07-21", 12, 60),
+    c("2026-07-21", 14, 60),
+    c("2026-07-21", 16, 60),
+    // Five prior Tuesdays, all three hours each → 15 baseline cells / 5 days
+    // (the busyness call site requires ≥5 baseline days).
+    c("2026-07-14", 12, 40),
+    c("2026-07-14", 14, 40),
+    c("2026-07-14", 16, 40),
+    c("2026-07-07", 12, 40),
+    c("2026-07-07", 14, 40),
+    c("2026-07-07", 16, 40),
+    c("2026-06-30", 12, 40),
+    c("2026-06-30", 14, 40),
+    c("2026-06-30", 16, 40),
+    c("2026-06-23", 12, 40),
+    c("2026-06-23", 14, 40),
+    c("2026-06-23", 16, 40),
+    c("2026-06-16", 12, 40),
+    c("2026-06-16", 14, 40),
+    c("2026-06-16", 16, 40),
+    // A prior Saturday at the same hours — excluded by same-weekday matching.
+    c("2026-07-18", 12, 95),
+    c("2026-07-18", 14, 95),
+  ];
+
+  it("attaches a same-weekday, hour-matched crowd comparison when given today's date", () => {
+    const d = summarizeBusyness(
+      { latest: { cams: [{ name: "A", crowd: "busy", crowdPct: 60 }] }, history: history as never },
+      undefined,
+      "2026-07-21",
+    );
+    expect(d.vsAvg?.weekday).toBe("Tuesday");
+    expect(d.vsAvg?.baselineDays).toBe(5); // five prior Tuesdays
+    expect(Math.round(d.vsAvg!.deltaPct!)).toBe(50); // 60 vs 40
+  });
+
+  it("still computes vsAvg from today's reads when the live read is night-gated", () => {
+    const feed: CamFeed = {
+      latest: { capturedAtLocal: "2026-07-21T22:00:00-04:00", cams: [] },
+      history: history as never,
+    };
+    const now = new Date("2026-07-21T23:30:00-04:00"); // past sunset + buffer
+    const d = summarizeBusyness(feed, {
+      now,
+      sunriseIso: "2026-07-21T06:30:00-04:00",
+      sunsetIso: "2026-07-21T20:00:00-04:00",
+    }, "2026-07-21");
+    expect(d.level).toBe("unknown");
+    expect(d.vsAvg?.deltaPct).not.toBeNull();
+    expect(Math.round(d.vsAvg!.deltaPct!)).toBe(50);
+  });
+
+  it("omits vsAvg entirely when today's date isn't supplied (cam-selection-only callers)", () => {
+    const d = summarizeBusyness({ latest: { cams: [{ name: "A", crowd: "busy" }] } });
+    expect(d.vsAvg).toBeUndefined();
+  });
 });
 
 describe("fetchBusyness — cam gating", () => {

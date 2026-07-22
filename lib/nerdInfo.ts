@@ -220,7 +220,7 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
       title: "Crowds",
       weightPct: SCORE_WEIGHTS_PCT.crowds,
       explainer:
-        "How full the beach looks right now, read straight off the public beach cams by a vision model. An empty beach scores best and a packed one worst — this is about elbow room, not safety. At night, or when a cam is down or stale, we simply can't see the sand, so busyness reads 'unknown' and drops out of the score entirely rather than pretending the beach is empty.",
+        "How full the beach looks right now, read straight off the public beach cams by a vision model. An empty beach scores best and a packed one worst — this is about elbow room, not safety. At night, or when a cam is down or stale, we simply can't see the sand, so busyness reads 'unknown' and drops out of the score entirely rather than pretending the beach is empty. The \"busier/quieter than average\" line compares today's reads only against the same hours on prior same-weekday days over a rolling ~8-week window (so it stays fair to the time of day), and needs about a week of same-weekday history before it will speak.",
       formula: "crowdScore = curve through 0%→100, 25%→90, 50%→70, 75%→45, 100%→25 (emptier is better)",
       computation,
       sources: src(snap.busyness.source),
@@ -441,7 +441,7 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
       title: "Seaweed",
       weightPct: SCORE_WEIGHTS_PCT.sargassum,
       explainer:
-        "Sargassum is the brown seaweed that can pile up on Florida sand and make the water unpleasant to wade through. We read its coverage off the cams — preferring the early-morning shot, before the city's cleaning tractor runs — so the more covered the beach, the lower the score. A heavy mat (50% or more) also slides a ceiling onto the whole score, but never far enough to read as a full beach closure.",
+        "Sargassum is the brown seaweed that can pile up on Florida sand and make the water unpleasant to wade through. We read its coverage off the cams — preferring the early-morning shot, before the city's cleaning tractor runs — so the more covered the beach, the lower the score. A heavy mat (50% or more) also slides a ceiling onto the whole score, but never far enough to read as a full beach closure. The \"more/less seaweed than average\" line compares today's reads against the same hours on prior days over a rolling ~8-week window (all weekdays, since seaweed doesn't follow a work-week rhythm), and needs a week or two of history before it appears.",
       formula: "coverage curve 0%→100, 10%→85, 30%→55, 60%→20, 100%→0  (else category none/low/moderate/high = 100/85/55/20)",
       computation,
       sources: src(snap.sargassum.source),

@@ -1,7 +1,32 @@
 import type { BusynessData } from "@/lib/types";
 import { BUSYNESS_SLOTS, busynessFilledSlots } from "@/lib/busynessFill";
+import { busynessVsAvgPhrase, type VsAvgTone } from "@/lib/vsAveragePhrase";
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+
+/** Tone → colour: busier = amber, quieter = emerald, typical = slate. */
+const TONE_CLASS: Record<VsAvgTone, string> = {
+  busier: "text-amber-700 dark:text-amber-400",
+  quieter: "text-emerald-700 dark:text-emerald-400",
+  typical: "text-slate-500 dark:text-slate-400",
+};
+
+/**
+ * Quiet one-liner comparing today's crowd to a typical same-weekday beach.
+ * Renders nothing until there's enough history (deltaPct null with no points
+ * fallback). The rounding/band/wording live in lib/vsAveragePhrase.ts; here we
+ * only map the tone to a colour. The sample detail lives in the title, not the text.
+ */
+function BusynessVsAvgLine({ vsAvg }: { vsAvg: NonNullable<BusynessData["vsAvg"]> }) {
+  const phrase = busynessVsAvgPhrase(vsAvg);
+  if (!phrase) return null;
+  const title = `${vsAvg.baselineDays}-day hour-matched, same-weekday baseline`;
+  return (
+    <div className={`mt-1 text-xs ${TONE_CLASS[phrase.tone]}`} title={title}>
+      {phrase.text}
+    </div>
+  );
+}
 
 /** One umbrella-and-pole silhouette, filled/ghosted/dimmed per its slot state. */
 function Umbrella({ state }: { state: "filled" | "ghost" | "dimmed" }) {
@@ -54,6 +79,7 @@ export function BusynessCard({ busy }: { busy?: BusynessData | null }) {
           <span aria-hidden>🌙</span>
           <span>{busy.note}</span>
         </div>
+        {busy.vsAvg ? <BusynessVsAvgLine vsAvg={busy.vsAvg} /> : null}
       </div>
     );
   }
@@ -82,6 +108,7 @@ export function BusynessCard({ busy }: { busy?: BusynessData | null }) {
         {filled} of {BUSYNESS_SLOTS} umbrellas
         {sub ? ` · ${sub}` : ""}
       </div>
+      {busy.vsAvg ? <BusynessVsAvgLine vsAvg={busy.vsAvg} /> : null}
     </div>
   );
 }

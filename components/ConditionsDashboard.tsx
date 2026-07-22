@@ -38,6 +38,7 @@ import { SourceList } from "@/components/SourceBadge";
 import { CamGrid } from "@/components/CamGrid";
 import { DayOutlookStrip } from "@/components/DayOutlookStrip";
 import { NotifyButton } from "@/components/NotifyButton";
+import { seaweedVsAvgPhrase } from "@/lib/vsAveragePhrase";
 
 // Throw on non-OK so an error body (e.g. a 404 `{error}`) never replaces the
 // good snapshot — SWR keeps the last good data and the consumer guard holds.
@@ -467,6 +468,9 @@ export function ConditionsDashboard({
                 sub={
                   `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
                   (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "") +
+                  // vs-average FIRST (before the cam note) so the 3-line clamp
+                  // never eats it.
+                  seaweedVsAvgPhrase(sg.vsAvg) +
                   (sg.note ? ` — ${sg.note}` : "")
                 }
               />

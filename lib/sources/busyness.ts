@@ -8,6 +8,7 @@ import type {
 } from "@/lib/types";
 import { fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
 import { fetchSun } from "@/lib/sources/sun";
+import { vsAverage, weekdayName, type VsAverageEntry } from "@/lib/vsAverage";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
 
@@ -104,6 +105,11 @@ export interface CamFeed {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** Cap the serving-path by-day chart to the most recent N days. The raw feed
+ *  stays unlimited; this only bounds what we hand the UI (matches the vs-average
+ *  ~8-week lookback). */
+const BY_DAY_CAP_DAYS = 56;
+
 const LEVELS: BusynessLevel[] = ["empty", "quiet", "moderate", "busy", "packed"];
 
 /** Average the rolling history into a typical busyness per local hour. */
@@ -188,6 +194,7 @@ function byDayFromHistory(history: HistoryEntry[]): BusynessByDay[] | undefined 
   if (!byDate.size) return undefined;
   return [...byDate.entries()]
     .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(-BY_DAY_CAP_DAYS) // most recent 56 days only (serving-path bound)
     .map(([date, b]) => {
       const avg = b.sum / b.n;
       return {
@@ -209,9 +216,37 @@ function byDayFromHistory(history: HistoryEntry[]): BusynessByDay[] | undefined 
  * level/people/crowdPct headline) while leaving the historical byHour/byDay
  * charts untouched, since those are daytime aggregates that stay valid.
  */
-export function summarizeBusyness(feed: CamFeed, gate?: BusynessGateOptions): BusynessData {
-  const byHour = byHourFromHistory(feed?.history ?? []);
-  const byDay = byDayFromHistory(feed?.history ?? []);
+/**
+ * "≈20% busier than the average Tuesday" — today's crowd vs a hour-matched,
+ * same-weekday rolling baseline. Computed even when the current read is gated to
+ * "unknown" (night/stale): the live headline is unavailable but the historical
+ * comparison is still honest, drawn from today's daylight reads. Returns
+ * undefined when the caller didn't supply today's local date (unit tests that
+ * only exercise cam-selection). See lib/vsAverage.ts.
+ */
+function busynessVsAvg(
+  history: readonly VsAverageEntry[],
+  nowLocalDate?: string,
+): BusynessData["vsAvg"] {
+  if (!nowLocalDate) return undefined;
+  const r = vsAverage(history, nowLocalDate, { matchWeekday: true, minBaselineDays: 5 }, "crowdPct");
+  return {
+    deltaPct: r.deltaPct,
+    deltaPts: r.deltaPts,
+    weekday: weekdayName(nowLocalDate) ?? "day",
+    baselineDays: r.baselineDays,
+  };
+}
+
+export function summarizeBusyness(
+  feed: CamFeed,
+  gate?: BusynessGateOptions,
+  nowLocalDate?: string,
+): BusynessData {
+  const history = feed?.history ?? [];
+  const byHour = byHourFromHistory(history);
+  const byDay = byDayFromHistory(history);
+  const vsAvg = busynessVsAvg(history, nowLocalDate);
   const group = feed?.latest ?? feed?.morning ?? undefined;
 
   // No gate passed at all -> caller isn't opting into the daylight/freshness
@@ -219,7 +254,7 @@ export function summarizeBusyness(feed: CamFeed, gate?: BusynessGateOptions): Bu
   // fetchBusyness's real callers pass one.
   const note = gate ? unreadableReason(group?.capturedAtLocal, gate) : undefined;
   if (note) {
-    return { level: "unknown", capturedAtLocal: group?.capturedAtLocal, note, byHour, byDay };
+    return { level: "unknown", capturedAtLocal: group?.capturedAtLocal, note, byHour, byDay, vsAvg };
   }
 
   const cams = (group?.cams ?? []).filter(
@@ -227,7 +262,7 @@ export function summarizeBusyness(feed: CamFeed, gate?: BusynessGateOptions): Bu
       !!c && typeof c.crowd === "string" && c.crowd in RANK,
   );
   if (!cams.length) {
-    return { level: "unknown", capturedAtLocal: group?.capturedAtLocal, byHour, byDay };
+    return { level: "unknown", capturedAtLocal: group?.capturedAtLocal, byHour, byDay, vsAvg };
   }
   const busiest = cams.reduce((a, b) => {
     if (RANK[b.crowd] !== RANK[a.crowd]) return RANK[b.crowd] > RANK[a.crowd] ? b : a;
@@ -242,6 +277,7 @@ export function summarizeBusyness(feed: CamFeed, gate?: BusynessGateOptions): Bu
     cams: cams.map((c) => ({ name: c.name, crowd: c.crowd, people: c.people })),
     byHour,
     byDay,
+    vsAvg,
   };
 }
 
@@ -265,7 +301,7 @@ export async function fetchBusyness(
   try {
     const res = await fetchWithTimeout(CAM_FEED_URL, {
       timeoutMs: 6000,
-      next: { revalidate: 3600 }, // 1h — the cam-vision job runs a few times/day
+      next: { revalidate: 600 }, // 10 min — the cam job now runs every 10 min during daylight
     });
     fetchedAt = fetchedAtOf(res);
     if (res.status === 404) {
@@ -287,7 +323,16 @@ export async function fetchBusyness(
     // so summarizeBusyness can gate the current reading to the beach's own
     // daylight window without depending on lib/conditions.ts's fetch ordering.
     const sun = fetchSun(loc).data;
-    const data = summarizeBusyness(feed, { sunriseIso: sun?.sunrise, sunsetIso: sun?.sunset });
+    // Today's local calendar date at the beach — anchors the vs-average baseline
+    // to "today" in the beach's own timezone (not the server's).
+    const nowLocalDate = new Intl.DateTimeFormat("en-CA", { timeZone: loc.timezone }).format(
+      new Date(),
+    );
+    const data = summarizeBusyness(
+      feed,
+      { sunriseIso: sun?.sunrise, sunsetIso: sun?.sunset },
+      nowLocalDate,
+    );
     return {
       source: ATTRIBUTION,
       status: data.level === "unknown" ? "best-effort" : "ok",

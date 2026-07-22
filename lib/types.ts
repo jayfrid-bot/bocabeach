@@ -430,6 +430,18 @@ export interface BusynessData {
   byHour?: BusynessByHour[];
   /** Peak busyness per day, learned from the rolling cam history. */
   byDay?: BusynessByDay[];
+  /**
+   * How today's crowd compares to a typical same-weekday beach day — hour-matched
+   * against a rolling ~8-week baseline. deltaPct is null (honest no-answer) until
+   * there's enough history, or falls back to deltaPts when the baseline crowd is
+   * near zero. See lib/vsAverage.ts.
+   */
+  vsAvg?: {
+    deltaPct: number | null;
+    deltaPts?: number | null;
+    weekday: string;
+    baselineDays: number;
+  };
 }
 /**
  * Seaweed (sargassum) read entirely from the beach cams by the vision job —
@@ -452,6 +464,17 @@ export interface SargassumData {
   byHour?: SargassumByHour[];
   /** Worst seaweed per day, learned from the rolling cam history. */
   byDay?: SargassumByDay[];
+  /**
+   * How today's seaweed coverage compares to a typical day — hour-matched against
+   * a rolling ~8-week baseline (all weekdays; seaweed doesn't follow a work week).
+   * deltaPct is null until there's enough history, or falls back to deltaPts when
+   * the baseline coverage is near zero. See lib/vsAverage.ts.
+   */
+  vsAvg?: {
+    deltaPct: number | null;
+    deltaPts?: number | null;
+    baselineDays: number;
+  };
 }
 
 // --- NWS alerts + rip-current risk (api.weather.gov) -----------------------
