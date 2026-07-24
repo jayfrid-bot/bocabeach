@@ -48,7 +48,10 @@ const FACTOR_LABEL: Record<string, string> = {
  *  full label already fits every slice width their weight can produce). */
 const FACTOR_ABBREV: Record<string, string> = {
   comfort: "Humid",
-  sargassum: "Algae",
+  // No shortened form — "Seaweed" is the product's word (owner: never "Algae");
+  // when it can't fit along the arc the plan falls through to a radial spoke,
+  // where the full word fits comfortably.
+  sargassum: "Seaweed",
   crowds: "Busy",
 };
 

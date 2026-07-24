@@ -34,9 +34,10 @@ describe("ScoreWheel planLabel — every slice gets readable text", () => {
     expect(plan.radial).toBe(false);
   });
 
-  it("sargassum (7%) shrinks to its abbreviation instead of dropping", () => {
+  it("sargassum (7%) keeps the word 'Seaweed' (owner: never 'Algae'), going radial if needed", () => {
     const plan = planLabel("sargassum", 300, arcLenFor(0.07));
-    expect(plan.text).toBe("Algae");
+    expect(plan.text).toBe("Seaweed");
+    expect(plan.text.length).toBeGreaterThan(0);
   });
 
   it("never returns empty text, even for a pathologically thin slice", () => {
