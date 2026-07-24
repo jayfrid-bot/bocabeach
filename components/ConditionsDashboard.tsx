@@ -75,6 +75,15 @@ function dewComfort(f?: number): string | undefined {
   if (f < 75) return "muggy";
   return "oppressive";
 }
+/**
+ * Wrapper for the storm/air-quality/lightning band's fronts. The h-full +
+ * child-stretch makes each card fill its grid cell; the shared min-height keeps
+ * the three reading as ONE band even when they wrap to different rows (narrow
+ * viewports, or a missing storm metric shifting the row up). The lightning radar
+ * is the tallest of the three and simply exceeds this floor.
+ */
+const SAFETY_CARD_WRAP = "h-full min-h-[15rem] [&>div]:h-full";
+
 /** Plain-English note for relative humidity (%). */
 function humidityNote(p?: number): string | undefined {
   if (p == null) return undefined;
@@ -125,7 +134,9 @@ export function ConditionsDashboard({
   const busy = snap.busyness.data;
   const clarity = snap.clarity.data;
   const traffic = snap.traffic.data;
-  const rip = snap.nws.data?.ripCurrentRisk;
+  // (No rip-current text tile here: the hourly RipRiskCard in the safety cluster
+  // below is the single home for rip risk — the plain "Low / NWS Surf Zone
+  // Forecast" tile that used to sit in this grid said strictly less, twice.)
   const nc = snap.nowcast.data;
 
   // Shared context for the flip-card "data nerd" backs (the math + sources
@@ -322,7 +333,10 @@ export function ConditionsDashboard({
           {bw ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-200/80 dark:bg-slate-800/70 px-3 py-1 text-slate-700 dark:text-slate-200 ring-1 ring-slate-900/10 dark:ring-white/10">
               <span aria-hidden>⭐</span>
-              Best remaining window today: {fmtTime(bw.startIso, tz)}–{fmtTime(bw.endIso, tz)}
+              Best remaining window today:{" "}
+              <span className="tabular-nums">
+                {fmtTime(bw.startIso, tz)}–{fmtTime(bw.endIso, tz)}
+              </span>
             </span>
           ) : null}
         </section>
@@ -334,14 +348,17 @@ export function ConditionsDashboard({
         </section>
       ) : null}
 
-      <h2 className="mb-3 mt-2 text-lg font-semibold text-slate-900 dark:text-white">
+      <h2 className="mb-3 mt-2 text-balance text-lg font-semibold text-slate-900 dark:text-white">
         Explore the details
       </h2>
 
-      {/* Instruments: the four graphic cards in one band so every row pairs
-          equal-height cards (default grid stretch + h-full on each card). Each
-          is a FlipCard — tap to reveal the math/sources on the back. */}
-      <section className="mb-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/* ONE flowing grid, graphic instruments first then the reading tiles, so
+          there are no empty slots at 4-col (the old split into two sections left
+          a hole wherever the first grid's item count wasn't a multiple of four).
+          2-col → 4-col only: an intermediate 3-col re-orphans the last row.
+          Every card is a FlipCard — tap to reveal the math/sources on the back —
+          and default grid stretch equalizes each row's heights. */}
+      <section className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <FlipCard
           label="Wind"
           back={nerdBack("wind")}
@@ -433,12 +450,57 @@ export function ConditionsDashboard({
         {showBusyness ? (
           <FlipCard label="Busyness" back={nerdBack("busyness")} front={<BusynessCard busy={busy} />} />
         ) : null}
-      </section>
-
-      {/* Readings: compact text tiles only — same shape per row (default grid
-          stretch equalizes rows). Each tile is a FlipCard; the height floor
-          keeps the (taller) nerd back readable, and the band stays uniform. */}
-      <section className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        {/* Water clarity + water quality ride up here next to Busyness: they
+            fill what used to be the gap at the end of the instruments band, and
+            "what's the water actually like" belongs beside it either way. */}
+        {clarity ? (
+          <FlipCard
+            label="Water clarity"
+            back={nerdBack("clarity")}
+            front={
+              <MetricCard
+                icon="🔍"
+                label="Water clarity"
+                value={clarity.level ? clarityDisplayWord(clarity.level, clarity.pct) : "—"}
+                sub={
+                  clarity.level
+                    ? [
+                        clarity.pct != null ? `~${clarity.pct}% clear` : null,
+                        clarity.note,
+                        clarity.capturedAtLocal
+                          ? `as of ${fmtTime(clarity.capturedAtLocal, tz)}`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")
+                    : clarity.note ?? "not available"
+                }
+              />
+            }
+          />
+        ) : null}
+        <FlipCard
+          label="Water quality"
+          back={nerdBack("waterQuality")}
+          front={
+            <MetricCard
+              icon="🧫"
+              label="Water quality"
+              value={
+                d.waterRating === "unknown"
+                  ? "—"
+                  : d.waterRating[0].toUpperCase() + d.waterRating.slice(1)
+              }
+              sub={
+                d.waterRating === "unknown"
+                  ? "not available"
+                  : d.waterAdvisory
+                    ? "advisory in effect"
+                    : undefined
+              }
+            />
+          }
+        />
         <FlipCard
           label="Air temp"
           back={nerdBack("airTemp")}
@@ -464,7 +526,7 @@ export function ConditionsDashboard({
                 <span className="truncate">Water temp</span>
               </div>
               <div className="flex flex-1 flex-col justify-center">
-                <div className="text-xl font-semibold text-slate-900 dark:text-white sm:text-2xl">
+                <div className="text-xl font-semibold tabular-nums text-slate-900 dark:text-white sm:text-2xl">
                   {d.waterTempF != null ? `${d.waterTempF}°F` : "—"}
                 </div>
                 <div className="min-h-4 break-words text-xs text-slate-600 dark:text-slate-400 line-clamp-3">
@@ -530,66 +592,6 @@ export function ConditionsDashboard({
             front={<MetricCard icon="🌧️" label="Rain chance" value={`${d.precipProbability}%`} />}
           />
         ) : null}
-        <FlipCard
-          label="Water quality"
-          back={nerdBack("waterQuality")}
-          front={
-            <MetricCard
-              icon="🧫"
-              label="Water quality"
-              value={
-                d.waterRating === "unknown"
-                  ? "—"
-                  : d.waterRating[0].toUpperCase() + d.waterRating.slice(1)
-              }
-              sub={
-                d.waterRating === "unknown"
-                  ? "not available"
-                  : d.waterAdvisory
-                    ? "advisory in effect"
-                    : undefined
-              }
-            />
-          }
-        />
-        {clarity ? (
-          <FlipCard
-            label="Water clarity"
-            back={nerdBack("clarity")}
-            front={
-              <MetricCard
-                icon="🔍"
-                label="Water clarity"
-                value={clarity.level ? clarityDisplayWord(clarity.level, clarity.pct) : "—"}
-                sub={
-                  clarity.level
-                    ? [
-                        clarity.pct != null ? `~${clarity.pct}% clear` : null,
-                        clarity.note,
-                        clarity.capturedAtLocal
-                          ? `as of ${fmtTime(clarity.capturedAtLocal, tz)}`
-                          : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")
-                    : clarity.note ?? "not available"
-                }
-              />
-            }
-          />
-        ) : null}
-        <FlipCard
-          label="Rip current risk"
-          back={nerdBack("ripCurrent")}
-          front={
-            <MetricCard
-              icon="🌊"
-              label="Rip current risk"
-              value={!rip || rip === "unknown" ? "—" : cap(rip)}
-              sub={rip && rip !== "unknown" ? "NWS Surf Zone Forecast" : "not available"}
-            />
-          }
-        />
         {sg && sg.level !== "unknown" ? (
           <FlipCard
             label="Seaweed"
@@ -658,7 +660,7 @@ export function ConditionsDashboard({
           label="Air quality"
           back={nerdBack("airQuality")}
           front={
-            <div className="h-full [&>div]:h-full">
+            <div className={SAFETY_CARD_WRAP}>
               <AirQualityMeter air={snap.airQuality} />
             </div>
           }
@@ -673,7 +675,7 @@ export function ConditionsDashboard({
             label="Storm activity"
             back={nerdBack("storm")}
             front={
-              <div className="h-full [&>div]:h-full">
+              <div className={SAFETY_CARD_WRAP}>
                 <StormActivityMeter storm={storm} />
               </div>
             }
@@ -683,7 +685,7 @@ export function ConditionsDashboard({
           label="Lightning"
           back={nerdBack("lightning")}
           front={
-            <div className="h-full [&>div]:h-full">
+            <div className={SAFETY_CARD_WRAP}>
               <LightningCard lightning={snap.lightning} />
             </div>
           }
@@ -744,10 +746,13 @@ export function ConditionsDashboard({
       </section>
 
       {/* Quiet, exception-only advisories (SE-US-Atlantic beaches only) — kept
-          low on the page like the tide-aberration badges. Both cards self-hide,
-          and the section only mounts when at least one has something to say. */}
+          low on the page and rendered as full-width STRIPS, the same language as
+          the tide-aberration badges. A stack (not a 2-up grid) because these
+          speak one at a time far more often than in pairs, and a lone card left
+          an obvious hole. Each advisory self-hides; the section only mounts when
+          at least one has something to say. */}
       {showMarineStinger || showSharkContext ? (
-        <section className="mb-6 grid gap-4 sm:grid-cols-2">
+        <section className="mb-6 flex flex-col gap-2">
           {showMarineStinger ? (
             <MarineStingerCard manOWar={ms!.manOWar} seaLice={ms!.seaLice} />
           ) : null}

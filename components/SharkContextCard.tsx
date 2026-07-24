@@ -1,6 +1,7 @@
 import type { SharkContext, SharkFactor, SharkSeason } from "@/lib/sharkContext";
 import type { NerdInfo } from "@/lib/nerdInfo";
-import { FlipCard, NerdBack } from "@/components/FlipCard";
+import { NerdBack } from "@/components/FlipCard";
+import { AdvisoryStrip } from "@/components/AdvisoryStrip";
 
 const SEASON_LABEL: Record<SharkSeason, string> = {
   "mullet-run": "Mullet-run season",
@@ -25,6 +26,10 @@ function buildInfo(context: SharkContext): NerdInfo {
     context.factors.length
       ? `Active factors: ${context.factors.map((f) => FACTOR_LABEL[f]).join(", ")}`
       : "Active factors: none",
+    // The strip clamps the note to one line and has no room for the rarity
+    // note, so both live here in full — nothing the card used to show is lost.
+    context.note,
+    context.rarityNote,
   ];
 
   return {
@@ -81,34 +86,23 @@ export interface SharkContextCardProps {
  * integration note in the build report for which beaches should even call it.
  */
 export function SharkContextCard({ context }: SharkContextCardProps) {
-  // Quiet, exception-only card: nothing seasonal or notable today -> render nothing.
+  // Quiet, exception-only advisory: nothing seasonal or notable today -> render nothing.
   if (!context) return null;
 
-  const front = (
-    <div className="flex h-full flex-col rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
-      <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-        <span aria-hidden>🦈</span>
-        <span>Shark context</span>
-        <span className="ml-auto rounded-full bg-slate-500/10 px-2 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-slate-500/20 dark:text-slate-400">
-          Seasonal note
-        </span>
-      </div>
-
-      {context.season ? (
-        <div className="mt-2 text-sm font-semibold text-slate-700 dark:text-slate-200">
-          {SEASON_LABEL[context.season]}
-        </div>
-      ) : null}
-
-      <div className="mt-1 break-words text-xs leading-relaxed text-slate-600 dark:text-slate-400">
-        {context.note}
-      </div>
-
-      <div className="mt-2 rounded-lg bg-slate-500/5 px-2.5 py-2 text-[11px] leading-relaxed text-slate-500 ring-1 ring-slate-500/10 dark:text-slate-400 dark:ring-white/5">
-        {context.rarityNote}
-      </div>
-    </div>
+  // One slim strip (see components/AdvisoryStrip.tsx), matching the marine-
+  // stinger advisories it sits beside. Still the least alarming thing on the
+  // page: slate tone throughout, no escalation color, no number.
+  return (
+    <AdvisoryStrip
+      icon="🦈"
+      label="shark seasonal note"
+      headline={context.season ? SEASON_LABEL[context.season] : "Shark context"}
+      detail={context.note}
+      pill={{
+        label: "Seasonal note",
+        tone: "bg-slate-500/10 text-slate-500 ring-slate-500/25 dark:text-slate-400",
+      }}
+      note={<NerdBack info={buildInfo(context)} />}
+    />
   );
-
-  return <FlipCard label="Shark context" back={<NerdBack info={buildInfo(context)} />} front={front} />;
 }

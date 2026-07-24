@@ -41,6 +41,24 @@ import { FlipCard, NerdBack } from "@/components/FlipCard";
 
 const r0 = (n: number) => Math.round(n);
 
+// --- Comfort meter ---------------------------------------------------------
+// Same "gradient track + marker" idiom as SandTempPanel's barefoot scale (and
+// AirQualityMeter / StormActivityMeter), using the identical emerald→amber→
+// orange→rose hexes lib/feelsLikeBeach.ts's feelsLikeBandInfo already returns.
+// The color stops sit at the TRUE scale positions of the band boundaries
+// (88/95/103°F on a 75-115°F scale → 32.5% / 50% / 70%), so the marker's spot
+// on the bar always agrees with the band word printed above it.
+const METER_MIN_F = 75;
+const METER_MAX_F = 115;
+const METER_GRADIENT =
+  "linear-gradient(to right, #34d399 0%, #34d399 27%, #fbbf24 38%, #fbbf24 45%, #fb923c 55%, #fb923c 65%, #fb7185 75%, #fb7185 100%)";
+
+/** Position (0-100%) of a feels-like temperature on the comfort meter. */
+function meterPct(tempF: number): number {
+  const frac = (tempF - METER_MIN_F) / (METER_MAX_F - METER_MIN_F);
+  return Math.min(100, Math.max(0, frac * 100));
+}
+
 export interface FeelsLikeCardProps extends FeelsLikeInput {
   /** Compact mode drops the driver line — for tight layouts. Defaults to false. */
   compact?: boolean;
@@ -68,12 +86,26 @@ function FeelsLikeFront({
       {/* Centered value block, same "square widget" convention as MetricCard —
           extra vertical room reads as a deliberate widget, not dead space. */}
       <div className="flex flex-1 flex-col justify-center">
-        <div className="text-xl font-semibold text-slate-900 dark:text-white sm:text-2xl">
+        <div className="text-xl font-semibold tabular-nums text-slate-900 dark:text-white sm:text-2xl">
           {tempF}°F
         </div>
         <div className={`text-xs font-medium ${info.textClass}`}>{info.label}</div>
+        {/* Slim comfort meter so this reads as an instrument, not a text tile —
+            the track's radius stays far under the card's rounded-2xl. */}
+        <div
+          className="relative mt-2 h-1.5 rounded-full"
+          style={{ background: METER_GRADIENT }}
+          role="img"
+          aria-label={`${tempF}°F on a ${METER_MIN_F}–${METER_MAX_F}°F comfort scale — ${info.label}`}
+        >
+          <div
+            className="absolute top-1/2 h-3 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow ring-2 ring-slate-900"
+            style={{ left: `${meterPct(tempF)}%` }}
+            aria-hidden
+          />
+        </div>
         {!compact ? (
-          <div className="mt-0.5 min-h-4 break-words text-xs text-slate-600 dark:text-slate-400 line-clamp-2">
+          <div className="mt-1.5 min-h-4 break-words text-xs text-slate-600 dark:text-slate-400 line-clamp-2">
             {drivers.length ? drivers.join(" · ") : " "}
           </div>
         ) : null}

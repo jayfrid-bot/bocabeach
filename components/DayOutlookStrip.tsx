@@ -184,7 +184,7 @@ export function DayOutlookStrip({
 
   return (
     <section>
-      <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+      <h2 className="text-balance text-lg font-semibold text-slate-900 dark:text-white">
         7-day outlook — best beach times
       </h2>
       <p className="mb-3 mt-1 text-xs text-slate-500">
@@ -227,23 +227,26 @@ export function DayOutlookStrip({
               </div>
 
               <div
-                className="text-[9px] font-semibold leading-tight text-slate-900 dark:text-white sm:text-sm"
+                className="text-[9px] font-semibold tabular-nums leading-tight text-slate-900 dark:text-white sm:text-sm"
                 aria-hidden
               >
                 {d.hi != null ? `${d.hi}°` : "—"}
                 <span className="text-slate-400 sm:hidden">/{d.lo != null ? `${d.lo}°` : "—"}</span>
               </div>
-              <div className="hidden text-xs leading-tight text-slate-500 sm:block" aria-hidden>
+              <div
+                className="hidden text-xs tabular-nums leading-tight text-slate-500 sm:block"
+                aria-hidden
+              >
                 {d.lo != null ? `${d.lo}°` : "—"}
               </div>
 
-              <div className="min-h-[10px] text-[8px] font-medium leading-tight text-ocean-700 dark:text-ocean-300 sm:min-h-[16px] sm:text-[11px]">
+              <div className="min-h-[10px] text-[8px] font-medium tabular-nums leading-tight text-ocean-700 dark:text-ocean-300 sm:min-h-[16px] sm:text-[11px]">
                 {d.rain != null && d.rain >= 20 ? `💧${d.rain}%` : null}
               </div>
 
               {d.peakScore != null ? (
                 <div
-                  className="mx-auto mt-0.5 flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold text-slate-950 sm:mt-1 sm:h-9 sm:w-9 sm:text-sm"
+                  className="mx-auto mt-0.5 flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold tabular-nums text-slate-950 sm:mt-1 sm:h-9 sm:w-9 sm:text-sm"
                   style={{ background: scoreColor(d.peakScore) }}
                   title={`Peak Beach Day score: ${d.peakScore}`}
                   aria-hidden
@@ -259,7 +262,7 @@ export function DayOutlookStrip({
                 </div>
               )}
 
-              <div className="mt-0.5 break-words text-[9px] leading-tight text-slate-600 dark:text-slate-300 sm:mt-2 sm:text-[11px]" aria-hidden>
+              <div className="mt-0.5 break-words text-[9px] tabular-nums leading-tight text-slate-600 dark:text-slate-300 sm:mt-2 sm:text-[11px]" aria-hidden>
                 {d.best ? (
                   <>
                     <span className="sm:hidden">

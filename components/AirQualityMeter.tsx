@@ -19,14 +19,18 @@ export function AirQualityMeter({ air }: { air: Wrapped<AirQualityData> }) {
   const detail = known ? null : "Air quality data unavailable";
 
   return (
-    <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
+    // flex column + a centered middle: in the storm/air/lightning band this card
+    // is stretched to the (taller) lightning radar's height, and the meter rides
+    // the middle of that space rather than floating under the header. Same
+    // "flex-1 + justify-center" idiom MetricCard uses.
+    <div className="flex h-full flex-col rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
       <div className="flex items-end justify-between gap-3">
         <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
           <span aria-hidden>🌫️</span>
           <span>Air quality (US AQI)</span>
         </div>
         <div className="text-right leading-none">
-          <span className="text-2xl font-bold text-slate-900 dark:text-white sm:text-3xl">
+          <span className="text-2xl font-bold tabular-nums text-slate-900 dark:text-white sm:text-3xl">
             {known ? aqi : "—"}
           </span>
           {band ? (
@@ -37,25 +41,27 @@ export function AirQualityMeter({ air }: { air: Wrapped<AirQualityData> }) {
         </div>
       </div>
 
-      <div className="relative mt-3 h-2.5 rounded-full" style={{ background: GRADIENT }}>
-        {known ? (
-          <div
-            className="absolute top-1/2 h-4 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow ring-2 ring-slate-900"
-            style={{ left: `${pct}%` }}
-            aria-hidden
-          />
+      <div className="flex flex-1 flex-col justify-center">
+        <div className="relative mt-3 h-2.5 rounded-full" style={{ background: GRADIENT }}>
+          {known ? (
+            <div
+              className="absolute top-1/2 h-4 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow ring-2 ring-slate-900"
+              style={{ left: `${pct}%` }}
+              aria-hidden
+            />
+          ) : null}
+        </div>
+        <div className="mt-1 flex justify-between text-[10px] tabular-nums text-slate-500">
+          <span>0</span>
+          <span>100</span>
+          <span>200</span>
+          <span>{AQI_SCALE_MAX}+</span>
+        </div>
+
+        {detail ? (
+          <div className="mt-2 break-words text-xs text-slate-600 dark:text-slate-400">{detail}</div>
         ) : null}
       </div>
-      <div className="mt-1 flex justify-between text-[10px] text-slate-500">
-        <span>0</span>
-        <span>100</span>
-        <span>200</span>
-        <span>{AQI_SCALE_MAX}+</span>
-      </div>
-
-      {detail ? (
-        <div className="mt-2 break-words text-xs text-slate-600 dark:text-slate-400">{detail}</div>
-      ) : null}
     </div>
   );
 }

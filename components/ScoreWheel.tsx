@@ -285,7 +285,7 @@ export function ScoreWheel({ result }: { result: ScoreResult }) {
 
   return (
     <section>
-      <h2 className="mb-1 text-lg font-semibold text-slate-900 dark:text-white">
+      <h2 className="mb-1 text-balance text-lg font-semibold text-slate-900 dark:text-white">
         What&apos;s making the score
       </h2>
       <p className="mb-3 text-xs text-slate-500">

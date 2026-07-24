@@ -19,7 +19,11 @@ export function MetricCard({
           value block turns that extra room into a deliberate widget look
           instead of a top-heavy card with dead space at the bottom. */}
       <div className="flex flex-1 flex-col justify-center">
-        <div className="text-xl font-semibold text-slate-900 dark:text-white sm:text-2xl">{value}</div>
+        {/* tabular-nums: a refresh that swings 79°F → 80°F must not re-flow the
+            tile (proportional digits are different widths). */}
+        <div className="text-xl font-semibold tabular-nums text-slate-900 dark:text-white sm:text-2xl">
+          {value}
+        </div>
         {/* Always reserve the sub line so values share a baseline across a row
             (a sub-less "27%" used to sit lower than its neighbor's "36%"). */}
         <div className="min-h-4 break-words text-xs text-slate-600 dark:text-slate-400 line-clamp-3">

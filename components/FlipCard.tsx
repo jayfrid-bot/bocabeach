@@ -190,6 +190,10 @@ export function NerdBack({ info }: { info: NerdInfo }) {
           )}
         </div>
 
+        {/* Optional scale/legend graphic, for cards whose front was compacted to
+            tile density and whose explanatory visual lives back here. */}
+        {info.visual ? <div className="mt-2">{info.visual}</div> : null}
+
         <div className="mt-2 space-y-3 text-slate-600 dark:text-slate-300">
           {/* Plain-English lead — first thing you read. */}
           <p className="text-[12.5px] leading-relaxed text-slate-700 dark:text-slate-200">

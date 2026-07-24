@@ -1,6 +1,7 @@
 import type { ManOWarConfidence, ManOWarLevel, ManOWarRisk, SeaLiceLevel, SeaLiceRisk } from "@/lib/marineStinger";
 import type { NerdInfo } from "@/lib/nerdInfo";
-import { FlipCard, NerdBack } from "@/components/FlipCard";
+import { NerdBack } from "@/components/FlipCard";
+import { AdvisoryStrip } from "@/components/AdvisoryStrip";
 
 const MAN_O_WAR_LABEL: Record<ManOWarLevel, string> = {
   low: "Low",
@@ -134,50 +135,40 @@ export function MarineStingerCard({ manOWar, seaLice }: MarineStingerCardProps) 
   const showManOWar = !!manOWar && manOWar.level !== "low";
   const showSeaLice = !!seaLice && seaLice.level !== "low";
 
-  // Quiet, exception-only card: nothing worth flagging today -> render nothing.
+  // Quiet, exception-only advisory: nothing worth flagging today -> render nothing.
   if (!showManOWar && !showSeaLice) return null;
 
-  const front = (
-    <div className="flex h-full flex-col rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
-      <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-        <span aria-hidden>🪼</span>
-        <span>Marine stingers</span>
-      </div>
-
-      {showManOWar ? (
-        <div className="mt-2">
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className={`text-xl font-semibold sm:text-2xl ${MAN_O_WAR_TONE[manOWar!.level]}`}>
-              {MAN_O_WAR_LABEL[manOWar!.level]}
-              {" man-o’-war advisory"}
-            </span>
-            <span
-              className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${CONFIDENCE_BADGE[manOWar!.confidence].tone}`}
-            >
-              {confidenceLabel(manOWar!.confidence)}
-            </span>
-          </div>
-          <div className="mt-1 break-words text-xs text-slate-600 dark:text-slate-400">{manOWar!.note}</div>
-        </div>
-      ) : null}
-
-      {showSeaLice ? (
-        <div className={showManOWar ? "mt-2 border-t border-slate-900/10 pt-2 dark:border-white/10" : "mt-2"}>
-          <span className={`text-sm font-semibold ${SEA_LICE_TONE[seaLice!.level]}`}>
-            {showManOWar ? "Also: " : ""}
-            {SEA_LICE_LABEL[seaLice!.level]} sea-lice season
-          </span>
-          <div className="mt-1 break-words text-xs text-slate-600 dark:text-slate-400">{seaLice!.note}</div>
-        </div>
-      ) : null}
-    </div>
-  );
+  // One slim strip PER active advisory (see components/AdvisoryStrip.tsx) —
+  // stacked when both speak, and no empty half of a card grid when only one
+  // does. Both share the same science note, which is what the flip back was.
+  const note = <NerdBack info={buildInfo(manOWar, seaLice)} />;
 
   return (
-    <FlipCard
-      label="Marine stingers"
-      back={<NerdBack info={buildInfo(manOWar, seaLice)} />}
-      front={front}
-    />
+    <>
+      {showManOWar ? (
+        <AdvisoryStrip
+          icon="🪼"
+          label="man-o’-war advisory"
+          headline={`${MAN_O_WAR_LABEL[manOWar!.level]} man-o’-war advisory`}
+          headlineClass={MAN_O_WAR_TONE[manOWar!.level]}
+          detail={manOWar!.note}
+          pill={{
+            label: confidenceLabel(manOWar!.confidence),
+            tone: CONFIDENCE_BADGE[manOWar!.confidence].tone,
+          }}
+          note={note}
+        />
+      ) : null}
+      {showSeaLice ? (
+        <AdvisoryStrip
+          icon="🦠"
+          label="sea-lice advisory"
+          headline={`${SEA_LICE_LABEL[seaLice!.level]} sea-lice season`}
+          headlineClass={SEA_LICE_TONE[seaLice!.level]}
+          detail={seaLice!.note}
+          note={note}
+        />
+      ) : null}
+    </>
   );
 }

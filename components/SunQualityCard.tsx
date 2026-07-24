@@ -123,6 +123,7 @@ function buildSunQualityNerdInfo(args: {
   goldenLine: string;
 }): NerdInfo {
   const { event, timeIso, tz, cloud, humidityPct, result, peakLine, goldenLine } = args;
+  const meta = result.band ? sunQualityBandMeta(result.band) : null;
   const time = fmtTime(timeIso, tz);
   const knownTotalOnly = !hasCompleteLevelSplit(cloud) && !!cloud && cloud.totalPct != null;
   const b = result.breakdown;
@@ -152,6 +153,27 @@ function buildSunQualityNerdInfo(args: {
   return {
     title: `${eventLabel(event)} color potential`,
     weightPct: null,
+    // The band scale + the cloud-mix sentence live here (not on the front) so
+    // the front stays at standard tile density — see SunQualityFront.
+    visual: (
+      <div>
+        <div className="text-[11px] leading-snug text-slate-500 dark:text-slate-400">
+          How colorful the next sunrise/sunset should look, judged from the cloud mix.
+        </div>
+        <div className="relative mt-2 h-2 rounded-full" style={{ background: GRADIENT }}>
+          {result.score != null && meta ? (
+            <div
+              className="absolute top-1/2 h-3.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow ring-2 ring-slate-900"
+              style={{ left: `${Math.min(100, Math.max(0, result.score))}%` }}
+              aria-hidden
+            />
+          ) : null}
+        </div>
+        <div className="mt-1.5 break-words text-xs leading-snug text-slate-600 dark:text-slate-400">
+          {result.note}
+        </div>
+      </div>
+    ),
     explainer:
       "Will the sky put on a color show, or is it a clear-but-plain bust? The best sunrises and sunsets aren't the clearest ones — they need a mid/high cloud DECK to act as a canvas the low sun's red and orange light can paint onto, AND a clear enough horizon for that low beam to reach it. Golden hour is the low-angle window itself: the sun from +6° above the horizon down to −4° below it — so it straddles the sunrise/sunset, not stopping at it. Roughly 30-60% mid/high cloud is the color sweet spot; a perfectly clear sky is clean but plain; and a heavy LOW cloud deck sitting on the horizon blocks the beam before it reaches whatever's above.",
     formula:
@@ -218,70 +240,64 @@ function SunQualityFront({
   progress: number | null;
   peakLine: string | null;
 }) {
-  const { score, band, note } = result;
+  const { score, band } = result;
   const meta = band ? sunQualityBandMeta(band) : null;
-  const pct = Math.min(100, Math.max(0, score ?? 0));
 
+  // Standard tile density (see MetricCard): label row, value block, then two
+  // reserved single-line rows. The band scale, the "how colorful…" sentence and
+  // the cloud-mix note all live on the flip back — every one of them is still a
+  // tap away, and none of them is what you came to this tile to read.
   return (
     <div className="flex h-full flex-col rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
       <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
         <span aria-hidden>{eventIcon(next.event)}</span>
-        <span>Golden hour</span>
+        <span className="truncate">Golden hour</span>
       </div>
 
-      <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-        How colorful the next sunrise/sunset should look, judged from the cloud mix.
-      </div>
-
-      <div className="mt-2 flex flex-1 flex-col justify-center">
+      <div className="flex flex-1 flex-col justify-center">
         {score == null || !meta ? (
           <div className="text-sm text-slate-500 dark:text-slate-400">No forecast yet.</div>
         ) : (
-          <>
-            <div className="flex items-baseline gap-2">
-              <span className="text-2xl font-semibold text-slate-900 dark:text-white sm:text-3xl">
-                {score}
-              </span>
-              <span className="text-xs font-medium" style={{ color: meta.color }}>
-                {meta.label}
-              </span>
-            </div>
-            <div className="relative mt-2.5 h-2 rounded-full" style={{ background: GRADIENT }}>
-              <div
-                className="absolute top-1/2 h-3.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow ring-2 ring-slate-900"
-                style={{ left: `${pct}%` }}
-                aria-hidden
-              />
-            </div>
-          </>
-        )}
-        <div className="mt-2 min-h-8 break-words text-xs text-slate-600 dark:text-slate-400 line-clamp-3">
-          {note}
-        </div>
-        {peakLine ? (
-          <div className="mt-1.5 text-xs font-medium text-amber-600 dark:text-amber-400">
-            {peakLine}
+          <div className="flex items-baseline gap-2">
+            <span className="text-xl font-semibold tabular-nums text-slate-900 dark:text-white sm:text-2xl">
+              {score}
+            </span>
+            <span className="text-xs font-medium" style={{ color: meta.color }}>
+              {meta.label}
+            </span>
           </div>
-        ) : null}
-      </div>
+        )}
 
-      <div className="mt-2 border-t border-slate-900/10 pt-2 dark:border-white/10">
+        {/* Both lines reserve their row (min-h-4) so a row of tiles keeps one
+            baseline whether or not peak color resolves. */}
+        <div
+          className="mt-0.5 min-h-4 text-xs font-medium tabular-nums text-amber-600 dark:text-amber-400 line-clamp-1"
+          title={peakLine ?? undefined}
+        >
+          {peakLine ?? " "}
+        </div>
+        <div
+          className="min-h-4 text-xs tabular-nums text-slate-600 dark:text-slate-400 line-clamp-1"
+          title={eventTimeLine(next, tz)}
+        >
+          {eventTimeLine(next, tz)}
+        </div>
+
         {progress != null ? (
-          <>
+          <div className="mt-2">
             <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
               <span>In golden hour now</span>
-              <span>{Math.round(progress)}%</span>
+              <span className="tabular-nums">{Math.round(progress)}%</span>
             </div>
-            <div className="relative mt-1 h-1.5 rounded-full bg-slate-200 dark:bg-slate-800">
+            {/* Inner radius stays well under the card's rounded-2xl (concentric). */}
+            <div className="relative mt-1 h-1.5 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
               <div
                 className="h-1.5 rounded-full"
                 style={{ width: `${progress}%`, background: GOLDEN_PROGRESS_GRADIENT }}
               />
             </div>
-          </>
-        ) : (
-          <div className="text-xs text-slate-600 dark:text-slate-400">{eventTimeLine(next, tz)}</div>
-        )}
+          </div>
+        ) : null}
       </div>
     </div>
   );

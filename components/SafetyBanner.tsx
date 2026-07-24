@@ -203,20 +203,18 @@ export function SafetyBanner({
         </div>
       ) : null}
 
+      {/* One slim inline row — label and flag(s) on the same baseline. The tall
+          flying-flag graphic turned a single fact into a half-empty slab when
+          it was the only thing this banner had to say. */}
       {data ? (
-        <>
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-              Lifeguard flags:
-            </span>
-            {flags.length === 0 ? (
-              <span className="text-sm text-slate-600 dark:text-slate-400">none reported</span>
-            ) : (
-              flags.map((f) => <LifeguardFlag key={f} flag={f} />)
-            )}
-          </div>
-
-        </>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
+          <span className="font-medium text-slate-700 dark:text-slate-200">Lifeguard flags:</span>
+          {flags.length === 0 ? (
+            <span className="text-slate-600 dark:text-slate-400">none reported</span>
+          ) : (
+            flags.map((f) => <LifeguardFlag key={f} flag={f} inline />)
+          )}
+        </div>
       ) : null}
     </div>
   );

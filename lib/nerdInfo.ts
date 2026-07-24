@@ -13,6 +13,7 @@
 // a few of them so a silent drift fails the suite.
 // ---------------------------------------------------------------------------
 
+import type { ReactNode } from "react";
 import type { ConditionsSnapshot } from "@/lib/types";
 import type { Derived } from "@/lib/score";
 import { currentHourOf, satelliteBeamCloudPct, satelliteCloudPct } from "@/lib/score";
@@ -63,6 +64,11 @@ export interface NerdInfo {
   sources: string[];
   /** Honest caveats — calibration limits, gates, what "feeds" what. */
   notes?: string;
+  /** Optional small graphic (a scale, meter, legend) rendered on the flip back
+   *  directly under the title. Used when a card's front is compacted to tile
+   *  density and its explanatory visual moves to the back — see
+   *  components/SunQualityCard.tsx. Snapshot-driven builders leave it unset. */
+  visual?: ReactNode;
 }
 
 export interface NerdContext {
