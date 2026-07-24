@@ -216,14 +216,28 @@ def fetch_uw_frame() -> bytes:
     ffmpeg error, timeout) raises — the caller catches it and the main cam flow
     is unaffected; we simply accrue no `uw` field for that tick.
     """
-    proc = subprocess.run(
-        ["yt-dlp", "-g", UW_STREAM_URL],
-        capture_output=True, text=True, timeout=40, check=True,
-    )
-    lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
-    if not lines:
-        raise RuntimeError("yt-dlp returned no manifest URL")
-    manifest = lines[0]  # first line is the video/HLS URL
+    # YouTube blocks the default web client from datacenter IPs (confirmed on
+    # GitHub runners 2026-07-23: exit 1 while the same call works locally). The
+    # ios/tv innertube clients are served different bot-checks and frequently
+    # still work from datacenters, so try them in order before giving up.
+    manifest = None
+    errors: list[str] = []
+    for client in ("ios", "tv", "default"):
+        try:
+            proc = subprocess.run(
+                ["yt-dlp", "--extractor-args", f"youtube:player_client={client}",
+                 "-g", UW_STREAM_URL],
+                capture_output=True, text=True, timeout=40, check=True,
+            )
+            lines = [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+            if lines:
+                manifest = lines[0]  # first line is the video/HLS URL
+                break
+            errors.append(f"{client}: no manifest URL")
+        except Exception as e:  # noqa: BLE001 — try the next client
+            errors.append(f"{client}: {e}")
+    if manifest is None:
+        raise RuntimeError("all yt-dlp clients failed -> " + " | ".join(errors))
 
     fd, tmp = tempfile.mkstemp(suffix=".jpg")
     os.close(fd)
@@ -505,17 +519,28 @@ def main() -> int:
         print("no vision providers configured — preserving any existing readings",
               file=sys.stderr)
 
-    # UNDERWATER read — quota-gated to AT MOST once per hour (the cron fires every
-    # 10 min and each tick already spends 3 vision calls; Gemini's free tier is
-    # 250/day). Only in the first 10 min of the hour and only during daylight
-    # hours (dark underwater at night) => ~14 extra calls/day. Carry the previous
-    # `uw` forward on skipped ticks, like morning/latest.
+    # UNDERWATER read — quota-gated to AT MOST once per hour, during daylight
+    # only (dark underwater at night). Gating is by AGE of the previous uw read
+    # (>= 50 min), NOT by wall-clock minute: GitHub throttles the */10 cron to
+    # roughly hourly at unpredictable minutes (observed 2026-07-23), so a
+    # minute<10 gate almost never fired. Age-based gating attempts on ~every
+    # throttled tick (~11/day) yet still caps at ~once/hour if GitHub ever
+    # honors the full 10-min cadence. Carry the previous `uw` forward on
+    # skipped/failed ticks, like morning/latest.
     uw = prev.get("uw")
     uw_reading = None
-    if providers and now_local.minute < 10 and now_local.hour in UW_HOURS:
-        uw_reading = capture_uw(now_local)
-        if uw_reading:
-            uw = uw_reading
+    if providers and now_local.hour in UW_HOURS:
+        prev_uw_at = (uw or {}).get("capturedAtLocal")
+        uw_age_min = None
+        if prev_uw_at:
+            try:
+                uw_age_min = (now_local - dt.datetime.fromisoformat(prev_uw_at)).total_seconds() / 60
+            except ValueError:
+                uw_age_min = None  # unparseable -> treat as due
+        if uw_age_min is None or uw_age_min >= 50:
+            uw_reading = capture_uw(now_local)
+            if uw_reading:
+                uw = uw_reading
 
     # The earliest morning (pre-tractor) reading of the day is authoritative.
     morning = prev_morning
