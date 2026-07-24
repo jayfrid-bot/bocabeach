@@ -10,7 +10,8 @@ correct SYSTEMATIC bias only, never chase single noisy points).
 |---|---|---|---|---|---|---|
 | 2026-07-24 | ~1:10 PM | **75% clear** | 25 / 65 / 85 (pre-fix prompt) | 25 | 65 | 35 (7 mi away) |
 | 2026-07-24 | 1:17 PM (post-fix re-read, same water) | (75) | 50 / 85 / 88 | — | **85** (published) | — |
-| 2026-07-24 | 2:58 PM | **65% clear** | 85 / 85 / 85 | — | **85** (published) | — |
+| 2026-07-24 | 2:58 PM | **65% clear** | 85 / 85 / 85 (pre-rubric) | — | **85** (published) | — |
+| 2026-07-24 | 3:00 PM (rubric-anchored re-read, same water) | (65) | 65 / 72 / 80 | — | **72** (published) | — |
 
 ## Changes made from this ledger
 
@@ -30,6 +31,11 @@ seaweed/glare prompt overcorrected into poor scale discrimination. Fix: rubric
 anchoring in the prompt (explicit 0-100 bands, "most days fall 55-80, reserve
 85+ for genuinely exceptional transparency") rather than a numeric offset.
 Re-evaluate the residual sign after the next owner anchor.
+Result: the rubric-anchored re-read (3:00 PM, same water) came in 65/72/80 →
+median 72 vs owner 65 — residual +7 and real spread restored. Day-1 progression
+of the whole pipeline: −50 → +10 → +20 → **+7**. Keep collecting anchors;
+if the next 2-3 stay consistently +5..+10, a small −7 systematic trim is
+justified.
 
 ## Open questions (need more data)
 
