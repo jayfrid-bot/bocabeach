@@ -45,6 +45,7 @@ import { RipRiskCard } from "@/components/RipRiskCard";
 import { MarineStingerCard } from "@/components/MarineStingerCard";
 import { SharkContextCard } from "@/components/SharkContextCard";
 import { seaweedVsAvgPhrase } from "@/lib/vsAveragePhrase";
+import { clarityDisplayWord } from "@/lib/sources/clarity";
 
 // Throw on non-OK so an error body (e.g. a 404 `{error}`) never replaces the
 // good snapshot — SWR keeps the last good data and the consumer guard holds.
@@ -82,15 +83,6 @@ function humidityNote(p?: number): string | undefined {
   if (p < 90) return "muggy";
   return "saturated";
 }
-/** Display word for a water-clarity grade. */
-function clarityGradeWord(g: string): string {
-  return g === "slightly_murky"
-    ? "Slightly murky"
-    : g === "churned"
-      ? "Churned up"
-      : g[0].toUpperCase() + g.slice(1);
-}
-
 export function ConditionsDashboard({
   slug,
   initial,
@@ -541,7 +533,7 @@ export function ConditionsDashboard({
               <MetricCard
                 icon="🔍"
                 label="Water clarity"
-                value={clarity.level ? clarityGradeWord(clarity.level) : "—"}
+                value={clarity.level ? clarityDisplayWord(clarity.level, clarity.pct) : "—"}
                 sub={
                   clarity.level
                     ? [
@@ -672,7 +664,7 @@ export function ConditionsDashboard({
         {/* Hourly rip-current risk curve — anchored on (and never contradicting)
             the official NWS word, sitting in the safety cluster. Self-wraps its
             FlipCard and renders nothing when there's no official word to anchor. */}
-        {snap.ripRisk ? <RipRiskCard curve={snap.ripRisk} /> : null}
+        {snap.ripRisk ? <RipRiskCard curve={snap.ripRisk} tz={tz} /> : null}
         <LifeguardReport city={snap.cityOfficial} />
         <LocalCoverage location={snap.location} hasCams={cams.length > 0} />
       </section>

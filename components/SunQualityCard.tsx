@@ -1,6 +1,10 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { fmtTime } from "@/lib/format";
 import type { NerdInfo } from "@/lib/nerdInfo";
 import {
+  goldenHourProgress,
   nearestHourlyPoint,
   nextSunEvent,
   sunEventQuality,
@@ -9,6 +13,7 @@ import {
   type HourlyCloudPoint,
   type SunEventKind,
   type SunEventQuality,
+  type SunEventTime,
 } from "@/lib/sunQuality";
 import { FlipCard, NerdBack } from "@/components/FlipCard";
 
@@ -17,6 +22,11 @@ import { FlipCard, NerdBack } from "@/components/FlipCard";
 // StormActivityMeter/AirQualityMeter's meter gradients.
 const GRADIENT =
   "linear-gradient(to right, #64748b 20%, #94a3b8 45%, #fbbf24 70%, #fb923c 90%, #f97316 100%)";
+
+// Warm sunrise→sunset progress-bar gradient for the live golden-hour track —
+// same quiet "gradient fill on a rounded track" idiom as MoonPanel's cycle
+// progress bar, just warmed up to match this card's subject.
+const GOLDEN_PROGRESS_GRADIENT = "linear-gradient(to right, #f59e0b, #fb923c, #f97316)";
 
 export interface SunQualityCardProps {
   /** Current instant; injectable for tests/SSR determinism. Defaults to now. */
@@ -83,12 +93,12 @@ function buildSunQualityNerdInfo(args: {
         ];
 
   return {
-    title: `${eventLabel(event)} sky show`,
+    title: `${eventLabel(event)} color potential`,
     weightPct: null,
     explainer:
       "Will the sky put on a color show, or is it a clear-but-plain bust? The best sunrises and sunsets aren't the clearest ones — they need a mid/high cloud DECK to act as a canvas the low sun's red and orange light can paint onto. Roughly 30-60% mid/high cloud is the sweet spot: enough surface up there to catch color, not so much it blocks the sun outright. A perfectly clear sky is clean but plain — nothing up there to paint color onto. And a heavy LOW cloud deck (near-total, ~85%+) is the opposite of magic: it sits right at the horizon and blocks the direct beam before it ever reaches whatever's above, so it can kill the show even under a promising mid/high deck.",
     formula:
-      "colorCanvas = screenBlend(mid%, high%); score = curve(colorCanvas: 0%→40, 30-60%→90-97 peak, 100%→15) × lowCloudPenalty(low%: ≤30%→none, →~90% by a near-total low deck) + up to +5 for humidity <60%. Total-cloud-only readings use a flatter, lower-ceiling curve instead, since the level split (beneficial mid/high vs. blocking low) isn't known.",
+      "colorCanvas = screenBlend(mid%, high%); score = curve(colorCanvas: 0%→40, 30-60%→90-97 peak, 100%→15) × lowCloudPenalty(low%: ≤30%→none, →~90% by a near-total low deck) + up to +5 for humidity <60%. Total-cloud-only readings use a flatter, lower-ceiling curve instead, since the level split (beneficial mid/high vs. blocking low) isn't known. Golden hour itself is a fixed 60-minute window on the sunrise/sunset side of the event — a deliberate approximation of the sun's low-angle window at Florida's latitudes, not a solar-elevation calculation.",
     computation,
     sources: [
       "Open-Meteo hourly forecast — total cloud cover (cloud-by-level not yet fetched by this app)",
@@ -100,30 +110,41 @@ function buildSunQualityNerdInfo(args: {
   };
 }
 
+/** "Sunset 8:12 PM · golden hour 7:12–8:12 PM" (or the sunrise equivalent,
+ *  "Sunrise 6:30 AM · golden hour 6:30–7:30 AM"). All times in `tz`. */
+function eventTimeLine(next: SunEventTime, tz: string): string {
+  const eventTime = fmtTime(next.timeIso, tz);
+  const goldenStart = fmtTime(next.goldenStartIso, tz);
+  const goldenEnd = fmtTime(next.goldenEndIso, tz);
+  return `${eventLabel(next.event)} ${eventTime} · golden hour ${goldenStart}–${goldenEnd}`;
+}
+
 function SunQualityFront({
-  event,
-  timeIso,
+  next,
   tz,
   result,
+  progress,
 }: {
-  event: SunEventKind;
-  timeIso: string;
+  next: SunEventTime;
   tz: string;
   result: SunEventQuality;
+  /** 0-100 when `now` is live and inside the golden-hour window; null
+   *  otherwise (pre-mount, or simply outside the window). */
+  progress: number | null;
 }) {
-  const time = fmtTime(timeIso, tz);
   const { score, band, note } = result;
   const meta = band ? sunQualityBandMeta(band) : null;
   const pct = Math.min(100, Math.max(0, score ?? 0));
 
   return (
     <div className="flex h-full flex-col rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-          <span aria-hidden>{eventIcon(event)}</span>
-          <span>{eventLabel(event)} show</span>
-        </div>
-        <span className="shrink-0 text-xs text-slate-500 dark:text-slate-400">{time}</span>
+      <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+        <span aria-hidden>{eventIcon(next.event)}</span>
+        <span>Golden hour</span>
+      </div>
+
+      <div className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+        How colorful the next sunrise/sunset should look, judged from the cloud mix.
       </div>
 
       <div className="mt-2 flex flex-1 flex-col justify-center">
@@ -152,30 +173,63 @@ function SunQualityFront({
           {note}
         </div>
       </div>
+
+      <div className="mt-2 border-t border-slate-900/10 pt-2 dark:border-white/10">
+        {progress != null ? (
+          <>
+            <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400">
+              <span>In golden hour now</span>
+              <span>{Math.round(progress)}%</span>
+            </div>
+            <div className="relative mt-1 h-1.5 rounded-full bg-slate-200 dark:bg-slate-800">
+              <div
+                className="h-1.5 rounded-full"
+                style={{ width: `${progress}%`, background: GOLDEN_PROGRESS_GRADIENT }}
+              />
+            </div>
+          </>
+        ) : (
+          <div className="text-xs text-slate-600 dark:text-slate-400">{eventTimeLine(next, tz)}</div>
+        )}
+      </div>
     </div>
   );
 }
 
 /**
- * Sunrise/sunset "sky show" card: scores the NEXT sun event (today's sunrise
- * if it hasn't happened, else today's sunset, else tomorrow's sunrise) for
- * how likely it is to put on a real color show, via lib/sunQuality.ts's pure
- * `sunEventQuality`. Self-contained and props-driven — matches the
- * FlipCard(front/back) + MetricCard-style front convention used across
- * ConditionsDashboard.tsx (see e.g. UvCard, StormActivityMeter). Renders a
- * "no sun times" front when there's genuinely nothing to show, rather than a
- * fabricated score.
+ * "Golden hour" card: when the next golden hour is (morning after sunrise, or
+ * evening before sunset), whether sunrise or sunset is next, a live in-window
+ * progress track, and how colorful it should look — scored via
+ * lib/sunQuality.ts's pure `sunEventQuality` off the forecast cloud mix.
+ * Self-contained and props-driven — matches the FlipCard(front/back) +
+ * MetricCard-style front convention used across ConditionsDashboard.tsx (see
+ * e.g. UvCard, StormActivityMeter). Renders a "no sun times" front when
+ * there's genuinely nothing to show, rather than a fabricated score.
+ *
+ * HYDRATION SAFETY: `now` (from the caller) pins the server render and the
+ * event/score selection to the snapshot's generatedAt for SSR stability. The
+ * live golden-hour progress bar is additionally gated on a client-only clock
+ * (`clientNowMs`, null until mount) — same convention as RipRiskCard — so the
+ * server HTML and the first client render agree exactly; the bar only turns
+ * on after mount, once the real clock lands.
  */
 export function SunQualityCard({ now, tz, today, tomorrowSunrise, hourly }: SunQualityCardProps) {
   const nowD = now ?? new Date();
   const next = nextSunEvent(nowD, today, tomorrowSunrise);
+
+  const [clientNowMs, setClientNowMs] = useState<number | null>(null);
+  useEffect(() => {
+    setClientNowMs(Date.now());
+    const id = setInterval(() => setClientNowMs(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   if (!next) {
     return (
       <div className="flex h-full flex-col rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
         <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
           <span aria-hidden>🌅</span>
-          <span>Sky show</span>
+          <span>Golden hour</span>
         </div>
         <div className="mt-2 text-sm text-slate-500 dark:text-slate-400">
           No sun times for this beach right now.
@@ -195,10 +249,14 @@ export function SunQualityCard({ now, tz, today, tomorrowSunrise, hourly }: SunQ
     result,
   });
 
+  // Live progress only once the client clock has landed post-mount, so SSR
+  // and hydration render the same "no bar yet" state.
+  const progress = clientNowMs != null ? goldenHourProgress(new Date(clientNowMs), next) : null;
+
   return (
     <FlipCard
-      label={`${eventLabel(next.event)} sky show`}
-      front={<SunQualityFront event={next.event} timeIso={next.timeIso} tz={tz} result={result} />}
+      label="Golden hour"
+      front={<SunQualityFront next={next} tz={tz} result={result} progress={progress} />}
       back={<NerdBack info={info} />}
     />
   );

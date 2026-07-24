@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { BAND_RANGE, type BandedRipRisk, type RipRiskCurve } from "@/lib/ripRiskCurve";
 import type { NerdInfo } from "@/lib/nerdInfo";
 import { FlipCard, NerdBack } from "@/components/FlipCard";
+import { fmtTimeCompact } from "@/lib/format";
 
 const BAND_LABEL: Record<BandedRipRisk, string> = {
   low: "Low",
@@ -37,11 +38,27 @@ const BAND_FILL_ID: Record<BandedRipRisk, string> = {
 // the client hydration pass agree exactly (same convention as TideCurve /
 // WaveHeightCard / UvCard / ScoreWheel).
 const W = 280;
-const H = 56;
+const CURVE_H = 56;
+/** Extra vertical room below the curve for the quiet hour-axis labels. */
+const AXIS_H = 14;
+const H = CURVE_H + AXIS_H;
 const PX = 4;
 const PT = 6;
 const PB = 6;
 const round2 = (v: number) => Math.round(v * 100) / 100;
+
+/** Evenly-spaced tick indices into an `n`-length array: first, last, and
+ *  `count - 2` more spread between them (e.g. count=4 → first, ~1/3, ~2/3,
+ *  last — "7a  11a  3p  7p"). Deterministic, dedupes for short arrays. */
+function pickTickIndices(n: number, count = 4): number[] {
+  if (n <= 0) return [];
+  if (n <= count) return Array.from({ length: n }, (_, i) => i);
+  const idxs = new Set<number>();
+  for (let i = 0; i < count; i++) {
+    idxs.add(Math.round((i * (n - 1)) / (count - 1)));
+  }
+  return Array.from(idxs).sort((a, b) => a - b);
+}
 
 /** Index of the last hour whose bucket start is at/before `nowMs`; falls back
  *  to the first hour when `nowMs` is before the whole window (e.g. pre-dawn
@@ -65,10 +82,15 @@ function Sparkline({
   hours,
   band,
   nowMs,
+  tz,
 }: {
   hours: RipRiskCurve["hours"];
   band: BandedRipRisk;
   nowMs: number | null;
+  /** IANA timezone the hour-axis labels are formatted in — the beach's own
+   *  local time, not the viewer's, since the curve's hours are beach-local
+   *  daylight buckets. */
+  tz: string;
 }) {
   if (hours.length < 2) return null;
   const { min, max } = BAND_RANGE[band];
@@ -78,11 +100,11 @@ function Sparkline({
   const tN = Date.parse(hours[hours.length - 1].t);
   const spanT = Math.max(tN - t0, 1);
   const xFor = (t: number) => PX + ((t - t0) / spanT) * (W - 2 * PX);
-  const yFor = (score: number) => PT + (1 - (score - min) / span) * (H - PT - PB);
+  const yFor = (score: number) => PT + (1 - (score - min) / span) * (CURVE_H - PT - PB);
 
   const pts = hours.map((h) => ({ x: xFor(Date.parse(h.t)), y: yFor(h.score) }));
   const d = pts.map((p, i) => `${i === 0 ? "M" : "L"}${round2(p.x)} ${round2(p.y)}`).join(" ");
-  const area = `${d} L${round2(pts[pts.length - 1].x)} ${H - PB} L${round2(pts[0].x)} ${H - PB} Z`;
+  const area = `${d} L${round2(pts[pts.length - 1].x)} ${CURVE_H - PB} L${round2(pts[0].x)} ${CURVE_H - PB} Z`;
 
   const stroke = BAND_STROKE[band];
   const fillId = BAND_FILL_ID[band];
@@ -90,6 +112,15 @@ function Sparkline({
   const nowVisible = nowMs != null && nowMs >= t0 && nowMs <= tN;
   const nowIdx = nowVisible ? currentHourIndex(hours, nowMs as number) : -1;
   const nowPt = nowIdx >= 0 ? pts[nowIdx] : null;
+  // Keep the "now" tag from clipping off the top edge when the current hour's
+  // point sits right near PT.
+  const nowLabelY = nowPt ? round2(Math.max(8, nowPt.y - 7)) : null;
+
+  const tickIdx = pickTickIndices(hours.length, 4);
+  const ticks = tickIdx.map((i) => ({
+    x: round2(xFor(Date.parse(hours[i].t))),
+    label: fmtTimeCompact(hours[i].t, tz),
+  }));
 
   return (
     // Decorative: the current-hour word + peakNote already carry the reading
@@ -107,6 +138,30 @@ function Sparkline({
       {nowPt ? (
         <circle cx={round2(nowPt.x)} cy={round2(nowPt.y)} r="3" fill={stroke} stroke="#0f172a" strokeWidth="1.5" />
       ) : null}
+      {nowPt && nowLabelY != null ? (
+        <text
+          x={round2(nowPt.x)}
+          y={nowLabelY}
+          textAnchor="middle"
+          fontSize="8"
+          fontWeight={600}
+          fill={stroke}
+        >
+          now
+        </text>
+      ) : null}
+      {ticks.map((t, i) => (
+        <text
+          key={i}
+          x={t.x}
+          y={CURVE_H + 10}
+          textAnchor={i === 0 ? "start" : i === ticks.length - 1 ? "end" : "middle"}
+          fontSize="8"
+          className="fill-slate-400 dark:fill-slate-500"
+        >
+          {t.label}
+        </text>
+      ))}
     </svg>
   );
 }
@@ -177,6 +232,9 @@ export interface RipRiskCardProps {
   /** Output of lib/ripRiskCurve.ts's `ripRiskCurve()` — pass it straight
    *  through. `null` (no official NWS word to anchor to) renders nothing. */
   curve: RipRiskCurve | null;
+  /** Beach's IANA timezone — formats the sparkline's hour-axis labels
+   *  ("7a  11a  3p  7p") in beach-local time, matching the curve's hours. */
+  tz: string;
 }
 
 /**
@@ -186,7 +244,7 @@ export interface RipRiskCardProps {
  * when there's no curve to show (honest-null from the official NWS level, or
  * before this card has been wired up with data) — never a placeholder guess.
  */
-export function RipRiskCard({ curve }: RipRiskCardProps) {
+export function RipRiskCard({ curve, tz }: RipRiskCardProps) {
   // "Now" is client-only (set after mount) so SSR and hydration HTML agree —
   // same convention as TideCurve/FlipCard's reduced-motion detection.
   const [nowMs, setNowMs] = useState<number | null>(null);
@@ -235,7 +293,7 @@ export function RipRiskCard({ curve }: RipRiskCardProps) {
         )}
       </div>
 
-      {curve.unshaped ? null : <Sparkline hours={curve.hours} band={band} nowMs={nowMs} />}
+      {curve.unshaped ? null : <Sparkline hours={curve.hours} band={band} nowMs={nowMs} tz={tz} />}
 
       <div className="mt-1 break-words text-xs text-slate-600 dark:text-slate-400">
         {sentence(curve.peakNote)} Estimate layered on the official NWS level — always follow the lifeguard flags.

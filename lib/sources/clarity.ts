@@ -113,6 +113,51 @@ function unreadableReason(
 
 const clampPct = (n: number): number => Math.max(0, Math.min(100, Math.round(n)));
 
+/**
+ * Positively-framed display word for water clarity. The underlying vision
+ * model still grades on the same four-step scale (clear / slightly_murky /
+ * murky / churned) — this only changes the WORD shown to a beachgoer, deriving
+ * it from the clarity percentage when one is present so "65% clear" reads as
+ * "Mostly clear" instead of a discouraging "slightly murky".
+ *
+ * Band mapping (percentage is 0-100, 100 = crystal clear):
+ *   >= 85            "Crystal clear"
+ *   65-84            "Mostly clear"
+ *   45-64            "A bit murky"
+ *   25-44            "Murky"
+ *   < 25             "Very murky" (or "Churned up" when the grade itself is
+ *                    "churned" — a stirred-up read, not just cloudy)
+ *
+ * Falls back to a positively-adjusted word for the categorical grade alone
+ * when no percentage is available:
+ *   clear → "Clear", slightly_murky → "Mostly clear", murky → "Murky",
+ *   churned → "Churned up".
+ */
+export function clarityDisplayWord(
+  level: WaterClarityGrade | null | undefined,
+  pct: number | null | undefined,
+): string {
+  if (pct != null) {
+    if (pct >= 85) return "Crystal clear";
+    if (pct >= 65) return "Mostly clear";
+    if (pct >= 45) return "A bit murky";
+    if (pct >= 25) return "Murky";
+    return level === "churned" ? "Churned up" : "Very murky";
+  }
+  switch (level) {
+    case "clear":
+      return "Clear";
+    case "slightly_murky":
+      return "Mostly clear";
+    case "murky":
+      return "Murky";
+    case "churned":
+      return "Churned up";
+    default:
+      return "";
+  }
+}
+
 /** True when the feed actually carries clarity fields (vs a legacy pre-clarity feed). */
 function hasClarityFields(feed: ClarityFeed): boolean {
   const groups = [feed?.latest, feed?.morning];

@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
+  goldenHourProgress,
   nearestHourlyPoint,
   nextSunEvent,
   sunEventQuality,
   sunQualityBandMeta,
   type HourlyCloudPoint,
+  type SunEventTime,
 } from "@/lib/sunQuality";
 
 describe("sunEventQuality", () => {
@@ -146,19 +148,27 @@ describe("nextSunEvent", () => {
   const today = { sunrise: "2026-07-21T10:30:00.000Z", sunset: "2026-07-21T23:45:00.000Z" };
   const tomorrowSunrise = "2026-07-22T10:31:00.000Z";
 
-  it("picks today's sunrise when now is before it", () => {
+  it("picks today's sunrise when now is before it, with a 60-min golden window starting at sunrise", () => {
     const r = nextSunEvent(new Date("2026-07-21T08:00:00.000Z"), today, tomorrowSunrise);
-    expect(r).toEqual({ event: "sunrise", timeIso: today.sunrise });
+    expect(r?.event).toBe("sunrise");
+    expect(r?.timeIso).toBe(today.sunrise);
+    expect(r?.goldenStartIso).toBe(today.sunrise);
+    expect(r?.goldenEndIso).toBe("2026-07-21T11:30:00.000Z");
   });
 
-  it("picks today's sunset when sunrise has passed but sunset hasn't", () => {
+  it("picks today's sunset when sunrise has passed but sunset hasn't, with a 60-min golden window ending at sunset", () => {
     const r = nextSunEvent(new Date("2026-07-21T15:00:00.000Z"), today, tomorrowSunrise);
-    expect(r).toEqual({ event: "sunset", timeIso: today.sunset });
+    expect(r?.event).toBe("sunset");
+    expect(r?.timeIso).toBe(today.sunset);
+    expect(r?.goldenStartIso).toBe("2026-07-21T22:45:00.000Z");
+    expect(r?.goldenEndIso).toBe(today.sunset);
   });
 
   it("picks tomorrow's sunrise once today's sunset has passed", () => {
     const r = nextSunEvent(new Date("2026-07-22T01:00:00.000Z"), today, tomorrowSunrise);
-    expect(r).toEqual({ event: "sunrise", timeIso: tomorrowSunrise });
+    expect(r?.event).toBe("sunrise");
+    expect(r?.timeIso).toBe(tomorrowSunrise);
+    expect(r?.goldenStartIso).toBe(tomorrowSunrise);
   });
 
   it("returns null after sunset when no tomorrow sunrise was supplied", () => {
@@ -177,7 +187,56 @@ describe("nextSunEvent", () => {
       { sunset: today.sunset },
       tomorrowSunrise,
     );
-    expect(r).toEqual({ event: "sunset", timeIso: today.sunset });
+    expect(r?.event).toBe("sunset");
+    expect(r?.timeIso).toBe(today.sunset);
+  });
+});
+
+describe("goldenHourProgress", () => {
+  const sunriseEvent: SunEventTime = {
+    event: "sunrise",
+    timeIso: "2026-07-21T10:30:00.000Z",
+    goldenStartIso: "2026-07-21T10:30:00.000Z",
+    goldenEndIso: "2026-07-21T11:30:00.000Z",
+  };
+  const sunsetEvent: SunEventTime = {
+    event: "sunset",
+    timeIso: "2026-07-21T23:45:00.000Z",
+    goldenStartIso: "2026-07-21T22:45:00.000Z",
+    goldenEndIso: "2026-07-21T23:45:00.000Z",
+  };
+
+  it("is null before the morning golden-hour window starts", () => {
+    const p = goldenHourProgress(new Date("2026-07-21T10:00:00.000Z"), sunriseEvent);
+    expect(p).toBeNull();
+  });
+
+  it("is 0 at the very start of the morning window and ~50 at its midpoint", () => {
+    expect(goldenHourProgress(new Date("2026-07-21T10:30:00.000Z"), sunriseEvent)).toBe(0);
+    expect(goldenHourProgress(new Date("2026-07-21T11:00:00.000Z"), sunriseEvent)).toBe(50);
+  });
+
+  it("is null after the morning golden-hour window ends", () => {
+    const p = goldenHourProgress(new Date("2026-07-21T11:31:00.000Z"), sunriseEvent);
+    expect(p).toBeNull();
+  });
+
+  it("is null before the evening golden-hour window starts", () => {
+    const p = goldenHourProgress(new Date("2026-07-21T22:00:00.000Z"), sunsetEvent);
+    expect(p).toBeNull();
+  });
+
+  it("tracks progression through the evening window and hits 100 at sunset", () => {
+    expect(goldenHourProgress(new Date("2026-07-21T22:45:00.000Z"), sunsetEvent)).toBe(0);
+    expect(goldenHourProgress(new Date("2026-07-21T23:15:00.000Z"), sunsetEvent)).toBe(50);
+    expect(goldenHourProgress(new Date("2026-07-21T23:45:00.000Z"), sunsetEvent)).toBe(100);
+  });
+
+  it("is null once we're past sunset and into the after-sunset → tomorrow-sunrise case", () => {
+    // nextSunEvent would have rolled over to tomorrow's sunrise by this point;
+    // this just confirms a stale sunset event's window doesn't read as "live".
+    const p = goldenHourProgress(new Date("2026-07-22T01:00:00.000Z"), sunsetEvent);
+    expect(p).toBeNull();
   });
 });
 

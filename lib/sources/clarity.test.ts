@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { summarizeClarity, fetchClarity, type ClarityFeed } from "@/lib/sources/clarity";
+import { summarizeClarity, fetchClarity, clarityDisplayWord, type ClarityFeed } from "@/lib/sources/clarity";
 import type { Location } from "@/lib/types";
 
 const CAMLESS_LOCATION: Location = {
@@ -180,5 +180,43 @@ describe("fetchClarity — cam gating + failure", () => {
     expect(w.data).toBeNull();
     expect(w.status).toBe("best-effort");
     expect(w.note).toMatch(/not published/i);
+  });
+});
+
+describe("clarityDisplayWord — positively-framed band mapping from the clarity %", () => {
+  it("bands the percentage, testing every edge", () => {
+    // >= 85 "Crystal clear"
+    expect(clarityDisplayWord("clear", 100)).toBe("Crystal clear");
+    expect(clarityDisplayWord("clear", 85)).toBe("Crystal clear");
+    // just under 85 falls to the next band
+    expect(clarityDisplayWord("clear", 84)).toBe("Mostly clear");
+    // 65-84 "Mostly clear"
+    expect(clarityDisplayWord("slightly_murky", 65)).toBe("Mostly clear");
+    expect(clarityDisplayWord("slightly_murky", 64)).toBe("A bit murky");
+    // 45-64 "A bit murky"
+    expect(clarityDisplayWord("murky", 45)).toBe("A bit murky");
+    expect(clarityDisplayWord("murky", 44)).toBe("Murky");
+    // 25-44 "Murky"
+    expect(clarityDisplayWord("murky", 25)).toBe("Murky");
+    expect(clarityDisplayWord("churned", 24)).toBe("Churned up");
+    // < 25 "Very murky" (or "Churned up" when the grade itself is churned)
+    expect(clarityDisplayWord("murky", 24)).toBe("Very murky");
+    expect(clarityDisplayWord("murky", 0)).toBe("Very murky");
+  });
+
+  it("a 65% clear read shows the positive framing from the prompt example", () => {
+    expect(clarityDisplayWord("slightly_murky", 65)).toBe("Mostly clear");
+  });
+
+  it("falls back to a positively-adjusted grade word when pct is null", () => {
+    expect(clarityDisplayWord("clear", null)).toBe("Clear");
+    expect(clarityDisplayWord("slightly_murky", null)).toBe("Mostly clear");
+    expect(clarityDisplayWord("murky", null)).toBe("Murky");
+    expect(clarityDisplayWord("churned", null)).toBe("Churned up");
+  });
+
+  it("returns an empty string when there's no level to describe", () => {
+    expect(clarityDisplayWord(null, null)).toBe("");
+    expect(clarityDisplayWord(undefined, undefined)).toBe("");
   });
 });

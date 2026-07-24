@@ -8,10 +8,11 @@ import { scoreColor, scoreTextClass } from "@/lib/format";
 const SIZE = 340;
 const CX = SIZE / 2;
 const CY = SIZE / 2;
-const R_OUT = 150;
-const R_IN = 92;
+export const R_OUT = 150;
+export const R_IN = 92;
 const R_OUT_SEL = 158; // the selected slice pops outward
-const LABEL_R = (R_OUT + R_IN) / 2;
+export const LABEL_R = (R_OUT + R_IN) / 2;
+export const GAP = 1.6; // degrees of breathing room between slices
 
 /** Small neutral header emoji for the tap-detail card (NOT the slices). */
 const FACTOR_EMOJI: Record<string, string> = {
@@ -41,6 +42,16 @@ const FACTOR_LABEL: Record<string, string> = {
   uv: "UV",
 };
 
+/** Shorter fallback for factors whose full FACTOR_LABEL word doesn't fit a
+ *  narrow slice's arc even at LABEL_FONT — tried before resorting to a radial
+ *  orientation or the font floor. Factors not listed here don't need one (their
+ *  full label already fits every slice width their weight can produce). */
+const FACTOR_ABBREV: Record<string, string> = {
+  comfort: "Humid",
+  sargassum: "Algae",
+  crowds: "Busy",
+};
+
 // Slice-label typography. Dark slate text with a white paint-order halo reads
 // cleanly on every slice fill (emerald / lime / amber / rose) in both themes,
 // since the slice colors are theme-independent.
@@ -51,6 +62,68 @@ const LABEL_FONT = 11.5;
 // crowding the slice edges.
 const LABEL_CHAR_W = 6.5;
 const LABEL_PAD = 9;
+/** Smallest font size a slice label is ever allowed to shrink to. */
+const LABEL_FONT_FLOOR = 8;
+/** Radial band width available to a label oriented along the spoke (outward
+ *  from the hole) instead of along the arc — same donut ring every slice's
+ *  tangential label lives in, so a radial label never leaves its own slice's
+ *  color to sit over a neighbor. */
+const RADIAL_BAND = R_OUT - R_IN;
+
+/** True when `text` fits in `available` px at `fontSize`, per the same
+ *  deterministic px/char estimate LABEL_CHAR_W encodes at LABEL_FONT. */
+function labelFits(text: string, available: number, fontSize: number): boolean {
+  if (!text) return false;
+  const charW = LABEL_CHAR_W * (fontSize / LABEL_FONT);
+  return available >= text.length * charW + LABEL_PAD;
+}
+
+/** Rotate `deg` (already the "reads correctly" orientation, e.g. tangential =
+ *  mid, radial = mid+90) into the (-90, 90] range so the glyph is never
+ *  upside down on the bottom/left half of the wheel. */
+function uprightRotation(deg: number): number {
+  const norm = ((deg % 360) + 360) % 360;
+  return round2(norm > 90 && norm < 270 ? deg + 180 : deg);
+}
+
+export interface LabelPlan {
+  text: string;
+  radial: boolean;
+  fontSize: number;
+  rot: number;
+}
+
+/**
+ * Deterministic (SSR-stable) plan for a slice's label: try the full word
+ * tangentially, then the abbreviation tangentially, then either word oriented
+ * radially (a spoke pointing out from the hole needs far less arc — only its
+ * own font height, not its full text width), and finally fall back to the
+ * abbreviation at the font floor, radially, which is never skipped — every
+ * slice always gets readable text, however tight.
+ */
+export function planLabel(key: string, mid: number, arcLen: number): LabelPlan {
+  const full = FACTOR_LABEL[key] ?? "";
+  const abbrev = FACTOR_ABBREV[key] ?? full;
+  const tangentRot = uprightRotation(mid);
+  const radialRot = uprightRotation(mid + 90);
+
+  const candidates: { text: string; radial: boolean; fontSize: number }[] = [
+    { text: full, radial: false, fontSize: LABEL_FONT },
+    { text: abbrev, radial: false, fontSize: LABEL_FONT },
+    { text: full, radial: true, fontSize: LABEL_FONT },
+    { text: abbrev, radial: true, fontSize: LABEL_FONT },
+  ];
+  for (const c of candidates) {
+    const available = c.radial ? RADIAL_BAND : arcLen;
+    if (labelFits(c.text, available, c.fontSize)) {
+      return { text: c.text, radial: c.radial, fontSize: c.fontSize, rot: c.radial ? radialRot : tangentRot };
+    }
+  }
+  // Guaranteed last resort — the font floor plus the generous radial band
+  // fits every abbreviation the app ships today, but this branch renders
+  // regardless so no slice is ever left blank.
+  return { text: abbrev, radial: true, fontSize: LABEL_FONT_FLOOR, rot: radialRot };
+}
 
 /** Plain-English "what it measures + how it's calculated" per factor. */
 const FACTOR_EXPLAIN: Record<string, string> = {
@@ -126,7 +199,6 @@ export function ScoreWheel({ result }: { result: ScoreResult }) {
   const totalW = withData.reduce((a, s) => a + s.weight, 0);
   if (!withData.length || totalW <= 0) return null;
 
-  const GAP = 1.6; // degrees of breathing room between slices
   let cursor = 0;
   const slices: Slice[] = withData.map((sub) => {
     const span = (sub.weight / totalW) * 360;
@@ -230,17 +302,14 @@ export function ScoreWheel({ result }: { result: ScoreResult }) {
             const mid = (s.startDeg + s.endDeg) / 2;
             const span = s.endDeg - s.startDeg;
             const at = pt(LABEL_R, mid);
-            // Tangential label: it follows the arc (rotate to the slice's
-            // mid-angle). Flip 180° on the bottom/left arc so text is never
-            // upside down. Show it only when the arc at the label radius can
-            // hold the word — thin slices stay clean; tap still reveals all.
-            const labelText = FACTOR_LABEL[s.sub.key] ?? "";
+            // Every slice gets readable text: tangential (arc-following) when
+            // the word fits the arc at LABEL_R, else a radial spoke (needs
+            // only font-height worth of arc, not the word's full width), with
+            // an abbreviation and a font floor as further fallbacks — see
+            // planLabel. Deterministic px/char estimate, no DOM measuring, so
+            // SSR and hydration always agree.
             const arcLen = (span * Math.PI) / 180 * LABEL_R;
-            const showLabel =
-              labelText.length > 0 &&
-              arcLen >= labelText.length * LABEL_CHAR_W + LABEL_PAD;
-            const flip = mid > 90 && mid < 270;
-            const rot = round2(flip ? mid + 180 : mid);
+            const label = planLabel(s.sub.key, mid, arcLen);
             return (
               <g key={s.sub.key}>
                 <path
@@ -268,27 +337,25 @@ export function ScoreWheel({ result }: { result: ScoreResult }) {
                     }
                   }}
                 />
-                {showLabel ? (
-                  <text
-                    x={at.x}
-                    y={at.y}
-                    transform={`rotate(${rot} ${at.x} ${at.y})`}
-                    textAnchor="middle"
-                    dominantBaseline="central"
-                    fontSize={LABEL_FONT}
-                    fontWeight={500}
-                    fill="#0f172a"
-                    stroke="#ffffff"
-                    strokeWidth={2.5}
-                    strokeLinejoin="round"
-                    paintOrder="stroke"
-                    opacity={selected && !isSel ? 0.35 : 1}
-                    className="pointer-events-none select-none transition-opacity"
-                    aria-hidden
-                  >
-                    {labelText}
-                  </text>
-                ) : null}
+                <text
+                  x={at.x}
+                  y={at.y}
+                  transform={`rotate(${label.rot} ${at.x} ${at.y})`}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fontSize={label.fontSize}
+                  fontWeight={500}
+                  fill="#0f172a"
+                  stroke="#ffffff"
+                  strokeWidth={2.5}
+                  strokeLinejoin="round"
+                  paintOrder="stroke"
+                  opacity={selected && !isSel ? 0.35 : 1}
+                  className="pointer-events-none select-none transition-opacity"
+                  aria-hidden
+                >
+                  {label.text}
+                </text>
               </g>
             );
           })}

@@ -283,10 +283,35 @@ export function sunEventQuality(input: SunEventQualityInput): SunEventQuality {
 
 // --- event selection ----------------------------------------------------------
 
+/**
+ * Fixed golden-hour window length, in minutes. A deliberate approximation of
+ * the sun's true low-angle window (which actually varies with latitude, date,
+ * and horizon obstruction) — at Florida's low latitudes the sun drops fast,
+ * so a flat 60-minute window on either side of the event is a reasonable
+ * stand-in. A real solar-elevation solve (e.g. sun altitude < ~6°) can
+ * replace this later without changing the shape of the card.
+ */
+export const GOLDEN_HOUR_MINUTES = 60;
+const GOLDEN_HOUR_MS = GOLDEN_HOUR_MINUTES * 60_000;
+
 export interface SunEventTime {
   event: SunEventKind;
   /** ISO time of the event. */
   timeIso: string;
+  /** ISO start of the golden-hour window around this event. */
+  goldenStartIso: string;
+  /** ISO end of the golden-hour window around this event. */
+  goldenEndIso: string;
+}
+
+/** Builds the golden-hour window for an event: sunrise → sunrise+60min for a
+ *  sunrise, sunset−60min → sunset for a sunset (see GOLDEN_HOUR_MINUTES). */
+function goldenWindow(event: SunEventKind, timeIso: string): { goldenStartIso: string; goldenEndIso: string } {
+  const t = Date.parse(timeIso);
+  if (event === "sunrise") {
+    return { goldenStartIso: timeIso, goldenEndIso: new Date(t + GOLDEN_HOUR_MS).toISOString() };
+  }
+  return { goldenStartIso: new Date(t - GOLDEN_HOUR_MS).toISOString(), goldenEndIso: timeIso };
 }
 
 /**
@@ -295,7 +320,8 @@ export interface SunEventTime {
  * tomorrow's sunrise. Pure — `now` is injected so it's testable without
  * mocking the clock. Returns null (honest-null) only when there's truly
  * nothing to show (no sun times at all, e.g. a fetch failure with no
- * tomorrow fallback supplied).
+ * tomorrow fallback supplied). Each result carries its golden-hour window
+ * (see `goldenWindow`) alongside the bare event time.
  */
 export function nextSunEvent(
   now: Date,
@@ -306,19 +332,34 @@ export function nextSunEvent(
 
   const sunriseMs = today.sunrise ? Date.parse(today.sunrise) : NaN;
   if (Number.isFinite(sunriseMs) && nowMs < sunriseMs) {
-    return { event: "sunrise", timeIso: today.sunrise! };
+    return { event: "sunrise", timeIso: today.sunrise!, ...goldenWindow("sunrise", today.sunrise!) };
   }
 
   const sunsetMs = today.sunset ? Date.parse(today.sunset) : NaN;
   if (Number.isFinite(sunsetMs) && nowMs < sunsetMs) {
-    return { event: "sunset", timeIso: today.sunset! };
+    return { event: "sunset", timeIso: today.sunset!, ...goldenWindow("sunset", today.sunset!) };
   }
 
   if (tomorrowSunriseIso) {
-    return { event: "sunrise", timeIso: tomorrowSunriseIso };
+    return { event: "sunrise", timeIso: tomorrowSunriseIso, ...goldenWindow("sunrise", tomorrowSunriseIso) };
   }
 
   return null;
+}
+
+/**
+ * Where `now` falls within a sun event's golden-hour window, 0-100. Returns
+ * null when `now` is outside the window (before it starts or after it ends)
+ * — callers use that to decide "show the live progress bar" vs. "show the
+ * upcoming times" per the card's spec.
+ */
+export function goldenHourProgress(now: Date, event: SunEventTime): number | null {
+  const nowMs = now.getTime();
+  const startMs = Date.parse(event.goldenStartIso);
+  const endMs = Date.parse(event.goldenEndIso);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+  if (nowMs < startMs || nowMs > endMs) return null;
+  return Math.min(100, Math.max(0, ((nowMs - startMs) / (endMs - startMs)) * 100));
 }
 
 // --- hourly lookup -------------------------------------------------------------
