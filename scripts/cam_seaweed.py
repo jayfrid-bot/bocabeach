@@ -216,10 +216,34 @@ def fetch_uw_frame() -> bytes:
     ffmpeg error, timeout) raises — the caller catches it and the main cam flow
     is unaffected; we simply accrue no `uw` field for that tick.
     """
-    # YouTube blocks the default web client from datacenter IPs (confirmed on
-    # GitHub runners 2026-07-23: exit 1 while the same call works locally). The
-    # ios/tv innertube clients are served different bot-checks and frequently
-    # still work from datacenters, so try them in order before giving up.
+    # PREFERRED PATH — the frame COURIER: YouTube blocks ALL yt-dlp clients from
+    # GitHub's datacenter IPs (confirmed 2026-07-24: ios/tv/default each exit 1
+    # in CI while working from a residential connection), so the owner's Mac
+    # grabs a frame hourly (scripts/uw_frame_local.sh via launchd) and pushes it
+    # to the `uw-frames` branch. Use it when fresh (<=90 min per its meta.json).
+    try:
+        meta = json.loads(_get(
+            "https://raw.githubusercontent.com/jayfrid-bot/bocabeach/uw-frames/meta.json",
+            timeout=15).decode("utf-8", "replace"))
+        grabbed = dt.datetime.strptime(
+            meta["grabbedAtUtc"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+        age_min = (dt.datetime.now(dt.timezone.utc) - grabbed).total_seconds() / 60
+        if age_min <= 90:
+            frame = _get(
+                "https://raw.githubusercontent.com/jayfrid-bot/bocabeach/uw-frames/"
+                f"latest.jpg?cb={int(grabbed.timestamp())}", timeout=25)
+            if frame[:2] == b"\xff\xd8":  # JPEG magic — a real image, not an error page
+                print(f"  uw: courier frame ({age_min:.0f} min old)")
+                return frame
+        else:
+            print(f"  uw: courier frame stale ({age_min:.0f} min) — trying yt-dlp",
+                  file=sys.stderr)
+    except Exception as e:  # noqa: BLE001 — fall through to the direct grab
+        print(f"  uw: courier unavailable ({e}) — trying yt-dlp", file=sys.stderr)
+
+    # FALLBACK — direct grab. Works locally/residential; blocked from GitHub
+    # runners, but kept so the script still works outside CI and in case the
+    # ios/tv innertube clients (served different bot-checks) start passing.
     manifest = None
     errors: list[str] = []
     for client in ("ios", "tv", "default"):
