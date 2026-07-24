@@ -193,7 +193,12 @@ PROMPT = (
     "slightly_murky=greenish with some suspended sand, murky=brown/tea-colored "
     "water itself, churned=heavily stirred-up sand throughout. Use unknown "
     "(and water_pct null) if open water is not clearly visible in this frame. "
-    "water_pct = water clarity 0-100 where 100=crystal clear and 0=opaque."
+    "water_pct = water clarity 0-100. Use the FULL scale and discriminate: "
+    "90-100 = exceptional glass-clear tropical water (rare here); 75-89 = very "
+    "clear blue-green; 60-74 = decent but visibly tinted green, a typical fair "
+    "day; 40-59 = noticeably murky/sandy; 20-39 = poor, brown or heavily "
+    "suspended; <20 = opaque. Most days fall 55-80 — reserve 85+ for genuinely "
+    "exceptional transparency."
 )
 
 # Separate prompt for the UNDERWATER sea-cam frame — a different scene (below the

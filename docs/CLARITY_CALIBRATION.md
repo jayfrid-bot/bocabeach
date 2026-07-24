@@ -10,6 +10,7 @@ correct SYSTEMATIC bias only, never chase single noisy points).
 |---|---|---|---|---|---|---|
 | 2026-07-24 | ~1:10 PM | **75% clear** | 25 / 65 / 85 (pre-fix prompt) | 25 | 65 | 35 (7 mi away) |
 | 2026-07-24 | 1:17 PM (post-fix re-read, same water) | (75) | 50 / 85 / 88 | — | **85** (published) | — |
+| 2026-07-24 | 2:58 PM | **65% clear** | 85 / 85 / 85 | — | **85** (published) | — |
 
 ## Changes made from this ledger
 
@@ -22,6 +23,13 @@ correct SYSTEMATIC bias only, never chase single noisy points).
   within 10 pts of the owner's 75.
 - Vision prompt now explicitly excludes floating seaweed and sun glare from
   the water-clarity judgment.
+
+**2026-07-24 later (n=2):** both post-fix residuals are OVER (+10, +20) and the
+cams clustered at exactly 85 while the real water declined 75→65 — the
+seaweed/glare prompt overcorrected into poor scale discrimination. Fix: rubric
+anchoring in the prompt (explicit 0-100 bands, "most days fall 55-80, reserve
+85+ for genuinely exceptional transparency") rather than a numeric offset.
+Re-evaluate the residual sign after the next owner anchor.
 
 ## Open questions (need more data)
 
