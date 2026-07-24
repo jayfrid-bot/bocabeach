@@ -21,13 +21,23 @@ value (plus a `latest` reading for the current beach state).
 
 UNDERWATER CAM (calibration): Deerfield Beach runs "Spinner the Sea Cam", an
 underwater YouTube livestream on the International Fishing Pier ~7 mi up-coast.
-At most once per hour (local minute < 10) during daylight (hours 6-20) we grab a
-single frame (yt-dlp -g -> ffmpeg) and run a SEPARATE underwater-visibility
-vision read through the same provider fallback chain. This ground-truths the
-SURFACE water-clarity grades: later we correlate a tick's surface `clr` against
-the underwater `uw`. It fully fail-softs — YouTube sometimes blocks datacenter
-IPs, so if Actions can't reach the stream we simply accrue no `uw` fields and
-lose nothing; the main cam flow is never affected.
+At most once per hour during daylight (hours 6-20) we grab a single frame and run
+a SEPARATE underwater-visibility vision read through the same provider fallback
+chain. This ground-truths the SURFACE water-clarity grades: later we correlate a
+tick's surface `clr` against the underwater `uw`. It fully fail-softs — if no
+frame is reachable we simply accrue no `uw` fields and lose nothing; the main cam
+flow is never affected.
+
+Frame source (fetch_uw_frame) is a COURIER CHAIN, tried in order:
+  (a) the Cloudflare "uw-frame" Worker — headless Chrome (Browser Rendering)
+      opens the YouTube embed hourly and stores a fresh frame in KV; we read its
+      /meta and use /frame when grabbedAtUtc <= 90 min. URL via env UW_FRAME_URL
+      (default the deployed worker). This is the cloud-side replacement for the
+      old Mac courier and has NO Mac dependency. See workers/uw-frame/.
+  (b) the legacy `uw-frames` branch raw file (the owner's Mac launchd courier) —
+      kept as a silent fallback in case the Worker is down.
+  (c) direct yt-dlp -g -> ffmpeg — works locally/residential but YouTube blocks
+      it from GitHub datacenter IPs; kept as a last resort.
 
 Data shape (cam_seaweed.json):
   top-level `uw`: {level, pct, note, capturedAtLocal} — latest underwater read,
@@ -145,6 +155,14 @@ UW_CLARITY = ("clear", "slightly_hazy", "hazy", "murky")
 UW_STREAM_URL = os.environ.get(
     "UW_STREAM_URL", "https://www.youtube.com/watch?v=SHfAtWHr9Ks"
 )
+# Cloud-side frame courier: the Cloudflare Browser-Rendering Worker that grabs a
+# fresh underwater frame hourly and serves /frame + /meta. Preferred source (no
+# Mac dependency). See workers/uw-frame/.
+UW_FRAME_URL = os.environ.get(
+    "UW_FRAME_URL", "https://uw-frame.entwined-app.workers.dev"
+).rstrip("/")
+# A courier frame older than this (minutes) is considered stale -> fall through.
+UW_FRAME_MAX_AGE_MIN = float(os.environ.get("UW_FRAME_MAX_AGE_MIN", "90"))
 # Only run the underwater read within these LOCAL hours (dark underwater at night)
 # and only in the first 10 minutes of the hour, so it fires at most ~once/hour.
 UW_HOURS = range(6, 21)  # 6 AM .. 8 PM local, inclusive
@@ -204,23 +222,53 @@ def fetch_still(cam: dict) -> bytes:
     return _get(f"{cam['feed']}/{feed[cam['view']]['mr']}")
 
 
+def _age_min_utc(grabbed_at: str) -> float:
+    """Minutes since an ISO-8601 UTC timestamp like '2026-07-24T14:38:39Z'."""
+    grabbed = dt.datetime.strptime(
+        grabbed_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+    return (dt.datetime.now(dt.timezone.utc) - grabbed).total_seconds() / 60
+
+
 def fetch_uw_frame() -> bytes:
     """Grab a single JPEG frame from the Deerfield underwater YouTube livestream.
 
-    Two subprocess hops: `yt-dlp -g` resolves the live HLS manifest URL (needs a
-    JS runtime — node is preinstalled on GitHub ubuntu runners), then ffmpeg
-    pulls one frame. Kept fully self-contained with tight timeouts (~60s total).
+    COURIER CHAIN, tried in order (each fail-soft, all timeouts tight):
+      (a) Cloudflare uw-frame Worker (Browser Rendering) — the cloud-side, NO-Mac
+          replacement. Read its /meta; if grabbedAtUtc <= UW_FRAME_MAX_AGE_MIN
+          (default 90 min) fetch /frame. URL via env UW_FRAME_URL.
+      (b) legacy `uw-frames` branch raw file — the owner's Mac launchd courier,
+          kept as a silent fallback if the Worker is down.
+      (c) direct yt-dlp -g -> ffmpeg — works locally/residential; YouTube blocks
+          it from GitHub datacenter IPs, so it's the last resort.
 
-    CAVEAT: YouTube periodically blocks datacenter IPs, and the stream can be
-    offline. EVERY failure mode here (yt-dlp missing, IP block, offline stream,
-    ffmpeg error, timeout) raises — the caller catches it and the main cam flow
+    If ALL three fail this raises — the caller catches it and the main cam flow
     is unaffected; we simply accrue no `uw` field for that tick.
     """
-    # PREFERRED PATH — the frame COURIER: YouTube blocks ALL yt-dlp clients from
-    # GitHub's datacenter IPs (confirmed 2026-07-24: ios/tv/default each exit 1
-    # in CI while working from a residential connection), so the owner's Mac
-    # grabs a frame hourly (scripts/uw_frame_local.sh via launchd) and pushes it
-    # to the `uw-frames` branch. Use it when fresh (<=90 min per its meta.json).
+    # (a) PREFERRED — Cloudflare Browser-Rendering Worker (no Mac dependency).
+    try:
+        meta = json.loads(_get(f"{UW_FRAME_URL}/meta", timeout=15)
+                          .decode("utf-8", "replace"))
+        grabbed_at = meta.get("grabbedAtUtc")
+        if grabbed_at:
+            age_min = _age_min_utc(grabbed_at)
+            if age_min <= UW_FRAME_MAX_AGE_MIN:
+                frame = _get(f"{UW_FRAME_URL}/frame", timeout=25)
+                if frame[:2] == b"\xff\xd8":  # JPEG magic — a real image
+                    print(f"  uw: CF worker frame ({age_min:.0f} min old)")
+                    return frame
+            else:
+                print(f"  uw: CF worker frame stale ({age_min:.0f} min) — "
+                      "trying legacy courier", file=sys.stderr)
+        else:
+            print("  uw: CF worker has no frame yet — trying legacy courier",
+                  file=sys.stderr)
+    except Exception as e:  # noqa: BLE001 — fall through to the legacy courier
+        print(f"  uw: CF worker unavailable ({e}) — trying legacy courier",
+              file=sys.stderr)
+
+    # (b) LEGACY FALLBACK — the owner's Mac grabs a frame hourly
+    # (scripts/uw_frame_local.sh via launchd) and pushes it to the `uw-frames`
+    # branch. Silent fallback for when the Worker is down. Use if <= 90 min old.
     try:
         meta = json.loads(_get(
             "https://raw.githubusercontent.com/jayfrid-bot/bocabeach/uw-frames/meta.json",
@@ -233,17 +281,17 @@ def fetch_uw_frame() -> bytes:
                 "https://raw.githubusercontent.com/jayfrid-bot/bocabeach/uw-frames/"
                 f"latest.jpg?cb={int(grabbed.timestamp())}", timeout=25)
             if frame[:2] == b"\xff\xd8":  # JPEG magic — a real image, not an error page
-                print(f"  uw: courier frame ({age_min:.0f} min old)")
+                print(f"  uw: legacy courier frame ({age_min:.0f} min old)")
                 return frame
         else:
-            print(f"  uw: courier frame stale ({age_min:.0f} min) — trying yt-dlp",
+            print(f"  uw: legacy courier frame stale ({age_min:.0f} min) — trying yt-dlp",
                   file=sys.stderr)
     except Exception as e:  # noqa: BLE001 — fall through to the direct grab
-        print(f"  uw: courier unavailable ({e}) — trying yt-dlp", file=sys.stderr)
+        print(f"  uw: legacy courier unavailable ({e}) — trying yt-dlp", file=sys.stderr)
 
-    # FALLBACK — direct grab. Works locally/residential; blocked from GitHub
-    # runners, but kept so the script still works outside CI and in case the
-    # ios/tv innertube clients (served different bot-checks) start passing.
+    # (c) LAST RESORT — direct grab. Works locally/residential; blocked from
+    # GitHub runners, but kept so the script still works outside CI and in case
+    # the ios/tv innertube clients (served different bot-checks) start passing.
     manifest = None
     errors: list[str] = []
     for client in ("ios", "tv", "default"):
