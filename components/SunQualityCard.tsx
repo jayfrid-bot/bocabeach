@@ -7,9 +7,12 @@ import {
   goldenHourProgress,
   nearestHourlyPoint,
   nextSunEvent,
+  peakColorTime,
   sunEventQuality,
   sunQualityBandMeta,
   type CloudMix,
+  type GoldenWindowIso,
+  type HorizonPath,
   type HourlyCloudPoint,
   type SunEventKind,
   type SunEventQuality,
@@ -28,17 +31,35 @@ const GRADIENT =
 // progress bar, just warmed up to match this card's subject.
 const GOLDEN_PROGRESS_GRADIENT = "linear-gradient(to right, #f59e0b, #fb923c, #f97316)";
 
+/** How close (minutes) the event must be for a "right now" satellite beam-path
+ *  reading to speak for it — a live cloud observation can't vouch for a sunrise
+ *  hours away. Aligns with nearestHourlyPoint's forecast tolerance. */
+const BEAM_IMMINENT_MINUTES = 90;
+
 export interface SunQualityCardProps {
   /** Current instant; injectable for tests/SSR determinism. Defaults to now. */
   now?: Date;
   /** IANA timezone for the displayed time, e.g. "America/New_York". */
   tz: string;
-  /** Today's sun times (ISO strings), e.g. from lib/sources/sun.ts's SunData. */
-  today: { sunrise?: string; sunset?: string };
-  /** Tomorrow's sunrise (ISO) — only used once today's sunset has passed. */
-  tomorrowSunrise?: string;
+  /** Today's sun times (ISO strings) + real elevation golden windows, e.g. from
+   *  lib/sources/sun.ts's SunData. */
+  today: {
+    sunrise?: string;
+    sunset?: string;
+    goldenAm?: GoldenWindowIso;
+    goldenEve?: GoldenWindowIso;
+  };
+  /** Tomorrow's sunrise (ISO) + its morning golden window — used once today's
+   *  sunset has passed. */
+  tomorrow?: { sunriseIso?: string; goldenAm?: GoldenWindowIso };
   /** Hourly forecast cloud/humidity points to read the event-hour reading from. */
   hourly: readonly HourlyCloudPoint[];
+  /** Current air-clarity reading (aerosol optical depth + PM2.5) — a small
+   *  modifier on the color score. Optional/honest-null. */
+  airQuality?: { aod?: number; pm2_5?: number } | null;
+  /** Satellite beam/horizon-path cloud right now (GOES) + its wrapper status —
+   *  used as the clear-path input ONLY when fresh and the event is imminent. */
+  goesCloud?: { beamCloudPct?: number | null; cloudPct?: number; status?: string } | null;
 }
 
 function eventIcon(event: SunEventKind): string {
@@ -66,9 +87,31 @@ function cloudLine(cloud: CloudMix | undefined): string {
   return "No forecast cloud reading for this hour.";
 }
 
-/** Builds the flip-card back's NerdInfo locally (no lib/nerdInfo.ts registry
- *  entry — this module stays fully self-contained; see the integration note
- *  in lib/sunQuality.ts for wiring this into that registry later). */
+/**
+ * Resolve the satellite beam/horizon-path clearness for the factor model —
+ * present (with `fresh:true`) only when GOES delivered a reading, its wrapper is
+ * "ok" (not stale), and the event is within BEAM_IMMINENT_MINUTES of `now`
+ * (deterministic: `now` is the server-pinned snapshot time, so SSR and hydration
+ * agree). Beam-path cloud is preferred; overhead cloudPct is the honest fallback.
+ */
+function resolveHorizon(
+  goes: SunQualityCardProps["goesCloud"],
+  eventIso: string,
+  now: Date,
+): HorizonPath | undefined {
+  if (!goes || goes.status !== "ok") return undefined;
+  const pct = goes.beamCloudPct ?? goes.cloudPct;
+  if (pct == null) return undefined;
+  const dt = Math.abs(Date.parse(eventIso) - now.getTime());
+  if (!Number.isFinite(dt)) return undefined;
+  const fresh = dt <= BEAM_IMMINENT_MINUTES * 60_000;
+  return { cloudPct: pct, fresh };
+}
+
+/** Builds the flip-card back's NerdInfo. When the richer factor model ran, the
+ *  transparent per-factor breakdown leads (the spinoff app's differentiator);
+ *  otherwise the simpler cloud-canvas explainer stands. Self-contained (no
+ *  lib/nerdInfo.ts registry entry) — see the integration note in lib/sunQuality.ts. */
 function buildSunQualityNerdInfo(args: {
   event: SunEventKind;
   timeIso: string;
@@ -76,42 +119,60 @@ function buildSunQualityNerdInfo(args: {
   cloud: CloudMix | undefined;
   humidityPct: number | undefined;
   result: SunEventQuality;
+  peakLine: string | null;
+  goldenLine: string;
 }): NerdInfo {
-  const { event, timeIso, tz, cloud, humidityPct, result } = args;
+  const { event, timeIso, tz, cloud, humidityPct, result, peakLine, goldenLine } = args;
   const time = fmtTime(timeIso, tz);
-  // The total-only fallback path is taken whenever the level split is INCOMPLETE
-  // but total cover is available — matches lib/sunQuality.ts's hasTotalOnly.
   const knownTotalOnly = !hasCompleteLevelSplit(cloud) && !!cloud && cloud.totalPct != null;
+  const b = result.breakdown;
 
   const computation: string[] =
     result.score == null
       ? ["No forecast cloud reading for this hour yet."]
-      : [
-          `${cloudLine(cloud)} at ${time}`,
-          ...(humidityPct != null ? [`${humidityPct}% humidity`] : []),
-          `→ ${result.score}/100 (${result.band})`,
-        ];
+      : b
+        ? [
+            // Transparent factor-by-factor breakdown — each shown plainly.
+            `Horizon path: ${b.horizonPath}`,
+            `Cloud canvas: ${b.cloudCanvas}`,
+            ...(b.airClarity ? [`Air clarity: ${b.airClarity}`] : []),
+            ...(b.humidity ? [`Humidity: ${b.humidity}`] : []),
+            `→ ${result.score}/100 (${result.band})`,
+            goldenLine,
+            ...(peakLine ? [peakLine] : []),
+          ]
+        : [
+            `${cloudLine(cloud)} at ${time}`,
+            ...(humidityPct != null ? [`${humidityPct}% humidity`] : []),
+            `→ ${result.score}/100 (${result.band})`,
+            goldenLine,
+            ...(peakLine ? [peakLine] : []),
+          ];
 
   return {
     title: `${eventLabel(event)} color potential`,
     weightPct: null,
     explainer:
-      "Will the sky put on a color show, or is it a clear-but-plain bust? The best sunrises and sunsets aren't the clearest ones — they need a mid/high cloud DECK to act as a canvas the low sun's red and orange light can paint onto. Roughly 30-60% mid/high cloud is the sweet spot: enough surface up there to catch color, not so much it blocks the sun outright. A perfectly clear sky is clean but plain — nothing up there to paint color onto. And a heavy LOW cloud deck (near-total, ~85%+) is the opposite of magic: it sits right at the horizon and blocks the direct beam before it ever reaches whatever's above, so it can kill the show even under a promising mid/high deck.",
+      "Will the sky put on a color show, or is it a clear-but-plain bust? The best sunrises and sunsets aren't the clearest ones — they need a mid/high cloud DECK to act as a canvas the low sun's red and orange light can paint onto, AND a clear enough horizon for that low beam to reach it. Golden hour is the low-angle window itself: the sun from +6° above the horizon down to −4° below it — so it straddles the sunrise/sunset, not stopping at it. Roughly 30-60% mid/high cloud is the color sweet spot; a perfectly clear sky is clean but plain; and a heavy LOW cloud deck sitting on the horizon blocks the beam before it reaches whatever's above.",
     formula:
-      "colorCanvas = screenBlend(mid%, high%); score = curve(colorCanvas: 0%→40, 30-60%→90-97 peak, 100%→15) × lowCloudPenalty(low%: ≤30%→none, →~90% by a near-total low deck) + up to +5 for humidity <60%. Total-cloud-only readings use a flatter, lower-ceiling curve instead, since the level split (beneficial mid/high vs. blocking low) isn't known. Golden hour itself is a fixed 60-minute window on the sunrise/sunset side of the event — a deliberate approximation of the sun's low-angle window at Florida's latitudes, not a solar-elevation calculation.",
+      "score = 0.40·clearPath + 0.40·canvas + 0.20·seasonalPrior, × aerosol × humidity modifiers. clearPath = 100 − beam-path cloud% (satellite, when a fresh sample is near the event) else 100 − low-cloud est. canvas = 100 − |0.5·mid + 0.7·high − 50|·2.2 − 0.9·low (high cloud weighted above mid). Modifiers: clean air (AOD<0.15) small bonus, haze/PM2.5 penalties (−25%/−35% caps), humidity >60% penalty (−15% cap). Peak color lags to the sun's −2°→−4° window when there's a high-cloud deck. Every constant is a tuned heuristic except the low-cloud clear-path blocker (Corfidi/NOAA). Without the atmospheric/satellite inputs, a simpler cloud-canvas curve is used instead. Golden/blue-hour times come from a solar-elevation solve (+6°/−4°/−6°), not a fixed 60-min window.",
     computation,
     sources: [
-      "Open-Meteo hourly forecast — total cloud cover (cloud-by-level not yet fetched by this app)",
-      "Sun times — computed locally (NOAA solar-position algorithm)",
+      "Open-Meteo hourly forecast — cloud cover by level (low/mid/high) + humidity",
+      "Open-Meteo air quality — aerosol optical depth (CAMS) + PM2.5",
+      "NOAA GOES-19 ABI — beam-path cloud (horizon clearness), when fresh",
+      "Sun/golden-hour times — computed locally (NOAA solar-position algorithm)",
     ],
     notes: knownTotalOnly
-      ? "This app doesn't fetch cloud-by-level yet, so this reading falls back to total cloud cover on a flatter, more conservative curve — the real color potential could be higher or lower than shown."
-      : "Needs BOTH things to line up for a truly vivid sky: a moderate mid/high deck AND a low deck that stays out of the way.",
+      ? "Cloud-by-level wasn't available for this hour, so this falls back to total cloud cover on a flatter, more conservative curve — the real color potential could be higher or lower."
+      : b && b.horizonPath.startsWith("~")
+        ? "The horizon path here is estimated from low cloud, not confirmed by satellite (no fresh beam-path sample near the event) — treat clear-path as a best guess."
+        : "Needs BOTH a moderate mid/high deck AND a low deck that stays out of the way. Peak-color timing and the modifiers are research-informed heuristics, not guarantees.",
   };
 }
 
-/** "Sunset 8:12 PM · golden hour 7:12–8:12 PM" (or the sunrise equivalent,
- *  "Sunrise 6:30 AM · golden hour 6:30–7:30 AM"). All times in `tz`. */
+/** "Sunset 8:11 PM · golden hour 7:39–8:27 PM" — the true elevation window,
+ *  which for a sunset runs PAST sunset (down to the sun at −4°). All times in `tz`. */
 function eventTimeLine(next: SunEventTime, tz: string): string {
   const eventTime = fmtTime(next.timeIso, tz);
   const goldenStart = fmtTime(next.goldenStartIso, tz);
@@ -119,11 +180,35 @@ function eventTimeLine(next: SunEventTime, tz: string): string {
   return `${eventLabel(next.event)} ${eventTime} · golden hour ${goldenStart}–${goldenEnd}`;
 }
 
+/** "Peak color ~8:22 PM (11 min after sunset)" / "…(11 min before sunrise)" /
+ *  "…around sunset". Null when there's no usable event time. */
+function peakColorLine(
+  next: SunEventTime,
+  tz: string,
+  cloud: CloudMix | undefined,
+  clearPathEstimate: number | undefined,
+): string | null {
+  const peak = peakColorTime({
+    event: next.event,
+    eventIso: next.timeIso,
+    peakAnchorIso: next.peakAnchorIso,
+    highPct: cloud?.highPct,
+    clearPathScore: clearPathEstimate,
+  });
+  if (!peak) return null;
+  const at = fmtTime(peak.iso, tz);
+  const m = peak.minutesFromEvent;
+  if (m === 0) return `Peak color ~${at} (around ${next.event})`;
+  const rel = m > 0 ? `${m} min after ${next.event}` : `${-m} min before ${next.event}`;
+  return `Peak color ~${at} (${rel})`;
+}
+
 function SunQualityFront({
   next,
   tz,
   result,
   progress,
+  peakLine,
 }: {
   next: SunEventTime;
   tz: string;
@@ -131,6 +216,7 @@ function SunQualityFront({
   /** 0-100 when `now` is live and inside the golden-hour window; null
    *  otherwise (pre-mount, or simply outside the window). */
   progress: number | null;
+  peakLine: string | null;
 }) {
   const { score, band, note } = result;
   const meta = band ? sunQualityBandMeta(band) : null;
@@ -172,6 +258,11 @@ function SunQualityFront({
         <div className="mt-2 min-h-8 break-words text-xs text-slate-600 dark:text-slate-400 line-clamp-3">
           {note}
         </div>
+        {peakLine ? (
+          <div className="mt-1.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+            {peakLine}
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-2 border-t border-slate-900/10 pt-2 dark:border-white/10">
@@ -197,25 +288,32 @@ function SunQualityFront({
 }
 
 /**
- * "Golden hour" card: when the next golden hour is (morning after sunrise, or
- * evening before sunset), whether sunrise or sunset is next, a live in-window
- * progress track, and how colorful it should look — scored via
- * lib/sunQuality.ts's pure `sunEventQuality` off the forecast cloud mix.
+ * "Golden hour" card: when the next golden hour is (the TRUE elevation window,
+ * +6°→−4°, which straddles the sun event rather than stopping at it), whether
+ * sunrise or sunset is next, a live in-window progress track, how colorful it
+ * should look (lib/sunQuality.ts's factor model off the forecast cloud mix +
+ * air clarity + satellite horizon), and when color should peak.
  * Self-contained and props-driven — matches the FlipCard(front/back) +
- * MetricCard-style front convention used across ConditionsDashboard.tsx (see
- * e.g. UvCard, StormActivityMeter). Renders a "no sun times" front when
- * there's genuinely nothing to show, rather than a fabricated score.
+ * MetricCard-style front convention used across ConditionsDashboard.tsx. Renders
+ * a "no sun times" front when there's genuinely nothing to show.
  *
  * HYDRATION SAFETY: `now` (from the caller) pins the server render and the
- * event/score selection to the snapshot's generatedAt for SSR stability. The
- * live golden-hour progress bar is additionally gated on a client-only clock
- * (`clientNowMs`, null until mount) — same convention as RipRiskCard — so the
- * server HTML and the first client render agree exactly; the bar only turns
- * on after mount, once the real clock lands.
+ * event/score selection — including the deterministic satellite-freshness gate —
+ * to the snapshot's generatedAt for SSR stability. The live golden-hour progress
+ * bar is additionally gated on a client-only clock (`clientNowMs`, null until
+ * mount) so the server HTML and first client render agree exactly.
  */
-export function SunQualityCard({ now, tz, today, tomorrowSunrise, hourly }: SunQualityCardProps) {
+export function SunQualityCard({
+  now,
+  tz,
+  today,
+  tomorrow,
+  hourly,
+  airQuality,
+  goesCloud,
+}: SunQualityCardProps) {
   const nowD = now ?? new Date();
-  const next = nextSunEvent(nowD, today, tomorrowSunrise);
+  const next = nextSunEvent(nowD, today, tomorrow);
 
   const [clientNowMs, setClientNowMs] = useState<number | null>(null);
   useEffect(() => {
@@ -239,7 +337,28 @@ export function SunQualityCard({ now, tz, today, tomorrowSunrise, hourly }: SunQ
   }
 
   const point = nearestHourlyPoint(next.timeIso, hourly);
-  const result = sunEventQuality({ cloud: point?.cloud, humidityPct: point?.humidityPct });
+  const horizon = resolveHorizon(goesCloud, next.timeIso, nowD);
+  const result = sunEventQuality({
+    cloud: point?.cloud,
+    humidityPct: point?.humidityPct,
+    aod: airQuality?.aod,
+    pm2_5: airQuality?.pm2_5,
+    horizon,
+  });
+
+  // A rough clear-path estimate purely for the peak-color "reasonably clear"
+  // gate (mirrors the factor model's clearPath: fresh beam, else low-cloud est.).
+  const clearPathEstimate =
+    horizon?.fresh
+      ? Math.max(0, 100 - horizon.cloudPct)
+      : point?.cloud.lowPct != null
+        ? Math.max(0, 100 - point.cloud.lowPct * 1.1)
+        : undefined;
+  const peakLine = peakColorLine(next, tz, point?.cloud, clearPathEstimate);
+  const goldenLine = next.goldenFromElevation
+    ? `Golden hour ${fmtTime(next.goldenStartIso, tz)}–${fmtTime(next.goldenEndIso, tz)} (true elevation window)`
+    : `Golden hour ${fmtTime(next.goldenStartIso, tz)}–${fmtTime(next.goldenEndIso, tz)} (≈60-min estimate)`;
+
   const info = buildSunQualityNerdInfo({
     event: next.event,
     timeIso: next.timeIso,
@@ -247,6 +366,8 @@ export function SunQualityCard({ now, tz, today, tomorrowSunrise, hourly }: SunQ
     cloud: point?.cloud,
     humidityPct: point?.humidityPct,
     result,
+    peakLine,
+    goldenLine,
   });
 
   // Live progress only once the client clock has landed post-mount, so SSR
@@ -256,7 +377,7 @@ export function SunQualityCard({ now, tz, today, tomorrowSunrise, hourly }: SunQ
   return (
     <FlipCard
       label="Golden hour"
-      front={<SunQualityFront next={next} tz={tz} result={result} progress={progress} />}
+      front={<SunQualityFront next={next} tz={tz} result={result} progress={progress} peakLine={peakLine} />}
       back={<NerdBack info={info} />}
     />
   );

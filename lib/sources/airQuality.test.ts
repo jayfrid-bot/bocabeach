@@ -36,4 +36,15 @@ describe("parseAirQuality", () => {
     expect(parseAirQuality({ current: { time: "2026-06-02T21:00" } })).toBeNull();
     expect(parseAirQuality({})).toBeNull();
   });
+
+  it("reads aerosol optical depth (CAMS) when present, rounded to 2dp", () => {
+    const withAod = {
+      current: { ...SAMPLE.current, aerosol_optical_depth: 0.0873 },
+    };
+    expect(parseAirQuality(withAod)!.aod).toBe(0.09);
+  });
+
+  it("leaves aod undefined when the provider omits it (older feeds / AirNow path)", () => {
+    expect(parseAirQuality(SAMPLE)!.aod).toBeUndefined();
+  });
 });

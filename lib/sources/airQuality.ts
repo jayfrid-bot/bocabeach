@@ -13,6 +13,10 @@ interface OpenMeteoAir {
     us_aqi_pm2_5?: number | null;
     us_aqi_pm10?: number | null;
     us_aqi_ozone?: number | null;
+    // Aerosol optical depth from CAMS (dimensionless) — how much the whole
+    // column of haze/dust/smoke dims the sun. Feeds the sunrise/sunset color
+    // model (lib/sunQuality.ts). Same keyless Open-Meteo air-quality family.
+    aerosol_optical_depth?: number | null;
   };
 }
 
@@ -45,6 +49,7 @@ export function parseAirQuality(json: OpenMeteoAir): AirQualityData | null {
     pm2_5: num(c.pm2_5, 1),
     pm10: num(c.pm10, 1),
     ozone: num(c.ozone),
+    aod: num(c.aerosol_optical_depth, 2),
     observedAt: c.time ? new Date(`${c.time}:00Z`).toISOString() : undefined,
   };
 }
@@ -110,7 +115,7 @@ export async function fetchAirQuality(
   const url =
     `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${loc.lat}` +
     `&longitude=${loc.lon}` +
-    `&current=us_aqi,pm2_5,pm10,ozone,us_aqi_pm2_5,us_aqi_pm10,us_aqi_ozone`;
+    `&current=us_aqi,pm2_5,pm10,ozone,us_aqi_pm2_5,us_aqi_pm10,us_aqi_ozone,aerosol_optical_depth`;
   try {
     const res = await fetchWithTimeout(url, {
       timeoutMs: 7000,

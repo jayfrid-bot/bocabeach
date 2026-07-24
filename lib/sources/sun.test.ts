@@ -91,6 +91,78 @@ describe("computeSunTimes", () => {
     expect(sunrise).toBeNull();
     expect(sunset).toBeNull();
   });
+
+  it("also returns null golden/blue-hour crossings during polar night", () => {
+    const t = computeSunTimes(78.2, 15.6, 2026, 12, 21);
+    for (const d of [
+      t.goldenAmStart,
+      t.goldenAmEnd,
+      t.goldenEveStart,
+      t.goldenEveEnd,
+      t.blueAmStart,
+      t.blueEveEnd,
+      t.goldenAmPeak,
+      t.goldenEvePeak,
+    ]) {
+      expect(d).toBeNull();
+    }
+  });
+});
+
+describe("computeSunTimes — true golden/blue hour (elevation solve)", () => {
+  const t = computeSunTimes(LAT, LON, 2026, 7, 24);
+
+  it("orders the evening sequence: golden start (+6°) → sunset → peak (−3°) → golden end (−4°) → blue end (−6°)", () => {
+    const seq = [
+      t.goldenEveStart!,
+      t.sunset!,
+      t.goldenEvePeak!,
+      t.goldenEveEnd!,
+      t.blueEveEnd!,
+    ].map((d) => d.getTime());
+    for (let i = 1; i < seq.length; i++) {
+      expect(seq[i]).toBeGreaterThan(seq[i - 1]);
+    }
+  });
+
+  it("evening golden hour straddles sunset — it does NOT stop at it", () => {
+    expect(t.goldenEveStart!.getTime()).toBeLessThan(t.sunset!.getTime());
+    expect(t.goldenEveEnd!.getTime()).toBeGreaterThan(t.sunset!.getTime());
+  });
+
+  it("orders the morning sequence: blue start (−6°) → golden start (−4°) → peak (−3°) → sunrise → golden end (+6°)", () => {
+    const seq = [
+      t.blueAmStart!,
+      t.goldenAmStart!,
+      t.goldenAmPeak!,
+      t.sunrise!,
+      t.goldenAmEnd!,
+    ].map((d) => d.getTime());
+    for (let i = 1; i < seq.length; i++) {
+      expect(seq[i]).toBeGreaterThan(seq[i - 1]);
+    }
+  });
+
+  it("blue-hour bounds coincide with the −6° civil-twilight instants (daybreak/dusk)", () => {
+    expect(t.blueAmStart!.getTime()).toBe(t.daybreak!.getTime());
+    expect(t.blueEveEnd!.getTime()).toBe(t.dusk!.getTime());
+    // The blue↔golden boundary is shared (−4°).
+    expect(t.blueAmEnd!.getTime()).toBe(t.goldenAmStart!.getTime());
+    expect(t.blueEveStart!.getTime()).toBe(t.goldenEveEnd!.getTime());
+  });
+
+  it("each golden-hour side runs ~40-55 min at Boca's latitude (sun drops fast, but +6→−4 is 10° of arc)", () => {
+    const eveMin = (t.goldenEveEnd!.getTime() - t.goldenEveStart!.getTime()) / 60000;
+    const amMin = (t.goldenAmEnd!.getTime() - t.goldenAmStart!.getTime()) / 60000;
+    expect(eveMin).toBeGreaterThanOrEqual(40);
+    expect(eveMin).toBeLessThanOrEqual(55);
+    expect(amMin).toBeGreaterThanOrEqual(40);
+    expect(amMin).toBeLessThanOrEqual(55);
+    // Post-sunset side (sunset→−4°) is the ~25-35 min "per side of sunset" figure.
+    const postSunset = (t.goldenEveEnd!.getTime() - t.sunset!.getTime()) / 60000;
+    expect(postSunset).toBeGreaterThanOrEqual(10);
+    expect(postSunset).toBeLessThanOrEqual(35);
+  });
 });
 
 describe("fetchSun", () => {
@@ -116,5 +188,25 @@ describe("fetchSun", () => {
     // 2026-06-02 02:00Z is still 2026-06-01 (10 PM) in New York.
     const w = fetchSun(loc, new Date("2026-06-02T02:00:00Z"));
     expect(w.data?.date).toBe("2026-06-01");
+  });
+
+  it("emits the true golden/blue-hour ISO windows (today + tomorrow's morning)", () => {
+    const w = fetchSun(loc, new Date("2026-06-01T16:00:00Z"));
+    const d = w.data!;
+    for (const iso of [
+      d.goldenAmStartIso,
+      d.goldenAmEndIso,
+      d.goldenEveStartIso,
+      d.goldenEveEndIso,
+      d.blueEveEndIso,
+      d.goldenEvePeakIso,
+      d.tomorrowGoldenAmStartIso,
+      d.tomorrowGoldenAmEndIso,
+    ]) {
+      expect(iso).toBeTruthy();
+      expect(Number.isFinite(Date.parse(iso!))).toBe(true);
+    }
+    // Evening golden hour runs past sunset.
+    expect(Date.parse(d.goldenEveEndIso!)).toBeGreaterThan(Date.parse(d.sunset!));
   });
 });

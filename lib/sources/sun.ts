@@ -7,6 +7,16 @@ const SOURCE = "Solar calculator";
 const ZENITH_SUNRISE = 90.833; // upper limb + standard atmospheric refraction
 const ZENITH_CIVIL = 96; // civil twilight ("daybreak" / first light)
 
+// Photographic golden/blue hour, as SOLAR ELEVATIONS (degrees above horizon).
+// Golden hour is NOT bounded by sunset — it straddles it: the warm, low-angle
+// light runs from +6° down through the horizon to −4°. Blue hour is the −4°→−6°
+// twilight band just past golden hour. (Widely-used photographic convention;
+// e.g. PhotoPills / golden-hour.com use these same +6/−4/−6 bounds.)
+const ELEV_GOLDEN_HI = 6; // upper bound of golden hour
+const ELEV_GOLDEN_LO = -4; // golden↔blue boundary (below the horizon)
+const ELEV_BLUE_LO = -6; // lower bound of blue hour (= civil twilight, −6°)
+const ELEV_PEAK = -3; // peak-color anchor: midpoint of the −2°→−4° sweet spot
+
 const deg2rad = (d: number) => (d * Math.PI) / 180;
 const rad2deg = (r: number) => (r * 180) / Math.PI;
 const mod360 = (x: number) => ((x % 360) + 360) % 360;
@@ -94,6 +104,18 @@ export interface SunTimes {
   solarNoon: Date | null;
   sunset: Date | null;
   dusk: Date | null;
+  // --- True golden/blue hour bounds from the elevation solve (see the ELEV_*
+  // constants). Null when the sun never reaches that elevation on this day. ---
+  goldenAmStart: Date | null; // sun rising through −4°
+  goldenAmEnd: Date | null; // sun rising through +6°
+  goldenEveStart: Date | null; // sun descending through +6°
+  goldenEveEnd: Date | null; // sun descending through −4°
+  blueAmStart: Date | null; // sun rising through −6° (= daybreak)
+  blueAmEnd: Date | null; // sun rising through −4°
+  blueEveStart: Date | null; // sun descending through −4°
+  blueEveEnd: Date | null; // sun descending through −6° (= dusk)
+  goldenAmPeak: Date | null; // sun at −3°, rising (pre-sunrise peak color)
+  goldenEvePeak: Date | null; // sun at −3°, descending (post-sunset peak color)
   /** Sun's maximum altitude above the horizon at solar noon (degrees). */
   maxAltitudeDeg: number;
 }
@@ -120,12 +142,37 @@ export function computeSunTimes(
   const haSun = hourAngle(lat, declin, ZENITH_SUNRISE);
   const haCivil = hourAngle(lat, declin, ZENITH_CIVIL);
 
+  // Rising ("am") and descending ("eve") instants the sun passes a given
+  // elevation, from the same hour-angle solver (zenith = 90° − elevation).
+  // Both null when the sun never reaches that elevation (polar day/night).
+  const crossing = (
+    elevDeg: number,
+  ): { am: Date | null; eve: Date | null } => {
+    const ha = hourAngle(lat, declin, 90 - elevDeg);
+    if (ha == null) return { am: null, eve: null };
+    return { am: at(solarNoonUTC - 4 * ha), eve: at(solarNoonUTC + 4 * ha) };
+  };
+  const gHi = crossing(ELEV_GOLDEN_HI); // +6°
+  const gLo = crossing(ELEV_GOLDEN_LO); // −4°
+  const bLo = crossing(ELEV_BLUE_LO); // −6°
+  const pk = crossing(ELEV_PEAK); // −3°
+
   return {
     daybreak: haCivil == null ? null : at(solarNoonUTC - 4 * haCivil),
     sunrise: haSun == null ? null : at(solarNoonUTC - 4 * haSun),
     solarNoon: at(solarNoonUTC),
     sunset: haSun == null ? null : at(solarNoonUTC + 4 * haSun),
     dusk: haCivil == null ? null : at(solarNoonUTC + 4 * haCivil),
+    goldenAmStart: gLo.am,
+    goldenAmEnd: gHi.am,
+    goldenEveStart: gHi.eve,
+    goldenEveEnd: gLo.eve,
+    blueAmStart: bLo.am,
+    blueAmEnd: gLo.am,
+    blueEveStart: gLo.eve,
+    blueEveEnd: bLo.eve,
+    goldenAmPeak: pk.am,
+    goldenEvePeak: pk.eve,
     // Altitude at solar noon = 90° − |latitude − declination|.
     maxAltitudeDeg: Math.round((90 - Math.abs(lat - declin)) * 10) / 10,
   };
@@ -205,6 +252,22 @@ export function fetchSun(loc: Location, now: Date = new Date()): Wrapped<SunData
       sunset: t.sunset?.toISOString(),
       dusk: t.dusk?.toISOString(),
       tomorrowSunrise: tomorrow.sunrise?.toISOString(),
+      // True golden/blue-hour windows from the elevation solve (undefined, not
+      // null, when the sun never reaches that elevation — keeps SunData's
+      // optional-string shape and the JSON snapshot small).
+      goldenAmStartIso: t.goldenAmStart?.toISOString(),
+      goldenAmEndIso: t.goldenAmEnd?.toISOString(),
+      goldenEveStartIso: t.goldenEveStart?.toISOString(),
+      goldenEveEndIso: t.goldenEveEnd?.toISOString(),
+      blueAmStartIso: t.blueAmStart?.toISOString(),
+      blueAmEndIso: t.blueAmEnd?.toISOString(),
+      blueEveStartIso: t.blueEveStart?.toISOString(),
+      blueEveEndIso: t.blueEveEnd?.toISOString(),
+      goldenAmPeakIso: t.goldenAmPeak?.toISOString(),
+      goldenEvePeakIso: t.goldenEvePeak?.toISOString(),
+      tomorrowGoldenAmStartIso: tomorrow.goldenAmStart?.toISOString(),
+      tomorrowGoldenAmEndIso: tomorrow.goldenAmEnd?.toISOString(),
+      tomorrowGoldenAmPeakIso: tomorrow.goldenAmPeak?.toISOString(),
       maxAltitudeDeg: t.maxAltitudeDeg,
       moonPhase: moonPhase(now),
     };

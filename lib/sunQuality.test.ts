@@ -3,6 +3,7 @@ import {
   goldenHourProgress,
   nearestHourlyPoint,
   nextSunEvent,
+  peakColorTime,
   sunEventQuality,
   sunQualityBandMeta,
   type HourlyCloudPoint,
@@ -198,12 +199,14 @@ describe("goldenHourProgress", () => {
     timeIso: "2026-07-21T10:30:00.000Z",
     goldenStartIso: "2026-07-21T10:30:00.000Z",
     goldenEndIso: "2026-07-21T11:30:00.000Z",
+    goldenFromElevation: false,
   };
   const sunsetEvent: SunEventTime = {
     event: "sunset",
     timeIso: "2026-07-21T23:45:00.000Z",
     goldenStartIso: "2026-07-21T22:45:00.000Z",
     goldenEndIso: "2026-07-21T23:45:00.000Z",
+    goldenFromElevation: false,
   };
 
   it("is null before the morning golden-hour window starts", () => {
@@ -260,5 +263,265 @@ describe("nearestHourlyPoint", () => {
   it("returns undefined for an empty forecast", () => {
     const p = nearestHourlyPoint("2026-07-21T10:00:00.000Z", []);
     expect(p).toBeUndefined();
+  });
+});
+
+// --- richer FACTOR model (engaged when a level split is joined by an
+// atmospheric/satellite signal) -------------------------------------------
+describe("sunEventQuality — factor model", () => {
+  const split = { lowPct: 10, midPct: 40, highPct: 30 };
+
+  it("engages (populates a factor breakdown) once an atmospheric signal is present, but not on the bare level split", () => {
+    const bare = sunEventQuality({ cloud: split });
+    expect(bare.breakdown).toBeUndefined(); // fallback curve path
+
+    const rich = sunEventQuality({ cloud: split, aod: 0.09 });
+    expect(rich.breakdown).toBeDefined();
+    expect(rich.breakdown!.cloudCanvas).toContain("mid-high");
+    expect(rich.score).not.toBeNull();
+  });
+
+  it("also engages on a fresh satellite horizon reading alone", () => {
+    const r = sunEventQuality({ cloud: split, horizon: { cloudPct: 5, fresh: true } });
+    expect(r.breakdown).toBeDefined();
+    expect(r.breakdown!.horizonPath.toLowerCase()).toContain("satellite");
+  });
+
+  it("a fresh CLEAR satellite horizon beats a socked-in one, all else equal", () => {
+    const clear = sunEventQuality({ cloud: split, aod: 0.1, horizon: { cloudPct: 0, fresh: true } });
+    const socked = sunEventQuality({ cloud: split, aod: 0.1, horizon: { cloudPct: 95, fresh: true } });
+    expect(clear.score!).toBeGreaterThan(socked.score!);
+    expect(clear.breakdown!.horizonPath).toMatch(/clear/i);
+  });
+
+  it("a stale/non-fresh horizon is ignored for clear-path and flagged unverified (falls back to low-cloud est.)", () => {
+    const stale = sunEventQuality({ cloud: split, aod: 0.1, horizon: { cloudPct: 0, fresh: false } });
+    const noBeam = sunEventQuality({ cloud: split, aod: 0.1 });
+    expect(stale.score).toBe(noBeam.score); // beam not used
+    expect(stale.breakdown!.horizonPath).toMatch(/unverified/i);
+  });
+
+  it("CANVAS: peaks near the high-weighted ~50% amount and HIGH cloud counts more than mid", () => {
+    // high-weighted amount 0.5*mid+0.7*high: tune each to sit at ~50.
+    const balanced = sunEventQuality({ cloud: { lowPct: 0, midPct: 40, highPct: 43 }, aod: 0.1 });
+    const tooClear = sunEventQuality({ cloud: { lowPct: 0, midPct: 10, highPct: 5 }, aod: 0.1 });
+    expect(balanced.score!).toBeGreaterThan(tooClear.score!);
+    // 50% as all-high scores higher than 50% as all-mid (high weighted above mid).
+    const allHigh = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 71 }, aod: 0.1 });
+    const allMid = sunEventQuality({ cloud: { lowPct: 0, midPct: 71, highPct: 0 }, aod: 0.1 });
+    expect(allHigh.score!).toBeGreaterThan(allMid.score!);
+  });
+
+  it("LOW cloud imposes a near-linear canvas + clear-path penalty", () => {
+    const lowClean = sunEventQuality({ cloud: { lowPct: 0, midPct: 40, highPct: 30 }, aod: 0.1 });
+    const lowSome = sunEventQuality({ cloud: { lowPct: 40, midPct: 40, highPct: 30 }, aod: 0.1 });
+    const lowHeavy = sunEventQuality({ cloud: { lowPct: 90, midPct: 40, highPct: 30 }, aod: 0.1 });
+    expect(lowClean.score!).toBeGreaterThan(lowSome.score!);
+    expect(lowSome.score!).toBeGreaterThan(lowHeavy.score!);
+    expect(lowHeavy.band).toBe("dud");
+  });
+
+  it("AEROSOL modifier: very clean air (AOD<0.15) beats hazy air; penalty is capped at −25%", () => {
+    const clean = sunEventQuality({ cloud: split, aod: 0.05 });
+    const hazy = sunEventQuality({ cloud: split, aod: 0.4 });
+    const veryHazy = sunEventQuality({ cloud: split, aod: 5 });
+    expect(clean.score!).toBeGreaterThan(hazy.score!);
+    // Cap: even absurd AOD can't push the modifier below 0.75, so veryHazy
+    // stays at the −25% floor (not lower than a moderately hazy reading's ramp).
+    const neutral = sunEventQuality({ cloud: split, aod: 0.15 });
+    expect(veryHazy.score!).toBeGreaterThanOrEqual(Math.round(neutral.score! * 0.75) - 1);
+    expect(clean.breakdown!.airClarity).toMatch(/AOD/);
+  });
+
+  it("PM2.5 boundary-smoke penalty applies above ~35 µg/m³ and is capped at −35%", () => {
+    const cleanPm = sunEventQuality({ cloud: split, pm2_5: 8 });
+    const smoky = sunEventQuality({ cloud: split, pm2_5: 200 });
+    expect(smoky.score!).toBeLessThan(cleanPm.score!);
+    // Floor: modifier can't drop below 0.65.
+    const base = sunEventQuality({ cloud: split, pm2_5: 35 });
+    expect(smoky.score!).toBeGreaterThanOrEqual(Math.round(base.score! * 0.65) - 1);
+  });
+
+  it("HUMIDITY modifier: mild penalty above 60% RH, capped at −15%; ≤60% costs nothing", () => {
+    const dry = sunEventQuality({ cloud: split, aod: 0.1, humidityPct: 40 });
+    const at60 = sunEventQuality({ cloud: split, aod: 0.1, humidityPct: 60 });
+    const muggy = sunEventQuality({ cloud: split, aod: 0.1, humidityPct: 100 });
+    expect(dry.score).toBe(at60.score); // no penalty at/below 60
+    expect(muggy.score!).toBeLessThan(dry.score!);
+    // Floor: −15% at saturation.
+    expect(muggy.score!).toBeGreaterThanOrEqual(Math.round(dry.score! * 0.85) - 1);
+    expect(muggy.breakdown!.humidity).toMatch(/muggy/i);
+  });
+
+  it("still honest-null with no cloud reading, even when air/satellite inputs are present", () => {
+    const r = sunEventQuality({ cloud: undefined, aod: 0.1, horizon: { cloudPct: 0, fresh: true } });
+    expect(r.score).toBeNull();
+    expect(r.band).toBeNull();
+    expect(r.breakdown).toBeUndefined();
+  });
+
+  it("an incomplete split + air signal does NOT engage the factor model (no fabricated canvas)", () => {
+    // Only total cover known → stays on the flatter total-only fallback curve.
+    const r = sunEventQuality({ cloud: { totalPct: 45 }, aod: 0.1 });
+    expect(r.breakdown).toBeUndefined();
+    expect(r.note.toLowerCase()).toContain("cloud mix unknown");
+  });
+
+  it("factor-model scores never leave 0-100", () => {
+    for (const cloud of [
+      { lowPct: 0, midPct: 71, highPct: 71 },
+      { lowPct: 100, midPct: 100, highPct: 100 },
+      { lowPct: 0, midPct: 0, highPct: 0 },
+    ]) {
+      const r = sunEventQuality({ cloud, aod: 0.01, pm2_5: 5, humidityPct: 20, horizon: { cloudPct: 0, fresh: true } });
+      expect(r.score!).toBeGreaterThanOrEqual(0);
+      expect(r.score!).toBeLessThanOrEqual(100);
+    }
+  });
+});
+
+// --- real elevation golden windows on nextSunEvent ------------------------
+describe("nextSunEvent — true elevation golden windows", () => {
+  const today = {
+    sunrise: "2026-07-21T10:41:00.000Z",
+    sunset: "2026-07-22T00:11:00.000Z",
+    goldenAm: {
+      goldenStartIso: "2026-07-21T10:26:00.000Z",
+      goldenEndIso: "2026-07-21T11:14:00.000Z",
+      peakAnchorIso: "2026-07-21T10:31:00.000Z",
+    },
+    goldenEve: {
+      goldenStartIso: "2026-07-21T23:39:00.000Z",
+      goldenEndIso: "2026-07-22T00:27:00.000Z", // runs PAST sunset (sun at −4°)
+      peakAnchorIso: "2026-07-22T00:22:00.000Z",
+    },
+  };
+
+  it("uses the real morning window (spanning before sunrise) and marks it elevation-derived", () => {
+    const r = nextSunEvent(new Date("2026-07-21T08:00:00.000Z"), today);
+    expect(r?.event).toBe("sunrise");
+    expect(r?.goldenStartIso).toBe(today.goldenAm.goldenStartIso);
+    expect(r?.goldenEndIso).toBe(today.goldenAm.goldenEndIso);
+    expect(r?.goldenFromElevation).toBe(true);
+    expect(r?.peakAnchorIso).toBe(today.goldenAm.peakAnchorIso);
+  });
+
+  it("uses the real evening window that runs PAST sunset", () => {
+    const r = nextSunEvent(new Date("2026-07-21T20:00:00.000Z"), today);
+    expect(r?.event).toBe("sunset");
+    expect(r?.goldenEndIso).toBe(today.goldenEve.goldenEndIso);
+    // The window end is after the sunset instant — golden hour straddles it.
+    expect(Date.parse(r!.goldenEndIso)).toBeGreaterThan(Date.parse(today.sunset));
+    expect(r?.goldenFromElevation).toBe(true);
+  });
+
+  it("falls back to the ±60-min window (goldenFromElevation:false) when no real window is supplied", () => {
+    const r = nextSunEvent(new Date("2026-07-21T08:00:00.000Z"), {
+      sunrise: today.sunrise,
+      sunset: today.sunset,
+    });
+    expect(r?.goldenFromElevation).toBe(false);
+    expect(r?.goldenStartIso).toBe(today.sunrise); // sunrise → +60
+    expect(r?.peakAnchorIso).toBeUndefined();
+  });
+
+  it("uses tomorrow's real morning window once tonight's sunset has passed", () => {
+    const r = nextSunEvent(
+      new Date("2026-07-22T02:00:00.000Z"),
+      today,
+      {
+        sunriseIso: "2026-07-22T10:42:00.000Z",
+        goldenAm: {
+          goldenStartIso: "2026-07-22T10:27:00.000Z",
+          goldenEndIso: "2026-07-22T11:15:00.000Z",
+          peakAnchorIso: "2026-07-22T10:32:00.000Z",
+        },
+      },
+    );
+    expect(r?.event).toBe("sunrise");
+    expect(r?.timeIso).toBe("2026-07-22T10:42:00.000Z");
+    expect(r?.goldenFromElevation).toBe(true);
+    expect(r?.peakAnchorIso).toBe("2026-07-22T10:32:00.000Z");
+  });
+
+  it("still accepts the legacy string tomorrow-sunrise form (back-compat)", () => {
+    const r = nextSunEvent(new Date("2026-07-22T02:00:00.000Z"), today, "2026-07-22T10:42:00.000Z");
+    expect(r?.event).toBe("sunrise");
+    expect(r?.timeIso).toBe("2026-07-22T10:42:00.000Z");
+    expect(r?.goldenFromElevation).toBe(false); // no window supplied with the string
+  });
+});
+
+// --- peak-color timing -----------------------------------------------------
+describe("peakColorTime", () => {
+  const sunsetIso = "2026-07-22T00:11:00.000Z";
+  const eveAnchor = "2026-07-22T00:22:00.000Z"; // sun −3°, 11 min after sunset
+  const sunriseIso = "2026-07-21T10:41:00.000Z";
+  const amAnchor = "2026-07-21T10:31:00.000Z"; // sun −3°, 10 min before sunrise
+
+  it("with a high-cloud deck + clear horizon, sunset peak lags to the −3° anchor", () => {
+    const p = peakColorTime({
+      event: "sunset",
+      eventIso: sunsetIso,
+      peakAnchorIso: eveAnchor,
+      highPct: 30,
+      clearPathScore: 80,
+    });
+    expect(p?.iso).toBe(eveAnchor);
+    expect(p?.minutesFromEvent).toBe(11);
+  });
+
+  it("for a sunrise the anchor lands BEFORE the event (negative offset)", () => {
+    const p = peakColorTime({
+      event: "sunrise",
+      eventIso: sunriseIso,
+      peakAnchorIso: amAnchor,
+      highPct: 20,
+      clearPathScore: 70,
+    });
+    expect(p?.minutesFromEvent).toBe(-10);
+  });
+
+  it("without a meaningful high-cloud deck, peak is at the event itself", () => {
+    const p = peakColorTime({
+      event: "sunset",
+      eventIso: sunsetIso,
+      peakAnchorIso: eveAnchor,
+      highPct: 5, // below the 15% threshold
+      clearPathScore: 80,
+    });
+    expect(p?.iso).toBe(sunsetIso);
+    expect(p?.minutesFromEvent).toBe(0);
+  });
+
+  it("a socked-in horizon (low clear-path) also collapses peak to the event", () => {
+    const p = peakColorTime({
+      event: "sunset",
+      eventIso: sunsetIso,
+      peakAnchorIso: eveAnchor,
+      highPct: 40,
+      clearPathScore: 20, // not clear
+    });
+    expect(p?.minutesFromEvent).toBe(0);
+  });
+
+  it("caps the lag at +30 min from the event", () => {
+    const p = peakColorTime({
+      event: "sunset",
+      eventIso: sunsetIso,
+      peakAnchorIso: "2026-07-22T01:30:00.000Z", // 79 min out — absurd
+      highPct: 40,
+      clearPathScore: 90,
+    });
+    expect(p?.minutesFromEvent).toBe(30);
+  });
+
+  it("with no anchor (elevation solve unavailable) peak stays at the event", () => {
+    const p = peakColorTime({ event: "sunset", eventIso: sunsetIso, highPct: 40, clearPathScore: 90 });
+    expect(p?.minutesFromEvent).toBe(0);
+  });
+
+  it("honest-null when there's no event time at all", () => {
+    expect(peakColorTime({ event: "sunset", eventIso: undefined })).toBeNull();
   });
 });

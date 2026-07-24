@@ -251,6 +251,37 @@ export interface SunData {
   /** Tomorrow's sunrise (ISO) — the sky-show card looks ahead to it once
    *  today's sunset has passed. See lib/sunQuality.ts's nextSunEvent. */
   tomorrowSunrise?: string;
+  // --- True golden/blue hour, from a solar-elevation solve (photographic
+  // standard, NOT a fixed 60-min approximation): golden hour spans solar
+  // elevation +6° down to −4° (straddling sunrise/sunset); blue hour is −4°
+  // to −6°. All ISO, all additive/optional (absent at high latitudes where the
+  // sun never crosses the elevation, and on cached snapshots predating this). ---
+  /** Morning golden hour start — sun rising through −4° (before sunrise). */
+  goldenAmStartIso?: string;
+  /** Morning golden hour end — sun rising through +6°. */
+  goldenAmEndIso?: string;
+  /** Evening golden hour start — sun descending through +6° (before sunset). */
+  goldenEveStartIso?: string;
+  /** Evening golden hour end — sun descending through −4° (after sunset). */
+  goldenEveEndIso?: string;
+  /** Morning blue hour start — sun rising through −6° (= daybreak). */
+  blueAmStartIso?: string;
+  /** Morning blue hour end — sun rising through −4° (= goldenAmStart). */
+  blueAmEndIso?: string;
+  /** Evening blue hour start — sun descending through −4° (= goldenEveEnd). */
+  blueEveStartIso?: string;
+  /** Evening blue hour end — sun descending through −6° (= dusk). */
+  blueEveEndIso?: string;
+  /** Peak-color anchor: sun at −3° in the morning (pre-sunrise). See
+   *  lib/sunQuality.ts's peakColorTime. */
+  goldenAmPeakIso?: string;
+  /** Peak-color anchor: sun at −3° in the evening (post-sunset). */
+  goldenEvePeakIso?: string;
+  /** Tomorrow's morning golden-hour window + peak anchor — used by the sky-show
+   *  card once tonight's sunset has passed and it looks ahead to tomorrow. */
+  tomorrowGoldenAmStartIso?: string;
+  tomorrowGoldenAmEndIso?: string;
+  tomorrowGoldenAmPeakIso?: string;
   /** Sun's maximum altitude above the horizon at solar noon (degrees). */
   maxAltitudeDeg?: number;
   /** Tonight's moon phase (computed from the date). */
@@ -297,6 +328,10 @@ export interface AirQualityData {
   pm2_5?: number; // µg/m³
   pm10?: number; // µg/m³
   ozone?: number; // µg/m³
+  /** Aerosol optical depth (CAMS, dimensionless) — column haze/dust/smoke that
+   *  dims the sun. Feeds the sunrise/sunset color model (lib/sunQuality.ts).
+   *  Absent when the provider returns none (older feeds / AirNow path). */
+  aod?: number;
   observedAt?: string; // ISO
 }
 

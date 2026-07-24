@@ -38,6 +38,7 @@ import { SourceList } from "@/components/SourceBadge";
 import { CamGrid } from "@/components/CamGrid";
 import { DayOutlookStrip } from "@/components/DayOutlookStrip";
 import { NotifyButton } from "@/components/NotifyButton";
+import { ChangelogSection } from "@/components/ChangelogSection";
 import { FeelsLikeCard } from "@/components/FeelsLikeCard";
 import { SunQualityCard } from "@/components/SunQualityCard";
 import { WaterTrendCard } from "@/components/WaterTrendCard";
@@ -398,9 +399,35 @@ export function ConditionsDashboard({
           <SunQualityCard
             now={new Date(snap.generatedAt)}
             tz={tz}
-            today={{ sunrise: snap.sun.data.sunrise, sunset: snap.sun.data.sunset }}
-            tomorrowSunrise={snap.sun.data.tomorrowSunrise}
+            today={{
+              sunrise: snap.sun.data.sunrise,
+              sunset: snap.sun.data.sunset,
+              goldenAm: {
+                goldenStartIso: snap.sun.data.goldenAmStartIso,
+                goldenEndIso: snap.sun.data.goldenAmEndIso,
+                peakAnchorIso: snap.sun.data.goldenAmPeakIso,
+              },
+              goldenEve: {
+                goldenStartIso: snap.sun.data.goldenEveStartIso,
+                goldenEndIso: snap.sun.data.goldenEveEndIso,
+                peakAnchorIso: snap.sun.data.goldenEvePeakIso,
+              },
+            }}
+            tomorrow={{
+              sunriseIso: snap.sun.data.tomorrowSunrise,
+              goldenAm: {
+                goldenStartIso: snap.sun.data.tomorrowGoldenAmStartIso,
+                goldenEndIso: snap.sun.data.tomorrowGoldenAmEndIso,
+                peakAnchorIso: snap.sun.data.tomorrowGoldenAmPeakIso,
+              },
+            }}
             hourly={sunQualityHourly}
+            airQuality={snap.airQuality.data}
+            goesCloud={
+              snap.goesCloud.data
+                ? { ...snap.goesCloud.data, status: snap.goesCloud.status }
+                : null
+            }
           />
         ) : null}
         {showBusyness ? (
@@ -777,6 +804,7 @@ export function ConditionsDashboard({
             {isValidating ? "Refreshing…" : "Refresh"}
           </button>
         </div>
+        <ChangelogSection />
       </footer>
     </main>
     </PullToRefresh>
