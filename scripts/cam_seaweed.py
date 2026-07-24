@@ -184,12 +184,15 @@ PROMPT = (
     "(and cars in any visible parking lot): empty=nobody, quiet=a few people, "
     "moderate=steady, busy=crowded, packed=very crowded. "
     "crowd_pct = how full the beach looks, 0=empty to 100=packed holiday peak. "
-    "Water = how clear the OCEAN WATER looks where it is visible (judge color "
-    "and transparency of the water beyond the breaking surf, not whitewater "
-    "foam): clear=blue-green and transparent, slightly_murky=greenish with "
-    "some suspended sand, murky=brown/tea-colored, churned=heavily stirred-up "
-    "sand throughout. Use unknown (and water_pct null) if open water is not "
-    "clearly visible in this frame. "
+    "Water = how clear the OCEAN WATER itself looks where it is visible (judge "
+    "color and transparency of the water beyond the breaking surf, not "
+    "whitewater foam). IMPORTANT: floating seaweed patches and brown seaweed "
+    "mats are NOT murkiness — seaweed is graded separately above; judge the "
+    "water transparency in areas FREE of seaweed, and don't let sun glare or "
+    "surface brightness read as murk. clear=blue-green and transparent, "
+    "slightly_murky=greenish with some suspended sand, murky=brown/tea-colored "
+    "water itself, churned=heavily stirred-up sand throughout. Use unknown "
+    "(and water_pct null) if open water is not clearly visible in this frame. "
     "water_pct = water clarity 0-100 where 100=crystal clear and 0=opaque."
 )
 
@@ -535,19 +538,32 @@ def worst_seaweed(group: dict | None) -> dict | None:
     return {"level": b["level"], "pct": b.get("coveragePct")}
 
 
-def murkiest_water(group: dict | None) -> dict | None:
-    """The murkiest water clarity across a capture's cams: {level, pct}.
+def median_water(group: dict | None) -> dict | None:
+    """The MEDIAN water clarity across a capture's cams: {level, pct}.
 
-    Worst-of wins (like seaweed): a single cam angle showing churned water is
-    the honest read for a swimmer. Cams whose frame shows no open water report
-    water=None and are skipped; pct is 0-100 with 100 = crystal clear, so the
-    murkiest cam is the one with the LOWEST pct (rank first, pct as tiebreak)."""
+    CALIBRATED 2026-07-24 against owner in-water ground truth: cams read
+    25/65/85 while the owner (swimming at Boca that minute) estimated 75%
+    clear. Worst-of published 25 — a single angle contaminated by floating
+    seaweed patches (a separate signal) dragged the whole reading down.
+    Per-angle clarity noise is mostly DOWNWARD (seaweed patches, sun glare,
+    breaking whitewater), so worst-of is the wrong estimator here; the median
+    (65 that tick) landed within 10 pts of truth. Cams whose frame shows no
+    open water report water=None and are skipped. The categorical level is
+    taken from the cam whose pct is closest to the median pct."""
     cams = [c for c in (group or {}).get("cams", []) if c.get("water") in WATER_RANK]
     if not cams:
         return None
-    b = max(cams, key=lambda c: (WATER_RANK[c["water"]],
-                                 -(c.get("waterPct") if c.get("waterPct") is not None else 101)))
-    return {"level": b["water"], "pct": b.get("waterPct")}
+    with_pct = [c for c in cams if c.get("waterPct") is not None]
+    if not with_pct:
+        # No numeric pcts — fall back to the median-ranked categorical grade.
+        ranked = sorted(cams, key=lambda c: WATER_RANK[c["water"]])
+        mid = ranked[len(ranked) // 2]
+        return {"level": mid["water"], "pct": None}
+    pcts = sorted(c["waterPct"] for c in with_pct)
+    n = len(pcts)
+    med = pcts[n // 2] if n % 2 else round((pcts[n // 2 - 1] + pcts[n // 2]) / 2)
+    closest = min(with_pct, key=lambda c: abs(c["waterPct"] - med))
+    return {"level": closest["water"], "pct": med}
 
 
 def fetch_prev() -> dict:
@@ -629,7 +645,7 @@ def main() -> int:
     if current:
         crowd = busiest_crowd(current) or {}
         ws = worst_seaweed(current) or {}
-        wc = murkiest_water(current) or {}
+        wc = median_water(current) or {}
         entry = {
             "t": current["capturedAtLocal"],
             "hour": current["hour"],
@@ -638,7 +654,7 @@ def main() -> int:
             "crowdPct": crowd.get("crowdPct"),  # 0-100 fullness (busiest cam)
             "seaweed": ws.get("level"),         # worst seaweed across the cams
             "cov": ws.get("pct"),               # 0-100 seaweed coverage (worst cam)
-            "water": wc.get("level"),           # murkiest water across the cams
+            "water": wc.get("level"),           # MEDIAN water clarity across the cams
             "clr": wc.get("pct"),               # 0-100 clarity (100 = crystal clear)
         }
         # SPARSE underwater fields — present ONLY on the ~hourly ticks that

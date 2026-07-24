@@ -21,21 +21,33 @@ const feed = (cams: unknown[], capturedAtLocal = "2026-07-22T16:00:00-04:00"): C
 });
 
 describe("summarizeClarity — parses a with-clarity capture", () => {
-  it("reports the WORST (murkiest) cam as the headline", () => {
+  it("reports the MEDIAN cam as the headline (calibrated vs owner in-water truth)", () => {
     const d = summarizeClarity(
       feed([
         { name: "A", water: "clear", waterPct: 90, waterNote: "gin-clear" },
         { name: "B", water: "murky", waterPct: 45, waterNote: "stirred up near shore" },
-        { name: "C", water: "slightly_murky", waterPct: 70 },
+        { name: "C", water: "slightly_murky", waterPct: 70, waterNote: "greenish" },
       ]),
     );
     expect(d).not.toBeNull();
-    expect(d!.level).toBe("murky");
-    expect(d!.pct).toBe(45);
-    expect(d!.note).toBe("stirred up near shore");
+    expect(d!.level).toBe("slightly_murky");
+    expect(d!.pct).toBe(70);
+    expect(d!.note).toBe("greenish");
     expect(d!.perCam).toHaveLength(3);
     expect(d!.capturedAtLocal).toBe("2026-07-22T16:00:00-04:00");
     expect(d!.status).toBeUndefined();
+  });
+
+  it("2026-07-24 calibration case: 25/65/85 reads → median 65, not worst-of 25 (owner truth: 75)", () => {
+    const d = summarizeClarity(
+      feed([
+        { name: "inlet", water: "murky", waterPct: 25, waterNote: "brownish near shore due to seaweed" },
+        { name: "south-surf", water: "slightly_murky", waterPct: 65, waterNote: "greenish near shore" },
+        { name: "south", water: "clear", waterPct: 85 },
+      ]),
+    );
+    expect(d!.pct).toBe(65);
+    expect(d!.level).toBe("slightly_murky");
   });
 
   it("only includes cams that saw open water (water null = no reading)", () => {
@@ -56,14 +68,15 @@ describe("summarizeClarity — parses a with-clarity capture", () => {
     expect(d!.pct).toBe(100);
   });
 
-  it("ties on grade break to the lower clarity %", () => {
+  it("even cam count → median is the rounded mean of the middle two", () => {
     const d = summarizeClarity(
       feed([
         { name: "A", water: "murky", waterPct: 50 },
         { name: "B", water: "murky", waterPct: 30 },
       ]),
     );
-    expect(d!.pct).toBe(30);
+    expect(d!.pct).toBe(40);
+    expect(d!.level).toBe("murky");
   });
 
   it("degrades to a level-null 'unknown' when a capture shows no open water", () => {

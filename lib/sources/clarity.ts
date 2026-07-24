@@ -173,8 +173,16 @@ function hasClarityFields(feed: ClarityFeed): boolean {
 }
 
 /**
- * Roll the per-cam water-clarity reads into one grade: the WORST cam of the most
- * recent capture (murkiest wins — one churned cam means the water isn't clear).
+ * Roll the per-cam water-clarity reads into one grade: the MEDIAN across the
+ * cams of the most recent capture.
+ *
+ * CALIBRATED 2026-07-24 against owner in-water ground truth: the cams read
+ * 25/65/85 while the owner (swimming at Boca that minute) estimated 75% clear.
+ * The previous worst-of rule published 25 — one angle contaminated by floating
+ * seaweed patches (a separate, already-tracked signal) dragged the whole
+ * reading down. Per-angle clarity noise is mostly DOWNWARD (seaweed patches,
+ * sun glare, whitewater), so worst-of systematically under-reads; the median
+ * (65 that tick) landed within 10 pts of truth. See docs/CLARITY_CALIBRATION.md.
  * Pure + tested.
  *
  * Returns null when the feed carries no clarity fields at all (a legacy /
@@ -219,16 +227,32 @@ export function summarizeClarity(
     return { level: null, pct: null, note: NO_WATER_NOTE, capturedAtLocal, status: "unknown" };
   }
 
-  // Worst (murkiest) cam by grade rank; tie-broken by the lower clarity %.
-  const worst = perCam.reduce((a, b) => {
-    if (RANK[b.water!] !== RANK[a.water!]) return RANK[b.water!] > RANK[a.water!] ? b : a;
-    return (b.waterPct ?? 101) < (a.waterPct ?? 101) ? b : a;
-  });
-
+  // MEDIAN across the cams (see the calibration note above). Prefer the numeric
+  // clarity %s; the categorical level + note come from the cam closest to the
+  // median % (or the median-ranked grade when no cam reported a %).
+  const withPct = perCam.filter((c) => c.waterPct != null);
+  if (withPct.length) {
+    const pcts = withPct.map((c) => c.waterPct as number).sort((a, b) => a - b);
+    const n = pcts.length;
+    const med =
+      n % 2 ? pcts[(n - 1) / 2] : Math.round((pcts[n / 2 - 1] + pcts[n / 2]) / 2);
+    const closest = withPct.reduce((a, b) =>
+      Math.abs((b.waterPct as number) - med) < Math.abs((a.waterPct as number) - med) ? b : a,
+    );
+    return {
+      level: closest.water,
+      pct: med,
+      note: closest.waterNote,
+      capturedAtLocal,
+      perCam,
+    };
+  }
+  const ranked = [...perCam].sort((a, b) => RANK[a.water!] - RANK[b.water!]);
+  const mid = ranked[Math.floor(ranked.length / 2)];
   return {
-    level: worst.water,
-    pct: worst.waterPct,
-    note: worst.waterNote,
+    level: mid.water,
+    pct: mid.waterPct,
+    note: mid.waterNote,
     capturedAtLocal,
     perCam,
   };
