@@ -8,7 +8,8 @@ correct SYSTEMATIC bias only, never chase single noisy points).
 
 | Date | Time (ET) | Owner estimate | Cam reads (per-cam) | Worst-of | Median | UW cam (Deerfield) |
 |---|---|---|---|---|---|---|
-| 2026-07-24 | ~1:10 PM | **75% clear** | 25 / 65 / 85 | 25 | 65 | 35 (7 mi away) |
+| 2026-07-24 | ~1:10 PM | **75% clear** | 25 / 65 / 85 (pre-fix prompt) | 25 | 65 | 35 (7 mi away) |
+| 2026-07-24 | 1:17 PM (post-fix re-read, same water) | (75) | 50 / 85 / 88 | — | **85** (published) | — |
 
 ## Changes made from this ledger
 
@@ -24,8 +25,11 @@ correct SYSTEMATIC bias only, never chase single noisy points).
 
 ## Open questions (need more data)
 
-- Residual after the median fix: 65 vs 75 → −10. One point; apply a numeric
-  correction only when ≥4-5 owner estimates show a consistent sign.
+- Residual: pre-fix median 65 vs 75 → −10; post-fix (median + seaweed/glare
+  prompt) 85 vs 75 → **+10**. The pipeline moved from −50 to +10 in one pass.
+  One ground-truth point; apply a numeric correction only when ≥4-5 owner
+  estimates show a consistent sign (watch for overshoot now that the prompt
+  is more permissive).
 - Deerfield UW cam reads much lower than Boca surface/owner (35 vs 75).
   Plausible real difference (pier piling, 7 mi north, different bottom) —
   treat UW as a TREND/sanity signal, not an absolute anchor for Boca, until
