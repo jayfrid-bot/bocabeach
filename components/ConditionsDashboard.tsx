@@ -24,6 +24,7 @@ import {
   SeaweedByDayChart,
 } from "@/components/HistoryCharts";
 import { MetricCard } from "@/components/MetricCard";
+import { ClarityTileFront } from "@/components/ClarityScene";
 import { UvCard } from "@/components/UvCard";
 import { BusynessCard } from "@/components/BusynessCard";
 import { WindCompass } from "@/components/WindCompass";
@@ -458,10 +459,12 @@ export function ConditionsDashboard({
             label="Water clarity"
             back={nerdBack("clarity")}
             front={
-              <MetricCard
-                icon="🔍"
-                label="Water clarity"
+              // MetricCard's own layout, plus the water-column scene (see
+              // components/ClarityScene.tsx) in the value block's dead space.
+              <ClarityTileFront
                 value={clarity.level ? clarityDisplayWord(clarity.level, clarity.pct) : "—"}
+                pct={clarity.pct}
+                level={clarity.level}
                 sub={
                   clarity.level
                     ? [

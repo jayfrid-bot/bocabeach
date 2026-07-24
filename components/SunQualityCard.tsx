@@ -19,6 +19,8 @@ import {
   type SunEventTime,
 } from "@/lib/sunQuality";
 import { FlipCard, NerdBack } from "@/components/FlipCard";
+import { SunsetScene } from "@/components/SunsetScene";
+import { sunScenePhase, type SunScenePhase } from "@/lib/sunsetScene";
 
 // Gradient stops line up with lib/sunQuality.ts's BAND_CUTOFFS (dud <20,
 // plain <45, good <70, vivid <90, epic >=90) — same idiom as
@@ -231,6 +233,8 @@ function SunQualityFront({
   result,
   progress,
   peakLine,
+  phase,
+  cloud,
 }: {
   next: SunEventTime;
   tz: string;
@@ -239,6 +243,11 @@ function SunQualityFront({
    *  otherwise (pre-mount, or simply outside the window). */
   progress: number | null;
   peakLine: string | null;
+  /** Where the sun is right now — places the disc in the scene. Derived from
+   *  the server-pinned `now`, so SSR and hydration draw the same sky. */
+  phase: SunScenePhase;
+  /** The event hour's forecast cloud mix — drawn literally in the scene. */
+  cloud: CloudMix | undefined;
 }) {
   const { score, band } = result;
   const meta = band ? sunQualityBandMeta(band) : null;
@@ -267,6 +276,14 @@ function SunQualityFront({
             </span>
           </div>
         )}
+
+        {/* The predicted sky (components/SunsetScene.tsx). It sits in the tile's
+            reserved dead space between the score and the times — a fixed, short
+            well, so the card keeps the same height as its grid neighbours. Radius
+            stays well inside the card's rounded-2xl (concentric). */}
+        <div className="relative mt-1.5 h-8 w-full flex-none overflow-hidden rounded-lg sm:h-10">
+          <SunsetScene score={score} band={band} phase={phase} cloud={cloud} />
+        </div>
 
         {/* Both lines reserve their row (min-h-4) so a row of tiles keeps one
             baseline whether or not peak color resolves. */}
@@ -390,10 +407,32 @@ export function SunQualityCard({
   // and hydration render the same "no bar yet" state.
   const progress = clientNowMs != null ? goldenHourProgress(new Date(clientNowMs), next) : null;
 
+  // Sun position for the scene. Read off the SAME server-pinned `now` as the
+  // event/score selection (not the client clock), so the sky the server renders
+  // is the sky that hydrates.
+  const todaySunsetMs = today.sunset ? Date.parse(today.sunset) : Number.NaN;
+  const phase = sunScenePhase({
+    nowMs: nowD.getTime(),
+    goldenStartMs: Date.parse(next.goldenStartIso),
+    goldenEndMs: Date.parse(next.goldenEndIso),
+    nextEvent: next.event,
+    lastSunsetMs: Number.isFinite(todaySunsetMs) ? todaySunsetMs : null,
+  });
+
   return (
     <FlipCard
       label="Golden hour"
-      front={<SunQualityFront next={next} tz={tz} result={result} progress={progress} peakLine={peakLine} />}
+      front={
+        <SunQualityFront
+          next={next}
+          tz={tz}
+          result={result}
+          progress={progress}
+          peakLine={peakLine}
+          phase={phase}
+          cloud={point?.cloud}
+        />
+      }
       back={<NerdBack info={info} />}
     />
   );
