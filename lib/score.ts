@@ -17,9 +17,26 @@ import { seaState } from "@/lib/format";
 import { scoreBand } from "@/lib/scoreBands";
 
 // Consolidated, best-available values pulled across all sources.
+/**
+ * Which feed actually produced a displayed metric. Buoy coverage is per-FIELD
+ * now (lib/sources/buoy.ts merges two stations field by field, because Boca's
+ * primary C-MAN mast reports wind but structurally never waves), so "the buoy"
+ * is no longer a single answer for the whole card — the nerd cards
+ * (lib/nerdInfo.ts) name whichever station or model fed THIS number.
+ */
+export type MetricSource =
+  | { kind: "buoy"; stationId?: string }
+  | { kind: "model" };
+
 export interface Derived {
   airTempF?: number;
   waterTempF?: number;
+  /** Where `waterTempF` came from: a named NDBC station, or the marine model's
+   *  sea-surface field when no buoy reported WTMP. */
+  waterTempSource?: MetricSource;
+  /** Where `waveHeightFt` came from. In practice almost always the model —
+   *  the nearest wave-reporting buoy to SE Florida is ~90 mi north. */
+  waveHeightSource?: MetricSource;
   windSpeedMph?: number;
   windDirDeg?: number;
   waveHeightFt?: number; // combined sea state (for swimming calmness)
@@ -108,15 +125,40 @@ export function median(...vals: (number | undefined)[]): number | undefined {
  * hourly forecast can flip-flop between refreshes (63% vs 100% for the same hour,
  * observed 2026-07-06), so anything sensitive to "how grey is the sky now" (the
  * sand-temp overcast damping) must read this consensus, not a single source.
+ *
+ * PLUS the satellite, DOUBLE-WEIGHTED, whenever the GOES Clear Sky Mask read is
+ * FRESH (see satelliteCloudPct below). Rationale, in order:
+ *
+ *  - The other five voices are all MODELS. GOES is the only actual OBSERVATION
+ *    of the sky over this beach, and models can miss it by ~70 points — the
+ *    2026-07-15 anvil incident documented directly below had every forecast
+ *    reading 11-24% under a genuinely ~97% overcast sky. A median of five
+ *    wrong-in-the-same-direction models is confidently wrong.
+ *  - So it gets TWO votes, not one: with 5 model voices, a single satellite
+ *    vote can never move the median off the model cluster (it just becomes the
+ *    new min or max). Two votes let a satellite that disagrees with all five
+ *    pull the median a full model-step toward reality.
+ *  - But still a MEDIAN, not an override: satellite granules are noisy (thin
+ *    cirrus, edge-of-swath geometry, a sparse valid-pixel count), and the
+ *    models remain the tie-breaker. 5 models + 2 satellite votes = 7 entries,
+ *    so the median is the 4th value — the satellite can drag the consensus to
+ *    the edge of the model spread and no further. One bad granule cannot
+ *    dictate the number; a consistently-disagreeing satellite wins.
+ *
+ * Stale or missing satellite → identical behavior to before (5 model voices).
  */
 export function consensusCloudPct(s: ConditionsSnapshot): number | undefined {
   const om = currentHourOf(s.hourly.data ?? []);
+  const sat = satelliteCloudPct(s);
   return median(
     s.marine.data?.cloudCoverPct,
     s.metno.data?.cloudCoverPct,
     om?.cloudCoverPct,
     s.weather.data?.cloudCoverPct,
     s.gfs.data?.cloudCoverPct,
+    // Two entries on purpose — see the double-weight rationale above.
+    sat,
+    sat,
   );
 }
 
@@ -174,6 +216,17 @@ export function satelliteBeamCloudPct(s: ConditionsSnapshot): number | undefined
   const g = s.goesCloud;
   if (g.status !== "ok" || g.data?.beamCloudPct == null) return undefined;
   return g.data.beamCloudPct;
+}
+
+/** Mirror of a `buoyValue ?? modelValue` preference as a {@link MetricSource}. */
+function metricSource(
+  buoyValue: number | undefined,
+  buoyStationId: string | null | undefined,
+  modelValue: number | undefined,
+): MetricSource | undefined {
+  if (buoyValue != null) return { kind: "buoy", stationId: buoyStationId ?? undefined };
+  if (modelValue != null) return { kind: "model" };
+  return undefined;
 }
 
 export function deriveMetrics(s: ConditionsSnapshot): Derived {
@@ -254,6 +307,11 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     // Open-Meteo, so no single provider or model can skew the dashboard.
     airTempF,
     waterTempF: b?.waterTempF ?? m?.seaSurfaceTempF,
+    // Provenance for the two metrics whose real source is routinely NOT what
+    // the card used to imply — see MetricSource. Both follow the exact `??`
+    // preference above/below them, so the label can never drift from the value.
+    waterTempSource: metricSource(b?.waterTempF, b?.sources?.waterTempF, m?.seaSurfaceTempF),
+    waveHeightSource: metricSource(b?.waveHeightFt, b?.sources?.waveHeightFt, m?.waveHeightFt),
     windSpeedMph:
       median(w?.windSpeedMph, mn?.windSpeedMph, om?.windSpeedMph, g?.windSpeedMph) ?? b?.windSpeedMph,
     windDirDeg: w?.windDirDeg ?? mn?.windDirDeg ?? b?.windDirDeg,

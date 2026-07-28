@@ -5,6 +5,7 @@ import {
   computeHourlyScores,
   computeMultiDayWindows,
   computeScore,
+  consensusCloudPct,
   deriveMetrics,
   median,
   rainSeverity,
@@ -22,6 +23,7 @@ import type {
   FlagColor,
   ForecastDay,
   GoesCloudData,
+  PrecipRadarData,
   HourlyMetrics,
   HourlyScore,
   LightningData,
@@ -61,6 +63,10 @@ function snapshot(over: {
   sun?: SunData | null;
   hourly?: HourlyMetrics[] | null;
   nowcast?: NowcastData | null;
+  /** The two remaining model cloud voices, so a full 5-model consensus can be
+   *  built (see the satellite-in-consensus tests). */
+  metno?: MetnoCurrent | null;
+  gfs?: MetnoCurrent | null;
   /** Pass a pre-wrapped lightning result to exercise the freshness gate
    * (status + lastMinutesAgo); plain data wraps to status "ok". */
   lightning?: LightningData | Wrapped<LightningData> | null;
@@ -96,10 +102,15 @@ function snapshot(over: {
     nws: wrap(over.nws ?? null),
     traffic: wrap<TrafficData>(null),
     airQuality: wrap<AirQualityData>(null),
-    metno: wrap<MetnoCurrent>(null),
-    gfs: wrap<MetnoCurrent>(null),
+    metno: wrap(over.metno ?? null),
+    gfs: wrap(over.gfs ?? null),
     lightning,
     goesCloud,
+    // Radar rain (MRMS) is INFORMATIONAL ONLY — it deliberately does not feed
+    // the Beach Day score, so these score tests always see it absent. If a
+    // future change wires radar into scoring, this null is the seam to widen
+    // (and that change is meant to be reviewed, not incidental).
+    precipRadar: wrap<PrecipRadarData>(null),
     sargassum: wrap(over.sargassum ?? null),
     busyness: wrap(over.busyness ?? null),
     clarity: wrap<ClarityData>(null),
@@ -343,9 +354,17 @@ describe("satelliteCloudPct + sand-model cloud override (2026-07-15 GOES fix)", 
       const d = deriveMetrics(withSatellite);
       expect(d.sandTempF).toBe(108);
       expect(d.sandTempF!).toBeLessThan(deriveMetrics(forecastOnly).sandTempF!);
-      // The shared cloudCoverPct (Sky sub-score, display, rain corroboration)
-      // is intentionally UNCHANGED — only the sand input is overridden.
-      expect(d.cloudCoverPct).toBe(24);
+      // FIXTURE UPDATED (satellite-in-consensus upgrade): the shared
+      // cloudCoverPct used to stay at the wrong 24% because consensusCloudPct
+      // polled forecast models ONLY. The satellite is now a DOUBLE-WEIGHTED
+      // voice in that median whenever its granule is fresh, so this snapshot's
+      // three entries — [24 (Open-Meteo hourly), 97, 97 (GOES ×2)] — median to
+      // 97, i.e. the observed sky. That is the point of the change: the Sky
+      // sub-score, its display, and the rain-corroboration gate all inherit the
+      // observation instead of a five-model consensus that was 73 points wrong
+      // on 2026-07-15. The sand input is unaffected (it already preferred the
+      // satellite directly).
+      expect(d.cloudCoverPct).toBe(97);
     });
 
     it("prefers a fresh BEAM reading over a fresh OVERHEAD reading (beam > overhead > consensus)", () => {
@@ -1626,5 +1645,119 @@ describe("anchorCurrentHourScore", () => {
       Date.parse("2026-06-25T20:00:00.000Z"),
     );
     expect(out).toBe(hourly);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Satellite as a DOUBLE-WEIGHTED voice in the cloud consensus.
+// The upgrade deliberately SHIFTS score inputs: consensusCloudPct feeds the Sky
+// sub-score, its display, the rain-corroboration gate, and (as a last resort)
+// the sand model. See consensusCloudPct's comment in lib/score.ts.
+// ---------------------------------------------------------------------------
+describe("consensusCloudPct — GOES observation as a double-weighted voice", () => {
+  const NOW = new Date("2026-07-15T15:30:00.000Z").getTime();
+  beforeEach(() => vi.setSystemTime(NOW));
+  afterEach(() => vi.useRealTimers());
+
+  const hourStart = new Date(Math.floor(NOW / 3_600_000) * 3_600_000).toISOString();
+  const fresh = () => new Date(NOW - 5 * 60_000).toISOString();
+  const stale = () => new Date(NOW - 90 * 60_000).toISOString();
+
+  /** All five MODEL cloud voices at once, so the satellite's two votes can be
+   *  measured against a full model consensus (5 + 2 = 7 entries). */
+  const fiveModels = (a: number, b: number, c: number, d: number, e: number) => ({
+    marine: { cloudCoverPct: a },
+    metno: { cloudCoverPct: b } as unknown as MetnoCurrent,
+    hourly: [{ time: hourStart, cloudCoverPct: c }],
+    weather: { cloudCoverPct: d },
+    gfs: { cloudCoverPct: e } as unknown as MetnoCurrent,
+  });
+
+  const sat = (cloudPct: number, granuleStartIso: string) => ({
+    cloudPct,
+    validPixels: 49,
+    totalPixels: 49,
+    granuleAgeMinutes: 5,
+    granuleStartIso,
+  });
+
+  it("includes a FRESH satellite read TWICE — 5 models + 2 votes = 7 entries, median is the 4th", () => {
+    // Models: 10, 20, 30, 40, 50 (median 30 on their own).
+    // With the satellite at 90 counted twice: sorted [10,20,30,40,50,90,90],
+    // the 4th value is 40 — the median moved one full model-step toward the
+    // observation. A SINGLE satellite vote would have left it at 30.
+    const models = fiveModels(10, 20, 30, 40, 50);
+    expect(consensusCloudPct(snapshot(models))).toBe(30);
+    expect(consensusCloudPct(snapshot({ ...models, goesCloud: sat(90, fresh()) }))).toBe(40);
+  });
+
+  it("a single satellite vote would NOT have moved it — proving the double weight is load-bearing", () => {
+    // Same models, satellite counted once (simulated with the raw median helper):
+    // [10,20,30,40,50,90] -> mean of the middle two = 35, and with an ODD
+    // model count the lone vote can never do better than becoming the new
+    // extreme. Two votes is what buys the observation real influence.
+    expect(median(10, 20, 30, 40, 50, 90)).toBe(35);
+    expect(median(10, 20, 30, 40, 50, 90, 90)).toBe(40);
+  });
+
+  it("EXCLUDES a stale satellite read — behavior identical to before the upgrade", () => {
+    const models = fiveModels(10, 20, 30, 40, 50);
+    const staleSat = snapshot({
+      ...models,
+      goesCloud: {
+        source: "test",
+        status: "stale",
+        fetchedAt: new Date().toISOString(),
+        attribution: "test",
+        data: { ...sat(90, stale()), granuleAgeMinutes: 90 },
+      },
+    });
+    expect(consensusCloudPct(staleSat)).toBe(30); // the models' own median
+    expect(consensusCloudPct(staleSat)).toBe(consensusCloudPct(snapshot(models)));
+  });
+
+  it("EXCLUDES an errored / never-fetched satellite (no goesCloud override at all)", () => {
+    const models = fiveModels(0, 25, 50, 75, 100);
+    expect(consensusCloudPct(snapshot(models))).toBe(50);
+    const errored = snapshot({
+      ...models,
+      goesCloud: {
+        source: "test",
+        status: "error",
+        fetchedAt: new Date().toISOString(),
+        attribution: "test",
+        data: null,
+      },
+    });
+    expect(consensusCloudPct(errored)).toBe(50);
+  });
+
+  it("with 6 entries (4 models + 2 satellite votes) the median averages the middle pair", () => {
+    // Models 10, 20, 30, 40; satellite 80 twice -> [10,20,30,40,80,80] -> (30+40)/2 = 35.
+    const s = snapshot({
+      marine: { cloudCoverPct: 10 },
+      metno: { cloudCoverPct: 20 } as unknown as MetnoCurrent,
+      hourly: [{ time: hourStart, cloudCoverPct: 30 }],
+      weather: { cloudCoverPct: 40 },
+      goesCloud: sat(80, fresh()),
+    });
+    expect(consensusCloudPct(s)).toBe(35);
+  });
+
+  it("2026-07-15 anvil: the satellite drags the consensus off a unanimously-wrong model cluster", () => {
+    // Every model read 11-24% under a genuinely ~97% overcast sky. Two votes
+    // pull the consensus to the top of the model spread rather than leaving it
+    // at the cluster's centre.
+    const anvil = fiveModels(11, 16, 24, 20, 18);
+    expect(consensusCloudPct(snapshot(anvil))).toBe(18); // the old, wrong number
+    expect(consensusCloudPct(snapshot({ ...anvil, goesCloud: sat(97, fresh()) }))).toBe(20);
+  });
+
+  it("a lone noisy granule cannot dictate the number — the model cluster still bounds it", () => {
+    // A wild 100% granule against five models that agree on ~20% moves the
+    // consensus by one model-step (20 -> 22), not to 100. That containment IS
+    // the reason this is a weighted median and not an override.
+    const agreeing = fiveModels(18, 19, 20, 22, 24);
+    expect(consensusCloudPct(snapshot({ ...agreeing, goesCloud: sat(100, fresh()) }))).toBe(22);
   });
 });
