@@ -14,6 +14,55 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-07-28",
+    title: "Live rain radar — see showers before they arrive",
+    details:
+      "Real weather radar now watches the beach: when rain is on the way you'll see it called out — roughly how far off it is and about when it could arrive. When radar shows rain, it overrides the forecast's opinion.",
+    tag: "new",
+  },
+  {
+    date: "2026-07-28",
+    title: "Real water level, not just the tide tables",
+    details:
+      "The tide panel now shows the actually-measured water level from the nearest NOAA gauge and how far above or below the predicted tide it's running.",
+    tag: "new",
+  },
+  {
+    date: "2026-07-28",
+    title: "Satellite eyes on the sky score",
+    details:
+      "The cloud reading behind the score now includes what the weather satellite actually sees overhead — not just what forecast models expect.",
+    tag: "improved",
+  },
+  {
+    date: "2026-07-28",
+    title: "Straight talk about where each reading comes from",
+    details:
+      "Flip a card over and it now names its live source — real buoy vs. weather model — instead of implying measurements the local stations can't make. Rip current detail also now accounts for the direction waves approach the shore.",
+    tag: "improved",
+  },
+  {
+    date: "2026-07-24",
+    title: "Little scenes on the Golden hour and Water clarity cards",
+    details:
+      "The sunset card now paints tonight's predicted sky — vivid when a show is coming, gray for a dud — and water clarity shows a swimmer's-eye view where the seafloor fades with the murk.",
+    tag: "new",
+  },
+  {
+    date: "2026-07-24",
+    title: "A cleaner, tidier dashboard",
+    details:
+      "Cards reorganized so everything lines up with no gaps, duplicate readings removed, and quieter one-line advisories.",
+    tag: "improved",
+  },
+  {
+    date: "2026-07-24",
+    title: "Water clarity tuned against a real swim",
+    details:
+      "The clarity reading was calibrated against in-the-water checks at the beach itself — it now tracks what the water actually looks like much more closely.",
+    tag: "improved",
+  },
+  {
     date: "2026-07-24",
     title: "Golden hour sunset quality, and labels on every score wheel slice",
     details:
