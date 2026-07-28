@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { parseNoaaPredictions, deriveTideData } from "@/lib/sources/tides";
+import {
+  buildObservedTide,
+  deriveTideData,
+  parseNoaaPredictions,
+  parseWaterLevel,
+} from "@/lib/sources/tides";
 
 const JSON_OK = {
   predictions: [
@@ -69,5 +74,105 @@ describe("deriveTideData", () => {
     expect(data).not.toBeNull();
     expect(data!.next.length).toBeGreaterThan(0);
     expect(data!.aberration).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Observed water level vs. prediction (a REAL gauge, not a subordinate station)
+// Fixtures are the live payloads captured from CO-OPS on 2026-07-28.
+// ---------------------------------------------------------------------------
+describe("parseWaterLevel", () => {
+  const LIVE = {
+    metadata: { id: "8722670", name: "Lake Worth Pier, Atlantic Ocean", lat: "26.6128", lon: "-80.0342" },
+    data: [{ t: "2026-07-28 19:18", v: "0.83", s: "0.049", f: "1,0,0,0", q: "p" }],
+  };
+
+  it("parses the latest observation, in GMT, with the station's own metadata", () => {
+    const obs = parseWaterLevel(LIVE, "8722670");
+    expect(obs).not.toBeNull();
+    expect(obs!.heightFt).toBe(0.83);
+    expect(obs!.tIso).toBe("2026-07-28T19:18:00.000Z");
+    expect(obs!.stationId).toBe("8722670");
+    expect(obs!.stationName).toBe("Lake Worth Pier, Atlantic Ocean");
+  });
+
+  it("falls back to the requested station id when CO-OPS returns no metadata", () => {
+    const obs = parseWaterLevel({ data: [{ t: "2026-07-28 19:18", v: "0.83" }] }, "8722670");
+    expect(obs!.stationId).toBe("8722670");
+    expect(obs!.stationName).toBeUndefined();
+  });
+
+  it("returns null on the subordinate-station error payload (8722816 has no observations)", () => {
+    expect(
+      parseWaterLevel(
+        { error: { message: "No data was found. This product may not be offered at this station at the requested time." } },
+        "8722816",
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null on an empty/garbled payload rather than guessing", () => {
+    expect(parseWaterLevel({ data: [] }, "X")).toBeNull();
+    expect(parseWaterLevel({}, "X")).toBeNull();
+    expect(parseWaterLevel({ data: [{ t: "2026-07-28 19:18", v: "MM" }] }, "X")).toBeNull();
+    expect(parseWaterLevel({ data: [{ t: "not-a-date", v: "0.83" }] }, "X")).toBeNull();
+  });
+});
+
+describe("buildObservedTide", () => {
+  // Gauge 8722670's OWN hi/lo predictions bracketing the observation above.
+  const GAUGE_PREDICTIONS = {
+    predictions: [
+      { t: "2026-07-28 06:00", v: "0.454", type: "L" as const },
+      { t: "2026-07-28 11:47", v: "2.339", type: "H" as const },
+      { t: "2026-07-28 17:57", v: "0.003", type: "L" as const },
+      { t: "2026-07-29 00:28", v: "2.883", type: "H" as const },
+      { t: "2026-07-29 06:38", v: "0.363", type: "L" as const },
+    ],
+  };
+  const events = GAUGE_PREDICTIONS.predictions.map((p) => ({
+    type: p.type === "H" ? ("high" as const) : ("low" as const),
+    time: new Date(`${p.t.replace(" ", "T")}:00Z`).toISOString(),
+    heightFt: Number(p.v),
+  }));
+  const obs = {
+    heightFt: 0.83,
+    tIso: "2026-07-28T19:18:00.000Z",
+    stationId: "8722670",
+    stationName: "Lake Worth Pier, Atlantic Ocean",
+  };
+
+  it("LIVE 2026-07-28: 0.83 ft observed vs ~0.30 ft predicted -> +0.53 ft residual", () => {
+    const o = buildObservedTide(events, obs)!;
+    expect(o).not.toBeNull();
+    // The 19:18 observation sits 81 min into the 391-min low(17:57, 0.003 ft)
+    // -> high(00:28, 2.883 ft) leg: f = 0.2072, raised-cosine ease = 0.1021,
+    // predicted = 0.297 ft. Observed 0.83 -> the water was running half a foot
+    // above the tables (amber territory in the UI).
+    expect(o.deltaFt).toBeCloseTo(0.53, 2);
+    expect(o.heightFt).toBe(0.83);
+    expect(o.stationId).toBe("8722670");
+    expect(o.stationName).toBe("Lake Worth Pier, Atlantic Ocean");
+  });
+
+  it("reports a NEGATIVE residual when the water is running below prediction", () => {
+    const low = buildObservedTide(events, { ...obs, heightFt: -0.4 })!;
+    expect(low.deltaFt).toBeCloseTo(-0.7, 2);
+  });
+
+  it("is ~0 when the gauge matches its own harmonic prediction exactly", () => {
+    // Right at a published turning point, prediction == the event height.
+    const atLow = buildObservedTide(events, {
+      ...obs,
+      tIso: "2026-07-28T17:57:00.000Z",
+      heightFt: 0.003,
+    })!;
+    expect(atLow.deltaFt).toBeCloseTo(0, 2);
+  });
+
+  it("honest-nulls when the observation is missing or falls outside the prediction window", () => {
+    expect(buildObservedTide(events, null)).toBeNull();
+    expect(buildObservedTide(events, { ...obs, tIso: "2026-08-05T12:00:00.000Z" })).toBeNull();
+    expect(buildObservedTide([], obs)).toBeNull();
   });
 });

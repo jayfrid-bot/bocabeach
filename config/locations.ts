@@ -30,6 +30,9 @@ export const LOCATIONS: Location[] = [
     coast: "atlantic",
     noaaTideStationId: "8722816", // Boca Raton
     noaaTideStationFallbackId: "8722670", // Lake Worth Pier
+    // Observed water level comes from the Lake Worth Pier GAUGE (~18 mi north):
+    // 8722816 is a subordinate PREDICTION station and publishes no observations.
+    noaaWaterLevelStationId: "8722670",
     ndbcBuoyId: "LKWF1", // Lake Worth Pier C-MAN (nearest)
     ndbcBuoyFallbackId: "FWYF1", // Fowey Rocks
     // SPLocation names as published by the FL Healthy Beaches feed (Palm Beach county).

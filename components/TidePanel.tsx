@@ -1,11 +1,71 @@
-import type { Wrapped, TideData } from "@/lib/types";
+import type { TideObserved, Wrapped, TideData } from "@/lib/types";
 import { fmtTime } from "@/lib/format";
 import { TideCrossSection } from "@/components/TideCrossSection";
 import { TideCurve } from "@/components/TideCurve";
 
+/** Past this, a "live" gauge reading isn't live any more — CO-OPS gauges tick
+ *  every 6 minutes, so an hour-old value means the station went quiet and the
+ *  chip hides rather than presenting a stale number as "observed right now". */
+export const OBSERVED_STALE_MINUTES = 60;
+
+/** A residual this size is real signal (wind setup / surge / a barometric push)
+ *  rather than the ±0.1-0.3 ft the harmonic prediction misses by on a normal
+ *  day, so it earns a colored tone. */
+const NOTABLE_DELTA_FT = 0.5;
+
+/**
+ * The observed-vs-predicted chip's text + tone, or `null` when there's nothing
+ * honest to show. Pure (takes `nowMs`) so server and client agree and so the
+ * staleness rule is unit-testable without rendering.
+ */
+export function observedChip(
+  observed: TideObserved | undefined,
+  nowMs: number,
+): { text: string; tone: string } | null {
+  if (!observed) return null;
+  const obsMs = Date.parse(observed.tIso);
+  if (!Number.isFinite(obsMs)) return null;
+  const ageMin = (nowMs - obsMs) / 60_000;
+  // Future-dated readings are as suspect as ancient ones — both mean the feed
+  // isn't describing right now.
+  if (ageMin > OBSERVED_STALE_MINUTES || ageMin < -OBSERVED_STALE_MINUTES) return null;
+
+  const d = observed.deltaFt;
+  // The gauge's own published name, trimmed to its place ("Lake Worth Pier,
+  // Atlantic Ocean" -> "Lake Worth Pier"); never invented — fall back to the id.
+  const place = observed.stationName?.split(",")[0]?.trim();
+  const label = place ? `${place} gauge` : `gauge ${observed.stationId}`;
+  const relation =
+    Math.abs(d) < 0.05
+      ? "right on prediction"
+      : `${Math.abs(d).toFixed(1)} ft ${d > 0 ? "above" : "below"} predicted`;
+
+  const tone =
+    d >= NOTABLE_DELTA_FT
+      ? "bg-amber-500/10 text-amber-700 ring-amber-500/25 dark:text-amber-300"
+      : d <= -NOTABLE_DELTA_FT
+        ? "bg-cyan-500/10 text-cyan-700 ring-cyan-500/25 dark:text-cyan-300"
+        : "bg-slate-500/10 text-slate-600 ring-slate-500/20 dark:text-slate-300";
+
+  return {
+    text: `Observed: ${observed.heightFt.toFixed(1)} ft — ${relation} (${label})`,
+    tone,
+  };
+}
+
 export function TidePanel({ tides, tz }: { tides: Wrapped<TideData>; tz: string }) {
   const events = tides.data?.next ?? [];
   const ab = tides.data?.aberration;
+  // Staleness is measured against the SNAPSHOT's fetch time, not Date.now():
+  // this component is rendered inside a "use client" tree, so a wall-clock read
+  // would differ between the SSR pass and hydration. `fetchedAt` is part of the
+  // payload, so both renders agree — and "how old was the gauge reading when we
+  // pulled it" is the honest question anyway.
+  const snapMs = Date.parse(tides.fetchedAt);
+  const obsChip = observedChip(
+    tides.data?.observed,
+    Number.isFinite(snapMs) ? snapMs : Date.now(),
+  );
 
   // Aberration call-outs — rendered ONLY when today's tides actually escape the
   // normal band, so a normal day adds nothing here. King highs get an amber tone
@@ -66,6 +126,20 @@ export function TidePanel({ tides, tz }: { tides: Wrapped<TideData>; tz: string 
           </span>
         ) : null}
       </div>
+      {/* What the water is ACTUALLY doing vs. what the astronomy said it would
+          — the one line on this card that isn't a prediction. Amber when the
+          gauge is running high (wind setup / surge), cyan when it's running
+          low, neutral when the harmonic model is holding. */}
+      {obsChip ? (
+        <div className="mt-2">
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${obsChip.tone}`}
+          >
+            <span aria-hidden>📈</span>
+            {obsChip.text}
+          </span>
+        </div>
+      ) : null}
       {events.length === 0 ? (
         <div className="mt-2 text-sm text-slate-500">Unavailable</div>
       ) : (

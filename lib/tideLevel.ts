@@ -22,6 +22,53 @@ export interface TideLevelResult {
 }
 
 /**
+ * The raised-cosine easing every tide interpolation in the app shares:
+ * 0 at f=0, 1 at f=1, zero slope at both ends, steepest at the midpoint.
+ * Real tides move like simple harmonic motion — fast through mid-tide,
+ * lingering at the turns — so a straight lerp would misplace the water at
+ * nearly every instant between two events. Extracted so the waterline
+ * graphic (computeTideLevel below), TideCurve.tsx, and the observed-vs-
+ * predicted residual in lib/sources/tides.ts all ease IDENTICALLY — a delta
+ * computed against a different curve than the one drawn would be a lie.
+ */
+export function raisedCosineEase(f: number): number {
+  const x = Math.min(1, Math.max(0, f));
+  return (1 - Math.cos(Math.PI * x)) / 2;
+}
+
+/**
+ * Predicted tide height (ft) at an arbitrary instant, eased with
+ * {@link raisedCosineEase} between the two published high/low events that
+ * BRACKET it.
+ *
+ * Returns `null` when `tMs` isn't bracketed (before the first or after the
+ * last event, or fewer than two usable events) — no extrapolation. Outside a
+ * bracket there's no honest curve to ride, and the caller (the observed-vs-
+ * predicted residual) would rather report nothing than a made-up baseline.
+ *
+ * `events` may be in any order and may include PAST events (unlike
+ * TideData.next, which is upcoming-only) — this is meant for the full
+ * prediction window, so the instant being asked about is usually in the
+ * recent past.
+ */
+export function interpolateTideHeightFt(events: TideEvent[], tMs: number): number | null {
+  if (!Number.isFinite(tMs)) return null;
+  const pts = events
+    .map((e) => ({ t: new Date(e.time).getTime(), heightFt: e.heightFt }))
+    .filter((p) => Number.isFinite(p.t) && Number.isFinite(p.heightFt))
+    .sort((a, b) => a.t - b.t);
+  if (pts.length < 2) return null;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i];
+    const b = pts[i + 1];
+    if (tMs < a.t || tMs > b.t || b.t <= a.t) continue;
+    const f = (tMs - a.t) / (b.t - a.t);
+    return a.heightFt + raisedCosineEase(f) * (b.heightFt - a.heightFt);
+  }
+  return null;
+}
+
+/**
  * Estimate where the tide sits right now between its surrounding turning
  * points.
  *
@@ -82,7 +129,7 @@ export function computeTideLevel(
   for (let i = 0; i < pts.length - 1; i++) {
     if (t <= pts[i + 1].t) {
       const f = (t - pts[i].t) / (pts[i + 1].t - pts[i].t);
-      const ease = (1 - Math.cos(Math.PI * f)) / 2;
+      const ease = raisedCosineEase(f);
       heightFt = pts[i].heightFt + ease * (pts[i + 1].heightFt - pts[i].heightFt);
       break;
     }
