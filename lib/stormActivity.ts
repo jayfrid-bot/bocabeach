@@ -1,4 +1,10 @@
-import type { LightningData, StormActivityBand, StormActivityData, Wrapped } from "@/lib/types";
+import type {
+  LightningData,
+  PrecipRadarData,
+  StormActivityBand,
+  StormActivityData,
+  Wrapped,
+} from "@/lib/types";
 import { clamp } from "@/lib/util";
 
 /** Inputs the Storm Activity metric needs, pulled by the caller from the
@@ -11,6 +17,9 @@ export interface StormActivityInput {
   weatherCode?: number;
   /** Current hour's precipitation probability (0-100). */
   precipProbability?: number;
+  /** Radar-OBSERVED rain (NOAA MRMS), when available. Optional: every existing
+   *  caller/test that omits it gets exactly today's forecast-based behavior. */
+  precipRadar?: Wrapped<PrecipRadarData> | null;
 }
 
 const STRIKE_WEIGHT = 0.45;
@@ -111,8 +120,19 @@ function rainScoreOf(
   precipIn: number | undefined,
   weatherCode: number | undefined,
   precipProbability: number | undefined,
+  /** Radar-OBSERVED rain score, when a fresh radar read is available. It
+   *  REPLACES the forecast-derived base (an observation of where the rain
+   *  physically is beats a model's guess that it might be there — the same
+   *  principle as satellite cloud overriding forecast cloud in score.ts). Null
+   *  or omitted falls straight back to the forecast behavior, which is exactly
+   *  what every pre-radar caller gets. */
+  observed?: number | null,
 ): number | null {
-  const base = precipIn != null ? lerpCurve(precipIn, RAIN_ANCHORS) : null;
+  const base = observed ?? (precipIn != null ? lerpCurve(precipIn, RAIN_ANCHORS) : null);
+  // The thunderstorm-code floor still applies on top of EITHER base: it encodes
+  // "a corroborated active thunderstorm is at least this stormy", which is true
+  // regardless of which rain input we measured. Radar can also be legitimately
+  // near-zero under a storm that's all lightning and no rain at the beach yet.
   const corroborated =
     weatherCode != null &&
     weatherCode >= 95 &&
@@ -121,6 +141,60 @@ function rainScoreOf(
     precipProbability >= 25;
   if (!corroborated) return base;
   return Math.max(base ?? 0, 70);
+}
+
+// --- Radar-observed rain component ------------------------------------------
+// PrecipRate (mm/hr) observed AT the beach -> 0-100. Anchored to be broadly
+// comparable to RAIN_ANCHORS' inches/hr scale so swapping one for the other
+// doesn't jolt the meter: 0.1 in/hr (the 50-point anchor there) is ~2.5 mm/hr,
+// which is the 50-point anchor here.
+const RADAR_RATE_ANCHORS: [number, number][] = [
+  [0, 0],
+  [0.5, 20], // the job's own rain threshold — light drizzle
+  [2.5, 50], // ~0.1 in/hr
+  [6.5, 75], // ~0.25 in/hr
+  [12.5, 100], // ~0.5 in/hr, torrential
+];
+// Areal coverage of the ~64 km box -> 0-100. A beach can sit in a dry slot
+// inside a box that is otherwise full of storms; coverage catches the
+// "surrounded by weather" case that a single-point rate rate misses entirely.
+const RADAR_COVERAGE_ANCHORS: [number, number][] = [
+  [0, 0],
+  [10, 25],
+  [30, 50],
+  [60, 75],
+  [85, 100],
+];
+
+/**
+ * Whether the radar feed is fresh enough to PREFER over the forecast. Requires
+ * the fetch to have succeeded ("ok" — not "stale") AND a frame no more than 25
+ * min old, matching PRECIP_RADAR_STALE_MINUTES in lib/sources/precipRadar.ts.
+ * The threshold is duplicated rather than imported to keep this module a pure,
+ * dependency-free unit (same reasoning as the local `lerpCurve` above).
+ */
+function radarFresh(w: Wrapped<PrecipRadarData> | null | undefined): w is Wrapped<PrecipRadarData> {
+  if (!w || w.status !== "ok" || !w.data) return false;
+  const age = w.data.frameAgeMinutes;
+  return age == null || age <= 25;
+}
+
+/**
+ * The radar-OBSERVED rain term: max of the at-the-beach rain rate and the box's
+ * areal coverage. Max (not mean) because these describe two different ways of
+ * being in a storm and either one alone is real: a downpour directly overhead
+ * with clear air around it, and a beach in a temporary dry slot inside a
+ * wall-to-wall squall line, are both "storm activity". Averaging would let
+ * each case cancel the other's evidence.
+ *
+ * Returns null when the radar has nothing usable for this beach (no coverage),
+ * which sends the caller back to the forecast term.
+ */
+function radarRainScoreOf(d: PrecipRadarData): number | null {
+  const rate = d.rainNowMmHr != null ? lerpCurve(d.rainNowMmHr, RADAR_RATE_ANCHORS) : null;
+  const coverage = d.coveragePct != null ? lerpCurve(d.coveragePct, RADAR_COVERAGE_ANCHORS) : null;
+  if (rate == null && coverage == null) return null;
+  return Math.max(rate ?? 0, coverage ?? 0);
 }
 
 function bandFor(score: number): StormActivityBand {
@@ -168,7 +242,18 @@ export function computeStormActivity(input: StormActivityInput): StormActivityDa
 
   const strikes = known && data ? strikeScoreOf(data) : null;
   const proximity = known && data ? proximityScoreOf(data) : null;
-  const rain = rainScoreOf(input.precipIn, input.weatherCode, input.precipProbability);
+  // Prefer the radar OBSERVATION for the rain term when it's fresh; fall back
+  // to the forecast hour otherwise. The weight (RAIN_WEIGHT) is unchanged —
+  // this upgrades what the 0.20 term MEASURES, not how much it counts.
+  const observedRain = radarFresh(input.precipRadar)
+    ? radarRainScoreOf(input.precipRadar.data!)
+    : null;
+  const rain = rainScoreOf(
+    input.precipIn,
+    input.weatherCode,
+    input.precipProbability,
+    observedRain,
+  );
 
   const combined = combineParts([
     { score: strikes, weight: STRIKE_WEIGHT },
@@ -176,9 +261,13 @@ export function computeStormActivity(input: StormActivityInput): StormActivityDa
     { score: rain, weight: RAIN_WEIGHT },
   ]);
 
+  // True only when the rain term actually CAME FROM radar — lets the meter say
+  // "observed" instead of "forecast" without re-deriving the preference order.
+  const rainFromRadar = observedRain != null;
+
   if (freshClose) {
     const score = clamp(Math.round(Math.max(combined ?? 90, 90)), 0, 100);
-    return { score, band: bandFor(score), parts: { strikes, proximity, rain } };
+    return { score, band: bandFor(score), parts: { strikes, proximity, rain }, rainFromRadar };
   }
 
   if (combined == null) return null;
@@ -186,5 +275,5 @@ export function computeStormActivity(input: StormActivityInput): StormActivityDa
   if (!known && bandFor(roundedCombined) === "Calm") return null;
 
   const score = clamp(roundedCombined, 0, 100);
-  return { score, band: bandFor(score), parts: { strikes, proximity, rain } };
+  return { score, band: bandFor(score), parts: { strikes, proximity, rain }, rainFromRadar };
 }

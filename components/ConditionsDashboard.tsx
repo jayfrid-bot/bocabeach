@@ -6,6 +6,7 @@ import useSWR from "swr";
 import type { ConditionsResponse } from "@/lib/types";
 import { consensusCloudPct, currentHourOf, deriveMetrics } from "@/lib/score";
 import { computeStormActivity } from "@/lib/stormActivity";
+import { rainNowcast } from "@/lib/rainNowcast";
 import { beachDayVerdict, fmtDate, fmtTime, scoreTextClass } from "@/lib/format";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -166,7 +167,28 @@ export function ConditionsDashboard({
     precipIn: currentHour?.precipIn,
     weatherCode: currentHour?.weatherCode,
     precipProbability: currentHour?.precipProbability,
+    // Radar OBSERVATION, preferred over the forecast hour for the rain term
+    // when fresh — see lib/stormActivity.ts. Informational only: this does not
+    // touch the Beach Day score.
+    precipRadar: snap.precipRadar,
   });
+  // Radar rain-nowcast line. Null unless the radar is fresh AND has something
+  // to say; rendered under the storm gauge, and (for the two urgent kinds) as
+  // a chip up top.
+  const radarRain = rainNowcast(snap.precipRadar);
+  // Only the urgent kinds earn a chip up top. `nearby` is informational and
+  // lives under the storm gauge instead of competing for attention here.
+  //
+  // WHY THIS SUPPRESSES THE DRY CHIP (see the chip row below): the existing
+  // chip is Open-Meteo's MODEL nowcast ("Dry for the next 2+ hrs"), while this
+  // one is a radar OBSERVATION of where the rain physically is. When they
+  // disagree, the observation is right — a model that says "dry" while radar
+  // shows rain overhead is exactly the failure this feed exists to catch. So
+  // whenever the radar chip is showing, the dry chip is hidden rather than
+  // rendered next to it flatly contradicting it. Radar going quiet (stale,
+  // missing, or nothing to report) hands the row straight back to the model
+  // copy, unchanged.
+  const radarChip = radarRain && radarRain.kind !== "nearby" ? radarRain : null;
 
   // --- Informational advisories (computed server-side in lib/conditions.ts;
   // NONE feed the Beach Day score). Each self-hides when it has nothing to say. ---
@@ -228,6 +250,7 @@ export function ConditionsDashboard({
     snap.gfs,
     snap.lightning,
     snap.goesCloud,
+    snap.precipRadar,
     snap.sargassum,
     snap.busyness,
     snap.traffic,
@@ -319,13 +342,23 @@ export function ConditionsDashboard({
         <ScoreExplainer derived={d} result={active} />
       </section>
 
-      {nc || bw ? (
+      {nc || bw || radarChip ? (
         <section className="mb-4 flex flex-wrap gap-2 text-sm">
+          {/* Radar chip: full-width, and only for the two kinds that are worth
+              interrupting for (raining now / arriving soon). "Showers nearby,
+              drifting away" is real but not actionable, so it stays in the
+              storm-gauge note rather than taking a chip slot up here. */}
+          {radarChip ? (
+            <span className="inline-flex w-full items-center gap-1.5 rounded-full bg-amber-500/10 px-3 py-1 text-amber-800 ring-1 ring-amber-500/30 dark:text-amber-300">
+              <span aria-hidden>{radarChip.kind === "raining" ? "🌧️" : "📡"}</span>
+              {radarChip.text}
+            </span>
+          ) : null}
           {/* Suppress a "Raining" pill the corroboration gate vetoed (see
               deriveMetrics.nowcastRaining) — the minutely model hallucinates
               showers under clear skies; showing "Raining" in bright sun burns
               trust. The dry state and corroborated rain render as before. */}
-          {nc && (nc.state !== "raining" || d.nowcastRaining) ? (
+          {nc && !radarChip && (nc.state !== "raining" || d.nowcastRaining) ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-200/80 dark:bg-slate-800/70 px-3 py-1 text-slate-700 dark:text-slate-200 ring-1 ring-slate-900/10 dark:ring-white/10">
               <span aria-hidden>{nc.state === "raining" ? "🌧️" : "☀️"}</span>
               {nc.text}
@@ -679,7 +712,7 @@ export function ConditionsDashboard({
             back={nerdBack("storm")}
             front={
               <div className={SAFETY_CARD_WRAP}>
-                <StormActivityMeter storm={storm} />
+                <StormActivityMeter storm={storm} rain={radarRain} />
               </div>
             }
           />

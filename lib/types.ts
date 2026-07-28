@@ -33,11 +33,49 @@ export interface TideEvent {
   time: string; // ISO
   heightFt: number;
 }
+/**
+ * A real-time OBSERVED water level from a NOAA CO-OPS gauge, paired with the
+ * harmonic prediction for the same instant.
+ *
+ * Only REAL gauges publish `product=water_level`; most beaches' nearest tide
+ * station is a SUBORDINATE prediction station (Boca Raton's 8722816 is one —
+ * it returns "No data was found" for water_level). So this reading comes from
+ * whichever gauge `Location.noaaWaterLevelStationId` names, which is usually
+ * some miles up or down the coast — `stationId` is carried here so the UI can
+ * say WHICH gauge, and the distance caveat is stated in lib/nerdInfo.ts.
+ *
+ * `deltaFt` is the residual (observed − predicted) AT THAT GAUGE — both numbers
+ * come from the same station, so the difference is a genuine "how far off is
+ * the astronomy today" signal (wind setup, storm surge, barometric pressure)
+ * rather than a cross-station offset artifact.
+ */
+export interface TideObserved {
+  /** Observed water level, feet above MLLW. */
+  heightFt: number;
+  /** ISO (UTC) timestamp of the observation — 6-minute gauge cadence. */
+  tIso: string;
+  /** The CO-OPS gauge that reported it (e.g. "8722670"). */
+  stationId: string;
+  /** The gauge's published name (e.g. "Lake Worth Pier, Atlantic Ocean"), when
+   *  CO-OPS returned metadata. Used verbatim-ish in the UI so we never invent a
+   *  friendly label for a station. */
+  stationName?: string;
+  /** observed − predicted at `tIso`, feet. Positive = water is running high. */
+  deltaFt: number;
+}
+
 export interface TideData {
   /** Upcoming high/low events, soonest first. */
   next: TideEvent[];
   /** Whether the tide is currently rising or falling (derived from next events). */
   trend?: "rising" | "falling";
+  /**
+   * Live gauge reading vs. the harmonic prediction for the same instant.
+   * Absent (honest-null) when the beach has no configured gauge, the gauge is
+   * down, or the observation can't be bracketed by two predicted events.
+   * Informational — does NOT feed the Beach Day score.
+   */
+  observed?: TideObserved;
   /**
    * How today's tide extremes compare to normal over a ±3-week window of NOAA
    * predictions — king tides (perigean spring highs) and unusually low lows.
@@ -64,7 +102,29 @@ export interface BuoyData {
    * buoy published no usable WTMP rows. Informational — never feeds the score.
    */
   waterTempHistory?: { t: string; waterTempF: number }[];
+  /**
+   * PER-FIELD provenance: which NDBC station actually supplied each value
+   * above, or `null` when neither station reported it. The primary buoy is
+   * frequently only PARTIALLY alive (Boca's LKWF1 is a C-MAN mast that
+   * STRUCTURALLY never reports waves — 100% "MM" over a 45-day audit — and
+   * drops WTMP ~21-24% of ticks), so lib/sources/buoy.ts merges primary and
+   * fallback field-by-field instead of letting one wind-only row win the whole
+   * station. That makes "the buoy" a fiction, hence this map: the nerd cards
+   * (lib/nerdInfo.ts) name the station that fed the number the user is looking
+   * at, not the station we wish had reported it.
+   */
+  sources?: Partial<Record<BuoyFieldKey, string | null>>;
 }
+
+/** The BuoyData fields that carry per-station provenance (see `BuoyData.sources`). */
+export type BuoyFieldKey =
+  | "waterTempF"
+  | "airTempF"
+  | "windDirDeg"
+  | "windSpeedMph"
+  | "windGustMph"
+  | "waveHeightFt"
+  | "dominantPeriodS";
 
 // --- Weather (NWS api.weather.gov) ----------------------------------------
 export interface WeatherData {
@@ -99,7 +159,19 @@ export interface MarineData {
    * times — anchors the hourly rip-current risk curve (lib/ripRiskCurve.ts).
    * Absent when the marine model returned no hourly block.
    */
-  hourlyWaves?: { time: string; waveHeightFt?: number; wavePeriodS?: number }[];
+  hourlyWaves?: {
+    time: string;
+    waveHeightFt?: number;
+    wavePeriodS?: number;
+    /**
+     * Direction the waves are coming FROM, degrees (same convention as
+     * `Location.coastNormalDeg`). Feeds the rip curve's shore-incidence
+     * multiplier — swell arriving square to the beach drives rip circulation,
+     * oblique swell drives a longshore current instead. Absent when the model
+     * returned no direction for that hour.
+     */
+    waveDirDeg?: number;
+  }[];
 }
 
 // --- Official local conditions (City of Boca Raton Ocean Rescue scrape) -----
@@ -400,6 +472,53 @@ export interface GoesCloudData {
   granuleStartIso: string;
 }
 
+// --- Radar-observed precipitation (NOAA MRMS PrecipRate, via an off-Netlify
+// job) — see scripts/mrms_precip.py + lib/sources/precipRadar.ts ---
+/** Estimated storm motion from cross-correlating consecutive radar frames. */
+export interface PrecipRadarMotion {
+  /** Speed of the rain field over the ground, km/h. */
+  speedKmh: number;
+  /** Compass direction the rain is moving TOWARD (0 = north, 90 = east). */
+  dirDeg: number;
+  /** Best normalized cross-correlation score (0-1) behind this vector —
+   *  carried through for observability; a low score means the frames barely
+   *  matched (the job already refuses to publish motion below its own floor). */
+  corr?: number;
+  /** Minutes between the two frames the vector was measured across. */
+  baselineMin?: number;
+}
+
+export interface PrecipRadarData {
+  /** Observed rain rate AT the beach, mm/hr (3x3 pixel max — see
+   *  scripts/mrms_precip.py). null when the beach is outside radar coverage;
+   *  0 is a real observation meaning "radar sees no rain here". */
+  rainNowMmHr: number | null;
+  /** Distance to the nearest radar pixel at >= 0.5 mm/hr within the ~64 km
+   *  analysis box, km. null when the whole box is dry. */
+  nearestRainKm: number | null;
+  /** Compass bearing FROM the beach TO that nearest rain. null when the box is
+   *  dry, and also when the rain is at the beach itself (0 km has no
+   *  direction — read rainNowMmHr for that case). */
+  nearestBearingDeg: number | null;
+  /** % of valid radar pixels in the box at >= 0.5 mm/hr. Denominator excludes
+   *  no-coverage pixels, so partial coverage never reads as falsely dry. */
+  coveragePct: number | null;
+  /** null when motion couldn't be honestly determined (too little rain to
+   *  correlate, a too-weak match, or a peak pinned to the search boundary). */
+  motion: PrecipRadarMotion | null;
+  /** Minutes until rain reaches the beach, by marching the beach backward
+   *  along the motion vector. null when there is no honest answer: no/stalled
+   *  motion, or the upstream track is dry (rain nearby but drifting AWAY). */
+  etaMinutes: number | null;
+  /** Scan time of the newest radar frame used — the observation time, NOT the
+   *  job's run time. This is what the staleness gate reads. */
+  frameIso: string | null;
+  /** How many radar frames actually decoded this run (motion needs >= 2). */
+  framesUsed: number;
+  /** Age of `frameIso` in minutes, computed at fetch time. */
+  frameAgeMinutes: number;
+}
+
 // --- Storm activity (derived: lightning strikes + proximity + current rain) ---
 export type StormActivityBand = "Calm" | "Unsettled" | "Stormy" | "Severe";
 
@@ -414,9 +533,15 @@ export interface StormActivityData {
     strikes: number | null;
     /** Nearest-strike-proximity component. */
     proximity: number | null;
-    /** Current-hour precipitation component. */
+    /** Current-hour precipitation component. Measured from RADAR OBSERVATION
+     *  when a fresh MRMS read is available (see `rainFromRadar`), otherwise
+     *  from the forecast hour's precip. */
     rain: number | null;
   };
+  /** Whether `parts.rain` came from the radar observation rather than the
+   *  forecast. Display-only (lets the meter label the source honestly).
+   *  Optional so pre-radar callers/payloads stay valid. */
+  rainFromRadar?: boolean;
 }
 
 // --- Sargassum / seaweed (NOAA Sargassum Inundation Risk, via off-Netlify job) ---
@@ -644,6 +769,11 @@ export interface ConditionsSnapshot {
    *  OBSERVATION that overrides the forecast consensus for the sand-temp
    *  model when fresh — see consensusCloudPct / satelliteCloudPct in score.ts. */
   goesCloud: Wrapped<GoesCloudData>;
+  /** Radar-observed rain near the beach + a short-fuse "rain approaching"
+   *  nowcast (NOAA MRMS PrecipRate). INFORMATIONAL ONLY in v1 — it feeds the
+   *  rain-nowcast copy and the Storm Activity meter, and deliberately does NOT
+   *  feed the Beach Day score or its rain caps (see lib/rainNowcast.ts). */
+  precipRadar: Wrapped<PrecipRadarData>;
   sargassum: Wrapped<SargassumData>;
   busyness: Wrapped<BusynessData>;
   /** Cam-based water clarity (Tier 1). Informational — not part of the score. */
@@ -791,6 +921,16 @@ export interface Location {
   coast?: "atlantic" | "gulf" | "pacific";
   noaaTideStationId: string;
   noaaTideStationFallbackId?: string;
+  /**
+   * CO-OPS station to read REAL-TIME OBSERVED water level from
+   * (`product=water_level`). Distinct from the prediction stations above
+   * because only physical gauges publish observations — a subordinate
+   * prediction station (like Boca's 8722816) returns "No data was found".
+   * Usually the fallback/reference gauge, which can be some miles away; the
+   * UI names it so the distance is never hidden. Omit for beaches with no
+   * nearby gauge — the observed-vs-predicted chip simply doesn't render.
+   */
+  noaaWaterLevelStationId?: string;
   ndbcBuoyId: string;
   ndbcBuoyFallbackId?: string;
   /**

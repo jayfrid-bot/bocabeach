@@ -1,3 +1,4 @@
+import type { RainNowcast } from "@/lib/rainNowcast";
 import type { StormActivityBand, StormActivityData } from "@/lib/types";
 
 // Same gradient-construction style as AirQualityMeter's AQI_BANDS: list each
@@ -19,7 +20,16 @@ const BAND_TEXT_CLASS: Record<StormActivityBand, string> = {
  * nothing when the metric is null (lightning feed down/stale AND rain data
  * alone doesn't justify showing it — see lib/stormActivity.ts).
  */
-export function StormActivityMeter({ storm }: { storm: StormActivityData | null }) {
+export function StormActivityMeter({
+  storm,
+  /** The radar rain-nowcast line, or null when the radar has nothing current to
+   *  say (see lib/rainNowcast.ts). Optional so any other call site keeps
+   *  working unchanged. */
+  rain = null,
+}: {
+  storm: StormActivityData | null;
+  rain?: RainNowcast | null;
+}) {
   if (!storm) return null;
   const { score, band } = storm;
   const pct = Math.max(0, Math.min(100, score));
@@ -59,7 +69,23 @@ export function StormActivityMeter({ storm }: { storm: StormActivityData | null 
 
         <div className="mt-2 break-words text-xs text-slate-600 dark:text-slate-400">
           Lightning strikes + rain within ~20 miles of the beach
+          {/* Say so when the rain half of that sentence is a radar OBSERVATION
+              rather than a forecast — the distinction is the whole point of the
+              MRMS feed, and it's what earns the gauge extra trust. */}
+          {storm.rainFromRadar ? " · rain observed by radar" : null}
         </div>
+
+        {/* One-line radar note under the gauge. Self-hides whenever the radar
+            is stale, missing, or simply quiet — an observation that isn't
+            current must not sound certain (see lib/rainNowcast.ts). */}
+        {rain ? (
+          <div className="mt-2 flex items-start gap-1.5 break-words text-xs text-amber-700 dark:text-amber-400">
+            <span aria-hidden className="leading-none">
+              📡
+            </span>
+            <span>{rain.text}</span>
+          </div>
+        ) : null}
       </div>
     </div>
   );

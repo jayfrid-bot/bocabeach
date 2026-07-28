@@ -13,6 +13,7 @@ import { fetchLightning } from "@/lib/sources/lightning";
 import { fetchMarine } from "@/lib/sources/marine";
 import { fetchMetno } from "@/lib/sources/metno";
 import { fetchGoesCloud } from "@/lib/sources/goesCloud";
+import { fetchPrecipRadar } from "@/lib/sources/precipRadar";
 import { fetchGfs } from "@/lib/sources/modelEnsemble";
 import { fetchNowcast } from "@/lib/sources/nowcast";
 import { fetchNws } from "@/lib/sources/nws";
@@ -130,6 +131,7 @@ export async function getSnapshotForLocation(
     gfs,
     lightning,
     goesCloud,
+    precipRadar,
     sargassum,
     busyness,
     clarity,
@@ -151,6 +153,7 @@ export async function getSnapshotForLocation(
     fetchGfs(loc),
     fetchLightning(loc),
     fetchGoesCloud(loc),
+    fetchPrecipRadar(loc),
     fetchSargassum(loc),
     fetchBusyness(loc),
     fetchClarity(loc),
@@ -181,6 +184,7 @@ export async function getSnapshotForLocation(
     gfs,
     lightning,
     goesCloud,
+    precipRadar,
     sargassum,
     busyness,
     clarity,

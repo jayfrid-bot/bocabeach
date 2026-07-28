@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { computeStormActivity, type StormActivityInput } from "@/lib/stormActivity";
-import type { LightningData, SourceStatus, Wrapped } from "@/lib/types";
+import type { LightningData, PrecipRadarData, SourceStatus, Wrapped } from "@/lib/types";
 
 function wrapLightning(
   data: LightningData | null,
@@ -193,5 +193,159 @@ describe("computeStormActivity", () => {
     expect(r).not.toBeNull();
     expect(r!.parts.rain).toBe(0);
     expect(r!.band).toBe("Calm");
+  });
+});
+
+// --- Radar-observed rain term (NOAA MRMS) ------------------------------------
+// The 0.20 rain weight is unchanged; what changed is what it MEASURES. When a
+// fresh radar read exists it replaces the forecast hour's precip, because an
+// observation of where the rain physically is beats a model's guess that it
+// might be there.
+
+function wrapRadar(
+  data: Partial<PrecipRadarData> | null,
+  status: SourceStatus = data ? "ok" : "error",
+): Wrapped<PrecipRadarData> {
+  return {
+    source: "test",
+    status,
+    fetchedAt: new Date().toISOString(),
+    attribution: "NOAA MRMS (radar observation)",
+    data: data
+      ? {
+          rainNowMmHr: 0,
+          nearestRainKm: null,
+          nearestBearingDeg: null,
+          coveragePct: 0,
+          motion: null,
+          etaMinutes: null,
+          frameIso: new Date().toISOString(),
+          framesUsed: 3,
+          frameAgeMinutes: 2,
+          ...data,
+        }
+      : null,
+  };
+}
+
+describe("computeStormActivity: radar-observed rain", () => {
+  it("prefers a fresh radar observation over the forecast hour", () => {
+    // Forecast says bone dry; radar sees 6.5 mm/hr falling on the beach.
+    const r = computeStormActivity(
+      input({
+        precipIn: 0,
+        precipRadar: wrapRadar({ rainNowMmHr: 6.5, coveragePct: 0 }),
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.parts.rain).toBeCloseTo(75, 5); // the ~0.25 in/hr anchor
+    expect(r!.rainFromRadar).toBe(true);
+  });
+
+  it("falls back to exactly today's forecast behavior when radar is absent", () => {
+    const withoutField = computeStormActivity(input({ precipIn: 0.1 }));
+    const withNullRadar = computeStormActivity(
+      input({ precipIn: 0.1, precipRadar: wrapRadar(null) }),
+    );
+    expect(withoutField!.parts.rain).toBe(50);
+    expect(withNullRadar!.parts.rain).toBe(50);
+    expect(withNullRadar!.rainFromRadar).toBe(false);
+  });
+
+  it("ignores a STALE radar feed and uses the forecast instead", () => {
+    const r = computeStormActivity(
+      input({
+        precipIn: 0.1,
+        precipRadar: wrapRadar({ rainNowMmHr: 12.5 }, "stale"),
+      }),
+    );
+    expect(r!.parts.rain).toBe(50); // the forecast's 0.1 in/hr, not radar's 100
+    expect(r!.rainFromRadar).toBe(false);
+  });
+
+  it("ignores a radar frame older than the 25-min gate even when status is ok", () => {
+    const r = computeStormActivity(
+      input({
+        precipIn: 0.1,
+        precipRadar: wrapRadar({ rainNowMmHr: 12.5, frameAgeMinutes: 40 }),
+      }),
+    );
+    expect(r!.parts.rain).toBe(50);
+    expect(r!.rainFromRadar).toBe(false);
+  });
+
+  it("catches a beach sitting in a dry slot inside a wall-to-wall squall", () => {
+    // Nothing falling at the beach pixel, but 85% of the box is raining.
+    // Coverage must carry the term — a point reading alone would miss this.
+    const r = computeStormActivity(
+      input({ precipIn: 0, precipRadar: wrapRadar({ rainNowMmHr: 0, coveragePct: 85 }) }),
+    );
+    expect(r!.parts.rain).toBeCloseTo(100, 5);
+  });
+
+  it("takes the max of rate and coverage, not their average", () => {
+    // A downpour overhead with clear air around it is still a downpour.
+    const r = computeStormActivity(
+      input({ precipRadar: wrapRadar({ rainNowMmHr: 12.5, coveragePct: 0 }) }),
+    );
+    expect(r!.parts.rain).toBeCloseTo(100, 5);
+  });
+
+  it("reports an observed-dry beach as 0 rain (radar 0 is a reading, not a gap)", () => {
+    const r = computeStormActivity(
+      input({
+        precipIn: 0.25, // forecast insists it's pouring
+        precipRadar: wrapRadar({ rainNowMmHr: 0, coveragePct: 0 }),
+      }),
+    );
+    expect(r!.parts.rain).toBe(0);
+    expect(r!.rainFromRadar).toBe(true);
+  });
+
+  it("keeps the corroborated-thunderstorm floor on top of the radar term", () => {
+    // Radar sees no rain at the beach yet, but a corroborated storm code says
+    // there's an active thunderstorm — the 70 floor still applies.
+    const r = computeStormActivity(
+      input({
+        precipIn: 0,
+        weatherCode: 95,
+        precipProbability: 60,
+        precipRadar: wrapRadar({ rainNowMmHr: 0, coveragePct: 0 }),
+      }),
+    );
+    expect(r!.parts.rain).toBe(70);
+  });
+
+  it("still returns null when lightning is down and radar rain alone reads Calm", () => {
+    // The unknown-lightning honesty rule is untouched by the radar upgrade.
+    const r = computeStormActivity(
+      input({
+        lightning: wrapLightning(null),
+        precipRadar: wrapRadar({ rainNowMmHr: 0, coveragePct: 0 }),
+      }),
+    );
+    expect(r).toBeNull();
+  });
+
+  it("shows the metric when lightning is down but radar alone proves a storm", () => {
+    const r = computeStormActivity(
+      input({
+        lightning: wrapLightning(null),
+        precipRadar: wrapRadar({ rainNowMmHr: 12.5, coveragePct: 90 }),
+      }),
+    );
+    expect(r).not.toBeNull();
+    expect(r!.band).not.toBe("Calm");
+    expect(r!.rainFromRadar).toBe(true);
+  });
+
+  it("does not change the weight of the rain term (still 0.20 of the blend)", () => {
+    // Radar-max rain, nothing else: 100 * 0.20 / 1.00 weight sum over the three
+    // available parts => the same 20 the forecast path would produce.
+    const viaRadar = computeStormActivity(
+      input({ precipRadar: wrapRadar({ rainNowMmHr: 12.5 }) }),
+    );
+    const viaForecast = computeStormActivity(input({ precipIn: 0.5 }));
+    expect(viaRadar!.score).toBe(viaForecast!.score);
   });
 });

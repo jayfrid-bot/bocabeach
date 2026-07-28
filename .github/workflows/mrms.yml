@@ -1,0 +1,79 @@
+name: MRMS Radar Rain Nowcast
+
+# Builds a small mrms_precip.json of RADAR-OBSERVED rain near each beach (NOAA
+# MRMS PrecipRate, 1 km / 2 min) plus a short-fuse "rain is approaching"
+# nowcast, and publishes it to the `mrms-data` branch (NOT main) — the same
+# force-pushed-orphan-branch pattern as goes-cloud.yml and lightning.yml. The
+# GRIB2 decode + advection work runs here on free public-repo Actions minutes
+# and never touches the Netlify build/bill. The web app reads the published
+# file via raw.githubusercontent.com (lib/sources/precipRadar.ts).
+#
+# CADENCE: MRMS itself publishes every 2 minutes, and radar echoes move fast
+# enough that a fresh read genuinely matters (a 60 km/h cell crosses the whole
+# 64 km analysis box in about an hour). So this asks for */10. GitHub throttles
+# scheduled workflows on busy repos and in practice often delivers closer to
+# hourly — that is accepted rather than worked around: the app does NOT trust
+# a stale read (see PRECIP_RADAR_STALE_MINUTES in lib/sources/precipRadar.ts,
+# which degrades the feed to "stale" and suppresses the nowcast copy entirely
+# once the frame is old). A throttled run therefore shows nothing, never a
+# confidently-wrong "rain in 20 min" built on an hour-old frame.
+# workflow_dispatch is here for on-demand runs while iterating.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  push:
+    branches: [main]
+    paths: [".github/workflows/mrms.yml", "scripts/mrms_precip.py"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mrms-precip
+  cancel-in-progress: true
+
+jobs:
+  build-feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout (for the script)
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # pygrib ships manylinux x86_64 wheels (cp39-cp314) with ECMWF's eccodes
+      # BUNDLED, so there is deliberately no `apt-get install libeccodes0` step
+      # here — the wheel is self-contained. Verified against PyPI for 2.1.8 and
+      # locally in a clean venv. If a future runner/Python combo ever falls back
+      # to an sdist build, THAT is when the eccodes system package becomes
+      # necessary; the failure would be loud (a build error), not silent.
+      - name: Install deps
+        run: pip install --quiet --disable-pip-version-check pygrib numpy
+
+      - name: Build the feed
+        env:
+          MRMS_OUT: ${{ runner.temp }}/mrms_precip.json
+        run: python scripts/mrms_precip.py
+
+      - name: Publish to mrms-data branch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          work="${RUNNER_TEMP}/pub"
+          rm -rf "$work"; mkdir -p "$work"
+          cp "${RUNNER_TEMP}/mrms_precip.json" "$work/mrms_precip.json"
+          cd "$work"
+          git init -q
+          git config user.name "mrms-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -q -b mrms-data
+          git add mrms_precip.json
+          git commit -q -m "MRMS radar rain feed $(date -u +%FT%TZ)"
+          # Force-push a single-commit orphan branch so history never grows.
+          git push -f "$remote" mrms-data
