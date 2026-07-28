@@ -226,3 +226,118 @@ describe("flagship instrument backs quote the REAL sand/storm/lightning constant
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// HONESTY LABELS: name the feed that actually produced the displayed number.
+// The buoy pair is merged per FIELD (lib/sources/buoy.ts), so "the nearest NOAA
+// buoy" was a different answer for water temp than for waves — and for waves it
+// was simply never true here.
+// ---------------------------------------------------------------------------
+describe("runtime source honesty (per-field buoy merge)", () => {
+  const withSources = (over: Partial<Derived>): NerdContext => ({
+    d: { ...d, ...over },
+    snap,
+  });
+
+  it("water temp names the ACTUAL station when a buoy measured it", () => {
+    const info = buildNerdInfo(
+      "waterTemp",
+      withSources({ waterTempSource: { kind: "buoy", stationId: "LKWF1" } }),
+    );
+    expect(info.computation.join(" ")).toContain("NOAA buoy LKWF1 (Lake Worth Pier)");
+    expect(info.computation.join(" ")).not.toContain("marine model");
+  });
+
+  it("water temp names the FALLBACK station when that's what filled the gap", () => {
+    const info = buildNerdInfo(
+      "waterTemp",
+      withSources({ waterTempSource: { kind: "buoy", stationId: "FWYF1" } }),
+    );
+    expect(info.computation.join(" ")).toContain("NOAA buoy FWYF1 (Fowey Rocks)");
+  });
+
+  it("water temp admits the model — and WHY — when no buoy reported WTMP", () => {
+    const info = buildNerdInfo("waterTemp", withSources({ waterTempSource: { kind: "model" } }));
+    const text = info.computation.join(" ");
+    expect(text).toContain("Open-Meteo marine model");
+    expect(text).toContain("no buoy reported a water temperature");
+    expect(text).not.toContain("NOAA buoy");
+  });
+
+  it("waves stop implying a buoy: the model, at THIS beach's coordinates, with the distance stated", () => {
+    const info = buildNerdInfo("waves", withSources({ waveHeightSource: { kind: "model" } }));
+    const text = [info.explainer, info.notes ?? "", ...info.computation].join(" ");
+    expect(text).toContain("Open-Meteo marine model");
+    expect(text).toContain("beach"); // "at this beach's coordinates"
+    expect(text).toContain("90 mi"); // the nearest wave-reporting buoy
+    // The old copy led with "the nearest NOAA buoy" — that must be gone.
+    expect(info.explainer).not.toMatch(/comes from the nearest NOAA buoy/i);
+    // The model source is listed FIRST now, ahead of the buoy.
+    expect(info.sources[0]).toContain("Open-Meteo Marine");
+  });
+
+  it("waves would still name a buoy if one ever reported a height (label follows the value)", () => {
+    const info = buildNerdInfo(
+      "waves",
+      withSources({ waveHeightSource: { kind: "buoy", stationId: "FWYF1" } }),
+    );
+    expect(info.computation.join(" ")).toContain("NOAA buoy FWYF1");
+  });
+
+  it("an unknown station id gets no invented place name", () => {
+    const info = buildNerdInfo(
+      "waterTemp",
+      withSources({ waterTempSource: { kind: "buoy", stationId: "ZZZZ9" } }),
+    );
+    expect(info.computation.join(" ")).toContain("NOAA buoy ZZZZ9");
+    expect(info.computation.join(" ")).not.toContain("(");
+  });
+
+  it("keeps BOTH candidate sources listed on the water-temp card (the pre-existing contract)", () => {
+    const info = buildNerdInfo("waterTemp", ctx);
+    expect(info.sources.some((s) => s.includes("NOAA NDBC (LKWF1)"))).toBe(true);
+    expect(info.sources.some((s) => s.includes("Open-Meteo Marine"))).toBe(true);
+  });
+});
+
+describe("tides card reports the observed-vs-predicted gap honestly", () => {
+  const snapWithObs = {
+    ...snap,
+    tides: {
+      ...snap.tides,
+      data: {
+        ...(snap.tides.data as object),
+        observed: {
+          heightFt: 0.83,
+          tIso: "2026-07-28T19:18:00.000Z",
+          stationId: "8722670",
+          stationName: "Lake Worth Pier, Atlantic Ocean",
+          deltaFt: 0.53,
+        },
+      },
+    },
+  } as unknown as ConditionsSnapshot;
+
+  it("shows the gauge, the measurement, and the signed gap when a reading exists", () => {
+    const info = buildNerdInfo("tides", { d, snap: snapWithObs });
+    const text = info.computation.join(" ");
+    expect(text).toContain("8722670");
+    expect(text).toContain("Lake Worth Pier");
+    expect(text).toContain("0.83 ft");
+    expect(text).toContain("+0.53 ft");
+    expect(info.sources.some((s) => s.includes("observed water level"))).toBe(true);
+  });
+
+  it("states the gauge-distance caveat and that observed-vs-predicted never touches the score", () => {
+    const info = buildNerdInfo("tides", { d, snap: snapWithObs });
+    expect(info.explainer).toContain("18 miles");
+    expect(info.explainer.toLowerCase()).toContain("not on this beach");
+    expect((info.notes ?? "").toLowerCase()).toContain("ever changes the score");
+  });
+
+  it("says nothing at all when there's no observation — no empty placeholder line", () => {
+    const info = buildNerdInfo("tides", ctx);
+    expect(info.computation.join(" ")).not.toContain("Gauge");
+    expect(info.sources.some((s) => s.includes("observed water level"))).toBe(false);
+  });
+});

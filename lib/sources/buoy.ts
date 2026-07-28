@@ -1,4 +1,4 @@
-import type { BuoyData, Location, Wrapped } from "@/lib/types";
+import type { BuoyData, BuoyFieldKey, Location, Wrapped } from "@/lib/types";
 import {
   cToF,
   fetchWithTimeout,
@@ -175,46 +175,172 @@ async function fetchOne(
   return { data, at: fetchedAtOf(res) };
 }
 
-export async function fetchBuoy(loc: Location): Promise<Wrapped<BuoyData>> {
-  const fetchedAt = nowIso();
-  const ids = [loc.ndbcBuoyId, loc.ndbcBuoyFallbackId].filter(Boolean) as string[];
-  for (const id of ids) {
-    try {
-      const { data, at } = await fetchOne(id);
-      // Station eligibility is about whether the CURRENT row carries usable
-      // observations (wind/waves/water temp) — those are what feed
-      // deriveMetrics + scoring. `waterTempHistory` is a trailing series for
-      // the purely-informational water-trend read; it must NOT count toward
-      // usability, or a dead primary station whose latest row is empty-but-for
-      // a timestamp would wrongly pass this gate (its old WTMP history inflates
-      // the key count) and block fallback to a live station — silently changing
-      // the score. Count only current-row fields (observedAt + real metrics).
-      const currentRowFieldCount = data
-        ? Object.keys(data).filter((k) => k !== "waterTempHistory").length
-        : 0;
-      if (data && currentRowFieldCount > 1) {
-        const isFallback = id !== loc.ndbcBuoyId;
-        // Downgrade a fresh-looking HTTP response when the observation itself is
-        // old: NDBC keeps serving the last row even when a buoy stops reporting.
-        const obsMs = data.observedAt ? new Date(data.observedAt).getTime() : NaN;
-        const aged = Number.isFinite(obsMs) && Date.now() - obsMs > STALE_AFTER_MS;
-        return {
-          source: `NOAA NDBC (${id})`,
-          status: isFallback || aged ? "stale" : "ok",
-          fetchedAt: aged ? oldestIso(data.observedAt, at) : at,
-          attribution: ATTRIBUTION,
-          data,
-          note: isFallback
-            ? `primary buoy unavailable; using ${id}`
-            : aged
-              ? "buoy observation is stale"
-              : undefined,
-        };
-      }
-    } catch {
-      // try the next station
+/** The metric fields that get merged station-by-station (everything except the
+ *  timestamp, the trailing history, and the provenance map itself). */
+export const MERGED_FIELDS: BuoyFieldKey[] = [
+  "waterTempF",
+  "airTempF",
+  "windDirDeg",
+  "windSpeedMph",
+  "windGustMph",
+  "waveHeightFt",
+  "dominantPeriodS",
+];
+
+/**
+ * Station eligibility: does the CURRENT row carry usable observations
+ * (wind/waves/water temp)? Those are what feed deriveMetrics + scoring.
+ * `waterTempHistory` is a trailing series for the purely-informational
+ * water-trend read; it must NOT count toward usability, or a dead station
+ * whose latest row is empty-but-for-a-timestamp would wrongly pass (its old
+ * WTMP history inflates the key count) and shoulder out a live station.
+ */
+function isUsableRow(data: BuoyData | null): boolean {
+  if (!data) return false;
+  return MERGED_FIELDS.some((k) => data[k] !== undefined);
+}
+
+interface StationRead {
+  id: string;
+  data: BuoyData;
+  at: string;
+}
+
+/**
+ * Merge two stations FIELD BY FIELD, primary winning each field it actually
+ * reported.
+ *
+ * WHY, concretely (45-day audit of Boca's pair, 2026-07): the primary LKWF1 is
+ * a C-MAN mast on the Lake Worth Pier. It has no wave sensor at all — WVHT/DPD
+ * are "MM" on 100% of ticks, structurally, forever — and it drops WTMP on
+ * ~21-24% of ticks. The old all-or-nothing station gate asked only "does this
+ * row have more than one field?", so a wind-only LKWF1 row won the whole
+ * station and we silently threw away FWYF1's water temperature, which is the
+ * value that actually feeds the 9%-weighted waterTemp sub-score. Preferring a
+ * nearer station PER FIELD keeps the locality advantage where it exists
+ * without letting it veto data it never had.
+ *
+ * Pure (no clock, no fetch) so the merge rules are directly testable.
+ */
+export function mergeBuoyStations(primary: StationRead | null, fallback: StationRead | null): {
+  data: BuoyData;
+  /** Station ids that supplied at least one merged field, primary first. */
+  contributors: string[];
+  /** Fields the fallback had to cover because the primary didn't report them. */
+  filledByFallback: BuoyFieldKey[];
+} | null {
+  if (!primary && !fallback) return null;
+
+  const data: BuoyData = {};
+  const sources: Partial<Record<BuoyFieldKey, string | null>> = {};
+  const filledByFallback: BuoyFieldKey[] = [];
+  let primaryUsed = false;
+  let fallbackUsed = false;
+
+  for (const key of MERGED_FIELDS) {
+    const fromPrimary = primary?.data[key];
+    const fromFallback = fallback?.data[key];
+    if (fromPrimary !== undefined) {
+      data[key] = fromPrimary;
+      sources[key] = primary!.id;
+      primaryUsed = true;
+    } else if (fromFallback !== undefined) {
+      data[key] = fromFallback;
+      sources[key] = fallback!.id;
+      fallbackUsed = true;
+      filledByFallback.push(key);
+    } else {
+      // Explicit null, not an omitted key: "neither station reported this" is
+      // itself the honest answer the nerd cards need to render.
+      sources[key] = null;
     }
   }
+
+  if (!primaryUsed && !fallbackUsed) return null;
+
+  // The timestamp belongs to whichever station led the merge — a merged row is
+  // genuinely two observations, so we report the leading station's tick and
+  // let the per-field `sources` map carry the nuance.
+  const observedAt = (primaryUsed ? primary?.data.observedAt : undefined) ?? fallback?.data.observedAt;
+  if (observedAt) data.observedAt = observedAt;
+
+  // Water-temp history: prefer the primary's when it has one (it's the nearer
+  // water, and the trend read wants a single consistent series — splicing two
+  // stations' temperatures into one trend line would manufacture jumps).
+  const history = primary?.data.waterTempHistory?.length
+    ? primary.data.waterTempHistory
+    : fallback?.data.waterTempHistory;
+  if (history?.length) data.waterTempHistory = history;
+
+  data.sources = sources;
+
+  const contributors: string[] = [];
+  if (primaryUsed && primary) contributors.push(primary.id);
+  if (fallbackUsed && fallback) contributors.push(fallback.id);
+  return { data, contributors, filledByFallback };
+}
+
+export async function fetchBuoy(loc: Location): Promise<Wrapped<BuoyData>> {
+  const fetchedAt = nowIso();
+  const primaryId = loc.ndbcBuoyId;
+  const fallbackId = loc.ndbcBuoyFallbackId;
+
+  // Both stations are fetched every time now (they always were, sequentially,
+  // whenever the primary looked unusable) — but concurrently, and the fallback
+  // is consulted per FIELD rather than only when the primary is wholly dead.
+  const [primaryRes, fallbackRes] = await Promise.allSettled([
+    primaryId ? fetchOne(primaryId) : Promise.reject(new Error("no primary buoy")),
+    fallbackId ? fetchOne(fallbackId) : Promise.reject(new Error("no fallback buoy")),
+  ]);
+
+  const toRead = (
+    id: string | undefined,
+    res: PromiseSettledResult<{ data: BuoyData | null; at: string }>,
+  ): StationRead | null => {
+    if (!id || res.status !== "fulfilled" || !isUsableRow(res.value.data)) return null;
+    return { id, data: res.value.data as BuoyData, at: res.value.at };
+  };
+
+  const primary = toRead(primaryId, primaryRes);
+  const fallback = toRead(fallbackId, fallbackRes);
+  const merged = mergeBuoyStations(primary, fallback);
+
+  if (merged) {
+    const { data, contributors, filledByFallback } = merged;
+    const usedPrimary = !!primaryId && contributors.includes(primaryId);
+    const usedFallback = !!fallbackId && contributors.includes(fallbackId);
+    // Report the OLDEST contributing fetch — a merged reading is only as fresh
+    // as its stalest half.
+    const at = oldestIso(
+      usedPrimary ? primary?.at : undefined,
+      usedFallback ? fallback?.at : undefined,
+    );
+    // Downgrade a fresh-looking HTTP response when the observation itself is
+    // old: NDBC keeps serving the last row even when a buoy stops reporting.
+    const obsMs = data.observedAt ? new Date(data.observedAt).getTime() : NaN;
+    const aged = Number.isFinite(obsMs) && Date.now() - obsMs > STALE_AFTER_MS;
+    // "stale" is reserved for the cases it always meant: the primary is dead
+    // (we're reading a substitute station) or the observation itself is old.
+    // A live primary that merely lacks a sensor the fallback has is NOT stale —
+    // it's the normal, healthy case for a C-MAN mast with no wave gear.
+    const status = !usedPrimary || aged ? "stale" : "ok";
+    const note = !usedPrimary
+      ? `primary buoy unavailable; using ${contributors.join(", ")}`
+      : aged
+        ? "buoy observation is stale"
+        : filledByFallback.length
+          ? `${filledByFallback.join(", ")} from ${fallbackId} (${primaryId} doesn't report ${filledByFallback.length > 1 ? "them" : "it"})`
+          : undefined;
+    return {
+      source: `NOAA NDBC (${contributors.join(" + ")})`,
+      status,
+      fetchedAt: aged ? oldestIso(data.observedAt, at) : at,
+      attribution: ATTRIBUTION,
+      data,
+      note,
+    };
+  }
+
   return {
     source: `NOAA NDBC (${loc.ndbcBuoyId})`,
     status: "error",

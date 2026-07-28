@@ -15,7 +15,7 @@
 
 import type { ReactNode } from "react";
 import type { ConditionsSnapshot } from "@/lib/types";
-import type { Derived } from "@/lib/score";
+import type { Derived, MetricSource } from "@/lib/score";
 import { currentHourOf, satelliteBeamCloudPct, satelliteCloudPct } from "@/lib/score";
 import { afternoonBoostFactor, hoursFromSolarNoon } from "@/lib/sandTemp";
 import { computeStormActivity } from "@/lib/stormActivity";
@@ -135,6 +135,48 @@ const src = (...lines: (string | undefined | null)[]): string[] =>
 
 const CONSENSUS_NOTE = "consensus median so no single provider skews the number";
 
+/**
+ * The nearest buoy that actually reports WAVES to a SE-Florida beach. Boca's
+ * own primary (LKWF1) and its fallback (FWYF1) are both C-MAN masts with no
+ * wave sensor at all — the wave number on this app is, and has always been, a
+ * MODEL. Stated in miles rather than a station id because the point for a
+ * reader is the distance, not the callsign.
+ */
+const NEAREST_WAVE_BUOY_MI = 90;
+
+/**
+ * Runtime source line for a metric that can come from either a named NDBC
+ * station or a model — see `MetricSource` in lib/score.ts. The buoy pair is
+ * merged FIELD BY FIELD now, so "which buoy" is a different answer for water
+ * temp than it is for waves, and a card that hardcoded "the nearest NOAA buoy"
+ * was simply wrong most days.
+ */
+function feedLabel(
+  source: MetricSource | undefined,
+  modelLabel: string,
+  modelReason: string,
+): string {
+  if (!source) return "No live reading right now.";
+  if (source.kind === "buoy") {
+    return source.stationId
+      ? `Now showing: NOAA buoy ${source.stationId}${stationPlace(source.stationId)}`
+      : "Now showing: the NOAA buoy reading";
+  }
+  return `Now showing: ${modelLabel} (${modelReason})`;
+}
+
+/** " (Lake Worth Pier)" for stations we ship; empty string for anything else —
+ *  auto-resolved beaches get whatever callsign the registry picked, and
+ *  inventing a place name for an unknown station id would be a fabrication. */
+function stationPlace(stationId: string): string {
+  const known: Record<string, string> = {
+    LKWF1: "Lake Worth Pier",
+    FWYF1: "Fowey Rocks",
+  };
+  const place = known[stationId.toUpperCase()];
+  return place ? ` (${place})` : "";
+}
+
 // --- builders ---------------------------------------------------------------
 
 const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
@@ -170,22 +212,31 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
 
   waves: ({ d, snap }) => {
     const ft = d.waveHeightFt;
+    const feed = feedLabel(
+      d.waveHeightSource,
+      "the Open-Meteo marine model at this beach's coordinates",
+      `the nearest wave-reporting buoy is ~${NEAREST_WAVE_BUOY_MI} mi north`,
+    );
     const computation =
       ft != null
         ? (() => {
             const s = r0(clamp(100 - Math.max(0, ft - 1) * 25, 0, 100));
-            return [`${ft} ft → waveCalm ${s}/100`, pts(s, SCORE_WEIGHTS_PCT.waves)];
+            return [`${ft} ft → waveCalm ${s}/100`, pts(s, SCORE_WEIGHTS_PCT.waves), feed];
           })()
         : ["No wave reading — this factor is dropped from the weighted average."];
     return {
       title: "Sea state",
       weightPct: SCORE_WEIGHTS_PCT.waves,
       explainer:
-        "This reads the ocean's roughness as a swimming-calmness proxy — how easy it is to wade in and float, not how good the surf is. Knee-high water (about a foot or less) scores a perfect 100; the score bleeds off as the combined wave-and-swell height climbs, hitting zero by roughly 5 ft of churn. It comes from the nearest NOAA buoy when one's reporting, and falls back to a marine model otherwise.",
+        `This reads the ocean's roughness as a swimming-calmness proxy — how easy it is to wade in and float, not how good the surf is. Knee-high water (about a foot or less) scores a perfect 100; the score bleeds off as the combined wave-and-swell height climbs, hitting zero by roughly 5 ft of churn. Where it comes from, plainly: this is the Open-Meteo marine model evaluated at the beach's own coordinates, not a buoy reading. The two NOAA stations we watch here are C-MAN masts on fixed structures with no wave sensor — they report wind and water temperature and leave the wave columns blank on every single tick. The nearest buoy that does measure waves is about ${NEAREST_WAVE_BUOY_MI} mi up the coast, far enough that a model run at this exact spot is the more representative number anyway. If a buoy ever does report a wave height here, it takes precedence and this card names it.`,
       formula: "waveCalm = 100 − max(0, waveFt − 1) × 25  (≤1 ft = 100, hits 0 by 5 ft)",
       computation,
-      sources: src(`${snap.buoy.source} (primary)`, `${snap.marine.source} (fallback)`),
-      notes: "Combined sea state (wave + swell height) as a swimming-calmness proxy — not a surf-quality rating.",
+      sources: src(
+        `${snap.marine.source} — modeled wave + swell height at the beach coordinates`,
+        `${snap.buoy.source} — used only if a station actually reports waves (these don't)`,
+      ),
+      notes:
+        `Combined sea state (wave + swell height) as a swimming-calmness proxy — not a surf-quality rating. Modeled, not measured: no wave-reporting buoy sits within ~${NEAREST_WAVE_BUOY_MI} mi of here.`,
     };
   },
 
@@ -263,23 +314,31 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
 
   waterTemp: ({ d, snap }) => {
     const t = d.waterTempF;
+    const feed = feedLabel(
+      d.waterTempSource,
+      "the Open-Meteo marine model's sea-surface temperature",
+      "no buoy reported a water temperature this tick",
+    );
     const computation =
       t != null
         ? (() => {
             const s = r0(plateau(t, 77, 90, 15));
-            return [`${t}°F → waterTemp ${s}/100`, pts(s, SCORE_WEIGHTS_PCT.waterTemp)];
+            return [`${t}°F → waterTemp ${s}/100`, pts(s, SCORE_WEIGHTS_PCT.waterTemp), feed];
           })()
         : ["No water-temp reading — this factor is dropped from the weighted average."];
     return {
       title: "Water temp",
       weightPct: SCORE_WEIGHTS_PCT.waterTemp,
       explainer:
-        "How warm the ocean is for a swim. Warmer is simply better for a beachgoer, all the way up to about 90°F — only past that does bathwater-warm ocean start to feel like soup (and hint at coral stress and a weaker cool-off). It's read from the nearest NOAA buoy when one's live, and falls back to a sea-surface model otherwise.",
+        "How warm the ocean is for a swim. Warmer is simply better for a beachgoer, all the way up to about 90°F — only past that does bathwater-warm ocean start to feel like soup (and hint at coral stress and a weaker cool-off). This one is usually a genuine measurement: a thermistor on a NOAA station in the water. The catch is that the nearest station drops its water-temperature column on roughly a fifth of its ticks, so we merge our two stations reading by reading — nearest first, the backup filling the gaps — and fall back to a modeled sea-surface temperature only when neither reported. The line above names whichever one you're actually looking at.",
       formula: "plateau(waterTempF, 77–90°F = 100, then −100 over 15°F on each side)",
       computation,
-      sources: src(`${snap.buoy.source} (primary)`, `${snap.marine.source} sea-surface (fallback)`),
+      sources: src(
+        `${snap.buoy.source} — measured water temperature, merged per field across the station pair`,
+        `${snap.marine.source} sea-surface (fallback when no station reports WTMP)`,
+      ),
       notes:
-        "Warmer is better for a beachgoer right up to ~90°F; only past 90 does warm ocean start reading as 'soup' (and it tracks coral-bleaching / weaker cooling-off value).",
+        "Warmer is better for a beachgoer right up to ~90°F; only past 90 does warm ocean start reading as 'soup' (and it tracks coral-bleaching / weaker cooling-off value). Station coverage is patchy — the nearest mast omits WTMP on ~1 tick in 5, which is exactly why the two stations are merged field by field rather than all-or-nothing.",
     };
   },
 
@@ -677,11 +736,16 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
           return lines;
         })()
       : [];
+    const obs = t?.observed;
+    const obsLine = obs
+      ? `Gauge ${obs.stationId}${obs.stationName ? ` (${obs.stationName.split(",")[0].trim()})` : ""} observed ${obs.heightFt.toFixed(2)} ft at ${obs.tIso.slice(11, 16)} UTC → ${obs.deltaFt >= 0 ? "+" : ""}${obs.deltaFt.toFixed(2)} ft vs its own predicted curve`
+      : null;
     const computation = nextEvents.length
       ? src(
           t?.trend ? `Tide is ${t.trend} right now` : null,
           ...nextEvents.map((e) => `${cap(e.type)} tide ${e.heightFt} ft at ${e.time.slice(11, 16)} UTC`),
           "Between events the waterline eases on a raised cosine, not a straight line",
+          obsLine,
           ...abLines,
         )
       : ["No tide predictions for this beach right now."];
@@ -689,13 +753,19 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
       title: "Tides",
       weightPct: null,
       explainer:
-        "These aren't forecasts — they're astronomy. NOAA publishes harmonic predictions per tide station: the moon and sun's gravitational pull decomposed into constituents that are known years ahead, which is why a tide table for next August already exists. We take the published high/low times and heights, then fill in everything between them ourselves, because real tides move like simple harmonic motion — racing through mid-tide and lingering at the turns. A straight line between high and low would misplace the water at nearly every moment in between, so the living-shore graphic eases with a raised cosine instead. That interpolated height is what drives the waterline you see climbing the sand. Separately, we flag ABERRATIONS: today's peak high and lowest low are compared against a ±3-week window of the same station's predictions, so a king tide — a perigean spring high, when the sun and moon line up at the moon's closest approach (lunar perigee) and push the water far enough up to flood A1A and the beach parking — stands out, as does the fun flip side, an unusually low low that bares sandbars and tide pools.",
+        "These aren't forecasts — they're astronomy. NOAA publishes harmonic predictions per tide station: the moon and sun's gravitational pull decomposed into constituents that are known years ahead, which is why a tide table for next August already exists. We take the published high/low times and heights, then fill in everything between them ourselves, because real tides move like simple harmonic motion — racing through mid-tide and lingering at the turns. A straight line between high and low would misplace the water at nearly every moment in between, so the living-shore graphic eases with a raised cosine instead. That interpolated height is what drives the waterline you see climbing the sand. Separately, we flag ABERRATIONS: today's peak high and lowest low are compared against a ±3-week window of the same station's predictions, so a king tide — a perigean spring high, when the sun and moon line up at the moon's closest approach (lunar perigee) and push the water far enough up to flood A1A and the beach parking — stands out, as does the fun flip side, an unusually low low that bares sandbars and tide pools. And because astronomy isn't the whole story, we also check it against reality: a NOAA gauge posts an actual measured water level every six minutes, and we subtract the prediction for that same instant to show how far off the tide table is running. Wind pushing water against the coast, a passing low-pressure system, or a storm surge can all lift the real water well above what the moon alone called for — a positive gap of half a foot or more is worth knowing before you set your towel down. One honest caveat: the gauge is not on this beach. Predictions come from the station closest to town, but only true gauges publish live observations, so the measurement comes from the nearest real one — for Boca that's the Lake Worth Pier, roughly 18 miles up the coast. The gap we show is that gauge's own observed level minus that gauge's own prediction, never one station's water against another's forecast, so it's a clean read on how far the ocean is departing from the tables today, even though the water it was measured in is up the road.",
       formula:
         "NOAA hilo predictions → between two events: height = h0 + (1 − cos(π × f)) / 2 × (h1 − h0), where f is the fraction of the interval elapsed. Aberration: king when today's max high ≥ p90 of the ±21-day window's highs AND ≥ 0.5 ft over the median high (king ≥ p95, else near-king); mirror for unusually low lows (≤ p10 / p05, ≥ 0.5 ft under the median low). Trend is derived from the next events. Informational — not part of the Beach Day score.",
       computation,
-      sources: src(`${snap.tides.source} — harmonic high/low predictions (±21-day window)`, "Raised-cosine interpolation (lib/tideLevel.ts) for the waterline; aberration band (lib/tideAberration.ts)"),
+      sources: src(
+        `${snap.tides.source} — harmonic high/low predictions (±21-day window)`,
+        obs
+          ? `NOAA CO-OPS (${obs.stationId}) — observed water level, 6-minute cadence, differenced against that same station's predictions`
+          : null,
+        "Raised-cosine interpolation (lib/tideLevel.ts) for the waterline; aberration band (lib/tideAberration.ts)",
+      ),
       notes:
-        "With only one known event we won't fake a height — the graphic falls back to a trend-only placement rather than inventing a number. Aberrations are honest-null: no king/low claim on a thin prediction window (< 14 days). Tides are NOT a scored factor — the aberration is a call-out, never a score change.",
+        "With only one known event we won't fake a height — the graphic falls back to a trend-only placement rather than inventing a number. Aberrations are honest-null: no king/low claim on a thin prediction window (< 14 days). The observed-vs-predicted line is measured at the nearest real gauge, which for this beach sits ~18 mi north — treat it as 'how much is the regional water running above/below the tables', not a reading taken at this shoreline; it hides entirely once the gauge's last tick is over an hour old. Tides are NOT a scored factor — neither the aberration nor the observed gap ever changes the score.",
     };
   },
 
