@@ -24,8 +24,13 @@ describe("sitemap", () => {
     expect(urls).not.toContain(`${BASE}/${flagship?.slug}`);
   });
 
-  it("emits home + find + one URL per non-flagship beach", () => {
-    expect(entries).toHaveLength(2 + all.length - 1);
+  it("includes the support and privacy pages", () => {
+    expect(urls).toContain(`${BASE}/support`);
+    expect(urls).toContain(`${BASE}/privacy`);
+  });
+
+  it("emits home + find + support + privacy + one URL per non-flagship beach", () => {
+    expect(entries).toHaveLength(4 + all.length - 1);
   });
 
   it("keeps every URL on the apex (canonical) domain", () => {

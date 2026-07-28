@@ -817,6 +817,15 @@ export function ConditionsDashboard({
             hello@isitbeachday.com
           </a>
         </p>
+        <p className="text-center text-xs text-slate-400 dark:text-slate-600">
+          <Link href="/support" className="hover:underline">
+            Support
+          </Link>
+          <span className="mx-1.5">·</span>
+          <Link href="/privacy" className="hover:underline">
+            Privacy
+          </Link>
+        </p>
         <p className="text-center text-xs text-slate-500">
           v{APP_VERSION}
           {BUILD_NUM && BUILD_NUM !== "0" ? ` · build ${BUILD_NUM}` : ""}
