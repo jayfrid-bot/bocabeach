@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { ripRiskCurve, type RipRiskWaveSample } from "@/lib/ripRiskCurve";
+import {
+  BAND_RANGE,
+  ripRiskCurve,
+  shoreIncidenceFactor,
+  type RipRiskWaveSample,
+} from "@/lib/ripRiskCurve";
 import type { TideEvent } from "@/lib/types";
 
 // A South-Florida-ish summer day: sunrise 6 AM EDT, sunset 8 PM EDT.
@@ -243,5 +248,111 @@ describe("ripRiskCurve — peak attribution (honest peakReason)", () => {
     expect(curve!.unshaped).toBe(false);
     expect(curve!.peakNote).not.toMatch(/swell/i);
     expect(curve!.peakNote).toMatch(/tide/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shore-incidence multiplier on the wave-energy factor.
+// Shore-normal swell piles water onto the beach, and the return leg IS the rip.
+// Oblique swell converts that momentum into a longshore current instead — same
+// height, same period, materially less rip circulation.
+// ---------------------------------------------------------------------------
+describe("ripRiskCurve — wave approach angle (shore incidence)", () => {
+  /** Boca faces due east: onshore/shore-normal is 90°. */
+  const COAST_NORMAL = 90;
+
+  function wavesFrom(dirDeg: number | undefined): RipRiskWaveSample[] {
+    return steadyWaves(3, 10).map((w) => ({ ...w, waveDirDeg: dirDeg }));
+  }
+
+  const day = (waves: RipRiskWaveSample[], coastNormalDeg?: number) =>
+    ripRiskCurve({
+      officialLevel: "moderate",
+      sunriseIso: SUNRISE,
+      sunsetIso: SUNSET,
+      tz: TZ,
+      waves,
+      tideEvents: LOW_TIDE_EVENTS,
+      coastNormalDeg,
+    })!;
+
+  const peak = (c: ReturnType<typeof day>) => Math.max(...c.hours.map((h) => h.score));
+
+  it("shore-normal swell scores HIGHER than alongshore swell at identical height + period", () => {
+    const normal = day(wavesFrom(90), COAST_NORMAL); // straight in from the east
+    const oblique = day(wavesFrom(180), COAST_NORMAL); // from the south, alongshore
+    expect(peak(normal)).toBeGreaterThan(peak(oblique));
+    // Every hour, not just the peak — the multiplier is applied per sample.
+    normal.hours.forEach((h, i) => expect(h.score).toBeGreaterThanOrEqual(oblique.hours[i].score));
+  });
+
+  it("is FLAT within ~30° of shore-normal — a small angle isn't a meaningful change", () => {
+    const dead = day(wavesFrom(90), COAST_NORMAL);
+    const slight = day(wavesFrom(115), COAST_NORMAL); // 25° off
+    expect(peak(slight)).toBe(peak(dead));
+  });
+
+  it("tapers between 30° and 90°, monotonically", () => {
+    const scores = [90, 120, 150, 180].map((dir) => peak(day(wavesFrom(dir), COAST_NORMAL)));
+    for (let i = 1; i < scores.length; i++) {
+      expect(scores[i]).toBeLessThanOrEqual(scores[i - 1]);
+    }
+    expect(scores[3]).toBeLessThan(scores[0]);
+  });
+
+  it("treats the angle as absolute — 60° either side of normal is the same", () => {
+    expect(peak(day(wavesFrom(30), COAST_NORMAL))).toBe(peak(day(wavesFrom(150), COAST_NORMAL)));
+  });
+
+  it("MISSING wave direction leaves today's behavior untouched (multiplier 1.0)", () => {
+    const noDir = day(wavesFrom(undefined), COAST_NORMAL);
+    const shoreNormal = day(wavesFrom(90), COAST_NORMAL);
+    expect(noDir.hours).toEqual(shoreNormal.hours);
+  });
+
+  it("MISSING coastNormalDeg leaves it untouched too — never guess a beach's orientation", () => {
+    const noOrientation = day(wavesFrom(180)); // fully alongshore, but we don't know the beach
+    const noDir = day(wavesFrom(undefined), COAST_NORMAL);
+    expect(noOrientation.hours.map((h) => h.score)).toEqual(noDir.hours.map((h) => h.score));
+  });
+
+  it("STAYS inside the official NWS band at every angle — the anchor rule holds", () => {
+    for (const level of ["low", "moderate", "high"] as const) {
+      for (const dir of [0, 45, 90, 135, 180, 270]) {
+        const curve = ripRiskCurve({
+          officialLevel: level,
+          sunriseIso: SUNRISE,
+          sunsetIso: SUNSET,
+          tz: TZ,
+          waves: steadyWaves(12, 20).map((w) => ({ ...w, waveDirDeg: dir })), // saturating energy
+          tideEvents: LOW_TIDE_EVENTS,
+          coastNormalDeg: COAST_NORMAL,
+        })!;
+        for (const h of curve.hours) {
+          expect(h.score).toBeGreaterThanOrEqual(BAND_RANGE[level].min);
+          expect(h.score).toBeLessThanOrEqual(BAND_RANGE[level].max);
+          expect(h.band).toBe(level);
+        }
+      }
+    }
+  });
+});
+
+describe("shoreIncidenceFactor (pure)", () => {
+  it("is 1.0 out to 30° off shore-normal, then tapers to 0.6 at 90°", () => {
+    expect(shoreIncidenceFactor(90, 90)).toBe(1);
+    expect(shoreIncidenceFactor(120, 90)).toBe(1); // exactly 30°
+    expect(shoreIncidenceFactor(180, 90)).toBeCloseTo(0.6, 10); // 90°, alongshore
+    expect(shoreIncidenceFactor(150, 90)).toBeCloseTo(0.8, 10); // 60°, halfway down
+  });
+
+  it("never drops below the 0.6 floor — oblique swell still feeds rips at channels/jetties", () => {
+    expect(shoreIncidenceFactor(270, 90)).toBeCloseTo(0.6, 10); // 180° (offshore/model noise)
+  });
+
+  it("returns 1.0 whenever either input is missing or non-finite", () => {
+    expect(shoreIncidenceFactor(undefined, 90)).toBe(1);
+    expect(shoreIncidenceFactor(180, undefined)).toBe(1);
+    expect(shoreIncidenceFactor(NaN, 90)).toBe(1);
   });
 });

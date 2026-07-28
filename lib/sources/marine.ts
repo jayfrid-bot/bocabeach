@@ -9,8 +9,10 @@ interface MarineHourly {
   time?: string[];
   wave_height?: NumArr;
   wave_period?: NumArr;
+  wave_direction?: NumArr;
   swell_wave_height?: NumArr;
   swell_wave_period?: NumArr;
+  swell_wave_direction?: NumArr;
 }
 
 async function getMarine(
@@ -36,28 +38,31 @@ async function getCurrent(
 /**
  * Reduce Open-Meteo marine `hourly` arrays into the compact wave samples the
  * hourly rip-current curve (lib/ripRiskCurve.ts) anchors on: height (ft) +
- * period (s) per hour, dominant `wave_period` preferred, falling back to
- * `swell_wave_period`. Times come back in GMT (no `timezone=` on the URL), so
+ * period (s) + approach direction per hour, dominant `wave_period` /
+ * `wave_direction` preferred, each falling back to its `swell_wave_*`
+ * counterpart. Times come back in GMT (no `timezone=` on the URL), so
  * each is pinned to an absolute UTC ISO string — matching lib/sources/
  * hourlyForecast.ts's convention so they line up with the wind/tide hours.
  */
 export function parseMarineHourly(
   h: MarineHourly | null,
-): { time: string; waveHeightFt?: number; wavePeriodS?: number }[] | undefined {
+): NonNullable<MarineData["hourlyWaves"]> | undefined {
   const time = h?.time;
   if (!h || !Array.isArray(time) || time.length === 0) return undefined;
   const num = (arr: NumArr | undefined, i: number): number | undefined =>
     typeof arr?.[i] === "number" ? (arr[i] as number) : undefined;
-  const out: { time: string; waveHeightFt?: number; wavePeriodS?: number }[] = [];
+  const out: NonNullable<MarineData["hourlyWaves"]> = [];
   for (let i = 0; i < time.length; i++) {
     const t = new Date(`${time[i]}:00Z`);
     if (!Number.isFinite(t.getTime())) continue;
     const waveM = num(h.wave_height, i);
     const periodS = num(h.wave_period, i) ?? num(h.swell_wave_period, i);
+    const dirDeg = num(h.wave_direction, i) ?? num(h.swell_wave_direction, i);
     out.push({
       time: t.toISOString(),
       waveHeightFt: waveM !== undefined ? round(mToFt(waveM), 1) : undefined,
       wavePeriodS: periodS !== undefined ? round(periodS, 1) : undefined,
+      waveDirDeg: dirDeg !== undefined ? round(dirDeg) : undefined,
     });
   }
   return out.length ? out : undefined;
@@ -70,7 +75,10 @@ export async function fetchMarine(loc: Location): Promise<Wrapped<MarineData>> {
     `&current=wave_height,wave_direction,wave_period,swell_wave_height,swell_wave_period,` +
     `swell_wave_direction,sea_surface_temperature` +
     // Hourly waves feed the hourly rip-current risk curve (lib/ripRiskCurve.ts).
-    `&hourly=wave_height,wave_period,swell_wave_height,swell_wave_period&forecast_days=2`;
+    // `wave_direction` (+ its swell fallback) drives that curve's shore-incidence
+    // multiplier — square-on swell makes rips, oblique swell makes longshore drift.
+    `&hourly=wave_height,wave_period,wave_direction,swell_wave_height,swell_wave_period,` +
+    `swell_wave_direction&forecast_days=2`;
   const uvUrl =
     `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
     `&current=uv_index,cloud_cover`;

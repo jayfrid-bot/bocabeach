@@ -30,7 +30,7 @@
 // ---------------------------------------------------------------------------
 
 import type { RipRisk, TideEvent } from "@/lib/types";
-import { clamp, round } from "@/lib/util";
+import { angularDistance, clamp, round } from "@/lib/util";
 
 const HOUR_MS = 3_600_000;
 
@@ -48,6 +48,10 @@ export interface RipRiskWaveSample {
    *  the same height (a slow, powerful groundswell pulls harder than wind
    *  chop of the same size) — see waveFactorAt. */
   wavePeriodS?: number;
+  /** Direction the waves are coming FROM, degrees (0=N, 90=E) — same
+   *  convention as `coastNormalDeg`. Optional; without it the wave factor is
+   *  unchanged (multiplier 1.0). See shoreIncidenceFactor. */
+  waveDirDeg?: number;
 }
 
 /** One hourly wind sample — only used for the minor onshore-chop nudge. */
@@ -80,7 +84,10 @@ export interface RipRiskCurveInput {
    *  `coastNormalDeg` to mean anything; ignored without it. */
   wind?: RipRiskWindSample[];
   /** Compass bearing wind blows FROM when blowing straight onshore at this
-   *  beach — same convention as lib/marineStinger.ts's `coastNormalDeg`. */
+   *  beach — same convention as lib/marineStinger.ts's `coastNormalDeg`.
+   *  Used twice: the minor onshore-chop nudge, and (with each wave sample's
+   *  `waveDirDeg`) the wave factor's shore-incidence multiplier. Absent =>
+   *  both degrade to today's neutral/unmodulated behavior. */
   coastNormalDeg?: number;
   /** IANA timezone for the peakNote's clock text, e.g. "America/New_York". */
   tz: string;
@@ -203,7 +210,48 @@ function nearestWithin<T extends { time: string }>(
   return best;
 }
 
-function waveFactorAt(tMs: number, waves: RipRiskWaveSample[] | undefined): number {
+/** Incidence angle (degrees off shore-normal) at or below which swell counts as
+ *  arriving square-on and gets the full wave-energy weight. */
+const INCIDENCE_FULL_DEG = 30;
+/** Multiplier floor, reached at a fully alongshore (90°) approach. */
+const INCIDENCE_MIN = 0.6;
+
+/**
+ * How much of a swell's energy actually goes into rip circulation, given the
+ * angle it meets the beach at: 1.0 within ~30° of shore-normal, tapering
+ * linearly to {@link INCIDENCE_MIN} at 90° (alongshore).
+ *
+ * MECHANISM: rips are the seaward return leg of water piled onto the beach by
+ * breaking waves. Swell arriving square to the shore pushes that water
+ * straight up the beach face, and the excess has nowhere to go but back out
+ * through a channel — a rip. Swell arriving obliquely instead breaks
+ * progressively along the beach and converts most of that momentum into a
+ * LONGSHORE current running parallel to shore, which drains the setup
+ * sideways instead of seaward. Same wave height, same period, materially
+ * less rip circulation. The floor is 0.6, not 0: oblique swell still sets up
+ * water, still feeds rips at groins/jetties/channels, and a longshore current
+ * carries its own (different) hazard — this modulates risk, never cancels it.
+ *
+ * Returns 1.0 (today's behavior, unchanged) whenever either the wave direction
+ * or the beach's orientation is unknown — never guess a beach's angle.
+ */
+export function shoreIncidenceFactor(
+  waveDirDeg: number | undefined,
+  coastNormalDeg: number | undefined,
+): number {
+  if (waveDirDeg == null || coastNormalDeg == null) return 1;
+  if (!Number.isFinite(waveDirDeg) || !Number.isFinite(coastNormalDeg)) return 1;
+  const offNormal = angularDistance(waveDirDeg, coastNormalDeg);
+  if (offNormal <= INCIDENCE_FULL_DEG) return 1;
+  const t = clamp((offNormal - INCIDENCE_FULL_DEG) / (90 - INCIDENCE_FULL_DEG), 0, 1);
+  return 1 - t * (1 - INCIDENCE_MIN);
+}
+
+function waveFactorAt(
+  tMs: number,
+  waves: RipRiskWaveSample[] | undefined,
+  coastNormalDeg: number | undefined,
+): number {
   const match = nearestWithin(
     tMs,
     waves,
@@ -211,7 +259,14 @@ function waveFactorAt(tMs: number, waves: RipRiskWaveSample[] | undefined): numb
   );
   if (!match) return NEUTRAL;
   const energy = Math.max(0, match.waveHeightFt as number) * Math.max(0, match.wavePeriodS as number);
-  return lerpCurve(energy, WAVE_ENERGY_ANCHORS);
+  // Energy sets the ceiling; approach angle decides how much of it becomes rip
+  // circulation rather than longshore drift. Still bounded to 0-1, so the
+  // banded score stays inside BAND_RANGE by construction.
+  return clamp(
+    lerpCurve(energy, WAVE_ENERGY_ANCHORS) * shoreIncidenceFactor(match.waveDirDeg, coastNormalDeg),
+    0,
+    1,
+  );
 }
 
 // --- Tide phase ------------------------------------------------------------
@@ -433,7 +488,7 @@ export function ripRiskCurve(input: RipRiskCurveInput): RipRiskCurve | null {
     const tMs = Date.parse(iso);
     const usableWave =
       nearestWithin(tMs, waves, (w) => w.waveHeightFt != null && w.wavePeriodS != null) != null;
-    const wv = waveFactorAt(tMs, waves);
+    const wv = waveFactorAt(tMs, waves, coastNormalDeg);
     const td = tideFactorAt(tMs, sortedTide);
     const wd = windFactorAt(tMs, wind, coastNormalDeg);
     parts.push({ wv, td, wd, usableWave });
