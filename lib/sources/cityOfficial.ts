@@ -15,7 +15,27 @@ function htmlToText(html: string): string {
     .trim();
 }
 
-function detectFlags(text: string): FlagColor[] {
+/** Clauses that only say when a flag COULD be flown are forecasts, not postings.
+ *  The City added a standing "Double Red Flags May Be Flown At Times Due To
+ *  Lightning In The Area" note in July 2026; read literally it pinned the Beach
+ *  Day score at the double-red cap (5) all day, every day, while the flags
+ *  actually flying were yellow/purple. A posting is a statement of fact, so any
+ *  clause hedged with may/might/could/at times/if-directed is dropped before we
+ *  look for colors. */
+const CONDITIONAL_FLAG =
+  /\b(?:may|might|could|can|will|would|are\s+sometimes|is\s+sometimes)\s+(?:be\s+)?(?:flown|raised|posted|displayed|used|up)\b|\bat\s+times\b|\bif\s+(?:directed|lightning|conditions|needed|necessary)\b|\bin\s+the\s+event\b|\bas\s+needed\b|\bsubject\s+to\b|\bwhen(?:ever)?\s+lightning\b|\bpotential(?:ly)?\b|\bpossible\b/;
+
+/** Blank out conditional clauses, preserving length/structure so the detectors
+ *  below see the same offsets. Splitting keeps the delimiters (`:` included —
+ *  this page separates its flag statements with colons). */
+function dropConditionalClauses(t: string): string {
+  return t
+    .split(/([.;:\n])/)
+    .map((seg, i) => (i % 2 === 0 && CONDITIONAL_FLAG.test(seg) ? " ".repeat(seg.length) : seg))
+    .join("");
+}
+
+function detectFlags(raw: string): FlagColor[] {
   // A posted flag color caps the Beach Day score (red -> 85, double-red -> 5),
   // so we only trust assignment-like phrasings: either a color directly before
   // "flag(s)", or colors listed in the clause a "flags" anchor introduces
@@ -26,7 +46,7 @@ function detectFlags(text: string): FlagColor[] {
   // tide", "red drum", or "near Red Rock jetty" from manufacturing a false red
   // flag, while still capturing real one- and multi-color postings. "Red Reef"
   // is neutralized up front. Nothing matching => "unknown" (does not cap).
-  const t = text.toLowerCase().replace(/red reef/g, "reef");
+  const t = dropConditionalClauses(raw.toLowerCase().replace(/red reef/g, "reef"));
 
   // A color token, double-red first so "red" doesn't shadow it.
   const COLOR = "(double\\s*red|red|yellow|green|purple)";
@@ -58,6 +78,23 @@ function detectFlags(text: string): FlagColor[] {
     let c: RegExpExecArray | null;
     listColor.lastIndex = 0;
     while ((c = listColor.exec(clause)) !== null) add(c[1]);
+  }
+
+  // Form 3: colors listed BEFORE a "flags" anchor with severity notes in
+  // between — the City's own house style, "Yellow (Medium) Hazard And Purple
+  // (Sea Pest) Flags:". A color counts when an optional "(note)" is followed by
+  // a flag-ish word or a list separator, so "watch for red tide near the flags"
+  // still doesn't post a red flag.
+  const preColor = new RegExp(
+    `\\b${COLOR}\\b(?:\\s*\\([^)]*\\))?(?=\\s*(?:hazard|sea\\s*pest|flags?\\b|and\\b|or\\b|&|,|$))`,
+    "g",
+  );
+  const preRe = /([^.;:\n]*)\bflags?\b/g;
+  while ((m = preRe.exec(t)) !== null) {
+    const pre = m[1] ?? "";
+    let c: RegExpExecArray | null;
+    preColor.lastIndex = 0;
+    while ((c = preColor.exec(pre)) !== null) add(c[1]);
   }
 
   // If a double-red was posted, drop a bare "red" so we don't emit both for the

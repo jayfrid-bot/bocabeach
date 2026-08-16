@@ -107,4 +107,48 @@ describe("parseCityConditions", () => {
     // Absent label -> undefined, not a crash.
     expect(parseCityConditions("<p>Flags: Green</p>").updatedLabel).toBeUndefined();
   });
+
+  // Regression, 2026-07-29: the City added a standing note that double reds
+  // "may be flown at times" during lightning. Read as a posting it pinned the
+  // Beach Day score at the double-red cap (5) all day while yellow/purple were
+  // the flags actually up. A hedged clause is a forecast, not a posting.
+  it("ignores a conditional double-red note and reads the flags actually flying", () => {
+    const html = `<html><body>
+      <h3>Flags</h3>
+      <p>Yellow (Medium) Hazard And Purple (Sea Pest) Flags:</p>
+      <p>Double Red Flags May Be Flown At Times Due To Lightning In The Area: Please Clear The Beach If Directed</p>
+    </body></html>`;
+    const d = parseCityConditions(html);
+    expect(d.flags).not.toContain("double-red");
+    expect(d.flags).not.toContain("red");
+    expect(d.flags).toEqual(expect.arrayContaining(["yellow", "purple"]));
+  });
+
+  it("still posts a real double-red when it is stated as fact", () => {
+    const d = parseCityConditions(
+      `<html><body><p>Double red flags are flying. Beach closed to swimming.</p></body></html>`,
+    );
+    expect(d.flags).toContain("double-red");
+    expect(d.flags).not.toContain("red");
+  });
+
+  it("still posts a plain red flag stated as fact", () => {
+    const d = parseCityConditions(`<html><body><p>Red flag: high hazard surf.</p></body></html>`);
+    expect(d.flags).toContain("red");
+  });
+
+  it("does not post a flag for hedged single-red wording", () => {
+    const d = parseCityConditions(
+      `<html><body><p>Red flags may be posted if conditions deteriorate.</p></body></html>`,
+    );
+    expect(d.flags).not.toContain("red");
+  });
+
+  it("does not treat 'red tide' near a flags anchor as a red flag", () => {
+    const d = parseCityConditions(
+      `<html><body><p>Watch for red tide near the flags. Green flag today.</p></body></html>`,
+    );
+    expect(d.flags).not.toContain("red");
+    expect(d.flags).toContain("green");
+  });
 });
