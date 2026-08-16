@@ -30,6 +30,13 @@ npm run lint
 npm run build
 ```
 
+## Shipping checklist (do not skip)
+Any change a beachgoer could NOTICE — a new metric, a visual change, a fix to a
+wrong reading, a copy change — MUST add an entry to `lib/changelog.ts` in the
+SAME commit. Plain beachgoer language, no file names. The "What's new" section
+at the page footer is the user-facing record; the owner has had to ask twice
+when it drifted. Backend-only work (refactors, tests, infra) does not need one.
+
 ## Guardrails
 - Don't embed Surfline cams or scrape their video (link out only).
 - Keep scores as guidance; lifeguard flags are authoritative safety overrides.
