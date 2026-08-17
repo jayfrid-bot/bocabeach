@@ -40,6 +40,7 @@ import { SourceList } from "@/components/SourceBadge";
 import { CamGrid } from "@/components/CamGrid";
 import { DayOutlookStrip } from "@/components/DayOutlookStrip";
 import { NotifyButton } from "@/components/NotifyButton";
+import { AppStoreBand } from "@/components/AppStoreBand";
 import { ChangelogSection } from "@/components/ChangelogSection";
 import { FeelsLikeCard } from "@/components/FeelsLikeCard";
 import { SunQualityCard } from "@/components/SunQualityCard";
@@ -294,6 +295,10 @@ export function ConditionsDashboard({
           {!preview ? <NotifyButton slug={slug} serverNative={isNativeApp} /> : null}
         </div>
       </header>
+
+      {/* Someone reading this inside the iOS app already has the app — never
+          ask them to go download it. Only the web/PWA surface sees the band. */}
+      {!isNativeApp ? <AppStoreBand /> : null}
 
       <div className="mb-6">
         <SafetyBanner
@@ -825,6 +830,17 @@ export function ConditionsDashboard({
           <Link href="/privacy" className="hover:underline">
             Privacy
           </Link>
+          {/* Permanent, quiet — stays reachable even after the AppStoreBand
+              above is dismissed. */}
+          <span className="mx-1.5">·</span>
+          <a
+            href="https://apps.apple.com/us/app/id6779072992"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:underline"
+          >
+            iPhone app
+          </a>
         </p>
         <p className="text-center text-xs text-slate-500">
           v{APP_VERSION}

@@ -117,6 +117,24 @@ export default function SupportPage() {
 
       <section className="mt-10 rounded-2xl bg-white/80 p-5 text-center ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
         <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
+          Get the app
+        </h2>
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+          Is It Beach Day is free on the App Store, with the same live score plus notifications.
+        </p>
+        <a
+          href="https://apps.apple.com/us/app/id6779072992"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-3 inline-flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ocean-500/70 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/app-store-badge.svg" alt="Download on the App Store" width={120} height={40} />
+        </a>
+      </section>
+
+      <section className="mt-6 rounded-2xl bg-white/80 p-5 text-center ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
+        <h2 className="text-sm font-semibold text-slate-900 dark:text-white">
           Still stuck?
         </h2>
         <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">

@@ -15,6 +15,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-07-29",
+    title: "Is It Beach Day is on the App Store",
+    details:
+      "The iPhone app is here — free, with the same live Beach Day score, cams, and an optional morning heads-up notification. Look for the App Store link at the top of the page.",
+    tag: "new",
+  },
+  {
+    date: "2026-07-29",
     title: "Fixed: lifeguard flags read as double red all day",
     details:
       "The City's page added a standing note that double red flags may be flown during lightning. We were reading that as the flag actually flying, which pinned the beach score near zero. Now hedged wording is treated as a heads-up, not a posting — and the real flags (like yellow and purple) are read correctly.",
