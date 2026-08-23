@@ -662,17 +662,10 @@ export function ConditionsDashboard({
                 icon="🪸"
                 label="Seaweed (sargassum)"
                 value={cap(sg.level)}
+                // Deterministic facts only — the cam's free-text note is any
+                // length (it overflowed the 3-line clamp even on desktop), so
+                // it lives on the flip back's "right now" section instead.
                 sub={
-                  `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
-                  (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "") +
-                  // vs-average FIRST (before the cam note) so the 3-line clamp
-                  // never eats it.
-                  seaweedVsAvgPhrase(sg.vsAvg) +
-                  (sg.note ? ` — ${sg.note}` : "")
-                }
-                // Phones: drop the free-text cam note so the 2-col tile never
-                // truncates mid-sentence (the full line stays in `title`).
-                subShort={
                   `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
                   (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "") +
                   seaweedVsAvgPhrase(sg.vsAvg)

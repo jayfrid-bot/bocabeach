@@ -504,6 +504,8 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
     } else {
       computation = ["No cam read — this factor is dropped from the weighted average."];
     }
+    const camNote = snap.sargassum.data?.note;
+    if (camNote) computation.push(`Cam note: ${camNote}`);
     return {
       title: "Seaweed",
       weightPct: SCORE_WEIGHTS_PCT.sargassum,
