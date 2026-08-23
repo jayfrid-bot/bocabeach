@@ -141,12 +141,15 @@ export function ClarityScene({ pct }: ClaritySceneProps) {
 export function ClarityTileFront({
   value,
   sub,
+  subShort,
   pct,
   level,
   muted = false,
 }: {
   value: string;
   sub: string;
+  /** Shorter phone-width sub (see clarityTileCopy); falls back to `sub`. */
+  subShort?: string;
   pct: number | null;
   level?: string | null;
   /** The scene is showing a REMEMBERED day (the overnight fallback), not a live
@@ -181,11 +184,18 @@ export function ClarityTileFront({
         ) : null}
         <div
           className={`min-h-4 break-words text-xs text-slate-600 dark:text-slate-400 ${
-            hasScene ? "line-clamp-1" : "line-clamp-3"
+            hasScene ? "line-clamp-2 sm:line-clamp-1" : "line-clamp-3"
           }`}
           title={sub}
         >
-          {sub || " "}
+          {subShort && subShort !== sub ? (
+            <>
+              <span className="sm:hidden">{subShort}</span>
+              <span className="hidden sm:inline">{sub}</span>
+            </>
+          ) : (
+            sub || " "
+          )}
         </div>
       </div>
     </div>

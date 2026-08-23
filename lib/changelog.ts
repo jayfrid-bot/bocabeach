@@ -18,6 +18,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-08-23",
+    title: "Fixed: cut-off text on phone-width cards",
+    details: "Golden hour, water clarity, and seaweed no longer truncate mid-sentence on a phone — lines wrap, and long camera notes step aside on small screens.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-08-23",
     title: "Golden hour card: times, a countdown, and a simple timeline",
     details:
       "The sunset illustration is gone. The card now leads with how long until golden hour (or how long is left once you're in it), the exact window and sunset time, and a clean timeline that lights up while golden hour is on.",

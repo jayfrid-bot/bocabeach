@@ -354,6 +354,9 @@ export interface ClarityTileCopy {
   /** True when the scene is showing a past day, not a live read — the tile
    *  dims it so a remembered reading never looks like a current one. */
   muted?: boolean;
+  /** Phone-width variant of `sub`: the deterministic parts only (no free-text
+   *  cam note), so a 2-column tile never has to truncate mid-sentence. */
+  subShort?: string;
 }
 
 const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
@@ -378,6 +381,12 @@ export function clarityTileCopy(d: ClarityData, tz: string): ClarityTileCopy {
       sub: [
         d.pct != null ? `~${d.pct}% clear` : null,
         d.note,
+        d.capturedAtLocal ? `as of ${fmtTime(d.capturedAtLocal, tz)}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      subShort: [
+        d.pct != null ? `~${d.pct}% clear` : null,
         d.capturedAtLocal ? `as of ${fmtTime(d.capturedAtLocal, tz)}` : null,
       ]
         .filter(Boolean)

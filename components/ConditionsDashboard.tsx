@@ -670,6 +670,13 @@ export function ConditionsDashboard({
                   seaweedVsAvgPhrase(sg.vsAvg) +
                   (sg.note ? ` — ${sg.note}` : "")
                 }
+                // Phones: drop the free-text cam note so the 2-col tile never
+                // truncates mid-sentence (the full line stays in `title`).
+                subShort={
+                  `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
+                  (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "") +
+                  seaweedVsAvgPhrase(sg.vsAvg)
+                }
               />
             }
           />

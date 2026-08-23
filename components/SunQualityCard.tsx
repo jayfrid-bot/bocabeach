@@ -418,7 +418,7 @@ function SunQualityFront({
         {target ? <GoldenTrack target={target} nowMs={nowMs} during={during} tz={tz} /> : null}
 
         <div
-          className="mt-3 min-h-4 text-xs tabular-nums text-slate-500 dark:text-slate-400 line-clamp-1"
+          className="mt-3 min-h-4 text-xs tabular-nums text-slate-500 dark:text-slate-400 line-clamp-2 sm:line-clamp-1"
           title={colorLine}
         >
           {colorLine}

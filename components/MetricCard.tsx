@@ -3,11 +3,16 @@ export function MetricCard({
   label,
   value,
   sub,
+  subShort,
 }: {
   icon: string;
   label: string;
   value: string;
   sub?: string;
+  /** Phone-width variant of `sub` (2-column tiles are ~170px wide): the
+   *  deterministic parts only, no free-text cam note, so nothing truncates
+   *  mid-sentence. Falls back to `sub` on wider screens and when omitted. */
+  subShort?: string;
 }) {
   return (
     <div className="flex h-full flex-col rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
@@ -26,8 +31,18 @@ export function MetricCard({
         </div>
         {/* Always reserve the sub line so values share a baseline across a row
             (a sub-less "27%" used to sit lower than its neighbor's "36%"). */}
-        <div className="min-h-4 break-words text-xs text-slate-600 dark:text-slate-400 line-clamp-3">
-          {sub ?? " "}
+        <div
+          className="min-h-4 break-words text-xs text-slate-600 dark:text-slate-400 line-clamp-3"
+          title={sub}
+        >
+          {subShort && subShort !== sub ? (
+            <>
+              <span className="sm:hidden">{subShort}</span>
+              <span className="hidden sm:inline">{sub}</span>
+            </>
+          ) : (
+            (sub ?? "\u00a0")
+          )}
         </div>
       </div>
     </div>
