@@ -264,3 +264,192 @@ describe("summarizeBusyness — daylight/freshness gate", () => {
     expect(d.level).toBe("busy");
   });
 });
+
+// --- Overnight fallback ----------------------------------------------------
+// After dark the live read is honestly "unknown"; these cover what the card
+// says INSTEAD of "no read" — the last readable day, and the next read time.
+
+describe("summarizeBusyness — the last readable day (overnight fallback)", () => {
+  const read = (date: string, hour: number, crowdPct: number) => ({
+    t: `${date}T${String(hour).padStart(2, "0")}:00:00-04:00`,
+    hour,
+    level: "moderate",
+    crowdPct,
+  });
+  // Fri 08-21: only two reads (too thin). Sat 08-22: four. Sun 08-23: three.
+  const history = [
+    read("2026-08-21", 10, 90),
+    read("2026-08-21", 12, 90),
+    read("2026-08-22", 8, 20),
+    read("2026-08-22", 11, 40),
+    read("2026-08-22", 14, 65),
+    read("2026-08-22", 17, 35),
+    read("2026-08-23", 9, 10),
+    read("2026-08-23", 12, 30),
+    read("2026-08-23", 15, 45),
+  ];
+  const sunriseIso = "2026-08-23T06:50:00-04:00";
+  const sunsetIso = "2026-08-23T19:45:00-04:00";
+  const tomorrowSunriseIso = "2026-08-24T06:51:00-04:00";
+  const gated = (now: string, nowLocalDate: string, sun = true) =>
+    summarizeBusyness(
+      { latest: { capturedAtLocal: "2026-08-23T15:00:00-04:00", cams: [] }, history: history as never },
+      sun
+        ? { now: new Date(now), sunriseIso, sunsetIso, tomorrowSunriseIso }
+        : { now: new Date(now), sunriseIso, sunsetIso },
+      nowLocalDate,
+    );
+
+  it("at 11 PM, TODAY's own daylight reads are the freshest day — labelled 'today'", () => {
+    const d = gated("2026-08-23T23:00:00-04:00", "2026-08-23");
+    expect(d.yesterday).toMatchObject({
+      dateLocal: "2026-08-23",
+      dayLabel: "today",
+      reads: 3,
+      avgCrowdPct: 28, // (10+30+45)/3 = 28.33 → the "quiet" band (<30)
+      level: "quiet",
+      peakLevel: "moderate", // 45% full at its peak
+      peakHourLocal: 15,
+    });
+  });
+
+  it("at 1 AM, the day that just ended is 'yesterday'", () => {
+    const d = gated("2026-08-24T01:00:00-04:00", "2026-08-24");
+    expect(d.yesterday?.dateLocal).toBe("2026-08-23");
+    expect(d.yesterday?.dayLabel).toBe("yesterday");
+  });
+
+  it("walks back past a day with fewer than three daylight reads", () => {
+    const thin = history.filter((e) => !e.t.startsWith("2026-08-23"));
+    const d = summarizeBusyness(
+      { latest: { cams: [] }, history: thin as never },
+      { now: new Date("2026-08-23T23:00:00-04:00"), sunriseIso, sunsetIso },
+      "2026-08-23",
+    );
+    // 08-21 has only two reads, so Saturday the 22nd is the last readable day.
+    expect(d.yesterday).toMatchObject({
+      dateLocal: "2026-08-22",
+      dayLabel: "yesterday",
+      reads: 4,
+      avgCrowdPct: 40, // (20+40+65+35)/4
+      level: "moderate",
+      peakLevel: "busy",
+      peakHourLocal: 14,
+    });
+  });
+
+  it("names a day further back by its weekday", () => {
+    const d = summarizeBusyness(
+      { latest: { cams: [] }, history: history as never },
+      { now: new Date("2026-08-25T22:00:00-04:00"), sunriseIso, sunsetIso },
+      "2026-08-25", // Tuesday; the last readable day is Sunday the 23rd
+    );
+    expect(d.yesterday?.dayLabel).toBe("Sunday");
+  });
+
+  it("ignores night reads and never summarizes a day ahead of today", () => {
+    const withNight = [
+      ...history.filter((e) => e.t.startsWith("2026-08-23")),
+      read("2026-08-23", 22, 95), // a stray dark frame — outside the daylight window
+      read("2026-08-24", 12, 95), // ahead of "today" — impossible, but never trusted
+    ];
+    const d = summarizeBusyness(
+      { latest: { cams: [] }, history: withNight as never },
+      { now: new Date("2026-08-23T23:00:00-04:00"), sunriseIso, sunsetIso },
+      "2026-08-23",
+    );
+    expect(d.yesterday?.dateLocal).toBe("2026-08-23");
+    expect(d.yesterday?.reads).toBe(3); // the 10 PM read is not part of the day
+  });
+
+  it("bands the day by the crowd boundaries the cams grade against", () => {
+    // A 75%-full read is what the vision model itself calls "busy" (packed
+    // starts at 80), so the peak word must not round up past the boundary.
+    const day = [read("2026-08-22", 9, 65), read("2026-08-22", 11, 75), read("2026-08-22", 13, 55)];
+    const d = summarizeBusyness(
+      { latest: { cams: [] }, history: day as never },
+      { now: new Date("2026-08-22T23:00:00-04:00"), sunriseIso, sunsetIso },
+      "2026-08-22",
+    );
+    expect(d.yesterday).toMatchObject({ avgCrowdPct: 65, level: "busy", peakLevel: "busy" });
+  });
+
+  it("returns null (and keeps the honest note) when no day has enough reads", () => {
+    const d = summarizeBusyness(
+      { latest: { cams: [] }, history: [read("2026-08-22", 10, 50)] as never },
+      { now: new Date("2026-08-23T23:00:00-04:00"), sunriseIso, sunsetIso },
+      "2026-08-23",
+    );
+    expect(d.yesterday).toBeNull();
+    expect(d.note).toMatch(/dark/i);
+  });
+
+  it("keeps the gated reading 'unknown' — the day summary is display-only", () => {
+    const d = gated("2026-08-23T23:00:00-04:00", "2026-08-23");
+    // The score drops busyness on "unknown"; attaching yesterday must not change that.
+    expect(d.level).toBe("unknown");
+    expect(d.crowdPct).toBeUndefined();
+    expect(d.peopleEstimate).toBeUndefined();
+    expect(d.cams).toBeUndefined();
+    expect(d.yesterday).not.toBeNull();
+  });
+
+  it("attaches nothing extra to a live daytime reading", () => {
+    const d = summarizeBusyness(
+      {
+        latest: {
+          capturedAtLocal: "2026-08-23T14:30:00-04:00",
+          cams: [{ name: "A", crowd: "busy", crowdPct: 70 }] as never,
+        },
+        history: history as never,
+      },
+      { now: new Date("2026-08-23T15:00:00-04:00"), sunriseIso, sunsetIso, tomorrowSunriseIso },
+      "2026-08-23",
+    );
+    expect(d.level).toBe("busy");
+    expect(d.yesterday).toBeUndefined();
+    expect(d.nextReadIso).toBeUndefined();
+  });
+
+  it("promises no sunrise for a stale DAYTIME capture — that outage has no known end", () => {
+    const d = summarizeBusyness(
+      {
+        latest: { capturedAtLocal: "2026-08-23T08:00:00-04:00", cams: [] },
+        history: history as never,
+      },
+      // Midday, but the last capture is 4h old → the stale gate, not the night one.
+      { now: new Date("2026-08-23T12:00:00-04:00"), sunriseIso, sunsetIso, tomorrowSunriseIso },
+      "2026-08-23",
+    );
+    expect(d.level).toBe("unknown");
+    expect(d.note).toMatch(/stale|old/i);
+    expect(d.nextReadIso).toBeUndefined(); // the card falls back to the note
+    expect(d.yesterday?.dateLocal).toBe("2026-08-23"); // still says what today did
+  });
+
+  describe("nextReadIso — when the cams can see the beach again", () => {
+    it("uses TOMORROW's sunrise minus the 30-min buffer late at night", () => {
+      const d = gated("2026-08-23T23:00:00-04:00", "2026-08-23");
+      expect(d.nextReadIso).toBe(new Date("2026-08-24T06:21:00-04:00").toISOString());
+    });
+
+    it("uses TODAY's sunrise when it's still ahead (the 1 AM case)", () => {
+      const d = summarizeBusyness(
+        { latest: { cams: [] }, history: history as never },
+        {
+          now: new Date("2026-08-24T01:00:00-04:00"),
+          sunriseIso: "2026-08-24T06:51:00-04:00",
+          sunsetIso: "2026-08-24T19:44:00-04:00",
+          tomorrowSunriseIso: "2026-08-25T06:52:00-04:00",
+        },
+        "2026-08-24",
+      );
+      expect(d.nextReadIso).toBe(new Date("2026-08-24T06:21:00-04:00").toISOString());
+    });
+
+    it("is omitted when tomorrow's sunrise isn't known", () => {
+      const d = gated("2026-08-23T23:00:00-04:00", "2026-08-23", false);
+      expect(d.nextReadIso).toBeUndefined();
+    });
+  });
+});

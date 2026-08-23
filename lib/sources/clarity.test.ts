@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { summarizeClarity, fetchClarity, clarityDisplayWord, type ClarityFeed } from "@/lib/sources/clarity";
+import {
+  summarizeClarity,
+  fetchClarity,
+  clarityDisplayWord,
+  clarityTileCopy,
+  type ClarityFeed,
+} from "@/lib/sources/clarity";
 import type { Location } from "@/lib/types";
 
 const CAMLESS_LOCATION: Location = {
@@ -231,5 +237,238 @@ describe("clarityDisplayWord — positively-framed band mapping from the clarity
   it("returns an empty string when there's no level to describe", () => {
     expect(clarityDisplayWord(null, null)).toBe("");
     expect(clarityDisplayWord(undefined, undefined)).toBe("");
+  });
+});
+
+// --- Overnight fallback ----------------------------------------------------
+
+describe("summarizeClarity — the last readable day (overnight fallback)", () => {
+  const read = (date: string, hour: number, clr: number, water = "clear") => ({
+    t: `${date}T${String(hour).padStart(2, "0")}:00:00-04:00`,
+    hour,
+    water,
+    clr,
+  });
+  // Fri 08-21: two reads (too thin). Sat 08-22: four. Sun 08-23: five, clearer
+  // in the morning than the afternoon.
+  const history = [
+    read("2026-08-21", 10, 20, "murky"),
+    read("2026-08-21", 12, 20, "murky"),
+    read("2026-08-22", 8, 40, "murky"),
+    read("2026-08-22", 11, 50, "slightly_murky"),
+    read("2026-08-22", 14, 60, "slightly_murky"),
+    read("2026-08-22", 17, 70),
+    read("2026-08-23", 8, 80),
+    read("2026-08-23", 10, 78),
+    read("2026-08-23", 13, 72),
+    read("2026-08-23", 15, 66, "slightly_murky"),
+    read("2026-08-23", 17, 64, "slightly_murky"),
+  ];
+  const tz = "America/New_York";
+  const sunriseIso = "2026-08-23T06:50:00-04:00";
+  const tomorrowSunriseIso = "2026-08-24T06:51:00-04:00";
+  const gated = (now: string, nowLocalDate: string) =>
+    summarizeClarity(
+      { latest: { capturedAtLocal: "2026-08-23T17:00:00-04:00", cams: [] }, history: history as never },
+      { now: new Date(now), timezone: tz, sunriseIso, tomorrowSunriseIso, nowLocalDate },
+    );
+
+  it("at 11 PM, summarizes TODAY's daylight reads with the median clarity", () => {
+    const d = gated("2026-08-23T23:00:00-04:00", "2026-08-23");
+    expect(d!.yesterday).toMatchObject({
+      dateLocal: "2026-08-23",
+      dayLabel: "today",
+      pct: 72, // median of 80/78/72/66/64
+      word: "Mostly clear",
+      reads: 5,
+    });
+  });
+
+  it("splits the day into morning and afternoon medians when both halves have reads", () => {
+    const d = gated("2026-08-23T23:00:00-04:00", "2026-08-23");
+    expect(d!.yesterday?.amPct).toBe(79); // (80+78)/2
+    expect(d!.yesterday?.pmPct).toBe(66); // median of 72/66/64
+  });
+
+  it("omits the am/pm split when the day only ran one half", () => {
+    const morningOnly = [read("2026-08-22", 7, 60), read("2026-08-22", 9, 70), read("2026-08-22", 11, 80)];
+    const d = summarizeClarity(
+      { latest: { cams: [] }, history: morningOnly as never },
+      { now: new Date("2026-08-22T23:00:00-04:00"), timezone: tz, nowLocalDate: "2026-08-22" },
+    );
+    expect(d!.yesterday?.pct).toBe(70);
+    expect(d!.yesterday?.amPct).toBeUndefined();
+    expect(d!.yesterday?.pmPct).toBeUndefined();
+  });
+
+  it("at 1 AM, the day that just ended is 'yesterday'", () => {
+    const d = gated("2026-08-24T01:00:00-04:00", "2026-08-24");
+    expect(d!.yesterday?.dateLocal).toBe("2026-08-23");
+    expect(d!.yesterday?.dayLabel).toBe("yesterday");
+  });
+
+  it("walks back past a day with fewer than three daylight clarity reads", () => {
+    const thin = history.filter((e) => !e.t.startsWith("2026-08-23"));
+    const d = summarizeClarity(
+      { latest: { cams: [] }, history: thin as never },
+      { now: new Date("2026-08-23T23:00:00-04:00"), timezone: tz, nowLocalDate: "2026-08-23" },
+    );
+    expect(d!.yesterday).toMatchObject({
+      dateLocal: "2026-08-22",
+      dayLabel: "yesterday",
+      pct: 55, // (50+60)/2
+      word: "A bit murky",
+      reads: 4,
+    });
+  });
+
+  it("returns null when no day carries enough clarity reads", () => {
+    const d = summarizeClarity(
+      { latest: { cams: [] }, history: [read("2026-08-22", 10, 50)] as never },
+      { now: new Date("2026-08-23T23:00:00-04:00"), timezone: tz, nowLocalDate: "2026-08-23" },
+    );
+    expect(d!.yesterday).toBeNull();
+    expect(d!.note).toMatch(/dark/i);
+  });
+
+  it("keeps the gated reading level-null 'unknown' — the day summary is display-only", () => {
+    const d = gated("2026-08-23T23:00:00-04:00", "2026-08-23");
+    expect(d!.level).toBeNull();
+    expect(d!.pct).toBeNull();
+    expect(d!.status).toBe("unknown");
+    expect(d!.yesterday).not.toBeNull();
+  });
+
+  it("attaches nothing extra to a live daytime reading", () => {
+    const d = summarizeClarity(
+      {
+        latest: {
+          capturedAtLocal: "2026-08-23T15:00:00-04:00",
+          cams: [{ name: "A", water: "clear", waterPct: 80 }] as never,
+        },
+        history: history as never,
+      },
+      { now: new Date("2026-08-23T15:30:00-04:00"), timezone: tz, sunriseIso, nowLocalDate: "2026-08-23" },
+    );
+    expect(d!.level).toBe("clear");
+    expect(d!.yesterday).toBeUndefined();
+    expect(d!.nextReadIso).toBeUndefined();
+  });
+
+  it("says when the next cam read lands (tomorrow's sunrise minus the buffer)", () => {
+    const d = gated("2026-08-23T23:00:00-04:00", "2026-08-23");
+    expect(d!.nextReadIso).toBe(new Date("2026-08-24T06:21:00-04:00").toISOString());
+  });
+
+  it("uses today's sunrise for the next read at 1 AM", () => {
+    const d = summarizeClarity(
+      { latest: { cams: [] }, history: history as never },
+      {
+        now: new Date("2026-08-24T01:00:00-04:00"),
+        timezone: tz,
+        sunriseIso: "2026-08-24T06:51:00-04:00",
+        tomorrowSunriseIso: "2026-08-25T06:52:00-04:00",
+        nowLocalDate: "2026-08-24",
+      },
+    );
+    expect(d!.nextReadIso).toBe(new Date("2026-08-24T06:21:00-04:00").toISOString());
+  });
+});
+
+describe("clarityTileCopy — what the tile actually says", () => {
+  const tz = "America/New_York";
+
+  it("shows the live reading as before", () => {
+    const c = clarityTileCopy(
+      {
+        level: "clear",
+        pct: 78,
+        note: "blue-green past the surf",
+        capturedAtLocal: "2026-08-23T15:00:00-04:00",
+      },
+      tz,
+    );
+    expect(c.value).toBe("Mostly clear");
+    expect(c.sub).toBe("~78% clear · blue-green past the surf · as of 3:00 PM");
+    expect(c.pct).toBe(78);
+    expect(c.muted).toBeUndefined();
+  });
+
+  it("shows the last readable day, dimmed, with the next read time", () => {
+    const c = clarityTileCopy(
+      {
+        level: null,
+        pct: null,
+        status: "unknown",
+        note: "cams can't read the water in the dark",
+        nextReadIso: "2026-08-24T06:21:00-04:00",
+        yesterday: {
+          dateLocal: "2026-08-23",
+          dayLabel: "yesterday",
+          pct: 72,
+          word: "Mostly clear",
+          reads: 5,
+        },
+      },
+      tz,
+    );
+    expect(c.value).toBe("Yesterday: Mostly clear");
+    expect(c.sub).toBe("~72% clear · next cam read ~6:21 AM");
+    expect(c.pct).toBe(72); // the scene still draws something, just muted
+    expect(c.muted).toBe(true);
+  });
+
+  it("calls out a big morning/afternoon gap, and stays quiet about a small one", () => {
+    const base = {
+      level: null,
+      pct: null,
+      status: "unknown" as const,
+      nextReadIso: "2026-08-24T06:21:00-04:00",
+    };
+    const day = { dateLocal: "2026-08-23", dayLabel: "today", pct: 72, word: "Mostly clear", reads: 5 };
+    expect(
+      clarityTileCopy({ ...base, yesterday: { ...day, amPct: 85, pmPct: 60 } }, tz).sub,
+    ).toBe("~72% clear · 85% AM, 60% PM · next cam read ~6:21 AM");
+    expect(
+      clarityTileCopy({ ...base, yesterday: { ...day, amPct: 74, pmPct: 70 } }, tz).sub,
+    ).toBe("~72% clear · next cam read ~6:21 AM");
+  });
+
+  it("falls back to the reason when the outage has no known end (a stale daytime frame)", () => {
+    const c = clarityTileCopy(
+      {
+        level: null,
+        pct: null,
+        status: "unknown",
+        note: "latest cam capture is a couple hours old",
+        yesterday: {
+          dateLocal: "2026-08-23",
+          dayLabel: "today",
+          pct: 72,
+          word: "Mostly clear",
+          reads: 5,
+        },
+      },
+      tz,
+    );
+    expect(c.sub).toBe("~72% clear · latest cam capture is a couple hours old");
+    expect(c.muted).toBe(true);
+  });
+
+  it("keeps the honest note plus the next read time when there's no day behind us", () => {
+    const c = clarityTileCopy(
+      {
+        level: null,
+        pct: null,
+        status: "unknown",
+        note: "cams can't read the water in the dark",
+        nextReadIso: "2026-08-24T06:21:00-04:00",
+        yesterday: null,
+      },
+      tz,
+    );
+    expect(c.value).toBe("—");
+    expect(c.sub).toBe("cams can't read the water in the dark · next cam read ~6:21 AM");
+    expect(c.pct).toBeNull();
   });
 });

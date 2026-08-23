@@ -18,6 +18,20 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-08-23",
+    title: "Fixed: beach cams could show an old frame labeled as live",
+    details:
+      "If the app sat in the background for a while, a cam could keep showing an older picture under a fresh-looking time. Cams now say \"Live\" only when both the picture and the page's data are truly current, refresh the moment you come back, and say \"Feed paused\" when a camera stops sending new frames.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-08-23",
+    title: "Overnight, busyness and water clarity show yesterday and the next read time",
+    details:
+      "The cams can't see in the dark, so instead of a blank, the cards now tell you how the day went — like \"Yesterday: Moderate, peaked around 2 PM\" or \"Yesterday: Mostly clear\" — plus when the next camera read lands in the morning.",
+    tag: "improved",
+  },
+  {
+    date: "2026-08-23",
     title: "Fixed: wrong dates on recent entries in this list",
     details: "Two August updates were mislabeled as July. Dates here are now checked against the actual release record.",
     tag: "fixed",

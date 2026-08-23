@@ -143,11 +143,15 @@ export function ClarityTileFront({
   sub,
   pct,
   level,
+  muted = false,
 }: {
   value: string;
   sub: string;
   pct: number | null;
   level?: string | null;
+  /** The scene is showing a REMEMBERED day (the overnight fallback), not a live
+   *  read — draw it dimmed and desaturated so it never reads as "right now". */
+  muted?: boolean;
 }) {
   const hasScene = pct != null && Number.isFinite(pct);
 
@@ -158,12 +162,20 @@ export function ClarityTileFront({
         <span className="truncate">Water clarity</span>
       </div>
       <div className="flex flex-1 flex-col justify-center">
-        <div className="text-xl font-semibold tabular-nums text-slate-900 dark:text-white sm:text-2xl">
+        <div
+          className={`text-xl font-semibold tabular-nums sm:text-2xl ${
+            muted ? "text-slate-500 dark:text-slate-400" : "text-slate-900 dark:text-white"
+          }`}
+        >
           {value}
         </div>
         {hasScene ? (
           // Radius stays well inside the card's rounded-2xl (concentric).
-          <div className="relative mt-1 h-7 w-full overflow-hidden rounded-lg sm:h-8">
+          <div
+            className={`relative mt-1 h-7 w-full overflow-hidden rounded-lg sm:h-8 ${
+              muted ? "opacity-50 saturate-50" : ""
+            }`}
+          >
             <ClarityScene pct={pct} level={level} />
           </div>
         ) : null}

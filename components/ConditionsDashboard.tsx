@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import useSWR from "swr";
 import type { ConditionsResponse } from "@/lib/types";
 import { consensusCloudPct, currentHourOf, deriveMetrics } from "@/lib/score";
@@ -49,7 +49,7 @@ import { RipRiskCard } from "@/components/RipRiskCard";
 import { MarineStingerCard } from "@/components/MarineStingerCard";
 import { SharkContextCard } from "@/components/SharkContextCard";
 import { seaweedVsAvgPhrase } from "@/lib/vsAveragePhrase";
-import { clarityDisplayWord } from "@/lib/sources/clarity";
+import { clarityTileCopy } from "@/lib/sources/clarity";
 
 // Throw on non-OK so an error body (e.g. a 404 `{error}`) never replaces the
 // good snapshot — SWR keeps the last good data and the consumer guard holds.
@@ -121,8 +121,39 @@ export function ConditionsDashboard({
   const { data, mutate, isValidating } = useSWR<ConditionsResponse>(
     preview ? null : `/api/conditions/${slug}`,
     fetcher,
-    { fallbackData: initial, refreshInterval: preview ? 0 : 300_000 },
+    {
+      fallbackData: initial,
+      refreshInterval: preview ? 0 : 300_000,
+      // Stated outright rather than left to the defaults: the whole page is a
+      // "right now" claim, so coming back to it must go get fresh data.
+      revalidateOnFocus: true,
+      revalidateOnReconnect: true,
+    },
   );
+
+  // SWR's own focus revalidation doesn't fire reliably inside the iOS WKWebView
+  // shell (the web view is restored without a focus event), so ask for fresh
+  // data ourselves whenever the page comes back on screen. Throttled to once
+  // per 30s so app-switching doesn't hammer the API.
+  const lastResumeFetchRef = useRef(0);
+  useEffect(() => {
+    if (preview) return;
+    const refetch = () => {
+      const t = Date.now();
+      if (t - lastResumeFetchRef.current < 30_000) return;
+      lastResumeFetchRef.current = t;
+      void mutate();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refetch();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", refetch);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", refetch);
+    };
+  }, [preview, mutate]);
 
   // Fall back to the SSR snapshot unless SWR has a fully-formed response — an
   // error body lacking `.snapshot` must never shadow the good initial data.
@@ -487,7 +518,11 @@ export function ConditionsDashboard({
           />
         ) : null}
         {showBusyness ? (
-          <FlipCard label="Busyness" back={nerdBack("busyness")} front={<BusynessCard busy={busy} />} />
+          <FlipCard
+            label="Busyness"
+            back={nerdBack("busyness")}
+            front={<BusynessCard busy={busy} tz={tz} />}
+          />
         ) : null}
         {/* Water clarity + water quality ride up here next to Busyness: they
             fill what used to be the gap at the end of the instruments band, and
@@ -499,24 +534,9 @@ export function ConditionsDashboard({
             front={
               // MetricCard's own layout, plus the water-column scene (see
               // components/ClarityScene.tsx) in the value block's dead space.
-              <ClarityTileFront
-                value={clarity.level ? clarityDisplayWord(clarity.level, clarity.pct) : "—"}
-                pct={clarity.pct}
-                level={clarity.level}
-                sub={
-                  clarity.level
-                    ? [
-                        clarity.pct != null ? `~${clarity.pct}% clear` : null,
-                        clarity.note,
-                        clarity.capturedAtLocal
-                          ? `as of ${fmtTime(clarity.capturedAtLocal, tz)}`
-                          : null,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")
-                    : clarity.note ?? "not available"
-                }
-              />
+              // The copy — live read, or the last readable day dimmed with the
+              // next read time — is decided in lib/sources/clarity.ts.
+              <ClarityTileFront {...clarityTileCopy(clarity, tz)} />
             }
           />
         ) : null}
@@ -803,7 +823,7 @@ export function ConditionsDashboard({
 
       {cams.length > 0 ? (
         <section className="mb-8">
-          <CamGrid cams={cams} tz={tz} />
+          <CamGrid cams={cams} tz={tz} dataAt={snap.generatedAt} />
         </section>
       ) : null}
 

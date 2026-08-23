@@ -38,8 +38,13 @@ export function fmtDate(iso: string, tz: string): string {
   }).format(new Date(iso));
 }
 
-export function fmtRelative(iso: string): string {
-  const diffMs = Date.now() - new Date(iso).getTime();
+/**
+ * "3m ago" style label. Pass `nowMs` to judge against a clock read the caller
+ * already took, so a label and the badge beside it can never disagree about
+ * what time it is; it defaults to the current clock.
+ */
+export function fmtRelative(iso: string, nowMs: number = Date.now()): string {
+  const diffMs = nowMs - new Date(iso).getTime();
   const m = Math.round(diffMs / 60000);
   if (m < 1) return "just now";
   if (m < 60) return `${m}m ago`;

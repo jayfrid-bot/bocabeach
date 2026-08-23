@@ -1,24 +1,10 @@
-import { useEffect, useState } from "react";
 import type { CamView } from "@/lib/types";
 import { fmtTime } from "@/lib/format";
-import { RelativeTime } from "@/components/RelativeTime";
+import { RelativeTime, useNowMs } from "@/components/RelativeTime";
+import { camFreshness } from "@/lib/camFreshness";
 
-/**
- * Wall-clock "now", client-only: null on the server and for the first client
- * render so the prerendered HTML and hydration agree. (Computing freshness from
- * Date.now() during render was a real hydration mismatch — React #418 — once
- * the statically generated page was a minute old.) Ticks each minute after
- * mount, same contract as RelativeTime.
- */
-function useNowMs(): number | null {
-  const [now, setNow] = useState<number | null>(null);
-  useEffect(() => {
-    setNow(Date.now());
-    const id = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(id);
-  }, []);
-  return now;
-}
+/** Above this, a frozen provider feed reads as "paused", not just "a bit late". */
+const FEED_PAUSED_MIN = 30;
 
 /**
  * Time of the still being shown: the source's exact capture time when published
@@ -46,24 +32,25 @@ function CamStamp({ cam, tz }: { cam: CamView; tz: string }) {
 }
 
 /** Big "headline" still-image cam (live JPEG via the same-origin proxy). */
-function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
-  // Cache-bust on a new capture (feed cams) or each poll, so the still refreshes.
-  const src = `${cam.imageUrl}?t=${cam.capturedAt ?? cam.weather.fetchedAt}`;
-  // Three honesty states:
-  //  - verified + fresh  → "● Live" (feed published a recent capture time)
-  //  - verified + old     → just state the last feed time + how long ago it was
-  //    captured (no alarm — the live video is one tap away)
-  //  - unverified         → "Snapshot" (no capture time at all, e.g. the
-  //    most_recent_image.php cams send no Last-Modified) — we can't confirm it's
-  //    current, so we must NOT claim it's live.
+function FeaturedCam({ cam, tz, dataAt }: { cam: CamView; tz: string; dataAt?: string }) {
+  // Cache-bust on a new capture (feed cams) or each poll, AND on every data
+  // refresh: a refetched snapshot must produce a new image URL even when the
+  // provider's capture time hasn't moved, or the browser keeps painting the old
+  // JPEG. Cheap — the proxy is edge-cached for 60s.
+  const src = `${cam.imageUrl}?t=${encodeURIComponent(
+    cam.capturedAt ?? cam.weather.fetchedAt,
+  )}&d=${encodeURIComponent(dataAt ?? "")}`;
+  // Four honesty states (see lib/camFreshness.ts). The one rule that matters:
+  // we only say "Live" when BOTH the capture time and the snapshot this page is
+  // holding are recent. A page that failed to refetch, or sat in the background,
+  // is showing an old frame no matter what its stored capture time says.
   // Freshness is judged against the client clock only (null until mounted), so
   // the server renders the honest "unverified" state and hydration matches it.
   const now = useNowMs();
-  const ageMin = now != null && cam.capturedAt
-    ? (now - Date.parse(cam.capturedAt)) / 60000
-    : null;
-  const verified = ageMin != null;
-  const stale = verified && ageMin > 15;
+  const state = camFreshness({ capturedAt: cam.capturedAt, dataAt, now });
+  const captureAgeMin =
+    now != null && cam.capturedAt ? (now - Date.parse(cam.capturedAt)) / 60000 : null;
+  const stale = state === "feed-stale" || state === "data-stale";
   const dim = stale;
   return (
     <a
@@ -83,11 +70,17 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
           loading="lazy"
           decoding="async"
         />
-        {stale ? (
+        {state === "feed-stale" ? (
           <div className="absolute inset-x-0 bottom-0 bg-slate-950/70 px-2 py-1 text-center text-[11px] text-slate-100">
-            Last feed {fmtTime(cam.capturedAt as string, tz)} · <RelativeTime iso={cam.capturedAt as string} />
+            {captureAgeMin != null && captureAgeMin > FEED_PAUSED_MIN ? "Feed paused — " : null}
+            Last feed {fmtTime(cam.capturedAt as string, tz)} ·{" "}
+            <RelativeTime iso={cam.capturedAt as string} />
           </div>
-        ) : !verified ? (
+        ) : state === "data-stale" ? (
+          <div className="absolute inset-x-0 bottom-0 bg-slate-950/70 px-2 py-1 text-center text-[11px] text-slate-100">
+            Refreshing… {dataAt ? <>last data <RelativeTime iso={dataAt} /></> : "last data time unknown"}
+          </div>
+        ) : state === "unverified" ? (
           <div className="absolute inset-x-0 bottom-0 bg-slate-950/65 px-2 py-1 text-center text-[11px] text-slate-200">
             Snapshot — may be delayed
           </div>
@@ -103,7 +96,7 @@ function FeaturedCam({ cam, tz }: { cam: CamView; tz: string }) {
             >
               📷 <RelativeTime iso={cam.capturedAt as string} />
             </span>
-          ) : verified ? (
+          ) : state === "live" ? (
             <span className="shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-rose-300">
               ● Live
             </span>
@@ -164,7 +157,16 @@ function LinkChip({ cam }: { cam: CamView }) {
   );
 }
 
-export function CamGrid({ cams, tz }: { cams: CamView[]; tz: string }) {
+export function CamGrid({
+  cams,
+  tz,
+  dataAt,
+}: {
+  cams: CamView[];
+  tz: string;
+  /** When the snapshot on screen was generated (ISO) — gates the "Live" badge. */
+  dataAt?: string;
+}) {
   const featured = cams.filter((c) => c.embedType === "image" && c.imageUrl);
   const videos = cams.filter((c) => c.embedType === "iframe");
   const links = cams.filter((c) => c.embedType === "link");
@@ -177,7 +179,7 @@ export function CamGrid({ cams, tz }: { cams: CamView[]; tz: string }) {
       {featured.length ? (
         <div className="grid gap-4 sm:grid-cols-2">
           {featured.map((cam) => (
-            <FeaturedCam key={cam.name} cam={cam} tz={tz} />
+            <FeaturedCam key={cam.name} cam={cam} tz={tz} dataAt={dataAt} />
           ))}
         </div>
       ) : null}

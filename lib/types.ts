@@ -611,6 +611,33 @@ export interface BusynessByDay {
   /** Number of cam reads that fed the day. */
   samples: number;
 }
+/**
+ * Which day a cam-derived overnight summary is describing, relative to the
+ * beach's own calendar: "today" (the sun has set but today's daylight reads are
+ * the freshest we have), "yesterday" (the day that just ended), or a weekday
+ * name ("Friday") when the last readable day is further back.
+ */
+export type CamDayLabel = string;
+/**
+ * What the cams saw on the last readable day — shown while the live read is
+ * night-gated or stale, so the card says what the beach DID instead of "no
+ * read". Display only: it never feeds the Beach Day score.
+ */
+export interface BusynessDaySummary {
+  /** The day being described, local to the beach (YYYY-MM-DD). */
+  dateLocal: string;
+  dayLabel: CamDayLabel;
+  /** The day's overall crowd — its mean fullness mapped to a band. */
+  level: BusynessLevel;
+  /** The band at the day's busiest read. */
+  peakLevel: BusynessLevel;
+  /** Local hour (0-23) of the day's busiest read. */
+  peakHourLocal: number;
+  /** Mean 0-100 fullness across the day's daylight reads. */
+  avgCrowdPct: number;
+  /** How many daylight cam reads fed the summary. */
+  reads: number;
+}
 export interface BusynessData {
   level: BusynessLevel;
   /** Approx people visible at the busiest cam. */
@@ -636,6 +663,16 @@ export interface BusynessData {
     weekday: string;
     baselineDays: number;
   };
+  /**
+   * The last readable day's crowd, attached only when the live read is gated to
+   * "unknown" (night or stale). Null when no prior day has enough reads yet.
+   * Display only — the gated `level` stays "unknown" and still drops out of the
+   * score. See lib/sources/busyness.ts.
+   */
+  yesterday?: BusynessDaySummary | null;
+  /** When the cams can see the beach again (next sunrise − the daylight
+   *  buffer), ISO. Omitted when sun times are unavailable. */
+  nextReadIso?: string;
 }
 /**
  * Seaweed (sargassum) read entirely from the beach cams by the vision job —
@@ -704,6 +741,31 @@ export interface ClarityData {
   /** "unknown" when a capture exists but is night-gated, stale, or saw no open
    *  water (distinguishes a gated no-read from a genuine reading). */
   status?: "unknown";
+  /**
+   * What the cams saw of the water on the last readable day, attached only when
+   * the live read is gated. Null when no prior day has enough reads yet.
+   * Display only — clarity never feeds the score anyway.
+   */
+  yesterday?: ClarityDaySummary | null;
+  /** When the cams can read the water again (next sunrise − the daylight
+   *  buffer), ISO. Omitted when sun times are unavailable. */
+  nextReadIso?: string;
+}
+/** The last readable day's water clarity — the overnight stand-in for a live read. */
+export interface ClarityDaySummary {
+  /** The day being described, local to the beach (YYYY-MM-DD). */
+  dateLocal: string;
+  dayLabel: CamDayLabel;
+  /** Median 0-100 clarity across the day's daylight reads (100 = crystal clear). */
+  pct: number;
+  /** The display word for that median (see clarityDisplayWord). */
+  word: string;
+  /** Median clarity before noon — present only when BOTH halves have reads. */
+  amPct?: number;
+  /** Median clarity from noon on — present only when BOTH halves have reads. */
+  pmPct?: number;
+  /** How many daylight cam reads fed the summary. */
+  reads: number;
 }
 
 // --- NWS alerts + rip-current risk (api.weather.gov) -----------------------

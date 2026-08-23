@@ -1,11 +1,19 @@
 import type {
   CamWaterClarity,
   ClarityData,
+  ClarityDaySummary,
   Location,
   WaterClarityGrade,
   Wrapped,
 } from "@/lib/types";
-import { fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
+import { clamp, fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
+import { fmtTime } from "@/lib/format";
+import { fetchSun } from "@/lib/sources/sun";
+// The overnight fallback ("what did the water look like on the last readable
+// day, and when does the next read land?") is the same question busyness asks,
+// so both cards share one implementation of day selection, day naming and the
+// next-read instant. See lib/sources/busyness.ts.
+import { camDayLabel, mostRecentReadableDay, nextCamReadIso } from "@/lib/sources/busyness";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
 
@@ -70,6 +78,12 @@ export interface ClarityGateOptions {
   /** IANA timezone for the local-hour night gate. Omit to skip the night gate
    *  (the stale-capture check still applies). */
   timezone?: string;
+  /** Today's / tomorrow's sunrise (ISO) — only used to say when the next cam
+   *  read lands. Omit to leave that line off. */
+  sunriseIso?: string;
+  tomorrowSunriseIso?: string;
+  /** Today's calendar date at the beach (YYYY-MM-DD) — anchors "yesterday". */
+  nowLocalDate?: string;
 }
 
 /** The local hour (0-23) of `date` in `tz`, or undefined if it can't be derived. */
@@ -158,6 +172,60 @@ export function clarityDisplayWord(
   }
 }
 
+// --- Overnight fallback: the last readable day's water ---------------------
+
+/** Median of a non-empty list; even counts take the rounded mean of the middle
+ *  two, exactly like the live cross-cam median above. */
+function median(xs: readonly number[]): number {
+  const s = [...xs].sort((a, b) => a - b);
+  const n = s.length;
+  return n % 2 ? s[(n - 1) / 2] : Math.round((s[n / 2 - 1] + s[n / 2]) / 2);
+}
+
+/**
+ * The last readable day's water clarity, for the card to show while the live
+ * read is night-gated or stale: the day's median clarity and its display word,
+ * plus the morning and afternoon medians when the day has reads on both sides
+ * of noon (mornings are often the clear half). Null when no day carries enough
+ * daylight reads. Pure + tested.
+ */
+export function clarityDaySummary(
+  history: readonly HistoryEntry[],
+  todayLocal?: string,
+): ClarityDaySummary | null {
+  const day = mostRecentReadableDay(
+    history,
+    todayLocal,
+    (e) => typeof e.clr === "number" && Number.isFinite(e.clr),
+  );
+  if (!day) return null;
+
+  const reads = day.entries.map((e) => ({
+    hour: e.hour as number,
+    pct: clampPct(clamp(e.clr as number, 0, 100)),
+    water: e.water ?? null,
+  }));
+  const pct = median(reads.map((r) => r.pct));
+  // The grade word comes from the read closest to the median, mirroring how the
+  // live headline picks its cam — so picture and percentage never disagree.
+  const closest = reads.reduce((a, b) =>
+    Math.abs(b.pct - pct) < Math.abs(a.pct - pct) ? b : a,
+  );
+
+  const am = reads.filter((r) => r.hour < 12).map((r) => r.pct);
+  const pm = reads.filter((r) => r.hour >= 12).map((r) => r.pct);
+  const bothHalves = am.length > 0 && pm.length > 0;
+
+  return {
+    dateLocal: day.dateLocal,
+    dayLabel: camDayLabel(day.dateLocal, todayLocal),
+    pct,
+    word: clarityDisplayWord(closest.water, pct),
+    ...(bothHalves ? { amPct: median(am), pmPct: median(pm) } : {}),
+    reads: reads.length,
+  };
+}
+
 /** True when the feed actually carries clarity fields (vs a legacy pre-clarity feed). */
 function hasClarityFields(feed: ClarityFeed): boolean {
   const groups = [feed?.latest, feed?.morning];
@@ -204,7 +272,22 @@ export function summarizeClarity(
   // "unknown" reading with the reason, mirroring busyness.
   const note = gate ? unreadableReason(capturedAtLocal, gate) : undefined;
   if (note) {
-    return { level: null, pct: null, note, capturedAtLocal, status: "unknown" };
+    // Gated: still an honest no-live-read (level null, status "unknown"), with
+    // the last readable day and the next read time attached for the card.
+    return {
+      level: null,
+      pct: null,
+      note,
+      capturedAtLocal,
+      status: "unknown",
+      yesterday: clarityDaySummary(feed?.history ?? [], gate?.nowLocalDate),
+      // Night has a knowable end; a stale or no-open-water daytime frame does
+      // not, so those keep their own note rather than promising a sunrise.
+      nextReadIso:
+        note === NIGHT_NOTE
+          ? nextCamReadIso(gate?.now ?? new Date(), gate?.sunriseIso, gate?.tomorrowSunriseIso)
+          : undefined,
+    };
   }
 
   // Only cams that actually saw open water (water is a valid grade, not null).
@@ -258,6 +341,75 @@ export function summarizeClarity(
   };
 }
 
+/** Exactly what the Water clarity tile renders — the copy decision in one pure,
+ *  tested place instead of inside the dashboard's JSX. */
+export interface ClarityTileCopy {
+  /** Headline word ("Mostly clear", or "Yesterday: Mostly clear" at night). */
+  value: string;
+  /** Supporting line: the %, the note, and when the next cam read lands. */
+  sub: string;
+  /** What the water-column scene should draw (null = no scene). */
+  pct: number | null;
+  level?: WaterClarityGrade | null;
+  /** True when the scene is showing a past day, not a live read — the tile
+   *  dims it so a remembered reading never looks like a current one. */
+  muted?: boolean;
+}
+
+const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+/** Only call out the AM/PM split when the halves actually differed. */
+const HALF_DAY_GAP_PTS = 10;
+
+/**
+ * Copy for the Water clarity tile. Three cases:
+ *  - a live read → the reading, as before;
+ *  - gated with a readable day behind us → that day's word and %, dimmed, plus
+ *    when the cams look again ("Yesterday: Mostly clear · ~72% clear · next cam
+ *    read ~6:40 AM") — the overnight answer the owner asked for;
+ *  - gated with nothing behind us (a brand-new beach) → the honest note plus
+ *    the next read time.
+ */
+export function clarityTileCopy(d: ClarityData, tz: string): ClarityTileCopy {
+  const nextRead = d.nextReadIso ? `next cam read ~${fmtTime(d.nextReadIso, tz)}` : null;
+
+  if (d.level) {
+    return {
+      value: clarityDisplayWord(d.level, d.pct),
+      sub: [
+        d.pct != null ? `~${d.pct}% clear` : null,
+        d.note,
+        d.capturedAtLocal ? `as of ${fmtTime(d.capturedAtLocal, tz)}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      pct: d.pct,
+      level: d.level,
+    };
+  }
+
+  const y = d.yesterday;
+  if (y) {
+    const split =
+      y.amPct != null && y.pmPct != null && Math.abs(y.amPct - y.pmPct) >= HALF_DAY_GAP_PTS
+        ? `${y.amPct}% AM, ${y.pmPct}% PM`
+        : null;
+    return {
+      value: `${cap(y.dayLabel)}: ${y.word}`,
+      // Closes with when the cams look again — or, for a daytime outage (which
+      // has no knowable end, so no nextReadIso), the reason they're out.
+      sub: [`~${y.pct}% clear`, split, nextRead ?? d.note].filter(Boolean).join(" · "),
+      pct: y.pct,
+      muted: true,
+    };
+  }
+
+  return {
+    value: "—",
+    sub: [d.note ?? "not available", nextRead].filter(Boolean).join(" · "),
+    pct: null,
+  };
+}
+
 export async function fetchClarity(loc: Location): Promise<Wrapped<ClarityData>> {
   // Water clarity (Tier 1) is read from the same cam-vision job, which only
   // covers beaches with configured cams (currently just Boca). For a cam-less
@@ -296,7 +448,18 @@ export async function fetchClarity(loc: Location): Promise<Wrapped<ClarityData>>
     // The GitHub CDN's Date header is serve-time, not when the job generated the
     // snapshot — report the older of the two so RelativeTime matches the card.
     fetchedAt = oldestIso(feed.generatedAt, fetchedAtOf(res));
-    const data = summarizeClarity(feed, { timezone: loc.timezone });
+    // Sun times are a pure local computation (no network) — they only answer
+    // "when does the next cam read land?"; the night gate itself still runs off
+    // the fixed local-hour window above.
+    const sun = fetchSun(loc).data;
+    const data = summarizeClarity(feed, {
+      timezone: loc.timezone,
+      sunriseIso: sun?.sunrise,
+      tomorrowSunriseIso: sun?.tomorrowSunrise,
+      // Today's calendar date at the BEACH, so "yesterday" means the beach's
+      // yesterday and not the server's.
+      nowLocalDate: new Intl.DateTimeFormat("en-CA", { timeZone: loc.timezone }).format(new Date()),
+    });
     return {
       source: ATTRIBUTION,
       status: data && data.level ? "ok" : "best-effort",

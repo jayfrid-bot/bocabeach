@@ -2,18 +2,22 @@ import type {
   BusynessByDay,
   BusynessByHour,
   BusynessData,
+  BusynessDaySummary,
   BusynessLevel,
+  CamDayLabel,
   Location,
   Wrapped,
 } from "@/lib/types";
-import { fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
+import { clamp, fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
 import { fetchSun } from "@/lib/sources/sun";
 import { vsAverage, weekdayName, type VsAverageEntry } from "@/lib/vsAverage";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
 
-/** How far past sunset / before sunrise the cams are still considered readable. */
-const DAYLIGHT_BUFFER_MS = 30 * 60_000;
+/** How far past sunset / before sunrise the cams are still considered readable.
+ *  Also the margin on the "next cam read" estimate — lib/sources/clarity.ts
+ *  imports it so both cards quote the same moment. */
+export const DAYLIGHT_BUFFER_MS = 30 * 60_000;
 /** Beyond this age, even a daytime capture is too stale to call "current". */
 const STALE_CAPTURE_MS = 3 * 60 * 60_000;
 
@@ -30,6 +34,9 @@ export interface BusynessGateOptions {
    * (e.g. sun data unavailable) — the stale-capture check still applies. */
   sunriseIso?: string;
   sunsetIso?: string;
+  /** Tomorrow's sunrise (ISO) — used for the "next cam read" line once today's
+   * sunrise has already passed. Omit to skip that line. */
+  tomorrowSunriseIso?: string;
 }
 
 /**
@@ -160,6 +167,21 @@ function pctToRank(pct: number): number {
   return 4;
 }
 
+/**
+ * A fullness % straight to its crowd BAND — the same boundaries the vision
+ * model grades against (empty<10, quiet<30, moderate<55, busy<80, packed), so a
+ * 75%-full read is called "busy" exactly as the cam read called it. Distinct
+ * from rounding pctToRank, which blurs across a boundary (75% → "packed").
+ */
+function pctToLevel(pct: number): BusynessLevel {
+  const c = clamp(pct, 0, 100);
+  if (c < 10) return "empty";
+  if (c < 30) return "quiet";
+  if (c < 55) return "moderate";
+  if (c < 80) return "busy";
+  return "packed";
+}
+
 /** One read's crowd rank (0-4): the measured fullness when present, else category. */
 function readRank(e: HistoryEntry): number | undefined {
   if (typeof e.crowdPct === "number" && Number.isFinite(e.crowdPct)) return pctToRank(e.crowdPct);
@@ -205,6 +227,134 @@ function byDayFromHistory(history: HistoryEntry[]): BusynessByDay[] | undefined 
         samples: b.n,
       };
     });
+}
+
+// --- Overnight fallback: what the cams saw on the last readable day ---------
+//
+// After dark the live read is honestly "unknown" (and stays out of the score),
+// but silence isn't the friendliest answer — the card can still say what the
+// beach DID on the last day the cams could see it, and when they'll see it
+// again. Everything below is pure and display-only.
+
+/** Local hours a cam read counts as "daylight" — a coarse window that holds all
+ *  year at the latitudes we serve, and matches lib/sources/clarity.ts's gate.
+ *  Reads outside it (a stray dark frame) never define a day's summary. */
+const DAY_START_HOUR = 6;
+const DAY_END_HOUR = 20;
+/** Fewer reads than this is a scrap of a day, not a summary of one. */
+const MIN_DAY_READS = 3;
+
+/** The calendar day before `dateLocal` (YYYY-MM-DD), via UTC to dodge DST. */
+function previousLocalDay(dateLocal: string): string {
+  const [y, m, d] = dateLocal.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10);
+}
+
+/**
+ * How to name the day a summary describes, relative to the beach's own today:
+ * "today" once the sun has set but today's reads are still the freshest,
+ * "yesterday" for the day that just ended (the 1 AM case), else the weekday.
+ * Exported so lib/sources/clarity.ts names days identically.
+ */
+export function camDayLabel(dateLocal: string, todayLocal?: string): CamDayLabel {
+  if (todayLocal) {
+    if (dateLocal === todayLocal) return "today";
+    if (dateLocal === previousLocalDay(todayLocal)) return "yesterday";
+  }
+  return weekdayName(dateLocal) ?? "the last cam day";
+}
+
+/**
+ * The most recent local day (at or before `todayLocal`) with at least
+ * MIN_DAY_READS usable daylight reads, plus those reads. Walks backwards, so a
+ * rained-out or feed-less day falls through to the one before it. Exported for
+ * lib/sources/clarity.ts, which needs the same day selection over its own
+ * history shape.
+ */
+export function mostRecentReadableDay<T extends { t?: string; hour?: number }>(
+  history: readonly T[],
+  todayLocal: string | undefined,
+  usable: (entry: T) => boolean,
+): { dateLocal: string; entries: T[] } | undefined {
+  const byDate = new Map<string, T[]>();
+  for (const e of history) {
+    if (typeof e.t !== "string") continue;
+    const date = e.t.slice(0, 10);
+    if (!DATE_RE.test(date)) continue;
+    if (todayLocal && date > todayLocal) continue; // never summarize the future
+    if (typeof e.hour !== "number" || e.hour < DAY_START_HOUR || e.hour >= DAY_END_HOUR) {
+      continue;
+    }
+    if (!usable(e)) continue;
+    const bucket = byDate.get(date);
+    if (bucket) bucket.push(e);
+    else byDate.set(date, [e]);
+  }
+  const dates = [...byDate.keys()].sort();
+  for (let i = dates.length - 1; i >= 0; i--) {
+    const entries = byDate.get(dates[i]) as T[];
+    if (entries.length >= MIN_DAY_READS) return { dateLocal: dates[i], entries };
+  }
+  return undefined;
+}
+
+/**
+ * When the cams can see the beach again: the next sunrise minus the same
+ * DAYLIGHT_BUFFER_MS the gate already allows, so the promised time is the
+ * moment the gate actually opens. Today's sunrise when it's still ahead (the
+ * 1 AM case), else tomorrow's. Undefined when sun times are missing — the UI
+ * then simply omits the line rather than guessing. Exported for clarity.ts.
+ */
+export function nextCamReadIso(
+  now: Date,
+  sunriseIso?: string,
+  tomorrowSunriseIso?: string,
+): string | undefined {
+  for (const iso of [sunriseIso, tomorrowSunriseIso]) {
+    if (!iso) continue;
+    const opensAt = new Date(iso).getTime() - DAYLIGHT_BUFFER_MS;
+    if (Number.isFinite(opensAt) && opensAt > now.getTime()) {
+      return new Date(opensAt).toISOString();
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The last readable day's crowd, as one line the card can say at night: the
+ * day's overall level (mean fullness → band), its peak and when that peak hit.
+ * Null when no day in the history carries enough daylight reads — a brand-new
+ * beach then keeps the honest "cams can't read the beach in the dark" copy.
+ * Pure + tested.
+ */
+export function busynessDaySummary(
+  history: readonly HistoryEntry[],
+  todayLocal?: string,
+): BusynessDaySummary | null {
+  const day = mostRecentReadableDay(
+    history,
+    todayLocal,
+    (e) => typeof e.crowdPct === "number" && Number.isFinite(e.crowdPct),
+  );
+  if (!day) return null;
+
+  const reads = day.entries.map((e) => ({
+    hour: e.hour as number,
+    pct: clamp(e.crowdPct as number, 0, 100),
+  }));
+  const avg = reads.reduce((sum, r) => sum + r.pct, 0) / reads.length;
+  // Ties go to the earlier read, so "peaked ~2 PM" names when it FIRST filled up.
+  const peak = reads.reduce((a, b) => (b.pct > a.pct ? b : a));
+
+  return {
+    dateLocal: day.dateLocal,
+    dayLabel: camDayLabel(day.dateLocal, todayLocal),
+    level: pctToLevel(avg),
+    peakLevel: pctToLevel(peak.pct),
+    peakHourLocal: peak.hour,
+    avgCrowdPct: Math.round(avg),
+    reads: reads.length,
+  };
 }
 
 /**
@@ -254,7 +404,25 @@ export function summarizeBusyness(
   // fetchBusyness's real callers pass one.
   const note = gate ? unreadableReason(group?.capturedAtLocal, gate) : undefined;
   if (note) {
-    return { level: "unknown", capturedAtLocal: group?.capturedAtLocal, note, byHour, byDay, vsAvg };
+    // Gated: the LIVE reading stays "unknown" (so it still drops out of the
+    // score), but we hand the card the last readable day and the next read time
+    // so it can say something useful instead of "no read".
+    return {
+      level: "unknown",
+      capturedAtLocal: group?.capturedAtLocal,
+      note,
+      byHour,
+      byDay,
+      vsAvg,
+      yesterday: busynessDaySummary(history, nowLocalDate),
+      // Only darkness has a knowable end. A stale DAYTIME capture keeps its own
+      // note instead: the gate is already open, so the next read is whenever the
+      // job recovers — promising "6:26 AM tomorrow" would be worse than silence.
+      nextReadIso:
+        note === NIGHT_NOTE
+          ? nextCamReadIso(gate?.now ?? new Date(), gate?.sunriseIso, gate?.tomorrowSunriseIso)
+          : undefined,
+    };
   }
 
   const cams = (group?.cams ?? []).filter(
@@ -330,7 +498,13 @@ export async function fetchBusyness(
     );
     const data = summarizeBusyness(
       feed,
-      { sunriseIso: sun?.sunrise, sunsetIso: sun?.sunset },
+      {
+        sunriseIso: sun?.sunrise,
+        sunsetIso: sun?.sunset,
+        // Tomorrow's sunrise answers "when does the next read come in?" once
+        // today's has already passed (the evening case).
+        tomorrowSunriseIso: sun?.tomorrowSunrise,
+      },
       nowLocalDate,
     );
     return {

@@ -279,12 +279,12 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
       title: "Crowds",
       weightPct: SCORE_WEIGHTS_PCT.crowds,
       explainer:
-        "How full the beach looks right now, read straight off the public beach cams by a vision model. An empty beach scores best and a packed one worst — this is about elbow room, not safety. At night, or when a cam is down or stale, we simply can't see the sand, so busyness reads 'unknown' and drops out of the score entirely rather than pretending the beach is empty. The \"busier/quieter than average\" line compares today's reads only against the same hours on prior same-weekday days over a rolling ~8-week window (so it stays fair to the time of day), and needs about a week of same-weekday history before it will speak.",
+        "How full the beach looks right now, read straight off the public beach cams by a vision model. An empty beach scores best and a packed one worst — this is about elbow room, not safety. At night, or when a cam is down or stale, we simply can't see the sand, so busyness reads 'unknown' and drops out of the score entirely rather than pretending the beach is empty. The \"busier/quieter than average\" line compares today's reads only against the same hours on prior same-weekday days over a rolling ~8-week window (so it stays fair to the time of day), and needs about a week of same-weekday history before it will speak. Overnight the card shows the last day the cams COULD read the beach — its overall level, its peak and roughly when it hit — plus when the next read lands; that summary is a memory, not a live reading, and it stays out of the score.",
       formula: "crowdScore = curve through 0%→100, 25%→90, 50%→70, 75%→45, 100%→25 (emptier is better)",
       computation,
       sources: src(snap.busyness.source),
       notes:
-        "Read from the beach cams by a vision model (busiest cam now, else the hour's learned average). Night gate: when the cams can't see the beach (dark or a stale capture) busyness reads 'unknown' and is dropped entirely rather than faking an empty beach.",
+        "Read from the beach cams by a vision model (busiest cam now, else the hour's learned average). Night gate: when the cams can't see the beach (dark or a stale capture) busyness reads 'unknown' and is dropped entirely rather than faking an empty beach. The overnight card text is the last readable day's summary (mean fullness → band, plus its peak hour) and the next read time; it never re-enters the score.",
     };
   },
 
@@ -537,13 +537,13 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
       title: "Water clarity",
       weightPct: null,
       explainer:
-        "How clear the water looks right now, graded by the same vision model — off the same live beach-cam frames — that reads seaweed and busyness. The MODEL still grades on its usual four-step scale (clear → slightly murky → murky → churned up) plus a 0-100 clarity number where 100 is crystal clear, and when several cams see the water we report the MEDIAN one — calibrated against a real in-the-water check: a single angle can read falsely murky from floating seaweed patches or sun glare, so the middle reading tracks the true water best. The WORD shown on the card is a positively-framed presentation of that same read (see formula below) — the underlying grade is unchanged. It's purely informational: it does NOT feed the Beach Day score. At night, when a cam is stale, or when no open water is in frame, clarity reads 'unknown' rather than pretending the water is clear. Satellite nearshore clarity is coming for beaches without cams.",
+        "How clear the water looks right now, graded by the same vision model — off the same live beach-cam frames — that reads seaweed and busyness. The MODEL still grades on its usual four-step scale (clear → slightly murky → murky → churned up) plus a 0-100 clarity number where 100 is crystal clear, and when several cams see the water we report the MEDIAN one — calibrated against a real in-the-water check: a single angle can read falsely murky from floating seaweed patches or sun glare, so the middle reading tracks the true water best. The WORD shown on the card is a positively-framed presentation of that same read (see formula below) — the underlying grade is unchanged. It's purely informational: it does NOT feed the Beach Day score. At night, when a cam is stale, or when no open water is in frame, clarity reads 'unknown' rather than pretending the water is clear. Overnight the tile shows the last readable day's MEDIAN clarity (dimmed, with the morning/afternoon split when the halves differed) and when the next cam read lands, so you get the recent picture instead of a blank. Satellite nearshore clarity is coming for beaches without cams.",
       formula:
         "Informational only — water clarity does NOT feed the Beach Day score. Headline = median clarity across the cams (calibrated 2026-07-24 vs an owner in-water estimate — see docs/CLARITY_CALIBRATION.md); clarity % 0-100 (100 = crystal clear). Displayed word, from the % when present: ≥85 \"Crystal clear\", 65-84 \"Mostly clear\", 45-64 \"A bit murky\", 25-44 \"Murky\", <25 \"Very murky\" (\"Churned up\" if the underlying grade is churned). Without a %, falls back to the grade itself, worded positively: clear→\"Clear\", slightly_murky→\"Mostly clear\", murky→\"Murky\", churned→\"Churned up\".",
       computation,
       sources: src(snap.clarity?.source),
       notes:
-        "Read from the beach cams by a vision model (worst cam of the latest capture). Not scored — shown for planning a swim/snorkel. Night/stale/no-open-water reads show 'unknown' rather than a false 'clear'. Satellite nearshore clarity is planned for cam-less beaches.",
+        "Read from the beach cams by a vision model (worst cam of the latest capture). Not scored — shown for planning a swim/snorkel. Night/stale/no-open-water reads show 'unknown' rather than a false 'clear' — dimmed, with the last readable day's median and the next read time in place of a blank tile. Satellite nearshore clarity is planned for cam-less beaches.",
     };
   },
 
