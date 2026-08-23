@@ -237,7 +237,7 @@ export function ConditionsDashboard({
     ((!!ms.manOWar && ms.manOWar.level !== "low") ||
       (!!ms.seaLice && ms.seaLice.level !== "low"));
   const showSharkContext = !!shark;
-  // Map the hourly forecast into the sky-show card's cloud/humidity points; the
+  // Map the hourly forecast into the sunset-color card's cloud/humidity points; the
   // cloud-by-level fields (added to the hourly fetch) sharpen the color-canvas
   // model, degrading to total cloud where a level split isn't available.
   const sunQualityHourly = (snap.hourly.data ?? []).map((h) => ({
@@ -479,7 +479,7 @@ export function ConditionsDashboard({
             solarWm2={currentHour?.solarWm2}
           />
         ) : null}
-        {/* Sunrise/sunset "sky show" score — a sun-related scored instrument, so
+        {/* Sunrise/sunset color score — a sun-related scored instrument, so
             it sits with UV here. `now` is pinned to the snapshot's generatedAt so
             the next-event pick is identical on the server render and hydration. */}
         {snap.sun.data && snap.hourly.data?.length ? (

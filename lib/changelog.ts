@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-08-23",
+    title: "Golden hour card: times, a countdown, and a simple timeline",
+    details:
+      "The sunset illustration is gone. The card now leads with how long until golden hour (or how long is left once you're in it), the exact window and sunset time, and a clean timeline that lights up while golden hour is on.",
+    tag: "improved",
+  },
+  {
+    date: "2026-08-23",
     title: "Fixed: beach cams could show an old frame labeled as live",
     details:
       "If the app sat in the background for a while, a cam could keep showing an older picture under a fresh-looking time. Cams now say \"Live\" only when both the picture and the page's data are truly current, refresh the moment you come back, and say \"Feed paused\" when a camera stops sending new frames.",

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Sunrise / sunset "sky show" quality — will the sky put on a color show at
+// Sunrise / sunset color quality — how colorful the sky should be at
 // the next sun event, or is it a bust?
 //
 // The recipe (meteorology, not vibes): a vivid sunrise/sunset needs a mid/high
@@ -413,7 +413,7 @@ function buildNote(opts: {
 }
 
 /**
- * Score how likely the NEXT sunrise/sunset is to put on a color show, 0-100.
+ * Score how likely the NEXT sunrise/sunset is to be colorful, 0-100.
  * Pure: no network, no clock reads (`humidityPct`/`cloud` are handed in).
  *
  * - With a level split (any of `lowPct`/`midPct`/`highPct` present): scores

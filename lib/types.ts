@@ -220,7 +220,7 @@ export interface HourlyMetrics {
   time: string; // ISO (UTC)
   airTempF?: number;
   cloudCoverPct?: number;
-  /** Low-level cloud cover, 0-100% (near-horizon deck — blocks a sky show). */
+  /** Low-level cloud cover, 0-100% (near-horizon deck — blocks the sunset color). */
   cloudCoverLowPct?: number;
   /** Mid-level cloud cover, 0-100% (the classic sunrise/sunset color canvas). */
   cloudCoverMidPct?: number;
@@ -320,7 +320,7 @@ export interface SunData {
   sunset?: string;
   /** Dusk / civil twilight end (sun 6° below horizon, evening), ISO. */
   dusk?: string;
-  /** Tomorrow's sunrise (ISO) — the sky-show card looks ahead to it once
+  /** Tomorrow's sunrise (ISO) — the sunset-color card looks ahead to it once
    *  today's sunset has passed. See lib/sunQuality.ts's nextSunEvent. */
   tomorrowSunrise?: string;
   // --- True golden/blue hour, from a solar-elevation solve (photographic
@@ -349,7 +349,7 @@ export interface SunData {
   goldenAmPeakIso?: string;
   /** Peak-color anchor: sun at −3° in the evening (post-sunset). */
   goldenEvePeakIso?: string;
-  /** Tomorrow's morning golden-hour window + peak anchor — used by the sky-show
+  /** Tomorrow's morning golden-hour window + peak anchor — used by the sunset-color
    *  card once tonight's sunset has passed and it looks ahead to tomorrow. */
   tomorrowGoldenAmStartIso?: string;
   tomorrowGoldenAmEndIso?: string;

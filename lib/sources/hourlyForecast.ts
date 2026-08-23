@@ -144,7 +144,7 @@ export async function fetchHourlyForecast(
     `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch` +
     // `past_days=2` (was 1) gives the marine-stinger man-o'-war advisory a safe
     // >=24h trailing-wind margin regardless of local time-of-day; cloud_cover_low/
-    // mid/high feed the sunrise/sunset sky-show score's color-canvas model.
+    // mid/high feed the sunrise/sunset color score's color-canvas model.
     `&past_days=2&forecast_days=7`; // keep in step with forecast.ts's daily forecast_days
   // GOES satellite-observed radiation for elapsed hours (best effort; the
   // forecast model's values stand wherever this is missing or fails).
