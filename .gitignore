@@ -42,6 +42,11 @@ yarn-error.log*
 # test
 /coverage
 
+# playwright (mobile-layout check — see e2e/layout.spec.ts)
+/playwright-report/
+/test-results/
+/e2e/artifacts/
+
 # python
 __pycache__/
 *.pyc

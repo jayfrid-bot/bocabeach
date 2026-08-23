@@ -41,6 +41,11 @@ can drift weeks behind the real calendar; it happened). `lib/changelog.dates.tes
 cross-checks every entry against git and fails on a mismatch; an entry written
 after the fact must set `backfilled: true` and carry the real ship date.
 
+Run `npm run check:mobile` (auto-runs on push + inside `npm run deploy`) — any
+new card/copy must pass at 390px; never add a one-line clamp to a 2-column
+tile without a phone-width fallback (see `MetricCard`'s `subShort` prop for
+the pattern). Details: `e2e/layout.spec.ts`.
+
 ## Guardrails
 - Don't embed Surfline cams or scrape their video (link out only).
 - Keep scores as guidance; lifeguard flags are authoritative safety overrides.

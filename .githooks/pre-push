@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Mobile-layout gate — runs before every push (see e2e/layout.spec.ts).
+#
+# Catches things desktop testing misses: clipped text, sideways scroll,
+# undersized tap targets, console errors, at real phone widths (390/768/1280).
+# This is what caught today's bug — a golden-hour line that truncated
+# mid-sentence at 390px and looked fine at desktop width.
+#
+# Enabled via: git config core.hooksPath .githooks
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "Running mobile layout check before push (npm run check:mobile)..."
+if npm run check:mobile; then
+  echo "Mobile layout check passed."
+  exit 0
+else
+  status=$?
+  echo ""
+  echo "Mobile layout check FAILED — push blocked."
+  echo "See the failure output above (or open playwright-report/index.html)."
+  echo ""
+  echo "Fix the layout issue, or if this is a genuine emergency, bypass with:"
+  echo "  git push --no-verify"
+  echo ""
+  exit "$status"
+fi

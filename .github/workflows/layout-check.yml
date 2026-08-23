@@ -1,0 +1,61 @@
+name: Mobile Layout Check
+
+# Runs e2e/layout.spec.ts against a real Chromium browser at phone/tablet/
+# desktop widths on every push to main and every PR — the CI backstop for the
+# .githooks/pre-push gate (which only runs on pushers who have the hook
+# enabled locally). Catches exactly the class of bug this suite was built
+# for: text that clips only at narrow widths (see e2e/layout.spec.ts's header
+# comment for the 2026-08-23 golden-hour bug this suite would have caught).
+#
+# CI has none of the external API keys the live site uses (NDBC, NOAA, GOES,
+# etc) — every data source in lib/sources/*.ts must degrade honestly rather
+# than throw, so the page still renders. playwright.config.ts's hydration
+# wait only requires the footer build stamp + a score rating word, never a
+# specific live value, so this suite stays green with zero secrets.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: layout-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  layout-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build (CI serves the built app, not the dev server)
+        run: npm run build
+
+      - name: Run mobile layout check
+        run: npx playwright test
+        env:
+          # dev-server startup is slow and flaky in CI; a built `next start`
+          # is fast and matches what actually ships. See playwright.config.ts.
+          PW_WEB_SERVER_CMD: "npm run start -- -p 3100"
+
+      - name: Upload screenshots + report (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: layout-check-artifacts
+          path: |
+            e2e/artifacts
+            playwright-report
+          retention-days: 14

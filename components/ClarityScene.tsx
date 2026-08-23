@@ -183,9 +183,15 @@ export function ClarityTileFront({
           </div>
         ) : null}
         <div
-          className={`min-h-4 break-words text-xs text-slate-600 dark:text-slate-400 ${
-            hasScene ? "line-clamp-2 sm:line-clamp-1" : "line-clamp-3"
-          }`}
+          // NOTE: unlike SunQualityCard's colorLine (same clamp idiom), this
+          // line swaps in MORE text at sm+ (the full `sub`, including the
+          // free-text cam note) than it shows on phones (`subShort`, the
+          // deterministic parts only) — so it must never drop to FEWER lines
+          // at the wider breakpoint. A stray `sm:line-clamp-1` here once
+          // clipped the long note mid-sentence on tablet/desktop (caught by
+          // e2e/layout.spec.ts); line-clamp-3 unconditionally is the safe
+          // superset for both the short (mobile) and long (sm+) text.
+          className="min-h-4 break-words text-xs text-slate-600 dark:text-slate-400 line-clamp-3"
           title={sub}
         >
           {subShort && subShort !== sub ? (

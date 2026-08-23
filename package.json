@@ -9,7 +9,9 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "check:mobile": "playwright test",
+    "deploy": "npm run check:mobile && rm -rf .next .open-next && opennextjs-cloudflare build && wrangler deploy"
   },
   "dependencies": {
     "@capacitor/android": "^8.4.0",
@@ -25,6 +27,7 @@
   "devDependencies": {
     "@capacitor/cli": "^8.4.0",
     "@opennextjs/cloudflare": "^1.20.1",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^20.17.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

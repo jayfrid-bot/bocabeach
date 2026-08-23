@@ -417,8 +417,14 @@ function SunQualityFront({
 
         {target ? <GoldenTrack target={target} nowMs={nowMs} during={during} tz={tz} /> : null}
 
+        {/* Two lines allowed at every width, matching timesLine above: with a
+            "Vivid"/"Sunrise" band label plus the "· peak color ~H:MM AM/PM"
+            suffix, this line can run long enough to wrap even in the wider
+            4-col desktop card (~200px) — a `sm:line-clamp-1` here once
+            clipped it mid-sentence on desktop (caught by e2e/layout.spec.ts;
+            the phone-width fix alone wasn't sufficient at every width). */}
         <div
-          className="mt-3 min-h-4 text-xs tabular-nums text-slate-500 dark:text-slate-400 line-clamp-2 sm:line-clamp-1"
+          className="mt-3 min-h-4 text-xs tabular-nums text-slate-500 dark:text-slate-400 line-clamp-2"
           title={colorLine}
         >
           {colorLine}
