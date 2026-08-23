@@ -10,18 +10,27 @@ export interface ChangelogEntry {
   title: string;
   details?: string;
   tag?: ChangelogTag;
+  /** Set when the entry was written AFTER the work shipped (documenting an
+   *  earlier date). Tested: the date must then match a real commit day in git. */
+  backfilled?: boolean;
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
-    date: "2026-07-29",
+    date: "2026-08-23",
+    title: "Fixed: wrong dates on recent entries in this list",
+    details: "Two August updates were mislabeled as July. Dates here are now checked against the actual release record.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-08-17",
     title: "Is It Beach Day is on the App Store",
     details:
       "The iPhone app is here — free, with the same live Beach Day score, cams, and an optional morning heads-up notification. Look for the App Store link at the top of the page.",
     tag: "new",
   },
   {
-    date: "2026-07-29",
+    date: "2026-08-16",
     title: "Fixed: lifeguard flags read as double red all day",
     details:
       "The City's page added a standing note that double red flags may be flown during lightning. We were reading that as the flag actually flying, which pinned the beach score near zero. Now hedged wording is treated as a heads-up, not a posting — and the real flags (like yellow and purple) are read correctly.",
@@ -58,6 +67,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-07-24",
     title: "Little scenes on the Golden hour and Water clarity cards",
+    backfilled: true,
     details:
       "The sunset card now paints tonight's predicted sky — vivid when a show is coming, gray for a dud — and water clarity shows a swimmer's-eye view where the seafloor fades with the murk.",
     tag: "new",
@@ -65,6 +75,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-07-24",
     title: "A cleaner, tidier dashboard",
+    backfilled: true,
     details:
       "Cards reorganized so everything lines up with no gaps, duplicate readings removed, and quieter one-line advisories.",
     tag: "improved",
@@ -72,6 +83,7 @@ export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-07-24",
     title: "Water clarity tuned against a real swim",
+    backfilled: true,
     details:
       "The clarity reading was calibrated against in-the-water checks at the beach itself — it now tracks what the water actually looks like much more closely.",
     tag: "improved",

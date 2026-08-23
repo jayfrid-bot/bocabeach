@@ -36,6 +36,10 @@ wrong reading, a copy change — MUST add an entry to `lib/changelog.ts` in the
 SAME commit. Plain beachgoer language, no file names. The "What's new" section
 at the page footer is the user-facing record; the owner has had to ask twice
 when it drifted. Backend-only work (refactors, tests, infra) does not need one.
+NEVER hand-type the entry date from memory — run `date` first (a session clock
+can drift weeks behind the real calendar; it happened). `lib/changelog.dates.test.ts`
+cross-checks every entry against git and fails on a mismatch; an entry written
+after the fact must set `backfilled: true` and carry the real ship date.
 
 ## Guardrails
 - Don't embed Surfline cams or scrape their video (link out only).
