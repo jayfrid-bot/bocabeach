@@ -105,7 +105,7 @@ function FeelsLikeFront({
           />
         </div>
         {!compact ? (
-          <div className="mt-1.5 min-h-4 break-words text-xs text-slate-600 dark:text-slate-400 line-clamp-2">
+          <div className="mt-1.5 min-h-4 break-words text-xs text-slate-600 dark:text-slate-400 line-clamp-3 sm:line-clamp-2">
             {drivers.length ? drivers.join(" · ") : " "}
           </div>
         ) : null}

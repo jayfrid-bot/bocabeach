@@ -244,10 +244,44 @@ const DAY_END_HOUR = 20;
 /** Fewer reads than this is a scrap of a day, not a summary of one. */
 const MIN_DAY_READS = 3;
 
+/**
+ * How far back a cam-day summary may reach: today, yesterday, or the day before
+ * that. Past three days the beach has simply moved on, and a remembered day
+ * shown as a headline reads as a broken card ("Wednesday: Quiet" on a Friday),
+ * so the cards say plainly that there's been no recent read instead.
+ */
+export const MAX_CAM_SUMMARY_DAYS_BACK = 2;
+
 /** The calendar day before `dateLocal` (YYYY-MM-DD), via UTC to dodge DST. */
 function previousLocalDay(dateLocal: string): string {
   const [y, m, d] = dateLocal.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10);
+}
+
+const SHORT_WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+/** Abbreviated weekday for a local date ("2026-08-26" → "Wed"), computed in UTC
+ *  so it never drifts with the server's own timezone. */
+export function shortWeekday(dateLocal: string): string | undefined {
+  if (!DATE_RE.test(dateLocal)) return undefined;
+  const [y, m, d] = dateLocal.split("-").map(Number);
+  return SHORT_WEEKDAYS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+}
+
+/** Whole calendar days from `dateLocal` back to `todayLocal` (0 = today). */
+function daysBackFrom(dateLocal: string, todayLocal: string): number | undefined {
+  if (!DATE_RE.test(dateLocal) || !DATE_RE.test(todayLocal)) return undefined;
+  const [ty, tm, td] = todayLocal.split("-").map(Number);
+  const [dy, dm, dd] = dateLocal.split("-").map(Number);
+  return Math.round(
+    (Date.UTC(ty, tm - 1, td) - Date.UTC(dy, dm - 1, dd)) / 86_400_000,
+  );
+}
+
+/** True when a readable day is recent enough to summarize. A day of unknown
+ *  distance (the caller passed no "today") keeps the old unbounded behaviour. */
+function withinSummaryWindow(day: { daysBack?: number }): boolean {
+  return day.daysBack == null || day.daysBack <= MAX_CAM_SUMMARY_DAYS_BACK;
 }
 
 /**
@@ -264,18 +298,52 @@ export function camDayLabel(dateLocal: string, todayLocal?: string): CamDayLabel
   return weekdayName(dateLocal) ?? "the last cam day";
 }
 
+const cap = (s: string): string => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+/**
+ * The card headline for a day summary: "Today", "Yesterday", or — for the
+ * oldest day still inside the summary window — "Last read (Sun)". The
+ * parenthetical makes a two-day-old reading unmistakably historical; the bare
+ * "Sunday: Quiet" it replaces read as a broken card. Exported so the busyness
+ * card and the clarity tile name the day identically.
+ */
+export function camDayHeadline(day: {
+  dateLocal: string;
+  dayLabel: CamDayLabel;
+  daysBack?: number;
+}): string {
+  if (day.daysBack != null && day.daysBack >= MAX_CAM_SUMMARY_DAYS_BACK) {
+    const w = shortWeekday(day.dateLocal);
+    return w ? `Last read (${w})` : "Last read";
+  }
+  return cap(day.dayLabel);
+}
+
+/**
+ * The one honest line a card shows when its newest readable day is older than
+ * the summary window: "No recent cam reads — last clear read Wed". The weekday
+ * is dropped when no day is readable at any distance.
+ */
+export function noRecentCamReadsCopy(lastReadWeekday?: string): string {
+  return lastReadWeekday
+    ? `No recent cam reads — last clear read ${lastReadWeekday}`
+    : "No recent cam reads";
+}
+
 /**
  * The most recent local day (at or before `todayLocal`) with at least
- * MIN_DAY_READS usable daylight reads, plus those reads. Walks backwards, so a
- * rained-out or feed-less day falls through to the one before it. Exported for
- * lib/sources/clarity.ts, which needs the same day selection over its own
- * history shape.
+ * MIN_DAY_READS usable daylight reads, plus those reads and how many calendar
+ * days back it sits. Walks backwards, so a rained-out or feed-less day falls
+ * through to the one before it; the walk itself is UNBOUNDED so callers can
+ * still name a long-stale day, and they apply MAX_CAM_SUMMARY_DAYS_BACK to
+ * decide whether it may be summarized. Exported for lib/sources/clarity.ts,
+ * which needs the same day selection over its own history shape.
  */
 export function mostRecentReadableDay<T extends { t?: string; hour?: number }>(
   history: readonly T[],
   todayLocal: string | undefined,
   usable: (entry: T) => boolean,
-): { dateLocal: string; entries: T[] } | undefined {
+): { dateLocal: string; entries: T[]; daysBack?: number } | undefined {
   const byDate = new Map<string, T[]>();
   for (const e of history) {
     if (typeof e.t !== "string") continue;
@@ -293,9 +361,31 @@ export function mostRecentReadableDay<T extends { t?: string; hour?: number }>(
   const dates = [...byDate.keys()].sort();
   for (let i = dates.length - 1; i >= 0; i--) {
     const entries = byDate.get(dates[i]) as T[];
-    if (entries.length >= MIN_DAY_READS) return { dateLocal: dates[i], entries };
+    if (entries.length >= MIN_DAY_READS) {
+      return {
+        dateLocal: dates[i],
+        entries,
+        daysBack: todayLocal ? daysBackFrom(dates[i], todayLocal) : undefined,
+      };
+    }
   }
   return undefined;
+}
+
+/**
+ * Abbreviated weekday of the newest readable day when that day is TOO OLD to
+ * summarize — the "last clear read Wed" the cards fall back to. Undefined when
+ * a summary is available, or when no day is readable at any distance (the card
+ * then keeps its plain "cams can't see" note). Exported for clarity.ts.
+ */
+export function staleCamReadWeekday<T extends { t?: string; hour?: number }>(
+  history: readonly T[],
+  todayLocal: string | undefined,
+  usable: (entry: T) => boolean,
+): string | undefined {
+  const day = mostRecentReadableDay(history, todayLocal, usable);
+  if (!day || withinSummaryWindow(day)) return undefined;
+  return shortWeekday(day.dateLocal);
 }
 
 /**
@@ -320,23 +410,24 @@ export function nextCamReadIso(
   return undefined;
 }
 
+/** A history entry usable as a crowd read (it carries a real fullness %). */
+const USABLE_CROWD = (e: HistoryEntry): boolean =>
+  typeof e.crowdPct === "number" && Number.isFinite(e.crowdPct);
+
 /**
  * The last readable day's crowd, as one line the card can say at night: the
  * day's overall level (mean fullness → band), its peak and when that peak hit.
- * Null when no day in the history carries enough daylight reads — a brand-new
- * beach then keeps the honest "cams can't read the beach in the dark" copy.
- * Pure + tested.
+ * Null when no day in the history carries enough daylight reads, OR when the
+ * newest such day is further back than MAX_CAM_SUMMARY_DAYS_BACK — a day older
+ * than that isn't a stand-in for "right now", so the card says there's been no
+ * recent read instead of headlining a stale weekday. Pure + tested.
  */
 export function busynessDaySummary(
   history: readonly HistoryEntry[],
   todayLocal?: string,
 ): BusynessDaySummary | null {
-  const day = mostRecentReadableDay(
-    history,
-    todayLocal,
-    (e) => typeof e.crowdPct === "number" && Number.isFinite(e.crowdPct),
-  );
-  if (!day) return null;
+  const day = mostRecentReadableDay(history, todayLocal, USABLE_CROWD);
+  if (!day || !withinSummaryWindow(day)) return null;
 
   const reads = day.entries.map((e) => ({
     hour: e.hour as number,
@@ -349,6 +440,7 @@ export function busynessDaySummary(
   return {
     dateLocal: day.dateLocal,
     dayLabel: camDayLabel(day.dateLocal, todayLocal),
+    daysBack: day.daysBack,
     level: pctToLevel(avg),
     peakLevel: pctToLevel(peak.pct),
     peakHourLocal: peak.hour,
@@ -407,6 +499,7 @@ export function summarizeBusyness(
     // Gated: the LIVE reading stays "unknown" (so it still drops out of the
     // score), but we hand the card the last readable day and the next read time
     // so it can say something useful instead of "no read".
+    const yesterday = busynessDaySummary(history, nowLocalDate);
     return {
       level: "unknown",
       capturedAtLocal: group?.capturedAtLocal,
@@ -414,7 +507,12 @@ export function summarizeBusyness(
       byHour,
       byDay,
       vsAvg,
-      yesterday: busynessDaySummary(history, nowLocalDate),
+      yesterday,
+      // Only when the newest readable day was too old to summarize: the card
+      // then says "No recent cam reads — last clear read Wed".
+      lastReadWeekday: yesterday
+        ? undefined
+        : staleCamReadWeekday(history, nowLocalDate, USABLE_CROWD),
       // Only darkness has a knowable end. A stale DAYTIME capture keeps its own
       // note instead: the gate is already open, so the next read is whenever the
       // job recovers — promising "6:26 AM tomorrow" would be worse than silence.

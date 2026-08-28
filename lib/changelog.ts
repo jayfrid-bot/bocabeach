@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-08-28",
+    title: "Fixed: cam readings going stale for hours",
+    details:
+      "The scheduler that reads the beach cams was being throttled to a few runs a day. It now keeps itself running through daylight hours, so seaweed, busyness, and water clarity stay current. Camera capture times are also fetched more reliably, and if readings ever do lapse, the cards now say plainly when the last clear read was.",
+    tag: "fixed",
+  },
+  {
     date: "2026-08-23",
     title: "Fixed: cut-off text on phone-width cards",
     details: "Golden hour, water clarity, and seaweed no longer truncate mid-sentence on a phone — lines wrap, and long camera notes step aside on small screens.",

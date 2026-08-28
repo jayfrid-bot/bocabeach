@@ -1,6 +1,7 @@
 import type { BusynessData } from "@/lib/types";
 import { BUSYNESS_SLOTS, busynessFilledSlots } from "@/lib/busynessFill";
 import { fmtTime } from "@/lib/format";
+import { camDayHeadline, noRecentCamReadsCopy } from "@/lib/sources/busyness";
 import { busynessVsAvgPhrase, type VsAvgTone } from "@/lib/vsAveragePhrase";
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
@@ -80,10 +81,16 @@ export function BusynessCard({ busy, tz }: { busy?: BusynessData | null; tz?: st
     const nextRead =
       busy.nextReadIso && tz ? `Next cam read ~${fmtTime(busy.nextReadIso, tz)}` : null;
     const filled = y ? busynessFilledSlots(y.avgCrowdPct, y.level) : 0;
+    // No day recent enough to summarize, but the cams DID read the beach at
+    // some point — name that day plainly rather than showing nothing.
+    const staleLine = !y && busy.lastReadWeekday
+      ? noRecentCamReadsCopy(busy.lastReadWeekday)
+      : null;
     // One quiet closing line: when the cams come back — or, for a daytime
-    // outage (no knowable end, so no nextRead), why they're out at all. Without
-    // a day summary the note is already the main line, so it isn't repeated.
-    const tail = y ? nextRead ?? busy.note : nextRead;
+    // outage (no knowable end, so no nextRead), why they're out at all. With no
+    // day summary and no stale line the note is already the main line, so it
+    // isn't repeated.
+    const tail = y || staleLine ? nextRead ?? busy.note : nextRead;
 
     return (
       <div className="flex h-full flex-col rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
@@ -92,7 +99,7 @@ export function BusynessCard({ busy, tz }: { busy?: BusynessData | null; tz?: st
           <span>Beach busyness</span>
         </div>
         <div className="mt-1 text-xl font-semibold text-slate-500 dark:text-slate-400 sm:text-2xl">
-          {y ? `${cap(y.dayLabel)}: ${cap(y.level)}` : "Unknown right now"}
+          {y ? `${camDayHeadline(y)}: ${cap(y.level)}` : "Unknown right now"}
         </div>
         <div className="mt-2 flex flex-wrap gap-1 rounded-xl bg-slate-100/80 p-2 text-slate-400 dark:bg-slate-950/40 dark:text-slate-600">
           {Array.from({ length: BUSYNESS_SLOTS }, (_, i) => (
@@ -104,7 +111,7 @@ export function BusynessCard({ busy, tz }: { busy?: BusynessData | null; tz?: st
           <span>
             {y
               ? `${y.dayLabel}'s average · peaked ${cap(y.peakLevel)} ~${hourLabel(y.peakHourLocal)}`
-              : busy.note}
+              : staleLine ?? busy.note}
           </span>
         </div>
         {tail ? (

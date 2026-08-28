@@ -163,8 +163,14 @@ UW_FRAME_URL = os.environ.get(
 ).rstrip("/")
 # A courier frame older than this (minutes) is considered stale -> fall through.
 UW_FRAME_MAX_AGE_MIN = float(os.environ.get("UW_FRAME_MAX_AGE_MIN", "90"))
-# Only run the underwater read within these LOCAL hours (dark underwater at night)
-# and only in the first 10 minutes of the hour, so it fires at most ~once/hour.
+# Only run the underwater read within these LOCAL hours (dark underwater at night).
+# The at-most-once-per-hour cap itself is enforced in main() by AGE of the
+# previous uw read (>= 50 min), not by wall-clock minute — see the comment there
+# for why. That age gate is what actually throttles this to ~hourly, whether a
+# tick arrives from GitHub's throttled cron or from the workflow's internal
+# ~10-min loop (see .github/workflows/sargassum.yml): a fresh run every ~10 min
+# means the gate opens on the 6th cycle after the last successful read, i.e.
+# close to exactly once per hour, same as before.
 UW_HOURS = range(6, 21)  # 6 AM .. 8 PM local, inclusive
 
 PROMPT = (

@@ -328,7 +328,29 @@ describe("summarizeClarity — the last readable day (overnight fallback)", () =
       { now: new Date("2026-08-23T23:00:00-04:00"), timezone: tz, nowLocalDate: "2026-08-23" },
     );
     expect(d!.yesterday).toBeNull();
+    expect(d!.lastReadWeekday).toBeUndefined(); // nothing readable at any distance
     expect(d!.note).toMatch(/dark/i);
+  });
+
+  it("still summarizes exactly two days back, headlined as history", () => {
+    const d = summarizeClarity(
+      { latest: { cams: [] }, history: history as never },
+      { now: new Date("2026-08-25T23:00:00-04:00"), timezone: tz, nowLocalDate: "2026-08-25" },
+    );
+    expect(d!.yesterday?.dateLocal).toBe("2026-08-23"); // Sunday, 2 days back
+    expect(d!.yesterday?.daysBack).toBe(2);
+    expect(clarityTileCopy(d!, tz).value).toBe("Last read (Sun): Mostly clear");
+    expect(d!.lastReadWeekday).toBeUndefined();
+  });
+
+  it("drops the summary past two days back and names the last clear read", () => {
+    const d = summarizeClarity(
+      { latest: { cams: [] }, history: history as never },
+      { now: new Date("2026-08-26T23:00:00-04:00"), timezone: tz, nowLocalDate: "2026-08-26" },
+    );
+    expect(d!.yesterday).toBeNull(); // Sunday is 3 days back now
+    expect(d!.lastReadWeekday).toBe("Sun");
+    expect(d!.status).toBe("unknown"); // still an honest no-live-read
   });
 
   it("keeps the gated reading level-null 'unknown' — the day summary is display-only", () => {
@@ -453,6 +475,25 @@ describe("clarityTileCopy — what the tile actually says", () => {
     );
     expect(c.sub).toBe("~72% clear · latest cam capture is a couple hours old");
     expect(c.muted).toBe(true);
+  });
+
+  it("says there's been no recent read when the last readable day is too old", () => {
+    const c = clarityTileCopy(
+      {
+        level: null,
+        pct: null,
+        status: "unknown",
+        note: "cams can't read the water in the dark",
+        nextReadIso: "2026-08-27T06:24:00-04:00",
+        yesterday: null,
+        lastReadWeekday: "Wed",
+      },
+      tz,
+    );
+    expect(c.value).toBe("—");
+    expect(c.sub).toBe("No recent cam reads — last clear read Wed · next cam read ~6:24 AM");
+    expect(c.pct).toBeNull(); // no scene — nothing recent enough to draw
+    expect(c.muted).toBeUndefined();
   });
 
   it("keeps the honest note plus the next read time when there's no day behind us", () => {

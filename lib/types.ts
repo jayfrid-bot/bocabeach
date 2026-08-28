@@ -627,6 +627,12 @@ export interface BusynessDaySummary {
   /** The day being described, local to the beach (YYYY-MM-DD). */
   dateLocal: string;
   dayLabel: CamDayLabel;
+  /**
+   * Whole calendar days from today back to this day (0 = today, 1 = yesterday,
+   * 2 = the oldest day still summarized). Absent when the caller didn't supply
+   * today's local date. Drives the "Last read (Sun)" headline.
+   */
+  daysBack?: number;
   /** The day's overall crowd — its mean fullness mapped to a band. */
   level: BusynessLevel;
   /** The band at the day's busiest read. */
@@ -670,6 +676,13 @@ export interface BusynessData {
    * score. See lib/sources/busyness.ts.
    */
   yesterday?: BusynessDaySummary | null;
+  /**
+   * Abbreviated weekday ("Wed") of the newest readable cam day when that day is
+   * too old to summarize (more than two days back), so the card can say "No
+   * recent cam reads — last clear read Wed". Omitted whenever a summary is
+   * present, or when no day is readable at any distance.
+   */
+  lastReadWeekday?: string;
   /** When the cams can see the beach again (next sunrise − the daylight
    *  buffer), ISO. Omitted when sun times are unavailable. */
   nextReadIso?: string;
@@ -747,6 +760,13 @@ export interface ClarityData {
    * Display only — clarity never feeds the score anyway.
    */
   yesterday?: ClarityDaySummary | null;
+  /**
+   * Abbreviated weekday ("Wed") of the newest readable cam day when that day is
+   * too old to summarize (more than two days back), so the tile can say "No
+   * recent cam reads — last clear read Wed". Omitted whenever a summary is
+   * present, or when no day is readable at any distance.
+   */
+  lastReadWeekday?: string;
   /** When the cams can read the water again (next sunrise − the daylight
    *  buffer), ISO. Omitted when sun times are unavailable. */
   nextReadIso?: string;
@@ -756,6 +776,12 @@ export interface ClarityDaySummary {
   /** The day being described, local to the beach (YYYY-MM-DD). */
   dateLocal: string;
   dayLabel: CamDayLabel;
+  /**
+   * Whole calendar days from today back to this day (0 = today, 1 = yesterday,
+   * 2 = the oldest day still summarized). Absent when the caller didn't supply
+   * today's local date. Drives the "Last read (Sun)" headline.
+   */
+  daysBack?: number;
   /** Median 0-100 clarity across the day's daylight reads (100 = crystal clear). */
   pct: number;
   /** The display word for that median (see clarityDisplayWord). */

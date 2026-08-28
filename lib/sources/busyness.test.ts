@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { summarizeBusyness, fetchBusyness, type CamFeed } from "@/lib/sources/busyness";
+import {
+  summarizeBusyness,
+  fetchBusyness,
+  camDayHeadline,
+  noRecentCamReadsCopy,
+  type CamFeed,
+} from "@/lib/sources/busyness";
 import type { Location } from "@/lib/types";
 
 const CAMLESS_LOCATION: Location = {
@@ -338,13 +344,40 @@ describe("summarizeBusyness — the last readable day (overnight fallback)", () 
     });
   });
 
-  it("names a day further back by its weekday", () => {
+  it("names a day further back by its weekday, headlined as history", () => {
     const d = summarizeBusyness(
       { latest: { cams: [] }, history: history as never },
       { now: new Date("2026-08-25T22:00:00-04:00"), sunriseIso, sunsetIso },
       "2026-08-25", // Tuesday; the last readable day is Sunday the 23rd
     );
     expect(d.yesterday?.dayLabel).toBe("Sunday");
+    expect(d.yesterday?.daysBack).toBe(2);
+    // A bare "Sunday: Quiet" read as a broken card — the parenthetical fixes that.
+    expect(camDayHeadline(d.yesterday!)).toBe("Last read (Sun)");
+    expect(d.lastReadWeekday).toBeUndefined(); // a summary IS available
+  });
+
+  it("drops the summary past two days back and names the last clear read", () => {
+    const d = summarizeBusyness(
+      { latest: { cams: [] }, history: history as never },
+      { now: new Date("2026-08-26T22:00:00-04:00"), sunriseIso, sunsetIso },
+      "2026-08-26", // Wednesday; the last readable day is Sunday the 23rd — 3 back
+    );
+    expect(d.level).toBe("unknown"); // the score gate is untouched by any of this
+    expect(d.yesterday).toBeNull();
+    expect(d.lastReadWeekday).toBe("Sun");
+    expect(noRecentCamReadsCopy(d.lastReadWeekday)).toBe(
+      "No recent cam reads — last clear read Sun",
+    );
+  });
+
+  it("keeps today/yesterday headlines plain", () => {
+    expect(camDayHeadline({ dateLocal: "2026-08-23", dayLabel: "today", daysBack: 0 })).toBe(
+      "Today",
+    );
+    expect(camDayHeadline({ dateLocal: "2026-08-22", dayLabel: "yesterday", daysBack: 1 })).toBe(
+      "Yesterday",
+    );
   });
 
   it("ignores night reads and never summarizes a day ahead of today", () => {
@@ -381,7 +414,9 @@ describe("summarizeBusyness — the last readable day (overnight fallback)", () 
       "2026-08-23",
     );
     expect(d.yesterday).toBeNull();
+    expect(d.lastReadWeekday).toBeUndefined(); // nothing to name — the note stands alone
     expect(d.note).toMatch(/dark/i);
+    expect(noRecentCamReadsCopy()).toBe("No recent cam reads");
   });
 
   it("keeps the gated reading 'unknown' — the day summary is display-only", () => {

@@ -13,7 +13,15 @@ import { fetchSun } from "@/lib/sources/sun";
 // day, and when does the next read land?") is the same question busyness asks,
 // so both cards share one implementation of day selection, day naming and the
 // next-read instant. See lib/sources/busyness.ts.
-import { camDayLabel, mostRecentReadableDay, nextCamReadIso } from "@/lib/sources/busyness";
+import {
+  camDayHeadline,
+  camDayLabel,
+  mostRecentReadableDay,
+  nextCamReadIso,
+  noRecentCamReadsCopy,
+  staleCamReadWeekday,
+  MAX_CAM_SUMMARY_DAYS_BACK,
+} from "@/lib/sources/busyness";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
 
@@ -182,23 +190,26 @@ function median(xs: readonly number[]): number {
   return n % 2 ? s[(n - 1) / 2] : Math.round((s[n / 2 - 1] + s[n / 2]) / 2);
 }
 
+/** A history entry usable as a clarity read (it carries a real clarity %). */
+const USABLE_CLARITY = (e: HistoryEntry): boolean =>
+  typeof e.clr === "number" && Number.isFinite(e.clr);
+
 /**
  * The last readable day's water clarity, for the card to show while the live
  * read is night-gated or stale: the day's median clarity and its display word,
  * plus the morning and afternoon medians when the day has reads on both sides
  * of noon (mornings are often the clear half). Null when no day carries enough
- * daylight reads. Pure + tested.
+ * daylight reads, or when the newest such day is further back than
+ * MAX_CAM_SUMMARY_DAYS_BACK — water two days stale is history, not a stand-in
+ * for now. Pure + tested.
  */
 export function clarityDaySummary(
   history: readonly HistoryEntry[],
   todayLocal?: string,
 ): ClarityDaySummary | null {
-  const day = mostRecentReadableDay(
-    history,
-    todayLocal,
-    (e) => typeof e.clr === "number" && Number.isFinite(e.clr),
-  );
+  const day = mostRecentReadableDay(history, todayLocal, USABLE_CLARITY);
   if (!day) return null;
+  if (day.daysBack != null && day.daysBack > MAX_CAM_SUMMARY_DAYS_BACK) return null;
 
   const reads = day.entries.map((e) => ({
     hour: e.hour as number,
@@ -219,6 +230,7 @@ export function clarityDaySummary(
   return {
     dateLocal: day.dateLocal,
     dayLabel: camDayLabel(day.dateLocal, todayLocal),
+    daysBack: day.daysBack,
     pct,
     word: clarityDisplayWord(closest.water, pct),
     ...(bothHalves ? { amPct: median(am), pmPct: median(pm) } : {}),
@@ -274,13 +286,20 @@ export function summarizeClarity(
   if (note) {
     // Gated: still an honest no-live-read (level null, status "unknown"), with
     // the last readable day and the next read time attached for the card.
+    const history = feed?.history ?? [];
+    const yesterday = clarityDaySummary(history, gate?.nowLocalDate);
     return {
       level: null,
       pct: null,
       note,
       capturedAtLocal,
       status: "unknown",
-      yesterday: clarityDaySummary(feed?.history ?? [], gate?.nowLocalDate),
+      yesterday,
+      // Only when the newest readable day was too old to summarize: the tile
+      // then says "No recent cam reads — last clear read Wed".
+      lastReadWeekday: yesterday
+        ? undefined
+        : staleCamReadWeekday(history, gate?.nowLocalDate, USABLE_CLARITY),
       // Night has a knowable end; a stale or no-open-water daytime frame does
       // not, so those keep their own note rather than promising a sunrise.
       nextReadIso:
@@ -359,19 +378,33 @@ export interface ClarityTileCopy {
   subShort?: string;
 }
 
-const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 /** Only call out the AM/PM split when the halves actually differed. */
 const HALF_DAY_GAP_PTS = 10;
 
 /**
- * Copy for the Water clarity tile. Three cases:
+ * Copy for the Water clarity tile. Four cases:
  *  - a live read → the reading, as before;
- *  - gated with a readable day behind us → that day's word and %, dimmed, plus
- *    when the cams look again ("Yesterday: Mostly clear · ~72% clear · next cam
- *    read ~6:40 AM") — the overnight answer the owner asked for;
+ *  - gated with a recent readable day behind us → that day's word and %,
+ *    dimmed, plus when the cams look again ("Yesterday: Mostly clear · ~72%
+ *    clear · next cam read ~6:40 AM") — the overnight answer the owner asked
+ *    for. Two days back it headlines "Last read (Sun): ..." so nobody mistakes
+ *    it for now;
+ *  - gated with only an OLDER readable day behind us → "No recent cam reads —
+ *    last clear read Wed", rather than headlining water nobody swam in this week;
  *  - gated with nothing behind us (a brand-new beach) → the honest note plus
  *    the next read time.
  */
+/** Compact, tile-sized form of a gate note — the full sentence overflows the
+ *  3-line clamp on the 2-column tile (caught by the layout gate). The complete
+ *  wording still shows in the tile's hover title and on the flip back. */
+function compactGateNote(note: string | undefined): string | undefined {
+  if (!note) return note;
+  if (note === NIGHT_NOTE) return "cams resume at daylight";
+  if (note === STALE_NOTE) return "waiting on a fresher shot";
+  if (note === NO_WATER_NOTE) return "no open water in frame";
+  return note;
+}
+
 export function clarityTileCopy(d: ClarityData, tz: string): ClarityTileCopy {
   const nextRead = d.nextReadIso ? `next cam read ~${fmtTime(d.nextReadIso, tz)}` : null;
 
@@ -380,7 +413,7 @@ export function clarityTileCopy(d: ClarityData, tz: string): ClarityTileCopy {
       value: clarityDisplayWord(d.level, d.pct),
       sub: [
         d.pct != null ? `~${d.pct}% clear` : null,
-        d.note,
+        compactGateNote(d.note),
         d.capturedAtLocal ? `as of ${fmtTime(d.capturedAtLocal, tz)}` : null,
       ]
         .filter(Boolean)
@@ -403,18 +436,30 @@ export function clarityTileCopy(d: ClarityData, tz: string): ClarityTileCopy {
         ? `${y.amPct}% AM, ${y.pmPct}% PM`
         : null;
     return {
-      value: `${cap(y.dayLabel)}: ${y.word}`,
+      value: `${camDayHeadline(y)}: ${y.word}`,
       // Closes with when the cams look again — or, for a daytime outage (which
       // has no knowable end, so no nextReadIso), the reason they're out.
-      sub: [`~${y.pct}% clear`, split, nextRead ?? d.note].filter(Boolean).join(" · "),
+      sub: [`~${y.pct}% clear`, split, nextRead ?? compactGateNote(d.note)].filter(Boolean).join(" · "),
       pct: y.pct,
       muted: true,
     };
   }
 
+  // A readable day exists, but it's older than the summary window — say so
+  // plainly and name the day, instead of drawing a scene for stale water.
+  if (d.lastReadWeekday) {
+    return {
+      value: "—",
+      sub: [noRecentCamReadsCopy(d.lastReadWeekday), nextRead ?? compactGateNote(d.note)]
+        .filter(Boolean)
+        .join(" · "),
+      pct: null,
+    };
+  }
+
   return {
     value: "—",
-    sub: [d.note ?? "not available", nextRead].filter(Boolean).join(" · "),
+    sub: [compactGateNote(d.note) ?? "not available", nextRead].filter(Boolean).join(" · "),
     pct: null,
   };
 }

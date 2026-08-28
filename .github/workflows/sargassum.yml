@@ -6,15 +6,34 @@ name: Cam Vision Feed
 # Also, at most once per hour during daylight, grabs a frame from the Deerfield
 # underwater sea-cam (yt-dlp -> ffmpeg) for a separate visibility read that
 # ground-truths the surface water-clarity grades (fully fail-soft — see script).
+#
+# GitHub's cron is a promise of "no more often than", NOT "will fire on time":
+# in practice this */10 schedule gets throttled to only ~4-5 REAL fires/day at
+# unpredictable hours (verified Aug 26-28 2026: fires landed at 20:18, 23:40,
+# 05:04, 20:02, 04:20 UTC — nothing else, on a schedule meant to fire ~84x/day).
+# One read-and-exit per fire left the cam-vision feed hours-to-days stale,
+# tripping the app's staleness gates and showing day-old summaries. So — same
+# fix already proven by lightning.yml, see that file — each fire does NOT read
+# once and exit. It loops INSIDE the job on its own ~10-minute wall-clock
+# cadence for as long as it's daylight (up to ~340 min of job time), so
+# whenever GitHub's sparse re-fires do land, they just restart a loop that was
+# already keeping the cadence, and the feed never goes stale.
+#
+# QUOTA MATH is unchanged by this fix and MUST be respected by the loop: the
+# original design is 3 cams/tick x ~84 ticks/day (every 10 min through
+# daylight) ~= Gemini's 250/day free cap, with Groq/GitHub-Models fallbacks
+# absorbing overflow. The loop implements that SAME ~10-min cadence — it must
+# NEVER read more often than every 10 minutes. It enforces this by sleeping to
+# the next :00/:10/:20... wall-clock boundary after each cycle (not a fixed
+# "sleep 600"), so a slow cycle (retries/backoff) can never compound into
+# faster-than-10-min reads.
 
 on:
   schedule:
-    # Every 10 minutes through daylight (~6 AM-8 PM ET). Budget: 3 cams/tick ×
-    # ~84 scheduled ticks = ~252 vision calls/day, right at Gemini's 250/day
-    # free cap — but GitHub skips ~30% of scheduled ticks, and any Gemini 429
-    # falls through to the Groq/GitHub-Models fallbacks, so real usage fits.
-    # Dense morning coverage also captures seaweed BEFORE the City's
-    # beach-cleaning tractor (~7-9 AM), which is weighted highest.
+    # Every 10 minutes through daylight (~6 AM-8 PM ET). GitHub throttles this
+    # to only a handful of real fires/day (see header) — the in-job loop below
+    # is what actually delivers the ~10-min cadence; the cron here just makes
+    # sure a loop gets (re)started periodically even if push/dispatch don't.
     - cron: "*/10 10-23 * * *" # every 10 min, ~6 AM-7:50 PM ET (EDT)
   push:
     branches: [main]
@@ -29,12 +48,20 @@ permissions:
 
 concurrency:
   group: sargassum
+  # A new cron fire cancels any healthy running loop and starts a fresh one.
+  # That's fine, not wasteful: the fresh loop just resumes the same ~10-min
+  # cadence, so the cam-vision feed cadence is unaffected. Keeping this true is
+  # what makes the fix quota-safe — without it, two loops started by
+  # overlapping throttled fires would each read every ~10 min, DOUBLING vision
+  # spend and blowing the quota math above.
   cancel-in-progress: true
 
 jobs:
   build-feed:
     runs-on: ubuntu-latest
-    timeout-minutes: 12  # headroom for per-cam spacing + retry backoff
+    # Long-running loop job now, not a single read. GitHub's hard cap on a job
+    # is 360 min (6h); 350 leaves headroom for the runner's own setup/teardown.
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -49,33 +76,97 @@ jobs:
         # never fail the workflow — we just accrue no underwater readings.
         run: pip install --quiet yt-dlp || true
 
-      - name: Read seaweed + crowd from beach cams (free vision, with fallback)
-        # Falls through providers in order until one answers; no-op if none configured.
-        run: python scripts/cam_seaweed.py
+      - name: Read + publish cam vision on a ~10-minute loop through daylight
+        # Loop pattern per lightning.yml (see that file's header for the full
+        # rationale): each cycle runs the one-shot script, publishes its output
+        # to the sargassum-data branch, then sleeps to the next 10-min
+        # wall-clock boundary so cadence stays ~10 min regardless of how long
+        # the cycle itself took (API retries, backoff, courier fetch, etc).
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }} # optional free fallback (14.4k/day)
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }} # optional free fallback
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GitHub Models fallback (no signup)
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # for the publish push below
           CAM_SEAWEED_OUT: ${{ runner.temp }}/cam_seaweed.json
-
-      - name: Publish to sargassum-data branch
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          feed="${{ runner.temp }}/cam_seaweed.json"
-          if [ ! -f "$feed" ]; then
-            echo "no feed written (no fresh readings and no prior good data) — leaving last good sargassum-data in place"
-            exit 0
-          fi
-          work="${{ runner.temp }}/pub"
-          mkdir -p "$work"
-          cp "$feed" "$work/cam_seaweed.json"
-          cd "$work"
-          git init -q
-          git config user.name "cam-vision-bot"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -q -b sargassum-data
-          git add -A
-          git commit -q -m "Cam vision feed $(date -u +%FT%TZ)"
-          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" sargassum-data
+          set +e # one bad cycle (vision API down, publish push conflict, ...) must not kill the loop
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          work="${RUNNER_TEMP}/pub"
+          feed="${CAM_SEAWEED_OUT}"
+          budget_min=340 # leaves ~10 min headroom under the 350 timeout-minutes above
+
+          # Seconds until the next :00/:10/:20... wall-clock boundary. Relies on
+          # America/New_York (and UTC) using whole-hour offsets, so a UTC epoch
+          # mod 600 lines up with local 10-minute boundaries too — no TZ math
+          # needed here for the sleep itself (only the daylight check below
+          # needs the actual local clock).
+          sleep_to_boundary() {
+            local now rem
+            now=$(date +%s)
+            rem=$(( now % 600 ))
+            if [ "$rem" -eq 0 ]; then echo 0; else echo $(( 600 - rem )); fi
+          }
+
+          # True while local (America/New_York) time is inside the daylight
+          # window the underwater read + main cams care about, with a 5-min
+          # margin on each side (script's own window is hours 6-20 local).
+          in_daylight() {
+            local hm hm10
+            hm=$(TZ="America/New_York" date +%H%M)
+            hm10=$((10#$hm)) # force base-10: a leading zero would read as octal
+            [ "$hm10" -ge 555 ] && [ "$hm10" -le 2005 ]
+          }
+
+          publish() {
+            [ -f "$feed" ] || { echo "  no feed written this cycle — leaving last good sargassum-data in place"; return 0; }
+            rm -rf "$work"; mkdir -p "$work"
+            cp "$feed" "$work/cam_seaweed.json" || return 1
+            cd "$work" || return 1
+            git init -q
+            git config user.name "cam-vision-bot"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout -q -b sargassum-data
+            git add -A
+            git commit -q -m "Cam vision feed $(date -u +%FT%TZ)"
+            # Force-push a single-commit orphan branch so history never grows.
+            git push -f "$remote" sargassum-data
+            cd - >/dev/null
+          }
+
+          consecutive_fail=0
+          start_epoch=$(date +%s)
+
+          run_cycle() {
+            rm -f "$feed"
+            if python scripts/cam_seaweed.py; then
+              consecutive_fail=0
+              publish && echo "  published $(date -u +%FT%TZ)"
+            else
+              consecutive_fail=$((consecutive_fail + 1))
+              echo "  cycle failed (${consecutive_fail} in a row) — will retry next cycle"
+            fi
+          }
+
+          while true; do
+            elapsed_min=$(( ($(date +%s) - start_epoch) / 60 ))
+            if [ "$elapsed_min" -ge "$budget_min" ]; then
+              echo "time budget exhausted after ${elapsed_min}m — exiting loop (next fire picks up)"
+              break
+            fi
+
+            if ! in_daylight; then
+              echo "outside daylight window (05:55-20:05 America/New_York) — running one final read for carry-forward/night publish, then exiting"
+              run_cycle
+              break
+            fi
+
+            run_cycle
+
+            if [ "$consecutive_fail" -ge 5 ]; then
+              echo "5 consecutive cycle failures — bailing so this shows as a red run (persistent breakage, not transient)"
+              exit 1
+            fi
+
+            sleep "$(sleep_to_boundary)"
+          done
