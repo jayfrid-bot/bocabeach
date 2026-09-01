@@ -13,6 +13,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { ScoreExplainer } from "@/components/ScoreExplainer";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { ScoreWheel } from "@/components/ScoreWheel";
+import { ScoreCapBanner } from "@/components/ScoreCapBanner";
 import { AirQualityMeter } from "@/components/AirQualityMeter";
 import { StormActivityMeter } from "@/components/StormActivityMeter";
 import { LightningCard } from "@/components/LightningCard";
@@ -365,6 +366,7 @@ export function ConditionsDashboard({
           </div>
         ) : (
           <>
+            <ScoreCapBanner result={active} />
             <div
               className={`mb-2 text-center text-3xl font-bold ${scoreTextClass(active.score)}`}
             >

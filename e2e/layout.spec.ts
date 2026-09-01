@@ -50,7 +50,13 @@ const BUILD_STAMP_RE = /build\s+\d+/;
  *  it can't be found with a role/label locator; text-content matching is the
  *  robust signal here. "Unavailable" covers the fully-degraded (no APIs) case
  *  so this wait also succeeds in CI. */
-const SCORE_RATING_RE = /^(Excellent|Good|Decent|Fair|Poor|Unavailable)$/;
+// The ScoreWheel center rating word — the last thing to render, so its
+// presence means the page has hydrated with live data. Keep this list EXACTLY
+// in sync with SCORE_BANDS[].rating in lib/scoreBands.ts (Excellent/Good/Decent/
+// Marginal/Poor) plus "Unavailable" for the total-outage state. It was missing
+// "Marginal" (the capped-score band), so on any day the score was capped into
+// 25-64 the whole home check hung waiting for a word that never appears.
+const SCORE_RATING_RE = /^(Excellent|Good|Decent|Marginal|Poor|Unavailable)$/;
 
 async function waitForReady(page: Page, path: string) {
   if (path === "/find") {

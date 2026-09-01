@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-08-31",
+    title: "A capped score now tells you why, right at the top",
+    details:
+      "When something holds the beach score down — lightning nearby, a water-quality advisory, high wind, heavy seaweed — a clear banner now sits at the top of the score saying what's capping it and to what, instead of hiding the reason in the fine print.",
+    tag: "improved",
+  },
+  {
+    date: "2026-08-31",
     title: "Simpler seasonal heads-up for sharks, jellyfish, and sea lice",
     details:
       "A calm \"What's in the water\" panel now shows every day, telling you at a glance whether it's the season for Portuguese man-o'-war, sea lice, and sharks — in plain, one-line language. Before, this only appeared on the rare day something was already flagged. It's seasonal guidance for SE-Florida beaches, not a live report, and it still speaks up when today's conditions are worth an extra look.",
