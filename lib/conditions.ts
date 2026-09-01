@@ -269,6 +269,10 @@ export async function getSnapshotForLocation(
     ripRisk: ripRiskData,
     marineStinger: marineStingerData,
     sharkContext: sharkContextData,
+    // Always-on seasonal heads-up panel gate — true for curated Atlantic beaches
+    // regardless of season or live data (the two advisories above go null on a
+    // quiet day; this stays true so the panel keeps showing).
+    atlanticOriented,
   };
 }
 

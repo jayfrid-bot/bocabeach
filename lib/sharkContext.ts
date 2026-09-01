@@ -145,11 +145,14 @@ const SE_US_ATLANTIC_LAT_MAX = 35;
 const BLACKTIP_LAT_MIN = 25.5;
 const BLACKTIP_LAT_MAX = 27.5;
 
-function inSeUsAtlanticBand(latDeg: number): boolean {
+// The four season predicates and two latitude-band gates below are exported so
+// the always-on seasonal heads-up panel (lib/seasonalHazards.ts) classifies the
+// exact same windows and bands rather than redefining any of them.
+export function inSeUsAtlanticBand(latDeg: number): boolean {
   return latDeg >= SE_US_ATLANTIC_LAT_MIN && latDeg <= SE_US_ATLANTIC_LAT_MAX;
 }
 
-function inBlacktipBand(latDeg: number): boolean {
+export function inBlacktipBand(latDeg: number): boolean {
   return latDeg >= BLACKTIP_LAT_MIN && latDeg <= BLACKTIP_LAT_MAX;
 }
 
@@ -157,7 +160,7 @@ function inBlacktipBand(latDeg: number): boolean {
 
 /** Primary mullet-run months: September and October — the literature's core
  *  window, reliable enough to flag on the calendar alone. */
-function isMulletRunPeak(month: number): boolean {
+export function isMulletRunPeak(month: number): boolean {
   return month === 9 || month === 10;
 }
 
@@ -166,7 +169,7 @@ function isMulletRunPeak(month: number): boolean {
  *  necessarily arrived yet (Aug) or the run may already be tailing off (Nov),
  *  so a shoulder-month read additionally needs the water-temperature
  *  corroboration below before we'll call it "active". */
-function isMulletRunShoulder(month: number): boolean {
+export function isMulletRunShoulder(month: number): boolean {
   return month === 8 || month === 11;
 }
 
@@ -185,12 +188,12 @@ function mulletRunCorroborated(waterTempF: number | undefined): boolean {
 /** Full blacktip-aggregation window: December through March. The SE-Florida
  *  migration often begins with the first strong December cold fronts (not only
  *  in the new year), so December is inside the window; peak stays late Feb-Mar. */
-function isBlacktipWindow(month: number): boolean {
+export function isBlacktipWindow(month: number): boolean {
   return month === 12 || month === 1 || month === 2 || month === 3;
 }
 
 /** Documented peak of the aggregation: late February through March. */
-function isBlacktipPeak(month: number): boolean {
+export function isBlacktipPeak(month: number): boolean {
   return month === 2 || month === 3;
 }
 

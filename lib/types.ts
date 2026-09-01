@@ -886,6 +886,11 @@ export interface ConditionsSnapshot {
   /** Seasonal shark CONTEXT note. SE-US-Atlantic-oriented beaches only. See
    *  lib/sharkContext.ts. */
   sharkContext?: SharkContext | null;
+  /** Whether this beach is SE-US-Atlantic-oriented (curated Atlantic coast with
+   *  a real shoreline orientation) — the gate for the always-on "What's in the
+   *  water" seasonal heads-up panel. True even off-season / on a quiet day, when
+   *  marineStinger + sharkContext are both null, so the panel stays visible. */
+  atlanticOriented?: boolean;
 }
 
 // --- Scores ----------------------------------------------------------------

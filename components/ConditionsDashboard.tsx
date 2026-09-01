@@ -46,8 +46,7 @@ import { FeelsLikeCard } from "@/components/FeelsLikeCard";
 import { SunQualityCard } from "@/components/SunQualityCard";
 import { WaterTrendCard } from "@/components/WaterTrendCard";
 import { RipRiskCard } from "@/components/RipRiskCard";
-import { MarineStingerCard } from "@/components/MarineStingerCard";
-import { SharkContextCard } from "@/components/SharkContextCard";
+import { SeasonalHazards } from "@/components/SeasonalHazards";
 import { seaweedVsAvgPhrase } from "@/lib/vsAveragePhrase";
 import { clarityTileCopy } from "@/lib/sources/clarity";
 
@@ -162,6 +161,13 @@ export function ConditionsDashboard({
   const active = res.score;
   const d = deriveMetrics(snap);
   const tz = snap.location.timezone;
+  // Beach-LOCAL calendar month (1-12), driving the seasonal heads-up windows —
+  // NOT the viewer's month, so a Nov cold-front season reads right regardless of
+  // where the visitor is. Same tz-aware derivation the server uses (conditions.ts).
+  const localMonth =
+    Number(
+      new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "numeric" }).format(new Date()),
+    ) || new Date().getUTCMonth() + 1;
   const cams = res.cams;
   const ratings = snap.cityOfficial.data;
   const sg = snap.sargassum.data;
@@ -230,13 +236,10 @@ export function ConditionsDashboard({
   // Feels-like needs air + humidity (its two irreplaceable inputs) — hide the
   // whole card when they're absent, matching how busyness/seaweed hide.
   const showFeelsLike = d.airTempF != null && d.humidityPct != null;
-  // Mirror MarineStingerCard's own show logic so the advisory section only takes
-  // up room when a card will actually render (both cards self-hide otherwise).
-  const showMarineStinger =
-    !!ms &&
-    ((!!ms.manOWar && ms.manOWar.level !== "low") ||
-      (!!ms.seaLice && ms.seaLice.level !== "low"));
-  const showSharkContext = !!shark;
+  // Always-on seasonal heads-up panel: shown for SE-US-Atlantic-oriented beaches
+  // (same gate that computes ms/shark), independent of whether either advisory
+  // is currently elevated. `ms`/`shark` still feed the LIVE "watch" elevations.
+  const showSeasonalHazards = snap.atlanticOriented === true;
   // Map the hourly forecast into the sunset-color card's cloud/humidity points; the
   // cloud-by-level fields (added to the hourly fetch) sharpen the color-canvas
   // model, degrading to total cloud where a level split isn't available.
@@ -806,18 +809,18 @@ export function ConditionsDashboard({
         />
       </section>
 
-      {/* Quiet, exception-only advisories (SE-US-Atlantic beaches only) — kept
-          low on the page and rendered as full-width STRIPS, the same language as
-          the tide-aberration badges. A stack (not a 2-up grid) because these
-          speak one at a time far more often than in pairs, and a lone card left
-          an obvious hole. Each advisory self-hides; the section only mounts when
-          at least one has something to say. */}
-      {showMarineStinger || showSharkContext ? (
-        <section className="mb-6 flex flex-col gap-2">
-          {showMarineStinger ? (
-            <MarineStingerCard manOWar={ms!.manOWar} seaLice={ms!.seaLice} />
-          ) : null}
-          {showSharkContext ? <SharkContextCard context={shark} /> : null}
+      {/* Always-on seasonal heads-up (SE-US-Atlantic beaches only) — a calm,
+          glanceable "what's in the water" reference for man-o'-war, sea lice, and
+          sharks. Visible every day for these beaches (not exception-only); the
+          live ms/shark snapshots only lift a row to "watch" when elevated. */}
+      {showSeasonalHazards ? (
+        <section className="mb-6">
+          <SeasonalHazards
+            month={localMonth}
+            latDeg={snap.location.lat}
+            marineStinger={ms}
+            sharkContext={shark}
+          />
         </section>
       ) : null}
 

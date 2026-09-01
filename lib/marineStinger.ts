@@ -232,8 +232,10 @@ function sustainedOnshoreMph(
 }
 
 /** Nov-Apr: SE-Florida's winter cold-front / trade-wind easterly season, the
- *  window the man-o'-war stranding literature is drawn from. */
-function isPeakManOWarSeason(month: number): boolean {
+ *  window the man-o'-war stranding literature is drawn from. Exported so the
+ *  always-on seasonal heads-up panel classifies the same window (see
+ *  lib/seasonalHazards.ts) rather than redefining it. */
+export function isManOWarSeason(month: number): boolean {
   return month === 11 || month === 12 || month <= 4;
 }
 
@@ -330,7 +332,7 @@ export function manOWarRisk(input: ManOWarInput): ManOWarRisk | null {
   const wind = sustainedOnshoreMph(input.hourlyWind, input.coastNormalDeg, nowMs);
   if (!wind) return null;
 
-  const inSeason = isPeakManOWarSeason(input.month);
+  const inSeason = isManOWarSeason(input.month);
   const seasonFactor = inSeason ? 1 : OFF_SEASON_FACTOR;
   const baseScore = lerpCurve(wind.meanOnshoreMph, WIND_ANCHORS);
   const scaledScore = baseScore * seasonFactor;
@@ -396,6 +398,19 @@ const SEA_LICE_PEAK_MONTHS = new Set([5, 6]);
  *  climatological signal. */
 const SEA_LICE_WARM_WATER_F = 78;
 
+/** In the SE-Florida seabather's-eruption window (Mar-Aug). Exported so the
+ *  always-on seasonal heads-up panel reuses the exact window rather than
+ *  redefining it (see lib/seasonalHazards.ts). */
+export function isSeaLiceSeason(month: number): boolean {
+  return month >= SEA_LICE_START_MONTH && month <= SEA_LICE_END_MONTH;
+}
+
+/** In the documented May-Jun peak of the window. Exported alongside
+ *  isSeaLiceSeason for the same single-source-of-truth reason. */
+export function isSeaLicePeak(month: number): boolean {
+  return SEA_LICE_PEAK_MONTHS.has(month);
+}
+
 /**
  * Seabather's eruption seasonal likelihood — PURELY climatological (season +
  * water temperature), never wind-forecast, since the driver is warm-water
@@ -406,9 +421,9 @@ const SEA_LICE_WARM_WATER_F = 78;
  * baseline. Always a likelihood, never a forecast for a specific day.
  */
 export function seaLiceRisk({ month, waterTempF }: SeaLiceInput): SeaLiceRisk | null {
-  if (month < SEA_LICE_START_MONTH || month > SEA_LICE_END_MONTH) return null;
+  if (!isSeaLiceSeason(month)) return null;
 
-  const peak = SEA_LICE_PEAK_MONTHS.has(month);
+  const peak = isSeaLicePeak(month);
   const warm = waterTempF != null && waterTempF >= SEA_LICE_WARM_WATER_F;
   const signals = (peak ? 1 : 0) + (warm ? 1 : 0);
   const level: SeaLiceLevel = signals >= 2 ? "elevated" : signals === 1 ? "possible" : "low";
