@@ -377,7 +377,7 @@ describe("summarizeClarity — the last readable day (overnight fallback)", () =
     expect(d!.nextReadIso).toBeUndefined();
   });
 
-  it("says when the next cam read lands (tomorrow's sunrise minus the buffer)", () => {
+  it("says when cams resume (tomorrow's sunrise minus the buffer)", () => {
     const d = gated("2026-08-23T23:00:00-04:00", "2026-08-23");
     expect(d!.nextReadIso).toBe(new Date("2026-08-24T06:21:00-04:00").toISOString());
   });
@@ -435,7 +435,7 @@ describe("clarityTileCopy — what the tile actually says", () => {
       tz,
     );
     expect(c.value).toBe("Yesterday: Mostly clear");
-    expect(c.sub).toBe("~72% clear · next cam read ~6:21 AM");
+    expect(c.sub).toBe("~72% clear · cams resume ~6:21 AM");
     expect(c.pct).toBe(72); // the scene still draws something, just muted
     expect(c.muted).toBe(true);
   });
@@ -450,10 +450,10 @@ describe("clarityTileCopy — what the tile actually says", () => {
     const day = { dateLocal: "2026-08-23", dayLabel: "today", pct: 72, word: "Mostly clear", reads: 5 };
     expect(
       clarityTileCopy({ ...base, yesterday: { ...day, amPct: 85, pmPct: 60 } }, tz).sub,
-    ).toBe("~72% clear · 85% AM, 60% PM · next cam read ~6:21 AM");
+    ).toBe("~72% clear · 85% AM, 60% PM · cams resume ~6:21 AM");
     expect(
       clarityTileCopy({ ...base, yesterday: { ...day, amPct: 74, pmPct: 70 } }, tz).sub,
-    ).toBe("~72% clear · next cam read ~6:21 AM");
+    ).toBe("~72% clear · cams resume ~6:21 AM");
   });
 
   it("falls back to the reason when the outage has no known end (a stale daytime frame)", () => {
@@ -491,7 +491,7 @@ describe("clarityTileCopy — what the tile actually says", () => {
       tz,
     );
     expect(c.value).toBe("—");
-    expect(c.sub).toBe("No recent cam reads — last clear read Wed · next cam read ~6:24 AM");
+    expect(c.sub).toBe("No recent cam reads — last clear read Wed · cams resume ~6:24 AM");
     expect(c.pct).toBeNull(); // no scene — nothing recent enough to draw
     expect(c.muted).toBeUndefined();
   });
@@ -509,7 +509,7 @@ describe("clarityTileCopy — what the tile actually says", () => {
       tz,
     );
     expect(c.value).toBe("—");
-    expect(c.sub).toBe("cams can't read the water in the dark · next cam read ~6:21 AM");
+    expect(c.sub).toBe("cams can't read the water in the dark · cams resume ~6:21 AM");
     expect(c.pct).toBeNull();
   });
 });

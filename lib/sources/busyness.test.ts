@@ -371,9 +371,11 @@ describe("summarizeBusyness — the last readable day (overnight fallback)", () 
     );
   });
 
-  it("keeps today/yesterday headlines plain", () => {
+  it("frames an overnight recap as past — 'Earlier today', then 'Yesterday'", () => {
+    // "Earlier today" (not a bare "Today") so a night recap can't read as a live
+    // now-value; after midnight the label is already "yesterday".
     expect(camDayHeadline({ dateLocal: "2026-08-23", dayLabel: "today", daysBack: 0 })).toBe(
-      "Today",
+      "Earlier today",
     );
     expect(camDayHeadline({ dateLocal: "2026-08-22", dayLabel: "yesterday", daysBack: 1 })).toBe(
       "Yesterday",

@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-08-31",
+    title: "Clearer overnight cam readings, and no cut-off text on the Golden hour card",
+    details:
+      "At night the busyness and water-clarity cards now read plainly as a look-back — \"Earlier today: Quiet\" (or \"Yesterday\" after midnight) with when the cameras resume in the morning — so it's obvious you're seeing the past, not a live number. The Golden hour card's lines also wrap fully instead of getting cut off on a phone.",
+    tag: "improved",
+  },
+  {
+    date: "2026-08-31",
     title: "A capped score now tells you why, right at the top",
     details:
       "When something holds the beach score down — lightning nearby, a water-quality advisory, high wind, heavy seaweed — a clear banner now sits at the top of the score saying what's capping it and to what, instead of hiding the reason in the fine print.",

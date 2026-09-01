@@ -409,7 +409,7 @@ function SunQualityFront({
         {/* Two lines allowed: in the mobile 2-up grid the full window + event
             won't fit one line, and these times are the point of the card. */}
         <div
-          className="mt-1 min-h-4 text-xs leading-snug tabular-nums text-slate-500 dark:text-slate-400 line-clamp-2"
+          className="mt-1 min-h-4 text-xs leading-snug tabular-nums text-slate-500 dark:text-slate-400"
           title={timesLine.trim() || undefined}
         >
           {timesLine}
@@ -424,7 +424,7 @@ function SunQualityFront({
             clipped it mid-sentence on desktop (caught by e2e/layout.spec.ts;
             the phone-width fix alone wasn't sufficient at every width). */}
         <div
-          className="mt-3 min-h-4 text-xs tabular-nums text-slate-500 dark:text-slate-400 line-clamp-2"
+          className="mt-3 min-h-4 text-xs tabular-nums text-slate-500 dark:text-slate-400"
           title={colorLine}
         >
           {colorLine}

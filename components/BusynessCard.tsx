@@ -79,7 +79,7 @@ export function BusynessCard({ busy, tz }: { busy?: BusynessData | null; tz?: st
     // "Next cam read ~6:40 AM" needs the beach's clock; without a tz we simply
     // leave the line off rather than quote a server-local time.
     const nextRead =
-      busy.nextReadIso && tz ? `Next cam read ~${fmtTime(busy.nextReadIso, tz)}` : null;
+      busy.nextReadIso && tz ? `Cams resume ~${fmtTime(busy.nextReadIso, tz)}` : null;
     const filled = y ? busynessFilledSlots(y.avgCrowdPct, y.level) : 0;
     // No day recent enough to summarize, but the cams DID read the beach at
     // some point — name that day plainly rather than showing nothing.
@@ -110,7 +110,7 @@ export function BusynessCard({ busy, tz }: { busy?: BusynessData | null; tz?: st
           <span aria-hidden>🌙</span>
           <span>
             {y
-              ? `${y.dayLabel}'s average · peaked ${cap(y.peakLevel)} ~${hourLabel(y.peakHourLocal)}`
+              ? `Peaked ${cap(y.peakLevel)} around ${hourLabel(y.peakHourLocal)}`
               : staleLine ?? busy.note}
           </span>
         </div>

@@ -406,7 +406,7 @@ function compactGateNote(note: string | undefined): string | undefined {
 }
 
 export function clarityTileCopy(d: ClarityData, tz: string): ClarityTileCopy {
-  const nextRead = d.nextReadIso ? `next cam read ~${fmtTime(d.nextReadIso, tz)}` : null;
+  const nextRead = d.nextReadIso ? `cams resume ~${fmtTime(d.nextReadIso, tz)}` : null;
 
   if (d.level) {
     return {

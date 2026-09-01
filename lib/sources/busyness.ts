@@ -316,6 +316,10 @@ export function camDayHeadline(day: {
     const w = shortWeekday(day.dateLocal);
     return w ? `Last read (${w})` : "Last read";
   }
+  // "Earlier today" (not a bare "Today") so an overnight recap can't be mistaken
+  // for a live/now reading — it reads unmistakably as the past. After midnight
+  // the label is already "yesterday" (see camDayLabel), which needs no change.
+  if (day.dayLabel === "today") return "Earlier today";
   return cap(day.dayLabel);
 }
 
