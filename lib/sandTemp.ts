@@ -104,7 +104,17 @@ const FULL_SUN_WM2 = 1000;
  *    today, so both inputs agreed — the satellite's unique win is on forecast-miss
  *    days like 7/15. Measured boost was soil+9 vs the damped model's soil+4, i.e.
  *    the ~88% damp at 99% beam may run a touch strong — but one point, -5°F, on the
- *    conservative side: leave it. */
+ *    conservative side: leave it.
+ *  - 2026-09-02 ~2:00 PM: soil 94°F (forecast), forecast 402 W/m² under a forecast
+ *    "overcast" (90% MID cloud), 8 mph, GOES STALE — last granule 10:51 AM (202 min
+ *    old, said 100% cloud) → satellite correctly ignored, model fell back to the
+ *    forecast → model 108°F, MEASURED 121-135°F, six readings, mean 129 (-21).
+ *    Observer: overhead CLEAR, ~20-30% cloud to the E and W, full sun ≥1 h. The
+ *    mirror image of 7/15 (forecast said cloud, reality was sun). The model logic is
+ *    not at fault — the input that exists for this exact case was 3+ h stale
+ *    because GitHub throttled the */15 goes-cloud cron (the same throttling that
+ *    starved the cam feed; fixed there with the in-job loop pattern). Fix is the
+ *    pipeline cadence (goes-cloud.yml → loop pattern), not a curve retune. */
 const MAX_SUN_BOOST_F = 55;
 /**
  * Solid overcast kills the dry-sand boost. The boost is driven by DIRECT beam
