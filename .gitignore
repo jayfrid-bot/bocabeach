@@ -27,6 +27,9 @@ yarn-error.log*
 # local native push token store (dev fallback for Netlify Blobs)
 .push-native-store.json
 
+# local Plus device store (dev fallback for D1 — lib/db/memoryStore.ts)
+.plus-store.json
+
 # deploy
 .vercel
 .netlify

@@ -894,6 +894,56 @@ export interface ConditionsSnapshot {
 }
 
 // --- Scores ----------------------------------------------------------------
+/**
+ * Every weighted factor in the Beach Day score. `clarity` (cam-read water
+ * clarity) joined the list for Beach Day Plus; it carries weight 0 in
+ * DEFAULT_SCORING, so the free score is unchanged (zero-weight factors are
+ * dropped from `subScores` entirely — see scoreBeachDay).
+ */
+export type SubKey =
+  | "airTemp"
+  | "sky"
+  | "wind"
+  | "comfort"
+  | "waterTemp"
+  | "waves"
+  | "sargassum"
+  | "crowds"
+  | "uv"
+  | "sandTemp"
+  | "clarity";
+
+/** Which wave curve to score with: flat water, a little swell, or rideable surf. */
+export type WaveMode = "calm" | "some" | "surf";
+
+/**
+ * Which safety caps clamp the score.
+ * - `water` — every cap, exactly as the free score does today.
+ * - `shore` — weather caps only (you can still have a great day on the sand).
+ * - `surf` — weather caps plus the closures (double red, water quality, no-swim);
+ *   a red flag or a high rip is information for a surfer, not a stop sign.
+ */
+export type CapPolicy = "water" | "shore" | "surf";
+
+/** What "good" means for this person: the plateau each curve calls perfect. */
+export interface ScoringIdeals {
+  /** [low, high] °F air temperature that scores 100. */
+  airPlateau: [number, number];
+  /** [low, high] °F water temperature that scores 100. */
+  waterPlateau: [number, number];
+  /** [low, high] mph wind that scores 100. */
+  windPlateau: [number, number];
+  waveMode: WaveMode;
+}
+
+/** The whole scoring engine as data. `DEFAULT_SCORING` (lib/score.ts) is today's. */
+export interface ScoringOptions {
+  /** Per-factor weight, 0-1, summing to 1. Zero-weight factors drop out. */
+  weights: Record<SubKey, number>;
+  ideals: ScoringIdeals;
+  capPolicy: CapPolicy;
+}
+
 export interface SubScore {
   key: string;
   label: string;

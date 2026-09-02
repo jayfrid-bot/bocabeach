@@ -24,7 +24,15 @@ const STORE_NAME = "push-native-subscriptions";
 const FILE = path.join(process.cwd(), ".push-native-store.json");
 
 /** Key-safe id for a device token (FCM tokens contain ':' and run long). */
-const tokenKey = (token: string) => Buffer.from(token).toString("base64url");
+export const tokenKey = (token: string) => Buffer.from(token).toString("base64url");
+
+/**
+ * PUSH_KV is shared with the OpenNext incremental cache (same namespace id, see
+ * wrangler.jsonc), so an unprefixed list scans thousands of page-cache entries
+ * and tries to JSON-parse each one. Skip anything that is not a subscription.
+ */
+const FOREIGN_KEY_PREFIXES = ["incremental-cache/", "__NEXT", "tag-cache/"];
+const isForeignKey = (name: string) => FOREIGN_KEY_PREFIXES.some((p) => name.startsWith(p));
 
 /** Common shape every backend adapter returns. */
 interface Backend {
@@ -68,8 +76,10 @@ async function kvStore(): Promise<Backend | null> {
         do {
           const page = await kv.list(cursor ? { cursor } : undefined);
           for (const { name } of page.keys) {
+            if (isForeignKey(name)) continue; // page-cache entry, not a subscription
             const v = (await kv.get(name, "json")) as NativeSub | null;
-            if (v) out.push(v);
+            // A cache entry that slipped past the prefix filter is not a sub.
+            if (v && typeof v === "object" && typeof v.token === "string") out.push(v);
           }
           cursor = page.list_complete ? undefined : page.cursor;
         } while (cursor);
