@@ -16,11 +16,22 @@
     // → 1102 under load). Reuses the same namespace; OpenNext prefixes its keys.
     { "binding": "NEXT_INC_CACHE_KV", "id": "4dab9a763f5c416ab8c97ff19f47cf40" }
   ],
-  // Safety push alerts are paused app-wide (only the morning summary ships) until
-  // presence-gating lands — mirrors the Netlify PUSH_SAFETY_ALERTS=off so the CF
-  // origin honors the pause once the push cron points here.
+  // Beach Day Plus store: devices, presence, alert dedup (see migrations/).
+  // Apply schema changes with `wrangler d1 migrations apply isitbeachday-plus --remote`.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "isitbeachday-plus",
+      "database_id": "0ee25fbd-fc05-4c5c-a8ae-9e0c8d4c1bb0",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Hazard alerts are LIVE. They were paused while they fired off a person's HOME
+  // beach (lightning 5 mi from a beach you're nowhere near is noise); they now fire
+  // only from a live presence fix — see lib/alerts/*. Set this to "off" to stop
+  // every hazard alert app-wide without a deploy of the engine.
   "vars": {
-    "PUSH_SAFETY_ALERTS": "off"
+    "PUSH_SAFETY_ALERTS": "on"
   }
   // NOTE: custom domains (isitbeachday.com, www, app.isitbeachday.com) are attached
   // to this Worker via the Cloudflare API/dashboard, deliberately NOT via a `routes`

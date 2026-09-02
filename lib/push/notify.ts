@@ -3,7 +3,8 @@
 // now. No I/O here — the /api/push/run route does the fetching and sending and
 // feeds these functions, which keeps the decision rules unit-testable.
 
-import type { ConditionsResponse, SubScore, HourlyScore } from "@/lib/types";
+import type { ConditionsResponse, ScoringOptions, SubScore, HourlyScore } from "@/lib/types";
+import { computeHourlyScores, computeScore, DEFAULT_SCORING } from "@/lib/score";
 import { beachDayVerdict } from "@/lib/format";
 import { scoreBand } from "@/lib/scoreBands";
 
@@ -11,14 +12,20 @@ import { scoreBand } from "@/lib/scoreBands";
 export const MORNING_HOUR = 8;
 
 /**
- * Safety alerts (lightning / rip / hazards) are PAUSED for now. They should only
- * fire when the user is physically at the beach, which needs presence-gating we
- * haven't built yet — until then, sending them anywhere (e.g. lightning 5 mi from
- * a beach you're nowhere near) is just noise. Only the morning summary ships.
- * Default on so the logic + tests stay exercised; production sets
- * PUSH_SAFETY_ALERTS=off to disable. Flip back on (with the presence gate) later.
+ * The kill switch for every hazard alert (`PUSH_SAFETY_ALERTS`). Safety alerts
+ * were paused app-wide while they fired off a person's HOME beach — lightning
+ * 5 mi from a beach you are nowhere near is noise, not a warning. They now fire
+ * only from a live presence fix (`lib/alerts/*`), so the var flips to "on".
+ *
+ * Read at call time, not at import time, so a test (or a rollback) can flip it
+ * without reloading the module.
  */
-const SAFETY_ALERTS_ENABLED = process.env.PUSH_SAFETY_ALERTS !== "off";
+export function safetyAlertsEnabled(): boolean {
+  return process.env.PUSH_SAFETY_ALERTS !== "off";
+}
+
+/** How long a still-active hazard waits before it re-reminds. */
+export const SAFETY_REPEAT_MS = 30 * 60 * 1000;
 
 /**
  * The minimum a subscription must expose for the decision logic — satisfied by
@@ -66,7 +73,7 @@ const SEVERE_ALERT =
  * SafetyBanner surfaces in-app (incl. moderate rip), so push never stays silent
  * on a hazard the app is showing. Returns null when clear.
  */
-function activeSafety(res: ConditionsResponse): { key: string; text: string } | null {
+export function activeSafety(res: ConditionsResponse): { key: string; text: string } | null {
   const s = res.snapshot;
 
   const lt = s.lightning;
@@ -257,29 +264,50 @@ function findBestWindow(hourly: HourlyScore[], tz: string): string | undefined {
   return fmtWindow(best[0].time, best[best.length - 1].time, tz);
 }
 
+/**
+ * Options for a PERSONAL summary. Pass a device's `resolveScoring(profile)` and
+ * the summary speaks in THEIR number: their score, their pros and cons, and the
+ * best window off their own hourly curve — not the everyone score the response
+ * was built with.
+ *
+ * `res.multiDayWindows` and `res.score` are everyone's, so a personal summary
+ * ignores both and re-derives from the snapshot. Re-scoring is pure and cheap
+ * (no fetching), and it fails soft: anything unexpected falls back to the
+ * everyone summary rather than dropping the person's digest.
+ */
+export interface PushSummaryOptions {
+  scoring?: ScoringOptions;
+  nowMs?: number;
+}
+
 /** Build a notification-ready summary from a full conditions response. */
 export function summarizeForPush(
   res: ConditionsResponse,
   loc: { slug: string; name: string; tz: string },
+  opts?: PushSummaryOptions,
 ): PushSummary {
-  const score = res.score.score;
-  const today = res.multiDayWindows?.[0];
-  const bw = today?.best ?? null;
+  const personal = personalView(res, opts);
+  const score = personal?.score.score ?? res.score.score;
+  const rating = personal?.score.rating ?? res.score.rating ?? "";
+  const subScores = personal?.score.subScores ?? res.score.subScores ?? [];
   // res.hourlyScores has the chart's now-anchor baked in (one bucket forced to the
   // headline), which would distort dip/best-stretch detection — prefer the raw
   // unanchored forecast curve for window analysis (falls back when absent).
-  const forecast = res.hourlyForecast ?? res.hourlyScores ?? [];
+  const forecast = personal?.hourly ?? res.hourlyForecast ?? res.hourlyScores ?? [];
+  // The stored daily window was computed for everyone; a personal summary has to
+  // find its own, or it would name a window that is not this person's best.
+  const bw = personal ? null : (res.multiDayWindows?.[0]?.best ?? null);
   const bestWindow = bw
     ? fmtWindow(bw.startIso, bw.endIso, loc.tz)
     : findBestWindow(forecast, loc.tz);
   const skipWindow = findSkipWindow(forecast, loc.tz);
-  const { pros, cons } = prosAndCons(res.score.subScores ?? []);
+  const { pros, cons } = prosAndCons(subScores);
   const safety = activeSafety(res);
   return {
     slug: loc.slug,
     name: loc.name,
     score,
-    rating: res.score.rating ?? "",
+    rating,
     verdict: beachDayVerdict(score),
     pros,
     cons,
@@ -288,6 +316,28 @@ export function summarizeForPush(
     safetyKey: safety?.key,
     safetyText: safety?.text,
   };
+}
+
+/**
+ * Re-score the snapshot for one person. Returns null when there is nothing to
+ * personalize (no options, or the free defaults) or when the snapshot cannot be
+ * re-scored — the caller then uses the response's own everyone score.
+ */
+function personalView(
+  res: ConditionsResponse,
+  opts?: PushSummaryOptions,
+): { score: ConditionsResponse["score"]; hourly: HourlyScore[] } | null {
+  const scoring = opts?.scoring;
+  if (!scoring || scoring === DEFAULT_SCORING) return null;
+  try {
+    const nowMs = opts?.nowMs ?? Date.now();
+    return {
+      score: computeScore(res.snapshot, scoring),
+      hourly: computeHourlyScores(res.snapshot, nowMs, scoring),
+    };
+  } catch {
+    return null; // a partial snapshot must not cost this person their digest
+  }
 }
 
 /** A single notification to deliver (matches the service worker's payload shape). */
@@ -349,8 +399,7 @@ export function decideNotifications(
   // RE-fire a still-active one every SAFETY_REPEAT_MS. The single-shot-on-change
   // rule alone meant a phone offline when the alert first fired (then suppressed by
   // the key dedup) never got a warning on reconnect.
-  if (SAFETY_ALERTS_ENABLED) {
-    const SAFETY_REPEAT_MS = 30 * 60 * 1000;
+  if (safetyAlertsEnabled()) {
     const lastAt = sent.safetyAt ? Date.parse(sent.safetyAt) : NaN;
     const safetyDue =
       !!summary.safetyKey &&

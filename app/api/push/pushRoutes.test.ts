@@ -6,6 +6,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ConditionsResponse } from "@/lib/types";
 import type { NativeSub } from "@/lib/push/nativeStore";
+import { scorableResponse, wrapped } from "@/lib/alerts/fixtures";
 
 // Shared switches the mocks read, so each test can steer the fakes.
 const ctl = vi.hoisted(() => ({
@@ -13,6 +14,11 @@ const ctl = vi.hoisted(() => ({
   removed: [] as string[],
   sendResult: { ok: true, dead: false },
   fcmSends: [] as string[],
+  fcmMessages: [] as { title: string; body: string }[],
+  /** null = use the minimal CONDITIONS below. */
+  conditions: null as unknown,
+  /** The GLM strike feed the at-beach engine reads. */
+  feed: null as { generatedAt: string; windowMinutes: number; strikes: number[][] } | null,
 }));
 
 vi.mock("@/lib/push/nativeStore", async (importActual) => {
@@ -36,15 +42,26 @@ vi.mock("@/lib/push/fcm", () => ({
   getFcm: () => ({ projectId: "test-project" }),
   getFcmAccessToken: async () => "access-token",
   isDeadFcmToken: () => ctl.sendResult.dead,
-  sendFcm: async (_a: string, _p: string, token: string) => {
+  sendFcm: async (_a: string, _p: string, token: string, msg: { title: string; body: string }) => {
     ctl.fcmSends.push(token);
+    ctl.fcmMessages.push({ title: msg.title, body: msg.body });
     return { ok: ctl.sendResult.ok };
   },
 }));
 
 vi.mock("@/lib/conditions", () => ({
-  getConditions: async () => CONDITIONS,
+  getConditions: async () => ctl.conditions ?? CONDITIONS,
 }));
+
+// The at-beach engine's two feeds. Mocked so a safety run never leaves the process.
+vi.mock("@/lib/alerts/lightningFeed", () => ({
+  loadLightningFeed: async () => ctl.feed,
+}));
+
+vi.mock("@/lib/alerts/rain", async (importActual) => {
+  const actual = await importActual<typeof import("@/lib/alerts/rain")>();
+  return { ...actual, rainForFix: async () => null };
+});
 
 const { POST: registerPost } = await import("@/app/api/push/register-native/route");
 const { POST: unregisterPost } = await import("@/app/api/push/unregister-native/route");
@@ -104,7 +121,11 @@ beforeEach(() => {
   ctl.removed = [];
   ctl.sendResult = { ok: true, dead: false };
   ctl.fcmSends = [];
+  ctl.fcmMessages = [];
+  ctl.conditions = null;
+  ctl.feed = null;
   process.env.CRON_SECRET = "test-cron-secret";
+  delete process.env.PUSH_SAFETY_ALERTS;
 });
 
 describe("POST /api/push/register-native", () => {
@@ -275,6 +296,15 @@ describe("POST /api/push/run", () => {
     );
   }
 
+  /** Every alert is Plus (docs/PLUS_BUILD_SPEC.md), so a test device is Plus. */
+  async function grantPlus(id: string): Promise<void> {
+    const store = await getStore();
+    await store.upsertDevice(id, {
+      plan: "plus",
+      entitlementUntil: Date.now() + 30 * 24 * 3600 * 1000,
+    });
+  }
+
   async function seedDevice(): Promise<void> {
     await registerPost(
       post("https://x/api/push/register-native", {
@@ -284,6 +314,7 @@ describe("POST /api/push/run", () => {
         deviceId: DEV,
       }),
     );
+    await grantPlus(DEV);
   }
 
   it("503s without a cron secret", async () => {
@@ -328,10 +359,51 @@ describe("POST /api/push/run", () => {
         platform: "android",
       }),
     );
+    await grantPlus(legacyDeviceId(FCM_TOKEN_2));
     const body = (await (await run("?force=morning")).json()) as Record<string, number>;
     expect(body.beaches).toBe(2);
     expect(body.subscriptions).toBe(2);
     expect(body.sent).toBe(2);
+  });
+
+  it("sends no digest to a free device and leaves its dedup state alone", async () => {
+    await registerPost(
+      post("https://x/api/push/register-native", {
+        slug: "boca-raton",
+        token: FCM_TOKEN,
+        platform: "android",
+        deviceId: DEV,
+      }),
+    );
+    const body = (await (await run("?force=morning")).json()) as Record<string, number>;
+    expect(body.subscriptions).toBe(1); // it is still counted as a subscriber
+    expect(body.sent).toBe(0);
+    expect(ctl.fcmSends).toEqual([]);
+    const store = await getStore();
+    expect(await store.getSent(DEV)).toEqual({});
+  });
+
+  it("sends the digest once the free device upgrades", async () => {
+    await registerPost(
+      post("https://x/api/push/register-native", {
+        slug: "boca-raton",
+        token: FCM_TOKEN,
+        platform: "android",
+        deviceId: DEV,
+      }),
+    );
+    expect(((await (await run("?force=morning")).json()) as Record<string, number>).sent).toBe(0);
+    await grantPlus(DEV);
+    expect(((await (await run("?force=morning")).json()) as Record<string, number>).sent).toBe(1);
+  });
+
+  it("reports at-beach alert counts, and sends none when nobody is armed", async () => {
+    await seedDevice();
+    const body = (await (await run("?mode=safety")).json()) as Record<string, unknown>;
+    expect(body.mode).toBe("safety");
+    expect(body.sent).toBe(0);
+    expect(body.armed).toBe(0);
+    expect(body.alerts).toMatchObject({ devices: 0, evaluated: 0, sent: 0 });
   });
 
   it("mode=safety does not send the forced morning summary", async () => {
@@ -390,5 +462,147 @@ describe("POST /api/push/run", () => {
     await store.upsertDevice(DEV, { prefs: { morning: false } });
     const body = (await (await run("?force=morning")).json()) as Record<string, number>;
     expect(body.sent).toBe(0);
+  });
+
+  // --- The at-beach engine, through the route -------------------------------
+  describe("hazard alerts from a live fix", () => {
+    /** A strike ~3.4 mi north of Boca's beach, two minutes ago. */
+    function nearStrike() {
+      return {
+        generatedAt: new Date().toISOString(),
+        windowMinutes: 20,
+        strikes: [[Math.floor(Date.now() / 1000) - 120, 26.4087, -80.0686]],
+      };
+    }
+
+    async function arm(deviceId: string): Promise<void> {
+      const store = await getStore();
+      await store.setPresence(deviceId, {
+        slug: "boca-raton",
+        lat: 26.3587,
+        lon: -80.0686,
+        accuracyM: 15,
+        fixAt: Date.now(),
+        armedUntil: Date.now() + 4 * 3600 * 1000,
+        source: "auto",
+      });
+    }
+
+    it("pushes lightning to an armed device and counts it", async () => {
+      await seedDevice();
+      await arm(DEV);
+      ctl.feed = nearStrike();
+      const body = (await (await run("?mode=safety")).json()) as Record<string, number>;
+      expect(body.armed).toBe(1);
+      expect(body.sent).toBe(1);
+      expect(ctl.fcmMessages[0].body).toContain("get out of the water and take cover.");
+    });
+
+    it("still reaches a device that never picked a home beach", async () => {
+      await seedDevice();
+      const store = await getStore();
+      await store.upsertDevice(DEV, { homeSlug: null });
+      await arm(DEV);
+      ctl.feed = nearStrike();
+      const body = (await (await run("?mode=safety")).json()) as Record<string, number>;
+      expect(body.subscriptions).toBe(0); // no home beach → no digest
+      expect(body.sent).toBe(1); // …but the hazard alert still lands
+    });
+
+    it("sends nothing while the kill switch is off", async () => {
+      await seedDevice();
+      await arm(DEV);
+      ctl.feed = nearStrike();
+      process.env.PUSH_SAFETY_ALERTS = "off";
+      const body = (await (await run("?mode=safety")).json()) as Record<string, number>;
+      expect(body.armed).toBe(0);
+      expect(body.sent).toBe(0);
+      expect(ctl.fcmMessages).toEqual([]);
+    });
+
+    it("mode=morning does not run the at-beach engine", async () => {
+      await seedDevice();
+      await arm(DEV);
+      ctl.feed = nearStrike();
+      const body = (await (await run("?mode=morning")).json()) as Record<string, number>;
+      expect(body.armed).toBe(0);
+      expect(body.sent).toBe(0);
+    });
+  });
+
+  // --- The personal digest, and "your beach day just turned Excellent" -------
+  // A 4 ft day: 86 for everyone, 99 for a surfer. One fixture, two numbers.
+  describe("in the person's own number", () => {
+    const SURF = { profiles: ["surf"], heat: "normal", crowds: "normal" } as const;
+
+    /** The scorable fixture, with a sun window wide enough to be daylight now. */
+    function fourFootDay(): ConditionsResponse {
+      const res = scorableResponse({ waveHeightFt: 4 });
+      const sun = {
+        date: "2026-09-02",
+        sunrise: "1970-01-01T00:00:00Z",
+        sunset: "2100-01-01T00:00:00Z",
+      };
+      return {
+        ...res,
+        snapshot: { ...res.snapshot, sun: wrapped(sun) },
+      } as ConditionsResponse;
+    }
+
+    beforeEach(() => {
+      ctl.conditions = fourFootDay();
+    });
+
+    it("pushes everyone's score to a device with no profile", async () => {
+      await seedDevice();
+      await run("?force=morning");
+      expect(ctl.fcmMessages[0].title).toContain("86/100");
+    });
+
+    it("pushes the surfer's score to a device with a surfing profile", async () => {
+      await seedDevice();
+      const store = await getStore();
+      await store.upsertDevice(DEV, { profile: { ...SURF, profiles: ["surf"] } });
+      await run("?force=morning");
+      expect(ctl.fcmMessages[0].title).toContain("99/100");
+    });
+
+    it("tells the surfer their day turned Excellent, once", async () => {
+      await seedDevice();
+      const store = await getStore();
+      await store.upsertDevice(DEV, { profile: { ...SURF, profiles: ["surf"] } });
+
+      const first = (await (await run()).json()) as Record<string, number>;
+      expect(first.excellent).toBe(1);
+      expect(ctl.fcmMessages.at(-1)?.body).toBe(
+        "🏖️ Your beach day just turned Excellent at Boca Raton — 99/100.",
+      );
+
+      const second = (await (await run()).json()) as Record<string, number>;
+      expect(second.excellent).toBe(0);
+    });
+
+    it("says nothing to a device whose own score is only 86", async () => {
+      await seedDevice();
+      const body = (await (await run()).json()) as Record<string, number>;
+      expect(body.excellent).toBe(0);
+      expect(ctl.fcmMessages).toEqual([]);
+    });
+
+    it("says nothing to a free device, whatever its score", async () => {
+      await registerPost(
+        post("https://x/api/push/register-native", {
+          slug: "boca-raton",
+          token: FCM_TOKEN,
+          platform: "android",
+          deviceId: DEV,
+        }),
+      );
+      const store = await getStore();
+      await store.upsertDevice(DEV, { profile: { ...SURF, profiles: ["surf"] } });
+      const body = (await (await run()).json()) as Record<string, number>;
+      expect(body.excellent).toBe(0);
+      expect(ctl.fcmMessages).toEqual([]);
+    });
   });
 });
