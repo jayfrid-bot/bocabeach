@@ -7,14 +7,32 @@ name: GOES Cloud Feed
 # The web app reads the published file via raw.githubusercontent.com
 # (lib/sources/goesCloud.ts).
 #
-# Unlike lightning.yml, this does NOT need a long-lived in-run loop: GLM's
-# near-real-time safety case (get-out-of-the-water alerts) needs to bridge
-# GitHub's sporadic cron with a ~1-min republish loop. Cloud cover changes on
-# a ~5-minute scale (the ACMC product's own cadence), so a plain ~15-min cron
-# plus workflow_dispatch is plenty — no loop required.
+# GitHub's cron is a promise of "no more often than", NOT "will fire on time":
+# a plain `*/15` schedule was throttled to only ~4-5 REAL fires/day (same
+# throttling proven for sargassum.yml — see that file's header for the full
+# write-up and the measured fire times). One read-and-exit per fire left this
+# feed hours stale (202 min stale at 2 PM measured once), which fed a wrong
+# fallback into the sand-temperature model and under-read ground truth by
+# 21degF. So — same fix as sargassum.yml and lightning.yml — each fire does
+# NOT read once and exit. It loops INSIDE the job on its own ~15-minute
+# wall-clock cadence for as long as it's daylight (up to ~340 min of job
+# time), so whenever GitHub's sparse re-fires do land, they just restart a
+# loop that was already keeping the cadence, and the feed never goes stale.
+#
+# CADENCE MATH is unchanged by this fix and MUST be respected by the loop:
+# the ACMC cloud-mask product itself only updates on a ~5-min cadence, so
+# there is no value (and only NOAA S3 anonymous-fetch quota cost) in reading
+# faster than every 15 min. The loop enforces this by sleeping to the next
+# :00/:15/:30/:45 wall-clock boundary after each cycle (not a fixed
+# "sleep 900"), so a slow cycle (retries/backoff) can never compound into
+# faster-than-15-min reads.
 
 on:
   schedule:
+    # Every 15 minutes, around the clock. GitHub throttles this to only a
+    # handful of real fires/day (see header) — the in-job loop below is what
+    # actually delivers the ~15-min cadence; the cron here just makes sure a
+    # loop gets (re)started periodically even if push/dispatch don't.
     - cron: "*/15 * * * *"
   push:
     branches: [main]
@@ -26,12 +44,21 @@ permissions:
 
 concurrency:
   group: goes-cloud
+  # A new cron fire cancels any healthy running loop and starts a fresh one.
+  # That's fine, not wasteful: the fresh loop just resumes the same ~15-min
+  # cadence, so the feed cadence is unaffected. Keeping this true is what
+  # makes the fix quota-safe — without it, two loops started by overlapping
+  # throttled fires would each read every ~15 min, doubling NOAA S3 fetch
+  # volume for no benefit.
   cancel-in-progress: true
 
 jobs:
   build-feed:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Long-running loop job now, not a single read. GitHub's hard cap on a
+    # job is 360 min (6h); 350 leaves headroom for the runner's own
+    # setup/teardown.
+    timeout-minutes: 350
     steps:
       - name: Checkout (for the script + beach config)
         uses: actions/checkout@v4
@@ -43,25 +70,94 @@ jobs:
       - name: Install deps
         run: pip install --quiet --disable-pip-version-check h5py numpy
 
-      - name: Build the feed
-        env:
-          GOES_OUT: ${{ runner.temp }}/goes_cloud.json
-        run: python scripts/goes_cloud.py
-
-      - name: Publish to cloud-data branch
+      - name: Build + publish cloud feed on a ~15-minute loop through daylight
+        # Loop pattern per sargassum.yml/lightning.yml (see sargassum.yml's
+        # header for the full rationale): each cycle runs the one-shot
+        # script, publishes its output to the cloud-data branch, then sleeps
+        # to the next 15-min wall-clock boundary so cadence stays ~15 min
+        # regardless of how long the cycle itself took (S3 retries, etc).
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GOES_OUT: ${{ runner.temp }}/goes_cloud.json
         run: |
+          set +e # one bad cycle (S3 hiccup, publish push conflict, ...) must not kill the loop
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           work="${RUNNER_TEMP}/pub"
-          rm -rf "$work"; mkdir -p "$work"
-          cp "${RUNNER_TEMP}/goes_cloud.json" "$work/goes_cloud.json"
-          cd "$work"
-          git init -q
-          git config user.name "goes-cloud-bot"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -q -b cloud-data
-          git add goes_cloud.json
-          git commit -q -m "GOES-19 cloud feed $(date -u +%FT%TZ)"
-          # Force-push a single-commit orphan branch so history never grows.
-          git push -f "$remote" cloud-data
+          feed="${GOES_OUT}"
+          budget_min=340 # leaves ~10 min headroom under the 350 timeout-minutes above
+
+          # Seconds until the next :00/:15/:30/:45 wall-clock boundary. Relies
+          # on America/New_York (and UTC) using whole-hour offsets, so a UTC
+          # epoch mod 900 lines up with local 15-minute boundaries too — no TZ
+          # math needed here for the sleep itself (only the daylight check
+          # below needs the actual local clock).
+          sleep_to_boundary() {
+            local now rem
+            now=$(date +%s)
+            rem=$(( now % 900 ))
+            if [ "$rem" -eq 0 ]; then echo 0; else echo $(( 900 - rem )); fi
+          }
+
+          # True while local (America/New_York) time is inside the daylight
+          # window GOES cloud cover cares about for the sand model + sky
+          # score. A bit later than the cam feed's window: sunset-color
+          # scoring wants the evening granules too.
+          in_daylight() {
+            local hm hm10
+            hm=$(TZ="America/New_York" date +%H%M)
+            hm10=$((10#$hm)) # force base-10: a leading zero would read as octal
+            [ "$hm10" -ge 555 ] && [ "$hm10" -le 2035 ]
+          }
+
+          publish() {
+            [ -f "$feed" ] || { echo "  no feed written this cycle — leaving last good cloud-data in place"; return 0; }
+            rm -rf "$work"; mkdir -p "$work"
+            cp "$feed" "$work/goes_cloud.json" || return 1
+            cd "$work" || return 1
+            git init -q
+            git config user.name "goes-cloud-bot"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout -q -b cloud-data
+            git add goes_cloud.json
+            git commit -q -m "GOES-19 cloud feed $(date -u +%FT%TZ)"
+            # Force-push a single-commit orphan branch so history never grows.
+            git push -f "$remote" cloud-data
+            cd - >/dev/null
+          }
+
+          consecutive_fail=0
+          start_epoch=$(date +%s)
+
+          run_cycle() {
+            rm -f "$feed"
+            if python scripts/goes_cloud.py; then
+              consecutive_fail=0
+              publish && echo "  published $(date -u +%FT%TZ)"
+            else
+              consecutive_fail=$((consecutive_fail + 1))
+              echo "  cycle failed (${consecutive_fail} in a row) — will retry next cycle"
+            fi
+          }
+
+          while true; do
+            elapsed_min=$(( ($(date +%s) - start_epoch) / 60 ))
+            if [ "$elapsed_min" -ge "$budget_min" ]; then
+              echo "time budget exhausted after ${elapsed_min}m — exiting loop (next fire picks up)"
+              break
+            fi
+
+            if ! in_daylight; then
+              echo "outside daylight window (05:55-20:35 America/New_York) — running one final read for carry-forward/night publish, then exiting"
+              run_cycle
+              break
+            fi
+
+            run_cycle
+
+            if [ "$consecutive_fail" -ge 5 ]; then
+              echo "5 consecutive cycle failures — bailing so this shows as a red run (persistent breakage, not transient)"
+              exit 1
+            fi
+
+            sleep "$(sleep_to_boundary)"
+          done

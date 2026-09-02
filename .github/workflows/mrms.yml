@@ -8,19 +8,38 @@ name: MRMS Radar Rain Nowcast
 # and never touches the Netlify build/bill. The web app reads the published
 # file via raw.githubusercontent.com (lib/sources/precipRadar.ts).
 #
-# CADENCE: MRMS itself publishes every 2 minutes, and radar echoes move fast
-# enough that a fresh read genuinely matters (a 60 km/h cell crosses the whole
-# 64 km analysis box in about an hour). So this asks for */10. GitHub throttles
-# scheduled workflows on busy repos and in practice often delivers closer to
-# hourly — that is accepted rather than worked around: the app does NOT trust
-# a stale read (see PRECIP_RADAR_STALE_MINUTES in lib/sources/precipRadar.ts,
-# which degrades the feed to "stale" and suppresses the nowcast copy entirely
-# once the frame is old). A throttled run therefore shows nothing, never a
-# confidently-wrong "rain in 20 min" built on an hour-old frame.
+# GitHub's cron is a promise of "no more often than", NOT "will fire on time":
+# a plain `*/10` schedule was throttled to only ~4-5 REAL fires/day (same
+# throttling proven for sargassum.yml and goes-cloud.yml — see sargassum.yml's
+# header for the full write-up and measured fire times). One read-and-exit
+# per fire left rain radar hours stale, which is worse than useless for a
+# short-fuse nowcast (a 60 km/h cell crosses the whole 64 km analysis box in
+# about an hour). So — same fix as sargassum.yml/lightning.yml/goes-cloud.yml
+# — each fire does NOT read once and exit. It loops INSIDE the job on its own
+# ~10-minute wall-clock cadence for the full job budget, around the clock
+# (rain radar matters at night too, unlike cloud cover), so whenever GitHub's
+# sparse re-fires do land, they just restart a loop that was already keeping
+# the cadence, and the feed never goes stale.
+#
+# CADENCE MATH is unchanged by this fix and MUST be respected by the loop:
+# MRMS itself publishes every 2 minutes, but this loop deliberately reads no
+# faster than every 10 min (quota/politeness on NOAA S3 anonymous fetches).
+# The app does NOT trust a stale read regardless (see
+# PRECIP_RADAR_STALE_MINUTES in lib/sources/precipRadar.ts, which degrades
+# the feed to "stale" and suppresses the nowcast copy entirely once the frame
+# is old) — a throttled/failed cycle therefore shows nothing, never a
+# confidently-wrong "rain in 20 min" built on an hour-old frame. The loop
+# enforces the 10-min floor by sleeping to the next :00/:10/:20... wall-clock
+# boundary after each cycle (not a fixed "sleep 600"), so a slow cycle
+# (retries/backoff) can never compound into faster-than-10-min reads.
 # workflow_dispatch is here for on-demand runs while iterating.
 
 on:
   schedule:
+    # Every 10 minutes, around the clock. GitHub throttles this to only a
+    # handful of real fires/day (see header) — the in-job loop below is what
+    # actually delivers the ~10-min cadence; the cron here just makes sure a
+    # loop gets (re)started periodically even if push/dispatch don't.
     - cron: "*/10 * * * *"
   push:
     branches: [main]
@@ -32,12 +51,21 @@ permissions:
 
 concurrency:
   group: mrms-precip
+  # A new cron fire cancels any healthy running loop and starts a fresh one.
+  # That's fine, not wasteful: the fresh loop just resumes the same ~10-min
+  # cadence, so the feed cadence is unaffected. Keeping this true is what
+  # makes the fix quota-safe — without it, two loops started by overlapping
+  # throttled fires would each read every ~10 min, doubling NOAA S3 fetch
+  # volume for no benefit.
   cancel-in-progress: true
 
 jobs:
   build-feed:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Long-running loop job now, not a single read. GitHub's hard cap on a
+    # job is 360 min (6h); 350 leaves headroom for the runner's own
+    # setup/teardown.
+    timeout-minutes: 350
     steps:
       - name: Checkout (for the script)
         uses: actions/checkout@v4
@@ -55,25 +83,75 @@ jobs:
       - name: Install deps
         run: pip install --quiet --disable-pip-version-check pygrib numpy
 
-      - name: Build the feed
-        env:
-          MRMS_OUT: ${{ runner.temp }}/mrms_precip.json
-        run: python scripts/mrms_precip.py
-
-      - name: Publish to mrms-data branch
+      - name: Build + publish MRMS feed on a ~10-minute loop
+        # Loop pattern per sargassum.yml/lightning.yml/goes-cloud.yml (see
+        # sargassum.yml's header for the full rationale): each cycle runs the
+        # one-shot script, publishes its output to the mrms-data branch, then
+        # sleeps to the next 10-min wall-clock boundary so cadence stays
+        # ~10 min regardless of how long the cycle itself took (S3 retries,
+        # GRIB2 decode time, etc). Runs around the clock — rain radar matters
+        # at night, unlike GOES cloud cover, so there is no daylight gate.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MRMS_OUT: ${{ runner.temp }}/mrms_precip.json
         run: |
+          set +e # one bad cycle (S3 hiccup, publish push conflict, ...) must not kill the loop
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           work="${RUNNER_TEMP}/pub"
-          rm -rf "$work"; mkdir -p "$work"
-          cp "${RUNNER_TEMP}/mrms_precip.json" "$work/mrms_precip.json"
-          cd "$work"
-          git init -q
-          git config user.name "mrms-bot"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout -q -b mrms-data
-          git add mrms_precip.json
-          git commit -q -m "MRMS radar rain feed $(date -u +%FT%TZ)"
-          # Force-push a single-commit orphan branch so history never grows.
-          git push -f "$remote" mrms-data
+          feed="${MRMS_OUT}"
+          budget_min=340 # leaves ~10 min headroom under the 350 timeout-minutes above
+
+          # Seconds until the next :00/:10/:20... wall-clock boundary.
+          sleep_to_boundary() {
+            local now rem
+            now=$(date +%s)
+            rem=$(( now % 600 ))
+            if [ "$rem" -eq 0 ]; then echo 0; else echo $(( 600 - rem )); fi
+          }
+
+          publish() {
+            [ -f "$feed" ] || { echo "  no feed written this cycle — leaving last good mrms-data in place"; return 0; }
+            rm -rf "$work"; mkdir -p "$work"
+            cp "$feed" "$work/mrms_precip.json" || return 1
+            cd "$work" || return 1
+            git init -q
+            git config user.name "mrms-bot"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout -q -b mrms-data
+            git add mrms_precip.json
+            git commit -q -m "MRMS radar rain feed $(date -u +%FT%TZ)"
+            # Force-push a single-commit orphan branch so history never grows.
+            git push -f "$remote" mrms-data
+            cd - >/dev/null
+          }
+
+          consecutive_fail=0
+          start_epoch=$(date +%s)
+
+          run_cycle() {
+            rm -f "$feed"
+            if python scripts/mrms_precip.py; then
+              consecutive_fail=0
+              publish && echo "  published $(date -u +%FT%TZ)"
+            else
+              consecutive_fail=$((consecutive_fail + 1))
+              echo "  cycle failed (${consecutive_fail} in a row) — will retry next cycle"
+            fi
+          }
+
+          while true; do
+            elapsed_min=$(( ($(date +%s) - start_epoch) / 60 ))
+            if [ "$elapsed_min" -ge "$budget_min" ]; then
+              echo "time budget exhausted after ${elapsed_min}m — exiting loop (next fire picks up)"
+              break
+            fi
+
+            run_cycle
+
+            if [ "$consecutive_fail" -ge 5 ]; then
+              echo "5 consecutive cycle failures — bailing so this shows as a red run (persistent breakage, not transient)"
+              exit 1
+            fi
+
+            sleep "$(sleep_to_boundary)"
+          done
