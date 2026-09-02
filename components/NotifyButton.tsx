@@ -9,13 +9,23 @@ const pill =
   "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 transition";
 
 /**
- * "Notify me" opt-in for a beach: a morning Beach Day summary + safety alerts,
- * delivered as native push (APNs on iOS, FCM on Android) inside the app. Renders
- * nothing in a normal browser — push is an app-only feature now.
+ * The Alerts door.
+ *
+ * Free: tapping it opens the Plus questions — alerts are the paid half of the
+ * app, and pretending otherwise by asking for a notification permission we
+ * cannot use would be worse than saying so.
+ * Plus: the original opt-in, unchanged — permission, APNs/FCM registration, and
+ * the token stored against this device — plus a way into the settings sheet.
+ *
+ * Renders nothing in a normal browser: push is an app-only feature.
  */
 export function NotifyButton({
   slug,
   serverNative = false,
+  entitled = false,
+  prefs = { morning: true, safety: true },
+  onDoor,
+  onSettings,
 }: {
   slug: string;
   /**
@@ -24,6 +34,14 @@ export function NotifyButton({
    * mis-detects "web" on the remote URL. We still call the plugin on tap.
    */
   serverNative?: boolean;
+  /** Beach Day Plus is active on this device. */
+  entitled?: boolean;
+  /** This device's saved alert choices, in the two switches push understands. */
+  prefs?: { morning: boolean; safety: boolean };
+  /** Free tap — open the Plus questions. */
+  onDoor?: () => void;
+  /** Plus tap once alerts are on — open the settings sheet. */
+  onSettings?: () => void;
 }) {
   // When the server already knows we're in the app, start in "off" so the
   // button is in the SSR HTML immediately (no init flash); the effect then
@@ -62,10 +80,15 @@ export function NotifyButton({
   }, [slug, serverNative]);
 
   const enable = async () => {
+    // No entitlement, no alerts to enable — send them to the offer instead.
+    if (!entitled) {
+      onDoor?.();
+      return;
+    }
     setState("busy");
     setErr(null);
     try {
-      await enableNative(slug, { morning: true, safety: true });
+      await enableNative(slug, prefs);
       setState("on");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -100,6 +123,11 @@ export function NotifyButton({
     return (
       <span className={`${pill} bg-emerald-500/10 text-emerald-700 ring-emerald-500/20 dark:text-emerald-300`}>
         🔔 Alerts on
+        {onSettings ? (
+          <button onClick={onSettings} className="ml-1 underline hover:no-underline">
+            settings
+          </button>
+        ) : null}
         <button onClick={disable} className="ml-1 underline hover:no-underline">
           turn off
         </button>
@@ -113,9 +141,14 @@ export function NotifyButton({
         onClick={enable}
         disabled={state === "busy"}
         className={`${pill} bg-ocean-500/10 text-ocean-700 ring-ocean-500/20 hover:bg-ocean-500/20 disabled:opacity-60 dark:text-ocean-300`}
-        title={err ?? "Get a morning beach-day summary + safety alerts for this beach"}
+        title={
+          err ??
+          (entitled
+            ? "Turn on safety and morning alerts for this beach"
+            : "Safety and morning alerts are part of Beach Day Plus")
+        }
       >
-        🔔 {state === "busy" ? "Enabling…" : state === "error" ? "Try again" : "Notify me"}
+        🔔 {state === "busy" ? "Enabling…" : state === "error" ? "Try again" : "Alerts"}
       </button>
       {state === "error" && err ? (
         <span className="max-w-[280px] text-[11px] leading-tight text-rose-600 dark:text-rose-400">

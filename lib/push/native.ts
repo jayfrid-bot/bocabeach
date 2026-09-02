@@ -6,6 +6,7 @@
 import { Capacitor } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
 import type { Token, RegistrationError, ActionPerformed } from "@capacitor/push-notifications";
+import { getDeviceId } from "@/lib/deviceId";
 
 /**
  * Resolve the runtime platform robustly. We load the live site inside the
@@ -190,10 +191,16 @@ export async function enableNative(
   const token = await registerForToken();
   // "ios" → APNs token, "android" → FCM token; the server routes by platform.
   const platform = nativePlatform();
+  // The Plus device id ties this push token to THIS device's row (profile,
+  // entitlement, alert prefs). Without it the server has to keep the token on a
+  // synthetic "legacy:<token>" row instead; sending it lets that row be merged
+  // and dropped. "" (storage disabled) is omitted so the server keeps the
+  // legacy path rather than rejecting the body.
+  const deviceId = getDeviceId();
   const res = await fetch("/api/push/register-native", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ slug, token, platform, prefs }),
+    body: JSON.stringify({ slug, token, platform, prefs, ...(deviceId ? { deviceId } : {}) }),
   });
   if (!res.ok) throw new Error(`Couldn't save your registration (${res.status}).`);
   try {
@@ -212,10 +219,11 @@ export async function disableNative(slug: string): Promise<void> {
     /* ignore */
   }
   if (token) {
+    const deviceId = getDeviceId();
     await fetch("/api/push/unregister-native", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
+      body: JSON.stringify({ token, ...(deviceId ? { deviceId } : {}) }),
     }).catch(() => {});
   }
   try {

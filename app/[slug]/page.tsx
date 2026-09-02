@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, permanentRedirect } from "next/navigation";
 import { getConditions } from "@/lib/conditions";
-import { getLocation, listLocations } from "@/config/locations";
+import { getLocation, listLocations, toPublicLocation } from "@/config/locations";
 import { ConditionsDashboard } from "@/components/ConditionsDashboard";
 import { isNativeAppRequest } from "@/lib/nativeRequest";
 
@@ -118,6 +118,9 @@ export default async function BeachPage({
         initial={data}
         browseHref={browseHref}
         isNativeApp={isNativeApp}
+        // The served-beach list powers the location features (nearest beach,
+        // home beach, near-you chip) — public fields only.
+        beaches={all.map(toPublicLocation)}
       />
     </>
   );

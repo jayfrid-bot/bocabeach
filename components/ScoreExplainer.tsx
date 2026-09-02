@@ -1,5 +1,6 @@
 import type { Derived } from "@/lib/score";
-import type { ScoreResult } from "@/lib/types";
+import { DEFAULT_SCORING } from "@/lib/score";
+import type { ScoreResult, ScoringOptions } from "@/lib/types";
 import { explainScore } from "@/lib/explain";
 
 /**
@@ -8,15 +9,25 @@ import { explainScore } from "@/lib/explain";
  * sentences a beachgoer can scan in two seconds. Caps (flags, storms,
  * advisories) appear at the top of the "holding it back" column since
  * they're the single biggest reason the score is what it is.
+ *
+ * `options` + `profileLabel` are how a personal score explains ITSELF: the
+ * summary then names what the score is tuned for and which factors lead it.
+ * Without them the wording is exactly what every free user has always seen.
  */
 export function ScoreExplainer({
   derived,
   result,
+  options = DEFAULT_SCORING,
+  profileLabel,
 }: {
   derived: Derived;
   result: ScoreResult;
+  /** The scoring this result was produced with. */
+  options?: ScoringOptions;
+  /** "snorkeling", "swimming and dog walks" — omitted for the shared score. */
+  profileLabel?: string;
 }) {
-  const { summary, helping, hurting } = explainScore(derived, result);
+  const { summary, helping, hurting } = explainScore(derived, result, options, profileLabel);
 
   return (
     <div className="rounded-2xl bg-white/80 dark:bg-slate-900/70 p-5 ring-1 ring-slate-900/10 dark:ring-white/10">
