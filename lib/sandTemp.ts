@@ -112,7 +112,7 @@ const FULL_SUN_WM2 = 1000;
  *    Observer: overhead CLEAR, ~20-30% cloud to the E and W, full sun ≥1 h. The
  *    mirror image of 7/15 (forecast said cloud, reality was sun). The model logic is
  *    not at fault — the input that exists for this exact case was 3+ h stale
- *    because GitHub throttled the */15 goes-cloud cron (the same throttling that
+ *    because GitHub throttled the every-15-min goes-cloud cron (the same throttling that
  *    starved the cam feed; fixed there with the in-job loop pattern). Fix is the
  *    pipeline cadence (goes-cloud.yml → loop pattern), not a curve retune. */
 const MAX_SUN_BOOST_F = 55;
