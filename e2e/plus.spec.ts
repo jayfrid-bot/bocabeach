@@ -55,6 +55,19 @@ async function openDashboard(page: Page): Promise<string[]> {
   await page.route("**://static.cloudflareinsights.com/**", (route) =>
     route.fulfill({ status: 200, contentType: "application/javascript", body: "" }),
   );
+  // Warm the Plus API routes once per worker. `next dev` compiles routes on
+  // first use and brings up the local D1 binding lazily; the reveal/trial steps
+  // could race that and see a one-off 500, which the console-error check then
+  // failed on. A 4xx from a bogus body is fine — the route is compiled.
+  if (!warmed) {
+    warmed = true;
+    await Promise.all([
+      page.request.get("/api/devices?deviceId=warm-up").catch(() => {}),
+      page.request.post("/api/devices/trial", { data: {} }).catch(() => {}),
+      page.request.post("/api/devices/unlock", { data: {} }).catch(() => {}),
+      page.request.post("/api/presence", { data: {} }).catch(() => {}),
+    ]);
+  }
   await page.goto("/", { waitUntil: "domcontentloaded" });
   await expect(page.getByText(/build\s+\d+/)).toBeVisible({ timeout: 60_000 });
   await expect(
@@ -104,6 +117,9 @@ async function clippedText(page: Page, selector: string): Promise<string[]> {
     return bad;
   }, selector);
 }
+
+/** Once per worker: see the warm-up in openDashboard. */
+let warmed = false;
 
 test.describe("Beach Day Plus", () => {
   test("free dashboard offers the door and shows no personal score", async ({ page }) => {
