@@ -62,11 +62,51 @@ describe("POST /api/devices", () => {
     expect((await json(res)).device?.profile).toEqual(profile);
   });
 
+  it("rejects a profile the scoring engine could not run", async () => {
+    // A hand-made body used to be stored verbatim. `{profiles: "swim"}` threw
+    // inside resolveScoring, and a nonsense ideal band scored every hour NaN —
+    // the morning digest went out titled "Poor · NaN/100".
+    for (const profile of [{ profiles: "swim" }, { profiles: [] }, { profiles: ["yachting"] }]) {
+      const res = await devicesPost(post("https://x/api/devices", { deviceId: DEV, profile }));
+      expect(res.status, JSON.stringify(profile)).toBe(400);
+    }
+  });
+
+  it("stores a profile with the nonsense stripped out of it", async () => {
+    const res = await devicesPost(
+      post("https://x/api/devices", {
+        deviceId: DEV,
+        profile: {
+          profiles: ["swim", "kids", "surf"],
+          heat: "boiling",
+          crowds: 7,
+          advanced: { airIdeal: ["a", "b"], mult: { waves: 1e9, sky: 2 } },
+        },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect((await json(res)).device?.profile).toEqual({
+      profiles: ["swim", "kids"],
+      heat: "normal",
+      crowds: "normal",
+      advanced: { mult: { sky: 2 } },
+    });
+  });
+
   it("rejects a missing or malformed deviceId", async () => {
     for (const deviceId of [undefined, "", "short", 42, "has space"]) {
       const res = await devicesPost(post("https://x/api/devices", { deviceId }));
       expect(res.status).toBe(400);
       expect((await json(res)).error).toBe("bad-request");
+    }
+  });
+
+  it("rejects a timezone no clock can read", async () => {
+    // The push run formats every device's local hour with Intl, which throws a
+    // RangeError on a zone it does not know — and that killed the whole run.
+    for (const tz of ["Mars/Olympus", "America/New York", "America/New_York; DROP"]) {
+      const res = await devicesPost(post("https://x/api/devices", { deviceId: DEV, tz }));
+      expect(res.status, tz).toBe(400);
     }
   });
 

@@ -9,10 +9,24 @@ import type { LocationPublic } from "@/lib/types";
 
 /** Inside this, you are at the beach and alerts arm themselves. */
 const AT_BEACH_MI = 2;
-const AUTO_ARM_MS = 4 * 3600 * 1000;
+export const AUTO_ARM_MS = 4 * 3600 * 1000;
 const MANUAL_ARM_MS = 6 * 3600 * 1000;
 /** Never re-arm more than once a minute, however often the app foregrounds. */
 const ARM_THROTTLE_MS = 60_000;
+/** …and only top a live window up once it is down to its last hour. */
+const ARM_TOP_UP_MS = 3600 * 1000;
+
+/**
+ * Should the auto-arm fire now? Pure, because getting it wrong is expensive: the
+ * effect below re-runs on every render (the app re-renders once a minute to keep
+ * its clock moving), so a bare throttle wrote a fresh presence row every 60
+ * seconds for as long as someone stood on the sand. A window with hours left on
+ * it needs nothing.
+ */
+export function shouldAutoArm(now: number, lastArmAt: number, armedUntil: number): boolean {
+  if (now - lastArmAt < ARM_THROTTLE_MS) return false;
+  return armedUntil - now <= ARM_TOP_UP_MS;
+}
 
 const CARD =
   "mb-4 rounded-2xl bg-white/80 px-4 py-3 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10";
@@ -52,7 +66,8 @@ export function BeachModeCard({
   const nearest = fix ? nearestServedBeach(fix.lat, fix.lon, beaches) : null;
   const atBeach = !!nearest && nearest.distanceMi <= AT_BEACH_MI;
   const presence = plus.device?.presence ?? null;
-  const armed = !!presence && presence.armedUntil > Date.now();
+  const armedUntil = presence?.armedUntil ?? 0;
+  const armed = !!presence && armedUntil > Date.now();
 
   const arm = useCallback(
     async (ms: number, source: "auto" | "manual") => {
@@ -87,7 +102,7 @@ export function BeachModeCard({
     if (!native || !plus.entitled || locked || !atBeach) return;
     const armIfDue = () => {
       const now = Date.now();
-      if (now - lastArmRef.current < ARM_THROTTLE_MS) return;
+      if (!shouldAutoArm(now, lastArmRef.current, armedUntil)) return;
       lastArmRef.current = now;
       void arm(AUTO_ARM_MS, "auto");
     };
@@ -97,7 +112,7 @@ export function BeachModeCard({
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [native, plus.entitled, locked, atBeach, arm]);
+  }, [native, plus.entitled, locked, atBeach, armedUntil, arm]);
 
   const disarm = async () => {
     setBusy(true);

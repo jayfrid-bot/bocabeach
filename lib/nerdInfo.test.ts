@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { buildNerdInfo, nerdBuilders, SCORE_WEIGHTS_PCT, type NerdContext } from "@/lib/nerdInfo";
 import type { ConditionsSnapshot, Wrapped } from "@/lib/types";
 import type { Derived } from "@/lib/score";
@@ -339,5 +339,32 @@ describe("tides card reports the observed-vs-predicted gap honestly", () => {
     const info = buildNerdInfo("tides", ctx);
     expect(info.computation.join(" ")).not.toContain("Gauge");
     expect(info.sources.some((s) => s.includes("observed water level"))).toBe(false);
+  });
+});
+
+describe("hydration safety: a back reads the snapshot's clock, never the wall clock", () => {
+  // The sand back prints hours-from-solar-noon to one decimal — it moves every
+  // six minutes. Read off `new Date()` it differed between the server render and
+  // the client's hydration, and React threw the whole tree away and rebuilt it.
+  const dated = { ...snap, generatedAt: "2026-07-17T16:00:00.000Z" } as ConditionsSnapshot;
+
+  function atClock(ms: number): string {
+    vi.useFakeTimers();
+    vi.setSystemTime(ms);
+    try {
+      return buildNerdInfo("sandTemp", { d, snap: dated }).computation.join(" | ");
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it("says the same thing however long hydration takes", () => {
+    const t = Date.parse("2026-07-17T16:00:00.000Z");
+    expect(atClock(t + 8_000)).toBe(atClock(t));
+    expect(atClock(t + 40 * 60_000)).toBe(atClock(t));
+  });
+
+  it("still reports the decay factor for the snapshot's own moment", () => {
+    expect(atClock(Date.parse("2026-07-17T16:00:00.000Z"))).toContain("h before solar noon");
   });
 });

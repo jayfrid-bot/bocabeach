@@ -597,7 +597,13 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
       computation.push("GOES-19 cloud feed not fresh — model falls back to the forecast cloud consensus.");
     }
     if (lon != null) {
-      const hrs = hoursFromSolarNoon(lon, new Date());
+      // The SNAPSHOT's moment, never the wall clock. This line prints one
+      // decimal, so it moves every six minutes — read off `new Date()` it came
+      // out different on the server than it did a few seconds later at
+      // hydration, and React threw the card away and rebuilt it. Same rule
+      // SunQualityCard follows.
+      const at = Date.parse(snap.generatedAt ?? "");
+      const hrs = hoursFromSolarNoon(lon, new Date(Number.isFinite(at) ? at : Date.now()));
       const factor = afternoonBoostFactor(hrs);
       const when =
         hrs >= 0 ? `${hrs.toFixed(1)} h past solar noon` : `${(-hrs).toFixed(1)} h before solar noon`;

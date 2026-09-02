@@ -414,7 +414,7 @@ export function ConditionsDashboard({
           blocks anything — the whole dashboard is already rendered below it. */}
       {plusOn ? (
         <>
-          <HomeBeachRedirect flagshipSlug={flagshipSlug} />
+          <HomeBeachRedirect flagshipSlug={flagshipSlug} beaches={beaches} />
           <FirstRunBanner
             plus={plus}
             beaches={beaches}

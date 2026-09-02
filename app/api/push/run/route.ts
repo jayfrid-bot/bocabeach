@@ -243,6 +243,8 @@ export async function POST(req: Request): Promise<Response> {
   let morningSent = 0;
   let excellentSent = 0;
   let pruned = 0;
+  /** Devices the home loop could not finish. The run carries on to the next. */
+  let errors = 0;
   let alerts: AtBeachCounts = { devices: 0, evaluated: 0, sent: 0, skipped: 0, errors: 0, pruned: 0 };
 
   try {
@@ -268,29 +270,37 @@ export async function POST(req: Request): Promise<Response> {
           if (!entitled(sub.device, nowMs)) continue;
           const sendOne = senderFor(sub);
           if (!sendOne) continue;
-          const summary = personalSummary(res, place, sub.device, nowMs, summaries);
+          // One device's failure never sinks the run — the same rule the
+          // at-beach engine follows. A single unreadable row (a stored timezone
+          // Intl rejects, say) must not cost everyone else their alerts.
+          try {
+            const summary = personalSummary(res, place, sub.device, nowMs, summaries);
 
-          const r = await deliverMorning(store, sub, summary, loc.timezone, now, sendOne, force);
-          morningSent += r.sent;
-          pruned += r.pruned;
-          if (r.pruned) continue; // the device is gone
+            const r = await deliverMorning(store, sub, summary, loc.timezone, now, sendOne, force);
+            morningSent += r.sent;
+            pruned += r.pruned;
+            if (r.pruned) continue; // the device is gone
 
-          const { date } = localHourAndDate(sub.device.tz || loc.timezone, now);
-          const excellent = excellentDecision({ device: sub.device, summary, res, nowMs, date });
-          if (!excellent) continue;
-          if (await store.lastAlert(sub.device.id, excellent.dedupKey)) continue; // once per day
-          const sent = await sendOne({
-            tag: excellent.tag,
-            title: excellent.title,
-            body: excellent.body,
-            url: `/${slug}`,
-          });
-          if (sent.dead) {
-            await prune(store, sub).catch((e) => console.error("push: prune failed", e));
-            pruned += 1;
-          } else if (sent.ok) {
-            excellentSent += 1;
-            await store.markAlert(sub.device.id, excellent.dedupKey, nowMs, excellent.meta);
+            const { date } = localHourAndDate(sub.device.tz || loc.timezone, now);
+            const excellent = excellentDecision({ device: sub.device, summary, res, nowMs, date });
+            if (!excellent) continue;
+            if (await store.lastAlert(sub.device.id, excellent.dedupKey)) continue; // once per day
+            const sent = await sendOne({
+              tag: excellent.tag,
+              title: excellent.title,
+              body: excellent.body,
+              url: `/${slug}`,
+            });
+            if (sent.dead) {
+              await prune(store, sub).catch((e) => console.error("push: prune failed", e));
+              pruned += 1;
+            } else if (sent.ok) {
+              excellentSent += 1;
+              await store.markAlert(sub.device.id, excellent.dedupKey, nowMs, excellent.meta);
+            }
+          } catch (e) {
+            errors += 1;
+            console.error("push: device failed", sub.device.id, e);
           }
         }
       }
@@ -328,5 +338,6 @@ export async function POST(req: Request): Promise<Response> {
     armed: alerts.devices,
     alerts,
     pruned,
+    errors,
   });
 }

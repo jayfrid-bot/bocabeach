@@ -383,6 +383,15 @@ describe("POST /api/push/run", () => {
     expect(await store.getSent(DEV)).toEqual({});
   });
 
+  it("treats a lapsed subscription as free", async () => {
+    await seedDevice();
+    const store = await getStore();
+    await store.upsertDevice(DEV, { plan: "plus", entitlementUntil: Date.now() - 1000 });
+    const body = (await (await run("?force=morning")).json()) as Record<string, number>;
+    expect(body.sent).toBe(0);
+    expect(ctl.fcmSends).toEqual([]);
+  });
+
   it("sends the digest once the free device upgrades", async () => {
     await registerPost(
       post("https://x/api/push/register-native", {
@@ -395,6 +404,30 @@ describe("POST /api/push/run", () => {
     expect(((await (await run("?force=morning")).json()) as Record<string, number>).sent).toBe(0);
     await grantPlus(DEV);
     expect(((await (await run("?force=morning")).json()) as Record<string, number>).sent).toBe(1);
+  });
+
+  it("one unreadable device does not sink the run", async () => {
+    // A stored timezone Intl cannot parse used to throw straight out of the
+    // handler: no digests, and no safety alerts for anybody, until it was found.
+    await seedDevice();
+    await registerPost(
+      post("https://x/api/push/register-native", {
+        slug: "cocoa-beach",
+        token: FCM_TOKEN_2,
+        platform: "android",
+      }),
+    );
+    const other = legacyDeviceId(FCM_TOKEN_2);
+    await grantPlus(other);
+    const store = await getStore();
+    await store.upsertDevice(other, { tz: "Mars/Olympus" });
+
+    const res = await run("?force=morning");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, number>;
+    expect(body.errors).toBe(1);
+    // The healthy device still got its summary.
+    expect(ctl.fcmSends).toEqual([FCM_TOKEN]);
   });
 
   it("reports at-beach alert counts, and sends none when nobody is armed", async () => {

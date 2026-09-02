@@ -11,12 +11,30 @@
 import { getLocation } from "@/config/locations";
 import { badRequest, fail, isDeviceId, okDevice, readBody } from "@/lib/db/api";
 import { getStore } from "@/lib/db/store";
-import { ALERT_KEYS, type AlertPrefs, type DevicePatch, type StoredProfile } from "@/lib/db/types";
+import { ALERT_KEYS, type AlertPrefs, type DevicePatch } from "@/lib/db/types";
+// The same validator the phone runs before it saves (lib/plus/storage.ts is
+// pure and guards on `localStorage`, so it is safe here) — one definition of
+// "a profile we accept", server and client.
+import { cleanProfile } from "@/lib/plus/storage";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const MAX_TZ = 64;
+
+/**
+ * A zone `Intl` can actually read. The push run formats every device's local
+ * hour with it, and an unknown zone throws a RangeError there — so a made-up
+ * string must never reach the column.
+ */
+function isTimeZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** Read the optional shared fields into a patch, or null when one is malformed. */
 function patchFromBody(body: Record<string, unknown>): DevicePatch | null {
@@ -30,6 +48,7 @@ function patchFromBody(body: Record<string, unknown>): DevicePatch | null {
 
   if (body.tz !== undefined) {
     if (typeof body.tz !== "string" || body.tz.length > MAX_TZ) return null;
+    if (body.tz && !isTimeZone(body.tz)) return null;
     patch.tz = body.tz || null;
   }
 
@@ -46,8 +65,13 @@ function patchFromBody(body: Record<string, unknown>): DevicePatch | null {
     if (body.profile === null) {
       patch.profile = null;
     } else {
-      if (typeof body.profile !== "object" || Array.isArray(body.profile)) return null;
-      patch.profile = body.profile as StoredProfile;
+      // Validated, not just shape-checked. The stored profile is fed straight to
+      // resolveScoring() by the morning digest, where a `profiles` that is not an
+      // array throws and an ideal band of strings scores every hour NaN — the
+      // digest then goes out titled "Poor · NaN/100".
+      const profile = cleanProfile(body.profile);
+      if (!profile) return null;
+      patch.profile = profile;
     }
   }
 
