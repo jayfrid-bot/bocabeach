@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { execSync } from "node:child_process";
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 // Read the app version from package.json and stamp the build time, both baked
 // into the bundle at build so the footer can show "which build + how fresh".
@@ -35,5 +36,16 @@ const nextConfig = {
     NEXT_PUBLIC_BUILD_TIME: new Date().toISOString(),
   },
 };
+
+// Wire the Cloudflare bindings (D1 `DB`, KV) into `next dev`, so the Plus API
+// routes talk to the real local D1 instead of the in-memory fallback. Dev only,
+// and never fatal: without it `getStore()` just picks the memory/file backend.
+if (process.env.NODE_ENV === "development") {
+  try {
+    await initOpenNextCloudflareForDev();
+  } catch (e) {
+    console.warn("next.config: local Cloudflare bindings unavailable —", e?.message ?? e);
+  }
+}
 
 export default nextConfig;

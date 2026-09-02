@@ -1,5 +1,6 @@
 import type {
   BestWindow,
+  CapPolicy,
   DayWindow,
   HourlyMetrics,
   ConditionsSnapshot,
@@ -8,8 +9,11 @@ import type {
   RipRisk,
   SargassumRisk,
   ScoreResult,
+  ScoringOptions,
+  SubKey,
   SubScore,
   WaterQualityRating,
+  WaveMode,
 } from "@/lib/types";
 import { clamp, degToCardinal, dewPointFromTempRH, plateau, round } from "@/lib/util";
 import { currentSandTempF, estimateSandTempF, hoursFromSolarNoon } from "@/lib/sandTemp";
@@ -53,6 +57,9 @@ export interface Derived {
   sargassumCoveragePct?: number;
   /** 0-100 beach fullness (busiest cam now, or the hour's history); 0=empty. */
   crowdPct?: number;
+  /** 0-100 cam-read water clarity (100 = crystal clear). Weight 0 in the free
+   *  score, so it only moves a personal (Plus) score — see DEFAULT_SCORING. */
+  clarityPct?: number;
   /** Estimated dry-sand surface temp (°F) — barefoot comfort (lib/sandTemp). */
   sandTempF?: number;
   flags: FlagColor[];
@@ -327,6 +334,10 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     sargassumLevel: s.sargassum.data?.level,
     sargassumCoveragePct: s.sargassum.data?.coveragePct,
     crowdPct: s.busyness.data?.crowdPct ?? crowdLevelPct(s.busyness.data?.level),
+    // Cam-read water clarity. Null/absent whenever the read is night-gated,
+    // stale, or the beach has no cams — the sub-score then drops out and the
+    // remaining weights renormalize, exactly like any other missing input.
+    clarityPct: s.clarity?.data?.pct ?? undefined,
     // Sand "now" prefers the satellite BEAM-PATH observation (fresh + valid),
     // then the satellite OVERHEAD observation (fresh + valid), then the
     // forecast consensus (same as the Sky card) — see satelliteBeamCloudPct's
@@ -431,9 +442,62 @@ export function bestBeachWindow(hours: HourlyScore[], nowMs?: number): BestWindo
 // stagnant/buggy/hot; 5-13 mph is ideal; above ~13 mph turns choppy and starts
 // blowing sand. Plateau across [5, 13], tapering to 0 over 12 mph on each side
 // (so dead calm ≈ 58, a 25 mph gale ≈ 0).
-const windScore = (mph: number) => plateau(mph, 5, 13, 12);
+const windScore = (mph: number, low = 5, high = 13) => plateau(mph, low, high, 12);
 const waveCalm = (ft: number) => clamp(100 - Math.max(0, ft - 1) * 25, 0, 100);
 const uvScore = (uv: number) => clamp(100 - Math.max(0, uv - 8) * 12, 0, 100);
+
+// Wave curves, one per taste (ScoringIdeals.waveMode):
+//  - `calm`   the free score's curve: flat water is perfect, every foot costs.
+//  - `some`   a bit of swell is the point — 1-3 ft is perfect, gentle either way.
+//  - `surf`   rideable waves: 2-5 ft is perfect, ankle-slappers are a bust
+//             (~30) and anything over 7 ft is for experienced surfers only (~40).
+const waveSome = (ft: number) => plateau(ft, 1, 3, 5);
+const SURF_WAVE_CURVE: [number, number][] = [
+  [0, 30],
+  [1, 30],
+  [2, 100],
+  [5, 100],
+  [7, 40],
+  [12, 10],
+];
+const waveSurf = (ft: number) => lerpCurve(ft, SURF_WAVE_CURVE);
+function waveScore(ft: number, mode: WaveMode): number {
+  if (mode === "surf") return waveSurf(ft);
+  if (mode === "some") return waveSome(ft);
+  return waveCalm(ft);
+}
+
+/**
+ * Today's engine, expressed as data: the free Beach Day score. Passing this (or
+ * nothing) to `scoreBeachDay` reproduces the free score exactly — same numbers,
+ * same sub-score order, same cap strings. `clarity` sits at weight 0, and
+ * zero-weight factors never reach `subScores`, so the free breakdown still has
+ * the same ten slices it always had.
+ *
+ * Treat it as read-only: `resolveScoring(null)` hands back this very object.
+ */
+export const DEFAULT_SCORING: ScoringOptions = {
+  weights: {
+    airTemp: 0.16,
+    sky: 0.16,
+    wind: 0.13,
+    comfort: 0.08,
+    waterTemp: 0.09,
+    waves: 0.14,
+    sargassum: 0.07,
+    crowds: 0.05,
+    uv: 0.04,
+    sandTemp: 0.08,
+    clarity: 0,
+  },
+  ideals: {
+    airPlateau: [78, 88],
+    waterPlateau: [77, 90],
+    windPlateau: [5, 13],
+    waveMode: "calm",
+  },
+  capPolicy: "water",
+};
 
 // Water quality is no longer a weighted sub-score — it's binary (safe vs. not),
 // so it only ever CAPS the score via an active advisory (see applyBeachCaps'
@@ -605,26 +669,37 @@ function sandScore(tempF: number | undefined): number | null {
   return tempF == null ? null : lerpCurve(tempF, SAND_CURVE);
 }
 
-export function scoreBeachDay(d: Derived): ScoreResult {
-  const subs: SubScore[] = [
+/**
+ * The Beach Day score for one set of conditions.
+ *
+ * `opts` is the whole engine as data — weights, ideals, cap policy. The default
+ * (`DEFAULT_SCORING`) is the free score, byte-identical to what it has always
+ * produced; a personal profile (see lib/profile/resolve.ts) passes its own.
+ * Factors weighted 0 are dropped from `subScores` entirely, so the wheel and the
+ * explainer never show a slice that cannot move the number.
+ */
+export function scoreBeachDay(d: Derived, opts: ScoringOptions = DEFAULT_SCORING): ScoreResult {
+  const w = opts.weights;
+  const { airPlateau, waterPlateau, windPlateau, waveMode } = opts.ideals;
+  const all: SubScore[] = [
     sub(
       "airTemp",
       "Air temperature",
-      d.airTempF != null ? plateau(d.airTempF, 78, 88, 18) : null,
-      0.16,
+      d.airTempF != null ? plateau(d.airTempF, airPlateau[0], airPlateau[1], 18) : null,
+      w.airTemp,
       f1(d.airTempF, "°F"),
     ),
-    sub("sky", "Sky (sun & rain)", skyScore(d), 0.16, skyDisplay(d)),
+    sub("sky", "Sky (sun & rain)", skyScore(d), w.sky, skyDisplay(d)),
     sub(
       "wind",
       "Wind (sea breeze)",
-      d.windSpeedMph != null ? windScore(d.windSpeedMph) : null,
-      0.13,
+      d.windSpeedMph != null ? windScore(d.windSpeedMph, windPlateau[0], windPlateau[1]) : null,
+      w.wind,
       d.windSpeedMph != null
         ? `${d.windSpeedMph} mph${d.windDirDeg != null ? " " + degToCardinal(d.windDirDeg) : ""}`
         : undefined,
     ),
-    sub("comfort", "Comfort (mugginess)", comfortScore(d), 0.08, comfortDisplay(d)),
+    sub("comfort", "Comfort (mugginess)", comfortScore(d), w.comfort, comfortDisplay(d)),
     sub(
       "waterTemp",
       "Water temperature",
@@ -633,17 +708,19 @@ export function scoreBeachDay(d: Derived): ScoreResult {
       // BEACHGOER, warmer is better right up until genuinely hot-tub territory;
       // only past 90°F does it start to read as soup (and it also tracks coral
       // bleaching / weaker cooling-off value).
-      d.waterTempF != null ? plateau(d.waterTempF, 77, 90, 15) : null,
-      0.09,
+      d.waterTempF != null
+        ? plateau(d.waterTempF, waterPlateau[0], waterPlateau[1], 15)
+        : null,
+      w.waterTemp,
       f1(d.waterTempF, "°F"),
     ),
     sub(
       "waves",
       "Sea state (swim calmness)",
-      d.waveHeightFt != null ? waveCalm(d.waveHeightFt) : null,
+      d.waveHeightFt != null ? waveScore(d.waveHeightFt, waveMode) : null,
       // 0.14 = its own 0.08 + water quality's old 0.06 (water quality left the
       // weighted score to become advisory-cap-only; owner 2026-07-17).
-      0.14,
+      w.waves,
       d.waveHeightFt != null
         ? `${f1(d.waveHeightFt, " ft")} · ${seaState(d.waveHeightFt).label.toLowerCase()}`
         : undefined,
@@ -652,31 +729,42 @@ export function scoreBeachDay(d: Derived): ScoreResult {
       "sargassum",
       "Seaweed (sargassum)",
       sargassumScore(d.sargassumLevel, d.sargassumCoveragePct),
-      0.07,
+      w.sargassum,
       sargassumDisplay(d),
     ),
     sub(
       "crowds",
       "Crowds",
       crowdScore(d.crowdPct),
-      0.05,
+      w.crowds,
       d.crowdPct != null ? `~${d.crowdPct}% full` : undefined,
     ),
     sub(
       "uv",
       "UV index",
       d.uvIndex != null ? uvScore(d.uvIndex) : null,
-      0.04,
+      w.uv,
       d.uvIndex != null ? `${d.uvIndex}` : undefined,
     ),
     sub(
       "sandTemp",
       "Sand temperature (barefoot)",
       sandScore(d.sandTempF),
-      0.08,
+      w.sandTemp,
       d.sandTempF != null ? `~${d.sandTempF}°F est.` : undefined,
     ),
+    sub(
+      "clarity",
+      "Water clarity",
+      d.clarityPct != null ? clamp(d.clarityPct, 0, 100) : null,
+      w.clarity,
+      d.clarityPct != null ? `~${d.clarityPct}% clear` : undefined,
+    ),
   ];
+  // A factor nobody weighted is not part of this score at all: it never reaches
+  // the average, the wheel, or the explainer. This is what keeps the free score
+  // identical after clarity joined the list (clarity weighs 0 by default).
+  const subs = all.filter((s) => s.weight > 0);
 
   const rawScore = combine(subs);
   // Total data outage: no weather sub-score was available. Surface it explicitly
@@ -685,7 +773,7 @@ export function scoreBeachDay(d: Derived): ScoreResult {
   // feed, which is independent of the weather pipeline — still registers as a cap
   // reason even when every forecast feed is down. (Math.min keeps the score at 0.)
   if (rawScore == null) {
-    const { caps } = applyBeachCaps(0, d);
+    const { caps } = applyBeachCaps(0, d, opts.capPolicy);
     return {
       score: 0,
       rawScore: 0,
@@ -695,7 +783,7 @@ export function scoreBeachDay(d: Derived): ScoreResult {
       dataAvailable: false,
     };
   }
-  const { score, caps } = applyBeachCaps(rawScore, d);
+  const { score, caps } = applyBeachCaps(rawScore, d, opts.capPolicy);
   return { score, rawScore, rating: ratingFor(score), subScores: subs, caps, dataAvailable: true };
 }
 
@@ -729,12 +817,27 @@ export function rainSeverity(d: Derived): RainSeverity {
   return "none";
 }
 
-function applyBeachCaps(
+/**
+ * Clamp a raw score for the hazards that are really out there.
+ *
+ * `policy` decides WHICH hazards clamp THIS person's day (the safety line in
+ * lib/safetyLine.ts still reports every one of them, to everybody):
+ *  - `water` — all of them, the free score's behavior.
+ *  - `shore` — weather only. A red flag does not spoil a day on the sand.
+ *  - `surf`  — weather plus the closures. A red flag or a high rip is what a
+ *              surfer came for; a closed beach or dirty water still is not.
+ */
+export function applyBeachCaps(
   raw: number,
   d: Derived,
+  policy: CapPolicy = "water",
 ): { score: number; caps: string[] } {
   let score = raw;
   const caps: string[] = [];
+  // Swim-hazard caps (red flag, rip, surf advisory) apply to swimmers only.
+  const swimCaps = policy === "water";
+  // Closures (double red, dirty water, city no-swim) stop a surfer too.
+  const closureCaps = policy === "water" || policy === "surf";
   // Lifeguard flags are safety signals. We distinguish a true closure from a
   // swim-hazard warning:
   //  - DOUBLE-RED means the water is closed — there's no beach day to be had, so
@@ -745,19 +848,19 @@ function applyBeachCaps(
   //    surfaced in the safety banner regardless).
   // The purple (dangerous marine life) flag is intentionally NOT a score cap —
   // it's a near-constant in South Florida, so it carries no day-to-day signal.
-  if (d.flags.includes("double-red")) {
+  if (closureCaps && d.flags.includes("double-red")) {
     score = Math.min(score, 5);
     caps.push("Double red flag — water access closed");
-  } else if (d.flags.includes("red")) {
+  } else if (swimCaps && d.flags.includes("red")) {
     score = Math.min(score, 85);
     caps.push("Red flag — high hazard, swimming discouraged");
   }
-  if (d.waterAdvisory) {
+  if (closureCaps && d.waterAdvisory) {
     score = Math.min(score, 40);
     caps.push("Water quality advisory in effect");
   }
   // A City-issued no-swim advisory is a direct swim-safety override.
-  if (d.noSwimAdvisory) {
+  if (closureCaps && d.noSwimAdvisory) {
     score = Math.min(score, 40);
     caps.push("City no-swim advisory in effect");
   }
@@ -791,16 +894,16 @@ function applyBeachCaps(
   // NWS rip-current risk: HIGH means life-threatening rip currents are likely.
   // Like a red flag, this is a swimmer-safety hazard rather than a beach-day
   // killer — you can still enjoy the sand — so it caps at 85, not lower.
-  if (d.ripCurrentRisk === "high") {
+  if (swimCaps && d.ripCurrentRisk === "high") {
     score = Math.min(score, 85);
     caps.push("High rip current risk (NWS)");
-  } else if (d.ripCurrentRisk === "moderate") {
+  } else if (swimCaps && d.ripCurrentRisk === "moderate") {
     score = Math.min(score, 92);
     caps.push("Moderate rip current risk (NWS)");
   }
   // A surf/coastal-flood ADVISORY (sub-warning tier) discourages swimming — a
   // soft cap; the hard SEVERE_ALERT cap above already covers the *warning* tier.
-  if (d.surfAdvisory) {
+  if (swimCaps && d.surfAdvisory) {
     score = Math.min(score, 85);
     caps.push("High surf or coastal-flood advisory — swimming discouraged");
   }
@@ -853,8 +956,11 @@ function applyBeachCaps(
   return { score, caps };
 }
 
-export function computeScore(s: ConditionsSnapshot): ScoreResult {
-  return scoreBeachDay(deriveMetrics(s));
+export function computeScore(
+  s: ConditionsSnapshot,
+  opts: ScoringOptions = DEFAULT_SCORING,
+): ScoreResult {
+  return scoreBeachDay(deriveMetrics(s), opts);
 }
 
 const HOUR_MS = 3_600_000;
@@ -906,6 +1012,7 @@ function toHourlyScore(h: FullHourlyScore): HourlyScore {
 function scoreAllHoursFull(
   s: ConditionsSnapshot,
   nowMs: number = Date.now(),
+  opts: ScoringOptions = DEFAULT_SCORING,
 ): FullHourlyScore[] {
   const hours = s.hourly.data;
   if (!hours?.length) return [];
@@ -1006,6 +1113,9 @@ function scoreAllHoursFull(
           : undefined,
         crowdPct: crowdByHour.get(localHourOf(h.time)),
         sandTempF: sandByTime.get(h.time),
+        // Clarity, like seaweed, is a TODAY-only cam observation — the cams see
+        // this water now, not next Tuesday. Future days score it as unknown.
+        clarityPct: isToday ? base.clarityPct : undefined,
         // Current NWS alerts/flags are TODAY-only conditions (most expire within
         // the day) — apply them to TODAY's hours only, NEVER to future days, so a
         // single warning/flag today can't flat-line the whole week's forecast.
@@ -1026,7 +1136,7 @@ function scoreAllHoursFull(
             }
           : {}),
       };
-      const r = scoreBeachDay(d);
+      const r = scoreBeachDay(d, opts);
       const raining = rainSeverity(d) !== "none";
       // When the corroboration rule vetoes a phantom rain/thunder code, don't
       // show its storm emoji either — fall back to a cloud-cover sky.
@@ -1055,8 +1165,12 @@ function scoreAllHoursFull(
 
 /** Compact-scores projection of `scoreAllHoursFull`, for callers (the hourly
  *  chart) that only need the curve, not the per-hour breakdown. */
-function scoreAllHours(s: ConditionsSnapshot, nowMs: number = Date.now()): HourlyScore[] {
-  return scoreAllHoursFull(s, nowMs).map(toHourlyScore);
+function scoreAllHours(
+  s: ConditionsSnapshot,
+  nowMs: number = Date.now(),
+  opts: ScoringOptions = DEFAULT_SCORING,
+): HourlyScore[] {
+  return scoreAllHoursFull(s, nowMs, opts).map(toHourlyScore);
 }
 
 /**
@@ -1067,8 +1181,9 @@ function scoreAllHours(s: ConditionsSnapshot, nowMs: number = Date.now()): Hourl
 export function computeHourlyScores(
   s: ConditionsSnapshot,
   nowMs: number = Date.now(),
+  opts: ScoringOptions = DEFAULT_SCORING,
 ): HourlyScore[] {
-  const scored = scoreAllHours(s, nowMs);
+  const scored = scoreAllHours(s, nowMs, opts);
   const sun = s.sun.data;
   const sunrise = sun?.sunrise ? new Date(sun.sunrise).getTime() : null;
   const sunset = sun?.sunset ? new Date(sun.sunset).getTime() : null;
@@ -1112,6 +1227,9 @@ export function anchorCurrentHourScore(
   hourly: HourlyScore[],
   headline: { score: number; rating: string },
   nowMs: number = Date.now(),
+  /** Accepted for a uniform call shape across the engine. Anchoring copies the
+   *  headline the caller already computed, so the options never change it. */
+  _opts: ScoringOptions = DEFAULT_SCORING,
 ): HourlyScore[] {
   const i = hourly.findIndex((h) => {
     const t = new Date(h.time).getTime();
@@ -1150,8 +1268,9 @@ export function computeMultiDayWindows(
   s: ConditionsSnapshot,
   nowMs: number = Date.now(),
   maxDays = 7,
+  opts: ScoringOptions = DEFAULT_SCORING,
 ): DayWindow[] {
-  const scoredFull = scoreAllHoursFull(s, nowMs);
+  const scoredFull = scoreAllHoursFull(s, nowMs, opts);
   if (!scoredFull.length) return [];
   const scored = scoredFull.map(toHourlyScore);
   // Full breakdown per hour, keyed by time, so the day's peak hour can carry its

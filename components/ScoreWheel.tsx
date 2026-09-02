@@ -26,6 +26,7 @@ const FACTOR_EMOJI: Record<string, string> = {
   sargassum: "🌿",
   crowds: "👥",
   uv: "🕶️",
+  clarity: "🥽",
 };
 
 /** Short TEXT label carried on the slice itself (replaces the old slice emoji). */
@@ -40,6 +41,7 @@ const FACTOR_LABEL: Record<string, string> = {
   sargassum: "Seaweed",
   crowds: "Crowds",
   uv: "UV",
+  clarity: "Clarity",
 };
 
 /** Shorter fallback for factors whose full FACTOR_LABEL word doesn't fit a
@@ -150,6 +152,8 @@ const FACTOR_EXPLAIN: Record<string, string> = {
     "How busy the sand is, read live from the beach cams. Quieter beach, higher score.",
   uv:
     "The current UV index. High UV only trims a little — it mostly means bring sunscreen — but extreme UV trims more.",
+  clarity:
+    "How far you can see through the water, read live from the beach cams. It only counts toward the score for people who picked snorkeling — everyone else has it switched off, and beaches with no cams drop it entirely.",
 };
 
 interface Slice {

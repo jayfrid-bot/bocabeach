@@ -1,12 +1,22 @@
 // POST /api/push/register-native — store a native app's push token for a beach.
-// Body: { slug, token, platform: "ios"|"android", prefs?: { morning, safety } }.
+// Body: { slug, token, platform: "ios"|"android", prefs?: { morning, safety },
+//         deviceId? }.
 // The token is only ever used as the destination for APNs/FCM sends (no SSRF
 // surface); validated by platform-appropriate format + bounded length.
+//
+// Storage moved from KV to the D1 device table (`lib/db/store.ts`). A client that
+// sends its `deviceId` writes straight to its own row; an older build without one
+// keeps writing to the synthetic "legacy:<token>" row, and the first call that
+// DOES carry a deviceId adopts that legacy row's beach, prefs and dedup state,
+// then deletes it. The response shape is unchanged.
 
 import { getLocation } from "@/config/locations";
-import { getNativeSub, putNativeSub, type NativeSub } from "@/lib/push/nativeStore";
+import { isDeviceId } from "@/lib/db/api";
+import { isLegacyId, legacyDeviceId, prefsFromLegacy, getStore } from "@/lib/db/store";
+import type { SentState } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 // iOS APNs tokens are hex (64 std, headroom allowed). Android FCM registration
 // tokens are long and use base64url plus ':'.
@@ -18,6 +28,7 @@ interface Body {
   token?: string;
   platform?: string;
   prefs?: { morning?: unknown; safety?: unknown };
+  deviceId?: string;
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -42,24 +53,57 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "invalid device token" }, { status: 400 });
   }
 
-  // Preserve dedup state when the same device re-registers for the SAME beach.
-  const existing = await getNativeSub(token).catch(() => null);
-
-  const record: NativeSub = {
-    token,
-    platform,
-    slug: loc.slug,
-    tz: loc.timezone,
-    prefs: {
-      morning: body.prefs?.morning !== false,
-      safety: body.prefs?.safety !== false,
-    },
-    createdAt: existing?.createdAt ?? new Date().toISOString(),
-    sent: existing && existing.slug === loc.slug ? existing.sent : undefined,
-  };
+  const id = isDeviceId(body.deviceId) ? body.deviceId : legacyDeviceId(token);
 
   try {
-    await putNativeSub(record);
+    const store = await getStore();
+
+    // The row this token is already attached to, if any.
+    const existing = await store.findByPushToken(token);
+
+    let priorSlug: string | null = null;
+    let priorSent: SentState = {};
+
+    if (existing) {
+      priorSlug = existing.homeSlug;
+      priorSent = await store.getSent(existing.id);
+      if (existing.id !== id) {
+        // The token is moving to a different row. Carry the prefs across, then
+        // make sure the old row can never be pushed to as well: a legacy row has
+        // nothing else on it, so drop it; a real device row keeps its Plus state
+        // and just loses the token.
+        await store.upsertDevice(id, { prefs: existing.prefs });
+        if (isLegacyId(existing.id)) await store.deleteDevice(existing.id);
+        else await store.upsertDevice(existing.id, { pushToken: null });
+      }
+    }
+
+    // Preserve dedup state when the same device re-registers for the SAME beach
+    // (matches the pre-D1 behavior); a beach change starts clean.
+    const sent = priorSlug === loc.slug ? priorSent : {};
+
+    // The two coarse switches the native client sends only seed a BRAND-NEW
+    // row. A device that already exists keeps its per-alert prefs (set through
+    // /api/devices) — otherwise every tap on "Alerts" would expand the coarse
+    // safety switch back into all-on and undo a single opt-out.
+    const current = await store.getDevice(id);
+    const seedPrefs = current
+      ? {}
+      : {
+          prefs: prefsFromLegacy({
+            morning: body.prefs?.morning !== false,
+            safety: body.prefs?.safety !== false,
+          }),
+        };
+
+    await store.upsertDevice(id, {
+      platform,
+      pushToken: token,
+      tz: loc.timezone,
+      homeSlug: loc.slug,
+      ...seedPrefs,
+      sent,
+    });
     return Response.json({ ok: true });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });

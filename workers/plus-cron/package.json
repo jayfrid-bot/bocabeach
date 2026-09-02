@@ -1,0 +1,15 @@
+{
+  "name": "plus-cron",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Every-5-minute trigger for the Beach Day push/alerts sender",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "test-scheduled": "wrangler dev --test-scheduled"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260724.1",
+    "wrangler": "^4.109.0"
+  }
+}

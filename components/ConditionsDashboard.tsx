@@ -1,10 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
-import type { ConditionsResponse } from "@/lib/types";
-import { consensusCloudPct, currentHourOf, deriveMetrics } from "@/lib/score";
+import type { ConditionsResponse, LocationPublic } from "@/lib/types";
+import { consensusCloudPct, currentHourOf, deriveMetrics, DEFAULT_SCORING } from "@/lib/score";
 import { computeStormActivity } from "@/lib/stormActivity";
 import { rainNowcast } from "@/lib/rainNowcast";
 import { beachDayVerdict, fmtDate, fmtTime, scoreTextClass } from "@/lib/format";
@@ -50,6 +50,21 @@ import { RipRiskCard } from "@/components/RipRiskCard";
 import { SeasonalHazards } from "@/components/SeasonalHazards";
 import { seaweedVsAvgPhrase } from "@/lib/vsAveragePhrase";
 import { clarityTileCopy } from "@/lib/sources/clarity";
+// --- Beach Day Plus ---------------------------------------------------------
+import { SAFETY_ALERT_KEYS } from "@/lib/db/types";
+import { profileLabel, resolveScoring } from "@/lib/profile/resolve";
+import { usePersonalScore, usePlus } from "@/lib/plus/client";
+import { isNativePlatform } from "@/lib/push/native";
+import { BeachModeCard } from "@/components/plus/BeachModeCard";
+import { FirstRunBanner } from "@/components/plus/FirstRunBanner";
+import { HomeBeachRedirect } from "@/components/plus/HomeBeachRedirect";
+import { NearYouChip } from "@/components/plus/NearYouChip";
+import { Paywall } from "@/components/plus/Paywall";
+import { PersonalizeCard } from "@/components/plus/PersonalizeCard";
+import { PlusOnboarding } from "@/components/plus/PlusOnboarding";
+import { PlusSettingsSheet } from "@/components/plus/PlusSettingsSheet";
+import { SafetyLine } from "@/components/plus/SafetyLine";
+import { ScoreToggle } from "@/components/plus/ScoreToggle";
 
 // Throw on non-OK so an error body (e.g. a 404 `{error}`) never replaces the
 // good snapshot — SWR keeps the last good data and the consumer guard holds.
@@ -96,12 +111,20 @@ function humidityNote(p?: number): string | undefined {
   if (p < 90) return "muggy";
   return "saturated";
 }
+/** The beach "/" renders: the curated one, else the first. Mirrors app/page.tsx
+ *  so the home-beach redirect and the first-run banner never send anyone to a
+ *  /<slug> that just 301s back to "/". */
+function flagshipSlugOf(beaches: LocationPublic[]): string {
+  return (beaches.find((b) => b.tier !== "auto") ?? beaches[0])?.slug ?? "";
+}
+
 export function ConditionsDashboard({
   slug,
   initial,
   preview = false,
   browseHref,
   isNativeApp = false,
+  beaches = [],
 }: {
   slug: string;
   initial: ConditionsResponse;
@@ -117,6 +140,11 @@ export function ConditionsDashboard({
   browseHref?: string;
   /** Server-detected native shell (request UA) — drives the Notify button. */
   isNativeApp?: boolean;
+  /**
+   * Every served beach, for the location features (nearest beach, home beach
+   * picker, the near-you chip). Empty in the admin preview, which disables them.
+   */
+  beaches?: LocationPublic[];
 }) {
   const { data, mutate, isValidating } = useSWR<ConditionsResponse>(
     preview ? null : `/api/conditions/${slug}`,
@@ -159,8 +187,44 @@ export function ConditionsDashboard({
   // error body lacking `.snapshot` must never shadow the good initial data.
   const res = data && data.snapshot ? data : initial;
   const snap = res.snapshot;
-  const active = res.score;
   const d = deriveMetrics(snap);
+
+  // --- Beach Day Plus -------------------------------------------------------
+  // Everything below is inert for a free user: `plus.entitled` starts false and
+  // `usePersonalScore` returns null without a profile, so the free dashboard is
+  // byte-for-byte what it always was.
+  const plus = usePlus();
+  const plusOn = !preview && beaches.length > 0;
+  // The clock the personal engine runs on. Never earlier than the snapshot's own
+  // generation time, so a phone whose clock lags the server can't score "now"
+  // against an hour that has not happened yet. Re-taken on every SWR refresh.
+  const nowMs = useMemo(
+    () => Math.max(Date.now(), Date.parse(res.snapshot.generatedAt) || 0),
+    [res],
+  );
+  const personal = usePersonalScore(res, plus.entitled ? plus.profile : null, nowMs);
+  const [showEveryone, setShowEveryone] = useState(false);
+  const [sheet, setSheet] = useState<"onboarding" | "paywall" | "settings" | null>(null);
+  // The server's UA sniff is authoritative and cache-proof; the client probe
+  // only ever ADDS the app (a bundled build the UA tag missed). Deferred to an
+  // effect so the first client render matches the server's HTML.
+  const [native, setNative] = useState(isNativeApp);
+  useEffect(() => {
+    if (!isNativeApp && isNativePlatform()) setNative(true);
+  }, [isNativeApp]);
+
+  // The personal number leads when there is one and the toggle isn't flipped.
+  const personalActive = plusOn && !!personal && !showEveryone;
+  const active = personalActive && personal ? personal.score : res.score;
+  const windows = (personalActive && personal ? personal.multiDayWindows : res.multiDayWindows) ?? [];
+  const scoringOpts = personalActive ? resolveScoring(plus.profile) : DEFAULT_SCORING;
+  const flagshipSlug = flagshipSlugOf(beaches);
+  // The two coarse switches native push understands, read off this device's
+  // full alert prefs (see lib/db/types.ts).
+  const pushPrefs = {
+    morning: plus.prefs.morning,
+    safety: SAFETY_ALERT_KEYS.some((k) => plus.prefs[k]),
+  };
   const tz = snap.location.timezone;
   // Beach-LOCAL calendar month (1-12), driving the seasonal heads-up windows —
   // NOT the viewer's month, so a Nov cold-front season reads right regardless of
@@ -191,10 +255,11 @@ export function ConditionsDashboard({
   // that here so we never render a blank flippable card.
   const showBusyness = !!busy && !(busy.level === "unknown" && !busy.note);
 
-  // "Best window today" pill — reuse the server-computed Today window from
+  // "Best window today" pill — reuse the computed Today window from
   // multiDayWindows[0] so the pill and the Best-times strip always show the SAME
   // window (a client recompute used different daylight bounds + a different clock).
-  const bw = res.multiDayWindows?.[0]?.best ?? null;
+  // With a personal score active, both come off the personal curve.
+  const bw = windows[0]?.best ?? null;
   // "Now" cloud is the multi-source consensus (the Sky card's number) — a single
   // model's hourly cloud flip-flops and mis-drives the overcast damping.
   const nowCloudPct = consensusCloudPct(snap);
@@ -327,13 +392,45 @@ export function ConditionsDashboard({
               <span aria-hidden className="text-sm leading-none">＋</span> Other beaches
             </Link>
           ) : null}
-          {!preview ? <NotifyButton slug={slug} serverNative={isNativeApp} /> : null}
+          {!preview ? (
+            <NotifyButton
+              slug={slug}
+              serverNative={isNativeApp}
+              entitled={plus.entitled}
+              prefs={pushPrefs}
+              onDoor={() => setSheet(plus.previewSeen ? "paywall" : "onboarding")}
+              onSettings={() => setSheet("settings")}
+            />
+          ) : null}
+          {plusOn ? <NearYouChip beaches={beaches} currentSlug={slug} /> : null}
         </div>
       </header>
 
       {/* Someone reading this inside the iOS app already has the app — never
           ask them to go download it. Only the web/PWA surface sees the band. */}
       {!isNativeApp ? <AppStoreBand /> : null}
+
+      {/* First launch only: one line offering the nearest beach. It never
+          blocks anything — the whole dashboard is already rendered below it. */}
+      {plusOn ? (
+        <>
+          <HomeBeachRedirect flagshipSlug={flagshipSlug} beaches={beaches} />
+          <FirstRunBanner
+            plus={plus}
+            beaches={beaches}
+            currentSlug={slug}
+            flagshipSlug={flagshipSlug}
+          />
+          <BeachModeCard
+            plus={plus}
+            native={native}
+            slug={slug}
+            beaches={beaches}
+            tz={tz}
+            onDoor={() => setSheet(plus.previewSeen ? "paywall" : "onboarding")}
+          />
+        </>
+      ) : null}
 
       <div className="mb-6">
         <SafetyBanner
@@ -366,6 +463,14 @@ export function ConditionsDashboard({
           </div>
         ) : (
           <>
+            {/* Plus: the personal number leads, everyone's is one tap away. */}
+            {plusOn && personal ? (
+              <ScoreToggle
+                showingEveryone={showEveryone}
+                onChange={setShowEveryone}
+                onSettings={() => setSheet("settings")}
+              />
+            ) : null}
             <ScoreCapBanner result={active} />
             <div
               className={`mb-2 text-center text-3xl font-bold ${scoreTextClass(active.score)}`}
@@ -373,14 +478,40 @@ export function ConditionsDashboard({
               {beachDayVerdict(active.score)}
             </div>
             <ScoreWheel result={active} />
+            {/* The score is personal; the water is not. This line carries every
+                hazard to everybody, whichever score is on screen. */}
+            {plusOn ? (
+              <SafetyLine
+                derived={d}
+                snapshot={snap}
+                profile={plus.entitled ? plus.profile : null}
+              />
+            ) : null}
             {/* (Lifeguard swim/snorkel/surf ratings live in the LifeguardReport
                 card below — a duplicate line here was removed.) */}
           </>
         )}
+        {/* The door to Plus. Hidden for subscribers: their number is already
+            the headline. */}
+        {plusOn && !plus.entitled ? (
+          <div className="mt-3">
+            <PersonalizeCard
+              profile={plus.profile}
+              preview={plus.preview}
+              onPersonalize={() => setSheet("onboarding")}
+              onUpgrade={() => setSheet("paywall")}
+            />
+          </div>
+        ) : null}
       </section>
 
       <section className="mb-6">
-        <ScoreExplainer derived={d} result={active} />
+        <ScoreExplainer
+          derived={d}
+          result={active}
+          options={scoringOpts}
+          profileLabel={personalActive ? profileLabel(plus.profile) : undefined}
+        />
       </section>
 
       {nc || bw || radarChip ? (
@@ -417,9 +548,9 @@ export function ConditionsDashboard({
         </section>
       ) : null}
 
-      {res.multiDayWindows?.length || snap.forecast.data?.length ? (
+      {windows.length || snap.forecast.data?.length ? (
         <section className="mb-6">
-          <DayOutlookStrip days={res.multiDayWindows ?? []} forecast={snap.forecast} tz={tz} />
+          <DayOutlookStrip days={windows} forecast={snap.forecast} tz={tz} />
         </section>
       ) : null}
 
@@ -897,6 +1028,35 @@ export function ConditionsDashboard({
         </div>
         <ChangelogSection />
       </footer>
+
+      {/* The Plus screens. All three are modal, all three are opened by a tap,
+          and none of them render anything until then. */}
+      {plusOn ? (
+        <>
+          <PlusOnboarding
+            open={sheet === "onboarding"}
+            onClose={() => setSheet(null)}
+            plus={plus}
+            res={res}
+            nowMs={nowMs}
+            native={native}
+          />
+          <Paywall
+            open={sheet === "paywall"}
+            onClose={() => setSheet(null)}
+            plus={plus}
+            native={native}
+          />
+          <PlusSettingsSheet
+            open={sheet === "settings"}
+            onClose={() => setSheet(null)}
+            plus={plus}
+            beaches={beaches}
+            native={native}
+            personalScore={personal ? personal.score.score : null}
+          />
+        </>
+      ) : null}
     </main>
     </PullToRefresh>
   );

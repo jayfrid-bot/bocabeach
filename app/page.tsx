@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { listLocations } from "@/config/locations";
+import { listLocations, toPublicLocation } from "@/config/locations";
 import { getConditions } from "@/lib/conditions";
 import { LogoMark } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -52,6 +52,9 @@ export default async function Home() {
         initial={data}
         browseHref={browseHref}
         isNativeApp={isNativeApp}
+        // The served-beach list powers the location features (nearest beach,
+        // home beach, near-you chip) — public fields only.
+        beaches={locations.map(toPublicLocation)}
       />
     );
   }

@@ -2,8 +2,8 @@
 // sub-scores into one-line "what's helping / what's hurting" readings a
 // non-engineer can scan in two seconds. Pure given its inputs — UI-free.
 
-import type { Derived } from "@/lib/score";
-import type { ScoreResult } from "@/lib/types";
+import { DEFAULT_SCORING, type Derived } from "@/lib/score";
+import type { ScoreResult, ScoringOptions, SubKey, WaveMode } from "@/lib/types";
 import { seaState } from "@/lib/format";
 import { sandVerdict } from "@/lib/sandTemp";
 
@@ -67,6 +67,7 @@ function reasonsFor(d: Derived, result: ScoreResult): {
     crowds: { help: "🧘", hurt: "👥" },
     uv: { help: "🧴", hurt: "🧴" },
     sandTemp: { help: "🦶", hurt: "🦶" },
+    clarity: { help: "🥽", hurt: "🌫️" },
   };
 
   // Air temp — "feels great" vs "cold/hot".
@@ -172,6 +173,17 @@ function reasonsFor(d: Derived, result: ScoreResult): {
     );
   }
 
+  // Water clarity. Only a scored factor for profiles that asked for it
+  // (snorkeling); with weight 0 the sub-score never reaches this map, so the
+  // free score's explainer is unchanged.
+  if (d.clarityPct != null) {
+    push(
+      "clarity",
+      `Water looks clear (~${d.clarityPct}% clarity)`,
+      `Water is murky (~${d.clarityPct}% clarity)`,
+    );
+  }
+
   // Crowds.
   if (d.crowdPct != null) {
     push(
@@ -235,13 +247,83 @@ function capReasons(result: ScoreResult): Reason[] {
   });
 }
 
-/** Produce the human-readable explanation. Pure + unit-testable. */
-export function explainScore(d: Derived, result: ScoreResult): ScoreExplanation {
+/** The free score's summary. Unchanged, and shown to every free user. */
+const DEFAULT_SUMMARY =
+  "We add points for sunshine, warm air, a sea breeze, dry feel, warm water, calm seas, an empty beach, and manageable UV. We take them away for rain, scorching sand, choppy seas, high wind, heavy seaweed, lifeguard flags, and severe weather — and a water-quality advisory hard-caps the whole score.";
+
+/** How each factor reads inside "… and … lead." */
+const LEAD_PHRASE: Record<SubKey, string> = {
+  airTemp: "warm air",
+  sky: "sunshine",
+  wind: "a light sea breeze",
+  comfort: "dry air",
+  waterTemp: "warm water",
+  waves: "calm water",
+  sargassum: "a clean beach",
+  crowds: "an empty beach",
+  uv: "manageable UV",
+  sandTemp: "cool sand",
+  clarity: "water clarity",
+};
+
+/** The order the engine lists factors in — the tie-break when weights match. */
+const FACTOR_ORDER = Object.keys(DEFAULT_SCORING.weights) as SubKey[];
+
+function leadPhrase(key: SubKey, waveMode: WaveMode): string {
+  if (key === "waves") {
+    if (waveMode === "surf") return "rideable surf";
+    if (waveMode === "some") return "a bit of swell";
+  }
+  return LEAD_PHRASE[key];
+}
+
+/** True when these options are the free score's — the summary then never changes. */
+function isDefaultWeights(opts: ScoringOptions): boolean {
+  return FACTOR_ORDER.every((k) => opts.weights[k] === DEFAULT_SCORING.weights[k]);
+}
+
+/** What the caps sentence says depends on which caps this person's score obeys. */
+function capsSentence(opts: ScoringOptions): string {
+  if (opts.capPolicy === "shore") {
+    return "Storms, high wind, and heavy seaweed still cap it; flags and rip currents stay in the safety line.";
+  }
+  if (opts.capPolicy === "surf") {
+    return "Storms and closures still cap it; a red flag or a high rip is information, not a stop sign.";
+  }
+  return "Storms, high wind, heavy seaweed, flags, and advisories still cap it.";
+}
+
+/** The one-liner that frames the breakdown, in this person's terms. */
+function summaryFor(opts: ScoringOptions, label?: string): string {
+  if (!label && isDefaultWeights(opts)) return DEFAULT_SUMMARY;
+  const top = FACTOR_ORDER.filter((k) => opts.weights[k] > 0)
+    .map((k, i) => ({ k, i, w: opts.weights[k] }))
+    .sort((a, b) => b.w - a.w || a.i - b.i)
+    .slice(0, 2)
+    .map((x) => leadPhrase(x.k, opts.ideals.waveMode));
+  if (!top.length) return DEFAULT_SUMMARY;
+  const lead = top.length === 2 ? `${top[0]} and ${top[1]}` : top[0];
+  const head = label ? `Tuned for ${label}: ${lead} lead.` : `${lead} lead this score.`;
+  return `${head} ${capsSentence(opts)}`;
+}
+
+/**
+ * Produce the human-readable explanation. Pure + unit-testable.
+ *
+ * `opts` is the scoring the result was produced with, and `profileLabel` the
+ * phrase from lib/profile/resolve.ts ("snorkeling"). With neither — the free
+ * score — the summary is word-for-word what it has always been.
+ */
+export function explainScore(
+  d: Derived,
+  result: ScoreResult,
+  opts: ScoringOptions = DEFAULT_SCORING,
+  profileLabel?: string,
+): ScoreExplanation {
   const { helping, hurting } = reasonsFor(d, result);
   const caps = capReasons(result);
   return {
-    summary:
-      "We add points for sunshine, warm air, a sea breeze, dry feel, warm water, calm seas, an empty beach, and manageable UV. We take them away for rain, scorching sand, choppy seas, high wind, heavy seaweed, lifeguard flags, and severe weather — and a water-quality advisory hard-caps the whole score.",
+    summary: summaryFor(opts, profileLabel),
     helping,
     // Caps come first — they're the most important reasons the score is what it is.
     hurting: [...caps, ...hurting],

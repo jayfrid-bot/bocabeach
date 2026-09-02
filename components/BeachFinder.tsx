@@ -4,18 +4,8 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { LocationPublic } from "@/lib/types";
 import { US_STATE_NAMES, stateCodeFromRegion } from "@/lib/stateBeachPrograms";
-
-/** Great-circle distance in miles between two lat/lon points. */
-function distMi(aLat: number, aLon: number, bLat: number, bLon: number): number {
-  const R = 3958.8;
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(bLat - aLat);
-  const dLon = toRad(bLon - aLon);
-  const s =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLon / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(s));
-}
+import { rankBeaches } from "@/lib/location/nearest";
+import { getFix } from "@/lib/location/device";
 
 type GeoState = "idle" | "locating" | "denied" | "unsupported";
 
@@ -46,20 +36,15 @@ export function BeachFinder({ beaches }: { beaches: LocationPublic[] }) {
   const [origin, setOrigin] = useState<{ lat: number; lon: number } | null>(null);
   const [geo, setGeo] = useState<GeoState>("idle");
 
-  const locate = () => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      setGeo("unsupported");
+  const locate = async () => {
+    setGeo("locating");
+    const fix = await getFix();
+    if ("error" in fix) {
+      setGeo(fix.error === "unsupported" ? "unsupported" : "denied");
       return;
     }
-    setGeo("locating");
-    navigator.geolocation.getCurrentPosition(
-      (p) => {
-        setOrigin({ lat: p.coords.latitude, lon: p.coords.longitude });
-        setGeo("idle");
-      },
-      () => setGeo("denied"),
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 600_000 },
-    );
+    setOrigin({ lat: fix.lat, lon: fix.lon });
+    setGeo("idle");
   };
 
   const needle = q.trim().toLowerCase();
@@ -71,9 +56,10 @@ export function BeachFinder({ beaches }: { beaches: LocationPublic[] }) {
       list = list.filter((b) => `${b.name} ${b.region}`.toLowerCase().includes(needle));
     }
     if (origin) {
-      return list
-        .map((b) => ({ b, mi: distMi(origin.lat, origin.lon, b.lat, b.lon) }))
-        .sort((x, y) => x.mi - y.mi);
+      return rankBeaches(origin.lat, origin.lon, list).map(({ beach, distanceMi }) => ({
+        b: beach,
+        mi: distanceMi,
+      }));
     }
     return list.map((b) => ({ b, mi: null as number | null }));
   }, [beaches, needle, origin]);

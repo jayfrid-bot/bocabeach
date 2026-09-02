@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "plus-cron",
+  "main": "src/index.ts",
+  "account_id": "10cdd8dec9ac9d0593e31a55eeaee1e2",
+  "compatibility_date": "2025-03-01",
+  // Every 5 minutes. The sender itself decides what is actually due: the morning
+  // summary fires once per beach-local 08:00, safety alerts only for devices with
+  // a live presence window. A tighter cadence than this buys nothing; a looser one
+  // would blunt lightning alerts.
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
+  "observability": { "enabled": true }
+  // CRON_SECRET is a secret, not a var: `wrangler secret put CRON_SECRET` from
+  // this directory, with the SAME value the main Worker has.
+}
