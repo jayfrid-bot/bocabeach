@@ -82,17 +82,26 @@ export async function POST(req: Request): Promise<Response> {
     // (matches the pre-D1 behavior); a beach change starts clean.
     const sent = priorSlug === loc.slug ? priorSent : {};
 
+    // The two coarse switches the native client sends only seed a BRAND-NEW
+    // row. A device that already exists keeps its per-alert prefs (set through
+    // /api/devices) — otherwise every tap on "Alerts" would expand the coarse
+    // safety switch back into all-on and undo a single opt-out.
+    const current = await store.getDevice(id);
+    const seedPrefs = current
+      ? {}
+      : {
+          prefs: prefsFromLegacy({
+            morning: body.prefs?.morning !== false,
+            safety: body.prefs?.safety !== false,
+          }),
+        };
+
     await store.upsertDevice(id, {
       platform,
       pushToken: token,
       tz: loc.timezone,
       homeSlug: loc.slug,
-      // Only the two coarse switches the native client knows about are touched;
-      // any finer per-alert prefs set through /api/devices survive.
-      prefs: prefsFromLegacy({
-        morning: body.prefs?.morning !== false,
-        safety: body.prefs?.safety !== false,
-      }),
+      ...seedPrefs,
       sent,
     });
     return Response.json({ ok: true });
