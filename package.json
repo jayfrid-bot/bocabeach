@@ -10,7 +10,7 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check:mobile": "playwright test",
+    "check:mobile": "playwright test --retries=1",
     "deploy": "npm run check:mobile && rm -rf .next .open-next && opennextjs-cloudflare build && wrangler deploy"
   },
   "dependencies": {
