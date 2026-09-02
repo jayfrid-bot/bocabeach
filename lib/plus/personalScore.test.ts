@@ -85,7 +85,7 @@ function snapshot(clarityPct: number | null = 92): ConditionsSnapshot {
 function response(snap: ConditionsSnapshot): ConditionsResponse {
   return {
     snapshot: snap,
-    score: computeScore(snap),
+    score: computeScore(snap, DEFAULT_SCORING, NOW),
     hourlyScores: computeHourlyScores(snap, NOW),
     multiDayWindows: computeMultiDayWindows(snap, NOW),
     cams: [],
@@ -98,7 +98,7 @@ describe("computePersonalScore mirrors the server pipeline", () => {
   it("with the default options it reproduces the shared headline exactly", () => {
     const snap = snapshot();
     const out = computePersonalScore(response(snap), DEFAULT_SCORING, NOW);
-    expect(out.score).toEqual(computeScore(snap));
+    expect(out.score).toEqual(computeScore(snap, DEFAULT_SCORING, NOW));
   });
 
   it("anchors the current hour to the headline, the way the chart's now-dot needs", () => {
@@ -139,10 +139,17 @@ describe("computePersonalScore mirrors the server pipeline", () => {
 });
 
 describe("the profile actually changes the number", () => {
-  it("scores a clear-water day differently for a snorkeler", () => {
-    const res = response(snapshot(92));
-    const personal = computePersonalScore(res, resolveScoring(SNORKEL), NOW);
-    expect(personal.score.score).not.toBe(res.score.score);
+  it("water clarity moves a snorkeler's number and never moves everyone else's", () => {
+    // The honest claim is not "a snorkeler scores differently than the shared
+    // number" — on a given fixture the profile's other shifts (its stricter wind
+    // ideal, for one) can cancel the clarity credit to the same integer. The claim
+    // is that clarity is a live input for the snorkeler and inert for everyone.
+    const clear = response(snapshot(92));
+    const murky = response(snapshot(20));
+    expect(murky.score.score).toBe(clear.score.score); // weight 0 in the shared score
+    const snorkelClear = computePersonalScore(clear, resolveScoring(SNORKEL), NOW);
+    const snorkelMurky = computePersonalScore(murky, resolveScoring(SNORKEL), NOW);
+    expect(snorkelMurky.score.score).toBeLessThan(snorkelClear.score.score);
   });
 
   it("gives a snorkeler a clarity slice that the shared score does not have", () => {
