@@ -3,17 +3,17 @@ import Link from "next/link";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
-const EFFECTIVE_DATE = "July 28, 2026";
+const EFFECTIVE_DATE = "September 2, 2026";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
   description:
-    "How Is It Beach Day handles data: no accounts, no sign-in, cookieless analytics, and exactly what a push notification token is used for.",
+    "How Is It Beach Day handles data: no accounts, no sign-in, cookieless analytics, and exactly what location and push notification data Beach Day Plus uses.",
   alternates: { canonical: "https://isitbeachday.com/privacy" },
   openGraph: {
     title: "Privacy Policy · Is It Beach Day?",
     description:
-      "How Is It Beach Day handles data: no accounts, no sign-in, cookieless analytics, and exactly what a push notification token is used for.",
+      "How Is It Beach Day handles data: no accounts, no sign-in, cookieless analytics, and exactly what location and push notification data Beach Day Plus uses.",
     url: "https://isitbeachday.com/privacy",
     images: [{ url: "https://isitbeachday.com/opengraph-image", width: 1200, height: 630, alt: "Is It Beach Day?" }],
   },
@@ -63,10 +63,11 @@ export default function PrivacyPage() {
       <Section title="Push notifications (app only)">
         <p>
           In the iOS/Android app, you can opt in to &quot;Notify me&quot; for a beach —
-          a morning Beach Day summary and/or safety alerts. Turning this on stores
-          your device&apos;s push token (an APNs token on iOS, an FCM token on
-          Android) in our database, tied to the beach you picked and your on/off
-          preferences. Nothing else is attached to it — no name, no email, no
+          a morning Beach Day summary and, with Beach Day Plus, safety alerts.
+          Turning this on stores your device&apos;s push token (an APNs token on
+          iOS, an FCM token on Android) in our database, tied to a random device
+          id — see &quot;Location and your device id&quot; below for what else that
+          id carries. Nothing personal is attached — no name, no email, no
           account, no identity of any kind.
         </p>
         <p>
@@ -76,14 +77,33 @@ export default function PrivacyPage() {
         </p>
       </Section>
 
-      <Section title="Location">
+      <Section title="Location and your device id">
         <p>
-          The app and site never read your device&apos;s location automatically.
-          The one exception is the &quot;Find your beach&quot; page: if you tap
-          &quot;Use my location,&quot; your browser asks permission and, if you
-          allow it, uses your coordinates to sort the beach list by distance —
-          entirely in your browser. That location is never sent to our servers or
-          stored anywhere. Skip the button and nothing is requested.
+          The app and site read your location only when you ask them to — never
+          automatically, and never in the background.
+        </p>
+        <p>
+          Tapping &quot;Find my nearest beach&quot; — on the website&apos;s Find
+          your beach page, or the one-line banner the app shows on first launch —
+          asks your browser or device for a location fix, used only to sort the
+          beach list or set your home beach by distance. That fix is used
+          entirely on your device. It is never sent to our servers or stored.
+          Skip the button and nothing is requested.
+        </p>
+        <p>
+          Turning on Beach Mode — a Beach Day Plus feature that arms hazard
+          alerts for where you&apos;re actually standing, not just your home
+          beach — is different. Your device&apos;s position (latitude, longitude,
+          accuracy, and the time of the fix) is sent to our server and kept with
+          your device record for as long as alerts are armed, at most 8 hours,
+          so alerts can be computed for where you really are. Turning Beach Mode
+          off removes that position right away.
+        </p>
+        <p>
+          A random device id — no account, no name, no email — ties your score
+          profile, alert settings, and Plus status to your device, the same way
+          the push token above does. There is still no sign-in. Deleting the app
+          clears all of it.
         </p>
       </Section>
 
@@ -124,7 +144,7 @@ export default function PrivacyPage() {
       <Section title="Children">
         <p>
           The site collects no personal information from anyone, including
-          children, beyond the anonymous push token described above.
+          children, beyond the anonymous device data described above.
         </p>
       </Section>
 

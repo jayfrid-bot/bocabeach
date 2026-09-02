@@ -17,6 +17,62 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-09-02",
+    title: "Beach Day Plus, with a 3-day free trial",
+    details:
+      "A new paid tier: your own personal Beach Day score, safety and surf alerts computed from right where you're standing, and a morning summary in your number. Try it free for 3 days from the Personalize or Alerts button.",
+    tag: "new",
+  },
+  {
+    date: "2026-09-02",
+    title: "Personalize my score",
+    details:
+      "Tell us how you use the beach — swimming, watching kids, sunbathing, snorkeling, walking the dog, walking the shore, or surfing — and the score re-ranks around what matters to you. Advanced tuning lets you adjust each factor by hand. Part of Beach Day Plus.",
+    tag: "new",
+  },
+  {
+    date: "2026-09-02",
+    title: "A swim safety line, and a surf conditions line, right under the score",
+    details:
+      "The score now sits beside a plain safety read — Safe, Caution, or Stay out for swimmers; Go, Experienced only, or Closed for surfers — so the safety call is never buried in the fine print.",
+    tag: "new",
+  },
+  {
+    date: "2026-09-02",
+    title: "Find my nearest beach, and a \"near you\" chip",
+    details:
+      "One tap sets your home beach by distance. Once it's set, a small chip shows how far you are from it, or points you to the nearest beach we cover.",
+    tag: "new",
+  },
+  {
+    date: "2026-09-02",
+    title: "Beach Mode — alerts from right where you stand",
+    details:
+      "With Beach Day Plus, turn on Beach Mode and alerts are computed from your actual spot on the sand: lightning distance measured from you, rain where you are, flag and rip changes, and storms moving in. Auto-arms when you're near a beach.",
+    tag: "new",
+  },
+  {
+    date: "2026-09-02",
+    title: "Alert settings, with a toggle for each kind",
+    details:
+      "Choose exactly which Beach Mode alerts you want — lightning, storms, rain, wind, flags, rip current, water advisories — each with its own on/off switch.",
+    tag: "new",
+  },
+  {
+    date: "2026-09-02",
+    title: "The morning summary now speaks in your own score",
+    details:
+      "Beach Day Plus subscribers get the daily morning notification tuned to their personal score, instead of everyone's.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-02",
+    title: "Water clarity now counts toward the score for snorkelers",
+    details:
+      "Pick the Snorkeling profile and water clarity becomes one of the biggest factors in your personal score, wherever we have a clarity reading.",
+    tag: "improved",
+  },
+  {
     date: "2026-08-31",
     title: "Clearer overnight cam readings, and no cut-off text on the Golden hour card",
     details:

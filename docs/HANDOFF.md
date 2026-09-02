@@ -15,8 +15,9 @@ score (for beachgoers) and a **Surf** score. Built **config-first** — adding a
 town is a single entry in `config/locations.ts`. Long-term goal: every beach town, and
 eventual monetization.
 
-Deployed on **Netlify** (`@netlify/plugin-nextjs`). All external data is fetched
-**server-side** with per-source `next.revalidate` caching.
+Deployed on **Cloudflare Workers**, built with OpenNext (`npm run deploy`). All
+external data is fetched **server-side** with per-source `next.revalidate`
+caching.
 
 See `README.md` for the full data-source list and `CLAUDE.md` for conventions/guardrails.
 
@@ -209,4 +210,33 @@ git checkout -B main origin/main
 git merge --no-ff claude/ecstatic-hopper-iRGHU -m "Merge: ..." && git push -u origin main
 ```
 
-Repo: `jayfrid-bot/bocabeach` · Host: Netlify · Vision pipeline: GitHub Actions.
+Repo: `jayfrid-bot/bocabeach` · Host: Cloudflare Workers (OpenNext) · Vision pipeline: GitHub Actions.
+
+---
+
+## 10. Beach Day Plus
+
+A paid tier — personal score profiles, safety/surf alert lines, and location-aware
+alerts ("Beach Mode"). Read these, in order:
+
+- `docs/PREMIUM_ROADMAP.md` — the plan and decisions.
+- `docs/PLUS_BUILD_SPEC.md` — binding contracts: types, routes, D1 schema, file ownership.
+- `docs/architecture.md` — the current backend map (Mermaid diagrams), including the Plus
+  device/presence/alerts pipeline.
+
+---
+
+## 11. Owner to-dos
+
+- **Real billing.** Trial start and code-unlock work server-side today
+  (`/api/devices/trial`, `/api/devices/unlock`), but nothing charges a card yet.
+  Wire RevenueCat or StoreKit directly, and sign Apple's Paid Applications
+  Agreement (required before any paid unlock can ship to real users).
+- **App Store privacy label.** Update it to declare precise location, linked to
+  the device id (see `app/privacy/page.tsx` for the current wording).
+- **Android Play upload.** Needs the Play service-account key to publish; not
+  yet supplied.
+- **Real-time lightning feed.** The current strike feed adds up to ~15 minutes
+  of latency to a paid lightning alert (GitHub-hosted ingest + 5-min cron).
+  Decide whether to move to a paid real-time feed before marketing "lightning
+  alerts" — flagged as a risk in `docs/PREMIUM_ROADMAP.md`.
