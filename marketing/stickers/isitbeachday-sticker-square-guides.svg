@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="675" height="675" viewBox="0 0 675 675"><style>@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@700&family=Nunito:wght@800&display=swap');</style>
+  <defs>
+    <radialGradient id="sky" cx="50%" cy="62%" r="70%">
+      <stop offset="0" stop-color="#1E5C8A"/><stop offset="0.55" stop-color="#0F2F4E"/><stop offset="1" stop-color="#081A2C"/>
+    </radialGradient>
+    <linearGradient id="sun" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFE38A"/><stop offset="0.5" stop-color="#F7C948"/><stop offset="1" stop-color="#F2A93B"/>
+    </linearGradient>
+    <linearGradient id="w1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5FD0EA"/><stop offset="1" stop-color="#3BB0D6"/></linearGradient>
+    <linearGradient id="w2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2C8FC2"/><stop offset="1" stop-color="#1F6FA3"/></linearGradient>
+    <linearGradient id="w3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1A5F90"/><stop offset="1" stop-color="#123F66"/></linearGradient>
+    <path id="arcTop" d="M 129.5 337.5 A 208 208 0 0 1 545.5 337.5"/>
+    <path id="arcBot" d="M 105.5 337.5 A 232 232 0 0 0 569.5 337.5"/>
+    <clipPath id="cutRound"><circle cx="337.5" cy="337.5" r="338"/></clipPath>
+  </defs>
+    <rect width="675" height="675" fill="url(#sky)"/>
+    
+    <g><line x1="467.5" y1="400.0" x2="501.5" y2="400.0" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.9"/><line x1="457.6" y1="449.7" x2="489.0" y2="462.8" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.55"/><line x1="429.4" y1="491.9" x2="453.5" y2="516.0" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.9"/><line x1="387.2" y1="520.1" x2="400.3" y2="551.5" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.55"/><line x1="337.5" y1="530.0" x2="337.5" y2="564.0" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.9"/><line x1="287.8" y1="520.1" x2="274.7" y2="551.5" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.55"/><line x1="245.6" y1="491.9" x2="221.5" y2="516.0" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.9"/><line x1="217.4" y1="449.7" x2="186.0" y2="462.8" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.55"/><line x1="207.5" y1="400.0" x2="173.5" y2="400.0" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.9"/><line x1="217.4" y1="350.3" x2="186.0" y2="337.2" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.55"/><line x1="245.6" y1="308.1" x2="221.5" y2="284.0" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.9"/><line x1="287.8" y1="279.9" x2="274.7" y2="248.5" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.55"/><line x1="337.5" y1="270.0" x2="337.5" y2="236.0" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.9"/><line x1="387.2" y1="279.9" x2="400.3" y2="248.5" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.55"/><line x1="429.4" y1="308.1" x2="453.5" y2="284.0" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.9"/><line x1="457.6" y1="350.3" x2="489.0" y2="337.2" stroke="#F7C948" stroke-width="9" stroke-linecap="round" opacity="0.55"/></g>
+    <circle cx="337.5" cy="400" r="112" fill="url(#sun)"/>
+    <circle cx="306.14" cy="366.4" r="38.080000000000005" fill="#FFF1B8" opacity="0.55"/>
+    <path d="M -50 470 L -50 457.8 L -25 463.3 L 0 470.0 L 25 476.7 L 50 482.2 L 75 485.4 L 100 485.8 L 125 483.2 L 150 478.2 L 175 471.7 L 200 464.9 L 225 459.0 L 250 455.1 L 275 454.0 L 300 455.9 L 325 460.3 L 350 466.6 L 375 473.4 L 400 479.7 L 425 484.1 L 450 486.0 L 475 484.9 L 500 481.0 L 525 475.1 L 550 468.3 L 575 461.8 L 600 456.8 L 625 454.2 L 650 454.6 L 675 457.8 L 700 463.3 L 725 470.0 L 725 800 L -50 800 Z" fill="url(#w1)"/>
+    <path d="M -50 518 L -50 527.4 L -25 530.9 L 0 532.0 L 25 530.5 L 50 526.7 L 75 521.3 L 100 515.3 L 125 509.8 L 150 505.8 L 175 504.0 L 200 504.9 L 225 508.1 L 250 513.2 L 275 519.2 L 300 524.9 L 325 529.4 L 350 531.8 L 375 531.6 L 400 528.9 L 425 524.2 L 450 518.3 L 475 512.4 L 500 507.6 L 525 504.6 L 550 504.1 L 575 506.2 L 600 510.5 L 625 516.1 L 650 522.1 L 675 527.4 L 700 530.9 L 725 532.0 L 725 800 L -50 800 Z" fill="url(#w2)"/>
+    <path d="M -50 566 L -50 575.5 L -25 571.5 L 0 566.5 L 25 561.4 L 50 557.2 L 75 554.6 L 100 554.1 L 125 555.8 L 150 559.4 L 175 564.2 L 200 569.4 L 225 573.9 L 250 577.0 L 275 578.0 L 300 576.8 L 325 573.7 L 350 569.1 L 375 563.9 L 400 559.1 L 425 555.6 L 450 554.1 L 475 554.7 L 500 557.4 L 525 561.7 L 550 566.8 L 575 571.8 L 600 575.6 L 625 577.8 L 650 577.7 L 675 575.5 L 700 571.5 L 725 566.5 L 725 800 L -50 800 Z" fill="url(#w3)"/>
+    <path d="M 267.5 494 q 18 -14 36 0 q 18 14 36 0" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" opacity="0.9"/>
+    <path d="M 377.5 540 q 14 -11 28 0 q 14 11 28 0" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" opacity="0.75"/>
+    <text font-family="Fredoka, 'Arial Rounded MT Bold', Arial, sans-serif" font-weight="700" undefined font-size="78" letter-spacing="2" fill="#FFFFFF" text-anchor="middle" x="337.5" y="150">IS IT</text>
+    <text font-family="Fredoka, 'Arial Rounded MT Bold', Arial, sans-serif" font-weight="700" undefined font-size="78" letter-spacing="2" fill="#FFFFFF" text-anchor="middle" x="337.5" y="232">BEACH DAY?</text>
+    <text font-family="Nunito, Arial, sans-serif" font-weight="800" font-size="30" letter-spacing="2" fill="#CFEFFF" text-anchor="middle" x="337.5" y="596">isitbeachday.com</text>
+    <rect x="37.5" y="37.5" width="600" height="600" rx="75" fill="none" stroke="#FF3B3B" stroke-width="2" stroke-dasharray="8 6"/><rect x="75" y="75" width="525" height="525" rx="45" fill="none" stroke="#3BFF7A" stroke-width="2" stroke-dasharray="4 6"/><text x="12" y="24" font-family="Arial" font-size="16" fill="#FF3B3B">red = 2" cut line (0.25" corners) · green = safe zone · edge = bleed</text>
+  </svg>
