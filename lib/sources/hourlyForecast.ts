@@ -1,7 +1,7 @@
 import type { HourlyMetrics, Location, Wrapped } from "@/lib/types";
 import { wmoEmoji } from "@/lib/sources/forecast";
 import { wmoText } from "@/lib/sources/spotWeather";
-import { fetchedAtOf, fetchWithTimeout, nowIso, round } from "@/lib/util";
+import { fetchJsonWithRetry, fetchedAtOf, nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo (open-meteo.com)";
 
@@ -153,27 +153,20 @@ export async function fetchHourlyForecast(
     `&longitude=${loc.lon}&hourly=shortwave_radiation&past_days=1&forecast_days=1`;
   try {
     const [res, satRes] = await Promise.allSettled([
-      fetchWithTimeout(url, { timeoutMs: 7000, next: { revalidate: 3600 } }), // 1h
-      fetchWithTimeout(satUrl, { timeoutMs: 7000, next: { revalidate: 1800 } }), // 30m
+      fetchJsonWithRetry<OpenMeteoHourly>(url, { timeoutMs: 7000, next: { revalidate: 3600 } }), // 1h
+      fetchJsonWithRetry<{ hourly?: { time?: string[]; shortwave_radiation?: (number | null)[] } }>(
+        satUrl,
+        { timeoutMs: 7000, next: { revalidate: 1800 } }, // 30m
+      ),
     ]);
     if (res.status === "rejected") throw res.reason;
-    fetchedAt = fetchedAtOf(res.value);
-    if (!res.value.ok) throw new Error(`Open-Meteo hourly -> ${res.value.status}`);
-    const data = parseOpenMeteoHourly(await res.value.json());
+    fetchedAt = fetchedAtOf(res.value.res);
+    const data = parseOpenMeteoHourly(res.value.json);
 
     let satOk = false;
-    if (data && satRes.status === "fulfilled" && satRes.value.ok) {
-      try {
-        const sat = (await satRes.value.json()) as {
-          hourly?: { time?: string[]; shortwave_radiation?: (number | null)[] };
-        };
-        if (sat.hourly) {
-          overlaySatelliteRadiation(data, sat.hourly, Date.now());
-          satOk = true;
-        }
-      } catch {
-        // keep model radiation
-      }
+    if (data && satRes.status === "fulfilled" && satRes.value.json.hourly) {
+      overlaySatelliteRadiation(data, satRes.value.json.hourly, Date.now());
+      satOk = true;
     }
     return {
       source: satOk ? "Open-Meteo (hourly + GOES radiation)" : "Open-Meteo (hourly)",

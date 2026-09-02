@@ -1,5 +1,5 @@
 import type { Location, MarineData, Wrapped } from "@/lib/types";
-import { cToF, fetchWithTimeout, fetchedAtOf, mToFt, nowIso, oldestIso, round } from "@/lib/util";
+import { cToF, fetchJsonWithRetry, fetchedAtOf, mToFt, nowIso, oldestIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo (open-meteo.com) — marine & weather models";
 
@@ -19,9 +19,10 @@ async function getMarine(
   url: string,
   revalidate: number,
 ): Promise<{ current: Current | null; hourly: MarineHourly | null; at: string }> {
-  const res = await fetchWithTimeout(url, { next: { revalidate } });
-  if (!res.ok) throw new Error(`${url} -> ${res.status}`);
-  const json = (await res.json()) as { current?: Current; hourly?: MarineHourly };
+  const { json, res } = await fetchJsonWithRetry<{ current?: Current; hourly?: MarineHourly }>(
+    url,
+    { next: { revalidate } },
+  );
   return { current: json.current ?? null, hourly: json.hourly ?? null, at: fetchedAtOf(res) };
 }
 
@@ -29,9 +30,9 @@ async function getCurrent(
   url: string,
   revalidate: number,
 ): Promise<{ current: Current | null; at: string }> {
-  const res = await fetchWithTimeout(url, { next: { revalidate } });
-  if (!res.ok) throw new Error(`${url} -> ${res.status}`);
-  const json = (await res.json()) as { current?: Current };
+  const { json, res } = await fetchJsonWithRetry<{ current?: Current }>(url, {
+    next: { revalidate },
+  });
   return { current: json.current ?? null, at: fetchedAtOf(res) };
 }
 

@@ -3,7 +3,7 @@
 // with a Request. The transports, the conditions pipeline and the legacy KV
 // reader are all mocked, so nothing touches the network or the disk.
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { ConditionsResponse } from "@/lib/types";
 import type { NativeSub } from "@/lib/push/nativeStore";
 import { scorableResponse, wrapped } from "@/lib/alerts/fixtures";
@@ -19,6 +19,8 @@ const ctl = vi.hoisted(() => ({
   conditions: null as unknown,
   /** The GLM strike feed the at-beach engine reads. */
   feed: null as { generatedAt: string; windowMinutes: number; strikes: number[][] } | null,
+  /** Every slug getConditions was actually called with, in order. */
+  conditionsCalls: [] as string[],
 }));
 
 vi.mock("@/lib/push/nativeStore", async (importActual) => {
@@ -50,8 +52,39 @@ vi.mock("@/lib/push/fcm", () => ({
 }));
 
 vi.mock("@/lib/conditions", () => ({
-  getConditions: async () => ctl.conditions ?? CONDITIONS,
+  getConditions: async (slug: string) => {
+    ctl.conditionsCalls.push(slug);
+    return ctl.conditions ?? CONDITIONS;
+  },
 }));
+
+// Real daylight varies with whatever time the test happens to run — pin every
+// beach to an always-daylight window so the score-excellent candidacy gate
+// (isDaylightAt in the route) is deterministic regardless of wall-clock time.
+vi.mock("@/lib/sources/sun", async (importActual) => {
+  const actual = await importActual<typeof import("@/lib/sources/sun")>();
+  return {
+    ...actual,
+    computeSunTimes: () => ({
+      daybreak: new Date("1970-01-01T00:00:00Z"),
+      sunrise: new Date("1970-01-01T00:00:00Z"),
+      solarNoon: new Date("1970-01-01T12:00:00Z"),
+      sunset: new Date("2100-01-01T00:00:00Z"),
+      dusk: new Date("2100-01-01T00:00:00Z"),
+      goldenAmStart: null,
+      goldenAmEnd: null,
+      goldenEveStart: null,
+      goldenEveEnd: null,
+      blueAmStart: null,
+      blueAmEnd: null,
+      blueEveStart: null,
+      blueEveEnd: null,
+      goldenAmPeak: null,
+      goldenEvePeak: null,
+      maxAltitudeDeg: 60,
+    }),
+  };
+});
 
 // The at-beach engine's two feeds. Mocked so a safety run never leaves the process.
 vi.mock("@/lib/alerts/lightningFeed", () => ({
@@ -124,6 +157,7 @@ beforeEach(() => {
   ctl.fcmMessages = [];
   ctl.conditions = null;
   ctl.feed = null;
+  ctl.conditionsCalls = [];
   process.env.CRON_SECRET = "test-cron-secret";
   delete process.env.PUSH_SAFETY_ALERTS;
 });
@@ -464,6 +498,58 @@ describe("POST /api/push/run", () => {
     const store = await getStore();
     expect(await store.getDevice(DEV)).toBeNull();
     expect(ctl.removed).toContain(FCM_TOKEN);
+  });
+
+  // --- conditionsFetched: only touch beaches someone can actually be pushed on -
+  describe("conditions are fetched only for a beach with someone reachable", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("fetches nothing for two free legacy devices at 2 PM (nobody entitled, nobody due)", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-09-02T18:00:00Z")); // 2 PM America/New_York (EDT)
+      await registerPost(
+        post("https://x/api/push/register-native", {
+          slug: "boca-raton",
+          token: FCM_TOKEN,
+          platform: "android",
+          deviceId: DEV,
+        }),
+      );
+      await registerPost(
+        post("https://x/api/push/register-native", {
+          slug: "cocoa-beach",
+          token: FCM_TOKEN_2,
+          platform: "android",
+        }),
+      );
+      const body = (await (await run()).json()) as Record<string, number>;
+      expect(body.beaches).toBe(0);
+      expect(body.conditionsFetched).toBe(0);
+      expect(ctl.conditionsCalls).toEqual([]);
+    });
+
+    it("fetches conditions once for an entitled device at its 8 AM morning hour, and sends the digest", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-09-02T12:00:00Z")); // 08:00 America/New_York (EDT)
+      await seedDevice();
+      const body = (await (await run()).json()) as Record<string, number>;
+      expect(body.beaches).toBe(1);
+      expect(body.conditionsFetched).toBe(1);
+      expect(body.sent).toBe(1);
+      expect(ctl.conditionsCalls).toEqual(["boca-raton"]);
+    });
+
+    it("?force=morning still forces a fetch and a send outside the 8 AM gate", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-09-02T18:00:00Z")); // 2 PM — not the morning hour
+      await seedDevice();
+      const body = (await (await run("?force=morning")).json()) as Record<string, number>;
+      expect(body.beaches).toBe(1);
+      expect(body.conditionsFetched).toBe(1);
+      expect(body.sent).toBe(1);
+    });
   });
 
   it("imports legacy KV subscriptions on the first run, once", async () => {

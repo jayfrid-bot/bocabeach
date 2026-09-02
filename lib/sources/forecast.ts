@@ -1,6 +1,6 @@
 import type { ForecastDay, Location, Wrapped } from "@/lib/types";
 import { wmoText } from "@/lib/sources/spotWeather";
-import { fetchedAtOf, fetchWithTimeout, nowIso, round } from "@/lib/util";
+import { fetchJsonWithRetry, fetchedAtOf, nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo (open-meteo.com)";
 
@@ -84,13 +84,12 @@ export async function fetchForecast(
     `weathercode,wind_speed_10m_max` +
     `&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto&forecast_days=7`;
   try {
-    const res = await fetchWithTimeout(url, {
+    const { json, res } = await fetchJsonWithRetry<OpenMeteoDaily>(url, {
       timeoutMs: 7000,
       next: { revalidate: 3600 }, // 1h
     });
     fetchedAt = fetchedAtOf(res);
-    if (!res.ok) throw new Error(`Open-Meteo daily -> ${res.status}`);
-    const data = parseOpenMeteoDaily(await res.json());
+    const data = parseOpenMeteoDaily(json);
     return {
       source: "Open-Meteo (7-day)",
       status: data ? "ok" : "error",

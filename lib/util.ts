@@ -135,6 +135,60 @@ export async function fetchWithTimeout(
   }
 }
 
+/**
+ * fetch() + JSON parse, with one retry. Open-Meteo intermittently returns a
+ * network error, a 5xx, or a 200 with a non-JSON body (seen 2026-09-01, ~1h
+ * outage) — any of those is treated as a failure. The retry waits 800ms and
+ * re-fetches with `cache: "no-store"` and no `next` option, so a bad response
+ * already sitting in Next's fetch cache can never be re-served as the retry.
+ * A 4xx is NOT retried — it throws immediately with the status. Two failures
+ * throw an Error naming the status and the first 60 chars of the body.
+ */
+export async function fetchJsonWithRetry<T = unknown>(
+  url: string,
+  init: FetchInit = {},
+): Promise<{ json: T; res: Response }> {
+  const attempt = async (retryInit?: FetchInit) => {
+    const useInit = retryInit ?? init;
+    let res: Response;
+    try {
+      res = await fetchWithTimeout(url, useInit);
+    } catch (e) {
+      return { ok: false as const, error: e instanceof Error ? e : new Error(String(e)) };
+    }
+    if (res.status >= 500) {
+      const body = await res.text().catch(() => "");
+      return { ok: false as const, error: new Error(`${url} -> ${res.status}: "${body.slice(0, 60)}"`), status: res.status };
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      return { ok: false as const, error: new Error(`${url} -> ${res.status}: "${body.slice(0, 60)}"`), status: res.status, noRetry: true };
+    }
+    const text = await res.text();
+    try {
+      const json = JSON.parse(text) as T;
+      return { ok: true as const, json, res };
+    } catch {
+      return {
+        ok: false as const,
+        error: new Error(`${url} -> ${res.status} non-JSON: "${text.slice(0, 60)}"`),
+        status: res.status,
+      };
+    }
+  };
+
+  const first = await attempt(init);
+  if (first.ok) return { json: first.json, res: first.res };
+  if (first.noRetry) throw first.error;
+
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  const { next: _next, ...rest } = init;
+  const retryInit: FetchInit = { ...rest, cache: "no-store" };
+  const second = await attempt(retryInit);
+  if (second.ok) return { json: second.json, res: second.res };
+  throw second.error;
+}
+
 export const nowIso = (): string => new Date().toISOString();
 
 /**

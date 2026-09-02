@@ -1,5 +1,5 @@
 import type { Location, MetnoCurrent, Wrapped } from "@/lib/types";
-import { fetchWithTimeout, fetchedAtOf, nowIso, round } from "@/lib/util";
+import { fetchJsonWithRetry, fetchedAtOf, nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo — NOAA GFS model (open-meteo.com)";
 
@@ -44,13 +44,12 @@ export async function fetchGfs(loc: Location): Promise<Wrapped<MetnoCurrent>> {
     `wind_direction_10m,cloud_cover` +
     `&temperature_unit=fahrenheit&wind_speed_unit=mph&models=gfs_seamless`;
   try {
-    const res = await fetchWithTimeout(url, {
+    const { json, res } = await fetchJsonWithRetry<OmCurrent>(url, {
       timeoutMs: 7000,
       next: { revalidate: 1800 }, // 30m
     });
     fetchedAt = fetchedAtOf(res);
-    if (!res.ok) throw new Error(`Open-Meteo GFS -> ${res.status}`);
-    const data = parseGfsCurrent(await res.json());
+    const data = parseGfsCurrent(json);
     return {
       source: "NOAA GFS (via Open-Meteo)",
       status: data ? "ok" : "error",

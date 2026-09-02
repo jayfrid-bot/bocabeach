@@ -26,11 +26,13 @@
 import { timingSafeEqual } from "node:crypto";
 import { getConditions } from "@/lib/conditions";
 import { getLocation } from "@/config/locations";
+import { computeSunTimes } from "@/lib/sources/sun";
+import type { Location } from "@/lib/types";
 import { listNativeSubs, removeNativeSub } from "@/lib/push/nativeStore";
 import { getStore, type DeviceStore, type PushableDevice } from "@/lib/db/store";
 import { coarsePrefs, parseMode } from "@/lib/db/plus";
 import { entitled, type SentState } from "@/lib/db/types";
-import { decideNotifications, type PushDecision, type PushSummary } from "@/lib/push/notify";
+import { decideNotifications, MORNING_HOUR, type PushDecision, type PushSummary } from "@/lib/push/notify";
 import { excellentDecision, newSummaryCache, personalSummary } from "@/lib/alerts/morning";
 import { runAtBeachAlerts, type AtBeachCounts } from "@/lib/alerts/run";
 import { getApns, isDeadToken, openApnsSession } from "@/lib/push/apns";
@@ -58,6 +60,16 @@ function localHourAndDate(tz: string, now: Date): { hour: number; date: string }
     day: "2-digit",
   }).format(now);
   return { hour, date };
+}
+
+/** Is the sun up at this beach on `date` (its own local calendar day), right now? */
+function isDaylightAt(loc: { lat: number; lon: number }, now: Date, date: string): boolean {
+  const [y, m, d] = date.split("-").map(Number);
+  if (!y || !m || !d) return false;
+  const t = computeSunTimes(loc.lat, loc.lon, y, m, d);
+  if (!t.sunrise || !t.sunset) return false;
+  const ms = now.getTime();
+  return ms >= t.sunrise.getTime() && ms <= t.sunset.getTime();
 }
 
 /**
@@ -246,6 +258,46 @@ export async function POST(req: Request): Promise<Response> {
   /** Devices the home loop could not finish. The run carries on to the next. */
   let errors = 0;
   let alerts: AtBeachCounts = { devices: 0, evaluated: 0, sent: 0, skipped: 0, errors: 0, pruned: 0 };
+  // How many times this run actually called getConditions — the number we're
+  // trying to shrink: the 5-minute cron used to re-fetch every home beach's
+  // conditions even when nobody there could receive anything (2 PM, nobody at
+  // MORNING_HOUR, nobody in daylight for score-excellent).
+  let conditionsFetched = 0;
+  const countedGetConditions = (slug: string) => {
+    conditionsFetched += 1;
+    return getConditions(slug);
+  };
+  // Home beaches actually worked this run — i.e. that had a device someone
+  // could receive a digest or "turned Excellent" alert for, right now.
+  let homeBeaches = 0;
+
+  /**
+   * Does ANY device in this beach's group actually need conditions fetched
+   * right now — either it is due the morning digest (or `?force=morning`), or
+   * it is a live candidate for "just turned Excellent" (entitled, has a
+   * transport, daylight at the beach, not already sent today)? A device whose
+   * own local-hour lookup throws (a corrupt stored tz) fails OPEN, so the
+   * existing per-device error handling below still sees and counts it.
+   */
+  async function slugNeedsConditions(loc: Location, group: PushableDevice[]): Promise<boolean> {
+    for (const sub of group) {
+      if (!entitled(sub.device, nowMs)) continue;
+      if (!senderFor(sub)) continue;
+      try {
+        const { hour, date } = localHourAndDate(sub.device.tz || loc.timezone, now);
+        if (sub.device.prefs.morning && (force || (hour === MORNING_HOUR && sub.sent.morningDate !== date))) {
+          return true;
+        }
+        if (sub.device.prefs["score-excellent"] !== false && isDaylightAt(loc, now, date)) {
+          const already = await store.lastAlert(sub.device.id, `score-excellent:${date}`);
+          if (!already) return true;
+        }
+      } catch {
+        return true; // fail open — let the real error surface (and count) below
+      }
+    }
+    return false;
+  }
 
   try {
     // --- Home beach: the daily digest + "turned Excellent". Plus only. --------
@@ -254,9 +306,11 @@ export async function POST(req: Request): Promise<Response> {
       for (const [slug, group] of bySlug) {
         const loc = getLocation(slug);
         if (!loc) continue;
+        if (!(await slugNeedsConditions(loc, group))) continue;
+        homeBeaches += 1;
         let res;
         try {
-          res = await getConditions(slug);
+          res = await countedGetConditions(slug);
         } catch {
           continue;
         }
@@ -311,6 +365,7 @@ export async function POST(req: Request): Promise<Response> {
       alerts = await runAtBeachAlerts({
         store,
         now: nowMs,
+        loadConditions: countedGetConditions,
         deliver: async (sub, msg) => {
           const sendOne = senderFor(sub);
           if (!sendOne) return { ok: false, dead: false };
@@ -328,7 +383,7 @@ export async function POST(req: Request): Promise<Response> {
     ok: true,
     mode,
     imported,
-    beaches: bySlug.size,
+    beaches: homeBeaches,
     subscriptions: subs.length,
     ios: subs.filter((s) => s.platform === "ios").length,
     android: subs.filter((s) => s.platform === "android").length,
@@ -337,6 +392,7 @@ export async function POST(req: Request): Promise<Response> {
     excellent: excellentSent,
     armed: alerts.devices,
     alerts,
+    conditionsFetched,
     pruned,
     errors,
   });
