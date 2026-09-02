@@ -58,7 +58,7 @@ export function computePersonalScore(
   nowMs: number,
 ): PersonalScore {
   const snapshot = res.snapshot;
-  const score = computeScore(snapshot, opts);
+  const score = computeScore(snapshot, opts, nowMs);
   const hourlyForecast = computeHourlyScores(snapshot, nowMs, opts);
   const hourlyScores = anchorCurrentHourScore(hourlyForecast, score, nowMs, opts);
   const multiDayWindows = computeMultiDayWindows(snapshot, nowMs, 7, opts);

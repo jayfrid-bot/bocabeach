@@ -236,7 +236,11 @@ function metricSource(
   return undefined;
 }
 
-export function deriveMetrics(s: ConditionsSnapshot): Derived {
+// `nowMs` only feeds the sand model's "current hour" pick. Callers that already
+// hold a clock (the hourly/personal scorers, SSR vs hydration) pass it in so the
+// same snapshot scores the same way regardless of wall time; the default keeps
+// every existing call site unchanged.
+export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now()): Derived {
   const w = s.weather.data;
   const b = s.buoy.data;
   const m = s.marine.data;
@@ -351,7 +355,7 @@ export function deriveMetrics(s: ConditionsSnapshot): Derived {
     sandTempF: s.hourly.data
       ? currentSandTempF(
           s.hourly.data,
-          Date.now(),
+          nowMs,
           {
             cloudCoverPct: satelliteBeamCloudPct(s) ?? satelliteCloudPct(s) ?? cloudCoverPct,
             // Beam-path readings damp from 50% (sustained blockage), not 70%.
@@ -959,8 +963,9 @@ export function applyBeachCaps(
 export function computeScore(
   s: ConditionsSnapshot,
   opts: ScoringOptions = DEFAULT_SCORING,
+  nowMs: number = Date.now(),
 ): ScoreResult {
-  return scoreBeachDay(deriveMetrics(s), opts);
+  return scoreBeachDay(deriveMetrics(s, nowMs), opts);
 }
 
 const HOUR_MS = 3_600_000;
