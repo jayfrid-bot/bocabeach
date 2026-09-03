@@ -187,7 +187,27 @@ export function ConditionsDashboard({
   // error body lacking `.snapshot` must never shadow the good initial data.
   const res = data && data.snapshot ? data : initial;
   const snap = res.snapshot;
-  const d = deriveMetrics(snap);
+
+  // The clock every time-dependent render runs on.
+  //
+  // The FIRST render — the server's HTML and the client's hydration pass — must
+  // take it from the DATA, never the wall clock. This is a client component, so
+  // both passes execute; on a slow machine they land in different minutes, the
+  // sand-temperature text comes out different, and React throws the whole tree
+  // away (minified error #418). That is what was reddening the CI layout check
+  // while the same build passed on a fast laptop.
+  //
+  // After mount we take the real clock and re-render. From then on it is never
+  // earlier than the snapshot's own generation time, so a phone whose clock lags
+  // the server cannot score "now" against an hour that has not happened yet.
+  const generatedMs = Date.parse(snap.generatedAt) || 0;
+  const [liveNow, setLiveNow] = useState<number | null>(null);
+  useEffect(() => {
+    setLiveNow(Date.now());
+  }, [res]);
+  const nowMs = Math.max(liveNow ?? generatedMs, generatedMs);
+
+  const d = deriveMetrics(snap, nowMs);
 
   // --- Beach Day Plus -------------------------------------------------------
   // Everything below is inert for a free user: `plus.entitled` starts false and
@@ -198,10 +218,6 @@ export function ConditionsDashboard({
   // The clock the personal engine runs on. Never earlier than the snapshot's own
   // generation time, so a phone whose clock lags the server can't score "now"
   // against an hour that has not happened yet. Re-taken on every SWR refresh.
-  const nowMs = useMemo(
-    () => Math.max(Date.now(), Date.parse(res.snapshot.generatedAt) || 0),
-    [res],
-  );
   const personal = usePersonalScore(res, plus.entitled ? plus.profile : null, nowMs);
   const [showEveryone, setShowEveryone] = useState(false);
   const [sheet, setSheet] = useState<"onboarding" | "paywall" | "settings" | null>(null);
@@ -231,8 +247,8 @@ export function ConditionsDashboard({
   // where the visitor is. Same tz-aware derivation the server uses (conditions.ts).
   const localMonth =
     Number(
-      new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "numeric" }).format(new Date()),
-    ) || new Date().getUTCMonth() + 1;
+      new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "numeric" }).format(new Date(nowMs)),
+    ) || new Date(nowMs).getUTCMonth() + 1;
   const cams = res.cams;
   const ratings = snap.cityOfficial.data;
   const sg = snap.sargassum.data;
