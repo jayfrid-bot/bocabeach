@@ -43,6 +43,15 @@ jobs:
       - name: Build (CI serves the built app, not the dev server)
         run: npm run build
 
+      # The Plus API routes (/api/devices, /api/presence) talk to D1. Even under
+      # `next start`, next.config.mjs's initOpenNextCloudflareForDev wires a LOCAL
+      # miniflare D1 — an empty database with no tables — so without this step the
+      # routes 500 with "no such table: devices" and e2e/plus.spec.ts's trial test
+      # fails on the resulting console error. Local mode needs no Cloudflare
+      # credentials; it just seeds .wrangler/state from migrations/.
+      - name: Apply D1 migrations to the local test database
+        run: npx wrangler d1 migrations apply isitbeachday-plus --local
+
       - name: Run mobile layout check
         run: npx playwright test
         env:
