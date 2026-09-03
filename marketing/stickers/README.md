@@ -10,5 +10,14 @@ Regenerate: `cp marketing/stickers/generate.mjs .sticker-tmp.mjs && node .sticke
 
 ## QR versions (recommended for print)
 
-- `isitbeachday-sticker-round-qr.png` / `square-qr.png` — the QR code is the sun: white panel, 4-module quiet zone, sun logo over the centre (error-correction level H, so the logo costs nothing). Encodes `HTTPS://ISITBEACHDAY.COM` (uppercase = alphanumeric mode = a smaller, easier-to-scan symbol; hosts are case-insensitive). Version 3-H, 29 modules, ~0.6 mm per module at 2".
+- `isitbeachday-sticker-round-qr.png` / `square-qr.png` — the QR code is the sun: white panel, 4-module quiet zone, sun logo over the centre (error-correction level H, so the logo costs nothing). Encodes `https://isitbeachday.com/sticker` — a real route (`app/sticker/route.ts`) that counts the scan in D1 and 307s to `/?ref=sticker`. Version 4-H, 33 modules, ~0.54 mm per module at 2". Uppercase would give a sparser version-3 symbol, but it decoded no better in testing and would need case-insensitive routing, so the readable lowercase URL wins.
 - `qr.json` is the module matrix (made with `segno`); `generate-qr.mjs` renders; `scan-test.mjs` decodes the finished PNGs with jsQR at 2", 1", 0.73" to prove they read.
+
+## Counting scans
+
+```bash
+npx wrangler d1 execute isitbeachday-plus --remote --command \
+  "SELECT day, source, n FROM scan_log ORDER BY day DESC LIMIT 30"
+```
+
+The `?s=` tag on the link becomes `source`, so a second print run or a different placement can be told apart: `https://isitbeachday.com/sticker?s=coolers`.
