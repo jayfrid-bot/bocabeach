@@ -161,8 +161,19 @@ export function median(...vals: (number | undefined)[]): number | undefined {
  *
  * Stale or missing satellite → identical behavior to before (5 model voices).
  */
-export function consensusCloudPct(s: ConditionsSnapshot): number | undefined {
-  const om = currentHourOf(s.hourly.data ?? []);
+export function consensusCloudPct(
+  s: ConditionsSnapshot,
+  nowMs: number = Date.now(),
+): number | undefined {
+  // A satellite-OBSERVED sunshine reading, when we have one, is a direct
+  // MEASUREMENT of cloud opacity and outranks a median of forecast models that
+  // can be unanimously wrong the same way (2026-09-04: three of five models said
+  // 100% cloud while 94% of the sun measurably reached the ground). It resolves
+  // both failure modes — thin cirrus the mask over-counts, and a thunderstorm
+  // anvil the models miss (the anvil starves the radiation, so it reads cloudy).
+  const observed = observedSkyCloudPct(s, nowMs);
+  if (observed != null) return observed;
+  const om = currentHourOf(s.hourly.data ?? [], nowMs);
   const sat = satelliteCloudPct(s);
   return median(
     s.marine.data?.cloudCoverPct,
@@ -170,10 +181,74 @@ export function consensusCloudPct(s: ConditionsSnapshot): number | undefined {
     om?.cloudCoverPct,
     s.weather.data?.cloudCoverPct,
     s.gfs.data?.cloudCoverPct,
-    // Two entries on purpose — see the double-weight rationale above.
+    // The binary mask, double-weighted, only when no observed-sunshine read is
+    // available (night, low sun, stale feed) — see the double-weight rationale
+    // above. observedSkyCloudPct supersedes it whenever the sun is measurably up.
     sat,
     sat,
   );
+}
+
+/**
+ * Fair-weather clear-sky global horizontal irradiance at the zenith (W/m²) at
+ * sea level. Deliberately on the HIGH side (~1050) so a genuinely clear sky
+ * divides out to a transmission just under 1.0 — reading a few % cloud, never a
+ * negative or impossible value from sensor/model noise.
+ */
+const CLEAR_SKY_GHI_PEAK_WM2 = 1050;
+/**
+ * Below this sun elevation the sin() clear-sky model and rising air mass make
+ * the transmission ratio unreliable, so the observed read stands down and the
+ * model consensus is used. Sky quality matters least near the horizon anyway.
+ */
+const SKY_OBS_MIN_SUN_ELEV_DEG = 25;
+/** The observed-radiation hour must be at least this fresh to speak for "now". */
+const SKY_OBS_MAX_AGE_MS = 90 * 60_000;
+
+/**
+ * Cloud cover RIGHT NOW inferred from the satellite-OBSERVED shortwave radiation
+ * — a quantitative measurement of how much sun actually reaches the ground,
+ * which both the forecast models and the binary GOES cloud MASK get wrong in
+ * BOTH directions:
+ *   - thin cirrus: mask flags "cloud", models forecast overcast, yet the sun
+ *     pours through (2026-09-04: mask 98%, models 3×100%, but 853 W/m² of a ~907
+ *     clear-sky ceiling reached the ground — a 130°F beach under a blue sky);
+ *   - a thunderstorm anvil the models miss (2026-07-15): the radiation collapses,
+ *     so this correctly reads heavy cloud.
+ * cloud% = (1 − observed/clear-sky(elevation)). Returns undefined — falling back
+ * to the model+mask consensus — unless the GOES granule is fresh with the sun
+ * well up and enough valid pixels, and a satellite-observed shortwave hour sits
+ * within the last ~90 min. The elevation comes from the granule itself.
+ */
+export function observedSkyCloudPct(
+  s: ConditionsSnapshot,
+  nowMs: number = Date.now(),
+): number | undefined {
+  const g = s.goesCloud;
+  if (g.status !== "ok" || g.data == null) return undefined;
+  const elev = g.data.sunElevDeg;
+  if (elev == null || elev < SKY_OBS_MIN_SUN_ELEV_DEG) return undefined;
+  const { validPixels: vp, totalPixels: tp } = g.data;
+  if (tp > 0 && vp / tp < 0.5) return undefined; // degraded granule — don't trust it
+
+  // The most recent satellite-OBSERVED shortwave hour near now (overlaid onto
+  // elapsed hours by hourlyForecast.ts; a forecast hour is never solarObserved).
+  let obs: number | undefined;
+  let bestAge = Infinity;
+  for (const h of s.hourly.data ?? []) {
+    if (h.solarObserved !== true || h.solarWm2 == null) continue;
+    const age = Math.abs(nowMs - (new Date(h.time).getTime() + 1800_000));
+    if (age < bestAge) {
+      bestAge = age;
+      obs = h.solarWm2;
+    }
+  }
+  if (obs == null || bestAge > SKY_OBS_MAX_AGE_MS) return undefined;
+
+  const clearSky = CLEAR_SKY_GHI_PEAK_WM2 * Math.sin((elev * Math.PI) / 180);
+  if (clearSky < 50) return undefined;
+  const transmission = Math.max(0, Math.min(1, obs / clearSky));
+  return Math.round((1 - transmission) * 100);
 }
 
 /**
@@ -268,7 +343,7 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
   const g = s.gfs.data;
   // Open-Meteo's reading for the current hour — the third consensus voice.
   const om = currentHourOf(s.hourly.data ?? []);
-  const cloudCoverPct = consensusCloudPct(s);
+  const cloudCoverPct = consensusCloudPct(s, nowMs);
   // Consensus current values (median across sources), computed up front so the
   // dew-point fallback derives from the SAME temp + humidity the UI shows — not a
   // single provider, which previously made dew point inconsistent with the card.
@@ -570,8 +645,17 @@ function skyScore(d: Derived): number | null {
 /** Human-readable summary of the sky inputs for the score breakdown. */
 function skyDisplay(d: Derived): string | undefined {
   const parts: string[] = [];
-  if (d.shortForecast) parts.push(d.shortForecast);
-  if (d.cloudCoverPct != null) parts.push(`${d.cloudCoverPct}% cloud`);
+  const word = d.shortForecast;
+  const cloud = d.cloudCoverPct;
+  // Never print a word and a number that plainly contradict — the "Clear · 98%
+  // cloud" a thin-cirrus day used to show (the ground station reports clear, a
+  // binary cloud mask counts the cirrus). Keep the human word, drop the number.
+  const clearWord = word != null && /clear|sunny|fair/i.test(word);
+  const cloudyWord = word != null && /cloud|overcast/i.test(word);
+  const contradicts =
+    cloud != null && ((clearWord && cloud >= 70) || (cloudyWord && cloud <= 20));
+  if (word) parts.push(word);
+  if (cloud != null && !contradicts) parts.push(`${cloud}% cloud`);
   return parts.length ? parts.join(" · ") : undefined;
 }
 

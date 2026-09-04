@@ -410,15 +410,15 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
       title: "Cloud cover",
       weightPct: null,
       explainer:
-        "How much of the sky is covered, which feeds the Sky factor alongside rain chance — more sun means a better beach day. This card shows the multi-source consensus. Separately, a dedicated GOES-19 satellite reading of the actual clouds drives the sand-temperature model and, when it's genuinely overcast, tempers the UV — those two use the satellite, not this consensus number.",
-      formula: "Feeds Sky (16% of score). skyBase = 0.6 × sunshine + 0.4 × dryness, where sunshine = 100 − cloud%.",
+        "How much of the sky is covered, which feeds the Sky factor alongside rain chance — more sun means a better beach day. When the sun is well up we measure it directly: how much sunlight the satellite sees reaching the ground tells us what's really cloud and what's just thin haze the models over-count. Otherwise this is a multi-source consensus. A separate satellite cloud reading also drives the sand-temperature model and tempers the UV.",
+      formula:
+        "Feeds Sky (16% of score). skyBase = 0.6 × sunshine + 0.4 × dryness, where sunshine = 100 − cloud%. Sun well up + fresh satellite: cloud% = 100 × (1 − observed sunlight ÷ clear-sky sunlight); otherwise a median across the forecast models plus the satellite cloud mask.",
       computation,
       sources: src(
-        `Median of ${snap.marine.source} · ${snap.metno.source} · ${snap.hourly.source} · ${snap.weather.source} · ${snap.gfs.source}`,
-        `${snap.goesCloud.source} — feeds the sand model + UV attenuation separately`,
+        `Satellite-observed sunlight (${snap.goesCloud.source}) when the sun is up, else median of ${snap.marine.source} · ${snap.metno.source} · ${snap.hourly.source} · ${snap.weather.source} · ${snap.gfs.source}`,
       ),
       notes:
-        "This card shows the multi-source consensus median (the Sky number). A separate GOES-19 satellite reading drives the sand-temp model and, at ≥50% observed, the UV attenuation. Cloud ≥50% also helps corroborate 'is it really raining' before rain is allowed to cap the day.",
+        "When the sun is high and the satellite feed is fresh, the number is measured from how much sunlight actually reached the ground — so a blue sky behind thin cirrus reads as mostly clear instead of the models' phantom overcast. At night or low sun it falls back to the multi-source consensus median plus the satellite cloud mask. Cloud ≥50% also helps corroborate 'is it really raining' before rain is allowed to cap the day.",
     };
   },
 

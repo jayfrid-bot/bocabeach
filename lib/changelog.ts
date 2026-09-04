@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-04",
+    title: "The Sky reading now measures the sun that's actually out",
+    details:
+      "On a blue-sky day behind thin, wispy cloud, the forecast models all cried overcast and the Sky line could read a contradictory 'Clear · 98% cloud' while you stood in full sun. When the sun is well up, we now measure it directly — how much sunlight the satellite sees reaching the ground — so a sky that's really clear reads clear and scores like it. A genuinely grey, overcast sky still reads grey.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-04",
     title: "Sand temperature and the rain warning now trust what's observed over what was forecast",
     details:
       "The forecast can call for a shower that never comes. When that happened, the sand estimate believed the beach was soaked and read 94°F on a day the sand was really 130°F, and the score warned of rain under a sunny sky. Now the radar and the satellite get the final say: an hour the satellite saw in full sun can't have rained, and a radar that sees nothing overrules a forecast rain warning for the current hour.",
