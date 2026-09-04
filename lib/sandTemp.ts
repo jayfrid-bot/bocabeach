@@ -114,7 +114,40 @@ const FULL_SUN_WM2 = 1000;
  *    not at fault — the input that exists for this exact case was 3+ h stale
  *    because GitHub throttled the every-15-min goes-cloud cron (the same throttling that
  *    starved the cam feed; fixed there with the in-job loop pattern). Fix is the
- *    pipeline cadence (goes-cloud.yml → loop pattern), not a curve retune. */
+ *    pipeline cadence (goes-cloud.yml → loop pattern), not a curve retune.
+ *  - 2026-09-04 ~1:00 PM: MEASURED 140°F. ~3:10 PM: MEASURED 130°F. Model at
+ *    3:09 PM: 94°F (-36, the largest miss on record). Soil 93°F. The sky inputs
+ *    were unanimous and wrong the same way: GOES cloud MASK 98% overhead /
+ *    99.9% beam (FRESH, 13 min), Open-Meteo 100%, GFS 100%, MET 79%; only the
+ *    NWS airport obs said "Clear"/55%. But the decisive input is RADIATION, and
+ *    the 3 PM hour is a FORECAST bucket: 257 W/m² (the model assumed overcast).
+ *    The satellite-OBSERVED shortwave for the elapsed hours in the SAME array
+ *    read 759 / 849 / 853 W/m² at 12 / 1 / 2 PM — full sun, matching the 140°F
+ *    (re-running the 1 PM bucket with its own observed 849 W/m² gives 133°F:
+ *    the engine is right whenever it is fed an observation). Owner's sky at
+ *    3:10 PM: "milky cirrus, lots of blue around, one thick dark cloud to the
+ *    south" — the GOES mask (a yes/no detection) flagged the optically-thin
+ *    cirrus as cloud; the radiation retrieval (quantitative) saw straight
+ *    through it. THREE stacked input faults, found by forcing them one at a
+ *    time against the 130°F ground truth:
+ *      1. recentRainIn: the 2 PM forecast bucket carried 1.72 in of rain that
+ *         never fell (MRMS radar: 0 mm/hr, nearest rain 18 km; the satellite
+ *         saw 853 W/m² that hour — you cannot have a downpour under near-clear-
+ *         sky radiation). The x0.3 wet-sand damping alone pins the 3 PM estimate
+ *         near 105°F even with full sun and 0% cloud. THE dominant fault.
+ *      2. The 3 PM bucket is a FORECAST hour: 257 W/m² (the model assumed
+ *         overcast), while the satellite-observed 2 PM hour next to it read 853.
+ *      3. The GOES mask's 98% / 99.9%-beam then damps whatever boost is left.
+ *    The same phantom 2 PM shower had earlier capped the whole score "Rain in
+ *    the forecast" — one bad forecast hour, two symptoms. Fixes (this file +
+ *    score.ts + hourlyForecast.ts): an elapsed hour the satellite saw brighter
+ *    than BRIGHT_HOUR_WM2 contributes no forecast rain to recentRainIn; a fresh,
+ *    dry MRMS radar frame vetoes the current hour's forecast rain (sand AND the
+ *    score cap); and when the previous hour was observed-bright and the radar is
+ *    dry, the "now" estimate carries that observed radiation forward (sun-angle
+ *    scaled) instead of the forecast, with no mask damping stacked on top of an
+ *    observation that already embodies the sky. Same lesson as 7/15 and the UV
+ *    fix: observation must be allowed to overrule the model. */
 const MAX_SUN_BOOST_F = 55;
 /**
  * Solid overcast kills the dry-sand boost. The boost is driven by DIRECT beam
@@ -143,6 +176,16 @@ const OVERCAST_MAX_DAMP = 0.9;
  * likely under-reads a top-heavy anvil (the 9-12 km slots read 84-86%).
  */
 const BEAM_OVERCAST_START_PCT = 50;
+
+/**
+ * An elapsed hour the satellite saw at least this bright (W/m², hourly mean)
+ * cannot have delivered a wet-sand shower: a real downpour drops the hourly
+ * mean well under ~150. 2026-09-04: the forecast put 1.72 in of rain in a 2 PM
+ * hour the satellite observed at 853 W/m²; radar showed 0 mm/hr; the sand was
+ * 130-140°F. Forecast rain in such an hour is not counted, and the observed
+ * radiation is trusted over the next hour's forecast when the radar is dry.
+ */
+const BRIGHT_HOUR_WM2 = 400;
 /**
  * The wet/firm sand by the surf runs much cooler than the dry dune sand — a
  * ~11°F surf-to-dunes spread measured at Boca (2026-06-23: 113°F surf → 124°F
@@ -261,6 +304,8 @@ export interface SandTempInput {
    * (BEAM_OVERCAST_START_PCT vs OVERCAST_START_PCT).
    */
   cloudIsBeamPath?: boolean;
+  /** Set when solarWm2 was carried forward from the previous satellite-observed hour. */
+  solarCarried?: boolean;
   /**
    * Hours after local solar noon (negative = morning) for this hour. When set,
    * the boost decays through the afternoon (see afternoonBoostFactor). Omit to
@@ -372,6 +417,8 @@ export type SandHour = {
   time: string;
   soilTempF?: number;
   solarWm2?: number;
+  /** solarWm2 is a satellite OBSERVATION (elapsed hour), not a forecast. */
+  solarObserved?: boolean;
   windSpeedMph?: number;
   precipIn?: number;
   cloudCoverPct?: number;
@@ -392,6 +439,27 @@ export interface SandNowOverride {
   cloudCoverPct?: number;
   /** The override is a beam-path (toward-the-sun) reading — earlier damping. */
   cloudIsBeamPath?: boolean;
+  /**
+   * A fresh MRMS radar frame shows no rain at or near the beach. An observation:
+   * it vetoes the current hour's FORECAST rain for the wet-sand damping, and it
+   * is the permission slip for carrying the previous observed hour's radiation
+   * into this forecast hour (a shower could have arrived since — the radar says
+   * it did not).
+   */
+  radarDryNow?: boolean;
+}
+
+/**
+ * Ratio of clear-sky direct beam between two moments, from the cosine of the
+ * hour angle (15° per hour from solar noon). Latitude-free, so only trustworthy
+ * across the one-hour gap it is used for. Clamped so a bad clock can never
+ * inflate an observation.
+ */
+function clearSkyRatio(hoursFromNoonThen: number, hoursFromNoonNow: number): number {
+  const c = (h: number) => Math.cos((h * 15 * Math.PI) / 180);
+  const then = c(hoursFromNoonThen);
+  if (then <= 0.1) return 0.95;
+  return Math.max(0.5, Math.min(1.1, c(hoursFromNoonNow) / then));
 }
 
 function currentSandInput(
@@ -424,17 +492,52 @@ function currentSandInput(
   if (best < 0 || Math.abs(new Date(hours[best].time).getTime() - nowMs) > 2 * 3600_000)
     return undefined;
   const h = hours[best];
-  const recentRainIn = [best, best - 1, best - 2].reduce((a, j) => a + (hours[j]?.precipIn ?? 0), 0);
+  const brightObserved = (b?: SandHour) =>
+    !!b && b.solarObserved === true && (b.solarWm2 ?? 0) >= BRIGHT_HOUR_WM2;
+  // Forecast rain counts only for hours nothing observed contradicts: an hour
+  // the satellite saw bright could not have rained (2026-09-04: a phantom
+  // 1.72 in at 2 PM under 853 W/m² was pinning a 130°F beach at 94°F), and the
+  // current hour's forecast rain is vetoed by a fresh, dry radar frame.
+  const recentRainIn = [best, best - 1, best - 2].reduce((a, j) => {
+    const b = hours[j];
+    if (!b || brightObserved(b)) return a;
+    if (j === best && override?.radarDryNow) return a;
+    return a + (b.precipIn ?? 0);
+  }, 0);
+  // Afternoon decay keyed to "now" (the bucket ≈ now); omit without a longitude.
+  const hfn = lon != null ? hoursFromSolarNoon(lon, new Date(nowMs)) : undefined;
+  // The current hour is usually a FORECAST bucket (it has not elapsed, so the
+  // satellite overlay could not touch it). When the hour before it was observed
+  // bright and the radar sees no rain, what the sun just did beats what a model
+  // said it would do: carry that observation forward, scaled for sun angle.
+  const prev = hours[best - 1];
+  const carry = h.solarObserved !== true && override?.radarDryNow === true && brightObserved(prev);
+  let solarWm2 = h.solarWm2;
+  if (carry) {
+    const prevMid = new Date(prev.time).getTime() + 1800_000;
+    const ratio =
+      lon != null && hfn != null
+        ? clearSkyRatio(hoursFromSolarNoon(lon, new Date(prevMid)), hfn)
+        : 0.95;
+    solarWm2 = Math.round((prev.solarWm2 ?? 0) * ratio);
+  }
   return {
     soilTempF: h.soilTempF,
-    solarWm2: h.solarWm2,
+    solarWm2,
     windSpeedMph: h.windSpeedMph,
     recentRainIn,
-    cloudCoverPct: override?.cloudCoverPct ?? h.cloudCoverPct,
+    // An observed radiation already embodies the sky it came through (2026-09-04:
+    // the yes/no cloud mask called thin cirrus "98% cloud" while the radiation
+    // retrieval saw 853 W/m² through it). No mask damping on top of it.
+    cloudCoverPct: carry ? 0 : (override?.cloudCoverPct ?? h.cloudCoverPct),
     // Only meaningful when the cloud value itself came from the override.
-    cloudIsBeamPath: override?.cloudCoverPct != null ? override?.cloudIsBeamPath : undefined,
-    // Afternoon decay keyed to "now" (the bucket ≈ now); omit without a longitude.
-    hoursFromSolarNoon: lon != null ? hoursFromSolarNoon(lon, new Date(nowMs)) : undefined,
+    cloudIsBeamPath: carry
+      ? undefined
+      : override?.cloudCoverPct != null
+        ? override?.cloudIsBeamPath
+        : undefined,
+    hoursFromSolarNoon: hfn,
+    solarCarried: carry || undefined,
   };
 }
 

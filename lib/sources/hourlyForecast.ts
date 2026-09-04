@@ -115,7 +115,13 @@ export function overlaySatelliteRadiation(
   for (const h of hours) {
     const elapsed = new Date(h.time).getTime() + 3600_000 <= nowMs;
     const observed = byIso.get(h.time);
-    if (elapsed && observed != null) h.solarWm2 = round(observed);
+    if (elapsed && observed != null) {
+      h.solarWm2 = round(observed);
+      // Marks the hour as evidence, not a guess. The sand model uses this to
+      // discard forecast rain in a bright observed hour and to carry an observed
+      // radiation into the current (forecast) hour — see lib/sandTemp.ts.
+      h.solarObserved = true;
+    }
   }
   return hours;
 }

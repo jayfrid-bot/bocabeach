@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-09-04",
+    title: "Sand temperature and the rain warning now trust what's observed over what was forecast",
+    details:
+      "The forecast can call for a shower that never comes. When that happened, the sand estimate believed the beach was soaked and read 94°F on a day the sand was really 130°F, and the score warned of rain under a sunny sky. Now the radar and the satellite get the final say: an hour the satellite saw in full sun can't have rained, and a radar that sees nothing overrules a forecast rain warning for the current hour.",
+    tag: "fixed",
+  },
+  {
     date: "2026-09-02",
     title: "Beach Day Plus, with a 3-day free trial",
     details:

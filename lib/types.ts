@@ -239,6 +239,12 @@ export interface HourlyMetrics {
   soilTempF?: number;
   /** Solar energy hitting the ground (W/m²); drives how much hotter sand runs. */
   solarWm2?: number;
+  /**
+   * True when solarWm2 is the GOES satellite-OBSERVED value (elapsed hours only,
+   * see hourlyForecast.ts overlaySatelliteRadiation). The sand model treats an
+   * observed hour as evidence: an hour seen this bright cannot have rained.
+   */
+  solarObserved?: boolean;
   /** Precipitation that hour (inches) — wet sand stays near air temp. */
   precipIn?: number;
   shortForecast?: string; // derived from the WMO code

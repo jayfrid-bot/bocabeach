@@ -75,6 +75,13 @@ export interface Derived {
   surfAdvisory?: boolean;
   /** Live nowcast says it's precipitating RIGHT NOW (observed, beats the forecast). */
   nowcastRaining?: boolean;
+  /**
+   * A fresh MRMS radar frame sees no rain at or near the beach (now-only). An
+   * observation that vetoes the current hour's FORECAST rain cap and the model
+   * nowcast — the forecast said "rain showers, 1.72 in" for a 2 PM hour on
+   * 2026-09-04 while the radar showed 0 mm/hr and the sand read 130°F.
+   */
+  radarDryNow?: boolean;
   /** A fresh GOES GLM strike landed within 5 mi (now-only) — trips the get-out cap. */
   lightningWithin5mi?: boolean;
   /** Minutes since the most recent strike in the scanned area (now-only). */
@@ -236,6 +243,16 @@ function metricSource(
   return undefined;
 }
 
+/**
+ * Radar-dry veto thresholds. The frame must be younger than the radar
+ * pipeline's own staleness rule (a GitHub-throttled cron can leave a frame
+ * 25+ min old; precipRadar.ts already degrades it to silence past that), and
+ * "dry" means nothing in the beach pixel and nothing within a few km that could
+ * arrive before the next frame. 5 km ≈ 8 min at a typical 40 km/h cell speed.
+ */
+const RADAR_DRY_VETO_MAX_AGE_MIN = 25;
+const RADAR_DRY_VETO_RADIUS_KM = 5;
+
 // `nowMs` only feeds the sand model's "current hour" pick. Callers that already
 // hold a clock (the hourly/personal scorers, SSR vs hydration) pass it in so the
 // same snapshot scores the same way regardless of wall time; the default keeps
@@ -313,6 +330,17 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
     (cloudCoverPct ?? 100) >= 50 ||
     (precipProbability ?? 100) >= 25 ||
     (om?.precipIn ?? 0) > 0;
+  // A fresh MRMS radar frame that sees nothing at the beach is an OBSERVATION and
+  // outranks both the model nowcast and a forecast hour's rain code. Fresh means
+  // the frame is younger than the radar pipeline's own staleness rule, and "dry"
+  // means no rain in the beach pixel AND none within a few km that could arrive
+  // before the next frame.
+  const radar = s.precipRadar?.status === "ok" ? s.precipRadar.data : null;
+  const radarDryNow =
+    !!radar &&
+    radar.frameAgeMinutes <= RADAR_DRY_VETO_MAX_AGE_MIN &&
+    radar.rainNowMmHr === 0 &&
+    (radar.nearestRainKm ?? Infinity) > RADAR_DRY_VETO_RADIUS_KM;
   return {
     // Shared metrics are the MEDIAN of NWS (real station obs), MET Norway, and
     // Open-Meteo, so no single provider or model can skew the dashboard.
@@ -360,6 +388,9 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
             cloudCoverPct: satelliteBeamCloudPct(s) ?? satelliteCloudPct(s) ?? cloudCoverPct,
             // Beam-path readings damp from 50% (sustained blockage), not 70%.
             cloudIsBeamPath: satelliteBeamCloudPct(s) != null,
+            // Lets the sand model drop phantom forecast rain and carry the
+            // previous observed hour's radiation into this forecast hour.
+            radarDryNow,
           },
           s.location.lon, // afternoon-decay term (hours from solar noon)
         )
@@ -383,7 +414,8 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
     // Observed "now" signals — they override the forecast-based rain logic.
     // (Corroboration-gated: see nowcastCorroborated above — a phantom model
     // shower under a clear sky must not cap the day.)
-    nowcastRaining: nowcastSaysRain && nowcastCorroborated,
+    nowcastRaining: nowcastSaysRain && nowcastCorroborated && !radarDryNow,
+    radarDryNow,
     // Lightning trips the get-out cap only when the feed is OK, the activity is
     // fresh (most recent strike <=30 min ago), AND the closest strike landed
     // within 5 mi. A stale/errored scan, or strikes that are all farther than
@@ -953,7 +985,11 @@ export function applyBeachCaps(
       score = Math.min(score, 25);
       caps.push("Raining right now");
     }
-  } else if (rain === "rain") {
+  } else if (rain === "rain" && !d.radarDryNow) {
+    // A forecast rain code for the current hour yields to a fresh radar frame
+    // that sees nothing (radarDryNow is set on the now-bucket only, so future
+    // hours keep their forecast caps). Thunder is deliberately NOT vetoed here:
+    // the lightning feed owns that, and a dry radar says nothing about strikes.
     score = Math.min(score, 25);
     caps.push("Rain in the forecast");
   }
@@ -1136,6 +1172,7 @@ function scoreAllHoursFull(
         ...(isCurrentHour
           ? {
               nowcastRaining: base.nowcastRaining,
+              radarDryNow: base.radarDryNow,
               lightningWithin5mi: base.lightningWithin5mi,
               lightningLastMinutesAgo: base.lightningLastMinutesAgo,
             }
