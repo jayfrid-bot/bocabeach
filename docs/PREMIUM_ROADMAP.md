@@ -26,7 +26,7 @@ About 3.5 weeks of build in six phases. One native app build (location permissio
 | Safety | Cap banner, Swim safety line | Swim / Surf safety line matched to your profile |
 | Location | Nearest-beach pick, near-you chip | **Beach Mode** — alerts armed from where you stand |
 | Alerts | none | Every kind: at-the-beach safety, weather, planning, personalized morning digest |
-| Later | | Multi-beach, quiet hours, web Plus |
+| Later | | Multi-beach, quiet hours, Android Plus (Play billing) |
 
 ## First run — and every run after
 
@@ -236,3 +236,23 @@ Privacy page rewrite (it currently promises location is never read and never sen
 - **Price** — proposed $2.99/mo · $19.99/yr · 3-day trial; confirm.
 - **Web Plus** — later (Stripe); out of scope here.
 - **Two profiles blended** can produce a mushy score; the reveal screen should say which one leads.
+
+## Rollout status — 2026-09-05
+
+**Where Plus lives:** the iPhone app only. The website shows what Plus includes and links to the App Store; it never runs the questions, the reveal, or the trial. Server-side, `/api/devices/trial` and `/api/devices/unlock` refuse any request without the app's User-Agent tag (403 `app-only`), so a browser cannot become entitled whatever its client claims.
+
+| Piece | Status | Where |
+|---|---|---|
+| Personal score (7 profiles, advanced tuning) | LIVE | app |
+| One-time onboarding → reveal → paywall | LIVE | app |
+| Swim safety / Surf conditions line | LIVE, free | app + web |
+| Nearest beach, near-you chip | LIVE, free | app + web |
+| Beach Mode (auto-arm ≤2 mi) + at-beach alerts | LIVE (server + UI) | app |
+| Alert settings, per-kind toggles | LIVE | app |
+| Personalized morning digest, score-excellent | LIVE | app |
+| 3-day free trial | LIVE, server-granted | app |
+| Unlock code (testers, owner) | LIVE | app |
+| **Paid subscription ($2.99/mo · $19.99/yr)** | **NOT BUILT** — no StoreKit / Play Billing / RevenueCat; "Subscribe" after the trial says billing is being connected | — |
+| Android | app is on Play internal testing only; Plus untested there | — |
+
+**What "finish the rollout" means:** wire real billing (RevenueCat recommended; needs the Paid Apps agreement in App Store Connect), then confirm the trial → paywall → purchase → restore path on a real device, and the push delivery for an armed Beach Mode alert. Until billing exists, Plus is a working free trial with a dead end after three days.

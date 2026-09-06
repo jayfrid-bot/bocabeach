@@ -8,11 +8,14 @@
 import { badRequest, fail, isDeviceId, okDevice, readBody, secretEqual } from "@/lib/db/api";
 import { getStore } from "@/lib/db/store";
 import { UNLOCK_DAYS } from "@/lib/db/plus";
+import { isNativeRequest } from "@/lib/nativeRequest";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function POST(req: Request): Promise<Response> {
+  // App only, like the trial: Plus is delivered inside the phone app.
+  if (!isNativeRequest(req)) return fail("app-only", 403);
   const body = await readBody(req);
   if (!body || !isDeviceId(body.deviceId)) return badRequest();
   if (typeof body.code !== "string" || body.code.length > 256) return badRequest();

@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-09-05",
+    title: "Beach Day Plus lives in the iPhone app — the website now points you there",
+    details:
+      "Personalized scores and location-based alerts need your phone: its location, its notifications, and the App Store to pay through. So the website no longer runs the Plus questions or the free trial. It shows what Plus includes and sends you to the app. Everything the site showed for free is still free, unchanged.",
+    tag: "improved",
+  },
+  {
     date: "2026-09-04",
     title: "The Sky reading now measures the sun that's actually out",
     details:

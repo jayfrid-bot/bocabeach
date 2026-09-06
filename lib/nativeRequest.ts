@@ -14,6 +14,21 @@ import { headers } from "next/headers";
  */
 const NATIVE_UA = /IsItBeachDayApp/i;
 
+/** The same test on a raw User-Agent string — for route handlers and tests. */
+export function isNativeUserAgent(ua: string | null | undefined): boolean {
+  return NATIVE_UA.test(ua ?? "");
+}
+
+/**
+ * Route-handler form: reads the User-Agent off the Request itself rather than
+ * next/headers, so it works in plain unit tests and never trusts a client-
+ * supplied `platform` field. Plus is sold and delivered only inside the app;
+ * the trial and unlock routes refuse anything else with 403 "app-only".
+ */
+export function isNativeRequest(req: Request): boolean {
+  return isNativeUserAgent(req.headers.get("user-agent"));
+}
+
 export async function isNativeAppRequest(): Promise<boolean> {
   try {
     const ua = (await headers()).get("user-agent") ?? "";

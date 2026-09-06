@@ -122,12 +122,21 @@ async function clippedText(page: Page, selector: string): Promise<string[]> {
 let warmed = false;
 
 test.describe("Beach Day Plus", () => {
-  test("free dashboard offers the door and shows no personal score", async ({ page }) => {
+  test("the website shows what Plus includes and points to the app — no questions, no trial", async ({
+    page,
+  }) => {
     const errors = await openDashboard(page);
 
-    // The door is there…
-    await expect(page.getByRole("button", { name: /Personalize my score/ })).toBeVisible();
-    // …and nothing has been personalized yet.
+    // The door on the web is the App Store, not the questions.
+    const card = page.getByRole("region", { name: /Personalize your score in the app/ });
+    await expect(card).toBeVisible();
+    await expect(card.getByRole("link", { name: /Get Is It Beach Day for iPhone/ })).toHaveAttribute(
+      "href",
+      /apps\.apple\.com/,
+    );
+    await expect(card.getByText("$2.99/mo · $19.99/yr · 3-day free trial")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Personalize my score/ })).toHaveCount(0);
+    // …and nothing is personalized.
     await expect(page.getByRole("group", { name: "Which score to show" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /^Your score$/ })).toHaveCount(0);
 
@@ -137,6 +146,20 @@ test.describe("Beach Day Plus", () => {
     await expect(page.getByText(/^(Swim safety|Surf conditions):/)).toBeVisible();
 
     expect(errors, `console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+
+  test("a browser cannot start the trial or redeem a code, whatever it claims", async ({ page }) => {
+    await openDashboard(page);
+    const trial = await page.request.post("/api/devices/trial", {
+      data: { deviceId: "11111111-2222-4333-8444-555555555555", platform: "ios" },
+    });
+    expect(trial.status()).toBe(403);
+    expect((await trial.json()).error).toBe("app-only");
+    const unlock = await page.request.post("/api/devices/unlock", {
+      data: { deviceId: "11111111-2222-4333-8444-555555555555", code: "anything" },
+    });
+    expect(unlock.status()).toBe(403);
+    expect((await unlock.json()).error).toBe("app-only");
   });
 
   test("the first launch offers the nearest beach, once", async ({ page }) => {
@@ -150,6 +173,38 @@ test.describe("Beach Day Plus", () => {
     await page.reload({ waitUntil: "domcontentloaded" });
     await expect(page.getByText(/build\s+\d+/)).toBeVisible({ timeout: 60_000 });
     await expect(page.getByRole("button", { name: "Find my nearest beach" })).toHaveCount(0);
+  });
+
+});
+
+// The app shell is detected from the request User-Agent (lib/nativeRequest.ts),
+// so a UA carrying the Capacitor tag renders exactly what a phone gets: the
+// Alerts button and Beach Mode, neither of which exists in a browser.
+test.describe("inside the app shell", () => {
+  test.use({
+    userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 IsItBeachDayApp/ios",
+  });
+
+  test("Beach Mode and Alerts are doors to Plus, never dead ends", async ({ page }) => {
+    const errors = await openDashboard(page);
+
+    // Beach Mode explains itself before it asks for anything.
+    const beachMode = page.getByRole("button", { name: /Get alerts where you stand/ });
+    await expect(beachMode).toBeVisible();
+
+    // Alerts exists here and nowhere else.
+    await expect(page.getByRole("button", { name: /🔔 Alerts/ })).toBeVisible();
+
+    // Either door opens the same questions.
+    await beachMode.click();
+    await expect(page.getByRole("dialog").getByText("What do you go to the beach for?")).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: /🔔 Alerts/ }).click();
+    await expect(page.getByRole("dialog").getByText("What do you go to the beach for?")).toBeVisible();
+
+    expect(errors, `console errors: ${errors.join("\n")}`).toEqual([]);
   });
 
   test("the questions run once and end at the reveal", async ({ page }) => {
@@ -259,37 +314,6 @@ test.describe("Beach Day Plus", () => {
     await expect(settings.getByLabel("Home beach")).toBeVisible();
     expect(await clippedText(page, '[role="dialog"]')).toEqual([]);
     expect(await undersizedTapTargets(page, '[role="dialog"]')).toEqual([]);
-
-    expect(errors, `console errors: ${errors.join("\n")}`).toEqual([]);
-  });
-});
-
-// The app shell is detected from the request User-Agent (lib/nativeRequest.ts),
-// so a UA carrying the Capacitor tag renders exactly what a phone gets: the
-// Alerts button and Beach Mode, neither of which exists in a browser.
-test.describe("inside the app shell", () => {
-  test.use({
-    userAgent:
-      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 IsItBeachDayApp/ios",
-  });
-
-  test("Beach Mode and Alerts are doors to Plus, never dead ends", async ({ page }) => {
-    const errors = await openDashboard(page);
-
-    // Beach Mode explains itself before it asks for anything.
-    const beachMode = page.getByRole("button", { name: /Get alerts where you stand/ });
-    await expect(beachMode).toBeVisible();
-
-    // Alerts exists here and nowhere else.
-    await expect(page.getByRole("button", { name: /🔔 Alerts/ })).toBeVisible();
-
-    // Either door opens the same questions.
-    await beachMode.click();
-    await expect(page.getByRole("dialog").getByText("What do you go to the beach for?")).toBeVisible();
-    await page.keyboard.press("Escape");
-
-    await page.getByRole("button", { name: /🔔 Alerts/ }).click();
-    await expect(page.getByRole("dialog").getByText("What do you go to the beach for?")).toBeVisible();
 
     expect(errors, `console errors: ${errors.join("\n")}`).toEqual([]);
   });

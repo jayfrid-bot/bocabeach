@@ -61,6 +61,7 @@ import { HomeBeachRedirect } from "@/components/plus/HomeBeachRedirect";
 import { NearYouChip } from "@/components/plus/NearYouChip";
 import { Paywall } from "@/components/plus/Paywall";
 import { PersonalizeCard } from "@/components/plus/PersonalizeCard";
+import { PlusInAppCard } from "@/components/plus/PlusInAppCard";
 import { PlusOnboarding } from "@/components/plus/PlusOnboarding";
 import { PlusSettingsSheet } from "@/components/plus/PlusSettingsSheet";
 import { SafetyLine } from "@/components/plus/SafetyLine";
@@ -215,12 +216,6 @@ export function ConditionsDashboard({
   // byte-for-byte what it always was.
   const plus = usePlus();
   const plusOn = !preview && beaches.length > 0;
-  // The clock the personal engine runs on. Never earlier than the snapshot's own
-  // generation time, so a phone whose clock lags the server can't score "now"
-  // against an hour that has not happened yet. Re-taken on every SWR refresh.
-  const personal = usePersonalScore(res, plus.entitled ? plus.profile : null, nowMs);
-  const [showEveryone, setShowEveryone] = useState(false);
-  const [sheet, setSheet] = useState<"onboarding" | "paywall" | "settings" | null>(null);
   // The server's UA sniff is authoritative and cache-proof; the client probe
   // only ever ADDS the app (a bundled build the UA tag missed). Deferred to an
   // effect so the first client render matches the server's HTML.
@@ -228,6 +223,17 @@ export function ConditionsDashboard({
   useEffect(() => {
     if (!isNativeApp && isNativePlatform()) setNative(true);
   }, [isNativeApp]);
+  // Plus is delivered only inside the phone app — billing, location and push all
+  // live there. A browser is never entitled, whatever an old cached trial in its
+  // localStorage says; the site shows what Plus is and points to the App Store.
+  // (The server enforces the same rule: trial/unlock are 403 without the app UA.)
+  const plusEntitled = native && plus.entitled;
+  // The clock the personal engine runs on. Never earlier than the snapshot's own
+  // generation time, so a phone whose clock lags the server can't score "now"
+  // against an hour that has not happened yet. Re-taken on every SWR refresh.
+  const personal = usePersonalScore(res, plusEntitled ? plus.profile : null, nowMs);
+  const [showEveryone, setShowEveryone] = useState(false);
+  const [sheet, setSheet] = useState<"onboarding" | "paywall" | "settings" | null>(null);
 
   // The personal number leads when there is one and the toggle isn't flipped.
   const personalActive = plusOn && !!personal && !showEveryone;
@@ -412,7 +418,7 @@ export function ConditionsDashboard({
             <NotifyButton
               slug={slug}
               serverNative={isNativeApp}
-              entitled={plus.entitled}
+              entitled={plusEntitled}
               prefs={pushPrefs}
               onDoor={() => setSheet(plus.previewSeen ? "paywall" : "onboarding")}
               onSettings={() => setSheet("settings")}
@@ -500,7 +506,7 @@ export function ConditionsDashboard({
               <SafetyLine
                 derived={d}
                 snapshot={snap}
-                profile={plus.entitled ? plus.profile : null}
+                profile={plusEntitled ? plus.profile : null}
               />
             ) : null}
             {/* (Lifeguard swim/snorkel/surf ratings live in the LifeguardReport
@@ -508,15 +514,20 @@ export function ConditionsDashboard({
           </>
         )}
         {/* The door to Plus. Hidden for subscribers: their number is already
-            the headline. */}
-        {plusOn && !plus.entitled ? (
+            the headline. In a browser the door leads to the App Store — the
+            questions, the reveal and the trial only run inside the app. */}
+        {plusOn && !plusEntitled ? (
           <div className="mt-3">
-            <PersonalizeCard
-              profile={plus.profile}
-              preview={plus.preview}
-              onPersonalize={() => setSheet("onboarding")}
-              onUpgrade={() => setSheet("paywall")}
-            />
+            {native ? (
+              <PersonalizeCard
+                profile={plus.profile}
+                preview={plus.preview}
+                onPersonalize={() => setSheet("onboarding")}
+                onUpgrade={() => setSheet("paywall")}
+              />
+            ) : (
+              <PlusInAppCard />
+            )}
           </div>
         ) : null}
       </section>

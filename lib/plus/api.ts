@@ -105,6 +105,8 @@ export function plusErrorMessage(error: string | null): string {
       return "That code did not work. Check it and try again.";
     case "not-entitled":
       return "Alerts are part of Beach Day Plus.";
+    case "app-only":
+      return "Beach Day Plus lives in the iPhone app. Get the app to start your trial.";
     case "not-found":
       return "We could not find a subscription for this device.";
     case "store-unavailable":

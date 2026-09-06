@@ -15,10 +15,15 @@ import { MAX_ARM_MS } from "@/lib/db/plus";
 const DEV = "11111111-2222-4333-8444-555555555555";
 const HOUR = 3600 * 1000;
 
-function post(url: string, body: unknown): Request {
+/** The app shell's User-Agent tag (capacitor.config appendUserAgent). The trial
+ *  and unlock routes are app-only, so the default request here carries it. */
+const APP_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) IsItBeachDayApp/ios";
+const WEB_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 Safari/605.1.15";
+
+function post(url: string, body: unknown, ua: string = APP_UA): Request {
   return new Request(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "User-Agent": ua },
     body: JSON.stringify(body),
   });
 }
@@ -309,6 +314,34 @@ describe("/api/presence", () => {
     const res = await presenceDelete(
       new Request(`https://x/api/presence?deviceId=${DEV}`, { method: "DELETE" }),
     );
+    expect(res.status).toBe(200);
+  });
+});
+
+// Plus is sold and delivered only inside the phone app. The website shows what
+// Plus is and points to the App Store; it must never be able to start a trial or
+// redeem a code, whatever its client-side `platform` field claims.
+describe("Plus purchase routes are app-only", () => {
+  it("trial from a browser User-Agent is refused with 403 app-only", async () => {
+    const res = await trialPost(post("https://x/api/devices/trial", { deviceId: DEV }, WEB_UA));
+    expect(res.status).toBe(403);
+    expect((await json(res)).error).toBe("app-only");
+    // And nothing was granted.
+    const store = await getStore();
+    expect((await store.getDevice(DEV))?.plan ?? "free").toBe("free");
+  });
+
+  it("unlock from a browser User-Agent is refused before the code is even checked", async () => {
+    process.env.PLUS_UNLOCK_CODE = "sandy-shoes";
+    const res = await unlockPost(
+      post("https://x/api/devices/unlock", { deviceId: DEV, code: "sandy-shoes" }, WEB_UA),
+    );
+    expect(res.status).toBe(403);
+    expect((await json(res)).error).toBe("app-only");
+  });
+
+  it("the same requests from the app shell succeed", async () => {
+    const res = await trialPost(post("https://x/api/devices/trial", { deviceId: DEV }));
     expect(res.status).toBe(200);
   });
 });
