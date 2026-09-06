@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-05",
+    title: "Two iPhone fixes: the header clears the status bar, and Alerts stops crying wolf",
+    details:
+      "In the app, the top bar no longer sits under the clock and the Dynamic Island, and the last row no longer hides behind the home indicator. And the Alerts button only says notifications are blocked when your phone actually says so — a hiccup while turning them on now reads as 'Try again', not as a denial you never made.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-09-05",
     title: "Beach Day Plus lives in the iPhone app — the website now points you there",
     details:
       "Personalized scores and location-based alerts need your phone: its location, its notifications, and the App Store to pay through. So the website no longer runs the Plus questions or the free trial. It shows what Plus includes and sends you to the app. Everything the site showed for free is still free, unchanged.",

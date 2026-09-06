@@ -93,7 +93,13 @@ export function NotifyButton({
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setErr(msg);
-      setState(/permission/i.test(msg) ? "denied" : "error");
+      // "Blocked" is a claim about the OS setting, so ask the OS. Matching the
+      // error text used to label any not-yet-granted permission as blocked — a
+      // person who had just tapped Allow was told they had said no (seen on the
+      // iOS simulator 2026-09-05). Only a real "denied" from the permission check
+      // earns the blocked label; everything else is a retryable error.
+      const perm = await nativeStatus(slug).catch(() => "off" as const);
+      setState(perm === "denied" ? "denied" : "error");
     }
   };
 

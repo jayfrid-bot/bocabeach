@@ -61,6 +61,15 @@ html, body {
   overscroll-behavior-y: contain;
 }
 
+/* Inside the iPhone app the WKWebView runs edge to edge (layout.tsx sets
+   viewport-fit=cover), so without this the header sits under the status bar
+   and the Dynamic Island, and the last row hides behind the home indicator.
+   These resolve to 0 in a desktop browser. Seen on-device 2026-09-05. */
+body {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 /* Daylight beach: warm sun glow over a pale sky-blue wash. */
 body {
   background:
