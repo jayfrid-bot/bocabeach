@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-07",
+    title: "Fourteen Plus fixes from a full review: alerts, Beach Mode, restore, and your settings",
+    details:
+      "Safety alerts no longer overwrite each other on your lock screen (a rain notice used to replace a lightning warning). Beach Mode's Off now stays off until you leave that beach, and Extend can only ever add time. The morning report arrives at 8 AM in your beach's time zone. Restore only says 'Restored' when Plus is actually on, and the trial button only promises 3 days free when the App Store confirms you're eligible — otherwise it plainly says Subscribe with the price. A code or trial you already have can never be shortened by a subscription, and a lost push token no longer erases anything. Settings you turned off stay off when you reopen the app, and a save that fails on a bad connection retries on its own.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-09-07",
     title: "Beach Day Plus can now be bought in the iPhone app — monthly or yearly, with 3 days free",
     details:
       "The paywall in the app now offers two plans, $2.99 a month or $19.99 a year, and buys through the App Store like any subscription: 3 days free first, nothing charged today, cancel anytime in Settings. Restore brings a purchase back on a new phone. If you already have a code, it still works.",
