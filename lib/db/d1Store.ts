@@ -23,6 +23,7 @@ import type {
 import { applyPatch, newDeviceRow, parseSent, toRecord } from "@/lib/db/types";
 import { legacyDeviceId, legacyPatch } from "@/lib/db/legacy";
 import type { DeviceStore } from "@/lib/db/store";
+import { ABANDONED_CLAIM_MS, CLAIM_RETENTION_MS } from "@/lib/db/sendClaims";
 
 /** The slice of the D1 API we use (avoids a @cloudflare/workers-types dep). */
 export interface D1Stmt {
@@ -309,6 +310,45 @@ export function d1Store(db: D1Like): DeviceStore {
         platform: row.platform as "ios" | "android",
         sent: parseSent(row.sent_json),
       }));
+    },
+
+    // --- Atomic send claims (#14, migrations/0004_send_claims.sql) ---------
+    //
+    // One statement, no read-then-write race: INSERT the claim, or — only
+    // when the existing claim is unsent AND old enough to call abandoned —
+    // UPDATE it to hand it to this caller. D1 serializes writes to a single
+    // key, so of any two callers racing for the same key, at most one
+    // statement actually changes a row; the other's WHERE clause fails and it
+    // changes nothing. That is also why this does NOT compare the read-back
+    // row to `now`: two real callers can share the same millisecond, and a
+    // value-equality check would then (wrongly) tell both of them they won.
+    async claimSend(key, now) {
+      const result = await db
+        .prepare(
+          "INSERT INTO send_claims (key, claimed_at, sent_at) VALUES (?, ?, NULL) " +
+            "ON CONFLICT(key) DO UPDATE SET claimed_at = excluded.claimed_at " +
+            "WHERE send_claims.sent_at IS NULL AND send_claims.claimed_at <= ?",
+        )
+        .bind(key, now, now - ABANDONED_CLAIM_MS)
+        .run();
+      // D1's real `.run()` result carries `meta.changes` (its documented
+      // shape); the local D1Stmt type leaves `run()` untyped to avoid a
+      // @cloudflare/workers-types dependency, so this is the one place that
+      // reads it. changes > 0 means THIS statement is the one that inserted
+      // or updated the row — i.e. this caller won the claim.
+      const changes = (result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
+      return changes > 0;
+    },
+
+    async markSent(key, now) {
+      await db.prepare("UPDATE send_claims SET sent_at = ? WHERE key = ?").bind(now, key).run();
+    },
+
+    async pruneSendClaims(now) {
+      await db
+        .prepare("DELETE FROM send_claims WHERE claimed_at < ?")
+        .bind(now - CLAIM_RETENTION_MS)
+        .run();
     },
   };
 }

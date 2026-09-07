@@ -50,6 +50,21 @@ export interface DeviceStore {
   getPushToken(id: string): Promise<string | null>;
   /** Every device that can receive a push, with its token. */
   listPushable(): Promise<PushableDevice[]>;
+
+  // --- Atomic send claims (#14) — appended, not mixed into the device rows
+  // above. See migrations/0004_send_claims.sql and lib/db/sendClaims.ts for
+  // the key format and the concurrency story.
+  /**
+   * Claim the right to send one alert. Returns true only for the caller that
+   * wins the race for `key` (built with `sendClaimKey`); every other
+   * concurrent caller gets false and must not send. A claim with no
+   * `markSent` after `ABANDONED_CLAIM_MS` may be re-claimed.
+   */
+  claimSend(key: string, now: number): Promise<boolean>;
+  /** Record that a claimed send actually went out. */
+  markSent(key: string, now: number): Promise<void>;
+  /** Drop claims old enough (`CLAIM_RETENTION_MS`) to never matter again. */
+  pruneSendClaims(now: number): Promise<void>;
 }
 
 /**

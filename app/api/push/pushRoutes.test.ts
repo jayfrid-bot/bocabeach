@@ -21,6 +21,10 @@ const ctl = vi.hoisted(() => ({
   feed: null as { generatedAt: string; windowMinutes: number; strikes: number[][] } | null,
   /** Every slug getConditions was actually called with, in order. */
   conditionsCalls: [] as string[],
+  /** When set, sendFcm throws for exactly this token — simulates one
+   *  device's send blowing up without a corrupt stored timezone (#13
+   *  removed the tz-parsing path that used to stand in for this). */
+  throwForToken: null as string | null,
 }));
 
 vi.mock("@/lib/push/nativeStore", async (importActual) => {
@@ -45,6 +49,7 @@ vi.mock("@/lib/push/fcm", () => ({
   getFcmAccessToken: async () => "access-token",
   isDeadFcmToken: () => ctl.sendResult.dead,
   sendFcm: async (_a: string, _p: string, token: string, msg: { title: string; body: string }) => {
+    if (token === ctl.throwForToken) throw new Error("simulated transport failure");
     ctl.fcmSends.push(token);
     ctl.fcmMessages.push({ title: msg.title, body: msg.body });
     return { ok: ctl.sendResult.ok };
@@ -158,6 +163,7 @@ beforeEach(() => {
   ctl.conditions = null;
   ctl.feed = null;
   ctl.conditionsCalls = [];
+  ctl.throwForToken = null;
   process.env.CRON_SECRET = "test-cron-secret";
   delete process.env.PUSH_SAFETY_ALERTS;
 });
@@ -441,8 +447,11 @@ describe("POST /api/push/run", () => {
   });
 
   it("one unreadable device does not sink the run", async () => {
-    // A stored timezone Intl cannot parse used to throw straight out of the
-    // handler: no digests, and no safety alerts for anybody, until it was found.
+    // One device's send blowing up (a transport error, a corrupt row, ...)
+    // used to be reproduced here with a stored timezone Intl couldn't parse —
+    // but scheduling no longer reads the phone's tz at all (#13), so that
+    // path can't throw anymore. A transport failure exercises the same
+    // per-device try/catch a different way.
     await seedDevice();
     await registerPost(
       post("https://x/api/push/register-native", {
@@ -453,8 +462,7 @@ describe("POST /api/push/run", () => {
     );
     const other = legacyDeviceId(FCM_TOKEN_2);
     await grantPlus(other);
-    const store = await getStore();
-    await store.upsertDevice(other, { tz: "Mars/Olympus" });
+    ctl.throwForToken = FCM_TOKEN_2;
 
     const res = await run("?force=morning");
     expect(res.status).toBe(200);
@@ -722,6 +730,78 @@ describe("POST /api/push/run", () => {
       const body = (await (await run()).json()) as Record<string, number>;
       expect(body.excellent).toBe(0);
       expect(ctl.fcmMessages).toEqual([]);
+    });
+  });
+
+  // --- Scheduling runs on the BEACH's clock, never the phone's (#13) --------
+  describe("beach-local scheduling", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    async function seedAt(slug: string, phoneTz: string): Promise<void> {
+      await registerPost(
+        post("https://x/api/push/register-native", {
+          slug,
+          token: FCM_TOKEN,
+          platform: "android",
+          deviceId: DEV,
+        }),
+      );
+      await grantPlus(DEV);
+      // The phone's own zone stays on the row (for display), but must never
+      // drive scheduling — that is exactly the bug #13 fixes.
+      const store = await getStore();
+      await store.upsertDevice(DEV, { tz: phoneTz });
+    }
+
+    it("sends the morning digest at 8 AM BEACH time, even though it is not 8 AM on the phone", async () => {
+      vi.useFakeTimers();
+      // 8:00 AM America/Los_Angeles (PDT) — but 11:00 AM America/New_York.
+      vi.setSystemTime(new Date("2026-09-02T15:00:00Z"));
+      await seedAt("santa-monica", "America/New_York");
+      const body = (await (await run()).json()) as Record<string, number>;
+      expect(body.beaches).toBe(1);
+      expect(body.sent).toBe(1);
+    });
+
+    it("does NOT send at the phone's 8 AM when it is not yet 8 AM at the beach", async () => {
+      vi.useFakeTimers();
+      // 8:00 AM America/Los_Angeles again, but the HOME BEACH is Eastern this
+      // time (11:00 AM there) — the exact reproduction from #13.
+      vi.setSystemTime(new Date("2026-09-02T15:00:00Z"));
+      await seedAt("boca-raton", "America/Los_Angeles");
+      const body = (await (await run()).json()) as Record<string, number>;
+      expect(body.sent).toBe(0);
+    });
+
+    it("keys the Excellent daily dedup by the BEACH's calendar day across a date boundary", async () => {
+      vi.useFakeTimers();
+      // 11:30 PM Sep 2 at the Pacific beach — but already 2:30 AM Sep 3 on an
+      // Eastern phone. The two zones disagree about what day it is.
+      vi.setSystemTime(new Date("2026-09-03T06:30:00Z"));
+      await seedAt("santa-monica", "America/New_York");
+      const store = await getStore();
+      // A 90+ score that stays "Excellent" whatever the profile.
+      ctl.conditions = {
+        ...CONDITIONS,
+        score: { ...CONDITIONS.score, score: 95, rating: "Excellent" },
+        snapshot: {
+          ...CONDITIONS.snapshot,
+          sun: wrapped({
+            date: "2026-09-02",
+            sunrise: "1970-01-01T00:00:00Z",
+            sunset: "2100-01-01T00:00:00Z",
+          }),
+        },
+      } as unknown as ConditionsResponse;
+
+      const body = (await (await run()).json()) as Record<string, number>;
+      expect(body.excellent).toBe(1);
+      // Beach-local date (Pacific): the correct key.
+      expect(await store.lastAlert(DEV, "score-excellent:2026-09-02")).not.toBeNull();
+      // Phone-local date (Eastern): must NOT be what got written.
+      expect(await store.lastAlert(DEV, "score-excellent:2026-09-03")).toBeNull();
     });
   });
 });

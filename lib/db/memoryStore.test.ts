@@ -247,3 +247,52 @@ describe("importLegacy", () => {
     expect(await store.listDevices()).toHaveLength(2);
   });
 });
+
+// The concurrency guard beneath the alerts dedup window (#14). The full race
+// (two overlapping runs, one send) is covered end to end in
+// lib/alerts/run.test.ts; this is the store contract in isolation.
+describe("send claims (#14)", () => {
+  const KEY = "dev-1111:lightning:100";
+
+  it("the first claim on a key wins", async () => {
+    expect(await store.claimSend(KEY, 1000)).toBe(true);
+  });
+
+  it("a second claim on the same key, before it is sent or abandoned, loses", async () => {
+    await store.claimSend(KEY, 1000);
+    expect(await store.claimSend(KEY, 1005)).toBe(false);
+  });
+
+  it("a different key claims independently — an escalation is never blocked by the plain alert's claim", async () => {
+    await store.claimSend("dev-1111:lightning:100", 1000);
+    expect(await store.claimSend("dev-1111:lightning:2mi:100", 1000)).toBe(true);
+  });
+
+  it("markSent does not unblock a fresh claim on the same key", async () => {
+    await store.claimSend(KEY, 1000);
+    await store.markSent(KEY, 1000);
+    expect(await store.claimSend(KEY, 1005)).toBe(false);
+  });
+
+  it("an unsent claim younger than the abandonment window cannot be re-claimed", async () => {
+    await store.claimSend(KEY, 1000);
+    expect(await store.claimSend(KEY, 1000 + 9 * 60_000)).toBe(false);
+  });
+
+  it("an unsent claim 10+ minutes old is abandoned, and may be re-claimed", async () => {
+    await store.claimSend(KEY, 1000);
+    expect(await store.claimSend(KEY, 1000 + 10 * 60_000)).toBe(true);
+  });
+
+  it("prunes claims older than the retention window, and leaves fresher ones", async () => {
+    const THREE_DAYS = 3 * 24 * 60 * 60 * 1000;
+    await store.claimSend("old", 1000);
+    await store.claimSend("fresh", 1000 + THREE_DAYS);
+    await store.pruneSendClaims(1000 + THREE_DAYS + 1);
+    // A pruned key is gone entirely — re-claiming it looks like the very first
+    // claim, not a takeover of an abandoned one.
+    expect(await store.claimSend("old", 1000 + THREE_DAYS + 2)).toBe(true);
+    // The fresh one is untouched: claiming it again is still a contested claim.
+    expect(await store.claimSend("fresh", 1000 + THREE_DAYS + 2)).toBe(false);
+  });
+});

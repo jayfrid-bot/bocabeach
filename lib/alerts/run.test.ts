@@ -5,8 +5,16 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createMemoryStore } from "@/lib/db/memoryStore";
 import type { DeviceStore } from "@/lib/db/store";
+import type { ArmedDevice } from "@/lib/db/types";
 import type { LightningFeed } from "@/lib/sources/lightning";
-import { runAtBeachAlerts, type AtBeachPush } from "@/lib/alerts/run";
+import {
+  runAtBeachAlerts,
+  fixOf,
+  FIX_MAX_AGE_MS,
+  FIX_MAX_ACCURACY_M,
+  FIX_MAX_DISTANCE_MI,
+  type AtBeachPush,
+} from "@/lib/alerts/run";
 import { conditionsFixture, type ConditionsOver } from "@/lib/alerts/fixtures";
 import type { RainRead } from "@/lib/alerts/rain";
 
@@ -40,12 +48,15 @@ interface Options {
   rain?: RainRead | null;
   sendResult?: { ok: boolean; dead: boolean };
   onDeadToken?: (id: string) => void;
+  /** Override the run's clock — used to move past the 30-min dedup window or
+   *  the 10-min send-claim abandonment window. */
+  now?: number;
 }
 
 async function run(opts: Options = {}) {
   return runAtBeachAlerts({
     store,
-    now: NOW,
+    now: opts.now ?? NOW,
     deliver: async (_sub, msg) => {
       sent.push(msg);
       return opts.sendResult ?? { ok: true, dead: false };
@@ -106,7 +117,9 @@ describe("runAtBeachAlerts", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].body).toContain("mi away — get out of the water and take cover.");
     expect(sent[0].url).toBe("/boca-raton");
-    expect(sent[0].tag).toBe("safety");
+    // Hazard-specific + beach-scoped, so a later rain/wind push never collapses
+    // this lightning warning (#8).
+    expect(sent[0].tag).toBe("safety:lightning:boca-raton");
   });
 
   it("writes the alert log, so the same hazard stays quiet for 30 minutes", async () => {
@@ -173,12 +186,17 @@ describe("runAtBeachAlerts", () => {
     expect(await store.getDevice(DEV)).toBeNull();
   });
 
-  it("leaves the key unmarked after a transient send failure, so the next run retries", async () => {
+  it("leaves the key unmarked after a transient send failure, and retries once its claim looks abandoned", async () => {
     await seed();
     const counts = await run({ sendResult: { ok: false, dead: false } });
     expect(counts).toMatchObject({ sent: 0, errors: 1 });
     expect(await store.lastAlert(DEV, "lightning")).toBeNull();
-    const retry = await run();
+    // Right away, the send claim from the failed attempt is still active (not
+    // yet 10 minutes old) — see #14 — so an immediate retry is held, not sent.
+    const tooSoon = await run();
+    expect(tooSoon).toMatchObject({ sent: 0, skipped: 1 });
+    // Once the claim looks abandoned, the next run reclaims it and sends.
+    const retry = await run({ now: NOW + 10 * 60_000 });
     expect(retry.sent).toBe(1);
   });
 
@@ -233,5 +251,95 @@ describe("runAtBeachAlerts", () => {
     await seed();
     const counts = await run({ feed: null });
     expect(counts).toMatchObject({ evaluated: 1, sent: 0, errors: 0 });
+  });
+});
+
+// The concurrency guard beneath the dedup window (#14): the Cloudflare 5-min
+// cron and the GitHub hourly backstop can both call the sender within
+// seconds of each other. Both can read "not yet sent" before either writes —
+// the send claim is what still limits them to one actual push.
+describe("runAtBeachAlerts — overlapping runs (#14)", () => {
+  it("two runs racing over the same armed device send the hazard exactly once", async () => {
+    await seed();
+    const [a, b] = await Promise.all([run(), run()]);
+    expect(a.sent + b.sent).toBe(1);
+    expect(sent).toHaveLength(1);
+    // The loser still evaluated the device — it just lost the send, not the
+    // whole device — so it should show up as skipped, not silently dropped.
+    expect(a.skipped + b.skipped).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// Where hazard geometry comes from: the person's own fix when it can be
+// trusted, the beach centroid otherwise, always explicitly (#6).
+describe("fixOf", () => {
+  const BEACH = { lat: 26.3587, lon: -80.0686 }; // Boca Raton
+  const NOW6 = 2_000_000_000_000;
+
+  function armed(over: Partial<ArmedDevice["presence"]> = {}): ArmedDevice {
+    return {
+      device: {} as ArmedDevice["device"], // fixOf never reads this
+      presence: {
+        slug: "boca-raton",
+        lat: BEACH.lat,
+        lon: BEACH.lon,
+        accuracyM: 20,
+        fixAt: NOW6 - 60_000,
+        armedUntil: NOW6 + 3600_000,
+        source: "auto",
+        ...over,
+      },
+    };
+  }
+
+  it("uses the device fix when it is fresh, accurate and near the beach", () => {
+    const f = fixOf(armed(), BEACH, NOW6);
+    expect(f).toEqual({ lat: BEACH.lat, lon: BEACH.lon, fixSource: "device" });
+  });
+
+  it("falls back to the beach centroid when lat/lon are null", () => {
+    const f = fixOf(armed({ lat: null, lon: null }), BEACH, NOW6);
+    expect(f).toEqual({ ...BEACH, fixSource: "beach" });
+  });
+
+  it("falls back when the fix has no timestamp at all", () => {
+    const f = fixOf(armed({ fixAt: null }), BEACH, NOW6);
+    expect(f.fixSource).toBe("beach");
+  });
+
+  it("uses a fix exactly at the age limit, falls back just past it", () => {
+    const atLimit = fixOf(armed({ fixAt: NOW6 - FIX_MAX_AGE_MS }), BEACH, NOW6);
+    expect(atLimit.fixSource).toBe("device");
+    const pastLimit = fixOf(armed({ fixAt: NOW6 - FIX_MAX_AGE_MS - 1 }), BEACH, NOW6);
+    expect(pastLimit.fixSource).toBe("beach");
+  });
+
+  it("falls back on a fix worse than the accuracy limit", () => {
+    const ok = fixOf(armed({ accuracyM: FIX_MAX_ACCURACY_M }), BEACH, NOW6);
+    expect(ok.fixSource).toBe("device");
+    const bad = fixOf(armed({ accuracyM: FIX_MAX_ACCURACY_M + 1 }), BEACH, NOW6);
+    expect(bad.fixSource).toBe("beach");
+  });
+
+  it("trusts a fix with no accuracy reading at all — only a bad one disqualifies it", () => {
+    const f = fixOf(armed({ accuracyM: null }), BEACH, NOW6);
+    expect(f.fixSource).toBe("device");
+  });
+
+  it("falls back on a fix far from the armed beach", () => {
+    // A fresh, accurate fix at HOME while manually monitoring a beach ~40 mi
+    // away — the "arm a distant destination from home" case in #6.
+    const home = { lat: 26.3587, lon: -80.4 }; // west of Boca, past the 15 km cap
+    const f = fixOf(armed(home), BEACH, NOW6);
+    expect(f.fixSource).toBe("beach");
+    expect(f).toEqual({ ...BEACH, fixSource: "beach" });
+  });
+
+  it("uses a fix just inside the distance cap", () => {
+    // ~0.05° of longitude at this latitude is a little under 5 km.
+    const nearby = { lat: BEACH.lat, lon: BEACH.lon - 0.05 };
+    const f = fixOf(armed(nearby), BEACH, NOW6);
+    expect(f.fixSource).toBe("device");
+    expect(FIX_MAX_DISTANCE_MI).toBeGreaterThan(9); // sanity: ~15 km in miles
   });
 });
