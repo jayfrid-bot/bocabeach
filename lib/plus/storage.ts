@@ -6,9 +6,11 @@
 // server (no localStorage there → the null/no-op path) AND unit-testable in the
 // node test environment by assigning a fake `globalThis.localStorage`.
 
+import { ALERT_KEYS, type AlertPrefs } from "@/lib/db/types";
 import { isProfileId } from "@/lib/profile/presets";
 import type { AdvancedProfile, ScoreProfile, SubKey } from "@/lib/profile/types";
-import type { PlusCache, PreviewRecord } from "@/lib/plus/types";
+import { clearField, clearPrefsKeys, isEmpty as pendingIsEmpty, mergeHomeSlug, mergePrefs, mergeProfile } from "@/lib/plus/pendingWrites";
+import type { OffSuppression, PendingWrites, PlusCache, PreviewRecord } from "@/lib/plus/types";
 
 export const PLUS_KEYS = {
   profile: "bd:profile",
@@ -16,6 +18,8 @@ export const PLUS_KEYS = {
   previewSeen: "bd:preview-seen",
   preview: "bd:preview",
   firstRunDone: "bd:first-run-done",
+  offSuppression: "bd:off-suppression",
+  pending: "bd:pending-writes",
 } as const;
 
 function store(): Storage | null {
@@ -199,4 +203,98 @@ export function readFirstRunDone(): boolean {
 
 export function writeFirstRunDone(done: boolean): void {
   writeFlag(PLUS_KEYS.firstRunDone, done);
+}
+
+// --- Beach Mode Off suppression ---------------------------------------------
+
+/** Validate anything claiming to be a stored Off suppression. */
+export function cleanOffSuppression(v: unknown): OffSuppression | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const raw = v as Record<string, unknown>;
+  if (typeof raw.slug !== "string" || !raw.slug) return null;
+  if (typeof raw.since !== "number" || !Number.isFinite(raw.since)) return null;
+  if (typeof raw.lat !== "number" || !Number.isFinite(raw.lat)) return null;
+  if (typeof raw.lon !== "number" || !Number.isFinite(raw.lon)) return null;
+  return { slug: raw.slug, since: raw.since, lat: raw.lat, lon: raw.lon };
+}
+
+export function readOffSuppression(): OffSuppression | null {
+  return cleanOffSuppression(readJson(PLUS_KEYS.offSuppression));
+}
+
+export function writeOffSuppression(suppression: OffSuppression | null): void {
+  if (!suppression) remove(PLUS_KEYS.offSuppression);
+  else writeJson(PLUS_KEYS.offSuppression, suppression);
+}
+
+// --- pending writes (failed saves waiting to retry) -------------------------
+//
+// Small queue for the three kinds of save that can silently diverge from the
+// server on a bad connection: profile, home beach, prefs. The merge rules
+// (supersede vs. per-key merge) live in lib/plus/pendingWrites.ts and are
+// tested there directly; this is just that structure's localStorage wiring.
+
+/** Validate anything claiming to be the pending-writes queue. Corrupt or
+ *  partly-unreadable input degrades to whatever pieces of it ARE readable,
+ *  never to a crash — losing a queued edit is bad, but throwing is worse. */
+function cleanPendingWrites(v: unknown): PendingWrites {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  const raw = v as Record<string, unknown>;
+  const out: PendingWrites = {};
+  const profile = cleanProfile(raw.profile);
+  if (profile) out.profile = profile;
+  if (typeof raw.homeSlug === "string" && raw.homeSlug) out.homeSlug = raw.homeSlug;
+  if (raw.prefs && typeof raw.prefs === "object" && !Array.isArray(raw.prefs)) {
+    const prefs: Partial<AlertPrefs> = {};
+    for (const k of ALERT_KEYS) {
+      const val = (raw.prefs as Record<string, unknown>)[k];
+      if (typeof val === "boolean") prefs[k] = val;
+    }
+    if (Object.keys(prefs).length) out.prefs = prefs;
+  }
+  return out;
+}
+
+export function readPending(): PendingWrites {
+  return cleanPendingWrites(readJson(PLUS_KEYS.pending));
+}
+
+function writePendingRaw(p: PendingWrites): void {
+  if (pendingIsEmpty(p)) remove(PLUS_KEYS.pending);
+  else writeJson(PLUS_KEYS.pending, p);
+}
+
+/** Queue a profile edit, superseding whatever was pending before — a later
+ *  local edit always wins over an earlier unsent one. */
+export function queuePendingProfile(profile: ScoreProfile): void {
+  writePendingRaw(mergeProfile(readPending(), profile));
+}
+
+export function queuePendingHome(slug: string): void {
+  writePendingRaw(mergeHomeSlug(readPending(), slug));
+}
+
+/** Merge a prefs patch into what is pending, per key — so toggling two
+ *  different alerts offline queues both instead of the second overwriting
+ *  the first. */
+export function queuePendingPrefs(patch: Partial<AlertPrefs>): void {
+  writePendingRaw(mergePrefs(readPending(), patch));
+}
+
+export function clearPendingProfile(): void {
+  writePendingRaw(clearField(readPending(), "profile"));
+}
+
+export function clearPendingHome(): void {
+  writePendingRaw(clearField(readPending(), "homeSlug"));
+}
+
+export function clearPendingPrefs(): void {
+  writePendingRaw(clearField(readPending(), "prefs"));
+}
+
+/** Drop just the given keys from pending prefs — used when only some of a
+ *  multi-key patch has landed (or been rejected), leaving the rest queued. */
+export function clearPendingPrefsKeys(keys: readonly string[]): void {
+  writePendingRaw(clearPrefsKeys(readPending(), keys));
 }

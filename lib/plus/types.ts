@@ -26,3 +26,30 @@ export interface PreviewRecord {
   /** What it was tuned for, e.g. "snorkeling". */
   label: string;
 }
+
+/**
+ * An explicit "Off" tap on Beach Mode, remembered so auto-arm does not
+ * immediately undo it (`bd:off-suppression`). Cleared once a fix shows the
+ * phone has left the spot, or after 24h as a safety valve — see
+ * lib/plus/beachMode.ts's `shouldClearSuppression`.
+ */
+export interface OffSuppression {
+  slug: string;
+  /** Epoch ms of the tap. */
+  since: number;
+  /** Where the phone was when it was turned off. */
+  lat: number;
+  lon: number;
+}
+
+/**
+ * Saves that failed to reach the server and are waiting for the next
+ * foreground/online/retry (`bd:pending-writes`). Each field replaces (profile,
+ * homeSlug) or merges (prefs) with the newest local intent — see
+ * lib/plus/pendingWrites.ts for the merge rules.
+ */
+export interface PendingWrites {
+  profile?: ScoreProfile;
+  homeSlug?: string;
+  prefs?: Partial<AlertPrefs>;
+}

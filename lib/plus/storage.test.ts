@@ -2,15 +2,26 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   PLUS_KEYS,
   cleanCache,
+  cleanOffSuppression,
   cleanPreview,
   cleanProfile,
+  clearPendingHome,
+  clearPendingPrefs,
+  clearPendingPrefsKeys,
+  clearPendingProfile,
+  queuePendingHome,
+  queuePendingPrefs,
+  queuePendingProfile,
   readCache,
   readFirstRunDone,
+  readOffSuppression,
+  readPending,
   readPreview,
   readPreviewSeen,
   readProfile,
   writeCache,
   writeFirstRunDone,
+  writeOffSuppression,
   writePreview,
   writePreviewSeen,
   writeProfile,
@@ -167,6 +178,92 @@ describe("the one-time reveal", () => {
   });
 });
 
+describe("Beach Mode Off suppression", () => {
+  it("round-trips", () => {
+    writeOffSuppression({ slug: "delray", since: 123, lat: 26.35, lon: -80.08 });
+    expect(readOffSuppression()).toEqual({ slug: "delray", since: 123, lat: 26.35, lon: -80.08 });
+  });
+
+  it("a manual On clears it", () => {
+    writeOffSuppression({ slug: "delray", since: 123, lat: 26.35, lon: -80.08 });
+    writeOffSuppression(null);
+    expect(readOffSuppression()).toBeNull();
+  });
+
+  it("rejects a record missing any of its four fields", () => {
+    expect(cleanOffSuppression({ since: 1, lat: 1, lon: 1 })).toBeNull();
+    expect(cleanOffSuppression({ slug: "delray", lat: 1, lon: 1 })).toBeNull();
+    expect(cleanOffSuppression({ slug: "delray", since: 1, lon: 1 })).toBeNull();
+    expect(cleanOffSuppression({ slug: "delray", since: 1, lat: 1 })).toBeNull();
+  });
+
+  it("survives a corrupted stored value", () => {
+    fake.setItem(PLUS_KEYS.offSuppression, "{not json");
+    expect(readOffSuppression()).toBeNull();
+  });
+});
+
+describe("pending writes (failed saves waiting to retry)", () => {
+  it("reads as empty when nothing has ever been queued", () => {
+    expect(readPending()).toEqual({});
+  });
+
+  it("a later profile queue supersedes an earlier one", () => {
+    queuePendingProfile({ profiles: ["swim"], heat: "normal", crowds: "normal" });
+    queuePendingProfile({ profiles: ["surf"], heat: "hot", crowds: "low" });
+    expect(readPending().profile).toEqual({ profiles: ["surf"], heat: "hot", crowds: "low" });
+  });
+
+  it("a later home queue supersedes an earlier one", () => {
+    queuePendingHome("delray");
+    queuePendingHome("boca-raton");
+    expect(readPending().homeSlug).toBe("boca-raton");
+  });
+
+  it("prefs merge per key rather than replace", () => {
+    queuePendingPrefs({ lightning: false });
+    queuePendingPrefs({ rip: false });
+    expect(readPending().prefs).toEqual({ lightning: false, rip: false });
+  });
+
+  it("clearPendingProfile/Home/Prefs each drop only their own field", () => {
+    queuePendingProfile({ profiles: ["swim"], heat: "normal", crowds: "normal" });
+    queuePendingHome("delray");
+    queuePendingPrefs({ rip: false });
+
+    clearPendingProfile();
+    expect(readPending()).toEqual({ homeSlug: "delray", prefs: { rip: false } });
+
+    clearPendingHome();
+    expect(readPending()).toEqual({ prefs: { rip: false } });
+
+    clearPendingPrefs();
+    expect(readPending()).toEqual({});
+  });
+
+  it("clearPendingPrefsKeys drops only the given keys, leaving the rest queued", () => {
+    queuePendingPrefs({ lightning: false, rip: false, morning: true });
+    clearPendingPrefsKeys(["rip"]);
+    expect(readPending().prefs).toEqual({ lightning: false, morning: true });
+  });
+
+  it("clears the storage key entirely once the queue empties out — not left as '{}'", () => {
+    queuePendingHome("delray");
+    clearPendingHome();
+    expect(fake.getItem(PLUS_KEYS.pending)).toBeNull();
+  });
+
+  it("survives a corrupted stored value", () => {
+    fake.setItem(PLUS_KEYS.pending, "{not json");
+    expect(readPending()).toEqual({});
+  });
+
+  it("drops unknown prefs keys but keeps the recognized ones", () => {
+    fake.setItem(PLUS_KEYS.pending, JSON.stringify({ prefs: { rip: false, kayaking: true } }));
+    expect(readPending().prefs).toEqual({ rip: false });
+  });
+});
+
 describe("with no storage at all (server render, private mode)", () => {
   it("reads as empty and writes without throwing", () => {
     delete (globalThis as { localStorage?: unknown }).localStorage;
@@ -175,7 +272,11 @@ describe("with no storage at all (server render, private mode)", () => {
     expect(readPreview()).toBeNull();
     expect(readPreviewSeen()).toBe(false);
     expect(readFirstRunDone()).toBe(false);
+    expect(readOffSuppression()).toBeNull();
+    expect(readPending()).toEqual({});
     expect(() => writeProfile({ profiles: ["swim"], heat: "normal", crowds: "normal" })).not.toThrow();
     expect(() => writeFirstRunDone(true)).not.toThrow();
+    expect(() => writeOffSuppression({ slug: "delray", since: 1, lat: 1, lon: 1 })).not.toThrow();
+    expect(() => queuePendingHome("delray")).not.toThrow();
   });
 });

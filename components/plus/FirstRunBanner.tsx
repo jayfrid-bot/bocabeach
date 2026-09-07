@@ -67,6 +67,10 @@ export function FirstRunBanner({
       return;
     }
     setHomeBeach(nearest.beach.slug);
+    // Local nav below is immediate either way; a failed remote save here is
+    // not silently lost — setHome (lib/plus/client.ts) queues it for the next
+    // foreground/online retry on its own, so this promise is intentionally
+    // fire-and-forget rather than something this banner needs to await.
     void plus.setHome(nearest.beach.slug);
     setState("hidden");
     if (nearest.beach.slug !== currentSlug) {

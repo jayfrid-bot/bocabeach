@@ -11,15 +11,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getDeviceId } from "@/lib/deviceId";
-import { checkLocationPermission, getFix, type Fix } from "@/lib/location/device";
+import { checkLocationPermission, getFix, shouldRefreshFix, type Fix } from "@/lib/location/device";
 import { nativePlatform } from "@/lib/push/native";
-import { defaultPrefs, type AlertPrefs, type DeviceRecord } from "@/lib/db/types";
+import { defaultPrefs, type AlertKey, type AlertPrefs, type DeviceRecord } from "@/lib/db/types";
 import { resolveScoring } from "@/lib/profile/resolve";
 import type { ScoreProfile } from "@/lib/profile/types";
 import type { ConditionsResponse } from "@/lib/types";
 import { plusApi, type PlusResult, type PresenceBody } from "@/lib/plus/api";
 import { billingAvailable, restoreBilling } from "@/lib/plus/billing";
-import { cacheFromDevice, isEntitled, shouldRefresh } from "@/lib/plus/entitlement";
+import { cacheFromDevice, isEntitled } from "@/lib/plus/entitlement";
+import { isRetryableSaveError } from "@/lib/plus/pendingWrites";
 import { computePersonalScore, type PersonalScore } from "@/lib/plus/personalScore";
 import * as store from "@/lib/plus/storage";
 import type { PlusCache, PreviewRecord } from "@/lib/plus/types";
@@ -37,9 +38,16 @@ export interface PlusState {
   entitled: boolean;
   /** A server call is in flight. */
   loading: boolean;
+  /** The device row itself has been fetched at least once this session — the
+   *  entitlement cache can render before this, but prefs/presence/home have no
+   *  client cache of their own and read as fabricated defaults until this is
+   *  true. */
+  deviceLoaded: boolean;
   device: DeviceRecord | null;
   profile: ScoreProfile | null;
   prefs: AlertPrefs;
+  /** Alert keys with an edit that failed to save and is waiting to retry. */
+  pendingPrefsKeys: AlertKey[];
   previewSeen: boolean;
   preview: PreviewRecord | null;
   cache: PlusCache | null;
@@ -79,7 +87,9 @@ export function usePlus(): PlusState {
   const [deviceId, setDeviceId] = useState("");
   const [cache, setCache] = useState<PlusCache | null>(null);
   const [device, setDevice] = useState<DeviceRecord | null>(null);
+  const [deviceLoaded, setDeviceLoaded] = useState(false);
   const [profile, setProfile] = useState<ScoreProfile | null>(null);
+  const [pendingPrefsKeys, setPendingPrefsKeys] = useState<AlertKey[]>([]);
   const [previewSeen, setPreviewSeen] = useState(false);
   const [preview, setPreview] = useState<PreviewRecord | null>(null);
   const [loading, setLoading] = useState(false);
@@ -96,6 +106,7 @@ export function usePlus(): PlusState {
     setDeviceId(getDeviceId());
     setCache(store.readCache());
     setProfile(store.readProfile());
+    setPendingPrefsKeys(Object.keys(store.readPending().prefs ?? {}) as AlertKey[]);
     setPreviewSeen(store.readPreviewSeen());
     setPreview(store.readPreview());
     setNow(Date.now());
@@ -145,10 +156,15 @@ export function usePlus(): PlusState {
     return res;
   }, [applyDevice]);
 
-  // --- re-check: stale cache on open, and on every foreground ---------------
+  // --- device metadata: fetched once every mount, cache or no cache ---------
+  // The entitlement cache can render on the very first frame, but prefs,
+  // presence and home have no client-side cache of their own — so a reopened
+  // app fetches the device row once even when the entitlement is still fresh,
+  // rather than showing fabricated "all alerts on" defaults or a Beach Mode
+  // card that offers to start a window that may already be running.
   useEffect(() => {
     if (!ready) return;
-    if (shouldRefresh(store.readCache(), Date.now())) void refresh();
+    void refresh().finally(() => setDeviceLoaded(true));
   }, [ready, refresh]);
 
   useEffect(() => {
@@ -173,6 +189,64 @@ export function usePlus(): PlusState {
     return () => clearInterval(t);
   }, []);
 
+  // --- retry queue: saves that failed to reach the server --------------------
+  // Merge/supersede rules live in lib/plus/pendingWrites.ts; this is only the
+  // "when do we try again" half.
+  const flushPending = useCallback(async (): Promise<void> => {
+    const id = getDeviceId();
+    if (!id) return;
+    const pending = store.readPending();
+    if (pending.profile) {
+      const res = await plusApi.saveDevice(id, { ...baseFields(), profile: pending.profile });
+      if (res.ok && res.device) {
+        applyDevice(res.device);
+        store.clearPendingProfile();
+      } else if (!isRetryableSaveError(res)) {
+        // The server rejected it outright — retrying would only repeat the
+        // same rejected request.
+        store.clearPendingProfile();
+      }
+    }
+    if (pending.homeSlug) {
+      const res = await plusApi.saveDevice(id, { ...baseFields(), homeSlug: pending.homeSlug });
+      if (res.ok && res.device) {
+        applyDevice(res.device);
+        store.clearPendingHome();
+      } else if (!isRetryableSaveError(res)) {
+        store.clearPendingHome();
+      }
+    }
+    if (pending.prefs && Object.keys(pending.prefs).length) {
+      const res = await plusApi.saveDevice(id, { ...baseFields(), prefs: pending.prefs });
+      if (res.ok && res.device) {
+        applyDevice(res.device);
+        store.clearPendingPrefs();
+        setPendingPrefsKeys([]);
+      } else if (!isRetryableSaveError(res)) {
+        store.clearPendingPrefs();
+        setPendingPrefsKeys([]);
+      }
+    }
+  }, [applyDevice]);
+
+  // Try the queue on mount (a previous session may have left something
+  // behind), whenever the phone comes back online, and on every foreground —
+  // the three moments a save that failed offline is most likely to succeed.
+  useEffect(() => {
+    if (!ready) return;
+    void flushPending();
+    const onOnline = () => void flushPending();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void flushPending();
+    };
+    window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [ready, flushPending]);
+
   // --- writes ---------------------------------------------------------------
   const flushProfile = useCallback(async (): Promise<void> => {
     const pending = pendingProfileRef.current;
@@ -181,7 +255,16 @@ export function usePlus(): PlusState {
     const id = getDeviceId();
     if (!id) return;
     const res = await plusApi.saveDevice(id, { ...baseFields(), profile: pending });
-    if (res.ok && res.device) applyDevice(res.device);
+    if (res.ok && res.device) {
+      applyDevice(res.device);
+      store.clearPendingProfile();
+    } else if (isRetryableSaveError(res)) {
+      // Offline, or the server had a bad moment: the local copy (already
+      // written by saveProfile) is right, but the server never heard about
+      // it — queue it so the retry loop (foreground/online/next flush) picks
+      // it up instead of the edit quietly staying server-side stale forever.
+      store.queuePendingProfile(pending);
+    }
   }, [applyDevice]);
 
   const saveProfile = useCallback(
@@ -232,15 +315,33 @@ export function usePlus(): PlusState {
     async (patch: Partial<AlertPrefs>): Promise<PlusResult> => {
       const id = getDeviceId();
       if (!id) return { ok: false, device: null, error: "network", status: 0 };
+      const prevPrefs = device?.prefs ?? defaultPrefs();
       // Optimistic: the toggle moves now, the server catches up.
       setDevice((d) => (d ? { ...d, prefs: { ...d.prefs, ...patch } } : d));
       setLoading(true);
       const res = await plusApi.saveDevice(id, { ...baseFields(), prefs: patch });
       setLoading(false);
-      if (res.ok && res.device) applyDevice(res.device);
+      if (res.ok && res.device) {
+        applyDevice(res.device);
+        store.clearPendingPrefsKeys(Object.keys(patch));
+        setPendingPrefsKeys(Object.keys(store.readPending().prefs ?? {}) as AlertKey[]);
+      } else if (isRetryableSaveError(res)) {
+        // The server never confirmed it: put the toggle back to what it
+        // showed before this tap (never a fabricated guess) and remember the
+        // intended value so the retry queue lands it on its own.
+        setDevice((d) => (d ? { ...d, prefs: prevPrefs } : d));
+        store.queuePendingPrefs(patch);
+        setPendingPrefsKeys(Object.keys(store.readPending().prefs ?? {}) as AlertKey[]);
+      } else {
+        // The server rejected it outright: retrying would just repeat the
+        // same rejected request, so revert and drop it from the queue.
+        setDevice((d) => (d ? { ...d, prefs: prevPrefs } : d));
+        store.clearPendingPrefsKeys(Object.keys(patch));
+        setPendingPrefsKeys(Object.keys(store.readPending().prefs ?? {}) as AlertKey[]);
+      }
       return res;
     },
-    [applyDevice],
+    [applyDevice, device],
   );
 
   const setHome = useCallback(
@@ -248,7 +349,14 @@ export function usePlus(): PlusState {
       const id = getDeviceId();
       if (!id) return { ok: false, device: null, error: "network", status: 0 };
       const res = await plusApi.saveDevice(id, { ...baseFields(), homeSlug: slug });
-      if (res.ok && res.device) applyDevice(res.device);
+      if (res.ok && res.device) {
+        applyDevice(res.device);
+        store.clearPendingHome();
+      } else if (isRetryableSaveError(res)) {
+        // Local navigation already moved on; remember the intended home so
+        // the next foreground/online try lands the server copy too.
+        store.queuePendingHome(slug);
+      }
       return res;
     },
     [applyDevice],
@@ -340,9 +448,11 @@ export function usePlus(): PlusState {
     ready,
     entitled,
     loading,
+    deviceLoaded,
     device,
     profile,
     prefs,
+    pendingPrefsKeys,
     previewSeen,
     preview,
     cache,
@@ -440,6 +550,8 @@ export interface DeviceFixState {
   settled: boolean;
   /** Ask for a position, prompting if the OS wants to. Never rejects. */
   request(): Promise<Fix | null>;
+  /** How old the current fix is right now (ms), or null when there is none. */
+  fixAgeMs(): number | null;
 }
 
 export function useDeviceFix(): DeviceFixState {
@@ -491,5 +603,27 @@ export function useDeviceFix(): DeviceFixState {
     return got;
   }, []);
 
-  return { fix, settled, request };
+  // Reads the module-level fix directly (not the `fix` state variable), so it
+  // is always current even between a fix update and this component's next
+  // render.
+  const fixAgeMs = useCallback((): number | null => {
+    return sessionFix ? Date.now() - sessionFix.at : null;
+  }, []);
+
+  // A fix from a few minutes ago is still a fine stand-in for "where the
+  // phone is now"; one from before the app was backgrounded is not. Only
+  // refreshes a fix that already exists — a phone that has never granted
+  // location is not asked again just for reopening the app; that prompt
+  // belongs to an explicit tap.
+  useEffect(() => {
+    if (!settled) return;
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (shouldRefreshFix(fixAgeMs())) void request();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [settled, request, fixAgeMs]);
+
+  return { fix, settled, request, fixAgeMs };
 }

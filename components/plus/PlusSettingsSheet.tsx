@@ -17,6 +17,7 @@ import { ALERT_GROUPS, ALERT_LABELS, FACTOR_LABELS, FACTOR_ORDER, MULTIPLIER_STO
 import { plusErrorMessage } from "@/lib/plus/api";
 import type { PlusState } from "@/lib/plus/client";
 import { entitlementRemaining } from "@/lib/plus/entitlement";
+import { isRetryableSaveError } from "@/lib/plus/pendingWrites";
 import { getHomeBeach, setHomeBeach } from "@/lib/homeBeach";
 import type { LocationPublic } from "@/lib/types";
 import { Chip, ErrorLine, PrimaryButton, SecondaryButton, Sheet } from "@/components/plus/Sheet";
@@ -100,17 +101,23 @@ export function PlusSettingsSheet({
   };
 
   const pickHome = async (slug: string) => {
+    // Local navigation is immediate; the remote save (setHome) retries on its
+    // own via the pending queue, so a network hiccup here is not worth an
+    // error banner — only a save the server genuinely rejected is.
     setHome(slug);
     setHomeBeach(slug);
     setError(null);
     const res = await plus.setHome(slug);
-    if (!res.ok) setError(plusErrorMessage(res.error));
+    if (!res.ok && !isRetryableSaveError(res)) setError(plusErrorMessage(res.error));
   };
 
   const toggleAlert = async (key: AlertKey, on: boolean) => {
     setError(null);
     const res = await plus.savePrefs({ [key]: on } as Partial<Record<AlertKey, boolean>>);
-    if (!res.ok) setError(plusErrorMessage(res.error));
+    // A retryable failure already reverted the toggle and queued the retry —
+    // the per-row "Unsaved — retrying" note covers it, so only a genuine
+    // rejection gets the sheet-wide error line.
+    if (!res.ok && !isRetryableSaveError(res)) setError(plusErrorMessage(res.error));
   };
 
   const redeem = async () => {
@@ -321,6 +328,9 @@ export function PlusSettingsSheet({
       {native ? (
         <div className="mt-5 border-t border-slate-900/10 pt-4 dark:border-white/10">
           <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Alerts</h3>
+          {!plus.deviceLoaded ? (
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Loading your settings…</p>
+          ) : null}
           {ALERT_GROUPS.map((group) => (
             <div key={group.title} className="mt-3">
               <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
@@ -332,6 +342,8 @@ export function PlusSettingsSheet({
                     key={key}
                     label={ALERT_LABELS[key]}
                     on={plus.prefs[key]}
+                    disabled={!plus.deviceLoaded}
+                    pending={plus.pendingPrefsKeys.includes(key)}
                     onChange={(on) => void toggleAlert(key, on)}
                   />
                 ))}
@@ -488,31 +500,51 @@ function RangeEditor({
 function AlertToggle({
   label,
   on,
+  disabled,
+  pending,
   onChange,
 }: {
   label: string;
   on: boolean;
+  /** Settings have not loaded from the server yet — show neither on nor off,
+   *  never a fabricated guess. */
+  disabled?: boolean;
+  /** A change that failed to save and is waiting to retry. */
+  pending?: boolean;
   onChange: (on: boolean) => void;
 }) {
+  // While loading, the switch shows neither state — `on` is not trustworthy
+  // yet (it may be a fabricated default), so the track and thumb stay in
+  // their "off" position regardless of what `on` says.
+  const show = !disabled && on;
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      onClick={() => onChange(!on)}
-      className="flex min-h-[44px] w-full items-center justify-between gap-3 rounded-xl px-1 text-left transition hover:bg-slate-900/5 dark:hover:bg-white/5"
-    >
-      <span className="min-w-0 flex-1 text-sm text-slate-700 dark:text-slate-300">{label}</span>
-      <span
-        aria-hidden
-        className={`flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition ${
-          on ? "bg-ocean-600" : "bg-slate-300 dark:bg-slate-600"
+    <div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={show}
+        aria-disabled={disabled}
+        disabled={disabled}
+        onClick={() => onChange(!on)}
+        className={`flex min-h-[44px] w-full items-center justify-between gap-3 rounded-xl px-1 text-left transition ${
+          disabled ? "opacity-50" : "hover:bg-slate-900/5 dark:hover:bg-white/5"
         }`}
       >
+        <span className="min-w-0 flex-1 text-sm text-slate-700 dark:text-slate-300">{label}</span>
         <span
-          className={`h-5 w-5 rounded-full bg-white transition ${on ? "translate-x-5" : ""}`}
-        />
-      </span>
-    </button>
+          aria-hidden
+          className={`flex h-6 w-11 shrink-0 items-center rounded-full p-0.5 transition ${
+            show ? "bg-ocean-600" : "bg-slate-300 dark:bg-slate-600"
+          }`}
+        >
+          <span className={`h-5 w-5 rounded-full bg-white transition ${show ? "translate-x-5" : ""}`} />
+        </span>
+      </button>
+      {pending ? (
+        <p className="px-1 pb-1 text-xs leading-snug text-amber-600 dark:text-amber-400">
+          Unsaved — retrying…
+        </p>
+      ) : null}
+    </div>
   );
 }
