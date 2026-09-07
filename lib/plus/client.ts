@@ -18,6 +18,7 @@ import { resolveScoring } from "@/lib/profile/resolve";
 import type { ScoreProfile } from "@/lib/profile/types";
 import type { ConditionsResponse } from "@/lib/types";
 import { plusApi, type PlusResult, type PresenceBody } from "@/lib/plus/api";
+import { billingAvailable, restoreBilling } from "@/lib/plus/billing";
 import { cacheFromDevice, isEntitled, shouldRefresh } from "@/lib/plus/entitlement";
 import { computePersonalScore, type PersonalScore } from "@/lib/plus/personalScore";
 import * as store from "@/lib/plus/storage";
@@ -44,9 +45,12 @@ export interface PlusState {
   cache: PlusCache | null;
   deviceId: string;
   refresh(): Promise<PlusResult | null>;
+  /** Store restore (when billing is on) then the server's copy of this device. */
   restore(): Promise<PlusResult>;
   startTrial(): Promise<PlusResult>;
   unlock(code: string): Promise<PlusResult>;
+  /** After a store purchase: the server confirms it with RevenueCat and turns Plus on. */
+  syncPurchase(): Promise<PlusResult>;
   /** Local now, server shortly after. For sliders and chips. */
   saveProfile(profile: ScoreProfile): void;
   /** Local now, server before this resolves. For the reveal and the paywall. */
@@ -273,11 +277,31 @@ export function usePlus(): PlusState {
     [applyDevice],
   );
 
+  const syncPurchase = useCallback(async (): Promise<PlusResult> => {
+    const id = getDeviceId();
+    if (!id) return { ok: false, device: null, error: "network", status: 0 };
+    setLoading(true);
+    const res = await plusApi.syncPurchase(id);
+    setLoading(false);
+    if (res.ok && res.device) applyDevice(res.device);
+    return res;
+  }, [applyDevice]);
+
   const restore = useCallback(async (): Promise<PlusResult> => {
     const id = getDeviceId();
     if (!id) return { ok: false, device: null, error: "network", status: 0 };
     lastRefreshRef.current = Date.now();
     setLoading(true);
+    // With billing on, ask the store first: a reinstall or a new phone on the
+    // same Apple ID has a purchase the server has never been told about.
+    if (billingAvailable() && (await restoreBilling(id))) {
+      const synced = await plusApi.syncPurchase(id);
+      if (synced.ok && synced.device) {
+        setLoading(false);
+        applyDevice(synced.device, { adoptProfile: true });
+        return synced;
+      }
+    }
     const res = await plusApi.getDevice(id);
     setLoading(false);
     // Explicit Restore: the server's copy wins, profile included.
@@ -327,6 +351,7 @@ export function usePlus(): PlusState {
     restore,
     startTrial,
     unlock,
+    syncPurchase,
     saveProfile,
     commitProfile,
     savePrefs,

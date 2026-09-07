@@ -80,6 +80,11 @@ export const plusApi = {
   unlock(deviceId: string, code: string): Promise<PlusResult> {
     return postJson("/api/devices/unlock", { deviceId, code });
   },
+  /** After an App Store purchase or Restore: have the server confirm it with
+   *  RevenueCat and turn Plus on. Never turns it off. */
+  syncPurchase(deviceId: string): Promise<PlusResult> {
+    return postJson("/api/devices/purchase", { deviceId });
+  },
   arm(deviceId: string, presence: PresenceBody): Promise<PlusResult> {
     return postJson("/api/presence", { deviceId, ...presence });
   },
@@ -111,6 +116,13 @@ export function plusErrorMessage(error: string | null): string {
       return "We could not find a subscription for this device.";
     case "store-unavailable":
       return "Our end had a problem saving that. Try again in a minute.";
+    case "billing-unavailable":
+    case "not-configured":
+      return "We could not reach billing to confirm that. Try again in a minute.";
+    case "purchase-failed":
+      return "The App Store could not complete that purchase. Try again.";
+    case "purchase-unconfirmed":
+      return "Your purchase went through, but we could not confirm it yet. Tap Restore in a moment.";
     case "bad-request":
       return "Something about that request was wrong. Try again.";
     default:

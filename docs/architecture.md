@@ -99,15 +99,22 @@ flowchart TD
   subgraph app [App]
     OPEN[Open / foreground] -->|deviceId, profile, prefs| DEV["/api/devices<br/>POST upsert · GET read"]
     OPEN -->|fix: lat, lon, accuracy| PRES["/api/presence<br/>POST arm · DELETE disarm"]
-    TRIAL["/api/devices/trial<br/>3-day trial, once"]
+    TRIAL["/api/devices/trial<br/>3-day trial, once (fallback when billing is off)"]
     UNLOCK["/api/devices/unlock<br/>code → 365-day plan"]
+    BUY["/api/devices/purchase<br/>after a store purchase or Restore"]
     REG["/api/push/register-native<br/>/api/push/unregister-native"]
   end
+
+  APPSTORE[(App Store<br/>monthly · yearly, 3-day trial)] -->|"purchase via RevenueCat SDK<br/>appUserID = deviceId"| BUY
+  BUY -->|"GET /v1/subscribers/{deviceId}<br/>secret key"| RC[(RevenueCat)]
+  RC -->|"webhook: purchase · renewal · expiration<br/>Authorization = REVENUECAT_WEBHOOK_SECRET"| RCHOOK["/api/revenuecat/webhook"]
 
   DEV --> STORE[lib/db/store.ts<br/>one DeviceStore interface]
   PRES --> STORE
   TRIAL --> STORE
   UNLOCK --> STORE
+  BUY -->|plan + entitlementUntil, up only| STORE
+  RCHOOK -->|plan + entitlementUntil| STORE
   REG --> STORE
 
   STORE -->|production| D1[(D1: isitbeachday-plus<br/>devices · presence · alert_log)]
@@ -142,6 +149,7 @@ Worth splitting if either one grows enough to matter.
 
 | Source | Used for |
 |---|---|
+| RevenueCat | Beach Day Plus billing: the app buys through its SDK; the server confirms with its REST API (`/api/devices/purchase`) and hears renewals/expirations on `/api/revenuecat/webhook` (see docs/BILLING_SETUP.md) |
 | Open-Meteo | Forecast, hourly forecast, nowcast, minutely rain (Plus alert fallback) |
 | National Weather Service (NWS) | Alerts, forecast |
 | NOAA CO-OPS | Tide predictions and real water level |

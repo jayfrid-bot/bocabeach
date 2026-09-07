@@ -1,11 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { plusErrorMessage } from "@/lib/plus/api";
+import {
+  billingAvailable,
+  loadOffers,
+  purchasePlan,
+  type PlanChoice,
+  type PlanOffer,
+} from "@/lib/plus/billing";
 import type { PlusState } from "@/lib/plus/client";
 import { ErrorLine, PrimaryButton, SecondaryButton, Sheet } from "@/components/plus/Sheet";
 
 const APP_STORE_URL = "https://apps.apple.com/us/app/id6779072992";
+const TERMS_URL = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
+const PRIVACY_URL = "/privacy";
+
+/** What the store charges when it has not told us yet (it always agrees). */
+const FALLBACK_PRICE: Record<PlanChoice, string> = { monthly: "$2.99", yearly: "$19.99" };
+const PER: Record<PlanChoice, string> = { monthly: "mo", yearly: "yr" };
 
 const BENEFITS: { icon: string; title: string; body: string }[] = [
   {
@@ -29,8 +42,10 @@ const BENEFITS: { icon: string; title: string; body: string }[] = [
  * The paywall body. Rendered inside the onboarding sheet at the end of the
  * questions, and inside its own sheet when someone taps the locked pill later.
  *
- * There is no fake purchase here. Until billing is wired the honest paths are a
- * real 3-day trial (server-granted) and a code; anything else says so plainly.
+ * With billing on (inside the app, with a RevenueCat key) the button runs the
+ * App Store's own purchase sheet for the chosen plan, then has the server
+ * confirm it. Without billing the honest paths remain: the server's 3-day
+ * trial and a code. Nothing here ever pretends a purchase happened.
  */
 export function PaywallBody({
   plus,
@@ -51,6 +66,26 @@ export function PaywallBody({
   // Known from the device row, or learned the moment the server answers 409.
   const [trialUsed, setTrialUsed] = useState(plus.device?.trialUsed ?? false);
 
+  // Store billing: decided on the phone, after mount, so the server render and
+  // a browser both see the plain (no-billing) paywall.
+  const [billing, setBilling] = useState(false);
+  const [offers, setOffers] = useState<PlanOffer[] | null>(null);
+  const [plan, setPlan] = useState<PlanChoice>("yearly");
+
+  useEffect(() => {
+    if (!native || !plus.deviceId || !billingAvailable()) return;
+    let alive = true;
+    setBilling(true);
+    loadOffers(plus.deviceId)
+      .then((o) => alive && setOffers(o))
+      .catch(() => alive && setOffers([]));
+    return () => {
+      alive = false;
+    };
+  }, [native, plus.deviceId]);
+
+  const priceOf = (p: PlanChoice) => offers?.find((o) => o.plan === p)?.price ?? FALLBACK_PRICE[p];
+
   const startTrial = async () => {
     setBusy(true);
     setError(null);
@@ -63,6 +98,35 @@ export function PaywallBody({
     }
     if (res.error === "trial-used") setTrialUsed(true);
     setError(plusErrorMessage(res.error));
+  };
+
+  const buy = async () => {
+    setError(null);
+    setNote(null);
+    const offer = offers?.find((o) => o.plan === plan);
+    if (!offer) {
+      setError(
+        offers === null
+          ? "Still loading prices from the App Store. One second."
+          : "The App Store did not answer with prices. Try again in a moment.",
+      );
+      return;
+    }
+    setBusy(true);
+    const outcome = await purchasePlan(plus.deviceId, offer);
+    if (outcome === "purchased") {
+      const res = await plus.syncPurchase();
+      setBusy(false);
+      if (res.ok && res.device?.plan === "plus") {
+        onEntitled();
+        return;
+      }
+      setError(plusErrorMessage("purchase-unconfirmed"));
+      return;
+    }
+    setBusy(false);
+    if (outcome === "failed") setError(plusErrorMessage("purchase-failed"));
+    // "cancelled": they closed the store sheet. Nothing to say.
   };
 
   const subscribe = () => {
@@ -101,8 +165,33 @@ export function PaywallBody({
       onEntitled();
       return;
     }
-    if (res.ok) setNote("Nothing to restore on this device yet.");
+    if (res.ok || res.error === "not-found") setNote("Nothing to restore on this device yet.");
     else setError(plusErrorMessage(res.error));
+  };
+
+  const planButton = (p: PlanChoice, label: string, tag?: string) => {
+    const on = plan === p;
+    return (
+      <button
+        type="button"
+        aria-pressed={on}
+        onClick={() => setPlan(p)}
+        disabled={busy}
+        className={`flex min-h-[56px] flex-1 flex-col items-center justify-center rounded-2xl px-3 py-2 text-center ring-2 transition ${
+          on
+            ? "bg-ocean-50 ring-ocean-600 dark:bg-ocean-900/40 dark:ring-ocean-400"
+            : "bg-white ring-slate-900/10 dark:bg-slate-800 dark:ring-white/10"
+        }`}
+      >
+        <span className="text-sm font-semibold text-slate-900 dark:text-white">{label}</span>
+        <span className="text-sm tabular-nums text-slate-700 dark:text-slate-300">
+          {priceOf(p)}/{PER[p]}
+        </span>
+        {tag ? (
+          <span className="mt-0.5 text-[11px] font-medium text-ocean-700 dark:text-ocean-300">{tag}</span>
+        ) : null}
+      </button>
+    );
   };
 
   return (
@@ -130,25 +219,41 @@ export function PaywallBody({
         ))}
       </ul>
 
-      <p className="mt-4 text-center text-sm font-semibold tabular-nums text-slate-900 dark:text-white">
-        $2.99/mo · $19.99/yr
-      </p>
+      {billing ? (
+        <div role="group" aria-label="Choose a plan" className="mt-4 flex gap-2">
+          {planButton("yearly", "Yearly", "Best value")}
+          {planButton("monthly", "Monthly")}
+        </div>
+      ) : (
+        <p className="mt-4 text-center text-sm font-semibold tabular-nums text-slate-900 dark:text-white">
+          $2.99/mo · $19.99/yr
+        </p>
+      )}
 
       <div className="mt-3 space-y-2">
-        {trialUsed ? (
+        {billing ? (
+          <>
+            <PrimaryButton onClick={buy} disabled={busy}>
+              {busy ? "One moment…" : "Start 3-day free trial"}
+            </PrimaryButton>
+            <p className="text-center text-xs leading-snug text-slate-500 dark:text-slate-400">
+              3 days free, then {priceOf(plan)}/{PER[plan]}. Renews until you cancel in Settings.
+            </p>
+          </>
+        ) : trialUsed ? (
           <PrimaryButton onClick={subscribe} disabled={busy}>
             Subscribe
           </PrimaryButton>
         ) : (
-          <PrimaryButton onClick={startTrial} disabled={busy}>
-            {busy ? "One moment…" : "Start 3-day free trial"}
-          </PrimaryButton>
+          <>
+            <PrimaryButton onClick={startTrial} disabled={busy}>
+              {busy ? "One moment…" : "Start 3-day free trial"}
+            </PrimaryButton>
+            <p className="text-center text-xs leading-snug text-slate-500 dark:text-slate-400">
+              Three days free. Nothing is charged today.
+            </p>
+          </>
         )}
-        {!trialUsed ? (
-          <p className="text-center text-xs leading-snug text-slate-500 dark:text-slate-400">
-            Three days free. Nothing is charged today.
-          </p>
-        ) : null}
 
         {codeOpen ? (
           <div className="rounded-2xl bg-slate-900/5 p-3 dark:bg-white/5">
@@ -182,6 +287,28 @@ export function PaywallBody({
         <SecondaryButton onClick={restore} disabled={busy}>
           Restore
         </SecondaryButton>
+
+        {billing ? (
+          <div className="flex items-center justify-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+            <a
+              href={TERMS_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-[44px] items-center px-2 underline"
+            >
+              Terms of Use
+            </a>
+            <span aria-hidden>·</span>
+            <a
+              href={PRIVACY_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-[44px] items-center px-2 underline"
+            >
+              Privacy Policy
+            </a>
+          </div>
+        ) : null}
 
         {!native ? (
           <p className="text-center text-xs leading-snug text-slate-500 dark:text-slate-400">

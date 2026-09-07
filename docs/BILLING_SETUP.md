@@ -1,6 +1,6 @@
 # Beach Day Plus — turning on real billing
 
-Status as of 2026-09-05. The goal: a real, chargeable subscription behind the
+Status as of 2026-09-07. The goal: a real, chargeable subscription behind the
 paywall, using **RevenueCat** as the billing layer. Confirmed decisions:
 $2.99/mo · $19.99/yr · 3-day free trial.
 
