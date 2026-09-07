@@ -6,19 +6,40 @@ import {
   billingAvailable,
   loadOffers,
   purchasePlan,
+  trialEligibility,
+  type Eligibility,
   type PlanChoice,
   type PlanOffer,
 } from "@/lib/plus/billing";
 import type { PlusState } from "@/lib/plus/client";
+import { deviceEntitled } from "@/lib/plus/entitlement";
+import { defaultPlan, paywallCopy, PER, type OffersStatus } from "@/lib/plus/paywallCopy";
 import { ErrorLine, PrimaryButton, SecondaryButton, Sheet } from "@/components/plus/Sheet";
 
 const APP_STORE_URL = "https://apps.apple.com/us/app/id6779072992";
 const TERMS_URL = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
 const PRIVACY_URL = "/privacy";
 
-/** What the store charges when it has not told us yet (it always agrees). */
-const FALLBACK_PRICE: Record<PlanChoice, string> = { monthly: "$2.99", yearly: "$19.99" };
-const PER: Record<PlanChoice, string> = { monthly: "mo", yearly: "yr" };
+const NO_ELIGIBILITY: Record<PlanChoice, Eligibility> = { monthly: "unknown", yearly: "unknown" };
+
+/**
+ * Ask the store for prices, then (only once there is something to ask about)
+ * whether this Apple account still owes each plan a trial. Both legs are
+ * never-throw contracts (see lib/plus/billing.ts), so this never rejects
+ * either — a caller just awaits the plain result.
+ */
+async function fetchPlanData(deviceId: string): Promise<{
+  offers: PlanOffer[];
+  status: OffersStatus;
+  plan: PlanChoice | null;
+  eligibility: Record<PlanChoice, Eligibility>;
+}> {
+  const offers = await loadOffers(deviceId);
+  const status: OffersStatus = offers.length > 0 ? "loaded" : "failed";
+  const plan = defaultPlan(offers.map((o) => o.plan));
+  const eligibility = offers.length > 0 ? await trialEligibility(deviceId, offers) : NO_ELIGIBILITY;
+  return { offers, status, plan, eligibility };
+}
 
 const BENEFITS: { icon: string; title: string; body: string }[] = [
   {
@@ -69,64 +90,98 @@ export function PaywallBody({
   // Store billing: decided on the phone, after mount, so the server render and
   // a browser both see the plain (no-billing) paywall.
   const [billing, setBilling] = useState(false);
-  const [offers, setOffers] = useState<PlanOffer[] | null>(null);
-  const [plan, setPlan] = useState<PlanChoice>("yearly");
+  const [offers, setOffers] = useState<PlanOffer[]>([]);
+  const [offersStatus, setOffersStatus] = useState<OffersStatus>("loading");
+  const [plan, setPlan] = useState<PlanChoice | null>(null);
+  const [eligibility, setEligibility] = useState<Record<PlanChoice, Eligibility>>(NO_ELIGIBILITY);
 
   useEffect(() => {
     if (!native || !plus.deviceId || !billingAvailable()) return;
     let alive = true;
     setBilling(true);
-    loadOffers(plus.deviceId)
-      .then((o) => alive && setOffers(o))
-      .catch(() => alive && setOffers([]));
+    setOffersStatus("loading");
+    fetchPlanData(plus.deviceId).then((r) => {
+      if (!alive) return;
+      setOffers(r.offers);
+      setOffersStatus(r.status);
+      setPlan(r.plan);
+      setEligibility(r.eligibility);
+    });
     return () => {
       alive = false;
     };
   }, [native, plus.deviceId]);
 
-  const priceOf = (p: PlanChoice) => offers?.find((o) => o.plan === p)?.price ?? FALLBACK_PRICE[p];
+  const priceOf = (p: PlanChoice) => offers.find((o) => o.plan === p)?.price;
+
+  const cta = paywallCopy({
+    status: offersStatus,
+    plan,
+    price: plan ? priceOf(plan) : undefined,
+    eligibility: plan ? eligibility[plan] : "unknown",
+  });
 
   const startTrial = async () => {
     setBusy(true);
     setError(null);
     setNote(null);
-    const res = await plus.startTrial();
-    setBusy(false);
-    if (res.ok) {
-      onEntitled();
-      return;
-    }
-    if (res.error === "trial-used") setTrialUsed(true);
-    setError(plusErrorMessage(res.error));
-  };
-
-  const buy = async () => {
-    setError(null);
-    setNote(null);
-    const offer = offers?.find((o) => o.plan === plan);
-    if (!offer) {
-      setError(
-        offers === null
-          ? "Still loading prices from the App Store. One second."
-          : "The App Store did not answer with prices. Try again in a moment.",
-      );
-      return;
-    }
-    setBusy(true);
-    const outcome = await purchasePlan(plus.deviceId, offer);
-    if (outcome === "purchased") {
-      const res = await plus.syncPurchase();
-      setBusy(false);
-      if (res.ok && res.device?.plan === "plus") {
+    try {
+      const res = await plus.startTrial();
+      if (res.ok) {
         onEntitled();
         return;
       }
-      setError(plusErrorMessage("purchase-unconfirmed"));
+      if (res.error === "trial-used") setTrialUsed(true);
+      setError(plusErrorMessage(res.error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const buy = async () => {
+    const offer = offers.find((o) => o.plan === plan);
+    if (!offer) return; // the CTA reads "Try again" instead of reaching here
+    setError(null);
+    setNote(null);
+    setBusy(true);
+    try {
+      const outcome = await purchasePlan(plus.deviceId, offer);
+      if (outcome === "purchased") {
+        const res = await plus.syncPurchase();
+        // Entitled NOW, not merely "plan is plus" — a synced row can still be
+        // expired the instant it lands (issue #12's predicate, applied here too).
+        if (res.ok && deviceEntitled(res.device, Date.now())) {
+          onEntitled();
+          return;
+        }
+        setError(plusErrorMessage("purchase-unconfirmed"));
+        return;
+      }
+      if (outcome === "failed") setError(plusErrorMessage("purchase-failed"));
+      // "cancelled": they closed the store sheet. Nothing to say.
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** The CTA while offers have not loaded reads "Loading prices…" and is
+   *  disabled; once they fail it reads "Try again" and this reloads them. */
+  const retryOffers = async () => {
+    if (!plus.deviceId) return;
+    setOffersStatus("loading");
+    const r = await fetchPlanData(plus.deviceId);
+    setOffers(r.offers);
+    setOffersStatus(r.status);
+    setPlan(r.plan);
+    setEligibility(r.eligibility);
+  };
+
+  const handleCta = () => {
+    if (offersStatus === "failed") {
+      void retryOffers();
       return;
     }
-    setBusy(false);
-    if (outcome === "failed") setError(plusErrorMessage("purchase-failed"));
-    // "cancelled": they closed the store sheet. Nothing to say.
+    void buy();
   };
 
   const subscribe = () => {
@@ -146,27 +201,35 @@ export function PaywallBody({
     setBusy(true);
     setError(null);
     setNote(null);
-    const res = await plus.unlock(code);
-    setBusy(false);
-    if (res.ok) {
-      onEntitled();
-      return;
+    try {
+      const res = await plus.unlock(code);
+      if (res.ok) {
+        onEntitled();
+        return;
+      }
+      setError(plusErrorMessage(res.error));
+    } finally {
+      setBusy(false);
     }
-    setError(plusErrorMessage(res.error));
   };
 
   const restore = async () => {
     setBusy(true);
     setError(null);
     setNote(null);
-    const res = await plus.restore();
-    setBusy(false);
-    if (res.ok && res.device && res.device.plan === "plus") {
-      onEntitled();
-      return;
+    try {
+      const res = await plus.restore();
+      // Entitled NOW, not merely "plan is plus" (issue #12): an expired trial
+      // or code row must not read back as a successful restore.
+      if (res.ok && deviceEntitled(res.device, Date.now())) {
+        onEntitled();
+        return;
+      }
+      if (res.ok || res.error === "not-found") setNote("Nothing to restore on this device yet.");
+      else setError(plusErrorMessage(res.error));
+    } finally {
+      setBusy(false);
     }
-    if (res.ok || res.error === "not-found") setNote("Nothing to restore on this device yet.");
-    else setError(plusErrorMessage(res.error));
   };
 
   const planButton = (p: PlanChoice, label: string, tag?: string) => {
@@ -220,10 +283,21 @@ export function PaywallBody({
       </ul>
 
       {billing ? (
-        <div role="group" aria-label="Choose a plan" className="mt-4 flex gap-2">
-          {planButton("yearly", "Yearly", "Best value")}
-          {planButton("monthly", "Monthly")}
-        </div>
+        offers.length > 0 ? (
+          // Only the plans the store actually returned — a store that only
+          // has monthly must never leave yearly sitting there, selected and
+          // unbuyable (issue #17, "unavailable/partial offerings").
+          <div role="group" aria-label="Choose a plan" className="mt-4 flex gap-2">
+            {offers.some((o) => o.plan === "yearly") ? planButton("yearly", "Yearly", "Best value") : null}
+            {offers.some((o) => o.plan === "monthly") ? planButton("monthly", "Monthly") : null}
+          </div>
+        ) : (
+          <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">
+            {offersStatus === "loading"
+              ? "Loading prices…"
+              : "We could not load prices from the App Store."}
+          </p>
+        )
       ) : (
         <p className="mt-4 text-center text-sm font-semibold tabular-nums text-slate-900 dark:text-white">
           $2.99/mo · $19.99/yr
@@ -233,12 +307,14 @@ export function PaywallBody({
       <div className="mt-3 space-y-2">
         {billing ? (
           <>
-            <PrimaryButton onClick={buy} disabled={busy}>
-              {busy ? "One moment…" : "Start 3-day free trial"}
+            <PrimaryButton onClick={handleCta} disabled={busy || cta.ctaDisabled}>
+              {busy ? "One moment…" : cta.ctaLabel}
             </PrimaryButton>
-            <p className="text-center text-xs leading-snug text-slate-500 dark:text-slate-400">
-              3 days free, then {priceOf(plan)}/{PER[plan]}. Renews until you cancel in Settings.
-            </p>
+            {cta.finePrint ? (
+              <p className="text-center text-xs leading-snug text-slate-500 dark:text-slate-400">
+                {cta.finePrint}
+              </p>
+            ) : null}
           </>
         ) : trialUsed ? (
           <PrimaryButton onClick={subscribe} disabled={busy}>
