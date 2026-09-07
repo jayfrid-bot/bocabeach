@@ -1,8 +1,33 @@
 # Beach Day Plus — turning on real billing
 
-Status as of 2026-09-07. The goal: a real, chargeable subscription behind the
-paywall, using **RevenueCat** as the billing layer. Confirmed decisions:
-$2.99/mo · $19.99/yr · 3-day free trial.
+**Status 2026-09-07: WIRED END TO END, awaiting a sandbox purchase test and the
+review submission.** Everything below is done unless marked otherwise.
+
+- App Store Connect: group "Beach Day Plus" (22367204) with
+  `com.isitbeachday.app.plus.monthly` (6809597275, $2.99) and
+  `com.isitbeachday.app.plus.yearly` (6809597421, $19.99); 175 territories priced,
+  3-day free-trial intro offers in all 175, review screenshot attached — both
+  **Ready to Submit** (they go to review with the next app submission).
+- RevenueCat project "Is It Beach Day" (b46c13c9): App Store app `app8918e42531`
+  (bundle com.isitbeachday.app, In-App Purchase key BHL4L3AX5U shared with the
+  other apps), both products, entitlement `plus`, offering `default` with
+  `$rc_monthly` + `$rc_annual`, webhook "Is It Beach Day server" →
+  `/api/revenuecat/webhook` (verified live: real header 200, wrong 401),
+  v1 secret key "isitbeachday-server".
+- Worker secrets set: `REVENUECAT_WEBHOOK_SECRET`, `REVENUECAT_SECRET_KEY`.
+  Public key `NEXT_PUBLIC_REVENUECAT_IOS_KEY` in `.env.local` (baked at deploy).
+- iOS build **2026090701** on TestFlight carries the RevenueCat plugin.
+- Gotcha learned: RevenueCat's v1 API answers 403 to a SECRET key that sends an
+  `X-Platform` header. The server does not send one.
+
+Still to do: (1) sandbox purchase on the TestFlight build (trial → purchase →
+Restore) and confirm the D1 row flips; (2) the Account Holder must re-accept the
+updated Apple Developer Program License Agreement; (3) submit the app + both
+subscriptions for review.
+
+The original plan follows, kept for the reasoning. The goal: a real, chargeable
+subscription behind the paywall, using **RevenueCat** as the billing layer.
+Confirmed decisions: $2.99/mo · $19.99/yr · 3-day free trial.
 
 ## What's already true (don't redo)
 

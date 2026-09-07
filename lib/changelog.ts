@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-09-07",
+    title: "Beach Day Plus can now be bought in the iPhone app — monthly or yearly, with 3 days free",
+    details:
+      "The paywall in the app now offers two plans, $2.99 a month or $19.99 a year, and buys through the App Store like any subscription: 3 days free first, nothing charged today, cancel anytime in Settings. Restore brings a purchase back on a new phone. If you already have a code, it still works.",
+    tag: "new",
+  },
+  {
     date: "2026-09-05",
     title: "Two iPhone fixes: the header clears the status bar, and Alerts stops crying wolf",
     details:

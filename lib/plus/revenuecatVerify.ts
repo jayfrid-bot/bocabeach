@@ -40,11 +40,12 @@ export async function fetchPlusEntitlement(
 ): Promise<PlusEntitlement | null> {
   let res: Response;
   try {
+    // No X-Platform header here: RevenueCat answers 403 "Secret API keys
+    // should not be used in your app" to a secret key that sends one.
     res = await fetchImpl(RC_API + encodeURIComponent(appUserId), {
       headers: {
         Authorization: `Bearer ${secretKey}`,
         "Content-Type": "application/json",
-        "X-Platform": "ios",
       },
     });
   } catch {

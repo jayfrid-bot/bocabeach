@@ -40,5 +40,10 @@ export default defineConfig({
     url: `http://localhost:${PORT}`,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
+    // Store billing needs the native RevenueCat plugin, which no browser has.
+    // The suite exercises the no-billing paywall (server trial + code) on
+    // purpose, so the public key from .env.local must not leak into the dev
+    // server. Next never overrides an env var that is already set.
+    env: { ...process.env, NEXT_PUBLIC_REVENUECAT_IOS_KEY: "" },
   },
 });
