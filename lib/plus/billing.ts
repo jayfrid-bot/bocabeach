@@ -11,7 +11,7 @@
 // bridge the WebView injects, fall back to the bundled import. Same rule too:
 // the plugin proxy is never awaited itself, only its method calls.
 
-import { Purchases, type PurchasesPackage } from "@revenuecat/purchases-capacitor";
+import { INTRO_ELIGIBILITY_STATUS, Purchases, type PurchasesPackage } from "@revenuecat/purchases-capacitor";
 import { isNativePlatform } from "@/lib/push/native";
 
 /** Public SDK key (appl_…). Public by design; baked in at build time. */
@@ -29,6 +29,15 @@ export interface PlanOffer {
 
 export type PurchaseOutcome = "purchased" | "cancelled" | "failed";
 
+/**
+ * Whether the App Store account behind this device still owes a plan its
+ * trial (or intro price). "unknown" means the store could not say — RevenueCat
+ * needs subscription-group data it does not always have yet — and the paywall
+ * must treat that exactly like "ineligible": never promise a trial it cannot
+ * back up.
+ */
+export type Eligibility = "eligible" | "ineligible" | "unknown";
+
 /** True only inside the app AND with a key to talk to RevenueCat. */
 export function billingAvailable(): boolean {
   return isNativePlatform() && BILLING_KEY.length > 0;
@@ -45,24 +54,83 @@ function getPlugin(): typeof Purchases {
 
 let configuredFor: string | null = null;
 
-/** Configure once per device id. Resolves false when billing is not available. */
+/**
+ * Configure once per device id. Resolves false when billing is not available
+ * OR when the native `configure` call itself fails (missing plugin, a stale
+ * bridge, whatever) — configuration is the very first thing every other
+ * billing call does, so it has to be inside the guarded region rather than
+ * left to reject in each caller's own try/catch.
+ */
 export async function configureBilling(deviceId: string): Promise<boolean> {
   if (!billingAvailable() || !deviceId) return false;
   if (configuredFor === deviceId) return true;
-  const P = getPlugin();
-  await P.configure({ apiKey: BILLING_KEY, appUserID: deviceId });
-  configuredFor = deviceId;
-  return true;
+  try {
+    const P = getPlugin();
+    await P.configure({ apiKey: BILLING_KEY, appUserID: deviceId });
+    configuredFor = deviceId;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** The two plans, priced by the store. Empty when billing is off or unreachable. */
 export async function loadOffers(deviceId: string): Promise<PlanOffer[]> {
   if (!(await configureBilling(deviceId))) return [];
-  const P = getPlugin();
-  const { current } = await P.getOfferings();
-  const out: PlanOffer[] = [];
-  if (current?.monthly) out.push({ plan: "monthly", price: current.monthly.product.priceString, pkg: current.monthly });
-  if (current?.annual) out.push({ plan: "yearly", price: current.annual.product.priceString, pkg: current.annual });
+  try {
+    const P = getPlugin();
+    const { current } = await P.getOfferings();
+    const out: PlanOffer[] = [];
+    if (current?.monthly) out.push({ plan: "monthly", price: current.monthly.product.priceString, pkg: current.monthly });
+    if (current?.annual) out.push({ plan: "yearly", price: current.annual.product.priceString, pkg: current.annual });
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Which of the given plans this Apple account can still get a trial (or intro
+ * price) for. Checked against the App Store account, not this device, so a
+ * reinstall or a new phone on the same Apple ID gets the right answer instead
+ * of a fresh, wrong "eligible".
+ *
+ * Never throws: any failure — billing off, configure failed, the eligibility
+ * call itself rejected — leaves every plan "unknown", and the caller must
+ * treat "unknown" the same as "ineligible" (no promised trial).
+ */
+export async function trialEligibility(
+  deviceId: string,
+  offers: PlanOffer[],
+): Promise<Record<PlanChoice, Eligibility>> {
+  const out: Record<PlanChoice, Eligibility> = { monthly: "unknown", yearly: "unknown" };
+  if (!(await configureBilling(deviceId))) return out;
+  // A package whose product carries no introductory offer at all can never
+  // grant a trial, whatever the eligibility call says (or fails to say).
+  const withOffer = offers.filter((o) => o.pkg.product.introPrice != null);
+  for (const o of offers) {
+    if (!withOffer.includes(o)) out[o.plan] = "ineligible";
+  }
+  if (withOffer.length === 0) return out;
+  try {
+    const P = getPlugin();
+    const ids = withOffer.map((o) => o.pkg.product.identifier);
+    const result = await P.checkTrialOrIntroductoryPriceEligibility({ productIdentifiers: ids });
+    for (const o of withOffer) {
+      const status = result[o.pkg.product.identifier]?.status;
+      if (status === INTRO_ELIGIBILITY_STATUS.INTRO_ELIGIBILITY_STATUS_ELIGIBLE) {
+        out[o.plan] = "eligible";
+      } else if (
+        status === INTRO_ELIGIBILITY_STATUS.INTRO_ELIGIBILITY_STATUS_INELIGIBLE ||
+        status === INTRO_ELIGIBILITY_STATUS.INTRO_ELIGIBILITY_STATUS_NO_INTRO_OFFER_EXISTS
+      ) {
+        out[o.plan] = "ineligible";
+      }
+      // Any other status (including UNKNOWN) leaves the "unknown" default.
+    }
+  } catch {
+    // The withOffer plans stay "unknown" — set above, untouched here.
+  }
   return out;
 }
 

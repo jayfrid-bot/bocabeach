@@ -36,6 +36,20 @@ export function cacheFromDevice(device: DeviceRecord, now: number): PlusCache {
   return { plan: device.plan, until: device.entitlementUntil ?? null, checkedAt: now };
 }
 
+/**
+ * Whether a device record the server just returned is entitled RIGHT NOW.
+ *
+ * Restore and post-purchase sync must not declare success off `plan ===
+ * "plus"` alone: a trial or code can leave that label on the row long after
+ * `entitlementUntil` has passed, since expiry is enforced by timestamp, not by
+ * clearing the plan. Built on the same `isEntitled` the rest of the app reads,
+ * so there is exactly one definition of "entitled" on the phone.
+ */
+export function deviceEntitled(device: DeviceRecord | null, now: number): boolean {
+  if (!device) return false;
+  return isEntitled(cacheFromDevice(device, now), now);
+}
+
 /** "3 days left", "Ends today" — how long the current grant runs. */
 export function entitlementRemaining(cache: PlusCache | null, now: number): string | null {
   if (!isEntitled(cache, now)) return null;

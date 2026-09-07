@@ -281,10 +281,16 @@ export function usePlus(): PlusState {
     const id = getDeviceId();
     if (!id) return { ok: false, device: null, error: "network", status: 0 };
     setLoading(true);
-    const res = await plusApi.syncPurchase(id);
-    setLoading(false);
-    if (res.ok && res.device) applyDevice(res.device);
-    return res;
+    try {
+      const res = await plusApi.syncPurchase(id);
+      if (res.ok && res.device) applyDevice(res.device);
+      return res;
+    } finally {
+      // A `finally` here, not a plain call after the await: plusApi never
+      // rejects, but restoreBilling/purchasePlan callers rely on this same
+      // shape, and a stray throw must not leave loading stuck true (#16).
+      setLoading(false);
+    }
   }, [applyDevice]);
 
   const restore = useCallback(async (): Promise<PlusResult> => {
@@ -292,21 +298,24 @@ export function usePlus(): PlusState {
     if (!id) return { ok: false, device: null, error: "network", status: 0 };
     lastRefreshRef.current = Date.now();
     setLoading(true);
-    // With billing on, ask the store first: a reinstall or a new phone on the
-    // same Apple ID has a purchase the server has never been told about.
-    if (billingAvailable() && (await restoreBilling(id))) {
-      const synced = await plusApi.syncPurchase(id);
-      if (synced.ok && synced.device) {
-        setLoading(false);
-        applyDevice(synced.device, { adoptProfile: true });
-        return synced;
+    try {
+      // With billing on, ask the store first: a reinstall or a new phone on
+      // the same Apple ID has a purchase the server has never been told
+      // about. restoreBilling itself never throws (lib/plus/billing.ts).
+      if (billingAvailable() && (await restoreBilling(id))) {
+        const synced = await plusApi.syncPurchase(id);
+        if (synced.ok && synced.device) {
+          applyDevice(synced.device, { adoptProfile: true });
+          return synced;
+        }
       }
+      const res = await plusApi.getDevice(id);
+      // Explicit Restore: the server's copy wins, profile included.
+      if (res.ok && res.device) applyDevice(res.device, { adoptProfile: true });
+      return res;
+    } finally {
+      setLoading(false);
     }
-    const res = await plusApi.getDevice(id);
-    setLoading(false);
-    // Explicit Restore: the server's copy wins, profile included.
-    if (res.ok && res.device) applyDevice(res.device, { adoptProfile: true });
-    return res;
   }, [applyDevice]);
 
   const savePreview = useCallback((record: PreviewRecord) => {

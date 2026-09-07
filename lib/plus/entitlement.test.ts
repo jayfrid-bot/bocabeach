@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CACHE_MAX_AGE_MS,
   cacheFromDevice,
+  deviceEntitled,
   entitlementRemaining,
   isEntitled,
   shouldRefresh,
@@ -60,6 +61,41 @@ describe("isEntitled", () => {
 
   it("does not need a fresh cache — an expiry date is its own limit", () => {
     expect(isEntitled(cache({ checkedAt: NOW - 30 * DAY }), NOW)).toBe(true);
+  });
+});
+
+describe("deviceEntitled", () => {
+  // Issue #12: Restore and purchase-sync must declare success off the same
+  // "entitled right now" rule as the rest of the app — never off the plan
+  // label alone, since expiry is a timestamp and does not clear the label.
+
+  it("is false for null (no device came back)", () => {
+    expect(deviceEntitled(null, NOW)).toBe(false);
+  });
+
+  it("is false for an expired trial, even though plan still reads plus", () => {
+    const trial = device({ plan: "plus", entitlementUntil: NOW - 1000 });
+    expect(deviceEntitled(trial, NOW)).toBe(false);
+  });
+
+  it("is false for an expired code redemption", () => {
+    const code = device({ plan: "plus", entitlementUntil: NOW - DAY });
+    expect(deviceEntitled(code, NOW)).toBe(false);
+  });
+
+  it("is true for a subscription that has not run out", () => {
+    const sub = device({ plan: "plus", entitlementUntil: NOW + 30 * DAY });
+    expect(deviceEntitled(sub, NOW)).toBe(true);
+  });
+
+  it("is true for a valid independent grant with a future expiry", () => {
+    const grant = device({ plan: "plus", entitlementUntil: NOW + DAY });
+    expect(deviceEntitled(grant, NOW)).toBe(true);
+  });
+
+  it("is false on a free plan regardless of any stale expiry date", () => {
+    const free = device({ plan: "free", entitlementUntil: NOW + DAY });
+    expect(deviceEntitled(free, NOW)).toBe(false);
   });
 });
 

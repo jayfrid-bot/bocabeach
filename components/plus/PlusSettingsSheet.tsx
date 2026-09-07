@@ -16,7 +16,7 @@ import type { AlertKey } from "@/lib/db/types";
 import { ALERT_GROUPS, ALERT_LABELS, FACTOR_LABELS, FACTOR_ORDER, MULTIPLIER_STOPS } from "@/lib/plus/labels";
 import { plusErrorMessage } from "@/lib/plus/api";
 import type { PlusState } from "@/lib/plus/client";
-import { entitlementRemaining } from "@/lib/plus/entitlement";
+import { deviceEntitled, entitlementRemaining } from "@/lib/plus/entitlement";
 import { getHomeBeach, setHomeBeach } from "@/lib/homeBeach";
 import type { LocationPublic } from "@/lib/types";
 import { Chip, ErrorLine, PrimaryButton, SecondaryButton, Sheet } from "@/components/plus/Sheet";
@@ -134,11 +134,16 @@ export function PlusSettingsSheet({
     setBusy(true);
     setError(null);
     setNote(null);
-    const res = await plus.restore();
-    setBusy(false);
-    if (res.ok && res.device?.plan === "plus") setNote("Restored.");
-    else if (res.ok) setNote("Nothing to restore on this device yet.");
-    else setError(plusErrorMessage(res.error));
+    try {
+      const res = await plus.restore();
+      // Entitled NOW, not merely "plan is plus" (issue #12): an expired
+      // trial or code row must not read back as a successful restore.
+      if (res.ok && deviceEntitled(res.device, Date.now())) setNote("Restored.");
+      else if (res.ok) setNote("Nothing to restore on this device yet.");
+      else setError(plusErrorMessage(res.error));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const opts = resolveScoring(plus.profile);
