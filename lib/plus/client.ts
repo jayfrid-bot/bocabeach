@@ -121,6 +121,7 @@ export function usePlus(): PlusState {
       setCache(next);
       store.writeCache(next);
       setDevice(rec);
+      setDeviceLoaded(true);
       setNow(at);
       // A routine refresh must never overwrite an edit made on this phone, so
       // the server's profile is only adopted when there is nothing local (a
@@ -164,6 +165,13 @@ export function usePlus(): PlusState {
   // card that offers to start a window that may already be running.
   useEffect(() => {
     if (!ready) return;
+    // A phone with no cache has never talked to the server, so there is no row
+    // to load and nothing to wait for. Asking anyway would just be a 404 on
+    // every first launch (which browsers log as an error).
+    if (!store.readCache()) {
+      setDeviceLoaded(true);
+      return;
+    }
     void refresh().finally(() => setDeviceLoaded(true));
   }, [ready, refresh]);
 
