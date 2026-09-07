@@ -252,7 +252,7 @@ Privacy page rewrite (it currently promises location is never read and never sen
 | Personalized morning digest, score-excellent | LIVE | app |
 | 3-day free trial | LIVE, server-granted | app |
 | Unlock code (testers, owner) | LIVE | app |
-| **Paid subscription ($2.99/mo · $19.99/yr)** | **NOT BUILT** — no StoreKit / Play Billing / RevenueCat; "Subscribe" after the trial says billing is being connected | — |
+| **Paid subscription ($2.99/mo · $19.99/yr)** | **IN PROGRESS** — Paid Apps agreement already active (Landfall proves it); RevenueCat chosen; entitlement webhook (`/api/revenuecat/webhook`) built + tested. Missing: ASC subscription products, a RevenueCat project + keys, and the SDK wired in. See docs/BILLING_SETUP.md | app |
 | Android | app is on Play internal testing only; Plus untested there | — |
 
 **What "finish the rollout" means:** wire real billing (RevenueCat recommended; needs the Paid Apps agreement in App Store Connect), then confirm the trial → paywall → purchase → restore path on a real device, and the push delivery for an armed Beach Mode alert. Until billing exists, Plus is a working free trial with a dead end after three days.
