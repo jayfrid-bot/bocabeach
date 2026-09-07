@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createMemoryStore } from "@/lib/db/memoryStore";
 import { legacyDeviceId } from "@/lib/db/legacy";
 import { entitled, defaultPrefs, toRecord, newDeviceRow, applyPatch } from "@/lib/db/types";
@@ -134,8 +134,22 @@ describe("device CRUD", () => {
 describe("presence + listArmed", () => {
   const now = 1_700_000_000_000;
 
+  // Plan/entitlement are now derived at write time against the real clock
+  // (#4) — pin it to this suite's fixed `now` so "until = now - 1" still
+  // means "already lapsed" and "now + HOUR" still means "live", regardless
+  // of what day this actually runs.
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   async function armed(id: string, plan: "free" | "plus", until: number, armedUntil: number) {
-    await store.upsertDevice(id, { plan, entitlementUntil: until });
+    // plan/entitlementUntil aren't patchable — grant (or don't) through
+    // codeUntil and let the store derive plan from it.
+    if (plan === "plus") await store.upsertDevice(id, { codeUntil: until });
     await store.setPresence(id, {
       slug: "boca-raton",
       lat: 26.35,

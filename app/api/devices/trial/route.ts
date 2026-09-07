@@ -1,6 +1,12 @@
 // POST /api/devices/trial — start the one free trial this device gets.
-// Body { deviceId }. Grants Plus for TRIAL_DAYS and flips trial_used, so a
-// second call answers 409 { ok: false, error: "trial-used" }.
+// Body { deviceId }. Grants Plus for TRIAL_DAYS on the dedicated `trialUntil`
+// grant (#4) and flips trial_used, so a second call answers 409
+// { ok: false, error: "trial-used" }.
+//
+// `store.claimTrial` does the "only if not already used" check and the write
+// as ONE atomic conditional update (#3) — two requests racing for the same
+// device's trial can't both win, and trial_used can never be reset by a
+// later, unrelated write (it isn't part of the general upsert patch).
 //
 // App only: Plus is sold and delivered inside the phone app (billing, location
 // and push all live there), so a request without the app's User-Agent tag gets
@@ -21,16 +27,10 @@ export async function POST(req: Request): Promise<Response> {
   const deviceId = body.deviceId;
   try {
     const store = await getStore();
-    const existing = await store.getDevice(deviceId);
-    if (existing?.trialUsed) return fail("trial-used", 409);
     const until = Date.now() + TRIAL_DAYS * 24 * 3600 * 1000;
-    return okDevice(
-      await store.upsertDevice(deviceId, {
-        plan: "plus",
-        entitlementUntil: until,
-        trialUsed: true,
-      }),
-    );
+    const result = await store.claimTrial(deviceId, until);
+    if (result === "trial-used") return fail("trial-used", 409);
+    return okDevice(result);
   } catch (e) {
     console.error("devices/trial: failed", e);
     return fail("store-unavailable", 500);

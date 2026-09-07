@@ -333,10 +333,7 @@ describe("POST /api/push/run", () => {
   /** Every alert is Plus (docs/PLUS_BUILD_SPEC.md), so a test device is Plus. */
   async function grantPlus(id: string): Promise<void> {
     const store = await getStore();
-    await store.upsertDevice(id, {
-      plan: "plus",
-      entitlementUntil: Date.now() + 30 * 24 * 3600 * 1000,
-    });
+    await store.upsertDevice(id, { codeUntil: Date.now() + 30 * 24 * 3600 * 1000 });
   }
 
   async function seedDevice(): Promise<void> {
@@ -420,7 +417,7 @@ describe("POST /api/push/run", () => {
   it("treats a lapsed subscription as free", async () => {
     await seedDevice();
     const store = await getStore();
-    await store.upsertDevice(DEV, { plan: "plus", entitlementUntil: Date.now() - 1000 });
+    await store.upsertDevice(DEV, { codeUntil: Date.now() - 1000 });
     const body = (await (await run("?force=morning")).json()) as Record<string, number>;
     expect(body.sent).toBe(0);
     expect(ctl.fcmSends).toEqual([]);
@@ -488,16 +485,60 @@ describe("POST /api/push/run", () => {
     expect(body.sent).toBe(1);
   });
 
-  it("prunes a dead token from D1 and KV", async () => {
+  it("prunes a dead token, but keeps the device's entitlement, profile and trial history (#5)", async () => {
     await seedDevice();
+    const store = await getStore();
+    await store.upsertDevice(DEV, { trialUsed: true, profile: { profiles: ["swim"], heat: "hot", crowds: "low" } });
     ctl.sendResult = { ok: false, dead: true };
     const body = (await (await run("?force=morning")).json()) as Record<string, number>;
     expect(body.pruned).toBe(1);
     expect(body.sent).toBe(0);
 
+    // A dead token used to delete the whole row — wiping a paid grant, the
+    // saved profile and trial-used history along with it. Only the token
+    // itself goes now; everything else survives.
+    const device = await store.getDevice(DEV);
+    expect(device).not.toBeNull();
+    expect(device?.plan).toBe("plus");
+    expect(device?.trialUsed).toBe(true);
+    expect(device?.profile).toEqual({ profiles: ["swim"], heat: "hot", crowds: "low" });
+    expect(await store.getPushToken(DEV)).toBeNull();
+    expect(await store.listPushable()).toHaveLength(0); // no token → not pushable
+    expect(ctl.removed).toContain(FCM_TOKEN); // the KV record still goes, so it can't resurrect the row
+  });
+
+  it("still deletes a legacy-only row on a dead token — it is nothing but a push subscription", async () => {
+    await registerPost(
+      post("https://x/api/push/register-native", {
+        slug: "boca-raton",
+        token: FCM_TOKEN,
+        platform: "android",
+      }),
+    );
+    await grantPlus(legacyDeviceId(FCM_TOKEN));
+    ctl.sendResult = { ok: false, dead: true };
+    const body = (await (await run("?force=morning")).json()) as Record<string, number>;
+    expect(body.pruned).toBe(1);
+
     const store = await getStore();
-    expect(await store.getDevice(DEV)).toBeNull();
-    expect(ctl.removed).toContain(FCM_TOKEN);
+    expect(await store.getDevice(legacyDeviceId(FCM_TOKEN))).toBeNull();
+  });
+
+  it("a dead-token prune never clears a token the device already replaced (#5)", async () => {
+    await seedDevice();
+    const store = await getStore();
+    // The phone re-registers with a fresh token before this run's send even
+    // fails on the old one — simulated by swapping the stored token out from
+    // under the in-flight push.
+    ctl.sendResult = { ok: false, dead: true };
+    const freshToken = "z".repeat(80);
+    const originalPrune = store.clearPushToken.bind(store);
+    store.clearPushToken = async (id, expected) => {
+      await store.upsertDevice(id, { pushToken: freshToken });
+      await originalPrune(id, expected); // still fires with the now-stale expected token
+    };
+    await run("?force=morning");
+    expect(await store.getPushToken(DEV)).toBe(freshToken); // the new token survives
   });
 
   // --- conditionsFetched: only touch beaches someone can actually be pushed on -

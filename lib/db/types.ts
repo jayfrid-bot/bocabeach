@@ -84,8 +84,18 @@ export interface DeviceRow {
   home_slug: string | null;
   profile_json: string | null;
   prefs_json: string | null;
+  /** `plan` and `entitlement_until` are DERIVED — never written directly.
+   *  They are recomputed from the three grant columns below on every write
+   *  (migrations/0003_grant_sources.sql), so they can never drift out of sync
+   *  with what actually grants access. */
   plan: string;
   entitlement_until: number | null;
+  /** Plus bought on the App/Play Store, mirrored from RevenueCat. */
+  store_until: number | null;
+  /** Plus granted by redeeming a code (`/api/devices/unlock`). */
+  code_until: number | null;
+  /** The one free trial (`/api/devices/trial`). */
+  trial_until: number | null;
   trial_used: number;
   preview_seen: number;
   sent_json: string | null;
@@ -106,6 +116,15 @@ export interface PresenceRow {
   updated_at: number;
 }
 
+/** The three independent sources Plus access can come from (#4). A device
+ *  keeps whichever grants it has ever earned; none of them can shorten
+ *  another. `null` means that source has never granted anything. */
+export interface DeviceGrants {
+  storeUntil: number | null;
+  codeUntil: number | null;
+  trialUntil: number | null;
+}
+
 /** The API shape: what every Plus route returns as `device`. */
 export interface DeviceRecord {
   id: string;
@@ -114,8 +133,11 @@ export interface DeviceRecord {
   homeSlug: string | null;
   profile: StoredProfile | null;
   prefs: AlertPrefs;
+  /** Derived: "plus" iff any grant below is still in the future. */
   plan: Plan;
+  /** Derived: the latest (max) of the three grants below. */
   entitlementUntil: number | null;
+  grants: DeviceGrants;
   trialUsed: boolean;
   previewSeen: boolean;
   presence: { slug: string; armedUntil: number; source: PresenceSource } | null;
@@ -125,6 +147,12 @@ export interface DeviceRecord {
  * Fields an upsert may change. Anything left `undefined` is untouched; `null`
  * clears a nullable column. `prefs` is MERGED over the stored prefs (so a client
  * can flip one toggle); everything else replaces.
+ *
+ * `plan` and `entitlementUntil` are NOT patchable — they are derived from
+ * `storeUntil`/`codeUntil`/`trialUntil` on every write (#4), so a caller can
+ * never accidentally shorten access by writing the derived field directly.
+ * Grant a trial through `DeviceStore.claimTrial`, not this patch — it needs
+ * the atomic "only if unused" guard from #3.
  */
 export interface DevicePatch {
   platform?: Platform | null;
@@ -133,8 +161,9 @@ export interface DevicePatch {
   homeSlug?: string | null;
   profile?: StoredProfile | null;
   prefs?: Partial<AlertPrefs>;
-  plan?: Plan;
-  entitlementUntil?: number | null;
+  storeUntil?: number | null;
+  codeUntil?: number | null;
+  trialUntil?: number | null;
   trialUsed?: boolean;
   previewSeen?: boolean;
   sent?: SentState;
@@ -248,6 +277,9 @@ export function newDeviceRow(id: string, now: number): DeviceRow {
     prefs_json: null,
     plan: "free",
     entitlement_until: null,
+    store_until: null,
+    code_until: null,
+    trial_until: null,
     trial_used: 0,
     preview_seen: 0,
     sent_json: null,
@@ -257,8 +289,25 @@ export function newDeviceRow(id: string, now: number): DeviceRow {
 }
 
 /**
- * Apply a patch to a row, returning a NEW row. Shared by both backends so
- * "only provided fields change" (and the prefs merge) can't drift between them.
+ * The single rule for "what does this device's access add up to" (#4): the
+ * LATEST of the three grants, never their sum and never whichever was written
+ * most recently. A shorter grant arriving later (a 30-day Restore, say) can
+ * never shorten a longer one already on file — it just stops being the max.
+ * Both backends call this so they can't drift: d1Store recomputes the same
+ * formula in SQL (so it stays correct under a concurrent write), memoryStore
+ * calls this function directly.
+ */
+export function deriveEntitlement(grants: DeviceGrants, now: number): { plan: Plan; until: number | null } {
+  const until = Math.max(grants.storeUntil ?? -Infinity, grants.codeUntil ?? -Infinity, grants.trialUntil ?? -Infinity);
+  if (!Number.isFinite(until)) return { plan: "free", until: null };
+  return { plan: until > now ? "plus" : "free", until };
+}
+
+/**
+ * Apply a patch to a row, returning a NEW row. Used by the memory backend
+ * (and by legacy-import on both backends, which only ever creates a fresh
+ * row). d1Store does NOT use this for a live upsert — it needs the patch
+ * applied as one atomic SQL statement (#3), not read-then-write in JS.
  */
 export function applyPatch(row: DeviceRow, patch: DevicePatch, now: number): DeviceRow {
   const next: DeviceRow = { ...row, updated_at: now };
@@ -273,8 +322,9 @@ export function applyPatch(row: DeviceRow, patch: DevicePatch, now: number): Dev
     // Merge, so a client can flip one toggle without resending the whole set.
     next.prefs_json = JSON.stringify({ ...parsePrefs(row.prefs_json), ...patch.prefs });
   }
-  if (patch.plan !== undefined) next.plan = patch.plan;
-  if (patch.entitlementUntil !== undefined) next.entitlement_until = patch.entitlementUntil;
+  if (patch.storeUntil !== undefined) next.store_until = patch.storeUntil;
+  if (patch.codeUntil !== undefined) next.code_until = patch.codeUntil;
+  if (patch.trialUntil !== undefined) next.trial_until = patch.trialUntil;
   if (patch.trialUsed !== undefined) next.trial_used = patch.trialUsed ? 1 : 0;
   if (patch.previewSeen !== undefined) next.preview_seen = patch.previewSeen ? 1 : 0;
   if (patch.sent !== undefined) {
@@ -283,6 +333,14 @@ export function applyPatch(row: DeviceRow, patch: DevicePatch, now: number): Dev
     );
     next.sent_json = keys.length ? JSON.stringify(patch.sent) : null;
   }
+  // plan/entitlement_until are derived, always, from whatever the three grant
+  // columns now hold — never taken from the patch.
+  const derived = deriveEntitlement(
+    { storeUntil: next.store_until, codeUntil: next.code_until, trialUntil: next.trial_until },
+    now,
+  );
+  next.plan = derived.plan;
+  next.entitlement_until = derived.until;
   return next;
 }
 
@@ -297,6 +355,11 @@ export function toRecord(row: DeviceRow, presence?: PresenceRow | null): DeviceR
     prefs: parsePrefs(row.prefs_json),
     plan: row.plan === "plus" ? "plus" : "free",
     entitlementUntil: typeof row.entitlement_until === "number" ? row.entitlement_until : null,
+    grants: {
+      storeUntil: typeof row.store_until === "number" ? row.store_until : null,
+      codeUntil: typeof row.code_until === "number" ? row.code_until : null,
+      trialUntil: typeof row.trial_until === "number" ? row.trial_until : null,
+    },
     trialUsed: !!row.trial_used,
     previewSeen: !!row.preview_seen,
     presence: presence

@@ -107,14 +107,15 @@ flowchart TD
 
   APPSTORE[(App Store<br/>monthly · yearly, 3-day trial)] -->|"purchase via RevenueCat SDK<br/>appUserID = deviceId"| BUY
   BUY -->|"GET /v1/subscribers/{deviceId}<br/>secret key"| RC[(RevenueCat)]
-  RC -->|"webhook: purchase · renewal · expiration<br/>Authorization = REVENUECAT_WEBHOOK_SECRET"| RCHOOK["/api/revenuecat/webhook"]
+  RC -->|"webhook: any event with a mappable device id<br/>Authorization = REVENUECAT_WEBHOOK_SECRET"| RCHOOK["/api/revenuecat/webhook"]
+  RCHOOK -->|"reconcile: GET /v1/subscribers/{deviceId}<br/>same secret key — never trusts the event's own meaning"| RC
 
   DEV --> STORE[lib/db/store.ts<br/>one DeviceStore interface]
   PRES --> STORE
-  TRIAL --> STORE
-  UNLOCK --> STORE
-  BUY -->|plan + entitlementUntil, up only| STORE
-  RCHOOK -->|plan + entitlementUntil| STORE
+  TRIAL -->|claimTrial: trialUntil, once, atomically| STORE
+  UNLOCK -->|codeUntil| STORE
+  BUY -->|storeUntil, up only| STORE
+  RCHOOK -->|storeUntil, from RC's live answer| STORE
   REG --> STORE
 
   STORE -->|production| D1[(D1: isitbeachday-plus<br/>devices · presence · alert_log)]
@@ -139,6 +140,27 @@ flowchart TD
   SEND -->|FCM| FCM[(Firebase Cloud Messaging)]
 ```
 
+**Grant-source model.** `devices` keeps three independent expiries —
+`store_until` (a purchase, mirrored from RevenueCat), `code_until` (an
+unlock code), `trial_until` (the free trial) — instead of one shared
+`plan`/`entitlement_until`. Effective access is the LATEST of the three, and
+`plan`/`entitlement_until` are recomputed from them on every write, so a
+route can only ever move ITS OWN grant, never overwrite someone else's: a
+30-day Restore can't shorten a 365-day code, and a store refund clears only
+`store_until`, leaving a code or trial grant standing. Every write goes
+through one atomic SQL statement (`d1Store.ts`) so a concurrent purchase and
+a concurrent preference save can never clobber each other, and the trial's
+"grant it exactly once" check is a single conditional `UPDATE … WHERE
+trial_used = 0` rather than a separate read then write.
+
+**Webhook reconciliation.** The webhook does not apply an event's own
+meaning (a RENEWAL retried late, after a newer EXPIRATION, used to be able to
+silently restore access RevenueCat had already ended). Instead, any event
+naming one of our devices makes the route ask RevenueCat's live subscriber
+record "is `plus` active right now, and until when" and writes that answer
+onto `store_until`. Delivery order and repeated deliveries stop mattering —
+the write reflects the truth at request time either way.
+
 **Note on KV namespaces:** `PUSH_KV` (legacy push subscriptions) and
 `NEXT_INC_CACHE_KV` (the OpenNext page/data cache) are bound to the **same
 underlying KV namespace id** in `wrangler.jsonc` — OpenNext prefixes its keys,
@@ -149,7 +171,7 @@ Worth splitting if either one grows enough to matter.
 
 | Source | Used for |
 |---|---|
-| RevenueCat | Beach Day Plus billing: the app buys through its SDK; the server confirms with its REST API (`/api/devices/purchase`) and hears renewals/expirations on `/api/revenuecat/webhook` (see docs/BILLING_SETUP.md) |
+| RevenueCat | Beach Day Plus billing: the app buys through its SDK; the server confirms with its REST API (`/api/devices/purchase`), and `/api/revenuecat/webhook` re-asks that same REST API for the live subscriber state on any renewal/expiration/pause/cancellation ping rather than trusting the event itself (see docs/BILLING_SETUP.md) |
 | Open-Meteo | Forecast, hourly forecast, nowcast, minutely rain (Plus alert fallback) |
 | National Weather Service (NWS) | Alerts, forecast |
 | NOAA CO-OPS | Tide predictions and real water level |

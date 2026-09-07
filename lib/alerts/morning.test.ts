@@ -39,6 +39,7 @@ function device(over: Partial<DeviceRecord> = {}): DeviceRecord {
     prefs: defaultPrefs(),
     plan: "plus",
     entitlementUntil: NOW + 30 * 24 * 3600 * 1000,
+    grants: { storeUntil: null, codeUntil: NOW + 30 * 24 * 3600 * 1000, trialUntil: null },
     trialUsed: false,
     previewSeen: true,
     presence: null,

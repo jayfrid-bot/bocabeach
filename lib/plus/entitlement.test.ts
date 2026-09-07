@@ -27,6 +27,7 @@ function device(over: Partial<DeviceRecord> = {}): DeviceRecord {
     prefs: defaultPrefs(),
     plan: "free",
     entitlementUntil: null,
+    grants: { storeUntil: null, codeUntil: null, trialUntil: null },
     trialUsed: false,
     previewSeen: false,
     presence: null,

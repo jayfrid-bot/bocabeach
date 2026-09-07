@@ -37,8 +37,11 @@ Confirmed decisions: $2.99/mo · $19.99/yr · 3-day free trial.
   No banking/tax work is needed.
 - The paywall, the 3-day server trial, the unlock code, and entitlement gating
   (`entitled()` → `plan === "plus" && entitlementUntil > now`) all work today.
-- The webhook that syncs a RevenueCat purchase onto the D1 device row is built:
-  `POST /api/revenuecat/webhook` (+ `lib/plus/revenuecat.ts`, tested).
+- The webhook that syncs RevenueCat onto the D1 device row is built:
+  `POST /api/revenuecat/webhook` (+ `lib/plus/revenuecat.ts`, tested). It
+  doesn't trust the event's own meaning — any event naming a known device
+  makes it re-ask RevenueCat's live subscriber record and write that, so an
+  out-of-order or retried delivery can't undo a newer renewal or revocation.
 
 ## What's missing
 

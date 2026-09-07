@@ -182,7 +182,11 @@ describe("POST /api/devices/trial", () => {
   it("refuses a second trial even after the first expired", async () => {
     await trialPost(post("https://x/api/devices/trial", { deviceId: DEV }));
     const store = await getStore();
-    await store.upsertDevice(DEV, { plan: "free", entitlementUntil: null });
+    // Move the clock forward on the trial grant itself (not a raw plan/
+    // entitlementUntil override — those aren't patchable fields anymore).
+    // trial_used stays 1 regardless, which is the actual invariant #4 cares
+    // about: the trial is spent forever, not just "while it's still running".
+    await store.upsertDevice(DEV, { trialUntil: Date.now() - 1000 });
     const res = await trialPost(post("https://x/api/devices/trial", { deviceId: DEV }));
     expect(res.status).toBe(409);
   });
@@ -222,7 +226,7 @@ describe("POST /api/devices/unlock", () => {
 describe("/api/presence", () => {
   async function makePlus(): Promise<void> {
     const store = await getStore();
-    await store.upsertDevice(DEV, { plan: "plus", entitlementUntil: Date.now() + 30 * 24 * HOUR });
+    await store.upsertDevice(DEV, { codeUntil: Date.now() + 30 * 24 * HOUR });
   }
 
   const fix = {

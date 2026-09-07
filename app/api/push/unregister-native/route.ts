@@ -27,9 +27,11 @@ export async function POST(req: Request): Promise<Response> {
     if (device) {
       // A legacy row is only ever a push subscription, so it goes entirely. A
       // real device keeps its record (profile, Plus) and just stops being a
-      // push destination.
+      // push destination — cleared conditionally on the token still matching,
+      // same guard `prune()` uses (#5), in case a fresh registration lands
+      // between the lookup above and this write.
       if (isLegacyId(device.id)) await store.deleteDevice(device.id);
-      else await store.upsertDevice(device.id, { pushToken: null });
+      else await store.clearPushToken(device.id, token);
     }
     await removeNativeSub(token).catch(() => {});
     return Response.json({ ok: true });

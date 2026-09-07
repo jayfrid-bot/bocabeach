@@ -29,7 +29,7 @@ import { getLocation } from "@/config/locations";
 import { computeSunTimes } from "@/lib/sources/sun";
 import type { Location } from "@/lib/types";
 import { listNativeSubs, removeNativeSub } from "@/lib/push/nativeStore";
-import { getStore, type DeviceStore, type PushableDevice } from "@/lib/db/store";
+import { getStore, isLegacyId, type DeviceStore, type PushableDevice } from "@/lib/db/store";
 import { coarsePrefs, parseMode } from "@/lib/db/plus";
 import { entitled, type SentState } from "@/lib/db/types";
 import { decideNotifications, MORNING_HOUR, type PushDecision, type PushSummary } from "@/lib/push/notify";
@@ -148,11 +148,22 @@ async function deliverMorning(
 }
 
 /**
- * Drop a dead token. The legacy KV record goes too — it is still the import
- * source, so leaving it would re-create the device on the next run.
+ * Drop a dead token. A dead token used to delete the whole device row — which
+ * meant a failed delivery destroyed the person's Plus access, profile and
+ * trial history, and the next re-registration started them over as a fresh
+ * free device (#5). A legacy row is nothing BUT a push subscription, so it
+ * still goes entirely — it is also still the KV import source, and leaving it
+ * would re-create the device on the next run. A real device just loses the
+ * token: `clearPushToken` only clears it if it still matches the one that
+ * bounced, so a phone that already re-registered a fresh token in the
+ * meantime keeps it.
  */
 async function prune(store: DeviceStore, sub: PushableDevice): Promise<void> {
-  await store.deleteDevice(sub.device.id);
+  if (isLegacyId(sub.device.id)) {
+    await store.deleteDevice(sub.device.id);
+  } else {
+    await store.clearPushToken(sub.device.id, sub.token);
+  }
   await removeNativeSub(sub.token).catch(() => {});
 }
 

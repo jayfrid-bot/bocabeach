@@ -1,9 +1,12 @@
 // POST /api/devices/unlock — redeem a Plus code. Body { deviceId, code }.
 //
-// One shared code (PLUS_UNLOCK_CODE, set with `wrangler secret`) grants a year.
-// It is how friends, testers and the owner get Plus before billing exists. A
-// wrong code — or no code configured — answers 403 { ok: false, error: "bad-code" },
-// so the endpoint never reveals whether the feature is switched on.
+// One shared code (PLUS_UNLOCK_CODE, set with `wrangler secret`) grants a year
+// on the dedicated `codeUntil` grant (#4) — independent of any store purchase
+// or trial, so redeeming a code can never shorten (or be shortened by) either
+// of those. It is how friends, testers and the owner get Plus before billing
+// exists. A wrong code — or no code configured — answers 403
+// { ok: false, error: "bad-code" }, so the endpoint never reveals whether the
+// feature is switched on.
 
 import { badRequest, fail, isDeviceId, okDevice, readBody, secretEqual } from "@/lib/db/api";
 import { getStore } from "@/lib/db/store";
@@ -27,9 +30,7 @@ export async function POST(req: Request): Promise<Response> {
   try {
     const store = await getStore();
     const until = Date.now() + UNLOCK_DAYS * 24 * 3600 * 1000;
-    return okDevice(
-      await store.upsertDevice(body.deviceId, { plan: "plus", entitlementUntil: until }),
-    );
+    return okDevice(await store.upsertDevice(body.deviceId, { codeUntil: until }));
   } catch (e) {
     console.error("devices/unlock: failed", e);
     return fail("store-unavailable", 500);

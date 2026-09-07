@@ -19,13 +19,14 @@ Read `docs/PREMIUM_ROADMAP.md` first for intent. This file is the contract every
 - `deviceId`: UUID v4 minted once on the client, localStorage key `bd:device-id` (`lib/deviceId.ts`, Agent C). Sent as the JSON body field `deviceId` on every Plus API call. No auth, same trust model as the push token today.
 - Legacy KV push subscriptions (keyed by push token) are imported into D1 as `id = "legacy:" + base64url(token)` on the first run-route execution. When a client later registers push with a `deviceId` and the same token, the legacy row is deleted and its prefs/sent state moves to the new row.
 
-## D1 — binding `DB`, database `isitbeachday-plus`, `migrations/0001_init.sql`
+## D1 — binding `DB`, database `isitbeachday-plus`, `migrations/0001_init.sql` + `0003_grant_sources.sql`
 
 ```sql
 CREATE TABLE devices (
   id TEXT PRIMARY KEY, platform TEXT, push_token TEXT, tz TEXT, home_slug TEXT,
   profile_json TEXT, prefs_json TEXT,
-  plan TEXT NOT NULL DEFAULT 'free', entitlement_until INTEGER,
+  plan TEXT NOT NULL DEFAULT 'free', entitlement_until INTEGER,       -- DERIVED, see below
+  store_until INTEGER, code_until INTEGER, trial_until INTEGER,       -- the three grant sources
   trial_used INTEGER NOT NULL DEFAULT 0, preview_seen INTEGER NOT NULL DEFAULT 0,
   sent_json TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
@@ -41,9 +42,19 @@ CREATE TABLE alert_log (
 );
 ```
 
-`entitled(device, now) = plan === 'plus' && entitlement_until > now`.
+**Grant sources (added by `migrations/0003_grant_sources.sql`).** Plus can come
+from a store purchase, an unlock code, or the trial — three independent
+nullable epoch-ms columns, none of which can shorten another. Effective
+access is `MAX(store_until, code_until, trial_until)`; `plan` and
+`entitlement_until` are DERIVED from that max on every write (never written
+directly) and kept for every existing reader: `entitled(device, now) = plan
+=== 'plus' && entitlement_until > now` still holds exactly as before. A route
+only ever patches the ONE grant column it owns — `/api/devices/purchase` →
+`storeUntil`, `/api/devices/unlock` → `codeUntil`, `/api/devices/trial` →
+`trialUntil` via `claimTrial` — so it can only move access up for its own
+source, never take away what another source granted.
 
-Store (`lib/db/store.ts`, Agent B): one `DeviceStore` interface, two backends — **D1** (via `getCloudflareContext().env.DB`) and **memory/file** (tests, and `next dev` without bindings; persist to `.plus-store.json` like the old KV file fallback). Methods: `getDevice(id)`, `upsertDevice(id, patch)`, `findByPushToken(token)`, `deleteDevice(id)`, `listDevices()`, `listArmed(nowMs)` (devices ⋈ presence, `armed_until > now`, entitled only), `setPresence(deviceId, p)`, `clearPresence(deviceId)`, `getSent(deviceId)` / `setSent(deviceId, sent)`, `lastAlert(deviceId, key)` / `markAlert(deviceId, key, at, meta?)`, `importLegacy(subs)` (idempotent).
+Store (`lib/db/store.ts`, Agent B): one `DeviceStore` interface, two backends — **D1** (via `getCloudflareContext().env.DB`) and **memory/file** (tests, and `next dev` without bindings; persist to `.plus-store.json` like the old KV file fallback). Methods: `getDevice(id)`, `upsertDevice(id, patch)` (one atomic write per call — a field left out of `patch` is guaranteed to survive a concurrent write to some other field), `claimTrial(id, until)` (atomic "grant the trial iff `trial_used` is still 0"; returns the sentinel `"trial-used"` instead of a record when it was already spent), `clearPushToken(id, expectedToken)` (clears the token only if it still matches — used to clean up a dead token without erasing a concurrently-registered fresh one), `findByPushToken(token)`, `deleteDevice(id)`, `listDevices()`, `listArmed(nowMs)` (devices ⋈ presence, `armed_until > now`, entitled only), `setPresence(deviceId, p)`, `clearPresence(deviceId)`, `getSent(deviceId)` / `setSent(deviceId, sent)`, `lastAlert(deviceId, key)` / `markAlert(deviceId, key, at, meta?)`, `importLegacy(subs)` (idempotent).
 
 ## Types
 
@@ -76,7 +87,9 @@ type AlertPrefs = Record<AlertKey, boolean>;             // defaults: all true
 
 type DeviceRecord = {                                    // API shape, camelCase
   id: string; platform: "ios" | "android" | "web" | null; tz: string | null; homeSlug: string | null;
-  profile: ScoreProfile | null; prefs: AlertPrefs; plan: "free" | "plus"; entitlementUntil: number | null;
+  profile: ScoreProfile | null; prefs: AlertPrefs;
+  plan: "free" | "plus"; entitlementUntil: number | null;  // both DERIVED — see grant sources above
+  grants: { storeUntil: number | null; codeUntil: number | null; trialUntil: number | null };
   trialUsed: boolean; previewSeen: boolean;
   presence: { slug: string; armedUntil: number; source: "auto" | "manual" } | null;
 };
@@ -104,8 +117,8 @@ Clarity sub-score = `snapshot.clarity.data.pct` (0–100) when present, else `nu
 |---|---|---|
 | `POST /api/devices` | `{deviceId, platform?, tz?, homeSlug?, profile?, prefs?, previewSeen?}` | Upsert; only provided fields change |
 | `GET /api/devices?deviceId=` | — | Read |
-| `POST /api/devices/trial` | `{deviceId}` | If `!trial_used`: plan=plus, until=now+3 d, trial_used=1. Else `error:"trial-used"` (409) |
-| `POST /api/devices/unlock` | `{deviceId, code}` | `code === env.PLUS_UNLOCK_CODE` → plan=plus, until=now+365 d. Else 403 `error:"bad-code"` |
+| `POST /api/devices/trial` | `{deviceId}` | Atomically (`claimTrial`), if `!trial_used`: trialUntil=now+3 d, trial_used=1. Else `error:"trial-used"` (409) |
+| `POST /api/devices/unlock` | `{deviceId, code}` | `code === env.PLUS_UNLOCK_CODE` → codeUntil=now+365 d. Else 403 `error:"bad-code"` |
 | `POST /api/presence` | `{deviceId, slug, lat, lon, accuracyM, fixAt, armedUntil, source}` | 403 `error:"not-entitled"` if not entitled; clamps `armedUntil ≤ now+8 h`; unknown slug → 400 |
 | `DELETE /api/presence` | `{deviceId}` | Disarm |
 | `POST /api/push/register-native` | existing + optional `deviceId` | Same response as today; writes D1 |

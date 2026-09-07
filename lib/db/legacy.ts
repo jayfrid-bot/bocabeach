@@ -49,7 +49,9 @@ export function legacyPatch(sub: NativeSub): DevicePatch {
     tz: sub.tz ?? null,
     homeSlug: sub.slug ?? null,
     prefs: prefsFromLegacy(sub.prefs ?? {}),
-    plan: "free",
+    // No plan field here on purpose: plan/entitlement are derived from the
+    // grant columns, and a freshly imported row has never earned one, so it
+    // is free by default without saying so.
     sent: sub.sent ?? {},
   };
 }

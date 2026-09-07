@@ -73,8 +73,9 @@ async function seed(
     pushToken: over.pushToken === undefined ? token : over.pushToken,
     tz: "America/New_York",
     homeSlug: "boca-raton",
-    plan: over.plan ?? "plus",
-    entitlementUntil: NOW + 30 * 24 * HOUR,
+    // plan/entitlementUntil aren't patchable — grant (or don't) through
+    // codeUntil and let the store derive plan from it.
+    codeUntil: (over.plan ?? "plus") === "plus" ? NOW + 30 * 24 * HOUR : null,
   });
   await store.setPresence(id, {
     slug: over.slug ?? "boca-raton",

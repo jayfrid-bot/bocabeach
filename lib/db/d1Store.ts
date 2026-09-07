@@ -7,6 +7,15 @@
 // never wired.
 //
 // Every statement is parameterized — no string interpolation into SQL.
+//
+// upsertDevice used to read the row, patch it in JavaScript, then write the
+// whole thing back (#3). Two overlapping calls — a purchase landing while a
+// preference save is in flight, say — raced on that read, and whichever wrote
+// last won outright: a granted purchase could vanish, or a revoked one could
+// come back. Every write below is now ONE SQL statement per method, with a
+// "was this field actually provided" flag bound alongside each value, so a
+// field the caller did not mention is guaranteed to survive no matter what
+// else changes underneath it in between.
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import type { NativeSub } from "@/lib/push/nativeStore";
@@ -20,15 +29,21 @@ import type {
   PushableDevice,
   SentState,
 } from "@/lib/db/types";
-import { applyPatch, newDeviceRow, parseSent, toRecord } from "@/lib/db/types";
+import { applyPatch, defaultPrefs, newDeviceRow, parseSent, toRecord } from "@/lib/db/types";
 import { legacyDeviceId, legacyPatch } from "@/lib/db/legacy";
 import type { DeviceStore } from "@/lib/db/store";
 
-/** The slice of the D1 API we use (avoids a @cloudflare/workers-types dep). */
+/** The slice of the D1 API we use (avoids a @cloudflare/workers-types dep).
+ *  `run()`'s `meta.changes` mirrors real D1 — `claimTrial` reads it to tell
+ *  "I won the race" from "someone already claimed this". */
+export interface D1RunResult {
+  success?: boolean;
+  meta?: { changes?: number; last_row_id?: number };
+}
 export interface D1Stmt {
   bind(...values: unknown[]): D1Stmt;
   first<T = unknown>(): Promise<T | null>;
-  run(): Promise<unknown>;
+  run(): Promise<D1RunResult>;
   all<T = unknown>(): Promise<{ results?: T[] }>;
 }
 export interface D1Like {
@@ -49,33 +64,112 @@ export async function getD1(): Promise<D1Like | null> {
 
 const DEVICE_COLS =
   "id, platform, push_token, tz, home_slug, profile_json, prefs_json, plan, " +
-  "entitlement_until, trial_used, preview_seen, sent_json, created_at, updated_at";
+  "entitlement_until, store_until, code_until, trial_until, trial_used, preview_seen, " +
+  "sent_json, created_at, updated_at";
 
-/** Full-row upsert — the patch is applied in JS so both backends behave alike. */
-const UPSERT_DEVICE =
-  `INSERT INTO devices (${DEVICE_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ` +
-  "ON CONFLICT(id) DO UPDATE SET platform=excluded.platform, push_token=excluded.push_token, " +
-  "tz=excluded.tz, home_slug=excluded.home_slug, profile_json=excluded.profile_json, " +
-  "prefs_json=excluded.prefs_json, plan=excluded.plan, entitlement_until=excluded.entitlement_until, " +
-  "trial_used=excluded.trial_used, preview_seen=excluded.preview_seen, sent_json=excluded.sent_json, " +
-  "updated_at=excluded.updated_at";
+/** A device with never-touched prefs stores no row at all for them — this is
+ *  the merge base `json_patch` starts from, so a bare "all alerts on" device
+ *  never needs a row here in the first place. Fixed content, safe to inline
+ *  as a SQL literal (never contains a user-supplied value or a quote). */
+const DEFAULT_PREFS_JSON = JSON.stringify(defaultPrefs());
 
-function deviceValues(row: DeviceRow): unknown[] {
+// The three grant columns, resolved to "the caller's new value if they
+// provided one, else whatever is already on the row" — duplicated wherever
+// the derived plan/entitlement_until need to read it, because a single
+// INSERT ... ON CONFLICT DO UPDATE SET has no way to name a subexpression.
+const RESOLVED_STORE = "CASE WHEN ?22 THEN ?8 ELSE devices.store_until END";
+const RESOLVED_CODE = "CASE WHEN ?23 THEN ?9 ELSE devices.code_until END";
+const RESOLVED_TRIAL = "CASE WHEN ?24 THEN ?10 ELSE devices.trial_until END";
+const MAX_UPDATE =
+  `MAX(COALESCE(${RESOLVED_STORE},0), COALESCE(${RESOLVED_CODE},0), COALESCE(${RESOLVED_TRIAL},0))`;
+const MAX_INSERT = "MAX(COALESCE(?8,0), COALESCE(?9,0), COALESCE(?10,0))";
+
+/**
+ * One atomic upsert. Every column is either a plain bound value (?1..?15,
+ * ?16 = now) or, for a field the caller can leave untouched, guarded by a
+ * "present" flag (?17..?27): `CASE WHEN <present> THEN <new value> ELSE
+ * <current column> END`. `plan` and `entitlement_until` are never taken from
+ * the caller — they are always MAX(store, code, trial), recomputed from
+ * whichever of the three this write actually touches (#4). `prefs_json` is
+ * always a `json_patch` merge, so a caller who didn't mention prefs merges
+ * `{}` — a no-op — instead of needing its own present flag.
+ */
+const UPSERT_COLS =
+  "id, platform, push_token, tz, home_slug, profile_json, prefs_json, " +
+  "store_until, code_until, trial_until, plan, entitlement_until, trial_used, preview_seen, " +
+  "sent_json, created_at, updated_at";
+
+const UPSERT_DEVICE = `
+INSERT INTO devices (${UPSERT_COLS})
+VALUES (
+  ?1, ?2, ?3, ?4, ?5, ?6,
+  json_patch('${DEFAULT_PREFS_JSON}', ?7),
+  ?8, ?9, ?10,
+  CASE WHEN ${MAX_INSERT} > ?16 THEN 'plus' ELSE 'free' END,
+  CASE WHEN ${MAX_INSERT} = 0 THEN NULL ELSE ${MAX_INSERT} END,
+  ?11, ?12,
+  ?13, ?14, ?15
+)
+ON CONFLICT(id) DO UPDATE SET
+  platform = CASE WHEN ?17 THEN ?2 ELSE devices.platform END,
+  push_token = CASE WHEN ?18 THEN ?3 ELSE devices.push_token END,
+  tz = CASE WHEN ?19 THEN ?4 ELSE devices.tz END,
+  home_slug = CASE WHEN ?20 THEN ?5 ELSE devices.home_slug END,
+  profile_json = CASE WHEN ?21 THEN ?6 ELSE devices.profile_json END,
+  prefs_json = json_patch(COALESCE(devices.prefs_json, '${DEFAULT_PREFS_JSON}'), ?7),
+  store_until = ${RESOLVED_STORE},
+  code_until = ${RESOLVED_CODE},
+  trial_until = ${RESOLVED_TRIAL},
+  plan = CASE WHEN ${MAX_UPDATE} > ?16 THEN 'plus' ELSE 'free' END,
+  entitlement_until = CASE WHEN ${MAX_UPDATE} = 0 THEN NULL ELSE ${MAX_UPDATE} END,
+  trial_used = CASE WHEN ?25 THEN ?11 ELSE devices.trial_used END,
+  preview_seen = CASE WHEN ?26 THEN ?12 ELSE devices.preview_seen END,
+  sent_json = CASE WHEN ?27 THEN ?13 ELSE devices.sent_json END,
+  updated_at = ?15
+`;
+
+/** DevicePatch → the 27 positional binds `UPSERT_DEVICE` expects. */
+function upsertBinds(id: string, patch: Record<string, unknown>, now: number): unknown[] {
+  const has = (k: string) => Object.prototype.hasOwnProperty.call(patch, k) && patch[k] !== undefined;
+  const val = <T,>(k: string, transform: (v: unknown) => T = (v) => v as T): T | null =>
+    has(k) ? transform(patch[k]) : null;
+
+  const sentVal = has("sent")
+    ? (() => {
+        const sent = patch.sent as Record<string, unknown>;
+        const keys = Object.keys(sent).filter((k) => sent[k] !== undefined);
+        return keys.length ? JSON.stringify(sent) : null;
+      })()
+    : null;
+
   return [
-    row.id,
-    row.platform,
-    row.push_token,
-    row.tz,
-    row.home_slug,
-    row.profile_json,
-    row.prefs_json,
-    row.plan,
-    row.entitlement_until,
-    row.trial_used,
-    row.preview_seen,
-    row.sent_json,
-    row.created_at,
-    row.updated_at,
+    id, // 1
+    val("platform"), // 2
+    val("pushToken"), // 3
+    val("tz"), // 4
+    val("homeSlug"), // 5
+    has("profile") ? (patch.profile === null ? null : JSON.stringify(patch.profile)) : null, // 6
+    JSON.stringify(patch.prefs ?? {}), // 7 — always applied; absent → no-op merge
+    val("storeUntil"), // 8
+    val("codeUntil"), // 9
+    val("trialUntil"), // 10
+    val("trialUsed", (v) => (v ? 1 : 0)) ?? 0, // 11
+    val("previewSeen", (v) => (v ? 1 : 0)) ?? 0, // 12
+    sentVal, // 13
+    now, // 14 created_at (insert only)
+    now, // 15 updated_at
+    now, // 16 "now", for the plan comparison
+    has("platform") ? 1 : 0, // 17
+    has("pushToken") ? 1 : 0, // 18
+    has("tz") ? 1 : 0, // 19
+    has("homeSlug") ? 1 : 0, // 20
+    has("profile") ? 1 : 0, // 21
+    has("storeUntil") ? 1 : 0, // 22
+    has("codeUntil") ? 1 : 0, // 23
+    has("trialUntil") ? 1 : 0, // 24
+    has("trialUsed") ? 1 : 0, // 25
+    has("previewSeen") ? 1 : 0, // 26
+    has("sent") ? 1 : 0, // 27
   ];
 }
 
@@ -85,10 +179,6 @@ export function d1Store(db: D1Like): DeviceStore {
 
   const getPresenceRow = (id: string) =>
     db.prepare("SELECT * FROM presence WHERE device_id = ?").bind(id).first<PresenceRow>();
-
-  async function write(row: DeviceRow): Promise<void> {
-    await db.prepare(UPSERT_DEVICE).bind(...deviceValues(row)).run();
-  }
 
   async function toApi(row: DeviceRow): Promise<DeviceRecord> {
     return toRecord(row, await getPresenceRow(row.id));
@@ -102,10 +192,56 @@ export function d1Store(db: D1Like): DeviceStore {
 
     async upsertDevice(id, patch) {
       const now = Date.now();
-      const base = (await getRow(id)) ?? newDeviceRow(id, now);
-      const next = applyPatch(base, patch, now);
-      await write(next);
-      return toApi(next);
+      await db
+        .prepare(UPSERT_DEVICE)
+        .bind(...upsertBinds(id, patch as Record<string, unknown>, now))
+        .run();
+      const row = await getRow(id);
+      // The row we just wrote must exist — but fall back to the JS patcher
+      // over a blank row rather than throw, so a transient read-after-write
+      // hiccup degrades to "act like the write hadn't landed yet" instead of
+      // crashing the request.
+      return row ? toApi(row) : toApi(applyPatch(newDeviceRow(id, now), patch, now));
+    },
+
+    async claimTrial(id, until) {
+      const now = Date.now();
+      // Make sure a row exists (no-op if it already does) — a device can
+      // start its trial before it has ever called POST /api/devices.
+      await db
+        .prepare(
+          "INSERT INTO devices (id, plan, entitlement_until, trial_used, preview_seen, prefs_json, created_at, updated_at) " +
+            "VALUES (?, 'free', NULL, 0, 0, NULL, ?, ?) ON CONFLICT(id) DO NOTHING",
+        )
+        .bind(id, now, now)
+        .run();
+      // The WHERE clause is the whole trick: two concurrent claims both reach
+      // this UPDATE, but SQLite serializes writes, so only the first one's
+      // WHERE still matches by the time it runs — the second sees
+      // trial_used already 1 and changes nothing.
+      const result = await db
+        .prepare(
+          "UPDATE devices SET trial_until = ?1, trial_used = 1, " +
+            "entitlement_until = CASE WHEN MAX(COALESCE(store_until,0), COALESCE(code_until,0), COALESCE(?1,0)) = 0 " +
+            "THEN NULL ELSE MAX(COALESCE(store_until,0), COALESCE(code_until,0), COALESCE(?1,0)) END, " +
+            "plan = CASE WHEN MAX(COALESCE(store_until,0), COALESCE(code_until,0), COALESCE(?1,0)) > ?2 THEN 'plus' ELSE 'free' END, " +
+            "updated_at = ?2 WHERE id = ?3 AND trial_used = 0",
+        )
+        .bind(until, now, id)
+        .run();
+      if (!result.meta?.changes) return "trial-used";
+      const row = await getRow(id);
+      return row ? toApi(row) : "trial-used";
+    },
+
+    async clearPushToken(id, expectedToken) {
+      // Conditional on the CURRENT value, not just the id: if the phone
+      // already re-registered a new token by the time this runs, that new
+      // token is what is live and must not be erased (#5).
+      await db
+        .prepare("UPDATE devices SET push_token = NULL, updated_at = ? WHERE id = ? AND push_token = ?")
+        .bind(Date.now(), id, expectedToken)
+        .run();
     },
 
     async findByPushToken(token) {
@@ -137,8 +273,9 @@ export function d1Store(db: D1Like): DeviceStore {
           await db
             .prepare(
               `SELECT d.id AS d_id, d.platform, d.push_token, d.tz, d.home_slug, d.profile_json, ` +
-                "d.prefs_json, d.plan, d.entitlement_until, d.trial_used, d.preview_seen, d.sent_json, " +
-                "d.created_at, d.updated_at, p.device_id, p.slug, p.lat, p.lon, p.accuracy_m, " +
+                "d.prefs_json, d.plan, d.entitlement_until, d.store_until, d.code_until, d.trial_until, " +
+                "d.trial_used, d.preview_seen, d.sent_json, d.created_at, d.updated_at, " +
+                "p.device_id, p.slug, p.lat, p.lon, p.accuracy_m, " +
                 "p.fix_at, p.armed_until, p.source, p.updated_at AS p_updated_at " +
                 "FROM presence p JOIN devices d ON d.id = p.device_id " +
                 "WHERE p.armed_until > ? AND d.plan = 'plus' AND d.entitlement_until > ?",
@@ -157,6 +294,9 @@ export function d1Store(db: D1Like): DeviceStore {
           prefs_json: (r.prefs_json as string | null) ?? null,
           plan: String(r.plan),
           entitlement_until: (r.entitlement_until as number | null) ?? null,
+          store_until: (r.store_until as number | null) ?? null,
+          code_until: (r.code_until as number | null) ?? null,
+          trial_until: (r.trial_until as number | null) ?? null,
           trial_used: Number(r.trial_used ?? 0),
           preview_seen: Number(r.preview_seen ?? 0),
           sent_json: (r.sent_json as string | null) ?? null,
@@ -275,7 +415,10 @@ export function d1Store(db: D1Like): DeviceStore {
           continue;
         }
         const id = legacyDeviceId(sub.token);
-        await write(applyPatch(newDeviceRow(id, now), legacyPatch(sub), now));
+        await db
+          .prepare(UPSERT_DEVICE)
+          .bind(...upsertBinds(id, legacyPatch(sub) as Record<string, unknown>, now))
+          .run();
         known.add(sub.token);
         imported += 1;
       }

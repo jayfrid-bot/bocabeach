@@ -30,8 +30,26 @@ export { isLegacyId, legacyDeviceId, legacyPatch, prefsFromLegacy } from "@/lib/
 
 export interface DeviceStore {
   getDevice(id: string): Promise<DeviceRecord | null>;
-  /** Create or patch. Returns the device as it now stands. */
+  /** Create or patch. Returns the device as it now stands. Atomic and
+   *  field-specific in both backends (#3) — a field left out of `patch` is
+   *  guaranteed to survive a concurrent write to some other field. */
   upsertDevice(id: string, patch: DevicePatch): Promise<DeviceRecord>;
+  /**
+   * Grant the free trial, exactly once, no matter how many requests race for
+   * it (#3, #4). Sets `trialUntil` and `trialUsed` together in one atomic
+   * conditional write — "only if trial_used is still 0" — so two concurrent
+   * calls can never both succeed, and returns the sentinel string instead of
+   * a record when the trial was already spent.
+   */
+  claimTrial(id: string, until: number): Promise<DeviceRecord | "trial-used">;
+  /**
+   * Clear a device's push token, but only if it still equals `expectedToken`
+   * (#5). Used when a token turned out to be dead: if the phone re-registered
+   * a fresh token in the meantime, this is a no-op instead of erasing the new
+   * one. Never touches anything else on the row — entitlement, profile, and
+   * trial history all survive a dead-token cleanup.
+   */
+  clearPushToken(id: string, expectedToken: string): Promise<void>;
   findByPushToken(token: string): Promise<DeviceRecord | null>;
   deleteDevice(id: string): Promise<void>;
   listDevices(): Promise<DeviceRecord[]>;

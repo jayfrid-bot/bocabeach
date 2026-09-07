@@ -75,13 +75,35 @@ describe("POST /api/devices/purchase", () => {
   it("never takes Plus away: a trial device with no store purchase keeps its trial", async () => {
     const store = await getStore();
     const until = Date.now() + 2 * DAY;
-    await store.upsertDevice(DEV, { plan: "plus", entitlementUntil: until, trialUsed: true });
+    await store.upsertDevice(DEV, { trialUntil: until, trialUsed: true });
     rcAnswers(201, { entitlements: {} }); // RevenueCat just created an empty subscriber
     const res = await POST(post({ deviceId: DEV }));
     expect(res.status).toBe(200);
     const body = await json(res);
     expect(body.device?.plan).toBe("plus");
     expect(body.device?.entitlementUntil).toBe(until);
+  });
+
+  it("a 365-day code grant survives a 30-day store restore (#4)", async () => {
+    const store = await getStore();
+    const codeUntil = Date.now() + 365 * DAY;
+    await store.upsertDevice(DEV, { codeUntil });
+    const exp = new Date(Date.now() + 30 * DAY).toISOString();
+    rcAnswers(200, { entitlements: { plus: { expires_date: exp } } });
+    const res = await POST(post({ deviceId: DEV }));
+    const body = await json(res);
+    expect(body.device?.entitlementUntil).toBe(codeUntil); // the longer code grant still wins
+  });
+
+  it("a store expiration leaves an independent code grant intact (#4)", async () => {
+    const store = await getStore();
+    const codeUntil = Date.now() + 365 * DAY;
+    await store.upsertDevice(DEV, { codeUntil, storeUntil: Date.now() + 30 * DAY });
+    rcAnswers(200, { entitlements: {} }); // the subscription lapsed
+    const res = await POST(post({ deviceId: DEV }));
+    const body = await json(res);
+    expect(body.device?.plan).toBe("plus"); // still entitled — through the code
+    expect(body.device?.entitlementUntil).toBe(codeUntil);
   });
 
   it("no purchase and no row is not-found, not an error", async () => {

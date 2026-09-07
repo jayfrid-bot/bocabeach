@@ -10,6 +10,17 @@ export const TRIAL_DAYS = 3;
 /** Length of the grant a redeemed unlock code buys (`POST /api/devices/unlock`). */
 export const UNLOCK_DAYS = 365;
 
+/**
+ * Stand-in for "no end date" on a store entitlement RevenueCat reports as
+ * active forever (none of ours today — every product renews or expires).
+ * `store_until` is a plain epoch ms column, so it needs SOME number rather
+ * than null (null there means "no store grant at all", not "grant with no
+ * end"). One constant, shared by the purchase route and the webhook, so a
+ * lifetime product — if one is ever added — reads the same way from either
+ * path instead of two routes inventing two different "forever" values.
+ */
+export const NO_END_MS = 100 * 365 * 24 * 3600 * 1000;
+
 /** Longest a single presence arm lasts. Manual "heading to the beach" asks 6 h. */
 export const MAX_ARM_MS = 8 * 3600 * 1000;
 
