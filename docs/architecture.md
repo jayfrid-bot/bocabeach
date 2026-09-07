@@ -118,7 +118,7 @@ flowchart TD
   RCHOOK -->|storeUntil, from RC's live answer| STORE
   REG --> STORE
 
-  STORE -->|production| D1[(D1: isitbeachday-plus<br/>devices · presence · alert_log)]
+  STORE -->|production| D1[(D1: isitbeachday-plus<br/>devices · presence · alert_log · send_claims)]
   STORE -->|tests, next dev w/o bindings| MEM[(memory store<br/>.plus-store.json fallback)]
 
   KVLEGACY[(PUSH_KV<br/>legacy push-token subs)] -.imported once per device.-> STORE
@@ -133,9 +133,11 @@ flowchart TD
   ATBEACH --> EVALRULES[lib/alerts/evaluate.ts<br/>pure alert rules]
   EVALRULES --> DEDUP[lib/alerts/dedup.ts<br/>30-min repeat window, D1 alert_log]
 
-  MORNING -->|entitled only, 08:00 beach-local| PIPE2
+  MORNING -->|entitled only, 08:00 the BEACH's local time| PIPE2
 
-  DEDUP --> SEND[lib/push/apns.ts, fcm.ts<br/>deliver]
+  DEDUP --> CLAIM[lib/db/sendClaims.ts<br/>atomic send claim, D1 send_claims]
+  MORNING --> CLAIM
+  CLAIM --> SEND[lib/push/apns.ts, fcm.ts<br/>deliver]
   SEND -->|APNs| APNS[(Apple Push Notification service)]
   SEND -->|FCM| FCM[(Firebase Cloud Messaging)]
 ```
@@ -166,6 +168,25 @@ the write reflects the truth at request time either way.
 underlying KV namespace id** in `wrangler.jsonc` — OpenNext prefixes its keys,
 so they don't collide, but it means one namespace serves two unrelated jobs.
 Worth splitting if either one grows enough to matter.
+
+**Beach-local scheduling:** the morning digest, "just turned Excellent", and
+every hazard's freshness window are all judged in the **beach's own
+timezone** (`config/locations.ts`'s `timezone`), never the phone's — a device
+sees its home beach's 8 AM digest whatever zone the phone itself is in. The
+phone's zone still rides along on the device row (`tz`), but only for
+display; nothing in the sender schedules off it.
+
+**Atomic send claims (`send_claims`, migrations/0004_send_claims.sql):** the
+Cloudflare cron (every 5 min) and the GitHub Actions backstop (hourly) both
+call `/api/push/run`, and can start within seconds of each other — both
+enabled on purpose, since GitHub's schedule is best-effort. Two overlapping
+runs can each read "not yet sent" from `alert_log` before either has written
+its mark. Before sending any morning digest, Excellent alert, or at-beach
+hazard, the sender claims `<deviceId>:<alertKey>:<window>` with an atomic
+INSERT — only the run that wins the claim may send, so the 30-minute (or
+once-a-day) dedup window still holds even when two runs race for it. A claim
+whose send never finished (a crash, a timeout) is abandoned after 10 minutes
+and may be re-claimed.
 
 ## External integrations
 

@@ -40,7 +40,17 @@ export const RAIN_MEMORY_MS = 3 * 60 * 60 * 1000;
 export interface AtBeachInput {
   now: number;
   device: { prefs: AlertPrefs; profile: ScoreProfile | null };
-  presence: { slug: string; lat: number | null; lon: number | null };
+  presence: {
+    slug: string;
+    lat: number | null;
+    lon: number | null;
+    /**
+     * Where `lat`/`lon` came from — the person's own fresh, accurate, nearby
+     * fix, or the beach centroid it fell back to (#6). Pure bookkeeping: the
+     * rules below read `lat`/`lon` the same way either way.
+     */
+    fixSource?: "device" | "beach";
+  };
   /** The beach's display name — every line of copy names it. */
   beachName: string;
   /** `summarizeStrikes(feed, fixLat, fixLon, now)`, or null with no feed. */
@@ -184,7 +194,9 @@ export function evaluateAtBeach(input: AtBeachInput): AlertDecision[] {
     const soft =
       informationalKeys.includes(subject.key) &&
       !(subject.key === "flag" && subject.flag === "double-red");
-    out.push(buildAlert(subject, { beach: input.beachName, informational: soft }));
+    out.push(
+      buildAlert(subject, { beach: input.beachName, slug: input.presence.slug, informational: soft }),
+    );
   }
   return out.sort((a, b) => a.priority - b.priority || a.dedupKey.localeCompare(b.dedupKey));
 }

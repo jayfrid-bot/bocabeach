@@ -91,6 +91,13 @@ export interface AlertContext {
   /** The beach the person is at (or whose day just turned Excellent). */
   beach: string;
   /**
+   * The beach's slug — folded into the at-beach collapse id (`safety:<hazard>:<slug>`)
+   * so the SAME hazard at two different beaches never shares a collapse window.
+   * Not needed for the home tier (morning / score-excellent keep their own stable
+   * tags), so it is optional.
+   */
+  slug?: string;
+  /**
    * Report the hazard, don't sound the alarm. Set for the flag + rip alerts on
    * a surfing profile: a red flag is what they came for, so it is news about the
    * conditions, not a warning to get out (see the surf cap policy).
@@ -182,6 +189,26 @@ function metaFor(subject: AlertSubject): Record<string, unknown> | undefined {
   }
 }
 
+/**
+ * The APNs `apns-collapse-id` / FCM-equivalent collapse key. Each hazard gets
+ * its own id, scoped to the beach: `safety:<hazardKey>:<slug>`. That way a
+ * rain update never replaces a lightning warning (different hazardKey), a
+ * repeat update of the SAME hazard at the SAME beach still replaces its
+ * predecessor (same id — the point of collapsing at all), and the same
+ * hazard at two different beaches never shares a window. Lightning's
+ * escalation shares "lightning" as its hazardKey (see dedupKeyFor, which
+ * gives it a finer DEDUP key) so the 2-mile notice collapses the plain one.
+ * Morning and Excellent keep their own stable ids — see #8. (Only
+ * `score-excellent` reaches this function via the "home" tier: the morning
+ * digest is built by `decideNotifications` in lib/push/notify.ts, not the
+ * catalog, and hardcodes its own "morning" tag there.)
+ */
+function collapseTag(subject: AlertSubject, ctx: AlertContext): string {
+  const spec = CATALOG[subject.key];
+  if (spec.tier === "home") return "excellent";
+  return `safety:${subject.key}:${ctx.slug ?? ""}`;
+}
+
 /** Turn one finding into a ready-to-send decision. */
 export function buildAlert(subject: AlertSubject, ctx: AlertContext): AlertDecision {
   const spec = CATALOG[subject.key];
@@ -192,7 +219,7 @@ export function buildAlert(subject: AlertSubject, ctx: AlertContext): AlertDecis
     priority: spec.priority,
     repeatMs: spec.repeatMs,
     title: alarm ? `⚠️ ${ctx.beach}` : ctx.beach,
-    tag: spec.tier === "home" ? "excellent" : "safety",
+    tag: collapseTag(subject, ctx),
     body: bodyFor(subject, ctx),
     // A lightning escalation replaces the plain lightning alert in the same run,
     // so a storm arriving already inside 2 mi sends ONE push, not two.

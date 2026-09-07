@@ -32,6 +32,7 @@ import { listNativeSubs, removeNativeSub } from "@/lib/push/nativeStore";
 import { getStore, isLegacyId, type DeviceStore, type PushableDevice } from "@/lib/db/store";
 import { coarsePrefs, parseMode } from "@/lib/db/plus";
 import { entitled, type SentState } from "@/lib/db/types";
+import { sendClaimKey } from "@/lib/db/sendClaims";
 import { decideNotifications, MORNING_HOUR, type PushDecision, type PushSummary } from "@/lib/push/notify";
 import { excellentDecision, newSummaryCache, personalSummary } from "@/lib/alerts/morning";
 import { runAtBeachAlerts, type AtBeachCounts } from "@/lib/alerts/run";
@@ -100,12 +101,15 @@ async function deliverMorning(
   store: DeviceStore,
   sub: PushableDevice,
   summary: PushSummary,
-  fallbackTz: string,
+  beachTz: string,
   now: Date,
   sendOne: SendOne,
   opts?: { force?: "morning" },
 ): Promise<{ sent: number; pruned: number }> {
-  const { hour, date } = localHourAndDate(sub.device.tz || fallbackTz, now);
+  // The digest is due at 08:00 in the BEACH's timezone, never the phone's — see
+  // #13. `sub.device.tz` is the phone's zone; it stays on the device row for
+  // display purposes but must never drive scheduling.
+  const { hour, date } = localHourAndDate(beachTz, now);
   const { sends, nextSent } = decideNotifications(
     { prefs: coarsePrefs(sub.device), sent: sub.sent },
     summary,
@@ -121,12 +125,21 @@ async function deliverMorning(
   let removed = false;
   // Advance the dedup state ONLY if the send actually succeeded — a transient
   // failure must leave the old state so the next run retries (instead of marking
-  // it "already sent" and silently skipping the digest).
+  // it "already sent" and silently skipping the digest). A lost send claim
+  // (#14 — a concurrent run already owns today's digest for this device)
+  // takes the same "don't persist" path: whichever run actually sends is the
+  // one that should update the dedup state.
   let failed = false;
   for (const msg of due) {
+    const claimKey = sendClaimKey(sub.device.id, "morning", date);
+    if (!(await store.claimSend(claimKey, now.getTime()))) {
+      failed = true;
+      continue;
+    }
     const r = await sendOne(msg);
     if (r.ok) {
       sent += 1;
+      await store.markSent(claimKey, now.getTime());
     } else if (r.dead) {
       await prune(store, sub).catch((e) => console.error("push: prune failed", e));
       removed = true;
@@ -201,6 +214,16 @@ export async function POST(req: Request): Promise<Response> {
     if (legacy.length) imported = (await store.importLegacy(legacy)).imported;
   } catch (e) {
     console.error("push: legacy import failed", e);
+  }
+
+  // Opportunistic housekeeping for the send-claims table (#14): drop claims
+  // old enough to never matter again. Never fatal — every run does this once,
+  // regardless of `mode`, so the table doesn't grow forever even if a run is
+  // later narrowed to just one channel.
+  try {
+    await store.pruneSendClaims(nowMs);
+  } catch (e) {
+    console.error("push: claim prune failed", e);
   }
 
   const pushable = await store.listPushable();
@@ -295,7 +318,8 @@ export async function POST(req: Request): Promise<Response> {
       if (!entitled(sub.device, nowMs)) continue;
       if (!senderFor(sub)) continue;
       try {
-        const { hour, date } = localHourAndDate(sub.device.tz || loc.timezone, now);
+        // Beach-local, not phone-local — see #13.
+        const { hour, date } = localHourAndDate(loc.timezone, now);
         if (sub.device.prefs.morning && (force || (hour === MORNING_HOUR && sub.sent.morningDate !== date))) {
           return true;
         }
@@ -346,10 +370,17 @@ export async function POST(req: Request): Promise<Response> {
             pruned += r.pruned;
             if (r.pruned) continue; // the device is gone
 
-            const { date } = localHourAndDate(sub.device.tz || loc.timezone, now);
+            // The Excellent daily-dedup key is a calendar day in the BEACH's
+            // timezone too, so it can't drift from the same day the digest uses.
+            const { date } = localHourAndDate(loc.timezone, now);
             const excellent = excellentDecision({ device: sub.device, summary, res, nowMs, date });
             if (!excellent) continue;
             if (await store.lastAlert(sub.device.id, excellent.dedupKey)) continue; // once per day
+            // The send claim (#14): a concurrent run could have read the same
+            // "not sent today" answer above, a moment before either of us
+            // wrote alert_log. Only the run that wins this claim may send.
+            const claimKey = sendClaimKey(sub.device.id, "score-excellent", date);
+            if (!(await store.claimSend(claimKey, nowMs))) continue;
             const sent = await sendOne({
               tag: excellent.tag,
               title: excellent.title,
@@ -362,6 +393,7 @@ export async function POST(req: Request): Promise<Response> {
             } else if (sent.ok) {
               excellentSent += 1;
               await store.markAlert(sub.device.id, excellent.dedupKey, nowMs, excellent.meta);
+              await store.markSent(claimKey, nowMs);
             }
           } catch (e) {
             errors += 1;
