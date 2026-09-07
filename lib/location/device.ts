@@ -20,6 +20,23 @@ export interface FixError {
   error: FixErrorReason;
 }
 
+/** How stale a session fix has to be before a foreground reopen bothers to
+ *  ask for a new one. A fix from a few minutes ago is still a fine stand-in
+ *  for "where the phone is now"; one from before the app was backgrounded is
+ *  not — Beach Mode's distance math would then describe somewhere the phone
+ *  used to be, not where it is arming. */
+export const FIX_STALE_MS = 5 * 60 * 1000;
+
+/**
+ * Pure: should a foreground reopen refresh the session fix? Only when one
+ * already exists — a phone that has never granted location (or had its fix
+ * fail) has `ageMs === null` and must not be nagged again just for reopening
+ * the app; that prompt belongs to an explicit tap.
+ */
+export function shouldRefreshFix(ageMs: number | null): boolean {
+  return ageMs !== null && ageMs >= FIX_STALE_MS;
+}
+
 /** True inside the Capacitor native app; false in any browser. Re-exports
  *  push's own platform probe so this module never duplicates that (deliberately
  *  hard-won) remote-URL-shell detection logic — see lib/push/native.ts. */

@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getFix, checkLocationPermission, isNativeLocation } from "@/lib/location/device";
+import {
+  FIX_STALE_MS,
+  getFix,
+  checkLocationPermission,
+  isNativeLocation,
+  shouldRefreshFix,
+} from "@/lib/location/device";
 
 // This suite runs under vitest's environment: "node" (see vitest.config.ts —
 // no jsdom), so there's no `window` and Capacitor's own getPlatform() safely
@@ -88,5 +94,21 @@ describe("checkLocationPermission — web path", () => {
       permissions: { query: async () => ({ state: "granted" }) },
     });
     expect(await checkLocationPermission()).toBe("granted");
+  });
+});
+
+describe("shouldRefreshFix", () => {
+  it("never refreshes when there is no fix at all — that prompt belongs to an explicit tap", () => {
+    expect(shouldRefreshFix(null)).toBe(false);
+  });
+
+  it("leaves a fresh fix alone", () => {
+    expect(shouldRefreshFix(0)).toBe(false);
+    expect(shouldRefreshFix(FIX_STALE_MS - 1)).toBe(false);
+  });
+
+  it("refreshes once a fix reaches the staleness threshold", () => {
+    expect(shouldRefreshFix(FIX_STALE_MS)).toBe(true);
+    expect(shouldRefreshFix(FIX_STALE_MS + 60_000)).toBe(true);
   });
 });
