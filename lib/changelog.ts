@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-08",
+    title: "Sand temperature is one number now, not a 10-degree range",
+    details:
+      "The headline is the dry sand you actually walk across — the surface the thermometer readings are taken on. The firmer, damp sand right by the water runs about 10°F cooler, and that figure now sits in small print next to it instead of stretching the main number into a range.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-08",
     title: "Sand temperature now notices when the sky has thickened since the last satellite reading",
     details:
       "When the satellite's last measured hour was bright but a fresher pass shows the clouds have since closed in, the sand estimate no longer assumes the sun kept pouring through. A patchy late-morning sky read 126°F where the sand was really 120°F; the estimate now gives up part of the lost sun instead of carrying the earlier brightness forward at full strength. A sky that stays the same is unaffected.",

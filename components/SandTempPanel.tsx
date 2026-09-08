@@ -149,14 +149,19 @@ export function SandTempPanel({
         ) : null}
       </div>
 
+      {/* One number, not a range: the dry sand people actually walk across (and
+          the number the IR calibrations are taken on). The firmer, damp band by
+          the water is a separate, cooler surface — say so in a quiet sub-line
+          rather than stretching the headline into a 10°F span (owner, 9/8). */}
       <div className="mt-2 flex items-baseline gap-2">
         <span className="text-2xl font-semibold text-slate-900 dark:text-white">
-          {current
-            ? current.surf !== current.sand
-              ? `~${current.surf}–${current.sand}°F`
-              : `~${current.sand}°F`
-            : "—"}
+          {current ? `~${current.sand}°F` : "—"}
         </span>
+        {current && current.surf !== current.sand ? (
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            dry sand · by the water ~{current.surf}°F
+          </span>
+        ) : null}
       </div>
 
       {/* barefoot comfort meter — slider marker carries a live temperature
