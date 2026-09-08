@@ -147,7 +147,27 @@ const FULL_SUN_WM2 = 1000;
  *    dry, the "now" estimate carries that observed radiation forward (sun-angle
  *    scaled) instead of the forecast, with no mask damping stacked on top of an
  *    observation that already embodies the sky. Same lesson as 7/15 and the UV
- *    fix: observation must be allowed to overrule the model. */
+ *    fix: observation must be allowed to overrule the model.
+ *  - 2026-09-08 ~11:40 AM: MEASURED 117 / 120 / 122°F (mean 120). Model 126°F
+ *    (+6, the first OVER-read since the carry rule landed). Soil 94°F, 5 mph.
+ *    Owner's sky: "a little overcast, the sun just peeked out from patchy
+ *    cloud". Inputs: the 10 AM hour was satellite-OBSERVED at 421 W/m² under
+ *    59% cloud; the 11 AM bucket is a forecast (680 W/m², "96% cloud" — the
+ *    forecast's radiation and its cloud disagree with each other); GOES
+ *    FRESH (16 min): 76% overhead, 80% beam. Radar dry. So the carry rule
+ *    fired: 421 × 1.1 (sun-angle boost) = 463 W/m², mask damping off → 126°F.
+ *    The miss is the carry ignoring that the sky DARKENED after the hour it
+ *    carries: 59% → 80% beam is a real change the fresher satellite pass can
+ *    see, and 463 W/m² assumes the 10 AM sky held. Sweep against the 120°F
+ *    truth: ~300 W/m² effective. Simply damping the carried 421 by the 80%
+ *    beam curve over-corrects to 112°F (double-damping an observation that
+ *    already came through cloud); the pure forecast path gives 116. Fix: when
+ *    the fresh beam cloud exceeds the observed hour's cloud, no sun-angle
+ *    boost, and the carried radiation is scaled by the lost clear-sky fraction
+ *    at HALF weight (CARRY_DARKENING_WEIGHT — diffuse light persists under
+ *    broken cloud): 421 × (1 − 0.5 × (1 − 20/41)) = 313 W/m² → 120°F. The
+ *    weight is fitted to this single point; a sky that has NOT darkened since
+ *    the observed hour is untouched, so 9/2 and 9/4 still reproduce. */
 const MAX_SUN_BOOST_F = 55;
 /**
  * Solid overcast kills the dry-sand boost. The boost is driven by DIRECT beam
@@ -186,6 +206,17 @@ const BEAM_OVERCAST_START_PCT = 50;
  * radiation is trusted over the next hour's forecast when the radar is dry.
  */
 const BRIGHT_HOUR_WM2 = 400;
+/**
+ * When the carry rule (above) brings an observed hour's radiation into the
+ * current forecast hour, a FRESHER satellite pass may show the sky has since
+ * thickened. The carried value is then scaled by the clear-sky fraction that
+ * was lost — but only at this weight, because broken cloud still passes plenty
+ * of diffuse light and the sand integrates the last hour of heating, not the
+ * last minute. 2026-09-08: 10 AM observed 421 W/m² at 59% cloud, 11:40 AM beam
+ * cloud 80%, sand 120°F; full weight lands 117, none lands 126, half lands 120.
+ * One calibration point — revisit with the next darkening-sky session.
+ */
+const CARRY_DARKENING_WEIGHT = 0.5;
 /**
  * The wet/firm sand by the surf runs much cooler than the dry dune sand — a
  * ~11°F surf-to-dunes spread measured at Boca (2026-06-23: 113°F surf → 124°F
@@ -515,11 +546,26 @@ function currentSandInput(
   let solarWm2 = h.solarWm2;
   if (carry) {
     const prevMid = new Date(prev.time).getTime() + 1800_000;
-    const ratio =
+    let ratio =
       lon != null && hfn != null
         ? clearSkyRatio(hoursFromSolarNoon(lon, new Date(prevMid)), hfn)
         : 0.95;
-    solarWm2 = Math.round((prev.solarWm2 ?? 0) * ratio);
+    // A carried observation assumes the sky it came through has held. When a
+    // fresher beam-path satellite reading says the sky has thickened since
+    // that hour, the sun cannot be trusted to have climbed unhindered (no
+    // sun-angle boost) and the carried radiation gives up part of the lost
+    // clear-sky fraction (2026-09-08: 59% → 80% beam, 126°F modeled vs 120°F
+    // measured; see CARRY_DARKENING_WEIGHT).
+    let darkening = 1;
+    const cloudNow = override?.cloudCoverPct;
+    const cloudThen = prev.cloudCoverPct;
+    if (override?.cloudIsBeamPath && cloudNow != null && cloudThen != null && cloudNow > cloudThen) {
+      const clearThen = Math.max(1, 100 - cloudThen);
+      const clearNow = Math.max(0, 100 - cloudNow);
+      darkening = 1 - CARRY_DARKENING_WEIGHT * (1 - clearNow / clearThen);
+      ratio = Math.min(1, ratio);
+    }
+    solarWm2 = Math.round((prev.solarWm2 ?? 0) * ratio * darkening);
   }
   return {
     soilTempF: h.soilTempF,

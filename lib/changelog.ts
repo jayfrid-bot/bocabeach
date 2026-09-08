@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-09-08",
+    title: "Sand temperature now notices when the sky has thickened since the last satellite reading",
+    details:
+      "When the satellite's last measured hour was bright but a fresher pass shows the clouds have since closed in, the sand estimate no longer assumes the sun kept pouring through. A patchy late-morning sky read 126°F where the sand was really 120°F; the estimate now gives up part of the lost sun instead of carrying the earlier brightness forward at full strength. A sky that stays the same is unaffected.",
+    tag: "improved",
+  },
+  {
     date: "2026-09-07",
     title: "Fourteen Plus fixes from a full review: alerts, Beach Mode, restore, and your settings",
     details:
