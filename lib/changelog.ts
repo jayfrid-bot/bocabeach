@@ -20,7 +20,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-09-08",
     title: "Sand temperature is one number now, not a 10-degree range",
     details:
-      "The headline is the dry sand you actually walk across — the surface the thermometer readings are taken on. The firmer, damp sand right by the water runs about 10°F cooler, and that figure now sits in small print next to it instead of stretching the main number into a range.",
+      "The sand reading is now a single figure: the dry sand you actually walk across, the surface the thermometer calibrations are taken on. The firm, damp strip right at the water's edge runs cooler, but it no longer gets its own number.",
     tag: "improved",
   },
   {

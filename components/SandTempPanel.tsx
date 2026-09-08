@@ -149,19 +149,14 @@ export function SandTempPanel({
         ) : null}
       </div>
 
-      {/* One number, not a range: the dry sand people actually walk across (and
-          the number the IR calibrations are taken on). The firmer, damp band by
-          the water is a separate, cooler surface — say so in a quiet sub-line
-          rather than stretching the headline into a 10°F span (owner, 9/8). */}
+      {/* One number: the dry sand people actually walk across, which is also
+          the surface every IR calibration reading is taken on (owner, 9/8). The
+          damp band by the water is a different, cooler surface; it is
+          mentioned once in the footnote, never as a second figure. */}
       <div className="mt-2 flex items-baseline gap-2">
         <span className="text-2xl font-semibold text-slate-900 dark:text-white">
           {current ? `~${current.sand}°F` : "—"}
         </span>
-        {current && current.surf !== current.sand ? (
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            dry sand · by the water ~{current.surf}°F
-          </span>
-        ) : null}
       </div>
 
       {/* barefoot comfort meter — slider marker carries a live temperature
@@ -297,8 +292,8 @@ export function SandTempPanel({
 
       <p className="mt-1 text-[10px] text-slate-400 dark:text-slate-600">
         Estimated from modeled ground temp, sun strength, wind, and recent rain —
-        calibrated against on-the-beach IR thermometer readings. The curve tracks
-        the hotter dune-side sand; firmer sand near the water runs ~10°F cooler.
+        calibrated against on-the-beach IR thermometer readings. This is the dry
+        sand; the firm, damp strip right at the water&rsquo;s edge runs cooler.
       </p>
     </div>
   );
