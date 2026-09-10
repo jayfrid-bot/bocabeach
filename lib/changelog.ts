@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-09-10",
+    title: "The 7-day outlook now forecasts the sea state for each day",
+    details:
+      "Every day card used to show today's wave reading — a whole week of '3 ft · really choppy' even when the ocean was forecast to calm down. Each day now uses the marine model's wave forecast for that day, so calm days ahead score as calm days.",
+    tag: "fixed",
+  },
+  {
     date: "2026-09-08",
     title: "Sand temperature is one number now, not a 10-degree range",
     details:

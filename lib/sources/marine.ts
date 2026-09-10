@@ -79,7 +79,7 @@ export async function fetchMarine(loc: Location): Promise<Wrapped<MarineData>> {
     // `wave_direction` (+ its swell fallback) drives that curve's shore-incidence
     // multiplier — square-on swell makes rips, oblique swell makes longshore drift.
     `&hourly=wave_height,wave_period,wave_direction,swell_wave_height,swell_wave_period,` +
-    `swell_wave_direction&forecast_days=2`;
+    `swell_wave_direction&forecast_days=7`;
   const uvUrl =
     `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
     `&current=uv_index,cloud_cover`;

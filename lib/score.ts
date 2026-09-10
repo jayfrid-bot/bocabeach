@@ -1142,8 +1142,19 @@ function scoreAllHoursFull(
   const hours = s.hourly.data;
   if (!hours?.length) return [];
 
-  // Day-constant inputs (water temp/quality/flags/waves/seaweed) reuse the snapshot.
+  // Day-constant inputs (water temp/quality/flags/seaweed) reuse the snapshot.
   const base = deriveMetrics(s);
+
+  // Waves are NOT day-constant: the marine model forecasts them hour by hour
+  // for the week (lib/sources/marine.ts, forecast_days=7). Before this lookup
+  // every future hour scored today's reading, so all seven day cards read the
+  // same sea state (2026-09-10: "3 ft · really choppy" for a week that was
+  // forecast to calm to under 2 ft). An hour outside the marine horizon still
+  // falls back to today's reading.
+  const waveByTime = new Map<string, number>();
+  for (const w of s.marine.data?.hourlyWaves ?? []) {
+    if (w.waveHeightFt != null) waveByTime.set(w.time, w.waveHeightFt);
+  }
 
   // Crowds vary through the day: map each LOCAL hour to its typical fullness.
   const tz = s.location.timezone;
@@ -1217,7 +1228,7 @@ function scoreAllHoursFull(
         waterTempF: base.waterTempF,
         windSpeedMph: h.windSpeedMph,
         windDirDeg: h.windDirDeg,
-        waveHeightFt: base.waveHeightFt,
+        waveHeightFt: waveByTime.get(h.time) ?? base.waveHeightFt,
         precipProbability: h.precipProbability,
         shortForecast: h.shortForecast,
         uvIndex: h.uvIndex,
