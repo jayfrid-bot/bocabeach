@@ -199,10 +199,10 @@ function ShareCard({ model, format }: { model: ShareCardModel; format: Format })
   const { width, height } = SIZES[format];
   const pad = isStory ? 64 : 56;
   const cols = isStory ? 2 : 3;
-  const scoreSize = isStory ? 260 : 200;
-  const nameSize = isStory ? 68 : 56;
-  const verdictSize = isStory ? 34 : 28;
-  const tileValueSize = isStory ? 34 : 28;
+  const scoreSize = isStory ? 260 : 176;
+  const nameSize = isStory ? 68 : 54;
+  const verdictSize = isStory ? 40 : 28;
+  const tileValueSize = isStory ? 44 : 28;
 
   return (
     <div
@@ -221,8 +221,9 @@ function ShareCard({ model, format }: { model: ShareCardModel; format: Format })
       <SunMotif size={isStory ? 170 : 130} top={isStory ? 50 : 40} right={isStory ? 60 : 50} />
       <WaveBand height={isStory ? 70 : 56} />
 
-      {/* Wordmark + local date/time */}
-      <div style={{ display: "flex", flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+      {/* Wordmark, with the local date/time on its own line beneath — the sun
+          motif owns the top-right corner, so nothing else may sit there. */}
+      <div style={{ display: "flex", flexDirection: "column" }}>
         <div
           style={{
             display: "flex",
@@ -235,13 +236,25 @@ function ShareCard({ model, format }: { model: ShareCardModel; format: Format })
         >
           isitbeachday.com
         </div>
-        <div style={{ display: "flex", fontSize: 26, color: MUTED }}>
+        <div style={{ display: "flex", fontSize: 26, color: MUTED, marginTop: 10 }}>
           {model.dateLabel}
           {model.dateLabel && model.timeLabel ? " · " : ""}
           {model.timeLabel}
         </div>
       </div>
 
+      {/* Body. On the tall story canvas it is centred between the header and
+          the footer (a top-anchored body left a third of the card empty); the
+          square is nearly full, so it stays top-anchored. */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          flex: 1,
+          justifyContent: isStory ? "center" : "flex-start",
+          paddingBottom: isStory ? 40 : 0,
+        }}
+      >
       {/* Beach name + region */}
       <div style={{ display: "flex", flexDirection: "column", marginTop: 28 }}>
         <div style={{ display: "flex", fontSize: nameSize, fontWeight: 800, lineHeight: 1.05 }}>
@@ -253,7 +266,7 @@ function ShareCard({ model, format }: { model: ShareCardModel; format: Format })
       </div>
 
       {/* Score + verdict */}
-      <div style={{ display: "flex", flexDirection: "row", alignItems: "flex-end", marginTop: 32 }}>
+      <div style={{ display: "flex", flexDirection: "row", alignItems: "flex-end", marginTop: isStory ? 32 : 18 }}>
         <div style={{ display: "flex", fontSize: scoreSize, fontWeight: 800, color: model.color, lineHeight: 1 }}>
           {Math.round(model.score)}
         </div>
@@ -263,7 +276,7 @@ function ShareCard({ model, format }: { model: ShareCardModel; format: Format })
           </div>
         </div>
       </div>
-      <div style={{ display: "flex", fontSize: verdictSize, fontWeight: 500, color: INK, marginTop: 10 }}>
+      <div style={{ display: "flex", fontSize: verdictSize, fontWeight: 500, color: INK, marginTop: isStory ? 16 : 10 }}>
         {model.verdict}
       </div>
 
@@ -285,7 +298,7 @@ function ShareCard({ model, format }: { model: ShareCardModel; format: Format })
       ) : null}
 
       {/* Metric tiles */}
-      <div style={{ display: "flex", marginTop: 32 }}>
+      <div style={{ display: "flex", marginTop: isStory ? 40 : 28 }}>
         <TileGrid tiles={model.tiles} cols={cols} valueSize={tileValueSize} />
       </div>
 
@@ -298,8 +311,7 @@ function ShareCard({ model, format }: { model: ShareCardModel; format: Format })
         </div>
       ) : null}
 
-      {/* Spacer pushes the footer to the bottom */}
-      <div style={{ display: "flex", flex: 1 }} />
+      </div>
 
       {/* Footer: brand + URL + QR */}
       <div
@@ -308,8 +320,8 @@ function ShareCard({ model, format }: { model: ShareCardModel; format: Format })
           flexDirection: "row",
           alignItems: "center",
           justifyContent: "space-between",
-          marginTop: 24,
-          paddingTop: 24,
+          marginTop: isStory ? 24 : 16,
+          paddingTop: isStory ? 24 : 16,
           borderTop: `1px solid ${CARD_RING}`,
         }}
       >
