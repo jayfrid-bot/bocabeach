@@ -318,3 +318,55 @@ test.describe("inside the app shell", () => {
     expect(errors, `console errors: ${errors.join("\n")}`).toEqual([]);
   });
 });
+
+// A 1x1 transparent PNG — stands in for the real (much slower, satori-rendered)
+// share card so this suite stays fast and deterministic. The route's own
+// rendering is covered by app/api/share/[slug]/route.test.ts.
+const ONE_PX_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
+
+test.describe("Share card", () => {
+  test("the Share button opens a sheet with both format previews", async ({ page }) => {
+    await page.route("**/api/share/**", (route) =>
+      route.fulfill({ status: 200, contentType: "image/png", body: ONE_PX_PNG }),
+    );
+
+    const errors = await openDashboard(page);
+
+    const shareButton = page.getByRole("button", { name: "Share" });
+    await expect(shareButton).toBeVisible();
+    await shareButton.click();
+
+    const sheet = page.getByRole("dialog", { name: "Share today's conditions" });
+    await expect(sheet).toBeVisible();
+
+    // Both format previews are present and load (routed to the stub above).
+    const previews = sheet.locator("img");
+    await expect(previews).toHaveCount(2);
+    for (const img of await previews.all()) {
+      await expect(img).toBeVisible();
+      await expect
+        .poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth), { timeout: 5_000 })
+        .toBeGreaterThan(0);
+    }
+
+    // Nothing in the dialog may be cut off or too small to hit at 390 px.
+    expect(await clippedText(page, '[role="dialog"]')).toEqual([]);
+    expect(await undersizedTapTargets(page, '[role="dialog"]')).toEqual([]);
+
+    // Picking the square format highlights it instead of the story format.
+    const square = sheet.getByRole("button", { name: /Use the Square/ });
+    const story = sheet.getByRole("button", { name: /Use the Story/ });
+    await expect(story).toHaveAttribute("aria-pressed", "true");
+    await square.click();
+    await expect(square).toHaveAttribute("aria-pressed", "true");
+    await expect(story).toHaveAttribute("aria-pressed", "false");
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+
+    expect(errors, `console errors: ${errors.join("\n")}`).toEqual([]);
+  });
+});

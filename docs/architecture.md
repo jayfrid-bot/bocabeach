@@ -27,6 +27,7 @@ flowchart TD
 
   subgraph routes [HTTP routes]
     COND["/api/conditions/[slug]"]
+    SHARE["/api/share/[slug]<br/>(shareable social card PNG, story/square)"]
     RESOLVE["/api/resolve<br/>(name/zip → nearest served beach)"]
     OG["/opengraph-image, /twitter-image"]
     SITEMAP["/sitemap.xml"]
@@ -35,11 +36,14 @@ flowchart TD
   end
 
   COND --> PIPE[lib/conditions.ts<br/>fetch all sources in parallel]
+  SHARE --> PIPE
   PIPE --> SOURCES[lib/sources/*<br/>one adapter per external source<br/>each returns Wrapped&lt;T&gt;, never throws]
   PIPE --> SCORE[lib/score.ts<br/>deriveMetrics + computeScore<br/>hourly + multi-day windows]
   SCORE --> CACHE[(NEXT_INC_CACHE_KV<br/>OpenNext page/data cache)]
   PIPE --> CACHE
   CAM --> SOURCES
+  SHARE --> CARDMODEL[lib/shareCard.ts<br/>pick + format the on-card tiles]
+  CARDMODEL --> IMG[next/og ImageResponse<br/>satori + resvg → PNG, default font only]
 
   RESOLVE --> LOC[config/locations.ts<br/>source of truth for served beaches]
   SITEMAP --> LOC

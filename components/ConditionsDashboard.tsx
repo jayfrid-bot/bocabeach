@@ -41,6 +41,7 @@ import { SourceList } from "@/components/SourceBadge";
 import { CamGrid } from "@/components/CamGrid";
 import { DayOutlookStrip } from "@/components/DayOutlookStrip";
 import { NotifyButton } from "@/components/NotifyButton";
+import { ShareCardSheet } from "@/components/ShareCardSheet";
 import { AppStoreBand } from "@/components/AppStoreBand";
 import { ChangelogSection } from "@/components/ChangelogSection";
 import { FeelsLikeCard } from "@/components/FeelsLikeCard";
@@ -424,6 +425,7 @@ export function ConditionsDashboard({
               onSettings={() => setSheet("settings")}
             />
           ) : null}
+          {!preview ? <ShareCardSheet slug={slug} beachName={snap.location.name} /> : null}
           {plusOn ? <NearYouChip beaches={beaches} currentSlug={slug} /> : null}
         </div>
       </header>

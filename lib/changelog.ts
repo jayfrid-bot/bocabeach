@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-14",
+    title: "Share today's beach conditions as a card",
+    details:
+      "A new Share button next to Alerts builds a card with the score, water and sand temp, waves, wind, and more — sized for an Instagram or TikTok story, or a square post. Post your own beach photos, then share the card alongside them.",
+    tag: "new",
+  },
+  {
+    date: "2026-09-14",
     title: "Deerfield Beach is now fully supported",
     details:
       "Deerfield Beach gets its own Beach Day score: tides from the Hillsboro River station, water quality from the two Deerfield sampling sites, and lifeguard flags straight from the City. Four City cameras — three on the sand and surf, one underwater — feed the busyness, seaweed, and water clarity readings.",
