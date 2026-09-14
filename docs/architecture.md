@@ -72,7 +72,8 @@ flowchart LR
   end
 
   LGT -->|writes| LDATA[(lightning-data branch)]
-  SARG -->|writes| SDATA[(sargassum-data branch<br/>cam_seaweed.json)]
+  SARG -->|reads| VCAMS[config/vision-cams.json<br/>per-beach cam registry]
+  SARG -->|writes| SDATA[(sargassum-data branch<br/>cam_seaweed.&lt;slug&gt;.json, one per beach)]
   GOES -->|writes| GDATA[(GOES cloud data)]
   MRMS -->|writes| MDATA[(MRMS rain nowcast data)]
   EVAL -->|archives + scores stills| SDATA
@@ -91,6 +92,20 @@ flowchart LR
 best-effort, so the Cloudflare cron is the reliable path and GitHub is the
 backstop. `PUSH_SAFETY_ALERTS` (a Worker var) kills every hazard alert
 app-wide without a deploy.
+
+**Cam vision is per-beach.** `sargassum.yml` no longer reads one hard-coded
+Boca cam list: `scripts/cam_seaweed.py` loads `config/vision-cams.json` (one
+entry per beach, each with its own cams and a `kind` of `feed`,
+`direct`, or `hls`) and processes every registered beach in the same run,
+publishing one `cam_seaweed.<slug>.json` per beach to `sargassum-data`. A
+`vitest` (`lib/visionCams.test.ts`) cross-checks the registry against
+`config/locations.ts` so the two never drift apart. `lib/sources/camFeed.ts`
+builds each beach's feed URL from `loc.slug`; `sargassum.ts` and `busyness.ts`
+both use it, and Boca Raton alone falls back to the pre-split single-file
+`cam_seaweed.json` (which the job still publishes as a copy, for one release)
+if its own per-beach file isn't there yet. The underwater "Spinner the Sea
+Cam" read stays a single per-run calibration signal — the same `uw` value is
+copied onto every beach's file, not read once per beach.
 
 ## 3. Beach Day Plus — device, presence, and alerts
 

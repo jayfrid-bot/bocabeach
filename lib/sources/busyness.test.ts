@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   summarizeBusyness,
   fetchBusyness,
@@ -6,6 +6,7 @@ import {
   noRecentCamReadsCopy,
   type CamFeed,
 } from "@/lib/sources/busyness";
+import { camFeedUrl, legacyCamFeedUrl } from "@/lib/sources/camFeed";
 import type { Location } from "@/lib/types";
 
 const CAMLESS_LOCATION: Location = {
@@ -20,6 +21,18 @@ const CAMLESS_LOCATION: Location = {
   ndbcBuoyId: "icac1",
   cams: [],
 };
+
+const ONE_CAM = [{ id: "cam-1", name: "Cam 1", provider: "p", embedType: "image" as const, url: "https://example.com" }];
+
+const BOCA_LOCATION: Location = { ...CAMLESS_LOCATION, slug: "boca-raton", cams: ONE_CAM };
+const DEERFIELD_LOCATION: Location = { ...CAMLESS_LOCATION, slug: "deerfield-beach", cams: ONE_CAM };
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 const feed = (cams: unknown[]): CamFeed => ({
   latest: { capturedAtLocal: "2026-06-03T16:00:00-04:00", cams: cams as never },
@@ -185,6 +198,53 @@ describe("fetchBusyness — cam gating", () => {
     expect(w.data).toBeNull();
     expect(w.status).toBe("best-effort");
     expect(w.note).toMatch(/no beach cams/i);
+  });
+});
+
+describe("fetchBusyness — per-beach feed URL + legacy fallback", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("fetches the beach's own per-beach file, no fallback, for a beach with no legacy history", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ latest: { cams: [] } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchBusyness(DEERFIELD_LOCATION);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(camFeedUrl("deerfield-beach"));
+  });
+
+  it("404s honestly for a beach with no registered cam feed, without trying a legacy file", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response("not found", { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const w = await fetchBusyness(DEERFIELD_LOCATION);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(w.data).toBeNull();
+    expect(w.note).toMatch(/not published yet/i);
+  });
+
+  it("falls back to the legacy single-file feed for boca-raton when its per-beach file 404s", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("not found", { status: 404 }))
+      .mockResolvedValueOnce(
+        jsonResponse({ latest: { cams: [{ name: "A", crowd: "busy", crowdPct: 80 }] } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const w = await fetchBusyness(BOCA_LOCATION);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe(camFeedUrl("boca-raton"));
+    expect(fetchMock.mock.calls[1][0]).toBe(legacyCamFeedUrl());
+    // Not asserting the level itself: fetchBusyness gates it by real-time
+    // daylight (via fetchSun), which this test doesn't control — the point
+    // here is only that the legacy fallback file's data made it through.
+    expect(w.data).not.toBeNull();
   });
 });
 

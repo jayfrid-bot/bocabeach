@@ -9,13 +9,9 @@ import type {
 } from "@/lib/types";
 import { fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
 import { vsAverage, type VsAverageEntry } from "@/lib/vsAverage";
+import { camFeedUrlCandidates } from "@/lib/sources/camFeed";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
-
-/** The off-Netlify cam-vision job publishes per-cam seaweed reads here. */
-const CAM_FEED_URL =
-  process.env.CAM_SEAWEED_FEED_URL ??
-  "https://raw.githubusercontent.com/jayfrid-bot/bocabeach/sargassum-data/cam_seaweed.json";
 
 const RANK: Record<string, number> = { none: 0, low: 1, moderate: 2, high: 3 };
 const LEVELS: SargassumRisk[] = ["none", "low", "moderate", "high"];
@@ -219,12 +215,20 @@ export async function fetchSargassum(
   }
   let fetchedAt = nowIso();
   try {
-    const res = await fetchWithTimeout(CAM_FEED_URL, {
-      timeoutMs: 7000,
-      next: { revalidate: 600 }, // 10 min — the cam job now runs every 10 min during daylight
-    });
-    fetchedAt = fetchedAtOf(res);
-    if (res.status === 404) {
+    // Try the beach's own per-beach file first; boca-raton (the only beach
+    // that had cams before the per-beach split) falls through to the legacy
+    // single-file feed if its own file isn't published yet. Any other beach
+    // with no registry entry just 404s here — see camFeedUrlCandidates.
+    let res: Response | undefined;
+    for (const url of camFeedUrlCandidates(loc.slug)) {
+      res = await fetchWithTimeout(url, {
+        timeoutMs: 7000,
+        next: { revalidate: 600 }, // 10 min — the cam job now runs every 10 min during daylight
+      });
+      fetchedAt = fetchedAtOf(res);
+      if (res.status !== 404) break;
+    }
+    if (!res || res.status === 404) {
       return {
         source: ATTRIBUTION,
         status: "best-effort",

@@ -1,8 +1,36 @@
 #!/usr/bin/env python3
 """
-Read visible sargassum/seaweed + crowd from the close-up beach-cam stills using a
-FALLBACK CHAIN of free vision APIs. Runs OFF Netlify in the Action; writes a tiny
-cam_seaweed.json the web app reads. Pure stdlib (urllib/base64/json/zoneinfo).
+Read visible sargassum/seaweed + crowd from close-up beach-cam stills using a
+FALLBACK CHAIN of free vision APIs. Runs OFF Netlify in the Action; writes one
+tiny cam_seaweed.<slug>.json PER BEACH for the web app to read. Pure stdlib
+(urllib/base64/json/zoneinfo) except for the optional ffmpeg frame-grab used
+by "hls"-kind cams (see CAM_REGISTRY below).
+
+PER-BEACH: which cams to read is NOT hard-coded here. It comes from the JSON
+registry at CAM_REGISTRY (default config/vision-cams.json), shaped:
+  { "<slug>": { "timezone": "America/New_York",
+                "cams": [ { "id", "name", "role": "crowd"|"shore",
+                            "source": {"kind": "feed"|"direct"|"hls", ...} } ] } }
+Every slug in the registry is processed in one run, so adding a beach (e.g.
+Deerfield Beach) is a registry edit, not a code change. A `lib/visionCams.test.ts`
+vitest cross-checks every registry cam id + feed base/view against
+config/locations.ts, so Python (plain json.load, no schema library needed) and
+TS never drift apart. Three cam.source.kind values:
+  feed   — a video-monitoring.com "latest.json" rotating-frame feed (existing
+           logic): {base, view}.
+  direct — a fixed JPG still URL, fetched as-is: {url}.
+  hls    — a live HLS (m3u8) stream; we grab exactly one frame with ffmpeg
+           (preinstalled on GitHub's ubuntu runners): {url}.
+Output: one file per beach, cam_seaweed.<slug>.json, written under
+CAM_SEAWEED_OUT_DIR (default "."; the workflow points it at a temp dir). Each
+file keeps the EXACT shape this script always wrote (history[], morning,
+latest, uw, ...) so nothing downstream changes per beach. For one release we
+also keep writing the pre-split single-file cam_seaweed.json (CAM_SEAWEED_OUT)
+as a copy of boca-raton's file, so lib/sources/*.ts's transition fallback (and
+any stale CDN cache) still resolves. If a beach's capture fails this cycle
+(every cam errored, or no providers), we still (re)write its file from the
+PREVIOUS published one (carry-forward) — see main() — so the workflow's
+force-pushed branch never drops a beach it once had.
 
 Reliability: each image is tried against each configured provider in order until
 one answers, so one provider being rate-limited/down doesn't blank the feed. A
@@ -39,9 +67,11 @@ Frame source (fetch_uw_frame) is a COURIER CHAIN, tried in order:
   (c) direct yt-dlp -g -> ffmpeg — works locally/residential but YouTube blocks
       it from GitHub datacenter IPs; kept as a last resort.
 
-Data shape (cam_seaweed.json):
+Data shape (cam_seaweed.<slug>.json — identical shape on every beach's file):
   top-level `uw`: {level, pct, note, capturedAtLocal} — latest underwater read,
     carried forward on ticks that skip the underwater read (like morning/latest).
+    Computed AT MOST ONCE per run (not per beach) and copied onto every beach's
+    `uw` field — it's one shared calibration signal, not a per-beach reading.
   history[]: {t, hour, level(crowd), people, crowdPct, seaweed, cov, water, clr}
     plus SPARSE `uw` (pct) + `uwLevel` fields present ONLY on the ~hourly ticks
     that actually ran an underwater read (absent otherwise).
@@ -62,8 +92,14 @@ from zoneinfo import ZoneInfo
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")  # 2.0-flash has no free tier
+# Legacy pre-per-beach output: kept as a copy of boca-raton's file for one
+# release (see LEGACY_SLUG below and the copy step at the end of main()).
 OUT = os.environ.get("CAM_SEAWEED_OUT", "cam_seaweed.json")
-TZ = ZoneInfo(os.environ.get("CAM_TZ", "America/New_York"))
+# Per-beach files (cam_seaweed.<slug>.json) are written here. The workflow
+# points this at a temp dir; default "." matches the old single-file layout.
+OUT_DIR = os.environ.get("CAM_SEAWEED_OUT_DIR", ".")
+# Fallback timezone for a registry entry that omits its own "timezone".
+DEFAULT_TZ_NAME = os.environ.get("CAM_TZ", "America/New_York")
 
 # Free vision APIs return 429 (quota/rate) and 503 (overloaded) under load; both
 # are usually transient, so we retry with exponential backoff. We also space the
@@ -121,22 +157,41 @@ OPENAI_PROVIDERS = {
     },
 }
 
-PREV_URL = os.environ.get(
-    "CAM_SEAWEED_PREV_URL",
-    "https://raw.githubusercontent.com/jayfrid-bot/bocabeach/sargassum-data/cam_seaweed.json",
+# Base URL each beach's PREVIOUS published file is read from (for carry-forward
+# and the earliest-morning-of-the-day logic): "<base>/cam_seaweed.<slug>.json".
+PREV_BASE = os.environ.get(
+    "CAM_SEAWEED_PREV_BASE",
+    "https://raw.githubusercontent.com/jayfrid-bot/bocabeach/sargassum-data",
 )
+# The one beach that had a single-file feed before the per-beach split — the
+# only slug fetch_prev() falls back to the legacy filename for (transition
+# safety: its "cam_seaweed.boca-raton.json" may not exist yet on an old branch
+# commit), and the only slug main() mirrors into the legacy OUT path.
+LEGACY_SLUG = "boca-raton"
 # Local hours considered "morning, before/at the beach-cleaning tractor".
 MORNING = range(5, 10)
 
-CAMS = [
-    {"id": "boca-inlet-surf", "name": "Boca Inlet — Surf & Shoreline",
-     "feed": "http://video-monitoring.com/beachcams/bocainlet", "view": "s16"},
-    {"id": "boca-south-surf", "name": "South Beach — Shoreline & Surf",
-     "feed": "http://video-monitoring.com/beachcams/boca", "view": "s11"},
-    # Wide pavilion + parking-lot view — the best gauge of how busy the beach is.
-    {"id": "boca-south", "name": "South Beach — Pavilion & Lot",
-     "feed": "http://video-monitoring.com/beachcams/boca", "view": "s4"},
-]
+# Which cams to read is NOT hard-coded — see load_registry() and the module
+# docstring. This used to be a fixed Boca-only list; it now comes from
+# CAM_REGISTRY (config/vision-cams.json), one entry per beach.
+CAM_REGISTRY_PATH = os.environ.get("CAM_REGISTRY", "config/vision-cams.json")
+
+
+def load_registry() -> dict:
+    """Every beach's cam list, keyed by slug. {} (and a warning) if the
+    registry file is missing/unparsable — fail-soft, same spirit as "no
+    vision providers configured": nothing to do, exit 0."""
+    try:
+        with open(CAM_REGISTRY_PATH, encoding="utf-8") as fh:
+            registry = json.load(fh)
+    except Exception as e:  # noqa: BLE001
+        print(f"warn: couldn't load {CAM_REGISTRY_PATH}: {e}", file=sys.stderr)
+        return {}
+    if not isinstance(registry, dict):
+        print(f"warn: {CAM_REGISTRY_PATH} is not a JSON object — ignoring", file=sys.stderr)
+        return {}
+    return registry
+
 
 SEAWEED = ("none", "low", "moderate", "high")
 SEAWEED_RANK = {s: i for i, s in enumerate(SEAWEED)}
@@ -229,11 +284,47 @@ def _get(url: str, timeout: int = 25) -> bytes:
     return urllib.request.urlopen(req, timeout=timeout).read()
 
 
+def _ffmpeg_frame_from_url(url: str, timeout: int = 20) -> bytes:
+    """Grab exactly one JPEG frame from a stream URL (HLS/m3u8 or anything
+    else ffmpeg can open) via `ffmpeg -i <url> -frames:v 1`. Shared by the
+    "hls"-kind registry cams and fetch_uw_frame()'s own last-resort grab."""
+    fd, tmp = tempfile.mkstemp(suffix=".jpg")
+    os.close(fd)
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", url, "-frames:v", "1", tmp],
+            capture_output=True, timeout=timeout, check=True,
+        )
+        with open(tmp, "rb") as fh:
+            data = fh.read()
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    if not data:
+        raise RuntimeError("ffmpeg produced an empty frame")
+    return data
+
+
 def fetch_still(cam: dict) -> bytes:
-    if cam.get("still"):
-        return _get(cam["still"])
-    feed = json.loads(_get(f"{cam['feed']}/latest.json").decode("utf-8", "replace"))
-    return _get(f"{cam['feed']}/{feed[cam['view']]['mr']}")
+    """Grab one still frame for a registry cam, per its source.kind:
+      feed   — video-monitoring.com "latest.json" rotating-frame feed
+               ({base, view}, the pre-existing behaviour).
+      direct — a fixed JPG still URL, fetched as-is ({url}).
+      hls    — a live HLS/m3u8 stream, one frame via ffmpeg ({url}).
+    """
+    src = cam.get("source") or {}
+    kind = src.get("kind", "feed")
+    if kind == "feed":
+        base, view = src["base"], src["view"]
+        feed = json.loads(_get(f"{base}/latest.json").decode("utf-8", "replace"))
+        return _get(f"{base}/{feed[view]['mr']}")
+    if kind == "direct":
+        return _get(src["url"])
+    if kind == "hls":
+        return _ffmpeg_frame_from_url(src["url"])
+    raise ValueError(f"cam {cam.get('id')!r}: unknown source kind {kind!r}")
 
 
 def _age_min_utc(grabbed_at: str) -> float:
@@ -325,24 +416,7 @@ def fetch_uw_frame() -> bytes:
     if manifest is None:
         raise RuntimeError("all yt-dlp clients failed -> " + " | ".join(errors))
 
-    fd, tmp = tempfile.mkstemp(suffix=".jpg")
-    os.close(fd)
-    try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-i", manifest,
-             "-frames:v", "1", tmp],
-            capture_output=True, timeout=20, check=True,
-        )
-        with open(tmp, "rb") as fh:
-            data = fh.read()
-    finally:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-    if not data:
-        raise RuntimeError("ffmpeg produced an empty frame")
-    return data
+    return _ffmpeg_frame_from_url(manifest)
 
 
 def _post(url: str, body: bytes, headers: dict | None = None, timeout: int = 40) -> bytes:
@@ -577,69 +651,57 @@ def median_water(group: dict | None) -> dict | None:
     return {"level": closest["water"], "pct": med}
 
 
-def fetch_prev() -> dict:
+def fetch_prev(slug: str) -> dict:
+    """The beach's last published file: "<PREV_BASE>/cam_seaweed.<slug>.json".
+    For LEGACY_SLUG only, falls back to the pre-split "cam_seaweed.json" if the
+    per-beach file 404s (an old sargassum-data branch commit, or the very first
+    run of this per-beach version). Any other slug that 404s just starts fresh
+    — {} — same as it always has for a brand-new beach."""
     try:
-        return json.loads(_get(PREV_URL).decode("utf-8", "replace"))
+        return json.loads(_get(f"{PREV_BASE}/cam_seaweed.{slug}.json").decode("utf-8", "replace"))
     except Exception:  # noqa: BLE001
-        return {}
+        if slug != LEGACY_SLUG:
+            return {}
+        try:
+            return json.loads(_get(f"{PREV_BASE}/cam_seaweed.json").decode("utf-8", "replace"))
+        except Exception:  # noqa: BLE001
+            return {}
 
 
-def capture_now(now_local: dt.datetime) -> dict | None:
+def capture_beach(slug: str, cams: list[dict], now_local: dt.datetime, gap_state: dict) -> dict | None:
+    """Read every cam configured for one beach. `gap_state` is a single
+    {"called": bool} shared across ALL beaches in this run, so CAM_GAP_S spaces
+    EVERY call in the whole run (not just within one beach) — quota math is
+    per-run, not per-beach (see the module docstring / DECISIONS #2)."""
     readings = []
-    for i, cam in enumerate(CAMS):
-        if i:
+    for cam in cams:
+        if gap_state["called"]:
             time.sleep(CAM_GAP_S)  # space calls to respect the per-minute limit
+        gap_state["called"] = True
         try:
             r = assess(fetch_still(cam))
             readings.append({"id": cam["id"], "name": cam["name"], **r})
-            print(f"  {cam['id']}: seaweed={r['level']}({r.get('coveragePct')}%) "
+            print(f"  [{slug}] {cam['id']}: seaweed={r['level']}({r.get('coveragePct')}%) "
                   f"crowd={r.get('crowd')}({r.get('crowdPct')}%) "
                   f"people={r.get('people')} via {r.get('provider')}")
         except Exception as e:  # noqa: BLE001
-            print(f"  warn {cam['id']}: {e}", file=sys.stderr)
+            print(f"  warn [{slug}] {cam['id']}: {e}", file=sys.stderr)
     if not readings:
         return None
     return {"capturedAtLocal": now_local.isoformat(timespec="minutes"),
             "hour": now_local.hour, "cams": readings}
 
 
-def main() -> int:
-    now_local = dt.datetime.now(TZ)
+def build_beach_output(
+    slug: str, tz_name: str, now_local: dt.datetime, providers: list[tuple[str, str]],
+    prev: dict, current: dict | None, uw: dict | None, uw_reading: dict | None,
+) -> dict:
+    """Assemble one beach's cam_seaweed.<slug>.json document — the exact shape
+    this script has always written, just computed per-beach now. `uw`/
+    `uw_reading` are the ONE shared underwater read for this whole run (see
+    main()), not per-beach."""
     today = now_local.date().isoformat()
-    providers = _enabled_providers()
-    prev = fetch_prev()
-    # Carry over today's morning reading; drop it if it's from a previous day.
     prev_morning = prev.get("morning") if prev.get("dateLocal") == today else None
-
-    if providers:
-        print(f"vision providers (in order): {', '.join(n for n, _ in providers)}")
-    current = capture_now(now_local) if providers else None
-    if current is None and not providers:
-        print("no vision providers configured — preserving any existing readings",
-              file=sys.stderr)
-
-    # UNDERWATER read — quota-gated to AT MOST once per hour, during daylight
-    # only (dark underwater at night). Gating is by AGE of the previous uw read
-    # (>= 50 min), NOT by wall-clock minute: GitHub throttles the */10 cron to
-    # roughly hourly at unpredictable minutes (observed 2026-07-23), so a
-    # minute<10 gate almost never fired. Age-based gating attempts on ~every
-    # throttled tick (~11/day) yet still caps at ~once/hour if GitHub ever
-    # honors the full 10-min cadence. Carry the previous `uw` forward on
-    # skipped/failed ticks, like morning/latest.
-    uw = prev.get("uw")
-    uw_reading = None
-    if providers and now_local.hour in UW_HOURS:
-        prev_uw_at = (uw or {}).get("capturedAtLocal")
-        uw_age_min = None
-        if prev_uw_at:
-            try:
-                uw_age_min = (now_local - dt.datetime.fromisoformat(prev_uw_at)).total_seconds() / 60
-            except ValueError:
-                uw_age_min = None  # unparseable -> treat as due
-        if uw_age_min is None or uw_age_min >= 50:
-            uw_reading = capture_uw(now_local)
-            if uw_reading:
-                uw = uw_reading
 
     # The earliest morning (pre-tractor) reading of the day is authoritative.
     morning = prev_morning
@@ -684,7 +746,7 @@ def main() -> int:
 
     now_iso = (dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
                .isoformat().replace("+00:00", "Z"))
-    out = {
+    return {
         # Bump the timestamp only on a fresh capture; otherwise keep prev's so a
         # failed run that re-publishes the last good data doesn't look "fresh".
         "generatedAt": now_iso if current else (prev.get("generatedAt") or now_iso),
@@ -692,11 +754,12 @@ def main() -> int:
         # exact provider/model that produced it). Keep prev's label on a no-op run.
         "model": (",".join(n for n, _ in providers) if current
                   else prev.get("model")) or (providers[0][1] if providers else None),
-        "tz": str(TZ),
+        "tz": tz_name,
         "dateLocal": today,
         "morning": morning,  # earliest pre-cleaning reading (highest weight)
         "latest": latest,    # most recent reading (current beach state)
-        # Latest underwater sea-cam read {level, pct, note, capturedAtLocal};
+        # Latest underwater sea-cam read {level, pct, note, capturedAtLocal} —
+        # ONE shared calibration signal, same value on every beach's file;
         # carried forward on ticks that skip the ~hourly underwater read. None
         # until the first successful underwater grab.
         "uw": uw,
@@ -705,20 +768,120 @@ def main() -> int:
         "history": history,
     }
 
-    # Non-destructive: never overwrite the published feed with an empty document.
-    # `latest`/`morning` already carry forward prev's good data, so `out` is empty
-    # only when this run got nothing AND there was no prior reading — in that case
-    # write nothing so the publish step leaves the last good feed untouched.
-    if not (out["morning"] or out["latest"]):
-        print("no fresh readings and no prior good data — leaving published feed "
-              "unchanged (not writing output)", file=sys.stderr)
+
+def main() -> int:
+    registry = load_registry()
+    if not registry:
+        print("no beaches in vision-cams registry — nothing to do", file=sys.stderr)
         return 0
 
-    with open(OUT, "w") as fh:
-        json.dump(out, fh, separators=(",", ":"))
-    mh = morning.get("hour") if morning else None
-    fresh = "fresh" if current else "preserved (no fresh capture this run)"
-    print(f"wrote {OUT} [{fresh}]: morning={mh} latest={(latest or {}).get('hour')}")
+    providers = _enabled_providers()
+    if providers:
+        print(f"vision providers (in order): {', '.join(n for n, _ in providers)}")
+    else:
+        print("no vision providers configured — preserving any existing readings",
+              file=sys.stderr)
+
+    now_by_slug = {
+        slug: dt.datetime.now(ZoneInfo(entry.get("timezone", DEFAULT_TZ_NAME)))
+        for slug, entry in registry.items()
+    }
+    prevs = {slug: fetch_prev(slug) for slug in registry}
+
+    # One capture pass over every beach's cams. gap_state is shared so
+    # CAM_GAP_S spaces every call across the WHOLE run, not just within one
+    # beach — the quota math (DECISIONS #2) is a per-run budget.
+    gap_state = {"called": False}
+    current_by_slug: dict[str, dict | None] = {}
+    for slug, entry in registry.items():
+        if providers:
+            current_by_slug[slug] = capture_beach(
+                slug, entry.get("cams", []), now_by_slug[slug], gap_state)
+        else:
+            current_by_slug[slug] = None
+
+    # UNDERWATER read — AT MOST ONCE PER RUN (not per beach; see module
+    # docstring), quota-gated to at most once per hour, during daylight only
+    # (dark underwater at night). Gating is by AGE of the previous uw read
+    # (>= 50 min), NOT by wall-clock minute: GitHub throttles the */10 cron to
+    # roughly hourly at unpredictable minutes (observed 2026-07-23), so a
+    # minute<10 gate almost never fired. Age-based gating attempts on ~every
+    # throttled tick (~11/day) yet still caps at ~once/hour if GitHub ever
+    # honors the full 10-min cadence. Every beach's local clock is currently
+    # the same zone (America/New_York); we use LEGACY_SLUG's (falling back to
+    # the first registered beach) to judge daylight/staleness, and carry the
+    # previous uw reading forward from whichever beach's prior file has one
+    # (LEGACY_SLUG preferred, since it's the long-running carrier).
+    clock_slug = LEGACY_SLUG if LEGACY_SLUG in registry else next(iter(registry))
+    now_local_for_uw = now_by_slug[clock_slug]
+    prev_uw = None
+    if prevs.get(LEGACY_SLUG, {}).get("uw"):
+        prev_uw = prevs[LEGACY_SLUG]["uw"]
+    else:
+        for slug in registry:
+            if prevs[slug].get("uw"):
+                prev_uw = prevs[slug]["uw"]
+                break
+    uw = prev_uw
+    uw_reading = None
+    if providers and now_local_for_uw.hour in UW_HOURS:
+        prev_uw_at = (prev_uw or {}).get("capturedAtLocal")
+        uw_age_min = None
+        if prev_uw_at:
+            try:
+                uw_age_min = (now_local_for_uw - dt.datetime.fromisoformat(prev_uw_at)).total_seconds() / 60
+            except ValueError:
+                uw_age_min = None  # unparseable -> treat as due
+        if uw_age_min is None or uw_age_min >= 50:
+            uw_reading = capture_uw(now_local_for_uw)
+            if uw_reading:
+                uw = uw_reading
+
+    os.makedirs(OUT_DIR, exist_ok=True)
+    wrote_any = False
+    legacy_src_path = None
+    for slug, entry in registry.items():
+        tz_name = entry.get("timezone", DEFAULT_TZ_NAME)
+        out = build_beach_output(
+            slug, tz_name, now_by_slug[slug], providers,
+            prevs[slug], current_by_slug[slug], uw, uw_reading,
+        )
+
+        # Non-destructive: never overwrite a beach's published feed with an
+        # empty document. `latest`/`morning` already carry forward prev's good
+        # data, so `out` is empty only when this run got nothing for this
+        # beach AND there was no prior reading — in that case skip writing so
+        # the publish step leaves that beach's last good feed untouched. If a
+        # beach captured fine before but failed just this cycle, `out` still
+        # carries prev's morning/latest/history forward, so its file IS
+        # rewritten (unchanged) — the force-push never drops a beach.
+        if not (out["morning"] or out["latest"]):
+            print(f"  [{slug}] no fresh readings and no prior good data — "
+                  "leaving published feed unchanged (not writing output)", file=sys.stderr)
+            continue
+
+        out_path = os.path.join(OUT_DIR, f"cam_seaweed.{slug}.json")
+        with open(out_path, "w") as fh:
+            json.dump(out, fh, separators=(",", ":"))
+        wrote_any = True
+        mh = out["morning"].get("hour") if out["morning"] else None
+        fresh = "fresh" if current_by_slug[slug] else "preserved (no fresh capture this run)"
+        print(f"wrote {out_path} [{fresh}]: morning={mh} latest={(out['latest'] or {}).get('hour')}")
+        if slug == LEGACY_SLUG:
+            legacy_src_path = out_path
+
+    # Legacy single-file feed: for one release, keep publishing cam_seaweed.json
+    # (CAM_SEAWEED_OUT) as a copy of boca-raton's file, so lib/sources/*.ts's
+    # transition fallback (and any stale CDN cache still pointed at the old
+    # single-file URL) keeps resolving until every reader has moved over.
+    if legacy_src_path:
+        with open(legacy_src_path, "rb") as src, open(OUT, "wb") as dst:
+            dst.write(src.read())
+        print(f"wrote legacy {OUT} (copy of {legacy_src_path})")
+
+    if not wrote_any:
+        print("no beach had fresh readings or prior data — nothing written this run",
+              file=sys.stderr)
     return 0
 
 

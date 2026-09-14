@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { summarizeSeaweed, fetchSargassum, type CamSeaweedFeed } from "@/lib/sources/sargassum";
+import { camFeedUrl, legacyCamFeedUrl } from "@/lib/sources/camFeed";
 import type { Location } from "@/lib/types";
 
 const CAMLESS_LOCATION: Location = {
@@ -14,6 +15,18 @@ const CAMLESS_LOCATION: Location = {
   ndbcBuoyId: "icac1",
   cams: [],
 };
+
+const ONE_CAM = [{ id: "cam-1", name: "Cam 1", provider: "p", embedType: "image" as const, url: "https://example.com" }];
+
+const BOCA_LOCATION: Location = { ...CAMLESS_LOCATION, slug: "boca-raton", cams: ONE_CAM };
+const DEERFIELD_LOCATION: Location = { ...CAMLESS_LOCATION, slug: "deerfield-beach", cams: ONE_CAM };
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 describe("summarizeSeaweed", () => {
   it("scores point-in-time: the latest capture wins, morning gets no extra weight", () => {
@@ -219,5 +232,47 @@ describe("fetchSargassum — cam gating", () => {
     expect(w.data).toBeNull();
     expect(w.status).toBe("best-effort");
     expect(w.note).toMatch(/no beach cams/i);
+  });
+});
+
+describe("fetchSargassum — per-beach feed URL + legacy fallback", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("fetches the beach's own per-beach file, no fallback, for a beach with no legacy history", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ latest: { cams: [] } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchSargassum(DEERFIELD_LOCATION);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(camFeedUrl("deerfield-beach"));
+  });
+
+  it("404s honestly for a beach with no registered cam feed, without trying a legacy file", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response("not found", { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const w = await fetchSargassum(DEERFIELD_LOCATION);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(w.data).toBeNull();
+    expect(w.note).toMatch(/not published yet/i);
+  });
+
+  it("falls back to the legacy single-file feed for boca-raton when its per-beach file 404s", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("not found", { status: 404 }))
+      .mockResolvedValueOnce(jsonResponse({ latest: { cams: [{ name: "A", level: "low" }] } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const w = await fetchSargassum(BOCA_LOCATION);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe(camFeedUrl("boca-raton"));
+    expect(fetchMock.mock.calls[1][0]).toBe(legacyCamFeedUrl());
+    expect(w.data?.level).toBe("low");
   });
 });

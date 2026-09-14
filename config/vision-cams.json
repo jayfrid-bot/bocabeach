@@ -1,0 +1,37 @@
+{
+  "boca-raton": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "boca-inlet-surf",
+        "name": "Boca Inlet — Surf & Shoreline",
+        "source": {
+          "kind": "feed",
+          "base": "http://video-monitoring.com/beachcams/bocainlet",
+          "view": "s16"
+        },
+        "role": "shore"
+      },
+      {
+        "id": "boca-south-surf",
+        "name": "South Beach — Shoreline & Surf",
+        "source": {
+          "kind": "feed",
+          "base": "http://video-monitoring.com/beachcams/boca",
+          "view": "s11"
+        },
+        "role": "shore"
+      },
+      {
+        "id": "boca-south",
+        "name": "South Beach — Pavilion & Lot",
+        "source": {
+          "kind": "feed",
+          "base": "http://video-monitoring.com/beachcams/boca",
+          "view": "s4"
+        },
+        "role": "crowd"
+      }
+    ]
+  }
+}

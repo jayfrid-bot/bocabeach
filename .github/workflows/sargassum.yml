@@ -1,8 +1,11 @@
 name: Cam Vision Feed
 
 # Reads seaweed (sargassum) + crowd from the beach cams with Gemini vision and
-# publishes cam_seaweed.json to the `sargassum-data` branch (NOT main), so the
-# AI calls run here on free public-repo Actions and never touch Netlify.
+# publishes ONE cam_seaweed.<slug>.json PER BEACH — driven by
+# config/vision-cams.json, see scripts/cam_seaweed.py — to the `sargassum-data`
+# branch (NOT main), so the AI calls run here on free public-repo Actions and
+# never touch Netlify. Also keeps publishing the pre-split cam_seaweed.json as
+# a copy of boca-raton's file for one release (transition fallback).
 # Also, at most once per hour during daylight, grabs a frame from the Deerfield
 # underwater sea-cam (yt-dlp -> ffmpeg) for a separate visibility read that
 # ground-truths the surface water-clarity grades (fully fail-soft — see script).
@@ -88,12 +91,17 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }} # optional free fallback
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GitHub Models fallback (no signup)
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # for the publish push below
-          CAM_SEAWEED_OUT: ${{ runner.temp }}/cam_seaweed.json
+          # One file per beach (cam_seaweed.<slug>.json) lands here, driven by
+          # config/vision-cams.json — see scripts/cam_seaweed.py. CAM_SEAWEED_OUT
+          # (the legacy single-file copy for boca-raton, kept for one release)
+          # is placed in the SAME directory so one glob picks up every file.
+          CAM_SEAWEED_OUT_DIR: ${{ runner.temp }}/vision
+          CAM_SEAWEED_OUT: ${{ runner.temp }}/vision/cam_seaweed.json
         run: |
           set +e # one bad cycle (vision API down, publish push conflict, ...) must not kill the loop
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           work="${RUNNER_TEMP}/pub"
-          feed="${CAM_SEAWEED_OUT}"
+          feed_dir="${CAM_SEAWEED_OUT_DIR}"
           budget_min=340 # leaves ~10 min headroom under the 350 timeout-minutes above
 
           # Seconds until the next :00/:10/:20... wall-clock boundary. Relies on
@@ -119,9 +127,14 @@ jobs:
           }
 
           publish() {
-            [ -f "$feed" ] || { echo "  no feed written this cycle — leaving last good sargassum-data in place"; return 0; }
+            # One file per beach, plus the legacy single-file copy — every
+            # cam_seaweed*.json the Python job wrote this cycle (see its
+            # per-beach carry-forward: a beach with no prior data AND no fresh
+            # capture this cycle simply has no file, same as before).
+            local files=("$feed_dir"/cam_seaweed*.json)
+            [ -e "${files[0]}" ] || { echo "  no feed written this cycle — leaving last good sargassum-data in place"; return 0; }
             rm -rf "$work"; mkdir -p "$work"
-            cp "$feed" "$work/cam_seaweed.json" || return 1
+            cp "${files[@]}" "$work/" || return 1
             cd "$work" || return 1
             git init -q
             git config user.name "cam-vision-bot"
@@ -138,7 +151,7 @@ jobs:
           start_epoch=$(date +%s)
 
           run_cycle() {
-            rm -f "$feed"
+            rm -rf "$feed_dir"; mkdir -p "$feed_dir"
             if python scripts/cam_seaweed.py; then
               consecutive_fail=0
               publish && echo "  published $(date -u +%FT%TZ)"
