@@ -98,6 +98,15 @@ from zoneinfo import ZoneInfo
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")  # 2.0-flash has no free tier
+# Google meters the free tier PER MODEL, so a second model is a second daily
+# bucket. 2026-09-14: with Deerfield's cams added, 2.5-flash ran out of its
+# daily quota mid-afternoon and every beach went unread; 2.5-flash-lite has a
+# larger free allowance and takes over for the rest of the day.
+GEMINI_MODELS = [
+    m.strip()
+    for m in os.environ.get("GEMINI_MODELS", f"{MODEL},gemini-2.5-flash-lite").split(",")
+    if m.strip()
+]
 # Legacy pre-per-beach output: kept as a copy of boca-raton's file for one
 # release (see LEGACY_SLUG below and the copy step at the end of main()).
 OUT = os.environ.get("CAM_SEAWEED_OUT", "cam_seaweed.json")
@@ -135,13 +144,16 @@ HTTP_UA = os.environ.get(
 # Override the order with VISION_PROVIDERS="groq,gemini,openrouter,github".
 PROVIDER_ORDER = [
     p.strip()
-    for p in os.environ.get("VISION_PROVIDERS", "gemini,groq,openrouter,github").split(",")
+    # GitHub Models is being retired (410 brownouts from 2026-09) and is off by default.
+    for p in os.environ.get("VISION_PROVIDERS", "gemini,groq,openrouter").split(",")
     if p.strip()
 ]
 OPENAI_PROVIDERS = {
     "groq": {
         "url": "https://api.groq.com/openai/v1/chat/completions",
-        "model": os.environ.get("GROQ_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct"),
+        # Llama 4 Scout was withdrawn from Groq (404 model_not_found, 2026-09);
+        # Qwen 3.6 27B is their current production vision model.
+        "model": os.environ.get("GROQ_MODEL", "qwen/qwen3.6-27b"),
         "key": os.environ.get("GROQ_API_KEY", "").strip(),
     },
     "openrouter": {
@@ -502,6 +514,12 @@ def _post(url: str, body: bytes, headers: dict | None = None, timeout: int = 40)
         except urllib.error.HTTPError as e:
             # Surface the provider's error detail (e.g. API_KEY_INVALID vs quota).
             detail = e.read().decode("utf-8", "replace")[:200]
+            # A DAILY quota that is already spent will not come back in a few
+            # seconds of backoff: retrying only stalls the whole run (~25 s per
+            # cam on 2026-09-14). Fail this provider at once so the chain moves
+            # on to the next model/provider; per-minute limits still get retried.
+            if e.code == 429 and "current quota" in detail:
+                raise RuntimeError(f"HTTP 429 (daily quota spent): {detail[:120]}") from None
             if e.code in RETRY_STATUSES and attempt < MAX_RETRIES:
                 time.sleep(delay + random.uniform(0, 0.75))
                 delay *= 2.2
@@ -569,7 +587,8 @@ def _parse_uw(out: dict) -> dict:
     }
 
 
-def _gemini_out(img: bytes, prompt: str = PROMPT) -> dict:
+def _gemini_out(img: bytes, prompt: str = PROMPT, model: str | None = None) -> dict:
+    model = model or MODEL
     body = json.dumps({
         "contents": [{"parts": [
             {"text": prompt},
@@ -579,7 +598,7 @@ def _gemini_out(img: bytes, prompt: str = PROMPT) -> dict:
         "generationConfig": {"temperature": 0, "responseMimeType": "application/json"},
     }).encode()
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{MODEL}:generateContent?key={API_KEY}")
+           f"{model}:generateContent?key={API_KEY}")
     resp = json.loads(_post(url, body))
     return _extract_json(resp["candidates"][0]["content"]["parts"][0]["text"])
 
@@ -605,7 +624,8 @@ def _enabled_providers() -> list[tuple[str, str]]:
     for name in PROVIDER_ORDER:
         if name == "gemini":
             if API_KEY:
-                out.append((name, MODEL))
+                for m in GEMINI_MODELS:
+                    out.append((name, m))
         elif name in OPENAI_PROVIDERS and OPENAI_PROVIDERS[name]["key"]:
             out.append((name, OPENAI_PROVIDERS[name]["model"]))
     return out
@@ -618,7 +638,8 @@ def _provider_configured(name: str) -> bool:
     return bool(cfg and cfg["key"])
 
 
-def assess_with(name: str, img: bytes, prompt: str = PROMPT, parse=_parse_out) -> dict:
+def assess_with(name: str, img: bytes, prompt: str = PROMPT, parse=_parse_out,
+                model: str | None = None) -> dict:
     """Read one image with exactly ONE named provider (for per-provider eval).
 
     `prompt`/`parse` let the same provider plumbing serve both the beach read
@@ -626,7 +647,8 @@ def assess_with(name: str, img: bytes, prompt: str = PROMPT, parse=_parse_out) -
     if name == "gemini":
         if not API_KEY:
             raise RuntimeError("gemini not configured")
-        raw, model = _gemini_out(img, prompt), MODEL
+        model = model or MODEL
+        raw = _gemini_out(img, prompt, model)
     else:
         cfg = OPENAI_PROVIDERS.get(name)
         if not cfg or not cfg["key"]:
@@ -641,11 +663,11 @@ def assess_with(name: str, img: bytes, prompt: str = PROMPT, parse=_parse_out) -
 def assess(img: bytes, prompt: str = PROMPT, parse=_parse_out) -> dict:
     """Read one image, falling through the provider chain until one succeeds."""
     errors = []
-    for name, _model in _enabled_providers():
+    for name, model in _enabled_providers():
         try:
-            return assess_with(name, img, prompt, parse)
+            return assess_with(name, img, prompt, parse, model)
         except Exception as e:  # noqa: BLE001 — try the next provider
-            errors.append(f"{name}: {e}")
+            errors.append(f"{name}/{model}: {str(e)[:160]}")
     if not errors:
         raise RuntimeError("no vision providers configured (set GEMINI_API_KEY or another key)")
     raise RuntimeError("all vision providers failed -> " + " | ".join(errors))
