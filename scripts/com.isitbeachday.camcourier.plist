@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd job for scripts/cam_courier_local.sh — see that script's header
+  for the token-file setup and what this job does.
+
+  NOT INSTALLED by this change. To install (replace __HOME__ first):
+    sed "s#__HOME__#$HOME#g" scripts/com.isitbeachday.camcourier.plist \
+      > "$HOME/Library/LaunchAgents/com.isitbeachday.camcourier.plist"
+    launchctl bootstrap gui/$(id -u) \
+      "$HOME/Library/LaunchAgents/com.isitbeachday.camcourier.plist"
+
+  To uninstall:
+    launchctl bootout gui/$(id -u)/com.isitbeachday.camcourier
+    rm "$HOME/Library/LaunchAgents/com.isitbeachday.camcourier.plist"
+
+  To check status / force a run:
+    launchctl print gui/$(id -u)/com.isitbeachday.camcourier
+    launchctl kickstart -k gui/$(id -u)/com.isitbeachday.camcourier
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.isitbeachday.camcourier</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__HOME__/Projects/bocabeach/scripts/cam_courier_local.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__HOME__/Projects/bocabeach</string>
+
+  <!-- Every hour at minute 7 (staggered off the worker's own top-of-hour
+       cron ticks so a courier upload and a browser-grab tick don't usually
+       land at the exact same instant). -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>0</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>1</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>2</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>3</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>4</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>5</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>6</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>7</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>8</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>9</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>10</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>11</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>12</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>13</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>14</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>15</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>16</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>17</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>18</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>19</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>20</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>21</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>22</integer></dict>
+    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>23</integer></dict>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/cam-courier.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/cam-courier.log</string>
+</dict>
+</plist>

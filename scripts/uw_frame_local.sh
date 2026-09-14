@@ -1,4 +1,18 @@
 #!/bin/bash
+# SUPERSEDED 2026-09-14 — do not install. Kept for reference only; not
+# deleted. Replaced by scripts/cam_courier_local.sh, which:
+#   - covers all four Deerfield Beach cams, not just the underwater one
+#   - POSTs each frame straight into workers/uw-frame via POST /ingest
+#     (Bearer-token auth), instead of pushing to a git branch for a GitHub
+#     Action to relay
+#   - is installed via scripts/com.isitbeachday.camcourier.plist, not
+#     scripts/com.isitbeachday.uwframe.plist (that plist was never added to
+#     this repo)
+# See scripts/cam_courier_local.sh's own header for the current install
+# steps and the up-to-date reason a Mac-side courier is needed at all
+# (YouTube now blocks Cloudflare's Browser Rendering fleet outright, not
+# just GitHub Actions' datacenter IPs).
+#
 # Deerfield underwater sea-cam FRAME COURIER (runs on the owner's Mac, hourly
 # via launchd — see scripts/com.isitbeachday.uwframe.plist).
 #

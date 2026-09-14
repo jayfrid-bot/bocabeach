@@ -59,6 +59,21 @@ describe("parseVisibleFlags", () => {
     ];
     expect(parseVisibleFlags(entries)).toEqual(["green"]);
   });
+
+  it("reads the live ArcGIS shadow-DOM state: bare <strong> labels, Green + Purple visible, others hidden", () => {
+    // Confirmed live 2026-09: the dashboard renders inside ~168 nested
+    // shadow roots and labels each block with a bare color word (no "Flag"
+    // suffix), toggled visible/hidden rather than swapped in/out.
+    const entries: FlagDomEntry[] = [
+      { text: "Beach Flags", visible: true },
+      { text: "Double Red", visible: false },
+      { text: "Single Red", visible: false },
+      { text: "Yellow", visible: false },
+      { text: "Green", visible: true },
+      { text: "Purple", visible: true },
+    ];
+    expect(parseVisibleFlags(entries)).toEqual(["green", "purple"]);
+  });
 });
 
 describe("summarizeVisibleText", () => {

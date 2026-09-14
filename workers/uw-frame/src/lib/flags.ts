@@ -31,15 +31,21 @@ interface FlagMatcher {
 // Order matters: "double-red" is checked before "red" so a block labelled
 // "Double_Red_Flag" (ArcGIS documentId 15330) is never also read as a plain
 // single red flag — classifyEntry below returns the FIRST match only.
+//
+// The live dashboard (confirmed 2026-09, walking its ~168 nested shadow
+// roots) labels each block with a BARE <strong> — "Double Red", "Single
+// Red", "Yellow", "Green", "Purple" — with no "Flag" word anywhere in the
+// label text. So the yellow/green/purple matchers must accept the bare
+// color word, not only "<color>_flag"/"<color> Flag".
 const FLAG_MATCHERS: readonly FlagMatcher[] = [
   { name: "double-red", test: (h) => /double[_\s-]*red/i.test(h) || /\b15330\b/.test(h) },
   {
     name: "red",
     test: (h) => /single[_\s-]*red/i.test(h) || /\bred[_\s-]*flag\b/i.test(h) || /\b15332\b/.test(h),
   },
-  { name: "yellow", test: (h) => /yellow[_\s-]*flag/i.test(h) || /\b15329\b/.test(h) },
-  { name: "green", test: (h) => /green[_\s-]*flag/i.test(h) || /\b15326\b/.test(h) },
-  { name: "purple", test: (h) => /purple[_\s-]*flag/i.test(h) || /\b15327\b/.test(h) },
+  { name: "yellow", test: (h) => /yellow([_\s-]*flag)?/i.test(h) || /\b15329\b/.test(h) },
+  { name: "green", test: (h) => /green([_\s-]*flag)?/i.test(h) || /\b15326\b/.test(h) },
+  { name: "purple", test: (h) => /purple([_\s-]*flag)?/i.test(h) || /\b15327\b/.test(h) },
 ];
 
 function classifyEntry(entry: FlagDomEntry): FlagName | null {

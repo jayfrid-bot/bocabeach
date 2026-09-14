@@ -71,6 +71,12 @@ flowchart LR
     UWFRAME["workers/uw-frame<br/>multi-cam frame courier + Deerfield flag reader<br/>top of each hour, 10a-11p ET"]
   end
 
+  subgraph mac [Owner's Mac — launchd, not a scheduler above]
+    CAMCOURIER["scripts/cam_courier_local.sh<br/>hourly, residential IP"]
+  end
+
+  CAMCOURIER -->|"POST /ingest?cam=&lt;id&gt;<br/>Bearer token, JPEG bytes"| UWFRAME
+
   LGT -->|writes| LDATA[(lightning-data branch)]
   SARG -->|reads| VCAMS[config/vision-cams.json<br/>per-beach cam registry]
   SARG -->|writes| SDATA[(sargassum-data branch<br/>cam_seaweed.&lt;slug&gt;.json, one per beach)]
@@ -106,6 +112,15 @@ decided in `workers/uw-frame/src/lib/schedule.ts` and documented in
 `GET /meta[?cam=<id>]` (no `cam` = the underwater cam, unchanged legacy
 keys), `GET /cams` (registry + each cam's last grab), and
 `GET /flags?slug=deerfield-beach`.
+
+As of September 2026, frames arrive from the owner's Mac courier
+(`scripts/cam_courier_local.sh`, hourly, residential IP) via `POST /ingest`;
+the Worker's own headless-Chrome grab remains as a fallback. YouTube now
+blocks video playback from Cloudflare's browser fleet, so the Mac — a normal
+home connection — grabs each frame and sends it to the Worker instead. Both
+paths write through the same guard, so neither can overwrite the other's
+newer good frame; `GET /cams` shows which path supplied each camera's
+current frame in its `source` field ("courier" or "browser").
 
 `push-cron.yml` and `plus-cron` both hit the same route — GitHub's schedule is
 best-effort, so the Cloudflare cron is the reliable path and GitHub is the
