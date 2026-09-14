@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { shareCardModel } from "@/lib/shareCard";
 import type {
   BusynessData,
-  CityOfficialData,
+  ClarityData,
   ConditionsResponse,
   ConditionsSnapshot,
   ScoreResult,
@@ -89,7 +89,6 @@ describe("shareCardModel", () => {
     expect(() => shareCardModel(response(), NOW_MS)).not.toThrow();
     const m = shareCardModel(response(), NOW_MS);
     expect(m.tiles).toEqual([]);
-    expect(m.flags).toEqual([]);
     expect(m.capped).toBe(false);
   });
 
@@ -99,6 +98,11 @@ describe("shareCardModel", () => {
     const m = shareCardModel(undefined, NOW_MS);
     expect(m.beachName).toBe("Is It Beach Day?");
     expect(m.tiles).toEqual([]);
+  });
+
+  it("has no flags field on the model", () => {
+    const m = shareCardModel(response(), NOW_MS);
+    expect((m as unknown as Record<string, unknown>).flags).toBeUndefined();
   });
 
   it("formats the local date and time from the beach's timezone", () => {
@@ -115,12 +119,12 @@ describe("shareCardModel", () => {
     expect(m.verdict).toBe("Absolutely!");
   });
 
-  it("selects tiles in priority order and drops any with missing data", () => {
+  it("selects tiles in priority order (water temp, air temp, clarity, sand, waves, uv) and drops any with missing data", () => {
     const subScores: SubScore[] = [
       sub("waterTemp", "Water temperature", "82.4°F"),
       sub("waves", "Sea state (swim calmness)", "1.4 ft · gentle"),
       sub("wind", "Wind (sea breeze)", "10 mph SE"),
-      sub("airTemp", "Air temperature", "88°F"),
+      sub("airTemp", "Air temperature", "88.3°F"),
       // sandTemp and uv deliberately missing (no display) — should be skipped
       sub("sandTemp", "Sand temperature (barefoot)", undefined),
       sub("uv", "UV index", undefined),
@@ -130,48 +134,122 @@ describe("shareCardModel", () => {
       { subScores },
     );
     const m = shareCardModel(res, NOW_MS);
-    // busyness is "unknown" today, so the 6th slot falls back to Air temp.
-    expect(m.tiles.map((t) => t.key)).toEqual(["waterTemp", "waves", "wind", "airTemp"]);
+    // No live clarity read, sand/uv missing — order stays waterTemp, airTemp, waves,
+    // then wind falls in as a fallback (crowd stays out: busyness is "unknown" today).
+    expect(m.tiles.map((t) => t.key)).toEqual(["waterTemp", "airTemp", "waves", "wind"]);
     expect(m.tiles[0]).toEqual({ key: "waterTemp", label: "Water temp", value: "82.4°F" });
     expect(m.tiles.find((t) => t.key === "airTemp")?.value).toBe("88°F");
   });
 
-  it("caps at six tiles even when every slot has data", () => {
+  it("rounds the air temp tile to a whole number", () => {
+    const res = response({}, { subScores: [sub("airTemp", "Air temperature", "88.7°F")] });
+    const m = shareCardModel(res, NOW_MS);
+    expect(m.tiles[0]).toEqual({ key: "airTemp", label: "Air temp", value: "89°F" });
+  });
+
+  it("adds a water clarity tile from a live cam read", () => {
+    const res = response({
+      clarity: wrap<ClarityData>({ level: "clear", pct: 90 }),
+    });
+    const m = shareCardModel(res, NOW_MS);
+    const clarityTile = m.tiles.find((t) => t.key === "clarity");
+    expect(clarityTile).toEqual({ key: "clarity", label: "Water clarity", value: "Crystal clear" });
+  });
+
+  it("omits the water clarity tile when the read is night/stale-gated (no live level)", () => {
+    const res = response({
+      clarity: wrap<ClarityData>({
+        level: null,
+        pct: null,
+        status: "unknown",
+        note: "cams can't read the water in the dark",
+        yesterday: {
+          dateLocal: "2026-09-13",
+          dayLabel: "yesterday",
+          daysBack: 1,
+          pct: 70,
+          word: "Mostly clear",
+          reads: 4,
+        },
+      }),
+    });
+    const m = shareCardModel(res, NOW_MS);
+    expect(m.tiles.find((t) => t.key === "clarity")).toBeUndefined();
+  });
+
+  it("omits the water clarity tile when there's no clarity data at all", () => {
+    const m = shareCardModel(response({ clarity: wrap<ClarityData>(null) }), NOW_MS);
+    expect(m.tiles.find((t) => t.key === "clarity")).toBeUndefined();
+  });
+
+  it("strips the '~' and 'est.' hedge from the sand temp tile", () => {
+    const res = response({}, { subScores: [sub("sandTemp", "Sand temperature (barefoot)", "~101°F est.")] });
+    const m = shareCardModel(res, NOW_MS);
+    expect(m.tiles[0]).toEqual({ key: "sandTemp", label: "Sand temp", value: "101°F" });
+  });
+
+  it("never shows 'est.', 'estimated', or '~' in any tile value", () => {
     const subScores: SubScore[] = [
       sub("waterTemp", "Water temperature", "82°F"),
+      sub("airTemp", "Air temperature", "88°F"),
       sub("sandTemp", "Sand temperature (barefoot)", "~120°F est."),
       sub("waves", "Sea state (swim calmness)", "1.4 ft · gentle"),
       sub("uv", "UV index", "7"),
       sub("wind", "Wind (sea breeze)", "10 mph SE"),
       sub("crowds", "Crowds", "~40% full"),
-      sub("airTemp", "Air temperature", "88°F"),
     ];
     const res = response(
-      { busyness: wrap<BusynessData>({ level: "moderate" }) },
+      {
+        busyness: wrap<BusynessData>({ level: "moderate" }),
+        clarity: wrap<ClarityData>({ level: "murky", pct: 30 }),
+      },
+      { subScores },
+    );
+    const m = shareCardModel(res, NOW_MS);
+    for (const t of m.tiles) {
+      expect(t.value.toLowerCase()).not.toContain("est");
+      expect(t.value).not.toContain("~");
+    }
+  });
+
+  it("caps at six tiles even when every slot has data", () => {
+    const subScores: SubScore[] = [
+      sub("waterTemp", "Water temperature", "82°F"),
+      sub("airTemp", "Air temperature", "88°F"),
+      sub("sandTemp", "Sand temperature (barefoot)", "120°F"),
+      sub("waves", "Sea state (swim calmness)", "1.4 ft · gentle"),
+      sub("uv", "UV index", "7"),
+      sub("wind", "Wind (sea breeze)", "10 mph SE"),
+      sub("crowds", "Crowds", "40% full"),
+    ];
+    const res = response(
+      {
+        busyness: wrap<BusynessData>({ level: "moderate" }),
+        clarity: wrap<ClarityData>({ level: "clear", pct: 92 }),
+      },
       { subScores },
     );
     const m = shareCardModel(res, NOW_MS);
     expect(m.tiles).toHaveLength(6);
     expect(m.tiles.map((t) => t.key)).toEqual([
       "waterTemp",
+      "airTemp",
+      "clarity",
       "sandTemp",
       "waves",
       "uv",
-      "wind",
-      "crowds",
     ]);
   });
 
   it("appends the UV level word to the UV tile", () => {
     const res = response({}, { subScores: [sub("uv", "UV index", "9")] });
     const m = shareCardModel(res, NOW_MS);
-    expect(m.tiles[0].value).toBe("9 · Very High");
+    expect(m.tiles.find((t) => t.key === "uv")?.value).toBe("9 · Very High");
   });
 
-  it("uses crowd only when a camera read the beach today, else air temp", () => {
+  it("uses crowd only when a camera read the beach today, and only as a fallback slot", () => {
     const subScores: SubScore[] = [
-      sub("crowds", "Crowds", "~60% full"),
-      sub("airTemp", "Air temperature", "90°F"),
+      sub("crowds", "Crowds", "60% full"),
     ];
 
     const withToday = response(
@@ -184,21 +262,7 @@ describe("shareCardModel", () => {
       { busyness: wrap<BusynessData>({ level: "unknown" }) },
       { subScores },
     );
-    expect(shareCardModel(withoutToday, NOW_MS).tiles.map((t) => t.key)).toEqual(["airTemp"]);
-
-    const noCamsAtAll = response({ busyness: wrap<BusynessData>(null) }, { subScores });
-    expect(shareCardModel(noCamsAtAll, NOW_MS).tiles.map((t) => t.key)).toEqual(["airTemp"]);
-  });
-
-  it("carries posted lifeguard flags as plain-English labels, dropping unknown", () => {
-    const res = response({
-      cityOfficial: wrap<CityOfficialData>({ flags: ["yellow", "purple", "unknown"] }),
-    });
-    const m = shareCardModel(res, NOW_MS);
-    expect(m.flags).toEqual([
-      { color: "yellow", label: "Yellow flag" },
-      { color: "purple", label: "Purple flag — marine pests" },
-    ]);
+    expect(shareCardModel(withoutToday, NOW_MS).tiles.map((t) => t.key)).toEqual([]);
   });
 
   it("notes a capped score with the first cap reason", () => {
@@ -216,9 +280,10 @@ describe("shareCardModel", () => {
     expect(m.capNote).toBeUndefined();
   });
 
-  it("builds the plain and tracked share URLs from the slug", () => {
+  it("builds the plain page URL (no tracking param) and the tracked share URL from the slug", () => {
     const m = shareCardModel(response(), NOW_MS);
     expect(m.pageUrl).toBe("isitbeachday.com/boca-raton");
+    expect(m.pageUrl).not.toContain("ref=share");
     expect(m.shareUrl).toBe("https://isitbeachday.com/boca-raton?ref=share");
   });
 });

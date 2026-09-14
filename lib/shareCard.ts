@@ -6,20 +6,16 @@
 // optional chain, so an empty/degraded ConditionsResponse still produces a
 // valid (mostly empty) model rather than sinking the image route.
 
-import type { ConditionsResponse, FlagColor } from "@/lib/types";
+import type { ConditionsResponse } from "@/lib/types";
 import { scoreBand } from "@/lib/scoreBands";
 import { beachDayVerdict } from "@/lib/format";
 import { uvBand } from "@/lib/uv";
+import { clarityDisplayWord } from "@/lib/sources/clarity";
 
 export interface ShareCardTile {
   key: string;
   label: string;
   value: string;
-}
-
-export interface ShareCardFlag {
-  color: FlagColor;
-  label: string;
 }
 
 export interface ShareCardModel {
@@ -38,31 +34,27 @@ export interface ShareCardModel {
   verdict: string;
   /** Up to six metric tiles, in priority order, data-permitting. */
   tiles: ShareCardTile[];
-  /** Posted lifeguard flags, worded for a caption (never "unknown"). */
-  flags: ShareCardFlag[];
   capped: boolean;
   /** Why the score was capped, when it was. */
   capNote?: string;
   /** "isitbeachday.com/<slug>" — for on-card display. */
   pageUrl: string;
-  /** The tracked link the QR code and "see more" line point to. */
+  /** The tracked link the share sheet hands off (never shown as visible
+   *  card text — see pageUrl for that). */
   shareUrl: string;
 }
-
-const FLAG_LABELS: Record<FlagColor, string> = {
-  green: "Green flag",
-  yellow: "Yellow flag",
-  red: "Red flag",
-  "double-red": "Double red — water closed",
-  purple: "Purple flag — marine pests",
-  unknown: "Flag unknown",
-};
 
 /** Safe number formatter: never throws on NaN/undefined. */
 function asNumber(s: string | undefined): number | undefined {
   if (!s) return undefined;
   const n = Number.parseFloat(s);
   return Number.isFinite(n) ? n : undefined;
+}
+
+/** Strips the "estimated" hedge words a sub-score display sometimes carries
+ *  (e.g. "~101°F est.") — the card states the number plainly, no hedging. */
+function stripEstimateHedge(s: string): string {
+  return s.replace(/~/g, "").replace(/\s*est\.?/gi, "").trim();
 }
 
 export function shareCardModel(
@@ -102,29 +94,43 @@ export function shareCardModel(
     if (value) tiles.push({ key, label, value });
   };
 
+  // Fixed priority order: Water temp, Air temp, Water clarity, Sand temp,
+  // Waves, UV fill the six slots when their data is in; Wind and Crowd only
+  // step in as fallbacks for a slot one of those six left empty.
   push("waterTemp", "Water temp", subByKey.get("waterTemp")?.display);
-  push("sandTemp", "Sand temp", subByKey.get("sandTemp")?.display);
+
+  const airTempNum = asNumber(subByKey.get("airTemp")?.display);
+  push("airTemp", "Air temp", airTempNum != null ? `${Math.round(airTempNum)}°F` : undefined);
+
+  // Only a genuinely live read (a level, not the night/stale "unknown" gate)
+  // belongs on the card — no "yesterday" stand-in on a shareable image.
+  const clarityData = snapshot?.clarity?.data;
+  if (clarityData?.level) {
+    push("clarity", "Water clarity", clarityDisplayWord(clarityData.level, clarityData.pct));
+  }
+
+  const sandDisplay = subByKey.get("sandTemp")?.display;
+  push("sandTemp", "Sand temp", sandDisplay ? stripEstimateHedge(sandDisplay) : undefined);
+
   push("waves", "Waves", subByKey.get("waves")?.display);
 
   const uvDisplay = subByKey.get("uv")?.display;
   const uvNum = asNumber(uvDisplay);
   push("uv", "UV index", uvDisplay ? `${uvDisplay} · ${uvBand(uvNum ?? 0)}` : undefined);
 
-  push("wind", "Wind", subByKey.get("wind")?.display);
-
-  // Crowd only stands in for the 6th tile when a cam actually read the beach
-  // TODAY — busyness.data.level is honestly "unknown" overnight/stale (see
-  // lib/sources/busyness.ts), which is exactly the case Air temp should cover.
-  const busynessToday = snapshot?.busyness?.data && snapshot.busyness.data.level !== "unknown";
-  if (busynessToday) {
-    push("crowds", "Crowd", subByKey.get("crowds")?.display);
-  } else {
-    push("airTemp", "Air temp", subByKey.get("airTemp")?.display);
+  if (tiles.length < 6) {
+    push("wind", "Wind", subByKey.get("wind")?.display);
   }
 
-  const flags: ShareCardFlag[] = (snapshot?.cityOfficial?.data?.flags ?? [])
-    .filter((f): f is Exclude<FlagColor, "unknown"> => f !== "unknown")
-    .map((f) => ({ color: f, label: FLAG_LABELS[f] }));
+  // Crowd only steps in when a cam actually read the beach TODAY —
+  // busyness.data.level is honestly "unknown" overnight/stale (see
+  // lib/sources/busyness.ts).
+  if (tiles.length < 6) {
+    const busynessToday = snapshot?.busyness?.data && snapshot.busyness.data.level !== "unknown";
+    if (busynessToday) {
+      push("crowds", "Crowd", subByKey.get("crowds")?.display);
+    }
+  }
 
   const caps = score?.caps ?? [];
   const slug = loc?.slug ?? "";
@@ -140,7 +146,6 @@ export function shareCardModel(
     color: band.color,
     verdict: beachDayVerdict(scoreValue),
     tiles: tiles.slice(0, 6),
-    flags,
     capped: caps.length > 0,
     capNote: caps[0],
     pageUrl: `isitbeachday.com/${slug}`,

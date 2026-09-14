@@ -2,7 +2,6 @@ import { ImageResponse } from "next/og";
 import { NextResponse } from "next/server";
 import { getConditions } from "@/lib/conditions";
 import { shareCardModel, type ShareCardModel, type ShareCardTile } from "@/lib/shareCard";
-import { qrMatrix } from "@/lib/qr";
 
 // The shareable social card: a phone-native PNG of today's conditions, built
 // for the Share sheet (components/ShareCardSheet.tsx) rather than link
@@ -26,82 +25,109 @@ function isFormat(v: string): v is Format {
   return v === "story" || v === "square";
 }
 
-// --- Design language (matches app/opengraph-image.tsx) --------------------
-const BG = "linear-gradient(160deg, #041525 0%, #06263f 55%, #073a5c 100%)";
-const INK = "#f1f7fb";
-const MUTED = "#9fc3d6";
-const WORDMARK = "#7fd7f0";
-const CARD_BG = "rgba(255,255,255,0.06)";
-const CARD_RING = "rgba(255,255,255,0.14)";
+// --- Brand language (matches the app icon: a sun over layered waves on a
+// deep navy sky) --------------------------------------------------------
+const SKY_GRADIENT = "linear-gradient(180deg, #0b2a5b 0%, #1758b6 100%)";
+const BODY_BG = "#142f57"; // ocean-950 — the flat ground the ring "punches a hole" into
+const WAVE_LIGHT = "#59c1ff"; // ocean-400
+const WAVE_DARK = "#1b85f5"; // ocean-600
+const SUN_CORE = "radial-gradient(circle at 35% 30%, #fef3d0 0%, #f9d465 45%, #f5b942 100%)";
+const SUN_RAY = "#f9d465";
+const SUN_YELLOW = "#f5c24b";
+const INK = "#f4f9fc";
+const MUTED = "#a9c8e0";
+const WORDMARK_MUTED = "#bcd9ef";
+const TILE_BG = "rgba(255,255,255,0.14)";
+const TILE_RING = "rgba(255,255,255,0.28)";
 
-function SunMotif({ size, top, right }: { size: number; top: number; right: number }) {
+/** A sun disc with 8 short rounded rays, matching the app icon's motif. Each
+ *  ray is drawn resting straight up from the disc, then rotated around a
+ *  transform-origin placed back at the disc's own center — the standard
+ *  "clock hand" trick, so no translate() is needed alongside the rotate(). */
+function Sun({ diameter, rayLen, rayW, gap }: { diameter: number; rayLen: number; rayW: number; gap: number }) {
+  const reach = diameter / 2 + gap + rayLen; // distance from disc center to the ray's outer tip
+  const angles = [0, 45, 90, 135, 180, 225, 270, 315];
   return (
-    <div
-      style={{
-        position: "absolute",
-        top,
-        right,
-        width: size,
-        height: size,
-        borderRadius: 9999,
-        background: "radial-gradient(circle at 50% 50%, #ffe27a 0%, #ffcf4d 55%, #f7b733 100%)",
-        boxShadow: `0 0 ${Math.round(size * 0.5)}px ${Math.round(size * 0.16)}px rgba(255, 207, 77, 0.3)`,
-        display: "flex",
-      }}
-    />
+    <div style={{ position: "relative", width: diameter, height: diameter, display: "flex" }}>
+      {angles.map((deg) => (
+        <div
+          key={deg}
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "50%",
+            width: rayW,
+            height: rayLen,
+            marginLeft: -rayW / 2,
+            marginTop: -reach,
+            borderRadius: 999,
+            background: SUN_RAY,
+            transform: `rotate(${deg}deg)`,
+            transformOrigin: `${rayW / 2}px ${reach}px`,
+            display: "flex",
+          }}
+        />
+      ))}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          width: diameter,
+          height: diameter,
+          borderRadius: 9999,
+          background: SUN_CORE,
+          display: "flex",
+        }}
+      />
+    </div>
   );
 }
 
-function WaveBand({ height }: { height: number }) {
+/** One wavy band: a row of overlapping circles forms the scalloped top edge,
+ *  with a solid rectangle beneath filling the rest of the band — "a row of
+ *  large circles clipped by an overflow-hidden container gives a wave crest
+ *  cheaply." Stacks bottom-up via `offsetBottom` inside the sky band. */
+function WaveBand({
+  color,
+  height,
+  bump,
+  offsetBottom,
+  cardWidth,
+}: {
+  color: string;
+  height: number;
+  bump: number;
+  offsetBottom: number;
+  cardWidth: number;
+}) {
+  const r = bump / 2;
+  const step = bump * 0.82;
+  const count = Math.ceil((cardWidth + bump * 2) / step) + 2;
   return (
-    <div
-      style={{
-        position: "absolute",
-        left: 0,
-        bottom: 0,
-        width: "100%",
-        height,
-        display: "flex",
-        background: "linear-gradient(90deg, #0e9bd6 0%, #1fb6d8 50%, #2fd0d0 100%)",
-      }}
-    />
-  );
-}
-
-/** QR modules rendered as absolutely-positioned divs — satori has no <img>/
- *  external-asset support here and no emoji font, but plain divs always work. */
-function QrCode({ text, box }: { text: string; box: number }) {
-  const QUIET = 3; // modules of white margin, each side — keeps scanners happy
-  const m = qrMatrix(text, "M");
-  const total = m.size + QUIET * 2;
-  const cell = box / total;
-  const modules: { x: number; y: number }[] = [];
-  for (let row = 0; row < m.size; row++) {
-    for (let col = 0; col < m.size; col++) {
-      if (m.isDark(row, col)) modules.push({ x: col, y: row });
-    }
-  }
-  return (
-    <div
-      style={{
-        position: "relative",
-        width: box,
-        height: box,
-        background: "#ffffff",
-        borderRadius: 12,
-        display: "flex",
-      }}
-    >
-      {modules.map((mod, i) => (
+    <div style={{ position: "absolute", left: 0, bottom: offsetBottom, width: "100%", height, display: "flex" }}>
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          top: r,
+          width: "100%",
+          height: Math.max(height - r, 0),
+          background: color,
+          display: "flex",
+        }}
+      />
+      {Array.from({ length: count }).map((_, i) => (
         <div
           key={i}
           style={{
             position: "absolute",
-            left: Math.round((mod.x + QUIET) * cell),
-            top: Math.round((mod.y + QUIET) * cell),
-            width: Math.ceil(cell),
-            height: Math.ceil(cell),
-            background: "#06263f",
+            left: -bump + i * step,
+            top: 0,
+            width: bump,
+            height: bump,
+            borderRadius: 9999,
+            background: color,
             display: "flex",
           }}
         />
@@ -110,61 +136,137 @@ function QrCode({ text, box }: { text: string; box: number }) {
   );
 }
 
-const FLAG_DOT: Record<string, string> = {
-  green: "#34d399",
-  yellow: "#fbbf24",
-  red: "#fb7185",
-  "double-red": "#e11d48",
-  purple: "#c084fc",
-};
-
-function FlagChip({ flag }: { flag: { color: string; label: string } }) {
+/** The decorative header: navy sky, sun, and a two-tone wave crest — the
+ *  app icon's motif recreated with divs (satori: no <img>/<svg> assets). */
+function SkyBand({ height, cardWidth, sun }: { height: number; cardWidth: number; sun: { d: number; rayLen: number; rayW: number; gap: number } }) {
+  const waveTopH = Math.round(height * 0.16);
+  const waveMidH = Math.round(height * 0.13);
+  const waveBlendH = Math.round(height * 0.1);
+  const sunTop = Math.round(height * 0.16);
   return (
     <div
       style={{
+        position: "absolute",
+        top: 0,
+        left: 0,
+        width: "100%",
+        height,
+        overflow: "hidden",
+        background: SKY_GRADIENT,
         display: "flex",
-        alignItems: "center",
-        background: CARD_BG,
-        border: `1px solid ${CARD_RING}`,
-        borderRadius: 9999,
-        padding: "10px 20px",
-        marginRight: 12,
-        marginTop: 12,
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          width: 16,
-          height: 16,
-          borderRadius: 9999,
-          background: FLAG_DOT[flag.color] ?? "#94a3b8",
-          marginRight: 10,
-        }}
+      <div style={{ position: "absolute", left: (cardWidth - sun.d) / 2, top: sunTop, display: "flex" }}>
+        <Sun diameter={sun.d} rayLen={sun.rayLen} rayW={sun.rayW} gap={sun.gap} />
+      </div>
+      <WaveBand
+        color={WAVE_LIGHT}
+        height={waveTopH}
+        bump={Math.round(waveTopH * 1.7)}
+        offsetBottom={waveMidH + waveBlendH}
+        cardWidth={cardWidth}
       />
-      <div style={{ display: "flex", fontSize: 24, color: INK }}>{flag.label}</div>
+      <WaveBand
+        color={WAVE_DARK}
+        height={waveMidH}
+        bump={Math.round(waveMidH * 1.7)}
+        offsetBottom={waveBlendH}
+        cardWidth={cardWidth}
+      />
+      {/* Blend band: same color as the card body below, so the sky band's
+          bottom edge dissolves into the rest of the card with no seam. */}
+      <WaveBand
+        color={BODY_BG}
+        height={waveBlendH}
+        bump={Math.round(waveBlendH * 1.7)}
+        offsetBottom={0}
+        cardWidth={cardWidth}
+      />
     </div>
   );
 }
 
-function Tile({ tile, valueSize }: { tile: ShareCardTile; valueSize: number }) {
+/** Beach Day score as a ring: a real SVG arc (satori renders inline SVG
+ *  directly). A conic-gradient background was tried first, but this build's
+ *  satori/next-og recognizes "conic-gradient(...)" as a valid gradient-shaped
+ *  string without actually having a stop parser for it (throws "Failed to
+ *  parse declaration" the moment it renders one); a dial of tiny rotated
+ *  divs was tried next, but it reads as jagged rather than a clean ring. A
+ *  stroked <circle> with stroke-dasharray is exact and cheap. */
+function ScoreRing({ diameter, thickness, score, color, numSize, slashSize }: { diameter: number; thickness: number; score: number; color: string; numSize: number; slashSize: number }) {
+  const pct = Math.max(0, Math.min(100, score));
+  const c = diameter / 2;
+  const r = (diameter - thickness) / 2;
+  const circ = 2 * Math.PI * r;
+  const filled = circ * (pct / 100);
+
+  return (
+    <div style={{ position: "relative", width: diameter, height: diameter, display: "flex" }}>
+      <svg width={diameter} height={diameter} viewBox={`0 0 ${diameter} ${diameter}`} style={{ display: "flex" }}>
+        <circle cx={c} cy={c} r={r} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth={thickness} />
+        <circle
+          cx={c}
+          cy={c}
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth={thickness}
+          strokeLinecap="round"
+          strokeDasharray={`${filled} ${circ}`}
+          transform={`rotate(-90 ${c} ${c})`}
+        />
+      </svg>
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          width: diameter,
+          height: diameter,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div style={{ display: "flex", fontSize: numSize, fontWeight: 800, color: INK, lineHeight: 1 }}>
+          {Math.round(score)}
+        </div>
+        <div style={{ display: "flex", fontSize: slashSize, fontWeight: 600, color: MUTED, marginTop: 2 }}>
+          /100
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Tile({ tile, valueSize, labelSize, tilePad }: { tile: ShareCardTile; valueSize: number; labelSize: number; tilePad: string }) {
   return (
     <div
       style={{
         display: "flex",
         flexDirection: "column",
         flex: 1,
-        background: CARD_BG,
-        border: `1px solid ${CARD_RING}`,
-        borderRadius: 20,
-        padding: "22px 24px",
-        marginRight: 16,
+        background: TILE_BG,
+        border: `1px solid ${TILE_RING}`,
+        borderRadius: 28,
+        padding: tilePad,
       }}
     >
-      <div style={{ display: "flex", fontSize: 22, color: MUTED, textTransform: "uppercase", letterSpacing: 1 }}>
+      <div
+        style={{
+          display: "flex",
+          fontSize: labelSize,
+          fontWeight: 600,
+          lineHeight: 1.15,
+          color: MUTED,
+          textTransform: "uppercase",
+          letterSpacing: 1.5,
+        }}
+      >
         {tile.label}
       </div>
-      <div style={{ display: "flex", fontSize: valueSize, fontWeight: 700, color: INK, marginTop: 6 }}>
+      <div style={{ display: "flex", fontSize: valueSize, fontWeight: 700, lineHeight: 1.15, color: INK, marginTop: 6 }}>
         {tile.value}
       </div>
     </div>
@@ -172,20 +274,35 @@ function Tile({ tile, valueSize }: { tile: ShareCardTile; valueSize: number }) {
 }
 
 /** Chunk tiles into rows of `cols` — a plain flex grid (satori has no CSS Grid). */
-function TileGrid({ tiles, cols, valueSize }: { tiles: ShareCardTile[]; cols: number; valueSize: number }) {
+function TileGrid({
+  tiles,
+  cols,
+  valueSize,
+  labelSize,
+  tilePad,
+  gap,
+}: {
+  tiles: ShareCardTile[];
+  cols: number;
+  valueSize: number;
+  labelSize: number;
+  tilePad: string;
+  gap: number;
+}) {
   const rows: ShareCardTile[][] = [];
   for (let i = 0; i < tiles.length; i += cols) rows.push(tiles.slice(i, i + cols));
   return (
     <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
       {rows.map((row, i) => (
-        <div key={i} style={{ display: "flex", flexDirection: "row", width: "100%", marginTop: i === 0 ? 0 : 16 }}>
-          {row.map((tile) => (
-            <Tile key={tile.key} tile={tile} valueSize={valueSize} />
+        <div key={i} style={{ display: "flex", flexDirection: "row", width: "100%", marginTop: i === 0 ? 0 : gap }}>
+          {row.map((tile, j) => (
+            <div key={tile.key} style={{ display: "flex", flex: 1, marginLeft: j === 0 ? 0 : gap }}>
+              <Tile tile={tile} valueSize={valueSize} labelSize={labelSize} tilePad={tilePad} />
+            </div>
           ))}
-          {/* Pad a short final row so tiles keep their column width. */}
           {row.length < cols
             ? Array.from({ length: cols - row.length }).map((_, j) => (
-                <div key={`pad-${j}`} style={{ display: "flex", flex: 1, marginRight: 16 }} />
+                <div key={`pad-${j}`} style={{ display: "flex", flex: 1, marginLeft: gap }} />
               ))
             : null}
         </div>
@@ -197,12 +314,31 @@ function TileGrid({ tiles, cols, valueSize }: { tiles: ShareCardTile[]; cols: nu
 function ShareCard({ model, format }: { model: ShareCardModel; format: Format }) {
   const isStory = format === "story";
   const { width, height } = SIZES[format];
-  const pad = isStory ? 64 : 56;
+
+  const pad = isStory ? 60 : 56;
+  const skyH = Math.round(height * (isStory ? 0.245 : 0.25));
+  const sun = isStory ? { d: 128, rayLen: 34, rayW: 12, gap: 12 } : { d: 106, rayLen: 28, rayW: 9, gap: 11 };
+
+  const ringDiameter = isStory ? 545 : 280;
+  const ringThickness = isStory ? 26 : 20;
+  const ringNumSize = isStory ? 222 : 80;
+  const ringSlashSize = isStory ? 52 : 22;
+
+  const verdictSize = isStory ? 64 : 32;
+  const nameSize = isStory ? 84 : 36;
+  const metaSize = isStory ? 36 : 21;
+  const capSize = isStory ? 28 : 19;
+
   const cols = isStory ? 2 : 3;
-  const scoreSize = isStory ? 260 : 176;
-  const nameSize = isStory ? 68 : 54;
-  const verdictSize = isStory ? 40 : 28;
-  const tileValueSize = isStory ? 44 : 28;
+  const tileValueSize = isStory ? 56 : 25;
+  const tileLabelSize = isStory ? 28 : 16;
+  const tileGap = isStory ? 18 : 12;
+  const tilePad = isStory ? "14px 22px" : "14px 14px";
+
+  const footerWordmark = isStory ? 40 : 22;
+  const footerUrl = isStory ? 32 : 18;
+
+  const metaLine = [model.region, model.dateLabel, model.timeLabel].filter(Boolean).join(" · ");
 
   return (
     <div
@@ -212,124 +348,133 @@ function ShareCard({ model, format }: { model: ShareCardModel; format: Format })
         display: "flex",
         flexDirection: "column",
         position: "relative",
-        background: BG,
+        background: BODY_BG,
         color: INK,
         fontFamily: "sans-serif",
-        padding: pad,
       }}
     >
-      <SunMotif size={isStory ? 170 : 130} top={isStory ? 50 : 40} right={isStory ? 60 : 50} />
-      <WaveBand height={isStory ? 70 : 56} />
+      <SkyBand height={skyH} cardWidth={width} sun={sun} />
 
-      {/* Wordmark, with the local date/time on its own line beneath — the sun
-          motif owns the top-right corner, so nothing else may sit there. */}
-      <div style={{ display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: pad, position: "relative" }}>
+        {/* Pushes everything below down past the sky band's painted area —
+            without this the hero would render on top of the sun/waves. */}
+        <div style={{ display: "flex", height: Math.max(0, skyH - pad), flexShrink: 0 }} />
+
+        {/* Centers the hero+tiles+footer block in the space left below the
+            sky band, so any slack lands evenly above and below instead of
+            as one large empty band at the bottom. */}
         <div
           style={{
             display: "flex",
-            fontSize: 26,
-            fontWeight: 600,
-            letterSpacing: 3,
-            textTransform: "uppercase",
-            color: WORDMARK,
+            flexDirection: "column",
+            alignItems: "center",
+            flex: 1,
+            justifyContent: "center",
           }}
         >
-          isitbeachday.com
-        </div>
-        <div style={{ display: "flex", fontSize: 26, color: MUTED, marginTop: 10 }}>
-          {model.dateLabel}
-          {model.dateLabel && model.timeLabel ? " · " : ""}
-          {model.timeLabel}
-        </div>
-      </div>
+          <ScoreRing
+            diameter={ringDiameter}
+            thickness={ringThickness}
+            score={model.score}
+            color={model.color}
+            numSize={ringNumSize}
+            slashSize={ringSlashSize}
+          />
 
-      {/* Body. On the tall story canvas it is centred between the header and
-          the footer (a top-anchored body left a third of the card empty); the
-          square is nearly full, so it stays top-anchored. */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          flex: 1,
-          justifyContent: isStory ? "center" : "flex-start",
-          paddingBottom: isStory ? 40 : 0,
-        }}
-      >
-      {/* Beach name + region */}
-      <div style={{ display: "flex", flexDirection: "column", marginTop: 28 }}>
-        <div style={{ display: "flex", fontSize: nameSize, fontWeight: 800, lineHeight: 1.05 }}>
-          {model.beachName}
-        </div>
-        {model.region ? (
-          <div style={{ display: "flex", fontSize: 28, color: MUTED, marginTop: 6 }}>{model.region}</div>
-        ) : null}
-      </div>
+          <div
+            style={{
+              display: "flex",
+              fontSize: verdictSize,
+              fontWeight: 800,
+              lineHeight: 1.15,
+              color: model.color,
+              marginTop: isStory ? 22 : 20,
+              textAlign: "center",
+            }}
+          >
+            {model.verdict}
+          </div>
 
-      {/* Score + verdict */}
-      <div style={{ display: "flex", flexDirection: "row", alignItems: "flex-end", marginTop: isStory ? 32 : 18 }}>
-        <div style={{ display: "flex", fontSize: scoreSize, fontWeight: 800, color: model.color, lineHeight: 1 }}>
-          {Math.round(model.score)}
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", marginLeft: 24, marginBottom: isStory ? 22 : 14 }}>
-          <div style={{ display: "flex", fontSize: isStory ? 40 : 32, fontWeight: 700, color: model.color }}>
-            {model.rating}
+          <div
+            style={{
+              display: "flex",
+              fontSize: nameSize,
+              fontWeight: 800,
+              lineHeight: 1.15,
+              color: INK,
+              marginTop: isStory ? 14 : 18,
+              textAlign: "center",
+            }}
+          >
+            {model.beachName}
+          </div>
+          {metaLine ? (
+            <div
+              style={{
+                display: "flex",
+                fontSize: metaSize,
+                lineHeight: 1.15,
+                color: MUTED,
+                marginTop: isStory ? 10 : 18,
+                textAlign: "center",
+              }}
+            >
+              {metaLine}
+            </div>
+          ) : null}
+
+          {model.capped && model.capNote ? (
+            <div
+              style={{
+                display: "flex",
+                marginTop: isStory ? 16 : 14,
+                padding: isStory ? "12px 20px" : "8px 14px",
+                borderRadius: 999,
+                background: "rgba(251,113,133,0.18)",
+                border: "1px solid rgba(251,113,133,0.45)",
+                fontSize: capSize,
+                color: "#ffd7de",
+                textAlign: "center",
+              }}
+            >
+              {model.capNote}
+            </div>
+          ) : null}
+
+          <div style={{ display: "flex", width: "100%", marginTop: isStory ? 24 : 26 }}>
+            <TileGrid
+              tiles={model.tiles}
+              cols={cols}
+              valueSize={tileValueSize}
+              labelSize={tileLabelSize}
+              tilePad={tilePad}
+              gap={tileGap}
+            />
+          </div>
+
+          {/* Footer: wordmark + plain URL line — no QR code. Kept inside the
+              centered block so it hugs the tiles instead of pinning to the
+              card's bottom edge with a big gap above it. */}
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              width: "100%",
+              marginTop: isStory ? 18 : 18,
+              paddingTop: isStory ? 20 : 16,
+              borderTop: `1px solid ${TILE_RING}`,
+            }}
+          >
+          <div style={{ display: "flex", fontSize: footerWordmark, fontWeight: 800, lineHeight: 1.15, color: INK }}>
+            <span style={{ display: "flex" }}>Is it beach day</span>
+            <span style={{ display: "flex", color: SUN_YELLOW }}>?</span>
+          </div>
+          <div style={{ display: "flex", fontSize: footerUrl, lineHeight: 1.15, color: WORDMARK_MUTED, marginTop: 6 }}>
+            {model.pageUrl}
           </div>
         </div>
-      </div>
-      <div style={{ display: "flex", fontSize: verdictSize, fontWeight: 500, color: INK, marginTop: isStory ? 16 : 10 }}>
-        {model.verdict}
-      </div>
-
-      {model.capped && model.capNote ? (
-        <div
-          style={{
-            display: "flex",
-            marginTop: 18,
-            padding: "12px 18px",
-            borderRadius: 14,
-            background: "rgba(251,113,133,0.16)",
-            border: "1px solid rgba(251,113,133,0.4)",
-            fontSize: 22,
-            color: "#ffd7de",
-          }}
-        >
-          {model.capNote}
         </div>
-      ) : null}
-
-      {/* Metric tiles */}
-      <div style={{ display: "flex", marginTop: isStory ? 40 : 28 }}>
-        <TileGrid tiles={model.tiles} cols={cols} valueSize={tileValueSize} />
-      </div>
-
-      {/* Lifeguard flags */}
-      {model.flags.length > 0 ? (
-        <div style={{ display: "flex", flexWrap: "wrap", marginTop: 8 }}>
-          {model.flags.map((f) => (
-            <FlagChip key={f.color} flag={f} />
-          ))}
-        </div>
-      ) : null}
-
-      </div>
-
-      {/* Footer: brand + URL + QR */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginTop: isStory ? 24 : 16,
-          paddingTop: isStory ? 24 : 16,
-          borderTop: `1px solid ${CARD_RING}`,
-        }}
-      >
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ display: "flex", fontSize: 30, fontWeight: 700, color: INK }}>Is It Beach Day?</div>
-          <div style={{ display: "flex", fontSize: 24, color: MUTED, marginTop: 4 }}>{model.pageUrl}</div>
-        </div>
-        <QrCode text={model.shareUrl} box={isStory ? 180 : 150} />
       </div>
     </div>
   );
