@@ -71,8 +71,23 @@ describe("parseVisibleFlags", () => {
       { text: "Yellow", visible: false },
       { text: "Green", visible: true },
       { text: "Purple", visible: true },
+      // The visible description under Purple names three OTHER colors. Read
+      // live on 2026-09-14 it produced a phantom "red"; prose never counts.
+      {
+        text: "Dangerous marine life, this flag can be flown with a single red, yellow, or green flag",
+        visible: true,
+      },
+      { text: "Low hazard, calm conditions, exercise caution", visible: true },
     ];
     expect(parseVisibleFlags(entries)).toEqual(["green", "purple"]);
+  });
+
+  it("a short label still counts even when a long sentence sits beside it", () => {
+    const entries: FlagDomEntry[] = [
+      { text: "Single Red", visible: true },
+      { text: "High hazard, high surf, strong currents — the red flag means stay out", visible: true },
+    ];
+    expect(parseVisibleFlags(entries)).toEqual(["red"]);
   });
 });
 

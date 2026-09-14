@@ -165,6 +165,10 @@ interface LegacyMeta {
 function frameKey(id: string): string {
   return `frame:${id}`;
 }
+/** The last FAILED browser attempt for a cam that still has a good frame. */
+function attemptKey(id: string): string {
+  return `attempt:${id}`;
+}
 function metaKey(id: string): string {
   return `meta:${id}`;
 }
@@ -392,6 +396,20 @@ async function storeCamResult(
   // against a slow tick finishing after a newer write has already landed.
   const stored = await readJson<CamMeta>(env, metaKey(cam.id));
   if (!shouldReplaceStoredFrame(stored, grabbedAtUtc)) {
+    return;
+  }
+  // A FAILED grab must never take a good frame off the air. Since YouTube
+  // began refusing playback to this browser fleet (2026-09-04), every tick
+  // fails here while the Mac courier keeps delivering good frames through
+  // /ingest; on 2026-09-14 a failing tick overwrote three fresh courier
+  // frames' meta with ok:false, which made the vision job skip them. The
+  // attempt is recorded under its own key (see /cams "lastAttempt") and
+  // the stored frame + meta are left exactly as they were.
+  if (!result.ok && stored?.ok) {
+    await env.UW_FRAME.put(
+      attemptKey(cam.id),
+      JSON.stringify({ grabbedAtUtc, ms: result.ms, ok: false, error: result.reason ?? "grab failed" }),
+    );
     return;
   }
 
@@ -686,7 +704,10 @@ async function handleMeta(env: Env, camParam: string | null): Promise<Response> 
 async function handleCams(env: Env): Promise<Response> {
   const cams = await Promise.all(
     CAMERA_REGISTRY.map(async (cam) => {
-      const meta = await readJson<CamMeta>(env, metaKey(cam.id));
+      const [meta, attempt] = await Promise.all([
+        readJson<CamMeta>(env, metaKey(cam.id)),
+        readJson<{ grabbedAtUtc: string; ok: false; error: string }>(env, attemptKey(cam.id)),
+      ]);
       return {
         id: cam.id,
         videoId: cam.videoId,
@@ -696,6 +717,8 @@ async function handleCams(env: Env): Promise<Response> {
         grabbedAtUtc: meta?.grabbedAtUtc ?? null,
         ok: meta?.ok ?? null,
         source: meta?.source ?? null,
+        // The browser's most recent failure while a good frame stays served.
+        lastAttempt: attempt ?? null,
       };
     })
   );

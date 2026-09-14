@@ -48,8 +48,19 @@ const FLAG_MATCHERS: readonly FlagMatcher[] = [
   { name: "purple", test: (h) => /purple([_\s-]*flag)?/i.test(h) || /\b15327\b/.test(h) },
 ];
 
+/**
+ * Only a LABEL's text may name a flag. The dashboard also shows each flag's
+ * description sentence, and Purple's reads "…can be flown with a single red,
+ * yellow, or green flag" — long enough to hold three other colors. Read
+ * 2026-09-14 that sentence produced a phantom red flag. A real label is a few
+ * words ("Single Red", "Purple"); anything longer is prose and is ignored for
+ * text matching (its alt/src, if any, still count).
+ */
+const MAX_LABEL_CHARS = 24;
+
 function classifyEntry(entry: FlagDomEntry): FlagName | null {
-  const haystack = [entry.text, entry.alt, entry.src].filter(Boolean).join(" ");
+  const labelText = entry.text && entry.text.trim().length <= MAX_LABEL_CHARS ? entry.text : undefined;
+  const haystack = [labelText, entry.alt, entry.src].filter(Boolean).join(" ");
   if (!haystack) return null;
   for (const matcher of FLAG_MATCHERS) {
     if (matcher.test(haystack)) return matcher.name;
