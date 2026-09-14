@@ -35,10 +35,25 @@ interface FileShareNavigator {
  * from the same live conditions already on the page — this component only
  * fetches it as a Blob and hands it off.
  */
-export function ShareCardSheet({ slug, beachName }: { slug: string; beachName: string }) {
+export function ShareCardSheet({
+  slug,
+  beachName,
+  shareUrl,
+}: {
+  slug: string;
+  beachName: string;
+  /** Clean canonical link for this beach, no tracking tag (the flagship beach
+   *  gets the apex). Passed in because only the page knows which beach is
+   *  flagship. */
+  shareUrl: string;
+}) {
   const [open, setOpen] = useState(false);
   const [format, setFormat] = useState<FormatKey>("story");
   const [loaded, setLoaded] = useState<Record<string, boolean>>({});
+  // Each format's PNG costs several server seconds to render, so only fetch one
+  // once it has actually been selected. Story is the default, so it starts
+  // active; square renders the first time it is tapped — not both at once.
+  const [active, setActive] = useState<Record<FormatKey, boolean>>({ story: true, square: false });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -54,8 +69,6 @@ export function ShareCardSheet({ slug, beachName }: { slug: string; beachName: s
       const file = new File([blob], `isitbeachday-${slug}-${format}.png`, { type: "image/png" });
       const title = `${beachName} — Is It Beach Day?`;
       const text = `Today's conditions at ${beachName} — Is It Beach Day?`;
-      const shareUrl = `https://isitbeachday.com/${slug}?ref=share`;
-
       const nav = navigator as Navigator & FileShareNavigator;
       if (nav.share && nav.canShare?.({ files: [file] })) {
         await nav.share({ files: [file], title, text, url: shareUrl });
@@ -112,7 +125,10 @@ export function ShareCardSheet({ slug, beachName }: { slug: string; beachName: s
             <button
               key={f.key}
               type="button"
-              onClick={() => setFormat(f.key)}
+              onClick={() => {
+                setFormat(f.key);
+                setActive((a) => ({ ...a, [f.key]: true }));
+              }}
               aria-pressed={format === f.key}
               aria-label={`Use the ${f.label} format`}
               className={`flex min-h-[44px] flex-col self-start overflow-hidden rounded-2xl ring-2 transition ${
@@ -131,19 +147,21 @@ export function ShareCardSheet({ slug, beachName }: { slug: string; beachName: s
                   background: "linear-gradient(160deg, #041525 0%, #06263f 55%, #073a5c 100%)",
                 }}
               >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={cardUrl(f.key)}
-                  alt={`${beachName} conditions card — ${f.label} preview`}
-                  onLoad={() => setLoaded((l) => ({ ...l, [f.key]: true }))}
-                  className={`absolute inset-0 h-full w-full transition-opacity duration-300 ${
-                    loaded[f.key] ? "opacity-100" : "opacity-0"
-                  }`}
-                  style={{ objectFit: "cover" }}
-                />
+                {active[f.key] ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={cardUrl(f.key)}
+                    alt={`${beachName} conditions card — ${f.label} preview`}
+                    onLoad={() => setLoaded((l) => ({ ...l, [f.key]: true }))}
+                    className={`absolute inset-0 h-full w-full transition-opacity duration-300 ${
+                      loaded[f.key] ? "opacity-100" : "opacity-0"
+                    }`}
+                    style={{ objectFit: "cover" }}
+                  />
+                ) : null}
                 {!loaded[f.key] ? (
                   <span className="absolute inset-0 flex items-center justify-center px-2 text-center text-xs text-slate-300">
-                    Drawing your card…
+                    {active[f.key] ? "Drawing your card…" : "Tap to preview"}
                   </span>
                 ) : null}
               </span>

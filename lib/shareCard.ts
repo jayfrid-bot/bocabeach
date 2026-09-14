@@ -11,6 +11,7 @@ import { scoreBand } from "@/lib/scoreBands";
 import { beachDayVerdict } from "@/lib/format";
 import { uvBand } from "@/lib/uv";
 import { clarityDisplayWord } from "@/lib/sources/clarity";
+import { listLocations } from "@/config/locations";
 
 export interface ShareCardTile {
   key: string;
@@ -135,6 +136,13 @@ export function shareCardModel(
   const caps = score?.caps ?? [];
   const slug = loc?.slug ?? "";
 
+  // The flagship beach lives at the apex ("/"), so its own "/<slug>" just
+  // 301s back — show and share the clean apex link instead. Everyone else
+  // gets "/<slug>". No "?ref=share" tag: a plain link reads better in a post.
+  const all = listLocations();
+  const flagship = all.find((l) => l.tier !== "auto") ?? all[0];
+  const path = flagship && loc && loc.slug === flagship.slug ? "" : `/${slug}`;
+
   return {
     slug,
     beachName: loc?.name ?? "Is It Beach Day?",
@@ -148,7 +156,7 @@ export function shareCardModel(
     tiles: tiles.slice(0, 6),
     capped: caps.length > 0,
     capNote: caps[0],
-    pageUrl: `isitbeachday.com/${slug}`,
-    shareUrl: `https://isitbeachday.com/${slug}?ref=share`,
+    pageUrl: `isitbeachday.com${path}`,
+    shareUrl: `https://isitbeachday.com${path}`,
   };
 }

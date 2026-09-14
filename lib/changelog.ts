@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-14",
+    title: "Faster share card and a cleaner shared link",
+    details:
+      "The Share sheet now draws only the shape you pick, and each card is cached at the edge, so it appears much faster. The link you share is now a plain isitbeachday.com — no tracking tag tacked on.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-14",
     title: "Share today's beach conditions as a card",
     details:
       "A new Share button next to Alerts builds a card in the Beach Day look — sun, waves, and the score ring — with water, air, and sand temp, water clarity, waves, and UV. Sized for an Instagram or TikTok story, or a square post. Post your own beach photos, then share the card alongside them.",

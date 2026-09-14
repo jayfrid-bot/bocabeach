@@ -328,7 +328,7 @@ const ONE_PX_PNG = Buffer.from(
 );
 
 test.describe("Share card", () => {
-  test("the Share button opens a sheet with both format previews", async ({ page }) => {
+  test("the Share button opens a sheet and previews the selected format", async ({ page }) => {
     await page.route("**/api/share/**", (route) =>
       route.fulfill({ status: 200, contentType: "image/png", body: ONE_PX_PNG }),
     );
@@ -342,27 +342,34 @@ test.describe("Share card", () => {
     const sheet = page.getByRole("dialog", { name: "Share today's conditions" });
     await expect(sheet).toBeVisible();
 
-    // Both format previews are present and load (routed to the stub above).
-    const previews = sheet.locator("img");
-    await expect(previews).toHaveCount(2);
-    for (const img of await previews.all()) {
-      await expect(img).toBeVisible();
-      await expect
-        .poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth), { timeout: 5_000 })
-        .toBeGreaterThan(0);
-    }
+    // Each PNG costs the server several seconds to render, so only the selected
+    // format loads: the story preview (the default) mounts and loads its image;
+    // the square one waits behind a "Tap to preview" placeholder until picked.
+    await expect
+      .poll(
+        () =>
+          sheet
+            .locator("img")
+            .first()
+            .evaluate((el: HTMLImageElement) => el.naturalWidth),
+        { timeout: 5_000 },
+      )
+      .toBeGreaterThan(0);
+    await expect(sheet.locator("img")).toHaveCount(1);
+    await expect(sheet.getByText("Tap to preview")).toBeVisible();
 
     // Nothing in the dialog may be cut off or too small to hit at 390 px.
     expect(await clippedText(page, '[role="dialog"]')).toEqual([]);
     expect(await undersizedTapTargets(page, '[role="dialog"]')).toEqual([]);
 
-    // Picking the square format highlights it instead of the story format.
+    // Picking the square format highlights it and loads its preview on demand.
     const square = sheet.getByRole("button", { name: /Use the Square/ });
     const story = sheet.getByRole("button", { name: /Use the Story/ });
     await expect(story).toHaveAttribute("aria-pressed", "true");
     await square.click();
     await expect(square).toHaveAttribute("aria-pressed", "true");
     await expect(story).toHaveAttribute("aria-pressed", "false");
+    await expect(sheet.locator("img")).toHaveCount(2);
 
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(0);

@@ -425,7 +425,17 @@ export function ConditionsDashboard({
               onSettings={() => setSheet("settings")}
             />
           ) : null}
-          {!preview ? <ShareCardSheet slug={slug} beachName={snap.location.name} /> : null}
+          {!preview ? (
+            <ShareCardSheet
+              slug={slug}
+              beachName={snap.location.name}
+              shareUrl={
+                slug === flagshipSlugOf(beaches)
+                  ? "https://isitbeachday.com"
+                  : `https://isitbeachday.com/${slug}`
+              }
+            />
+          ) : null}
           {plusOn ? <NearYouChip beaches={beaches} currentSlug={slug} /> : null}
         </div>
       </header>

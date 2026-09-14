@@ -280,10 +280,31 @@ describe("shareCardModel", () => {
     expect(m.capNote).toBeUndefined();
   });
 
-  it("builds the plain page URL (no tracking param) and the tracked share URL from the slug", () => {
+  it("uses the clean apex link for the flagship beach, with no tracking param", () => {
+    // Boca is the flagship (its own /<slug> 301s to "/"), so both the on-card
+    // text and the shared link are the bare apex — and neither carries ?ref.
     const m = shareCardModel(response(), NOW_MS);
-    expect(m.pageUrl).toBe("isitbeachday.com/boca-raton");
-    expect(m.pageUrl).not.toContain("ref=share");
-    expect(m.shareUrl).toBe("https://isitbeachday.com/boca-raton?ref=share");
+    expect(m.pageUrl).toBe("isitbeachday.com");
+    expect(m.shareUrl).toBe("https://isitbeachday.com");
+    expect(m.shareUrl).not.toContain("ref=share");
+  });
+
+  it("uses a plain /<slug> link for a non-flagship beach", () => {
+    const m = shareCardModel(
+      response({
+        location: {
+          slug: "deerfield-beach",
+          name: "Deerfield Beach",
+          region: "Broward County, FL",
+          lat: 26.3165,
+          lon: -80.0742,
+          timezone: "America/New_York",
+        },
+      } as unknown as Partial<ConditionsSnapshot>),
+      NOW_MS,
+    );
+    expect(m.pageUrl).toBe("isitbeachday.com/deerfield-beach");
+    expect(m.shareUrl).toBe("https://isitbeachday.com/deerfield-beach");
+    expect(m.shareUrl).not.toContain("ref=share");
   });
 });

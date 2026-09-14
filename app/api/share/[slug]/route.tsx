@@ -499,11 +499,30 @@ export async function GET(
   const model = shareCardModel(data, Date.now());
   const { width, height } = SIZES[formatParam];
 
-  return new ImageResponse(<ShareCard model={model} format={formatParam} />, {
+  // Rendering a 1080x1920 PNG through satori is CPU-heavy (several seconds),
+  // and the card only changes as fast as the conditions do (~2 min). Serve a
+  // rendered card straight from the Cloudflare edge cache for its lifetime, so
+  // the second view of a beach — reopening the sheet, the Share button's own
+  // fetch, or the next person sharing the same beach — is instant instead of
+  // re-rendering. Guarded: if the cache global isn't present, just render.
+  const cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
+  const cacheKey = new Request(new URL(req.url).toString());
+  if (cache) {
+    const hit = await cache.match(cacheKey);
+    if (hit) return hit;
+  }
+
+  const image = new ImageResponse(<ShareCard model={model} format={formatParam} />, {
     width,
     height,
     headers: {
       "Cache-Control": "public, max-age=120, s-maxage=120",
     },
   });
+
+  if (cache) {
+    // Cache a clone; the original still streams to this caller.
+    await cache.put(cacheKey, image.clone());
+  }
+  return image;
 }
