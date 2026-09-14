@@ -38,6 +38,7 @@ interface FileShareNavigator {
 export function ShareCardSheet({ slug, beachName }: { slug: string; beachName: string }) {
   const [open, setOpen] = useState(false);
   const [format, setFormat] = useState<FormatKey>("story");
+  const [loaded, setLoaded] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -114,20 +115,38 @@ export function ShareCardSheet({ slug, beachName }: { slug: string; beachName: s
               onClick={() => setFormat(f.key)}
               aria-pressed={format === f.key}
               aria-label={`Use the ${f.label} format`}
-              className={`flex min-h-[44px] flex-col overflow-hidden rounded-2xl ring-2 transition ${
+              className={`flex min-h-[44px] flex-col self-start overflow-hidden rounded-2xl ring-2 transition ${
                 format === f.key
                   ? "ring-ocean-500"
                   : "ring-transparent hover:ring-slate-900/10 dark:hover:ring-white/10"
               }`}
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={cardUrl(f.key)}
-                alt={`${beachName} conditions card — ${f.label} preview`}
-                loading="lazy"
-                className="w-full"
-                style={{ aspectRatio: `${f.width} / ${f.height}`, objectFit: "cover" }}
-              />
+              {/* The card is drawn on the server on first request (a few seconds
+                  for two sizes), so the frame carries the card's own deep-blue
+                  ground and says what it is doing — a white box read as broken. */}
+              <span
+                className="relative block w-full"
+                style={{
+                  aspectRatio: `${f.width} / ${f.height}`,
+                  background: "linear-gradient(160deg, #041525 0%, #06263f 55%, #073a5c 100%)",
+                }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={cardUrl(f.key)}
+                  alt={`${beachName} conditions card — ${f.label} preview`}
+                  onLoad={() => setLoaded((l) => ({ ...l, [f.key]: true }))}
+                  className={`absolute inset-0 h-full w-full transition-opacity duration-300 ${
+                    loaded[f.key] ? "opacity-100" : "opacity-0"
+                  }`}
+                  style={{ objectFit: "cover" }}
+                />
+                {!loaded[f.key] ? (
+                  <span className="absolute inset-0 flex items-center justify-center px-2 text-center text-xs text-slate-300">
+                    Drawing your card…
+                  </span>
+                ) : null}
+              </span>
               <span className="bg-slate-900/5 px-2 py-1.5 text-center text-xs font-medium text-slate-700 dark:bg-white/5 dark:text-slate-200">
                 {f.label}
               </span>
