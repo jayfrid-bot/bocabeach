@@ -1,9 +1,9 @@
 import type { CamConfig, CamView, Location } from "@/lib/types";
-import { pickFeedTimestamp } from "@/lib/camSnapshots";
+import { pickFeedTimestamp, pickMetaTimestamp } from "@/lib/camSnapshots";
 import { fetchSpotWeather } from "@/lib/sources/spotWeather";
 import { fetchWithTimeout } from "@/lib/util";
 
-// --- Resolving a feed cam's capture time -----------------------------------
+// --- Resolving a cam's capture time -----------------------------------------
 //
 // The provider (video-monitoring.com) drops requests in short bursts. A single
 // miss used to cost the cam card its capture time — the card then said "capture
@@ -12,8 +12,10 @@ import { fetchWithTimeout } from "@/lib/util";
 //
 // This runs inside the conditions snapshot assembly, so both attempts plus the
 // pause have to fit in one modest budget: 3.5s + 0.8s + 3.5s = 7.8s worst case.
+// The same budget applies to a `snapshotMetaUrl` courier lookup (Deerfield's
+// image cams), which is fetched and retried identically to a feed's latest.json.
 
-/** Timeout for a single latest.json attempt. */
+/** Timeout for a single JSON-fetch attempt (latest.json or a meta endpoint). */
 const ATTEMPT_TIMEOUT_MS = 3500;
 /** Pause before the one retry — long enough to miss a burst, short enough to pay for. */
 const RETRY_DELAY_MS = 800;
@@ -24,11 +26,11 @@ const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * One feed's latest.json, fetched with a single retry. Returns the parsed JSON,
- * or undefined when both attempts fail — the caller then reports an honest
+ * Fetch one JSON URL with a single retry. Returns the parsed JSON, or
+ * undefined when both attempts fail — the caller then reports an honest
  * unknown capture time rather than inventing one.
  */
-async function fetchFeedLatest(base: string): Promise<unknown | undefined> {
+async function fetchCamJsonWithRetry(url: string): Promise<unknown | undefined> {
   const deadline = Date.now() + TOTAL_BUDGET_MS;
   for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) {
@@ -39,7 +41,7 @@ async function fetchFeedLatest(base: string): Promise<unknown | undefined> {
     const timeoutMs = Math.min(ATTEMPT_TIMEOUT_MS, deadline - Date.now());
     if (timeoutMs <= 0) break;
     try {
-      const res = await fetchWithTimeout(`${base}/latest.json`, {
+      const res = await fetchWithTimeout(url, {
         timeoutMs,
         next: { revalidate: 60 },
       });
@@ -50,6 +52,10 @@ async function fetchFeedLatest(base: string): Promise<unknown | undefined> {
   }
   return undefined;
 }
+
+/** One feed's latest.json, fetched with a single retry. */
+const fetchFeedLatest = (base: string): Promise<unknown | undefined> =>
+  fetchCamJsonWithRetry(`${base}/latest.json`);
 
 /**
  * Build the cam list for a location, attaching the live weather/wind at each
@@ -79,11 +85,23 @@ export async function buildCamViews(loc: Location): Promise<CamView[]> {
     return json === undefined ? undefined : pickFeedTimestamp(json, feed.view);
   };
 
+  /** Exact capture time of a courier-grabbed still, via its meta endpoint. */
+  const metaCapturedAt = async (cam: CamConfig): Promise<string | undefined> => {
+    const metaUrl = cam.snapshotMetaUrl;
+    if (!metaUrl) return undefined;
+    const json = await fetchCamJsonWithRetry(metaUrl);
+    return json === undefined ? undefined : pickMetaTimestamp(json);
+  };
+
+  /** Resolve whichever capture-time source this cam config declares. */
+  const camCapturedAt = (cam: CamConfig): Promise<string | undefined> =>
+    cam.snapshotMetaUrl ? metaCapturedAt(cam) : feedCapturedAt(cam);
+
   return Promise.all(
     loc.cams.map(async (cam): Promise<CamView> => {
       const [weather, capturedAt] = await Promise.all([
         fetchSpotWeather(cam.lat ?? loc.lat, cam.lon ?? loc.lon),
-        feedCapturedAt(cam),
+        camCapturedAt(cam),
       ]);
       return {
         id: cam.id,

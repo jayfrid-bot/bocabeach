@@ -1035,6 +1035,15 @@ export interface CamConfig {
     /** Frame resolution to serve (default "mr" ≈ 1920px; "hr" is the full original). */
     res?: "mr" | "hr";
   };
+  /**
+   * JSON endpoint publishing the true capture time of a `snapshotUrl` still,
+   * for a cam whose frame is produced by our own courier (e.g. a headless-
+   * browser grab) rather than read verbatim off an upstream provider. Expected
+   * shape: `{ grabbedAtUtc: ISO string, ok: boolean, ... }` — lib/cams.ts reads
+   * `grabbedAtUtc` only when `ok === true`, so a courier outage degrades to an
+   * honest "capture time unknown" instead of showing a stale or invented time.
+   */
+  snapshotMetaUrl?: string;
   attribution?: string;
   /** Cam's own coordinates for per-spot weather; falls back to the town's lat/lon. */
   lat?: number;

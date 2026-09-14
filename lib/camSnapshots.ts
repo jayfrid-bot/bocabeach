@@ -54,6 +54,22 @@ export function pickFeedTimestamp(json: unknown, view: string): string | undefin
 }
 
 /**
+ * Pull the capture time out of a `snapshotMetaUrl` response
+ * (`{ grabbedAtUtc: ISO, ok: boolean, ... }`). Only trusted when `ok === true`
+ * and `grabbedAtUtc` parses as a real date — otherwise undefined, so a courier
+ * outage or bad payload degrades to an honest "capture time unknown" rather
+ * than showing a stale or invented time.
+ */
+export function pickMetaTimestamp(json: unknown): string | undefined {
+  const obj = json as Record<string, unknown> | null;
+  if (!obj || obj.ok !== true) return undefined;
+  const grabbedAtUtc = obj.grabbedAtUtc;
+  if (typeof grabbedAtUtc !== "string") return undefined;
+  const ms = Date.parse(grabbedAtUtc);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
+}
+
+/**
  * Resolve a feed's (relative) frame path against its base dir, rejecting anything
  * that escapes that dir — so a tampered latest.json can't redirect the proxy to
  * another host or path (SSRF guard). Returns an absolute URL.

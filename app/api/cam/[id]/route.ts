@@ -27,6 +27,17 @@ async function resolveImageUrl(id: string): Promise<string | null> {
 }
 
 /**
+ * A `direct` source's own courier (e.g. the uw-frame worker) may stamp its
+ * response with the true capture time. Forward it only when present and a
+ * valid ISO date, so a malformed or absent header never fabricates a time.
+ */
+function grabbedAtHeader(res: Response): string | undefined {
+  const value = res.headers.get("X-Grabbed-At");
+  if (!value) return undefined;
+  return Number.isFinite(Date.parse(value)) ? value : undefined;
+}
+
+/**
  * Proxy a configured cam's live snapshot JPEG. The browser only ever sees a
  * same-origin response; the upstream hop is https where the host supports it.
  * The guarantee here is same-origin, not https end-to-end.
@@ -40,6 +51,7 @@ export async function GET(
   const { id } = await params;
 
   try {
+    const src = camSourceForId(id);
     const upstream = await resolveImageUrl(id);
     if (!upstream) {
       return NextResponse.json({ error: "Unknown cam" }, { status: 404 });
@@ -56,12 +68,18 @@ export async function GET(
       throw new Error(`cam ${id} upstream returned ${contentType}`);
     }
 
+    // Forward the courier's own capture-time header for a `direct` source
+    // (e.g. the uw-frame worker) so the client can show an honest capture
+    // time instead of "unknown".
+    const grabbedAt = src?.kind === "direct" ? grabbedAtHeader(res) : undefined;
+
     const body = await res.arrayBuffer();
     return new NextResponse(body, {
       status: 200,
       headers: {
         "Content-Type": contentType,
         "Cache-Control": "public, s-maxage=60, stale-while-revalidate=120",
+        ...(grabbedAt ? { "X-Grabbed-At": grabbedAt } : {}),
       },
     });
   } catch (e) {

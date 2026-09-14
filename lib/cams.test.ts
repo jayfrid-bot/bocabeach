@@ -129,3 +129,116 @@ describe("buildCamViews — resolving each cam's capture time", () => {
     expect(cams[0].imageUrl).toBe("/api/cam/cam-s4");
   });
 });
+
+// --- snapshotMetaUrl (courier cams, e.g. Deerfield's uw-frame stills) ------
+// Same fetch: per-attempt timeout + single retry + total budget as the feed
+// path above, but the JSON shape is { grabbedAtUtc, ok } instead of latest.json.
+
+const META_URL = "https://uw-frame.entwined-app.workers.dev/meta?cam=deerfield-beach-cam";
+const GRABBED_AT_ISO = "2026-09-14T15:40:00.000Z";
+
+const META_LOCATION: Location = {
+  slug: "test-beach-meta",
+  name: "Test Beach Meta",
+  region: "Test County, FL",
+  lat: 26.32,
+  lon: -80.07,
+  timezone: "America/New_York",
+  noaaTideStationId: "8722832",
+  ndbcBuoyId: "41122",
+  cams: [
+    {
+      id: "deerfield-beach-cam",
+      name: "Deerfield Beach Cam",
+      provider: "Test",
+      embedType: "image",
+      url: "https://example.test/deerfield",
+      snapshotUrl: "https://uw-frame.entwined-app.workers.dev/frame?cam=deerfield-beach-cam",
+      snapshotMetaUrl: META_URL,
+    },
+  ],
+};
+
+function metaJson(ok: boolean): Response {
+  return new Response(
+    JSON.stringify({
+      id: "deerfield-beach-cam",
+      videoId: "rdeoEeJ00xA",
+      grabbedAtUtc: GRABBED_AT_ISO,
+      ms: 1200,
+      ok,
+      source: "grab",
+    }),
+    { status: 200, headers: { date: new Date().toUTCString() } },
+  );
+}
+
+/** A fetch stub: the meta endpoint is driven by `meta`, everything else
+ *  (per-cam spot weather) gets a harmless empty payload. */
+function stubMetaFetch(meta: () => Promise<Response>) {
+  const calls: string[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url.includes("/meta?cam=")) {
+        calls.push(url);
+        return meta();
+      }
+      return new Response("{}", { status: 200, headers: { date: new Date().toUTCString() } });
+    }),
+  );
+  return calls;
+}
+
+describe("buildCamViews — resolving a courier cam's capture time (snapshotMetaUrl)", () => {
+  it("resolves capturedAt from a successful ok:true meta response", async () => {
+    vi.useFakeTimers();
+    const calls = stubMetaFetch(async () => metaJson(true));
+
+    const cams = await runWithTimers(buildCamViews(META_LOCATION));
+
+    expect(calls).toHaveLength(1);
+    expect(cams[0].capturedAt).toBe(GRABBED_AT_ISO);
+  });
+
+  it("leaves capturedAt unknown when the meta response says ok:false", async () => {
+    vi.useFakeTimers();
+    stubMetaFetch(async () => metaJson(false));
+
+    const cams = await runWithTimers(buildCamViews(META_LOCATION));
+
+    expect(cams[0].capturedAt).toBeUndefined();
+  });
+
+  it("retries once after a failed meta fetch and recovers capturedAt", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    const calls = stubMetaFetch(async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("ECONNRESET");
+      return metaJson(true);
+    });
+
+    const cams = await runWithTimers(buildCamViews(META_LOCATION));
+
+    expect(attempts).toBe(2); // one failure, one retry
+    expect(calls).toHaveLength(2);
+    expect(cams[0].capturedAt).toBe(GRABBED_AT_ISO);
+  });
+
+  it("gives up honestly (capturedAt undefined) when both attempts time out", async () => {
+    vi.useFakeTimers();
+    let attempts = 0;
+    stubMetaFetch(async () => {
+      attempts += 1;
+      throw new Error("ETIMEDOUT");
+    });
+
+    const cams = await runWithTimers(buildCamViews(META_LOCATION));
+
+    expect(attempts).toBe(2); // exactly one retry — never a third try
+    expect(cams[0].capturedAt).toBeUndefined();
+    // The card still renders: the proxied still and the cam's identity survive.
+    expect(cams[0].imageUrl).toBe("/api/cam/deerfield-beach-cam");
+  });
+});

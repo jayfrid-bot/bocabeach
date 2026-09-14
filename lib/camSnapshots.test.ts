@@ -4,6 +4,7 @@ import {
   camSourceForId,
   pickFeedFramePath,
   pickFeedTimestamp,
+  pickMetaTimestamp,
   resolveFeedImageUrl,
 } from "@/lib/camSnapshots";
 
@@ -87,5 +88,43 @@ describe("latest.json feed resolution", () => {
     expect(() => resolveFeedImageUrl(base, "../../../../etc/passwd")).toThrow();
     expect(() => resolveFeedImageUrl(base, "http://evil.example.com/x.jpg")).toThrow();
     expect(() => resolveFeedImageUrl(base, "//evil.example.com/x.jpg")).toThrow();
+  });
+});
+
+describe("courier meta capture time (pickMetaTimestamp)", () => {
+  it("reads grabbedAtUtc when ok:true and it parses as a date", () => {
+    expect(
+      pickMetaTimestamp({
+        id: "deerfield-beach-cam",
+        videoId: "rdeoEeJ00xA",
+        grabbedAtUtc: "2026-09-14T15:40:00.000Z",
+        ms: 1200,
+        ok: true,
+        source: "grab",
+      }),
+    ).toBe("2026-09-14T15:40:00.000Z");
+  });
+
+  it("returns undefined when ok:false, even with a valid grabbedAtUtc", () => {
+    expect(
+      pickMetaTimestamp({
+        grabbedAtUtc: "2026-09-14T15:40:00.000Z",
+        ok: false,
+        error: "courier timed out",
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined when grabbedAtUtc is missing", () => {
+    expect(pickMetaTimestamp({ ok: true })).toBeUndefined();
+  });
+
+  it("returns undefined for garbage input (non-string, unparseable date, null, non-object)", () => {
+    expect(pickMetaTimestamp({ ok: true, grabbedAtUtc: "not-a-date" })).toBeUndefined();
+    expect(pickMetaTimestamp({ ok: true, grabbedAtUtc: 12345 })).toBeUndefined();
+    expect(pickMetaTimestamp({ ok: true, grabbedAtUtc: null })).toBeUndefined();
+    expect(pickMetaTimestamp(null)).toBeUndefined();
+    expect(pickMetaTimestamp(undefined)).toBeUndefined();
+    expect(pickMetaTimestamp("just a string")).toBeUndefined();
   });
 });
