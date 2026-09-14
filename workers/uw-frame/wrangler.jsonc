@@ -5,14 +5,20 @@
   "account_id": "10cdd8dec9ac9d0593e31a55eeaee1e2",
   "compatibility_date": "2025-03-01",
   "compatibility_flags": ["nodejs_compat"],
-  // Headless Chrome for grabbing one underwater sea-cam frame per hour. Free tier
-  // is ~10 browser-minutes/day; each grab is kept <~30s (see src/index.ts budget).
+  // Headless Chrome, shared by every cam grab AND the lifeguard-flag read in
+  // a tick (one browser launch per tick, not one per cam). Free tier is
+  // ~10 browser-minutes/day; see the BROWSER-RENDERING BUDGET comment in
+  // src/index.ts for the full per-tick/per-day estimate (~18.75 min/day).
   "browser": { "binding": "BROWSER" },
   "kv_namespaces": [
     // Dedicated namespace — deliberately NOT the app's NEXT_INC_CACHE_KV.
+    // Holds legacy frame:latest/frame:meta (Spinner cam), per-cam
+    // frame:<id>/meta:<id>, and flags:<slug> (lifeguard-flag reads).
     { "binding": "UW_FRAME", "id": "18ba88cc994e4c2e8f868d4f918757a7" }
   ],
-  // Top of each hour 10:00-24:00 UTC (~6 AM-8 PM ET) = 15 grabs/day.
+  // Top of each hour 10:00-24:00 UTC (~6 AM-8 PM ET) = 15 ticks/day. Which
+  // cams (and whether the flag read) actually run at a given tick is
+  // decided inside the handler — see src/lib/schedule.ts.
   "triggers": {
     "crons": ["0 10-23 * * *", "0 0 * * *"]
   },

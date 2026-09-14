@@ -68,7 +68,7 @@ flowchart LR
 
   subgraph cf [Cloudflare Cron Triggers]
     PLUSCRON["workers/plus-cron<br/>*/5 min"]
-    UWFRAME["workers/uw-frame<br/>top of each hour, 10a-11p ET"]
+    UWFRAME["workers/uw-frame<br/>multi-cam frame courier + Deerfield flag reader<br/>top of each hour, 10a-11p ET"]
   end
 
   LGT -->|writes| LDATA[(lightning-data branch)]
@@ -85,8 +85,27 @@ flowchart LR
 
   PUSHCRON -->|POST x-cron-secret| RUN["/api/push/run?mode=all"]
   PLUSCRON -->|POST x-cron-secret, every 5 min| RUN
-  UWFRAME -->|headless Chrome grab| UWKV[(UW_FRAME KV<br/>underwater cam still)]
+  UWFRAME -->|one headless-Chrome launch/tick,<br/>reused across every cam + the flag read| UWKV[(UW_FRAME KV<br/>frame:&lt;id&gt;, meta:&lt;id&gt;,<br/>flags:deerfield-beach)]
 ```
+
+**`workers/uw-frame` is a multi-cam courier, not a single grab.** Deerfield
+Beach's cams (underwater, crowd/sand, surf, pier) exist only as YouTube live
+streams — there's no still-image feed — so each cron tick opens ONE headless
+Chrome and reuses the SAME page across every camera due that tick (navigate
+the embed, wait for it to actually be playing, screenshot, move to the next
+cam) rather than launching a browser per camera. The same browser also loads
+the City's public ArcGIS "Beach Conditions" dashboard once per daylight tick
+to read which lifeguard flag(s) are currently flying — that dashboard shows
+the active flag(s) by toggling block visibility rather than changing text, so
+the reader records which of the five known blocks is actually visible. The
+underwater cam still grabs hourly (unchanged); the three surface cams grab
+every 3 hours in daylight only, and the flag read runs every daylight tick —
+all three cadences, and the full per-day Browser Rendering time budget, are
+decided in `workers/uw-frame/src/lib/schedule.ts` and documented in
+`workers/uw-frame/src/index.ts`. Endpoints: `GET /frame[?cam=<id>]`,
+`GET /meta[?cam=<id>]` (no `cam` = the underwater cam, unchanged legacy
+keys), `GET /cams` (registry + each cam's last grab), and
+`GET /flags?slug=deerfield-beach`.
 
 `push-cron.yml` and `plus-cron` both hit the same route — GitHub's schedule is
 best-effort, so the Cloudflare cron is the reliable path and GitHub is the
@@ -219,6 +238,7 @@ and may be re-claimed.
 | iNaturalist | Portuguese man-o'-war sighting reports |
 | FL Healthy Beaches | Water-quality advisories |
 | video-monitoring.com | Public beach cam still frames |
-| YouTube | Underwater cam source (`workers/uw-frame`) |
+| YouTube | Deerfield Beach underwater + surface cam sources, live-embed only (`workers/uw-frame`) |
+| ArcGIS (City of Deerfield Beach dashboard) | Lifeguard flag status read (`workers/uw-frame`) |
 | Apple Push Notification service (APNs) | iOS push delivery |
 | Firebase Cloud Messaging (FCM) | Android push delivery |
