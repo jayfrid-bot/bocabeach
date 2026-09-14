@@ -1,8 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   detectNoSwimAdvisory,
   parseCityConditions,
+  mapFlagsFeed,
+  fetchCityOfficial,
 } from "@/lib/sources/cityOfficial";
+import type { Location } from "@/lib/types";
 
 // Mirrors the structure of myboca.us/2464/Beach-Conditions.
 const HTML = `
@@ -150,5 +153,173 @@ describe("parseCityConditions", () => {
     );
     expect(d.flags).not.toContain("red");
     expect(d.flags).toContain("green");
+  });
+});
+
+// --- Deerfield Beach's flags-feed path (Location.flagsFeedUrl) -------------
+
+const NOW = new Date("2026-09-14T18:00:00Z");
+
+describe("mapFlagsFeed", () => {
+  it("reports a fresh single flag as-is", () => {
+    const d = mapFlagsFeed(
+      { flags: ["yellow"], observedAtUtc: "2026-09-14T17:45:00Z", ok: true },
+      NOW,
+    );
+    expect(d.flags).toEqual(["yellow"]);
+  });
+
+  it("reports a fresh purple+yellow combination", () => {
+    const d = mapFlagsFeed(
+      { flags: ["purple", "yellow"], observedAtUtc: "2026-09-14T17:45:00Z", ok: true },
+      NOW,
+    );
+    expect(d.flags).toEqual(expect.arrayContaining(["purple", "yellow"]));
+    expect(d.flags).toHaveLength(2);
+  });
+
+  it("degrades a stale reading (> 6h old) to unknown, not a cap", () => {
+    const d = mapFlagsFeed(
+      { flags: ["double-red"], observedAtUtc: "2026-09-14T11:00:00Z", ok: true },
+      NOW,
+    );
+    expect(d.flags).toEqual(["unknown"]);
+  });
+
+  it("degrades an explicit ok:false reading to unknown, regardless of freshness", () => {
+    const d = mapFlagsFeed(
+      { flags: ["red"], observedAtUtc: "2026-09-14T17:59:00Z", ok: false, error: "scrape failed" },
+      NOW,
+    );
+    expect(d.flags).toEqual(["unknown"]);
+  });
+
+  it("drops unrecognized flag values and falls back to unknown if none survive", () => {
+    const d = mapFlagsFeed(
+      { flags: ["chartreuse"], observedAtUtc: "2026-09-14T17:45:00Z", ok: true },
+      NOW,
+    );
+    expect(d.flags).toEqual(["unknown"]);
+  });
+
+  it("treats a missing/unparsable observedAtUtc as stale", () => {
+    expect(mapFlagsFeed({ flags: ["green"], ok: true }, NOW).flags).toEqual(["unknown"]);
+    expect(
+      mapFlagsFeed({ flags: ["green"], observedAtUtc: "not-a-date", ok: true }, NOW).flags,
+    ).toEqual(["unknown"]);
+  });
+});
+
+const DEERFIELD_LOCATION: Location = {
+  slug: "deerfield-beach",
+  name: "Deerfield Beach",
+  region: "Broward County, FL",
+  lat: 26.3165,
+  lon: -80.0742,
+  timezone: "America/New_York",
+  noaaTideStationId: "8722832",
+  ndbcBuoyId: "41122",
+  cams: [],
+  cityConditionsUrl: "https://www.deerfield-beach.com/286/Beach-Conditions-and-Flags",
+  cityConditionsAttribution: "City of Deerfield Beach Ocean Rescue",
+  flagsFeedUrl: "https://uw-frame.entwined-app.workers.dev/flags?slug=deerfield-beach",
+};
+
+const BOCA_LOCATION: Location = {
+  slug: "boca-raton",
+  name: "Boca Raton",
+  region: "Palm Beach County, FL",
+  lat: 26.3587,
+  lon: -80.0686,
+  timezone: "America/New_York",
+  noaaTideStationId: "8722816",
+  ndbcBuoyId: "LKWF1",
+  cams: [],
+  cityConditionsUrl: "https://www.myboca.us/2464/Beach-Conditions",
+  cityConditionsAttribution: "City of Boca Raton Ocean Rescue (myboca.us)",
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+describe("fetchCityOfficial — flags-feed beaches (e.g. Deerfield)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("reads a fresh flags feed instead of scraping cityConditionsUrl", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        flags: ["purple", "yellow"],
+        observedAtUtc: new Date().toISOString(),
+        ok: true,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const w = await fetchCityOfficial(DEERFIELD_LOCATION);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(DEERFIELD_LOCATION.flagsFeedUrl);
+    expect(w.data?.flags).toEqual(expect.arrayContaining(["purple", "yellow"]));
+    expect(w.attribution).toBe("City of Deerfield Beach Ocean Rescue");
+    expect(w.status).toBe("ok");
+  });
+
+  it("degrades a stale flags feed to unknown without throwing", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        flags: ["red"],
+        observedAtUtc: "2020-01-01T00:00:00Z", // ancient — always stale
+        ok: true,
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const w = await fetchCityOfficial(DEERFIELD_LOCATION);
+
+    expect(w.data?.flags).toEqual(["unknown"]);
+    expect(w.status).toBe("stale");
+  });
+
+  it("never throws on a network/parse failure — degrades to unknown", async () => {
+    const fetchMock = vi.fn().mockRejectedValueOnce(new Error("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const w = await fetchCityOfficial(DEERFIELD_LOCATION);
+
+    expect(w.data?.flags).toEqual(["unknown"]);
+    expect(w.status).toBe("error");
+    expect(w.note).toMatch(/network down/);
+  });
+
+  it("degrades to unknown on a non-ok HTTP response, without throwing", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response("nope", { status: 500 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const w = await fetchCityOfficial(DEERFIELD_LOCATION);
+
+    expect(w.data?.flags).toEqual(["unknown"]);
+    expect(w.status).toBe("error");
+  });
+
+  it("leaves Boca's HTML scrape path unchanged", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(HTML, { status: 200, headers: { "content-type": "text/html" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const w = await fetchCityOfficial(BOCA_LOCATION);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(BOCA_LOCATION.cityConditionsUrl);
+    expect(w.attribution).toBe("City of Boca Raton Ocean Rescue (myboca.us)");
+    expect(w.status).toBe("best-effort");
+    expect(w.data?.flags).toEqual(expect.arrayContaining(["purple", "yellow"]));
+    expect(w.data?.swimmingRating).toBe("Fair");
   });
 });

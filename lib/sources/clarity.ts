@@ -9,6 +9,7 @@ import type {
 import { clamp, fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
 import { fmtTime } from "@/lib/format";
 import { fetchSun } from "@/lib/sources/sun";
+import { camFeedUrlCandidates } from "@/lib/sources/camFeed";
 // The overnight fallback ("what did the water look like on the last readable
 // day, and when does the next read land?") is the same question busyness asks,
 // so both cards share one implementation of day selection, day naming and the
@@ -45,11 +46,6 @@ const RANK: Record<WaterClarityGrade, number> = {
   murky: 2,
   churned: 3,
 };
-
-/** Same off-Netlify cam-vision job now publishes per-cam water-clarity reads here. */
-const CAM_FEED_URL =
-  process.env.CAM_SEAWEED_FEED_URL ??
-  "https://raw.githubusercontent.com/jayfrid-bot/bocabeach/sargassum-data/cam_seaweed.json";
 
 interface CamReading {
   id?: string;
@@ -482,12 +478,20 @@ export async function fetchClarity(loc: Location): Promise<Wrapped<ClarityData>>
   }
   let fetchedAt = nowIso();
   try {
-    const res = await fetchWithTimeout(CAM_FEED_URL, {
-      timeoutMs: 7000,
-      next: { revalidate: 600 }, // 10 min — same feed/cache as busyness + seaweed (deduped)
-    });
-    fetchedAt = fetchedAtOf(res);
-    if (res.status === 404) {
+    // Try the beach's own per-beach file first; boca-raton (the only beach
+    // that had cams before the per-beach split) falls through to the legacy
+    // single-file feed if its own file isn't published yet. Any other beach
+    // with no registry entry just 404s here — see camFeedUrlCandidates.
+    let res: Response | undefined;
+    for (const url of camFeedUrlCandidates(loc.slug)) {
+      res = await fetchWithTimeout(url, {
+        timeoutMs: 7000,
+        next: { revalidate: 600 }, // 10 min — same feed/cache as busyness + seaweed (deduped)
+      });
+      fetchedAt = fetchedAtOf(res);
+      if (res.status !== 404) break;
+    }
+    if (!res || res.status === 404) {
       return {
         source: ATTRIBUTION,
         status: "best-effort",

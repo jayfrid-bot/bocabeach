@@ -7,6 +7,7 @@ import {
   type ClarityFeed,
 } from "@/lib/sources/clarity";
 import type { Location } from "@/lib/types";
+import { camFeedUrl, legacyCamFeedUrl } from "@/lib/sources/camFeed";
 
 const CAMLESS_LOCATION: Location = {
   slug: "test-beach",
@@ -199,6 +200,63 @@ describe("fetchClarity — cam gating + failure", () => {
     expect(w.data).toBeNull();
     expect(w.status).toBe("best-effort");
     expect(w.note).toMatch(/not published/i);
+  });
+});
+
+describe("fetchClarity — per-beach feed URL + legacy fallback", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const DEERFIELD_LOCATION: Location = { ...CAM_LOCATION, slug: "deerfield-beach" };
+  const BOCA_LOCATION: Location = { ...CAM_LOCATION, slug: "boca-raton" };
+
+  function jsonResponse(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  it("fetches the beach's own per-beach file, no fallback, for a beach with no legacy history", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ latest: { cams: [] } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await fetchClarity(DEERFIELD_LOCATION);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(camFeedUrl("deerfield-beach"));
+  });
+
+  it("falls back to the legacy single-file feed for boca-raton when its per-beach file 404s", async () => {
+    // Pin the clock to a daytime instant so the night/staleness gate (tested
+    // separately above) doesn't obscure what this test checks: URL fallback.
+    const NOW = new Date("2026-09-14T20:00:00Z"); // 1 PM America/Los_Angeles
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(new Response("not found", { status: 404 }))
+        .mockResolvedValueOnce(
+          jsonResponse({
+            latest: {
+              capturedAtLocal: NOW.toISOString(),
+              cams: [{ name: "A", water: "clear", waterPct: 80 }],
+            },
+          }),
+        );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const w = await fetchClarity(BOCA_LOCATION);
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[0][0]).toBe(camFeedUrl("boca-raton"));
+      expect(fetchMock.mock.calls[1][0]).toBe(legacyCamFeedUrl());
+      expect(w.data?.level).toBe("clear");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -1,7 +1,32 @@
 import type { CityOfficialData, FlagColor, Location, Wrapped } from "@/lib/types";
 import { fetchedAtOf, fetchWithTimeout, nowIso } from "@/lib/util";
 
-const ATTRIBUTION = "City of Boca Raton Ocean Rescue (myboca.us)";
+/** Fallback credit line for a location that hasn't set its own
+ *  `cityConditionsAttribution` yet. */
+const DEFAULT_ATTRIBUTION = "City Ocean Rescue";
+
+/** Every posted flag color the flags-feed JSON is allowed to report. */
+const KNOWN_FLAGS: ReadonlySet<FlagColor> = new Set([
+  "green",
+  "yellow",
+  "red",
+  "double-red",
+  "purple",
+  "unknown",
+]);
+
+/** A flags-feed reading older than this is too old to trust as "current". */
+const FLAGS_STALE_MS = 6 * 60 * 60_000; // 6 hours
+
+/** Shape published by a beach's `Location.flagsFeedUrl` (e.g. the uw-frame
+ *  Worker's /flags endpoint) — see lib/types.ts's flagsFeedUrl doc. */
+export interface FlagsFeed {
+  flags?: unknown;
+  observedAtUtc?: string;
+  ok?: boolean;
+  error?: string;
+  rawText?: string;
+}
 
 /** Strip HTML tags and collapse whitespace into a single searchable text blob. */
 function htmlToText(html: string): string {
@@ -205,16 +230,94 @@ export function parseCityConditions(html: string): CityOfficialData {
   };
 }
 
+/** Credit line for this location's flag/conditions posting. */
+function attributionFor(loc: Location): string {
+  return loc.cityConditionsAttribution ?? DEFAULT_ATTRIBUTION;
+}
+
+/**
+ * Map a beach's flags-feed JSON into CityOfficialData. Pure + tested.
+ *
+ * A reading is trusted only when the feed says `ok` (not explicitly false)
+ * AND `observedAtUtc` is within FLAGS_STALE_MS of `now` — otherwise this
+ * degrades to flags: ["unknown"] rather than throwing or capping the score
+ * on stale/bad data (an "unknown" flag never caps — see lib/score.ts). Any
+ * flag value the feed reports outside the known FlagColor set is dropped;
+ * if nothing recognizable is left, that's also ["unknown"].
+ */
+export function mapFlagsFeed(feed: FlagsFeed, now: Date = new Date()): CityOfficialData {
+  const observedMs = feed.observedAtUtc ? new Date(feed.observedAtUtc).getTime() : NaN;
+  const fresh = Number.isFinite(observedMs) && now.getTime() - observedMs <= FLAGS_STALE_MS;
+  if (feed.ok === false || !fresh) {
+    return { flags: ["unknown"] };
+  }
+  const raw = Array.isArray(feed.flags) ? feed.flags : [];
+  const flags = raw.filter((f): f is FlagColor => typeof f === "string" && KNOWN_FLAGS.has(f as FlagColor));
+  return { flags: flags.length ? flags : ["unknown"] };
+}
+
+/** Read flags from `loc.flagsFeedUrl` — a JSON endpoint, for beaches whose
+ *  official conditions page isn't scrapable HTML. Timeout-guarded and never
+ *  throws: any fetch/parse failure degrades to an honest flags: ["unknown"]
+ *  reading instead of propagating an error to the UI. */
+async function fetchCityOfficialFromFlagsFeed(
+  loc: Location,
+  url: string,
+): Promise<Wrapped<CityOfficialData>> {
+  const attribution = attributionFor(loc);
+  let fetchedAt = nowIso();
+  try {
+    const res = await fetchWithTimeout(url, {
+      timeoutMs: 8000,
+      // Same freshness bar as the HTML scrape path — flags can change intra-day.
+      next: { revalidate: 900 }, // 15 min
+    });
+    fetchedAt = fetchedAtOf(res);
+    if (!res.ok) throw new Error(`flags feed -> ${res.status}`);
+    const feed = (await res.json()) as FlagsFeed;
+    const data = mapFlagsFeed(feed);
+    const degraded = data.flags.length === 1 && data.flags[0] === "unknown";
+    return {
+      source: attribution,
+      status: degraded ? "stale" : "ok",
+      fetchedAt,
+      attribution,
+      data,
+      note: degraded ? (feed.error ?? "flags feed is stale or not reporting") : undefined,
+    };
+  } catch (e) {
+    return {
+      source: attribution,
+      status: "error",
+      fetchedAt,
+      attribution,
+      // Honest "no idea what's flying" rather than null — a null cityOfficial
+      // is read by lib/score.ts as flags ["unknown"] anyway, so this keeps
+      // the same non-capping behavior while still giving the UI something to show.
+      data: { flags: ["unknown"] },
+      note: String(e),
+    };
+  }
+}
+
 export async function fetchCityOfficial(
   loc: Location,
 ): Promise<Wrapped<CityOfficialData>> {
+  const attribution = attributionFor(loc);
+
+  // A JSON flags feed (for a beach whose official page isn't scrapable HTML)
+  // takes priority over the HTML scrape — see lib/types.ts's flagsFeedUrl doc.
+  if (loc.flagsFeedUrl) {
+    return fetchCityOfficialFromFlagsFeed(loc, loc.flagsFeedUrl);
+  }
+
   let fetchedAt = nowIso();
   if (!loc.cityConditionsUrl) {
     return {
-      source: ATTRIBUTION,
+      source: attribution,
       status: "error",
       fetchedAt,
-      attribution: ATTRIBUTION,
+      attribution,
       data: null,
       note: "no city conditions URL configured for this location",
     };
@@ -232,19 +335,19 @@ export async function fetchCityOfficial(
     if (!res.ok) throw new Error(`city page -> ${res.status}`);
     const data = parseCityConditions(await res.text());
     return {
-      source: ATTRIBUTION,
+      source: attribution,
       // Heuristic scrape of a hand-edited page — flag it as best-effort.
       status: "best-effort",
       fetchedAt,
-      attribution: ATTRIBUTION,
+      attribution,
       data,
     };
   } catch (e) {
     return {
-      source: ATTRIBUTION,
+      source: attribution,
       status: "error",
       fetchedAt,
-      attribution: ATTRIBUTION,
+      attribution,
       data: null,
       note: String(e),
     };

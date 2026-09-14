@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-09-14",
+    title: "Deerfield Beach is now fully supported",
+    details:
+      "Deerfield Beach gets its own Beach Day score: tides from the Hillsboro River station, water quality from the two Deerfield sampling sites, and lifeguard flags straight from the City. Four City cameras — three on the sand and surf, one underwater — feed the busyness, seaweed, and water clarity readings.",
+    tag: "new",
+  },
+  {
     date: "2026-09-10",
     title: "The 7-day outlook now forecasts the sea state for each day",
     details:

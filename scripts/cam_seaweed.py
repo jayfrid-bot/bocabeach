@@ -18,7 +18,13 @@ config/locations.ts, so Python (plain json.load, no schema library needed) and
 TS never drift apart. Three cam.source.kind values:
   feed   — a video-monitoring.com "latest.json" rotating-frame feed (existing
            logic): {base, view}.
-  direct — a fixed JPG still URL, fetched as-is: {url}.
+  direct — a fixed JPG still URL, fetched as-is: {url}. Optionally also
+           {meta}: a JSON {id, videoId, grabbedAtUtc, ok, error?} URL for a
+           courier-fed cam (e.g. Deerfield Beach's uw-frame Worker) — when
+           present we check it before spending a vision call and skip a frame
+           that's stale (> DIRECT_FRAME_MAX_AGE_MIN) or one we already scored
+           last run (dedupe against the courier's multi-hour refresh cadence
+           vs. this job's ~10-min cycle). See direct_cam_decision().
   hls    — a live HLS (m3u8) stream; we grab exactly one frame with ffmpeg
            (preinstalled on GitHub's ubuntu runners): {url}.
 Output: one file per beach, cam_seaweed.<slug>.json, written under
@@ -176,6 +182,14 @@ MORNING = range(5, 10)
 # CAM_REGISTRY (config/vision-cams.json), one entry per beach.
 CAM_REGISTRY_PATH = os.environ.get("CAM_REGISTRY", "config/vision-cams.json")
 
+# A "direct" cam whose registry entry also carries a "meta" URL (a Frame
+# Courier serving a headless-browser grab of a livestream — e.g. Deerfield
+# Beach's uw-frame Worker) is read only when its frame is both fresh AND new
+# since we last actually scored it — see direct_cam_decision(). The surface
+# courier refreshes on a multi-hour cadence while this job runs every ~10 min,
+# so without the dedupe check we'd re-score the identical frame a dozen times.
+DIRECT_FRAME_MAX_AGE_MIN = float(os.environ.get("DIRECT_FRAME_MAX_AGE_MIN", "150"))
+
 
 def load_registry() -> dict:
     """Every beach's cam list, keyed by slug. {} (and a warning) if the
@@ -305,6 +319,64 @@ def _ffmpeg_frame_from_url(url: str, timeout: int = 20) -> bytes:
     if not data:
         raise RuntimeError("ffmpeg produced an empty frame")
     return data
+
+
+def direct_cam_decision(meta: dict | None, prev_frame_at: str | None, now: dt.datetime) -> dict:
+    """Whether to read a "direct" cam that carries a "meta" URL (a Frame
+    Courier serving a headless-browser grab of a livestream), and why. PURE —
+    no network, no globals besides the DIRECT_FRAME_MAX_AGE_MIN constant — so
+    it's unit-testable without mocking HTTP.
+
+    `meta` is the already-fetched/parsed {id, videoId, grabbedAtUtc, ok, error?}
+    document (or None if it couldn't be fetched/parsed at all). `prev_frame_at`
+    is the grabbedAtUtc this same cam carried in the beach's previously
+    published file (or None if never recorded). `now` must be tz-aware (or
+    naive-UTC) so age can be computed.
+
+    Returns {"skip": bool, "reason": str | None, "frameAt": str | None}:
+      - meta missing/unreachable        -> skip, frameAt None
+      - meta["ok"] is False              -> skip, frameAt None
+      - no/unparsable grabbedAtUtc       -> skip, frameAt None
+      - frame older than the max age     -> skip, frameAt carried (for display)
+      - frame == the one we last scored  -> skip, frameAt carried (dedupe —
+                                             the whole point of this check)
+      - otherwise                        -> don't skip; frameAt is the fresh
+                                             grabbedAtUtc to record on a
+                                             successful read.
+    """
+    if not meta:
+        return {"skip": True, "reason": "no meta", "frameAt": None}
+    if meta.get("ok") is False:
+        return {"skip": True, "reason": "meta not ok", "frameAt": None}
+    grabbed_at = meta.get("grabbedAtUtc")
+    if not grabbed_at:
+        return {"skip": True, "reason": "no grabbedAtUtc", "frameAt": None}
+    try:
+        grabbed = dt.datetime.strptime(grabbed_at, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=dt.timezone.utc)
+    except (ValueError, TypeError):
+        return {"skip": True, "reason": "unparsable grabbedAtUtc", "frameAt": None}
+    # `now` is a parameter (not wall-clock time) so this stays pure/testable —
+    # unlike _age_min_utc(), which always measures against the real clock.
+    now_utc = now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)
+    age_min = (now_utc - grabbed).total_seconds() / 60
+    if age_min > DIRECT_FRAME_MAX_AGE_MIN:
+        return {"skip": True, "reason": f"stale frame ({age_min:.0f} min)", "frameAt": grabbed_at}
+    if prev_frame_at and grabbed_at == prev_frame_at:
+        return {"skip": True, "reason": "same frame already scored", "frameAt": grabbed_at}
+    return {"skip": False, "reason": None, "frameAt": grabbed_at}
+
+
+def prev_frame_at_for_cam(prev: dict, cam_id: str) -> str | None:
+    """The most recent frameAt recorded for `cam_id` in the beach's previously
+    published history (scanned newest-first), or None if it was never
+    recorded (a brand-new cam, or one whose reads have all been skipped so
+    far). See build_beach_output()'s `entry["frames"]`."""
+    for entry in reversed(prev.get("history") or []):
+        frames = entry.get("frames")
+        if isinstance(frames, dict) and cam_id in frames:
+            return frames[cam_id]
+    return None
 
 
 def fetch_still(cam: dict) -> bytes:
@@ -668,19 +740,45 @@ def fetch_prev(slug: str) -> dict:
             return {}
 
 
-def capture_beach(slug: str, cams: list[dict], now_local: dt.datetime, gap_state: dict) -> dict | None:
+def capture_beach(
+    slug: str, cams: list[dict], now_local: dt.datetime, gap_state: dict, prev: dict,
+) -> dict | None:
     """Read every cam configured for one beach. `gap_state` is a single
     {"called": bool} shared across ALL beaches in this run, so CAM_GAP_S spaces
     EVERY call in the whole run (not just within one beach) — quota math is
-    per-run, not per-beach (see the module docstring / DECISIONS #2)."""
+    per-run, not per-beach (see the module docstring / DECISIONS #2). `prev` is
+    this beach's previously published document (see fetch_prev()) — read for
+    the freshness/dedupe check on "direct" cams that carry a "meta" URL."""
     readings = []
     for cam in cams:
+        src = cam.get("source") or {}
+        frame_at = None
+        if src.get("kind") == "direct" and src.get("meta"):
+            # A courier-fed "direct" cam: check its meta before spending a
+            # vision call — skip a frame that's stale or one we already scored
+            # (the courier refreshes on a multi-hour cadence; this job runs
+            # every ~10 min, so most ticks see the identical frame).
+            try:
+                meta = json.loads(_get(src["meta"], timeout=15).decode("utf-8", "replace"))
+            except Exception as e:  # noqa: BLE001 — treat as "no meta"
+                meta = None
+                print(f"  warn [{slug}] {cam['id']} meta: {e}", file=sys.stderr)
+            decision = direct_cam_decision(
+                meta, prev_frame_at_for_cam(prev, cam["id"]), dt.datetime.now(dt.timezone.utc))
+            if decision["skip"]:
+                print(f"  [{slug}] {cam['id']}: skipped ({decision['reason']})")
+                continue
+            frame_at = decision["frameAt"]
+
         if gap_state["called"]:
             time.sleep(CAM_GAP_S)  # space calls to respect the per-minute limit
         gap_state["called"] = True
         try:
             r = assess(fetch_still(cam))
-            readings.append({"id": cam["id"], "name": cam["name"], **r})
+            reading = {"id": cam["id"], "name": cam["name"], **r}
+            if frame_at:
+                reading["frameAt"] = frame_at
+            readings.append(reading)
             print(f"  [{slug}] {cam['id']}: seaweed={r['level']}({r.get('coveragePct')}%) "
                   f"crowd={r.get('crowd')}({r.get('crowdPct')}%) "
                   f"people={r.get('people')} via {r.get('provider')}")
@@ -736,6 +834,13 @@ def build_beach_output(
         if uw_reading:
             entry["uw"] = uw_reading.get("pct")       # 0-100 underwater visibility
             entry["uwLevel"] = uw_reading.get("level")  # clear|slightly_hazy|hazy|murky
+        # SPARSE per-cam frameAt — present only for "direct" cams that carry a
+        # "meta" URL and were actually read this tick (see capture_beach's
+        # direct_cam_decision call). The NEXT run's prev_frame_at_for_cam()
+        # scans this back out of history to dedupe against the same frame.
+        frames = {c["id"]: c["frameAt"] for c in current["cams"] if c.get("frameAt")}
+        if frames:
+            entry["frames"] = frames
         history = history + [entry]
         # No cap — keep every raw read forever. Growth is trivial: ~60 reads/day ×
         # ~110 bytes ≈ 7 KB/day ≈ 2.4 MB/year, negligible for years. The full
@@ -796,7 +901,7 @@ def main() -> int:
     for slug, entry in registry.items():
         if providers:
             current_by_slug[slug] = capture_beach(
-                slug, entry.get("cams", []), now_by_slug[slug], gap_state)
+                slug, entry.get("cams", []), now_by_slug[slug], gap_state, prevs[slug])
         else:
             current_by_slug[slug] = None
 

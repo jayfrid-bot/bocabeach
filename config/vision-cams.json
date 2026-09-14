@@ -33,5 +33,40 @@
         "role": "crowd"
       }
     ]
+  },
+  "deerfield-beach": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "deerfield-beach-cam",
+        "name": "Deerfield Beach Cam",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=deerfield-beach-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=deerfield-beach-cam"
+        },
+        "role": "crowd"
+      },
+      {
+        "id": "deerfield-surf-cam",
+        "name": "Deerfield Beach — Surf Cam",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=deerfield-surf-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=deerfield-surf-cam"
+        },
+        "role": "shore"
+      },
+      {
+        "id": "deerfield-pier-cam",
+        "name": "Deerfield Beach — Fishing Pier Cam",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=deerfield-pier-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=deerfield-pier-cam"
+        },
+        "role": "shore"
+      }
+    ]
   }
 }

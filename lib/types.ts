@@ -1095,6 +1095,24 @@ export interface Location {
   /** City/official conditions page to scrape (flags, lifeguard ratings, hazards). */
   cityConditionsUrl?: string;
   /**
+   * Credit line for the City's flag/conditions posting, shown wherever
+   * `cityOfficial` data is attributed. Every curated beach sets its own (e.g.
+   * "City of Boca Raton Ocean Rescue (myboca.us)"); falls back to a neutral
+   * "City Ocean Rescue" when unset so an older, not-yet-curated entry still renders.
+   */
+  cityConditionsAttribution?: string;
+  /**
+   * A JSON endpoint publishing the current lifeguard flags for beaches whose
+   * official conditions page isn't scrapable HTML (e.g. an ArcGIS dashboard).
+   * Expected shape: { flags: FlagColor[], observedAtUtc: string, ok: boolean,
+   * error?: string, rawText?: string }. When set, lib/sources/cityOfficial.ts
+   * reads this INSTEAD of scraping `cityConditionsUrl` for flags — a stale
+   * (observedAtUtc more than 6h old) or `ok: false` reading degrades to
+   * flags: ["unknown"] rather than throwing or capping the score.
+   * `cityConditionsUrl` is still shown as the human "see official page" link.
+   */
+  flagsFeedUrl?: string;
+  /**
    * NWS Surf Zone Forecast lookup for rip-current risk: `office` is the issuing
    * WFO (e.g. "MFL" = Miami), `name` is the zone block name in the SRF text
    * (e.g. "Palm Beach"). Alerts use lat/lon and need no config.

@@ -22,7 +22,7 @@ const VIEWPORTS = [
   { name: "desktop-1280", width: 1280, height: 900 },
 ] as const;
 
-const PAGES = ["/", "/find"] as const;
+const PAGES = ["/", "/find", "/deerfield-beach"] as const;
 
 const ARTIFACT_DIR = "e2e/artifacts";
 mkdirSync(ARTIFACT_DIR, { recursive: true });

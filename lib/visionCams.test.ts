@@ -19,6 +19,9 @@ interface VisionCamSource {
   base?: string;
   view?: string;
   url?: string;
+  /** "direct" cams only: a /meta URL the vision job polls for freshness/dedupe
+   *  (see scripts/cam_seaweed.py's direct_cam_decision). */
+  meta?: string;
 }
 interface VisionCam {
   id: string;
@@ -77,6 +80,16 @@ describe("config/vision-cams.json — registry stays in lockstep with LOCATIONS"
               normalizeScheme(locCam!.snapshotFeed!.base),
             );
             expect(cam.source.view).toBe(locCam!.snapshotFeed!.view);
+          });
+        }
+
+        if (cam.source.kind === "direct") {
+          it(`cam "${cam.id}" direct source url matches its LOCATIONS snapshotUrl`, () => {
+            const locCam = camsById.get(cam.id);
+            expect(locCam?.snapshotUrl, `"${cam.id}" has no snapshotUrl in LOCATIONS`).toBeDefined();
+            expect(normalizeScheme(cam.source.url ?? "")).toBe(
+              normalizeScheme(locCam!.snapshotUrl!),
+            );
           });
         }
       }
