@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ConditionsResponse, Location } from "@/lib/types";
 import { ConditionsDashboard } from "@/components/ConditionsDashboard";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -42,7 +42,28 @@ const btn =
 const btnPrimary = `${btn} bg-ocean-600 text-white hover:bg-ocean-500`;
 const btnGhost = `${btn} bg-slate-900/5 text-slate-700 ring-1 ring-slate-900/10 hover:bg-slate-900/10 dark:bg-white/5 dark:text-slate-200 dark:ring-white/10 dark:hover:bg-white/10`;
 
+interface ScanSource {
+  source: string;
+  total: number;
+  first_at: number;
+  last_at: number;
+}
+interface ScansApi {
+  ok: boolean;
+  total: number;
+  todayTotal: number;
+  bySource: ScanSource[];
+  recent: { day: string; source: string; n: number }[];
+}
+
 export function AdminConsole() {
+  const [scans, setScans] = useState<ScansApi | null>(null);
+  useEffect(() => {
+    fetch("/api/admin/scans")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setScans(d))
+      .catch(() => {});
+  }, []);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -134,6 +155,43 @@ export function AdminConsole() {
         </div>
         <ThemeToggle />
       </header>
+
+      {/* QR sticker scans — written by /sticker, one row per (day, source). */}
+      {scans && scans.bySource.length > 0 ? (
+        <section className={`${card} mb-5`}>
+          <div className="mb-3 flex items-baseline justify-between">
+            <h2 className="text-sm font-medium text-slate-700 dark:text-slate-300">Sticker scans</h2>
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              {scans.total} all-time · {scans.todayTotal} today
+            </span>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wide text-slate-400">
+                <th className="pb-1 font-medium">Placement (?s=)</th>
+                <th className="pb-1 text-right font-medium">Scans</th>
+                <th className="pb-1 text-right font-medium">Last</th>
+              </tr>
+            </thead>
+            <tbody>
+              {scans.bySource.map((r) => (
+                <tr key={r.source} className="border-t border-slate-900/5 dark:border-white/10">
+                  <td className="py-1 font-mono text-slate-800 dark:text-slate-200">{r.source}</td>
+                  <td className="py-1 text-right tabular-nums text-slate-800 dark:text-slate-200">{r.total}</td>
+                  <td className="py-1 text-right text-xs text-slate-500 dark:text-slate-400">
+                    {new Date(r.last_at).toLocaleDateString()}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+            Tag each print run or spot with a distinct link, e.g.{" "}
+            <span className="font-mono">isitbeachday.com/sticker?s=boca-pier</span>, to tell them apart. Bots and
+            link previews are filtered out.
+          </p>
+        </section>
+      ) : null}
 
       {/* Search */}
       <form

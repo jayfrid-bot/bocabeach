@@ -35,14 +35,26 @@ function cleanSource(raw: string | null): string {
   return s || "sticker";
 }
 
+/** Link-preview crawlers and unfurlers (iMessage, Slack, WhatsApp, social
+ *  bots, search crawlers) fetch the URL to build a preview. They are not a
+ *  person scanning a sticker, so they must not inflate the count — but they
+ *  still get redirected like anyone else. A missing UA is treated as a bot. */
+function looksLikeBot(ua: string | null): boolean {
+  if (!ua) return true;
+  return /bot|crawl|spider|slurp|preview|facebookexternalhit|whatsapp|telegram|discord|slackbot|embedly|quora link|redditbot|applebot|bingbot|googlebot|yandex|petalbot|headless|python-requests|curl|wget|axios|node-fetch|go-http/i.test(
+    ua,
+  );
+}
+
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const source = cleanSource(url.searchParams.get("s"));
   const now = Date.now();
+  const isBot = looksLikeBot(req.headers.get("user-agent"));
 
   try {
     const db = await getD1();
-    if (db) {
+    if (db && !isBot) {
       await db
         .prepare(
           `INSERT INTO scan_log (day, source, n, first_at, last_at) VALUES (?, ?, 1, ?, ?)
