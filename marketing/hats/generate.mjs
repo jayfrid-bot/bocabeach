@@ -50,20 +50,31 @@ function waves(cx, y, w, dark = false) {
 
 /** `light` = art for a stone/khaki cap (navy letters). Otherwise cream letters
  *  for a navy cap. */
+// The sun's top ray reaches (r + 62) above the disc center, and its round cap
+// adds another strokeWidth/2 (13 px) — so the art needs this much clear
+// headroom above the disc or the ray gets clipped by the canvas top edge.
+const TOP_PAD = 40;
+
 function lockup(light) {
   const ink = light ? NAVY : CREAM;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="600" viewBox="0 0 1200 600"><style>${fontCss}</style>
-    ${sun(600, 150, 84)}
-    ${waves(600, 268, 520, !light)}
-    <text ${FONT} font-size="128" letter-spacing="4" fill="${ink}" text-anchor="middle" x="600" y="560">IS IT BEACH DAY?</text>
+  const h = 600 + TOP_PAD;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="${h}" viewBox="0 0 1200 ${h}"><style>${fontCss}</style>
+    <g transform="translate(0 ${TOP_PAD})">
+      ${sun(600, 150, 84)}
+      ${waves(600, 268, 520, !light)}
+      <text ${FONT} font-size="128" letter-spacing="4" fill="${ink}" text-anchor="middle" x="600" y="560">IS IT BEACH DAY?</text>
+    </g>
   </svg>`;
 }
 
-/** Icon only, for a side panel or the back. 2" x 1.4". */
+/** Icon only, for a side panel or the back. */
 function icon() {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="420" viewBox="0 0 600 420"><style>${fontCss}</style>
-    ${sun(300, 130, 76)}
-    ${waves(300, 240, 440, false)}
+  const h = 420 + TOP_PAD;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="${h}" viewBox="0 0 600 ${h}"><style>${fontCss}</style>
+    <g transform="translate(0 ${TOP_PAD})">
+      ${sun(300, 130, 76)}
+      ${waves(300, 240, 440, false)}
+    </g>
   </svg>`;
 }
 

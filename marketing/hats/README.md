@@ -4,16 +4,31 @@ Flat-colour marks built for a needle, not a printer. The sticker art in
 `../stickers/` cannot be stitched: embroidery has no gradients, and a QR code
 cannot be threaded at hat scale and stay scannable.
 
-## Files to send a decorator
+## Artwork, not a stitch file — read this first
+
+These are **artwork** files. They are NOT machine embroidery files (`.DST`,
+`.PES`, `.EXP`, `.JEF`). Turning artwork into stitches — "digitizing" — is a
+skilled step done in embroidery software (Wilcom/Hatch) that decides stitch
+paths, underlay, direction, density and pull compensation. **Your embroiderer
+or print-on-demand service does this for you, and Printify and Embroly both
+digitize for free and email a proof before they stitch.** So the deliverable
+here is the art you hand them; the `.DST`/`.PES` comes back from them.
+
+## Files to send a decorator / upload to a POD
 
 | File | Use |
 |---|---|
-| `isitbeachday-hat-lockup-for-light-cap.svg` | Front panel on **stone / khaki / white**. Navy letters. |
-| `isitbeachday-hat-lockup-for-navy-cap.svg` | Front panel on **navy / black**. Cream letters, lighter wave blues so nothing sinks into the fabric. |
-| `isitbeachday-hat-icon-only.svg` | Sun + waves alone, for a side panel or the back. |
+| `isitbeachday-hat-lockup-for-navy-cap.png` | Front panel on **navy / black**. Transparent, 600 dpi. |
+| `isitbeachday-hat-lockup-for-light-cap.png` | Front panel on **stone / khaki / white**. Transparent, 600 dpi. |
+| `isitbeachday-hat-icon-only.png` | Sun + waves alone, for a side panel or the back. Transparent, 600 dpi. |
 
-Send the **SVG**. The PNGs are 600 dpi previews for eyeballing; the `preview-*-cap.png`
-files show the art on cap-fabric colours at true size.
+**Upload / send the transparent PNG.** It is 600 dpi with the font baked in, so
+it is fully self-contained — the format every POD and digitizer accepts. The
+matching `.svg` is the editable vector source, but its lettering references the
+**Fredoka** font (text is not outlined), so an SVG opened without that font
+loses the words — prefer the PNG unless your decorator has Fredoka installed.
+The `preview-*-cap.png` files show the art on cap-fabric colours at true size,
+for eyeballing only.
 
 ## What to tell them
 
