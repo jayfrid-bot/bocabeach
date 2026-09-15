@@ -217,6 +217,23 @@ export function ConditionsDashboard({
   // byte-for-byte what it always was.
   const plus = usePlus();
   const plusOn = !preview && beaches.length > 0;
+  // Warm the share-card render while the reader is still on the page. Each card
+  // is a multi-second satori render; kicking both formats off now (into the
+  // route's edge cache) means that tapping Share a moment later is an instant
+  // cache hit instead of a cold wait. Fire once, low priority, ignore results.
+  const warmedRef = useRef(false);
+  useEffect(() => {
+    if (preview || warmedRef.current || !slug) return;
+    warmedRef.current = true;
+    const t = setTimeout(() => {
+      for (const format of ["story", "square"] as const) {
+        fetch(`/api/share/${slug}?format=${format}`, {
+          priority: "low",
+        } as RequestInit).catch(() => {});
+      }
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [preview, slug]);
   // The server's UA sniff is authoritative and cache-proof; the client probe
   // only ever ADDS the app (a bundled build the UA tag missed). Deferred to an
   // effect so the first client render matches the server's HTML.

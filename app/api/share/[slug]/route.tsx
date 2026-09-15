@@ -500,7 +500,7 @@ export async function GET(
   const { width, height } = SIZES[formatParam];
 
   // Rendering a 1080x1920 PNG through satori is CPU-heavy (several seconds),
-  // and the card only changes as fast as the conditions do (~2 min). Serve a
+  // and the card only changes as fast as the conditions meaningfully do. Serve a
   // rendered card straight from the Cloudflare edge cache for its lifetime, so
   // the second view of a beach — reopening the sheet, the Share button's own
   // fetch, or the next person sharing the same beach — is instant instead of
@@ -516,7 +516,7 @@ export async function GET(
     width,
     height,
     headers: {
-      "Cache-Control": "public, max-age=120, s-maxage=120",
+      "Cache-Control": "public, max-age=900, s-maxage=900, stale-while-revalidate=600",
     },
   });
 

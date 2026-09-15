@@ -20,7 +20,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-09-14",
     title: "Faster share card and a cleaner shared link",
     details:
-      "The Share sheet now draws only the shape you pick, and each card is cached at the edge, so it appears much faster. The link you share is now a plain isitbeachday.com — no tracking tag tacked on.",
+      "The card is now drawn ahead of time while you read the page and cached at the edge, so the Share sheet opens fast instead of pausing to render. The sheet also draws only the shape you pick. The link you share is now a plain isitbeachday.com — no tracking tag tacked on.",
     tag: "improved",
   },
   {

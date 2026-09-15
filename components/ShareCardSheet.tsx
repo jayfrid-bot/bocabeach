@@ -89,7 +89,7 @@ export function ShareCardSheet({
     } finally {
       setBusy(false);
     }
-  }, [format, slug, beachName, cardUrl]);
+  }, [format, slug, beachName, shareUrl, cardUrl]);
 
   return (
     <>
