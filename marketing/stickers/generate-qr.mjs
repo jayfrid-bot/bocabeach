@@ -11,8 +11,8 @@ const defs = `<defs>
   <linearGradient id="w1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5FD0EA"/><stop offset="1" stop-color="#3BB0D6"/></linearGradient>
   <linearGradient id="w2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2C8FC2"/><stop offset="1" stop-color="#1F6FA3"/></linearGradient>
   <linearGradient id="w3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1A5F90"/><stop offset="1" stop-color="#123F66"/></linearGradient>
-  <path id="arcTop" d="M ${CX-208} ${CX} A 208 208 0 0 1 ${CX+208} ${CX}"/>
-  <path id="arcBot" d="M ${CX-232} ${CX} A 232 232 0 0 0 ${CX+232} ${CX}"/>
+  <path id="arcTop" d="M ${CX-232} ${CX} A 232 232 0 0 1 ${CX+232} ${CX}"/>
+  <path id="arcBot" d="M ${CX-250} ${CX} A 250 250 0 0 0 ${CX+250} ${CX}"/>
 </defs>`;
 const head = (extra = "") => `font-family="Fredoka, 'Arial Rounded MT Bold', Arial, sans-serif" font-weight="700" ${extra}`;
 
@@ -46,21 +46,21 @@ function qrPanel(cx, cy, size, sunRays = true) {
 function round(guides) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="675" height="675" viewBox="0 0 675 675"><style>${fontCss}</style>${defs}
     <rect width="675" height="675" fill="url(#sky)"/>
-    ${waves(478)}
-    ${qrPanel(CX, 352, 262)}
-    <text ${head()} font-size="54" letter-spacing="3" fill="#FFFFFF"><textPath href="#arcTop" startOffset="50%" text-anchor="middle">IS IT BEACH DAY?</textPath></text>
-    <text font-family="Nunito, Arial, sans-serif" font-weight="800" font-size="30" letter-spacing="2" fill="#FFFFFF"><textPath href="#arcBot" startOffset="50%" text-anchor="middle">isitbeachday.com</textPath></text>
+    ${waves(452)}
+    ${qrPanel(CX, 356, 300)}
+    <text ${head()} font-size="60" letter-spacing="2" fill="#FFFFFF"><textPath href="#arcTop" startOffset="50%" text-anchor="middle">IS IT BEACH DAY?</textPath></text>
+    <text font-family="Nunito, Arial, sans-serif" font-weight="800" font-size="34" letter-spacing="2" fill="#FFFFFF"><textPath href="#arcBot" startOffset="50%" text-anchor="middle">isitbeachday.com</textPath></text>
     ${guides ? `<circle cx="${CX}" cy="${CX}" r="${R_CUT}" fill="none" stroke="#FF3B3B" stroke-width="2" stroke-dasharray="8 6"/><circle cx="${CX}" cy="${CX}" r="${R_SAFE}" fill="none" stroke="#3BFF7A" stroke-width="2" stroke-dasharray="4 6"/>` : ""}
   </svg>`;
 }
 function square(guides) {
   return `<svg xmlns="http://www.w3.org/2000/svg" width="675" height="675" viewBox="0 0 675 675"><style>${fontCss}</style>${defs}
     <rect width="675" height="675" fill="url(#sky)"/>
-    ${waves(486)}
-    ${qrPanel(CX, 372, 262)}
-    <text ${head()} font-size="62" letter-spacing="2" fill="#FFFFFF" text-anchor="middle" x="${CX}" y="128">IS IT</text>
-    <text ${head()} font-size="62" letter-spacing="2" fill="#FFFFFF" text-anchor="middle" x="${CX}" y="194">BEACH DAY?</text>
-    <text font-family="Nunito, Arial, sans-serif" font-weight="800" font-size="30" letter-spacing="2" fill="#FFFFFF" text-anchor="middle" x="${CX}" y="584">isitbeachday.com</text>
+    ${waves(470)}
+    ${qrPanel(CX, 384, 320)}
+    <text ${head()} font-size="76" letter-spacing="2" fill="#FFFFFF" text-anchor="middle" x="${CX}" y="118">IS IT</text>
+    <text ${head()} font-size="76" letter-spacing="2" fill="#FFFFFF" text-anchor="middle" x="${CX}" y="196">BEACH DAY?</text>
+    <text font-family="Nunito, Arial, sans-serif" font-weight="800" font-size="36" letter-spacing="2" fill="#FFFFFF" text-anchor="middle" x="${CX}" y="596">isitbeachday.com</text>
     ${guides ? `<rect x="37.5" y="37.5" width="600" height="600" rx="75" fill="none" stroke="#FF3B3B" stroke-width="2" stroke-dasharray="8 6"/><rect x="75" y="75" width="525" height="525" rx="45" fill="none" stroke="#3BFF7A" stroke-width="2" stroke-dasharray="4 6"/>` : ""}
   </svg>`;
 }
