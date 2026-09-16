@@ -35,6 +35,7 @@ flowchart TD
     ADMIN["/api/admin/add, /api/admin/preview<br/>(owner-only, add a beach)"]
     STICKER["/sticker?s=&lt;tag&gt;<br/>(QR landing: count scan, 307 → /?ref=tag)"]
     ADMINSCANS["/api/admin/scans<br/>(owner-only, read scan counts)"]
+    ADMINOWNER["/api/admin/owner<br/>(sets owner cookie; owner scans not counted)"]
   end
 
   COND --> PIPE[lib/conditions.ts<br/>fetch all sources in parallel]
@@ -174,7 +175,7 @@ flowchart TD
   REG --> STORE
 
   STORE -->|production| D1[(D1: isitbeachday-plus<br/>devices · presence · alert_log · send_claims · scan_log)]
-  STICKER -->|"count scan (bot-filtered), fail-soft"| D1
+  STICKER -->|"count scan (skips bots + owner cookie), fail-soft"| D1
   ADMINSCANS -->|read totals + recent days| D1
   STORE -->|tests, next dev w/o bindings| MEM[(memory store<br/>.plus-store.json fallback)]
 
