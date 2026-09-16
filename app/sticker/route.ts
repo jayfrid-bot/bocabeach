@@ -51,12 +51,10 @@ export async function GET(req: Request) {
   const source = cleanSource(url.searchParams.get("s"));
   const now = Date.now();
   const isBot = looksLikeBot(req.headers.get("user-agent"));
-  // The owner's own test scans don't count. /admin/yf sets this cookie.
-  const isOwner = /(?:^|;\s*)ibd_owner=1(?:;|$)/.test(req.headers.get("cookie") ?? "");
 
   try {
     const db = await getD1();
-    if (db && !isBot && !isOwner) {
+    if (db && !isBot) {
       await db
         .prepare(
           `INSERT INTO scan_log (day, source, n, first_at, last_at) VALUES (?, ?, 1, ?, ?)

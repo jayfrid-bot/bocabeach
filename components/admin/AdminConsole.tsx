@@ -58,12 +58,7 @@ interface ScansApi {
 
 export function AdminConsole() {
   const [scans, setScans] = useState<ScansApi | null>(null);
-  const [ownerExcluded, setOwnerExcluded] = useState(false);
   useEffect(() => {
-    // Mark this browser as the owner's so its own sticker scans aren't counted.
-    fetch("/api/admin/owner")
-      .then((r) => r.ok && setOwnerExcluded(true))
-      .catch(() => {});
     fetch("/api/admin/scans")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d && setScans(d))
@@ -162,13 +157,12 @@ export function AdminConsole() {
       </header>
 
       {/* QR sticker scans — written by /sticker, one row per (day, source). */}
-      {scans ? (
+      {scans && scans.bySource.length > 0 ? (
         <section className={`${card} mb-5`}>
           <div className="mb-3 flex items-baseline justify-between">
             <h2 className="text-sm font-medium text-slate-700 dark:text-slate-300">Sticker scans</h2>
             <span className="text-xs text-slate-500 dark:text-slate-400">
               {scans.total} all-time · {scans.todayTotal} today
-              {ownerExcluded ? " · this device's scans don't count" : ""}
             </span>
           </div>
           <table className="w-full text-sm">
