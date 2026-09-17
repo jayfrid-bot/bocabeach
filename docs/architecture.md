@@ -74,7 +74,7 @@ flowchart LR
 
   subgraph cf [Cloudflare Cron Triggers]
     PLUSCRON["workers/plus-cron<br/>*/5 min"]
-    UWFRAME["workers/uw-frame<br/>multi-cam frame courier + Deerfield flag reader<br/>top of each hour, 10a-11p ET"]
+    UWFRAME["workers/uw-frame<br/>multi-cam frame courier + Deerfield & Fort Lauderdale flag readers<br/>top of each hour, 10a-11p ET"]
   end
 
   subgraph mac [Owner's Mac — launchd, not a scheduler above]
@@ -97,7 +97,7 @@ flowchart LR
 
   PUSHCRON -->|POST x-cron-secret| RUN["/api/push/run?mode=all"]
   PLUSCRON -->|POST x-cron-secret, every 5 min| RUN
-  UWFRAME -->|one headless-Chrome launch/tick,<br/>reused across every cam + the flag read| UWKV[(UW_FRAME KV<br/>frame:&lt;id&gt;, meta:&lt;id&gt;,<br/>flags:deerfield-beach)]
+  UWFRAME -->|one headless-Chrome launch/tick,<br/>reused across every cam + the flag read| UWKV[(UW_FRAME KV<br/>frame:&lt;id&gt;, meta:&lt;id&gt;,<br/>flags:deerfield-beach, flags:fort-lauderdale)]
 ```
 
 **`workers/uw-frame` is a multi-cam courier, not a single grab.** Deerfield
@@ -118,7 +118,9 @@ decided in `workers/uw-frame/src/lib/schedule.ts` and documented in
 `workers/uw-frame/src/index.ts`. Endpoints: `GET /frame[?cam=<id>]`,
 `GET /meta[?cam=<id>]` (no `cam` = the underwater cam, unchanged legacy
 keys), `GET /cams` (registry + each cam's last grab), and
-`GET /flags?slug=deerfield-beach`.
+`GET /flags?slug=deerfield-beach`, `GET /flags?slug=fort-lauderdale`.
+
+**Fort Lauderdale lifeguard flags.** The City of Fort Lauderdale Fire Rescue posts a plain-text "Beach Conditions" page once a day (flags, sea-pest notes, ocean conditions, water temperature). A plain fetch gets a 403 bot-block, so `uw-frame` opens it in Browser Rendering on the same daylight-gated tick as the Deerfield read, reads `document.body.innerText`, parses it with the pure section parser `workers/uw-frame/src/lib/ftlConditions.ts`, and stores `flags:fort-lauderdale` in the same `{flags, observedAtUtc, ok}` shape `lib/sources/cityOfficial.ts`'s `mapFlagsFeed` expects, plus `pageDate`, `seaPests`, `seaPestsPresent`, `waterTempF`, `oceanConditions`. Because the City posts daily, a page more than 2 calendar days old (America/New_York) is written `ok:false`, which the app shows as "unknown" rather than a stale flag. A failed or stale read never overwrites a good stored one (the attempt lands under `flags-attempt:fort-lauderdale`). `seaPests` is captured but not yet shown in the UI.
 
 As of September 2026, frames arrive from the owner's Mac courier
 (`scripts/cam_courier_local.sh`, hourly, residential IP) via `POST /ingest`;
@@ -264,5 +266,6 @@ and may be re-claimed.
 | video-monitoring.com | Public beach cam still frames |
 | YouTube | Deerfield Beach underwater + surface cam sources, and Fort Lauderdale Beach's Elbo Room cam, live-embed only (`workers/uw-frame`) |
 | ArcGIS (City of Deerfield Beach dashboard) | Lifeguard flag status read (`workers/uw-frame`) |
+| City of Fort Lauderdale Fire Rescue "Beach Conditions" page | Lifeguard flags, sea pests, ocean report (`workers/uw-frame`, Browser Rendering) |
 | Apple Push Notification service (APNs) | iOS push delivery |
 | Firebase Cloud Messaging (FCM) | Android push delivery |

@@ -130,6 +130,7 @@ import {
   type CameraSpec,
 } from "./lib/schedule";
 import { parseVisibleFlags, summarizeVisibleText, type FlagDomEntry, type FlagName } from "./lib/flags";
+import { parseFortLauderdaleConditions, type FortLauderdaleConditions } from "./lib/ftlConditions";
 import { shouldReplaceStoredFrame } from "./lib/frameGuard";
 import { readJpegDimensions } from "./lib/jpeg";
 
@@ -187,13 +188,22 @@ interface CamMeta {
   error?: string;
 }
 
-// --- Lifeguard flags KV key ---
+// --- Lifeguard flags KV keys ---
 const FLAGS_SLUG = "deerfield-beach";
+const FTL_FLAGS_SLUG = "fort-lauderdale";
+const KNOWN_FLAGS_SLUGS: readonly string[] = [FLAGS_SLUG, FTL_FLAGS_SLUG];
 function flagsKey(slug: string): string {
   return `flags:${slug}`;
 }
 const ARCGIS_DASHBOARD_URL =
   "https://www.arcgis.com/apps/dashboards/02f2e5d84cfd43be90a0bb568eb68785";
+// Plain fetch to this page 403s (bot-blocked); Browser Rendering loads it fine.
+// Fire Rescue re-posts it once a day.
+const FTL_CONDITIONS_URL =
+  "https://www.fortlauderdale.gov/Government/Departments/Fire-Rescue/Beach-Conditions";
+const FTL_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) " +
+  "Chrome/128.0.0.0 Safari/537.36";
 
 interface FlagsResult {
   flags: FlagName[];
@@ -201,6 +211,37 @@ interface FlagsResult {
   ok: boolean;
   error?: string;
   rawText?: string;
+}
+
+/** FlagsResult plus the extra fields the Fort Lauderdale page carries that
+ *  Deerfield's ArcGIS dashboard doesn't. Field names/types shared with
+ *  FlagsResult match lib/sources/cityOfficial.ts's mapFlagsFeed contract
+ *  exactly; the extras below ride along unread by that mapper. */
+interface FtlFlagsResult extends FlagsResult {
+  pageDate: string | null;
+  seaPests: string | null;
+  seaPestsPresent: boolean | null;
+  waterTempF: number | null;
+  oceanConditions: string | null;
+}
+
+/** The City posts once a day — a page more than this many calendar days old
+ *  (America/New_York) is not "today's" reading and must not be served as
+ *  live; ok:false degrades lib/sources/cityOfficial.ts's mapFlagsFeed to
+ *  flags: ["unknown"] rather than showing yesterday's flag as current. */
+const FTL_MAX_PAGE_AGE_DAYS = 2;
+
+function nyDateOnly(d: Date): string {
+  // en-CA gives YYYY-MM-DD directly.
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
+}
+
+function isFtlPageStale(pageDate: string | null, now: Date): boolean {
+  if (!pageDate) return true;
+  const page = new Date(`${pageDate}T00:00:00`);
+  const today = new Date(`${nyDateOnly(now)}T00:00:00`);
+  const ageDays = Math.round((today.getTime() - page.getTime()) / 86_400_000);
+  return !Number.isFinite(ageDays) || ageDays > FTL_MAX_PAGE_AGE_DAYS || ageDays < 0;
 }
 
 const MIN_GOOD_BYTES = 15_000; // reject suspiciously-small (likely black) frames
@@ -595,10 +636,89 @@ async function readLifeguardFlags(browser: Browser): Promise<FlagsResult> {
   }
 }
 
+/**
+ * Read the City of Fort Lauderdale Fire Rescue "Beach Conditions" plain-text
+ * page via the same shared browser used for cams/Deerfield flags (a plain
+ * fetch to this URL gets a 403 bot-block; Browser Rendering with a normal
+ * desktop Chrome UA loads it fine). Never throws — a failure is reported as
+ * {ok:false, error}. Staleness (the City posts once a day) is applied by the
+ * caller via isFtlPageStale, not here.
+ */
+async function readFortLauderdaleConditions(browser: Browser): Promise<FtlFlagsResult> {
+  const observedAtUtc = nowUtc();
+  let page: Page | null = null;
+  try {
+    page = await browser.newPage();
+    await page.setViewport(VIEWPORT);
+    await page.setUserAgent(FTL_USER_AGENT);
+    await page.goto(FTL_CONDITIONS_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: FLAGS_BUDGET_MS,
+    });
+    const innerText = (await page.evaluate(() => document.body.innerText)) as string;
+    const parsed: FortLauderdaleConditions = parseFortLauderdaleConditions(innerText);
+    const stale = isFtlPageStale(parsed.pageDate, new Date());
+    return {
+      flags: parsed.flags,
+      observedAtUtc,
+      ok: !stale,
+      ...(stale ? { error: `page date ${parsed.pageDate ?? "unknown"} is stale` } : {}),
+      rawText: innerText.slice(0, 400),
+      pageDate: parsed.pageDate,
+      seaPests: parsed.seaPests,
+      seaPestsPresent: parsed.seaPestsPresent,
+      waterTempF: parsed.waterTempF,
+      oceanConditions: parsed.oceanConditions,
+    };
+  } catch (e) {
+    return {
+      flags: [],
+      observedAtUtc,
+      ok: false,
+      error: `ftl conditions read error: ${(e as Error).message}`,
+      pageDate: null,
+      seaPests: null,
+      seaPestsPresent: null,
+      waterTempF: null,
+      oceanConditions: null,
+    };
+  } finally {
+    if (page) {
+      try {
+        await page.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+/**
+ * Store a flags read, never letting a failed (or stale) read clobber a
+ * previously-good one — same guard shape as storeCamResult's "a FAILED grab
+ * must never take a good frame off the air" (see that comment). The failed
+ * attempt is still recorded, under its own key, for /grab visibility.
+ */
+async function storeFlagsResult(env: Env, slug: string, result: FlagsResult): Promise<void> {
+  const key = flagsKey(slug);
+  if (!result.ok) {
+    const stored = await readJson<FlagsResult>(env, key);
+    if (stored?.ok) {
+      await env.UW_FRAME.put(
+        `flags-attempt:${slug}`,
+        JSON.stringify({ observedAtUtc: result.observedAtUtc, ok: false, error: result.error ?? "flags read failed" }),
+      );
+      return;
+    }
+  }
+  await env.UW_FRAME.put(key, JSON.stringify(result));
+}
+
 interface TickSummary {
   tickAtUtc: string;
   cams: { id: string; ok: boolean; ms: number; reason?: string; skipped?: boolean }[];
   flags: { ok: boolean; ms: number; error?: string } | null;
+  ftlFlags: { ok: boolean; ms: number; error?: string } | null;
 }
 
 /**
@@ -608,7 +728,7 @@ interface TickSummary {
 async function runTick(env: Env, tickDate: Date): Promise<TickSummary> {
   const due = camsDueAtTick(tickDate);
   const doFlags = isDaylightEastern(tickDate);
-  const summary: TickSummary = { tickAtUtc: nowUtc(), cams: [], flags: null };
+  const summary: TickSummary = { tickAtUtc: nowUtc(), cams: [], flags: null, ftlFlags: null };
 
   let browser: Browser | null = null;
   try {
@@ -634,6 +754,15 @@ async function runTick(env: Env, tickDate: Date): Promise<TickSummary> {
         ok: flagsResult.ok,
         ms: Date.now() - tickStart,
         ...(flagsResult.error ? { error: flagsResult.error } : {}),
+      };
+
+      const ftlStart = Date.now();
+      const ftlResult = await readFortLauderdaleConditions(browser);
+      await storeFlagsResult(env, FTL_FLAGS_SLUG, ftlResult);
+      summary.ftlFlags = {
+        ok: ftlResult.ok,
+        ms: Date.now() - ftlStart,
+        ...(ftlResult.error ? { error: ftlResult.error } : {}),
       };
     }
   } catch (e) {
@@ -727,7 +856,7 @@ async function handleCams(env: Env): Promise<Response> {
 
 async function handleFlags(env: Env, slugParam: string | null): Promise<Response> {
   const slug = slugParam ?? FLAGS_SLUG;
-  if (slug !== FLAGS_SLUG) {
+  if (!KNOWN_FLAGS_SLUGS.includes(slug)) {
     return Response.json({ ok: false, error: `unknown flags slug "${slug}"` }, { status: 404 });
   }
   const flags = await readJson<FlagsResult>(env, flagsKey(slug));

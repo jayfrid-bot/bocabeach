@@ -209,14 +209,12 @@ KM_PER_DEG_LAT = 111.32
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Beaches to sample. Deliberately a short inline list rather than a parse of
-# config/locations.ts (which goes_cloud.py does): each beach costs only a few
-# array slices here, but this feed is new and unproven, so it starts with the
-# flagship beach and grows once the signal is trusted. Add entries here — the
-# rest of the script is already shaped for N beaches.
-BEACHES: list[dict] = [
-    {"slug": "boca-raton", "lat": 26.3587, "lon": -80.0686},
-]
+# Beaches to sample. Loaded from config/locations.ts (curated) +
+# config/locations.generated.json (admin-added), same merge goes_cloud.py's
+# load_beaches() does — every beach in the app gets a radar reading. Each
+# beach costs only a few array slices per frame, so there is no reason to
+# hand-curate a short list here once the signal is trusted (it is).
+BEACHES: list[dict] = []
 
 
 def _get(url: str, timeout: int = 60) -> bytes:
@@ -663,23 +661,71 @@ def estimate_eta(
     return None
 
 
-def load_beaches() -> list[dict]:
-    """BEACHES, or the MRMS_BEACHES JSON override (used by the local real-data
-    proof to aim the identical code at a coordinate that currently has echoes)."""
-    raw = os.environ.get("MRMS_BEACHES")
-    if not raw:
-        return BEACHES
+def _load_beaches_from_config() -> list[dict]:
+    """config/locations.ts (hand-curated) + config/locations.generated.json
+    (admin-added), merged exactly like config/locations.ts's allLocations()
+    does (curated first, generated entries deduped by slug) — identical
+    approach to goes_cloud.py's load_beaches(). We only need slug/lat/lon
+    here, so the TS file is parsed with a small targeted regex rather than a
+    JS toolchain — every LOCATIONS entry is `slug: "...", ... lat: N, lon: N,
+    ... cams:`, and that shape is stable/simple enough to lift without
+    executing TypeScript."""
+    beaches: list[dict] = []
+    seen: set[str] = set()
+
+    ts_path = os.path.join(REPO_ROOT, "config", "locations.ts")
     try:
-        parsed = json.loads(raw)
-        out = [
-            {"slug": str(b["slug"]), "lat": float(b["lat"]), "lon": float(b["lon"])}
-            for b in parsed
-            if b.get("slug") is not None and b.get("lat") is not None and b.get("lon") is not None
-        ]
-        return out or BEACHES
+        with open(ts_path, "r") as fh:
+            text = fh.read()
+        m = re.search(r"export const LOCATIONS:.*?=\s*\[(.*?)\n\];", text, re.S)
+        body = m.group(1) if m else text
+        for em in re.finditer(r'slug:\s*"([^"]+)"(.*?)cams:', body, re.S):
+            slug = em.group(1)
+            chunk = em.group(2)
+            lat_m = re.search(r"\blat:\s*(-?\d+(?:\.\d+)?)", chunk)
+            lon_m = re.search(r"\blon:\s*(-?\d+(?:\.\d+)?)", chunk)
+            if lat_m and lon_m and slug not in seen:
+                beaches.append({"slug": slug, "lat": float(lat_m.group(1)), "lon": float(lon_m.group(1))})
+                seen.add(slug)
     except Exception as e:  # noqa: BLE001
-        print(f"warn: bad MRMS_BEACHES ({e}) — using built-in list", file=sys.stderr)
-        return BEACHES
+        print(f"warn: could not parse config/locations.ts: {e}", file=sys.stderr)
+
+    gen_path = os.path.join(REPO_ROOT, "config", "locations.generated.json")
+    try:
+        with open(gen_path, "r") as fh:
+            generated = json.load(fh)
+        for loc in generated:
+            slug = loc.get("slug")
+            lat, lon = loc.get("lat"), loc.get("lon")
+            if slug and slug not in seen and isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+                beaches.append({"slug": slug, "lat": float(lat), "lon": float(lon)})
+                seen.add(slug)
+    except Exception as e:  # noqa: BLE001
+        print(f"warn: could not read config/locations.generated.json: {e}", file=sys.stderr)
+
+    return beaches
+
+
+def load_beaches() -> list[dict]:
+    """The MRMS_BEACHES JSON override (used by the local real-data proof to
+    aim the identical code at a coordinate that currently has echoes), else
+    every beach from config."""
+    raw = os.environ.get("MRMS_BEACHES")
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            out = [
+                {"slug": str(b["slug"]), "lat": float(b["lat"]), "lon": float(b["lon"])}
+                for b in parsed
+                if b.get("slug") is not None and b.get("lat") is not None and b.get("lon") is not None
+            ]
+            if out:
+                return out
+        except Exception as e:  # noqa: BLE001
+            print(f"warn: bad MRMS_BEACHES ({e}) — falling back to config", file=sys.stderr)
+
+    beaches = _load_beaches_from_config()
+    return beaches or BEACHES
 
 
 def iso(t: dt.datetime) -> str:

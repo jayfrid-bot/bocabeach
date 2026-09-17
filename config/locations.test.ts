@@ -93,6 +93,14 @@ describe("fort-lauderdale", () => {
     expect(loc?.surfZone).toEqual({ office: "MFL", name: "Broward" });
   });
 
+  it("reads lifeguard flags via the uw-frame flags feed (the City page 403s a plain fetch)", () => {
+    expect(loc?.cityConditionsUrl).toBe(
+      "https://www.fortlauderdale.gov/Government/Departments/Fire-Rescue/Beach-Conditions",
+    );
+    expect(loc?.cityConditionsAttribution).toBe("City of Fort Lauderdale Ocean Rescue");
+    expect(loc?.flagsFeedUrl).toBe("https://uw-frame.entwined-app.workers.dev/flags?slug=fort-lauderdale");
+  });
+
   it("has the Elbo Room beach cam, credited to Elbo Room", () => {
     const cam = loc?.cams.find((c) => c.id === "ftl-elbo-beach-cam");
     expect(cam).toBeDefined();

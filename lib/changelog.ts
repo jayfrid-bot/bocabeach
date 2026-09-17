@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-09-17",
+    title: "Fort Lauderdale now shows real lifeguard flags — and radar covers every beach",
+    details:
+      "Fort Lauderdale Beach now gets the City's daily lifeguard flags, sea-pest notes (like man-o'-war), and ocean report, read from Fort Lauderdale Fire Rescue's beach-conditions page the same way Deerfield's flags come from the City. The flag goes to 'unknown' if the City's page is more than two days old, so you never see a stale flag as today's. Rain radar now covers every beach in the app, not just Boca Raton.",
+    tag: "new",
+  },
+  {
     date: "2026-09-16",
     title: "A live cam for Fort Lauderdale Beach",
     details:

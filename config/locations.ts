@@ -259,6 +259,14 @@ export const LOCATIONS: Location[] = [
       sites: ["SEBASTIAN STREET", "BAHIA MAR"],
     },
     surfZone: { office: "MFL", name: "Broward" }, // NWS Miami Surf Zone Forecast
+    // Fire Rescue posts flags/conditions once a day as plain text, but a
+    // plain fetch gets a 403 bot-block — Browser Rendering loads it fine, so
+    // flagsFeedUrl (the uw-frame worker, same pattern as Deerfield) is what
+    // lib/sources/cityOfficial.ts actually reads; cityConditionsUrl is kept
+    // only as the human "see official page" link.
+    cityConditionsUrl: "https://www.fortlauderdale.gov/Government/Departments/Fire-Rescue/Beach-Conditions",
+    cityConditionsAttribution: "City of Fort Lauderdale Ocean Rescue",
+    flagsFeedUrl: "https://uw-frame.entwined-app.workers.dev/flags?slug=fort-lauderdale",
     cams: [
       {
         // Elbo Room's public YouTube livestream "Fort Lauderdale Beach
