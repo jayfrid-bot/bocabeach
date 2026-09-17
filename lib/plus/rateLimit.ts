@@ -85,3 +85,13 @@ export async function checkRateLimit(key: string, max: number, windowMs: number)
   });
   return { limited: false, retryAfterSec: 0 };
 }
+
+/** Best-effort client IP for rate-limit keys: Cloudflare's header first, then
+ *  the first X-Forwarded-For hop. Null when neither is present (local dev). */
+export function clientIp(req: Request): string | null {
+  const cf = req.headers.get("cf-connecting-ip");
+  if (cf) return cf.trim();
+  const xff = req.headers.get("x-forwarded-for");
+  if (xff) return xff.split(",")[0].trim() || null;
+  return null;
+}

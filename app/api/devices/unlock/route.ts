@@ -22,8 +22,7 @@ import { badRequest, fail, isDeviceId, okDevice, readBody, secretEqual } from "@
 import { getStore } from "@/lib/db/store";
 import { UNLOCK_DAYS } from "@/lib/db/plus";
 import { isNativeRequest } from "@/lib/nativeRequest";
-import { clientIp } from "@/lib/db/scanFunnel";
-import { checkRateLimit } from "@/lib/plus/rateLimit";
+import { checkRateLimit, clientIp } from "@/lib/plus/rateLimit";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
