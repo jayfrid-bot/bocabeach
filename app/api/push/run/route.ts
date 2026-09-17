@@ -225,6 +225,14 @@ export async function POST(req: Request): Promise<Response> {
   } catch (e) {
     console.error("push: claim prune failed", e);
   }
+  // Same spirit for presence: once a window has run out, the phone's stored
+  // coordinates are dropped (the row and its slug stay). Nothing reads a fix
+  // past `armed_until`, so keeping it is pure liability.
+  try {
+    await store.purgeExpiredPresenceFixes(nowMs);
+  } catch (e) {
+    console.error("push: presence fix purge failed", e);
+  }
 
   const pushable = await store.listPushable();
   // The home-beach loop needs a home beach; the at-beach engine does not (it

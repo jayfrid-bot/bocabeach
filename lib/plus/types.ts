@@ -52,4 +52,10 @@ export interface PendingWrites {
   profile?: ScoreProfile;
   homeSlug?: string;
   prefs?: Partial<AlertPrefs>;
+  /** The store just confirmed a purchase, but syncPurchase() (the call that
+   *  tells our server to ask RevenueCat and turn Plus on) failed to reach the
+   *  server — a network blip right after a real charge. There is nothing to
+   *  "merge": either a sync is owed or it isn't, so this is a flag, not a
+   *  value. flushPending retries it on the next foreground/online/mount. */
+  purchaseSync?: boolean;
 }

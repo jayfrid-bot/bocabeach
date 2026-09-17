@@ -493,5 +493,16 @@ export function d1Store(db: D1Like): DeviceStore {
         .bind(now - CLAIM_RETENTION_MS)
         .run();
     },
+
+    async purgeExpiredPresenceFixes(now) {
+      const r = await db
+        .prepare(
+          "UPDATE presence SET lat = NULL, lon = NULL, accuracy_m = NULL, fix_at = NULL, updated_at = ? " +
+            "WHERE armed_until < ? AND (lat IS NOT NULL OR lon IS NOT NULL OR accuracy_m IS NOT NULL OR fix_at IS NOT NULL)",
+        )
+        .bind(now, now)
+        .run();
+      return Number(r.meta?.changes ?? 0);
+    },
   };
 }

@@ -18,6 +18,20 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-17",
+    title: "Beach Mode now follows you, tells you what it's watching, and never misses a second warning",
+    details:
+      "Safety alerts now check every hazard on its own, so a tornado warning or a double-red closure is never hidden behind lightning, a rip-current note, or an alert you turned off. Move from one beach to another and the alerts move with you — and a beach you picked by hand stays put. The card now names the beach it is watching, says whether it's measuring from your spot or from the beach itself, and tells you plainly when notifications still need turning on instead of claiming alerts are on. Arriving at a beach only turns alerts on from a fresh, accurate position, never an old one. Rain timing now reads the forecast the way it is published, and 'rain clearing' is only promised when the whole next hour is known to be dry. Android phones that share an approximate location can still find their nearest beach.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-09-17",
+    title: "Beach Day Plus is a little harder to fool, and a lot harder to lose",
+    details:
+      "The free trial and the unlock code now hold up better under someone trying to abuse them, and a purchase that hits a bad connection right after checkout no longer gets stuck — it finishes unlocking Plus on its own the next time you open the app, or with a tap on Restore.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-17",
     title: "Fort Lauderdale now shows real lifeguard flags — and radar covers every beach",
     details:
       "Fort Lauderdale Beach now gets the City's daily lifeguard flags, sea-pest notes (like man-o'-war), and ocean report, read from Fort Lauderdale Fire Rescue's beach-conditions page the same way Deerfield's flags come from the City. The flag goes to 'unknown' if the City's page is more than two days old, so you never see a stale flag as today's. Rain radar now covers every beach in the app, not just Boca Raton.",

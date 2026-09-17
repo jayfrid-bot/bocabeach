@@ -11,6 +11,14 @@
 // App only: Plus is sold and delivered inside the phone app (billing, location
 // and push all live there), so a request without the app's User-Agent tag gets
 // 403 { ok: false, error: "app-only" }. The website never offers the trial.
+//
+// Off by default: the App Store already gives every eligible account a real
+// 3-day free trial through RevenueCat (see lib/plus/billing.ts
+// trialEligibility). A server-granted trial guarded only by a User-Agent
+// check let anyone with a new localStorage device id mint an unlimited number
+// of free trials, so this route now answers 403 { error: "server-trial-off" }
+// unless env PLUS_UNLOCK_CODE's sibling `PLUS_SERVER_TRIAL` is exactly "on" —
+// see docs/BILLING_SETUP.md for when to flip it (a billing outage only).
 
 import { badRequest, fail, isDeviceId, okDevice, readBody } from "@/lib/db/api";
 import { getStore } from "@/lib/db/store";
@@ -22,6 +30,7 @@ export const runtime = "nodejs";
 
 export async function POST(req: Request): Promise<Response> {
   if (!isNativeRequest(req)) return fail("app-only", 403);
+  if (process.env.PLUS_SERVER_TRIAL !== "on") return fail("server-trial-off", 403);
   const body = await readBody(req);
   if (!body || !isDeviceId(body.deviceId)) return badRequest();
   const deviceId = body.deviceId;

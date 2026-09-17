@@ -10,6 +10,7 @@ import { POST as unlockPost } from "@/app/api/devices/unlock/route";
 import { POST as presencePost, DELETE as presenceDelete } from "@/app/api/presence/route";
 import { getStore } from "@/lib/db/store";
 import { resetMemoryStore } from "@/lib/db/memoryStore";
+import { resetMemoryRateLimit } from "@/lib/plus/rateLimit";
 import { MAX_ARM_MS } from "@/lib/db/plus";
 
 const DEV = "11111111-2222-4333-8444-555555555555";
@@ -20,16 +21,15 @@ const HOUR = 3600 * 1000;
 const APP_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) IsItBeachDayApp/ios";
 const WEB_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 Safari/605.1.15";
 
-function post(url: string, body: unknown, ua: string = APP_UA): Request {
-  return new Request(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "User-Agent": ua },
-    body: JSON.stringify(body),
-  });
+function post(url: string, body: unknown, ua: string = APP_UA, ip?: string): Request {
+  const headers: Record<string, string> = { "Content-Type": "application/json", "User-Agent": ua };
+  if (ip) headers["cf-connecting-ip"] = ip;
+  return new Request(url, { method: "POST", headers, body: JSON.stringify(body) });
 }
 
 beforeEach(() => {
   resetMemoryStore();
+  resetMemoryRateLimit();
 });
 
 async function json(res: Response): Promise<Record<string, never> & { ok?: boolean; error?: string; device?: Record<string, unknown> }> {
@@ -162,6 +162,19 @@ describe("GET /api/devices", () => {
 });
 
 describe("POST /api/devices/trial", () => {
+  // Off by default (billing-outage fallback only — see docs/BILLING_SETUP.md
+  // and issue #1: an unguarded server trial let anyone mint unlimited free
+  // trials from a fresh localStorage device id). Every claimTrial behavior
+  // test below turns it on explicitly; the switch itself is tested last.
+  const OLD = process.env.PLUS_SERVER_TRIAL;
+  beforeEach(() => {
+    process.env.PLUS_SERVER_TRIAL = "on";
+  });
+  afterEach(() => {
+    if (OLD === undefined) delete process.env.PLUS_SERVER_TRIAL;
+    else process.env.PLUS_SERVER_TRIAL = OLD;
+  });
+
   it("grants three days of Plus once", async () => {
     const before = Date.now();
     const res = await trialPost(post("https://x/api/devices/trial", { deviceId: DEV }));
@@ -189,6 +202,43 @@ describe("POST /api/devices/trial", () => {
     await store.upsertDevice(DEV, { trialUntil: Date.now() - 1000 });
     const res = await trialPost(post("https://x/api/devices/trial", { deviceId: DEV }));
     expect(res.status).toBe(409);
+  });
+});
+
+describe("POST /api/devices/trial — off/on switch (#1)", () => {
+  const OLD = process.env.PLUS_SERVER_TRIAL;
+  afterEach(() => {
+    if (OLD === undefined) delete process.env.PLUS_SERVER_TRIAL;
+    else process.env.PLUS_SERVER_TRIAL = OLD;
+  });
+
+  it("is off by default: 403 server-trial-off, and nothing is granted", async () => {
+    delete process.env.PLUS_SERVER_TRIAL;
+    const res = await trialPost(post("https://x/api/devices/trial", { deviceId: DEV }));
+    expect(res.status).toBe(403);
+    expect((await json(res)).error).toBe("server-trial-off");
+    const store = await getStore();
+    expect((await store.getDevice(DEV))?.plan ?? "free").toBe("free");
+  });
+
+  it("any value other than the literal 'on' still counts as off", async () => {
+    process.env.PLUS_SERVER_TRIAL = "true";
+    const res = await trialPost(post("https://x/api/devices/trial", { deviceId: DEV }));
+    expect(res.status).toBe(403);
+    expect((await json(res)).error).toBe("server-trial-off");
+  });
+
+  it("turns on with PLUS_SERVER_TRIAL=on", async () => {
+    process.env.PLUS_SERVER_TRIAL = "on";
+    const res = await trialPost(post("https://x/api/devices/trial", { deviceId: DEV }));
+    expect(res.status).toBe(200);
+  });
+
+  it("app-only is still checked first, even with the switch on", async () => {
+    process.env.PLUS_SERVER_TRIAL = "on";
+    const res = await trialPost(post("https://x/api/devices/trial", { deviceId: DEV }, WEB_UA));
+    expect(res.status).toBe(403);
+    expect((await json(res)).error).toBe("app-only");
   });
 });
 
@@ -220,6 +270,97 @@ describe("POST /api/devices/unlock", () => {
     delete process.env.PLUS_UNLOCK_CODE;
     const res = await unlockPost(post("https://x/api/devices/unlock", { deviceId: DEV, code: "" }));
     expect(res.status).toBe(403);
+  });
+});
+
+describe("POST /api/devices/unlock — multiple codes (#2)", () => {
+  const OLD = process.env.PLUS_UNLOCK_CODE;
+  const OLD_LIST = process.env.PLUS_UNLOCK_CODES;
+  afterEach(() => {
+    if (OLD === undefined) delete process.env.PLUS_UNLOCK_CODE;
+    else process.env.PLUS_UNLOCK_CODE = OLD;
+    if (OLD_LIST === undefined) delete process.env.PLUS_UNLOCK_CODES;
+    else process.env.PLUS_UNLOCK_CODES = OLD_LIST;
+  });
+
+  it("accepts a code from PLUS_UNLOCK_CODES, not just the single PLUS_UNLOCK_CODE", async () => {
+    process.env.PLUS_UNLOCK_CODE = "sandy-shoes";
+    process.env.PLUS_UNLOCK_CODES = "beach-glass,driftwood";
+    const res = await unlockPost(post("https://x/api/devices/unlock", { deviceId: DEV, code: "driftwood" }));
+    expect(res.status).toBe(200);
+  });
+
+  it("a revoked code (removed from the list) stops working while others still do", async () => {
+    process.env.PLUS_UNLOCK_CODE = "sandy-shoes";
+    process.env.PLUS_UNLOCK_CODES = "driftwood"; // "beach-glass" was revoked
+    const revoked = await unlockPost(
+      post("https://x/api/devices/unlock", { deviceId: DEV, code: "beach-glass" }),
+    );
+    expect(revoked.status).toBe(403);
+    const stillGood = await unlockPost(
+      post("https://x/api/devices/unlock", { deviceId: `2${DEV.slice(1)}`, code: "driftwood" }),
+    );
+    expect(stillGood.status).toBe(200);
+  });
+
+  it("works with only PLUS_UNLOCK_CODES set and no single PLUS_UNLOCK_CODE", async () => {
+    delete process.env.PLUS_UNLOCK_CODE;
+    process.env.PLUS_UNLOCK_CODES = "driftwood";
+    const res = await unlockPost(post("https://x/api/devices/unlock", { deviceId: DEV, code: "driftwood" }));
+    expect(res.status).toBe(200);
+  });
+});
+
+describe("POST /api/devices/unlock — rate limiting (#2)", () => {
+  const OLD = process.env.PLUS_UNLOCK_CODE;
+  beforeEach(() => {
+    process.env.PLUS_UNLOCK_CODE = "sandy-shoes";
+  });
+  afterEach(() => {
+    if (OLD === undefined) delete process.env.PLUS_UNLOCK_CODE;
+    else process.env.PLUS_UNLOCK_CODE = OLD;
+  });
+
+  it("locks out after 5 wrong attempts from the same device, with Retry-After", async () => {
+    for (let i = 0; i < 5; i++) {
+      const res = await unlockPost(post("https://x/api/devices/unlock", { deviceId: DEV, code: "nope" }));
+      expect(res.status).toBe(403);
+    }
+    const sixth = await unlockPost(post("https://x/api/devices/unlock", { deviceId: DEV, code: "nope" }));
+    expect(sixth.status).toBe(429);
+    expect(sixth.headers.get("Retry-After")).toBeTruthy();
+    // Even the RIGHT code is refused once locked out — the lockout guards the
+    // attempt itself, not just wrong guesses.
+    const rightButLocked = await unlockPost(
+      post("https://x/api/devices/unlock", { deviceId: DEV, code: "sandy-shoes" }),
+    );
+    expect(rightButLocked.status).toBe(429);
+  });
+
+  it("a lockout on one device from one IP does not affect a different device on a different IP", async () => {
+    for (let i = 0; i < 5; i++) {
+      await unlockPost(
+        post("https://x/api/devices/unlock", { deviceId: DEV, code: "nope" }, APP_UA, "1.1.1.1"),
+      );
+    }
+    const other = "22222222-3333-4444-8555-666666666666";
+    const res = await unlockPost(
+      post("https://x/api/devices/unlock", { deviceId: other, code: "sandy-shoes" }, APP_UA, "2.2.2.2"),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("the per-IP limit locks out a new device sharing a locked-out IP", async () => {
+    for (let i = 0; i < 5; i++) {
+      await unlockPost(
+        post("https://x/api/devices/unlock", { deviceId: DEV, code: "nope" }, APP_UA, "3.3.3.3"),
+      );
+    }
+    const other = "33333333-4444-4555-8666-777777777777";
+    const res = await unlockPost(
+      post("https://x/api/devices/unlock", { deviceId: other, code: "sandy-shoes" }, APP_UA, "3.3.3.3"),
+    );
+    expect(res.status).toBe(429);
   });
 });
 
@@ -264,6 +405,7 @@ describe("/api/presence", () => {
       slug: "boca-raton",
       armedUntil,
       source: "auto",
+      hasFix: true,
     });
   });
 
@@ -345,7 +487,14 @@ describe("Plus purchase routes are app-only", () => {
   });
 
   it("the same requests from the app shell succeed", async () => {
-    const res = await trialPost(post("https://x/api/devices/trial", { deviceId: DEV }));
-    expect(res.status).toBe(200);
+    const old = process.env.PLUS_SERVER_TRIAL;
+    process.env.PLUS_SERVER_TRIAL = "on";
+    try {
+      const res = await trialPost(post("https://x/api/devices/trial", { deviceId: DEV }));
+      expect(res.status).toBe(200);
+    } finally {
+      if (old === undefined) delete process.env.PLUS_SERVER_TRIAL;
+      else process.env.PLUS_SERVER_TRIAL = old;
+    }
   });
 });

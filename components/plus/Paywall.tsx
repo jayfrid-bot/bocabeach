@@ -86,6 +86,11 @@ export function PaywallBody({
   const [code, setCode] = useState("");
   // Known from the device row, or learned the moment the server answers 409.
   const [trialUsed, setTrialUsed] = useState(plus.device?.trialUsed ?? false);
+  // The server trial route is a billing-outage fallback, off by default (see
+  // docs/BILLING_SETUP.md). When it answers 403 "server-trial-off" there is
+  // nothing left to offer here but Subscribe — the store's own trial only
+  // exists inside the `billing` branch below.
+  const [serverTrialOff, setServerTrialOff] = useState(false);
 
   // Store billing: decided on the phone, after mount, so the server render and
   // a browser both see the plain (no-billing) paywall.
@@ -132,6 +137,7 @@ export function PaywallBody({
         return;
       }
       if (res.error === "trial-used") setTrialUsed(true);
+      if (res.error === "server-trial-off") setServerTrialOff(true);
       setError(plusErrorMessage(res.error));
     } finally {
       setBusy(false);
@@ -184,13 +190,14 @@ export function PaywallBody({
     void buy();
   };
 
+  // Inside the app, but this build has no billing key wired (or the phone
+  // could not reach the store): there is nothing here that can be bought, so
+  // no button may promise otherwise (issue #6). A code still works.
+  const billingUnavailableInApp = native && !billingAvailable();
+
   const subscribe = () => {
     setError(null);
-    setNote(
-      native
-        ? "We are still connecting billing. If you have a code, use it below — otherwise check back in a few days."
-        : "Subscriptions live in the app. Get Is It Beach Day on your phone to subscribe.",
-    );
+    setNote("Subscriptions live in the app. Get Is It Beach Day on your phone to subscribe.");
   };
 
   const redeem = async () => {
@@ -298,11 +305,11 @@ export function PaywallBody({
               : "We could not load prices from the App Store."}
           </p>
         )
-      ) : (
-        <p className="mt-4 text-center text-sm font-semibold tabular-nums text-slate-900 dark:text-white">
-          $2.99/mo · $19.99/yr
+      ) : billingUnavailableInApp ? (
+        <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">
+          Billing isn&apos;t available in this build.
         </p>
-      )}
+      ) : null}
 
       <div className="mt-3 space-y-2">
         {billing ? (
@@ -316,10 +323,16 @@ export function PaywallBody({
               </p>
             ) : null}
           </>
-        ) : trialUsed ? (
-          <PrimaryButton onClick={subscribe} disabled={busy}>
-            Subscribe
-          </PrimaryButton>
+        ) : trialUsed || serverTrialOff ? (
+          billingUnavailableInApp ? (
+            <p className="text-center text-xs leading-snug text-slate-500 dark:text-slate-400">
+              Billing isn&apos;t available in this build. Use a code below, or check back once it is.
+            </p>
+          ) : (
+            <PrimaryButton onClick={subscribe} disabled={busy}>
+              Subscribe
+            </PrimaryButton>
+          )
         ) : (
           <>
             <PrimaryButton onClick={startTrial} disabled={busy}>

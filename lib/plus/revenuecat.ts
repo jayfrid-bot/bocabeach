@@ -33,6 +33,10 @@ export interface RcEvent {
   // RevenueCat round-trip for an event about some OTHER entitlement in the
   // same project, rather than let it drive our (only) "plus" entitlement.
   entitlement_ids?: string[];
+  // TRANSFER only: the app_user_id(s) the entitlement moved FROM. RevenueCat
+  // documents this as an array (a merge can move it from several aliases at
+  // once).
+  transferred_from?: string[];
 }
 
 export interface RcWebhookBody {
@@ -41,7 +45,7 @@ export interface RcWebhookBody {
 }
 
 export type RcDecision =
-  | { kind: "reconcile"; deviceId: string }
+  | { kind: "reconcile"; deviceId: string; alsoReconcile?: string[] }
   | { kind: "ignore"; reason: string };
 
 /**
@@ -68,6 +72,22 @@ export function decideReconcile(body: RcWebhookBody | null): RcDecision {
   // sent nothing to filter on), so don't skip it on that basis.
   if (Array.isArray(ev.entitlement_ids) && ev.entitlement_ids.length > 0 && !ev.entitlement_ids.includes("plus")) {
     return { kind: "ignore", reason: "other-entitlement" };
+  }
+
+  // TRANSFER: the entitlement moved to `id` (app_user_id) from one or more
+  // OTHER devices. Those old devices must be re-checked too, or a transferred
+  // subscription leaves stale access on the device it left (#TRANSFER). Only
+  // ids that actually differ from the winning one are worth another
+  // RevenueCat round-trip.
+  if (ev.type === "TRANSFER") {
+    const others = new Set<string>();
+    if (ev.original_app_user_id && ev.original_app_user_id !== id) others.add(ev.original_app_user_id);
+    for (const from of ev.transferred_from ?? []) {
+      if (from && from !== id) others.add(from);
+    }
+    if (others.size > 0) {
+      return { kind: "reconcile", deviceId: id, alsoReconcile: [...others] };
+    }
   }
 
   return { kind: "reconcile", deviceId: id };

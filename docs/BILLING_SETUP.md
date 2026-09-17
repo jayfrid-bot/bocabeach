@@ -1,5 +1,42 @@
 # Beach Day Plus — turning on real billing
 
+## The server trial is off by default (2026-09-17)
+
+`POST /api/devices/trial` used to grant a 3-day trial to any new device id,
+guarded only by a User-Agent check — that let anyone mint unlimited free
+trials from a fresh localStorage id. The App Store already gives every
+eligible Apple account a real 3-day free trial through RevenueCat (see
+`trialEligibility` in `lib/plus/billing.ts`), so the server route now checks
+env `PLUS_SERVER_TRIAL`:
+
+- unset or anything other than the exact string `"on"` → the route answers
+  403 `{ error: "server-trial-off" }` and grants nothing.
+- `PLUS_SERVER_TRIAL=on` → the original behavior (one trial per device,
+  `claimTrial`'s atomic "already used" check unchanged).
+
+Only turn it on as a **billing-outage fallback** — RevenueCat or the App
+Store itself unreachable for an extended stretch — and turn it back off once
+billing is confirmed working again. The paywall (`components/plus/Paywall.tsx`)
+never calls this route when `billingAvailable()` is true; it only shows the
+"Start 3-day free trial" button that calls it when billing is unavailable,
+and switches to a plain Subscribe/honest-unavailable state once the route
+answers `trial-used` or `server-trial-off`.
+
+## Unlock code: multiple codes + rate limiting (2026-09-17)
+
+`POST /api/devices/unlock` now accepts either the original single
+`PLUS_UNLOCK_CODE` secret or a comma-separated list in `PLUS_UNLOCK_CODES` —
+set both if you want to revoke one code (e.g. a leaked press code) without
+rotating the code everyone else has. Every candidate is compared
+constant-time.
+
+The route is also rate limited: 5 attempts per hour, tracked independently by
+IP and by deviceId on the `PUSH_KV` binding (fixed-window counters,
+`lib/plus/rateLimit.ts`), falling back to an in-memory counter off Cloudflare
+(dev/tests). Past the limit it answers 429 with a `Retry-After` header instead
+of running the code compare at all.
+
+
 **Status 2026-09-07: WIRED END TO END, awaiting a sandbox purchase test and the
 review submission.** Everything below is done unless marked otherwise.
 

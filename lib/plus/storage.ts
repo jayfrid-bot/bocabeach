@@ -9,7 +9,7 @@
 import { ALERT_KEYS, type AlertPrefs } from "@/lib/db/types";
 import { isProfileId } from "@/lib/profile/presets";
 import type { AdvancedProfile, ScoreProfile, SubKey } from "@/lib/profile/types";
-import { clearField, clearPrefsKeys, isEmpty as pendingIsEmpty, mergeHomeSlug, mergePrefs, mergeProfile } from "@/lib/plus/pendingWrites";
+import { clearField, clearPrefsKeys, isEmpty as pendingIsEmpty, mergeHomeSlug, mergePrefs, mergeProfile, mergePurchaseSync } from "@/lib/plus/pendingWrites";
 import type { OffSuppression, PendingWrites, PlusCache, PreviewRecord } from "@/lib/plus/types";
 
 export const PLUS_KEYS = {
@@ -252,6 +252,7 @@ function cleanPendingWrites(v: unknown): PendingWrites {
     }
     if (Object.keys(prefs).length) out.prefs = prefs;
   }
+  if (raw.purchaseSync === true) out.purchaseSync = true;
   return out;
 }
 
@@ -279,6 +280,16 @@ export function queuePendingHome(slug: string): void {
  *  the first. */
 export function queuePendingPrefs(patch: Partial<AlertPrefs>): void {
   writePendingRaw(mergePrefs(readPending(), patch));
+}
+
+/** The store confirmed a purchase but syncPurchase() failed to reach the
+ *  server — remember to retry it on the next foreground/online/mount. */
+export function queuePendingPurchaseSync(): void {
+  writePendingRaw(mergePurchaseSync(readPending()));
+}
+
+export function clearPendingPurchaseSync(): void {
+  writePendingRaw(clearField(readPending(), "purchaseSync"));
 }
 
 export function clearPendingProfile(): void {

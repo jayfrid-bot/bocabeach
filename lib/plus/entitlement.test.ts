@@ -5,7 +5,12 @@ import {
   deviceEntitled,
   entitlementRemaining,
   isEntitled,
+  isStoreBased,
+  SELF_HEAL_LAPSE_MS,
+  SELF_HEAL_THROTTLE_MS,
+  SELF_HEAL_WINDOW_MS,
   shouldRefresh,
+  shouldSelfHeal,
 } from "@/lib/plus/entitlement";
 import type { DeviceRecord } from "@/lib/db/types";
 import { defaultPrefs } from "@/lib/db/types";
@@ -126,6 +131,96 @@ describe("cacheFromDevice", () => {
 
   it("turns a missing expiry into null rather than undefined", () => {
     expect(cacheFromDevice(device(), NOW).until).toBeNull();
+  });
+});
+
+describe("isStoreBased", () => {
+  it("is false for null", () => {
+    expect(isStoreBased(null)).toBe(false);
+  });
+  it("is false when there is no store grant at all", () => {
+    const d = device({ grants: { storeUntil: null, codeUntil: NOW + DAY, trialUntil: null } });
+    expect(isStoreBased(d)).toBe(false);
+  });
+  it("is true when the store grant is the latest", () => {
+    const d = device({
+      grants: { storeUntil: NOW + 30 * DAY, codeUntil: NOW + DAY, trialUntil: null },
+    });
+    expect(isStoreBased(d)).toBe(true);
+  });
+  it("is false when a code grant outlasts the store grant", () => {
+    const d = device({
+      grants: { storeUntil: NOW + DAY, codeUntil: NOW + 365 * DAY, trialUntil: null },
+    });
+    expect(isStoreBased(d)).toBe(false);
+  });
+  it("ties go to the store", () => {
+    const d = device({ grants: { storeUntil: NOW + DAY, codeUntil: NOW + DAY, trialUntil: null } });
+    expect(isStoreBased(d)).toBe(true);
+  });
+});
+
+describe("shouldSelfHeal", () => {
+  const base = { now: NOW, storeBased: true, billingAvailable: true, lastSyncedAt: null };
+
+  it("never fires without billing available", () => {
+    expect(shouldSelfHeal({ ...base, billingAvailable: false, cache: cache({ until: NOW + 1000 }) })).toBe(false);
+  });
+
+  it("never fires for a trial/code grant (storeBased false)", () => {
+    expect(shouldSelfHeal({ ...base, storeBased: false, cache: cache({ until: NOW + 1000 }) })).toBe(false);
+  });
+
+  it("never fires with no cache", () => {
+    expect(shouldSelfHeal({ ...base, cache: null })).toBe(false);
+  });
+
+  it("never fires when there is no store grant (until 0/null)", () => {
+    expect(shouldSelfHeal({ ...base, cache: cache({ until: null }) })).toBe(false);
+  });
+
+  it("stays quiet well before expiry", () => {
+    expect(shouldSelfHeal({ ...base, cache: cache({ until: NOW + SELF_HEAL_WINDOW_MS + 1000 }) })).toBe(false);
+  });
+
+  it("fires right at the edge of the expiry window", () => {
+    expect(shouldSelfHeal({ ...base, cache: cache({ until: NOW + SELF_HEAL_WINDOW_MS }) })).toBe(true);
+  });
+
+  it("fires just before expiry", () => {
+    expect(shouldSelfHeal({ ...base, cache: cache({ until: NOW + 1000 }) })).toBe(true);
+  });
+
+  it("fires right at the moment it lapses", () => {
+    expect(shouldSelfHeal({ ...base, cache: cache({ until: NOW }) })).toBe(true);
+  });
+
+  it("fires for a recent lapse, at the edge of the lapse window", () => {
+    expect(shouldSelfHeal({ ...base, cache: cache({ until: NOW - SELF_HEAL_LAPSE_MS }) })).toBe(true);
+  });
+
+  it("stays quiet for a lapse well past the lapse window", () => {
+    expect(shouldSelfHeal({ ...base, cache: cache({ until: NOW - SELF_HEAL_LAPSE_MS - 1000 }) })).toBe(false);
+  });
+
+  it("is throttled: stays quiet inside the throttle window even when otherwise due", () => {
+    expect(
+      shouldSelfHeal({
+        ...base,
+        cache: cache({ until: NOW + 1000 }),
+        lastSyncedAt: NOW - SELF_HEAL_THROTTLE_MS + 1000,
+      }),
+    ).toBe(false);
+  });
+
+  it("fires again once the throttle window has fully passed", () => {
+    expect(
+      shouldSelfHeal({
+        ...base,
+        cache: cache({ until: NOW + 1000 }),
+        lastSyncedAt: NOW - SELF_HEAL_THROTTLE_MS,
+      }),
+    ).toBe(true);
   });
 });
 

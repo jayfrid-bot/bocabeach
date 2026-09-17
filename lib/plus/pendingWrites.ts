@@ -32,6 +32,12 @@ export function mergePrefs(pending: PendingWrites, patch: Partial<AlertPrefs>): 
   return { ...pending, prefs: { ...(pending.prefs ?? {}), ...patch } };
 }
 
+/** Flag a purchase as needing a sync retry. Idempotent — queuing it twice is
+ *  the same as once, since it carries no value of its own. */
+export function mergePurchaseSync(pending: PendingWrites): PendingWrites {
+  return { ...pending, purchaseSync: true };
+}
+
 /** Drop one kind of write from the queue entirely — used once it is
  *  confirmed saved, or once the server has rejected it outright (a 4xx,
  *  where retrying would only repeat the same rejected request). */
@@ -55,7 +61,12 @@ export function clearPrefsKeys(pending: PendingWrites, keys: readonly string[]):
 }
 
 export function isEmpty(pending: PendingWrites): boolean {
-  return !pending.profile && !pending.homeSlug && !(pending.prefs && Object.keys(pending.prefs).length);
+  return (
+    !pending.profile &&
+    !pending.homeSlug &&
+    !(pending.prefs && Object.keys(pending.prefs).length) &&
+    !pending.purchaseSync
+  );
 }
 
 /** A save worth retrying: the network never answered, or the server itself

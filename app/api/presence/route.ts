@@ -3,7 +3,12 @@
 //   POST   { deviceId, slug, lat, lon, accuracyM, fixAt, armedUntil, source }
 //          Arms a window. Plus only (403 not-entitled). `armedUntil` is clamped
 //          to at most MAX_ARM_MS ahead, so a bad clock or a stale client can
-//          never leave a device armed for days.
+//          never leave a device armed for days. A supplied `fixAt` more than
+//          a minute in the future, or a supplied `accuracyM` that is not a
+//          number in range, is a 400 — never silently turned into "unknown"
+//          (LOC-09). Answers `pushReady` alongside the device: monitoring is
+//          armed, but alerts only reach a phone with a registered push token
+//          (LOC-03), and the card must not claim otherwise.
 //   DELETE { deviceId }  (or ?deviceId=…)  Disarms.
 //
 // The stored fix is what the alerts engine uses for per-device lightning
@@ -14,6 +19,7 @@ import { badRequest, fail, isDeviceId, num, okDevice, readBody } from "@/lib/db/
 import { getStore } from "@/lib/db/store";
 import { entitled } from "@/lib/db/types";
 import { MAX_ARM_MS } from "@/lib/db/plus";
+import { FIX_MAX_FUTURE_SKEW_MS } from "@/lib/alerts/run";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -37,11 +43,19 @@ export async function POST(req: Request): Promise<Response> {
       (body.lon !== undefined && body.lon !== null && lon === null)) {
     return badRequest();
   }
+  const now = Date.now();
+  // LOC-09: a malformed precision or timestamp is a bad request, not a quiet
+  // null — "unknown accuracy" must mean the client reported none, never that
+  // it reported garbage.
   const accuracyM =
     body.accuracyM === undefined || body.accuracyM === null ? null : num(body.accuracyM, 0, 1e6);
-  const fixAt = body.fixAt === undefined || body.fixAt === null ? null : num(body.fixAt, 0, Number.MAX_SAFE_INTEGER);
+  if (body.accuracyM !== undefined && body.accuracyM !== null && accuracyM === null) return badRequest();
+  const fixAt =
+    body.fixAt === undefined || body.fixAt === null
+      ? null
+      : num(body.fixAt, 0, now + FIX_MAX_FUTURE_SKEW_MS);
+  if (body.fixAt !== undefined && body.fixAt !== null && fixAt === null) return badRequest();
 
-  const now = Date.now();
   const armedUntil = Math.min(Math.max(armedRaw, now), now + MAX_ARM_MS);
 
   try {
@@ -59,7 +73,9 @@ export async function POST(req: Request): Promise<Response> {
       source,
     });
     const updated = await store.getDevice(body.deviceId);
-    return okDevice(updated ?? device);
+    // Delivery readiness is a separate fact from monitoring (LOC-03).
+    const pushReady = !!(await store.getPushToken(body.deviceId));
+    return okDevice(updated ?? device, { pushReady });
   } catch (e) {
     console.error("presence: arm failed", e);
     return fail("store-unavailable", 500);

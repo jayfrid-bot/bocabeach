@@ -45,41 +45,119 @@ function minutely(startIso: string, rows: { precip?: number; prob?: number }[]) 
   };
 }
 
-describe("parseMinutely", () => {
-  it("finds the minutes until the first wet bucket", () => {
+describe("parseMinutely — a value is the accumulation ENDING at its timestamp (LOC-10)", () => {
+  it("reads the bucket that contains now as raining: the 18:15 value covers 18:00–18:15", () => {
+    const read = parseMinutely(minutely("2026-09-02T18:00:00Z", [{}, { precip: 0.08 }, {}, {}, {}, {}]), NOW);
+    expect(read).toMatchObject({ rainingNow: true, etaMinutes: null, clearingSoon: false });
+  });
+
+  it("the report's fixture: at 13:05, a wet 13:15 value is rain NOW, not rain in 10 minutes", () => {
+    const at = Date.parse("2026-09-02T13:05:00Z");
     const read = parseMinutely(
-      minutely("2026-09-02T17:45:00Z", [{}, {}, { precip: 0.04 }, {}]),
+      minutely("2026-09-02T13:00:00Z", [{}, { precip: 0.05 }, {}, {}, {}, {}]),
+      at,
+    );
+    expect(read).toMatchObject({ rainingNow: true, etaMinutes: null });
+  });
+
+  it("finds the minutes until the START of the first wet bucket ahead", () => {
+    // 18:30 value covers 18:15–18:30 → rain starts 15 minutes out.
+    const read = parseMinutely(minutely("2026-09-02T18:00:00Z", [{}, {}, { precip: 0.04 }, {}, {}, {}]), NOW);
+    expect(read).toMatchObject({ etaMinutes: 15, rainingNow: false, clearingSoon: false, source: "forecast" });
+  });
+
+  it("interior of a bucket: 18:07 still belongs to the 18:15 value", () => {
+    const at = Date.parse("2026-09-02T18:07:00Z");
+    const read = parseMinutely(minutely("2026-09-02T18:00:00Z", [{}, { prob: 80 }, {}, {}, {}, {}]), at);
+    expect(read?.rainingNow).toBe(true);
+  });
+
+  it("boundary: a value stamped exactly now is the interval that just ENDED, not the current one", () => {
+    // 18:00 value covers 17:45–18:00 (elapsed). 18:15 value is current and dry.
+    const read = parseMinutely(
+      minutely("2026-09-02T18:00:00Z", [{ precip: 0.3 }, {}, {}, {}, {}, {}]),
       NOW,
     );
-    expect(read).toMatchObject({ etaMinutes: 15, rainingNow: false, source: "forecast" });
+    expect(read?.rainingNow).toBe(false);
   });
 
   it("counts a high probability as rain even with no measured precipitation", () => {
-    const read = parseMinutely(minutely("2026-09-02T18:00:00Z", [{}, { prob: 75 }]), NOW);
+    const read = parseMinutely(minutely("2026-09-02T18:00:00Z", [{}, {}, { prob: 75 }, {}, {}]), NOW);
     expect(read?.etaMinutes).toBe(15);
   });
 
-  it("reads the bucket containing now as raining", () => {
-    const read = parseMinutely(
-      minutely("2026-09-02T17:55:00Z", [{ precip: 0.08 }, {}, {}, {}, {}]),
-      NOW,
+  it("crosses UTC midnight without losing the mapping or the horizon", () => {
+    const at = Date.parse("2026-09-02T23:50:00Z");
+    // 00:00 value covers 23:45–00:00 (current); 00:15…01:00 cover the hour ahead.
+    const read = parseMinutely(minutely("2026-09-02T23:45:00Z", [{}, {}, {}, {}, {}, {}, {}]), at);
+    expect(read).toMatchObject({ rainingNow: false, clearingSoon: true, horizonKnown: true });
+    const wetAfterMidnight = parseMinutely(
+      minutely("2026-09-02T23:45:00Z", [{}, {}, { precip: 0.1 }, {}, {}, {}, {}]),
+      at,
     );
-    expect(read?.rainingNow).toBe(true);
-    expect(read?.clearingSoon).toBe(false);
+    // 00:15 value covers 00:00–00:15 → 10 minutes out.
+    expect(wetAfterMidnight).toMatchObject({ rainingNow: false, etaMinutes: 10, clearingSoon: false });
+  });
+});
+
+describe("parseMinutely — unknown is unknown, never 'clearing' (LOC-11)", () => {
+  it("calls a fully known dry hour ahead 'clearing'", () => {
+    const read = parseMinutely(minutely("2026-09-02T18:00:00Z", [{}, {}, {}, {}, {}, {}]), NOW);
+    expect(read).toMatchObject({ clearingSoon: true, etaMinutes: null, rainingNow: false, horizonKnown: true });
   });
 
-  it("calls a dry hour ahead 'clearing'", () => {
-    const read = parseMinutely(minutely("2026-09-02T18:00:00Z", [{}, {}, {}, {}, {}]), NOW);
-    expect(read).toMatchObject({ clearingSoon: true, etaMinutes: null, rainingNow: false });
-  });
-
-  it("ignores rain beyond the hour", () => {
+  it("ignores rain beyond the hour when the hour itself is known and dry", () => {
+    // 18:15…19:00 dry (covers 18:00–19:00); 19:15 and 19:30 wet.
     const read = parseMinutely(
-      minutely("2026-09-02T18:00:00Z", [{}, {}, {}, {}, { precip: 0.2 }, { precip: 0.2 }]),
+      minutely("2026-09-02T18:00:00Z", [{}, {}, {}, {}, {}, { precip: 0.2 }, { precip: 0.2 }]),
       NOW,
     );
     expect(read?.etaMinutes).toBe(null);
     expect(read?.clearingSoon).toBe(true);
+  });
+
+  it("A: future timestamps with neither precipitation nor probability arrays → nothing usable", () => {
+    const t0 = Date.parse("2026-09-02T18:00:00Z");
+    const time = [0, 1, 2, 3, 4, 5].map((i) => new Date(t0 + i * 15 * 60_000).toISOString().slice(0, 16));
+    expect(parseMinutely({ minutely_15: { time } }, NOW)).toBeNull();
+  });
+
+  it("B: a single upcoming dry bucket cannot establish a dry hour", () => {
+    const read = parseMinutely(minutely("2026-09-02T18:00:00Z", [{}, {}]), NOW);
+    expect(read).toMatchObject({ rainingNow: false, clearingSoon: false, horizonKnown: false });
+  });
+
+  it("a null inside the hour leaves the horizon unknown", () => {
+    const payload = minutely("2026-09-02T18:00:00Z", [{}, {}, {}, {}, {}, {}]);
+    payload.minutely_15.precipitation[3] = null as unknown as number;
+    payload.minutely_15.precipitation_probability[3] = null as unknown as number;
+    const read = parseMinutely(payload, NOW);
+    expect(read).toMatchObject({ clearingSoon: false, horizonKnown: false });
+  });
+
+  it("a gap in the timestamps leaves the horizon unknown", () => {
+    const payload = minutely("2026-09-02T18:00:00Z", [{}, {}, {}, {}, {}, {}]);
+    payload.minutely_15.time.splice(3, 1); // drop 18:45
+    payload.minutely_15.precipitation.splice(3, 1);
+    payload.minutely_15.precipitation_probability.splice(3, 1);
+    const read = parseMinutely(payload, NOW);
+    expect(read?.clearingSoon).toBe(false);
+  });
+
+  it("a feed truncated at the day's end cannot promise a clear hour", () => {
+    const at = Date.parse("2026-09-02T23:50:00Z");
+    // Ends at the 00:00 value: the current bucket is known, nothing beyond.
+    const read = parseMinutely(minutely("2026-09-03T00:00:00Z", [{}]), at);
+    expect(read).toMatchObject({ rainingNow: false, clearingSoon: false, horizonKnown: false });
+  });
+
+  it("a wet bucket after a gap still yields an ETA — it is real information", () => {
+    const payload = minutely("2026-09-02T18:00:00Z", [{}, {}, {}, { precip: 0.2 }, {}, {}]);
+    payload.minutely_15.precipitation[2] = null as unknown as number;
+    payload.minutely_15.precipitation_probability[2] = null as unknown as number;
+    const read = parseMinutely(payload, NOW);
+    // 18:45 value covers 18:30–18:45 → 30 minutes out.
+    expect(read).toMatchObject({ etaMinutes: 30, clearingSoon: false });
   });
 
   it("returns null when there is nothing usable", () => {
@@ -96,7 +174,7 @@ describe("rainForFix", () => {
     vi.stubGlobal("fetch", async (url: string) => {
       calls.push(String(url));
       return new Response(
-        JSON.stringify(minutely("2026-09-02T18:00:00Z", [{}, { precip: 0.1 }, {}, {}])),
+        JSON.stringify(minutely("2026-09-02T18:00:00Z", [{}, {}, { precip: 0.1 }, {}])),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     });

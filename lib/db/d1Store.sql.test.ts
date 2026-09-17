@@ -222,4 +222,25 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
     const armed = await store.listArmed(Date.now());
     expect(armed.map((a) => a.device.id)).toEqual(["a1"]);
   });
+
+  // --- presence fix purge (housekeeping in app/api/push/run/route.ts) -------
+  describe("purgeExpiredPresenceFixes — the real UPDATE", () => {
+    const NOW = 2_000_000_000_000;
+    const fix = { lat: 26.35, lon: -80.07, accuracyM: 20, fixAt: NOW - 60_000 };
+
+    it("blanks only expired rows' coordinates, keeps the row, reports the count", async () => {
+      await store.upsertDevice("p1", { codeUntil: NOW + HOUR });
+      await store.upsertDevice("p2", { codeUntil: NOW + HOUR });
+      await store.setPresence("p1", { slug: "boca-raton", ...fix, armedUntil: NOW - 1, source: "auto" });
+      await store.setPresence("p2", { slug: "boca-raton", ...fix, armedUntil: NOW + HOUR, source: "manual" });
+      expect(await store.purgeExpiredPresenceFixes(NOW)).toBe(1);
+      expect(await store.purgeExpiredPresenceFixes(NOW)).toBe(0); // idempotent
+      expect((await store.getDevice("p1"))?.presence?.slug).toBe("boca-raton");
+      const live = await store.listArmed(NOW);
+      expect(live).toHaveLength(1);
+      expect(live[0].presence).toMatchObject({ slug: "boca-raton", lat: 26.35, fixAt: NOW - 60_000 });
+      const expired = (await store.listArmed(NOW - 60_000)).find((a) => a.device.id === "p1");
+      expect(expired?.presence).toMatchObject({ lat: null, lon: null, accuracyM: null, fixAt: null });
+    });
+  });
 });

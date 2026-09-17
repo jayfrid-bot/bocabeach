@@ -7,6 +7,7 @@ import {
   mergeHomeSlug,
   mergePrefs,
   mergeProfile,
+  mergePurchaseSync,
   type PendingWrites,
 } from "@/lib/plus/pendingWrites";
 import type { ScoreProfile } from "@/lib/profile/types";
@@ -93,6 +94,29 @@ describe("isEmpty", () => {
 
   it("an empty prefs object still counts as empty", () => {
     expect(isEmpty({ prefs: {} })).toBe(true);
+  });
+
+  it("a queued purchase sync is not empty", () => {
+    expect(isEmpty({ purchaseSync: true })).toBe(false);
+  });
+});
+
+describe("mergePurchaseSync", () => {
+  it("sets the flag without disturbing other pending fields", () => {
+    let pending: PendingWrites = { homeSlug: "delray" };
+    pending = mergePurchaseSync(pending);
+    expect(pending).toEqual({ homeSlug: "delray", purchaseSync: true });
+  });
+
+  it("is idempotent", () => {
+    let pending: PendingWrites = {};
+    pending = mergePurchaseSync(pending);
+    pending = mergePurchaseSync(pending);
+    expect(pending).toEqual({ purchaseSync: true });
+  });
+
+  it("clearField drops it cleanly", () => {
+    expect(clearField(mergePurchaseSync({}), "purchaseSync")).toEqual({});
   });
 });
 

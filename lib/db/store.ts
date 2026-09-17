@@ -83,6 +83,13 @@ export interface DeviceStore {
   markSent(key: string, now: number): Promise<void>;
   /** Drop claims old enough (`CLAIM_RETENTION_MS`) to never matter again. */
   pruneSendClaims(now: number): Promise<void>;
+  /**
+   * Blank the stored fix (lat/lon/accuracy/fixAt) on every presence row whose
+   * window has run out. The row and its slug stay — the card still knows which
+   * beach was last monitored — but a phone's coordinates have no business
+   * outliving the window they were sent for. Returns how many rows changed.
+   */
+  purgeExpiredPresenceFixes(now: number): Promise<number>;
 }
 
 /**

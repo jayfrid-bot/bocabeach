@@ -24,8 +24,8 @@ export function badRequest(): Response {
   return fail("bad-request", 400);
 }
 
-export function okDevice(device: DeviceRecord): Response {
-  return Response.json({ ok: true, device });
+export function okDevice(device: DeviceRecord, extra?: Record<string, unknown>): Response {
+  return Response.json({ ok: true, device, ...(extra ?? {}) });
 }
 
 /**

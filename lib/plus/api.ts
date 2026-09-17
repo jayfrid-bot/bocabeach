@@ -13,6 +13,12 @@ export interface PlusResult {
   /** Machine-readable slug from the server, or "network" when it never answered. */
   error: string | null;
   status: number;
+  /**
+   * `/api/presence` only (LOC-03): the server holds a push token for this
+   * device, so an armed session can actually be delivered to. Undefined on
+   * every other route.
+   */
+  pushReady?: boolean;
 }
 
 /** What a client may change about its own device row. */
@@ -49,9 +55,15 @@ async function request(url: string, init?: RequestInit): Promise<PlusResult> {
   } catch {
     body = null;
   }
-  const obj = (body ?? {}) as { ok?: unknown; device?: unknown; error?: unknown };
+  const obj = (body ?? {}) as { ok?: unknown; device?: unknown; error?: unknown; pushReady?: unknown };
   if (res.ok && obj.ok === true) {
-    return { ok: true, device: (obj.device as DeviceRecord) ?? null, error: null, status: res.status };
+    return {
+      ok: true,
+      device: (obj.device as DeviceRecord) ?? null,
+      error: null,
+      status: res.status,
+      ...(typeof obj.pushReady === "boolean" ? { pushReady: obj.pushReady } : {}),
+    };
   }
   const error = typeof obj.error === "string" ? obj.error : "server";
   return { ok: false, device: null, error, status: res.status };
@@ -108,10 +120,14 @@ export function plusErrorMessage(error: string | null): string {
       return "You have already used the free trial on this device.";
     case "bad-code":
       return "That code did not work. Check it and try again.";
+    case "too-many-attempts":
+      return "Too many tries. Wait a bit and try again.";
     case "not-entitled":
       return "Alerts are part of Beach Day Plus.";
     case "app-only":
       return "Beach Day Plus lives in the iPhone app. Get the app to start your trial.";
+    case "server-trial-off":
+      return "Free trials come from the App Store now. Open the plan picker to start yours.";
     case "not-found":
       return "We could not find a subscription for this device.";
     case "store-unavailable":
@@ -122,7 +138,7 @@ export function plusErrorMessage(error: string | null): string {
     case "purchase-failed":
       return "The App Store could not complete that purchase. Try again.";
     case "purchase-unconfirmed":
-      return "Your purchase went through, but we could not confirm it yet. Tap Restore in a moment.";
+      return "You were charged. Plus unlocks automatically in a moment — or tap Restore.";
     case "bad-request":
       return "Something about that request was wrong. Try again.";
     default:

@@ -13,6 +13,7 @@ import {
   FIX_MAX_AGE_MS,
   FIX_MAX_ACCURACY_M,
   FIX_MAX_DISTANCE_MI,
+  FIX_MAX_FUTURE_SKEW_MS,
   type AtBeachPush,
 } from "@/lib/alerts/run";
 import { conditionsFixture, type ConditionsOver } from "@/lib/alerts/fixtures";
@@ -126,7 +127,7 @@ describe("runAtBeachAlerts", () => {
   it("writes the alert log, so the same hazard stays quiet for 30 minutes", async () => {
     await seed();
     await run();
-    expect((await store.lastAlert(DEV, "lightning"))?.sentAt).toBe(NOW);
+    expect((await store.lastAlert(DEV, "lightning@boca-raton"))?.sentAt).toBe(NOW);
     const second = await run();
     expect(second).toMatchObject({ devices: 1, evaluated: 1, sent: 0, skipped: 1 });
   });
@@ -172,7 +173,7 @@ describe("runAtBeachAlerts", () => {
     const counts = await run();
     expect(counts).toEqual({ devices: 0, evaluated: 0, sent: 0, skipped: 0, errors: 0, pruned: 0 });
     expect(sent).toEqual([]);
-    expect(await store.lastAlert(DEV, "lightning")).toBeNull();
+    expect(await store.lastAlert(DEV, "lightning@boca-raton")).toBeNull();
   });
 
   it("prunes a dead token and stops pushing to it", async () => {
@@ -191,7 +192,7 @@ describe("runAtBeachAlerts", () => {
     await seed();
     const counts = await run({ sendResult: { ok: false, dead: false } });
     expect(counts).toMatchObject({ sent: 0, errors: 1 });
-    expect(await store.lastAlert(DEV, "lightning")).toBeNull();
+    expect(await store.lastAlert(DEV, "lightning@boca-raton")).toBeNull();
     // Right away, the send claim from the failed attempt is still active (not
     // yet 10 minutes old) — see #14 — so an immediate retry is held, not sent.
     const tooSoon = await run();
@@ -212,7 +213,7 @@ describe("runAtBeachAlerts", () => {
     expect(counts.sent).toBe(1);
     expect(sent[0].body).toBe("⚡ Lightning within 2 miles — take cover now.");
     // The quieter alert is marked too, so it does not arrive a run later.
-    expect(await store.lastAlert(DEV, "lightning")).not.toBeNull();
+    expect(await store.lastAlert(DEV, "lightning@boca-raton")).not.toBeNull();
   });
 
   it("remembers a wet fix so 'rain clearing' has something to clear from", async () => {
@@ -221,7 +222,7 @@ describe("runAtBeachAlerts", () => {
       feed: null,
       rain: { etaMinutes: null, rainingNow: true, clearingSoon: false, source: "radar" },
     });
-    expect((await store.lastAlert(DEV, "rain-wet"))?.sentAt).toBe(NOW);
+    expect((await store.lastAlert(DEV, "rain-wet@boca-raton"))?.sentAt).toBe(NOW);
 
     const clearing = await run({
       feed: null,
@@ -252,6 +253,60 @@ describe("runAtBeachAlerts", () => {
     await seed();
     const counts = await run({ feed: null });
     expect(counts).toMatchObject({ evaluated: 1, sent: 0, errors: 0 });
+  });
+});
+
+// Repeat suppression belongs to ONE monitored beach (LOC-08). Deerfield's
+// centroid is ~5 mi from Boca's, so the same device can re-arm there with a
+// fix that is near enough for the server to keep using it.
+describe("runAtBeachAlerts — the repeat window does not follow the phone to another beach (LOC-08)", () => {
+  const DEERFIELD = { lat: 26.3184, lon: -80.0748 };
+
+  async function monitor(slug: string, at: { lat: number; lon: number }, now = NOW) {
+    await store.setPresence(DEV, {
+      slug,
+      lat: at.lat,
+      lon: at.lon,
+      accuracyM: 20,
+      fixAt: now - 60_000,
+      armedUntil: now + 4 * HOUR,
+      source: "auto",
+    });
+  }
+
+  it("sends the same closure again, at once, at a newly monitored beach", async () => {
+    await seed();
+    await run({ feed: null, conditions: { flags: ["double-red"] } });
+    expect(sent.map((m) => m.body)).toEqual(["🚩 Double red flag at Boca Raton — beach closed to swimming."]);
+
+    const later = NOW + 5 * 60_000;
+    await monitor("deerfield-beach", DEERFIELD, later);
+    const counts = await run({ feed: null, conditions: { flags: ["double-red"] }, now: later });
+    expect(counts.sent).toBe(1);
+    expect(sent.at(-1)?.body).toContain("Deerfield");
+    expect(sent.at(-1)?.tag).toBe("safety:flag:deerfield-beach");
+  });
+
+  it("still holds a repeat at the SAME beach inside the window", async () => {
+    await seed();
+    await run({ feed: null, conditions: { flags: ["double-red"] } });
+    const again = await run({ feed: null, conditions: { flags: ["double-red"] }, now: NOW + 5 * 60_000 });
+    expect(again).toMatchObject({ sent: 0, skipped: 1 });
+  });
+
+  it("does not let rain memory from one beach qualify 'clearing' at another", async () => {
+    await seed();
+    await run({ feed: null, rain: { etaMinutes: null, rainingNow: true, clearingSoon: false, source: "radar" } });
+    expect(await store.lastAlert(DEV, "rain-wet@boca-raton")).not.toBeNull();
+
+    const later = NOW + 10 * 60_000;
+    await monitor("deerfield-beach", DEERFIELD, later);
+    const dryElsewhere = await run({
+      feed: null,
+      rain: { etaMinutes: null, rainingNow: false, clearingSoon: true, source: "radar" },
+      now: later,
+    });
+    expect(dryElsewhere.sent).toBe(0);
   });
 });
 
@@ -306,6 +361,15 @@ describe("fixOf", () => {
   it("falls back when the fix has no timestamp at all", () => {
     const f = fixOf(armed({ fixAt: null }), BEACH, NOW6);
     expect(f.fixSource).toBe("beach");
+  });
+
+  it("treats a future-dated fix as untrusted, not as fresh (LOC-09)", () => {
+    const skewOk = fixOf(armed({ fixAt: NOW6 + FIX_MAX_FUTURE_SKEW_MS }), BEACH, NOW6);
+    expect(skewOk.fixSource).toBe("device");
+    const future = fixOf(armed({ fixAt: NOW6 + FIX_MAX_FUTURE_SKEW_MS + 1 }), BEACH, NOW6);
+    expect(future.fixSource).toBe("beach");
+    const tomorrow = fixOf(armed({ fixAt: NOW6 + 24 * HOUR }), BEACH, NOW6);
+    expect(tomorrow.fixSource).toBe("beach");
   });
 
   it("uses a fix exactly at the age limit, falls back just past it", () => {

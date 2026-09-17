@@ -180,6 +180,7 @@ describe("presence + listArmed", () => {
       slug: "boca-raton",
       armedUntil: now + HOUR,
       source: "auto",
+      hasFix: true,
     });
   });
 
@@ -310,3 +311,32 @@ describe("send claims (#14)", () => {
     expect(await store.claimSend("fresh", 1000 + THREE_DAYS + 2)).toBe(false);
   });
 });
+
+describe("purgeExpiredPresenceFixes", () => {
+  const NOW = 2_000_000_000_000;
+  const fix = { lat: 26.35, lon: -80.07, accuracyM: 20, fixAt: NOW - 60_000 };
+
+  it("blanks the coordinates of an expired window but keeps the row and its slug", async () => {
+    await store.upsertDevice("d-exp", { codeUntil: NOW + HOUR });
+    await store.setPresence("d-exp", { slug: "boca-raton", ...fix, armedUntil: NOW - 1, source: "auto" });
+    expect(await store.purgeExpiredPresenceFixes(NOW)).toBe(1);
+    const dev = await store.getDevice("d-exp");
+    expect(dev?.presence?.slug).toBe("boca-raton"); // the row survives
+    // Not armed any more, so it is not listed — and the fix itself is gone.
+    expect(await store.listArmed(NOW)).toEqual([]);
+    expect(await store.listArmed(NOW - 60_000)).toMatchObject([
+      { presence: { lat: null, lon: null, accuracyM: null, fixAt: null } },
+    ]);
+  });
+
+  it("leaves a live window's fix alone, and is idempotent", async () => {
+    await store.upsertDevice("d-live", { codeUntil: NOW + HOUR });
+    await store.setPresence("d-live", { slug: "boca-raton", ...fix, armedUntil: NOW + HOUR, source: "auto" });
+    expect(await store.purgeExpiredPresenceFixes(NOW)).toBe(0);
+    expect((await store.listArmed(NOW))[0].presence.lat).toBe(26.35);
+    await store.setPresence("d-live", { slug: "boca-raton", ...fix, armedUntil: NOW - 1, source: "auto" });
+    expect(await store.purgeExpiredPresenceFixes(NOW)).toBe(1);
+    expect(await store.purgeExpiredPresenceFixes(NOW)).toBe(0);
+  });
+});
+

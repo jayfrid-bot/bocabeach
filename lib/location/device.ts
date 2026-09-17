@@ -14,7 +14,9 @@ export interface Fix {
   at: number;
 }
 
-export type FixErrorReason = "denied" | "unavailable" | "timeout" | "unsupported";
+/** `stale`: the OS answered a FRESH request with a position too old (or too
+ *  far in the future) to describe where the phone is now (LOC-06). */
+export type FixErrorReason = "denied" | "unavailable" | "timeout" | "unsupported" | "stale";
 
 export interface FixError {
   error: FixErrorReason;
@@ -26,6 +28,31 @@ export interface FixError {
  *  not — Beach Mode's distance math would then describe somewhere the phone
  *  used to be, not where it is arming. */
 export const FIX_STALE_MS = 5 * 60 * 1000;
+
+/**
+ * A fix worse than this cannot place someone at one beach rather than the
+ * next one over (LOC-12). Same number as the server's `FIX_MAX_ACCURACY_M`
+ * gate in lib/alerts/run.ts, on purpose: the card must not claim an arrival
+ * the server would then quietly downgrade to the beach centroid.
+ */
+export const FIX_MAX_ACCURACY_M = 500;
+
+/** A fix older than this cannot establish arrival, however close it looks —
+ *  three minutes is "still standing here", thirty is "was here". */
+export const ARRIVAL_MAX_FIX_AGE_MS = 3 * 60 * 1000;
+
+/** Tolerated forward clock skew on a fix timestamp. Beyond this it is wrong. */
+export const FIX_MAX_FUTURE_SKEW_MS = 60 * 1000;
+
+/**
+ * The freshness an arm / presence-refresh request asks the OS for (LOC-06):
+ * at most this old from the OS cache, high accuracy on. Casual browsing
+ * (`getFix()` defaults) keeps the cheap ten-minute cached path.
+ */
+export const FRESH_FIX_MAX_AGE_MS = 15 * 1000;
+/** …and the oldest a returned "fresh" fix may actually be before it is
+ *  rejected as `stale` — the OS is allowed a little slack over the ask. */
+export const FRESH_FIX_ACCEPT_AGE_MS = 60 * 1000;
 
 /**
  * Pure: should a foreground reopen refresh the session fix? Only when one
@@ -77,29 +104,65 @@ function getPlugin(): typeof Geolocation {
   return nativeBridge()?.Plugins?.Geolocation ?? Geolocation;
 }
 
-/** Best-effort permission read. Never throws; "unknown" when it can't tell. */
-export async function checkLocationPermission(): Promise<"granted" | "denied" | "prompt" | "unknown"> {
+export type PermissionState = "granted" | "denied" | "prompt" | "unknown";
+
+/**
+ * Permission plus how precise it is. Android can grant APPROXIMATE location
+ * without precise (LOC-07): that is enough to list nearby beaches, not
+ * enough to say "you are standing on this one" — Beach Mode applies its own
+ * accuracy policy on the fix itself (`FIX_MAX_ACCURACY_M`).
+ */
+export interface LocationAccess {
+  state: PermissionState;
+  /** "fine" once precise location is granted; "coarse" for approximate-only;
+   *  "unknown" when nothing is granted or the platform does not say. */
+  precision: "fine" | "coarse" | "unknown";
+}
+
+type NativePermState = string | undefined;
+
+/** Pure: fold Capacitor's two permission aliases into one answer. Exported for tests. */
+export function resolveNativeAccess(perm: { location?: NativePermState; coarseLocation?: NativePermState }): LocationAccess {
+  const fine = perm.location;
+  const coarse = perm.coarseLocation;
+  if (fine === "granted") return { state: "granted", precision: "fine" };
+  // A defined `location: "denied"` must NOT beat `coarseLocation: "granted"`:
+  // approximate access is a usable grant, just not a precise one.
+  if (coarse === "granted") return { state: "granted", precision: "coarse" };
+  const isPrompt = (s: NativePermState) => s === "prompt" || s === "prompt-with-rationale";
+  if (isPrompt(fine) || isPrompt(coarse)) return { state: "prompt", precision: "unknown" };
+  if (fine === "denied" || coarse === "denied") return { state: "denied", precision: "unknown" };
+  return { state: "unknown", precision: "unknown" };
+}
+
+/** Best-effort permission + precision read. Never throws. */
+export async function checkLocationAccess(): Promise<LocationAccess> {
   if (isNativeLocation()) {
     try {
       const GEO = getPlugin();
-      const perm = await GEO.checkPermissions();
-      const state = perm.location ?? perm.coarseLocation;
-      if (state === "granted") return "granted";
-      if (state === "denied") return "denied";
-      if (state === "prompt" || state === "prompt-with-rationale") return "prompt";
-      return "unknown";
+      return resolveNativeAccess(await GEO.checkPermissions());
     } catch {
-      return "unknown";
+      return { state: "unknown", precision: "unknown" };
     }
   }
-  if (typeof navigator === "undefined" || !navigator.permissions?.query) return "unknown";
+  if (typeof navigator === "undefined" || !navigator.permissions?.query) {
+    return { state: "unknown", precision: "unknown" };
+  }
   try {
     const status = await navigator.permissions.query({ name: "geolocation" as PermissionName });
     const state = status.state;
-    return state === "granted" || state === "denied" || state === "prompt" ? state : "unknown";
+    const known = state === "granted" || state === "denied" || state === "prompt" ? state : "unknown";
+    // The browser API does not distinguish precision; a grant is treated as
+    // fine and the fix's own accuracy decides the rest.
+    return { state: known, precision: known === "granted" ? "fine" : "unknown" };
   } catch {
-    return "unknown";
+    return { state: "unknown", precision: "unknown" };
   }
+}
+
+/** Best-effort permission read. Never throws; "unknown" when it can't tell. */
+export async function checkLocationPermission(): Promise<PermissionState> {
+  return (await checkLocationAccess()).state;
 }
 
 function mapWebErrorCode(code: number): FixErrorReason {
@@ -109,7 +172,7 @@ function mapWebErrorCode(code: number): FixErrorReason {
   return "unavailable";
 }
 
-function getWebFix(timeoutMs: number, maxAgeMs: number): Promise<Fix | FixError> {
+function getWebFix(timeoutMs: number, maxAgeMs: number, highAccuracy: boolean): Promise<Fix | FixError> {
   return new Promise((resolve) => {
     if (typeof navigator === "undefined" || !navigator.geolocation) {
       resolve({ error: "unsupported" });
@@ -127,7 +190,7 @@ function getWebFix(timeoutMs: number, maxAgeMs: number): Promise<Fix | FixError>
       (err) => {
         resolve({ error: mapWebErrorCode(err.code) });
       },
-      { enableHighAccuracy: false, timeout: timeoutMs, maximumAge: maxAgeMs },
+      { enableHighAccuracy: highAccuracy, timeout: timeoutMs, maximumAge: maxAgeMs },
     );
   });
 }
@@ -145,11 +208,11 @@ function mapNativeError(err: unknown): FixError {
   return { error: "unavailable" };
 }
 
-async function getNativeFix(timeoutMs: number, maxAgeMs: number): Promise<Fix | FixError> {
+async function getNativeFix(timeoutMs: number, maxAgeMs: number, highAccuracy: boolean): Promise<Fix | FixError> {
   try {
     const GEO = getPlugin();
     const pos = await GEO.getCurrentPosition({
-      enableHighAccuracy: false,
+      enableHighAccuracy: highAccuracy,
       timeout: timeoutMs,
       maximumAge: maxAgeMs,
     });
@@ -169,14 +232,49 @@ async function getNativeFix(timeoutMs: number, maxAgeMs: number): Promise<Fix | 
  * denial, a plugin/browser with no geolocation, or a timeout all come back as
  * a `FixError` the caller can switch on.
  */
-export async function getFix(opts?: { timeoutMs?: number; maxAgeMs?: number }): Promise<Fix | FixError> {
+export async function getFix(opts?: {
+  timeoutMs?: number;
+  maxAgeMs?: number;
+  highAccuracy?: boolean;
+}): Promise<Fix | FixError> {
   const timeoutMs = opts?.timeoutMs ?? 10_000;
   const maxAgeMs = opts?.maxAgeMs ?? 600_000;
+  const highAccuracy = opts?.highAccuracy ?? false;
   try {
-    return isNativeLocation() ? await getNativeFix(timeoutMs, maxAgeMs) : await getWebFix(timeoutMs, maxAgeMs);
+    return isNativeLocation()
+      ? await getNativeFix(timeoutMs, maxAgeMs, highAccuracy)
+      : await getWebFix(timeoutMs, maxAgeMs, highAccuracy);
   } catch {
     // Belt-and-suspenders: getWebFix/getNativeFix already catch internally,
     // but a caller must never see a rejected promise from getFix.
     return { error: "unavailable" };
   }
+}
+
+/**
+ * Pure: is a fix the OS handed back for a FRESH request actually fresh?
+ * A missing or non-finite timestamp is not trusted either — "fresh" has to be
+ * something we can check, not something we assume.
+ */
+export function validateFreshFix(fix: Fix, nowMs: number): Fix | FixError {
+  if (!Number.isFinite(fix.at)) return { error: "stale" };
+  if (nowMs - fix.at > FRESH_FIX_ACCEPT_AGE_MS) return { error: "stale" };
+  if (fix.at - nowMs > FIX_MAX_FUTURE_SKEW_MS) return { error: "stale" };
+  return fix;
+}
+
+/**
+ * A fix for arming Beach Mode or refreshing an armed presence (LOC-06): high
+ * accuracy, no more than FRESH_FIX_MAX_AGE_MS from the OS cache, and the
+ * returned timestamp is checked — an eight-minute-old cached position cannot
+ * satisfy this call. Never rejects.
+ */
+export async function getFreshFix(opts?: { timeoutMs?: number; nowMs?: number }): Promise<Fix | FixError> {
+  const got = await getFix({
+    timeoutMs: opts?.timeoutMs ?? 15_000,
+    maxAgeMs: FRESH_FIX_MAX_AGE_MS,
+    highAccuracy: true,
+  });
+  if ("error" in got) return got;
+  return validateFreshFix(got, opts?.nowMs ?? Date.now());
 }

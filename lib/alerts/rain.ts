@@ -33,8 +33,14 @@ export interface RainRead {
   etaMinutes: number | null;
   /** It is raining at the fix right now. */
   rainingNow: boolean;
-  /** Dry now AND nothing expected within CLEAR_HORIZON_MIN. */
+  /** Dry now AND the whole CLEAR_HORIZON_MIN ahead is known and dry. */
   clearingSoon: boolean;
+  /**
+   * The forecast path's honesty flag (LOC-11): true only when every 15-minute
+   * bucket from now through CLEAR_HORIZON_MIN was present and known. Radar
+   * reads are one observation, so they leave it unset.
+   */
+  horizonKnown?: boolean;
   source: "radar" | "forecast";
 }
 
@@ -66,51 +72,93 @@ interface MinutelyPayload {
   };
 }
 
-/** Parse a `minutely_15` payload into a read for `nowMs`. Pure, so it is tested. */
+/** One 15-minute step of the forecast. */
+const STEP_MS = 15 * 60_000;
+
+/** What one bucket says. "unknown" is a real answer — never rounded to dry. */
+type Bucket = "wet" | "dry" | "unknown";
+
+function bucketState(p: number | null | undefined, q: number | null | undefined): Bucket {
+  const hasP = typeof p === "number" && Number.isFinite(p);
+  const hasQ = typeof q === "number" && Number.isFinite(q);
+  if (!hasP && !hasQ) return "unknown";
+  if ((hasP && p > 0) || (hasQ && q >= WET_PROBABILITY)) return "wet";
+  return "dry";
+}
+
+/**
+ * Parse a `minutely_15` payload into a read for `nowMs`. Pure, so it is tested.
+ *
+ * Open-Meteo's 15-minute precipitation is an ACCUMULATION over the preceding
+ * interval — a value stamped 13:15 describes 13:00–13:15 (LOC-10). So each
+ * timestamp is the END of its bucket, and "now" lives in the bucket whose
+ * `(end - 15 min, end]` window contains it. Probability rides along with the
+ * same bucket.
+ *
+ * Three answers per bucket — wet, dry, unknown — and "clearing" is promised
+ * only when every bucket from now through CLEAR_HORIZON_MIN is present,
+ * contiguous and known-dry (LOC-11). A missing array, a null, a gap or a
+ * feed that stops at midnight cannot say the sky is clearing; it can only
+ * say we do not know.
+ */
 export function parseMinutely(json: MinutelyPayload, nowMs: number): RainRead | null {
   const m = json?.minutely_15;
   const times = m?.time;
   if (!Array.isArray(times) || times.length === 0) return null;
 
-  const precip = m?.precipitation ?? [];
-  const prob = m?.precipitation_probability ?? [];
-  const wet = (i: number): boolean => {
-    const p = precip[i];
-    const q = prob[i];
-    if (typeof p === "number" && p > 0) return true;
-    return typeof q === "number" && q >= WET_PROBABILITY;
-  };
+  const precip = Array.isArray(m?.precipitation) ? m.precipitation : [];
+  const prob = Array.isArray(m?.precipitation_probability) ? m.precipitation_probability : [];
 
-  let rainingNow = false;
-  let eta: number | null = null;
-  let anyAhead = false;
-  let wetAhead = false;
-
+  const buckets: { start: number; end: number; state: Bucket }[] = [];
   for (let i = 0; i < times.length; i++) {
     // Open-Meteo returns "YYYY-MM-DDThh:mm" in GMT; pin it to UTC explicitly
     // (same convention as lib/sources/hourlyForecast.ts).
-    const start = Date.parse(`${times[i]}:00Z`);
-    if (!Number.isFinite(start)) continue;
-    const end = start + 15 * 60_000;
-    if (end <= nowMs) continue; // already elapsed
-    if (start <= nowMs) {
-      if (wet(i)) rainingNow = true;
-      continue;
-    }
-    const minutesOut = Math.round((start - nowMs) / 60_000);
-    if (minutesOut >= CLEAR_HORIZON_MIN) break; // past the hour we speak for
-    anyAhead = true;
-    if (wet(i)) {
-      wetAhead = true;
-      if (eta == null) eta = minutesOut;
-    }
+    const end = Date.parse(`${times[i]}:00Z`);
+    if (!Number.isFinite(end)) continue;
+    buckets.push({ start: end - STEP_MS, end, state: bucketState(precip[i], prob[i]) });
+  }
+  buckets.sort((a, b) => a.end - b.end);
+
+  const horizonEnd = nowMs + CLEAR_HORIZON_MIN * 60_000;
+  const current = buckets.find((b) => b.start <= nowMs && nowMs < b.end) ?? null;
+  const nowState: Bucket = current?.state ?? "unknown";
+
+  // The earliest KNOWN wet bucket ahead, inside the hour we speak for.
+  let eta: number | null = null;
+  let anyKnownAhead = false;
+  for (const b of buckets) {
+    if (b.start <= nowMs || b.start >= horizonEnd) continue;
+    if (b.state === "unknown") continue;
+    anyKnownAhead = true;
+    if (b.state === "wet" && eta == null) eta = Math.round((b.start - nowMs) / 60_000);
   }
 
-  if (!anyAhead && !rainingNow) return null; // nothing usable in the window
+  // Coverage: walk contiguous known buckets from the current one until the
+  // horizon is reached. Any hole — missing bucket, unknown value, feed that
+  // ends early — leaves the horizon unknown.
+  let horizonKnown = false;
+  let wetInHorizon = false;
+  if (current && current.state !== "unknown") {
+    let cursor = current;
+    let covered = cursor.end >= horizonEnd;
+    while (!covered) {
+      const next = buckets.find((b) => b.start === cursor.end);
+      if (!next || next.state === "unknown") break;
+      if (next.state === "wet") wetInHorizon = true;
+      cursor = next;
+      covered = cursor.end >= horizonEnd;
+    }
+    horizonKnown = covered;
+  }
+
+  if (nowState === "unknown" && !anyKnownAhead) return null; // nothing usable in the window
+
+  const rainingNow = nowState === "wet";
   return {
-    etaMinutes: eta,
+    etaMinutes: rainingNow ? null : eta,
     rainingNow,
-    clearingSoon: !rainingNow && anyAhead && !wetAhead,
+    clearingSoon: nowState === "dry" && horizonKnown && !wetInHorizon,
+    horizonKnown,
     source: "forecast",
   };
 }
@@ -123,7 +171,10 @@ async function fetchMinutely(rawLat: number, rawLon: number, nowMs: number): Pro
   const url =
     `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
     `&minutely_15=precipitation,precipitation_probability` +
-    `&precipitation_unit=inch&forecast_days=1`;
+    // Two days, not one: a run late in the UTC day would otherwise see its
+    // 60-minute horizon cut off at midnight and could never say "clearing"
+    // (LOC-11), or worse, mistake the truncation for a dry hour.
+    `&precipitation_unit=inch&forecast_days=2`;
   try {
     const res = await fetchWithTimeout(url, {
       timeoutMs: 7000,

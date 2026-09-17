@@ -140,7 +140,15 @@ export interface DeviceRecord {
   grants: DeviceGrants;
   trialUsed: boolean;
   previewSeen: boolean;
-  presence: { slug: string; armedUntil: number; source: PresenceSource } | null;
+  presence: {
+    slug: string;
+    armedUntil: number;
+    source: PresenceSource;
+    /** The session carries the phone's own coordinates (LOC-03/LOC-05: the
+     *  card says whether geometry is "your spot" or "the beach"). The fix
+     *  itself is never returned. */
+    hasFix: boolean;
+  } | null;
 }
 
 /**
@@ -367,6 +375,7 @@ export function toRecord(row: DeviceRow, presence?: PresenceRow | null): DeviceR
           slug: presence.slug,
           armedUntil: presence.armed_until,
           source: presence.source === "auto" ? "auto" : "manual",
+          hasFix: presence.lat != null && presence.lon != null,
         }
       : null,
   };

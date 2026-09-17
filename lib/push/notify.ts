@@ -63,8 +63,15 @@ export interface PushSummary {
 }
 
 // The genuinely dangerous, beach-closing NWS warnings (mirrors score.ts).
-const SEVERE_ALERT =
+// Exported so lib/alerts/evaluate.ts judges "severe" by the same rule the
+// in-app banner does, while evaluating every hazard independently (LOC-01).
+export const SEVERE_ALERT =
   /hurricane warning|tropical storm warning|storm surge warning|tsunami (warning|advisory)|high surf warning|tornado warning|flash flood warning|special marine warning|extreme wind warning|coastal flood warning/i;
+
+/** Is this NWS alert one of the beach-closing warnings? */
+export function isSevereAlert(a: { event: string; severity?: string }): boolean {
+  return SEVERE_ALERT.test(a.event) || /^(Severe|Extreme)$/i.test(a.severity ?? "");
+}
 
 /**
  * Extract the single highest-priority active safety condition from a snapshot,
@@ -87,9 +94,7 @@ export function activeSafety(res: ConditionsResponse): { key: string; text: stri
   }
 
   const alerts = s.nws.data?.alerts ?? [];
-  const severe = alerts.find(
-    (a) => SEVERE_ALERT.test(a.event) || /^(Severe|Extreme)$/i.test(a.severity),
-  );
+  const severe = alerts.find(isSevereAlert);
   if (severe) return { key: `severe:${severe.event}`, text: `${severe.event} in effect.` };
 
   if (s.cityOfficial.data?.noSwimAdvisory || s.waterQuality.data?.advisory) {

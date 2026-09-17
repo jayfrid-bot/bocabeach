@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { setHomeBeach } from "@/lib/homeBeach";
 import { nearestServedBeach } from "@/lib/location/nearest";
 import type { PlusState } from "@/lib/plus/client";
@@ -36,19 +36,26 @@ export function FirstRunBanner({
   const fix = useDeviceFix();
   const [state, setState] = useState<State>("hidden");
   const [far, setFar] = useState<{ name: string; slug: string; mi: number } | null>(null);
+  // R-03: a dismiss while the position request is still out must cancel the
+  // continuation — no home-beach change, no redirect, arriving after the
+  // person said "no thanks". Each find() gets a ticket; dismiss retires it.
+  const findTicket = useRef(0);
 
   useEffect(() => {
     if (!readFirstRunDone()) setState("offer");
   }, []);
 
   const dismiss = () => {
+    findTicket.current += 1;
     writeFirstRunDone(true);
     setState("hidden");
   };
 
   const find = async () => {
+    const ticket = ++findTicket.current;
     setState("locating");
     const got = await fix.request();
+    if (ticket !== findTicket.current) return; // dismissed while looking
     writeFirstRunDone(true);
     if (!got) {
       // Denied, unavailable, or timed out. Say nothing — this was optional.

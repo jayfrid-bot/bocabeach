@@ -39,9 +39,12 @@ function input(over: EvalOver = {}): AtBeachInput {
   };
 }
 
-const keys = (ds: { dedupKey: string }[]): string[] => ds.map((d) => d.dedupKey);
+// Every at-beach dedup key is scoped to the monitored beach (`…@boca-raton`,
+// LOC-08); these table tests are about WHICH hazards fire, so the scope is
+// stripped here and asserted once, explicitly, below.
+const keys = (ds: { dedupKey: string }[]): string[] => ds.map((d) => d.dedupKey.replace(/@boca-raton$/, ""));
 const bodyOf = (ds: { dedupKey: string; body: string }[], key: string): string | undefined =>
-  ds.find((d) => d.dedupKey === key)?.body;
+  ds.find((d) => d.dedupKey.replace(/@boca-raton$/, "") === key)?.body;
 
 function prefsWithout(key: keyof AlertPrefs): AlertPrefs {
   const p = defaultPrefs();
@@ -55,6 +58,81 @@ const SWIM: ScoreProfile = { profiles: ["swim"], heat: "normal", crowds: "normal
 describe("evaluateAtBeach — a quiet beach", () => {
   it("says nothing when nothing is happening", () => {
     expect(evaluateAtBeach(input())).toEqual([]);
+  });
+});
+
+describe("evaluateAtBeach — dedup keys are scoped to the monitored beach (LOC-08)", () => {
+  it("carries the slug on every at-beach key", () => {
+    const out = evaluateAtBeach(input({ conditions: { flags: ["double-red"] } }));
+    expect(out.map((d) => d.dedupKey)).toEqual(["flag:double-red@boca-raton"]);
+  });
+
+  it("scopes the lightning escalation's supersedes to the same beach", () => {
+    const out = evaluateAtBeach(input({ strikes: strikes({ nearestMi: 1.4, nearestMinutesAgo: 1 }) }));
+    const esc = out.find((d) => d.dedupKey === "lightning:2mi@boca-raton")!;
+    expect(esc.supersedes).toEqual(["lightning@boca-raton"]);
+  });
+});
+
+describe("evaluateAtBeach — hazards are judged independently (LOC-01)", () => {
+  it("A: a Tornado Warning survives centroid lightning the fix-based read replaces", () => {
+    // The snapshot shows lightning 4 mi from the beach centre; the person's
+    // own fix has no qualifying strike. The old one-headline selector picked
+    // lightning, dropped it, and never looked at the tornado.
+    const out = evaluateAtBeach(
+      input({
+        strikes: null,
+        conditions: {
+          lightning: { nearestMi: 4, nearestMinutesAgo: 3, lastMinutesAgo: 3 },
+          alerts: [{ event: "Tornado Warning", severity: "Extreme" }],
+        },
+      }),
+    );
+    expect(keys(out)).toEqual(["severe:Tornado Warning"]);
+  });
+
+  it("B: a double-red closure is not hidden behind a high rip", () => {
+    const out = evaluateAtBeach(input({ conditions: { rip: "high", flags: ["double-red"] } }));
+    expect(keys(out)).toEqual(["rip", "flag:double-red"]);
+  });
+
+  it("C: turning water-advisory pushes off does not silence an enabled closure", () => {
+    const out = evaluateAtBeach(
+      input({
+        conditions: { waterAdvisory: true, flags: ["double-red"] },
+        device: { prefs: prefsWithout("water-advisory"), profile: null },
+      }),
+    );
+    expect(keys(out)).toEqual(["flag:double-red"]);
+  });
+
+  it("names every distinct severe warning, once each", () => {
+    const out = evaluateAtBeach(
+      input({
+        conditions: {
+          alerts: [
+            { event: "Tornado Warning", severity: "Extreme" },
+            { event: "Flash Flood Warning", severity: "Severe" },
+            { event: "Tornado Warning", severity: "Extreme" },
+          ],
+        },
+      }),
+    );
+    expect(keys(out)).toEqual(["severe:Flash Flood Warning", "severe:Tornado Warning"]);
+  });
+
+  it("still lets the fix-based lightning read replace only the centroid rung", () => {
+    const out = evaluateAtBeach(
+      input({
+        strikes: strikes({ nearestMi: 3.0, nearestMinutesAgo: 2 }),
+        conditions: {
+          lightning: { nearestMi: 1, nearestMinutesAgo: 1, lastMinutesAgo: 1 },
+          flags: ["double-red"],
+        },
+      }),
+    );
+    // One lightning subject (from the fix, 3 mi → no escalation), plus the closure.
+    expect(keys(out)).toEqual(["lightning", "flag:double-red"]);
   });
 });
 
@@ -81,9 +159,9 @@ describe("evaluateAtBeach — lightning, from the person's own fix", () => {
   it("escalates inside 2 miles, and the escalation replaces the plain alert", () => {
     const out = evaluateAtBeach(input({ strikes: strikes({ nearestMi: 1.4, nearestMinutesAgo: 1 }) }));
     expect(keys(out)).toEqual(["lightning", "lightning:2mi"]); // both offered
-    const esc = out.find((d) => d.dedupKey === "lightning:2mi")!;
+    const esc = out.find((d) => d.dedupKey === "lightning:2mi@boca-raton")!;
     expect(esc.body).toBe("⚡ Lightning within 2 miles — take cover now.");
-    expect(esc.supersedes).toEqual(["lightning"]); // dedup drops the quieter one
+    expect(esc.supersedes).toEqual(["lightning@boca-raton"]); // dedup drops the quieter one
   });
 
   it("respects the lightning opt-out", () => {

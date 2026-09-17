@@ -269,3 +269,33 @@ and may be re-claimed.
 | City of Fort Lauderdale Fire Rescue "Beach Conditions" page | Lifeguard flags, sea pests, ocean report (`workers/uw-frame`, Browser Rendering) |
 | Apple Push Notification service (APNs) | iOS push delivery |
 | Firebase Cloud Messaging (FCM) | Android push delivery |
+
+**Alert evaluation after the 2026-09 location audit (LOC-01, LOC-08, LOC-09).**
+`evaluateAtBeach` judges every snapshot hazard independently (severe warnings,
+Beach Hazards Statement, thunder, water advisory, rip, flag) and only replaces
+the centroid *lightning* rung with the device-fix read; preferences apply to
+the whole set. Dedup keys are beach-scoped — `flag:double-red@boca-raton`,
+`lightning:2mi@deerfield-beach` (`lib/alerts/catalog.ts` `scopeKey`) — as are
+the rain-memory marks `rain-soon@<slug>` / `rain-wet@<slug>` and the send
+claim built from the same key. `fixOf` rejects a fix more than 60 s in the
+future. `/api/presence` 400s a `fixAt` ahead of the server clock or an
+`accuracyM` that is not a number in [0, 1e6], and returns `pushReady` (a push
+token is stored) plus `device.presence.hasFix`, which the Beach Mode card uses
+to say "Safety alerts on" only when delivery is possible and whether geometry
+is the phone's spot or the beach. `/api/push/run` housekeeping now also runs
+`purgeExpiredPresenceFixes(now)`, blanking `lat/lon/accuracy_m/fix_at` on
+every `presence` row whose `armed_until` has passed. Open-Meteo `minutely_15`
+is requested with `forecast_days=2` and each value is read as the accumulation
+over the 15 minutes *ending* at its timestamp; unknown buckets stay unknown.
+
+**Billing hardening (2026-09-17).** `/api/devices/trial` is off unless
+`PLUS_SERVER_TRIAL=on` (the App Store's own 3-day trial via RevenueCat is the
+real one). `/api/devices/unlock` is rate-limited on `PUSH_KV`
+(`lib/plus/rateLimit.ts`, 5 attempts/hour per IP and per device, 429 +
+Retry-After) and accepts `PLUS_UNLOCK_CODES` (comma-separated, individually
+revocable). The RevenueCat webhook reconciles `original_app_user_id` and
+`transferred_from` on `TRANSFER` so an old device loses `store_until`. The app
+self-heals entitlement: `refresh()` re-asks RevenueCat (`syncPurchase`, at
+most every 6 h) when a store grant is within 48 h of expiry or lapsed within
+7 days, and a purchase whose sync failed is queued as a `purchaseSync` pending
+write retried on foreground.

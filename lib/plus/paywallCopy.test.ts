@@ -46,16 +46,21 @@ describe("paywallCopy", () => {
     expect(copy.ctaDisabled).toBe(false);
   });
 
-  it("never promises a trial when eligibility is ineligible", () => {
+  it("never promises a trial when eligibility is ineligible, and states title/price/renewal together", () => {
     const copy = paywallCopy({ status: "loaded", plan: "monthly", price: "$2.99", eligibility: "ineligible" });
     expect(copy.ctaLabel).toBe("Subscribe · $2.99/mo");
-    expect(copy.finePrint).toBe("Renews until you cancel in Settings. Cancel anytime.");
+    expect(copy.finePrint).toBe("Beach Day Plus · $2.99/mo, renews until you cancel in Settings.");
   });
 
   it("never promises a trial when eligibility is unknown either", () => {
     const copy = paywallCopy({ status: "loaded", plan: "monthly", price: "$2.99", eligibility: "unknown" });
     expect(copy.ctaLabel).toBe("Subscribe · $2.99/mo");
-    expect(copy.finePrint).toBe("Renews until you cancel in Settings. Cancel anytime.");
+    expect(copy.finePrint).toBe("Beach Day Plus · $2.99/mo, renews until you cancel in Settings.");
+  });
+
+  it("uses the yearly price and period when that plan is selected", () => {
+    const copy = paywallCopy({ status: "loaded", plan: "yearly", price: "$19.99", eligibility: "ineligible" });
+    expect(copy.finePrint).toBe("Beach Day Plus · $19.99/yr, renews until you cancel in Settings.");
   });
 
   it("switches between monthly and yearly price and period text", () => {

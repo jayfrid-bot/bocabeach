@@ -58,6 +58,18 @@ describe("buildAlert — collapse id (tag)", () => {
     expect(excellent.tag).toBe("excellent");
   });
 
+  it("scopes the at-beach DEDUP key to the beach, and leaves the home tier alone (LOC-08)", () => {
+    const here = buildAlert({ key: "flag", flag: "double-red" }, BOCA);
+    const there = buildAlert({ key: "flag", flag: "double-red" }, COCOA);
+    expect(here.dedupKey).toBe("flag:double-red@boca-raton");
+    expect(there.dedupKey).toBe("flag:double-red@cocoa-beach");
+    const esc = buildAlert({ key: "lightning", nearestMi: 1, escalated: true }, BOCA);
+    expect(esc.dedupKey).toBe("lightning:2mi@boca-raton");
+    expect(esc.supersedes).toEqual(["lightning@boca-raton"]);
+    const excellent = buildAlert({ key: "score-excellent", score: 95, dedupKey: "score-excellent:2026-09-02" }, BOCA);
+    expect(excellent.dedupKey).toBe("score-excellent:2026-09-02");
+  });
+
   it("still produces a usable tag when no slug is given (the home tier never needs one)", () => {
     const excellent = buildAlert(
       { key: "score-excellent", score: 95, dedupKey: "score-excellent:2026-09-02" },

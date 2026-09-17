@@ -26,6 +26,7 @@ import type { DeviceStore } from "@/lib/db/store";
 import type { ArmedDevice, PushableDevice } from "@/lib/db/types";
 import type { ConditionsResponse } from "@/lib/types";
 import { evaluateAtBeach, RAIN_MEMORY_MS } from "@/lib/alerts/evaluate";
+import { scopeKey } from "@/lib/alerts/catalog";
 import { splitByDedup } from "@/lib/alerts/dedup";
 import { loadLightningFeed } from "@/lib/alerts/lightningFeed";
 import { newRainCache, rainForFix, type RainRead } from "@/lib/alerts/rain";
@@ -94,6 +95,11 @@ export const FIX_MAX_ACCURACY_M = 500;
 /** A fix this far from the ARMED beach belongs to a different day, not this
  *  arm — manually monitoring a distant destination must not borrow it. */
 export const FIX_MAX_DISTANCE_MI = 15 * 0.621371; // 15 km
+/** A fix dated further ahead of the server clock than this is not "fresh", it
+ *  is wrong (LOC-09): a negative age must never pass the staleness check. The
+ *  presence route rejects such fixes outright; this is the belt for rows that
+ *  were stored before it did. */
+export const FIX_MAX_FUTURE_SKEW_MS = 60 * 1000;
 
 export interface Fix {
   lat: number;
@@ -119,20 +125,26 @@ export function fixOf(
   const { lat, lon, fixAt, accuracyM } = armed.presence;
   if (lat == null || lon == null || !Number.isFinite(lat) || !Number.isFinite(lon)) return beach;
   if (fixAt == null || !Number.isFinite(fixAt) || nowMs - fixAt > FIX_MAX_AGE_MS) return beach;
+  if (fixAt - nowMs > FIX_MAX_FUTURE_SKEW_MS) return beach; // future-dated → not trusted (LOC-09)
   if (accuracyM != null && Number.isFinite(accuracyM) && accuracyM > FIX_MAX_ACCURACY_M) return beach;
   if (haversineMiles(lat, lon, fallback.lat, fallback.lon) > FIX_MAX_DISTANCE_MI) return beach;
   return { lat, lon, fixSource: "device" };
 }
 
-/** The last time this device heard anything about rain (for "rain clearing"). */
+/**
+ * The last time this device heard anything about rain AT THIS BEACH (for
+ * "rain clearing"). Scoped by slug (LOC-08): a wet spell at A must never make
+ * a dry B say "clearing".
+ */
 async function recentRain(
   store: DeviceStore,
   deviceId: string,
+  slug: string,
   now: number,
 ): Promise<{ soonAt: number | null; wetAt: number | null }> {
   const [soon, wet] = await Promise.all([
-    store.lastAlert(deviceId, "rain-soon"),
-    store.lastAlert(deviceId, "rain-wet"),
+    store.lastAlert(deviceId, scopeKey("rain-soon", slug)),
+    store.lastAlert(deviceId, scopeKey("rain-wet", slug)),
   ]);
   const fresh = (at: number | undefined): number | null =>
     at != null && now - at <= RAIN_MEMORY_MS ? at : null;
@@ -193,7 +205,11 @@ export async function runAtBeachAlerts(deps: AtBeachDeps): Promise<AtBeachCounts
 
       // Remember a wet fix even when nothing is sent — it is what later makes
       // "rain clearing" a sentence a person recognizes.
-      if (rain?.rainingNow) await store.markAlert(device.device.id, "rain-wet", now, { slug: device.presence.slug });
+      if (rain?.rainingNow) {
+        await store.markAlert(device.device.id, scopeKey("rain-wet", device.presence.slug), now, {
+          slug: device.presence.slug,
+        });
+      }
 
       const decisions = evaluateAtBeach({
         now,
@@ -203,7 +219,7 @@ export async function runAtBeachAlerts(deps: AtBeachDeps): Promise<AtBeachCounts
         strikes: feed ? summarizeStrikes(feed, fix.lat, fix.lon, now) : null,
         rain,
         conditions,
-        recentRain: await recentRain(store, device.device.id, now),
+        recentRain: await recentRain(store, device.device.id, device.presence.slug, now),
       });
       counts.evaluated += 1;
 
@@ -213,7 +229,9 @@ export async function runAtBeachAlerts(deps: AtBeachDeps): Promise<AtBeachCounts
       counts.skipped += held.length;
 
       // A superseded key still gets marked: the person just read the louder
-      // version, so the quiet one must not arrive a run later.
+      // version, so the quiet one must not arrive a run later. Keys are
+      // already beach-scoped (catalog.ts `scopeKey`), as is the send claim
+      // below, which is built from the same dedupKey.
       for (const key of supersededKeys) await store.markAlert(device.device.id, key, now);
 
       for (const d of fire) {

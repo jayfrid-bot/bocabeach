@@ -61,6 +61,8 @@ export interface AlertDecision {
    * The `alert_log` key. Finer than `alertKey` where a change of degree must
    * beat the repeat window — `lightning:2mi`, `flag:double-red`, `rip:moderate`,
    * `severe:<event>` — so an escalation is never swallowed by its own base key.
+   * On the at-beach tier it is also scoped to the monitored beach
+   * (`flag:double-red@boca-raton`, see `scopeKey`, LOC-08).
    */
   dedupKey: string;
   priority: number;
@@ -149,8 +151,21 @@ function bodyFor(subject: AlertSubject, ctx: AlertContext): string {
   }
 }
 
-/** The `alert_log` key for one finding. */
-function dedupKeyFor(subject: AlertSubject): string {
+/**
+ * Scope an at-beach `alert_log` key to the monitored beach (LOC-08). The
+ * repeat window is a statement about ONE beach: a double-red at Boca must not
+ * silence the same closure at Deerfield five minutes later just because the
+ * phone moved. Rain memory (`rain-soon` / `rain-wet`, written by
+ * lib/alerts/run.ts) uses the same scoping so a wet spell at A can never
+ * qualify a "clearing" message at a dry B. No slug → the bare key (the home
+ * tier keeps its own stable keys).
+ */
+export function scopeKey(key: string, slug: string | undefined): string {
+  return slug ? `${key}@${slug}` : key;
+}
+
+/** The bare (unscoped) `alert_log` key for one finding. */
+function baseDedupKeyFor(subject: AlertSubject): string {
   switch (subject.key) {
     case "lightning":
       return subject.escalated ? "lightning:2mi" : "lightning";
@@ -165,6 +180,12 @@ function dedupKeyFor(subject: AlertSubject): string {
     default:
       return subject.key;
   }
+}
+
+/** The `alert_log` key for one finding — beach-scoped on the at-beach tier. */
+function dedupKeyFor(subject: AlertSubject, ctx: AlertContext): string {
+  const base = baseDedupKeyFor(subject);
+  return CATALOG[subject.key].tier === "at-beach" ? scopeKey(base, ctx.slug) : base;
 }
 
 /** Extra facts worth keeping in `alert_log.meta_json` for later debugging. */
@@ -215,7 +236,7 @@ export function buildAlert(subject: AlertSubject, ctx: AlertContext): AlertDecis
   const alarm = spec.alarm && !ctx.informational;
   return {
     alertKey: subject.key,
-    dedupKey: dedupKeyFor(subject),
+    dedupKey: dedupKeyFor(subject, ctx),
     priority: spec.priority,
     repeatMs: spec.repeatMs,
     title: alarm ? `⚠️ ${ctx.beach}` : ctx.beach,
@@ -223,7 +244,10 @@ export function buildAlert(subject: AlertSubject, ctx: AlertContext): AlertDecis
     body: bodyFor(subject, ctx),
     // A lightning escalation replaces the plain lightning alert in the same run,
     // so a storm arriving already inside 2 mi sends ONE push, not two.
-    ...(subject.key === "lightning" && subject.escalated ? { supersedes: ["lightning"] } : {}),
+    // Scoped to the same beach: an escalation at A never marks A's key from B.
+    ...(subject.key === "lightning" && subject.escalated
+      ? { supersedes: [scopeKey("lightning", ctx.slug)] }
+      : {}),
     meta: metaFor(subject),
   };
 }

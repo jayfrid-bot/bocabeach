@@ -5,6 +5,26 @@ import { disableNative, enableNative, isNativePlatform, nativeStatus } from "@/l
 
 type State = "init" | "hidden" | "off" | "on" | "denied" | "busy" | "error";
 
+/**
+ * The one notification-setup flow, shared with Beach Mode (LOC-03): ask the
+ * OS, register the token, store it against this device. "denied" only when
+ * the OS itself says so — see the note in `enable` below; anything else is a
+ * retryable error carrying its message.
+ */
+export async function enableAlertsFlow(
+  slug: string,
+  prefs: { morning: boolean; safety: boolean },
+): Promise<{ state: "on" } | { state: "denied" | "error"; message: string }> {
+  try {
+    await enableNative(slug, prefs);
+    return { state: "on" };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    const perm = await nativeStatus(slug).catch(() => "off" as const);
+    return { state: perm === "denied" ? "denied" : "error", message };
+  }
+}
+
 const pill =
   "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 transition";
 
@@ -87,20 +107,18 @@ export function NotifyButton({
     }
     setState("busy");
     setErr(null);
-    try {
-      await enableNative(slug, prefs);
+    // "Blocked" is a claim about the OS setting, so ask the OS. Matching the
+    // error text used to label any not-yet-granted permission as blocked — a
+    // person who had just tapped Allow was told they had said no (seen on the
+    // iOS simulator 2026-09-05). Only a real "denied" from the permission check
+    // earns the blocked label; everything else is a retryable error.
+    const r = await enableAlertsFlow(slug, prefs);
+    if (r.state === "on") {
       setState("on");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setErr(msg);
-      // "Blocked" is a claim about the OS setting, so ask the OS. Matching the
-      // error text used to label any not-yet-granted permission as blocked — a
-      // person who had just tapped Allow was told they had said no (seen on the
-      // iOS simulator 2026-09-05). Only a real "denied" from the permission check
-      // earns the blocked label; everything else is a retryable error.
-      const perm = await nativeStatus(slug).catch(() => "off" as const);
-      setState(perm === "denied" ? "denied" : "error");
+      return;
     }
+    setErr(r.message);
+    setState(r.state);
   };
 
   const disable = async () => {

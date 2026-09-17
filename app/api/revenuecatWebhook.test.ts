@@ -221,4 +221,77 @@ describe("POST /api/revenuecat/webhook", () => {
     expect(dev?.plan).toBe("plus");
     expect(dev?.entitlementUntil).toBe(until);
   });
+
+  // --- TRANSFER: the old device must lose access too ------------------------
+  describe("decideReconcile on TRANSFER", () => {
+    it("reconciles original_app_user_id when it differs from app_user_id", () => {
+      expect(
+        decideReconcile({ event: { type: "TRANSFER", app_user_id: DEV, original_app_user_id: "old-device" } }),
+      ).toEqual({ kind: "reconcile", deviceId: DEV, alsoReconcile: ["old-device"] });
+    });
+
+    it("reconciles every id in transferred_from, de-duplicated against app_user_id", () => {
+      const decision = decideReconcile({
+        event: { type: "TRANSFER", app_user_id: DEV, transferred_from: ["old-a", "old-b", DEV] },
+      });
+      expect(decision.kind).toBe("reconcile");
+      expect(decision.kind === "reconcile" ? new Set(decision.alsoReconcile) : null).toEqual(
+        new Set(["old-a", "old-b"]),
+      );
+    });
+
+    it("plain reconcile, no alsoReconcile, when there is nothing to transfer from", () => {
+      expect(decideReconcile({ event: { type: "TRANSFER", app_user_id: DEV } })).toEqual({
+        kind: "reconcile",
+        deviceId: DEV,
+      });
+    });
+  });
+
+  it("TRANSFER also clears the old device's store grant", async () => {
+    const OLD = "99999999-8888-4777-8666-555555555555";
+    const store = await getStore();
+    await store.upsertDevice(DEV, { platform: "ios" });
+    await store.upsertDevice(OLD, { storeUntil: Date.now() + 30 * DAY });
+
+    const newUntil = Date.now() + 365 * DAY;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        // Both subscriber lookups hit the same RC endpoint shape; distinguish
+        // by which device id is in the URL.
+        if (url.includes(OLD)) {
+          return new Response(JSON.stringify({ subscriber: { entitlements: {} } }), { status: 200 });
+        }
+        return new Response(
+          JSON.stringify({ subscriber: { entitlements: { plus: { expires_date: new Date(newUntil).toISOString() } } } }),
+          { status: 200 },
+        );
+      }),
+    );
+
+    const res = await POST(hook({ type: "TRANSFER", app_user_id: DEV, transferred_from: [OLD] }));
+    expect(res.status).toBe(200);
+
+    const newDev = await store.getDevice(DEV);
+    expect(newDev?.plan).toBe("plus");
+    expect(newDev?.entitlementUntil).toBe(newUntil);
+
+    const oldDev = await store.getDevice(OLD);
+    expect(oldDev?.grants.storeUntil).toBeNull();
+    expect(oldDev?.plan).toBe("free");
+  });
+
+  it("TRANSFER leaves an unknown old device alone rather than conjuring a row", async () => {
+    const store = await getStore();
+    await store.upsertDevice(DEV, { platform: "ios" });
+    const until = Date.now() + 30 * DAY;
+    rcAnswers({ plus: { expires_date: new Date(until).toISOString() } });
+    const res = await POST(
+      hook({ type: "TRANSFER", app_user_id: DEV, original_app_user_id: "never-seen-device" }),
+    );
+    expect(res.status).toBe(200);
+    expect(await store.getDevice("never-seen-device")).toBeNull();
+  });
 });

@@ -97,6 +97,26 @@ export async function POST(req: Request): Promise<Response> {
     const device = await store.upsertDevice(decision.deviceId, {
       storeUntil: ent.active ? (ent.expiresAt ?? now + NO_END_MS) : null,
     });
+
+    // TRANSFER: also reconcile any device the entitlement moved FROM, so the
+    // old device's store_until reflects RC's (now empty) answer for it, too —
+    // best-effort, and never lets a lookup failure for the OLD device fail
+    // the response for the device that actually won the entitlement.
+    for (const otherId of decision.alsoReconcile ?? []) {
+      if (!isDeviceId(otherId)) continue;
+      try {
+        const otherExisting = await store.getDevice(otherId);
+        if (!otherExisting) continue;
+        const otherEnt = await fetchPlusEntitlement(otherId, secret, now);
+        if (!otherEnt) continue; // RC unreachable for this one — leave it, the next event will retry
+        await store.upsertDevice(otherId, {
+          storeUntil: otherEnt.active ? (otherEnt.expiresAt ?? now + NO_END_MS) : null,
+        });
+      } catch (e) {
+        console.error("revenuecat/webhook: transfer reconcile failed", otherId, e);
+      }
+    }
+
     return Response.json({
       ok: true,
       applied: true,

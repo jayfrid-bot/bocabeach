@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getDeviceId } from "@/lib/deviceId";
-import { checkLocationPermission, getFix, shouldRefreshFix, type Fix } from "@/lib/location/device";
+import { checkLocationPermission, getFix, getFreshFix, shouldRefreshFix, type Fix } from "@/lib/location/device";
 import { nativePlatform } from "@/lib/push/native";
 import { defaultPrefs, type AlertKey, type AlertPrefs, type DeviceRecord } from "@/lib/db/types";
 import { resolveScoring } from "@/lib/profile/resolve";
@@ -19,7 +19,7 @@ import type { ScoreProfile } from "@/lib/profile/types";
 import type { ConditionsResponse } from "@/lib/types";
 import { plusApi, type PlusResult, type PresenceBody } from "@/lib/plus/api";
 import { billingAvailable, restoreBilling } from "@/lib/plus/billing";
-import { cacheFromDevice, isEntitled } from "@/lib/plus/entitlement";
+import { cacheFromDevice, isEntitled, isStoreBased, shouldSelfHeal } from "@/lib/plus/entitlement";
 import { isRetryableSaveError } from "@/lib/plus/pendingWrites";
 import { computePersonalScore, type PersonalScore } from "@/lib/plus/personalScore";
 import * as store from "@/lib/plus/storage";
@@ -100,6 +100,9 @@ export function usePlus(): PlusState {
   const lastRefreshRef = useRef(0);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingProfileRef = useRef<ScoreProfile | null>(null);
+  // Throttle for the entitlement self-heal below — module-scope would leak
+  // across devices in tests, so this lives per mounted hook instance instead.
+  const lastSelfHealRef = useRef<number | null>(null);
 
   // --- first read of the phone ---------------------------------------------
   useEffect(() => {
@@ -146,8 +149,30 @@ export function usePlus(): PlusState {
     setLoading(true);
     const res = await plusApi.getDevice(id);
     setLoading(false);
-    if (res.ok && res.device) applyDevice(res.device);
-    else if (res.error === "not-found") {
+    if (res.ok && res.device) {
+      applyDevice(res.device);
+      // Entitlement self-heal (#3): a store grant that is about to expire or
+      // just lapsed gets one quiet resync with RevenueCat, throttled to once
+      // per SELF_HEAL_THROTTLE_MS, so a webhook outage never silently
+      // de-provisions a paying subscriber who happens to reopen the app. The
+      // decision itself is the pure `shouldSelfHeal` (lib/plus/entitlement.ts);
+      // this is only the plumbing to call it and act on it.
+      const healAt = Date.now();
+      if (
+        billingAvailable() &&
+        shouldSelfHeal({
+          cache: cacheFromDevice(res.device, healAt),
+          now: healAt,
+          storeBased: isStoreBased(res.device),
+          billingAvailable: true,
+          lastSyncedAt: lastSelfHealRef.current,
+        })
+      ) {
+        lastSelfHealRef.current = healAt;
+        const synced = await plusApi.syncPurchase(id);
+        if (synced.ok && synced.device) applyDevice(synced.device);
+      }
+    } else if (res.error === "not-found") {
       // The server has never seen this device: it is free, and saying so stops
       // the app asking again on every foreground.
       const free: PlusCache = { plan: "free", until: null, checkedAt: Date.now() };
@@ -233,6 +258,19 @@ export function usePlus(): PlusState {
       } else if (!isRetryableSaveError(res)) {
         store.clearPendingPrefs();
         setPendingPrefsKeys([]);
+      }
+    }
+    if (pending.purchaseSync) {
+      // A store purchase that confirmed but never made it to our server
+      // (#4) — retry the same RevenueCat confirmation syncPurchase() does.
+      // Never clear this on a network failure: a paying subscriber's grant
+      // must not quietly stop being retried just because one attempt failed.
+      const res = await plusApi.syncPurchase(id);
+      if (res.ok && res.device) {
+        applyDevice(res.device);
+        store.clearPendingPurchaseSync();
+      } else if (!isRetryableSaveError(res)) {
+        store.clearPendingPurchaseSync();
       }
     }
   }, [applyDevice]);
@@ -399,7 +437,18 @@ export function usePlus(): PlusState {
     setLoading(true);
     try {
       const res = await plusApi.syncPurchase(id);
-      if (res.ok && res.device) applyDevice(res.device);
+      if (res.ok && res.device) {
+        applyDevice(res.device);
+        // A retry queued by an earlier failed sync is now settled.
+        store.clearPendingPurchaseSync();
+      } else if (isRetryableSaveError(res)) {
+        // The store already confirmed the purchase (that's the only reason a
+        // caller calls syncPurchase after `buy()`); the server just didn't
+        // hear about it this time — queue a retry rather than leave a
+        // charged customer without Plus until they happen to tap Restore
+        // (#4). A rejected (non-retryable) response has nothing to queue.
+        store.queuePendingPurchaseSync();
+      }
       return res;
     } finally {
       // A `finally` here, not a plain call after the await: plusApi never
@@ -551,10 +600,17 @@ type FixListener = (fix: Fix | null) => void;
 let sessionFix: Fix | null = null;
 const fixListeners = new Set<FixListener>();
 
-/** Publish a fix to every mounted consumer (and remember it for this session). */
-export function setSessionFix(fix: Fix | null): void {
+/**
+ * Publish a fix to every mounted consumer (and remember it for this session).
+ * An older fix never replaces a newer one (R-02): several consumers can have
+ * requests in flight at once, and the one that resolves last is not always
+ * the one that was taken last. Returns the fix now in effect.
+ */
+export function setSessionFix(fix: Fix | null): Fix | null {
+  if (fix && sessionFix && Number.isFinite(sessionFix.at) && fix.at < sessionFix.at) return sessionFix;
   sessionFix = fix;
   for (const fn of fixListeners) fn(fix);
+  return fix;
 }
 
 export function getSessionFix(): Fix | null {
@@ -567,6 +623,13 @@ export interface DeviceFixState {
   settled: boolean;
   /** Ask for a position, prompting if the OS wants to. Never rejects. */
   request(): Promise<Fix | null>;
+  /**
+   * Ask for a FRESH, high-accuracy position for arming Beach Mode or
+   * refreshing an armed presence (LOC-06). Null when the OS could not give
+   * one — the caller must then NOT fall back to `fix`, which may be exactly
+   * the obsolete reading this call was meant to replace.
+   */
+  requestFresh(): Promise<Fix | null>;
   /** How old the current fix is right now (ms), or null when there is none. */
   fixAgeMs(): number | null;
 }
@@ -620,6 +683,16 @@ export function useDeviceFix(): DeviceFixState {
     return got;
   }, []);
 
+  const requestFresh = useCallback(async (): Promise<Fix | null> => {
+    const got = await getFreshFix();
+    setSettled(true);
+    if ("error" in got) return null;
+    // Publish for everyone else, but hand THIS caller the fix it asked for,
+    // whatever a concurrent request may have published in the meantime.
+    setSessionFix(got);
+    return got;
+  }, []);
+
   // Reads the module-level fix directly (not the `fix` state variable), so it
   // is always current even between a fix update and this component's next
   // render.
@@ -642,5 +715,5 @@ export function useDeviceFix(): DeviceFixState {
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [settled, request, fixAgeMs]);
 
-  return { fix, settled, request, fixAgeMs };
+  return { fix, settled, request, requestFresh, fixAgeMs };
 }

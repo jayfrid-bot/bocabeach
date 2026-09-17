@@ -72,7 +72,10 @@ export function paywallCopy(input: PaywallCopyInput): PaywallCopy {
   }
   return {
     ctaLabel: `Subscribe · ${price}/${per}`,
-    finePrint: "Renews until you cancel in Settings. Cancel anytime.",
+    // Title, length-equivalent (the billing period) and price sit next to
+    // each other, not split across the button and a separate line, so the
+    // one line under the button is the whole disclosure on its own.
+    finePrint: `Beach Day Plus · ${price}/${per}, renews until you cancel in Settings.`,
     ctaDisabled: false,
   };
 }

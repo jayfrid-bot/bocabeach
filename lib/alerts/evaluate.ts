@@ -4,9 +4,10 @@
 // What it decides, and from what:
 //  - lightning   — the person's OWN fix (summarizeStrikes against their lat/lon)
 //  - thunder     — the beach snapshot's storm signals
-//  - severe / water advisory / rip / flag — `activeSafety()`, the same ladder the
-//    in-app safety banner uses, so push and the app can never word a hazard two
-//    different ways or disagree about which one leads
+//  - severe / water advisory / rip / flag — the beach snapshot, each judged on
+//    its own (LOC-01): the in-app banner's `activeSafety()` picks ONE headline,
+//    and an alert engine must not inherit that blind spot. Wording still comes
+//    from the shared catalog, so push and the app never word a hazard two ways.
 //  - wind gust   — the beach's buoy gust
 //  - rain        — the person's own cell (radar pixel or 15-minute forecast)
 //
@@ -18,7 +19,7 @@
 
 import { currentHourOf } from "@/lib/score";
 import { resolveScoring } from "@/lib/profile/resolve";
-import { activeSafety } from "@/lib/push/notify";
+import { isSevereAlert } from "@/lib/push/notify";
 import type { AlertKey, AlertPrefs, ScoreProfile } from "@/lib/db/types";
 import type { ConditionsResponse, FlagColor, LightningData } from "@/lib/types";
 import { buildAlert, type AlertDecision, type AlertSubject } from "@/lib/alerts/catalog";
@@ -112,30 +113,56 @@ function lightningSubjects(strikes: LightningData | null): AlertSubject[] {
 }
 
 /**
- * The one hazard the beach snapshot is showing, translated into a catalog key.
- * Lightning is dropped here: the fix-based read above is strictly better than
- * the beach-centroid one this ladder carries.
+ * Every hazard the beach snapshot is showing, each as its own subject (LOC-01).
+ *
+ * This is deliberately NOT `activeSafety()`: that ladder picks ONE headline
+ * for the in-app banner, and an alert engine that reads only the headline
+ * misses the rest. A Tornado Warning next to a lightning strike, a double-red
+ * closure under a high-rip note, a closure the person still wants after
+ * turning water-advisory pushes off — each has to be decided on its own, and
+ * preferences applied to the SET, not to the winner. Lightning is left out on
+ * purpose: the fix-based read in `lightningSubjects` replaces only the
+ * centroid lightning rung, nothing else.
+ *
+ * Wording still comes from the shared catalog, so push and the banner never
+ * describe one hazard two ways.
  */
-function snapshotHazard(res: ConditionsResponse, nowMs: number): AlertSubject | null {
-  const safety = activeSafety(res);
-  const key = safety?.key ?? "";
-  if (key.startsWith("lightning")) return null;
-  if (key.startsWith("severe:")) return { key: "severe", event: key.slice("severe:".length) };
-  if (key === "hazard") {
-    const event =
-      res.snapshot?.nws?.data?.alerts?.find((a) => /beach hazard/i.test(a.event))?.event ??
-      "Beach Hazards Statement";
-    return { key: "severe", event };
+function snapshotHazards(res: ConditionsResponse, nowMs: number): AlertSubject[] {
+  const s = res.snapshot;
+  const out: AlertSubject[] = [];
+  const alerts = s?.nws?.data?.alerts ?? [];
+
+  // Severe warnings: one subject per distinct event, so a Flash Flood Warning
+  // and a Tornado Warning both arrive (each has its own dedup key already).
+  const seen = new Set<string>();
+  let severeIsStorm = false;
+  for (const a of alerts) {
+    if (!isSevereAlert(a) || seen.has(a.event)) continue;
+    seen.add(a.event);
+    if (/thunderstorm/i.test(a.event)) severeIsStorm = true;
+    out.push({ key: "severe", event: a.event });
   }
-  if (key === "water") return { key: "water-advisory" };
-  if (key === "rip") return { key: "rip", level: "high" };
-  if (key === "rip-moderate") return { key: "rip", level: "moderate" };
-  if (key.startsWith("flag:")) {
-    const flag = postedFlag(res) ?? "red";
-    return { key: "flag", flag };
+  const hazardStatement = alerts.find((a) => /beach hazard/i.test(a.event));
+  if (hazardStatement && !seen.has(hazardStatement.event)) {
+    out.push({ key: "severe", event: hazardStatement.event });
   }
-  // No ladder hazard, but a storm may still be rolling in.
-  return thunderNearby(res, nowMs) ? { key: "thunder" } : null;
+
+  // A thunderstorm on the beach's own signals — unless a severe THUNDERSTORM
+  // warning already said so, one line louder.
+  if (!severeIsStorm && thunderNearby(res, nowMs)) out.push({ key: "thunder" });
+
+  if (s?.cityOfficial?.data?.noSwimAdvisory || s?.waterQuality?.data?.advisory) {
+    out.push({ key: "water-advisory" });
+  }
+
+  const rip = s?.nws?.data?.ripCurrentRisk;
+  if (rip === "high") out.push({ key: "rip", level: "high" });
+  else if (rip === "moderate") out.push({ key: "rip", level: "moderate" });
+
+  const flag = postedFlag(res);
+  if (flag) out.push({ key: "flag", flag });
+
+  return out;
 }
 
 /** Rain arriving, or rain done. Never both. */
@@ -165,16 +192,7 @@ export function evaluateAtBeach(input: AtBeachInput): AlertDecision[] {
   subjects.push(...lightningSubjects(input.strikes));
 
   if (input.conditions) {
-    const hazard = snapshotHazard(input.conditions, input.now);
-    if (hazard) subjects.push(hazard);
-
-    // A severe THUNDERSTORM warning already said "thunderstorm" — do not say it
-    // twice, one line quieter.
-    const severeIsStorm =
-      hazard?.key === "severe" && /thunderstorm/i.test(hazard.event);
-    if (hazard && hazard.key !== "thunder" && !severeIsStorm && thunderNearby(input.conditions, input.now)) {
-      subjects.push({ key: "thunder" });
-    }
+    subjects.push(...snapshotHazards(input.conditions, input.now));
 
     const gust = input.conditions.snapshot?.buoy?.data?.windGustMph;
     if (gust != null && gust > GUST_ALERT_MPH) {
@@ -198,5 +216,9 @@ export function evaluateAtBeach(input: AtBeachInput): AlertDecision[] {
       buildAlert(subject, { beach: input.beachName, slug: input.presence.slug, informational: soft }),
     );
   }
-  return out.sort((a, b) => a.priority - b.priority || a.dedupKey.localeCompare(b.dedupKey));
+  // Tie-break on the bare key (the beach scope is the same for every decision
+  // in one call) so the plain lightning notice still sorts before its
+  // escalation, exactly as it did before keys were scoped.
+  const bare = (k: string): string => k.replace(/@[^@]*$/, "");
+  return out.sort((a, b) => a.priority - b.priority || bare(a.dedupKey).localeCompare(bare(b.dedupKey)));
 }
