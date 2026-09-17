@@ -498,3 +498,38 @@ describe("Plus purchase routes are app-only", () => {
     }
   });
 });
+
+describe("POST /api/devices — personal-score profile is Plus-only after the preview (audit item 9)", () => {
+  const OLD = process.env.PLUS_UNLOCK_CODE;
+  afterEach(() => {
+    if (OLD === undefined) delete process.env.PLUS_UNLOCK_CODE;
+    else process.env.PLUS_UNLOCK_CODE = OLD;
+  });
+  const profile = { profiles: ["swim"] };
+
+  it("allows the one unpaid profile save that onboarding's preview makes", async () => {
+    const res = await devicesPost(post("https://x/api/devices", { deviceId: DEV, profile, previewSeen: true }));
+    expect(res.status).toBe(200);
+  });
+
+  it("rejects a second unpaid profile save with 403 not-entitled", async () => {
+    await devicesPost(post("https://x/api/devices", { deviceId: DEV, profile, previewSeen: true }));
+    const res = await devicesPost(post("https://x/api/devices", { deviceId: DEV, profile: { profiles: ["swim"], heat: "hot" } }));
+    expect(res.status).toBe(403);
+    expect((await json(res)).error).toBe("not-entitled");
+  });
+
+  it("still accepts non-profile fields from a non-entitled device", async () => {
+    await devicesPost(post("https://x/api/devices", { deviceId: DEV, profile, previewSeen: true }));
+    const res = await devicesPost(post("https://x/api/devices", { deviceId: DEV, homeSlug: "boca-raton" }));
+    expect(res.status).toBe(200);
+  });
+
+  it("accepts profile edits once the device is entitled", async () => {
+    process.env.PLUS_UNLOCK_CODE = "sandy-shoes";
+    await devicesPost(post("https://x/api/devices", { deviceId: DEV, profile, previewSeen: true }));
+    await unlockPost(post("https://x/api/devices/unlock", { deviceId: DEV, code: "sandy-shoes" }));
+    const res = await devicesPost(post("https://x/api/devices", { deviceId: DEV, profile: { profiles: ["swim"], heat: "hot" } }));
+    expect(res.status).toBe(200);
+  });
+});

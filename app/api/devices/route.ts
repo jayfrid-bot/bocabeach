@@ -11,7 +11,7 @@
 import { getLocation } from "@/config/locations";
 import { badRequest, fail, isDeviceId, okDevice, readBody } from "@/lib/db/api";
 import { getStore } from "@/lib/db/store";
-import { ALERT_KEYS, type AlertPrefs, type DevicePatch } from "@/lib/db/types";
+import { ALERT_KEYS, entitled, type AlertPrefs, type DevicePatch } from "@/lib/db/types";
 // The same validator the phone runs before it saves (lib/plus/storage.ts is
 // pure and guards on `localStorage`, so it is safe here) — one definition of
 // "a profile we accept", server and client.
@@ -102,6 +102,17 @@ export async function POST(req: Request): Promise<Response> {
   if (!patch) return badRequest();
   try {
     const store = await getStore();
+    // A personal-score profile is a Plus feature (2026-09 billing audit, item
+    // 9). Onboarding saves one profile BEFORE purchase for its one-time
+    // preview, so a device gets exactly one unpaid profile save; after the
+    // preview has been seen, profile writes need an active grant. Every other
+    // field on this route (platform, tz, homeSlug, prefs, previewSeen) stays
+    // free.
+    if (patch.profile !== undefined) {
+      const existing = await store.getDevice(body.deviceId);
+      const allowed = !existing || existing.previewSeen !== true || entitled(existing, Date.now());
+      if (!allowed) return fail("not-entitled", 403);
+    }
     return okDevice(await store.upsertDevice(body.deviceId, patch));
   } catch (e) {
     console.error("devices: upsert failed", e);

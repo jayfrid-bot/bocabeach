@@ -123,7 +123,7 @@ export function plusErrorMessage(error: string | null): string {
     case "too-many-attempts":
       return "Too many tries. Wait a bit and try again.";
     case "not-entitled":
-      return "Alerts are part of Beach Day Plus.";
+      return "That is part of Beach Day Plus.";
     case "app-only":
       return "Beach Day Plus lives in the iPhone app. Get the app to start your trial.";
     case "server-trial-off":

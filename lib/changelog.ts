@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-17",
+    title: "Your personal score profile is now Plus-only after the preview",
+    details:
+      "Everyone still gets the one-time preview of their personal score during setup. After that, saving changes to your score profile is part of Beach Day Plus, and the app now says so instead of quietly accepting the change.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-17",
     title: "Beach Mode now follows you, tells you what it's watching, and never misses a second warning",
     details:
       "Safety alerts now check every hazard on its own, so a tornado warning or a double-red closure is never hidden behind lightning, a rip-current note, or an alert you turned off. Move from one beach to another and the alerts move with you — and a beach you picked by hand stays put. The card now names the beach it is watching, says whether it's measuring from your spot or from the beach itself, and tells you plainly when notifications still need turning on instead of claiming alerts are on. Arriving at a beach only turns alerts on from a fresh, accurate position, never an old one. Rain timing now reads the forecast the way it is published, and 'rain clearing' is only promised when the whole next hour is known to be dry. Android phones that share an approximate location can still find their nearest beach.",
