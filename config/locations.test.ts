@@ -81,3 +81,15 @@ describe("Deerfield Beach", () => {
     }
   });
 });
+
+describe("fort-lauderdale", () => {
+  const loc = ALL.find((l) => l.slug === "fort-lauderdale");
+  it("is a curated Broward beach with water quality, tides, and a wave buoy", () => {
+    expect(loc).toBeDefined();
+    expect(loc?.region).toBe("Broward County, FL");
+    expect(loc?.healthyBeaches).toEqual({ county: "Broward", sites: ["SEBASTIAN STREET", "BAHIA MAR"] });
+    expect(loc?.noaaTideStationId).toBe("8722939");
+    expect(loc?.ndbcBuoyId).toBe("41122");
+    expect(loc?.surfZone).toEqual({ office: "MFL", name: "Broward" });
+  });
+});

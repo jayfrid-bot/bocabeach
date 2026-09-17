@@ -230,6 +230,37 @@ export const LOCATIONS: Location[] = [
       },
     ],
   },
+  {
+    slug: "fort-lauderdale",
+    name: "Fort Lauderdale Beach",
+    region: "Broward County, FL",
+    // The public beach at Las Olas Blvd & A1A. The resolver's coastal gate
+    // rejects "Fort Lauderdale" (the geocoded city centroid is inland), so this
+    // entry is hand-curated like Deerfield.
+    lat: 26.1195,
+    lon: -80.1035,
+    timezone: "America/New_York",
+    // The shoreline runs roughly north-south here (a few degrees east of north),
+    // so wind blowing straight onshore comes from ~94° (E). This also enables
+    // the southeast Florida man-o'-war and shark advisories.
+    coastNormalDeg: 94,
+    coast: "atlantic",
+    noaaTideStationId: "8722939", // Bahia Mar Yacht Club, 0.5 mi (predictions)
+    noaaTideStationFallbackId: "8722956", // South Port Everglades
+    // Bahia Mar only publishes predictions. The measured water level comes
+    // from the South Port Everglades gauge, 2.7 mi south.
+    noaaWaterLevelStationId: "8722956",
+    ndbcBuoyId: "41122", // Hollywood Beach Waverider, 8 mi south (waves + water temp)
+    ndbcBuoyFallbackId: "LKWF1", // Lake Worth Pier (air/water temp, no waves)
+    // Site names exactly as published by the FL Healthy Beaches feed (Broward).
+    // Sebastian Street sits just north of Las Olas; Bahia Mar is just south.
+    healthyBeaches: {
+      county: "Broward",
+      sites: ["SEBASTIAN STREET", "BAHIA MAR"],
+    },
+    surfZone: { office: "MFL", name: "Broward" }, // NWS Miami Surf Zone Forecast
+    cams: [],
+  },
 ];
 
 /** Hand-curated entries first, then admin-added (generated) ones; deduped by slug. */
