@@ -248,8 +248,12 @@ test.describe("inside the app shell", () => {
 
     // …then the paywall, with the price and the trial in plain sight.
     await sheet.getByRole("button", { name: "Keep my score" }).click();
-    await expect(sheet.getByText("$2.99/mo · $19.99/yr")).toBeVisible();
-    await expect(sheet.getByRole("button", { name: "Start 3-day free trial" })).toBeVisible();
+    // A build with no store billing must not show a price or a trial it can't
+    // honor (2026-09 billing audit): it says so, and still offers a code.
+    await expect(sheet.getByText(/Billing\ isn't\ available\ in\ this\ build/)).toBeVisible();
+    await expect(sheet.getByText("$2.99/mo · $19.99/yr")).toHaveCount(0);
+    await expect(sheet.getByRole("button", { name: "Start 3-day free trial" })).toHaveCount(0);
+    await expect(sheet.getByRole("button", { name: "Have a code?" })).toBeVisible();
 
     // Escape closes it, and the door is now the locked pill — no second run.
     await page.keyboard.press("Escape");
@@ -273,11 +277,11 @@ test.describe("inside the app shell", () => {
 
     // Reopening goes straight to the offer.
     await page.getByRole("button", { name: /Your score/ }).click();
-    await expect(page.getByRole("dialog").getByText("$2.99/mo · $19.99/yr")).toBeVisible();
+    await expect(page.getByRole("dialog").getByText(/Billing\ isn't\ available\ in\ this\ build/)).toBeVisible();
     await expect(page.getByRole("dialog").getByText("What do you go to the beach for?")).toHaveCount(0);
   });
 
-  test("a trial makes the personal number the headline", async ({ page }) => {
+  test("unlocking Plus makes the personal number the headline", async ({ page }) => {
     const errors = await openDashboard(page);
     await page.getByRole("button", { name: /Personalize my score/ }).click();
     const sheet = page.getByRole("dialog");
@@ -285,9 +289,12 @@ test.describe("inside the app shell", () => {
     await sheet.getByRole("button", { name: "See my score" }).click();
     await sheet.getByRole("button", { name: "Keep my score" }).click();
 
-    const trial = sheet.getByRole("button", { name: "Start 3-day free trial" });
-    await expect(trial).toBeVisible();
-    await trial.click();
+    // No store in a browser and the server trial is off by default, so the
+    // suite entitles the device with the unlock code the test server is
+    // started with (playwright.config.ts sets PLUS_UNLOCK_CODE).
+    await sheet.getByRole("button", { name: "Have a code?" }).click();
+    await sheet.getByRole("textbox").fill(process.env.PLUS_UNLOCK_CODE ?? "e2e-unlock-code");
+    await sheet.getByRole("button", { name: "Unlock Plus" }).click();
 
     // The sheet closes itself once the server confirms, and the headline flips.
     await expect(page.getByRole("dialog")).toHaveCount(0, { timeout: 20_000 });

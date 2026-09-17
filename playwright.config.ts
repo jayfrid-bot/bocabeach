@@ -44,6 +44,13 @@ export default defineConfig({
     // The suite exercises the no-billing paywall (server trial + code) on
     // purpose, so the public key from .env.local must not leak into the dev
     // server. Next never overrides an env var that is already set.
-    env: { ...process.env, NEXT_PUBLIC_REVENUECAT_IOS_KEY: "" },
+    // The server trial is off by default (2026-09 billing audit), so the suite
+    // entitles a device through the unlock code instead — a test-only code the
+    // server is started with. Rate-limited like production (5 tries/hour).
+    env: {
+      ...process.env,
+      NEXT_PUBLIC_REVENUECAT_IOS_KEY: "",
+      PLUS_UNLOCK_CODE: process.env.PLUS_UNLOCK_CODE ?? "e2e-unlock-code",
+    },
   },
 });

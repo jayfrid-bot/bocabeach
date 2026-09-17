@@ -305,10 +305,6 @@ export function PaywallBody({
               : "We could not load prices from the App Store."}
           </p>
         )
-      ) : billingUnavailableInApp ? (
-        <p className="mt-4 text-center text-sm text-slate-500 dark:text-slate-400">
-          Billing isn&apos;t available in this build.
-        </p>
       ) : null}
 
       <div className="mt-3 space-y-2">
@@ -323,7 +319,10 @@ export function PaywallBody({
               </p>
             ) : null}
           </>
-        ) : trialUsed || serverTrialOff ? (
+        // A build with no store billing must not offer the server trial either:
+        // it is an off-by-default outage fallback the paywall cannot detect, so
+        // the button would only ever answer "server-trial-off".
+        ) : trialUsed || serverTrialOff || billingUnavailableInApp ? (
           billingUnavailableInApp ? (
             <p className="text-center text-xs leading-snug text-slate-500 dark:text-slate-400">
               Billing isn&apos;t available in this build. Use a code below, or check back once it is.
