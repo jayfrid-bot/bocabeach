@@ -148,14 +148,17 @@ test.describe("Beach Day Plus", () => {
     expect(errors, `console errors: ${errors.join("\n")}`).toEqual([]);
   });
 
-  test("a browser cannot start the trial or redeem a code, whatever it claims", async ({ page }) => {
+  // Uses the test's own `request` context, not `page.request`: after the page
+  // has been idle, its kept-alive socket can be closed by the server at the
+  // exact moment a POST reuses it (ECONNRESET under `next start` in CI).
+  test("a browser cannot start the trial or redeem a code, whatever it claims", async ({ page, request }) => {
     await openDashboard(page);
-    const trial = await page.request.post("/api/devices/trial", {
+    const trial = await request.post("/api/devices/trial", {
       data: { deviceId: "11111111-2222-4333-8444-555555555555", platform: "ios" },
     });
     expect(trial.status()).toBe(403);
     expect((await trial.json()).error).toBe("app-only");
-    const unlock = await page.request.post("/api/devices/unlock", {
+    const unlock = await request.post("/api/devices/unlock", {
       data: { deviceId: "11111111-2222-4333-8444-555555555555", code: "anything" },
     });
     expect(unlock.status()).toBe(403);
