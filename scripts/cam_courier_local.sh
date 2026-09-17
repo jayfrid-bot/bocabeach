@@ -1,6 +1,8 @@
 #!/bin/bash
-# Deerfield Beach multi-cam FRAME COURIER (runs on the owner's Mac, hourly
-# via launchd — see scripts/com.isitbeachday.camcourier.plist).
+# Multi-cam FRAME COURIER (runs on the owner's Mac, hourly via launchd —
+# see scripts/com.isitbeachday.camcourier.plist). No longer Deerfield-only:
+# it also carries Fort Lauderdale Beach's Elbo Room cam (see the CAMS array
+# below).
 #
 # WHY THIS EXISTS: as of 2026-09, YouTube refuses playback to Cloudflare's
 # Browser Rendering fleet entirely for these streams — every grab attempt
@@ -8,11 +10,11 @@
 # error occurred. Please try again later. (Playback ID ...)" overlay
 # (datacenter IPs blocked outright). From this Mac's residential connection,
 # `yt-dlp -g` + `ffmpeg -frames:v 1` still works fine (verified 2026-09-14).
-# So this script grabs a frame for each of the four Deerfield Beach cams and
-# POSTs it straight into the worker via POST /ingest?cam=<id> — no git
-# branch, no GitHub Actions relay. The worker's own headless-Chrome grab
-# stays running unchanged as a self-healing fallback: if YouTube ever stops
-# blocking Cloudflare's fleet, it quietly starts contributing frames again.
+# So this script grabs a frame for each configured cam and POSTs it straight
+# into the worker via POST /ingest?cam=<id> — no git branch, no GitHub
+# Actions relay. The worker's own headless-Chrome grab stays running
+# unchanged as a self-healing fallback: if YouTube ever stops blocking
+# Cloudflare's fleet, it quietly starts contributing frames again.
 # Both writers go through the same server-side shouldReplaceStoredFrame
 # guard, so neither can clobber the other's newer good frame.
 #
@@ -87,11 +89,18 @@ fi
 
 # id:youtube-video-id pairs — kept in sync with
 # workers/uw-frame/src/lib/schedule.ts CAMERA_REGISTRY.
+#
+# ftl-elbo-beach-cam is Elbo Room's public "Fort Lauderdale Beach LIVE: Surf,
+# Wind & Golden Hour" YouTube stream (owner approved for this use). Elbo Room
+# also runs a patio cam (shows bar patrons) and a "weather station" cam
+# (shows the street) on the same page — neither is a beach/ocean view, so
+# neither is added here, on purpose.
 CAMS=(
   "deerfield-spinner-uw:SHfAtWHr9Ks"
   "deerfield-beach-cam:rdeoEeJ00xA"
   "deerfield-surf-cam:hIeFPNHfuoY"
   "deerfield-pier-cam:H33wtprQqSM"
+  "ftl-elbo-beach-cam:1j1lgppb0PY"
 )
 
 TMP="$(mktemp -d)"
@@ -116,6 +125,59 @@ run_with_timeout() {
   return "$status"
 }
 
+# FORT LAUDERDALE (ftl-elbo-beach-cam) ONLY: Elbo Room's stream id changes
+# whenever they restart it, so the id saved in CAMS can go stale. When the
+# saved id fails to play, this re-derives the current one straight from
+# Elbo Room's own beach-cam page: the embedded player's live-chat iframe
+# (youtube.com/live_chat?v=<ID>) is the most reliable place to scrape the
+# CURRENT video id out of plain HTML, no YouTube Data API key needed. Every
+# id found is deduped (first-seen order kept) and tried with `yt-dlp -g`;
+# the first whose title contains "Surf" wins, otherwise the first that
+# simply plays. Prints the winning video id on stdout (nothing else, so a
+# caller can capture it with $(...)); all logging goes to stderr. Prints
+# nothing and returns 1 if no candidate id plays.
+resolve_elbo_fallback_video_id() {
+  local page_html="$TMP/elbo-beach-cam-page.html"
+  local candidate title winner="" winner_reason=""
+
+  if ! run_with_timeout 20 curl -sS -f \
+      -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36" \
+      --max-time 15 \
+      "https://www.elboroom.com/beach-cam/" -o "$page_html" 2>"$TMP/elbo-page.err"; then
+    log "ftl-elbo-beach-cam: fallback page fetch failed" >&2
+    return 1
+  fi
+
+  while IFS= read -r candidate; do
+    [[ -z "$candidate" ]] && continue
+    if ! run_with_timeout 20 yt-dlp -g --no-warnings --socket-timeout 15 \
+        -f "best[height<=720]/best" \
+        "https://www.youtube.com/watch?v=$candidate" \
+        > /dev/null 2>"$TMP/elbo-$candidate.ytdlp.err"; then
+      continue # this candidate id doesn't play — try the next one
+    fi
+    # Only the beach view ("... Surf, Wind & Golden Hour") is acceptable. The
+    # same page also lists the weather-station stream, which shows the street,
+    # so a playable-but-wrong stream must never become the fallback.
+    title="$(run_with_timeout 15 yt-dlp --no-warnings --print "%(title)s" \
+        "https://www.youtube.com/watch?v=$candidate" 2>/dev/null || true)"
+    if [[ "$title" == *Surf* ]]; then
+      winner="$candidate"
+      winner_reason="title matched \"Surf\": $title"
+      break
+    fi
+  done < <(grep -oE 'live_chat\?v=[A-Za-z0-9_-]{6,}' "$page_html" \
+      | sed -E 's/^live_chat\?v=//' | awk '!seen[$0]++')
+
+  if [[ -z "$winner" ]]; then
+    log "ftl-elbo-beach-cam: no live beach (\"Surf\") stream found on the beach-cam page — skipping this run" >&2
+    return 1
+  fi
+  log "ftl-elbo-beach-cam: fallback resolved video id -> $winner ($winner_reason)" >&2
+  printf '%s\n' "$winner"
+  return 0
+}
+
 # Grabs and uploads ONE camera; every failure path logs and returns 1
 # rather than aborting the script (see the -euo pipefail note above).
 grab_and_upload() {
@@ -128,8 +190,23 @@ grab_and_upload() {
   if ! run_with_timeout 45 yt-dlp -g --no-warnings --socket-timeout 20 \
       -f "best[height<=720]/best" \
       "https://www.youtube.com/watch?v=$video_id" > "$manifest_file" 2>"$TMP/$cam_id.ytdlp.err"; then
-    log "$cam_id: yt-dlp -g failed or timed out"
-    return 1
+    log "$cam_id: yt-dlp -g failed or timed out for saved video id $video_id"
+    if [[ "$cam_id" == "ftl-elbo-beach-cam" ]]; then
+      local fallback_id
+      if ! fallback_id="$(resolve_elbo_fallback_video_id)"; then
+        return 1
+      fi
+      log "$cam_id: retrying with fallback video id $fallback_id"
+      video_id="$fallback_id"
+      if ! run_with_timeout 45 yt-dlp -g --no-warnings --socket-timeout 20 \
+          -f "best[height<=720]/best" \
+          "https://www.youtube.com/watch?v=$video_id" > "$manifest_file" 2>"$TMP/$cam_id.ytdlp.err"; then
+        log "$cam_id: yt-dlp -g failed even with fallback video id $video_id"
+        return 1
+      fi
+    else
+      return 1
+    fi
   fi
   local manifest
   manifest="$(head -1 "$manifest_file" 2>/dev/null || true)"

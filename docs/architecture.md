@@ -101,7 +101,8 @@ flowchart LR
 ```
 
 **`workers/uw-frame` is a multi-cam courier, not a single grab.** Deerfield
-Beach's cams (underwater, crowd/sand, surf, pier) exist only as YouTube live
+Beach's cams (underwater, crowd/sand, surf, pier) plus Fort Lauderdale
+Beach's Elbo Room cam (crowd/sand, owner approved) exist only as YouTube live
 streams — there's no still-image feed — so each cron tick opens ONE headless
 Chrome and reuses the SAME page across every camera due that tick (navigate
 the embed, wait for it to actually be playing, screenshot, move to the next
@@ -261,7 +262,7 @@ and may be re-claimed.
 | iNaturalist | Portuguese man-o'-war sighting reports |
 | FL Healthy Beaches | Water-quality advisories |
 | video-monitoring.com | Public beach cam still frames |
-| YouTube | Deerfield Beach underwater + surface cam sources, live-embed only (`workers/uw-frame`) |
+| YouTube | Deerfield Beach underwater + surface cam sources, and Fort Lauderdale Beach's Elbo Room cam, live-embed only (`workers/uw-frame`) |
 | ArcGIS (City of Deerfield Beach dashboard) | Lifeguard flag status read (`workers/uw-frame`) |
 | Apple Push Notification service (APNs) | iOS push delivery |
 | Firebase Cloud Messaging (FCM) | Android push delivery |

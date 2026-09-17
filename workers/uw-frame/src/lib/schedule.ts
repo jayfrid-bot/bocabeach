@@ -11,7 +11,8 @@ export type CameraId =
   | "deerfield-spinner-uw"
   | "deerfield-beach-cam"
   | "deerfield-surf-cam"
-  | "deerfield-pier-cam";
+  | "deerfield-pier-cam"
+  | "ftl-elbo-beach-cam";
 
 /**
  * "hourly"       — grabbed on every cron tick (today's Spinner behaviour).
@@ -35,7 +36,10 @@ export interface CameraSpec {
  * Single source of truth for every camera this worker grabs. Deerfield
  * Beach's surface cams exist ONLY as YouTube live streams on the City's
  * channel — there is no still-image feed — so each one gets the same
- * embed-and-screenshot treatment as the original underwater cam.
+ * embed-and-screenshot treatment as the original underwater cam. Fort
+ * Lauderdale Beach's cam (Elbo Room's public YouTube live stream, owner
+ * approved) is the same shape: no still-image feed, so it's grabbed the
+ * same way.
  */
 export const CAMERA_REGISTRY: readonly CameraSpec[] = [
   {
@@ -64,6 +68,13 @@ export const CAMERA_REGISTRY: readonly CameraSpec[] = [
     videoId: "H33wtprQqSM",
     label: "Deerfield Pier Cam",
     purpose: "shoreline",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "ftl-elbo-beach-cam",
+    videoId: "1j1lgppb0PY",
+    label: "Fort Lauderdale Beach Cam (Elbo Room)",
+    purpose: "crowd/sand",
     cadence: "3h-daylight",
   },
 ] as const;

@@ -259,7 +259,25 @@ export const LOCATIONS: Location[] = [
       sites: ["SEBASTIAN STREET", "BAHIA MAR"],
     },
     surfZone: { office: "MFL", name: "Broward" }, // NWS Miami Surf Zone Forecast
-    cams: [],
+    cams: [
+      {
+        // Elbo Room's public YouTube livestream "Fort Lauderdale Beach
+        // LIVE: Surf, Wind & Golden Hour" — looks over the beach and ocean
+        // at Las Olas Blvd & A1A. Owner approved for this use. Frames come
+        // from the owner's Mac courier (scripts/cam_courier_local.sh),
+        // same as Deerfield's cams — see workers/uw-frame/.
+        id: "ftl-elbo-beach-cam",
+        name: "Fort Lauderdale Beach Cam",
+        provider: "Elbo Room",
+        embedType: "image",
+        url: "https://www.elboroom.com/beach-cam/",
+        snapshotUrl: "https://uw-frame.entwined-app.workers.dev/frame?cam=ftl-elbo-beach-cam",
+        snapshotMetaUrl: "https://uw-frame.entwined-app.workers.dev/meta?cam=ftl-elbo-beach-cam",
+        attribution: "Live stream courtesy Elbo Room (ElboRoom.com)",
+        lat: 26.1195,
+        lon: -80.1035,
+      },
+    ],
   },
 ];
 

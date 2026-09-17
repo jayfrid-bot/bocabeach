@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-16",
+    title: "A live cam for Fort Lauderdale Beach",
+    details:
+      "Fort Lauderdale Beach now has a live beach camera, courtesy of Elbo Room. Its crowd, seaweed, and water-clarity readings come from that camera too. Like any cam, it won't show much after dark.",
+    tag: "new",
+  },
+  {
+    date: "2026-09-16",
     title: "Fort Lauderdale Beach is now supported",
     details:
       "Fort Lauderdale Beach at Las Olas gets its own Beach Day score. It uses tides from Bahia Mar, waves and water temperature from the Hollywood Beach buoy, the NWS Miami surf and rip-current forecast, and water-quality results from the Sebastian Street and Bahia Mar sampling sites.",

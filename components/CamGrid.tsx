@@ -110,6 +110,9 @@ function FeaturedCam({ cam, tz, dataAt }: { cam: CamView; tz: string; dataAt?: s
           )}
         </div>
         <CamStamp cam={cam} tz={tz} />
+        {cam.attribution ? (
+          <div className="mt-0.5 truncate text-[11px] text-slate-500">{cam.attribution}</div>
+        ) : null}
       </div>
     </a>
   );

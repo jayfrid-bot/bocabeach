@@ -68,5 +68,20 @@
         "role": "shore"
       }
     ]
+  },
+  "fort-lauderdale": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "ftl-elbo-beach-cam",
+        "name": "Fort Lauderdale Beach Cam",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=ftl-elbo-beach-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=ftl-elbo-beach-cam"
+        },
+        "role": "crowd"
+      }
+    ]
   }
 }

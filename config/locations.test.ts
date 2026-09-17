@@ -92,4 +92,11 @@ describe("fort-lauderdale", () => {
     expect(loc?.ndbcBuoyId).toBe("41122");
     expect(loc?.surfZone).toEqual({ office: "MFL", name: "Broward" });
   });
+
+  it("has the Elbo Room beach cam, credited to Elbo Room", () => {
+    const cam = loc?.cams.find((c) => c.id === "ftl-elbo-beach-cam");
+    expect(cam).toBeDefined();
+    expect(cam?.provider).toBe("Elbo Room");
+    expect(cam?.attribution).toMatch(/Elbo Room/);
+  });
 });
