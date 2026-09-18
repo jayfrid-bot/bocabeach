@@ -33,8 +33,15 @@ export const LOCATIONS: Location[] = [
     // Observed water level comes from the Lake Worth Pier GAUGE (~18 mi north):
     // 8722816 is a subordinate PREDICTION station and publishes no observations.
     noaaWaterLevelStationId: "8722670",
-    ndbcBuoyId: "LKWF1", // Lake Worth Pier C-MAN (nearest)
-    ndbcBuoyFallbackId: "FWYF1", // Fowey Rocks
+    ndbcBuoyId: "LKWF1", // Lake Worth Pier C-MAN (nearest — supplies water temp)
+    // 41122 (Hillsboro/Dania nearshore Datawell, ~24 mi south) supplies OBSERVED
+    // wave height + period: LKWF1 has no wave sensor (WVHT is "MM" 100% of ticks),
+    // and the old FWYF1 fallback is a wave-less light station that is offline, so
+    // Boca's wave height silently fell back to the Open-Meteo model, which reads
+    // ~3x high nearshore (3.1 ft model vs 1.0 ft observed, 2026-09-18). The
+    // field-by-field buoy merge keeps LKWF1's nearer water temp and fills waves
+    // from 41122 — the same buoy neighboring Deerfield and Fort Lauderdale use.
+    ndbcBuoyFallbackId: "41122", // Hillsboro/Dania nearshore buoy (observed waves)
     // SPLocation names as published by the FL Healthy Beaches feed (Palm Beach county).
     healthyBeaches: {
       county: "Palm Beach",

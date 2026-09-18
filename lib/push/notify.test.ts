@@ -8,7 +8,7 @@ import {
 import type { ConditionsResponse } from "@/lib/types";
 
 function sub(over: Partial<Notifiable> = {}): Notifiable {
-  return { prefs: { morning: true, safety: true }, ...over };
+  return { prefs: { morning: true }, ...over };
 }
 
 const SUMMARY = {
@@ -21,8 +21,6 @@ const SUMMARY = {
   cons: ["muggy", "cloudy"],
   bestWindow: "10 AM–2 PM",
   skipWindow: undefined as string | undefined,
-  safetyKey: undefined as string | undefined,
-  safetyText: undefined as string | undefined,
 };
 
 describe("decideNotifications", () => {
@@ -55,46 +53,12 @@ describe("decideNotifications", () => {
 
   it("respects the morning opt-out", () => {
     const r = decideNotifications(
-      sub({ prefs: { morning: false, safety: true } }),
+      sub({ prefs: { morning: false } }),
       SUMMARY,
       MORNING_HOUR,
       "2026-06-15",
     );
     expect(r.sends.find((s) => s.tag === "morning")).toBeUndefined();
-  });
-
-  it("sends a safety alert on a new hazard and dedups while it persists", () => {
-    const danger = { ...SUMMARY, safetyKey: "lightning", safetyText: "Lightning within 5 miles." };
-    const first = decideNotifications(sub(), danger, 14, "2026-06-15");
-    expect(first.sends.find((s) => s.tag === "safety")).toBeTruthy();
-    expect(first.nextSent.safetyKey).toBe("lightning");
-    const again = decideNotifications(
-      sub({ sent: { safetyKey: "lightning" } }),
-      danger,
-      15,
-      "2026-06-15",
-    );
-    expect(again.sends.find((s) => s.tag === "safety")).toBeUndefined();
-  });
-
-  it("re-alerts when the hazard changes, and clears state when safe", () => {
-    const hazard = { ...SUMMARY, safetyKey: "hazard", safetyText: "Beach Hazards Statement." };
-    const changed = decideNotifications(sub({ sent: { safetyKey: "lightning" } }), hazard, 14, "2026-06-15");
-    expect(changed.sends.find((s) => s.tag === "safety")).toBeTruthy();
-    const clear = decideNotifications(sub({ sent: { safetyKey: "hazard" } }), SUMMARY, 14, "2026-06-15");
-    expect(clear.sends.find((s) => s.tag === "safety")).toBeUndefined();
-    expect(clear.nextSent.safetyKey).toBeUndefined();
-  });
-
-  it("respects the safety opt-out", () => {
-    const danger = { ...SUMMARY, safetyKey: "lightning", safetyText: "x" };
-    const r = decideNotifications(
-      sub({ prefs: { morning: true, safety: false } }),
-      danger,
-      14,
-      "2026-06-15",
-    );
-    expect(r.sends.find((s) => s.tag === "safety")).toBeUndefined();
   });
 
   it("a forced morning fires off-hours but does not advance the dedup date", () => {
@@ -105,31 +69,13 @@ describe("decideNotifications", () => {
 
   it("a forced morning still respects the morning opt-out", () => {
     const r = decideNotifications(
-      sub({ prefs: { morning: false, safety: true } }),
+      sub({ prefs: { morning: false } }),
       SUMMARY,
       14,
       "2026-06-15",
       { force: "morning" },
     );
     expect(r.sends.find((s) => s.tag === "morning")).toBeUndefined();
-  });
-
-  it("re-alerts a persistent hazard only after the 30-minute repeat interval", () => {
-    const danger = { ...SUMMARY, safetyKey: "lightning", safetyText: "Lightning within 5 miles." };
-    const t0 = Date.parse("2026-06-15T18:00:00Z");
-    const sentState = { safetyKey: "lightning", safetyAt: new Date(t0).toISOString() };
-    // 10 min later: still deduped, no re-alert
-    const soon = decideNotifications(sub({ sent: sentState }), danger, 14, "2026-06-15", {
-      nowMs: t0 + 10 * 60 * 1000,
-    });
-    expect(soon.sends.find((s) => s.tag === "safety")).toBeUndefined();
-    expect(soon.nextSent.safetyAt).toBe(sentState.safetyAt); // timer not reset
-    // 31 min later: re-alert, timer resets
-    const later = decideNotifications(sub({ sent: sentState }), danger, 14, "2026-06-15", {
-      nowMs: t0 + 31 * 60 * 1000,
-    });
-    expect(later.sends.find((s) => s.tag === "safety")).toBeTruthy();
-    expect(Date.parse(later.nextSent.safetyAt!)).toBe(t0 + 31 * 60 * 1000);
   });
 });
 
@@ -170,36 +116,6 @@ describe("summarizeForPush", () => {
     expect(s.score).toBe(85);
     expect(s.verdict).toBeTruthy();
     expect(s.bestWindow).toMatch(/–/); // a time range
-    expect(s.safetyKey).toBeUndefined();
-  });
-
-  it("prioritizes lightning over a concurrent beach-hazards statement", () => {
-    const s = summarizeForPush(
-      res({
-        lightning: { nearestMi: 3, lastMinutesAgo: 5 },
-        alerts: [{ event: "Beach Hazards Statement", severity: "Moderate" }],
-      }),
-      loc,
-    );
-    expect(s.safetyKey).toBe("lightning");
-  });
-
-  it("falls back to a beach-hazards statement when no higher hazard is active", () => {
-    const s = summarizeForPush(
-      res({ alerts: [{ event: "Beach Hazards Statement", severity: "Moderate" }] }),
-      loc,
-    );
-    expect(s.safetyKey).toBe("hazard");
-  });
-
-  it("flags a red lifeguard flag", () => {
-    const s = summarizeForPush(res({ flags: ["red"] }), loc);
-    expect(s.safetyKey).toBe("flag:red");
-  });
-
-  it("alerts on moderate rip current, matching the in-app banner", () => {
-    const s = summarizeForPush(res({ rip: "moderate" }), loc);
-    expect(s.safetyKey).toBe("rip-moderate");
   });
 
   it("derives qualitative pros + cons from the sub-scores (real Boca day)", () => {

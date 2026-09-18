@@ -30,4 +30,11 @@ describe("setSessionFix", () => {
     setSessionFix(null);
     expect(getSessionFix()).toBeNull();
   });
+
+  it("accepts a same-timestamp fix — the rule is strictly OLDER, not older-or-equal", () => {
+    setSessionFix(newer);
+    const sameTime = { ...newer, lat: 26.4, lon: -80.05 };
+    expect(setSessionFix(sameTime)).toEqual(sameTime);
+    expect(getSessionFix()).toEqual(sameTime);
+  });
 });

@@ -24,16 +24,13 @@ export function safetyAlertsEnabled(): boolean {
   return process.env.PUSH_SAFETY_ALERTS !== "off";
 }
 
-/** How long a still-active hazard waits before it re-reminds. */
-export const SAFETY_REPEAT_MS = 30 * 60 * 1000;
-
 /**
  * The minimum a subscription must expose for the decision logic — satisfied by
  * `NativeSub` (iOS APNs + Android FCM), so one rule set drives both platforms.
  */
 export interface Notifiable {
-  prefs: { morning: boolean; safety: boolean };
-  sent?: { morningDate?: string; safetyKey?: string; safetyAt?: string };
+  prefs: { morning: boolean };
+  sent?: { morningDate?: string };
 }
 
 /** Compact, notification-ready view of a beach's current conditions. */
@@ -53,13 +50,6 @@ export interface PushSummary {
   bestWindow?: string;
   /** A daylight stretch worth avoiding (a storm/rain dip), e.g. "2–3 PM". */
   skipWindow?: string;
-  /**
-   * Stable key for the single most-urgent active safety condition (or undefined
-   * when none). Stable so the sender only re-alerts when the condition CHANGES;
-   * `safetyText` is the human message.
-   */
-  safetyKey?: string;
-  safetyText?: string;
 }
 
 // The genuinely dangerous, beach-closing NWS warnings (mirrors score.ts).
@@ -71,55 +61,6 @@ export const SEVERE_ALERT =
 /** Is this NWS alert one of the beach-closing warnings? */
 export function isSevereAlert(a: { event: string; severity?: string }): boolean {
   return SEVERE_ALERT.test(a.event) || /^(Severe|Extreme)$/i.test(a.severity ?? "");
-}
-
-/**
- * Extract the single highest-priority active safety condition from a snapshot,
- * as a stable { key, text }. Priority: lightning → severe warning → water
- * advisory → beach hazards → high rip → red flag → moderate rip. Mirrors what
- * SafetyBanner surfaces in-app (incl. moderate rip), so push never stays silent
- * on a hazard the app is showing. Returns null when clear.
- */
-export function activeSafety(res: ConditionsResponse): { key: string; text: string } | null {
-  const s = res.snapshot;
-
-  const lt = s.lightning;
-  if (
-    lt?.status === "ok" &&
-    (lt.data?.lastMinutesAgo == null || lt.data.lastMinutesAgo <= 30) &&
-    (lt.data?.nearestMi ?? Infinity) <= 5
-  ) {
-    // Match the in-app SafetyBanner wording exactly (incl. "seek shelter").
-    return { key: "lightning", text: "Lightning within 5 miles — get out of the water and seek shelter." };
-  }
-
-  const alerts = s.nws.data?.alerts ?? [];
-  const severe = alerts.find(isSevereAlert);
-  if (severe) return { key: `severe:${severe.event}`, text: `${severe.event} in effect.` };
-
-  if (s.cityOfficial.data?.noSwimAdvisory || s.waterQuality.data?.advisory) {
-    return { key: "water", text: "Water-quality advisory — swimming not recommended." };
-  }
-
-  const hazard = alerts.find((a) => /beach hazard/i.test(a.event));
-  if (hazard) return { key: "hazard", text: "NWS Beach Hazards Statement in effect." };
-
-  if (s.nws.data?.ripCurrentRisk === "high") {
-    return { key: "rip", text: "High rip-current risk today." };
-  }
-
-  const flags = s.cityOfficial.data?.flags ?? [];
-  if (flags.some((f) => f === "red" || f === "double-red")) {
-    return { key: "flag:red", text: "Red flag flying — dangerous surf, stay out of the water." };
-  }
-
-  // Moderate rip current: the app shows it (amber), so alert on it too — lowest
-  // priority. Dedup means it fires once per occurrence, not repeatedly.
-  if (s.nws.data?.ripCurrentRisk === "moderate") {
-    return { key: "rip-moderate", text: "Moderate rip-current risk today — swim near a lifeguard." };
-  }
-
-  return null;
 }
 
 // ---- Pros / cons lexicon --------------------------------------------------
@@ -307,7 +248,6 @@ export function summarizeForPush(
     : findBestWindow(forecast, loc.tz);
   const skipWindow = findSkipWindow(forecast, loc.tz);
   const { pros, cons } = prosAndCons(subScores);
-  const safety = activeSafety(res);
   return {
     slug: loc.slug,
     name: loc.name,
@@ -318,8 +258,6 @@ export function summarizeForPush(
     cons,
     bestWindow,
     skipWindow,
-    safetyKey: safety?.key,
-    safetyText: safety?.text,
   };
 }
 
@@ -359,8 +297,6 @@ export interface PushDecision {
  * dedup state to persist. Rules:
  *  - Morning summary: once per local day, at MORNING_HOUR, if opted in. Rich
  *    body: verdict + score, then ☀️ pros, ☁️ cons, 🕓 best/skip windows.
- *  - Safety alert: when an active safety condition's key differs from the last
- *    one we sent (so it fires on a NEW hazard, not every run while it persists).
  */
 export function decideNotifications(
   sub: Notifiable,
@@ -370,7 +306,6 @@ export function decideNotifications(
   opts?: { force?: "morning"; nowMs?: number },
 ): { sends: PushDecision[]; nextSent: NonNullable<Notifiable["sent"]> } {
   const sent = sub.sent ?? {};
-  const nowMs = opts?.nowMs ?? Date.now();
   const sends: PushDecision[] = [];
   const nextSent: NonNullable<Notifiable["sent"]> = { ...sent };
   const url = `/${summary.slug}`;
@@ -398,37 +333,6 @@ export function decideNotifications(
       url,
     });
     if (!forceMorning) nextSent.morningDate = date;
-  }
-
-  // Safety alert (paused unless SAFETY_ALERTS_ENABLED): fire on a NEW hazard, and
-  // RE-fire a still-active one every SAFETY_REPEAT_MS. The single-shot-on-change
-  // rule alone meant a phone offline when the alert first fired (then suppressed by
-  // the key dedup) never got a warning on reconnect.
-  if (safetyAlertsEnabled()) {
-    const lastAt = sent.safetyAt ? Date.parse(sent.safetyAt) : NaN;
-    const safetyDue =
-      !!summary.safetyKey &&
-      (sent.safetyKey !== summary.safetyKey ||
-        (Number.isFinite(lastAt) && nowMs - lastAt >= SAFETY_REPEAT_MS));
-    if (sub.prefs.safety && safetyDue) {
-      sends.push({
-        tag: "safety",
-        title: `⚠️ ${summary.name}`,
-        body: summary.safetyText ?? "Beach safety alert.",
-        url,
-      });
-    }
-    // Track the current key + when we last alerted, so a cleared-then-returned
-    // hazard re-alerts, a persistent one re-reminds every SAFETY_REPEAT_MS (not
-    // every run), and a cleared hazard resets the timer.
-    nextSent.safetyKey = summary.safetyKey;
-    if (!summary.safetyKey) {
-      nextSent.safetyAt = undefined;
-    } else if (sub.prefs.safety && safetyDue) {
-      nextSent.safetyAt = new Date(nowMs).toISOString();
-    } else {
-      nextSent.safetyAt = sent.safetyAt;
-    }
   }
 
   return { sends, nextSent };

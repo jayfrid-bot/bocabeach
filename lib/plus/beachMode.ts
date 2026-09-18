@@ -268,6 +268,29 @@ export function shouldRefreshPresence(
   return lastUploadedFixAt == null || fixAt > lastUploadedFixAt;
 }
 
+/**
+ * May the auto-arm effect write yet (R-01)? Both the device row (entitlement,
+ * any existing session) and the saved Off suppression must have been read
+ * first — `suppressionLoaded` starts false and flips true only once the
+ * stored suppression comes back from storage. Without this gate, a cached
+ * entitlement plus a leftover session fix could auto-arm on the very first
+ * render, before the card even knows about an Off from earlier in the day.
+ */
+export function canAutoArm(input: { deviceLoaded: boolean; suppressionLoaded: boolean }): boolean {
+  return input.deviceLoaded && input.suppressionLoaded;
+}
+
+/**
+ * Is `ticket` still the current arm request (R-02)? `arm()` takes a ticket
+ * from `armSeqRef` before each await; a mismatch after the await means a
+ * newer request — another tap, a retarget, or `disarm()` bumping the ref —
+ * took over while this one was in flight, and its result must be dropped
+ * rather than overwrite the newer intent.
+ */
+export function isCurrentArmTicket(ticket: number, current: number): boolean {
+  return ticket === current;
+}
+
 /** Which of BeachModeCard's four bodies should render. Centralized so the
  *  "device metadata not loaded yet" gate (issue #11) can be tested without
  *  rendering the card: the door outranks everything (a cached "not entitled"

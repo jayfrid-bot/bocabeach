@@ -9,10 +9,12 @@ import {
   ARM_THROTTLE_MS,
   AUTO_ARM_MS,
   MANUAL_ARM_MS,
+  canAutoArm,
   coarsePosition,
   decideArm,
   establishesArrival,
   extendArmedUntil,
+  isCurrentArmTicket,
   isSuppressed,
   resolveBeachModeView,
   resolveDelivery,
@@ -166,7 +168,7 @@ export function BeachModeCard({
       // fetch is a null fix, never a fallback to the session's older one
       // (LOC-06) — an automatic arm then simply does not happen.
       const freshFix = await requestFresh();
-      if (seq !== armSeqRef.current) return; // a newer request took over
+      if (!isCurrentArmTicket(seq, armSeqRef.current)) return; // a newer request took over
       const now = Date.now();
       const decision = decideArm({
         mode,
@@ -189,7 +191,7 @@ export function BeachModeCard({
         armedUntil: opts.keepExpiry ? armedUntil : extendArmedUntil(armedUntil, now, opts.ms),
         source: decision.source,
       });
-      if (seq !== armSeqRef.current) return;
+      if (!isCurrentArmTicket(seq, armSeqRef.current)) return;
       inFlightRef.current = false;
       setBusy(false);
       if (res.ok) {
@@ -216,7 +218,7 @@ export function BeachModeCard({
   // a write before the card knows about a saved Off or an existing session.
   useEffect(() => {
     if (!native || !plus.entitled || locked) return;
-    if (!plus.deviceLoaded || !suppressionLoaded) return;
+    if (!canAutoArm({ deviceLoaded: plus.deviceLoaded, suppressionLoaded })) return;
     const armIfDue = () => {
       if (inFlightRef.current) return;
       const now = Date.now();

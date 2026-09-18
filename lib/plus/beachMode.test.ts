@@ -4,10 +4,12 @@ import {
   MAX_ARM_MS,
   PRESENCE_REFRESH_MS,
   SUPPRESSION_MAX_AGE_MS,
+  canAutoArm,
   coarsePosition,
   decideArm,
   establishesArrival,
   extendArmedUntil,
+  isCurrentArmTicket,
   isSuppressed,
   resolveArmCoords,
   resolveBeachModeView,
@@ -190,6 +192,40 @@ describe("resolveBeachModeView", () => {
     expect(resolveBeachModeView({ entitled: true, locked: false, deviceLoaded: true, armed: false })).toBe(
       "idle",
     );
+  });
+});
+
+describe("canAutoArm (R-01: no auto-arm write before the saved state is read)", () => {
+  it("blocks until BOTH the device row and the saved Off suppression have loaded", () => {
+    expect(canAutoArm({ deviceLoaded: false, suppressionLoaded: false })).toBe(false);
+    expect(canAutoArm({ deviceLoaded: true, suppressionLoaded: false })).toBe(false);
+    expect(canAutoArm({ deviceLoaded: false, suppressionLoaded: true })).toBe(false);
+  });
+
+  it("allows it only once both have loaded", () => {
+    expect(canAutoArm({ deviceLoaded: true, suppressionLoaded: true })).toBe(true);
+  });
+});
+
+describe("isCurrentArmTicket (R-02: a stale in-flight arm result is dropped)", () => {
+  it("accepts a ticket that is still the newest one issued", () => {
+    const armSeqRef = { current: 1 };
+    const seq = armSeqRef.current; // this request's ticket
+    expect(isCurrentArmTicket(seq, armSeqRef.current)).toBe(true);
+  });
+
+  it("drops a result once a later request bumps the ticket while it was in flight", () => {
+    const armSeqRef = { current: 0 };
+    const seq = ++armSeqRef.current; // request A takes ticket 1
+    armSeqRef.current += 1; // request B (a later tap / retarget) takes ticket 2 first
+    expect(isCurrentArmTicket(seq, armSeqRef.current)).toBe(false); // A's result must not win
+  });
+
+  it("drops a result once disarm() bumps the ticket while it was in flight", () => {
+    const armSeqRef = { current: 0 };
+    const seq = ++armSeqRef.current; // an arm request in flight
+    armSeqRef.current += 1; // disarm(): "any arm still in flight loses to this Off"
+    expect(isCurrentArmTicket(seq, armSeqRef.current)).toBe(false);
   });
 });
 

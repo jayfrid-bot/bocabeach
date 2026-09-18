@@ -76,13 +76,13 @@ function isDaylightAt(loc: { lat: number; lon: number }, now: Date, date: string
 /**
  * How long APNs should STORE an undelivered push so an offline phone (airplane
  * mode / off) still gets it on reconnect, instead of Apple discarding it. The
- * morning summary stays relevant through the beach day; a safety alert goes
- * stale fast. 0 = deliver-or-discard.
+ * morning summary stays relevant through the beach day. Hazard alerts from the
+ * at-beach engine (tag `safety:<hazard>:<slug>`) fall through to 0 — deliver
+ * or discard, since a stale hazard warning is worse than none.
  */
 function apnsExpiry(tag: string, nowSec: number): number {
   if (tag === "morning") return nowSec + 8 * 3600; // through the beach day
   if (tag === "excellent") return nowSec + 4 * 3600; // the good stretch it names
-  if (tag === "safety") return nowSec + 30 * 60; // matches the lightning freshness window
   return 0;
 }
 

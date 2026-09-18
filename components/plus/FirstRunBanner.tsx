@@ -7,6 +7,7 @@ import { setHomeBeach } from "@/lib/homeBeach";
 import { nearestServedBeach } from "@/lib/location/nearest";
 import type { PlusState } from "@/lib/plus/client";
 import { useDeviceFix } from "@/lib/plus/client";
+import { shouldCancelPendingFind } from "@/lib/plus/firstRun";
 import { readFirstRunDone, writeFirstRunDone } from "@/lib/plus/storage";
 import type { LocationPublic } from "@/lib/types";
 
@@ -55,7 +56,7 @@ export function FirstRunBanner({
     const ticket = ++findTicket.current;
     setState("locating");
     const got = await fix.request();
-    if (ticket !== findTicket.current) return; // dismissed while looking
+    if (shouldCancelPendingFind(ticket, findTicket.current)) return; // dismissed while looking
     writeFirstRunDone(true);
     if (!got) {
       // Denied, unavailable, or timed out. Say nothing — this was optional.

@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-09-18",
+    title: "Boca Raton wave height now comes from a real buoy",
+    details:
+      "Boca's wave height was being estimated from a forecast model, which ran high — it could say 3 feet on a day the surf was barely over a foot. It now reads the live ocean buoy just down the coast at Hillsboro, the same one Deerfield and Fort Lauderdale already use, so the wave height matches what you actually see at the shore. Water temperature still comes from the closer Lake Worth Pier station.",
+    tag: "fixed",
+  },
+  {
     date: "2026-09-17",
     title: "Your personal score profile is now Plus-only after the preview",
     details:
