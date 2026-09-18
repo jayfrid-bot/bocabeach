@@ -313,8 +313,17 @@ export async function getConditionsForLocation(
     getSnapshotForLocation(loc),
     buildCamViews(loc).catch(() => []),
   ]);
-  const score = computeScore(snapshot);
-  const nowMs = Date.now();
+  // Score against the snapshot's OWN time, not the request clock. The snapshot
+  // is served from a ~2-min cache, and components/ConditionsDashboard.tsx
+  // hydrates its first render from `snap.generatedAt` (the hydration-stable
+  // clock, see cfe003a). If the server scored with Date.now() instead, a hold
+  // boundary (lightning 30 min, rain 20 min) falling inside that gap made the
+  // server HTML and the client's hydration pass disagree on the cap text —
+  // React #418 on every page during the 2026-09-18 storm (layout-check run
+  // 35390225577). Same clock on both sides = identical first render; the
+  // client re-scores with the live clock after mount, as before.
+  const nowMs = Date.parse(snapshot.generatedAt) || Date.now();
+  const score = computeScore(snapshot, undefined, nowMs);
   // The raw forecast curve (for the push's window analysis), and the same curve
   // with the current hour anchored to the headline (consensus) score so the chart's
   // "now" point matches the big number instead of diverging by the single-source gap.
