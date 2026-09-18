@@ -446,6 +446,11 @@ export function clarityTileCopy(d: ClarityData, tz: string): ClarityTileCopy {
   if (d.lastReadWeekday) {
     return {
       value: "—",
+      // Phones show only the deterministic part: with the gate note appended,
+      // the full line runs to four lines inside the tile's 3-line clamp at
+      // 390px (caught by e2e/layout.spec.ts on Deerfield, 2026-09-18). The
+      // full wording still shows at sm+ and in the hover title.
+      subShort: noRecentCamReadsCopy(d.lastReadWeekday),
       sub: [noRecentCamReadsCopy(d.lastReadWeekday), nextRead ?? compactGateNote(d.note)]
         .filter(Boolean)
         .join(" · "),

@@ -550,6 +550,9 @@ describe("clarityTileCopy — what the tile actually says", () => {
     );
     expect(c.value).toBe("—");
     expect(c.sub).toBe("No recent cam reads — last clear read Wed · cams resume ~6:24 AM");
+    // Phones get the short form: the full line is four lines inside the tile's
+    // 3-line clamp at 390px (Deerfield, 2026-09-18 layout-gate failure).
+    expect(c.subShort).toBe("No recent cam reads — last clear read Wed");
     expect(c.pct).toBeNull(); // no scene — nothing recent enough to draw
     expect(c.muted).toBeUndefined();
   });

@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-18",
+    title: "Water clarity tile no longer cuts off its note on phones",
+    details:
+      "When a beach's cams haven't had a clear read in a few days, the Water clarity tile explains that. On phones that note ran past the tile and got cut off mid-sentence; it now shows the short version, with the full wording on larger screens.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-09-18",
     title: "The score holds steady when a storm sits on the edge",
     details:
       "When lightning was hovering right around five miles out, or a shower sat at the edge of the radar, the score could jump between a safety cap and a normal number every time you refreshed. Now a rain or lightning cap holds for a short while after the last observation — 30 minutes after the last close strike, matching the usual safety rule, 20 minutes after the radar last saw rain — and then clears. The card says when it's holding ('Rain in the last 20 minutes'). Safety alerts and the score now use the same rain and lightning rule.",
