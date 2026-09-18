@@ -46,6 +46,7 @@ flowchart TD
   SHARE --> PIPE
   PIPE --> SOURCES[lib/sources/*<br/>one adapter per external source<br/>each returns Wrapped&lt;T&gt;, never throws]
   PIPE --> SCORE[lib/score.ts<br/>deriveMetrics + computeScore<br/>hourly + multi-day windows]
+  SCORE --> HAZ[lib/hazards/assess.ts<br/>one lightning + rain assessment<br/>30-min / 20-min holds, pure]
   SCORE --> CACHE[(NEXT_INC_CACHE_KV<br/>OpenNext page/data cache)]
   PIPE --> CACHE
   CAM --> SOURCES
@@ -98,9 +99,10 @@ flowchart LR
   LDATA --> SOURCES2[lib/sources/lightning.ts]
   SDATA --> SOURCES3[lib/sources/sargassum.ts, busyness.ts]
   GDATA --> SOURCES4[lib/sources/goesCloud.ts]
-  MDATA --> SOURCES5[lib/sources/precipRadar.ts]
+  MDATA --> SOURCES5[lib/sources/precipRadar.ts<br/>parses lastWetIso → wetMinutesAgo<br/>on the server clock]
 
   PUSHCRON -->|POST x-cron-secret| RUN["/api/push/run?mode=all"]
+  RUN -->|"at-beach hazards read the SAME<br/>assessment the score caps use"| HAZ2[lib/hazards/assess.ts<br/>lightning from the device fix,<br/>rain from the beach radar or the fix's cell forecast]
   PLUSCRON -->|POST x-cron-secret, every 5 min| RUN
   UWFRAME -->|one headless-Chrome launch/tick,<br/>reused across every cam + the flag read| UWKV[(UW_FRAME KV<br/>frame:&lt;id&gt;, meta:&lt;id&gt;,<br/>flags:deerfield-beach, flags:fort-lauderdale)]
 ```

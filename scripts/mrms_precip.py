@@ -207,6 +207,24 @@ S3_NS = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
 
 KM_PER_DEG_LAT = 111.32
 
+# "Wet" for the persisted lastWetIso field below: rain observed AT the beach,
+# or close enough (within RAIN_NEARBY_KM) that it plausibly just left/is about
+# to arrive. Mirrors the radius the score-side rain hold reads (see
+# docs/LOCATION_FIRST_PLAN.md phase 1c) — display-only here, same as the rest
+# of this feed (see SCOPE note above).
+RAIN_NEARBY_KM = 5.0
+# rainNowMmHr threshold for "wet" — mirrors RAIN_WET_MM_HR in
+# lib/hazards/assess.ts — keep in sync.
+RAIN_WET_MM_HR = 0.5
+
+# Where the currently-published feed lives, so lastWetIso can persist across
+# runs. Same branch/path the app reads (lib/sources/precipRadar.ts's
+# FEED_URL) — override with MRMS_FEED_URL (shared env name with that file).
+PREV_FEED_URL = os.environ.get(
+    "MRMS_FEED_URL",
+    "https://raw.githubusercontent.com/jayfrid-bot/bocabeach/mrms-data/mrms_precip.json",
+)
+
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Beaches to sample. Loaded from config/locations.ts (curated) +
@@ -528,6 +546,23 @@ def sample_box(
     }
 
 
+def frame_wetness(
+    frames: list[tuple[dt.datetime, np.ndarray]], grid: LatLonGrid, lat: float, lon: float
+) -> list[tuple[str, bool]]:
+    """(frameIso, wetNow) for one beach across every decoded frame this run —
+    the cheap per-frame sample last_wet_iso's replacement (newest_wet_iso)
+    needs so a wet older frame is never lost just because the newest frame is
+    dry. Reuses sample_box's existing pixel/neighborhood sampling; a frame
+    that can't be sampled (off-grid, no coverage) is simply omitted."""
+    out: list[tuple[str, bool]] = []
+    for t, v in frames:
+        s = sample_box(v, grid, lat, lon)
+        if s is None:
+            continue
+        out.append((iso(t), is_wet(s.get("rainNowMmHr"), s.get("nearestRainKm"))))
+    return out
+
+
 def _corr_field(vals: np.ndarray, r0: int, r1: int, c0: int, c1: int) -> np.ndarray:
     """A correlation-ready slice: no-data flags zeroed, intensities clipped."""
     sub = np.array(vals[r0:r1, c0:c1], dtype="float32")
@@ -732,6 +767,132 @@ def iso(t: dt.datetime) -> str:
     return t.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _parse_iso(s: str) -> dt.datetime | None:
+    """Strict-ish ISO-8601 parse; None on anything malformed OR
+    timezone-naive rather than raising — every caller here treats an
+    unparsable (or ambiguous, offset-less) timestamp as absent. Accepted
+    values are normalized to UTC so max()/comparisons never mix naive and
+    aware datetimes and a non-UTC offset (e.g. "+01:00") sorts correctly
+    against a "Z" value.
+
+    >>> _parse_iso("2026-09-18T12:00:00") is None
+    True
+    >>> _parse_iso("not a timestamp") is None
+    True
+    >>> _parse_iso("2026-09-18T12:00:00+01:00")
+    datetime.datetime(2026, 9, 18, 11, 0, tzinfo=datetime.timezone.utc)
+    """
+    try:
+        parsed = dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.astimezone(dt.timezone.utc)
+
+
+def is_wet(rain_now_mm_hr: float | None, nearest_rain_km: float | None) -> bool:
+    """WET this frame: rain observed at the beach, or within RAIN_NEARBY_KM.
+
+    >>> is_wet(0.0, None)
+    False
+    >>> is_wet(0.3, None)
+    False
+    >>> is_wet(0.5, None)
+    True
+    >>> is_wet(1.2, None)
+    True
+    >>> is_wet(None, 4.9)
+    True
+    >>> is_wet(None, 5.0)
+    True
+    >>> is_wet(None, 5.1)
+    False
+    >>> is_wet(None, None)
+    False
+    """
+    if rain_now_mm_hr is not None and rain_now_mm_hr >= RAIN_WET_MM_HR:
+        return True
+    if nearest_rain_km is not None and nearest_rain_km <= RAIN_NEARBY_KM:
+        return True
+    return False
+
+
+def newest_wet_iso(frames_wetness: list[tuple[str, bool]], prev_iso: str | None) -> str | None:
+    """Persisted "last wet" time for one beach, evaluated across every frame
+    decoded THIS run (not just the newest).
+
+    A job run only sees the newest of a handful of ~10-min-apart frames if it
+    looks at frames[-1] alone. When Actions gets throttled, the -10/-20 min
+    frame can be wet while the newest is dry, and that observation would
+    otherwise be lost with no hold created. So: find the newest WET frame in
+    frames_wetness (any order — compared here as UTC datetimes, which orders
+    chronologically for this feed's fixed-width UTC ISO format), then take
+    the max of that and the carried-forward prev_iso, so carry-forward can
+    never move the timestamp backwards and a run with no wet frame never
+    resurrects anything beyond what was already carried.
+
+    >>> newest_wet_iso([("2026-09-18T12:00:00Z", False), ("2026-09-18T11:50:00Z", True)], None)
+    '2026-09-18T11:50:00Z'
+    >>> newest_wet_iso([("2026-09-18T12:00:00Z", False)], "2026-09-18T11:40:00Z")
+    '2026-09-18T11:40:00Z'
+    >>> newest_wet_iso([("2026-09-18T12:00:00Z", True)], "2026-09-18T11:40:00Z")
+    '2026-09-18T12:00:00Z'
+    >>> newest_wet_iso([], "2026-09-18T11:40:00Z")
+    '2026-09-18T11:40:00Z'
+    >>> newest_wet_iso([], None) is None
+    True
+    >>> newest_wet_iso([("2026-09-18T12:00:00Z", True), ("2026-09-18T11:59:00+00:00", True)], None)
+    '2026-09-18T12:00:00Z'
+    >>> newest_wet_iso([("2026-09-18T11:59:00Z", True)], "2026-09-18T12:00:00+00:00")
+    '2026-09-18T12:00:00Z'
+    """
+    # Compare as timezone-aware UTC datetimes, not raw ISO strings — a
+    # "+00:00"-offset timestamp and a "Z" one are equal instants but don't
+    # sort the same lexically, so a string-max here could quietly return the
+    # stale one. Unparsable timestamps are dropped (treated as absent).
+    def parsed(pairs: list[tuple[str, bool]]) -> list[tuple[dt.datetime, str]]:
+        out: list[tuple[dt.datetime, str]] = []
+        for frame_iso, wet in pairs:
+            if not wet:
+                continue
+            t = _parse_iso(frame_iso)
+            if t is not None:
+                out.append((t, frame_iso))
+        return out
+
+    wet_dts = parsed(frames_wetness)
+    this_run = max(wet_dts)[0] if wet_dts else None
+    prev_dt = _parse_iso(prev_iso) if prev_iso is not None else None
+    candidates = [x for x in (this_run, prev_dt) if x is not None]
+    return iso(max(candidates)) if candidates else None
+
+
+def fetch_previous_last_wet() -> dict[str, str]:
+    """Best-effort {slug: lastWetIso} from the currently-published feed, used
+    to carry lastWetIso forward across runs. ANY failure — network error,
+    404 (branch not published yet), malformed JSON, wrong shape, a bad
+    per-beach value — yields {}. A job that can't read its own last output
+    must degrade to "carry nothing forward", never fail the run."""
+    try:
+        raw = _get(PREV_FEED_URL, timeout=15)
+        feed = json.loads(raw)
+        beaches = feed.get("beaches") if isinstance(feed, dict) else None
+        if not isinstance(beaches, dict):
+            return {}
+        out: dict[str, str] = {}
+        for slug, b in beaches.items():
+            if not isinstance(b, dict):
+                continue
+            v = b.get("lastWetIso")
+            if isinstance(v, str) and _parse_iso(v) is not None:
+                out[slug] = v
+        return out
+    except Exception as e:  # noqa: BLE001
+        print(f"warn: could not fetch previous feed for lastWetIso: {e}", file=sys.stderr)
+        return {}
+
+
 def write_out(payload: dict) -> None:
     out_path = OUT if os.path.isabs(OUT) else os.path.join(REPO_ROOT, OUT)
     with open(out_path, "w") as fh:
@@ -739,11 +900,14 @@ def write_out(payload: dict) -> None:
     print(f"wrote {out_path}")
 
 
-def empty_payload(note: str, beaches: list[dict]) -> dict:
+def empty_payload(note: str, beaches: list[dict], prev_wet: dict[str, str]) -> dict:
     """A well-formed file with null readings. Publishing this (rather than
     leaving the last good file in place) is what lets the app distinguish
     "the radar job ran and found nothing" from "the job has been dead for
-    hours" — the branch's own freshness is the app's staleness gate."""
+    hours" — the branch's own freshness is the app's staleness gate.
+
+    Nothing was sampled, so no beach is WET this run — lastWetIso just
+    carries forward whatever the previous feed had (None if nothing)."""
     return {
         "version": FEED_VERSION,
         "generatedAt": iso(dt.datetime.now(dt.timezone.utc)),
@@ -760,6 +924,7 @@ def empty_payload(note: str, beaches: list[dict]) -> dict:
                 "etaMinutes": None,
                 "frameIso": None,
                 "framesUsed": 0,
+                "lastWetIso": prev_wet.get(b["slug"]),
                 "note": note,
             }
             for b in beaches
@@ -771,10 +936,13 @@ def main() -> int:
     beaches = load_beaches()
     print(f"beaches: {[b['slug'] for b in beaches]}")
 
+    prev_wet = fetch_previous_last_wet()
+    print(f"lastWetIso carried over for {len(prev_wet)} beach(es)")
+
     picked = pick_frames()
     if not picked:
         print("warn: no MRMS frames available — publishing nulls", file=sys.stderr)
-        write_out(empty_payload("no MRMS frames available", beaches))
+        write_out(empty_payload("no MRMS frames available", beaches, prev_wet))
         return 0
     print("frames: " + ", ".join(f"{iso(t)}" for t, _ in picked))
 
@@ -799,7 +967,7 @@ def main() -> int:
 
     if not frames or grid is None:
         print("warn: no frame decoded — publishing nulls", file=sys.stderr)
-        write_out(empty_payload("no MRMS frame could be decoded", beaches))
+        write_out(empty_payload("no MRMS frame could be decoded", beaches, prev_wet))
         return 0
 
     frames.sort(key=lambda f: f[0])
@@ -811,6 +979,7 @@ def main() -> int:
         try:
             sampled = sample_box(newest_v, grid, lat, lon)
             if sampled is None:
+                # Not sampled at all this run — not wet, carry forward.
                 results[slug] = {
                     "rainNowMmHr": None,
                     "nearestRainKm": None,
@@ -820,11 +989,13 @@ def main() -> int:
                     "etaMinutes": None,
                     "frameIso": iso(newest_t),
                     "framesUsed": len(frames),
+                    "lastWetIso": prev_wet.get(slug),
                     "note": "beach outside the MRMS CONUS grid",
                 }
                 continue
             motion = estimate_motion(frames, grid, lat, lon)
             eta = estimate_eta(newest_v, grid, lat, lon, motion)
+            fw = frame_wetness(frames, grid, lat, lon)
             entry = {
                 "rainNowMmHr": sampled["rainNowMmHr"],
                 "nearestRainKm": sampled["nearestRainKm"],
@@ -834,12 +1005,14 @@ def main() -> int:
                 "etaMinutes": eta,
                 "frameIso": iso(newest_t),
                 "framesUsed": len(frames),
+                "lastWetIso": newest_wet_iso(fw, prev_wet.get(slug)),
             }
             if sampled.get("note"):
                 entry["note"] = sampled["note"]
             results[slug] = entry
         except Exception as e:  # noqa: BLE001
-            # One bad beach must never sink the whole feed.
+            # One bad beach must never sink the whole feed. Not wet this run
+            # (it wasn't sampled), so carry the previous lastWetIso forward.
             print(f"warn: beach {slug}: {e}", file=sys.stderr)
             results[slug] = {
                 "rainNowMmHr": None,
@@ -850,6 +1023,7 @@ def main() -> int:
                 "etaMinutes": None,
                 "frameIso": iso(newest_t),
                 "framesUsed": len(frames),
+                "lastWetIso": prev_wet.get(slug),
                 "note": f"sampling failed: {e}",
             }
 

@@ -11,7 +11,7 @@ import type { LightningData } from "@/lib/types";
 const NOW = Date.parse("2026-09-02T18:00:00Z"); // 2 PM ET
 
 function strikes(over: Partial<LightningData>): LightningData {
-  return {
+  const s = {
     within10mi: 1,
     within20mi: 1,
     within25mi: 1,
@@ -20,6 +20,17 @@ function strikes(over: Partial<LightningData>): LightningData {
     stormEnergy: 1,
     ...over,
   } as LightningData;
+  // assessLightning's active/latched call is keyed on `closeStrikeMinutesAgo`
+  // alone (lib/hazards/assess.ts), not `nearestMi`/`nearestMinutesAgo` — mirror
+  // the source's real behavior here so fixtures that only set nearestMi/
+  // nearestMinutesAgo (most of this file) still exercise the "within 5 mi"
+  // case they were written for, unless a test overrides it explicitly. Only
+  // derive when the caller didn't pass the key at all — an explicit
+  // `undefined` (e.g. to test the "no close strike" case) must stick.
+  if (!("closeStrikeMinutesAgo" in over) && s.nearestMi != null && s.nearestMi <= 5) {
+    s.closeStrikeMinutesAgo = s.nearestMinutesAgo;
+  }
+  return s;
 }
 
 /** Everything of AtBeachInput, except `conditions` comes in as fixture overrides. */
@@ -172,6 +183,31 @@ describe("evaluateAtBeach — lightning, from the person's own fix", () => {
       }),
     );
     expect(out).toEqual([]);
+  });
+
+  it("stays quiet near the nearest strike when closeStrikeMinutesAgo is explicitly absent", () => {
+    // Passing closeStrikeMinutesAgo: undefined must stick (not be re-derived
+    // from nearestMi by the strikes() fixture helper) — this mirrors the real
+    // feed's "nothing within 5 mi" shape even when nearestMi alone looks close.
+    const out = evaluateAtBeach(
+      input({
+        strikes: strikes({ nearestMi: 3.0, nearestMinutesAgo: 2, closeStrikeMinutesAgo: undefined }),
+      }),
+    );
+    expect(out).toEqual([]);
+  });
+
+  it("fires (latched) off a different, farther-in-the-past close strike even when the nearest strike is 7 mi and recent", () => {
+    const out = evaluateAtBeach(
+      input({
+        strikes: strikes({
+          nearestMi: 7.0,
+          nearestMinutesAgo: 1,
+          closeStrikeMinutesAgo: 20,
+        }),
+      }),
+    );
+    expect(keys(out)).toEqual(["lightning"]);
   });
 });
 

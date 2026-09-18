@@ -24,6 +24,8 @@ import type { AlertKey, AlertPrefs, ScoreProfile } from "@/lib/db/types";
 import type { ConditionsResponse, FlagColor, LightningData } from "@/lib/types";
 import { buildAlert, type AlertDecision, type AlertSubject } from "@/lib/alerts/catalog";
 import type { RainRead } from "@/lib/alerts/rain";
+import { assessLightning, type HazardAnchor } from "@/lib/hazards/assess";
+import { cellKey } from "@/lib/location/cell";
 
 /** Lightning this close counts as "at the beach". */
 export const LIGHTNING_ALERT_MI = 5;
@@ -99,12 +101,37 @@ function postedFlag(res: ConditionsResponse): "red" | "double-red" | null {
   return null;
 }
 
-/** Lightning, measured from where the person is standing. */
-function lightningSubjects(strikes: LightningData | null): AlertSubject[] {
+/** Where lightning is measured from: the person's own fix, or the beach
+ *  centroid when `fixOf` (run.ts) fell back to it (#6). */
+function anchorOf(presence: AtBeachInput["presence"]): HazardAnchor {
+  const { lat, lon, slug, fixSource } = presence;
+  if (fixSource === "beach" || lat == null || lon == null) return { kind: "beach", slug };
+  return { kind: "point", lat, lon, cell: cellKey(lat, lon) };
+}
+
+/**
+ * Lightning, measured from where the person is standing. The geometry (nearest
+ * strike vs the fix) still comes from `summarizeStrikes` upstream; the
+ * fire/no-fire call is delegated to `assessLightning` (lib/hazards/assess.ts)
+ * so the push and the score cap can never disagree about the same strike.
+ */
+function lightningSubjects(strikes: LightningData | null, anchor: HazardAnchor, nowMs: number): AlertSubject[] {
   const mi = strikes?.nearestMi;
-  const ago = strikes?.nearestMinutesAgo;
-  if (mi == null || !Number.isFinite(mi) || mi > LIGHTNING_ALERT_MI) return [];
-  if (ago != null && ago > LIGHTNING_FRESH_MIN) return [];
+  // The age of the MOST RECENT strike within 5 mi — the only signal
+  // assessLightning uses to decide active/latched (lib/hazards/assess.ts).
+  // nearestMi/nearestMinutesAgo above can point at a DIFFERENT strike (the
+  // closest one isn't always the most recent close one), so this must come
+  // from the source's own closeStrikeMinutesAgo, never be derived from mi.
+  const assessment = assessLightning({
+    status: strikes ? "ok" : "error",
+    nearestMi: mi,
+    nearestMinutesAgo: strikes?.nearestMinutesAgo,
+    closeStrikeMinutesAgo: strikes?.closeStrikeMinutesAgo,
+    windowMinutes: strikes?.windowMinutes,
+    nowMs,
+    anchor,
+  });
+  if (!assessment.active || mi == null || !Number.isFinite(mi)) return [];
   const out: AlertSubject[] = [{ key: "lightning", nearestMi: mi, escalated: false }];
   if (mi <= LIGHTNING_ESCALATE_MI) {
     out.unshift({ key: "lightning", nearestMi: mi, escalated: true });
@@ -169,10 +196,18 @@ function snapshotHazards(res: ConditionsResponse, nowMs: number): AlertSubject[]
 function rainSubject(input: AtBeachInput): AlertSubject | null {
   const rain = input.rain;
   if (!rain) return null;
+  // A rain-soon ETA is bookkeeping about what's coming — only the literal
+  // observation (not a latched hold) should erase it, exactly as rain.ts
+  // already keeps `etaMinutes` for a latched-but-currently-dry read.
   if (!rain.rainingNow && rain.etaMinutes != null && rain.etaMinutes <= RAIN_SOON_MIN) {
     return { key: "rain-soon", etaMinutes: rain.etaMinutes };
   }
-  if (rain.rainingNow || !rain.clearingSoon) return null;
+  // The hazard call — including a latched hold with nothing falling this
+  // instant — is what should hold back "clearing": telling someone it's
+  // clearing while the assessment still treats it as active would contradict
+  // the same hazard the score cap and other pushes are honoring right now.
+  const hazardActive = rain.hazardActive ?? rain.rainingNow;
+  if (hazardActive || !rain.clearingSoon) return null;
   // "Clearing" only means something to someone who was told it was coming, or
   // who got rained on. Otherwise it is a notification about nothing.
   const { soonAt = null, wetAt = null } = input.recentRain ?? {};
@@ -189,7 +224,7 @@ function rainSubject(input: AtBeachInput): AlertSubject | null {
  */
 export function evaluateAtBeach(input: AtBeachInput): AlertDecision[] {
   const subjects: AlertSubject[] = [];
-  subjects.push(...lightningSubjects(input.strikes));
+  subjects.push(...lightningSubjects(input.strikes, anchorOf(input.presence), input.now));
 
   if (input.conditions) {
     subjects.push(...snapshotHazards(input.conditions, input.now));

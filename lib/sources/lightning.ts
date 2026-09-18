@@ -25,6 +25,14 @@ export interface LightningFeed {
  * Reduce the raw strike feed to per-beach nearest-strike distance, recency, and
  * radius-band counts. Pure (so it's unit-tested); `nowMs` is injected.
  */
+// The lightning hold (lib/hazards/assess.ts) re-derives `active` from
+// closeStrikeMinutesAgo on every call, statelessly — no strike is ever
+// "remembered" across runs. That's only correct because a GLM flash's
+// lat/lon is fixed at capture (scripts/glm_lightning.py reads flash_lat/
+// flash_lon straight off the granule, no clustering/centroiding that could
+// relocate a strike between runs) and because the feed window is always
+// >= LIGHTNING_HOLD_MIN, so a strike can't age out of the feed before it
+// ages out of the hold.
 export function summarizeStrikes(
   feed: LightningFeed,
   lat: number,
@@ -40,6 +48,11 @@ export function summarizeStrikes(
   let nearestLon = 0;
   let lastEpoch = 0;
   let lastMi = Infinity;
+  // Age of the MOST RECENT strike within 5 mi — the single value the
+  // lightning hold (lib/hazards/assess.ts) keys off, so a triangulation
+  // wobble in nearestMi around the 5 mi line can never re-trigger or
+  // re-extend a hold on its own.
+  let closeStrike5Epoch: number | undefined;
   let within10 = 0;
   let within20 = 0;
   let within25 = 0;
@@ -61,6 +74,9 @@ export function summarizeStrikes(
       lastEpoch = epoch;
       lastMi = mi;
     }
+    if (mi <= 5 && (closeStrike5Epoch === undefined || epoch > closeStrike5Epoch)) {
+      closeStrike5Epoch = epoch;
+    }
     if (mi <= 10) within10++;
     if (mi <= 20) within20++;
     if (mi <= 25) within25++;
@@ -81,6 +97,7 @@ export function summarizeStrikes(
     nearestBearingDeg: has ? round(bearingDeg(lat, lon, nearestLat, nearestLon)) : undefined,
     lastMinutesAgo: has ? minAgo(lastEpoch) : undefined,
     lastMi: has ? round(lastMi, 1) : undefined,
+    closeStrikeMinutesAgo: closeStrike5Epoch !== undefined ? minAgo(closeStrike5Epoch) : undefined,
     within10mi: within10,
     within20mi: within20,
     within25mi: within25,

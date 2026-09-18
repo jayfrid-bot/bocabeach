@@ -41,7 +41,32 @@ interface PrecipRadarFeedBeach {
   etaMinutes: number | null;
   frameIso: string | null;
   framesUsed: number;
+  lastWetIso?: string | null;
   note?: string;
+}
+
+/** How much a lastWetIso may sit in the future before it's treated as
+ *  malformed/untrustworthy rather than clock skew between this reader and
+ *  the job that wrote it. */
+const WET_FUTURE_SKEW_MIN = 5;
+
+/** Validates a raw `lastWetIso` into a real Date, or null for anything not a
+ *  valid ISO string (absent, wrong type, unparsable). */
+function parseWetIso(v: unknown): Date | null {
+  if (typeof v !== "string" || v.trim() === "") return null;
+  const ms = Date.parse(v);
+  return Number.isFinite(ms) ? new Date(ms) : null;
+}
+
+/** Minutes between now (server clock) and a validated lastWetIso — never the
+ *  job's own clock, so a job that ran stale doesn't lie about recency. Null
+ *  when absent, invalid, or future-dated beyond plausible clock skew. */
+function wetMinutesAgoOf(v: unknown): number | null {
+  const wet = parseWetIso(v);
+  if (!wet) return null;
+  const minutesAgo = (Date.now() - wet.getTime()) / 60000;
+  if (minutesAgo < -WET_FUTURE_SKEW_MIN) return null;
+  return Math.max(0, Math.round(minutesAgo));
 }
 
 interface PrecipRadarFeed {
@@ -130,6 +155,34 @@ export async function fetchPrecipRadar(loc: Location): Promise<Wrapped<PrecipRad
     // (feed down / no frames decoded) — that's an honest "no data", not a
     // reading, so don't hand callers an all-null object to interpret.
     if (!b.frameIso) {
+      // ...UNLESS a still-valid lastWetIso survived (carried forward by the
+      // job even through a nulled-out run). A transient empty publication —
+      // e.g. the job failing right after rain — must not drop a hold that's
+      // still true. Every current-frame field stays null (never claim "wet
+      // now" from this), but wetMinutesAgo is still honest and lets the hold
+      // survive. Feeds without lastWetIso behave exactly as before: data null.
+      const wetMinutesAgo = wetMinutesAgoOf(b.lastWetIso);
+      if (wetMinutesAgo != null) {
+        return {
+          source: ATTRIBUTION,
+          status: "stale",
+          fetchedAt,
+          attribution: ATTRIBUTION,
+          data: {
+            rainNowMmHr: null,
+            nearestRainKm: null,
+            nearestBearingDeg: null,
+            coveragePct: null,
+            motion: null,
+            etaMinutes: null,
+            frameIso: null,
+            framesUsed: 0,
+            frameAgeMinutes: Infinity,
+            wetMinutesAgo,
+          },
+          note: b.note ?? feed.note ?? "no radar frame available — carrying last known wet time",
+        };
+      }
       return {
         source: ATTRIBUTION,
         status: "stale",
@@ -150,6 +203,7 @@ export async function fetchPrecipRadar(loc: Location): Promise<Wrapped<PrecipRad
       frameIso: b.frameIso,
       framesUsed: num(b.framesUsed) ?? 0,
       frameAgeMinutes,
+      wetMinutesAgo: wetMinutesAgoOf(b.lastWetIso),
     };
 
     return {

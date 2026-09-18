@@ -204,10 +204,14 @@ export async function runAtBeachAlerts(deps: AtBeachDeps): Promise<AtBeachCounts
       ).catch(() => null);
 
       // Remember a wet fix even when nothing is sent — it is what later makes
-      // "rain clearing" a sentence a person recognizes.
+      // "rain clearing" a sentence a person recognizes. Keyed off the LITERAL
+      // observation only (never a latched-but-dry hazard hold), or a cron
+      // running every 5 minutes while it stays dry would keep refreshing this
+      // mark forever.
       if (rain?.rainingNow) {
         await store.markAlert(device.device.id, scopeKey("rain-wet", device.presence.slug), now, {
           slug: device.presence.slug,
+          ...(rain.anchor ? { anchor: rain.anchor } : {}),
         });
       }
 

@@ -1,77 +1,93 @@
-# Location-first conditions — build plan (for review)
+# Location-first conditions — build plan
 
-**Status:** proposal, not started. Written 2026-09-18 for design review before any code.
-**Owner decision it answers:** "Move the app's logic to the person's real location, with a manually chosen beach as the fallback."
+**Status:** phase 1 in progress (2026-09-18). Reviewed by Codex on 2026-09-18; its changes are folded in below and supersede the first draft.
 
-## Bottom line
+## Bottom line (post-review)
 
-Do it as a **split, not a swap**. Half of what the app measures is physics that belongs to a point and should follow the person. The other half is facts about a place that only exist at a named, lifeguarded beach and cannot be derived from a coordinate. The plan makes the person's position drive the physics, keeps the nearest served beach as the source of place facts, and lets a manual pick override which beach. It stays cheap by caching physics per map cell instead of per person.
+The score stays anchored to the **selected beach**. The person's real position is used for the two hazards that are genuinely local — **rain and lightning** — in alerts and in a separate "at your location" hazard state. Hazard logic becomes **one shared assessment** that both the score's caps and the alert engine consume, with **hysteresis** so a storm hovering at a threshold cannot make the score flicker. No second location-derived score. No arbitrary-point conditions snapshot. Station auto-selection and point-only beaches are later work behind explicit safety rules.
 
-## Today (what we are changing)
+## What the review changed, and why
 
-- Everything is computed per curated beach (`config/locations.ts`, three entries today, target 300–500). `getConditions(slug)` builds one snapshot per beach, wrapped in `unstable_cache` (~2 min) in KV. That cache is the only reason the Worker stays under its resource limit (it tipped over once: Cloudflare 1102).
-- The score (`lib/score.ts`) reads that beach snapshot. Every reading is anchored to the beach's center point.
-- The person's device fix is used only for: nearest-beach discovery, Beach Mode presence, and — in the at-beach alert engine — lightning distance (`lightningSubjects` reads the person's fix). Rain radar in alerts is beach-based (`radar:<slug>`); the audit noted the phone-pixel version was the original intent.
-- A "location cell" already exists for the forecast fallback in alerts.
+| First draft said | Codex found | Decision |
+|---|---|---|
+| Two buckets: point physics vs place facts | Three: person point; beach/coastal context (marine model, shore orientation, rip risk, flags, water, cams); assigned observations (buoys, gauges, sites). Marine model and rip risk are NOT point-safe (`fetchMarine`, `fetchRipRisk`). Radar and GOES feeds are built per beach, not point-queryable. | Adopt the three buckets. Only rain + lightning move to the person in phase 1. |
+| Person's cell drives physics, beach supplies facts, manual pick overrides beach | A manual pick of Boca from New York would mix NY weather with Boca flags. | A manual destination anchors the **whole** score to that beach. Device geometry replaces beach geometry only for hazards, and only when a fresh, accurate fix is near the beach (`decideArm`, `fixOf` rules stay). |
+| Canonical beach score + personal score | Multiplies against the existing Everyone's / Your (profile) split into four variants. | One beach-anchored score. Show device-local hazards separately. |
+| 0.02° cells, 2-min TTL, "physics is the cheap half" | Unmeasured; per-source cadence exists already; existing 0.05° grid (`lib/location/cell.ts`). | Cells only for rain/nowcast at 0.05°; lightning from the exact fix against the shared feed; measure occupied cells before anything wider. |
+| Sticky caps as a small prerequisite | Needs observation history, not a request-mutated KV latch. Score and alert engine already disagree (score pairs `nearestMi` with a *different* strike's age). | Record "last wet" in the upstream radar product; lightning hold from the strike's own age; one `HazardAssessment` for both engines. |
+| Lite beaches with a label | Renormalized weights make a data-poor beach look confidently good (`scoreBeachDay`). `Location` type requires stations/cams. | Deferred. Needs a minimum-data contract + confidence rules first. |
 
-## The split
+## Phase 1 — "one truth for hazards, and it holds"
 
-| Bucket | Readings | Source type | Anchor after this plan |
-|---|---|---|---|
-| **Physics** (follows the person) | weather, forecast, hourly, GFS, MET.no, nowcast (minutely rain), rain radar (MRMS pixel), lightning (GLM distance), GOES cloud, sun / golden hour, air quality, NWS alerts, marine model, shore orientation | Grid / model / point query, valid at any lat-lon | **Person's fix**, quantized to a cell |
-| **Place facts** (belong to a beach) | lifeguard flags, city advisories, water-quality samples (Healthy Beaches sites), cams and everything derived from them (crowds, seaweed, clarity), tide gauge, wave buoy (observed), water trend, traffic, regional marine-life context | Hand-wired per beach; exists only at a named site | **Nearest served beach**, manual pick overrides |
+### 1a. Shared hazard assessment — `lib/hazards/assess.ts` (new, pure)
 
-Rule: a reading is "point" only if the same query works at any coordinate with no per-beach wiring. Anything that needs a station id, a page scrape, a camera, or a permission is "place".
+```ts
+export type HazardAnchor =
+  | { kind: "beach"; slug: string }
+  | { kind: "point"; lat: number; lon: number; cell: string }; // cell = cellKey(lat, lon)
 
-Two cautions that come straight from this week's bugs:
+export interface HazardAssessment {
+  kind: "lightning" | "rain";
+  anchor: HazardAnchor;
+  /** The cap/alert should apply now (observed now OR still inside the hold). */
+  active: boolean;
+  /** true when active only because of the hold window (nothing observed this instant). */
+  latched: boolean;
+  severity: "none" | "rain" | "storm" | "lightning-near";
+  observedAtIso: string | null; // the observation the state rests on
+  expiresAtIso: string | null;  // when the hold lapses if nothing new is seen
+  /** Short, user-facing reason, e.g. "Lightning within 5 miles, 12 min ago". */
+  reason: string | null;
+}
+```
 
-- Auto-picking "nearest station" from a point is a trap. Boca was wired to two stations with no wave sensor and silently served a model that read 3x high. Any auto-pick needs a registry with capability metadata (the new `lib/sources/ndbcStations.ts` map is the seed) and the coverage guard generalizes to "whatever gets picked must measure the thing".
-- Hard thresholds flicker. Point-based radar at the person's own cell is more local, so it sits on threshold edges more often. Sticky hazard caps are a prerequisite, not a follow-up.
+**Lightning** — `assessLightning({ status, closeStrikeMinutesAgo, windowMinutes, nearestMi, nearestMinutesAgo, nowMs, anchor })`:
+- `lib/sources/lightning.ts` `summarizeStrikes` exposes `closeStrikeMinutesAgo`: the age of the **most recent strike within 5 mi** of the point (undefined if none in the feed window). Active when the feed is OK and `closeStrikeMinutesAgo ≤ LIGHTNING_HOLD_MIN = 30`. This is the hold and the recency fix in one: the decision no longer depends on whichever strike happens to be nearest *right now* (4.8 → 5.2 → 4.8 mi cannot toggle it), and it never pairs one strike's distance with another strike's age (the bug the review found in `deriveMetrics`).
+- The GLM feed window is 30 min (`scripts/glm_lightning.py` `WINDOW_MIN`, feed field `windowMinutes`), so strikes leave the feed exactly when the hold lapses; the hold is stateless because of that coupling. If `windowMinutes < 30` the effective hold is capped at the window — never claim a hold the data can't back.
+- `latched` = active and `closeStrikeMinutesAgo > 5` (nothing in the last scan interval, still holding). `nearestMi` / `nearestMinutesAgo` are display-only inputs for the reason text.
 
-## Architecture changes
+**Rain** — `assessRain({ radar, nowcast, weatherCode, shortForecast, cloudPct, nowMs, anchor })`:
+- Inputs are the same signals `deriveMetrics` uses today (nowcast state, corroboration: rain-ish weather code / cloud ≥ 50% / etc., radar frame age, `rainNowMmHr`, `nearestRainKm`) plus the new radar field `lastWetIso`.
+- "Radar wet now" = `rainNowMmHr ≥ RAIN_WET_MM_HR` (0.5 mm/hr, one exported constant in `lib/hazards/assess.ts`, mirrored in `scripts/mrms_precip.py`) or `nearestRainKm ≤ 5`. The same threshold defines the alert engine's literal "raining" and the MRMS job's `lastWetIso`, so a 0.1 mm/hr trace can neither cap the score nor latch a 20-minute hold while the push engine says it is not raining. (The old dry veto's `=== 0` rule is retired; a trace now reads as dry, matching the alert engine.)
+- The GLM producer (`scripts/glm_lightning.py`) caps the feed at 20,000 strikes most-recent-first; to keep the 30-minute hold honest on a heavy CONUS day it always retains every strike within 50 mi of a served beach for the full window and caps only the remainder, and reports `retention` {cap, total, kept, nearBeachKept} in the feed.
+- "Radar wet recently" = `lastWetIso` within `RAIN_HOLD_MIN = 20`.
+- Active when: radar wet now; **or** radar wet recently (latched); **or** nowcast says raining and is corroborated and radar does not *confidently* veto. The dry veto is confident only when the frame is fresh (≤ 25 min), dry now, **and** not wet recently.
+- severity `storm` when a storm signal corroborates (weather code 95–99 or storm/thunder in the forecast text), else `rain`.
+- The rain assessment also exposes `confidentDryVeto` so `lib/score.ts` sets `radarDryNow` from it instead of re-deriving the rule (one truth; no drift). Strike corroboration for rain uses `hazardLightning.active`, never a separate distance/age pairing.
+- Missing `lastWetIso` (feed not yet upgraded) → behave exactly as today (no hold), never throw.
 
-### 1. Two anchors in the snapshot
-Split `ConditionsSnapshot` into a point part and a place part. Every reading carries its anchor (`point` / `place:<slug>`). The score reads both. The UI can then say plainly: "rain and lightning measured from where you stand; flags and water quality from Boca Raton" — which the location audit asked for.
+### 1b. Score consumes it — `lib/score.ts`
+- `deriveMetrics` calls `assessLightning` / `assessRain` for the beach anchor and sets the existing fields from the result: `lightningWithin5mi = lightning.active`, `nowcastRaining = rain.active && !latched-only-forecast…` — keep the field names so `applyBeachCaps` changes are minimal; add `hazardLightning` / `hazardRain` to `Derived` for the reason strings.
+- `applyBeachCaps` cap copy: "Lightning within 5 miles — get out of the water" (observed) / "Lightning within 5 miles in the last 30 minutes" (latched); "Raining right now" / "Rain in the last 20 minutes" (latched); storm variants unchanged.
+- Hourly forecast scoring (future buckets) is untouched — holds apply to the now-bucket only, as `radarDryNow` does today.
 
-### 2. Cell cache for physics
-Round the fix to a map cell (proposal: 0.02° ≈ 2 km; tune by hit rate). Cache physics per `cell:<lat>,<lon>` with the same ~2 min TTL. People in the same cell share it; a beach's center is just another cell. Place facts stay cached per beach as today. Per-person, per-exact-GPS computation is explicitly out: it would remove the cache that keeps the Worker alive.
+### 1c. Radar product records "last wet" — `scripts/mrms_precip.py` + `lib/sources/precipRadar.ts`
+- The MRMS job (GitHub Action → `mrms-data` branch, ~10-min cadence) writes, per beach, `lastWetIso`: the time of the **newest wet frame among every frame it decoded this run** (not only the newest frame — a throttled Action must not lose a wet frame from 10 minutes ago). It persists across runs by fetching the previously published `mrms-data` JSON at start (fail-soft: unavailable → carry nothing) and takes the later of "newest wet frame this run" and the carried value; carry-forward never moves the timestamp backwards and never invents one.
+- `precipRadar.ts` parses `lastWetIso` (validated ISO, else null) and exposes `wetMinutesAgo` computed at read time (server clock, never the job's; small future-skew tolerance). When a publication has no current frame (job failure right after rain) but a valid `lastWetIso`, the adapter still returns data with `wetMinutesAgo` set and every current-frame field null and a non-ok status — the hold survives, and nothing can read "wet now" from it.
+- Feed consumers must tolerate the field being absent (old feed) for the rollout window.
 
-### 3. Two scores from one engine
-- **Canonical beach score**: beach center cell + that beach's place facts. Unchanged behavior. Used by the web pages, the share card, the bare-apex flagship page, and the SEO beach/state pages — anything with no user location.
-- **Personal score**: person's cell + nearest served beach's place facts (or the manually chosen beach's). Native app only, foreground, when a fix is fresh and accurate enough (reuse `establishesArrival`'s accuracy/age gates). Same scoring function, different inputs.
+### 1d. Alerts consume the same assessment — `lib/alerts/evaluate.ts`, `lib/alerts/run.ts`, `lib/alerts/rain.ts`
+- `lightningSubjects` builds its inputs from the person's fix (as today), passes `closeStrikeMinutesAgo` into `assessLightning` with a `point` anchor (or `beach` when `fixOf` fell back to the centroid); the hazard subject fires iff `active`. Escalation semantics (in-2-mi supersedes plain lightning) unchanged.
+- Rain: radar is not point-queryable today, so the alert rain truth comes from the **beach** radar and is labeled anchor `beach`; only the cell-forecast fallback (Open-Meteo minutely for the fix's 0.05° `cellKey`) is labeled `point`. Anchors are never claimed that the data can't back.
+- `RainRead` carries three things and they are not conflated: literal `rainingNow` (the observation), `hazardActive` (assessment, incl. hold), `latched`. The rain-wet mark is written only on literal rain; "clearing" is held back while `hazardActive`; a latched-only state never erases an upcoming rain-soon ETA. Beach-scoped dedup keys (LOC-08) unchanged.
+- The per-cell cache holds **only the raw cell forecast**; the assessment and `RainRead` are built per caller (per beach radar) outside the cache, so two beaches sharing a cell can never inherit each other's hold. The radar latch is assessed independently of the forecast fetch: if the forecast fails, alerts still get `hazardActive`/`latched` from the radar (ETA/clearing null), matching what the score keeps.
+- Lightning's hold is stateless because GLM strikes are raw per-flash coordinates (rounded to 3 decimals, never clustered) and the feed window equals the hold; an end-to-end test runs the real `summarizeStrikes` over a 40-minute sequence and asserts exactly one on→off transition.
+- Result: score caps and push subjects are computed from the same rule and the same observation.
 
-Web users without location keep seeing the canonical score. Nothing about SEO or sharing changes.
+### 1e. "At your location" hazard state (native app, foreground) — after 1a–1d land
+- Native-only, rate-limited `GET /api/hazards?lat&lon` returning the two assessments for a `point` anchor. Fresh/accurate fix required (reuse `establishesArrival` gates); web never calls it.
+- Beach Mode card shows a single line when it differs from the beach: "Where you stand: lightning 3.8 mi, 6 min ago" / "Where you stand: raining". The score itself does not change.
+- Privacy page: state that a location fix is sent while the app is open with location on, only to read local rain/lightning, never stored beyond the existing presence record.
 
-### 4. Station registry with capabilities
-Replace hand-wired buoy / tide / sampling-site ids with registries that record what each station measures (waves yes/no, observed vs prediction-only tide gauge, etc.). Auto-pick the nearest *capable* station; the existing coverage guard becomes the generic rule. Needed for 500 beaches regardless of this plan.
+### Out of phase 1 (tracked, not built)
+- Station registries with distance/coast/quality constraints (capability map exists: `lib/sources/ndbcStations.ts`).
+- Cell-cached physics beyond rain/nowcast; occupied-cell instrumentation first.
+- Point-only beaches (needs minimum-data + confidence rules; evolve the `Location` tier model).
+- Amend `docs/PLUS_BUILD_SPEC.md` §conditions to record: caps hold; hazards are one shared assessment; device geometry is used for rain + lightning hazards only.
 
-### 5. "Lite" beaches
-A beach entry may have only a point (name, lat-lon, timezone). It gets physics, a score, and alerts immediately; place facts (flags, cams, water quality) are optional and can be added later. This is how the catalog grows to 500 without 500 hand-built entries. A lite beach must be labeled as such in the UI ("no lifeguard or water-quality data for this beach yet") so a missing flag is never read as "no flag".
-
-### 6. Alerts
-Move rain radar and nowcast in the at-beach engine to the person's cell (lightning already is). Dedup keys stay beach-scoped (the LOC-08 fix) because the *monitored beach* is still the session identity.
-
-## Phasing
-
-0. **Sticky hazard caps** (rain ~20 min, lightning 30 min after last observation). Prerequisite. Small.
-1. **Physics from the person's cell in the app and alerts** — radar, nowcast, lightning. Reuses the existing cell idea. Biggest accuracy win, smallest surface.
-2. **Snapshot tagging + cell cache + attribution UI.** The structural change; canonical and personal scores diverge here.
-3. **Station registry + lite beaches.** The scaling unlock.
-
-## Risks and open questions
-
-- **Cell size.** Smaller = more accurate, fewer cache hits, more upstream calls (Open-Meteo, AirNow rate limits). Need a cost model: expected distinct active cells per 2 min at 10× today's users.
-- **Two scores can disagree.** A person standing at Boca may see 78 while the Boca page says 85 (rain over their end of the beach). Honest, but confusing if not explained; the attribution line and a one-time explainer are the mitigation. Alerts and the share card must be unambiguous about which score they mean.
-- **Worker limits.** More distinct snapshots per minute. Physics is the cheap half (few fetches); place facts (cams, scrapes) stay per beach. Needs measurement before phase 2 ships.
-- **Privacy.** Sending the fix on every app refresh, not just on arming. Native While-Using only, never web, never background; the privacy page must say so. Cell quantization also bounds what the server ever sees.
-- **Far from any served beach.** Point-only personal score with no place facts. Present as "conditions where you are" with no beach name, or hide the personal score beyond N miles? Owner call.
-- **Consistency of hazards between engines.** The score's caps and the alert engine's hazards must read the same cell, or a user can get a lightning push while the score looks fine.
-
-## Questions for the reviewer
-
-(a) Is the point / place cut right? Anything misclassified — in particular marine model, rip risk, NWS alerts (zone-based)?
-(b) Cell caching: size, key design, TTL, and the Worker/upstream cost at 10× users. Is there a simpler way to keep physics cheap?
-(c) The two-score UX: acceptable, or should the app show one score and use the person's cell only for hazards/alerts?
-(d) Phasing order — would you ship anything before sticky caps?
-(e) Traps we are not seeing, especially around auto-picked stations and lite beaches eroding trust.
-(f) Anything here that contradicts `docs/PLUS_BUILD_SPEC.md` or the location audit (`docs/audits/location-features/BUG_REPORT.md`)?
+## Acceptance for phase 1
+- A strike at 4.8 mi 5 min ago → capped; the same strike 31 min ago → not capped; nearest strike 6.4 mi with a farther strike 2 min ago → not capped (recency bug fixed).
+- Radar dry now but wet 10 min ago → still capped, cap text says "in the last 20 minutes"; wet 25 min ago → clear; feed without `lastWetIso` → today's behavior.
+- Score and alert engine produce the same active/inactive answer for the same inputs (shared fixture test).
+- No flicker: consecutive assessments across a threshold-hovering fixture sequence never toggle more than once per hold window.
+- Existing tests, `tsc`, and the layout check stay green; changelog entry ships with it.

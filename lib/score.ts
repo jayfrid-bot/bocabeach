@@ -16,6 +16,7 @@ import type {
   WaveMode,
 } from "@/lib/types";
 import { clamp, degToCardinal, dewPointFromTempRH, plateau, round } from "@/lib/util";
+import { assessLightning, assessRain, type HazardAssessment } from "@/lib/hazards/assess";
 import { currentSandTempF, estimateSandTempF, hoursFromSolarNoon } from "@/lib/sandTemp";
 import { seaState } from "@/lib/format";
 import { scoreBand } from "@/lib/scoreBands";
@@ -86,6 +87,13 @@ export interface Derived {
   lightningWithin5mi?: boolean;
   /** Minutes since the most recent strike in the scanned area (now-only). */
   lightningLastMinutesAgo?: number;
+  /** The shared lightning assessment (lib/hazards/assess.ts) this beach's
+   *  `lightningWithin5mi` was derived from — carries the reason string and
+   *  hold-window bookkeeping for UI copy. */
+  hazardLightning?: HazardAssessment;
+  /** The shared rain assessment (lib/hazards/assess.ts) this beach's
+   *  `nowcastRaining` was derived from. */
+  hazardRain?: HazardAssessment;
 }
 
 /** Events that make the beach genuinely dangerous/closed — hard score cap.
@@ -318,16 +326,6 @@ function metricSource(
   return undefined;
 }
 
-/**
- * Radar-dry veto thresholds. The frame must be younger than the radar
- * pipeline's own staleness rule (a GitHub-throttled cron can leave a frame
- * 25+ min old; precipRadar.ts already degrades it to silence past that), and
- * "dry" means nothing in the beach pixel and nothing within a few km that could
- * arrive before the next frame. 5 km ≈ 8 min at a typical 40 km/h cell speed.
- */
-const RADAR_DRY_VETO_MAX_AGE_MIN = 25;
-const RADAR_DRY_VETO_RADIUS_KM = 5;
-
 // `nowMs` only feeds the sand model's "current hour" pick. Callers that already
 // hold a clock (the hourly/personal scorers, SSR vs hydration) pass it in so the
 // same snapshot scores the same way regardless of wall time; the default keeps
@@ -395,27 +393,57 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
     om?.weatherCode != null &&
     ((om.weatherCode >= 51 && om.weatherCode <= 67) ||
       (om.weatherCode >= 80 && om.weatherCode <= 99));
-  const freshStrikesNear =
-    s.lightning.status === "ok" &&
-    (s.lightning.data?.lastMinutesAgo ?? Infinity) <= 30 &&
-    (s.lightning.data?.nearestMi ?? Infinity) <= 5;
+
+  // The one shared lightning/rain assessment (lib/hazards/assess.ts) — score
+  // and the alert engine both call this so a cap and a push can never
+  // disagree about whether it's raining or lightning is near right now.
+  // Lightning goes FIRST: the rain-corroboration gate below needs its
+  // (recency-fixed) `active` verdict, not a second, independently-paired
+  // distance/age calc that could disagree with it.
+  const hazardAnchor = { kind: "beach" as const, slug: s.location.slug };
+  const hazardLightning = assessLightning({
+    status: s.lightning.status,
+    closeStrikeMinutesAgo: s.lightning.data?.closeStrikeMinutesAgo,
+    windowMinutes: s.lightning.data?.windowMinutes,
+    nearestMi: s.lightning.data?.nearestMi,
+    nearestMinutesAgo: s.lightning.data?.nearestMinutesAgo,
+    nowMs,
+    anchor: hazardAnchor,
+  });
+  // Fresh close-by strikes corroborate a rain nowcast/model signal (one truth
+  // with the lightning cap itself — see hazardLightning above).
+  const freshStrikesNear = hazardLightning.active;
   const nowcastCorroborated =
     rainishCode ||
     freshStrikesNear ||
     (cloudCoverPct ?? 100) >= 50 ||
     (precipProbability ?? 100) >= 25 ||
     (om?.precipIn ?? 0) > 0;
-  // A fresh MRMS radar frame that sees nothing at the beach is an OBSERVATION and
-  // outranks both the model nowcast and a forecast hour's rain code. Fresh means
-  // the frame is younger than the radar pipeline's own staleness rule, and "dry"
-  // means no rain in the beach pixel AND none within a few km that could arrive
-  // before the next frame.
-  const radar = s.precipRadar?.status === "ok" ? s.precipRadar.data : null;
-  const radarDryNow =
-    !!radar &&
-    radar.frameAgeMinutes <= RADAR_DRY_VETO_MAX_AGE_MIN &&
-    radar.rainNowMmHr === 0 &&
-    (radar.nearestRainKm ?? Infinity) > RADAR_DRY_VETO_RADIUS_KM;
+  const rainStormSignal =
+    (om?.weatherCode != null && om.weatherCode >= 95 && om.weatherCode <= 99) ||
+    /thunder|storm/i.test(w?.shortForecast ?? "");
+  const hazardRain = assessRain({
+    radar: s.precipRadar
+      ? {
+          status: s.precipRadar.status,
+          frameAgeMinutes: s.precipRadar.data?.frameAgeMinutes,
+          rainNowMmHr: s.precipRadar.data?.rainNowMmHr,
+          nearestRainKm: s.precipRadar.data?.nearestRainKm,
+          wetMinutesAgo: s.precipRadar.data?.wetMinutesAgo,
+        }
+      : null,
+    nowcastState: nowcastSaysRain ? "raining" : "dry",
+    corroborated: nowcastCorroborated,
+    stormSignal: rainStormSignal,
+    nowMs,
+    anchor: hazardAnchor,
+  });
+  // A fresh MRMS radar frame that sees nothing at the beach is an OBSERVATION
+  // that outranks both the model nowcast and a forecast hour's rain code.
+  // assessRain computes the one confident-dry formula (fresh + OK + no wet-now
+  // + no wet-recently) — read it back here instead of re-deriving it, so score
+  // and the alert engine can never disagree about what counts as "dry".
+  const radarDryNow = !!hazardRain.confidentDryVeto;
   return {
     // Shared metrics are the MEDIAN of NWS (real station obs), MET Norway, and
     // Open-Meteo, so no single provider or model can skew the dashboard.
@@ -489,17 +517,16 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
     // Observed "now" signals — they override the forecast-based rain logic.
     // (Corroboration-gated: see nowcastCorroborated above — a phantom model
     // shower under a clear sky must not cap the day.)
-    nowcastRaining: nowcastSaysRain && nowcastCorroborated && !radarDryNow,
+    nowcastRaining: hazardRain.active,
     radarDryNow,
-    // Lightning trips the get-out cap only when the feed is OK, the activity is
-    // fresh (most recent strike <=30 min ago), AND the closest strike landed
-    // within 5 mi. A stale/errored scan, or strikes that are all farther than
-    // 5 mi away, must not bottom the score.
-    lightningWithin5mi:
-      s.lightning.status === "ok" &&
-      (s.lightning.data?.lastMinutesAgo == null || s.lightning.data.lastMinutesAgo <= 30) &&
-      (s.lightning.data?.nearestMi ?? Infinity) <= 5,
+    // Lightning trips the get-out cap only when the feed is OK, the closest
+    // strike landed within 5 mi, AND that SAME strike's own age is fresh
+    // (<=30 min) — see lib/hazards/assess.ts for the recency-bug fix this
+    // replaced (pairing nearestMi with the wrong strike's age).
+    lightningWithin5mi: hazardLightning.active,
     lightningLastMinutesAgo: s.lightning.data?.lastMinutesAgo,
+    hazardLightning,
+    hazardRain,
   };
 }
 
@@ -1045,7 +1072,11 @@ export function applyBeachCaps(
   // This is observed data, so it bottoms the score regardless of the forecast.
   if (d.lightningWithin5mi) {
     score = Math.min(score, 10);
-    caps.push("Lightning within 5 miles — get out of the water");
+    caps.push(
+      d.hazardLightning?.latched
+        ? "Lightning within 5 miles in the last 30 minutes"
+        : "Lightning within 5 miles — get out of the water",
+    );
   }
   // Rain is a hard ceiling on the whole day. We trust OBSERVATION over forecast:
   // the live nowcast ("it's raining right now") overrides the forecast-code path,
@@ -1067,7 +1098,7 @@ export function applyBeachCaps(
       caps.push("Thunderstorm — raining now");
     } else {
       score = Math.min(score, 25);
-      caps.push("Raining right now");
+      caps.push(d.hazardRain?.latched ? "Rain in the last 20 minutes" : "Raining right now");
     }
   } else if (rain === "rain" && !d.radarDryNow) {
     // A forecast rain code for the current hour yields to a fresh radar frame
@@ -1270,6 +1301,8 @@ function scoreAllHoursFull(
               radarDryNow: base.radarDryNow,
               lightningWithin5mi: base.lightningWithin5mi,
               lightningLastMinutesAgo: base.lightningLastMinutesAgo,
+              hazardLightning: base.hazardLightning,
+              hazardRain: base.hazardRain,
             }
           : {}),
       };

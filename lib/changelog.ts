@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-18",
+    title: "The score holds steady when a storm sits on the edge",
+    details:
+      "When lightning was hovering right around five miles out, or a shower sat at the edge of the radar, the score could jump between a safety cap and a normal number every time you refreshed. Now a rain or lightning cap holds for a short while after the last observation — 30 minutes after the last close strike, matching the usual safety rule, 20 minutes after the radar last saw rain — and then clears. The card says when it's holding ('Rain in the last 20 minutes'). Safety alerts and the score now use the same rain and lightning rule.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-09-18",
     title: "Boca Raton wave height now comes from a real buoy",
     details:
       "Boca's wave height was being estimated from a forecast model, which ran high — it could say 3 feet on a day the surf was barely over a foot. It now reads the live ocean buoy just down the coast at Hillsboro, the same one Deerfield and Fort Lauderdale already use, so the wave height matches what you actually see at the shore. Water temperature still comes from the closer Lake Worth Pier station.",

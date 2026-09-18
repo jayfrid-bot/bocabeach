@@ -40,6 +40,7 @@ import type {
   WeatherData,
   Wrapped,
 } from "@/lib/types";
+import type { HazardAssessment } from "@/lib/hazards/assess";
 
 function wrap<T>(data: T | null): Wrapped<T> {
   return {
@@ -637,6 +638,10 @@ describe("scoring (Beach Day only — no surf)", () => {
     const ld = (over: Partial<LightningData>): LightningData => ({
       windowMinutes: 30,
       nearestMi: 3, // closest strike within 5 mi by default
+      // closeStrikeMinutesAgo is the ONE field assessLightning keys off (see
+      // lib/hazards/assess.ts) — default it alongside nearestMinutesAgo so
+      // existing cases don't need to repeat it; wrongPairing overrides it.
+      closeStrikeMinutesAgo: 4,
       within10mi: 5,
       within25mi: 5,
       within50mi: 5,
@@ -648,30 +653,92 @@ describe("scoring (Beach Day only — no surf)", () => {
       deriveMetrics(
         snapshot({
           ...niceBase,
-          lightning: { ...wrap(ld({ lastMinutesAgo: 4 })), status: "error" },
+          lightning: { ...wrap(ld({ nearestMinutesAgo: 4, lastMinutesAgo: 4 })), status: "error" },
         }),
       ),
     );
     expect(errored.caps.join(" ")).not.toMatch(/lightning/i);
     expect(errored.score).toBeGreaterThan(40);
-    // Feed OK but the most recent strike is older than 30 min -> stale, no cap.
+    // Feed OK but the close strike's OWN age is older than 30 min -> stale, no cap.
     const stale = scoreBeachDay(
-      deriveMetrics(snapshot({ ...niceBase, lightning: ld({ lastMinutesAgo: 45 }) })),
+      deriveMetrics(
+        snapshot({ ...niceBase, lightning: ld({ nearestMinutesAgo: 45, closeStrikeMinutesAgo: 45 }) }),
+      ),
     );
     expect(stale.caps.join(" ")).not.toMatch(/lightning/i);
     expect(stale.score).toBeGreaterThan(40);
     // Feed OK and recent, but the closest strike is 8 mi away (> 5 mi) -> no cap.
     const farOff = scoreBeachDay(
-      deriveMetrics(snapshot({ ...niceBase, lightning: ld({ lastMinutesAgo: 4, nearestMi: 8 }) })),
+      deriveMetrics(
+        snapshot({
+          ...niceBase,
+          lightning: ld({
+            nearestMinutesAgo: 4,
+            lastMinutesAgo: 4,
+            nearestMi: 8,
+            closeStrikeMinutesAgo: undefined, // nothing within 5 mi
+          }),
+        }),
+      ),
     );
     expect(farOff.caps.join(" ")).not.toMatch(/lightning/i);
     expect(farOff.score).toBeGreaterThan(40);
+    // Recency-bug regression: the MOST RECENT strike overall is fresh (2 min
+    // ago), but it's a DIFFERENT, farther-than-5-mi strike — the one strike
+    // that IS within 5 mi (nearestMi 3) is itself 45 min old, so
+    // closeStrikeMinutesAgo (the only field the hold uses) is 45 -> stale, no
+    // cap. Pairing nearestMi with lastMinutesAgo (the old bug) would have
+    // wrongly capped here.
+    const wrongPairing = scoreBeachDay(
+      deriveMetrics(
+        snapshot({
+          ...niceBase,
+          lightning: ld({ nearestMi: 3, nearestMinutesAgo: 45, lastMinutesAgo: 2, closeStrikeMinutesAgo: 45 }),
+        }),
+      ),
+    );
+    expect(wrongPairing.caps.join(" ")).not.toMatch(/lightning/i);
+    expect(wrongPairing.score).toBeGreaterThan(40);
     // Feed OK, fresh, and a strike within 5 mi -> get-out-of-the-water cap.
     const fresh = scoreBeachDay(
-      deriveMetrics(snapshot({ ...niceBase, lightning: ld({ lastMinutesAgo: 4 }) })),
+      deriveMetrics(snapshot({ ...niceBase, lightning: ld({ nearestMinutesAgo: 4, lastMinutesAgo: 4 }) })),
     );
     expect(fresh.score).toBeLessThanOrEqual(10);
     expect(fresh.caps.join(" ")).toMatch(/lightning within 5 miles/i);
+  });
+
+  describe("cap copy — exact wording, driven by the hazardLightning/hazardRain .latched flag", () => {
+    const base = deriveMetrics(NICE);
+    const hazard = (kind: "lightning" | "rain", latched: boolean): HazardAssessment => ({
+      kind,
+      anchor: { kind: "beach", slug: "boca-raton" },
+      active: true,
+      latched,
+      severity: kind === "lightning" ? "lightning-near" : "rain",
+      observedAtIso: new Date().toISOString(),
+      expiresAtIso: new Date().toISOString(),
+      reason: null,
+    });
+
+    it('lightning observed just now -> "Lightning within 5 miles — get out of the water"', () => {
+      const r = scoreBeachDay({ ...base, lightningWithin5mi: true, hazardLightning: hazard("lightning", false) });
+      expect(r.caps).toContain("Lightning within 5 miles — get out of the water");
+    });
+
+    it('lightning holding on a latched strike -> "Lightning within 5 miles in the last 30 minutes"', () => {
+      const r = scoreBeachDay({ ...base, lightningWithin5mi: true, hazardLightning: hazard("lightning", true) });
+      expect(r.caps).toContain("Lightning within 5 miles in the last 30 minutes");
+    });
+
+    it('rain observed just now -> "Raining right now"', () => {
+      const r = scoreBeachDay({ ...base, nowcastRaining: true, hazardRain: hazard("rain", false) });
+      expect(r.caps).toContain("Raining right now");
+    });
+
+    it('rain holding on the 20-min hold -> "Rain in the last 20 minutes"', () => {
+      const r = scoreBeachDay({ ...base, nowcastRaining: true, hazardRain: hazard("rain", true) });
+      expect(r.caps).toContain("Rain in the last 20 minutes");
+    });
   });
 
   it("scores sand barefoot comfort: cool sand best, scorching sand drags the score", () => {
@@ -1359,7 +1426,9 @@ describe("computeHourlyScores", () => {
         within25mi: 7,
         within50mi: 7,
         totalInArea: 7,
+        nearestMinutesAgo: 3,
         lastMinutesAgo: 3,
+        closeStrikeMinutesAgo: 3,
       },
     });
     const hrs = computeHourlyScores(s, now);
@@ -1390,7 +1459,9 @@ describe("computeHourlyScores", () => {
         within25mi: 7,
         within50mi: 7,
         totalInArea: 7,
+        nearestMinutesAgo: 3,
         lastMinutesAgo: 3,
+        closeStrikeMinutesAgo: 3,
       },
     });
     const hrs = computeHourlyScores(s, now);

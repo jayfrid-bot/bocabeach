@@ -127,6 +127,54 @@ describe("fetchPrecipRadar", () => {
     expect(r.note).toBe("no MRMS frames available");
   });
 
+  it("keeps a still-valid lastWetIso alive through an empty publication (hold survives a transient blank run)", async () => {
+    stub(
+      feed(
+        {
+          rainNowMmHr: null,
+          nearestRainKm: null,
+          coveragePct: null,
+          motion: null,
+          etaMinutes: null,
+          frameIso: null,
+          framesUsed: 0,
+          lastWetIso: minutesAgo(8),
+          note: "no MRMS frames available",
+        },
+        { frames: [], note: "no MRMS frames available" },
+      ),
+    );
+    const r = await fetchPrecipRadar(loc);
+    expect(r.data).not.toBeNull();
+    expect(r.data?.wetMinutesAgo).toBe(8);
+    // Never claim "wet now" from a blank publication — every current-frame
+    // field stays null even though data itself is non-null.
+    expect(r.data?.rainNowMmHr).toBeNull();
+    expect(r.data?.frameIso).toBeNull();
+    expect(r.status).not.toBe("ok");
+  });
+
+  it("returns null data (unchanged prior behavior) for an empty publication with no lastWetIso to carry", async () => {
+    stub(
+      feed(
+        {
+          rainNowMmHr: null,
+          nearestRainKm: null,
+          coveragePct: null,
+          motion: null,
+          etaMinutes: null,
+          frameIso: null,
+          framesUsed: 0,
+          note: "no MRMS frames available",
+        },
+        { frames: [], note: "no MRMS frames available" },
+      ),
+    );
+    const r = await fetchPrecipRadar(loc);
+    expect(r.data).toBeNull();
+    expect(r.status).toBe("stale");
+  });
+
   it("distinguishes an observed dry beach (0 mm/hr) from an unknown one (null)", async () => {
     stub(feed({ rainNowMmHr: 0, coveragePct: 0, nearestRainKm: null }));
     const dry = await fetchPrecipRadar(loc);
@@ -169,6 +217,30 @@ describe("fetchPrecipRadar", () => {
     const r = await fetchPrecipRadar(loc);
     expect(r.status).toBe("error");
     expect(r.data).toBeNull();
+  });
+
+  it("computes wetMinutesAgo from lastWetIso at read time", async () => {
+    stub(feed({ lastWetIso: minutesAgo(12) }));
+    const r = await fetchPrecipRadar(loc);
+    expect(r.data?.wetMinutesAgo).toBe(12);
+  });
+
+  it("returns null wetMinutesAgo when lastWetIso is absent (old feed)", async () => {
+    stub(feed()); // default beach has no lastWetIso key
+    const r = await fetchPrecipRadar(loc);
+    expect(r.data?.wetMinutesAgo).toBeNull();
+  });
+
+  it("returns null wetMinutesAgo for an invalid lastWetIso", async () => {
+    stub(feed({ lastWetIso: "not-a-date" }));
+    const r = await fetchPrecipRadar(loc);
+    expect(r.data?.wetMinutesAgo).toBeNull();
+  });
+
+  it("returns null wetMinutesAgo for a future-dated lastWetIso beyond clock skew", async () => {
+    stub(feed({ lastWetIso: new Date(Date.now() + 10 * 60_000).toISOString() }));
+    const r = await fetchPrecipRadar(loc);
+    expect(r.data?.wetMinutesAgo).toBeNull();
   });
 
   it("drops a half-built motion vector rather than reporting half a direction", async () => {

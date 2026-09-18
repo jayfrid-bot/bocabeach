@@ -225,7 +225,14 @@ describe("rainForFix", () => {
     const a = await rainForFix(26.3512, -80.0701, "boca-raton", NOW, cache, null);
     const b = await rainForFix(26.3549, -80.0788, "deerfield-beach", NOW, cache, null);
     expect(calls).toHaveLength(1);
-    expect(a).toEqual(b);
+    // The raw forecast (and cell) is shared, but the anchor is honestly built
+    // per caller from THEIR OWN fix — not the fix of whoever happened to
+    // populate the cache first (Codex round-2 #1).
+    const { anchor: anchorA, ...restA } = a as NonNullable<typeof a>;
+    const { anchor: anchorB, ...restB } = b as NonNullable<typeof b>;
+    expect(restA).toEqual(restB);
+    expect(anchorA).toMatchObject({ kind: "point", lat: 26.3512, lon: -80.0701 });
+    expect(anchorB).toMatchObject({ kind: "point", lat: 26.3549, lon: -80.0788 });
   });
 
   it("fetches once per cell for people three miles apart", async () => {
@@ -251,6 +258,60 @@ describe("rainForFix", () => {
 
   it("returns null on a bad response", async () => {
     vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
+    const read = await rainForFix(26.35, -80.07, "boca-raton", NOW, newRainCache(), null);
+    expect(read).toBeNull();
+  });
+
+  it("two beaches sharing a cell each get their OWN radar hold, not each other's (Codex round-2 #1)", async () => {
+    // frameAgeMinutes 40 > PRECIP_RADAR_STALE_MINUTES (25): both beaches fall
+    // to the cell-forecast path and land in the SAME cell cache entry, but
+    // assessRain's hold only cares about wetMinutesAgo <= 20, independent of
+    // frame freshness.
+    const wetRadar = radar({ rainNowMmHr: 0, wetMinutesAgo: 10, frameAgeMinutes: 40 });
+    const dryRadar = radar({ rainNowMmHr: 0, wetMinutesAgo: null, frameAgeMinutes: 40 });
+
+    for (const order of [
+      ["wet", "dry"],
+      ["dry", "wet"],
+    ] as const) {
+      const cache = newRainCache();
+      const results: Record<string, Awaited<ReturnType<typeof rainForFix>>> = {};
+      for (const which of order) {
+        results[which] = await rainForFix(
+          26.3512,
+          -80.0701,
+          which === "wet" ? "wet-beach" : "dry-beach",
+          NOW,
+          cache,
+          which === "wet" ? wetRadar : dryRadar,
+        );
+      }
+      expect(results.wet).toMatchObject({ hazardActive: true, latched: true });
+      expect(results.dry).not.toMatchObject({ hazardActive: true });
+    }
+  });
+});
+
+describe("rainForFix — a lost forecast must not cost a still-valid radar latch (Codex round-2 #2)", () => {
+  it("forecast throws but radar was wet 10 minutes ago: still hazardActive+latched, ETA null", async () => {
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("network down");
+    });
+    const read = await rainForFix(
+      26.35,
+      -80.07,
+      "boca-raton",
+      NOW,
+      newRainCache(),
+      radar({ rainNowMmHr: 0, wetMinutesAgo: 10 }, "stale"),
+    );
+    expect(read).toMatchObject({ hazardActive: true, latched: true, etaMinutes: null });
+  });
+
+  it("forecast throws and there is no radar latch: null, as before", async () => {
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("network down");
+    });
     const read = await rainForFix(26.35, -80.07, "boca-raton", NOW, newRainCache(), null);
     expect(read).toBeNull();
   });

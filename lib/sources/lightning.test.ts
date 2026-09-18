@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { summarizeStrikes, type LightningFeed } from "@/lib/sources/lightning";
+import { assessLightning, type HazardAnchor } from "@/lib/hazards/assess";
 import { degToCardinal } from "@/lib/util";
 
 const BOCA = { lat: 26.3587, lon: -80.0686 };
@@ -115,5 +116,117 @@ describe("summarizeStrikes", () => {
       NOW,
     );
     expect(d.stormEnergy).toBeLessThanOrEqual(0.01);
+  });
+
+  it("closeStrikeMinutesAgo is undefined when nothing is within 5 mi", () => {
+    const d = summarizeStrikes(
+      feed([[nowSec - 60, BOCA.lat + 0.5, BOCA.lon]]), // ~34.5 mi away
+      BOCA.lat,
+      BOCA.lon,
+      NOW,
+    );
+    expect(d.closeStrikeMinutesAgo).toBeUndefined();
+  });
+
+  it("closeStrikeMinutesAgo is the age of the MOST RECENT strike within 5 mi, not the closest one", () => {
+    // A: ~3 mi away, 20 min ago (older, but still the closest strike overall).
+    // B: ~4 mi away, 2 min ago (farther than A, but more recent, and still <=5 mi).
+    // C: ~34.5 mi away, 1 min ago (most recent strike overall, but outside 5 mi).
+    const d = summarizeStrikes(
+      feed([
+        [nowSec - 1200, BOCA.lat + 0.043, BOCA.lon], // ~3 mi
+        [nowSec - 120, BOCA.lat + 0.058, BOCA.lon], // ~4 mi
+        [nowSec - 60, BOCA.lat + 0.5, BOCA.lon], // ~34.5 mi
+      ]),
+      BOCA.lat,
+      BOCA.lon,
+      NOW,
+    );
+    expect(d.nearestMi).toBeLessThan(4); // A is the closest strike
+    expect(d.lastMinutesAgo).toBe(1); // C is the most recent strike overall
+    expect(d.closeStrikeMinutesAgo).toBe(2); // B: the most recent strike within 5 mi
+  });
+
+  it("windowMinutes is exposed on the summary", () => {
+    const d = summarizeStrikes(feed([]), BOCA.lat, BOCA.lon, NOW);
+    expect(d.windowMinutes).toBe(30);
+  });
+});
+
+describe("summarizeStrikes -> assessLightning (end-to-end hold, real per-flash feed)", () => {
+  // Offsets (in miles of latitude, roughly 69 mi/deg) that place strikes at a
+  // fixed distance from BOCA. These are DIFFERENT physical flashes, not one
+  // strike being "reclassified" — each keeps its own immutable epoch + coords,
+  // exactly as scripts/glm_lightning.py emits them (see lightning.ts comment).
+  const miToLatOffset = (mi: number) => mi / 69;
+  const anchor: HazardAnchor = { kind: "beach", slug: "boca-raton" };
+
+  it("holds active for exactly 30 min off one real close strike, unmoved by a stream of farther (>5mi) strikes", () => {
+    const T0 = NOW;
+    const closeStrike: [number, number, number] = [
+      T0 / 1000,
+      BOCA.lat + miToLatOffset(4.8),
+      BOCA.lon,
+    ];
+    // From T0+6min on, additional (separate) strikes land every 2 min at
+    // 5.2 mi and 6.4 mi — both outside the 5 mi "close" radius, so they must
+    // never feed closeStrikeMinutesAgo.
+    const farStrikes: [number, number, number][] = [];
+    for (let m = 6; m <= 40; m += 2) {
+      const epoch = T0 / 1000 + m * 60;
+      farStrikes.push([epoch, BOCA.lat + miToLatOffset(5.2), BOCA.lon]);
+      farStrikes.push([epoch, BOCA.lat + miToLatOffset(6.4), BOCA.lon]);
+    }
+    const f = feed([closeStrike, ...farStrikes]);
+
+    const results: boolean[] = [];
+    for (let elapsed = 0; elapsed <= 40; elapsed += 2) {
+      const nowMs = T0 + elapsed * 60_000;
+      const summary = summarizeStrikes(f, BOCA.lat, BOCA.lon, nowMs);
+      const r = assessLightning({
+        status: "ok",
+        closeStrikeMinutesAgo: summary.closeStrikeMinutesAgo,
+        nearestMi: summary.nearestMi,
+        nearestMinutesAgo: summary.nearestMinutesAgo,
+        windowMinutes: summary.windowMinutes,
+        nowMs,
+        anchor,
+      });
+      results.push(r.active);
+    }
+
+    // Active for elapsed 0..30 (16 steps, ages 0..30 <= LIGHTNING_HOLD_MIN),
+    // then false for 32..40 (5 steps).
+    expect(results.slice(0, 16).every(Boolean)).toBe(true);
+    expect(results.slice(16).every((v) => v === false)).toBe(true);
+
+    let trueToFalse = 0;
+    let falseToTrue = 0;
+    for (let i = 1; i < results.length; i++) {
+      if (results[i - 1] && !results[i]) trueToFalse++;
+      if (!results[i - 1] && results[i]) falseToTrue++;
+    }
+    expect(trueToFalse).toBe(1);
+    expect(falseToTrue).toBe(0);
+  });
+
+  it("a legitimate fix-point move (device relocates 1 mi) changes the answer — not flicker, a real distance change", () => {
+    // One strike, fixed at 5.5 mi from BOCA's original fix — just outside the
+    // 5 mi "close" radius, so it does not qualify. The strike's own lat/lon
+    // never changes between the two reads below; only the PERSON'S fix moves
+    // ~1 mi closer, legitimately bringing that same strike inside 5 mi.
+    const f = feed([[nowSec - 60, BOCA.lat + miToLatOffset(5.5), BOCA.lon]]);
+
+    const before = summarizeStrikes(f, BOCA.lat, BOCA.lon, NOW);
+    expect(before.closeStrikeMinutesAgo).toBeUndefined(); // 5.5 mi -> not close
+
+    const movedLat = BOCA.lat + miToLatOffset(1); // fix point moves 1 mi north
+    const after = summarizeStrikes(f, movedLat, BOCA.lon, NOW);
+
+    // The strike itself never moved; only the observer's fix did. That's a
+    // legitimate change in measured distance (now ~4.5 mi, inside 5 mi),
+    // not triangulation flicker on a stationary fix.
+    expect(after.nearestMi).toBeLessThan(5);
+    expect(after.closeStrikeMinutesAgo).toBeDefined();
   });
 });

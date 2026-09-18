@@ -421,6 +421,14 @@ export interface LightningData {
   /** Closest strike in the window (miles) + how long ago (minutes). */
   nearestMi?: number;
   nearestMinutesAgo?: number;
+  /** Age (minutes) of the MOST RECENT strike within 5 mi of the point — the
+   *  single input the lightning hazard hold uses to decide active/latched.
+   *  Undefined when no strike in the window is within 5 mi. Distinct from
+   *  nearestMi/nearestMinutesAgo, which can point at DIFFERENT strikes (the
+   *  closest one isn't always the most recent close one) — pairing the wrong
+   *  pair caused the 5-mile-line flicker this field fixes. See
+   *  lib/hazards/assess.ts assessLightning. */
+  closeStrikeMinutesAgo?: number;
   /** Compass bearing FROM the beach TO the closest strike (deg, 0=N, 90=E). */
   nearestBearingDeg?: number;
   /** Most recent strike in the window (may differ from the closest). */
@@ -523,6 +531,12 @@ export interface PrecipRadarData {
   framesUsed: number;
   /** Age of `frameIso` in minutes, computed at fetch time. */
   frameAgeMinutes: number;
+  /** Minutes since the beach was last "wet" on radar (rain at the beach, or
+   *  within 5 km) — computed at READ time from the server clock, never the
+   *  job's. null when absent, invalid, or future-dated beyond clock skew.
+   *  Optional so fixtures/mocks built before this field existed still
+   *  type-check; scripts/mrms_precip.py + fetchPrecipRadar always set it. */
+  wetMinutesAgo?: number | null;
 }
 
 // --- Storm activity (derived: lightning strikes + proximity + current rain) ---
