@@ -1,0 +1,39 @@
+name: Config checks
+
+# Deterministic, offline guards on config/locations.ts that catch a whole class
+# of silent data bug at commit time rather than on the beach. First guard: every
+# beach must have an NDBC station that actually reports wave height, so wave
+# height can never silently fall back to the (nearshore-biased) forecast model
+# — the 2026-09-18 Boca bug (see lib/sources/ndbcStations.ts). vitest does not
+# otherwise run in CI, so this is its own fast job.
+#
+# The live NDBC audit in ndbcStations.test.ts is OFF here on purpose (it needs
+# network + station uptime); run it by hand with NDBC_LIVE_CHECK=1 to re-verify
+# the station map against reality.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: config-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  buoy-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Buoy coverage — every beach must have a wave-reporting buoy
+        run: npx vitest run lib/sources/ndbcStations.test.ts
