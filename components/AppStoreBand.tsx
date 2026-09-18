@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 
-const APP_STORE_URL = "https://apps.apple.com/us/app/id6779072992";
+import { GET_APP_PATH } from "@/lib/appStore";
+
 const DISMISS_KEY = "ibd.appStoreBand.dismissed";
 
 /**
@@ -73,7 +74,7 @@ export function AppStoreBand() {
           </div>
         </div>
         <a
-          href={APP_STORE_URL}
+          href={GET_APP_PATH}
           target="_blank"
           rel="noopener noreferrer"
           className={`inline-flex shrink-0 self-start rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ocean-500/70 focus-visible:ring-offset-2 focus-visible:ring-offset-transparent sm:self-auto ${

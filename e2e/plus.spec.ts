@@ -127,12 +127,14 @@ test.describe("Beach Day Plus", () => {
   }) => {
     const errors = await openDashboard(page);
 
-    // The door on the web is the App Store, not the questions.
+    // The door on the web is the app, not the questions. The link goes by way
+    // of /get-app, which counts the tap before redirecting to the App Store
+    // (lib/db/scanFunnel.ts), so a sticker scan can be matched to the install.
     const card = page.getByRole("region", { name: /Personalize your score in the app/ });
     await expect(card).toBeVisible();
     await expect(card.getByRole("link", { name: /Get Is It Beach Day for iPhone/ })).toHaveAttribute(
       "href",
-      /apps\.apple\.com/,
+      "/get-app",
     );
     await expect(card.getByText("$2.99/mo · $19.99/yr · 3-day free trial")).toBeVisible();
     await expect(page.getByRole("button", { name: /Personalize my score/ })).toHaveCount(0);

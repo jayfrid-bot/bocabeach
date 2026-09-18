@@ -33,9 +33,14 @@ flowchart TD
     SITEMAP["/sitemap.xml"]
     CAM["/api/cam/[id]<br/>(proxied still frame)"]
     ADMIN["/api/admin/add, /api/admin/preview<br/>(owner-only, add a beach)"]
-    STICKER["/sticker?s=&lt;tag&gt;<br/>(QR landing: count scan, 307 → /?ref=tag)"]
-    ADMINSCANS["/api/admin/scans<br/>(owner-only, read scan counts)"]
+    STICKER["/sticker?s=&lt;tag&gt;<br/>(QR landing: count scan, set ref cookie, 307 → /?ref=tag)"]
+    GETAPP["/get-app<br/>(count the store tap, 307 → App Store)"]
+    ADMINSCANS["/api/admin/scans<br/>(owner-only, read the sticker funnel)"]
   end
+
+  STICKER -->|"scan_log + scan_claim"| FUNNEL[lib/db/scanFunnel.ts<br/>scan → tap → install]
+  GETAPP -->|"scan_tap, claim marked tapped"| FUNNEL
+  ADMINSCANS --> FUNNEL
 
   COND --> PIPE[lib/conditions.ts<br/>fetch all sources in parallel]
   SHARE --> PIPE
@@ -176,9 +181,13 @@ flowchart TD
   RCHOOK -->|storeUntil, from RC's live answer| STORE
   REG --> STORE
 
-  STORE -->|production| D1[(D1: isitbeachday-plus<br/>devices · presence · alert_log · send_claims · scan_log)]
+  STORE -->|production| D1[(D1: isitbeachday-plus<br/>devices · presence · alert_log · send_claims<br/>scan_log · scan_tap · scan_claim · install_attrib)]
   STICKER -->|"count scan (bot-filtered), fail-soft"| D1
-  ADMINSCANS -->|read totals + recent days| D1
+  GETAPP -->|"count store tap, fail-soft"| D1
+  DEV -->|"after the upsert: credit a fresh native install<br/>to a recent scan on the same network (probable)"| ATTRIB[lib/db/scanFunnel.ts<br/>attributeInstall]
+  REG --> ATTRIB
+  ATTRIB --> D1
+  ADMINSCANS -->|read the funnel| D1
   STORE -->|tests, next dev w/o bindings| MEM[(memory store<br/>.plus-store.json fallback)]
 
   KVLEGACY[(PUSH_KV<br/>legacy push-token subs)] -.imported once per device.-> STORE
@@ -247,6 +256,25 @@ INSERT — only the run that wins the claim may send, so the 30-minute (or
 once-a-day) dedup window still holds even when two runs race for it. A claim
 whose send never finished (a crash, a timeout) is abandoned after 10 minutes
 and may be re-claimed.
+
+**The sticker funnel (`lib/db/scanFunnel.ts`, migrations/0005_scan_funnel.sql):**
+three steps, each weaker evidence than the one before it. `/sticker` counts the
+scan (`scan_log`) and leaves a short-lived note that someone on this network
+scanned (`scan_claim`). `/get-app` counts the tap on "Get the app"
+(`scan_tap`) and upgrades that note to "tapped through" — the last step we can
+actually observe. Then, right after a device upsert, `/api/devices` and
+`/api/push/register-native` (whichever the fresh install writes to first) credit
+the install (`install_attrib`) if and only if the device row is minutes old,
+native rather than web, and its network has an unspent note from the last six
+hours. An install that never writes anything — no home beach, no profile, no
+alerts — has no device row to credit, so it is invisible here exactly as it is
+already missing from the device count.
+
+That last step is a **match, not a fact** — Apple never says who installed the
+app — so two phones on one home Wi-Fi can look like one scanner, and the growth
+report always calls these installs *probable*. What we keep about a network is a
+salted, truncated hash of the IP and nothing else, swept once the six-hour
+window has passed. `/api/admin/scans` reads the whole chain in two queries.
 
 ## External integrations
 

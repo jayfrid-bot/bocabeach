@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import type { ConditionsResponse, LocationPublic } from "@/lib/types";
+import { GET_APP_PATH } from "@/lib/appStore";
 import { consensusCloudPct, currentHourOf, deriveMetrics, DEFAULT_SCORING } from "@/lib/score";
 import { computeStormActivity } from "@/lib/stormActivity";
 import { rainNowcast } from "@/lib/rainNowcast";
@@ -1046,7 +1047,7 @@ export function ConditionsDashboard({
               above is dismissed. */}
           <span className="mx-1.5">·</span>
           <a
-            href="https://apps.apple.com/us/app/id6779072992"
+            href={GET_APP_PATH}
             target="_blank"
             rel="noopener noreferrer"
             className="hover:underline"

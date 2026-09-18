@@ -127,6 +127,15 @@ export default function PrivacyPage() {
           you across other sites, and doesn&apos;t build an advertising profile.
           We run no ads and use no ad trackers.
         </p>
+        <p>
+          We also count our own QR stickers. If you arrive by scanning one, we
+          count the scan, set one short-lived cookie holding only that
+          sticker&apos;s tag, and keep a scrambled, unreadable form of your
+          network address for six hours — so that if the app shows up on your
+          phone soon after, we can tell the sticker did its job. Both are gone
+          after six hours, neither can be read back as your address, and none of
+          it follows you to other sites or goes to anyone else.
+        </p>
       </Section>
 
       <Section title="What we share">

@@ -1,10 +1,15 @@
-// Owner-only readout of QR-sticker scans (the scan_log table written by
-// app/sticker/route.ts). Read-only and harmless, so it's exposed like the rest
-// of the admin surface (see app/admin/yf/page.tsx). Returns per-source totals
-// and a recent daily breakdown so the owner can tell which sticker placements
-// actually get scanned.
+// Owner-only readout of the sticker funnel. Read-only and harmless, so it's
+// exposed like the rest of the admin surface (see app/admin/yf/page.tsx).
+//
+// Returns the whole chain, so the owner can tell a placement that gets scanned
+// from a placement that gets installs:
+//   scans   — scan_log, per source, plus a recent daily breakdown
+//   taps    — scan_tap, per source: they tapped "Get the app"
+//   attributed — install_attrib: installs credited to a scan. A MATCH, not a
+//   fact — see lib/db/scanFunnel.ts for what it can and cannot tell you.
 
 import { getD1 } from "@/lib/db/d1Store";
+import { readFunnel } from "@/lib/db/scanFunnel";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,7 +38,10 @@ function today(): string {
 export async function GET(): Promise<Response> {
   const db = await getD1();
   if (!db) {
-    return Response.json({ ok: false, reason: "no-db", bySource: [], recent: [], todayTotal: 0, total: 0 });
+    return Response.json({
+      ok: false, reason: "no-db", bySource: [], recent: [], todayTotal: 0, total: 0,
+      taps: [], tapsTotal: 0, attributed: [], attributedTotal: 0,
+    });
   }
   try {
     const bySource =
@@ -58,8 +66,16 @@ export async function GET(): Promise<Response> {
     const t = today();
     const todayTotal = recent.filter((r) => r.day === t).reduce((a, r) => a + r.n, 0);
     const total = bySource.reduce((a, r) => a + r.total, 0);
-    return Response.json({ ok: true, total, todayTotal, bySource, recent });
+    const { taps, installs } = await readFunnel(db);
+    return Response.json({
+      ok: true, total, todayTotal, bySource, recent,
+      taps, tapsTotal: taps.reduce((a, r) => a + r.total, 0),
+      attributed: installs, attributedTotal: installs.reduce((a, r) => a + r.total, 0),
+    });
   } catch (e) {
-    return Response.json({ ok: false, reason: String(e), bySource: [], recent: [], todayTotal: 0, total: 0 });
+    return Response.json({
+      ok: false, reason: String(e), bySource: [], recent: [], todayTotal: 0, total: 0,
+      taps: [], tapsTotal: 0, attributed: [], attributedTotal: 0,
+    });
   }
 }

@@ -6,7 +6,7 @@
  * or the paywall. It says what Plus is, what it costs, and where to get it.
  * Everything the free dashboard shows stays exactly as it is above this card.
  */
-const APP_STORE_URL = "https://apps.apple.com/us/app/id6779072992";
+import { GET_APP_PATH } from "@/lib/appStore";
 
 const INCLUDED = [
   "Your own Beach Day score, tuned to how you use the beach — swimming, kids, sun, snorkeling, dog walks, surf.",
@@ -54,7 +54,7 @@ export function PlusInAppCard() {
       </p>
 
       <a
-        href={APP_STORE_URL}
+        href={GET_APP_PATH}
         target="_blank"
         rel="noopener noreferrer"
         className="mt-3 flex min-h-[44px] w-full items-center justify-center rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"

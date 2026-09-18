@@ -45,6 +45,13 @@ export const CHANGELOG: ChangelogEntry[] = [
     tag: "new",
   },
   {
+    date: "2026-09-17",
+    title: "The privacy page now explains how we count our QR stickers",
+    details:
+      "If you get here by scanning one of our beach stickers, we count the scan and hold a scrambled, unreadable form of your network address for six hours, so we can tell whether the sticker actually helped anyone find the app. It expires on its own, it can't be read back as your address, and it never follows you anywhere else. The privacy page now says so plainly.",
+    tag: "improved",
+  },
+  {
     date: "2026-09-16",
     title: "A live cam for Fort Lauderdale Beach",
     details:

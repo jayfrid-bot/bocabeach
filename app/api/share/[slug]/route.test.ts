@@ -114,10 +114,16 @@ describe("GET /api/share/[slug]", () => {
     expect(res.headers.get("content-type")).toBe("image/png");
   });
 
-  it("sets a 120s cache-control header", async () => {
+  // 15 minutes, not the original 2: rendering a 1080x1920 PNG through satori
+  // costs seconds of CPU, and the card only changes as fast as the conditions
+  // do (commit 2d78363). `stale-while-revalidate` keeps the next viewer on the
+  // cached card while a fresh one renders behind them.
+  it("caches the rendered card at the edge for 15 minutes", async () => {
     vi.mocked(getConditions).mockResolvedValue(fixture());
     const res = await GET(...req("boca-raton"));
-    expect(res.headers.get("cache-control")).toBe("public, max-age=120, s-maxage=120");
+    expect(res.headers.get("cache-control")).toBe(
+      "public, max-age=900, s-maxage=900, stale-while-revalidate=600",
+    );
   });
 
   it("404s for an unknown slug", async () => {

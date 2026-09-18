@@ -10,6 +10,8 @@
 
 import { getLocation } from "@/config/locations";
 import { badRequest, fail, isDeviceId, okDevice, readBody } from "@/lib/db/api";
+import { getD1 } from "@/lib/db/d1Store";
+import { attributeInstall, clientIp, fingerprint, fpSalt } from "@/lib/db/scanFunnel";
 import { getStore } from "@/lib/db/store";
 import { ALERT_KEYS, entitled, type AlertPrefs, type DevicePatch } from "@/lib/db/types";
 // The same validator the phone runs before it saves (lib/plus/storage.ts is
@@ -113,7 +115,27 @@ export async function POST(req: Request): Promise<Response> {
       const allowed = !existing || existing.previewSeen !== true || entitled(existing, Date.now());
       if (!allowed) return fail("not-entitled", 403);
     }
-    return okDevice(await store.upsertDevice(body.deviceId, patch));
+    const device = await store.upsertDevice(body.deviceId, patch);
+    // A brand-new native install may be the far end of a sticker scan. The SQL
+    // behind this decides on its own whether this device qualifies (minutes
+    // old, native, an unclaimed scan on the same network) — see
+    // lib/db/scanFunnel.ts. It runs after the upsert so the row it checks is
+    // already there, and it can only ever ADD a row to install_attrib, so a
+    // failure here costs a statistic and nothing else.
+    try {
+      const db = await getD1();
+      if (db) {
+        await attributeInstall(
+          db,
+          body.deviceId,
+          await fingerprint(clientIp(req), fpSalt()),
+          Date.now(),
+        );
+      }
+    } catch {
+      // never let the funnel cost someone their device record
+    }
+    return okDevice(device);
   } catch (e) {
     console.error("devices: upsert failed", e);
     return fail("store-unavailable", 500);

@@ -5,35 +5,30 @@
 // a config redirect never runs our code, and the client analytics beacon fires
 // on the destination, which we cannot tell apart from ordinary home-page traffic.
 //
+// It also leaves two traces so the funnel can be followed past the scan (see
+// lib/db/scanFunnel.ts): a cookie, so a later tap on "Get the app" is known to
+// have come from a sticker, and a short-lived, hashed network note, so a native
+// install that appears minutes later can be credited to this scan.
+//
 // Counting is fail-soft in every direction — a missing binding, a cold D1, or a
 // write error must never keep someone standing on the sand from reaching the
 // beach score. The redirect is issued regardless.
 
 import { NextResponse } from "next/server";
 import { getD1 } from "@/lib/db/d1Store";
+import {
+  MATCH_WINDOW_MS,
+  REF_COOKIE,
+  cleanSource,
+  clientIp,
+  fingerprint,
+  fpSalt,
+  localDay,
+  noteScan,
+} from "@/lib/db/scanFunnel";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-/** Local calendar day at the beach, so "scans today" means what a person means. */
-function localDay(nowMs: number): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(nowMs));
-}
-
-/** Only ever store a short, known-shaped tag — never free text from the URL. */
-function cleanSource(raw: string | null): string {
-  if (!raw) return "sticker";
-  const s = raw
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, "")
-    .slice(0, 24);
-  return s || "sticker";
-}
 
 /** Link-preview crawlers and unfurlers (iMessage, Slack, WhatsApp, social
  *  bots, search crawlers) fetch the URL to build a preview. They are not a
@@ -62,6 +57,7 @@ export async function GET(req: Request) {
         )
         .bind(localDay(now), source, now, now)
         .run();
+      await noteScan(db, await fingerprint(clientIp(req), fpSalt()), source, now);
     }
   } catch {
     // Counting is a nice-to-have; the redirect below is the promise we keep.
@@ -71,5 +67,17 @@ export async function GET(req: Request) {
   to.searchParams.set("ref", source);
   // 307, not 308: the tag is a marketing detail we may retire, and a permanent
   // redirect would be cached in every scanner's browser forever.
-  return NextResponse.redirect(to, 307);
+  const res = NextResponse.redirect(to, 307);
+  if (!isBot) {
+    // Lives exactly as long as an install can still be credited to this scan.
+    // Not a tracker: one short tag, our own site only, no personal data.
+    res.cookies.set(REF_COOKIE, source, {
+      maxAge: Math.floor(MATCH_WINDOW_MS / 1000),
+      path: "/",
+      sameSite: "lax",
+      httpOnly: true,
+      secure: true,
+    });
+  }
+  return res;
 }

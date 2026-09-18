@@ -12,6 +12,8 @@
 
 import { getLocation } from "@/config/locations";
 import { isDeviceId } from "@/lib/db/api";
+import { getD1 } from "@/lib/db/d1Store";
+import { attributeInstall, clientIp, fingerprint, fpSalt } from "@/lib/db/scanFunnel";
 import { isLegacyId, legacyDeviceId, prefsFromLegacy, getStore } from "@/lib/db/store";
 import type { SentState } from "@/lib/db/types";
 
@@ -104,6 +106,20 @@ export async function POST(req: Request): Promise<Response> {
       ...seedPrefs,
       sent,
     });
+
+    // Turning on alerts is often the FIRST thing a fresh install writes, so
+    // this is the second place a sticker scan can be redeemed (the other is
+    // POST /api/devices). The SQL behind it decides for itself whether this
+    // device qualifies, and it can only add a row to install_attrib — see
+    // lib/db/scanFunnel.ts. A failure here costs a statistic, nothing else.
+    try {
+      const db = await getD1();
+      if (db) {
+        await attributeInstall(db, id, await fingerprint(clientIp(req), fpSalt()), Date.now());
+      }
+    } catch {
+      // never let the funnel cost someone their alerts
+    }
     return Response.json({ ok: true });
   } catch (e) {
     return Response.json({ error: String(e) }, { status: 500 });
