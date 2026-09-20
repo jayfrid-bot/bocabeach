@@ -137,3 +137,17 @@ Sitemap lists only beaches with a resolved config that meets the minimum-data ru
 
 ## Questions for the reviewer
 (a) Are the pass criteria and distance ceilings sane per metric; is "same coast" enough of a basin check? (b) Ordered candidate list at runtime vs resolve-time only — which layer should own the walk? (c) `station_health` as D1 table vs a published JSON like the other feeds. (d) On-demand resolution inside a Worker request: subrequest limits, abuse, cold-start latency for the first visitor. (e) Coverage tiers — does labeling solve the renormalization problem or must Limited scores be capped? (f) SEO risk of thousands of programmatic beach pages. (g) Anything that contradicts phase 1 or the Plus spec.
+
+## Phase 2 — Codex review 2026-09-20: build with changes (adopted)
+Full text: `docs/reviews/2026-09-20-codex-phase2-history-imagery.md`. These replace the matching parts of the proposal above.
+1. **Basin / coast-segment / exposure metadata.** "Same coast" cannot be checked with today's data (no basin field on beaches or stations; the coastal gate is a no-op once a registry beach is chosen). Add a small static coast-segment set and tag beaches + stations with it.
+2. **Per-metric candidates, two layers.** Resolve time builds and verifies an ordered candidate list per metric; runtime walks the *vetted* list when live data fails. No global "cap four".
+3. **Per-field timestamps; waves stay near the existing 2-hour staleness rule** (6 h was too loose). The buoy adapter needs per-field observation times first.
+4. **Station health in D1, with a cached hot-path snapshot** the request path reads (never a D1 query per conditions build).
+5. **Resolve asynchronously**: single-flight job per beach, rate limits, retries, and a "setting up this beach" pending state. Never a full live resolution inside the first visitor's request (`/api/resolve` is public and unthrottled today; conditions already fan out ~21 source calls and has hit Cloudflare 1102 before).
+6. **An async location repository** in front of curated + generated + D1-resolved beaches; do not bolt D1 onto the synchronous `getLocation()`.
+7. **Completeness rules, not just labels**: track available vs observed weight; a Limited beach must not be able to read as a confident "Excellent" (`combine()` renormalizes silently today).
+8. **Coverage-aware SEO**: sitemap lists only stable, useful pages with a real `lastModified` (today every entry says "now"); page metadata must stop claiming water quality / seaweed / crowds for beaches that lack them.
+9. **Rewrite Plus onboarding + the privacy page around the two explicit modes.**
+10. **Map-pin fallback** if "every US beach" is non-negotiable: a person can drop a pin on the coast and get a location-only beach, even when no list has it.
+Also: extend the CI coverage guard to the merged served list (it covers only the 3 curated beaches today).
