@@ -92,3 +92,48 @@ export interface HazardAssessment {
 - Score and alert engine produce the same active/inactive answer for the same inputs (shared fixture test).
 - No flicker: consecutive assessments across a threshold-hovering fixture sequence never toggle more than once per hold window.
 - Existing tests, `tsc`, and the layout check stay green; changelog entry ships with it.
+
+---
+
+# Phase 2 — any US beach, resolved on demand, verified live (proposal, 2026-09-20)
+
+**Owner direction:** "If somebody puts in their location it should automatically pull the station data and only discard it if it doesn't meet the criteria." Two explicit modes: location-based, and fully manual with no location use. Every US beach available to pick.
+
+## What already exists (measured 2026-09-20)
+- `data/registry/beaches.us.json` — **956** coastal beaches (USGS GNIS, `coastalConfirmed`). Thin in places: FL has 46.
+- `data/registry/buoys.json` — **1,930** NDBC stations with `hasWaves` / `hasWaterTemp`; `tide-stations.json` — **3,450** CO-OPS stations.
+- `lib/resolve/*` — location → beach config: coastal gate (30 mi), capability-aware station pick (`stationRegistry.ts`: primary = nearest with water temp OR waves; fallback = nearest *wave*-capable), NWS zone, timezone, per-field source / confidence / distance report. It built the 36 `tier: "auto"` beaches. Admin-only today (`/admin/yf`), output committed as JSON.
+- Live probe of every station those 36 beaches use: **35 of 36 receive observed waves right now.** The miss (South Padre Island) has an offline fallback (42020 → 404). Hand-written Boca had two wave-less stations. So the picker design is right; the failure mode is **static capability flags + stations that go offline, with nothing re-checking.**
+- The CI coverage guard (`lib/sources/ndbcStations.test.ts`) covers only the 3 curated beaches — a gap.
+
+## 2a. Pull it, keep it only if it passes — live-verified station selection
+For each metric (observed waves, water temp, observed water level, tide predictions) the resolver builds an **ordered candidate list by distance** (not just primary + one fallback) and walks it until a station **passes**:
+- reports the field with a real value within the freshness window (waves / water temp: numeric in the last 6 h; water level: last 2 h);
+- inside the metric's distance ceiling (proposal: waves 75 mi, water temp 50 mi, water level 40 mi) and on the same coast (beach `coast` / `coastNormalDeg` vs station position — no picking a Gulf buoy for an Atlantic beach across the peninsula);
+- not a prediction-only tide gauge when an observed value is wanted (the 8722816 trap).
+Nothing passes → the forecast model, **labeled "estimated"** in the UI and recorded as such. Every chosen station stores provenance: id, distance, `verifiedAt`, what failed before it.
+Runtime: `lib/sources/buoy.ts` already merges two stations field-by-field; generalize to the ordered list (cap 4) so a dead station degrades to the next one instead of to the model.
+
+## 2b. Station health, re-checked on a schedule
+A daily job (extends the `NDBC_LIVE_CHECK` audit) probes every station any served beach depends on and writes `station_health` (id, field, lastSeenAt, status). The resolver and the runtime candidate walk read it; a beach that drops to model-only for >24 h shows up in the growth report. The CI guard is extended to **all** served beaches (curated + generated).
+
+## 2c. Two modes, one explicit setting
+- **Use my location** — asks While-Using permission; follows the person: nearest served beach, rain/lightning measured from where they stand (phase 1), Beach Mode auto-arm.
+- **I'll pick my beaches** — never requests location; one or more saved beaches; everything anchors to the chosen beach (Codex's rule: a manual destination anchors the whole score).
+Asked once at first run, changeable in settings, stored with device prefs. Switching to manual clears any stored presence fix.
+
+## 2d. A complete beach list
+Grow the gazetteer beyond GNIS: EPA's national beach list (BEACON — monitored swimming beaches, with ids and coordinates) as the main addition, OpenStreetMap `natural=beach` names to fill gaps. **Verify counts and licences before building** (GNIS: public domain; EPA: federal public data; OSM: ODbL — attribution + share-alike on the derived database, so OSM-derived rows stay separable). Dedupe by name + distance. Ship as a searchable static index (name, lat, lon, state, source) — no per-beach config.
+
+## 2e. Resolve on first open, cache, re-verify
+No pre-built configs for thousands of beaches. First open of a beach → resolve (2a) → store in D1 `beach_configs` (slug, config JSON, coverage tier, resolvedAt, verifiedAt) → served like any beach; re-verified on the 2b schedule. Rate-limited, so a crawler cannot trigger thousands of resolutions. An admin can promote a beach to curated (flags, cams, water-quality sites). Cost stays proportional to beaches people actually open (one build ≈ 10 Open-Meteo calls + ~10 other fetches, cached ~2 min).
+Sitemap lists only beaches with a resolved config that meets the minimum-data rule — no thin doorway pages.
+
+## 2f. Minimum data + honest confidence (Codex's standing warning)
+`scoreBeachDay` drops missing factors and renormalizes, so a data-poor beach can look confidently great. Rules:
+- Coverage tiers, shown on the page: **Full** (flags, water testing, cams) · **Standard** (weather + observed waves + tides + water temp) · **Limited** (model-only waves or no water temp).
+- The score always lists which factors are missing. Limited beaches carry a visible "limited data" label and are excluded from cross-beach "best beach" comparisons and rankings.
+- A beach below a minimum (no usable weather, or not coastal-confirmed) is not scored at all.
+
+## Questions for the reviewer
+(a) Are the pass criteria and distance ceilings sane per metric; is "same coast" enough of a basin check? (b) Ordered candidate list at runtime vs resolve-time only — which layer should own the walk? (c) `station_health` as D1 table vs a published JSON like the other feeds. (d) On-demand resolution inside a Worker request: subrequest limits, abuse, cold-start latency for the first visitor. (e) Coverage tiers — does labeling solve the renormalization problem or must Limited scores be capped? (f) SEO risk of thousands of programmatic beach pages. (g) Anything that contradicts phase 1 or the Plus spec.
