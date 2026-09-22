@@ -1,6 +1,7 @@
 import type {
   BestWindow,
   CapPolicy,
+  DataCoverage,
   DayWindow,
   HourlyMetrics,
   ConditionsSnapshot,
@@ -19,7 +20,7 @@ import { clamp, degToCardinal, dewPointFromTempRH, plateau, round } from "@/lib/
 import { assessLightning, assessRain, type HazardAssessment } from "@/lib/hazards/assess";
 import { currentSandTempF, estimateSandTempF, hoursFromSolarNoon } from "@/lib/sandTemp";
 import { seaState } from "@/lib/format";
-import { scoreBand } from "@/lib/scoreBands";
+import { scoreBand, SCORE_BANDS } from "@/lib/scoreBands";
 
 // Consolidated, best-available values pulled across all sources.
 /**
@@ -613,7 +614,12 @@ function waveScore(ft: number, mode: WaveMode): number {
  * jump. A build SHA alone is not an engine version: most commits don't touch
  * scoring at all, and we don't want every deploy to look like a model change.
  */
-export const SCORING_ENGINE_VERSION = "2026-09-18.1";
+// 2026-09-22.1: completeness now credits model-only waterTemp/waves at 0.5
+// instead of 1 (provenance-aware coverage), and classifies full/partial/
+// limited on the unrounded ratio instead of the rounded display value —
+// both change which days get capped/annotated, so old archived rows are not
+// reproducible from this version alone.
+export const SCORING_ENGINE_VERSION = "2026-09-22.1";
 /** Bump whenever `DEFAULT_SCORING` itself (weights/curves as DATA) changes,
  *  independent of `SCORING_ENGINE_VERSION` above — kept distinct in case a
  *  future release lets Plus users pick among named configs. */
@@ -714,6 +720,99 @@ function combine(subs: SubScore[]): number | null {
 
 function ratingFor(score: number): string {
   return scoreBand(score).rating;
+}
+
+// --- data coverage -----------------------------------------------------
+// How much of this profile's weighted score actually had a live reading —
+// see the docstring on DataCoverage (lib/types.ts). Most beaches have no
+// cams (36 of 39 today), so seaweed/crowds/clarity are routinely null; a
+// data-poor beach must say so instead of reading a confident "Excellent".
+const COMPLETENESS_FULL_MIN = 0.85;
+const COMPLETENESS_PARTIAL_MIN = 0.6;
+
+/** Highest score that still sits below the second-best band's floor (today
+ *  74, one under "Yes — good beach day" at 75) — the ceiling for a `limited`
+ *  day, so it can never read "Yes!"/"Absolutely!" on mostly-missing data. */
+export const LIMITED_DATA_CAP = SCORE_BANDS[1].min - 1;
+
+/** Plain-English words for a missing weighted factor — used by the
+ *  DataCoverageNote UI (components/DataCoverageNote.tsx). */
+export const FACTOR_WORDS: Record<string, string> = {
+  airTemp: "air temperature",
+  sky: "sky conditions",
+  wind: "wind",
+  comfort: "humidity",
+  waterTemp: "water temperature",
+  waves: "observed waves",
+  sargassum: "seaweed",
+  crowds: "crowds",
+  uv: "UV index",
+  sandTemp: "sand temperature",
+  clarity: "water clarity",
+};
+
+export interface Completeness {
+  /** Share (0-1) of this profile's total configured weight with a reading,
+   *  weighted by per-factor credit (see {@link computeCompleteness}). Rounded
+   *  for display/storage only — the full/partial/limited split below is
+   *  decided on the unrounded ratio. */
+  completeness: number;
+  dataCoverage: DataCoverage;
+  /** Keys of weighted factors that had no reading (zero credit). */
+  missingFactors: string[];
+  /** Keys of weighted factors whose reading came from a model, not an
+   *  observation (half credit) — waterTemp/waves only, per `MetricSource`. */
+  estimatedFactors: string[];
+}
+
+/**
+ * `completeness` = Σ(weight × credit) / Σ(weight) over every weighted
+ * sub-score. Credit is per-factor: 1 for a sub-score that has a reading and
+ * either carries no provenance tracking or was observed (buoy), 0.5 when its
+ * `Derived` source is model-only (`waterTempSource`/`waveHeightSource`.kind
+ * === "model" — a forecast standing in for a live reading, not the real
+ * thing), 0 when missing entirely. Weight-0 factors are already absent from
+ * `subs` (see scoreBeachDay), so they never enter either side. Empty `subs`
+ * (no factors configured at all) reads as fully complete — there's nothing to
+ * be missing.
+ *
+ * Classification (full/partial/limited) is decided on the UNROUNDED ratio so
+ * a value just below a threshold (e.g. 0.5999999) never gets rounded across
+ * it; only the returned `completeness` number itself is rounded, for display
+ * and storage.
+ */
+function computeCompleteness(subs: SubScore[], d: Derived): Completeness {
+  const totalW = subs.reduce((a, s) => a + s.weight, 0);
+  const missing: SubScore[] = [];
+  const estimated: SubScore[] = [];
+  let creditedW = 0;
+  for (const s of subs) {
+    if (s.score == null) {
+      missing.push(s);
+      continue;
+    }
+    const source =
+      s.key === "waterTemp" ? d.waterTempSource : s.key === "waves" ? d.waveHeightSource : undefined;
+    if (source?.kind === "model") {
+      estimated.push(s);
+      creditedW += s.weight * 0.5;
+    } else {
+      creditedW += s.weight;
+    }
+  }
+  const rawCompleteness = totalW > 0 ? creditedW / totalW : 1;
+  const dataCoverage: DataCoverage =
+    rawCompleteness >= COMPLETENESS_FULL_MIN
+      ? "full"
+      : rawCompleteness >= COMPLETENESS_PARTIAL_MIN
+        ? "partial"
+        : "limited";
+  return {
+    completeness: round(rawCompleteness, 2),
+    dataCoverage,
+    missingFactors: missing.map((s) => s.key),
+    estimatedFactors: estimated.map((s) => s.key),
+  };
 }
 
 function f1(n: number | undefined, unit: string): string | undefined {
@@ -926,6 +1025,10 @@ export function scoreBeachDay(d: Derived, opts: ScoringOptions = DEFAULT_SCORING
   // the average, the wheel, or the explainer. This is what keeps the free score
   // identical after clarity joined the list (clarity weighs 0 by default).
   const subs = all.filter((s) => s.weight > 0);
+  const { completeness, dataCoverage, missingFactors, estimatedFactors } = computeCompleteness(
+    subs,
+    d,
+  );
 
   const rawScore = combine(subs);
   // Total data outage: no weather sub-score was available. Surface it explicitly
@@ -942,10 +1045,37 @@ export function scoreBeachDay(d: Derived, opts: ScoringOptions = DEFAULT_SCORING
       subScores: subs,
       caps,
       dataAvailable: false,
+      completeness,
+      dataCoverage,
+      missingFactors,
+      estimatedFactors,
     };
   }
-  const { score, caps } = applyBeachCaps(rawScore, d, opts.capPolicy);
-  return { score, rawScore, rating: ratingFor(score), subScores: subs, caps, dataAvailable: true };
+  let { score, caps } = applyBeachCaps(rawScore, d, opts.capPolicy);
+  // Thin-data honesty cap: a beach with under 60% of its weighted factors
+  // reporting cannot read "Yes!"/"Absolutely!" on mostly-missing information.
+  // Pushed through the same `caps` array the safety caps use, so it shows
+  // wherever caps show (ScoreCapBanner) whenever it actually holds the score
+  // down; DataCoverageNote (components/) surfaces the coverage tier itself,
+  // including `partial`, which gets a quiet label but no numeric cap.
+  if (dataCoverage === "limited") {
+    score = Math.min(score, LIMITED_DATA_CAP);
+    caps.push(
+      `Limited data — ${missingFactors.length} factor${missingFactors.length === 1 ? "" : "s"} unavailable`,
+    );
+  }
+  return {
+    score,
+    rawScore,
+    rating: ratingFor(score),
+    subScores: subs,
+    caps,
+    dataAvailable: true,
+    completeness,
+    dataCoverage,
+    missingFactors,
+    estimatedFactors,
+  };
 }
 
 export type RainSeverity = "none" | "rain" | "thunder";
@@ -1274,6 +1404,13 @@ function scoreAllHoursFull(
         windSpeedMph: h.windSpeedMph,
         windDirDeg: h.windDirDeg,
         waveHeightFt: waveByTime.get(h.time) ?? base.waveHeightFt,
+        // Water temp is day-constant (reuses the snapshot's source); waves
+        // above come from the marine model's per-hour forecast whenever it
+        // covers this hour, so THAT hour's source is "model" even though
+        // `base.waveHeightSource` may say "buoy" for today's current reading
+        // — otherwise every future hour would misreport itself as observed.
+        waterTempSource: base.waterTempSource,
+        waveHeightSource: waveByTime.has(h.time) ? { kind: "model" } : base.waveHeightSource,
         precipProbability: h.precipProbability,
         shortForecast: h.shortForecast,
         uvIndex: h.uvIndex,

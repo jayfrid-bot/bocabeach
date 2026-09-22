@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-22",
+    title: "Beaches with thin data now say so",
+    details:
+      "Most beaches don't have cams, so readings like seaweed, crowds and water clarity are often unavailable. The score now tracks how much is actually known — a forecast-model wave or water-temperature reading counts as partial, not full — shows a quiet note when a lot is missing or estimated, and can no longer call a beach 'Excellent' or 'Absolutely!' on a mostly unknown or estimated picture.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-22",
     title: "Deerfield Beach and Fort Lauderdale cam readings are back",
     details:
       "Crowd, seaweed and water-clarity readings for Deerfield Beach and Fort Lauderdale had stopped on September 18. The camera pickup recovered on its own, and the backup image reader that should have covered the gap was pointed at a model that no longer exists. Both are fixed, so those readings keep coming even when the main reader hits its daily limit.",

@@ -25,6 +25,15 @@
 
 export interface Env {
   CRON_SECRET: string;
+  /**
+   * How many archive passes one scheduled tick makes, SEQUENTIALLY. Each pass
+   * is its own HTTP request to the app, so each gets its own subrequest budget
+   * on the app side (one cold conditions build ≈ 25 of the Free plan's 50) —
+   * the app route deliberately does one build per request. Default 1. Raise
+   * it (e.g. 5 on a five-minute schedule) only if the platform will not run a
+   * once-a-minute trigger; a tick stops early once a pass finds nothing to do.
+   */
+  PASSES_PER_TICK?: string;
 }
 
 /** app.isitbeachday.com is the Worker's own hostname (not the marketing site). */
@@ -57,8 +66,22 @@ async function runOnce(env: Env): Promise<RunResult> {
 
 export default {
   async scheduled(_ctrl: ScheduledController, env: Env): Promise<void> {
-    const r = await runOnce(env);
-    console.log("history-cron:", JSON.stringify(r));
+    const passes = Math.min(10, Math.max(1, Number(env.PASSES_PER_TICK) || 1));
+    for (let i = 1; i <= passes; i++) {
+      const r = await runOnce(env);
+      console.log(`history-cron pass ${i}/${passes}:`, JSON.stringify(r));
+      if (!r.ok) break; // a failing app answers the same way next pass — don't hammer it
+      // Stop early when the route reports nothing was claimed or archived: every
+      // eligible beach already has its row for this hour (or the budget is spent).
+      let idle = false;
+      try {
+        const j = JSON.parse(r.body) as { archived?: number; claimed?: number; disabled?: boolean };
+        idle = j.disabled === true || ((j.archived ?? 0) === 0 && (j.claimed ?? 0) === 0);
+      } catch {
+        idle = true;
+      }
+      if (idle) break;
+    }
   },
 
   async fetch(req: Request, env: Env): Promise<Response> {

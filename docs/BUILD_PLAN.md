@@ -22,7 +22,7 @@ Sizes are agent-build days (Sonnet crews, Fable orchestrating, Codex review on a
 | # | Item | Days |
 |---|---|---|
 | 9 | Live Activities phases 2–4 (bridge, server push, lightning hero) → **submit 1.2** (new native build + review) | 8–10 |
-| 10 | Score completeness rule — a data-poor beach can't read "Excellent" (live on 36 auto beaches today) | 2–3 |
+| 10 | ✅ Score completeness rule — provenance-weighted completeness, 'Limited data' cap at 74, partial/estimated note (shipped 2026-09-22) | done |
 | 11 | "Where you stand" rain/lightning line in the app (`/api/hazards`, native-only) | 2–3 |
 | 12 | Plus history screens (calendar, typical crowds, seaweed season) | 5 |
 | 13 | Satellite-as-data spike against Boca's 1,073 cam reads | 2–3 |

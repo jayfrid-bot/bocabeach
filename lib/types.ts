@@ -973,6 +973,15 @@ export interface SubScore {
   /** Human-readable value that produced this sub-score. */
   display?: string;
 }
+/**
+ * How much of the configured score this beach actually had live data for.
+ * - `full` — 85%+ of the weighted factors had a reading.
+ * - `partial` — 60-85%. Shown as a quiet note; doesn't change the score.
+ * - `limited` — under 60%. The score is capped so it can't read "Yes!"/"Absolutely!"
+ *   on mostly-missing information (see LIMITED_DATA_CAP in lib/score.ts).
+ */
+export type DataCoverage = "full" | "partial" | "limited";
+
 export interface ScoreResult {
   /** Final 0-100 score after safety caps. */
   score: number;
@@ -984,6 +993,17 @@ export interface ScoreResult {
   caps: string[];
   /** false only when zero sub-scores were available (total data outage) so the UI can show "Conditions unavailable". */
   dataAvailable?: boolean;
+  /** Share (0-1) of this profile's total weight that had a live reading.
+   *  Optional only for object literals built outside `scoreBeachDay` (older
+   *  test fixtures); every real score carries it. */
+  completeness?: number;
+  /** Coverage tier derived from `completeness` — see {@link DataCoverage}. */
+  dataCoverage?: DataCoverage;
+  /** Keys of weighted factors (see SubKey) that had no reading. */
+  missingFactors?: string[];
+  /** Keys of weighted factors whose reading came from a model, not an
+   *  observation (half credit toward `completeness`) — waterTemp/waves only. */
+  estimatedFactors?: string[];
 }
 
 /** A cam plus the live weather/wind at its location (Open-Meteo, per spot). */

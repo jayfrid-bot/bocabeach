@@ -113,10 +113,14 @@ export function rowFromConditions(
   const subs = res.score.subScores;
   let availableWeight = 0;
   let observedWeight = 0;
-  const missing: string[] = [];
+  // Prefer the score's own completeness/missing-factor read (lib/score.ts'
+  // scoreBeachDay) when present, so history and the UI never disagree about
+  // what was missing — falling back to re-deriving from subScores for older
+  // ScoreResult shapes/fixtures that predate those fields.
+  const missing: string[] = res.score.missingFactors ?? [];
   for (const s of subs) {
     if (s.score == null) {
-      missing.push(s.key);
+      if (res.score.missingFactors == null) missing.push(s.key);
       continue;
     }
     availableWeight += s.weight;
@@ -147,7 +151,7 @@ export function rowFromConditions(
     score: res.score.score,
     raw_score: res.score.rawScore,
     rating: res.score.rating,
-    available_weight: round2(availableWeight),
+    available_weight: round2(res.score.completeness ?? availableWeight),
     observed_weight: round2(observedWeight),
     coverage_tier: coverageTier(loc, res),
 

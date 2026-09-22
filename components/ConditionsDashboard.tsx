@@ -15,6 +15,7 @@ import { ScoreExplainer } from "@/components/ScoreExplainer";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { ScoreWheel } from "@/components/ScoreWheel";
 import { ScoreCapBanner } from "@/components/ScoreCapBanner";
+import { DataCoverageNote } from "@/components/DataCoverageNote";
 import { AirQualityMeter } from "@/components/AirQualityMeter";
 import { StormActivityMeter } from "@/components/StormActivityMeter";
 import { LightningCard } from "@/components/LightningCard";
@@ -530,6 +531,7 @@ export function ConditionsDashboard({
               {beachDayVerdict(active.score)}
             </div>
             <ScoreWheel result={active} />
+            <DataCoverageNote result={active} />
             {/* The score is personal; the water is not. This line carries every
                 hazard to everybody, whichever score is on screen. */}
             {plusOn ? (

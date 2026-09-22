@@ -177,9 +177,13 @@ describe("water clarity as a factor", () => {
 });
 
 describe("wave curves", () => {
-  // With waves as the only available factor, the score IS the wave sub-score.
-  const waveAt = (ft: number, mode: WaveMode) =>
-    scoreBeachDay(base({ waveHeightFt: ft }), waveOpts(mode)).score;
+  // With waves as the only available factor, the composite score would now
+  // read as `limited` coverage and get capped (see the data-coverage tests
+  // below) — read the wave sub-score itself instead, so this still pins the
+  // curve math in isolation.
+  const waveAt = (ft: number, mode: WaveMode): number =>
+    scoreBeachDay(base({ waveHeightFt: ft }), waveOpts(mode)).subScores.find((s) => s.key === "waves")!
+      .score!;
 
   it("calm: flat water is perfect and every foot costs (today's curve)", () => {
     expect(waveAt(1, "calm")).toBe(100);
