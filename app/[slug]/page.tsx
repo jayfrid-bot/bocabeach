@@ -4,21 +4,12 @@ import { getConditions } from "@/lib/conditions";
 import { getLocation, listLocations, toPublicLocation } from "@/config/locations";
 import { ConditionsDashboard } from "@/components/ConditionsDashboard";
 import { isNativeAppRequest } from "@/lib/nativeRequest";
-
-// Dynamic so we can read the request User-Agent to detect the native app shell
-// and serve it fresh, uncached HTML (referencing the latest JS chunks). Source
-// data fetches keep their own caching, so render stays cheap; build time stays
-// flat since nothing is prerendered.
-export const dynamic = "force-dynamic";
+import { beachDescription } from "./beachDescription";
 
 const SITE_URL = "https://isitbeachday.com";
 
 function beachTitle(name: string): string {
   return `Is It Beach Day at ${name}? Live Score & Conditions`;
-}
-
-function beachDescription(name: string, region: string): string {
-  return `Live ${name} (${region}) beach conditions: today's Beach Day score, water & sand temperature, rip current risk, seaweed levels, lightning radar, crowd levels and webcams — updated all day.`;
 }
 
 export async function generateMetadata({
@@ -33,7 +24,7 @@ export async function generateMetadata({
     return {};
   }
   const title = beachTitle(loc.name);
-  const description = beachDescription(loc.name, loc.region);
+  const description = beachDescription(loc);
   const canonical = `${SITE_URL}/${loc.slug}`;
   return {
     title,

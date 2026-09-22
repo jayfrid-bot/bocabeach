@@ -223,6 +223,70 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
     expect(armed.map((a) => a.device.id)).toEqual(["a1"]);
   });
 
+  // --- Hourly history archive (migrations/0006_history.sql) ----------------
+  // Real SQL for the two bits d1Store.sql.test.ts exists specifically to
+  // catch: the UPSERT that must refuse a max<=0 budget outright (Codex
+  // round-2 finding #2 — the JS-model in-memory store never had this bug,
+  // it only showed up in the real "INSERT branch bypasses the ON CONFLICT
+  // WHERE clause" SQLite semantics), and the claim abandonment window's
+  // win/lose/abandon/complete states (finding #4).
+  describe("reserveHistoryBuild — real UPSERT, max <= 0 refused outright", () => {
+    it("max=0 refuses every reservation, including the day's first ever", async () => {
+      expect(await store.reserveHistoryBuild("2026-09-20", 0)).toBe(false);
+      expect(await store.getHistoryBudget("2026-09-20")).toBe(0);
+    });
+
+    it("max=2 admits exactly two reservations, then refuses", async () => {
+      expect(await store.reserveHistoryBuild("2026-09-20", 2)).toBe(true);
+      expect(await store.reserveHistoryBuild("2026-09-20", 2)).toBe(true);
+      expect(await store.reserveHistoryBuild("2026-09-20", 2)).toBe(false);
+      expect(await store.getHistoryBudget("2026-09-20")).toBe(2);
+    });
+
+    it("a day-boundary split: each day gets its own independent budget", async () => {
+      expect(await store.reserveHistoryBuild("2026-09-20", 1)).toBe(true);
+      expect(await store.reserveHistoryBuild("2026-09-20", 1)).toBe(false); // day 1 exhausted
+      expect(await store.reserveHistoryBuild("2026-09-21", 1)).toBe(true); // day 2, fresh budget
+      expect(await store.getHistoryBudget("2026-09-20")).toBe(1);
+      expect(await store.getHistoryBudget("2026-09-21")).toBe(1);
+    });
+  });
+
+  describe("claimHistoryBuild — real abandonment-window UPSERT (win / lose / abandon / complete)", () => {
+    const hourUtc = "2026-09-20T14:00:00.000Z";
+    const TEN_MIN = 10 * 60 * 1000;
+
+    it("wins a fresh claim", async () => {
+      expect(await store.claimHistoryBuild("boca-raton", hourUtc, 1_000_000)).toBe(true);
+    });
+
+    it("loses a claim that's still fresh (not abandoned, not completed)", async () => {
+      expect(await store.claimHistoryBuild("boca-raton", hourUtc, 1_000_000)).toBe(true);
+      expect(await store.claimHistoryBuild("boca-raton", hourUtc, 1_000_000 + 60_000)).toBe(false);
+    });
+
+    it("wins an abandoned claim (never completed, older than the 10-minute window)", async () => {
+      const claimedAt = 1_000_000;
+      expect(await store.claimHistoryBuild("boca-raton", hourUtc, claimedAt)).toBe(true);
+      expect(await store.claimHistoryBuild("boca-raton", hourUtc, claimedAt + TEN_MIN - 1)).toBe(false);
+      expect(await store.claimHistoryBuild("boca-raton", hourUtc, claimedAt + TEN_MIN + 1)).toBe(true);
+    });
+
+    it("a completed claim is never re-claimable, no matter how old", async () => {
+      const claimedAt = 1_000_000;
+      expect(await store.claimHistoryBuild("boca-raton", hourUtc, claimedAt)).toBe(true);
+      await store.completeHistoryClaim("boca-raton", hourUtc, claimedAt + 1000);
+      expect(await store.claimHistoryBuild("boca-raton", hourUtc, claimedAt + 100 * TEN_MIN)).toBe(false);
+    });
+
+    it("releaseHistoryClaim deletes the claim so it can be re-claimed immediately", async () => {
+      const claimedAt = 1_000_000;
+      expect(await store.claimHistoryBuild("boca-raton", hourUtc, claimedAt)).toBe(true);
+      await store.releaseHistoryClaim("boca-raton", hourUtc);
+      expect(await store.claimHistoryBuild("boca-raton", hourUtc, claimedAt + 1)).toBe(true);
+    });
+  });
+
   // --- presence fix purge (housekeeping in app/api/push/run/route.ts) -------
   describe("purgeExpiredPresenceFixes — the real UPDATE", () => {
     const NOW = 2_000_000_000_000;

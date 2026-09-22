@@ -21,6 +21,7 @@ export const LOCATIONS: Location[] = [
     slug: "boca-raton",
     name: "Boca Raton",
     region: "Palm Beach County, FL",
+    updatedAt: "2026-05-29",
     lat: 26.3587,
     lon: -80.0686,
     timezone: "America/New_York",
@@ -149,6 +150,7 @@ export const LOCATIONS: Location[] = [
     slug: "deerfield-beach",
     name: "Deerfield Beach",
     region: "Broward County, FL",
+    updatedAt: "2026-05-29",
     lat: 26.3165,
     lon: -80.0742,
     timezone: "America/New_York",
@@ -241,6 +243,7 @@ export const LOCATIONS: Location[] = [
     slug: "fort-lauderdale",
     name: "Fort Lauderdale Beach",
     region: "Broward County, FL",
+    updatedAt: "2026-09-16",
     // The public beach at Las Olas Blvd & A1A. The resolver's coastal gate
     // rejects "Fort Lauderdale" (the geocoded city centroid is inland), so this
     // entry is hand-curated like Deerfield.

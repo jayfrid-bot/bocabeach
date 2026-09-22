@@ -104,6 +104,10 @@ flowchart LR
   PUSHCRON -->|POST x-cron-secret| RUN["/api/push/run?mode=all"]
   RUN -->|"at-beach hazards read the SAME<br/>assessment the score caps use"| HAZ2[lib/hazards/assess.ts<br/>lightning from the device fix,<br/>rain from the beach radar or the fix's cell forecast]
   PLUSCRON -->|POST x-cron-secret, every 5 min| RUN
+  HISTCRON["workers/history-cron<br/>Cloudflare Cron every minute"] -->|POST x-cron-secret| HIST["/api/history/archive<br/>ONE build per call (Workers Free = 50 subrequests/request;<br/>a cold build is ~25); scans candidates least-recently-archived first,<br/>claims (slug, hour_utc) with a 10-min abandonment window,<br/>reserves budget BEFORE fetching"]
+  HIST -->|getConditions per beach<br/>daylight-only for auto beaches| PIPE
+  HIST -->|"beach_hourly (score as shown + inputs),<br/>history_budget (free-tier guard, 600 builds/UTC-day;<br/>HISTORY_ENABLED=off pauses it)"| D1[(D1 isitbeachday-plus)]
+  BACKFILL[scripts/backfill_cam_history.mjs] -->|cam_observations| D1
   UWFRAME -->|one headless-Chrome launch/tick,<br/>reused across every cam + the flag read| UWKV[(UW_FRAME KV<br/>frame:&lt;id&gt;, meta:&lt;id&gt;,<br/>flags:deerfield-beach, flags:fort-lauderdale)]
 ```
 

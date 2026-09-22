@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { LOCATIONS } from "@/config/locations";
+import { listLocations } from "@/config/locations";
 import {
   NDBC_STATION_REPORTS_WAVES,
   reportsWaves,
@@ -12,7 +12,7 @@ import {
 
 describe("buoy wave coverage (deterministic — the CI guard)", () => {
   it("every configured beach has at least one wave-reporting NDBC station", () => {
-    const violations = buoyCoverageViolations(LOCATIONS);
+    const violations = buoyCoverageViolations(listLocations());
     // A readable failure: list each offending beach and how to fix it.
     expect(
       violations,
@@ -22,7 +22,7 @@ describe("buoy wave coverage (deterministic — the CI guard)", () => {
 
   it("every NDBC station in the config is classified (no unknowns)", () => {
     const configured = new Set<string>();
-    for (const loc of LOCATIONS) {
+    for (const loc of listLocations()) {
       configured.add(loc.ndbcBuoyId);
       if (loc.ndbcBuoyFallbackId) configured.add(loc.ndbcBuoyFallbackId);
     }

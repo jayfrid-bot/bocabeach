@@ -27,6 +27,9 @@ import { applyPatch, entitled, newDeviceRow, parseSent, toRecord } from "@/lib/d
 import { legacyDeviceId, legacyPatch } from "@/lib/db/legacy";
 import type { DeviceStore } from "@/lib/db/store";
 import { ABANDONED_CLAIM_MS, CLAIM_RETENTION_MS } from "@/lib/db/sendClaims";
+import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
+import { listLocations } from "@/config/locations";
+import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
 
 const FILE = path.join(process.cwd(), ".plus-store.json");
 
@@ -44,11 +47,21 @@ interface ClaimRow {
   sent_at: number | null;
 }
 
+/** One row of `history_claims` — see migrations/0006_history.sql. */
+interface HistoryClaimRow {
+  key: string;
+  claimed_at: number;
+  completed_at: number | null;
+}
+
 interface Snapshot {
   devices: DeviceRow[];
   presence: PresenceRow[];
   alerts: AlertRow[];
   claims?: ClaimRow[];
+  beachHourly?: BeachHourlyRow[];
+  historyBudget?: { day: string; builds: number }[];
+  historyClaims?: HistoryClaimRow[];
 }
 
 const alertKey = (deviceId: string, key: string) => `${deviceId}${key}`;
@@ -63,6 +76,9 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
   const presence = new Map<string, PresenceRow>();
   const alerts = new Map<string, AlertRow>();
   const claims = new Map<string, ClaimRow>();
+  const beachHourly = new Map<string, BeachHourlyRow>(); // key: `${slug}|${hour_utc}`
+  const historyBudget = new Map<string, number>(); // key: day
+  const historyClaims = new Map<string, HistoryClaimRow>(); // key: `history:<slug>:<hour_utc>`
   let loaded = file === null;
 
   async function load(): Promise<void> {
@@ -74,6 +90,9 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       for (const p of raw.presence ?? []) presence.set(p.device_id, p);
       for (const a of raw.alerts ?? []) alerts.set(alertKey(a.device_id, a.alert_key), a);
       for (const c of raw.claims ?? []) claims.set(c.key, c);
+      for (const h of raw.beachHourly ?? []) beachHourly.set(`${h.slug}|${h.hour_utc}`, h);
+      for (const b of raw.historyBudget ?? []) historyBudget.set(b.day, b.builds);
+      for (const c of raw.historyClaims ?? []) historyClaims.set(c.key, c);
     } catch {
       /* no file yet, or unreadable → start empty */
     }
@@ -86,6 +105,9 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       presence: [...presence.values()],
       alerts: [...alerts.values()],
       claims: [...claims.values()],
+      beachHourly: [...beachHourly.values()],
+      historyBudget: [...historyBudget.entries()].map(([day, builds]) => ({ day, builds })),
+      historyClaims: [...historyClaims.values()],
     };
     try {
       await fs.writeFile(file, JSON.stringify(snap, null, 2));
@@ -334,6 +356,103 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       }
       if (purged) await save();
       return purged;
+    },
+
+    // --- Hourly history archive (Part A) ------------------------------------
+    async upsertBeachHourly(row: BeachHourlyRow) {
+      await load();
+      const key = `${row.slug}|${row.hour_utc}`;
+      const existing = beachHourly.get(key);
+      if (existing && !(row.snapshot_generated_at > existing.snapshot_generated_at)) {
+        return { written: false };
+      }
+      beachHourly.set(key, { ...row });
+      // Codex round-2 finding #5: a successful write must persist — this
+      // mutated `beachHourly` in memory but never called save(), so a
+      // reopened file-backed store (a `next dev` restart, or a fresh test
+      // instance against the same file) silently lost every archived row.
+      await save();
+      return { written: true };
+    },
+
+    // Fair ordering, mirroring d1Store (Codex round-3 finding #1): compute
+    // each slug's most recent beach_hourly row from the in-memory map, then
+    // sort never-archived-first, then oldest-last-row-first, ties by slug.
+    async listArchiveCandidates(nowMs: number) {
+      await load();
+      const hourUtc = hourUtcOf(nowMs);
+      const archivedThisHour = new Set(
+        [...beachHourly.values()].filter((r) => r.hour_utc === hourUtc).map((r) => r.slug),
+      );
+      const lastHourBySlug = new Map<string, string>();
+      for (const r of beachHourly.values()) {
+        const cur = lastHourBySlug.get(r.slug);
+        if (cur === undefined || r.hour_utc > cur) lastHourBySlug.set(r.slug, r.hour_utc);
+      }
+      return listLocations()
+        .map((l): ArchiveCandidate => ({
+          slug: l.slug,
+          lat: l.lat,
+          lon: l.lon,
+          timezone: l.timezone,
+          tier: l.tier ?? "curated",
+        }))
+        .filter((c) => !archivedThisHour.has(c.slug) && shouldArchiveNow(c, nowMs))
+        .sort((a, b) => compareByLastHourThenSlug(lastHourBySlug.get(a.slug), a.slug, lastHourBySlug.get(b.slug), b.slug));
+    },
+
+    async getHistoryBudget(day: string) {
+      await load();
+      return historyBudget.get(day) ?? 0;
+    },
+
+    // No `await` between the read and the write below, same guarantee as
+    // every other read-modify-write in this store (see file header) — that
+    // is what makes "reserve only if under max" atomic without needing a
+    // real SQL statement here.
+    async reserveHistoryBuild(day: string, max: number) {
+      await load();
+      // max <= 0 must refuse outright, same as d1Store (Codex round-2
+      // finding #2) — otherwise `cur >= max` is false on the very first
+      // reservation of the day (0 >= 0 is true, so this alone would be
+      // fine, but a negative max must refuse too, and this guard covers both
+      // plainly rather than relying on that coincidence).
+      if (max <= 0) return false;
+      const cur = historyBudget.get(day) ?? 0;
+      if (cur >= max) return false;
+      historyBudget.set(day, cur + 1);
+      await save();
+      return true;
+    },
+
+    // Same abandonment-window shape as claimSend (Codex round-2 finding #4):
+    // free to (re-)claim when nobody holds the key, or the holder never
+    // completed its build and its claim is old enough to call abandoned.
+    async claimHistoryBuild(slug: string, hourUtc: string, now: number) {
+      await load();
+      const key = `history:${slug}:${hourUtc}`;
+      const existing = historyClaims.get(key);
+      const abandoned =
+        !!existing && existing.completed_at == null && now - existing.claimed_at >= ABANDONED_CLAIM_MS;
+      if (existing && !abandoned) return false;
+      historyClaims.set(key, { key, claimed_at: now, completed_at: null });
+      await save();
+      return true;
+    },
+
+    async completeHistoryClaim(slug: string, hourUtc: string, now: number) {
+      await load();
+      const key = `history:${slug}:${hourUtc}`;
+      const existing = historyClaims.get(key);
+      if (!existing) return; // completed without a claim never happens
+      historyClaims.set(key, { ...existing, completed_at: now });
+      await save();
+    },
+
+    async releaseHistoryClaim(slug: string, hourUtc: string) {
+      await load();
+      const key = `history:${slug}:${hourUtc}`;
+      if (historyClaims.delete(key)) await save();
     },
   };
 }

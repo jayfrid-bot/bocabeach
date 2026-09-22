@@ -15,6 +15,7 @@ import type {
   SentState,
 } from "@/lib/db/types";
 import type { NativeSub } from "@/lib/push/nativeStore";
+import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
 import { d1Store, getD1 } from "@/lib/db/d1Store";
 import { memoryStore } from "@/lib/db/memoryStore";
 
@@ -90,6 +91,62 @@ export interface DeviceStore {
    * outliving the window they were sent for. Returns how many rows changed.
    */
   purgeExpiredPresenceFixes(now: number): Promise<number>;
+
+  // --- Hourly history archive (Part A, migrations/0006_history.sql) --------
+  /**
+   * Conditional upsert: only replaces an existing (slug, hour_utc) row when
+   * `row.snapshot_generated_at` is strictly newer than what's already there —
+   * so a stale/retried build can never clobber a fresher archived snapshot.
+   * Returns whether a write actually happened.
+   */
+  upsertBeachHourly(row: BeachHourlyRow): Promise<{ written: boolean }>;
+  /**
+   * Every served beach (curated + generated) that has no `beach_hourly` row
+   * for the CURRENT UTC hour yet, filtered by the daylight rule for
+   * `tier: "auto"` beaches (curated beaches are candidates every hour).
+   */
+  listArchiveCandidates(nowMs: number): Promise<ArchiveCandidate[]>;
+  /** Open-Meteo call-budget guard (docs/HISTORY_AND_IMAGERY_PLAN.md): builds
+   *  already spent today (UTC calendar day). Reporting only — the actual gate
+   *  is `reserveHistoryBuild`. */
+  getHistoryBudget(day: string): Promise<number>;
+  /**
+   * Atomically reserve one build's worth of the daily budget for `day` (UTC
+   * calendar day) — ONE conditional statement, "increment only if
+   * builds < max". Returns whether the reservation succeeded; the caller must
+   * reserve BEFORE calling getConditions, never bump after the fact, or two
+   * overlapping cron calls can both read the same remaining budget and both
+   * proceed (Codex review 2026-09-22). A build that fails after a successful
+   * reservation does NOT give the unit back — conservative, and simpler than
+   * tracking in-flight reservations. `max <= 0` always refuses outright
+   * (Codex round-2 finding #2) — without this, the first INSERT branch of the
+   * UPSERT sets `builds = 1` unconditionally, so a caller-supplied
+   * `?batch=`/env of 0 would still let exactly one build through per day.
+   */
+  reserveHistoryBuild(day: string, max: number): Promise<boolean>;
+  /**
+   * Atomically claim the right to build history for (slug, hour_utc) this
+   * run — same abandonment-window shape as `claimSend`/`send_claims`
+   * (Codex round-2 finding #4): wins when no claim exists yet, OR the
+   * existing claim is older than `ABANDONED_CLAIM_MS` (10 min) and was never
+   * completed. Call BEFORE `reserveHistoryBuild` and before fetching, so two
+   * overlapping cron calls never both build the same beach/hour. A winner
+   * that goes on to write a row must call `completeHistoryClaim`; a winner
+   * that finds its own snapshot too stale to use must call
+   * `releaseHistoryClaim` instead of leaving the claim to expire naturally.
+   */
+  claimHistoryBuild(slug: string, hourUtc: string, now: number): Promise<boolean>;
+  /** Mark a claimed (slug, hour_utc) build as done — the claim can never be
+   *  re-claimed after this, even once ABANDONED_CLAIM_MS has passed. */
+  completeHistoryClaim(slug: string, hourUtc: string, now: number): Promise<void>;
+  /**
+   * Delete a claim outright (unlike `completeHistoryClaim`, which marks it
+   * done). Used when a winning claim turns out to be unusable — the caller's
+   * `getConditions` cache handed back a snapshot generated before the
+   * claimed hour even started — so the next tick can retry immediately
+   * instead of waiting out the full abandonment window.
+   */
+  releaseHistoryClaim(slug: string, hourUtc: string): Promise<void>;
 }
 
 /**

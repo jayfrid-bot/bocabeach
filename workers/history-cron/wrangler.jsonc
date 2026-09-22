@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "history-cron",
+  "main": "src/index.ts",
+  "account_id": "10cdd8dec9ac9d0593e31a55eeaee1e2",
+  "compatibility_date": "2025-03-01",
+  // Every minute (1,440 ticks/day) — NOT the same cadence as plus-cron.
+  // The archive route archives at most 1 beach per call (Codex round-2
+  // finding #3, still true under the round-3 head-of-line fix): the Worker
+  // is on Cloudflare's FREE plan, capped at 50 subrequests PER REQUEST, and
+  // a single cold getConditions build alone is ~25 fetches, plus this
+  // route's own D1 reads/writes — no headroom left for a second beach's
+  // BUILD in the same call (it may still scan/claim several candidates
+  // before finding one to build — see route.ts). Codex round-3 finding #1:
+  // up to 39 beaches are eligible each hour, candidates came back in fixed
+  // config order and reset every UTC hour, and a 2-minute cadence (only 30
+  // builds/hour) meant the beaches at the end of that order systematically
+  // never got archived. Running every minute gives 60 ticks/hour — enough
+  // for all 39 to get a turn even in the worst case — while the daily
+  // HISTORY_MAX_BUILDS_PER_DAY budget (default 600, upstream of this Worker)
+  // still caps total upstream load; a tick with nothing eligible just exits
+  // fast. The archive route itself decides whether a tick has anything due:
+  // it skips any beach that already has a row for the current UTC hour, and
+  // stops archiving for the day once HISTORY_MAX_BUILDS_PER_DAY is spent.
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "observability": { "enabled": true }
+  // CRON_SECRET is a secret, not a var: `wrangler secret put CRON_SECRET` from
+  // this directory, with the SAME value the main Worker has.
+}

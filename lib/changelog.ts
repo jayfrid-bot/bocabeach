@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-09-22",
+    title: "Deerfield Beach and Fort Lauderdale cam readings are back",
+    details:
+      "Crowd, seaweed and water-clarity readings for Deerfield Beach and Fort Lauderdale had stopped on September 18. The camera pickup recovered on its own, and the backup image reader that should have covered the gap was pointed at a model that no longer exists. Both are fixed, so those readings keep coming even when the main reader hits its daily limit.",
+    tag: "fixed",
+  },
+  {
     date: "2026-09-18",
     title: "Water clarity tile no longer cuts off its note on phones",
     details:

@@ -606,6 +606,20 @@ function waveScore(ft: number, mode: WaveMode): number {
 }
 
 /**
+ * Bump whenever the scoring MATH changes (a curve, a cap threshold, a weight) —
+ * anything that would make an old archived score not reproducible from today's
+ * code. The history archiver (lib/history/archive.ts) stamps every row with
+ * this, so a trend chart can show "the engine changed here" instead of a silent
+ * jump. A build SHA alone is not an engine version: most commits don't touch
+ * scoring at all, and we don't want every deploy to look like a model change.
+ */
+export const SCORING_ENGINE_VERSION = "2026-09-18.1";
+/** Bump whenever `DEFAULT_SCORING` itself (weights/curves as DATA) changes,
+ *  independent of `SCORING_ENGINE_VERSION` above — kept distinct in case a
+ *  future release lets Plus users pick among named configs. */
+export const SCORING_CONFIG_VERSION = "default-1";
+
+/**
  * Today's engine, expressed as data: the free Beach Day score. Passing this (or
  * nothing) to `scoreBeachDay` reproduces the free score exactly — same numbers,
  * same sub-score order, same cap strings. `clarity` sits at weight 0, and

@@ -151,9 +151,15 @@ PROVIDER_ORDER = [
 OPENAI_PROVIDERS = {
     "groq": {
         "url": "https://api.groq.com/openai/v1/chat/completions",
-        # Llama 4 Scout was withdrawn from Groq (404 model_not_found, 2026-09);
-        # Qwen 3.6 27B is their current production vision model.
-        "model": os.environ.get("GROQ_MODEL", "qwen/qwen3.6-27b"),
+        # Llama 4 Scout was withdrawn from Groq (404 model_not_found, 2026-09).
+        # Qwen 3.8 27B is their current production vision model — note the
+        # version number: "qwen3.6-27b" 404s (model_not_found), confirmed via
+        # console.groq.com/docs/vision 2026-09-22; every cam was silently
+        # falling through to Gemini-only until this was caught, so a Gemini
+        # daily-quota exhaustion (now more likely with 7 cams across 3
+        # beaches sharing the same ~250/day free tier) left every cam
+        # unread for the rest of the day with no working fallback.
+        "model": os.environ.get("GROQ_MODEL", "qwen/qwen3.8-27b"),
         "key": os.environ.get("GROQ_API_KEY", "").strip(),
     },
     "openrouter": {

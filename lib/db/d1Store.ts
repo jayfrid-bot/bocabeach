@@ -33,6 +33,9 @@ import { applyPatch, defaultPrefs, newDeviceRow, parseSent, toRecord } from "@/l
 import { legacyDeviceId, legacyPatch } from "@/lib/db/legacy";
 import type { DeviceStore } from "@/lib/db/store";
 import { ABANDONED_CLAIM_MS, CLAIM_RETENTION_MS } from "@/lib/db/sendClaims";
+import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
+import { listLocations } from "@/config/locations";
+import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
 
 /** The slice of the D1 API we use (avoids a @cloudflare/workers-types dep).
  *  `run()`'s `meta.changes` mirrors real D1 — `claimTrial` reads it to tell
@@ -67,6 +70,28 @@ const DEVICE_COLS =
   "id, platform, push_token, tz, home_slug, profile_json, prefs_json, plan, " +
   "entitlement_until, store_until, code_until, trial_until, trial_used, preview_seen, " +
   "sent_json, created_at, updated_at";
+
+/** `beach_hourly` columns, in the exact order both the INSERT and the
+ *  positional binds below use — see migrations/0006_history.sql. */
+const HOURLY_COLS = [
+  "slug", "hour_utc", "snapshot_generated_at", "archived_at", "local_date", "local_hour",
+  "utc_offset_minutes", "timezone", "score", "raw_score", "rating", "available_weight",
+  "observed_weight", "coverage_tier", "air_temp_f", "water_temp_f", "sand_temp_f", "wave_ft",
+  "wave_source", "wind_mph", "gust_mph", "uv", "cloud_pct", "rain_now", "lightning_near",
+  "tide_state", "crowd_pct", "seaweed_pct", "seaweed_level", "clarity_pct", "engine_version",
+  "scoring_config_version", "build_sha", "row_kind", "archive_reason", "caps_json",
+  "factors_json", "missing_json", "extra_json",
+] as const satisfies readonly (keyof BeachHourlyRow)[];
+
+const UPSERT_BEACH_HOURLY = `
+INSERT INTO beach_hourly (${HOURLY_COLS.join(", ")})
+VALUES (${HOURLY_COLS.map((_, i) => `?${i + 1}`).join(", ")})
+ON CONFLICT(slug, hour_utc) DO UPDATE SET
+  ${HOURLY_COLS.filter((c) => c !== "slug" && c !== "hour_utc")
+    .map((c) => `${c} = excluded.${c}`)
+    .join(", ")}
+WHERE excluded.snapshot_generated_at > beach_hourly.snapshot_generated_at
+`;
 
 /** A device with never-touched prefs stores no row at all for them — this is
  *  the merge base `json_patch` starts from, so a bare "all alerts on" device
@@ -503,6 +528,119 @@ export function d1Store(db: D1Like): DeviceStore {
         .bind(now, now)
         .run();
       return Number(r.meta?.changes ?? 0);
+    },
+
+    // --- Hourly history archive (Part A) ------------------------------------
+    async upsertBeachHourly(row: BeachHourlyRow) {
+      const result = await db
+        .prepare(UPSERT_BEACH_HOURLY)
+        .bind(...HOURLY_COLS.map((c) => row[c] ?? null))
+        .run();
+      const changes = (result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
+      return { written: changes > 0 };
+    },
+
+    // Codex round-3 finding #1: candidates used to come back in fixed config
+    // order, reset every UTC hour, so with only ~30 builds/hour possible the
+    // beaches at the end of that order systematically never got archived.
+    // Fair ordering instead: never-archived-at-all beaches first, then the
+    // beach whose most recent beach_hourly row is OLDEST, ties broken by
+    // slug — so every beach gets a turn instead of the same prefix winning
+    // every hour. `last_hour` is each slug's MAX(hour_utc) across ALL of
+    // beach_hourly (not just the current hour), via a single GROUP BY —
+    // equivalent to a correlated-subquery LEFT JOIN per candidate, cheaper
+    // to express as one aggregate query plus an in-memory merge since the
+    // candidate set itself (config `listLocations()`) isn't a DB table.
+    async listArchiveCandidates(nowMs: number) {
+      const hourUtc = hourUtcOf(nowMs);
+      const currentHourRows =
+        (
+          await db
+            .prepare("SELECT slug FROM beach_hourly WHERE hour_utc = ?")
+            .bind(hourUtc)
+            .all<{ slug: string }>()
+        ).results ?? [];
+      const archivedThisHour = new Set(currentHourRows.map((r) => r.slug));
+
+      const lastHourRows =
+        (
+          await db
+            .prepare("SELECT slug, MAX(hour_utc) AS last_hour FROM beach_hourly GROUP BY slug")
+            .all<{ slug: string; last_hour: string }>()
+        ).results ?? [];
+      const lastHourBySlug = new Map(lastHourRows.map((r) => [r.slug, r.last_hour]));
+
+      return listLocations()
+        .map((l): ArchiveCandidate => ({
+          slug: l.slug,
+          lat: l.lat,
+          lon: l.lon,
+          timezone: l.timezone,
+          tier: l.tier ?? "curated",
+        }))
+        .filter((c) => !archivedThisHour.has(c.slug) && shouldArchiveNow(c, nowMs))
+        .sort((a, b) => compareByLastHourThenSlug(lastHourBySlug.get(a.slug), a.slug, lastHourBySlug.get(b.slug), b.slug));
+    },
+
+    async getHistoryBudget(day: string) {
+      const row = await db
+        .prepare("SELECT builds FROM history_budget WHERE day = ?")
+        .bind(day)
+        .first<{ builds: number }>();
+      return row?.builds ?? 0;
+    },
+
+    // Single statement: insert the day's first build unconditionally, or
+    // increment an existing row ONLY while under `max`. SQLite runs the
+    // whole INSERT-or-DO-UPDATE as one atomic step, so of any two overlapping
+    // callers racing for the same day, at most `max` reservations total ever
+    // succeed — there is no read-then-write gap for a second caller to land
+    // in between (the bug this replaces: read remaining budget, fetch, THEN
+    // bump, which let two overlapping calls both read the same headroom).
+    async reserveHistoryBuild(day: string, max: number) {
+      // max <= 0 must refuse outright — the INSERT branch below would
+      // otherwise set builds = 1 unconditionally on the day's first call,
+      // regardless of `max` (Codex round-2 finding #2).
+      if (max <= 0) return false;
+      const result = await db
+        .prepare(
+          "INSERT INTO history_budget (day, builds) VALUES (?, 1) " +
+            "ON CONFLICT(day) DO UPDATE SET builds = builds + 1 WHERE history_budget.builds < ?",
+        )
+        .bind(day, max)
+        .run();
+      const changes = (result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
+      return changes > 0;
+    },
+
+    // Same abandonment-window shape as claimSend: INSERT the claim, or —
+    // only when the existing claim was never completed AND is old enough to
+    // call abandoned — UPDATE it to hand it to this caller (Codex round-2
+    // finding #4). See lib/db/store.ts claimHistoryBuild doc for the retry
+    // story this closes.
+    async claimHistoryBuild(slug: string, hourUtc: string, now: number) {
+      const key = `history:${slug}:${hourUtc}`;
+      const result = await db
+        .prepare(
+          "INSERT INTO history_claims (key, claimed_at, completed_at) VALUES (?, ?, NULL) " +
+            "ON CONFLICT(key) DO UPDATE SET claimed_at = excluded.claimed_at " +
+            "WHERE history_claims.completed_at IS NULL AND history_claims.claimed_at <= ?",
+        )
+        .bind(key, now, now - ABANDONED_CLAIM_MS)
+        .run();
+      const changes = (result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
+      return changes > 0;
+    },
+
+    async completeHistoryClaim(slug: string, hourUtc: string, now: number) {
+      await db
+        .prepare("UPDATE history_claims SET completed_at = ? WHERE key = ?")
+        .bind(now, `history:${slug}:${hourUtc}`)
+        .run();
+    },
+
+    async releaseHistoryClaim(slug: string, hourUtc: string) {
+      await db.prepare("DELETE FROM history_claims WHERE key = ?").bind(`history:${slug}:${hourUtc}`).run();
     },
   };
 }

@@ -1078,6 +1078,15 @@ export interface Location {
    * locals are not yet. Absent ⇒ `"curated"` (every hand-written entry).
    */
   tier?: "curated" | "auto";
+  /**
+   * ISO date this config entry was first added (e.g. "2026-05-29"). Curated
+   * beaches carry their real git add-date, set by hand once. Left unset for
+   * auto-generated beaches — the sitemap falls back to
+   * config/locations.generated.json's own last-commit date for those. Drives
+   * app/sitemap.ts's per-beach `lastModified` so it's a real, stable date
+   * instead of "now" on every request.
+   */
+  updatedAt?: string;
   timezone: string; // IANA, e.g. "America/New_York"
   /**
    * Onshore-source bearing: the compass bearing wind blows FROM when it blows
