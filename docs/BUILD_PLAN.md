@@ -11,12 +11,12 @@ Sizes are agent-build days (Sonnet crews, Fable orchestrating, Codex review on a
 |---|---|---|---|
 | 1 | ~~Paid Open-Meteo endpoint~~ | — | dropped for now (owner) |
 | 2 | NOAA full-disk radiation check → GOES radiation feed if it works | 0.5 + 1–2 | optional; only matters once a paid plan is chosen |
-| 3 | **History collector** (storage only, daily build budget guard for the free tier) | 2–3 | `docs/HISTORY_AND_IMAGERY_PLAN.md` Part A, Codex-revised: UTC hourly rows, separate cam table, own cron path |
-| 4 | Deerfield + Fort Lauderdale cam reads stopped 2026-09-18 | 0.5–1 | data being lost now |
-| 5 | Station guard for all 39 beaches + South Padre fallback | 0.5 | today it covers 3 |
-| 6 | Rate-limit the public `/api/resolve` | 0.5 | |
-| 7 | Sitemap `lastModified` + coverage-honest page metadata | 0.5–1 | SEO hygiene before more pages |
-| 8 | **Live Activities phases 0–1** (extension target, signing, lock-screen UI in the simulator) | 5 | `docs/LIVE_ACTIVITY_PLAN.md`; runs while 1.1 is in review |
+| 3 | ✅ **History collector** — LIVE 2026-09-22 (worker cb948a16, history-cron every minute, 1,144 cam observations backfilled) | done | `docs/HISTORY_AND_IMAGERY_PLAN.md` Part A, Codex-revised: UTC hourly rows, separate cam table, own cron path |
+| 4 | ✅ Deerfield + Fort Lauderdale cam reads — courier recovered, Groq fallback model id fixed | done |
+| 5 | ✅ Station guard for all 39 beaches (67 stations classified) + South Padre → 42092 | done |
+| 6 | ✅ `/api/resolve` rate-limited (10/h/IP) + input validation | done |
+| 7 | ✅ Sitemap `lastModified` stable + coverage-honest descriptions | done |
+| 8 | ⏳ **Live Activities phases 0–1** (extension target, lock-screen UI in the simulator) — IN PROGRESS from 2026-09-22 | 5 | `docs/LIVE_ACTIVITY_PLAN.md` |
 
 ## Next — after 1.1 is approved (≈ 4 weeks)
 | # | Item | Days |
