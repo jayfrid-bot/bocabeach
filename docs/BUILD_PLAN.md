@@ -4,14 +4,14 @@ Sizes are agent-build days (Sonnet crews, Fable orchestrating, Codex review on a
 
 ## Waiting on the owner (no build)
 - **1.1 billing release:** sandbox purchase on TestFlight 2026090701 → three App Store Connect clicks (attach both subscriptions to 1.1, privacy label, agreement) → "submit". Draft is staged. *This is the only thing between the app and revenue.*
-- **Open-Meteo plan:** Standard ~$29/mo or Professional ~$99/mo, due the day 1.1 goes live (`docs/research/2026-09-20-open-meteo-cost-and-alternatives.md`).
+- **Open-Meteo plan — owner decision 2026-09-22: stay on the free tier for now; switch to a paid plan once there are paying customers** (`docs/research/2026-09-20-open-meteo-cost-and-alternatives.md`). Consequence: everything that adds upstream calls (the history collector) must stay well under the free tier's 10,000 calls/day.
 
 ## Now — committed (≈ 2 weeks)
 | # | Item | Days | Notes |
 |---|---|---|---|
-| 1 | Point the app at Open-Meteo's paid endpoint | 0.5 | after the subscription exists |
-| 2 | NOAA full-disk radiation check → GOES radiation feed if it works | 0.5 + 1–2 | decides $29 vs $99 |
-| 3 | **History collector** (storage only) | 2–3 | `docs/HISTORY_AND_IMAGERY_PLAN.md` Part A, Codex-revised: UTC hourly rows, separate cam table, own cron path |
+| 1 | ~~Paid Open-Meteo endpoint~~ | — | dropped for now (owner) |
+| 2 | NOAA full-disk radiation check → GOES radiation feed if it works | 0.5 + 1–2 | optional; only matters once a paid plan is chosen |
+| 3 | **History collector** (storage only, daily build budget guard for the free tier) | 2–3 | `docs/HISTORY_AND_IMAGERY_PLAN.md` Part A, Codex-revised: UTC hourly rows, separate cam table, own cron path |
 | 4 | Deerfield + Fort Lauderdale cam reads stopped 2026-09-18 | 0.5–1 | data being lost now |
 | 5 | Station guard for all 39 beaches + South Padre fallback | 0.5 | today it covers 3 |
 | 6 | Rate-limit the public `/api/resolve` | 0.5 | |
@@ -37,5 +37,7 @@ Sizes are agent-build days (Sonnet crews, Fable orchestrating, Codex review on a
 
 ## Housekeeping (small, no order)
 Decommission the Netlify twin · paid vision tier for cams (Gemini ~$7/mo) · Workers Paid $5/mo for KV limits · consolidate `lib/rainNowcast.ts` rain constant.
+
+**Owner's definition of done (2026-09-22):** every feature discussed works properly, no bugs, and the app stays as simple and clean as it is now. Any change that would regress something gets flagged before it is made.
 
 **Rule:** revenue first (1.1), then the licence that revenue creates, then data we can't get back (history, cams), then the feature that sells Plus (Live Activities), then everything else.
