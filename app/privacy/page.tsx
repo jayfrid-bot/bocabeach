@@ -135,6 +135,14 @@ export default function PrivacyPage() {
           We run no ads and use no ad trackers.
         </p>
         <p>
+          To know how many people use the app each day, your device sends one
+          note a day saying it opened: the date, whether it is the iPhone app,
+          the Android app, or the website, and a scrambled, unreadable form of
+          the random device id. The scrambled form can&apos;t be turned back
+          into the id or linked to your settings — it only lets us count
+          people instead of page loads.
+        </p>
+        <p>
           We also count our own QR stickers. If you arrive by scanning one, we
           count the scan, set one short-lived cookie holding only that
           sticker&apos;s tag, and keep a scrambled, unreadable form of your

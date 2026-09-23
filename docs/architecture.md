@@ -37,7 +37,11 @@ flowchart TD
     GETAPP["/get-app<br/>(count the store tap, 307 → App Store)"]
     ADMINSCANS["/api/admin/scans<br/>(owner-only, read the sticker funnel)"]
     VERSION["/api/version<br/>(deployed git SHA, no-store)"]
+    OPENR["/api/open<br/>(once a day per device: count an app open)"]
   end
+
+  APPUI -->|"once per calendar day, on load + resume<br/>lib/useAppOpenPing.ts"| OPENR
+  OPENR -->|"app_opens (hashed id)"| OPENS[lib/db/appOpens.ts<br/>daily active users]
 
   APPUI -->|"poll on resume, throttled 60s<br/>lib/useReloadOnNewVersion.ts"| VERSION
   VERSION -->|"served SHA ≠ baked SHA<br/>→ location.reload()"| APPUI
@@ -200,7 +204,7 @@ flowchart TD
   RCHOOK -->|storeUntil, from RC's live answer| STORE
   REG --> STORE
 
-  STORE -->|production| D1[(D1: isitbeachday-plus<br/>devices · presence · alert_log · send_claims<br/>scan_log · scan_tap · scan_claim · install_attrib<br/>live_activities)]
+  STORE -->|production| D1[(D1: isitbeachday-plus<br/>devices · presence · alert_log · send_claims<br/>scan_log · scan_tap · scan_claim · install_attrib<br/>live_activities · app_opens)]
   LAREG -->|"entitled + armed at slug (listArmed gate)<br/>one active session/device, token rotation"| STORE
   LAEND -->|markLiveActivityEnded 'user'| STORE
   STICKER -->|"count scan (bot-filtered), fail-soft"| D1
@@ -340,6 +344,15 @@ INSERT — only the run that wins the claim may send, so the 30-minute (or
 once-a-day) dedup window still holds even when two runs race for it. A claim
 whose send never finished (a crash, a timeout) is abandoned after 10 minutes
 and may be re-claimed.
+
+**Daily active users (`lib/db/appOpens.ts`, migrations/0009_app_opens.sql):**
+the devices table only learns about a phone when someone saves something, so it
+cannot say how many people use the app. Every page mounts `AppOpenPing`, which
+posts `/api/open` at most once per Eastern calendar day — on load and on every
+return to the foreground, because the iOS shell keeps the page alive for days.
+One row per (day, device) with the platform and a salted, truncated hash of the
+device id, so the table counts people and joins to nothing. The growth report
+reads it for daily and 7-day active users.
 
 **The sticker funnel (`lib/db/scanFunnel.ts`, migrations/0005_scan_funnel.sql):**
 three steps, each weaker evidence than the one before it. `/sticker` counts the

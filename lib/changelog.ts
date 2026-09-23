@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-23",
+    title: "Privacy page: how we count daily visitors",
+    details:
+      "Your device now sends one note a day saying it opened the app, with a scrambled id that can't be traced back to you, so we can count people instead of page loads. The privacy page spells out exactly what's in it.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-23",
     title: "Nearest beach now checks the whole shoreline, not just one point",
     details:
       "South Boca no longer gets sent to Deerfield Beach — we now measure to the closest stretch of a beach's sand, not one pin in the middle of town.",
