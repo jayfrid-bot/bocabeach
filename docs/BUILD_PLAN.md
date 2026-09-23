@@ -23,7 +23,7 @@ Sizes are agent-build days (Sonnet crews, Fable orchestrating, Codex review on a
 |---|---|---|
 | 9 | Live Activities phases 2–4 (bridge, server push, lightning hero) → **submit 1.2** (new native build + review) | 8–10 |
 | 10 | ✅ Score completeness rule — provenance-weighted completeness, 'Limited data' cap at 74, partial/estimated note (shipped 2026-09-22) | done |
-| 11 | "Where you stand" rain/lightning line in the app (`/api/hazards`, native-only) | 2–3 |
+| 11 | ✅ "Where you stand" rain/lightning line — POST /api/hazards (native-only, arrival-gated, ~4 fetches), Beach Mode line only when it differs from the beach (shipped 2026-09-23) | done |
 | 12 | Plus history screens (calendar, typical crowds, seaweed season) | 5 |
 | 13 | ✅ Satellite-as-data spike (2026-09-22): NOT usable as live data — seaweed rho 0.16 (n=7), turbidity rho −0.80 but n=4, scene gaps up to 26 days; turbidity worth a longer validation only (`docs/research/2026-09-22-satellite-as-data-spike.md`) | done |
 

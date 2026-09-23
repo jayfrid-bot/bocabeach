@@ -100,6 +100,13 @@ export default function PrivacyPage() {
           off removes that position right away.
         </p>
         <p>
+          While Beach Mode is on and location is allowed, the app also sends
+          your position to read rain and lightning right where you stand, not
+          just at the beach&apos;s center. That read is not stored beyond the
+          presence record described above, and it is never used for
+          advertising.
+        </p>
+        <p>
           A random device id — no account, no name, no email — ties your score
           profile, alert settings, and Plus status to your device, the same way
           the push token above does. There is still no sign-in. Deleting the app

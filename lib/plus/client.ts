@@ -11,17 +11,26 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getDeviceId } from "@/lib/deviceId";
-import { checkLocationPermission, getFix, getFreshFix, shouldRefreshFix, type Fix } from "@/lib/location/device";
+import {
+  ARRIVAL_MAX_FIX_AGE_MS,
+  checkLocationPermission,
+  getFix,
+  getFreshFix,
+  shouldRefreshFix,
+  type Fix,
+} from "@/lib/location/device";
 import { nativePlatform } from "@/lib/push/native";
 import { defaultPrefs, type AlertKey, type AlertPrefs, type DeviceRecord } from "@/lib/db/types";
 import { resolveScoring } from "@/lib/profile/resolve";
 import type { ScoreProfile } from "@/lib/profile/types";
-import type { ConditionsResponse } from "@/lib/types";
+import type { ConditionsResponse, LocationPublic } from "@/lib/types";
+import type { HazardAssessment } from "@/lib/hazards/assess";
 import { plusApi, type PlusResult, type PresenceBody } from "@/lib/plus/api";
 import { billingAvailable, restoreBilling } from "@/lib/plus/billing";
 import { cacheFromDevice, isEntitled, isStoreBased, shouldSelfHeal } from "@/lib/plus/entitlement";
 import { isRetryableSaveError } from "@/lib/plus/pendingWrites";
 import { computePersonalScore, type PersonalScore } from "@/lib/plus/personalScore";
+import { establishesArrival } from "@/lib/plus/beachMode";
 import * as store from "@/lib/plus/storage";
 import type { PlusCache, PreviewRecord } from "@/lib/plus/types";
 
@@ -716,4 +725,197 @@ export function useDeviceFix(): DeviceFixState {
   }, [settled, request, fixAgeMs]);
 
   return { fix, settled, request, requestFresh, fixAgeMs };
+}
+
+// --- hazards at a point (Beach Mode "where you stand") ----------------------
+// POST /api/hazards, throttled to once per HAZARDS_REFRESH_MS and re-checked
+// on foreground — the same cadence pattern usePlus's refresh() uses above,
+// not a new interval. Fetches only while `eligible` (the card's own arm +
+// fresh-fix gates — see establishesArrival) is true; flips back to null the
+// moment it isn't, so a disarmed or stale-fix card never shows a stale read.
+// Never throws to the caller: any failure is a null read, i.e. no line
+// (fail-soft).
+//
+// Codex review: `eligible` and the fix it closed over can both go stale
+// between the render that armed this hook and the async work actually
+// running (a backgrounded tab for minutes, a slow throttle tick, a
+// concurrent disarm/move). So every dispatch re-reads the LATEST eligible
+// flag and fix off refs (never a value captured at hook-call time), re-runs
+// the same freshness gates `establishesArrival` uses (age, accuracy) right
+// before sending, asks for a fresh fix when the held one has aged past the
+// arrival limit, and stamps every request with a ticket — a response whose
+// ticket is no longer current, or that lands after the card went ineligible,
+// is dropped rather than repopulating state a disarm or a move already
+// invalidated.
+
+/** Never ask more than once every 5 minutes, however often the tab foregrounds. */
+const HAZARDS_REFRESH_MS = 5 * 60_000;
+
+export interface HazardPointRead {
+  lightning: HazardAssessment;
+  /** Display-only lightning distance the route measured for this anchor
+   *  (lib/hazards/assess.ts itself never carries a distance). */
+  lightningMi: number | null;
+  rain: HazardAssessment;
+}
+
+export interface HazardsAtPoint {
+  point: HazardPointRead;
+  beach: HazardPointRead;
+}
+
+/** The input a dispatched (or applied) hazards read is FOR — beach + the
+ *  exact fix (its timestamp, and position rounded to ~0.7 mi, plenty to
+ *  distinguish one beach's fix from another's). Codex round 2 #3: a card
+ *  that switched from eligible(A, fixA) to eligible(B, fixB) inside the
+ *  throttle window must never let A's in-flight response paint B's card —
+ *  comparing this key is how a stale response is told from a current one. */
+export function hazardsInputKey(slug: string, fix: Fix | null): string {
+  if (!fix) return `${slug}|no-fix`;
+  return `${slug}|${fix.at}|${fix.lat.toFixed(2)}|${fix.lon.toFixed(2)}`;
+}
+
+export function useHazardsAtPoint(opts: {
+  eligible: boolean;
+  slug: string;
+  fix: Fix | null;
+  /** Every served beach, so a fix refreshed mid-dispatch can be re-checked
+   *  against the CURRENT slug's centroid, not just its own age/accuracy. */
+  beaches: LocationPublic[];
+  /** DeviceFixState.requestFresh — asked for a fresh fix when the held one
+   *  has aged past the arrival limit at dispatch time. */
+  requestFresh: () => Promise<Fix | null>;
+}): HazardsAtPoint | null {
+  const { eligible, slug, fix, beaches, requestFresh } = opts;
+  const [read, setRead] = useState<HazardsAtPoint | null>(null);
+  const lastFetchAtRef = useRef(0);
+  // A ticket per dispatch (R-02 pattern, mirroring BeachModeCard's armSeqRef):
+  // only the response matching the CURRENT ticket may ever reach setRead.
+  const ticketRef = useRef(0);
+  const eligibleRef = useRef(eligible);
+  const fixRef = useRef(fix);
+  const slugRef = useRef(slug);
+  const beachesRef = useRef(beaches);
+  const requestFreshRef = useRef(requestFresh);
+  // The input key the CURRENT (or most recently dispatched) request belongs
+  // to. A response is only ever applied when its own key still matches this.
+  const currentKeyRef = useRef(hazardsInputKey(slug, fix));
+
+  useEffect(() => {
+    eligibleRef.current = eligible;
+  }, [eligible]);
+  useEffect(() => {
+    fixRef.current = fix;
+  }, [fix]);
+  useEffect(() => {
+    slugRef.current = slug;
+  }, [slug]);
+  useEffect(() => {
+    beachesRef.current = beaches;
+  }, [beaches]);
+  useEffect(() => {
+    requestFreshRef.current = requestFresh;
+  }, [requestFresh]);
+
+  const fetchNow = useCallback(async () => {
+    if (!eligibleRef.current) return;
+    let f = fixRef.current;
+    // Re-validate freshness AT DISPATCH, not at whatever render last computed
+    // `eligible` — the same age gate establishesArrival uses. A fix aged past
+    // it is refreshed once (reusing requestFresh), never silently reused.
+    const tooOld = !f || Date.now() - f.at > ARRIVAL_MAX_FIX_AGE_MS;
+    if (tooOld) {
+      f = await requestFreshRef.current();
+      if (!eligibleRef.current) return; // went ineligible while we waited
+    }
+    if (!f) return;
+
+    // Re-run the FULL arrival gate (age, accuracy, future-skew, AND
+    // proximity) against the fix that is actually about to be sent, for the
+    // CURRENT slug (Codex round 2 #1). The checks above only cover freshness
+    // — a just-refreshed fix can be accurate and recent but no longer near
+    // the beach (the phone kept walking while the refresh was in flight), or
+    // the slug itself can have moved on. Only `establishesArrival`'s
+    // composite check — the same one Beach Mode's own arrival gate uses —
+    // may clear a fix for dispatch.
+    const centroid = beachesRef.current.find((b) => b.slug === slugRef.current) ?? null;
+    if (!establishesArrival(f, centroid, Date.now())) return;
+
+    const id = getDeviceId();
+    if (!id) return;
+
+    const key = hazardsInputKey(slugRef.current, f);
+    currentKeyRef.current = key;
+    const ticket = ++ticketRef.current;
+    lastFetchAtRef.current = Date.now();
+    const superseded = () => ticket !== ticketRef.current || !eligibleRef.current || key !== currentKeyRef.current;
+    try {
+      const res = await fetch("/api/hazards", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          deviceId: id,
+          lat: f.lat,
+          lon: f.lon,
+          accuracyM: f.accuracyM,
+          fixAt: f.at,
+          slug: slugRef.current,
+        }),
+      });
+      if (superseded()) return; // a newer dispatch, a disarm/move, or a different beach/fix now current
+      if (!res.ok) {
+        setRead(null);
+        return;
+      }
+      const body = (await res.json()) as {
+        ok?: boolean;
+        lightning?: HazardAssessment;
+        lightningMi?: number | null;
+        rain?: HazardAssessment;
+        beach?: { lightning?: HazardAssessment; lightningMi?: number | null; rain?: HazardAssessment };
+      };
+      if (superseded()) return;
+      if (!body.ok || !body.lightning || !body.rain || !body.beach?.lightning || !body.beach?.rain) {
+        setRead(null);
+        return;
+      }
+      setRead({
+        point: { lightning: body.lightning, lightningMi: body.lightningMi ?? null, rain: body.rain },
+        beach: {
+          lightning: body.beach.lightning,
+          lightningMi: body.beach.lightningMi ?? null,
+          rain: body.beach.rain,
+        },
+      });
+    } catch {
+      if (!superseded()) setRead(null); // a hazard-line failure is silence, never a stale claim
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!eligible) {
+      ticketRef.current += 1; // invalidate any response still in flight
+      setRead(null);
+      return;
+    }
+    // A beach or fix switch while staying eligible (Codex round 2 #3): the
+    // in-flight response, if any, is now for a stale input, so it must be
+    // invalidated even though `eligible` itself never went false.
+    const key = hazardsInputKey(slug, fix);
+    if (key !== currentKeyRef.current) {
+      currentKeyRef.current = key;
+      ticketRef.current += 1;
+      setRead(null);
+    }
+    if (Date.now() - lastFetchAtRef.current >= HAZARDS_REFRESH_MS) void fetchNow();
+    const onVisible = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastFetchAtRef.current < HAZARDS_REFRESH_MS) return;
+      void fetchNow();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [eligible, slug, fix, fetchNow]);
+
+  return read;
 }

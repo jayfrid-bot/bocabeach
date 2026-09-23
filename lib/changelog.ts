@@ -18,6 +18,11 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-22",
+    title: "Beach Mode now tells you about lightning and rain where you stand, not just at the beach's center",
+    tag: "new",
+  },
+  {
+    date: "2026-09-22",
     title: "Beaches with thin data now say so",
     details:
       "Most beaches don't have cams, so readings like seaweed, crowds and water clarity are often unavailable. The score now tracks how much is actually known — a forecast-model wave or water-temperature reading counts as partial, not full — shows a quiet note when a lot is missing or estimated, and can no longer call a beach 'Excellent' or 'Absolutely!' on a mostly unknown or estimated picture.",

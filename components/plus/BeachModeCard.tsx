@@ -25,7 +25,8 @@ import {
   type ArmMode,
   type DeliveryState,
 } from "@/lib/plus/beachMode";
-import { useDeviceFix, type PlusState } from "@/lib/plus/client";
+import { useDeviceFix, useHazardsAtPoint, type PlusState } from "@/lib/plus/client";
+import { beachModeHazardLine } from "@/lib/hazards/pointVsBeach";
 import { readOffSuppression, writeOffSuppression } from "@/lib/plus/storage";
 import type { OffSuppression } from "@/lib/plus/types";
 import { nativeStatus } from "@/lib/push/native";
@@ -136,6 +137,21 @@ export function BeachModeCard({
   // one?"); the arm decision itself is made from the fresh fix (LOC-04).
   const nearest = fix ? nearestServedBeach(fix.lat, fix.lon, beaches) : null;
   const arrivedHint = !!nearest && establishesArrival(fix, nearest.beach, Date.now());
+
+  // "Where you stand": only while ARMED with a fix that establishes arrival at
+  // the MONITORED beach specifically (the same gate arm()/auto-arm use, not
+  // just "near some beach") — a stale or coarse fix must never fetch a hazard
+  // read it can't back.
+  const armedTarget = presence ? beachOf(presence.slug) : null;
+  const hazardsEligible = armed && establishesArrival(fix, armedTarget, Date.now());
+  const hazards = useHazardsAtPoint({
+    eligible: hazardsEligible,
+    slug: presence?.slug ?? slug,
+    fix,
+    beaches,
+    requestFresh,
+  });
+  const hazardLine = hazards ? beachModeHazardLine(hazards.point, hazards.beach) : null;
 
   // Once a fix shows the phone has actually left the suppressed spot — or a
   // day has passed — drop the suppression so auto-arm is free to fire again
@@ -400,6 +416,9 @@ export function BeachModeCard({
           </div>
         </div>
         <p className="mt-1.5 text-xs leading-snug text-slate-500 dark:text-slate-400">{geometry}</p>
+        {hazardLine ? (
+          <p className="mt-1 text-xs leading-snug text-slate-500 dark:text-slate-400">{hazardLine}</p>
+        ) : null}
         {delivery === "needs-setup" ? (
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
             <span className="min-w-0 flex-1 text-sm text-amber-700 dark:text-amber-300">

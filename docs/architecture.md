@@ -172,6 +172,7 @@ flowchart TD
     UNLOCK["/api/devices/unlock<br/>code → 365-day plan"]
     BUY["/api/devices/purchase<br/>after a store purchase or Restore"]
     REG["/api/push/register-native<br/>/api/push/unregister-native"]
+    HAZ2["/api/hazards<br/>POST — native-only, rate-limited<br/>'where you stand' lightning + rain"]
   end
 
   APPSTORE[(App Store<br/>monthly · yearly, 3-day trial)] -->|"purchase via RevenueCat SDK<br/>appUserID = deviceId"| BUY
@@ -197,6 +198,11 @@ flowchart TD
   STORE -->|tests, next dev w/o bindings| MEM[(memory store<br/>.plus-store.json fallback)]
 
   KVLEGACY[(PUSH_KV<br/>legacy push-token subs)] -.imported once per device.-> STORE
+
+  HAZ2 -->|"per fix"| STRIKES
+  HAZ2 -->|"per fix or beach radar"| RAIN
+  HAZ2 -->|"beach's own cached pair"| PIPE2
+  HAZ2 -->|"assessLightning/assessRain"| HAZASSESS[lib/hazards/assess.ts<br/>one lightning + rain assessment<br/>30-min / 20-min holds, pure]
 
   RUN["/api/push/run?mode=all"] --> ATBEACH[lib/alerts/run.ts<br/>runAtBeachAlerts]
   RUN --> MORNING[lib/alerts/morning.ts<br/>personal digest + Excellent alert]
