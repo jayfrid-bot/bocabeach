@@ -289,10 +289,12 @@ export function ScoreWheel({ result }: { result: ScoreResult }) {
 
   return (
     <section>
-      <h2 className="mb-1 text-balance text-lg font-semibold text-slate-900 dark:text-white">
+      <h2 className="mb-2 text-balance text-lg sm:mb-1 font-semibold text-slate-900 dark:text-white">
         What&apos;s making the score
       </h2>
-      <p className="mb-3 text-xs text-slate-500">
+      {/* Hidden on phones so the wheel sits higher on screen; the card below
+          already says "tap a slice". */}
+      <p className="mb-3 hidden text-xs text-slate-500 sm:block">
         Every slice is one factor — sized by how much it counts, colored by how
         it&apos;s doing right now. Tap a slice for the full story.
       </p>

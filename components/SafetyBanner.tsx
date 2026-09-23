@@ -92,7 +92,7 @@ export function SafetyBanner({
 
   return (
     <div
-      className={`rounded-2xl p-4 ring-1 ${
+      className={`rounded-2xl p-3 ring-1 sm:p-4 ${
         tone === "danger"
           ? "bg-rose-500/10 ring-rose-500/40"
           : tone === "caution"
@@ -207,8 +207,10 @@ export function SafetyBanner({
           flying-flag graphic turned a single fact into a half-empty slab when
           it was the only thing this banner had to say. */}
       {data ? (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
-          <span className="font-medium text-slate-700 dark:text-slate-200">Lifeguard flags:</span>
+        // One line at every width: shorter label, no wrapping, and the last
+        // flag's text truncates rather than dropping to a second line.
+        <div className="flex min-w-0 flex-nowrap items-center gap-x-2.5 overflow-hidden text-xs sm:gap-x-3 sm:text-sm">
+          <span className="shrink-0 font-medium text-slate-700 dark:text-slate-200">Flags:</span>
           {flags.length === 0 ? (
             <span className="text-slate-600 dark:text-slate-400">none reported</span>
           ) : (

@@ -476,8 +476,8 @@ export function ConditionsDashboard({
 
   return (
     <PullToRefresh onRefresh={onRefresh}>
-    <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
-      <header className="mb-6">
+    <main className="mx-auto max-w-5xl px-4 pb-6 pt-3 sm:px-6 sm:py-8">
+      <header className="mb-3 sm:mb-6">
         <div className="flex items-center justify-between">
           <Link
             href="/"
@@ -488,16 +488,20 @@ export function ConditionsDashboard({
           </Link>
           <ThemeToggle />
         </div>
-        <h1 className="mt-2 text-3xl font-bold text-slate-900 dark:text-white sm:text-4xl">
+        {/* The beach name only — the county line was dropped to pull the score
+            above the fold on a phone (it stays in the page title/metadata). */}
+        <h1
+          className="mt-1 text-2xl font-bold leading-tight text-slate-900 dark:text-white sm:text-3xl"
+          title={snap.location.region}
+        >
           {snap.location.name}
         </h1>
-        <p className="text-slate-600 dark:text-slate-400">{snap.location.region}</p>
         {snap.location.tier === "auto" ? (
           <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-ocean-500/10 px-2.5 py-0.5 text-[11px] font-medium text-ocean-700 ring-1 ring-ocean-500/20 dark:text-ocean-300">
             ✨ Auto-resolved · core conditions live, some local data pending
           </span>
         ) : null}
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2">
           {browseHref ? (
             <Link
               href={browseHref}
@@ -557,7 +561,7 @@ export function ConditionsDashboard({
         </>
       ) : null}
 
-      <div className="mb-6">
+      <div className="mb-4 sm:mb-6">
         <SafetyBanner
           city={snap.cityOfficial}
           water={snap.waterQuality}

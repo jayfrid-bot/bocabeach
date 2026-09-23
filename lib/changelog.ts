@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-23",
+    title: "More of the score on your first screen",
+    details:
+      "A tighter top of the page on phones: a smaller beach name, no county line, lifeguard flags on one line, and less space around them, so the score wheel shows without scrolling.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-23",
     title: "Fresher data on quieter beaches, and the sun arc matches golden hour",
     details:
       "If a beach's conditions are more than 10 minutes old when you open it, the page now fetches fresh ones a few seconds later. The sun arc now glows for the same 20-minute golden hour window as the sunrise and sunset color card.",

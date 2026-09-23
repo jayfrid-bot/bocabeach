@@ -28,15 +28,15 @@ export function LifeguardFlag({ flag, inline = false }: { flag: FlagColor; inlin
     const swatch = "block h-3.5 w-3 rounded-[2px] shadow-sm ring-1 ring-black/30";
     return (
       <span
-        className="inline-flex items-center gap-1.5"
+        className="inline-flex min-w-0 items-center gap-1.5"
         title={m.label}
         aria-label={`${flag.replace("-", " ")} flag — ${m.label}`}
       >
-        <span className="flex gap-[2px]" aria-hidden>
+        <span className="flex shrink-0 gap-[2px]" aria-hidden>
           <span className={swatch} style={{ background: m.color }} />
           {m.double ? <span className={swatch} style={{ background: m.color }} /> : null}
         </span>
-        <span className="text-sm font-medium leading-none text-slate-700 dark:text-slate-300">
+        <span className="truncate text-xs font-medium leading-none text-slate-700 dark:text-slate-300 sm:text-sm">
           {m.label}
         </span>
       </span>
