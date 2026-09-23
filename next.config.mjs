@@ -20,6 +20,20 @@ const git = (cmd, fallback) => {
 };
 const BUILD_NUM = git("git rev-list --count HEAD", "0");
 const GIT_SHA = git("git rev-parse --short HEAD", "dev");
+// The footer's "last built" stamp. It MUST be identical every time this config
+// is evaluated within one build: `next build` loads the config separately for
+// the server and client compilations, and a bare `new Date()` here gave the two
+// bundles timestamps a minute apart whenever the build straddled a minute
+// boundary — the server HTML said "11:38 PM", the client rendered "11:39 PM",
+// and React threw hydration error #418 on every page (CI run 35815054374,
+// 2026-09-23). The commit time is the same for every evaluation and is what
+// "last built" means to a reader anyway; an explicit env var wins for
+// reproducible builds, and a git-less checkout falls back to a per-process
+// constant (same value for every config load inside that process).
+const BUILD_TIME =
+  process.env.NEXT_PUBLIC_BUILD_TIME ||
+  git("git log -1 --format=%cI", "") ||
+  new Date().toISOString();
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -33,7 +47,7 @@ const nextConfig = {
     NEXT_PUBLIC_APP_VERSION: pkg.version,
     NEXT_PUBLIC_BUILD_NUM: BUILD_NUM,
     NEXT_PUBLIC_GIT_SHA: GIT_SHA,
-    NEXT_PUBLIC_BUILD_TIME: new Date().toISOString(),
+    NEXT_PUBLIC_BUILD_TIME: BUILD_TIME,
   },
 };
 
