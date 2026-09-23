@@ -8,11 +8,12 @@ import { GET_APP_PATH } from "@/lib/appStore";
 import { consensusCloudPct, currentHourOf, deriveMetrics, DEFAULT_SCORING } from "@/lib/score";
 import { computeStormActivity } from "@/lib/stormActivity";
 import { rainNowcast } from "@/lib/rainNowcast";
-import { beachDayVerdict, fmtDate, fmtTime, scoreTextClass } from "@/lib/format";
+import { beachDayVerdict, fmtDate, fmtTime, nextCamReadPhrase, scoreTextClass } from "@/lib/format";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ScoreExplainer } from "@/components/ScoreExplainer";
 import { PullToRefresh } from "@/components/PullToRefresh";
+import { isPullRefreshing } from "@/lib/refreshInFlight";
 import { ScoreWheel } from "@/components/ScoreWheel";
 import { ScoreCapBanner } from "@/components/ScoreCapBanner";
 import { DataCoverageNote } from "@/components/DataCoverageNote";
@@ -171,6 +172,9 @@ export function ConditionsDashboard({
   useEffect(() => {
     if (preview) return;
     const refetch = () => {
+      // A manual pull-to-refresh is already fetching (and holding the
+      // version-reload guard) — don't pile a second request on top of it.
+      if (isPullRefreshing()) return;
       const t = Date.now();
       if (t - lastResumeFetchRef.current < 30_000) return;
       lastResumeFetchRef.current = t;
@@ -716,7 +720,7 @@ export function ConditionsDashboard({
           <FlipCard
             label="Busyness"
             back={nerdBack("busyness")}
-            front={<BusynessCard busy={busy} tz={tz} />}
+            front={<BusynessCard busy={busy} tz={tz} nowMs={nowMs} />}
           />
         ) : null}
         {/* Water clarity + water quality ride up here next to Busyness: they
@@ -731,7 +735,7 @@ export function ConditionsDashboard({
               // components/ClarityScene.tsx) in the value block's dead space.
               // The copy — live read, or the last readable day dimmed with the
               // next read time — is decided in lib/sources/clarity.ts.
-              <ClarityTileFront {...clarityTileCopy(clarity, tz)} />
+              <ClarityTileFront {...clarityTileCopy(clarity, tz)} tz={tz} nowMs={nowMs} />
             }
           />
         ) : null}
@@ -865,6 +869,7 @@ export function ConditionsDashboard({
                   (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "") +
                   seaweedVsAvgPhrase(sg.vsAvg)
                 }
+                extra={nextCamReadPhrase(sg.nextReadIso, tz, nowMs) ?? undefined}
               />
             }
           />

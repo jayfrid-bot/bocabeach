@@ -18,6 +18,20 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-23",
+    title: "Pull to refresh now feels like a refresh",
+    details:
+      "The page follows your finger, bounces back when fresh data lands, and a small note shows the time of the data you're now seeing.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-23",
+    title: "Cam-based cards now say when the next camera read is coming, and the app updates itself",
+    details:
+      "Beach busyness, water clarity, and seaweed now show a quiet \"Next cam read ~\" line, learned from the last two weeks of camera reads. The app also reloads itself when you come back to it after an update, so you're never stuck looking at an old version.",
+    tag: "new",
+  },
+  {
+    date: "2026-09-23",
     title: "Simpler sunrise and sunset color card, and a tighter golden hour",
     details:
       "The card now says \"Upcoming sunrise color\" or \"Upcoming sunset color\" and rates it in one plain word: Poor, Fair, Good, Great, or Amazing. Golden hour now runs from 20 minutes before to 20 minutes after sunrise and sunset.",

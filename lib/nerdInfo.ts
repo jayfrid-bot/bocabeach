@@ -284,7 +284,7 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
       computation,
       sources: src(snap.busyness.source),
       notes:
-        "Read from the beach cams by a vision model (busiest cam now, else the hour's learned average). Night gate: when the cams can't see the beach (dark or a stale capture) busyness reads 'unknown' and is dropped entirely rather than faking an empty beach. The overnight card text is the last readable day's summary (mean fullness → band, plus its peak hour) and the next read time; it never re-enters the score.",
+        "Read from the beach cams by a vision model (busiest cam now, else the hour's learned average). Night gate: when the cams can't see the beach (dark or a stale capture) busyness reads 'unknown' and is dropped entirely rather than faking an empty beach. The overnight card text is the last readable day's summary (mean fullness → band, plus its peak hour) and the next read time; it never re-enters the score. The next-read time itself is estimated from the last two weeks of camera reads, not a fixed schedule.",
     };
   },
 
@@ -515,7 +515,7 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
       computation,
       sources: src(snap.sargassum.source),
       notes:
-        "Read from the cams, preferring the early-morning shot (before the City's beach-cleaning tractor). ≥50% coverage also slides a score ceiling from 100 down to 70 (flat 70 at ≥90%), so a heavy mat can't read as a full beach closure.",
+        "Read from the cams, preferring the early-morning shot (before the City's beach-cleaning tractor). ≥50% coverage also slides a score ceiling from 100 down to 70 (flat 70 at ≥90%), so a heavy mat can't read as a full beach closure. The next-read time is estimated from the last two weeks of camera reads, not a fixed schedule.",
     };
   },
 
@@ -545,7 +545,7 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
       computation,
       sources: src(snap.clarity?.source),
       notes:
-        "Read from the beach cams by a vision model (worst cam of the latest capture). Not scored — shown for planning a swim/snorkel. Night/stale/no-open-water reads show 'unknown' rather than a false 'clear' — dimmed, with the last readable day's median and the next read time in place of a blank tile. Satellite nearshore clarity is planned for cam-less beaches.",
+        "Read from the beach cams by a vision model (worst cam of the latest capture). Not scored — shown for planning a swim/snorkel. Night/stale/no-open-water reads show 'unknown' rather than a false 'clear' — dimmed, with the last readable day's median and the next read time in place of a blank tile. Satellite nearshore clarity is planned for cam-less beaches. The next-read time is estimated from the last two weeks of camera reads, not a fixed schedule.",
     };
   },
 

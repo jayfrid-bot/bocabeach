@@ -4,6 +4,7 @@ export function MetricCard({
   value,
   sub,
   subShort,
+  extra,
 }: {
   icon: string;
   label: string;
@@ -13,6 +14,9 @@ export function MetricCard({
    *  deterministic parts only, no free-text cam note, so nothing truncates
    *  mid-sentence. Falls back to `sub` on wider screens and when omitted. */
   subShort?: string;
+  /** An optional quiet line below `sub`, e.g. "Next cam read ~9:40 AM" — its
+   *  own unclamped line so it can never be cut mid-sentence by `sub`'s clamp. */
+  extra?: string;
 }) {
   return (
     <div className="flex h-full flex-col rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
@@ -44,6 +48,11 @@ export function MetricCard({
             (sub ?? "\u00a0")
           )}
         </div>
+        {extra ? (
+          <div className="mt-1 break-words text-xs text-slate-500 dark:text-slate-500">
+            {extra}
+          </div>
+        ) : null}
       </div>
     </div>
   );

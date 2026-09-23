@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { interpolateColor, seaState } from "@/lib/format";
+import { interpolateColor, nextCamReadPhrase, seaState } from "@/lib/format";
 
 describe("seaState", () => {
   it("maps wave height to the plain-English ladder", () => {
@@ -59,5 +59,38 @@ describe("interpolateColor", () => {
   it("handles degenerate stop lists", () => {
     expect(interpolateColor(0.5, ["#123456"])).toBe("#123456");
     expect(interpolateColor(0.5, [])).toBe("#000000");
+  });
+});
+
+describe("nextCamReadPhrase", () => {
+  const tz = "America/New_York";
+
+  it("returns null with no ISO", () => {
+    expect(nextCamReadPhrase(undefined, tz)).toBeNull();
+  });
+
+  it("returns the absolute-time form when nowMs is omitted", () => {
+    expect(nextCamReadPhrase("2026-08-24T06:21:00-04:00", tz)).toBe("Next cam read ~6:21 AM");
+  });
+
+  it("returns the '~X min' form inside the hour", () => {
+    const now = new Date("2026-08-24T06:01:00-04:00").getTime();
+    expect(nextCamReadPhrase("2026-08-24T06:21:00-04:00", tz, now)).toBe(
+      "Next cam read in ~20 min",
+    );
+  });
+
+  it("falls back to the absolute-time form beyond an hour out", () => {
+    const now = new Date("2026-08-24T04:00:00-04:00").getTime();
+    expect(nextCamReadPhrase("2026-08-24T06:21:00-04:00", tz, now)).toBe(
+      "Next cam read ~6:21 AM",
+    );
+  });
+
+  it("returns null when the target is at or before nowMs — no past 'next' time", () => {
+    const target = "2026-08-24T06:21:00-04:00";
+    const targetMs = new Date(target).getTime();
+    expect(nextCamReadPhrase(target, tz, targetMs)).toBeNull(); // exactly at now
+    expect(nextCamReadPhrase(target, tz, targetMs + 60_000)).toBeNull(); // a minute after
   });
 });

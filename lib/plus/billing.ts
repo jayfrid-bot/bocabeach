@@ -13,6 +13,7 @@
 
 import { INTRO_ELIGIBILITY_STATUS, Purchases, type PurchasesPackage } from "@revenuecat/purchases-capacitor";
 import { isNativePlatform } from "@/lib/push/native";
+import { holdReload } from "@/lib/reloadGuard";
 
 /** Public SDK key (appl_…). Public by design; baked in at build time. */
 export const BILLING_KEY = process.env.NEXT_PUBLIC_REVENUECAT_IOS_KEY ?? "";
@@ -136,15 +137,22 @@ export async function trialEligibility(
 
 /** Run the store's purchase sheet for one plan. Never throws. */
 export async function purchasePlan(deviceId: string, offer: PlanOffer): Promise<PurchaseOutcome> {
-  if (!(await configureBilling(deviceId))) return "failed";
-  const P = getPlugin();
+  // Held for the whole purchase sheet + confirmation — a reload here would
+  // interrupt the store's own UI or strand a charged customer mid-sync.
+  const release = holdReload();
   try {
-    await P.purchasePackage({ aPackage: offer.pkg });
-    return "purchased";
-  } catch (e) {
-    const err = e as { userCancelled?: boolean | null; readableErrorCode?: string };
-    if (err?.userCancelled || err?.readableErrorCode === "PURCHASE_CANCELLED") return "cancelled";
-    return "failed";
+    if (!(await configureBilling(deviceId))) return "failed";
+    const P = getPlugin();
+    try {
+      await P.purchasePackage({ aPackage: offer.pkg });
+      return "purchased";
+    } catch (e) {
+      const err = e as { userCancelled?: boolean | null; readableErrorCode?: string };
+      if (err?.userCancelled || err?.readableErrorCode === "PURCHASE_CANCELLED") return "cancelled";
+      return "failed";
+    }
+  } finally {
+    release();
   }
 }
 

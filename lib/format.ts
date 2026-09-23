@@ -54,6 +54,36 @@ export function fmtRelative(iso: string, nowMs: number = Date.now()): string {
 }
 
 /**
+ * "Next cam read ~9:40 AM" (or, inside the hour, "Next cam read in ~20 min") —
+ * one wording shared by every camera-based tile (busyness, clarity, seaweed)
+ * for when the next cam read is expected. `nowMs` is optional: pass the
+ * caller's render-stable clock (e.g. ConditionsDashboard's pinned `nowMs`) to
+ * get the "in ~X min" form near the top of the hour; omit it (server-side, or
+ * when no stable clock is available) to always get the absolute-time form, so
+ * the string never differs between server and client on first render. When
+ * `nowMs` is given and the target is already at or before it, returns null —
+ * a "next" read time can't be in the past, and a stale server-cached response
+ * must not tell a reader to wait for something that already happened.
+ */
+export function nextCamReadPhrase(
+  nextReadIso: string | undefined,
+  tz: string,
+  nowMs?: number,
+): string | null {
+  if (!nextReadIso) return null;
+  const targetMs = Date.parse(nextReadIso);
+  if (!Number.isFinite(targetMs)) return null;
+  if (nowMs != null) {
+    if (targetMs <= nowMs) return null;
+    const diffMin = Math.round((targetMs - nowMs) / 60_000);
+    if (diffMin > 0 && diffMin <= 60) {
+      return `Next cam read in ~${diffMin} min`;
+    }
+  }
+  return `Next cam read ~${fmtTime(nextReadIso, tz)}`;
+}
+
+/**
  * Plain-English sea state for a combined wave height (ft) — what the water
  * actually feels like, not just a number. Bands follow how SoFla beach days
  * read in practice: under a foot is flat; swimming gets pushy past ~3 ft;

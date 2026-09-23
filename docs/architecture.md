@@ -36,7 +36,11 @@ flowchart TD
     STICKER["/sticker?s=&lt;tag&gt;<br/>(QR landing: count scan, set ref cookie, 307 → /?ref=tag)"]
     GETAPP["/get-app<br/>(count the store tap, 307 → App Store)"]
     ADMINSCANS["/api/admin/scans<br/>(owner-only, read the sticker funnel)"]
+    VERSION["/api/version<br/>(deployed git SHA, no-store)"]
   end
+
+  APPUI -->|"poll on resume, throttled 60s<br/>lib/useReloadOnNewVersion.ts"| VERSION
+  VERSION -->|"served SHA ≠ baked SHA<br/>→ location.reload()"| APPUI
 
   STICKER -->|"scan_log + scan_claim"| FUNNEL[lib/db/scanFunnel.ts<br/>scan → tap → install]
   GETAPP -->|"scan_tap, claim marked tapped"| FUNNEL
@@ -97,7 +101,8 @@ flowchart LR
   EVAL -->|archives + scores stills| SDATA
 
   LDATA --> SOURCES2[lib/sources/lightning.ts]
-  SDATA --> SOURCES3[lib/sources/sargassum.ts, busyness.ts]
+  SDATA --> SOURCES3[lib/sources/sargassum.ts, busyness.ts, clarity.ts]
+  SOURCES3 -->|"last 2 weeks of read times"| CAMNEXT[lib/camNextRead.ts<br/>learns the next cam read time,<br/>no fixed schedule]
   GDATA --> SOURCES4[lib/sources/goesCloud.ts]
   MDATA --> SOURCES5[lib/sources/precipRadar.ts<br/>parses lastWetIso → wetMinutesAgo<br/>on the server clock]
 

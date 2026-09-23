@@ -550,3 +550,105 @@ describe("summarizeBusyness — the last readable day (overnight fallback)", () 
     });
   });
 });
+
+// --- nextReadIso learned from cam-read history (lib/camNextRead.ts) --------
+// When the caller opts in with a timezone, every camera-reading case (fresh,
+// stale, night) prefers the learned estimate over the old sunrise-only guess.
+
+describe("summarizeBusyness — learned nextReadIso (gate.timezone)", () => {
+  const TZ = "America/New_York";
+  // 14 straight days, each with a read 8 minutes after 14:00 local — a steady
+  // cadence the learned estimator can key off.
+  const learnedHistory = Array.from({ length: 14 }, (_, i) => {
+    const day = new Date(Date.UTC(2026, 7, 1 + i)); // Aug 1..14, arbitrary
+    const dateStr = day.toISOString().slice(0, 10);
+    return {
+      t: `${dateStr}T14:08:00-04:00`,
+      hour: 14,
+      level: "moderate",
+      crowdPct: 40,
+    };
+  });
+
+  it("prefers the learned estimate at night over the sunrise-only fallback", () => {
+    // A real night: well past sunset + the 30-min daylight buffer, so the
+    // night gate actually fires (not just an assertion that it "would").
+    const d = summarizeBusyness(
+      { latest: { capturedAtLocal: "2026-08-15T19:00:00-04:00", cams: [] }, history: learnedHistory as never },
+      {
+        now: new Date("2026-08-15T23:00:00-04:00"),
+        sunriseIso: "2026-08-15T06:40:00-04:00",
+        sunsetIso: "2026-08-15T19:44:00-04:00",
+        tomorrowSunriseIso: "2026-08-16T06:41:00-04:00",
+        timezone: TZ,
+      },
+      "2026-08-15",
+    );
+    expect(d.level).toBe("unknown");
+    expect(d.note).toMatch(/dark/i); // confirms the night gate, not the stale one, fired
+    // The old sunrise-only fallback would have said tomorrow's sunrise minus
+    // the 30-min buffer (~06:11 AM). The learned estimate instead follows the
+    // 14 days' own pattern: each night's target (23:00) is next answered by
+    // the FOLLOWING day's ~14:08 read, a ~15h08 delay — landing mid-afternoon
+    // the next day, not at sunrise.
+    const sunriseFallback = new Date("2026-08-16T06:11:00-04:00").toISOString();
+    expect(d.nextReadIso).not.toBe(sunriseFallback);
+    expect(d.nextReadIso).toBe(new Date("2026-08-16T14:10:00-04:00").toISOString());
+  });
+
+  it("attaches a learned nextReadIso to a stale DAYTIME capture (previously always undefined)", () => {
+    const d = summarizeBusyness(
+      {
+        latest: { capturedAtLocal: "2026-08-15T10:00:00-04:00", cams: [] },
+        history: learnedHistory as never,
+      },
+      {
+        // Midday, but the last capture is 4h old -> stale gate, not night.
+        now: new Date("2026-08-15T14:00:00-04:00"),
+        sunriseIso: "2026-08-15T06:40:00-04:00",
+        sunsetIso: "2026-08-15T19:44:00-04:00",
+        timezone: TZ,
+      },
+      "2026-08-15",
+    );
+    expect(d.level).toBe("unknown");
+    expect(d.note).toMatch(/stale|old/i);
+    // Learned from the 14-day 14:08 cadence: now (14:00) + ~8min, rounded up to
+    // the next 5-minute mark.
+    expect(d.nextReadIso).toBe(new Date("2026-08-15T14:10:00-04:00").toISOString());
+  });
+
+  it("attaches a learned nextReadIso to a live daytime reading", () => {
+    const d = summarizeBusyness(
+      {
+        latest: { capturedAtLocal: "2026-08-15T14:08:00-04:00", cams: [{ name: "A", crowd: "moderate", crowdPct: 40 }] },
+        history: learnedHistory as never,
+      },
+      {
+        now: new Date("2026-08-15T14:00:00-04:00"),
+        sunriseIso: "2026-08-15T06:40:00-04:00",
+        sunsetIso: "2026-08-15T19:44:00-04:00",
+        timezone: TZ,
+      },
+      "2026-08-15",
+    );
+    expect(d.level).toBe("moderate");
+    expect(d.nextReadIso).toBe(new Date("2026-08-15T14:10:00-04:00").toISOString());
+  });
+
+  it("without gate.timezone, behavior is unchanged (no learned estimate)", () => {
+    const d = summarizeBusyness(
+      {
+        latest: { capturedAtLocal: "2026-08-15T10:00:00-04:00", cams: [] },
+        history: learnedHistory as never,
+      },
+      {
+        now: new Date("2026-08-15T14:00:00-04:00"),
+        sunriseIso: "2026-08-15T06:40:00-04:00",
+        sunsetIso: "2026-08-15T19:44:00-04:00",
+      },
+      "2026-08-15",
+    );
+    expect(d.nextReadIso).toBeUndefined();
+  });
+});

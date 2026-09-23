@@ -12,6 +12,8 @@ import { clamp, fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/u
 import { fetchSun } from "@/lib/sources/sun";
 import { vsAverage, weekdayName, type VsAverageEntry } from "@/lib/vsAverage";
 import { camFeedUrlCandidates } from "@/lib/sources/camFeed";
+import { expectedNextCamRead } from "@/lib/camNextRead";
+import { capCamHistory } from "@/lib/camHistory";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
 
@@ -38,6 +40,10 @@ export interface BusynessGateOptions {
   /** Tomorrow's sunrise (ISO) — used for the "next cam read" line once today's
    * sunrise has already passed. Omit to skip that line. */
   tomorrowSunriseIso?: string;
+  /** IANA timezone for the learned "next cam read" estimate (see
+   * lib/camNextRead.ts). Omit to fall back to the sunrise-based guess at
+   * night only, and to leave the line off during the day. */
+  timezone?: string;
 }
 
 /**
@@ -485,11 +491,21 @@ export function summarizeBusyness(
   gate?: BusynessGateOptions,
   nowLocalDate?: string,
 ): BusynessData {
-  const history = feed?.history ?? [];
+  const history = capCamHistory(feed?.history);
   const byHour = byHourFromHistory(history);
   const byDay = byDayFromHistory(history);
   const vsAvg = busynessVsAvg(history, nowLocalDate);
   const group = feed?.latest ?? feed?.morning ?? undefined;
+
+  // Learned from the last two weeks of actual read times — computed once per
+  // call and reused below for every camera-reading case (fresh, stale, night).
+  const learnedNextRead = gate?.timezone
+    ? expectedNextCamRead(
+        history.map((e) => e.t).filter((t): t is string => typeof t === "string"),
+        gate?.now ?? new Date(),
+        gate.timezone,
+      )
+    : null;
 
   // No gate passed at all -> caller isn't opting into the daylight/freshness
   // check (e.g. tests exercising cam-selection logic in isolation); only
@@ -513,13 +529,14 @@ export function summarizeBusyness(
       lastReadWeekday: yesterday
         ? undefined
         : staleCamReadWeekday(history, nowLocalDate, USABLE_CROWD),
-      // Only darkness has a knowable end. A stale DAYTIME capture keeps its own
-      // note instead: the gate is already open, so the next read is whenever the
-      // job recovers — promising "6:26 AM tomorrow" would be worse than silence.
+      // Prefer the learned estimate (works for both night and a stale daytime
+      // capture). Only darkness has a knowable end via sunrise, so that's the
+      // one fallback when history alone isn't enough yet.
       nextReadIso:
-        note === NIGHT_NOTE
+        learnedNextRead?.iso ??
+        (note === NIGHT_NOTE
           ? nextCamReadIso(gate?.now ?? new Date(), gate?.sunriseIso, gate?.tomorrowSunriseIso)
-          : undefined,
+          : undefined),
     };
   }
 
@@ -528,7 +545,14 @@ export function summarizeBusyness(
       !!c && typeof c.crowd === "string" && c.crowd in RANK,
   );
   if (!cams.length) {
-    return { level: "unknown", capturedAtLocal: group?.capturedAtLocal, byHour, byDay, vsAvg };
+    return {
+      level: "unknown",
+      capturedAtLocal: group?.capturedAtLocal,
+      byHour,
+      byDay,
+      vsAvg,
+      nextReadIso: learnedNextRead?.iso,
+    };
   }
   const busiest = cams.reduce((a, b) => {
     if (RANK[b.crowd] !== RANK[a.crowd]) return RANK[b.crowd] > RANK[a.crowd] ? b : a;
@@ -544,6 +568,7 @@ export function summarizeBusyness(
     byHour,
     byDay,
     vsAvg,
+    nextReadIso: learnedNextRead?.iso,
   };
 }
 
@@ -610,6 +635,7 @@ export async function fetchBusyness(
         // Tomorrow's sunrise answers "when does the next read come in?" once
         // today's has already passed (the evening case).
         tomorrowSunriseIso: sun?.tomorrowSunrise,
+        timezone: loc.timezone,
       },
       nowLocalDate,
     );

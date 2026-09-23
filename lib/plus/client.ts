@@ -33,6 +33,7 @@ import { computePersonalScore, type PersonalScore } from "@/lib/plus/personalSco
 import { establishesArrival } from "@/lib/plus/beachMode";
 import * as store from "@/lib/plus/storage";
 import type { PlusCache, PreviewRecord } from "@/lib/plus/types";
+import { holdReload } from "@/lib/reloadGuard";
 
 /** Never ask the server twice inside this window on foreground. */
 const REFRESH_THROTTLE_MS = 60_000;
@@ -577,11 +578,17 @@ export function usePlus(): PlusState {
     async (code: string): Promise<PlusResult> => {
       const id = getDeviceId();
       if (!id) return { ok: false, device: null, error: "network", status: 0 };
+      // Redeem — held so a mid-deploy reload can't cut off an entered code.
+      const release = holdReload();
       setLoading(true);
-      const res = await plusApi.unlock(id, code.trim());
-      setLoading(false);
-      if (res.ok && res.device) applyDevice(res.device);
-      return res;
+      try {
+        const res = await plusApi.unlock(id, code.trim());
+        if (res.ok && res.device) applyDevice(res.device);
+        return res;
+      } finally {
+        setLoading(false);
+        release();
+      }
     },
     [applyDevice],
   );
@@ -589,6 +596,9 @@ export function usePlus(): PlusState {
   const syncPurchase = useCallback(async (): Promise<PlusResult> => {
     const id = getDeviceId();
     if (!id) return { ok: false, device: null, error: "network", status: 0 };
+    // A store purchase already confirmed — held so a reload can't strand a
+    // charged customer before the server hears about it.
+    const release = holdReload();
     setLoading(true);
     try {
       const res = await plusApi.syncPurchase(id);
@@ -610,6 +620,7 @@ export function usePlus(): PlusState {
       // rejects, but restoreBilling/purchasePlan callers rely on this same
       // shape, and a stray throw must not leave loading stuck true (#16).
       setLoading(false);
+      release();
     }
   }, [applyDevice]);
 
@@ -617,6 +628,8 @@ export function usePlus(): PlusState {
     const id = getDeviceId();
     if (!id) return { ok: false, device: null, error: "network", status: 0 };
     lastRefreshRef.current = Date.now();
+    // Held for the whole restore — store restore + server sync.
+    const release = holdReload();
     setLoading(true);
     try {
       // With billing on, ask the store first: a reinstall or a new phone on
@@ -635,6 +648,7 @@ export function usePlus(): PlusState {
       return res;
     } finally {
       setLoading(false);
+      release();
     }
   }, [applyDevice]);
 
@@ -647,9 +661,15 @@ export function usePlus(): PlusState {
     async (presence: PresenceBody): Promise<PlusResult> => {
       const id = getDeviceId();
       if (!id) return { ok: false, device: null, error: "network", status: 0 };
-      const res = await plusApi.arm(id, presence);
-      if (res.ok && res.device) applyDevice(res.device);
-      return res;
+      // Held for the presence write — a reload mid-arm must not race it.
+      const release = holdReload();
+      try {
+        const res = await plusApi.arm(id, presence);
+        if (res.ok && res.device) applyDevice(res.device);
+        return res;
+      } finally {
+        release();
+      }
     },
     [applyDevice],
   );
@@ -657,9 +677,14 @@ export function usePlus(): PlusState {
   const disarm = useCallback(async (): Promise<PlusResult> => {
     const id = getDeviceId();
     if (!id) return { ok: false, device: null, error: "network", status: 0 };
-    const res = await plusApi.disarm(id);
-    if (res.ok && res.device) applyDevice(res.device);
-    return res;
+    const release = holdReload();
+    try {
+      const res = await plusApi.disarm(id);
+      if (res.ok && res.device) applyDevice(res.device);
+      return res;
+    } finally {
+      release();
+    }
   }, [applyDevice]);
 
   const prefs = device?.prefs ?? defaultPrefs();
@@ -840,13 +865,21 @@ export function useDeviceFix(): DeviceFixState {
   }, []);
 
   const requestFresh = useCallback(async (): Promise<Fix | null> => {
-    const got = await getFreshFix();
-    setSettled(true);
-    if ("error" in got) return null;
-    // Publish for everyone else, but hand THIS caller the fix it asked for,
-    // whatever a concurrent request may have published in the meantime.
-    setSessionFix(got);
-    return got;
+    // Held for the location request — a reload mid-prompt would dismiss the
+    // OS permission dialog / cut off the fix, and Beach Mode's arm() awaits
+    // this before its own write anyway.
+    const release = holdReload();
+    try {
+      const got = await getFreshFix();
+      setSettled(true);
+      if ("error" in got) return null;
+      // Publish for everyone else, but hand THIS caller the fix it asked for,
+      // whatever a concurrent request may have published in the meantime.
+      setSessionFix(got);
+      return got;
+    } finally {
+      release();
+    }
   }, []);
 
   // Reads the module-level fix directly (not the `fix` state variable), so it

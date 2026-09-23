@@ -99,7 +99,7 @@ function FeelsLikeFront({
           aria-label={`${tempF}°F on a ${METER_MIN_F}–${METER_MAX_F}°F comfort scale — ${info.label}`}
         >
           <div
-            className="absolute top-1/2 h-3 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow ring-2 ring-slate-900"
+            className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-slate-900 shadow ring-2 ring-white dark:bg-white dark:ring-slate-900"
             style={{ left: `${meterPct(tempF)}%` }}
             aria-hidden
           />

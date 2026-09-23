@@ -1,4 +1,5 @@
 import { clarityHazeOpacity, clarityParticles } from "@/lib/clarityScene";
+import { nextCamReadPhrase } from "@/lib/format";
 
 // ---------------------------------------------------------------------------
 // "Can you see the bottom": a swimmer's-eye water column for the Water clarity
@@ -145,6 +146,9 @@ export function ClarityTileFront({
   pct,
   level,
   muted = false,
+  nextReadIso,
+  tz,
+  nowMs,
 }: {
   value: string;
   sub: string;
@@ -155,8 +159,17 @@ export function ClarityTileFront({
   /** The scene is showing a REMEMBERED day (the overnight fallback), not a live
    *  read — draw it dimmed and desaturated so it never reads as "right now". */
   muted?: boolean;
+  /** When the next cam read is expected, ISO (see clarityTileCopy). Rendered
+   *  as its own unclamped line so it can never be clipped. */
+  nextReadIso?: string;
+  /** Beach timezone, for formatting `nextReadIso`. */
+  tz?: string;
+  /** Render-stable clock (ConditionsDashboard's pinned `nowMs`) for the
+   *  "in ~X min" form; omit for the deterministic absolute-time form. */
+  nowMs?: number;
 }) {
   const hasScene = pct != null && Number.isFinite(pct);
+  const nextRead = tz ? nextCamReadPhrase(nextReadIso, tz, nowMs) : null;
 
   return (
     <div className="flex h-full flex-col rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
@@ -203,6 +216,14 @@ export function ClarityTileFront({
             sub || " "
           )}
         </div>
+        {/* Own line, never clamped — a mobile-caught clip regression once cut a
+            "Next cam read ~…" line short mid-sentence when it rode inside the
+            clamped `sub` block above. */}
+        {nextRead ? (
+          <div className="mt-1 break-words text-xs text-slate-500 dark:text-slate-500">
+            {nextRead}
+          </div>
+        ) : null}
       </div>
     </div>
   );

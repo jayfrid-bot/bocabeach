@@ -10,6 +10,8 @@ import type {
 import { fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
 import { vsAverage, type VsAverageEntry } from "@/lib/vsAverage";
 import { camFeedUrlCandidates } from "@/lib/sources/camFeed";
+import { expectedNextCamRead } from "@/lib/camNextRead";
+import { capCamHistory } from "@/lib/camHistory";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
 
@@ -138,16 +140,35 @@ function seaweedVsAvg(
   return { deltaPct: r.deltaPct, deltaPts: r.deltaPts, baselineDays: r.baselineDays };
 }
 
+export interface SeaweedNextReadOptions {
+  /** Instant to estimate the next cam read from. Defaults to real now — pass
+   *  an explicit value in tests for determinism. */
+  now?: Date;
+  /** IANA timezone for the learned "next cam read" estimate (see
+   *  lib/camNextRead.ts). Omit to leave the estimate off. */
+  timezone?: string;
+}
+
 export function summarizeSeaweed(
   feed: CamSeaweedFeed,
   nowLocalDate?: string,
+  nextRead?: SeaweedNextReadOptions,
 ): SargassumData | null {
-  const history = feed?.history ?? [];
+  const history = capCamHistory(feed?.history);
   const byHour = byHourFromHistory(history);
   const byDay = byDayFromHistory(history);
   const vsAvg = seaweedVsAvg(history, nowLocalDate);
   const morning = feed?.morning ?? null;
   const group = feed?.latest ?? morning ?? null;
+  // Learned from the last two weeks of actual read times — every camera
+  // reading (fresh or the "no current reading" case below) gets this line.
+  const nextReadIso = nextRead?.timezone
+    ? expectedNextCamRead(
+        history.map((e) => e.t).filter((t): t is string => typeof t === "string"),
+        nextRead?.now ?? new Date(),
+        nextRead.timezone,
+      )?.iso
+    : undefined;
   const cams = (group?.cams ?? []).filter(
     (c): c is CamSeaweedReading =>
       !!c && typeof c.level === "string" && c.level in RANK,
@@ -155,7 +176,7 @@ export function summarizeSeaweed(
   if (!cams.length) {
     // No current reading, but still surface the historical charts if we have any.
     return byHour || byDay
-      ? { level: "unknown", isMorning: false, cams: [], byHour, byDay, vsAvg }
+      ? { level: "unknown", isMorning: false, cams: [], byHour, byDay, vsAvg, nextReadIso }
       : null;
   }
   // Worst by category rank; tie-broken by the finer coverage % when present.
@@ -167,7 +188,7 @@ export function summarizeSeaweed(
   // Today's reads, in capture order, for point-in-time scoring of past hours.
   const today = group?.capturedAtLocal?.slice(0, 10);
   const todayReads = today
-    ? (feed?.history ?? [])
+    ? history
         .filter(
           (e) =>
             e.t?.slice(0, 10) === today &&
@@ -193,6 +214,7 @@ export function summarizeSeaweed(
     byHour,
     byDay,
     vsAvg,
+    nextReadIso,
   };
 }
 
@@ -248,7 +270,7 @@ export async function fetchSargassum(
     const nowLocalDate = new Intl.DateTimeFormat("en-CA", { timeZone: loc.timezone }).format(
       new Date(),
     );
-    const data = summarizeSeaweed(feed, nowLocalDate);
+    const data = summarizeSeaweed(feed, nowLocalDate, { timezone: loc.timezone });
     return {
       source: ATTRIBUTION,
       status: data ? "ok" : "best-effort",

@@ -703,8 +703,11 @@ export interface BusynessData {
    * present, or when no day is readable at any distance.
    */
   lastReadWeekday?: string;
-  /** When the cams can see the beach again (next sunrise − the daylight
-   *  buffer), ISO. Omitted when sun times are unavailable. */
+  /** When the next cam read is expected, ISO. Set for every camera reading
+   *  (fresh, stale, or night) — learned from the last two weeks of read
+   *  history (see lib/camNextRead.ts); at night, falls back to the next
+   *  sunrise minus the daylight buffer when history alone isn't enough.
+   *  Omitted when neither is available. */
   nextReadIso?: string;
 }
 /**
@@ -739,6 +742,10 @@ export interface SargassumData {
     deltaPts?: number | null;
     baselineDays: number;
   };
+  /** When the next cam read is expected, learned from the last two weeks of
+   *  read history (see lib/camNextRead.ts). ISO. Omitted when there isn't
+   *  enough history yet. */
+  nextReadIso?: string;
 }
 
 // --- Water clarity (Tier 1: cam-based, from the same vision job) -----------
@@ -787,8 +794,11 @@ export interface ClarityData {
    * present, or when no day is readable at any distance.
    */
   lastReadWeekday?: string;
-  /** When the cams can read the water again (next sunrise − the daylight
-   *  buffer), ISO. Omitted when sun times are unavailable. */
+  /** When the next cam read is expected, ISO. Set for every camera reading
+   *  (fresh, stale, or night) — learned from the last two weeks of read
+   *  history (see lib/camNextRead.ts); at night, falls back to the next
+   *  sunrise minus the daylight buffer when history alone isn't enough.
+   *  Omitted when neither is available. */
   nextReadIso?: string;
 }
 /** The last readable day's water clarity — the overnight stand-in for a live read. */

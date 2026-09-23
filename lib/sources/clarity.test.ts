@@ -493,7 +493,8 @@ describe("clarityTileCopy — what the tile actually says", () => {
       tz,
     );
     expect(c.value).toBe("Yesterday: Mostly clear");
-    expect(c.sub).toBe("~72% clear · cams resume ~6:21 AM");
+    expect(c.sub).toBe("~72% clear");
+    expect(c.nextReadIso).toBe("2026-08-24T06:21:00-04:00");
     expect(c.pct).toBe(72); // the scene still draws something, just muted
     expect(c.muted).toBe(true);
   });
@@ -508,10 +509,10 @@ describe("clarityTileCopy — what the tile actually says", () => {
     const day = { dateLocal: "2026-08-23", dayLabel: "today", pct: 72, word: "Mostly clear", reads: 5 };
     expect(
       clarityTileCopy({ ...base, yesterday: { ...day, amPct: 85, pmPct: 60 } }, tz).sub,
-    ).toBe("~72% clear · 85% AM, 60% PM · cams resume ~6:21 AM");
+    ).toBe("~72% clear · 85% AM, 60% PM");
     expect(
       clarityTileCopy({ ...base, yesterday: { ...day, amPct: 74, pmPct: 70 } }, tz).sub,
-    ).toBe("~72% clear · cams resume ~6:21 AM");
+    ).toBe("~72% clear");
   });
 
   it("falls back to the reason when the outage has no known end (a stale daytime frame)", () => {
@@ -549,7 +550,8 @@ describe("clarityTileCopy — what the tile actually says", () => {
       tz,
     );
     expect(c.value).toBe("—");
-    expect(c.sub).toBe("No recent cam reads — last clear read Wed · cams resume ~6:24 AM");
+    expect(c.sub).toBe("No recent cam reads — last clear read Wed");
+    expect(c.nextReadIso).toBe("2026-08-27T06:24:00-04:00");
     // Phones get the short form: the full line is four lines inside the tile's
     // 3-line clamp at 390px (Deerfield, 2026-09-18 layout-gate failure).
     expect(c.subShort).toBe("No recent cam reads — last clear read Wed");
@@ -570,7 +572,8 @@ describe("clarityTileCopy — what the tile actually says", () => {
       tz,
     );
     expect(c.value).toBe("—");
-    expect(c.sub).toBe("cams can't read the water in the dark · cams resume ~6:21 AM");
+    expect(c.sub).toBe("cams can't read the water in the dark");
+    expect(c.nextReadIso).toBe("2026-08-24T06:21:00-04:00");
     expect(c.pct).toBeNull();
   });
 });

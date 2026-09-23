@@ -10,6 +10,8 @@ import { clamp, fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/u
 import { fmtTime } from "@/lib/format";
 import { fetchSun } from "@/lib/sources/sun";
 import { camFeedUrlCandidates } from "@/lib/sources/camFeed";
+import { expectedNextCamRead } from "@/lib/camNextRead";
+import { capCamHistory } from "@/lib/camHistory";
 // The overnight fallback ("what did the water look like on the last readable
 // day, and when does the next read land?") is the same question busyness asks,
 // so both cards share one implementation of day selection, day naming and the
@@ -271,10 +273,22 @@ export function summarizeClarity(
   gate?: ClarityGateOptions,
 ): ClarityData | null {
   // A pre-clarity feed (fields not published yet) → unavailable, not a fake read.
-  if (!hasClarityFields(feed)) return null;
+  // Cap first so every scan below, including the field check, is bounded.
+  const history = capCamHistory(feed?.history);
+  if (!hasClarityFields(feed ? { ...feed, history } : feed)) return null;
 
   const group = feed?.latest ?? feed?.morning ?? undefined;
   const capturedAtLocal = group?.capturedAtLocal;
+
+  // Learned from the last two weeks of actual read times — computed once per
+  // call and reused for every camera-reading case (fresh, stale, night).
+  const learnedNextRead = gate?.timezone
+    ? expectedNextCamRead(
+        history.map((e) => e.t).filter((t): t is string => typeof t === "string"),
+        gate?.now ?? new Date(),
+        gate.timezone,
+      )
+    : null;
 
   // Night / stale gate (only when the caller opts in) — degrade to a level-null
   // "unknown" reading with the reason, mirroring busyness.
@@ -282,7 +296,6 @@ export function summarizeClarity(
   if (note) {
     // Gated: still an honest no-live-read (level null, status "unknown"), with
     // the last readable day and the next read time attached for the card.
-    const history = feed?.history ?? [];
     const yesterday = clarityDaySummary(history, gate?.nowLocalDate);
     return {
       level: null,
@@ -296,12 +309,14 @@ export function summarizeClarity(
       lastReadWeekday: yesterday
         ? undefined
         : staleCamReadWeekday(history, gate?.nowLocalDate, USABLE_CLARITY),
-      // Night has a knowable end; a stale or no-open-water daytime frame does
-      // not, so those keep their own note rather than promising a sunrise.
+      // Prefer the learned estimate (works for night and a stale daytime
+      // capture alike). Only darkness has a knowable end via sunrise, so
+      // that's the one fallback when history alone isn't enough yet.
       nextReadIso:
-        note === NIGHT_NOTE
+        learnedNextRead?.iso ??
+        (note === NIGHT_NOTE
           ? nextCamReadIso(gate?.now ?? new Date(), gate?.sunriseIso, gate?.tomorrowSunriseIso)
-          : undefined,
+          : undefined),
     };
   }
 
@@ -322,7 +337,14 @@ export function summarizeClarity(
   if (!perCam.length) {
     // Capture exists but no cam could read open water (e.g. darkness) — honest
     // "no reading" rather than pretending the water is clear.
-    return { level: null, pct: null, note: NO_WATER_NOTE, capturedAtLocal, status: "unknown" };
+    return {
+      level: null,
+      pct: null,
+      note: NO_WATER_NOTE,
+      capturedAtLocal,
+      status: "unknown",
+      nextReadIso: learnedNextRead?.iso,
+    };
   }
 
   // MEDIAN across the cams (see the calibration note above). Prefer the numeric
@@ -343,6 +365,7 @@ export function summarizeClarity(
       note: closest.waterNote,
       capturedAtLocal,
       perCam,
+      nextReadIso: learnedNextRead?.iso,
     };
   }
   const ranked = [...perCam].sort((a, b) => RANK[a.water!] - RANK[b.water!]);
@@ -353,6 +376,7 @@ export function summarizeClarity(
     note: mid.waterNote,
     capturedAtLocal,
     perCam,
+    nextReadIso: learnedNextRead?.iso,
   };
 }
 
@@ -372,6 +396,10 @@ export interface ClarityTileCopy {
   /** Phone-width variant of `sub`: the deterministic parts only (no free-text
    *  cam note), so a 2-column tile never has to truncate mid-sentence. */
   subShort?: string;
+  /** When the next cam read is expected, ISO — rendered by the tile as its
+   *  own unclamped "Next cam read ~…" line (see lib/format.ts's
+   *  nextCamReadPhrase) so it can never be clipped by `sub`'s line clamp. */
+  nextReadIso?: string;
 }
 
 /** Only call out the AM/PM split when the halves actually differed. */
@@ -395,15 +423,13 @@ const HALF_DAY_GAP_PTS = 10;
  *  wording still shows in the tile's hover title and on the flip back. */
 function compactGateNote(note: string | undefined): string | undefined {
   if (!note) return note;
-  if (note === NIGHT_NOTE) return "cams resume at daylight";
+  if (note === NIGHT_NOTE) return "Next cam read at daylight";
   if (note === STALE_NOTE) return "waiting on a fresher shot";
   if (note === NO_WATER_NOTE) return "no open water in frame";
   return note;
 }
 
 export function clarityTileCopy(d: ClarityData, tz: string): ClarityTileCopy {
-  const nextRead = d.nextReadIso ? `cams resume ~${fmtTime(d.nextReadIso, tz)}` : null;
-
   if (d.level) {
     return {
       value: clarityDisplayWord(d.level, d.pct),
@@ -422,6 +448,7 @@ export function clarityTileCopy(d: ClarityData, tz: string): ClarityTileCopy {
         .join(" · "),
       pct: d.pct,
       level: d.level,
+      nextReadIso: d.nextReadIso,
     };
   }
 
@@ -433,11 +460,15 @@ export function clarityTileCopy(d: ClarityData, tz: string): ClarityTileCopy {
         : null;
     return {
       value: `${camDayHeadline(y)}: ${y.word}`,
-      // Closes with when the cams look again — or, for a daytime outage (which
-      // has no knowable end, so no nextReadIso), the reason they're out.
-      sub: [`~${y.pct}% clear`, split, nextRead ?? compactGateNote(d.note)].filter(Boolean).join(" · "),
+      // The next-read time is its own unclamped line (nextReadIso, below) —
+      // for a daytime outage (no knowable end, so no nextReadIso) the gate
+      // note still closes this line.
+      sub: [`~${y.pct}% clear`, split, d.nextReadIso ? null : compactGateNote(d.note)]
+        .filter(Boolean)
+        .join(" · "),
       pct: y.pct,
       muted: true,
+      nextReadIso: d.nextReadIso,
     };
   }
 
@@ -451,17 +482,19 @@ export function clarityTileCopy(d: ClarityData, tz: string): ClarityTileCopy {
       // 390px (caught by e2e/layout.spec.ts on Deerfield, 2026-09-18). The
       // full wording still shows at sm+ and in the hover title.
       subShort: noRecentCamReadsCopy(d.lastReadWeekday),
-      sub: [noRecentCamReadsCopy(d.lastReadWeekday), nextRead ?? compactGateNote(d.note)]
+      sub: [noRecentCamReadsCopy(d.lastReadWeekday), d.nextReadIso ? null : compactGateNote(d.note)]
         .filter(Boolean)
         .join(" · "),
       pct: null,
+      nextReadIso: d.nextReadIso,
     };
   }
 
   return {
     value: "—",
-    sub: [compactGateNote(d.note) ?? "not available", nextRead].filter(Boolean).join(" · "),
+    sub: [compactGateNote(d.note) ?? "not available"].filter(Boolean).join(" · "),
     pct: null,
+    nextReadIso: d.nextReadIso,
   };
 }
 

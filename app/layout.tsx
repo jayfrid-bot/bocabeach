@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import { NativePushInit } from "@/components/NativePushInit";
+import { ReloadOnNewVersion } from "@/components/ReloadOnNewVersion";
 
 const SITE_URL = "https://isitbeachday.com";
 const DEFAULT_TITLE = "Is It Beach Day? — Live Beach Conditions & Score";
@@ -102,6 +103,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         {children}
         <ServiceWorkerRegister />
         <NativePushInit />
+        <ReloadOnNewVersion />
       </body>
     </html>
   );

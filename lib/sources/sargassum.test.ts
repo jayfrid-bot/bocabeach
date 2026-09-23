@@ -276,3 +276,41 @@ describe("fetchSargassum — per-beach feed URL + legacy fallback", () => {
     expect(w.data?.level).toBe("low");
   });
 });
+
+// --- nextReadIso learned from cam-read history (lib/camNextRead.ts) --------
+
+describe("summarizeSeaweed — learned nextReadIso", () => {
+  const TZ = "America/New_York";
+  const learnedHistory = Array.from({ length: 14 }, (_, i) => {
+    const day = new Date(Date.UTC(2026, 7, 1 + i)); // Aug 1..14
+    const dateStr = day.toISOString().slice(0, 10);
+    return { t: `${dateStr}T14:08:00-04:00`, hour: 14, seaweed: "low", cov: 10 };
+  });
+
+  it("attaches a learned nextReadIso when timezone is passed", () => {
+    const feed: CamSeaweedFeed = {
+      latest: {
+        capturedAtLocal: "2026-08-15T14:08:00-04:00",
+        cams: [{ name: "South", level: "low", note: "thin wrack line" }],
+      },
+      history: learnedHistory as never,
+    };
+    const d = summarizeSeaweed(feed, "2026-08-15", {
+      now: new Date("2026-08-15T14:00:00-04:00"),
+      timezone: TZ,
+    })!;
+    expect(d.nextReadIso).toBe(new Date("2026-08-15T14:10:00-04:00").toISOString());
+  });
+
+  it("omits nextReadIso without a timezone (unchanged default)", () => {
+    const feed: CamSeaweedFeed = {
+      latest: {
+        capturedAtLocal: "2026-08-15T14:08:00-04:00",
+        cams: [{ name: "South", level: "low", note: "thin wrack line" }],
+      },
+      history: learnedHistory as never,
+    };
+    const d = summarizeSeaweed(feed, "2026-08-15")!;
+    expect(d.nextReadIso).toBeUndefined();
+  });
+});

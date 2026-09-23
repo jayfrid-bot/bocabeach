@@ -1,6 +1,6 @@
 import type { BusynessData } from "@/lib/types";
 import { BUSYNESS_SLOTS, busynessFilledSlots } from "@/lib/busynessFill";
-import { fmtTime } from "@/lib/format";
+import { nextCamReadPhrase } from "@/lib/format";
 import { camDayHeadline, noRecentCamReadsCopy } from "@/lib/sources/busyness";
 import { busynessVsAvgPhrase, type VsAvgTone } from "@/lib/vsAveragePhrase";
 
@@ -67,7 +67,17 @@ function Umbrella({ state }: { state: UmbrellaState }) {
  * back to the plain "cams can't see in the dark" note. Renders nothing when
  * this beach has no busyness source at all (no cams).
  */
-export function BusynessCard({ busy, tz }: { busy?: BusynessData | null; tz?: string }) {
+export function BusynessCard({
+  busy,
+  tz,
+  nowMs,
+}: {
+  busy?: BusynessData | null;
+  tz?: string;
+  /** Render-stable clock (ConditionsDashboard's pinned `nowMs`) for the "Next
+   *  cam read in ~X min" form; omit for the deterministic absolute-time form. */
+  nowMs?: number;
+}) {
   if (!busy) return null;
   const isUnknown = busy.level === "unknown";
   // Matches the old MetricCard's gate: an unknown level with no note at all
@@ -78,8 +88,7 @@ export function BusynessCard({ busy, tz }: { busy?: BusynessData | null; tz?: st
     const y = busy.yesterday;
     // "Next cam read ~6:40 AM" needs the beach's clock; without a tz we simply
     // leave the line off rather than quote a server-local time.
-    const nextRead =
-      busy.nextReadIso && tz ? `Cams resume ~${fmtTime(busy.nextReadIso, tz)}` : null;
+    const nextRead = tz ? nextCamReadPhrase(busy.nextReadIso, tz, nowMs) : null;
     const filled = y ? busynessFilledSlots(y.avgCrowdPct, y.level) : 0;
     // No day recent enough to summarize, but the cams DID read the beach at
     // some point — name that day plainly rather than showing nothing.
@@ -127,6 +136,7 @@ export function BusynessCard({ busy, tz }: { busy?: BusynessData | null; tz?: st
   // (it's the same ratio) — appending a separately-computed "X% full" repeated
   // the same fact twice. The people estimate is the only additional number.
   const sub = busy.peopleEstimate != null ? `~${busy.peopleEstimate} people` : undefined;
+  const nextRead = tz ? nextCamReadPhrase(busy.nextReadIso, tz, nowMs) : null;
 
   return (
     <div className="flex h-full flex-col rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
@@ -146,6 +156,11 @@ export function BusynessCard({ busy, tz }: { busy?: BusynessData | null; tz?: st
         {filled} of {BUSYNESS_SLOTS} umbrellas
         {sub ? ` · ${sub}` : ""}
       </div>
+      {nextRead ? (
+        <div className="mt-1 break-words text-xs text-slate-500 dark:text-slate-500">
+          {nextRead}
+        </div>
+      ) : null}
       {busy.vsAvg ? <BusynessVsAvgLine vsAvg={busy.vsAvg} /> : null}
     </div>
   );
