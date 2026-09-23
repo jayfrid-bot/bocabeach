@@ -5,7 +5,9 @@
 #
 # Recipe (proven 2026-09-07 for build 2026090701, extended for the extension):
 #   1. bump CURRENT_PROJECT_VERSION in the pbxproj (both targets share it)
-#   2. `npx cap sync ios` (never skip — plugin registration lives in the synced config)
+#   2. `npx cap sync ios` (never skip — needed for the web bundle + npm plugins;
+#      our local BeachSessionActivityPlugin registers itself in code via
+#      BeachBridgeViewController.capacitorDidLoad(), not via the synced config)
 #   3. archive with AUTOMATIC signing + the App Store Connect auth key
 #      (passing PROVISIONING_PROFILE_SPECIFIER on the CLI breaks SPM package targets)
 #   4. export with MANUAL signing via scripts/ios/ExportOptions.plist, which maps

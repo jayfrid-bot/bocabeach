@@ -15,6 +15,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         if ProcessInfo.processInfo.arguments.contains("--demo-live-activity") {
             BeachSessionDemo.run()
         }
+        if ProcessInfo.processInfo.arguments.contains("--probe-live-activity-plugin") {
+            BeachSessionActivityPlugin.runProbe()
+        }
+        if ProcessInfo.processInfo.arguments.contains("--probe-live-activity-start-only") {
+            BeachSessionActivityPlugin.runProbeStartOnly()
+        }
         #endif
         return true
     }

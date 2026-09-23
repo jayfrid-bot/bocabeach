@@ -111,8 +111,28 @@ struct BeachSessionAttributes: ActivityAttributes {
                 latched = try c.decodeIfPresent(Bool.self, forKey: .latched) ?? false
                 miles = try c.decodeIfPresent(Double.self, forKey: .miles)
                 bearingDeg = try c.decodeIfPresent(Double.self, forKey: .bearingDeg)
-                observedAt = try c.decodeIfPresent(Date.self, forKey: .observedAt)
-                holdUntil = try c.decodeIfPresent(Date.self, forKey: .holdUntil)
+                // Wire format is epoch ms (see lib/liveActivity/state.ts), not
+                // a Date encoded by a JSONDecoder date strategy — decode the
+                // raw number and convert ourselves.
+                observedAt = try c.decodeEpochMsIfPresent(forKey: .observedAt)
+                holdUntil = try c.decodeEpochMsIfPresent(forKey: .holdUntil)
+            }
+
+            // ActivityKit round-trips ContentState through Codable between
+            // the app and the widget extension (and on every local update),
+            // not just for an APNs push decode. A synthesized encode(to:)
+            // would write these Date fields via the default strategy
+            // (seconds since 2001), which our epoch-ms decoder above would
+            // then misread as milliseconds since 1970 — every timestamp
+            // wrong. Encode explicitly, symmetric with the decoder.
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(active, forKey: .active)
+                try c.encode(latched, forKey: .latched)
+                try c.encodeIfPresent(miles, forKey: .miles)
+                try c.encodeIfPresent(bearingDeg, forKey: .bearingDeg)
+                try c.encodeEpochMsIfPresent(observedAt, forKey: .observedAt)
+                try c.encodeEpochMsIfPresent(holdUntil, forKey: .holdUntil)
             }
         }
 
@@ -172,14 +192,62 @@ struct BeachSessionAttributes: ActivityAttributes {
             waveFt = try c.decodeIfPresent(Double.self, forKey: .waveFt)
             clarity = try c.decodeIfPresent(String.self, forKey: .clarity)
             seaweed = try c.decodeIfPresent(String.self, forKey: .seaweed)
-            nextTideAt = try c.decodeIfPresent(Date.self, forKey: .nextTideAt)
+            // Wire format is epoch ms (lib/liveActivity/state.ts), not a Date
+            // encoded via a JSONDecoder date strategy — decode the raw
+            // number ourselves so this matches the JS mapper exactly and
+            // doesn't depend on whatever dateDecodingStrategy the caller
+            // (APNs content-state push decode included) happens to use.
+            nextTideAt = try c.decodeEpochMsIfPresent(forKey: .nextTideAt)
             nextTideKind = try c.decodeIfPresent(String.self, forKey: .nextTideKind)
-            sunsetAt = try c.decodeIfPresent(Date.self, forKey: .sunsetAt)
+            sunsetAt = try c.decodeEpochMsIfPresent(forKey: .sunsetAt)
             lightning = try c.decodeIfPresent(Lightning.self, forKey: .lightning)
-            updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
+            updatedAt = try c.decodeEpochMsIfPresent(forKey: .updatedAt) ?? Date()
             unavailable = try c.decodeIfPresent(Bool.self, forKey: .unavailable)
             ended = try c.decodeIfPresent(Bool.self, forKey: .ended)
         }
+
+        // Symmetric with init(from:) above — see that initializer's comment
+        // for why this can't be left to synthesis.
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(v, forKey: .v)
+            try c.encode(seq, forKey: .seq)
+            try c.encode(score, forKey: .score)
+            try c.encodeIfPresent(windMph, forKey: .windMph)
+            try c.encodeIfPresent(gustMph, forKey: .gustMph)
+            try c.encodeIfPresent(windDeg, forKey: .windDeg)
+            try c.encodeIfPresent(waveFt, forKey: .waveFt)
+            try c.encodeIfPresent(clarity, forKey: .clarity)
+            try c.encodeIfPresent(seaweed, forKey: .seaweed)
+            try c.encodeEpochMsIfPresent(nextTideAt, forKey: .nextTideAt)
+            try c.encodeIfPresent(nextTideKind, forKey: .nextTideKind)
+            try c.encodeEpochMsIfPresent(sunsetAt, forKey: .sunsetAt)
+            try c.encodeIfPresent(lightning, forKey: .lightning)
+            try c.encodeEpochMsIfPresent(updatedAt, forKey: .updatedAt)
+            try c.encodeIfPresent(unavailable, forKey: .unavailable)
+            try c.encodeIfPresent(ended, forKey: .ended)
+        }
+    }
+}
+
+/// Shared by BeachSessionAttributes.ContentState and its Lightning payload:
+/// decode a field that is a JS epoch-ms number (not a Date encoded via a
+/// JSONDecoder date strategy) into a Date, tolerant of a missing key.
+private extension KeyedDecodingContainer {
+    func decodeEpochMsIfPresent(forKey key: Key) throws -> Date? {
+        guard let ms = try decodeIfPresent(Double.self, forKey: key) else { return nil }
+        guard ms.isFinite else { return nil }
+        return Date(timeIntervalSince1970: ms / 1000)
+    }
+}
+
+/// The encode-side counterpart: writes a Date as a JS epoch-ms number,
+/// matching `decodeEpochMsIfPresent` above exactly (and omits the key
+/// entirely for a nil date, same as `encodeIfPresent`).
+private extension KeyedEncodingContainer {
+    mutating func encodeEpochMsIfPresent(_ date: Date?, forKey key: Key) throws {
+        guard let date else { return }
+        try encode(date.timeIntervalSince1970 * 1000, forKey: key)
     }
 }
 
