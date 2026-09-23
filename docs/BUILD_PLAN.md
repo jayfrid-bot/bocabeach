@@ -21,7 +21,7 @@ Sizes are agent-build days (Sonnet crews, Fable orchestrating, Codex review on a
 ## Next — after 1.1 is approved (≈ 4 weeks)
 | # | Item | Days |
 |---|---|---|
-| 9 | Live Activities phases 2–4 (bridge, server push, lightning hero) → **submit 1.2** (new native build + review) | 8–10 |
+| 9 | Live Activities phases 2–3 ✅ SHIPPED 2026-09-23 (commits e389a99 + 4f740bd; migrations 0007/0008 live; six Codex rounds to SHIP). **Build 1.2 (2026092301) uploaded to TestFlight.** Phase 4 = on-device verification of the silent lightning hero, then submit 1.2 | 1–2 |
 | 10 | ✅ Score completeness rule — provenance-weighted completeness, 'Limited data' cap at 74, partial/estimated note (shipped 2026-09-22) | done |
 | 11 | ✅ "Where you stand" rain/lightning line — POST /api/hazards (native-only, arrival-gated, ~4 fetches), Beach Mode line only when it differs from the beach (shipped 2026-09-23) | done |
 | 12 | Plus history screens (calendar, typical crowds, seaweed season) | 5 |
