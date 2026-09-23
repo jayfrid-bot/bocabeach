@@ -234,9 +234,9 @@ function clamp01(value: number, min: number, max: number): number {
 }
 
 /** How far before the window the timeline track starts (minutes). */
-export const TRACK_LEAD_MINUTES = 90;
+export const TRACK_LEAD_MINUTES = 60;
 /** How far past the window the timeline track runs (minutes). */
-export const TRACK_TAIL_MINUTES = 30;
+export const TRACK_TAIL_MINUTES = 20;
 
 export interface GoldenTrack {
   /** Track span (ms) — window start − lead, window end + tail. */

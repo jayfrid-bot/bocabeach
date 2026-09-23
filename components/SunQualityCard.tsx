@@ -181,7 +181,7 @@ function buildSunQualityNerdInfo(args: {
       </div>
     ),
     explainer:
-      "How colorful will this sunrise or sunset be — rich color, or clear but plain? The best ones aren't the clearest ones — they need a mid/high cloud DECK to act as a canvas the low sun's red and orange light can paint onto, AND a clear enough horizon for that low beam to reach it. Golden hour is the low-angle window itself: the sun from +6° above the horizon down to −4° below it — so it straddles the sunrise/sunset, not stopping at it. Roughly 30-60% mid/high cloud is the color sweet spot; a perfectly clear sky is clean but plain; and a heavy LOW cloud deck sitting on the horizon blocks the beam before it reaches whatever's above.",
+      "How colorful will this sunrise or sunset be — rich color, or clear but plain? The best ones aren't the clearest ones — they need a mid/high cloud DECK to act as a canvas the low sun's red and orange light can paint onto, AND a clear enough horizon for that low beam to reach it. Golden hour here is the 40 minutes around the event: 20 minutes before to 20 minutes after sunrise or sunset. Roughly 30-60% mid/high cloud is the color sweet spot; a perfectly clear sky is clean but plain; and a heavy LOW cloud deck sitting on the horizon blocks the beam before it reaches whatever's above.",
     formula:
       "score = 0.40·clearPath + 0.40·canvas + 0.20·seasonalPrior, × aerosol × humidity modifiers. clearPath = 100 − beam-path cloud% (satellite, when a fresh sample is near the event) else 100 − low-cloud est. canvas = 100 − |0.5·mid + 0.7·high − 50|·2.2 − 0.9·low (high cloud weighted above mid). Modifiers: clean air (AOD<0.15) small bonus, haze/PM2.5 penalties (−25%/−35% caps), humidity >60% penalty (−15% cap). Peak color lags to the sun's −2°→−4° window when there's a high-cloud deck. Every constant is a tuned heuristic except the low-cloud clear-path blocker (Corfidi/NOAA). Without the atmospheric/satellite inputs, a simpler cloud-canvas curve is used instead. Golden/blue-hour times come from a solar-elevation solve (+6°/−4°/−6°), not a fixed 60-min window.",
     computation,
@@ -267,10 +267,13 @@ function GoldenTrack({
   // the card; the ticks themselves stay at their true time positions.
   const labelAt = (pct: number) => Math.min(92, Math.max(8, pct));
 
+  // Ticks mark the window's edges and the event; only the event gets a word.
+  // The 40-minute window is too narrow on a phone for three labels (they
+  // overlapped), and the times line above already gives the start and end.
   const ticks: { pct: number; text: string }[] = [
-    { pct: track.startPct, text: "golden" },
+    { pct: track.startPct, text: "" },
     ...(track.eventPct != null ? [{ pct: track.eventPct, text: eventWord }] : []),
-    { pct: track.endPct, text: "end" },
+    { pct: track.endPct, text: "" },
   ];
 
   return (
@@ -311,16 +314,16 @@ function GoldenTrack({
       </div>
 
       <div className="relative h-1" aria-hidden>
-        {ticks.map((t) => (
+        {ticks.map((t, i) => (
           <span
-            key={t.text}
+            key={i}
             className="absolute top-0 h-1 w-px -translate-x-1/2 bg-slate-300 dark:bg-slate-600"
             style={{ left: `${t.pct}%` }}
           />
         ))}
       </div>
       <div className="relative h-3" aria-hidden>
-        {ticks.map((t) => (
+        {ticks.filter((t) => t.text).map((t) => (
           <span
             key={t.text}
             className="absolute top-0 -translate-x-1/2 text-[10px] leading-3 text-slate-400 dark:text-slate-500"
@@ -334,13 +337,19 @@ function GoldenTrack({
   );
 }
 
+/** Which event the card is about: the timing target's side, else the scored event. */
+function targetKindFor(timing: GoldenHourTiming, scored: SunEventTime | null): SunEventKind {
+  const target = timing.target;
+  if (target) return target.kind === "am" ? "sunrise" : "sunset";
+  return scored?.event ?? "sunset";
+}
+
 function SunQualityFront({
   timing,
   nowMs,
   tz,
   scored,
   result,
-  peak,
 }: {
   /** Where we stand relative to the next golden window. */
   timing: GoldenHourTiming;
@@ -351,23 +360,16 @@ function SunQualityFront({
   /** The sun event the color score belongs to (null when there are no times). */
   scored: SunEventTime | null;
   result: SunEventQuality;
-  peak: PeakColorTime | null;
 }) {
   const target = timing.target;
   const during = timing.phase === "during";
-  const kind: SunEventKind = target
-    ? target.kind === "am"
-      ? "sunrise"
-      : "sunset"
-    : (scored?.event ?? "sunset");
+  const kind = targetKindFor(timing, scored);
 
   const meta = result.band ? sunQualityBandMeta(result.band) : null;
-  const colorLine =
-    result.score == null || !meta
-      ? `${eventLabel(kind)} color: —`
-      : `${eventLabel(kind)} color: ${meta.label}${
-          peak ? ` · peak color ~${fmtTime(peak.iso, tz)}` : ""
-        }`;
+  const title = cardTitle(kind, during);
+  // "Golden hour in 2h 14m" / "Golden hour now · 23 min left" /
+  // "Next golden hour 6:26 AM · in 9h 26m" — one plain line under the rating.
+  const whenLine = timing.badge ? `${timing.headline} · ${timing.badge}` : timing.headline;
 
   const windowStart = target ? target.start.toISOString() : scored?.goldenStartIso;
   const windowEnd = target ? target.end.toISOString() : scored?.goldenEndIso;
@@ -381,57 +383,58 @@ function SunQualityFront({
 
   return (
     <div className="flex h-full flex-col rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
-      <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+      {/* The title may wrap to two lines in the phone 2-up grid; never clip it. */}
+      <div className="flex items-start gap-2 text-sm leading-tight text-slate-600 dark:text-slate-400">
         <span aria-hidden>{eventIcon(kind)}</span>
-        <span className="truncate">Golden hour</span>
+        <span>{title}</span>
       </div>
 
       <div className="flex flex-1 flex-col justify-center">
-        {/* The countdown IS the headline — it's what you open this tile for. */}
-        <div className="flex flex-wrap items-baseline gap-x-2">
-          <span className="text-xl font-semibold leading-tight tabular-nums text-slate-900 dark:text-white sm:text-2xl">
-            {/* Keep "2h 14m" on one line — the wrap split "7h / 7m" in the 4-col grid. */}
-            {timing.headline.replace(/(\d+h) (\d+m)/, "$1\u00a0$2")}
-          </span>
-          {timing.badge ? (
+        {/* The rating IS the headline — one plain word. */}
+        <div className="mt-1 flex items-center gap-2">
+          {meta ? (
             <span
-              className={`text-xs font-medium tabular-nums ${
-                during
-                  ? "text-amber-600 dark:text-amber-400"
-                  : "text-slate-500 dark:text-slate-400"
-              }`}
-            >
-              {timing.badge}
-            </span>
+              aria-hidden
+              className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+              style={{ backgroundColor: meta.color }}
+            />
           ) : null}
+          <span
+            className={
+              meta
+                ? "text-xl font-semibold leading-tight text-slate-900 dark:text-white sm:text-2xl"
+                : "text-sm leading-tight text-slate-500 dark:text-slate-400"
+            }
+          >
+            {meta ? meta.label : "No forecast yet"}
+          </span>
         </div>
 
-        {/* Two lines allowed: in the mobile 2-up grid the full window + event
-            won't fit one line, and these times are the point of the card. */}
+        {/* Wraps freely at every width: these lines are the point of the card. */}
         <div
-          className="mt-1 min-h-4 text-xs leading-snug tabular-nums text-slate-500 dark:text-slate-400"
-          title={timesLine.trim() || undefined}
+          className={`mt-1 text-xs font-medium leading-snug tabular-nums ${
+            during ? "text-amber-600 dark:text-amber-400" : "text-slate-600 dark:text-slate-300"
+          }`}
         >
+          {whenLine.replace(/(\d+h) (\d+m)/, "$1\u00a0$2")}
+        </div>
+        <div className="mt-0.5 min-h-4 text-xs leading-snug tabular-nums text-slate-500 dark:text-slate-400">
           {timesLine}
         </div>
 
         {target ? <GoldenTrack target={target} nowMs={nowMs} during={during} tz={tz} /> : null}
-
-        {/* Two lines allowed at every width, matching timesLine above: with a
-            "Vivid"/"Sunrise" band label plus the "· peak color ~H:MM AM/PM"
-            suffix, this line can run long enough to wrap even in the wider
-            4-col desktop card (~200px) — a `sm:line-clamp-1` here once
-            clipped it mid-sentence on desktop (caught by e2e/layout.spec.ts;
-            the phone-width fix alone wasn't sufficient at every width). */}
-        <div
-          className="mt-3 min-h-4 text-xs tabular-nums text-slate-500 dark:text-slate-400"
-          title={colorLine}
-        >
-          {colorLine}
-        </div>
       </div>
     </div>
   );
+}
+
+/** "Upcoming sunset color" before the window; "Sunset color now" inside it
+ *  (after the sun has already set, "upcoming" would be wrong). Exported for tests. */
+export function cardTitle(kind: SunEventKind, during: boolean): string {
+  const event = kind === "sunrise" ? "sunrise" : "sunset";
+  return during
+    ? `${event === "sunrise" ? "Sunrise" : "Sunset"} color now`
+    : `Upcoming ${event} color`;
 }
 
 /**
@@ -520,7 +523,7 @@ export function SunQualityCard({
       <div className="flex h-full flex-col rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
         <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
           <span aria-hidden>🌅</span>
-          <span>Golden hour</span>
+          <span>Sunrise &amp; sunset color</span>
         </div>
         <div className="mt-2 text-sm text-slate-500 dark:text-slate-400">
           No sun times for this beach right now.
@@ -555,8 +558,8 @@ export function SunQualityCard({
   });
   const peakLine = peakColorLine(peak, scored.event, tz);
   const goldenLine = scored.goldenFromElevation
-    ? `Golden hour ${fmtTime(scored.goldenStartIso, tz)}–${fmtTime(scored.goldenEndIso, tz)} (true elevation window)`
-    : `Golden hour ${fmtTime(scored.goldenStartIso, tz)}–${fmtTime(scored.goldenEndIso, tz)} (≈60-min estimate)`;
+    ? `Golden hour ${fmtTime(scored.goldenStartIso, tz)}–${fmtTime(scored.goldenEndIso, tz)} (20 min either side of the ${scored.event})`
+    : `Golden hour ${fmtTime(scored.goldenStartIso, tz)}–${fmtTime(scored.goldenEndIso, tz)} (20 min either side of the ${scored.event}, estimated)`;
 
   const info = buildSunQualityNerdInfo({
     event: scored.event,
@@ -571,7 +574,7 @@ export function SunQualityCard({
 
   return (
     <FlipCard
-      label="Golden hour"
+      label={cardTitle(targetKindFor(live, scored), live.phase === "during")}
       front={
         <SunQualityFront
           timing={live}
@@ -579,7 +582,6 @@ export function SunQualityCard({
           tz={tz}
           scored={scored}
           result={result}
-          peak={peak}
         />
       }
       back={<NerdBack info={info} />}

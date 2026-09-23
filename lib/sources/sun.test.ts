@@ -109,10 +109,10 @@ describe("computeSunTimes", () => {
   });
 });
 
-describe("computeSunTimes — true golden/blue hour (elevation solve)", () => {
+describe("computeSunTimes — golden/blue hour", () => {
   const t = computeSunTimes(LAT, LON, 2026, 7, 24);
 
-  it("orders the evening sequence: golden start (+6°) → sunset → peak (−3°) → golden end (−4°) → blue end (−6°)", () => {
+  it("orders the evening sequence: golden start (sunset−20m) → sunset → peak (−3°) → golden end (sunset+20m) → blue end (−6°)", () => {
     const seq = [
       t.goldenEveStart!,
       t.sunset!,
@@ -130,7 +130,7 @@ describe("computeSunTimes — true golden/blue hour (elevation solve)", () => {
     expect(t.goldenEveEnd!.getTime()).toBeGreaterThan(t.sunset!.getTime());
   });
 
-  it("orders the morning sequence: blue start (−6°) → golden start (−4°) → peak (−3°) → sunrise → golden end (+6°)", () => {
+  it("orders the morning sequence: blue start (−6°) → golden start (sunrise−20m) → peak (−3°) → sunrise → golden end (sunrise+20m)", () => {
     const seq = [
       t.blueAmStart!,
       t.goldenAmStart!,
@@ -146,22 +146,17 @@ describe("computeSunTimes — true golden/blue hour (elevation solve)", () => {
   it("blue-hour bounds coincide with the −6° civil-twilight instants (daybreak/dusk)", () => {
     expect(t.blueAmStart!.getTime()).toBe(t.daybreak!.getTime());
     expect(t.blueEveEnd!.getTime()).toBe(t.dusk!.getTime());
-    // The blue↔golden boundary is shared (−4°).
+    // Blue hour ends where golden hour begins (and vice versa in the evening).
     expect(t.blueAmEnd!.getTime()).toBe(t.goldenAmStart!.getTime());
     expect(t.blueEveStart!.getTime()).toBe(t.goldenEveEnd!.getTime());
   });
 
-  it("each golden-hour side runs ~40-55 min at Boca's latitude (sun drops fast, but +6→−4 is 10° of arc)", () => {
-    const eveMin = (t.goldenEveEnd!.getTime() - t.goldenEveStart!.getTime()) / 60000;
-    const amMin = (t.goldenAmEnd!.getTime() - t.goldenAmStart!.getTime()) / 60000;
-    expect(eveMin).toBeGreaterThanOrEqual(40);
-    expect(eveMin).toBeLessThanOrEqual(55);
-    expect(amMin).toBeGreaterThanOrEqual(40);
-    expect(amMin).toBeLessThanOrEqual(55);
-    // Post-sunset side (sunset→−4°) is the ~25-35 min "per side of sunset" figure.
-    const postSunset = (t.goldenEveEnd!.getTime() - t.sunset!.getTime()) / 60000;
-    expect(postSunset).toBeGreaterThanOrEqual(10);
-    expect(postSunset).toBeLessThanOrEqual(35);
+  it("golden hour is exactly 20 min before to 20 min after sunrise and sunset", () => {
+    const min = (a: Date, b: Date) => (a.getTime() - b.getTime()) / 60000;
+    expect(min(t.sunrise!, t.goldenAmStart!)).toBe(20);
+    expect(min(t.goldenAmEnd!, t.sunrise!)).toBe(20);
+    expect(min(t.sunset!, t.goldenEveStart!)).toBe(20);
+    expect(min(t.goldenEveEnd!, t.sunset!)).toBe(20);
   });
 });
 

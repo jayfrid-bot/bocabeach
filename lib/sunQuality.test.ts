@@ -149,27 +149,27 @@ describe("nextSunEvent", () => {
   const today = { sunrise: "2026-07-21T10:30:00.000Z", sunset: "2026-07-21T23:45:00.000Z" };
   const tomorrowSunrise = "2026-07-22T10:31:00.000Z";
 
-  it("picks today's sunrise when now is before it, with a 60-min golden window starting at sunrise", () => {
+  it("picks today's sunrise when now is before it, with a golden window 20 min either side of sunrise", () => {
     const r = nextSunEvent(new Date("2026-07-21T08:00:00.000Z"), today, tomorrowSunrise);
     expect(r?.event).toBe("sunrise");
     expect(r?.timeIso).toBe(today.sunrise);
-    expect(r?.goldenStartIso).toBe(today.sunrise);
-    expect(r?.goldenEndIso).toBe("2026-07-21T11:30:00.000Z");
+    expect(r?.goldenStartIso).toBe("2026-07-21T10:10:00.000Z");
+    expect(r?.goldenEndIso).toBe("2026-07-21T10:50:00.000Z");
   });
 
-  it("picks today's sunset when sunrise has passed but sunset hasn't, with a 60-min golden window ending at sunset", () => {
+  it("picks today's sunset when sunrise has passed but sunset hasn't, with a golden window 20 min either side of sunset", () => {
     const r = nextSunEvent(new Date("2026-07-21T15:00:00.000Z"), today, tomorrowSunrise);
     expect(r?.event).toBe("sunset");
     expect(r?.timeIso).toBe(today.sunset);
-    expect(r?.goldenStartIso).toBe("2026-07-21T22:45:00.000Z");
-    expect(r?.goldenEndIso).toBe(today.sunset);
+    expect(r?.goldenStartIso).toBe("2026-07-21T23:25:00.000Z");
+    expect(r?.goldenEndIso).toBe("2026-07-22T00:05:00.000Z");
   });
 
   it("picks tomorrow's sunrise once today's sunset has passed", () => {
     const r = nextSunEvent(new Date("2026-07-22T01:00:00.000Z"), today, tomorrowSunrise);
     expect(r?.event).toBe("sunrise");
     expect(r?.timeIso).toBe(tomorrowSunrise);
-    expect(r?.goldenStartIso).toBe(tomorrowSunrise);
+    expect(r?.goldenStartIso).toBe("2026-07-22T10:11:00.000Z");
   });
 
   it("returns null after sunset when no tomorrow sunrise was supplied", () => {
@@ -415,13 +415,14 @@ describe("nextSunEvent — true elevation golden windows", () => {
     expect(r?.goldenFromElevation).toBe(true);
   });
 
-  it("falls back to the ±60-min window (goldenFromElevation:false) when no real window is supplied", () => {
+  it("falls back to the ±20-min window (goldenFromElevation:false) when no real window is supplied", () => {
     const r = nextSunEvent(new Date("2026-07-21T08:00:00.000Z"), {
       sunrise: today.sunrise,
       sunset: today.sunset,
     });
     expect(r?.goldenFromElevation).toBe(false);
-    expect(r?.goldenStartIso).toBe(today.sunrise); // sunrise → +60
+    expect(r?.goldenStartIso).toBe("2026-07-21T10:21:00.000Z"); // sunrise − 20
+    expect(r?.goldenEndIso).toBe("2026-07-21T11:01:00.000Z"); // sunrise + 20
     expect(r?.peakAnchorIso).toBeUndefined();
   });
 

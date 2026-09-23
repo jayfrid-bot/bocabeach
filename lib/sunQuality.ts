@@ -118,11 +118,11 @@ export interface SunQualityBandMeta {
 
 /** Highest-scoring band last, low-scoring band first — display/legend order. */
 export const SUN_QUALITY_BANDS: readonly SunQualityBandMeta[] = [
-  { band: "dud", label: "Dud", color: "#64748b" }, // slate-500
-  { band: "plain", label: "Plain", color: "#94a3b8" }, // slate-400
+  { band: "dud", label: "Poor", color: "#64748b" }, // slate-500
+  { band: "plain", label: "Fair", color: "#94a3b8" }, // slate-400
   { band: "good", label: "Good", color: "#fbbf24" }, // amber-400
-  { band: "vivid", label: "Vivid", color: "#fb923c" }, // orange-400
-  { band: "epic", label: "Epic", color: "#f97316" }, // orange-500
+  { band: "vivid", label: "Great", color: "#fb923c" }, // orange-400
+  { band: "epic", label: "Amazing", color: "#f97316" }, // orange-500
 ] as const;
 
 export function sunQualityBandMeta(band: SunQualityBand): SunQualityBandMeta {
@@ -487,7 +487,7 @@ export function sunEventQuality(input: SunEventQualityInput): SunEventQuality {
  * below. This flat 60-min stand-in is used only when that elevation window is
  * unavailable (e.g. an older cached snapshot with no golden-hour fields).
  */
-export const GOLDEN_HOUR_MINUTES = 60;
+export const GOLDEN_HOUR_MINUTES = 20; // each side of the event
 const GOLDEN_HOUR_MS = GOLDEN_HOUR_MINUTES * 60_000;
 
 export interface SunEventTime {
@@ -542,17 +542,11 @@ function goldenWindow(
       peakAnchorIso: real.peakAnchorIso,
     };
   }
+  // Same rule as lib/sources/sun.ts: 20 min before to 20 min after the event.
   const t = Date.parse(timeIso);
-  if (event === "sunrise") {
-    return {
-      goldenStartIso: timeIso,
-      goldenEndIso: new Date(t + GOLDEN_HOUR_MS).toISOString(),
-      goldenFromElevation: false,
-    };
-  }
   return {
     goldenStartIso: new Date(t - GOLDEN_HOUR_MS).toISOString(),
-    goldenEndIso: timeIso,
+    goldenEndIso: new Date(t + GOLDEN_HOUR_MS).toISOString(),
     goldenFromElevation: false,
   };
 }

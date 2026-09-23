@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-09-23",
+    title: "Simpler sunrise and sunset color card, and a tighter golden hour",
+    details:
+      "The card now says \"Upcoming sunrise color\" or \"Upcoming sunset color\" and rates it in one plain word: Poor, Fair, Good, Great, or Amazing. Golden hour now runs from 20 minutes before to 20 minutes after sunrise and sunset.",
+    tag: "improved",
+  },
+  {
     date: "2026-09-22",
     title: "Beach Session on your Lock Screen — coming in the next app update",
     details:

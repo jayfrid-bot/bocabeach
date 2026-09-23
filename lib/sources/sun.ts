@@ -7,13 +7,13 @@ const SOURCE = "Solar calculator";
 const ZENITH_SUNRISE = 90.833; // upper limb + standard atmospheric refraction
 const ZENITH_CIVIL = 96; // civil twilight ("daybreak" / first light)
 
-// Photographic golden/blue hour, as SOLAR ELEVATIONS (degrees above horizon).
-// Golden hour is NOT bounded by sunset — it straddles it: the warm, low-angle
-// light runs from +6° down through the horizon to −4°. Blue hour is the −4°→−6°
-// twilight band just past golden hour. (Widely-used photographic convention;
-// e.g. PhotoPills / golden-hour.com use these same +6/−4/−6 bounds.)
-const ELEV_GOLDEN_HI = 6; // upper bound of golden hour
-const ELEV_GOLDEN_LO = -4; // golden↔blue boundary (below the horizon)
+// Golden hour is a fixed window around each sun event: 20 minutes before to
+// 20 minutes after sunrise, and 20 minutes before to 20 minutes after sunset
+// (owner decision 2026-09-23; replaced the photographic +6°/−4° elevation
+// window, which ran 40–55 min and felt too long). Blue hour runs from the sun
+// at −6° (civil twilight) up to the golden window's edge.
+export const GOLDEN_MINUTES_EACH_SIDE = 20;
+const GOLDEN_SIDE_MS = GOLDEN_MINUTES_EACH_SIDE * 60_000;
 const ELEV_BLUE_LO = -6; // lower bound of blue hour (= civil twilight, −6°)
 const ELEV_PEAK = -3; // peak-color anchor: midpoint of the −2°→−4° sweet spot
 
@@ -106,13 +106,13 @@ export interface SunTimes {
   dusk: Date | null;
   // --- True golden/blue hour bounds from the elevation solve (see the ELEV_*
   // constants). Null when the sun never reaches that elevation on this day. ---
-  goldenAmStart: Date | null; // sun rising through −4°
-  goldenAmEnd: Date | null; // sun rising through +6°
-  goldenEveStart: Date | null; // sun descending through +6°
-  goldenEveEnd: Date | null; // sun descending through −4°
+  goldenAmStart: Date | null; // sunrise − 20 min
+  goldenAmEnd: Date | null; // sunrise + 20 min
+  goldenEveStart: Date | null; // sunset − 20 min
+  goldenEveEnd: Date | null; // sunset + 20 min
   blueAmStart: Date | null; // sun rising through −6° (= daybreak)
-  blueAmEnd: Date | null; // sun rising through −4°
-  blueEveStart: Date | null; // sun descending through −4°
+  blueAmEnd: Date | null; // = goldenAmStart
+  blueEveStart: Date | null; // = goldenEveEnd
   blueEveEnd: Date | null; // sun descending through −6° (= dusk)
   goldenAmPeak: Date | null; // sun at −3°, rising (pre-sunrise peak color)
   goldenEvePeak: Date | null; // sun at −3°, descending (post-sunset peak color)
@@ -152,24 +152,28 @@ export function computeSunTimes(
     if (ha == null) return { am: null, eve: null };
     return { am: at(solarNoonUTC - 4 * ha), eve: at(solarNoonUTC + 4 * ha) };
   };
-  const gHi = crossing(ELEV_GOLDEN_HI); // +6°
-  const gLo = crossing(ELEV_GOLDEN_LO); // −4°
+  const sunrise = haSun == null ? null : at(solarNoonUTC - 4 * haSun);
+  const sunset = haSun == null ? null : at(solarNoonUTC + 4 * haSun);
+  const shift = (d: Date | null, ms: number): Date | null =>
+    d == null ? null : new Date(d.getTime() + ms);
+  const goldenAmStart = shift(sunrise, -GOLDEN_SIDE_MS);
+  const goldenEveEnd = shift(sunset, GOLDEN_SIDE_MS);
   const bLo = crossing(ELEV_BLUE_LO); // −6°
   const pk = crossing(ELEV_PEAK); // −3°
 
   return {
     daybreak: haCivil == null ? null : at(solarNoonUTC - 4 * haCivil),
-    sunrise: haSun == null ? null : at(solarNoonUTC - 4 * haSun),
+    sunrise,
     solarNoon: at(solarNoonUTC),
-    sunset: haSun == null ? null : at(solarNoonUTC + 4 * haSun),
+    sunset,
     dusk: haCivil == null ? null : at(solarNoonUTC + 4 * haCivil),
-    goldenAmStart: gLo.am,
-    goldenAmEnd: gHi.am,
-    goldenEveStart: gHi.eve,
-    goldenEveEnd: gLo.eve,
+    goldenAmStart,
+    goldenAmEnd: shift(sunrise, GOLDEN_SIDE_MS),
+    goldenEveStart: shift(sunset, -GOLDEN_SIDE_MS),
+    goldenEveEnd,
     blueAmStart: bLo.am,
-    blueAmEnd: gLo.am,
-    blueEveStart: gLo.eve,
+    blueAmEnd: goldenAmStart,
+    blueEveStart: goldenEveEnd,
     blueEveEnd: bLo.eve,
     goldenAmPeak: pk.am,
     goldenEvePeak: pk.eve,

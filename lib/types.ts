@@ -329,24 +329,24 @@ export interface SunData {
   /** Tomorrow's sunrise (ISO) — the sunset-color card looks ahead to it once
    *  today's sunset has passed. See lib/sunQuality.ts's nextSunEvent. */
   tomorrowSunrise?: string;
-  // --- True golden/blue hour, from a solar-elevation solve (photographic
-  // standard, NOT a fixed 60-min approximation): golden hour spans solar
-  // elevation +6° down to −4° (straddling sunrise/sunset); blue hour is −4°
-  // to −6°. All ISO, all additive/optional (absent at high latitudes where the
-  // sun never crosses the elevation, and on cached snapshots predating this). ---
-  /** Morning golden hour start — sun rising through −4° (before sunrise). */
+  // --- Golden/blue hour. Golden hour = 20 min before to 20 min after sunrise,
+  // and 20 min before to 20 min after sunset (lib/sources/sun.ts). Blue hour
+  // runs from the sun at −6° to the golden window's edge. All ISO, all
+  // additive/optional (absent where the sun never rises or sets, and on cached
+  // snapshots predating these fields). ---
+  /** Morning golden hour start — sunrise − 20 min. */
   goldenAmStartIso?: string;
-  /** Morning golden hour end — sun rising through +6°. */
+  /** Morning golden hour end — sunrise + 20 min. */
   goldenAmEndIso?: string;
-  /** Evening golden hour start — sun descending through +6° (before sunset). */
+  /** Evening golden hour start — sunset − 20 min. */
   goldenEveStartIso?: string;
-  /** Evening golden hour end — sun descending through −4° (after sunset). */
+  /** Evening golden hour end — sunset + 20 min. */
   goldenEveEndIso?: string;
   /** Morning blue hour start — sun rising through −6° (= daybreak). */
   blueAmStartIso?: string;
-  /** Morning blue hour end — sun rising through −4° (= goldenAmStart). */
+  /** Morning blue hour end (= goldenAmStart). */
   blueAmEndIso?: string;
-  /** Evening blue hour start — sun descending through −4° (= goldenEveEnd). */
+  /** Evening blue hour start (= goldenEveEnd). */
   blueEveStartIso?: string;
   /** Evening blue hour end — sun descending through −6° (= dusk). */
   blueEveEndIso?: string;

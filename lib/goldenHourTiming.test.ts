@@ -218,14 +218,14 @@ describe("goldenTrack", () => {
   });
 
   it("places the window, the event and now along the span", () => {
-    // Span = 90 lead + 45 window + 30 tail = 165 min.
+    // Span = 60 lead + 45 window + 20 tail = 125 min.
     const track = goldenTrack(target, at(N, "00:00"));
-    expect(track.startPct).toBeCloseTo((90 / 165) * 100, 5);
-    expect(track.endPct).toBeCloseTo((135 / 165) * 100, 5);
+    expect(track.startPct).toBeCloseTo((60 / 125) * 100, 5);
+    expect(track.endPct).toBeCloseTo((105 / 125) * 100, 5);
     // Sunset 7:49 PM = 31 min after the window opens.
-    expect(track.eventPct).toBeCloseTo((121 / 165) * 100, 5);
+    expect(track.eventPct).toBeCloseTo((91 / 125) * 100, 5);
     // Now 8:00 PM = 42 min after the window opens.
-    expect(track.nowPct).toBeCloseTo((132 / 165) * 100, 5);
+    expect(track.nowPct).toBeCloseTo((102 / 125) * 100, 5);
     expect(track.nowOutside).toBe(false);
   });
 
