@@ -714,6 +714,17 @@ describe("POST /api/push/run", () => {
 
   // --- The at-beach engine, through the route -------------------------------
   describe("hazard alerts from a live fix", () => {
+    // Pinned outside the 8 AM America/New_York morning-digest window, so
+    // mode=morning's "no digest, no hazard alert" assertions hold no matter
+    // when this suite happens to run.
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-09-02T18:00:00Z")); // 2 PM America/New_York (EDT)
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     /** A strike ~3.4 mi north of Boca's beach, two minutes ago. */
     function nearStrike() {
       return {
@@ -799,6 +810,13 @@ describe("POST /api/push/run", () => {
 
     beforeEach(() => {
       ctl.conditions = fourFootDay();
+      // Pinned outside the 8 AM America/New_York morning-digest window, so an
+      // un-forced run() here never picks up an unrelated digest send.
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-09-02T18:00:00Z")); // 2 PM America/New_York (EDT)
+    });
+    afterEach(() => {
+      vi.useRealTimers();
     });
 
     it("pushes everyone's score to a device with no profile", async () => {
