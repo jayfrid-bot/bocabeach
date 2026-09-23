@@ -25,13 +25,13 @@ Sizes are agent-build days (Sonnet crews, Fable orchestrating, Codex review on a
 | 10 | ✅ Score completeness rule — provenance-weighted completeness, 'Limited data' cap at 74, partial/estimated note (shipped 2026-09-22) | done |
 | 11 | "Where you stand" rain/lightning line in the app (`/api/hazards`, native-only) | 2–3 |
 | 12 | Plus history screens (calendar, typical crowds, seaweed season) | 5 |
-| 13 | Satellite-as-data spike against Boca's 1,073 cam reads | 2–3 |
+| 13 | ✅ Satellite-as-data spike (2026-09-22): NOT usable as live data — seaweed rho 0.16 (n=7), turbidity rho −0.80 but n=4, scene gaps up to 26 days; turbidity worth a longer validation only (`docs/research/2026-09-22-satellite-as-data-spike.md`) | done |
 
 ## Later — optional (≈ 5–6 weeks if all of it)
 | # | Item | Days |
 |---|---|---|
 | 14 | Location phase 2: coast segments, per-metric station candidates, station health, async beach setup, two explicit modes, drop-a-pin, bigger beach list, coverage-aware SEO (`docs/LOCATION_FIRST_PLAN.md` Phase 2) | 15–20 |
-| 15 | Satellite imagery gallery (only if the spike passes) | 5 |
+| 15 | Satellite imagery gallery — pictures only (the spike ruled out satellite-as-data); optional Pro feature | 5 |
 | 16 | Replace Open-Meteo fully with free sources (UV + aerosol remain gaps) | 6–9 |
 | 17 | Android release (Play key + AAB) | 1 + owner |
 
