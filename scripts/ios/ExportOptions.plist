@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Export the archive for App Store Connect / TestFlight with MANUAL signing.
+       Cloud signing can't mint a distribution cert with an App-Manager key, so the
+       archive step uses automatic signing + the ASC auth key and this export maps
+       each bundle id to its installed App Store profile (both are required since
+       the Beach Session Live Activity extension shipped — a missing mapping fails
+       the export, not the archive). -->
+  <key>method</key>
+  <string>app-store-connect</string>
+  <key>signingStyle</key>
+  <string>manual</string>
+  <key>teamID</key>
+  <string>F6994Y2RVD</string>
+  <key>signingCertificate</key>
+  <string>Apple Distribution</string>
+  <key>provisioningProfiles</key>
+  <dict>
+    <key>com.isitbeachday.app</key>
+    <string>IsItBeachDay AppStore Push</string>
+    <key>com.isitbeachday.app.beachsession</key>
+    <string>IsItBeachDay BeachSession AppStore</string>
+  </dict>
+  <key>uploadSymbols</key>
+  <true/>
+  <key>destination</key>
+  <string>export</string>
+</dict>
+</plist>
