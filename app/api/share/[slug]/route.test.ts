@@ -137,4 +137,44 @@ describe("GET /api/share/[slug]", () => {
     const res = await GET(...req("boca-raton", "?format=poster"));
     expect(res.status).toBe(400);
   });
+
+  // Codex round 2: the edge-cache lookup moved BEFORE getConditions() so a
+  // cache hit skips the conditions build entirely, not just the satori
+  // render — this route is warmed proactively on every page view.
+  describe("edge cache lookup runs before the conditions build", () => {
+    const originalCaches = (globalThis as { caches?: unknown }).caches;
+    afterEach(() => {
+      (globalThis as { caches?: unknown }).caches = originalCaches;
+    });
+
+    it("a cache hit never calls getConditions", async () => {
+      const cached = new Response(new Uint8Array([1, 2, 3]), {
+        headers: { "content-type": "image/png" },
+      });
+      const match = vi.fn().mockResolvedValue(cached);
+      const put = vi.fn();
+      (globalThis as { caches?: unknown }).caches = { default: { match, put } };
+
+      const res = await GET(...req("boca-raton"));
+
+      expect(res).toBe(cached);
+      expect(match).toHaveBeenCalledTimes(1);
+      expect(getConditions).not.toHaveBeenCalled();
+      expect(put).not.toHaveBeenCalled();
+    });
+
+    it("a cache miss still builds conditions and populates the cache", async () => {
+      vi.mocked(getConditions).mockResolvedValue(fixture());
+      const match = vi.fn().mockResolvedValue(undefined);
+      const put = vi.fn().mockResolvedValue(undefined);
+      (globalThis as { caches?: unknown }).caches = { default: { match, put } };
+
+      const res = await GET(...req("boca-raton"));
+
+      expect(res.status).toBe(200);
+      expect(match).toHaveBeenCalledTimes(1);
+      expect(getConditions).toHaveBeenCalledTimes(1);
+      expect(put).toHaveBeenCalledTimes(1);
+    });
+  });
 });

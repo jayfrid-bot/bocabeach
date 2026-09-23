@@ -72,9 +72,68 @@ describe("fetchTraffic error note (Codex round-5 #2)", () => {
     const result = await fetchTraffic(loc);
 
     expect(result.status).toBe("error");
-    expect(result.note).toBe("traffic source unavailable");
+    expect(result.note).toBe("Traffic data isn't available");
     expect(result.note).not.toContain("apiKey");
     expect(result.note).not.toContain("SECRET123");
     expect(result.note).not.toContain("?");
+  });
+});
+
+describe("fetchTraffic note never leaks internal details (Codex LOW)", () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.HERE_API_KEY;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    process.env.HERE_API_KEY = originalKey;
+    vi.restoreAllMocks();
+  });
+
+  it("uses a fixed, generic note when HERE_API_KEY isn't configured — never the env var's own name", async () => {
+    delete process.env.HERE_API_KEY;
+    const loc = { lat: 26.35, lon: -80.08, trafficRadiusKm: 2 } as Location;
+    const result = await fetchTraffic(loc);
+
+    expect(result.status).toBe("best-effort");
+    expect(result.data).toBeNull();
+    expect(result.note).toBe("Traffic data isn't available");
+    expect(result.note).not.toContain("HERE_API_KEY");
+    expect(result.note).not.toContain("HERE");
+  });
+
+  it("uses the same fixed note when the key is rejected or throttled — never the HTTP status", async () => {
+    process.env.HERE_API_KEY = "SECRET123";
+    globalThis.fetch = vi.fn(async () => new Response("", { status: 429 })) as unknown as typeof fetch;
+    const loc = { lat: 26.35, lon: -80.08, trafficRadiusKm: 2 } as Location;
+    const result = await fetchTraffic(loc);
+
+    expect(result.status).toBe("best-effort");
+    expect(result.note).toBe("Traffic data isn't available");
+  });
+
+  it("uses the same fixed note when no road segments are in range", async () => {
+    process.env.HERE_API_KEY = "SECRET123";
+    globalThis.fetch = vi.fn(
+      async () => new Response(JSON.stringify({ results: [] }), { status: 200 }),
+    ) as unknown as typeof fetch;
+    const loc = { lat: 26.35, lon: -80.08, trafficRadiusKm: 2 } as Location;
+    const result = await fetchTraffic(loc);
+
+    expect(result.status).toBe("best-effort");
+    expect(result.note).toBe("Traffic data isn't available");
+  });
+
+  it("carries no note at all on a healthy, known reading", async () => {
+    process.env.HERE_API_KEY = "SECRET123";
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ results: [{ currentFlow: { jamFactor: 2, confidence: 1 } }] }), {
+          status: 200,
+        }),
+    ) as unknown as typeof fetch;
+    const loc = { lat: 26.35, lon: -80.08, trafficRadiusKm: 2 } as Location;
+    const result = await fetchTraffic(loc);
+
+    expect(result.status).toBe("ok");
+    expect(result.note).toBeUndefined();
   });
 });

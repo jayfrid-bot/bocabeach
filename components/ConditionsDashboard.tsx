@@ -14,6 +14,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { ScoreExplainer } from "@/components/ScoreExplainer";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { isPullRefreshing } from "@/lib/refreshInFlight";
+import { shouldRefetchForFreshness } from "@/lib/conditionsFreshness";
 import { ScoreWheel } from "@/components/ScoreWheel";
 import { ScoreCapBanner } from "@/components/ScoreCapBanner";
 import { DataCoverageNote } from "@/components/DataCoverageNote";
@@ -195,6 +196,73 @@ export function ConditionsDashboard({
   // error body lacking `.snapshot` must never shadow the good initial data.
   const res = data && data.snapshot ? data : initial;
   const snap = res.snapshot;
+
+  // Stale-while-revalidate freshness retry (Codex round 2/3): unstable_cache's
+  // 120-s revalidate under OpenNext can serve the FIRST visitor to a
+  // low-traffic beach a snapshot that's many minutes old, with nobody
+  // revalidating it until someone asks. Rather than have the SERVER pay for
+  // a second, synchronous conditions build per request (rejected — see
+  // lib/conditions.ts), the CLIENT checks once it's on screen and, if the
+  // displayed snapshot is stale, quietly asks again — up to twice, at ~6s
+  // and ~20s post-mount. Every such request uses the SAME literal `?fresh=1`
+  // (never a unique cache-buster — round 3: that let every stale-boundary
+  // visitor force its own uncached rebuild) so concurrent askers share one
+  // edge cache entry, which the route serves `s-maxage=20` for. All of this
+  // is post-mount only; the very first render (SSR + hydration) still pins
+  // to `initial`/`snap` exactly as rendered, so there's no hydration mismatch.
+  const latestGeneratedAtRef = useRef(snap.generatedAt);
+  useEffect(() => {
+    latestGeneratedAtRef.current = snap.generatedAt;
+  }, [snap.generatedAt]);
+  useEffect(() => {
+    if (preview) return;
+    let attempts = 0;
+    let cancelled = false;
+    let inFlight = false; // the ~20s attempt must never overlap the ~6s one
+    const attempt = async () => {
+      if (cancelled || inFlight) return;
+      // A manual pull-to-refresh is already in flight — don't pile a second
+      // request on top of it (mirrors the resume-refetch guard above). This
+      // slot is simply skipped, not counted against the attempt budget, so
+      // the OTHER scheduled attempt still gets its turn.
+      if (isPullRefreshing()) return;
+      if (!shouldRefetchForFreshness(latestGeneratedAtRef.current, Date.now(), attempts)) return;
+      attempts += 1;
+      inFlight = true;
+      try {
+        // No `cache: "no-store"` (Codex round 4) — the route serves this
+        // exact URL `s-maxage=20`, and letting the browser/edge share that
+        // 20-s entry is the whole point: every client asking "is this fresh
+        // yet" in the same window gets the one shared answer, not its own.
+        const r = await fetch(`/api/conditions/${slug}?fresh=1`);
+        if (!r.ok || cancelled) return;
+        const fresh = (await r.json()) as ConditionsResponse;
+        if (!fresh?.snapshot?.generatedAt) return;
+        // Only replace the displayed data if it's actually NEWER — never
+        // let a straggling response overwrite something fresher that
+        // arrived in the meantime (SWR's own poll, focus/resume refetch).
+        if (Date.parse(fresh.snapshot.generatedAt) > Date.parse(latestGeneratedAtRef.current)) {
+          latestGeneratedAtRef.current = fresh.snapshot.generatedAt;
+          void mutate(fresh, { revalidate: false });
+        }
+      } catch {
+        // Best-effort — SWR's own 5-min poll and the focus/resume refetches
+        // above still cover this beach even if both tries fail.
+      } finally {
+        inFlight = false;
+      }
+    };
+    const t1 = setTimeout(attempt, 6_000);
+    const t2 = setTimeout(attempt, 20_000);
+    return () => {
+      cancelled = true;
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+    // Deliberately keyed to mount/slug only — a fresher arrival updates the
+    // ref directly (above) rather than restarting this two-attempt window.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preview, slug]);
 
   // The clock every time-dependent render runs on.
   //

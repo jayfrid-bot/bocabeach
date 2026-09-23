@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-23",
+    title: "Fresher data on quieter beaches, and the sun arc matches golden hour",
+    details:
+      "If a beach's conditions are more than 10 minutes old when you open it, the page now fetches fresh ones a few seconds later. The sun arc now glows for the same 20-minute golden hour window as the sunrise and sunset color card.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-09-23",
     title: "Pull to refresh now feels like a refresh",
     details:
       "The page follows your finger, bounces back when fresh data lands, and a small note shows the time of the data you're now seeing.",

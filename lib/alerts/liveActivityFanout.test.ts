@@ -404,4 +404,137 @@ describe("runAtBeachAlerts — Live Activity fan-out", () => {
       expect(laSent).toHaveLength(1);
     });
   });
+
+  describe("safety first (Codex HIGH): ordinary hazard alerts across ALL devices beat Live Activity work", () => {
+    const DEV_A = "aaaaaaaa-2222-4333-8444-555555555555";
+    const DEV_B = "bbbbbbbb-2222-4333-8444-555555555555";
+    const TOKEN_A = "d".repeat(80);
+    const TOKEN_B = "e".repeat(80);
+    const LA_TOKEN_A = "f".repeat(64);
+
+    // Deerfield's centroid is ~5 mi from Boca's (lib/alerts/run.test.ts) —
+    // far enough from NEAR_STRIKE (~3.4 mi north of Boca) that A never sees
+    // an active lightning hazard, while B, sitting at Boca itself, does.
+    const DEERFIELD = { lat: 26.3184, lon: -80.0748 };
+
+    async function seedTwo() {
+      // Device A: an active Live Activity due for its update, but nothing
+      // that fires an ordinary alert (no strike within 5 mi of A's fix,
+      // calm conditions otherwise).
+      await store.upsertDevice(DEV_A, {
+        platform: "ios",
+        pushToken: TOKEN_A,
+        tz: "America/New_York",
+        homeSlug: "deerfield-beach",
+        codeUntil: NOW + 30 * 24 * HOUR,
+      });
+      await store.setPresence(DEV_A, {
+        slug: "deerfield-beach",
+        lat: DEERFIELD.lat,
+        lon: DEERFIELD.lon,
+        accuracyM: 20,
+        fixAt: NOW - 60_000,
+        armedUntil: NOW + 4 * HOUR,
+        source: "auto",
+      });
+      // Never sent before — decideLiveActivitySend has nothing to diff
+      // against, so it is due for an update purely by being new (same as
+      // "a never-sent activity sends on the first run" above), regardless
+      // of A's own (calm) conditions.
+      await store.upsertLiveActivity({
+        activityId: "activity-a",
+        deviceId: DEV_A,
+        beachSlug: "deerfield-beach",
+        schemaVersion: 1,
+        appBuild: "1",
+        apnsEnvironment: "sandbox",
+        pushToken: LA_TOKEN_A,
+        startedAt: NOW,
+        expiresAt: NOW + 4 * HOUR,
+      });
+
+      // Device B: no Live Activity at all — just a fresh, new lightning
+      // strike at ITS fix that B has never been alerted about before.
+      await store.upsertDevice(DEV_B, {
+        platform: "android",
+        pushToken: TOKEN_B,
+        tz: "America/New_York",
+        homeSlug: "boca-raton",
+        codeUntil: NOW + 30 * 24 * HOUR,
+      });
+      await store.setPresence(DEV_B, {
+        slug: "boca-raton",
+        lat: 26.3587,
+        lon: -80.0686,
+        accuracyM: 20,
+        fixAt: NOW - 60_000,
+        armedUntil: NOW + 4 * HOUR,
+        source: "auto",
+      });
+    }
+
+    it("a budget that fits only one send total: B's new lightning alert is sent, A's Live Activity update is deferred — never the reverse", async () => {
+      await seedTwo();
+      const budget = new SubrequestBudget(1);
+      const counts = await runAtBeachAlerts({
+        store,
+        now: NOW,
+        budget,
+        deliver: async (_sub, msg) => {
+          if (!budget.take(1)) return { ok: false, dead: false };
+          sent.push(msg);
+          return { ok: true, dead: false };
+        },
+        loadFeed: async () => NEAR_STRIKE, // active at B's fix (Boca), too far from A's (Deerfield)
+        loadConditions: async () => conditions(),
+        loadRain: async () => null,
+        sendLiveActivity: async (token, args) => {
+          laSent.push({ token, args });
+          return laResult;
+        },
+      });
+      // B's ordinary hazard alert won the only unit of budget...
+      expect(sent).toHaveLength(1);
+      // ...even though A (the "LA due" device) was walked first — Live
+      // Activity work only gets a turn AFTER every device's ordinary alerts.
+      expect(laSent).toEqual([]);
+      expect(counts.sent).toBe(1);
+      expect(counts.deferred).toBeGreaterThan(0);
+    });
+  });
+
+  describe("Codex LOW: budget.take() moves to right before the APNs call, after the claim wins", () => {
+    it("a lost send-claim on the Live Activity end sweep spends no budget", async () => {
+      // Already expired — every active row for this device is due to end.
+      await seedDevice({ armedUntil: NOW - 1 });
+      await registerLiveActivity();
+      // Plenty of budget for two ends if the loser were (wrongly) charged
+      // too — the old order took 1 unit BEFORE the claim, so a run that
+      // lost the claim still spent a unit on a send it never made.
+      const budget = new SubrequestBudget(5);
+      const [a, b] = await Promise.all([
+        run({ budget }),
+        run({ budget }),
+      ]);
+      // Exactly one run actually ended the row and sent the APNs "end".
+      expect(laSent).toHaveLength(1);
+      expect(a.deferred + b.deferred).toBe(0);
+      // Only the WINNER's send spent from the shared budget — the loser's
+      // claimSend() returned false and never reached budget.take() at all.
+      expect(budget.left).toBe(4);
+    });
+
+    it("a lost send-claim on a Live Activity update spends no budget", async () => {
+      await seedDevice();
+      await registerLiveActivity();
+      const budget = new SubrequestBudget(5);
+      const [a, b] = await Promise.all([
+        run({ budget }),
+        run({ budget }),
+      ]);
+      expect(laSent).toHaveLength(1); // one update actually sent
+      expect(a.deferred + b.deferred).toBe(0);
+      expect(budget.left).toBe(4); // only the winner spent a unit
+    });
+  });
 });

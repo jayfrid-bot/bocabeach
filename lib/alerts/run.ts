@@ -25,7 +25,7 @@ import { repeatWindow, sendClaimKey } from "@/lib/db/sendClaims";
 import type { DeviceStore, LiveActivityRow } from "@/lib/db/store";
 import type { ArmedDevice, PushableDevice } from "@/lib/db/types";
 import type { ConditionsResponse } from "@/lib/types";
-import { evaluateAtBeach, RAIN_MEMORY_MS } from "@/lib/alerts/evaluate";
+import { evaluateAtBeach, RAIN_MEMORY_MS, type EvaluateAtBeachResult } from "@/lib/alerts/evaluate";
 import { scopeKey } from "@/lib/alerts/catalog";
 import { splitByDedup } from "@/lib/alerts/dedup";
 import { loadLightningFeed } from "@/lib/alerts/lightningFeed";
@@ -302,9 +302,18 @@ export async function runAtBeachAlerts(deps: AtBeachDeps): Promise<AtBeachCounts
     // its budget simply waits for next tick's sweep, same backstop shape as
     // the update fan-out's own bound below.
     const liveByDevice = new Map<string, LiveActivityRow[]>();
-    let endedThisRun = 0;
+    // Safety first: this pass only WORKS OUT which rows are still armed
+    // (feeding `liveByDevice`/`dueThisRun` below) and which are due to end —
+    // it spends no subrequest budget itself (`setLiveActivityExpiry` and
+    // `purgeLiveActivities` are D1 writes, not subrequests). The actual
+    // end-sweep SENDS are deferred to `pendingEnds`, processed only after
+    // every armed device's ordinary hazard alerts have been evaluated and
+    // sent below, so Live Activity work can never spend the budget ordinary
+    // safety alerts still need.
+    const pendingEnds: { row: LiveActivityRow; endClaimKey: string }[] = [];
     try {
       const activeRows = await store.listActiveLiveActivities(now);
+      let dueThisSweep = 0;
       for (let row of activeRows) {
         const armedEntry = armedByKey.get(`${row.deviceId}|${row.beachSlug}`);
         // Expiry reconciliation (Codex review #3): recomputed EVERY pass from
@@ -331,75 +340,95 @@ export async function runAtBeachAlerts(deps: AtBeachDeps): Promise<AtBeachCounts
           liveByDevice.set(row.deviceId, arr);
           continue;
         }
-        if (endedThisRun >= LA_MAX_ENDS_PER_RUN) continue; // leave for next run's sweep
-        endedThisRun += 1;
+        if (dueThisSweep >= LA_MAX_ENDS_PER_RUN) continue; // leave for next run's sweep
+        dueThisSweep += 1;
         // Due to end. Claimed like any other send, so the 5-min cron and the
-        // hourly backstop can't both fire the same "end" event.
+        // hourly backstop can't both fire the same "end" event. The claim
+        // itself (and the actual send) happen later, in `pendingEnds`'s pass
+        // — only the row is picked out here.
         const endClaimKey = sendClaimKey(
           row.deviceId,
           `liveactivity-end:${row.activityId}`,
           repeatWindow(now, LIVE_ACTIVITY_END_SWEEP_WINDOW_MS),
         );
-        // Budget check first (round-2 #4, stage reserve Codex round-3 #4b):
-        // the end sweep is unbounded work-wise except for LA_MAX_ENDS_PER_RUN,
-        // and every send below is one APNs subrequest — short-circuits
-        // before claiming, so a run that's out of budget doesn't burn the
-        // claim on a send it can't make (the row just waits for next tick's
-        // sweep, same as any other row past LA_MAX_ENDS_PER_RUN).
-        if (budget.left < STAGE_RESERVE.liveActivityEnds) {
-          counts.deferred += 1;
-        } else if (budget.take(1) && (await store.claimSend(endClaimKey, now))) {
-          const lastState = safeParseState(row.lastStateJson);
-          const endState: BeachSessionContentState =
-            lastState ?? { score: 0, updatedAt: now, unavailable: true };
-          // Allocate the seq AND timestamp atomically together (Codex
-          // round-3 fix), same reasoning as the update path below — a null
-          // return means the row stopped being 'active' between the sweep
-          // reading it and now; nothing to end.
-          const allocated = await store.allocateLiveActivitySeq(row.activityId, now);
-          if (allocated == null) continue;
-          const { seq, timestampMs } = allocated;
-          // Wire state contract (Codex review #7): v/seq/ended, same field
-          // names lib/liveActivity/state.ts's ContentState uses, matching the
-          // Swift decoder's epoch-ms numbers.
-          const wireEndState = { v: 1, seq, ...endState, ended: true };
-          const r = await sendLiveActivity(row.pushToken, {
-            contentState: wireEndState,
-            event: "end",
-            timestampMs,
-            dismissalDateMs: now + LIVE_ACTIVITY_DISMISSAL_AHEAD_MS,
-            relevanceScore: 0,
-            priority: 10,
-            environment: row.apnsEnvironment === "sandbox" ? "sandbox" : row.apnsEnvironment === "production" ? "production" : null,
-          });
-          // Sweep success/failure handling (Codex review #10): a transient
-          // failure (neither ok nor a permanent 410/BadDeviceToken rejection)
-          // leaves the row active/pending for the next tick's retry — it must
-          // NOT be marked ended. Only a confirmed delivery or a confirmed
-          // permanent rejection ends the row (and, in the same write, blanks
-          // its now-useless token rather than keeping it around for the full
-          // 72h purge window).
-          if (r.ok || r.dead) {
-            await store.markSent(endClaimKey, now);
-            await store.recordLiveActivitySend(row.activityId, {
-              timestamp: timestampMs,
-              status: r.status ?? (r.dead ? 410 : 0),
-              hash: hashContentState(endState),
-              stateJson: JSON.stringify(endState),
-              seq,
-            });
-            await store.markLiveActivityEnded(row.activityId, r.dead ? "token-dead" : "expired", now, {
-              clearToken: true,
-            });
-          }
-        }
-        // else: another run already won this end's claim — it owns ending
-        // this row; nothing more to do here this pass.
+        pendingEnds.push({ row, endClaimKey });
       }
       await store.purgeLiveActivities(now - LIVE_ACTIVITY_RETENTION_MS);
     } catch (e) {
       console.error("alerts: live activity sweep failed", e);
     }
+
+    // Runs one due-end row: claim → allocate seq → (only now) spend the
+    // budget → send. Moving `budget.take(1)` to immediately before the APNs
+    // call (Codex round-3, tightened) means a claim this run LOSES to a
+    // racing run spends nothing — the old order took the unit before the
+    // claim, burning budget even when another run ended up owning the send.
+    const runPendingEnd = async ({ row, endClaimKey }: { row: LiveActivityRow; endClaimKey: string }) => {
+      // Budget check first (round-2 #4, stage reserve Codex round-3 #4b):
+      // the end sweep is unbounded work-wise except for LA_MAX_ENDS_PER_RUN,
+      // and every send below is one APNs subrequest — short-circuits before
+      // claiming, so a run that's out of budget doesn't burn the claim on a
+      // send it can't make (the row just waits for next tick's sweep, same
+      // as any other row past LA_MAX_ENDS_PER_RUN).
+      if (budget.left < STAGE_RESERVE.liveActivityEnds) {
+        counts.deferred += 1;
+        return;
+      }
+      if (!(await store.claimSend(endClaimKey, now))) {
+        // Another run already won this end's claim — it owns ending this
+        // row; nothing more to do here this pass.
+        return;
+      }
+      const lastState = safeParseState(row.lastStateJson);
+      const endState: BeachSessionContentState = lastState ?? { score: 0, updatedAt: now, unavailable: true };
+      // Allocate the seq AND timestamp atomically together (Codex round-3
+      // fix), same reasoning as the update path below — a null return means
+      // the row stopped being 'active' between the sweep reading it and now;
+      // nothing to end.
+      const allocated = await store.allocateLiveActivitySeq(row.activityId, now);
+      if (allocated == null) return;
+      const { seq, timestampMs } = allocated;
+      // Wire state contract (Codex review #7): v/seq/ended, same field
+      // names lib/liveActivity/state.ts's ContentState uses, matching the
+      // Swift decoder's epoch-ms numbers.
+      const wireEndState = { v: 1, seq, ...endState, ended: true };
+      // Spend the budget only now that the claim and seq allocation both
+      // succeeded — a lost claim (returned above) or a null allocation
+      // (returned above) never touches the budget at all.
+      if (!budget.take(1)) {
+        counts.deferred += 1;
+        return;
+      }
+      const r = await sendLiveActivity(row.pushToken, {
+        contentState: wireEndState,
+        event: "end",
+        timestampMs,
+        dismissalDateMs: now + LIVE_ACTIVITY_DISMISSAL_AHEAD_MS,
+        relevanceScore: 0,
+        priority: 10,
+        environment: row.apnsEnvironment === "sandbox" ? "sandbox" : row.apnsEnvironment === "production" ? "production" : null,
+      });
+      // Sweep success/failure handling (Codex review #10): a transient
+      // failure (neither ok nor a permanent 410/BadDeviceToken rejection)
+      // leaves the row active/pending for the next tick's retry — it must
+      // NOT be marked ended. Only a confirmed delivery or a confirmed
+      // permanent rejection ends the row (and, in the same write, blanks
+      // its now-useless token rather than keeping it around for the full
+      // 72h purge window).
+      if (r.ok || r.dead) {
+        await store.markSent(endClaimKey, now);
+        await store.recordLiveActivitySend(row.activityId, {
+          timestamp: timestampMs,
+          status: r.status ?? (r.dead ? 410 : 0),
+          hash: hashContentState(endState),
+          stateJson: JSON.stringify(endState),
+          seq,
+        });
+        await store.markLiveActivityEnded(row.activityId, r.dead ? "token-dead" : "expired", now, {
+          clearToken: true,
+        });
+      }
+    };
 
     // Bounded fan-out (Codex review #2): only the LA_MAX_PER_RUN
     // least-recently-considered still-armed activities get a chance at an
@@ -420,8 +449,26 @@ export async function runAtBeachAlerts(deps: AtBeachDeps): Promise<AtBeachCounts
     // can also use it to put due beaches first, without recomputing.
     const dueSlugSet = new Set(allLiveRows.filter((r) => dueThisRun.has(r.activityId)).map((r) => r.beachSlug));
 
-    if (!armed.length) return counts;
+    // Safety first (Codex HIGH): a device's Live Activity work is never sent
+    // inline in the loop below — it is only queued here (the assessment
+    // already computed for the ordinary alert path is reused, never redone)
+    // and processed in a second pass, after every armed device's ordinary
+    // hazard alerts have had their turn at the budget. Declared outside the
+    // `if (armed.length)` block below so the pendingEnds/pendingUpdates
+    // passes at the bottom of this function still run — with an empty
+    // `pendingUpdates` — even when there are no armed devices at all or this
+    // run is too budget-starved to even start the at-beach stage; either way
+    // orphaned Live Activities must still get their due-end sweep.
+    interface PendingUpdate {
+      device: ArmedDevice;
+      dueLiveRows: LiveActivityRow[];
+      conditions: ConditionsResponse;
+      lightning: EvaluateAtBeachResult["lightning"];
+      nearestStrikeMi: number | null;
+    }
+    const pendingUpdates: PendingUpdate[] = [];
 
+    if (armed.length) {
     const pushable = new Map<string, PushableDevice>();
     for (const p of await store.listPushable()) pushable.set(p.device.id, p);
 
@@ -521,9 +568,7 @@ export async function runAtBeachAlerts(deps: AtBeachDeps): Promise<AtBeachCounts
     // retry than partially evaluating some devices and running out mid-loop.
     if (budget.left < STAGE_RESERVE.atBeach) {
       counts.deferred += armed.length;
-      return counts;
-    }
-
+    } else {
     // Due-first order (round-4 #3): a stable sort so the rain-cell cap above
     // spends its budget on devices at a beach with a Live Activity due this
     // run before any other armed device, without disturbing relative order
@@ -670,105 +715,147 @@ export async function runAtBeachAlerts(deps: AtBeachDeps): Promise<AtBeachCounts
         // active row exists for this device+slug, and conditions actually
         // loaded (never advance freshness on a feed outage). Bounded to the
         // rows this run's `dueThisRun` budget picked (Codex review #2) — a
-        // row left out is untouched, keeping its old cursor for next run. --
+        // row left out is untouched, keeping its old cursor for next run.
+        // Safety first: queued for the second pass below, not sent inline —
+        // the SAME `lightning`/`strikes` this evaluation already computed is
+        // carried along so the projection never re-assesses lightning.
         const dueLiveRows = liveRows.filter((row) => dueThisRun.has(row.activityId));
         if (dueLiveRows.length && conditions) {
-          // The SAME `lightning` HazardAssessment evaluateAtBeach just
-          // computed above — never a second assessLightning call for the
-          // same fix/anchor/moment (Codex review #9).
-          const desired = contentStateFromConditions(conditions, {
-            nowMs: now,
-            lightningPoint: { lightning, lightningMi: strikes?.nearestMi ?? null },
+          pendingUpdates.push({
+            device,
+            dueLiveRows,
+            conditions,
+            lightning,
+            nearestStrikeMi: strikes?.nearestMi ?? null,
           });
-          const desiredHash = hashContentState(desired);
-          const desiredJson = JSON.stringify(desired);
+        }
+      } catch (e) {
+        counts.errors += 1;
+        console.error("alerts: device failed", device.device.id, e);
+      }
+    }
+    } // end budget.left >= STAGE_RESERVE.atBeach
+    } // end if (armed.length)
 
-          for (const row of dueLiveRows) {
-            // Advance this row's round-robin cursor now that it's been
-            // considered this run, whatever the outcome below turns out to
-            // be (Codex review #2) — a successful send's recordLiveActivitySend
-            // overwrites this with a more precise timestamp momentarily.
-            await store.touchLiveActivityCursor(row.activityId, now);
+    // Safety first (Codex HIGH): only now, after every armed device's
+    // ordinary hazard alerts have been evaluated and sent above, does Live
+    // Activity work get a turn at whatever subrequest budget remains — first
+    // the due-end sweep, then per-device updates. Neither queue was sent
+    // inline above; this is the run's ONLY place either actually spends
+    // budget or calls `sendLiveActivity`.
+    for (const pending of pendingEnds) {
+      try {
+        await runPendingEnd(pending);
+      } catch (e) {
+        console.error("alerts: live activity end failed", pending.row.activityId, e);
+      }
+    }
 
-            const decision = decideLiveActivitySend({
-              nowMs: now,
-              desired,
-              desiredHash,
-              prevState: safeParseState(row.lastStateJson),
-              lastStateHash: row.lastStateHash,
-              lastSentAt: row.lastSentAt,
+    for (const { device, dueLiveRows, conditions, lightning, nearestStrikeMi } of pendingUpdates) {
+      try {
+        // The SAME `lightning` HazardAssessment evaluateAtBeach computed in
+        // the first pass — never a second assessLightning call for the same
+        // fix/anchor/moment (Codex review #9).
+        const desired = contentStateFromConditions(conditions, {
+          nowMs: now,
+          lightningPoint: { lightning, lightningMi: nearestStrikeMi },
+        });
+        const desiredHash = hashContentState(desired);
+        const desiredJson = JSON.stringify(desired);
+
+        for (const row of dueLiveRows) {
+          // Advance this row's round-robin cursor now that it's been
+          // considered this run, whatever the outcome below turns out to
+          // be (Codex review #2) — a successful send's recordLiveActivitySend
+          // overwrites this with a more precise timestamp momentarily.
+          await store.touchLiveActivityCursor(row.activityId, now);
+
+          const decision = decideLiveActivitySend({
+            nowMs: now,
+            desired,
+            desiredHash,
+            prevState: safeParseState(row.lastStateJson),
+            lastStateHash: row.lastStateHash,
+            lastSentAt: row.lastSentAt,
+          });
+          if (!decision.send) continue;
+
+          // Same send-claim mechanism as the alert path — keyed by the
+          // decided reason AND the content hash, not a bare time bucket:
+          // a bare bucket would let an URGENT lightning promotion get
+          // blocked by an ordinary update's claim from earlier in the
+          // same window (decideLiveActivitySend already IS the timing
+          // policy; the claim only needs to stop two schedulers racing to
+          // send the exact same decided content twice).
+          const claimKey = sendClaimKey(
+            device.device.id,
+            `liveactivity:${row.activityId}:${decision.reason}:${desiredHash}`,
+            repeatWindow(now, LIVE_ACTIVITY_UPDATE_WINDOW_MS),
+          );
+          // Budget check first (round-2 #4): "Live Activity sends only run
+          // with remaining budget" — an ordinary hazard push is the
+          // safety-critical surface and already had first claim on the
+          // budget above; a Beach Mode Lock Screen refresh sits out this
+          // run instead when the budget is tight, same as any row this run
+          // couldn't get to. The actual spend (`budget.take`) is deferred
+          // to immediately before the APNs call below, after the claim and
+          // seq allocation both succeed — a lost claim spends nothing.
+          if (budget.left < STAGE_RESERVE.liveActivityUpdates) {
+            counts.deferred += 1;
+            continue;
+          }
+          if (!(await store.claimSend(claimKey, now))) {
+            counts.skipped += 1;
+            continue;
+          }
+
+          // Allocate the seq AND timestamp atomically together, BEFORE the
+          // APNs call (Codex round-3 fix) — computing `row.lastSeq + 1`
+          // and the timestamp separately in JS left a race window across
+          // the network call below where two overlapping runs could
+          // allocate seq/timestamp pairs out of order relative to each
+          // other (ActivityKit orders by timestamp, not seq). A null
+          // return means the row went away or stopped being 'active'
+          // between this run picking it up and now — nothing to send.
+          const allocated = await store.allocateLiveActivitySeq(row.activityId, now);
+          if (allocated == null) continue;
+          const { seq, timestampMs } = allocated;
+          // Wire state contract (Codex review #7): v/seq, same field names
+          // the Swift decoder expects (ios/App/Shared/BeachSessionAttributes.swift).
+          const wireState = { v: 1, seq, ...desired };
+          // Spend the budget only now that the claim and seq allocation both
+          // succeeded (Codex LOW — moved from before the claim).
+          if (!budget.take(1)) {
+            counts.deferred += 1;
+            continue;
+          }
+          const r = await sendLiveActivity(row.pushToken, {
+            contentState: wireState,
+            event: "update",
+            timestampMs,
+            staleDateMs: decision.staleDateMs,
+            relevanceScore: decision.relevanceScore,
+            priority: decision.priority,
+            environment:
+              row.apnsEnvironment === "sandbox" ? "sandbox" : row.apnsEnvironment === "production" ? "production" : null,
+          });
+          if (r.dead) {
+            // A dead LIVE ACTIVITY token ends only this one row — it must
+            // never clear the device's normal APNs push token. Confirmed
+            // permanent rejection → blank this row's own token too (Codex
+            // review #10), same as the sweep's end path.
+            await store.markLiveActivityEnded(row.activityId, "token-dead", now, { clearToken: true });
+            continue;
+          }
+          if (r.ok) {
+            await store.recordLiveActivitySend(row.activityId, {
+              timestamp: timestampMs,
+              status: r.status ?? 200,
+              hash: desiredHash,
+              stateJson: desiredJson,
+              seq,
             });
-            if (!decision.send) continue;
-
-            // Same send-claim mechanism as the alert path — keyed by the
-            // decided reason AND the content hash, not a bare time bucket:
-            // a bare bucket would let an URGENT lightning promotion get
-            // blocked by an ordinary update's claim from earlier in the
-            // same window (decideLiveActivitySend already IS the timing
-            // policy; the claim only needs to stop two schedulers racing to
-            // send the exact same decided content twice).
-            // Budget check first (round-2 #4): "Live Activity sends only run
-            // with remaining budget" — an ordinary hazard push is the
-            // safety-critical surface and gets first claim on what's left;
-            // a Beach Mode Lock Screen refresh sits out this run instead
-            // when the budget is tight, same as any row this run couldn't
-            // get to.
-            if (budget.left < STAGE_RESERVE.liveActivityUpdates || !budget.take(1)) {
-              counts.deferred += 1;
-              continue;
-            }
-            const claimKey = sendClaimKey(
-              device.device.id,
-              `liveactivity:${row.activityId}:${decision.reason}:${desiredHash}`,
-              repeatWindow(now, LIVE_ACTIVITY_UPDATE_WINDOW_MS),
-            );
-            if (!(await store.claimSend(claimKey, now))) {
-              counts.skipped += 1;
-              continue;
-            }
-
-            // Allocate the seq AND timestamp atomically together, BEFORE the
-            // APNs call (Codex round-3 fix) — computing `row.lastSeq + 1`
-            // and the timestamp separately in JS left a race window across
-            // the network call below where two overlapping runs could
-            // allocate seq/timestamp pairs out of order relative to each
-            // other (ActivityKit orders by timestamp, not seq). A null
-            // return means the row went away or stopped being 'active'
-            // between this run picking it up and now — nothing to send.
-            const allocated = await store.allocateLiveActivitySeq(row.activityId, now);
-            if (allocated == null) continue;
-            const { seq, timestampMs } = allocated;
-            // Wire state contract (Codex review #7): v/seq, same field names
-            // the Swift decoder expects (ios/App/Shared/BeachSessionAttributes.swift).
-            const wireState = { v: 1, seq, ...desired };
-            const r = await sendLiveActivity(row.pushToken, {
-              contentState: wireState,
-              event: "update",
-              timestampMs,
-              staleDateMs: decision.staleDateMs,
-              relevanceScore: decision.relevanceScore,
-              priority: decision.priority,
-              environment:
-                row.apnsEnvironment === "sandbox" ? "sandbox" : row.apnsEnvironment === "production" ? "production" : null,
-            });
-            if (r.dead) {
-              // A dead LIVE ACTIVITY token ends only this one row — it must
-              // never clear the device's normal APNs push token. Confirmed
-              // permanent rejection → blank this row's own token too (Codex
-              // review #10), same as the sweep's end path.
-              await store.markLiveActivityEnded(row.activityId, "token-dead", now, { clearToken: true });
-              continue;
-            }
-            if (r.ok) {
-              await store.recordLiveActivitySend(row.activityId, {
-                timestamp: timestampMs,
-                status: r.status ?? 200,
-                hash: desiredHash,
-                stateJson: desiredJson,
-                seq,
-              });
-              await store.markSent(claimKey, now);
-            }
+            await store.markSent(claimKey, now);
           }
         }
       } catch (e) {

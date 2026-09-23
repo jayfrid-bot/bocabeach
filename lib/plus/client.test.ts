@@ -6,13 +6,27 @@
 // this file tests directly.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { bootstrapInstallToken, hazardsInputKey, resetInstallTokenLatch } from "@/lib/plus/client";
+import {
+  bootstrapInstallToken,
+  hazardsInputKey,
+  resetInstallTokenLatch,
+  shouldBootstrapInstallTokenOnMount,
+} from "@/lib/plus/client";
 import type { Fix } from "@/lib/location/device";
 import * as store from "@/lib/plus/storage";
 
 const DEV = "device-1";
 
 vi.mock("@/lib/deviceId", () => ({ getDeviceId: () => DEV }));
+
+// Controllable per test (issue: usePlus's mount bootstrap must be native-only
+// — a plain web visitor/crawler must never POST /api/devices just to mint an
+// install token nothing on web needs).
+const nativeCtl = vi.hoisted(() => ({ isNative: false }));
+vi.mock("@/lib/push/native", () => ({
+  isNativePlatform: () => nativeCtl.isNative,
+  nativePlatform: () => (nativeCtl.isNative ? "ios" : "web"),
+}));
 
 const apiCtl = vi.hoisted(() => ({
   saveDevice: vi.fn(),
@@ -150,6 +164,22 @@ describe("bootstrapInstallToken", () => {
     resolveSave({ ok: true, device: { id: DEV }, error: null, status: 200 });
     await Promise.all([a, b]);
     expect(apiCtl.saveDevice).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("shouldBootstrapInstallTokenOnMount", () => {
+  afterEach(() => {
+    nativeCtl.isNative = false;
+  });
+
+  it("is false on the web — a plain browser visitor never POSTs /api/devices to mint a token it has no use for", () => {
+    nativeCtl.isNative = false;
+    expect(shouldBootstrapInstallTokenOnMount()).toBe(false);
+  });
+
+  it("is true inside the native app — Live Activities and /api/hazards need the token", () => {
+    nativeCtl.isNative = true;
+    expect(shouldBootstrapInstallTokenOnMount()).toBe(true);
   });
 });
 

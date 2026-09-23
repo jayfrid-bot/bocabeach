@@ -491,6 +491,26 @@ export async function GET(
     return NextResponse.json({ error: "Bad format — use story or square" }, { status: 400 });
   }
 
+  // Rendering a 1080x1920 PNG through satori is CPU-heavy (several seconds),
+  // and the card only changes as fast as the conditions meaningfully do. Serve a
+  // rendered card straight from the Cloudflare edge cache for its lifetime, so
+  // the second view of a beach — reopening the sheet, the Share button's own
+  // fetch, or the next person sharing the same beach — is instant instead of
+  // re-rendering. Guarded: if the cache global isn't present, just render.
+  //
+  // Checked BEFORE `getConditions` (Codex round 2): a cache hit must skip the
+  // conditions build entirely, not just the satori render — this route is
+  // warmed proactively (components/ConditionsDashboard.tsx fires both
+  // formats on every page view), and calling getConditions() first meant
+  // every one of those warm requests paid for a conditions lookup even when
+  // the PNG itself was already cached and about to be thrown away below.
+  const cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
+  const cacheKey = new Request(new URL(req.url).toString());
+  if (cache) {
+    const hit = await cache.match(cacheKey);
+    if (hit) return hit;
+  }
+
   const data = await getConditions(slug);
   if (!data) {
     return NextResponse.json({ error: "Unknown location" }, { status: 404 });
@@ -498,19 +518,6 @@ export async function GET(
 
   const model = shareCardModel(data, Date.now());
   const { width, height } = SIZES[formatParam];
-
-  // Rendering a 1080x1920 PNG through satori is CPU-heavy (several seconds),
-  // and the card only changes as fast as the conditions meaningfully do. Serve a
-  // rendered card straight from the Cloudflare edge cache for its lifetime, so
-  // the second view of a beach — reopening the sheet, the Share button's own
-  // fetch, or the next person sharing the same beach — is instant instead of
-  // re-rendering. Guarded: if the cache global isn't present, just render.
-  const cache = (globalThis as { caches?: { default?: Cache } }).caches?.default;
-  const cacheKey = new Request(new URL(req.url).toString());
-  if (cache) {
-    const hit = await cache.match(cacheKey);
-    if (hit) return hit;
-  }
 
   const image = new ImageResponse(<ShareCard model={model} format={formatParam} />, {
     width,

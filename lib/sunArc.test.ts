@@ -4,6 +4,7 @@ import {
   daylightFraction,
   daylightStatusLabel,
   fmtDurationShort,
+  goldenHorizonEnd,
   goldenHourWindows,
   isDaylight,
   isGoldenHour,
@@ -65,17 +66,35 @@ describe("daylightFraction", () => {
 });
 
 describe("goldenHourWindows", () => {
-  it("is the first/last hour of daylight, derived from real times", () => {
+  it("defaults to ±20 min around real sunrise/sunset (not a full hour of daylight)", () => {
     const span = { sunriseMs: T("2026-07-15T06:00:00Z"), sunsetMs: T("2026-07-15T20:00:00Z") };
     const w = goldenHourWindows(span)!;
-    expect(w.morning.startMs).toBe(span.sunriseMs);
-    expect(w.morning.endMs - w.morning.startMs).toBe(3_600_000);
-    expect(w.evening.endMs).toBe(span.sunsetMs);
-    expect(w.evening.endMs - w.evening.startMs).toBe(3_600_000);
+    expect(w.morning.startMs).toBe(span.sunriseMs - 20 * 60_000);
+    expect(w.morning.endMs).toBe(span.sunriseMs + 20 * 60_000);
+    expect(w.evening.startMs).toBe(span.sunsetMs - 20 * 60_000);
+    expect(w.evening.endMs).toBe(span.sunsetMs + 20 * 60_000);
+  });
+
+  it("straddles sunrise/sunset — half the window falls outside [sunrise, sunset]", () => {
+    const span = { sunriseMs: T("2026-07-15T06:00:00Z"), sunsetMs: T("2026-07-15T20:00:00Z") };
+    const w = goldenHourWindows(span)!;
+    expect(w.morning.startMs).toBeLessThan(span.sunriseMs);
+    expect(w.evening.endMs).toBeGreaterThan(span.sunsetMs);
+  });
+
+  it("uses the snapshot's own explicit bounds when given, over the ±20 min default", () => {
+    const span = { sunriseMs: T("2026-07-15T06:00:00Z"), sunsetMs: T("2026-07-15T20:00:00Z") };
+    const explicit = {
+      morning: { startMs: T("2026-07-15T05:50:00Z"), endMs: T("2026-07-15T06:10:00Z") },
+    };
+    const w = goldenHourWindows(span, explicit)!;
+    expect(w.morning).toEqual(explicit.morning);
+    // The evening side, left unspecified, still falls back to the default.
+    expect(w.evening.startMs).toBe(span.sunsetMs - 20 * 60_000);
   });
 
   it("clamps to meet at the midpoint on a very short day instead of overlapping", () => {
-    const span = { sunriseMs: T("2026-07-15T06:00:00Z"), sunsetMs: T("2026-07-15T07:00:00Z") }; // 1h day
+    const span = { sunriseMs: T("2026-07-15T06:00:00Z"), sunsetMs: T("2026-07-15T06:30:00Z") }; // 30m day
     const w = goldenHourWindows(span)!;
     expect(w.morning.endMs).toBe(w.evening.startMs);
   });
@@ -87,12 +106,61 @@ describe("goldenHourWindows", () => {
 
 describe("isGoldenHour", () => {
   const span = { sunriseMs: T("2026-07-15T06:00:00Z"), sunsetMs: T("2026-07-15T20:00:00Z") };
-  it("true right after sunrise and right before sunset", () => {
-    expect(isGoldenHour(T("2026-07-15T06:30:00Z"), span)).toBe(true);
-    expect(isGoldenHour(T("2026-07-15T19:45:00Z"), span)).toBe(true);
+  it("true within 20 min either side of sunrise/sunset, including just before sunrise", () => {
+    expect(isGoldenHour(T("2026-07-15T06:10:00Z"), span)).toBe(true);
+    expect(isGoldenHour(T("2026-07-15T19:50:00Z"), span)).toBe(true);
+    // Half the window falls before sunrise itself — still golden hour, even
+    // though there's no daylight yet (SunArc gates its own dot on daylight
+    // separately; the predicate itself must not).
+    expect(isGoldenHour(T("2026-07-15T05:50:00Z"), span)).toBe(true);
   });
   it("false at midday", () => {
     expect(isGoldenHour(T("2026-07-15T13:00:00Z"), span)).toBe(false);
+  });
+  it("false just outside the 20-min window", () => {
+    expect(isGoldenHour(T("2026-07-15T06:30:00Z"), span)).toBe(false);
+  });
+  it("honors an explicit window over the ±20 min default", () => {
+    const explicit = { evening: { startMs: T("2026-07-15T19:00:00Z"), endMs: T("2026-07-15T20:00:00Z") } };
+    expect(isGoldenHour(T("2026-07-15T19:15:00Z"), span, explicit)).toBe(true); // outside the default, inside the explicit one
+    expect(isGoldenHour(T("2026-07-15T19:55:00Z"), span)).toBe(true); // default still applies with no explicit arg
+  });
+});
+
+describe("goldenHorizonEnd", () => {
+  const span = { sunriseMs: T("2026-07-15T06:00:00Z"), sunsetMs: T("2026-07-15T20:00:00Z") };
+
+  it("is the sunrise end (0) during the pre-sunrise half of the morning golden window", () => {
+    expect(goldenHorizonEnd(T("2026-07-15T05:50:00Z"), span)).toBe(0);
+  });
+
+  it("is the sunset end (1) during the post-sunset half of the evening golden window", () => {
+    expect(goldenHorizonEnd(T("2026-07-15T20:10:00Z"), span)).toBe(1);
+  });
+
+  it("is null once it's actually daylight, even inside the morning window — the caller has a real sun position then", () => {
+    expect(goldenHorizonEnd(T("2026-07-15T06:10:00Z"), span)).toBeNull();
+  });
+
+  it("is null in plain night, outside either golden window", () => {
+    expect(goldenHorizonEnd(T("2026-07-15T02:00:00Z"), span)).toBeNull();
+    expect(goldenHorizonEnd(T("2026-07-15T21:00:00Z"), span)).toBeNull();
+  });
+
+  it("is null at midday", () => {
+    expect(goldenHorizonEnd(T("2026-07-15T13:00:00Z"), span)).toBeNull();
+  });
+
+  it("null for a degenerate span", () => {
+    expect(
+      goldenHorizonEnd(T("2026-07-15T05:50:00Z"), { sunriseMs: T("2026-07-15T20:00:00Z"), sunsetMs: T("2026-07-15T06:00:00Z") }),
+    ).toBeNull();
+  });
+
+  it("honors an explicit window over the ±20 min default", () => {
+    const explicit = { evening: { startMs: T("2026-07-15T20:00:00Z"), endMs: T("2026-07-15T20:40:00Z") } };
+    // Outside the default (±20 min) window but inside the explicit one.
+    expect(goldenHorizonEnd(T("2026-07-15T20:30:00Z"), span, explicit)).toBe(1);
   });
 });
 

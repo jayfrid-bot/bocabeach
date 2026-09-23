@@ -54,32 +54,71 @@ export interface GoldenHourWindow {
   endMs: number;
 }
 
+/** Golden hour, per lib/sources/sun.ts: 20 min before to 20 min after
+ *  sunrise, and the same either side of sunset — the default fallback when
+ *  the snapshot's own goldenAm/EveStart/EndIso fields aren't available
+ *  (older cached snapshots). NOT the first/last full hour of daylight. */
+const DEFAULT_GOLDEN_HALF_MS = 20 * 60_000;
+
+/** Either side's window, straight from the snapshot's own
+ *  goldenAm/EveStart/EndIso fields (already epoch ms here — the caller
+ *  parses the ISO strings). Passing these keeps the arc's shading and
+ *  "golden now" read in exact agreement with the Sunrise/Sunset color card,
+ *  which reads the very same fields. */
+export interface GoldenHourExplicit {
+  morning?: GoldenHourWindow;
+  evening?: GoldenHourWindow;
+}
+
 /**
- * The first/last hour of daylight, derived from the real sunrise/sunset
- * times (never hardcoded clock times). On a day shorter than two hours the
- * two windows are clamped to meet at the midpoint rather than overlap.
+ * Golden-hour windows straddling real sunrise/sunset: the snapshot's own
+ * bounds when given (`explicit`), else ±20 min around each event. Windows
+ * are NOT clamped to [sunrise, sunset] — golden hour spans that boundary by
+ * design, half before and half after — so `isGoldenHour` reads true for the
+ * whole window even though the arc's own geometry only extends
+ * sunrise→sunset (drawing clips itself for free: `daylightFraction` already
+ * clamps any time outside that range to 0 or 1). On a day shorter than the
+ * window would need, the two windows are clamped to meet at the midpoint
+ * rather than overlap.
  */
 export function goldenHourWindows(
   span: DaySpan,
-  windowMs = HOUR_MS,
+  explicit?: GoldenHourExplicit,
 ): { morning: GoldenHourWindow; evening: GoldenHourWindow } | null {
   const { sunriseMs, sunsetMs } = span;
   if (sunsetMs <= sunriseMs) return null;
-  const half = (sunsetMs - sunriseMs) / 2;
-  const w = Math.min(windowMs, half);
-  return {
-    morning: { startMs: sunriseMs, endMs: sunriseMs + w },
-    evening: { startMs: sunsetMs - w, endMs: sunsetMs },
-  };
+  const half = Math.min(DEFAULT_GOLDEN_HALF_MS, (sunsetMs - sunriseMs) / 2);
+  const morning = explicit?.morning ?? { startMs: sunriseMs - half, endMs: sunriseMs + half };
+  const evening = explicit?.evening ?? { startMs: sunsetMs - half, endMs: sunsetMs + half };
+  return { morning, evening };
 }
 
-export function isGoldenHour(nowMs: number, span: DaySpan, windowMs = HOUR_MS): boolean {
-  const w = goldenHourWindows(span, windowMs);
+export function isGoldenHour(nowMs: number, span: DaySpan, explicit?: GoldenHourExplicit): boolean {
+  const w = goldenHourWindows(span, explicit);
   if (!w) return false;
   return (
     (nowMs >= w.morning.startMs && nowMs <= w.morning.endMs) ||
     (nowMs >= w.evening.startMs && nowMs <= w.evening.endMs)
   );
+}
+
+/**
+ * Where to draw the golden-hour glow when it's golden hour but NOT
+ * daylight — the pre-sunrise half of the morning window, or the post-sunset
+ * half of the evening window. The arc's real sun dot only exists in
+ * daylight (`arcPoint` at `daylightFraction`), so those two halves would
+ * otherwise show plain night despite `isGoldenHour` reading true; this pins
+ * the glow to whichever horizon end the window belongs to instead: 0
+ * (sunrise end, left) before sunrise, 1 (sunset end, right) after sunset.
+ * Returns null outside those two halves — ordinary daylight (where the
+ * caller has a real position) or full night, both the caller's job.
+ */
+export function goldenHorizonEnd(nowMs: number, span: DaySpan, explicit?: GoldenHourExplicit): 0 | 1 | null {
+  const w = goldenHourWindows(span, explicit);
+  if (!w) return null;
+  if (nowMs < span.sunriseMs && nowMs >= w.morning.startMs && nowMs <= w.morning.endMs) return 0;
+  if (nowMs > span.sunsetMs && nowMs >= w.evening.startMs && nowMs <= w.evening.endMs) return 1;
+  return null;
 }
 
 // --- Night position (moon on the arc's underside) -------------------------

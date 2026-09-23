@@ -19,7 +19,7 @@ import {
   shouldRefreshFix,
   type Fix,
 } from "@/lib/location/device";
-import { nativePlatform } from "@/lib/push/native";
+import { isNativePlatform, nativePlatform } from "@/lib/push/native";
 import { defaultPrefs, type AlertKey, type AlertPrefs, type DeviceRecord } from "@/lib/db/types";
 import { resolveScoring } from "@/lib/profile/resolve";
 import type { ScoreProfile } from "@/lib/profile/types";
@@ -166,6 +166,19 @@ let noTokenLatchedThisSession = false;
 // moment without a reload" reasoning `noTokenLatchedThisSession` already
 // uses for the non-forced path.
 let tokenRefreshAttemptedThisSession = false;
+
+/**
+ * Whether the mount effect below should mint an install token at all. The
+ * token only guards native-only endpoints (hazards, Live Activities) — a
+ * plain web visitor (or crawler) has no use for one, and minting it anyway
+ * is a POST /api/devices that writes a D1 device row on the Free plan for
+ * nothing. Pulled out as its own pure function (wrapping the existing
+ * `isNativePlatform` check already used by lib/plus/billing.ts) so it's
+ * unit-testable without rendering the `usePlus` hook itself.
+ */
+export function shouldBootstrapInstallTokenOnMount(): boolean {
+  return isNativePlatform();
+}
 
 export async function bootstrapInstallToken(opts?: {
   forceRefresh?: boolean;
@@ -340,8 +353,11 @@ export function usePlus(): PlusState {
       // be never for someone who only ever reads the free forecast. Fire
       // and forget: a fresh device with Beach Mode off never notices either
       // way, and `ensureInstallToken` is exactly what Beach Mode start()
-      // awaits before it needs the result.
-      void ensureInstallToken();
+      // awaits before it needs the result. Native-only: the token only
+      // guards native-only endpoints (hazards, Live Activities), and a plain
+      // web visitor (or crawler) bootstrapping one writes a D1 device row on
+      // the Free plan for nothing.
+      if (shouldBootstrapInstallTokenOnMount()) void ensureInstallToken();
       setDeviceLoaded(true);
       return;
     }
@@ -351,8 +367,9 @@ export function usePlus(): PlusState {
     // ensureInstallToken). A device that never received a token asks again
     // here on every mount. Once the server has stored a hash it will not mint
     // again (see lib/db/installTokenAuth.ts THREAT MODEL), so a lost token
-    // stays lost and the token-gated features show "not available".
-    void ensureInstallToken();
+    // stays lost and the token-gated features show "not available". Gated to
+    // native (see note above) — web visitors still get `refresh()` below.
+    if (shouldBootstrapInstallTokenOnMount()) void ensureInstallToken();
     void refresh().finally(() => setDeviceLoaded(true));
   }, [ready, refresh, ensureInstallToken]);
 

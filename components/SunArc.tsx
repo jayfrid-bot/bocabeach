@@ -7,6 +7,7 @@ import {
   arcPoint,
   daylightFraction,
   daylightStatusLabel,
+  goldenHorizonEnd,
   goldenHourWindows,
   isDaylight,
   isGoldenHour,
@@ -58,15 +59,44 @@ export function SunArc({ sun, tz }: { sun: SunData; tz: string }) {
   if (sunriseMs == null || sunsetMs == null || sunsetMs <= sunriseMs) return null;
   const span = { sunriseMs, sunsetMs, solarNoonMs };
 
+  // The snapshot's own golden-hour bounds (lib/sources/sun.ts: 20 min either
+  // side of sunrise/sunset) when present, so this glows exactly when the
+  // Sunrise/Sunset color card says golden hour — goldenHourWindows falls
+  // back to the same ±20 min default itself when a field is missing (an
+  // older cached snapshot).
+  const toMs = (iso: string | undefined) => (iso ? new Date(iso).getTime() : undefined);
+  const goldenExplicit = {
+    morning:
+      sun.goldenAmStartIso && sun.goldenAmEndIso
+        ? { startMs: toMs(sun.goldenAmStartIso)!, endMs: toMs(sun.goldenAmEndIso)! }
+        : undefined,
+    evening:
+      sun.goldenEveStartIso && sun.goldenEveEndIso
+        ? { startMs: toMs(sun.goldenEveStartIso)!, endMs: toMs(sun.goldenEveEndIso)! }
+        : undefined,
+  };
+
   const daylight = nowMs != null ? isDaylight(nowMs, span) : null;
-  const golden = nowMs != null && daylight ? isGoldenHour(nowMs, span) : false;
+  // Not gated on `daylight`: the window straddles sunrise/sunset by design
+  // (half before, half after), and the "golden now" read must be honest to
+  // the whole window even though the arc's dot only ever renders in
+  // daylight (there's simply nothing to highlight in the halves outside it).
+  const golden = nowMs != null ? isGoldenHour(nowMs, span, goldenExplicit) : false;
   const statusLabel = nowMs != null ? daylightStatusLabel(nowMs, span) : null;
   const nightFrac = nowMs != null && daylight === false ? nightProgress(nowMs, span) : null;
 
   const sunDot = nowMs != null && daylight ? arcPoint(daylightFraction(nowMs, span), GEO) : null;
   const moonDot = nightFrac != null ? nightArcPoint(nightFrac, { ...GEO, nightDepth: NIGHT_DEPTH }) : null;
 
-  const golden2 = goldenHourWindows(span);
+  // Golden hour but not daylight yet/anymore (the pre-sunrise or post-sunset
+  // half of the window): the real sun dot above only exists in daylight, so
+  // without this the arc would show plain night while the card still says
+  // golden hour. Pin the glow to whichever horizon end the window belongs
+  // to instead. Mutually exclusive with `sunDot` (daylight === false here).
+  const goldenHorizonFrac = nowMs != null && daylight === false ? goldenHorizonEnd(nowMs, span, goldenExplicit) : null;
+  const goldenHorizonDot = goldenHorizonFrac != null ? arcPoint(goldenHorizonFrac, GEO) : null;
+
+  const golden2 = goldenHourWindows(span, goldenExplicit);
   const goldenX = golden2
     ? {
         morningEnd: arcPoint(daylightFraction(golden2.morning.endMs, span), GEO).x,
@@ -178,6 +208,28 @@ export function SunArc({ sun, tz }: { sun: SunData; tz: string }) {
               }}
             />
             <circle cx={sunDot.x} cy={sunDot.y} r="7" fill={golden ? "#fb923c" : "#fbbf24"} stroke="#0f172a" strokeWidth="2" />
+          </g>
+        ) : null}
+
+        {/* golden hour but not daylight yet/anymore (pre-sunrise or
+            post-sunset half of the window): pin the glow to the horizon end
+            the window belongs to, since there's no real sun position to
+            show. Always the golden color — the plain-daylight amber never
+            applies here by construction. */}
+        {goldenHorizonDot ? (
+          <g>
+            <circle
+              cx={goldenHorizonDot.x}
+              cy={goldenHorizonDot.y}
+              r={19}
+              fill="url(#sunarc-glow)"
+              style={{
+                animation: "sunglow 3.5s ease-in-out infinite",
+                transformBox: "fill-box",
+                transformOrigin: "center",
+              }}
+            />
+            <circle cx={goldenHorizonDot.x} cy={goldenHorizonDot.y} r="7" fill="#fb923c" stroke="#0f172a" strokeWidth="2" />
           </g>
         ) : null}
 

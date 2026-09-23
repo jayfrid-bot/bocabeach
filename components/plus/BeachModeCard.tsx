@@ -30,7 +30,8 @@ import { useDeviceFix, useHazardsAtPoint, type PlusState } from "@/lib/plus/clie
 import { beachModeHazardLine } from "@/lib/hazards/pointVsBeach";
 import { contentStateFromConditions, hashContentState } from "@/lib/liveActivity/state";
 import * as liveActivity from "@/lib/plus/liveActivity";
-import type { BeachSessionWireState } from "@/lib/plus/liveActivity";
+import type { ActivityStatus, BeachSessionWireState } from "@/lib/plus/liveActivity";
+import type { BeachSessionContentState } from "@/lib/liveActivity/state";
 import {
   readLiveActivityDismissal,
   readLiveActivityPref,
@@ -81,6 +82,89 @@ export { AUTO_ARM_MS, shouldAutoArm };
  *  exported for testing. */
 export function isStaleLiveActivityTicket(ticket: number, current: number): boolean {
   return !isCurrentArmTicket(ticket, current);
+}
+
+/** What to do with getStatus()'s answer, on mount (or whenever the armed
+ *  session identity becomes known): adopt whatever activity is already
+ *  running instead of blindly starting a new one. Native start() always ends
+ *  the currently-running activity first (one-active-session-per-device), so
+ *  starting here when one is already up — e.g. after the app's own
+ *  auto-reload on a fresh deploy while Beach Mode was still armed — would
+ *  flicker/restart the Lock Screen activity and leave a real registration
+ *  gap while it does. Pulled out as a pure function of getStatus()'s result
+ *  so the adopt decision is unit-testable without rendering this card (this
+ *  file's other hook-driven effects follow the same untested-by-design
+ *  convention noted in lib/plus/beachMode.ts's header). */
+export function resolveLiveActivityAdoption(
+  status: ActivityStatus,
+): { activityId: string; nextSeq: number; content: BeachSessionContentState } | null {
+  const running = status.activities[0];
+  if (!running) return null;
+  const { seq, ...content } = running.state;
+  return { activityId: running.id, nextSeq: seq + 1, content };
+}
+
+export type LiveActivityStartDecision = "start" | "update" | "wait" | "abort";
+
+/**
+ * What the start/update effect should do at each point it could otherwise
+ * blindly call start() over an activity that is — or is about to be —
+ * already running. Adoption (`resolveLiveActivityAdoption` above) runs its
+ * own getStatus() round trip asynchronously, so there is a window where the
+ * start effect could fire in the same flush before that check has settled;
+ * this is the single pure decision reused at every point in the start path
+ * that could otherwise race it, regardless of which one settles first:
+ *
+ *  - BEFORE beginning start(): the adoption check for the current session
+ *    identity may still be in flight (`adoptionChecked: false`) — wait
+ *    rather than risk starting a second activity over one about to be
+ *    adopted.
+ *  - AFTER each await in the start path (ensureInstallToken, then the
+ *    native start() call itself): adoption may have finished and recorded
+ *    an activity id WHILE this call was in flight — switch to updating it
+ *    instead of (or as well as) starting a new one.
+ *
+ * Testable both orders: adoption-resolves-first (hasActivityId already true
+ * when the start effect's own gate check runs) and start-begins-first
+ * (hasActivityId flips true only later, discovered on a post-await recheck).
+ */
+export function decideLiveActivityStart(opts: {
+  /** This ticket/session is no longer current (Off, retarget, a newer
+   *  session) — whatever this call was doing is moot. */
+  stale: boolean;
+  /** The adoption check (getStatus()) for the CURRENT session identity has
+   *  resolved. Only meaningful for the BEFORE-start gate; a post-await
+   *  recheck mid-flight is always past that point (adoption having already
+   *  run, or being irrelevant off the adoption path) so it should pass
+   *  `true` here. */
+  adoptionChecked: boolean;
+  /** An activity id is already recorded — adopted, or a start()/another
+   *  await-recheck already won the race. */
+  hasActivityId: boolean;
+}): LiveActivityStartDecision {
+  if (opts.stale) return "abort";
+  if (opts.hasActivityId) return "update";
+  if (!opts.adoptionChecked) return "wait";
+  return "start";
+}
+
+/**
+ * Whether an armed session identity is eligible for adoption (Codex
+ * round-4): only the FIRST real identity a mount ever observes — a reload or
+ * relaunch while Beach Mode was already armed, where a Live Activity can be
+ * running from before this JS context existed. Every identity AFTER that
+ * (retarget, Off→On again, a newer session) is a transition the
+ * identity-teardown effect itself drives: it already ends whatever activity
+ * belonged to the previous identity, so there is nothing left over from
+ * OUTSIDE this session to adopt — only a race against that very end() call,
+ * since getStatus()'s answer carries no slug/window to tell sessions apart
+ * and could see the activity still "running" mid-teardown.
+ */
+export function isFirstArmedIdentityEligibleForAdoption(
+  identity: string | null,
+  hadPriorRealIdentity: boolean,
+): boolean {
+  return identity !== null && !hadPriorRealIdentity;
 }
 
 /** The identity of an armed session for Live Activity purposes: which beach,
@@ -227,6 +311,23 @@ export function BeachModeCard({
   const laDismissedRef = useRef(false); // this session's activity was user-dismissed: no auto-recreate
   const laSessionStartRef = useRef<number | null>(null);
   const laStartingRef = useRef(false);
+  // Codex round-4: the identity-teardown effect below fires end() without
+  // awaiting it (React effects can't be async). Stashing the promise here
+  // lets the start path wait for that end() to actually settle before
+  // calling native start() on a retarget — without it, start() (or worse,
+  // adoption's getStatus(), which carries no slug/window to tell activities
+  // apart) can see the old activity still "running" mid-teardown.
+  const laPendingEndRef = useRef<Promise<unknown> | null>(null);
+  // The single armed-session identity (see `laSessionIdentity`) eligible for
+  // adoption: only the FIRST one observed after mount (a reload/relaunch
+  // while already armed — see the identity-teardown effect below, which is
+  // the only place this is set). Every later identity change (retarget,
+  // Off→On again, a newer session) is entirely JS-driven: that same effect
+  // already ends whatever activity belonged to the previous identity itself,
+  // so there is nothing left over from outside this session to adopt —
+  // only a race against the end() call it just fired (Codex round-4).
+  const laAdoptionEligibleRef = useRef(false);
+  const laHadPriorRealIdentityRef = useRef(false);
   // A ticket per armed SESSION IDENTITY (R-02, same rule as arm()'s
   // armSeqRef): bumped whenever `laSessionIdentity` changes — Off, a newer
   // session, or a same-window retarget to a different beach — so a start()
@@ -265,10 +366,22 @@ export function BeachModeCard({
     const hadPriorSession = laSessionIdRef.current !== LA_SESSION_INIT;
     laSessionIdRef.current = identity;
     laSessionSeqRef.current += 1;
+    // Codex round-4: adoption is only ever eligible for the FIRST real
+    // identity this mount observes (a reload while already armed) — every
+    // identity after that is a transition THIS effect itself drives, so it
+    // both ends the old activity (nothing external left to adopt) and marks
+    // itself ineligible for the new one, before the adoption effect (which
+    // runs later in this same commit) gets a chance to check.
+    laAdoptionEligibleRef.current = isFirstArmedIdentityEligibleForAdoption(identity, laHadPriorRealIdentityRef.current);
+    if (identity !== null) laHadPriorRealIdentityRef.current = true;
     if (laActivityIdRef.current) {
       const id = laActivityIdRef.current;
       laActivityIdRef.current = null;
-      void liveActivity.end(id, { dismissal: "immediate" });
+      const endPromise = liveActivity.end(id, { dismissal: "immediate" });
+      laPendingEndRef.current = endPromise;
+      void endPromise.finally(() => {
+        if (laPendingEndRef.current === endPromise) laPendingEndRef.current = null;
+      });
     }
     laDismissedRef.current = false;
     laSessionStartRef.current = null;
@@ -310,6 +423,106 @@ export function BeachModeCard({
       alive = false;
     };
   }, [native, plus.entitled, armed]);
+
+  // Adopt an already-running Live Activity instead of starting a new one.
+  // getStatus() (called just above to resolve `laAvailable`) can report an
+  // activity from a PREVIOUS mount of this card — e.g. the app's own
+  // auto-reload on a fresh deploy while Beach Mode was still armed. Native
+  // start() always ends whatever activity is currently running before it
+  // begins a new one (one-active-session-per-device), so if the start/update
+  // effect below were left to run its ordinary `!laActivityIdRef.current` ->
+  // start() path here, it would restart the SAME session's activity: a
+  // flicker on the Lock Screen and a real registration gap while the old
+  // activity is torn down and the new one spun up. Adopting instead means
+  // setting `laActivityIdRef` (and the seq/hash refs) from whatever is
+  // already running, so the start/update effect's existing `update()` branch
+  // takes over on its very next tick — no start() call at all.
+  //
+  // Runs once per armed session identity (the same `laSessionIdentity` key
+  // the teardown effect above uses), mount included. A retarget (identity
+  // change) is unaffected: the teardown effect ends the old activity and
+  // resets `laActivityIdRef` to null first, so this effect's own
+  // `laActivityIdRef.current` guard lets the start/update effect start a
+  // fresh activity for the new identity exactly as before.
+  //
+  // Two refs, not one (Codex round-2 #1): `laAdoptionAttemptedForRef` is set
+  // SYNCHRONOUSLY, before the getStatus() await, purely to stop a re-render
+  // firing a second concurrent check for the same identity.
+  // `laAdoptionCheckedForRef` is set only once that check has SETTLED
+  // (adopted, nothing to adopt, or mooted by a stale ticket) — the
+  // start/update effect below gates on this one via `decideLiveActivityStart`
+  // so it can never fire start() while an adoption check for the current
+  // identity is still in flight.
+  const laAdoptionAttemptedForRef = useRef<string | null>(null);
+  const laAdoptionCheckedForRef = useRef<string | null>(null);
+  // Codex round-3: `laAdoptionCheckedForRef` alone can't wake the
+  // start/update effect below — a ref write causes no re-render, so a
+  // "wait" decision there would sit until something UNRELATED happened to
+  // re-render this component (could be minutes). This tick is bumped every
+  // time the ref settles, purely to force that re-render; the ref (not the
+  // tick's value) stays the actual source of truth the effects read.
+  const [laAdoptionTick, setLaAdoptionTick] = useState(0);
+  useEffect(() => {
+    if (!native || !armed || !presence || !laAvailable || !plus.entitled) return;
+    const identity = laSessionIdentity(presence);
+    if (identity === null) return;
+    if (laAdoptionAttemptedForRef.current === identity) return; // already checking/checked this session
+    laAdoptionAttemptedForRef.current = identity;
+    if (laActivityIdRef.current || !laAdoptionEligibleRef.current) {
+      // Either already have one (started or adopted) — nothing to check —
+      // or (Codex round-4) this isn't the first armed identity since mount:
+      // a retarget/re-arm is entirely JS-driven, so the identity-teardown
+      // effect already ended whatever activity belonged to the PREVIOUS
+      // identity itself. Calling getStatus() here anyway would just race
+      // that in-flight end() — its answer carries no slug/window, so it
+      // could see the activity still "running" mid-teardown and adopt the
+      // very one about to disappear. Mark checked immediately instead; the
+      // existing end-then-start retarget path (below, awaiting
+      // `laPendingEndRef`) is what actually gets this session a fresh
+      // activity.
+      laAdoptionCheckedForRef.current = identity;
+      setLaAdoptionTick((n) => n + 1);
+      return;
+    }
+    const ticket = laSessionSeqRef.current;
+    // Only the still-current identity may settle its own adoption gate. A late
+    // answer for an identity the phone has already left must not overwrite the
+    // newer identity's "checked" marker (that would leave its start waiting).
+    const stillCurrent = () =>
+      !isStaleLiveActivityTicket(ticket, laSessionSeqRef.current) &&
+      laSessionIdRef.current === identity;
+    const settle = () => {
+      if (!stillCurrent()) return;
+      laAdoptionCheckedForRef.current = identity;
+      setLaAdoptionTick((n) => n + 1);
+    };
+    void liveActivity.getStatus().then((status) => {
+      try {
+        // The session moved on (Off, retarget, a newer session) while this
+        // was in flight — the teardown effect already handled it, and this
+        // identity's check is moot (the NEW identity gets its own check).
+        if (isStaleLiveActivityTicket(ticket, laSessionSeqRef.current)) return;
+        if (laActivityIdRef.current) return; // start() beat us to it
+        const adoption = resolveLiveActivityAdoption(status);
+        if (!adoption) return; // nothing running — the ordinary start() path applies
+        laActivityIdRef.current = adoption.activityId;
+        laSessionStartRef.current = laSessionStartRef.current ?? Date.now();
+        laLastHashRef.current = hashContentState(adoption.content);
+        laSeqRef.current = adoption.nextSeq;
+        // Force the next genuinely-changed conditions read through
+        // immediately rather than waiting out a throttle window measured
+        // from before this card even mounted.
+        laLastUpdateAtRef.current = 0;
+      } finally {
+        // Resolved, errored, or the plugin was simply unreachable — either
+        // way the check for this identity is done; mark it so the
+        // start/update effect stops waiting even if there was nothing (or
+        // nothing new) to adopt. The tick bump is what actually wakes that
+        // effect (a plain ref write triggers no re-render on its own).
+        settle();
+      }
+    }, settle);
+  }, [native, armed, presence, laAvailable, plus.entitled]);
 
   // Entitlement (or native availability) lost mid-session (expiry, refund,
   // server correction, Settings toggle): end whatever activity is running
@@ -376,76 +589,158 @@ export function BeachModeCard({
     });
     const hash = hashContentState(state);
 
-    if (!laActivityIdRef.current) {
-      if (laStartingRef.current) return;
-      laStartingRef.current = true;
-      const sessionStart = laSessionStartRef.current ?? Date.now();
-      laSessionStartRef.current = sessionStart;
+    // Codex round-2 #1: the adoption check above (getStatus(), for THIS
+    // session identity) is async, so this effect can fire in the same flush
+    // before it has settled — proceeding to start() here regardless would
+    // let native start() end the very activity adoption was about to hand
+    // us. `decideLiveActivityStart` is the single gate, reused again after
+    // every await below in case adoption (or a previous tick of this same
+    // effect) wins the race WHILE one of those awaits is in flight.
+    const identity = laSessionIdentity(presence);
+    const initialDecision = decideLiveActivityStart({
+      stale: false,
+      adoptionChecked: identity !== null && laAdoptionCheckedForRef.current === identity,
+      hasActivityId: !!laActivityIdRef.current,
+    });
+
+    if (initialDecision === "wait") return; // adoption check for this identity still in flight
+
+    if (initialDecision === "update") {
+      const now = Date.now();
+      if (hash === laLastHashRef.current) return; // nothing meaningful changed
+      if (now - laLastUpdateAtRef.current < LIVE_ACTIVITY_MIN_UPDATE_MS) return;
       const seq = laSeqRef.current;
-      const ticket = laSessionSeqRef.current;
       const wire: BeachSessionWireState = { ...state, v: 1, seq };
-      // Round-2 #1(c): await the install-token bootstrap FIRST — most
-      // devices have never had a reason to POST /api/devices before now
-      // (that only otherwise fires on an actual profile/home/prefs edit),
-      // so without this the very first Beach Mode session of a phone's
-      // lifetime would call start() with nothing to send, and
-      // liveActivity.start() itself now refuses to call the native plugin
-      // with a null token (round-2 #1d) rather than let a doomed
-      // /register upload go out. If this still comes back null — a lost
-      // token this device isn't entitled to recover (round-2 #2), or
-      // simply offline — this session reads as unavailable exactly like
-      // `laAvailable` being false: nothing starts, nothing throws, and the
-      // card renders its ordinary non-Live-Activity state. The staleness
-      // ticket check below still applies after the await resolves.
-      void plus.ensureInstallToken().then((installToken) => {
-        if (!installToken || isStaleLiveActivityTicket(ticket, laSessionSeqRef.current)) {
-          laStartingRef.current = false;
-          return;
-        }
-        void liveActivity
-          .start(
-            { beachName: armedTarget.name, slug: armedTarget.slug, sessionStart },
-            wire,
-            plus.deviceId,
-            LA_APP_BUILD,
-          )
-          .then((res) => {
-            laStartingRef.current = false;
-            if (!res.ok) return;
-            if (isStaleLiveActivityTicket(ticket, laSessionSeqRef.current)) {
-              // The armed session this was for is already gone (Off, or a
-              // newer session started before this one resolved) — end what
-              // we just started rather than record and leave it running.
-              void liveActivity.end(res.activityId, { dismissal: "immediate" });
-              return;
-            }
-            laActivityIdRef.current = res.activityId;
-            laLastHashRef.current = hash;
-            laLastUpdateAtRef.current = Date.now();
-            laSeqRef.current = seq + 1;
-          });
-      });
+      const id = laActivityIdRef.current!;
+      laLastHashRef.current = hash;
+      laLastUpdateAtRef.current = now;
+      laSeqRef.current = seq + 1;
+      void liveActivity.update(id, wire);
       return;
     }
 
-    const now = Date.now();
-    if (hash === laLastHashRef.current) return; // nothing meaningful changed
-    if (now - laLastUpdateAtRef.current < LIVE_ACTIVITY_MIN_UPDATE_MS) return;
-
+    // initialDecision === "start"
+    if (laStartingRef.current) return;
+    laStartingRef.current = true;
+    const sessionStart = laSessionStartRef.current ?? Date.now();
+    laSessionStartRef.current = sessionStart;
     const seq = laSeqRef.current;
+    const ticket = laSessionSeqRef.current;
     const wire: BeachSessionWireState = { ...state, v: 1, seq };
-    const id = laActivityIdRef.current;
-    laLastHashRef.current = hash;
-    laLastUpdateAtRef.current = now;
-    laSeqRef.current = seq + 1;
-    void liveActivity.update(id, wire);
+    // Round-2 #1(c): await the install-token bootstrap FIRST — most
+    // devices have never had a reason to POST /api/devices before now
+    // (that only otherwise fires on an actual profile/home/prefs edit),
+    // so without this the very first Beach Mode session of a phone's
+    // lifetime would call start() with nothing to send, and
+    // liveActivity.start() itself now refuses to call the native plugin
+    // with a null token (round-2 #1d) rather than let a doomed
+    // /register upload go out. If this still comes back null — a lost
+    // token this device isn't entitled to recover (round-2 #2), or
+    // simply offline — this session reads as unavailable exactly like
+    // `laAvailable` being false: nothing starts, nothing throws, and the
+    // card renders its ordinary non-Live-Activity state.
+    void plus.ensureInstallToken().then(async (installToken) => {
+      // Recheck (Codex round-2 #1): adoption may have resolved and recorded
+      // an activity id WHILE this await was in flight — switch to updating
+      // it instead of starting a second one. `adoptionChecked: true` here
+      // because this call is past the gate above regardless of outcome; the
+      // only question left is the race, which `hasActivityId` answers.
+      const decision = decideLiveActivityStart({
+        stale: isStaleLiveActivityTicket(ticket, laSessionSeqRef.current),
+        adoptionChecked: true,
+        hasActivityId: !!laActivityIdRef.current,
+      });
+      if (decision === "abort") {
+        laStartingRef.current = false;
+        return;
+      }
+      if (decision === "update") {
+        laStartingRef.current = false;
+        void liveActivity.update(laActivityIdRef.current!, wire);
+        laLastHashRef.current = hash;
+        laLastUpdateAtRef.current = Date.now();
+        laSeqRef.current = seq + 1;
+        return;
+      }
+      // decision === "start": still need a token to actually call native
+      // start() (update() above doesn't need one — only the /register
+      // upload does).
+      if (!installToken) {
+        laStartingRef.current = false;
+        return;
+      }
+      // Codex round-4: on a retarget, the identity-teardown effect fired
+      // end(oldId) without awaiting it (effects can't be async) — native
+      // enforces one activity per device, so calling start() before that
+      // end() has actually settled risks it landing on top of (or racing)
+      // the teardown. Wait for it here, then recheck once more: the ticket
+      // could have gone stale, or (in principle) something else could have
+      // recorded an activity id, while this settled.
+      if (laPendingEndRef.current) {
+        await laPendingEndRef.current.catch(() => {}); // never let a failed end() block start()
+      }
+      const postEndDecision = decideLiveActivityStart({
+        stale: isStaleLiveActivityTicket(ticket, laSessionSeqRef.current),
+        adoptionChecked: true,
+        hasActivityId: !!laActivityIdRef.current,
+      });
+      if (postEndDecision === "abort") {
+        laStartingRef.current = false;
+        return;
+      }
+      if (postEndDecision === "update") {
+        laStartingRef.current = false;
+        void liveActivity.update(laActivityIdRef.current!, wire);
+        laLastHashRef.current = hash;
+        laLastUpdateAtRef.current = Date.now();
+        laSeqRef.current = seq + 1;
+        return;
+      }
+      void liveActivity
+        .start(
+          { beachName: armedTarget.name, slug: armedTarget.slug, sessionStart },
+          wire,
+          plus.deviceId,
+          LA_APP_BUILD,
+        )
+        .then((res) => {
+          laStartingRef.current = false;
+          if (!res.ok) return;
+          const postStartDecision = decideLiveActivityStart({
+            stale: isStaleLiveActivityTicket(ticket, laSessionSeqRef.current),
+            adoptionChecked: true,
+            hasActivityId: !!laActivityIdRef.current,
+          });
+          if (postStartDecision !== "start") {
+            // Either the armed session this was for is already gone (Off,
+            // or a newer session started before this resolved), or adoption
+            // (or another tick) already recorded a different activity id
+            // while this native call was in flight — end what we just
+            // started rather than record and leave a second one running.
+            void liveActivity.end(res.activityId, { dismissal: "immediate" });
+            return;
+          }
+          laActivityIdRef.current = res.activityId;
+          laLastHashRef.current = hash;
+          laLastUpdateAtRef.current = Date.now();
+          laSeqRef.current = seq + 1;
+        });
+    });
     // hazards is read for its CURRENT value only when this effect runs (on a
     // fresh conditions poll) — it is not itself a trigger, so it is left out
     // of the dependency list on purpose (mirrors hazards' own eligibility
     // pattern elsewhere in this file, which re-reads live refs rather than
-    // re-running on every hazards tick).
+    // re-running on every hazards tick). `presence` is read only for
+    // `laSessionIdentity` above, which is otherwise already implied by
+    // `armed`/`armedTarget` — also left out to avoid a redundant re-run on
+    // every presence tick within the same identity. `laAdoptionTick` IS
+    // included (Codex round-3): it's the only thing that wakes this effect
+    // once the adoption check settles — `laAdoptionCheckedForRef` is a plain
+    // ref, so without this a "wait" decision below would otherwise sit
+    // until some unrelated prop caused a re-render, stalling a genuine
+    // start() for however long that takes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [armed, laPref, laAvailable, laConditions, armedTarget, plus.entitled, plus.deviceId]);
+  }, [armed, laPref, laAvailable, laConditions, armedTarget, plus.entitled, plus.deviceId, laAdoptionTick]);
 
   // Once a fix shows the phone has actually left the suppressed spot — or a
   // day has passed — drop the suppression so auto-arm is free to fire again

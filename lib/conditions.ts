@@ -319,6 +319,25 @@ const cachedConditions = (slug: string) =>
     { revalidate: 120, tags: [`conditions-${slug}`] },
   )();
 
+/**
+ * Codex round 2 (BLOCKING): an earlier version of this fix had `getConditions`
+ * itself pay for a second direct `getConditionsForLocation` build and call
+ * `revalidateTag` whenever the cached entry was older than
+ * `CONDITIONS_MAX_STALE_MS` (lib/conditionsFreshness.ts). That doubled the
+ * subrequest fan-out in one request — `unstable_cache` ALREADY kicks off its
+ * own background revalidation the moment it returns an expired entry, so a
+ * second, synchronous build in the same request could push a single request
+ * past Workers Free's 50-subrequest ceiling, herd under concurrency (every
+ * request past the deadline paying for its own rebuild), race the
+ * background write, and break lib/history/archive.ts's one-build-per-slug
+ * assumption. `getConditions` is back to purely returning the cached
+ * result, unconditionally — staleness is instead handled client-side (see
+ * `shouldRefetchForFreshness`, components/ConditionsDashboard.tsx) via a
+ * `?fresh=` cache-busting refetch of the public route, which the edge
+ * serves `no-store` (app/api/conditions/[slug]/route.ts).
+ */
+export { CONDITIONS_MAX_STALE_MS } from "@/lib/conditionsFreshness";
+
 export async function getConditions(
   slug: string,
 ): Promise<ConditionsResponse | null> {
