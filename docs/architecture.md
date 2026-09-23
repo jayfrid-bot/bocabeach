@@ -59,10 +59,15 @@ flowchart TD
 
   RESOLVE --> LOC[config/locations.ts<br/>source of truth for served beaches]
   SITEMAP --> LOC
+  LOC --> NEAREST[lib/location/nearest.ts<br/>nearestServedBeach / rankBeaches]
+  NEAREST --> SHOREDIST[lib/location/shoreDistance.ts<br/>distance to closest point on a beach's<br/>shore polyline, falling back to its pin]
 ```
 
 On the Plus side, the app also calls the device/presence routes directly
-(see diagram 3).
+(see diagram 3). `lib/location/nearest.ts` and its `shoreDistance.ts` helper
+are also what `/api/hazards` and Beach Mode's arrival check (`establishesArrival`,
+`lib/plus/beachMode.ts`) use to decide "which beach" / "am I at the beach" —
+one shared rule, client and server.
 
 ## 2. Scheduled jobs — keeping the feeds current
 

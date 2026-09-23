@@ -174,10 +174,26 @@ describe("POST /api/hazards", () => {
 
   it("400s too-far when the fix is outside the 2-mile arrival radius, even if inside 15 km", async () => {
     const { POST } = await import("@/app/api/hazards/route");
-    // ~3 mi north of Boca's centroid — inside the old 15 km gate, outside the 2 mi one.
-    const res = await POST(post({ ...BASE_BODY, lat: NEAR_LAT + 0.045, lon: NEAR_LON }));
+    // ~3 mi north of Spanish River Park — the northern end of Boca's shore
+    // stretch (config/locations.ts) — so still outside the 2 mi gate even
+    // though it measures to the closest point on the shore, not the pin.
+    // (A smaller +0.045 offset used to clear this gate before Boca's shore
+    // was added: it's ~1.9 mi from Spanish River Park, inside 2 mi now that
+    // "too-far" is measured to the beach's shoreline rather than its pin —
+    // see lib/location/shoreDistance.ts.)
+    const res = await POST(post({ ...BASE_BODY, lat: NEAR_LAT + 0.06, lon: NEAR_LON }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toBe("too-far");
+  });
+
+  it("accepts a fix within 2mi of Spanish River Park even though it's >2mi from Boca's pin (Codex fix)", async () => {
+    // Same offset the too-far test used to clear the gate before Boca's
+    // shore existed: ~1.9 mi from Spanish River Park (the shore's north
+    // end), ~3.1 mi from Boca's own pin. The server gate must accept this —
+    // the same shoreline rule the client's establishesArrival uses to arm.
+    const { POST } = await import("@/app/api/hazards/route");
+    const res = await POST(post({ ...BASE_BODY, lat: NEAR_LAT + 0.045, lon: NEAR_LON }));
+    expect(res.status).toBe(200);
   });
 
   it("400s an unknown beach slug", async () => {

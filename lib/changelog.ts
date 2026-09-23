@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-23",
+    title: "Nearest beach now checks the whole shoreline, not just one point",
+    details:
+      "South Boca no longer gets sent to Deerfield Beach — we now measure to the closest stretch of a beach's sand, not one pin in the middle of town.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-09-23",
     title: "More of the score on your first screen",
     details:
       "A tighter top of the page on phones: a smaller beach name, no county line, lifeguard flags on one line, and less space around them, so the score wheel shows without scrolling.",

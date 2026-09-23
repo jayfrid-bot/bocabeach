@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { listLocations, toPublicLocation } from "@/config/locations";
 import { nearestServedBeach, rankBeaches, isWithinMi } from "@/lib/location/nearest";
+import { distanceToBeachMi } from "@/lib/location/shoreDistance";
+import { AT_BEACH_MI } from "@/lib/plus/beachMode";
 import type { LocationPublic } from "@/lib/types";
 
 const BEACHES: LocationPublic[] = listLocations().map(toPublicLocation);
@@ -70,5 +72,32 @@ describe("isWithinMi", () => {
     expect(isWithinMi(2, 2)).toBe(true);
     expect(isWithinMi(2.01, 2)).toBe(false);
     expect(isWithinMi(0, 2)).toBe(true);
+  });
+});
+
+// Owner-reported bug (2026-09-23): standing in south/southwest Boca, the app
+// suggested Deerfield Beach because both towns were modeled as one pin and
+// Boca's pin sits north of Camino Real. Boca's shore stretch
+// (config/locations.ts) fixes this — these are the owner's own repro points.
+describe("nearest beach: south Boca no longer suggests Deerfield", () => {
+  it("a southwest-Boca point near Camino Real ranks boca-raton first", () => {
+    const ranked = rankBeaches(26.337, -80.13, BEACHES);
+    expect(ranked[0].beach.slug).toBe("boca-raton");
+  });
+
+  it("a point near Boca's South Inlet Park (inland) ranks boca-raton first", () => {
+    const ranked = rankBeaches(26.333, -80.09, BEACHES);
+    expect(ranked[0].beach.slug).toBe("boca-raton");
+  });
+
+  it("a point near the Deerfield pier (inland) still ranks deerfield-beach first", () => {
+    const ranked = rankBeaches(26.317, -80.1, BEACHES);
+    expect(ranked[0].beach.slug).toBe("deerfield-beach");
+  });
+
+  it("someone standing at Spanish River Park is still \"at the beach\" for boca-raton", () => {
+    const boca = BEACHES.find((b) => b.slug === "boca-raton")!;
+    const d = distanceToBeachMi(26.383, -80.068, boca);
+    expect(isWithinMi(d, AT_BEACH_MI)).toBe(true);
   });
 });

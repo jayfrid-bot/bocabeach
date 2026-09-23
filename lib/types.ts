@@ -1111,6 +1111,20 @@ export interface Location {
   lat: number;
   lon: number;
   /**
+   * North-to-south polyline of [lat, lon] pairs tracing the public beach's
+   * shoreline, for towns whose beach stretches more than ~1 mile along the
+   * coast (e.g. Boca Raton: Spanish River Park down to South Inlet Park).
+   * When set, "which beach is nearest" / "am I at the beach" measure to the
+   * closest point on this line (lib/location/shoreDistance.ts) instead of
+   * straight-line distance to `lat`/`lon` — so a fix south of the pin but
+   * still along the town's own sand isn't sent to the next town over.
+   * `lat`/`lon` stay the data anchor for weather, buoys, tides, lightning
+   * distance, and score regardless — only "nearest beach" reads `shore`.
+   * Omit for beaches with a short or unverified frontage; they fall back to
+   * pin distance exactly as before.
+   */
+  shore?: [number, number][];
+  /**
    * Provenance tier. `"curated"` = a human filled in the local fields (cams,
    * lifeguard-flag scrape, water-quality county). `"auto"` = produced by the
    * beach auto-resolver from lat/lon, so the national data layers (weather,
@@ -1197,5 +1211,5 @@ export interface Location {
 
 export type LocationPublic = Pick<
   Location,
-  "slug" | "name" | "region" | "lat" | "lon" | "timezone" | "tier"
+  "slug" | "name" | "region" | "lat" | "lon" | "timezone" | "tier" | "shore"
 >;

@@ -1,7 +1,8 @@
 // Pure distance/ranking helpers over the served beach list. No fetch, no
 // browser globals — safe to unit test directly.
 
-import { haversineMiles, bearingDeg } from "@/lib/util";
+import { bearingDeg } from "@/lib/util";
+import { distanceToBeachMi, nearestShorePoint } from "@/lib/location/shoreDistance";
 import type { LocationPublic } from "@/lib/types";
 
 export interface NearestBeach {
@@ -24,20 +25,26 @@ export function nearestServedBeach(
 ): NearestBeach | null {
   let best: NearestBeach | null = null;
   for (const beach of beaches) {
-    const distanceMi = haversineMiles(lat, lon, beach.lat, beach.lon);
+    const distanceMi = distanceToBeachMi(lat, lon, beach);
     if (!best || distanceMi < best.distanceMi) best = { beach, distanceMi };
   }
   return best;
 }
 
-/** Every beach ranked nearest-first, each with its distance + bearing from (lat, lon). */
+/** Every beach ranked nearest-first, each with its distance + bearing from (lat, lon).
+ *  Distance is to the closest point on the beach's shoreline (falling back to
+ *  its pin when it has none); the bearing points the same way — toward that
+ *  nearest point on the sand, not always toward one fixed pin. */
 export function rankBeaches(lat: number, lon: number, beaches: LocationPublic[]): RankedBeach[] {
   return beaches
-    .map((beach) => ({
-      beach,
-      distanceMi: haversineMiles(lat, lon, beach.lat, beach.lon),
-      bearingDeg: bearingDeg(lat, lon, beach.lat, beach.lon),
-    }))
+    .map((beach) => {
+      const target = nearestShorePoint(lat, lon, beach);
+      return {
+        beach,
+        distanceMi: distanceToBeachMi(lat, lon, beach),
+        bearingDeg: bearingDeg(lat, lon, target.lat, target.lon),
+      };
+    })
     .sort((a, b) => a.distanceMi - b.distanceMi);
 }
 

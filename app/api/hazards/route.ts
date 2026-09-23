@@ -43,7 +43,7 @@ import { ARRIVAL_MAX_FIX_AGE_MS, FIX_MAX_ACCURACY_M, FIX_MAX_FUTURE_SKEW_MS } fr
 import { cellKey } from "@/lib/location/cell";
 import { isNativeRequest } from "@/lib/nativeRequest";
 import { checkRateLimit, clientIp } from "@/lib/plus/rateLimit";
-import { haversineMiles } from "@/lib/util";
+import { distanceToBeachMi } from "@/lib/location/shoreDistance";
 import type { PrecipRadarData, Wrapped } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -150,7 +150,12 @@ export async function POST(req: Request): Promise<Response> {
   if (fixAt - nowMs > FIX_MAX_FUTURE_SKEW_MS) return fail("future-fix", 400);
   if (nowMs - fixAt > ARRIVAL_MAX_FIX_AGE_MS) return fail("stale-fix", 400);
   if (accuracyM > FIX_MAX_ACCURACY_M) return fail("inaccurate-fix", 400);
-  if (haversineMiles(lat, lon, loc.lat, loc.lon) > AT_BEACH_MI) return fail("too-far", 400);
+  // Same shoreline-aware rule the client's establishesArrival used to arm
+  // (lib/location/shoreDistance.ts) — a fix the client calls "at the beach"
+  // must never be rejected here as "too far" (config/locations.ts's `shore`
+  // covers `loc` directly; getLocation returns the full Location, not the
+  // pared-down LocationPublic).
+  if (distanceToBeachMi(lat, lon, loc) > AT_BEACH_MI) return fail("too-far", 400);
   const pointAnchor = { kind: "point" as const, lat, lon, cell: cellKey(lat, lon) };
   const beachAnchor = { kind: "beach" as const, slug };
 

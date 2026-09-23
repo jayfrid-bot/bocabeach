@@ -440,4 +440,25 @@ describe("fixOf", () => {
     expect(f.fixSource).toBe("device");
     expect(FIX_MAX_DISTANCE_MI).toBeGreaterThan(9); // sanity: ~15 km in miles
   });
+
+  it("uses distance to the shore, not the pin, when the beach has one (Codex fix)", () => {
+    // Boca's real shore (config/locations.ts) — north end at Spanish River
+    // Park, 26.3822,-80.0683. A fix ~8.2 mi from that shore endpoint but
+    // ~9.8 mi from Boca's own pin: inside FIX_MAX_DISTANCE_MI (~9.32 mi)
+    // measured to the shore, outside it measured to the pin. Before this
+    // fix, fixOf's caller stripped the beach to {lat, lon} and this fix
+    // would have been silently downgraded to the beach centroid.
+    const boca = { lat: BEACH.lat, lon: BEACH.lon, shore: [[26.3822, -80.0683], [26.3347, -80.073]] as [number, number][] };
+    const far = { lat: 26.3822 + 0.118, lon: -80.0683 };
+    const f = fixOf(armed(far), boca, NOW6);
+    expect(f.fixSource).toBe("device");
+    expect(f).toEqual({ lat: far.lat, lon: far.lon, fixSource: "device" });
+  });
+
+  it("still falls back to the beach centroid past the shore-distance cap", () => {
+    const boca = { lat: BEACH.lat, lon: BEACH.lon, shore: [[26.3822, -80.0683], [26.3347, -80.073]] as [number, number][] };
+    const wayFar = { lat: 26.3822 + 0.3, lon: -80.0683 };
+    const f = fixOf(armed(wayFar), boca, NOW6);
+    expect(f).toEqual({ lat: boca.lat, lon: boca.lon, fixSource: "beach" });
+  });
 });

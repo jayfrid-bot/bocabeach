@@ -20,7 +20,7 @@ import { getConditions } from "@/lib/conditions";
 import { getLocation } from "@/config/locations";
 import { summarizeStrikes, type LightningFeed } from "@/lib/sources/lightning";
 import { safetyAlertsEnabled } from "@/lib/push/notify";
-import { haversineMiles } from "@/lib/util";
+import { distanceToBeachMi } from "@/lib/location/shoreDistance";
 import { repeatWindow, sendClaimKey } from "@/lib/db/sendClaims";
 import type { DeviceStore, LiveActivityRow } from "@/lib/db/store";
 import type { ArmedDevice, PushableDevice } from "@/lib/db/types";
@@ -213,7 +213,7 @@ export interface Fix {
  */
 export function fixOf(
   armed: ArmedDevice,
-  fallback: { lat: number; lon: number },
+  fallback: { lat: number; lon: number; shore?: [number, number][] },
   nowMs: number,
 ): Fix {
   const beach: Fix = { lat: fallback.lat, lon: fallback.lon, fixSource: "beach" };
@@ -222,7 +222,10 @@ export function fixOf(
   if (fixAt == null || !Number.isFinite(fixAt) || nowMs - fixAt > FIX_MAX_AGE_MS) return beach;
   if (fixAt - nowMs > FIX_MAX_FUTURE_SKEW_MS) return beach; // future-dated → not trusted (LOC-09)
   if (accuracyM != null && Number.isFinite(accuracyM) && accuracyM > FIX_MAX_ACCURACY_M) return beach;
-  if (haversineMiles(lat, lon, fallback.lat, fallback.lon) > FIX_MAX_DISTANCE_MI) return beach;
+  // Shoreline-aware, same rule as establishesArrival/the /api/hazards gate
+  // (lib/location/shoreDistance.ts): a fix near Boca's shore but far from its
+  // pin must not be quietly discarded here and silently fall back to the pin.
+  if (distanceToBeachMi(lat, lon, fallback) > FIX_MAX_DISTANCE_MI) return beach;
   return { lat, lon, fixSource: "device" };
 }
 
@@ -594,7 +597,7 @@ export async function runAtBeachAlerts(deps: AtBeachDeps): Promise<AtBeachCounts
         continue;
       }
       try {
-        const fix = fixOf(device, { lat: loc.lat, lon: loc.lon }, now);
+        const fix = fixOf(device, loc, now);
         const conditions = await conditionsForCapped(device.presence.slug);
         const rain = await loadRain(
           fix.lat,

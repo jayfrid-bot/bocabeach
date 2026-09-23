@@ -24,6 +24,20 @@ export const LOCATIONS: Location[] = [
     updatedAt: "2026-05-29",
     lat: 26.3587,
     lon: -80.0686,
+    // North-to-south polyline along Boca's ~3-mile public beach stretch, so
+    // "nearest beach" measures to the closest point on the sand rather than
+    // to one pin near the middle. Coordinates are each park's OSM centroid,
+    // geocoded via nominatim.openstreetmap.org 2026-09-23:
+    //   Spanish River Park  26.3822, -80.0683
+    //   Red Reef Park       26.3629, -80.0691
+    //   South Beach Park    26.3535, -80.0699
+    //   South Inlet Park    26.3347, -80.0730
+    shore: [
+      [26.3822, -80.0683],
+      [26.3629, -80.0691],
+      [26.3535, -80.0699],
+      [26.3347, -80.073],
+    ],
     timezone: "America/New_York",
     // Due-east-facing Atlantic shoreline: wind blowing straight onshore comes
     // FROM ~90° (E). Enables the man-o'-war + shark SE-FL advisories here.
@@ -323,5 +337,6 @@ export function toPublicLocation(l: Location): LocationPublic {
     lon: l.lon,
     timezone: l.timezone,
     tier: l.tier,
+    shore: l.shore,
   };
 }

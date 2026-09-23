@@ -13,6 +13,7 @@ import {
   FIX_MAX_FUTURE_SKEW_MS,
 } from "@/lib/location/device";
 import { haversineMiles } from "@/lib/util";
+import { distanceToBeachMi } from "@/lib/location/shoreDistance";
 import type { OffSuppression } from "@/lib/plus/types";
 import type { LocationPublic } from "@/lib/types";
 
@@ -149,7 +150,7 @@ export function establishesArrival(
   if (!Number.isFinite(fix.at)) return false;
   if (now - fix.at > ARRIVAL_MAX_FIX_AGE_MS) return false;
   if (fix.at - now > FIX_MAX_FUTURE_SKEW_MS) return false;
-  return isWithinMi(haversineMiles(fix.lat, fix.lon, centroid.lat, centroid.lon), AT_BEACH_MI);
+  return isWithinMi(distanceToBeachMi(fix.lat, fix.lon, centroid), AT_BEACH_MI);
 }
 
 /**
@@ -168,7 +169,7 @@ export function resolveArmCoords(
 ): ArmCoords {
   if (!fix || !centroid) return NO_COORDS;
   if (!Number.isFinite(fix.accuracyM) || fix.accuracyM > FIX_MAX_ACCURACY_M) return NO_COORDS;
-  const distanceMi = haversineMiles(fix.lat, fix.lon, centroid.lat, centroid.lon);
+  const distanceMi = distanceToBeachMi(fix.lat, fix.lon, centroid);
   if (!isWithinMi(distanceMi, AT_BEACH_MI)) return NO_COORDS;
   return { lat: fix.lat, lon: fix.lon, accuracyM: fix.accuracyM, fixAt: fix.at };
 }

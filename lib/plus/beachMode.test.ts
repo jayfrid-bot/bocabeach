@@ -29,6 +29,17 @@ const BEACH = { lat: 26.35, lon: -80.08 };
 const NEAR_FIX = { lat: 26.351, lon: -80.081 }; // well under 2mi
 const FAR_FIX = { lat: 26.6, lon: -80.3 }; // tens of miles away
 
+// Same centroid, but with a shore stretch running north — like Boca Raton's
+// real config (config/locations.ts). A fix near the shore's north end is
+// >2mi from BEACH's own pin, so these fixtures tell apart "measured to the
+// pin" (old behavior) from "measured to the shore" (current behavior).
+const BEACH_SHORE = {
+  ...BEACH,
+  shore: [[26.4, -80.075], [26.35, -80.08]] as [number, number][],
+};
+// ~0.09mi from the shore's north end, ~3.4mi from BEACH_SHORE's own pin.
+const FIX_NEAR_SHORE_FAR_FROM_PIN = { lat: 26.399, lon: -80.076 };
+
 describe("extendArmedUntil", () => {
   it("starts a fresh window at now + duration when nothing is armed", () => {
     expect(extendArmedUntil(0, NOW, 4 * HOUR)).toBe(NOW + 4 * HOUR);
@@ -164,6 +175,19 @@ describe("resolveArmCoords", () => {
     expect(resolveArmCoords("manual", onBeach, BEACH).lat).toBe(BEACH.lat);
     expect(AT_BEACH_MI).toBeGreaterThan(0);
   });
+
+  it("uses the shore, not just the pin, to decide whether a fix may be forwarded (Codex fix)", () => {
+    const nearShore = { lat: FIX_NEAR_SHORE_FAR_FROM_PIN.lat, lon: FIX_NEAR_SHORE_FAR_FROM_PIN.lon, accuracyM: 20, at: NOW };
+    // Too far from BEACH's pin — coordinates withheld under the old rule.
+    expect(resolveArmCoords("manual", nearShore, BEACH).lat).toBeNull();
+    // Within 2mi of BEACH_SHORE's actual shoreline — coordinates forwarded.
+    expect(resolveArmCoords("manual", nearShore, BEACH_SHORE)).toEqual({
+      lat: nearShore.lat,
+      lon: nearShore.lon,
+      accuracyM: nearShore.accuracyM,
+      fixAt: nearShore.at,
+    });
+  });
 });
 
 describe("resolveBeachModeView", () => {
@@ -252,6 +276,14 @@ describe("establishesArrival (LOC-12, LOC-06)", () => {
     expect(establishesArrival({ ...good, at: NaN }, BEACH, NOW)).toBe(false);
     expect(establishesArrival(null, BEACH, NOW)).toBe(false);
     expect(establishesArrival(good, null, NOW)).toBe(false);
+  });
+
+  it("measures to the beach's shore, not just its pin, when it has one (Codex fix)", () => {
+    const nearShore = { ...FIX_NEAR_SHORE_FAR_FROM_PIN, accuracyM: 20, at: NOW };
+    // Too far from the pin under the OLD pin-only rule...
+    expect(establishesArrival(nearShore, BEACH, NOW)).toBe(false);
+    // ...but within 2mi of BEACH_SHORE's actual shoreline.
+    expect(establishesArrival(nearShore, BEACH_SHORE, NOW)).toBe(true);
   });
 });
 
