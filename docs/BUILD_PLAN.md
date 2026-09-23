@@ -16,7 +16,7 @@ Sizes are agent-build days (Sonnet crews, Fable orchestrating, Codex review on a
 | 5 | ✅ Station guard for all 39 beaches (67 stations classified) + South Padre → 42092 | done |
 | 6 | ✅ `/api/resolve` rate-limited (10/h/IP) + input validation | done |
 | 7 | ✅ Sitemap `lastModified` stable + coverage-honest descriptions | done |
-| 8 | ⏳ **Live Activities phases 0–1** (extension target, lock-screen UI in the simulator) — IN PROGRESS from 2026-09-22 | 5 | `docs/LIVE_ACTIVITY_PLAN.md` |
+| 8 | ✅ **Live Activities phases 0–1** — extension target, versioned model, all presentations, simulator-proven (committed 2026-09-22; ships with 1.2) | done |
 
 ## Next — after 1.1 is approved (≈ 4 weeks)
 | # | Item | Days |

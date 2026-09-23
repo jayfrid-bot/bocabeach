@@ -8,6 +8,10 @@
 
 /* Begin PBXBuildFile section */
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
+		3F5B2398ADE104F1212F76E6 /* BeachSessionActivity.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 751FB9D08435C17C4D1424CB /* BeachSessionActivity.appex */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
+		44046A873E4EE775CE4D68C1 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E7C0EB58B1F6BEAC35EEC911 /* SwiftUI.framework */; };
+		489E3C5BE94101F8A0E3FB75 /* BeachSessionActivityLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C536892AAAF04BE9FA7461A6 /* BeachSessionActivityLiveActivity.swift */; };
+		4CC38E19F6D22BF5796103DD /* ActivityKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6947E1456562E5B41BCD9BA4 /* ActivityKit.framework */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
 		504EC3081FED79650016851F /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 504EC3071FED79650016851F /* AppDelegate.swift */; };
@@ -15,9 +19,40 @@
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
+		611B066ED996495C83C7A943 /* BeachSessionDemo.swift in Sources */ = {isa = PBXBuildFile; fileRef = E50A3F37F33E5C66566261D1 /* BeachSessionDemo.swift */; };
+		69D5CE288EC31D9C36E7C73F /* BeachSessionActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A84C271954F2DF367E4E21A /* BeachSessionActivityBundle.swift */; };
+		8762037FD95F10A645682F8F /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DA14EA36744C240FFED8B9A8 /* WidgetKit.framework */; };
+		884260816AB9C273A6857202 /* BeachSessionAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18A86DD8B5B898EB0DD5C2DD /* BeachSessionAttributes.swift */; };
+		BB57C405947EC0E8887AD68F /* BeachSessionAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18A86DD8B5B898EB0DD5C2DD /* BeachSessionAttributes.swift */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		E29C23BEDC8548C9590B48D7 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 988B585825E59D2DF8B2CC05;
+			remoteInfo = BeachSessionActivity;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		1A69D93A49D0B5D9C39011E4 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				3F5B2398ADE104F1212F76E6 /* BeachSessionActivity.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		03F2535581859D691E906110 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		18A86DD8B5B898EB0DD5C2DD /* BeachSessionAttributes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachSessionAttributes.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -27,7 +62,14 @@
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
+		5A84C271954F2DF367E4E21A /* BeachSessionActivityBundle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachSessionActivityBundle.swift; sourceTree = "<group>"; };
+		6947E1456562E5B41BCD9BA4 /* ActivityKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ActivityKit.framework; path = System/Library/Frameworks/ActivityKit.framework; sourceTree = SDKROOT; };
+		751FB9D08435C17C4D1424CB /* BeachSessionActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BeachSessionActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		C536892AAAF04BE9FA7461A6 /* BeachSessionActivityLiveActivity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachSessionActivityLiveActivity.swift; sourceTree = "<group>"; };
+		DA14EA36744C240FFED8B9A8 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		E50A3F37F33E5C66566261D1 /* BeachSessionDemo.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachSessionDemo.swift; sourceTree = "<group>"; };
+		E7C0EB58B1F6BEAC35EEC911 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -39,15 +81,38 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		6CEED320F5B84F75509D01F4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8762037FD95F10A645682F8F /* WidgetKit.framework in Frameworks */,
+				44046A873E4EE775CE4D68C1 /* SwiftUI.framework in Frameworks */,
+				4CC38E19F6D22BF5796103DD /* ActivityKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		1C8D14AD3E58B14D73889E74 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				DA14EA36744C240FFED8B9A8 /* WidgetKit.framework */,
+				E7C0EB58B1F6BEAC35EEC911 /* SwiftUI.framework */,
+				6947E1456562E5B41BCD9BA4 /* ActivityKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		504EC2FB1FED79650016851F = {
 			isa = PBXGroup;
 			children = (
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
 				504EC3061FED79650016851F /* App */,
 				504EC3051FED79650016851F /* Products */,
+				CB675614C16C8C035C498956 /* Shared */,
+				C33089D38720027F24B3649E /* BeachSessionActivity */,
+				1C8D14AD3E58B14D73889E74 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -55,6 +120,7 @@
 			isa = PBXGroup;
 			children = (
 				504EC3041FED79650016851F /* App.app */,
+				751FB9D08435C17C4D1424CB /* BeachSessionActivity.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -70,8 +136,29 @@
 				504EC3131FED79650016851F /* Info.plist */,
 				2FAD9762203C412B000D30F8 /* config.xml */,
 				50B271D01FEDC1A000F3C39B /* public */,
+				E50A3F37F33E5C66566261D1 /* BeachSessionDemo.swift */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		C33089D38720027F24B3649E /* BeachSessionActivity */ = {
+			isa = PBXGroup;
+			children = (
+				5A84C271954F2DF367E4E21A /* BeachSessionActivityBundle.swift */,
+				C536892AAAF04BE9FA7461A6 /* BeachSessionActivityLiveActivity.swift */,
+				03F2535581859D691E906110 /* Info.plist */,
+			);
+			name = BeachSessionActivity;
+			path = BeachSessionActivity;
+			sourceTree = "<group>";
+		};
+		CB675614C16C8C035C498956 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				18A86DD8B5B898EB0DD5C2DD /* BeachSessionAttributes.swift */,
+			);
+			name = Shared;
+			path = Shared;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -84,10 +171,12 @@
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
+				1A69D93A49D0B5D9C39011E4 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				2DFBBF21552B1B67CD3B8F73 /* PBXTargetDependency */,
 			);
 			name = App;
 			packageProductDependencies = (
@@ -96,6 +185,23 @@
 			productName = App;
 			productReference = 504EC3041FED79650016851F /* App.app */;
 			productType = "com.apple.product-type.application";
+		};
+		988B585825E59D2DF8B2CC05 /* BeachSessionActivity */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CEF0E5F8B0666352A3BDBA0B /* Build configuration list for PBXNativeTarget "BeachSessionActivity" */;
+			buildPhases = (
+				D53F3AF3E899BD4F66381983 /* Sources */,
+				6CEED320F5B84F75509D01F4 /* Frameworks */,
+				85CA6C825F42DDB8F39A820C /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BeachSessionActivity;
+			productName = BeachSessionActivity;
+			productReference = 751FB9D08435C17C4D1424CB /* BeachSessionActivity.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -109,6 +215,11 @@
 					504EC3031FED79650016851F = {
 						CreatedOnToolsVersion = 9.2;
 						LastSwiftMigration = 1100;
+						ProvisioningStyle = Automatic;
+					};
+					988B585825E59D2DF8B2CC05 = {
+						CreatedOnToolsVersion = 27.0;
+						DevelopmentTeam = F6994Y2RVD;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -130,6 +241,7 @@
 			projectRoot = "";
 			targets = (
 				504EC3031FED79650016851F /* App */,
+				988B585825E59D2DF8B2CC05 /* BeachSessionActivity */,
 			);
 		};
 /* End PBXProject section */
@@ -148,6 +260,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		85CA6C825F42DDB8F39A820C /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -156,10 +275,31 @@
 			buildActionMask = 2147483647;
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
+				611B066ED996495C83C7A943 /* BeachSessionDemo.swift in Sources */,
+				884260816AB9C273A6857202 /* BeachSessionAttributes.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D53F3AF3E899BD4F66381983 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				69D5CE288EC31D9C36E7C73F /* BeachSessionActivityBundle.swift in Sources */,
+				489E3C5BE94101F8A0E3FB75 /* BeachSessionActivityLiveActivity.swift in Sources */,
+				BB57C405947EC0E8887AD68F /* BeachSessionAttributes.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		2DFBBF21552B1B67CD3B8F73 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = BeachSessionActivity;
+			target = 988B585825E59D2DF8B2CC05 /* BeachSessionActivity */;
+			targetProxy = E29C23BEDC8548C9590B48D7 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXVariantGroup section */
 		504EC30B1FED79650016851F /* Main.storyboard */ = {
@@ -298,7 +438,6 @@
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2026090701;
-				OTHER_LDFLAGS = "$(inherited) -ObjC";
 				DEVELOPMENT_TEAM = F6994Y2RVD;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -307,6 +446,10 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.1;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
 				PRODUCT_BUNDLE_IDENTIFIER = com.isitbeachday.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -323,7 +466,6 @@
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2026090701;
-				OTHER_LDFLAGS = "$(inherited) -ObjC";
 				DEVELOPMENT_TEAM = F6994Y2RVD;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -332,6 +474,10 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.1;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-ObjC",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.isitbeachday.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
@@ -339,6 +485,62 @@
 				TARGETED_DEVICE_FAMILY = 1;
 			};
 			name = Release;
+		};
+		5F2A1ACB7BEA601B9C2A9FD2 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2026090701;
+				DEVELOPMENT_TEAM = F6994Y2RVD;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BeachSessionActivity/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.isitbeachday.app.beachsession;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		DF9F28976E9164276ADFEB22 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2026090701;
+				DEVELOPMENT_TEAM = F6994Y2RVD;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BeachSessionActivity/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.2;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.isitbeachday.app.beachsession;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
 		};
 /* End XCBuildConfiguration section */
 
@@ -357,6 +559,15 @@
 			buildConfigurations = (
 				504EC3171FED79650016851F /* Debug */,
 				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CEF0E5F8B0666352A3BDBA0B /* Build configuration list for PBXNativeTarget "BeachSessionActivity" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5F2A1ACB7BEA601B9C2A9FD2 /* Release */,
+				DF9F28976E9164276ADFEB22 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
