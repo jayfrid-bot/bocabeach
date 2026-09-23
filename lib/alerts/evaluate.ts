@@ -24,7 +24,7 @@ import type { AlertKey, AlertPrefs, ScoreProfile } from "@/lib/db/types";
 import type { ConditionsResponse, FlagColor, LightningData } from "@/lib/types";
 import { buildAlert, type AlertDecision, type AlertSubject } from "@/lib/alerts/catalog";
 import type { RainRead } from "@/lib/alerts/rain";
-import { assessLightning, type HazardAnchor } from "@/lib/hazards/assess";
+import { assessLightning, type HazardAnchor, type HazardAssessment } from "@/lib/hazards/assess";
 import { cellKey } from "@/lib/location/cell";
 
 /** Lightning this close counts as "at the beach". */
@@ -115,22 +115,32 @@ function anchorOf(presence: AtBeachInput["presence"]): HazardAnchor {
  * fire/no-fire call is delegated to `assessLightning` (lib/hazards/assess.ts)
  * so the push and the score cap can never disagree about the same strike.
  */
-function lightningSubjects(strikes: LightningData | null, anchor: HazardAnchor, nowMs: number): AlertSubject[] {
-  const mi = strikes?.nearestMi;
+/** The ONE lightning assessment this evaluation makes (Codex review #9) —
+ *  `evaluateAtBeach` returns it so `lib/alerts/run.ts` can feed the SAME
+ *  object into the Live Activity's content-state projection instead of
+ *  calling `assessLightning` a second time for the same fix/anchor/moment. */
+function lightningAssessment(strikes: LightningData | null, anchor: HazardAnchor, nowMs: number): HazardAssessment {
   // The age of the MOST RECENT strike within 5 mi — the only signal
   // assessLightning uses to decide active/latched (lib/hazards/assess.ts).
   // nearestMi/nearestMinutesAgo above can point at a DIFFERENT strike (the
   // closest one isn't always the most recent close one), so this must come
   // from the source's own closeStrikeMinutesAgo, never be derived from mi.
-  const assessment = assessLightning({
+  return assessLightning({
     status: strikes ? "ok" : "error",
-    nearestMi: mi,
+    nearestMi: strikes?.nearestMi,
     nearestMinutesAgo: strikes?.nearestMinutesAgo,
     closeStrikeMinutesAgo: strikes?.closeStrikeMinutesAgo,
     windowMinutes: strikes?.windowMinutes,
     nowMs,
     anchor,
   });
+}
+
+function lightningSubjects(
+  assessment: HazardAssessment,
+  strikes: LightningData | null,
+): AlertSubject[] {
+  const mi = strikes?.nearestMi;
   if (!assessment.active || mi == null || !Number.isFinite(mi)) return [];
   const out: AlertSubject[] = [{ key: "lightning", nearestMi: mi, escalated: false }];
   if (mi <= LIGHTNING_ESCALATE_MI) {
@@ -217,14 +227,24 @@ function rainSubject(input: AtBeachInput): AlertSubject | null {
   return recent ? { key: "rain-clearing" } : null;
 }
 
+/** `evaluateAtBeach`'s result: the alert decisions, plus the one lightning
+ *  assessment it computed (Codex review #9) — the caller (lib/alerts/run.ts)
+ *  feeds `lightning` straight into the Live Activity's content-state
+ *  projection instead of re-deriving it. */
+export interface EvaluateAtBeachResult {
+  decisions: AlertDecision[];
+  lightning: HazardAssessment;
+}
+
 /**
  * Decide every alert an armed device is due, most urgent first. Preferences are
  * applied here, so a decision that comes out of this function is one the person
  * asked for; the caller only has to handle the repeat window.
  */
-export function evaluateAtBeach(input: AtBeachInput): AlertDecision[] {
+export function evaluateAtBeach(input: AtBeachInput): EvaluateAtBeachResult {
   const subjects: AlertSubject[] = [];
-  subjects.push(...lightningSubjects(input.strikes, anchorOf(input.presence), input.now));
+  const lightning = lightningAssessment(input.strikes, anchorOf(input.presence), input.now);
+  subjects.push(...lightningSubjects(lightning, input.strikes));
 
   if (input.conditions) {
     subjects.push(...snapshotHazards(input.conditions, input.now));
@@ -255,5 +275,8 @@ export function evaluateAtBeach(input: AtBeachInput): AlertDecision[] {
   // in one call) so the plain lightning notice still sorts before its
   // escalation, exactly as it did before keys were scoped.
   const bare = (k: string): string => k.replace(/@[^@]*$/, "");
-  return out.sort((a, b) => a.priority - b.priority || bare(a.dedupKey).localeCompare(bare(b.dedupKey)));
+  const decisions = out.sort(
+    (a, b) => a.priority - b.priority || bare(a.dedupKey).localeCompare(bare(b.dedupKey)),
+  );
+  return { decisions, lightning };
 }

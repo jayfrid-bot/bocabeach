@@ -2,7 +2,13 @@
 //
 //   POST { deviceId, platform?, tz?, homeSlug?, profile?, prefs?, previewSeen? }
 //        Upsert. Only the fields present in the body change; `prefs` merges over
-//        what is stored, so a client can flip one toggle.
+//        what is stored, so a client can flip one toggle. The FIRST call for a
+//        device (any device with no `token_hash` on file yet) also mints an
+//        install token and returns it as `installToken` — ONCE, never again.
+//        The web layer stores it (lib/plus/storage.ts `bd:install-token`) and
+//        sends it back as `x-install-token` on every Plus API call
+//        (lib/plus/api.ts); `/api/live-activity/register`, `/end`, and
+//        `/api/hazards` require it once a device has a hash on file.
 //   GET  ?deviceId=…   Read.
 //
 // No auth: the deviceId is a client-minted UUID, the same trust model as the
@@ -12,7 +18,7 @@ import { getLocation } from "@/config/locations";
 import { badRequest, fail, isDeviceId, okDevice, readBody } from "@/lib/db/api";
 import { getD1 } from "@/lib/db/d1Store";
 import { attributeInstall, clientIp, fingerprint, fpSalt } from "@/lib/db/scanFunnel";
-import { getStore } from "@/lib/db/store";
+import { getStore, hashInstallToken, mintInstallToken } from "@/lib/db/store";
 import { ALERT_KEYS, entitled, type AlertPrefs, type DevicePatch } from "@/lib/db/types";
 // The same validator the phone runs before it saves (lib/plus/storage.ts is
 // pure and guards on `localStorage`, so it is safe here) — one definition of
@@ -116,6 +122,28 @@ export async function POST(req: Request): Promise<Response> {
       if (!allowed) return fail("not-entitled", 403);
     }
     const device = await store.upsertDevice(body.deviceId, patch);
+
+    // Install token identity (Codex review #1): a device row with no
+    // token_hash yet gets one minted here, and ONLY here — the raw token is
+    // returned in `installToken` exactly once, in this response, and never
+    // stored anywhere (only its sha256 hash is). A device that already has a
+    // hash gets nothing extra; a client that lost its stored token has no way
+    // to recover it and must be treated as a fresh device by whatever calls
+    // require one (`/api/live-activity/register`, `/end`, `/api/hazards`).
+    let installToken: string | undefined;
+    try {
+      const existingHash = await store.getInstallTokenHash(body.deviceId);
+      if (!existingHash) {
+        const token = mintInstallToken();
+        const won = await store.setInstallTokenHash(body.deviceId, hashInstallToken(token), Date.now());
+        if (won) installToken = token;
+      }
+    } catch (e) {
+      // Minting is a bonus, not the point of this request — a device that
+      // fails to get a token this call simply tries again next launch.
+      console.error("devices: install token mint failed", e);
+    }
+
     // A brand-new native install may be the far end of a sticker scan. The SQL
     // behind this decides on its own whether this device qualifies (minutes
     // old, native, an unclaimed scan on the same network) — see
@@ -135,7 +163,7 @@ export async function POST(req: Request): Promise<Response> {
     } catch {
       // never let the funnel cost someone their device record
     }
-    return okDevice(device);
+    return okDevice(device, installToken ? { installToken } : undefined);
   } catch (e) {
     console.error("devices: upsert failed", e);
     return fail("store-unavailable", 500);

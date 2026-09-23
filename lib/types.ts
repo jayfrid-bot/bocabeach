@@ -1035,6 +1035,16 @@ export interface ConditionsResponse {
   /** Best beach-time window + peak score per upcoming day (today first). */
   multiDayWindows: DayWindow[];
   cams: CamView[];
+  /** Codex round-5 #1: set when this build ran under a subrequest budget
+   *  that got exhausted partway through, so one or more sources are
+   *  deliberately missing rather than genuinely unavailable. Internal only —
+   *  `getConditions` never writes a response with this set to the shared
+   *  120-s cache, and public JSON routes (app/api/conditions/[slug],
+   *  app/api/share/[slug]) must strip it before responding. A push-run
+   *  consumer (lib/alerts/run.ts, app/api/push/run/route.ts) must treat it
+   *  as "no data this run" (count `deferred`), never send a digest/alert
+   *  built from it. */
+  budgetAborted?: boolean;
 }
 
 // --- Location config -------------------------------------------------------

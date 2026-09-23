@@ -36,6 +36,7 @@ import { ripRiskCurve } from "@/lib/ripRiskCurve";
 import { marineStinger } from "@/lib/marineStinger";
 import { sharkContext } from "@/lib/sharkContext";
 import { nowIso, round } from "@/lib/util";
+import { currentBudget } from "@/lib/alerts/budget";
 
 /**
  * Fetch every source for a location in parallel and assemble a snapshot.
@@ -286,9 +287,34 @@ export async function getSnapshotForLocation(
  * imperceptible — the client SWR-refetches every 5 min — and the near-real-time
  * safety path (lightning push loop) is separate and unaffected.
  */
+/** Thrown from inside `unstable_cache`'s own callback (never allowed to
+ *  escape `getConditions`) to stop Next from persisting a snapshot built
+ *  while the ambient subrequest budget was exhausted (Codex round-5 #1) —
+ *  `unstable_cache` never caches a callback that throws, and that's the
+ *  only lever available from inside the callback to opt a specific result
+ *  out of the shared 120-s cache. Carries the (deliberately incomplete)
+ *  response through so `getConditions` can still hand it back to its
+ *  caller, marked `budgetAborted`, instead of surfacing a hard error for
+ *  what is really just a degraded-but-usable-by-nobody build. */
+class BudgetAbortedDuringBuild extends Error {
+  constructor(public readonly response: ConditionsResponse) {
+    super("conditions build aborted by exhausted subrequest budget");
+  }
+}
+
 const cachedConditions = (slug: string) =>
   unstable_cache(
-    () => getConditionsForLocation(getLocation(slug)!),
+    async () => {
+      const response = await getConditionsForLocation(getLocation(slug)!);
+      // Checked right after the build, still inside the same ALS
+      // continuation `runWithBudget` (lib/alerts/budget.ts) established —
+      // `currentBudget()` sees the exact budget instance this build spent
+      // (and got refused) against.
+      if (currentBudget()?.exhaustedDuringBuild) {
+        throw new BudgetAbortedDuringBuild(response);
+      }
+      return response;
+    },
     ["conditions", slug],
     { revalidate: 120, tags: [`conditions-${slug}`] },
   )();
@@ -298,7 +324,18 @@ export async function getConditions(
 ): Promise<ConditionsResponse | null> {
   const loc = getLocation(slug);
   if (!loc) return null;
-  return cachedConditions(slug);
+  try {
+    return await cachedConditions(slug);
+  } catch (e) {
+    if (e instanceof BudgetAbortedDuringBuild) {
+      // Never cached (the throw above stopped that) — hand the caller the
+      // real, incomplete snapshot marked so a push-run consumer treats it as
+      // "no data this run" rather than sending a partial digest/alert, and
+      // so public JSON routes know to strip the field before responding.
+      return { ...e.response, budgetAborted: true };
+    }
+    throw e;
+  }
 }
 
 /**

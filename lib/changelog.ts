@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-22",
+    title: "Beach Session on your Lock Screen — coming in the next app update",
+    details:
+      "While Beach Mode is on, opt in to a Lock Screen and Dynamic Island view of the score, sunset and tide countdowns, wind, waves, and a lightning heads-up where you're standing.",
+    tag: "new",
+  },
+  {
+    date: "2026-09-22",
     title: "Beach Mode now tells you about lightning and rain where you stand, not just at the beach's center",
     tag: "new",
   },

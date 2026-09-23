@@ -103,10 +103,18 @@ interface CellForecast {
 export interface RainCache {
   radar: Map<string, Promise<RainRead | null>>;
   cell: Map<string, Promise<CellForecast | null>>;
+  /** Codex round-4 #3: caps how many DISTINCT cells this run will fetch the
+   *  Open-Meteo minutely fallback for (PUSH_RUN_MAX_RAIN_CELLS, default 4) —
+   *  a run with armed devices scattered across many cells otherwise has no
+   *  bound on this fan-out. A cell past the cap reads as "no data this run"
+   *  (never thrown), same as any other forecast-fetch failure; callers
+   *  should feed cells in due-first order so the cap's misses land on the
+   *  lowest-priority devices. */
+  maxCells: number;
 }
 
-export function newRainCache(): RainCache {
-  return { radar: new Map(), cell: new Map() };
+export function newRainCache(maxCells = Infinity): RainCache {
+  return { radar: new Map(), cell: new Map(), maxCells };
 }
 
 /** A fresh radar frame is an observation; a stale one is a story about the past. */
@@ -352,8 +360,15 @@ export async function rainForFix(
   // sharing a cell can never inherit or lose each other's rain hold.
   let hit = cache.cell.get(cell);
   if (!hit) {
-    const center = cellCenter(cell);
-    hit = fetchMinutely(center.lat, center.lon, nowMs);
+    if (cache.cell.size >= cache.maxCells) {
+      // Cap reached (round-4 #3) — this cell gets no fallback fetch this
+      // run. Cached as null like any other forecast miss so later fixes in
+      // the SAME cell don't re-check the cap or retry.
+      hit = Promise.resolve(null);
+    } else {
+      const center = cellCenter(cell);
+      hit = fetchMinutely(center.lat, center.lon, nowMs);
+    }
     cache.cell.set(cell, hit);
   }
   const forecast = await hit;

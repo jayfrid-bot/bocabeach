@@ -141,6 +141,39 @@ describe("POST /api/devices", () => {
     );
     expect(res.status).toBe(400);
   });
+
+  // --- Install token identity (Codex review #1) -----------------------------
+  describe("installToken", () => {
+    it("mints one on the first call for a device and never again on later calls", async () => {
+      const first = await json(
+        await devicesPost(post("https://x/api/devices", { deviceId: DEV, platform: "ios" })),
+      );
+      expect(typeof first.installToken).toBe("string");
+      expect((first.installToken as string).length).toBeGreaterThan(0);
+
+      const second = await json(
+        await devicesPost(post("https://x/api/devices", { deviceId: DEV, tz: "America/New_York" })),
+      );
+      expect(second.installToken).toBeUndefined();
+    });
+
+    it("two different devices get two different tokens", async () => {
+      const DEV2 = "22222222-2222-4333-8444-555555555555";
+      const a = await json(await devicesPost(post("https://x/api/devices", { deviceId: DEV, platform: "ios" })));
+      const b = await json(await devicesPost(post("https://x/api/devices", { deviceId: DEV2, platform: "ios" })));
+      expect(a.installToken).not.toBe(b.installToken);
+    });
+
+    it("stores only the hash — the raw token never appears in the stored device row", async () => {
+      const res = await json(
+        await devicesPost(post("https://x/api/devices", { deviceId: DEV, platform: "ios" })),
+      );
+      const store = await getStore();
+      const hash = await store.getInstallTokenHash(DEV);
+      expect(hash).toBeTruthy();
+      expect(hash).not.toBe(res.installToken);
+    });
+  });
 });
 
 describe("GET /api/devices", () => {

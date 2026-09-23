@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { AUTO_ARM_MS, shouldAutoArm } from "@/components/plus/BeachModeCard";
+import { AUTO_ARM_MS, isStaleLiveActivityTicket, shouldAutoArm } from "@/components/plus/BeachModeCard";
 
 const NOW = Date.parse("2026-09-02T16:00:00Z");
 const MIN = 60_000;
@@ -28,5 +28,18 @@ describe("shouldAutoArm", () => {
 
   it("re-arms a window that has already run out", () => {
     expect(shouldAutoArm(NOW, NOW - 2 * MIN, NOW - MIN)).toBe(true);
+  });
+});
+
+describe("isStaleLiveActivityTicket", () => {
+  it("is not stale when the ticket is still the current one", () => {
+    expect(isStaleLiveActivityTicket(1, 1)).toBe(false);
+  });
+
+  it("is stale once a newer session (Off, or another start) bumped the ticket", () => {
+    // A start() that resolves after the session it was requested for has
+    // already ended must recognize itself as stale, so it can end the
+    // activity it just created instead of recording a runaway session.
+    expect(isStaleLiveActivityTicket(1, 2)).toBe(true);
   });
 });

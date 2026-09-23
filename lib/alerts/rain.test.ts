@@ -242,6 +242,21 @@ describe("rainForFix", () => {
     expect(calls).toHaveLength(2);
   });
 
+  it("Codex round-4 #3: a maxCells cap stops fetching new cells but keeps returning null, never throwing", async () => {
+    const cache = newRainCache(2); // PUSH_RUN_MAX_RAIN_CELLS-style cap
+    const a = await rainForFix(26.35, -80.07, "beach-a", NOW, cache, null); // cell 1
+    const b = await rainForFix(26.46, -80.07, "beach-b", NOW, cache, null); // cell 2
+    const c = await rainForFix(26.57, -80.07, "beach-c", NOW, cache, null); // cell 3 — over cap
+    expect(calls).toHaveLength(2); // only the first two distinct cells fetched
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(c).toBeNull(); // degrades quietly, no throw
+    // A later fix in the SAME over-cap cell reuses the cached null — still no 3rd fetch.
+    const c2 = await rainForFix(26.575, -80.075, "beach-c2", NOW, cache, null);
+    expect(calls).toHaveLength(2);
+    expect(c2).toBeNull();
+  });
+
   it("asks about the cell centre, not the person's exact spot", async () => {
     await rainForFix(26.3512, -80.0701, "boca-raton", NOW, newRainCache(), null);
     expect(calls[0]).toContain("latitude=26.375");

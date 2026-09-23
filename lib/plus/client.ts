@@ -78,6 +78,35 @@ export interface PlusState {
   /** Beach Mode on — the window in which alerts use this phone's own position. */
   arm(presence: PresenceBody): Promise<PlusResult>;
   disarm(): Promise<PlusResult>;
+  /**
+   * Round-2 #1/#2: return this phone's install token, minting one first if
+   * it doesn't have one cached (there is no server-side recovery route —
+   * see `bootstrapInstallToken`'s doc). Every caller that needs the
+   * token for something that REQUIRES it server-side (Beach Mode's Live
+   * Activity start, and — indirectly, since the plugin reads it itself —
+   * the native register/end uploads) must await this FIRST rather than read
+   * `readInstallToken()` directly, so a device that simply never happened to
+   * POST /api/devices before (most devices: `saveDevice` only fires on an
+   * actual edit) gets bootstrapped on demand instead of silently having no
+   * token forever.
+   *
+   * Two outcomes, in order:
+   *  1. Already have one cached → return it, no network call.
+   *  2. No hash minted yet at all (a genuinely fresh device) → POST
+   *     /api/devices (the existing upsert; harmless to call with no other
+   *     fields) mints one and this returns it.
+   *
+   * There is no server-side recovery for a device that already has a hash
+   * on file but lost its own copy — see lib/db/installTokenAuth.ts's THREAT
+   * MODEL comment. That case (and a stale/wrong cached token) is handled by
+   * `bootstrapInstallToken`'s `forceRefresh` option, used by the 401 retry
+   * path below rather than by this cache-preferring wrapper.
+   *
+   * Resolves null (never throws) when nothing produced a token — the
+   * caller's job is to treat that as "not available right now", same as an
+   * offline network.
+   */
+  ensureInstallToken(): Promise<string | null>;
 }
 
 /** Fields every write carries, so the server always knows how to reach us. */
@@ -89,6 +118,98 @@ function baseFields(): { platform: "ios" | "android" | "web"; tz?: string } {
     tz = undefined;
   }
   return { platform: nativePlatform(), ...(tz ? { tz } : {}) };
+}
+
+// --- Install token bootstrap ------------------------------------------------
+//
+// Module-scope, not tied to any one hook instance, so every caller that needs
+// a token around the same moment — the mount effect below, Beach Mode's
+// start(), and useHazardsAtPoint's 401 retry further down — dedupes into the
+// SAME in-flight request instead of racing separate mints.
+//
+// Two outcomes:
+//  1. Already cached → returned immediately, no network call (unless the
+//     caller passes `forceRefresh: true` — see below).
+//  2. No hash minted yet at all (a genuinely fresh device) → the ordinary
+//     POST /api/devices upsert mints one on this, its first call ever.
+//
+// There is no server-side recovery for a device that already has a hash on
+// file but has lost its own copy (see lib/db/installTokenAuth.ts's THREAT
+// MODEL comment) — POST /api/devices simply answers with no token in that
+// case (the mint is exactly-once), and this resolves `{ token: null, ... }`.
+// Never throws; every caller treats a null token as "not available right
+// now", same as offline.
+//
+// `forceRefresh` (Codex round-3 fix): a caller that just got a `no-token`
+// 401 — meaning the server does NOT recognize whatever token this phone has
+// cached, whether that's stale, wrong, or simply gone server-side — must not
+// let outcome 1 above hand that same bad token straight back out on retry.
+// `forceRefresh: true` clears the cached token first, then always makes the
+// POST /api/devices round trip (bypassing both the cache check and the
+// session latch below) so the retry is a real question to the server, not a
+// replay of what just failed. If that round trip still doesn't produce a
+// token, this latches "no token available" for the rest of the session —
+// every later bootstrap call (forced or not) short-circuits to null instead
+// of re-hitting the server on every poll. Nothing about a `no-token` answer
+// changes moment to moment, so there is nothing to gain by asking again
+// before a reload or app relaunch creates a fresh module instance.
+let installTokenInFlight: Promise<{ token: string | null; device: DeviceRecord | null }> | null = null;
+let noTokenLatchedThisSession = false;
+// Codex round-4 #4: `forceRefresh` used to bypass every latch, so a
+// PERMANENTLY lost token (server never re-mints one) POSTed /api/devices on
+// every single forced retry — every hazards poll after a `no-token` 401,
+// forever, for the rest of the session. This latches after the FIRST forced
+// refresh this session, win or lose: later forced calls stop hitting the
+// server and just read back whatever that one attempt left cached (a token
+// if it worked, null if it didn't) — same "nothing changes moment to
+// moment without a reload" reasoning `noTokenLatchedThisSession` already
+// uses for the non-forced path.
+let tokenRefreshAttemptedThisSession = false;
+
+export async function bootstrapInstallToken(opts?: {
+  forceRefresh?: boolean;
+}): Promise<{ token: string | null; device: DeviceRecord | null }> {
+  const forceRefresh = opts?.forceRefresh === true;
+  if (forceRefresh) {
+    if (tokenRefreshAttemptedThisSession) {
+      return { token: store.readInstallToken(), device: null };
+    }
+    tokenRefreshAttemptedThisSession = true;
+    store.clearInstallToken();
+  } else {
+    const cached = store.readInstallToken();
+    if (cached) return { token: cached, device: null };
+    if (noTokenLatchedThisSession) return { token: null, device: null };
+  }
+  if (installTokenInFlight) return installTokenInFlight;
+
+  const run = (async (): Promise<{ token: string | null; device: DeviceRecord | null }> => {
+    const id = getDeviceId();
+    if (!id) return { token: null, device: null };
+    try {
+      const res = await plusApi.saveDevice(id, baseFields());
+      const minted = store.readInstallToken();
+      if (minted) return { token: minted, device: res.ok ? res.device : null };
+      noTokenLatchedThisSession = true;
+      return { token: null, device: res.ok ? res.device : null };
+    } catch {
+      return { token: null, device: null };
+    }
+  })();
+  installTokenInFlight = run;
+  try {
+    return await run;
+  } finally {
+    installTokenInFlight = null;
+  }
+}
+
+/** Test-only: clear the module-scope "no token available this session"
+ *  latch between tests, mirroring lib/db/memoryStore.ts's `resetMemoryStore`
+ *  and lib/plus/rateLimit.ts's `resetMemoryRateLimit`. */
+export function resetInstallTokenLatch(): void {
+  noTokenLatchedThisSession = false;
+  tokenRefreshAttemptedThisSession = false;
 }
 
 export function usePlus(): PlusState {
@@ -151,6 +272,15 @@ export function usePlus(): PlusState {
     [],
   );
 
+  // Wraps the module-level `bootstrapInstallToken` (see its doc above) to
+  // also fold in whatever device row it happened to read along the way —
+  // same `applyDevice` every other write here goes through.
+  const ensureInstallToken = useCallback(async (): Promise<string | null> => {
+    const { token, device } = await bootstrapInstallToken();
+    if (device) applyDevice(device);
+    return token;
+  }, [applyDevice]);
+
   const refresh = useCallback(async (): Promise<PlusResult | null> => {
     const id = getDeviceId();
     if (!id) return null;
@@ -200,14 +330,30 @@ export function usePlus(): PlusState {
   useEffect(() => {
     if (!ready) return;
     // A phone with no cache has never talked to the server, so there is no row
-    // to load and nothing to wait for. Asking anyway would just be a 404 on
-    // every first launch (which browsers log as an error).
+    // to load and nothing to wait for from a plain GET. Asking anyway would
+    // just be a 404 on every first launch (which browsers log as an error).
     if (!store.readCache()) {
+      // But it DOES still need an install token (round-2 #1) — minting one
+      // is the same POST /api/devices upsert that would otherwise only fire
+      // on the phone's first actual edit (profile/home/prefs), which could
+      // be never for someone who only ever reads the free forecast. Fire
+      // and forget: a fresh device with Beach Mode off never notices either
+      // way, and `ensureInstallToken` is exactly what Beach Mode start()
+      // awaits before it needs the result.
+      void ensureInstallToken();
       setDeviceLoaded(true);
       return;
     }
+    // Bootstrap the install token AND refresh the device row in parallel —
+    // independent concerns (round-2 #1): a device that already has a token
+    // short-circuits instantly (readInstallToken() cache hit inside
+    // ensureInstallToken). A device that never received a token asks again
+    // here on every mount. Once the server has stored a hash it will not mint
+    // again (see lib/db/installTokenAuth.ts THREAT MODEL), so a lost token
+    // stays lost and the token-gated features show "not available".
+    void ensureInstallToken();
     void refresh().finally(() => setDeviceLoaded(true));
-  }, [ready, refresh]);
+  }, [ready, refresh, ensureInstallToken]);
 
   useEffect(() => {
     if (!ready) return;
@@ -544,6 +690,7 @@ export function usePlus(): PlusState {
     savePreview,
     arm,
     disarm,
+    ensureInstallToken,
   };
 }
 
@@ -850,18 +997,40 @@ export function useHazardsAtPoint(opts: {
     lastFetchAtRef.current = Date.now();
     const superseded = () => ticket !== ticketRef.current || !eligibleRef.current || key !== currentKeyRef.current;
     try {
-      const res = await fetch("/api/hazards", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          deviceId: id,
-          lat: f.lat,
-          lon: f.lon,
-          accuracyM: f.accuracyM,
-          fixAt: f.at,
-          slug: slugRef.current,
-        }),
-      });
+      // /api/hazards requires the install token (Codex review #1) once this
+      // device has one on file — same header lib/plus/api.ts attaches to
+      // every plusApi call; this is a raw fetch, not one of those, so it's
+      // attached explicitly here instead.
+      const doFetch = (token: string | null) =>
+        fetch("/api/hazards", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(token ? { "x-install-token": token } : {}),
+          },
+          body: JSON.stringify({
+            deviceId: id,
+            lat: f.lat,
+            lon: f.lon,
+            accuracyM: f.accuracyM,
+            fixAt: f.at,
+            slug: slugRef.current,
+          }),
+        });
+      let res = await doFetch(store.readInstallToken());
+      // A 401 here means either this device has never had a token minted
+      // (`token-required`) or the one it's sending doesn't match what the
+      // server has on file (`no-token` — stale/wrong/lost locally). Either
+      // way the cached token (if any) is not trustworthy, so this forces a
+      // real round trip rather than letting `bootstrapInstallToken` hand the
+      // same bad cached value straight back. One bootstrap + one retry, then
+      // give up quietly — the existing `!res.ok` fallback below already
+      // reads as "no hazard read this pass", exactly the right degrade for a
+      // device that still has nothing after the retry.
+      if (res.status === 401 && !superseded()) {
+        const { token } = await bootstrapInstallToken({ forceRefresh: true });
+        if (token && !superseded()) res = await doFetch(token);
+      }
       if (superseded()) return; // a newer dispatch, a disarm/move, or a different beach/fix now current
       if (!res.ok) {
         setRead(null);

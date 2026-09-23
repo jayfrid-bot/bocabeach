@@ -13,7 +13,10 @@ export async function GET(
   if (!data) {
     return NextResponse.json({ error: "Unknown location" }, { status: 404 });
   }
-  return NextResponse.json(data, {
+  // budgetAborted (lib/conditions.ts, Codex round-5 #1) is an internal
+  // signal for push-run consumers only — never expose it in public JSON.
+  const { budgetAborted: _budgetAborted, ...publicData } = data;
+  return NextResponse.json(publicData, {
     headers: {
       "Cache-Control": "public, s-maxage=300, stale-while-revalidate=600",
     },

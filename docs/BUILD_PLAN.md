@@ -34,6 +34,7 @@ Sizes are agent-build days (Sonnet crews, Fable orchestrating, Codex review on a
 | 15 | Satellite imagery gallery — pictures only (the spike ruled out satellite-as-data); optional Pro feature | 5 |
 | 16 | Replace Open-Meteo fully with free sources (UV + aerosol remain gaps) | 6–9 |
 | 17 | Android release (Play key + AAB) | 1 + owner |
+| 18 | App Attest for device-bound auth (replaces first-minter-wins install token trust model — see `lib/db/installTokenAuth.ts`'s THREAT MODEL comment) | TBD |
 
 ## Housekeeping (small, no order)
 Decommission the Netlify twin · paid vision tier for cams (Gemini ~$7/mo) · Workers Paid $5/mo for KV limits · consolidate `lib/rainNowcast.ts` rain constant.

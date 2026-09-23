@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchJsonWithRetry } from "@/lib/util";
+import { fetchJsonWithRetry, fetchWithTimeout, setSubrequestHook, SubrequestBudgetExhausted } from "@/lib/util";
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -82,5 +82,28 @@ describe("fetchJsonWithRetry", () => {
 
     await expect(fetchJsonWithRetry("https://example.com/api")).rejects.toThrow(/404/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SubrequestBudgetExhausted message (Codex round-5 #2)", () => {
+  afterEach(() => {
+    setSubrequestHook(null); // don't leak the gate into other test files
+  });
+
+  it("never embeds the query string (e.g. an API key) — host only", async () => {
+    setSubrequestHook(() => false); // simulate an exhausted budget gate
+    const urlWithKey = "https://data.traffic.hereapi.com/v7/flow?in=circle:1,2;r=1000&apiKey=SECRET123";
+    await expect(fetchWithTimeout(urlWithKey)).rejects.toThrow(SubrequestBudgetExhausted);
+    try {
+      await fetchWithTimeout(urlWithKey);
+      throw new Error("expected fetchWithTimeout to throw");
+    } catch (e) {
+      expect(e).toBeInstanceOf(SubrequestBudgetExhausted);
+      const msg = (e as Error).message;
+      expect(msg).not.toContain("?");
+      expect(msg).not.toContain("apiKey");
+      expect(msg).not.toContain("SECRET123");
+      expect(msg).toContain("data.traffic.hereapi.com");
+    }
   });
 });

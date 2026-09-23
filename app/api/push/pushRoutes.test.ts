@@ -403,6 +403,86 @@ describe("POST /api/push/run", () => {
     expect(body.sent).toBe(2);
   });
 
+  it("PUSH_RUN_MAX_BEACHES caps how many home beaches one run attempts (round-2 #4)", async () => {
+    await seedDevice(); // boca-raton
+    await registerPost(
+      post("https://x/api/push/register-native", {
+        slug: "deerfield-beach",
+        token: FCM_TOKEN_2,
+        platform: "android",
+      }),
+    );
+    await grantPlus(legacyDeviceId(FCM_TOKEN_2));
+    const FCM_TOKEN_3 = "h".repeat(80);
+    await registerPost(
+      post("https://x/api/push/register-native", {
+        slug: "fort-lauderdale",
+        token: FCM_TOKEN_3,
+        platform: "android",
+      }),
+    );
+    await grantPlus(legacyDeviceId(FCM_TOKEN_3));
+    process.env.PUSH_RUN_MAX_BEACHES = "1";
+    try {
+      const body = (await (await run("?force=morning")).json()) as Record<string, number>;
+      expect(body.beaches).toBe(1);
+      expect(body.sent).toBe(1);
+      expect(body.beachesDeferred).toBe(2);
+    } finally {
+      delete process.env.PUSH_RUN_MAX_BEACHES;
+    }
+  });
+
+  it("Codex round-5 #1: a budgetAborted conditions build is deferred, never sent as a partial digest", async () => {
+    await seedDevice();
+    ctl.conditions = { ...CONDITIONS, budgetAborted: true } as ConditionsResponse;
+    const body = (await (await run("?force=morning")).json()) as Record<string, number>;
+    expect(body.sent).toBe(0);
+    expect(body.morning).toBe(0);
+    expect(body.beachesDeferred).toBe(1);
+  });
+
+  it("Codex round-3 #4c: a due morning digest is never deferred behind a merely-candidate (Excellent-only) beach", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-02T12:00:00Z")); // 08:00 America/New_York — boca-raton's morning hour
+      // boca-raton: due right now (morning digest gate).
+      await seedDevice();
+      // deerfield-beach: NOT due (digest off), but daylight is mocked always-on
+      // and score-excellent is on by default, so it's a "candidate" — elastic,
+      // fine to defer.
+      await registerPost(
+        post("https://x/api/push/register-native", {
+          slug: "deerfield-beach",
+          token: FCM_TOKEN_2,
+          platform: "android",
+        }),
+      );
+      const store = await getStore();
+      await store.upsertDevice(legacyDeviceId(FCM_TOKEN_2), {
+        codeUntil: Date.now() + 30 * 24 * 3600 * 1000,
+        prefs: { morning: false },
+      });
+      process.env.PUSH_RUN_MAX_BEACHES = "1";
+      const body = (await (await run()).json()) as Record<string, number>;
+      // The cap picked the DUE beach (boca-raton), not the merely-candidate
+      // one, even though nothing here forces a particular round-robin slot —
+      // due slugs always win their slot over candidate-only ones.
+      expect(body.beaches).toBe(1);
+      expect(ctl.conditionsCalls).toEqual(["boca-raton"]);
+      expect(body.beachesDeferred).toBe(1);
+    } finally {
+      delete process.env.PUSH_RUN_MAX_BEACHES;
+    }
+  });
+
+  it("reports the subrequest budget diagnostic on a normal run", async () => {
+    await seedDevice();
+    const body = (await (await run("?force=morning")).json()) as Record<string, unknown>;
+    expect(typeof body.subrequestBudgetLeft).toBe("number");
+    expect(body.beachesDeferred).toBe(0);
+  });
+
   it("sends no digest to a free device and leaves its dedup state alone", async () => {
     await registerPost(
       post("https://x/api/push/register-native", {

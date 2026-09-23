@@ -113,12 +113,75 @@ export type FetchInit = RequestInit & {
  */
 const DEFAULT_USER_AGENT = "isitbeachday.com (hello@isitbeachday.com)";
 
+/**
+ * Fires once per outbound network call this helper makes — the ONE seam
+ * every lib/sources/*.ts adapter's fetch (and `fetchJsonWithRetry`, which
+ * calls this) goes through, so it is where Codex round-3's real-subrequest
+ * counting for `/api/push/run` hooks in (lib/alerts/budget.ts's
+ * `runWithBudget`/`SubrequestBudget`, via AsyncLocalStorage). This file
+ * stays deliberately ignorant of budgets, ALS, or anything Node-only — it
+ * just calls whatever `setSubrequestHook` last installed, or does nothing —
+ * so it is still safe to import from a "use client" component (see
+ * components/TideCrossSection.tsx) with zero risk of a server/Node-only
+ * module leaking into the browser bundle. `lib/alerts/budget.ts` installs
+ * the real hook as a side effect of being imported, which only ever happens
+ * from server route code. */
+let onSubrequest: (() => boolean) | null = null;
+
+/** Install (or, with `null`, remove) the fetch-counting/gating hook. Exported
+ *  so a server-only module can wire itself in without this file importing it
+ *  — see the doc above. Last writer wins; there is only ever one hook
+ *  active, which is fine because the hook itself (`spendAmbientSubrequest`)
+ *  is stateless and reads the CURRENT request's budget out of
+ *  AsyncLocalStorage on every call, not out of anything set here. Returns
+ *  `true` when the call may proceed (and, as a side effect, spends the
+ *  budget); `false` GATES it — `fetchWithTimeout` throws
+ *  `SubrequestBudgetExhausted` instead of ever calling `fetch()` (round-4
+ *  #3: spending after the fact, via `.spend()`, never actually stopped a
+ *  cold build from issuing every one of its calls). */
+export function setSubrequestHook(hook: (() => boolean) | null): void {
+  onSubrequest = hook;
+}
+
+/** Host only, no path/query — used in error messages that might reach a
+ *  public note (Codex round-5 #2: the full URL, including API keys carried
+ *  as query params like HERE's `apiKey=`, must never leak into one). Falls
+ *  back to a fixed placeholder if the URL doesn't even parse. */
+function hostOnly(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "unknown host";
+  }
+}
+
+/** Thrown by `fetchWithTimeout` when the ambient subrequest budget
+ *  (lib/alerts/budget.ts) is exhausted — no network call is made. Adapters
+ *  already treat any thrown error from `fetchWithTimeout`/
+ *  `fetchJsonWithRetry` as "this source is unavailable" (`Promise.allSettled`
+ *  / try-catch, see lib/conditions.ts and every lib/sources/*.ts fetcher),
+ *  so this degrades the same way a network failure does — no adapter needs
+ *  to know about budgets. `fetchJsonWithRetry` additionally never retries on
+ *  this specific error (retrying would just re-trip the same gate). The
+ *  message carries the host only (Codex round-5 #2) — never the full URL —
+ *  since some adapters (traffic.ts) copy `e.message` into a public note, and
+ *  the full URL can carry an API key as a query param. */
+export class SubrequestBudgetExhausted extends Error {
+  constructor(url: string) {
+    super(`subrequest budget exhausted before fetching ${hostOnly(url)}`);
+    this.name = "SubrequestBudgetExhausted";
+  }
+}
+
 /** fetch() with a timeout and the project User-Agent applied. */
 export async function fetchWithTimeout(
   url: string,
   init: FetchInit = {},
 ): Promise<Response> {
   const { timeoutMs = 8000, ...rest } = init;
+  if (onSubrequest && !onSubrequest()) {
+    throw new SubrequestBudgetExhausted(url);
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -154,6 +217,11 @@ export async function fetchJsonWithRetry<T = unknown>(
     try {
       res = await fetchWithTimeout(url, useInit);
     } catch (e) {
+      if (e instanceof SubrequestBudgetExhausted) {
+        // Round-4 #3: retrying would just re-trip the same exhausted gate —
+        // same "don't retry" treatment as an explicit 4xx below.
+        return { ok: false as const, error: e, noRetry: true as const };
+      }
       return { ok: false as const, error: e instanceof Error ? e : new Error(String(e)) };
     }
     if (res.status >= 500) {

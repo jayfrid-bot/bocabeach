@@ -340,3 +340,224 @@ describe("purgeExpiredPresenceFixes", () => {
   });
 });
 
+// --- Beach Session Live Activity (migrations/0007_live_activities.sql) -----
+describe("live activity store methods", () => {
+  const NOW = 2_000_000_000_000;
+
+  function baseInput(over: Partial<Parameters<DeviceStore["upsertLiveActivity"]>[0]> = {}) {
+    return {
+      activityId: "act-1",
+      deviceId: "dev-1",
+      beachSlug: "boca-raton",
+      schemaVersion: 1,
+      appBuild: "42",
+      apnsEnvironment: "sandbox" as const,
+      pushToken: "a".repeat(64),
+      startedAt: NOW,
+      expiresAt: NOW + HOUR,
+      ...over,
+    };
+  }
+
+  it("upsertLiveActivity creates an active row", async () => {
+    const row = await store.upsertLiveActivity(baseInput());
+    expect(row.status).toBe("active");
+    expect(row.pushToken).toBe("a".repeat(64));
+    expect(row.startedAt).toBe(NOW);
+    const forDevice = await store.listLiveActivitiesForDevice("dev-1");
+    expect(forDevice).toHaveLength(1);
+  });
+
+  it("a token rotation for the SAME activityId replaces the token atomically and keeps startedAt", async () => {
+    await store.upsertLiveActivity(baseInput());
+    const rotated = await store.upsertLiveActivity(
+      baseInput({ pushToken: "b".repeat(64), startedAt: NOW + 999_999, expiresAt: NOW + 2 * HOUR }),
+    );
+    expect(rotated.pushToken).toBe("b".repeat(64));
+    expect(rotated.startedAt).toBe(NOW); // sticky — never overwritten by a rotation
+    expect(rotated.expiresAt).toBe(NOW + 2 * HOUR);
+    const forDevice = await store.listLiveActivitiesForDevice("dev-1");
+    expect(forDevice).toHaveLength(1); // still one row, not a duplicate
+  });
+
+  it("rotation never touches a different activity's row for the same device", async () => {
+    await store.upsertLiveActivity(baseInput({ activityId: "act-1" }));
+    await store.upsertLiveActivity(baseInput({ activityId: "act-2", pushToken: "c".repeat(64) }));
+    const forDevice = await store.listLiveActivitiesForDevice("dev-1");
+    expect(forDevice.map((r) => r.activityId).sort()).toEqual(["act-1", "act-2"]);
+  });
+
+  it("listActiveLiveActivities only returns active rows", async () => {
+    await store.upsertLiveActivity(baseInput({ activityId: "act-1" }));
+    await store.upsertLiveActivity(baseInput({ activityId: "act-2" }));
+    await store.markLiveActivityEnded("act-2", "user", NOW);
+    const active = await store.listActiveLiveActivities(NOW);
+    expect(active.map((r) => r.activityId)).toEqual(["act-1"]);
+  });
+
+  it("markLiveActivityEnded is idempotent and stamps endedAt", async () => {
+    await store.upsertLiveActivity(baseInput());
+    await store.markLiveActivityEnded("act-1", "user", NOW);
+    const first = (await store.listLiveActivitiesForDevice("dev-1"))[0];
+    expect(first.status).toBe("ended");
+    expect(first.endedAt).not.toBeNull();
+    // Ending an already-ended row a second time doesn't move endedAt forward
+    // into "never actually ended" territory — a no-op, not a re-stamp bug.
+    await store.markLiveActivityEnded("act-1", "user-again", NOW + 1000);
+    const second = (await store.listLiveActivitiesForDevice("dev-1"))[0];
+    expect(second.endedAt).toBe(first.endedAt);
+  });
+
+  it("recordLiveActivitySend updates send bookkeeping and stashes the state for next run", async () => {
+    await store.upsertLiveActivity(baseInput());
+    const seq = (await store.allocateLiveActivitySeq("act-1", NOW))?.seq;
+    await store.recordLiveActivitySend("act-1", {
+      timestamp: NOW + 1000,
+      status: 200,
+      hash: "abc",
+      stateJson: JSON.stringify({ score: 80, updatedAt: NOW }),
+      seq: seq!,
+    });
+    const row = (await store.listLiveActivitiesForDevice("dev-1"))[0];
+    expect(row.lastSentAt).toBe(NOW + 1000);
+    expect(row.lastApnsStatus).toBe(200);
+    expect(row.lastStateHash).toBe("abc");
+    expect(row.lastStateJson).toContain("80");
+    expect(row.lastSeq).toBe(1);
+  });
+
+  describe("allocateLiveActivitySeq (round-2 #5)", () => {
+    it("increments last_seq atomically and returns the new value", async () => {
+      await store.upsertLiveActivity(baseInput());
+      expect((await store.allocateLiveActivitySeq("act-1", NOW))?.seq).toBe(1);
+      expect((await store.allocateLiveActivitySeq("act-1", NOW))?.seq).toBe(2);
+      expect((await store.allocateLiveActivitySeq("act-1", NOW))?.seq).toBe(3);
+    });
+
+    it("returns null for a row that doesn't exist or isn't active", async () => {
+      expect(await store.allocateLiveActivitySeq("nope", NOW)).toBeNull();
+      await store.upsertLiveActivity(baseInput());
+      await store.markLiveActivityEnded("act-1", "user", NOW);
+      expect(await store.allocateLiveActivitySeq("act-1", NOW)).toBeNull();
+    });
+
+    it("Codex round-3: seq and timestamp are allocated together and strictly co-monotonic across concurrent callers", async () => {
+      await store.upsertLiveActivity(baseInput());
+      const a = await store.allocateLiveActivitySeq("act-1", NOW);
+      const b = await store.allocateLiveActivitySeq("act-1", NOW);
+      expect(a?.seq).toBe(1);
+      expect(b?.seq).toBe(2);
+      expect(b!.timestampMs).toBeGreaterThan(a!.timestampMs);
+      // Codex round-4 #5: apns.ts's wire payload only sends whole epoch
+      // SECONDS (Math.floor(ms/1000)) — that's the unit ActivityKit orders
+      // by, so two allocations 1ms apart used to collapse to the same
+      // transmitted timestamp. Assert the actual transmitted unit increases.
+      expect(Math.floor(b!.timestampMs / 1000)).toBeGreaterThan(Math.floor(a!.timestampMs / 1000));
+    });
+
+    it("overlapping runs never send the same seq: recordLiveActivitySend CAS rejects a stale seq", async () => {
+      await store.upsertLiveActivity(baseInput());
+      // Run A allocates seq 1, then (simulated) a slower run B allocates
+      // seq 2 and finishes its send first.
+      const seqA = (await store.allocateLiveActivitySeq("act-1", NOW))?.seq;
+      const seqB = (await store.allocateLiveActivitySeq("act-1", NOW))?.seq;
+      expect(seqA).toBe(1);
+      expect(seqB).toBe(2);
+      await store.recordLiveActivitySend("act-1", {
+        timestamp: NOW + 2000,
+        status: 200,
+        hash: "from-b",
+        seq: seqB!,
+      });
+      // Run A's send resolves late — its bookkeeping write must be rejected
+      // (last_seq is already 2, not 1) rather than clobber B's fresher state.
+      await store.recordLiveActivitySend("act-1", {
+        timestamp: NOW + 1000,
+        status: 200,
+        hash: "from-a",
+        seq: seqA!,
+      });
+      const row = (await store.listLiveActivitiesForDevice("dev-1"))[0];
+      expect(row.lastStateHash).toBe("from-b");
+      expect(row.lastSentAt).toBe(NOW + 2000);
+      expect(row.lastSeq).toBe(2);
+    });
+  });
+
+  describe("registerLiveActivity", () => {
+    function registerInput(
+      over: Partial<Parameters<DeviceStore["registerLiveActivity"]>[0]> = {},
+    ): Parameters<DeviceStore["registerLiveActivity"]>[0] {
+      return { ...baseInput(), rotation: null, ...over };
+    }
+
+    it("Codex round-3 #3 (HIGH): a delayed higher rotation for an ENDED activity must not reactivate it", async () => {
+      await store.registerLiveActivity(registerInput({ activityId: "A", deviceId: "dev-1", rotation: 1 }));
+      // B supersedes/ends A.
+      await store.registerLiveActivity(
+        registerInput({ activityId: "B", deviceId: "dev-1", pushToken: "b".repeat(64), rotation: 1 }),
+      );
+      const result = await store.registerLiveActivity(
+        registerInput({ activityId: "A", deviceId: "dev-1", pushToken: "d".repeat(64), rotation: 2 }),
+      );
+      expect(result).toBe("ended");
+      const rows = await store.listLiveActivitiesForDevice("dev-1");
+      const a = rows.find((r) => r.activityId === "A");
+      const b = rows.find((r) => r.activityId === "B");
+      expect(a?.status).toBe("ended");
+      expect(a?.pushToken).not.toBe("d".repeat(64));
+      expect(b?.status).toBe("active");
+    });
+
+    it("Codex round-4 #2 (HIGH) mirror: a delayed rotation-2 batch for A must not end B", async () => {
+      // memoryStore has no separate "pre-check, then later SQL batch" split
+      // (d1Store.ts's SUPERSEDE/REGISTER pair) — the status==='active' check
+      // and the supersede-then-insert mutation run in the same synchronous
+      // stretch with no `await` in between (see the method's own doc), so
+      // there is no window for a delayed call to observe a stale 'active'
+      // read. This test documents that guarantee with the same scenario the
+      // d1Store SQL-level test exercises directly.
+      await store.registerLiveActivity(registerInput({ activityId: "A", deviceId: "dev-1", rotation: 1 }));
+      await store.registerLiveActivity(
+        registerInput({ activityId: "B", deviceId: "dev-1", pushToken: "b".repeat(64), rotation: 1 }),
+      );
+      const result = await store.registerLiveActivity(
+        registerInput({ activityId: "A", deviceId: "dev-1", pushToken: "d".repeat(64), rotation: 2 }),
+      );
+      expect(result).toBe("ended");
+      const rows = await store.listLiveActivitiesForDevice("dev-1");
+      const a = rows.find((r) => r.activityId === "A");
+      const b = rows.find((r) => r.activityId === "B");
+      expect(a?.status).toBe("ended");
+      expect(b?.status).toBe("active"); // B must survive the delayed A batch untouched
+    });
+
+    it("a higher rotation on a still-ACTIVE row updates it normally", async () => {
+      await store.registerLiveActivity(registerInput({ activityId: "A", deviceId: "dev-1", rotation: 1 }));
+      const result = await store.registerLiveActivity(
+        registerInput({ activityId: "A", deviceId: "dev-1", pushToken: "d".repeat(64), rotation: 2 }),
+      );
+      expect(result).not.toBe("ended");
+      expect(result).not.toBe("stale-rotation");
+      const row = (await store.listLiveActivitiesForDevice("dev-1"))[0];
+      expect(row.status).toBe("active");
+      expect(row.pushToken).toBe("d".repeat(64));
+    });
+  });
+
+  it("purgeLiveActivities only deletes ended rows past the cutoff", async () => {
+    await store.upsertLiveActivity(baseInput({ activityId: "still-active" }));
+    await store.upsertLiveActivity(baseInput({ activityId: "ended-recent" }));
+    await store.upsertLiveActivity(baseInput({ activityId: "ended-old" }));
+    await store.markLiveActivityEnded("ended-recent", "user", NOW);
+    await store.markLiveActivityEnded("ended-old", "user", NOW);
+    // Force the "old" row's endedAt back in time so it's past a cutoff.
+    const rows = await store.listLiveActivitiesForDevice("dev-1");
+    expect(rows).toHaveLength(3);
+    const deleted = await store.purgeLiveActivities(NOW + 1); // everything ended is "old enough"
+    expect(deleted).toBe(2);
+    const remaining = await store.listLiveActivitiesForDevice("dev-1");
+    expect(remaining.map((r) => r.activityId)).toEqual(["still-active"]);
+  });
+});
+

@@ -8,12 +8,18 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { resetMemoryRateLimit } from "@/lib/plus/rateLimit";
+import { getStore, hashInstallToken } from "@/lib/db/store";
+import { resetMemoryStore } from "@/lib/db/memoryStore";
 import type { LightningFeed } from "@/lib/sources/lightning";
 import type { PrecipRadarData, Wrapped } from "@/lib/types";
 
 const APP_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) IsItBeachDayApp/ios";
 const WEB_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 Safari/605.1.15";
 const DEV = "11111111-2222-4333-8444-555555555555";
+/** This device's install token (Codex review #1) for every test below —
+ *  minted directly via the store so these tests don't need a real
+ *  POST /api/devices round trip just to get one. */
+const INSTALL_TOKEN = "install-token-for-hazards-tests";
 
 // Boca Raton: 26.3587,-80.0686. This is ~0.5 mi away — near the beach.
 const NEAR_LAT = 26.365;
@@ -38,10 +44,19 @@ vi.mock("@/lib/alerts/rain", async () => {
   return { ...actual, rainForFix: async () => mockRain };
 });
 
-function post(body: Record<string, unknown>, ua: string = APP_UA, ip = "1.2.3.4"): Request {
+function post(
+  body: Record<string, unknown>,
+  opts: { ua?: string; ip?: string; installToken?: string | null } = {},
+): Request {
+  const { ua = APP_UA, ip = "1.2.3.4", installToken = INSTALL_TOKEN } = opts;
   return new Request("https://x/api/hazards", {
     method: "POST",
-    headers: { "User-Agent": ua, "cf-connecting-ip": ip, "content-type": "application/json" },
+    headers: {
+      "User-Agent": ua,
+      "cf-connecting-ip": ip,
+      "content-type": "application/json",
+      ...(installToken ? { "x-install-token": installToken } : {}),
+    },
     body: JSON.stringify(body),
   });
 }
@@ -55,11 +70,18 @@ const BASE_BODY = {
   fixAt: Date.now(),
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   resetMemoryRateLimit();
+  resetMemoryStore();
   mockFeed = null;
   mockRadar = { source: "x", status: "best-effort", fetchedAt: new Date().toISOString(), attribution: "x", data: null };
   mockRain = null;
+  // Codex review #1: /api/hazards requires the install token once a device
+  // has one on file — mint it directly rather than round-tripping through
+  // POST /api/devices in every test.
+  const store = await getStore();
+  await store.upsertDevice(DEV, {}); // the row `setInstallTokenHash` requires to already exist
+  await store.setInstallTokenHash(DEV, hashInstallToken(INSTALL_TOKEN), Date.now());
 });
 
 afterEach(() => {
@@ -69,9 +91,28 @@ afterEach(() => {
 describe("POST /api/hazards", () => {
   it("403s a non-native request", async () => {
     const { POST } = await import("@/app/api/hazards/route");
-    const res = await POST(post(BASE_BODY, WEB_UA));
+    const res = await POST(post(BASE_BODY, { ua: WEB_UA }));
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe("app-only");
+  });
+
+  // --- Install token identity (Codex review #1) -----------------------------
+  it("401 token-required for a device with no install token on file", async () => {
+    const { POST } = await import("@/app/api/hazards/route");
+    const NEW_DEV = "22222222-2222-4333-8444-555555555555";
+    const res = await POST(post({ ...BASE_BODY, deviceId: NEW_DEV }));
+    expect(res.status).toBe(401);
+    expect((await res.json()).error).toBe("token-required");
+  });
+
+  it("401 no-token when the header is missing or wrong for a device that has a token", async () => {
+    const { POST } = await import("@/app/api/hazards/route");
+    const missing = await POST(post(BASE_BODY, { installToken: null }));
+    expect(missing.status).toBe(401);
+    expect((await missing.json()).error).toBe("no-token");
+    const wrong = await POST(post(BASE_BODY, { installToken: "nope" }));
+    expect(wrong.status).toBe(401);
+    expect((await wrong.json()).error).toBe("no-token");
   });
 
   it("400s a missing/malformed deviceId", async () => {

@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { summarizeTraffic, type HereFlowResponse } from "@/lib/sources/traffic";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { summarizeTraffic, fetchTraffic, type HereFlowResponse } from "@/lib/sources/traffic";
+import type { Location } from "@/lib/types";
 
 const flow = (jamFactor: number, confidence?: number) => ({
   currentFlow: { jamFactor, confidence },
@@ -45,5 +46,35 @@ describe("summarizeTraffic", () => {
     const d = summarizeTraffic({ results: [flow(8.5, 1), flow(9, 1)] });
     expect(d.level).toBe("severe");
     expect(d.congestion).toBeGreaterThanOrEqual(80);
+  });
+});
+
+describe("fetchTraffic error note (Codex round-5 #2)", () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.HERE_API_KEY;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    process.env.HERE_API_KEY = originalKey;
+    vi.restoreAllMocks();
+  });
+
+  it("redacts to a fixed string, never the caught error's message (which may carry the request URL + apiKey)", async () => {
+    process.env.HERE_API_KEY = "SECRET123";
+    globalThis.fetch = vi.fn(async () => {
+      // Mirrors what a real network-layer failure (or, pre-fix, a
+      // SubrequestBudgetExhausted) can embed: the full request URL.
+      throw new Error(
+        "fetch failed: https://data.traffic.hereapi.com/v7/flow?in=circle:1,2;r=1000&apiKey=SECRET123",
+      );
+    }) as unknown as typeof fetch;
+
+    const loc = { lat: 26.35, lon: -80.08, trafficRadiusKm: 2 } as Location;
+    const result = await fetchTraffic(loc);
+
+    expect(result.status).toBe("error");
+    expect(result.note).toBe("traffic source unavailable");
+    expect(result.note).not.toContain("apiKey");
+    expect(result.note).not.toContain("SECRET123");
+    expect(result.note).not.toContain("?");
   });
 });

@@ -36,6 +36,14 @@ import { sendClaimKey } from "@/lib/db/sendClaims";
 import { decideNotifications, MORNING_HOUR, type PushDecision, type PushSummary } from "@/lib/push/notify";
 import { excellentDecision, newSummaryCache, personalSummary } from "@/lib/alerts/morning";
 import { runAtBeachAlerts, type AtBeachCounts } from "@/lib/alerts/run";
+import {
+  SubrequestBudget,
+  pushRunSubrequestBudget,
+  pushRunMaxBeaches,
+  timeRoundRobinSlice,
+  runWithBudget,
+  STAGE_RESERVE,
+} from "@/lib/alerts/budget";
 import { getApns, isDeadToken, openApnsSession } from "@/lib/push/apns";
 import { getFcm, getFcmAccessToken, isDeadFcmToken, sendFcm } from "@/lib/push/fcm";
 
@@ -239,13 +247,25 @@ export async function POST(req: Request): Promise<Response> {
   // works off the presence fix), so only the digest is filtered here.
   const subs = pushable.filter((s) => !!s.device.homeSlug);
 
-  const bySlug = new Map<string, PushableDevice[]>();
+  const bySlugAll = new Map<string, PushableDevice[]>();
   for (const s of subs) {
     const slug = s.device.homeSlug as string;
-    const a = bySlug.get(slug);
+    const a = bySlugAll.get(slug);
     if (a) a.push(s);
-    else bySlug.set(slug, [s]);
+    else bySlugAll.set(slug, [s]);
   }
+
+  // Shared subrequest budget for the WHOLE request — both loops below (home
+  // digest, then the at-beach engine) spend from the same counter, so
+  // together they never exceed Workers Free's 50-per-request ceiling (round-2
+  // #4, lib/alerts/budget.ts). Real per-fetch counting (Codex round-3 #4) —
+  // every outbound fetch this request makes, however deeply nested inside
+  // getConditions/lib/sources, spends from THIS instance via
+  // lib/util.ts's fetchWithTimeout hook, as long as it runs inside
+  // `runWithBudget(budget, ...)` below. D1 calls (store.*) never count
+  // against it.
+  const budget = new SubrequestBudget(pushRunSubrequestBudget());
+  const maxBeaches = pushRunMaxBeaches();
 
   // Open each transport once, only if it's configured AND has devices waiting.
   // Judged on EVERY pushable device: someone armed at a beach with no home beach
@@ -261,15 +281,34 @@ export async function POST(req: Request): Promise<Response> {
     }
   }
   let fcmAccessToken: string | null = null;
+  // FCM OAuth is one subrequest — counted (round-2 #4) but never GATED:
+  // only the optional Live Activity surface actually checks remaining
+  // budget before proceeding (see run.ts). Every other surface here
+  // (morning digest, "just turned Excellent", ordinary hazard alerts) is
+  // paid/safety-critical functionality that must not silently no-op just
+  // because the counter ran low — `spend()` keeps the number honest for
+  // diagnostics (the response's `subrequestBudgetLeft`) without blocking.
   if (fcm && hasAndroid) {
+    budget.spend(1);
     fcmAccessToken = await getFcmAccessToken(fcm, nowSec).catch(() => null);
   }
 
-  /** The send function for one device, or null when its transport isn't open. */
+  /** The send function for one device, or null when its transport isn't
+   *  open. Every call spends one subrequest from the shared budget (round-2
+   *  #4, APNs/FCM are both one HTTP call each) — and, as of Codex round-3
+   *  #4, GATED on it: a send this run has no budget left for reports
+   *  `{ ok: false, dead: false }`, the same shape as a transient transport
+   *  failure, so both `deliverMorning` and the "just turned Excellent" send
+   *  below already leave their dedup/claim state untouched and retry next
+   *  tick — no separate "deferred" plumbing needed here. This replaces
+   *  round-2 #4's "counted, not gated" policy: a real Cloudflare
+   *  subrequest-ceiling hit kills the rest of the request outright, which is
+   *  strictly worse than one digest waiting 5 minutes. */
   const senderFor = (sub: PushableDevice): SendOne | null => {
     if (sub.platform === "ios" && apnsSession) {
       const session = apnsSession;
       return async (msg) => {
+        if (!budget.take(1)) return { ok: false, dead: false };
         const r = await session.send(sub.token, {
           title: msg.title,
           body: msg.body,
@@ -283,6 +322,7 @@ export async function POST(req: Request): Promise<Response> {
     if (sub.platform === "android" && fcm && fcmAccessToken) {
       const token = fcmAccessToken;
       return async (msg) => {
+        if (!budget.take(1)) return { ok: false, dead: false };
         const r = await sendFcm(token, fcm.projectId, sub.token, {
           title: msg.title,
           body: msg.body,
@@ -299,12 +339,20 @@ export async function POST(req: Request): Promise<Response> {
   let pruned = 0;
   /** Devices the home loop could not finish. The run carries on to the next. */
   let errors = 0;
-  let alerts: AtBeachCounts = { devices: 0, evaluated: 0, sent: 0, skipped: 0, errors: 0, pruned: 0 };
+  let alerts: AtBeachCounts = { devices: 0, evaluated: 0, sent: 0, skipped: 0, errors: 0, pruned: 0, deferred: 0 };
   // How many times this run actually called getConditions — the number we're
   // trying to shrink: the 5-minute cron used to re-fetch every home beach's
   // conditions even when nobody there could receive anything (2 PM, nobody at
   // MORNING_HOUR, nobody in daylight for score-excellent).
   let conditionsFetched = 0;
+  // No more static per-call charge here (Codex round-3 #4 — the old
+  // COLD_CONDITIONS_BUILD_COST=21 flat charge, and the SAME flat charge
+  // run.ts's own `conditionsFor` used to add on top of this one whenever the
+  // at-beach engine called this SAME function as its `loadConditions`,
+  // double-counting one real conditions build as 42 subrequests). Every real
+  // fetch a conditions build makes is now counted exactly once, as it
+  // happens, by lib/util.ts's `fetchWithTimeout` hook — see `runWithBudget`
+  // below, which this whole handler runs inside of.
   const countedGetConditions = (slug: string) => {
     conditionsFetched += 1;
     return getConditions(slug);
@@ -312,16 +360,28 @@ export async function POST(req: Request): Promise<Response> {
   // Home beaches actually worked this run — i.e. that had a device someone
   // could receive a digest or "turned Excellent" alert for, right now.
   let homeBeaches = 0;
+  // Home beaches that had real work due but got left for next tick — either
+  // PUSH_RUN_MAX_BEACHES' own cap, or the home-digests stage sitting out the
+  // whole run for lack of budget (Codex round-3 #4).
+  let homeBeachesDeferred = 0;
 
   /**
    * Does ANY device in this beach's group actually need conditions fetched
-   * right now — either it is due the morning digest (or `?force=morning`), or
-   * it is a live candidate for "just turned Excellent" (entitled, has a
-   * transport, daylight at the beach, not already sent today)? A device whose
-   * own local-hour lookup throws (a corrupt stored tz) fails OPEN, so the
-   * existing per-device error handling below still sees and counts it.
+   * right now? Two kinds, so the selection below can prioritize correctly:
+   *  - `due`: the morning digest's own MORNING_HOUR gate (or `?force=morning`)
+   *    — time-sensitive, missing it this run means missing it for the whole
+   *    day, so a `due` slug is never left out by the cap below.
+   *  - `candidate`: merely eligible for "just turned Excellent" — elastic,
+   *    fine to pick up next tick instead.
+   * A device whose own local-hour lookup throws (a corrupt stored tz) fails
+   * OPEN as `due`, so the existing per-device error handling below still
+   * sees and counts it.
    */
-  async function slugNeedsConditions(loc: Location, group: PushableDevice[]): Promise<boolean> {
+  async function slugConditionsNeed(
+    loc: Location,
+    group: PushableDevice[],
+  ): Promise<{ due: boolean; candidate: boolean }> {
+    let candidate = false;
     for (const sub of group) {
       if (!entitled(sub.device, nowMs)) continue;
       if (!senderFor(sub)) continue;
@@ -329,27 +389,64 @@ export async function POST(req: Request): Promise<Response> {
         // Beach-local, not phone-local — see #13.
         const { hour, date } = localHourAndDate(loc.timezone, now);
         if (sub.device.prefs.morning && (force || (hour === MORNING_HOUR && sub.sent.morningDate !== date))) {
-          return true;
+          return { due: true, candidate: true };
         }
         if (sub.device.prefs["score-excellent"] !== false && isDaylightAt(loc, now, date)) {
           const already = await store.lastAlert(sub.device.id, `score-excellent:${date}`);
-          if (!already) return true;
+          if (!already) candidate = true;
         }
       } catch {
-        return true; // fail open — let the real error surface (and count) below
+        return { due: true, candidate: true }; // fail open — let the real error surface (and count) below
       }
     }
-    return false;
+    return { due: false, candidate };
   }
 
+  // --- Beach selection (Codex round-3 #4c): filter to slugs that actually
+  // need conditions FIRST, then cap — the old order (cap the raw slug list,
+  // THEN check which of those need anything) could burn the run's limited
+  // slots on beaches with nothing due while a genuinely due digest a
+  // round-robin tick away got bumped. `due` slugs (MORNING_HOUR is now, or
+  // ?force=morning) always get in — missing that window means missing the
+  // whole day's digest, so PUSH_RUN_MAX_BEACHES only ever trims `candidate`
+  // (Excellent-only) slugs, which are fine to pick up next tick. Nothing
+  // here spends any budget — `slugConditionsNeed` only reads the store.
+  const dueSlugs: string[] = [];
+  const candidateSlugs: string[] = [];
+  for (const [slug, group] of bySlugAll) {
+    const loc = getLocation(slug);
+    if (!loc) continue;
+    const need = await slugConditionsNeed(loc, group);
+    if (need.due) dueSlugs.push(slug);
+    else if (need.candidate) candidateSlugs.push(slug);
+  }
+  const TICK_MS = 5 * 60 * 1000; // the cron's own interval (workers/plus-cron, push-cron.yml)
+  // `due` gets priority for the cap's slots — but is still itself capped
+  // (round-robin, for fairness across ticks) rather than unconditionally
+  // uncapped: MORNING_HOUR is a single beach-LOCAL hour gate, and this app's
+  // beaches cluster in a couple of timezones, so a large number of digests
+  // can plausibly come due in the very same 5-minute tick.
+  const selectedDue = timeRoundRobinSlice(dueSlugs, (slug) => slug, maxBeaches, nowMs, TICK_MS);
+  const candidateRoom = Math.max(0, maxBeaches - selectedDue.length);
+  const selectedCandidates = timeRoundRobinSlice(candidateSlugs, (slug) => slug, candidateRoom, nowMs, TICK_MS);
+  homeBeachesDeferred = dueSlugs.length - selectedDue.length + (candidateSlugs.length - selectedCandidates.length);
+  const slugsThisRunSet = new Set([...selectedDue, ...selectedCandidates]);
+  const bySlug = new Map([...bySlugAll].filter(([slug]) => slugsThisRunSet.has(slug)));
+
   try {
+    await runWithBudget(budget, async () => {
     // --- Home beach: the daily digest + "turned Excellent". Plus only. --------
-    if (mode !== "safety") {
+    // Stage reserve (Codex round-3 #4b): skip the WHOLE stage up front when
+    // there isn't even enough budget left for one send — deferred slugs are
+    // simply picked up again next tick, same as PUSH_RUN_MAX_BEACHES' own
+    // deferrals above.
+    if (mode !== "safety" && budget.left < STAGE_RESERVE.homeDigests) {
+      homeBeachesDeferred += bySlug.size;
+    } else if (mode !== "safety") {
       const summaries = newSummaryCache();
       for (const [slug, group] of bySlug) {
         const loc = getLocation(slug);
         if (!loc) continue;
-        if (!(await slugNeedsConditions(loc, group))) continue;
         homeBeaches += 1;
         let res;
         try {
@@ -358,6 +455,15 @@ export async function POST(req: Request): Promise<Response> {
           continue;
         }
         if (!res) continue;
+        if (res.budgetAborted) {
+          // Codex round-5 #1: this build ran out of subrequest budget
+          // partway through — one or more sources are deliberately missing,
+          // not genuinely down. Never build a digest/"turned Excellent" off
+          // it; leave this beach's group for next tick instead. Counted in
+          // beaches (one slug), the same unit as the cap deferrals above.
+          homeBeachesDeferred += 1;
+          continue;
+        }
         const place = { slug, name: loc.name, tz: loc.timezone };
 
         for (const sub of group) {
@@ -423,9 +529,20 @@ export async function POST(req: Request): Promise<Response> {
           return sendOne(msg);
         },
         onDeadToken: (sub) => prune(store, sub).catch((e) => console.error("push: prune failed", e)),
+        // Same budget instance the home-digest loop above just spent from
+        // (round-2 #4) — the at-beach engine runs SECOND in this request, so
+        // it sees whatever the home loop left, and its own internal spends
+        // (feed load, its own conditions builds for beaches outside
+        // `bySlug`, and its Live Activity/ordinary alert sends) count
+        // against the same ceiling. Its own per-stage reserve checks
+        // (lightning/at-beach/LA updates/LA ends — Codex round-3 #4b) live
+        // inside `runAtBeachAlerts` itself, since only it knows those
+        // stages' internal shape.
+        budget,
       });
       pruned += alerts.pruned;
     }
+    });
   } finally {
     apnsSession?.close();
   }
@@ -446,5 +563,13 @@ export async function POST(req: Request): Promise<Response> {
     conditionsFetched,
     pruned,
     errors,
+    // Diagnostics for the subrequest budget (round-2 #4) — how much of the
+    // ceiling this run had left when it finished, and how many home beaches
+    // with real work due (candidate-only — `due` digests are never deferred)
+    // got left for next tick, either by PUSH_RUN_MAX_BEACHES' own selection
+    // or by the home-digests stage sitting out the whole run for lack of
+    // budget (Codex round-3 #4).
+    subrequestBudgetLeft: budget.left,
+    beachesDeferred: homeBeachesDeferred,
   });
 }

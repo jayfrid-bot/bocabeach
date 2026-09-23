@@ -6,6 +6,7 @@
 
 import type { AlertPrefs, DeviceRecord } from "@/lib/db/types";
 import type { ScoreProfile } from "@/lib/profile/types";
+import { readInstallToken, writeInstallToken } from "@/lib/plus/storage";
 
 export interface PlusResult {
   ok: boolean;
@@ -42,10 +43,26 @@ export interface PresenceBody {
   source: "auto" | "manual";
 }
 
+/** Every Plus call carries the install token (Codex review #1), when this
+ *  phone has one — `/api/live-activity/register`, `/end`, and `/api/hazards`
+ *  require it once a device has a hash on file; every other route accepts it
+ *  optionally and logs nothing. A phone with no token yet (never called
+ *  POST /api/devices, or lost local storage) simply omits the header, same
+ *  as before this existed. */
+function withInstallToken(init?: RequestInit): RequestInit | undefined {
+  const token = readInstallToken();
+  // No token → leave `init` exactly as the caller passed it (including
+  // `undefined` for a bare GET) rather than manufacturing an empty object.
+  if (!token) return init;
+  const headers = new Headers(init?.headers);
+  headers.set("x-install-token", token);
+  return { ...init, headers };
+}
+
 async function request(url: string, init?: RequestInit): Promise<PlusResult> {
   let res: Response;
   try {
-    res = await fetch(url, init);
+    res = await fetch(url, withInstallToken(init));
   } catch {
     return { ok: false, device: null, error: "network", status: 0 };
   }
@@ -55,7 +72,16 @@ async function request(url: string, init?: RequestInit): Promise<PlusResult> {
   } catch {
     body = null;
   }
-  const obj = (body ?? {}) as { ok?: unknown; device?: unknown; error?: unknown; pushReady?: unknown };
+  const obj = (body ?? {}) as {
+    ok?: unknown;
+    device?: unknown;
+    error?: unknown;
+    pushReady?: unknown;
+    installToken?: unknown;
+  };
+  // POST /api/devices mints this at most once per device — capture it the
+  // moment it arrives, whichever call site triggered the mint.
+  if (typeof obj.installToken === "string" && obj.installToken) writeInstallToken(obj.installToken);
   if (res.ok && obj.ok === true) {
     return {
       ok: true,

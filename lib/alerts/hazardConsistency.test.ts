@@ -71,7 +71,7 @@ describe("phase 1d — alerts and the shared hazard assessment never disagree", 
       rain: null,
       conditions: null,
     };
-    const decisions = evaluateAtBeach(input);
+    const decisions = evaluateAtBeach(input).decisions;
     expect(decisions.some((d) => d.dedupKey.startsWith("lightning@"))).toBe(true);
   });
 
@@ -114,7 +114,7 @@ describe("phase 1d — alerts and the shared hazard assessment never disagree", 
       rain: read,
       conditions: null,
     };
-    const decisions = evaluateAtBeach(input);
+    const decisions = evaluateAtBeach(input).decisions;
     expect(decisions.some((d) => d.dedupKey.startsWith("rain-soon@") || d.dedupKey.startsWith("rain-clearing@"))).toBe(
       false,
     );
@@ -164,7 +164,7 @@ describe("phase 1d — INACTIVE fixtures agree everywhere too", () => {
       rain: null,
       conditions: null,
     };
-    const decisions = evaluateAtBeach(input);
+    const decisions = evaluateAtBeach(input).decisions;
     expect(decisions.some((d) => d.dedupKey.startsWith("lightning@"))).toBe(false);
   });
 
@@ -199,7 +199,7 @@ describe("phase 1d — INACTIVE fixtures agree everywhere too", () => {
       rain: read,
       conditions: null,
     };
-    const decisions = evaluateAtBeach(input);
+    const decisions = evaluateAtBeach(input).decisions;
     expect(
       decisions.some((d) => d.dedupKey.startsWith("rain-soon@") || d.dedupKey.startsWith("rain-clearing@")),
     ).toBe(false);
@@ -235,7 +235,7 @@ describe("phase 1d — a latched rain hold suppresses clearing but not a real ET
       rain: read,
       conditions: null,
     };
-    const decisions = evaluateAtBeach(input);
+    const decisions = evaluateAtBeach(input).decisions;
     expect(decisions.some((d) => d.dedupKey.startsWith("rain-clearing@"))).toBe(false);
     expect(decisions.some((d) => d.dedupKey.startsWith("rain-soon@"))).toBe(true);
   });

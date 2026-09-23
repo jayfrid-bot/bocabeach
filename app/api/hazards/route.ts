@@ -31,6 +31,8 @@
 
 import { getLocation } from "@/config/locations";
 import { badRequest, fail, isDeviceId, readBody } from "@/lib/db/api";
+import { getStore } from "@/lib/db/store";
+import { requireInstallToken } from "@/lib/db/installTokenAuth";
 import { assessLightning, type HazardAssessment } from "@/lib/hazards/assess";
 import { summarizeStrikes } from "@/lib/sources/lightning";
 import { loadLightningFeed } from "@/lib/alerts/lightningFeed";
@@ -112,6 +114,16 @@ export async function POST(req: Request): Promise<Response> {
   if (byIp.limited) return rateLimited(byIp.retryAfterSec);
   const byDevice = await checkRateLimit(`hazards:device:${deviceId}`, MAX_ATTEMPTS_DEVICE, WINDOW_MS);
   if (byDevice.limited) return rateLimited(byDevice.retryAfterSec);
+
+  // Install token (Codex review #1) — same requirement/shape as
+  // /api/live-activity/register and /end: required once this device has one
+  // on file (401 `token-required` when it doesn't yet — the client refreshes
+  // /api/devices and retries), a constant-time header check otherwise. Also
+  // marks the token used (round-2 #2 followup) — see
+  // lib/db/installTokenAuth.ts's doc.
+  const store = await getStore();
+  const tokenCheck = await requireInstallToken(store, deviceId, req.headers.get("x-install-token"), Date.now());
+  if (tokenCheck !== "ok") return fail(tokenCheck, 401);
 
   const lat = body.lat;
   const lon = body.lon;

@@ -18,6 +18,7 @@ import {
 } from "@/lib/alerts/run";
 import { conditionsFixture, type ConditionsOver } from "@/lib/alerts/fixtures";
 import type { RainRead } from "@/lib/alerts/rain";
+import { SubrequestBudget } from "@/lib/alerts/budget";
 
 const NOW = Date.parse("2026-09-02T18:00:00Z");
 const HOUR = 3600 * 1000;
@@ -171,7 +172,7 @@ describe("runAtBeachAlerts", () => {
     await seed();
     process.env.PUSH_SAFETY_ALERTS = "off";
     const counts = await run();
-    expect(counts).toEqual({ devices: 0, evaluated: 0, sent: 0, skipped: 0, errors: 0, pruned: 0 });
+    expect(counts).toEqual({ devices: 0, evaluated: 0, sent: 0, skipped: 0, errors: 0, pruned: 0, deferred: 0 });
     expect(sent).toEqual([]);
     expect(await store.lastAlert(DEV, "lightning@boca-raton")).toBeNull();
   });
@@ -186,6 +187,38 @@ describe("runAtBeachAlerts", () => {
     expect(counts).toMatchObject({ pruned: 1, sent: 0 });
     expect(dropped).toEqual([DEV]);
     expect(await store.getDevice(DEV)).toBeNull();
+  });
+
+  it("Codex round-4 #1: a shared budget with exactly 1 unit left sends — not double-spent between run.ts and the sender wrapper", async () => {
+    await seed();
+    const budget = new SubrequestBudget(1);
+    // Mirrors the REAL sender wrapper in app/api/push/run/route.ts's
+    // `senderFor`: it — and only it — spends from the budget for the send.
+    // Before the fix, run.ts ALSO spent 1 before claiming, so with exactly 1
+    // unit left the claim was created and then this take(1) failed on the
+    // now-empty budget, refusing a send that should have gone out.
+    const counts = await runAtBeachAlerts({
+      store,
+      now: NOW,
+      budget,
+      deliver: async (_sub, msg) => {
+        if (!budget.take(1)) return { ok: false, dead: false };
+        sent.push(msg);
+        return { ok: true, dead: false };
+      },
+      onDeadToken: async (sub) => {
+        await store.deleteDevice(sub.device.id);
+      },
+      loadFeed: async () => NEAR_STRIKE,
+      loadConditions: async (slug) => {
+        conditionsCalls.push(slug);
+        return conditionsFixture({});
+      },
+      loadRain: async () => null,
+    });
+    expect(counts).toMatchObject({ sent: 1, errors: 0, deferred: 0 });
+    expect(sent).toHaveLength(1);
+    expect(budget.left).toBe(0); // spent exactly once, by the sender wrapper
   });
 
   it("leaves the key unmarked after a transient send failure, and retries once its claim looks abandoned", async () => {

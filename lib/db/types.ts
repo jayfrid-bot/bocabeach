@@ -101,6 +101,21 @@ export interface DeviceRow {
   sent_json: string | null;
   created_at: number;
   updated_at: number;
+  /** Install token identity (migrations/0008_device_tokens.sql, Codex review
+   *  #1) — sha256 hex digest of the token minted once by POST /api/devices.
+   *  `?` (not read by the big multi-column SELECTs every other route uses):
+   *  only `lib/db/store.ts`'s dedicated `getInstallTokenHash`/
+   *  `setInstallTokenHash` touch these two columns, so a row built without
+   *  them (every other query in d1Store.ts/memoryStore.ts) is still a valid
+   *  DeviceRow. Never included in `DeviceRecord` — the hash must never reach
+   *  an API response. */
+  token_hash?: string | null;
+  token_issued_at?: number | null;
+  /** Epoch ms the current token was first successfully presented and
+   *  verified (round-2 #2 followup) — see migrations/0008_device_tokens.sql
+   *  and lib/db/installTokenAuth.ts. `?` for the same reason as the two
+   *  columns above: only the dedicated install-token store methods touch it. */
+  token_used_at?: number | null;
 }
 
 /** One row of `presence`, exactly as D1 stores it. */
@@ -293,6 +308,9 @@ export function newDeviceRow(id: string, now: number): DeviceRow {
     sent_json: null,
     created_at: now,
     updated_at: now,
+    token_hash: null,
+    token_issued_at: null,
+    token_used_at: null,
   };
 }
 

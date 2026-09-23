@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   PLUS_KEYS,
   cleanCache,
+  cleanLiveActivityDismissal,
+  cleanLiveActivityPref,
   cleanOffSuppression,
   cleanPreview,
   cleanProfile,
@@ -14,6 +16,8 @@ import {
   queuePendingProfile,
   readCache,
   readFirstRunDone,
+  readLiveActivityDismissal,
+  readLiveActivityPref,
   readOffSuppression,
   readPending,
   readPreview,
@@ -21,6 +25,8 @@ import {
   readProfile,
   writeCache,
   writeFirstRunDone,
+  writeLiveActivityDismissal,
+  writeLiveActivityPref,
   writeOffSuppression,
   writePreview,
   writePreviewSeen,
@@ -264,6 +270,64 @@ describe("pending writes (failed saves waiting to retry)", () => {
   });
 });
 
+describe("Live Activity opt-in", () => {
+  it("is null until asked", () => {
+    expect(readLiveActivityPref()).toBeNull();
+  });
+
+  it("survives a write and a read", () => {
+    writeLiveActivityPref("on");
+    expect(readLiveActivityPref()).toBe("on");
+    writeLiveActivityPref("off");
+    expect(readLiveActivityPref()).toBe("off");
+  });
+
+  it("cleanLiveActivityPref rejects anything else", () => {
+    expect(cleanLiveActivityPref("on")).toBe("on");
+    expect(cleanLiveActivityPref("off")).toBe("off");
+    expect(cleanLiveActivityPref("maybe")).toBeNull();
+    expect(cleanLiveActivityPref(undefined)).toBeNull();
+    expect(cleanLiveActivityPref(null)).toBeNull();
+  });
+});
+
+describe("Live Activity dismissal", () => {
+  it("is null until dismissed", () => {
+    expect(readLiveActivityDismissal()).toBeNull();
+  });
+
+  it("survives a write and a read, keyed on slug + armedUntil", () => {
+    writeLiveActivityDismissal({ slug: "south-beach", armedUntil: 12345 });
+    expect(readLiveActivityDismissal()).toEqual({ slug: "south-beach", armedUntil: 12345 });
+  });
+
+  it("null clears it", () => {
+    writeLiveActivityDismissal({ slug: "south-beach", armedUntil: 12345 });
+    writeLiveActivityDismissal(null);
+    expect(readLiveActivityDismissal()).toBeNull();
+  });
+
+  it("cleanLiveActivityDismissal rejects malformed input", () => {
+    expect(cleanLiveActivityDismissal({ slug: "south-beach", armedUntil: 5 })).toEqual({
+      slug: "south-beach",
+      armedUntil: 5,
+    });
+    expect(cleanLiveActivityDismissal({ armedUntil: 5 })).toBeNull();
+    expect(cleanLiveActivityDismissal({ slug: "", armedUntil: 5 })).toBeNull();
+    expect(cleanLiveActivityDismissal({ slug: "south-beach", armedUntil: "5" })).toBeNull();
+    expect(cleanLiveActivityDismissal({ slug: "south-beach", armedUntil: NaN })).toBeNull();
+    expect(cleanLiveActivityDismissal(null)).toBeNull();
+    expect(cleanLiveActivityDismissal(undefined)).toBeNull();
+    expect(cleanLiveActivityDismissal("nope")).toBeNull();
+    expect(cleanLiveActivityDismissal([])).toBeNull();
+  });
+
+  it("survives a corrupted stored value", () => {
+    fake.setItem(PLUS_KEYS.liveActivityDismissed, "{not json");
+    expect(readLiveActivityDismissal()).toBeNull();
+  });
+});
+
 describe("with no storage at all (server render, private mode)", () => {
   it("reads as empty and writes without throwing", () => {
     delete (globalThis as { localStorage?: unknown }).localStorage;
@@ -274,6 +338,8 @@ describe("with no storage at all (server render, private mode)", () => {
     expect(readFirstRunDone()).toBe(false);
     expect(readOffSuppression()).toBeNull();
     expect(readPending()).toEqual({});
+    expect(readLiveActivityPref()).toBeNull();
+    expect(() => writeLiveActivityPref("on")).not.toThrow();
     expect(() => writeProfile({ profiles: ["swim"], heat: "normal", crowds: "normal" })).not.toThrow();
     expect(() => writeFirstRunDone(true)).not.toThrow();
     expect(() => writeOffSuppression({ slug: "delray", since: 1, lat: 1, lon: 1 })).not.toThrow();

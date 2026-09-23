@@ -10,7 +10,7 @@ import { ALERT_KEYS, type AlertPrefs } from "@/lib/db/types";
 import { isProfileId } from "@/lib/profile/presets";
 import type { AdvancedProfile, ScoreProfile, SubKey } from "@/lib/profile/types";
 import { clearField, clearPrefsKeys, isEmpty as pendingIsEmpty, mergeHomeSlug, mergePrefs, mergeProfile, mergePurchaseSync } from "@/lib/plus/pendingWrites";
-import type { OffSuppression, PendingWrites, PlusCache, PreviewRecord } from "@/lib/plus/types";
+import type { LiveActivityDismissal, OffSuppression, PendingWrites, PlusCache, PreviewRecord } from "@/lib/plus/types";
 
 export const PLUS_KEYS = {
   profile: "bd:profile",
@@ -20,6 +20,9 @@ export const PLUS_KEYS = {
   firstRunDone: "bd:first-run-done",
   offSuppression: "bd:off-suppression",
   pending: "bd:pending-writes",
+  liveActivity: "bd:live-activity",
+  liveActivityDismissed: "bd:live-activity-dismissed",
+  installToken: "bd:install-token",
 } as const;
 
 function store(): Storage | null {
@@ -308,4 +311,99 @@ export function clearPendingPrefs(): void {
  *  multi-key patch has landed (or been rejected), leaving the rest queued. */
 export function clearPendingPrefsKeys(keys: readonly string[]): void {
   writePendingRaw(clearPrefsKeys(readPending(), keys));
+}
+
+// --- Beach Session Live Activity opt-in -------------------------------------
+//
+// One-time choice, asked the first time Beach Mode arms with the plugin
+// available (`bd:live-activity`). `null` means "never asked" — BeachModeCard
+// shows the prompt exactly once and then always has an explicit "on"/"off".
+
+/** Validate anything claiming to be the saved Live Activity preference. */
+export function cleanLiveActivityPref(v: unknown): "on" | "off" | null {
+  return v === "on" || v === "off" ? v : null;
+}
+
+export function readLiveActivityPref(): "on" | "off" | null {
+  const s = store();
+  if (!s) return null;
+  try {
+    return cleanLiveActivityPref(s.getItem(PLUS_KEYS.liveActivity));
+  } catch {
+    return null;
+  }
+}
+
+export function writeLiveActivityPref(pref: "on" | "off"): void {
+  const s = store();
+  if (!s) return;
+  try {
+    s.setItem(PLUS_KEYS.liveActivity, pref);
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+// --- Beach Session Live Activity dismissal ----------------------------------
+//
+// A ref alone (BeachModeCard's `laDismissedRef`) only survives for as long as
+// the component stays mounted — a backgrounded app or a relaunch loses it,
+// so the card would recreate the exact activity the user just swiped away.
+// Persisted here, keyed on the armed session's `armedUntil` so it applies to
+// THIS session only and doesn't linger onto the next arm.
+
+/** Validate anything claiming to be a saved Live Activity dismissal. */
+export function cleanLiveActivityDismissal(v: unknown): LiveActivityDismissal | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const raw = v as Record<string, unknown>;
+  if (typeof raw.slug !== "string" || !raw.slug) return null;
+  if (typeof raw.armedUntil !== "number" || !Number.isFinite(raw.armedUntil)) return null;
+  return { slug: raw.slug, armedUntil: raw.armedUntil };
+}
+
+export function readLiveActivityDismissal(): LiveActivityDismissal | null {
+  return cleanLiveActivityDismissal(readJson(PLUS_KEYS.liveActivityDismissed));
+}
+
+/** `null` clears it — used once the armed session it applied to has ended. */
+export function writeLiveActivityDismissal(dismissal: LiveActivityDismissal | null): void {
+  if (!dismissal) remove(PLUS_KEYS.liveActivityDismissed);
+  else writeJson(PLUS_KEYS.liveActivityDismissed, dismissal);
+}
+
+// --- Install token (Codex review #1) ----------------------------------------
+//
+// Minted once by POST /api/devices and returned exactly once in that
+// response's `installToken` field. Stored here as a plain string (not JSON —
+// same reasoning as the boolean flags above: nothing to validate as a shape,
+// just "is there a non-empty string"), and sent by lib/plus/api.ts as the
+// `x-install-token` header on every Plus API call.
+
+export function readInstallToken(): string | null {
+  const s = store();
+  if (!s) return null;
+  try {
+    const v = s.getItem(PLUS_KEYS.installToken);
+    return v || null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeInstallToken(token: string): void {
+  const s = store();
+  if (!s || !token) return;
+  try {
+    s.setItem(PLUS_KEYS.installToken, token);
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+/** Drop a locally-cached token that the server no longer recognizes (a
+ *  `no-token` 401) — used by `lib/plus/client.ts`'s `bootstrapInstallToken`
+ *  before it retries the mint so a stale value can't be read back and resent
+ *  on the very next call. */
+export function clearInstallToken(): void {
+  remove(PLUS_KEYS.installToken);
 }

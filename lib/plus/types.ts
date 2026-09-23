@@ -59,3 +59,15 @@ export interface PendingWrites {
    *  value. flushPending retries it on the next foreground/online/mount. */
   purchaseSync?: boolean;
 }
+
+/**
+ * A user's explicit Lock Screen dismissal of the Beach Session Live Activity,
+ * remembered so a remount (backgrounding, a relaunch) doesn't recreate the
+ * activity it was just dismissed for (`bd:live-activity-dismissed`). Keyed on
+ * the armed session's own identity — `slug` + `armedUntil`, the same pair
+ * BeachModeCard already reads off the session it is tracking.
+ */
+export interface LiveActivityDismissal {
+  slug: string;
+  armedUntil: number;
+}

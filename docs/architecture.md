@@ -173,6 +173,8 @@ flowchart TD
     BUY["/api/devices/purchase<br/>after a store purchase or Restore"]
     REG["/api/push/register-native<br/>/api/push/unregister-native"]
     HAZ2["/api/hazards<br/>POST — native-only, rate-limited<br/>'where you stand' lightning + rain"]
+    LAREG["/api/live-activity/register<br/>POST — native-only, rate-limited<br/>start/rotate a Beach Session token"]
+    LAEND["/api/live-activity/end<br/>POST — native-only, rate-limited<br/>Off / dismiss"]
   end
 
   APPSTORE[(App Store<br/>monthly · yearly, 3-day trial)] -->|"purchase via RevenueCat SDK<br/>appUserID = deviceId"| BUY
@@ -188,7 +190,9 @@ flowchart TD
   RCHOOK -->|storeUntil, from RC's live answer| STORE
   REG --> STORE
 
-  STORE -->|production| D1[(D1: isitbeachday-plus<br/>devices · presence · alert_log · send_claims<br/>scan_log · scan_tap · scan_claim · install_attrib)]
+  STORE -->|production| D1[(D1: isitbeachday-plus<br/>devices · presence · alert_log · send_claims<br/>scan_log · scan_tap · scan_claim · install_attrib<br/>live_activities)]
+  LAREG -->|"entitled + armed at slug (listArmed gate)<br/>one active session/device, token rotation"| STORE
+  LAEND -->|markLiveActivityEnded 'user'| STORE
   STICKER -->|"count scan (bot-filtered), fail-soft"| D1
   GETAPP -->|"count store tap, fail-soft"| D1
   DEV -->|"after the upsert: credit a fresh native install<br/>to a recent scan on the same network (probable)"| ATTRIB[lib/db/scanFunnel.ts<br/>attributeInstall]
@@ -221,6 +225,15 @@ flowchart TD
   CLAIM --> SEND[lib/push/apns.ts, fcm.ts<br/>deliver]
   SEND -->|APNs| APNS[(Apple Push Notification service)]
   SEND -->|FCM| FCM[(Firebase Cloud Messaging)]
+
+  %% Beach Session Live Activity (docs/LIVE_ACTIVITY_PLAN.md Phase 3) — one
+  %% evaluation, two independent fan-outs from the SAME armed-session loop.
+  ATBEACH -->|"listActiveLiveActivities + due-end sweep<br/>(expired presence or expires_at)"| D1
+  ATBEACH -->|"per activity: contentStateFromConditions<br/>(fed the ONE lightning assessment evaluateAtBeach already computed<br/>— no second assessLightning call)"| LASTATE[lib/liveActivity/state.ts<br/>contentStateFromConditions, hashContentState]
+  LASTATE --> LADECIDE[lib/liveActivity/server/decide.ts<br/>lightning-escalate / hash-change+60s / 15-min heartbeat]
+  LADECIDE --> CLAIM
+  CLAIM --> LASEND["lib/push/apns.ts<br/>sendLiveActivityUpdate<br/>apns-push-type: liveactivity"]
+  LASEND -->|APNs| APNS
 ```
 
 **Grant-source model.** `devices` keeps three independent expiries —
@@ -249,6 +262,55 @@ the write reflects the truth at request time either way.
 underlying KV namespace id** in `wrangler.jsonc` — OpenNext prefixes its keys,
 so they don't collide, but it means one namespace serves two unrelated jobs.
 Worth splitting if either one grows enough to matter.
+
+**Install token identity (`devices.token_hash`/`token_used_at`,
+migrations/0008_device_tokens.sql).** `POST /api/devices` mints a 32-byte
+install token the first time it sees a device row with no `token_hash` yet
+(first minter wins), returns it once as `installToken`, and stores only its
+sha256 hash. `/api/live-activity/register`, `/end`, and `/api/hazards`
+require a matching `x-install-token` header once a device has a hash on file
+(401 `no-token`), or `token-required` when it doesn't yet; every check goes
+through the shared `lib/db/installTokenAuth.ts` `requireInstallToken`, which
+also stamps `token_used_at` (once, on the first successful check for a
+token — kept for cheap diagnostics only; nothing gates on it). See that
+file's THREAT MODEL comment for the full model.
+
+**No server-side token recovery.** There is deliberately no route to
+recover a lost install token. A device that loses its token after it has
+already been used (reinstall, cleared storage) reads back `no-token` and the
+client (`lib/plus/client.ts` `ensureInstallToken`/`bootstrapInstallToken`)
+degrades to a plain "not available" state for Live Activity / Where-you-
+stand — nothing else (Plus alerts, presence, prefs) depends on this token.
+On a `no-token` 401 from `/api/hazards`, the client clears its cached token,
+retries the `POST /api/devices` bootstrap once (which answers with no token
+since the hash already exists), and latches "not available" for the rest of
+the session if nothing new arrives — it does not keep hammering the server.
+A reinstall gets a fresh deviceId, and RevenueCat restore-purchases (keyed
+off the store account, not deviceId) carries the Plus entitlement back
+without the old token. App Attest (device-bound auth) is the planned
+upgrade — see `docs/BUILD_PLAN.md`'s Later section.
+
+**Live Activity register: rotation + one-active-per-device.** The native
+plugin sends a monotonic `rotation` counter with each token; `registerLiveActivity`
+(`lib/db/d1Store.ts`) only replaces a row's token when the incoming rotation
+exceeds the stored `token_rotation`, and supersedes any other active row for
+the same device in the same D1 batch — a device can never be observed
+holding two 'active' rows, and an `activityId` can never change device
+ownership. `expires_at` is recomputed every fan-out pass and on rotation from
+the CURRENT presence/entitlement, capped at the row's own original
+`started_at + 8h` (never extended by a rotation).
+
+**Bounded Live Activity fan-out (`LA_MAX_PER_RUN`/`LA_MAX_ENDS_PER_RUN`,
+default 10 each).** `ATBEACH` only sends updates for the `LA_MAX_PER_RUN`
+activities least recently considered (`next_send_at` ascending) and ends at
+most `LA_MAX_ENDS_PER_RUN` due rows per run, so one run's worst case stays
+well inside the Workers Free 50-subrequest cap regardless of how many
+sessions are armed at once; anything left over rolls to the next tick.
+Every push (update or end) carries `v`/`seq` (a per-activity monotonic
+counter, `last_seq`) so the phone can tell a stale/reordered push from the
+current one, and an end push also sets `ended: true`. `lib/push/apns.ts`
+keeps a separate HTTP/2 client per APNs environment and routes each row by
+its own `apns_environment`, never by this server's own `APNS_PRODUCTION`.
 
 **Beach-local scheduling:** the morning digest, "just turned Excellent", and
 every hazard's freshness window are all judged in the **beach's own

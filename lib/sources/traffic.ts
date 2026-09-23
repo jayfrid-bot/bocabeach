@@ -95,15 +95,18 @@ export async function fetchTraffic(loc: Location): Promise<Wrapped<TrafficData>>
       data,
       note: data.level === "unknown" ? "no road segments in range" : undefined,
     };
-  } catch (e) {
-    // Never surface the request URL (it carries the API key) in the note.
+  } catch {
+    // Never surface the caught error's message in the note (Codex round-5
+    // #2) — it may be this adapter's own URL (which carries `apiKey=`), or
+    // (before the fix in lib/util.ts) a SubrequestBudgetExhausted message
+    // embedding it. Redact to a fixed string instead of copying `e.message`.
     return {
       source: ATTRIBUTION,
       status: "error",
       fetchedAt,
       attribution: ATTRIBUTION,
       data: null,
-      note: e instanceof Error ? e.message : String(e),
+      note: "traffic source unavailable",
     };
   }
 }

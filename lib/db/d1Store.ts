@@ -36,6 +36,12 @@ import { ABANDONED_CLAIM_MS, CLAIM_RETENTION_MS } from "@/lib/db/sendClaims";
 import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
 import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
+import type {
+  LiveActivityRow,
+  RegisterLiveActivityInput,
+  RegisterLiveActivityResult,
+  UpsertLiveActivityInput,
+} from "@/lib/db/store";
 
 /** The slice of the D1 API we use (avoids a @cloudflare/workers-types dep).
  *  `run()`'s `meta.changes` mirrors real D1 — `claimTrial` reads it to tell
@@ -52,6 +58,24 @@ export interface D1Stmt {
 }
 export interface D1Like {
   prepare(sql: string): D1Stmt;
+  /** Real D1 bindings expose this: run several bound statements as one
+   *  atomic transaction. Optional here because the SQLite-backed test
+   *  harnesses (lib/db/d1Store.sql.test.ts) don't implement it — callers use
+   *  `runBatch` below, which falls back to running the statements
+   *  sequentially when it's missing (still correct, just not atomic against
+   *  a concurrent writer, which those single-threaded test harnesses never
+   *  have anyway). */
+  batch?<T = unknown>(stmts: D1Stmt[]): Promise<D1RunResult[]>;
+}
+
+/** Run a list of already-bound statements as one D1 batch when the binding
+ *  supports it, else sequentially (Codex review #4 — "db.batch or a single
+ *  statement"). */
+async function runBatch(db: D1Like, stmts: D1Stmt[]): Promise<D1RunResult[]> {
+  if (typeof db.batch === "function") return db.batch(stmts);
+  const out: D1RunResult[] = [];
+  for (const s of stmts) out.push(await s.run());
+  return out;
 }
 
 /** The `DB` binding, or null when we are not running on Cloudflare. */
@@ -199,6 +223,144 @@ function upsertBinds(id: string, patch: Record<string, unknown>, now: number): u
   ];
 }
 
+/** `live_activities` columns, in the exact order the row mapper below reads
+ *  them (migrations/0007_live_activities.sql). */
+const LIVE_ACTIVITY_COLS =
+  "activity_id, device_id, beach_slug, schema_version, app_build, apns_environment, " +
+  "push_token, token_updated_at, started_at, expires_at, ended_at, status, " +
+  "last_state_json, last_state_hash, pending_state_json, pending_since, " +
+  "next_send_at, last_sent_at, last_apns_timestamp, last_apns_status, " +
+  "token_rotation, last_seq";
+
+function toLiveActivityRow(r: Record<string, unknown>): LiveActivityRow {
+  return {
+    activityId: String(r.activity_id),
+    deviceId: String(r.device_id),
+    beachSlug: String(r.beach_slug),
+    schemaVersion: Number(r.schema_version),
+    appBuild: (r.app_build as string | null) ?? null,
+    apnsEnvironment: (r.apns_environment as string | null) ?? null,
+    pushToken: String(r.push_token),
+    tokenUpdatedAt: Number(r.token_updated_at),
+    startedAt: Number(r.started_at),
+    expiresAt: Number(r.expires_at),
+    endedAt: (r.ended_at as number | null) ?? null,
+    status: r.status === "ended" ? "ended" : "active",
+    lastStateJson: (r.last_state_json as string | null) ?? null,
+    lastStateHash: (r.last_state_hash as string | null) ?? null,
+    pendingStateJson: (r.pending_state_json as string | null) ?? null,
+    pendingSince: (r.pending_since as number | null) ?? null,
+    nextSendAt: (r.next_send_at as number | null) ?? null,
+    lastSentAt: (r.last_sent_at as number | null) ?? null,
+    lastApnsTimestamp: (r.last_apns_timestamp as number | null) ?? null,
+    lastApnsStatus: (r.last_apns_status as number | null) ?? null,
+    tokenRotation: Number(r.token_rotation ?? 0),
+    lastSeq: Number(r.last_seq ?? 0),
+  };
+}
+
+// Insert a fresh activity, or — on a repeat call for the same activity_id
+// (a token rotation, or a re-register after a transient failure) — replace
+// its token/expiry/metadata and revive it to 'active' in one statement.
+// `started_at` (?9) is deliberately left out of the UPDATE SET list: it
+// stays whatever the first INSERT wrote, so a later rotation can never push
+// the 8-hour ActivityKit ceiling out from under the real start time.
+const UPSERT_LIVE_ACTIVITY = `
+INSERT INTO live_activities (
+  activity_id, device_id, beach_slug, schema_version, app_build, apns_environment,
+  push_token, token_updated_at, started_at, expires_at, ended_at, status
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, 'active')
+ON CONFLICT(activity_id) DO UPDATE SET
+  device_id = ?2,
+  beach_slug = ?3,
+  schema_version = ?4,
+  app_build = ?5,
+  apns_environment = ?6,
+  push_token = ?7,
+  token_updated_at = ?8,
+  expires_at = ?10,
+  ended_at = NULL,
+  status = 'active'
+`;
+
+// The register ROUTE's real entry point (Codex review #4, hardened round-2
+// #3) — same shape as UPSERT_LIVE_ACTIVITY, plus a rotation guard: ?11 is the
+// caller's rotation counter, or NULL for a caller that never sent one
+// (accepted unconditionally, `token_rotation` left untouched). The WHERE
+// clause also re-checks ownership (`device_id = ?2`) AND that the row is
+// still 'active' (Codex round-3 #3 — HIGH) as a second line of defense
+// alongside the pre-batch SELECT below: without the status check, a delayed
+// register for an activity that has since ended (or been superseded) could
+// silently reactivate it, undoing an explicit end/supersede.
+//
+// CODEX ROUND-3 #1 correction: this statement runs SECOND in the batch, not
+// first, despite an earlier version of this comment claiming otherwise —
+// see `registerLiveActivity` below, which binds `[supersede, register]` in
+// that literal order, and SUPERSEDE_OTHER_ACTIVE_IF_LANDED's own doc for why
+// that physical order is required (a brand-new activity's INSERT would trip
+// `idx_live_activities_active_device`'s unique index if an old row for this
+// device were still 'active' when it runs). Running register "logically
+// first" is achieved instead by SUPERSEDE's own guard replicating this
+// statement's success condition (see its doc) so it only ever fires when
+// this UPDATE/INSERT is guaranteed to land — and, as of round-3 #2, by
+// `registerLiveActivity` re-reading and verifying the row after the batch
+// rather than trusting the pre-batch read or this statement's own change
+// count.
+export const REGISTER_LIVE_ACTIVITY = `
+INSERT INTO live_activities (
+  activity_id, device_id, beach_slug, schema_version, app_build, apns_environment,
+  push_token, token_updated_at, started_at, expires_at, ended_at, status, token_rotation
+) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, 'active', COALESCE(?11, 0))
+ON CONFLICT(activity_id) DO UPDATE SET
+  device_id = ?2,
+  beach_slug = ?3,
+  schema_version = ?4,
+  app_build = ?5,
+  apns_environment = ?6,
+  push_token = ?7,
+  token_updated_at = ?8,
+  expires_at = ?10,
+  ended_at = NULL,
+  status = 'active',
+  token_rotation = CASE WHEN ?11 IS NULL THEN live_activities.token_rotation ELSE ?11 END
+WHERE live_activities.device_id = ?2
+  AND live_activities.status = 'active'
+  AND (?11 IS NULL OR ?11 > live_activities.token_rotation)
+`;
+
+/** Ends every OTHER active row for this device — the "supersede" half of
+ *  `registerLiveActivity`'s one-active-per-device guarantee (Codex review
+ *  #4, hardened round-2 #3). Also blanks its token (Codex review #10 — see
+ *  `markLiveActivityEnded`'s doc): a superseded row's token is as done as an
+ *  explicitly-ended one's.
+ *
+ *  Runs FIRST (register must run second, since inserting a brand-new active
+ *  row for this device while an old one is STILL active would trip
+ *  `idx_live_activities_active_device`'s unique constraint — SQLite checks it
+ *  immediately, not deferred). To close the round-2 #3 bug (a stale retry
+ *  superseding a newer, still-current activity) without reordering, THIS
+ *  statement is itself guarded to only fire when the paired
+ *  REGISTER_LIVE_ACTIVITY that follows is guaranteed to succeed: either no
+ *  row for ?3/this activity exists yet (a brand-new activity always wins its
+ *  INSERT, nothing to gate), or one does and it belongs to this device with
+ *  a rotation the incoming one will actually exceed (?4 IS NULL — no
+ *  rotation sent, register's own guard always accepts that — or ?4 strictly
+ *  greater than what's on file). A stale/rejected retry (device mismatch, or
+ *  a rotation that doesn't exceed what's on file) makes both EXISTS branches
+ *  false, so this UPDATE is a no-op and no other row is touched. */
+export const SUPERSEDE_OTHER_ACTIVE_IF_LANDED = `
+UPDATE live_activities SET status = 'ended', ended_at = ?1, push_token = ''
+WHERE device_id = ?2 AND status = 'active' AND activity_id != ?3
+  AND (
+    NOT EXISTS (SELECT 1 FROM live_activities WHERE activity_id = ?3)
+    OR EXISTS (
+      SELECT 1 FROM live_activities
+      WHERE activity_id = ?3 AND device_id = ?2 AND status = 'active'
+        AND (?4 IS NULL OR ?4 > token_rotation)
+    )
+  )
+`;
+
 export function d1Store(db: D1Like): DeviceStore {
   const getRow = (id: string) =>
     db.prepare(`SELECT ${DEVICE_COLS} FROM devices WHERE id = ?`).bind(id).first<DeviceRow>();
@@ -267,6 +429,44 @@ export function d1Store(db: D1Like): DeviceStore {
       await db
         .prepare("UPDATE devices SET push_token = NULL, updated_at = ? WHERE id = ? AND push_token = ?")
         .bind(Date.now(), id, expectedToken)
+        .run();
+    },
+
+    // --- Install token identity (migrations/0008_device_tokens.sql) --------
+    async getInstallTokenHash(id) {
+      const row = await db
+        .prepare("SELECT token_hash FROM devices WHERE id = ?")
+        .bind(id)
+        .first<{ token_hash: string | null }>();
+      return row?.token_hash ?? null;
+    },
+
+    async setInstallTokenHash(id, tokenHash, issuedAt) {
+      const result = await db
+        .prepare(
+          "UPDATE devices SET token_hash = ?, token_issued_at = ?, updated_at = ? " +
+            "WHERE id = ? AND token_hash IS NULL",
+        )
+        .bind(tokenHash, issuedAt, issuedAt, id)
+        .run();
+      return ((result as D1RunResult | undefined)?.meta?.changes ?? 0) > 0;
+    },
+
+    async getInstallTokenUsedAt(id) {
+      const row = await db
+        .prepare("SELECT token_used_at FROM devices WHERE id = ?")
+        .bind(id)
+        .first<{ token_used_at: number | null }>();
+      return row?.token_used_at ?? null;
+    },
+
+    async markInstallTokenUsed(id, usedAt) {
+      // Cheap on every call after the first for a given token: the WHERE
+      // guard makes every call after the winning one a real no-op UPDATE
+      // (SQLite/D1 still has to find the row, but writes nothing).
+      await db
+        .prepare("UPDATE devices SET token_used_at = ? WHERE id = ? AND token_used_at IS NULL")
+        .bind(usedAt, id)
         .run();
     },
 
@@ -641,6 +841,230 @@ export function d1Store(db: D1Like): DeviceStore {
 
     async releaseHistoryClaim(slug: string, hourUtc: string) {
       await db.prepare("DELETE FROM history_claims WHERE key = ?").bind(`history:${slug}:${hourUtc}`).run();
+    },
+
+    // --- Beach Session Live Activity (migrations/0007_live_activities.sql) -
+    async upsertLiveActivity(input: UpsertLiveActivityInput) {
+      const now = Date.now();
+      await db
+        .prepare(UPSERT_LIVE_ACTIVITY)
+        .bind(
+          input.activityId,
+          input.deviceId,
+          input.beachSlug,
+          input.schemaVersion,
+          input.appBuild,
+          input.apnsEnvironment,
+          input.pushToken,
+          now,
+          input.startedAt,
+          input.expiresAt,
+        )
+        .run();
+      const row = await db
+        .prepare(`SELECT ${LIVE_ACTIVITY_COLS} FROM live_activities WHERE activity_id = ?`)
+        .bind(input.activityId)
+        .first<Record<string, unknown>>();
+      // The row we just wrote must exist — but degrade to an in-memory
+      // reconstruction over throwing, mirroring upsertDevice's own guard
+      // against a transient read-after-write hiccup.
+      return row
+        ? toLiveActivityRow(row)
+        : {
+            activityId: input.activityId,
+            deviceId: input.deviceId,
+            beachSlug: input.beachSlug,
+            schemaVersion: input.schemaVersion,
+            appBuild: input.appBuild,
+            apnsEnvironment: input.apnsEnvironment,
+            pushToken: input.pushToken,
+            tokenUpdatedAt: now,
+            startedAt: input.startedAt,
+            expiresAt: input.expiresAt,
+            endedAt: null,
+            status: "active" as const,
+            lastStateJson: null,
+            lastStateHash: null,
+            pendingStateJson: null,
+            pendingSince: null,
+            nextSendAt: null,
+            lastSentAt: null,
+            lastApnsTimestamp: null,
+            lastApnsStatus: null,
+            tokenRotation: 0,
+            lastSeq: 0,
+          };
+    },
+
+    async registerLiveActivity(input: RegisterLiveActivityInput): Promise<RegisterLiveActivityResult> {
+      const now = Date.now();
+      // Cheap pre-check, NOT relied on for correctness (see the re-read
+      // below, Codex round-3 #2) — just lets an obvious device mismatch or
+      // an already-ended activity fail fast without running the batch.
+      const existing = await db
+        .prepare("SELECT device_id, status FROM live_activities WHERE activity_id = ?")
+        .bind(input.activityId)
+        .first<{ device_id: string; status: string }>();
+      if (existing && existing.device_id !== input.deviceId) return "device-mismatch";
+      if (existing && existing.status !== "active") return "ended";
+
+      // SUPERSEDE runs FIRST, REGISTER second — see REGISTER_LIVE_ACTIVITY's
+      // doc for why that physical order can't be swapped (the unique index
+      // on one-active-row-per-device). SUPERSEDE_OTHER_ACTIVE_IF_LANDED's
+      // own guard (see its doc) only fires when the paired REGISTER that
+      // follows is guaranteed to succeed, so a stale/rejected register can
+      // never end a different, still-current activity. ?4 in that guard and
+      // ?11 in REGISTER_LIVE_ACTIVITY are the same `input.rotation`.
+      const rotation = input.rotation ?? null;
+      const supersede = db
+        .prepare(SUPERSEDE_OTHER_ACTIVE_IF_LANDED)
+        .bind(now, input.deviceId, input.activityId, rotation);
+      const register = db
+        .prepare(REGISTER_LIVE_ACTIVITY)
+        .bind(
+          input.activityId,
+          input.deviceId,
+          input.beachSlug,
+          input.schemaVersion,
+          input.appBuild,
+          input.apnsEnvironment,
+          input.pushToken,
+          now,
+          input.startedAt,
+          input.expiresAt,
+          rotation,
+        );
+      await runBatch(db, [supersede, register]);
+
+      // Codex round-3 #2 (first-seen race): ALWAYS re-read the row after the
+      // batch and decide the outcome from what actually landed — never trust
+      // the pre-batch `existing` read or the register statement's own change
+      // count. Two concurrent first-time registers for the SAME brand-new
+      // activityId can both see `existing === null` before either writes;
+      // only one INSERT actually wins the row (the other's ON CONFLICT
+      // UPDATE branch loses on the `device_id = ?2` guard), so the loser
+      // must discover that from the row's real, current owner/rotation/
+      // status, not from its own now-stale pre-read.
+      const row = await db
+        .prepare(`SELECT ${LIVE_ACTIVITY_COLS} FROM live_activities WHERE activity_id = ?`)
+        .bind(input.activityId)
+        .first<Record<string, unknown>>();
+      if (!row) return "device-mismatch"; // defensive: nothing landed at all
+      const liveRow = toLiveActivityRow(row);
+      if (liveRow.deviceId !== input.deviceId) return "not-owner";
+      if (liveRow.status !== "active") return "ended";
+      if (rotation != null && liveRow.tokenRotation !== rotation) return "stale-rotation";
+      return liveRow;
+    },
+
+    async setLiveActivityExpiry(activityId: string, expiresAt: number) {
+      await db
+        .prepare("UPDATE live_activities SET expires_at = ? WHERE activity_id = ?")
+        .bind(expiresAt, activityId)
+        .run();
+    },
+
+    async touchLiveActivityCursor(activityId: string, nextSendAt: number) {
+      await db
+        .prepare("UPDATE live_activities SET next_send_at = ? WHERE activity_id = ?")
+        .bind(nextSendAt, activityId)
+        .run();
+    },
+
+    async listActiveLiveActivities(now: number) {
+      // `now` is accepted for interface parity (the caller decides what's
+      // due to end against expiresAt) — this query itself is unfiltered by
+      // time, same as memoryStore's implementation.
+      void now;
+      const rows =
+        (
+          await db
+            .prepare(`SELECT ${LIVE_ACTIVITY_COLS} FROM live_activities WHERE status = 'active'`)
+            .all<Record<string, unknown>>()
+        ).results ?? [];
+      return rows.map(toLiveActivityRow);
+    },
+
+    async listLiveActivitiesForDevice(deviceId: string) {
+      const rows =
+        (
+          await db
+            .prepare(`SELECT ${LIVE_ACTIVITY_COLS} FROM live_activities WHERE device_id = ?`)
+            .bind(deviceId)
+            .all<Record<string, unknown>>()
+        ).results ?? [];
+      return rows.map(toLiveActivityRow);
+    },
+
+    async markLiveActivityEnded(activityId: string, _reason: string, now: number, opts) {
+      void _reason; // diagnostics only — not a stored column (see store.ts doc)
+      await db
+        .prepare(
+          "UPDATE live_activities SET status = 'ended', ended_at = ?, " +
+            "push_token = CASE WHEN ? THEN '' ELSE push_token END " +
+            "WHERE activity_id = ? AND status != 'ended'",
+        )
+        .bind(now, opts?.clearToken ? 1 : 0, activityId)
+        .run();
+    },
+
+    async allocateLiveActivitySeq(activityId, now) {
+      // D1 supports RETURNING (round-2 #5) — the increment and the read of
+      // its new value are the same statement, so no other writer can land a
+      // seq in between "compute" and "persist". The timestamp is folded into
+      // this SAME statement (Codex round-3 fix) so it is allocated
+      // atomically with the seq, not computed separately in JS with a
+      // network call in between — see store.ts's doc for why that ordering
+      // matters to ActivityKit. The floor is +1000ms, not +1ms (Codex
+      // round-4 #5): lib/push/apns.ts's wire payload sends
+      // `Math.floor(timestampMs / 1000)` — whole epoch SECONDS, the unit
+      // ActivityKit actually orders by — so two allocations only 1ms apart
+      // used to collapse to the identical transmitted timestamp. A full
+      // second's worth of floor guarantees each allocation lands in a
+      // strictly later second than the last, even back-to-back.
+      const row = await db
+        .prepare(
+          "UPDATE live_activities SET last_seq = last_seq + 1, " +
+            "last_sent_at = MAX(COALESCE(last_sent_at, 0) + 1000, ?) " +
+            "WHERE activity_id = ? AND status = 'active' RETURNING last_seq, last_sent_at",
+        )
+        .bind(now, activityId)
+        .first<{ last_seq: number; last_sent_at: number }>();
+      return row ? { seq: Number(row.last_seq), timestampMs: Number(row.last_sent_at) } : null;
+    },
+
+    async recordLiveActivitySend(activityId, send) {
+      // Compare-and-swap on last_seq (round-2 #5): this bookkeeping write
+      // only lands if last_seq still equals the seq this call actually sent
+      // — i.e. no OTHER call has allocated (and therefore sent) a newer seq
+      // for this row since. A stale write here (an overlapping run's older
+      // send finally resolving after a newer one already recorded) must
+      // never overwrite fresher status/hash/state with older ones.
+      await db
+        .prepare(
+          "UPDATE live_activities SET last_sent_at = ?, last_apns_timestamp = ?, last_apns_status = ?, " +
+            "last_state_hash = ?, last_state_json = COALESCE(?, last_state_json), " +
+            "next_send_at = ? WHERE activity_id = ? AND last_seq = ?",
+        )
+        .bind(
+          send.timestamp,
+          send.timestamp,
+          send.status,
+          send.hash,
+          send.stateJson ?? null,
+          send.timestamp,
+          activityId,
+          send.seq,
+        )
+        .run();
+    },
+
+    async purgeLiveActivities(cutoffMs: number) {
+      const r = await db
+        .prepare("DELETE FROM live_activities WHERE status = 'ended' AND ended_at IS NOT NULL AND ended_at < ?")
+        .bind(cutoffMs)
+        .run();
+      return Number(r.meta?.changes ?? 0);
     },
   };
 }
