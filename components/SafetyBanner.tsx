@@ -6,7 +6,7 @@ import type {
   WaterQualityData,
   Wrapped,
 } from "@/lib/types";
-import { fmtDate } from "@/lib/format";
+import { fmtDate, fmtTime } from "@/lib/format";
 import { safetyTone } from "@/lib/safetyTone";
 import { resolveRipNow } from "@/lib/ripRisk";
 import { isAlertInEffectAt, isAlertUpcomingAt, levelForModelProb } from "@/lib/ripRisk/resolve";
@@ -19,6 +19,24 @@ import { LifeguardFlag } from "@/components/LifeguardFlag";
  *  a capital when they open a sentence/phrase in the UI. */
 function cap(s: string): string {
   return s.length ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+}
+
+/** "begins 2 AM Fri" (or "begins 2 AM" when it starts the same beach-local
+ *  day as `nowMs`) — the upcoming-alert onset, in the beach's own timezone
+ *  rather than a bare calendar date, so a statement starting overnight
+ *  reads as a time a reader can act on. Built from fmtTime (dropping a
+ *  :00 minute for a clean "2 AM") plus a short weekday, both computed in
+ *  `tz` so server render and client hydration always agree. */
+function fmtAlertBegins(iso: string, nowMs: number, tz: string): string {
+  const time = fmtTime(iso, tz).replace(/:00(?=\s)/, "");
+  const dayKey = (ms: number) =>
+    new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(ms));
+  const sameDay = dayKey(Date.parse(iso)) === dayKey(nowMs);
+  if (sameDay) return `begins ${time}`;
+  const weekday = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: tz }).format(
+    new Date(iso)
+  );
+  return `begins ${time} ${weekday}`;
 }
 
 export function SafetyBanner({
@@ -297,7 +315,8 @@ export function SafetyBanner({
             <div className="mt-1 flex items-center gap-2 text-xs font-medium text-amber-800 dark:text-amber-200">
               <span aria-hidden>🕐</span>
               <span>
-                {ripNow.upcomingAlert.event} begins {fmtDate(ripNow.upcomingAlert.onset, timezone)}
+                {ripNow.upcomingAlert.event}{" "}
+                {fmtAlertBegins(ripNow.upcomingAlert.onset, nowMs, timezone)}
               </span>
             </div>
           ) : null}

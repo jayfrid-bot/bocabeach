@@ -6,7 +6,7 @@ import { levelForModelProb } from "@/lib/ripRisk/resolve";
 import { firstFutureHighHour, type RipNwpsBeachSeries } from "@/lib/sources/ripNwps";
 import type { NerdInfo } from "@/lib/nerdInfo";
 import { FlipCard, NerdBack } from "@/components/FlipCard";
-import { fmtTimeCompact } from "@/lib/format";
+import { fmtTime, fmtTimeCompact } from "@/lib/format";
 
 /** The lead line's source label — which source actually governs right now
  *  (see lib/ripRisk's resolveRipNow priority: alert > model > forecast >
@@ -199,10 +199,52 @@ function Sparkline({
   );
 }
 
+/** Rank a band word so "rising"/"peak" comparisons are a plain number
+ *  compare — low < moderate < high. */
+const BAND_RANK: Record<BandedRipRisk, number> = { low: 0, moderate: 1, high: 2 };
+
+/** "12 PM Fri" — full AM/PM (not fmtTimeCompact's single-letter form) plus a
+ *  short weekday, for the strip's spoken-out aria-label. Drops a :00 minute
+ *  for a clean "12 PM" rather than "12:00 PM". */
+function fmtAriaTime(iso: string, tz: string): string {
+  const time = fmtTime(iso, tz).replace(/:00(?=\s)/, "");
+  const weekday = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: tz }).format(new Date(iso));
+  return `${time} ${weekday}`;
+}
+
+/** One spoken summary of the whole 24h strip for screen readers, e.g.
+ *  "Low now, rising to High by 12 PM Friday" or "High now, steady through
+ *  the next 24 hours" — the bars themselves are hidden from assistive tech
+ *  (aria-hidden), so this is the only accessible description of the shape. */
+function stripAriaLabel(hours: { t: string; prob: number }[], tz: string): string {
+  const nowLevel = levelForModelProb(hours[0].prob);
+  let peakLevel = nowLevel;
+  let peakIdx = 0;
+  for (let i = 1; i < hours.length; i++) {
+    const level = levelForModelProb(hours[i].prob);
+    if (BAND_RANK[level] > BAND_RANK[peakLevel]) {
+      peakLevel = level;
+      peakIdx = i;
+    }
+  }
+  if (BAND_RANK[peakLevel] <= BAND_RANK[nowLevel]) {
+    return `${BAND_LABEL[nowLevel]} now, steady through the next 24 hours`;
+  }
+  return `${BAND_LABEL[nowLevel]} now, rising to ${BAND_LABEL[peakLevel]} by ${fmtAriaTime(hours[peakIdx].t, tz)}`;
+}
+
+// Bar geometry: a minimum visible sliver even at 2-3% (item 1) so a quiet
+// day still reads as a chart, not an empty strip — full height (~40px) is
+// reserved for 100%.
+const STRIP_BAR_H = 40;
+const STRIP_MIN_BAR = 4;
+
 /**
- * 24-hour strip of the NOAA model's hourly rip probability, colored by band,
- * with the alert window marked (a red underline beneath the covered hours)
- * and the current SRF period's word as quiet labels above the strip.
+ * 24-hour strip of the NOAA model's hourly rip probability: one bar per
+ * hour, colored by app category (Low/Moderate/High), a "now" marker, hour
+ * labels every 6h, and the alert window as an underline beneath the covered
+ * hours. Bars are decorative (aria-hidden) — `role="img"` on the wrapper
+ * carries the one spoken summary instead of 24 individual numbers.
  */
 function ModelStrip({
   series,
@@ -226,14 +268,34 @@ function ModelStrip({
   const alert = ripNow?.alert ?? ripNow?.upcomingAlert ?? null;
   const alertStartMs = alert ? Date.parse(alert.onset) : null;
   const alertEndMs = alert ? Date.parse(alert.end) : null;
+  const alertHourCount = next24.filter((h) => {
+    const tMs = Date.parse(h.t);
+    return (
+      alertStartMs != null && alertEndMs != null && tMs < alertEndMs && tMs + 3_600_000 > alertStartMs
+    );
+  }).length;
+  // "if it fits" (item 1): a one-or-two-cell sliver is too narrow to hold a
+  // legible label, so only caption the underline once the window covers a
+  // meaningful stretch of the strip.
+  const showAlertLabel = alertHourCount >= 4;
+
+  // Ticks every 6h: "Now" for the current hour, then that hour's clock time
+  // for +6h/+12h/+18h (e.g. "Now · 6p · 12a · 6a").
+  const tickIdxs = [0, 6, 12, 18].filter((i) => i < next24.length);
 
   return (
-    <div className="mt-2">
-      <div className="flex h-8 items-end gap-[2px]" aria-hidden="true">
+    <div
+      className="mt-2"
+      role="img"
+      aria-label={stripAriaLabel(next24, tz)}
+    >
+      <div className="flex items-end gap-[2px]" style={{ height: STRIP_BAR_H }} aria-hidden="true">
         {next24.map((h, i) => {
           const tMs = Date.parse(h.t);
           const level = levelForModelProb(h.prob);
-          const heightPct = Math.max(8, Math.min(100, h.prob));
+          const heightPx = Math.round(
+            STRIP_MIN_BAR + (Math.max(0, Math.min(100, h.prob)) / 100) * (STRIP_BAR_H - STRIP_MIN_BAR)
+          );
           const isNowCell = nowMs != null && tMs <= nowMs && tMs + 3_600_000 > nowMs;
           // Overlap, not point-in-time (item 11): an alert that starts or
           // ends mid-hour still marks the WHOLE bucket, so a statement
@@ -244,28 +306,53 @@ function ModelStrip({
             tMs < alertEndMs &&
             tMs + 3_600_000 > alertStartMs;
           return (
-            <div key={i} className="flex flex-1 flex-col items-center justify-end">
+            <div key={i} className="flex flex-1 flex-col items-end justify-end self-end">
               <div
                 className="w-full rounded-sm"
                 style={{
-                  height: `${heightPct}%`,
+                  height: heightPx,
                   backgroundColor: MODEL_BAND_FILL[level],
-                  opacity: isNowCell ? 1 : 0.6,
+                  opacity: isNowCell ? 1 : 0.7,
                   outline: isNowCell ? "1.5px solid #0f172a" : undefined,
                 }}
                 title={`${fmtTimeCompact(h.t, tz)}: ${Math.round(h.prob)}% (${BAND_LABEL[level]})`}
-              />
-              <div
-                className="mt-0.5 h-0.5 w-full rounded-full"
-                style={{ backgroundColor: inAlertWindow ? "#e11d48" : "transparent" }}
               />
             </div>
           );
         })}
       </div>
-      <div className="mt-1 flex justify-between text-[9px] text-slate-400 dark:text-slate-500">
-        <span>{fmtTimeCompact(next24[0].t, tz)}</span>
-        <span>{fmtTimeCompact(next24[next24.length - 1].t, tz)}</span>
+      <div className="mt-0.5 flex h-1 gap-[2px]" aria-hidden="true">
+        {next24.map((h, i) => {
+          const tMs = Date.parse(h.t);
+          const inAlertWindow =
+            alertStartMs != null &&
+            alertEndMs != null &&
+            tMs < alertEndMs &&
+            tMs + 3_600_000 > alertStartMs;
+          return (
+            <div
+              key={i}
+              className="h-full flex-1 rounded-full"
+              style={{ backgroundColor: inAlertWindow ? "#e11d48" : "transparent" }}
+            />
+          );
+        })}
+      </div>
+      {showAlertLabel ? (
+        <div className="mt-0.5 text-center text-[9px] font-medium text-rose-600 dark:text-rose-400">
+          Rip Current Statement
+        </div>
+      ) : null}
+      <div className="mt-1 flex text-[9px] text-slate-400 dark:text-slate-500" aria-hidden="true">
+        {tickIdxs.map((i, k) => (
+          <span
+            key={i}
+            className="flex-1"
+            style={{ textAlign: k === 0 ? "left" : k === tickIdxs.length - 1 ? "right" : "center" }}
+          >
+            {i === 0 ? "Now" : fmtTimeCompact(next24[i].t, tz)}
+          </span>
+        ))}
       </div>
       <div className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
         NOAA model run {fmtRunLabel(series.run, tz)} · % = that hour&apos;s published probability of a hazardous rip
