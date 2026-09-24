@@ -464,26 +464,42 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
     };
   },
 
-  ripCurrent: ({ snap }) => {
-    const rip = snap.nws.data?.ripCurrentRisk;
+  ripCurrent: ({ d, snap }) => {
+    // Three sources, resolved against real time (2026-09-24 fix) — an alert
+    // scheduled for later today no longer reads as "in effect", and the cap
+    // only ever comes from what's ACTUALLY true right now. See lib/ripRisk/.
+    const ripNow = d.ripNow;
+    const via =
+      ripNow?.source === "alert"
+        ? "an NWS alert in effect right now"
+        : ripNow?.source === "model"
+          ? "NOAA's hourly rip current model"
+          : ripNow?.source === "forecast"
+            ? "the current NWS Surf Zone Forecast period"
+            : "no current reading";
     const computation =
-      rip === "high"
-        ? ["High → whole score capped at 85"]
-        : rip === "moderate"
-          ? ["Moderate → whole score capped at 92"]
-          : rip && rip !== "unknown"
-            ? [`${cap(rip)} → no cap applied`]
-            : ["No rip-risk reading — no cap applied."];
+      !ripNow || ripNow.source === "unknown"
+        ? [
+            ripNow?.upcomingAlert
+              ? `A Rip Current Statement is SCHEDULED (not yet in effect) — no cap until it starts.`
+              : "No current rip-risk reading — no cap applied.",
+          ]
+        : ripNow.level === "high"
+          ? [`High, via ${via} → whole score capped at 85`]
+          : ripNow.level === "moderate"
+            ? [`Moderate, via ${via} → whole score capped at 92`]
+            : [`${cap(ripNow.level)}, via ${via} → no cap applied`];
     return {
       title: "Rip current",
       weightPct: null,
       explainer:
-        "Rip currents are the ocean's real hazard — fast, narrow channels of water that pull swimmers away from shore. This isn't a weighted factor but a safety ceiling: High risk caps the whole score at 85 and Moderate at 92, because you can still enjoy the sand even when the water is dangerous. It comes straight from the National Weather Service Surf Zone Forecast.",
-      formula: "Not a weighted factor — a safety CAP. High rip risk caps the score at 85; moderate caps it at 92.",
+        "Rip currents are the ocean's real hazard — fast, narrow channels of water that pull swimmers away from shore. This isn't a weighted factor but a safety ceiling. THREE sources feed it, most-authoritative first: (1) an actual NWS Rip Current Statement ACTUALLY IN EFFECT right now — never one merely scheduled for later, always High; (2) NOAA's hourly probabilistic rip current model (NWPS), when its run is fresh — a run <=18h old can pull the result one band below a disagreeing Surf Zone Forecast word, an 18-36h-old run can only upgrade that word, never downgrade it; (3) the National Weather Service Surf Zone Forecast's word for the CURRENT period (today/tonight/etc), used when no fresh model reading exists. An alert or resolved High caps the whole score at 85, Moderate at 92 — you can still enjoy the sand even when the water is dangerous.",
+      formula:
+        "Not a weighted factor — a safety CAP. Alert-in-effect always resolves High (cap 85). Otherwise resolved High caps at 85, Moderate at 92. A scheduled (not-yet-started) alert applies no cap.",
       computation,
-      sources: src(snap.nws.source),
+      sources: src(snap.nws.source, ...(snap.ripNwps?.source ? [snap.ripNwps.source] : [])),
       notes:
-        "A swimmer-safety hazard, not a beach-day killer — you can still enjoy the sand — so it limits the ceiling rather than bottoming the score. From the NWS Surf Zone Forecast.",
+        "A swimmer-safety hazard, not a beach-day killer — you can still enjoy the sand — so it limits the ceiling rather than bottoming the score. From NOAA/NWS alerts + Surf Zone Forecast, resolved against the actual clock so a future/scheduled statement can never cap today's score.",
     };
   },
 

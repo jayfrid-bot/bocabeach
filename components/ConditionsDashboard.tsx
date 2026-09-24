@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import type { ConditionsResponse, LocationPublic } from "@/lib/types";
 import { GET_APP_PATH } from "@/lib/appStore";
-import { consensusCloudPct, currentHourOf, deriveMetrics, DEFAULT_SCORING } from "@/lib/score";
+import { applyLiveRipCap, consensusCloudPct, currentHourOf, deriveMetrics, DEFAULT_SCORING } from "@/lib/score";
 import { computeStormActivity } from "@/lib/stormActivity";
 import { rainNowcast } from "@/lib/rainNowcast";
 import { beachDayVerdict, fmtDate, fmtTime, nextCamReadPhrase, scoreTextClass } from "@/lib/format";
@@ -57,6 +57,7 @@ import { seaweedVsAvgPhrase } from "@/lib/vsAveragePhrase";
 import { clarityTileCopy } from "@/lib/sources/clarity";
 // --- Beach Day Plus ---------------------------------------------------------
 import { SAFETY_ALERT_KEYS } from "@/lib/db/types";
+import { ripCapFor } from "@/lib/ripRisk";
 import { profileLabel, resolveScoring } from "@/lib/profile/resolve";
 import { usePersonalScore, usePlus } from "@/lib/plus/client";
 import { isNativePlatform } from "@/lib/push/native";
@@ -280,10 +281,38 @@ export function ConditionsDashboard({
   const [liveNow, setLiveNow] = useState<number | null>(null);
   useEffect(() => {
     setLiveNow(Date.now());
+    // TEMPORAL FREEZE FIX (item 6): before this, `liveNow` was set ONCE after
+    // mount and never advanced again until the next SWR refetch (every 5 min
+    // — see usePersonalScore's own comment). A tab left open across a CAP
+    // alert's onset/end, or a NOAA model run rolling into its next hour,
+    // wouldn't move `nowMs` forward, so `d.ripNow` (which everything below —
+    // the score cap, SafetyBanner, RipRiskCard — resolves from) kept reading
+    // whatever was true at mount, potentially many minutes stale. Ticking
+    // every 60s (same cadence RipRiskCard's OWN clock already uses) is the
+    // simplest correct fix: it's one `setInterval`, reuses an established
+    // pattern, and needs no cache-control plumbing through the Worker/KV
+    // layer (the alternative considered: capping the conditions route's
+    // s-maxage to the next onset/end boundary — rejected as more invasive
+    // for the same result, since it only helps a FRESH fetch, not an
+    // already-rendered tab).
+    const id = setInterval(() => setLiveNow(Date.now()), 60_000);
+    return () => clearInterval(id);
   }, [res]);
   const nowMs = Math.max(liveNow ?? generatedMs, generatedMs);
 
   const d = deriveMetrics(snap, nowMs);
+  // The cached score response (`res.score`) was computed against whatever
+  // `nowMs` the SERVER had at build/cache time — up to the KV cache's 120s
+  // plus the client's own up-to-5-min SWR staleness. `d.ripNow` above is
+  // ALWAYS resolved against the live, minute-ticking clock, so the rip cap
+  // it implies (ripCapFor) can disagree with the cached score in EITHER
+  // direction — tighter (an alert/model reading that's since kicked in) or
+  // looser (an alert that's since ended). `res.score.scoreExceptRipCap` is
+  // the score with every OTHER cap already applied but the rip cap
+  // excluded, so re-applying the LIVE rip cap to it (not to the already-
+  // rip-capped `score`) follows the clock both ways without ever dropping
+  // any other cap still in force.
+  const liveRipCap = ripCapFor(d.ripNow);
 
   // --- Beach Day Plus -------------------------------------------------------
   // Everything below is inert for a free user: `plus.entitled` starts false and
@@ -329,7 +358,13 @@ export function ConditionsDashboard({
 
   // The personal number leads when there is one and the toggle isn't flipped.
   const personalActive = plusOn && !!personal && !showEveryone;
-  const active = personalActive && personal ? personal.score : res.score;
+  const activeBase = personalActive && personal ? personal.score : res.score;
+  // Live rip-cap recompute (item 3, pure — see lib/score.ts's
+  // applyLiveRipCap): follows the clock in BOTH directions — tighter when a
+  // hazard has newly kicked in, looser when an alert has since ended (its
+  // "(NWS alert)"/"(NOAA model)" cap line, and the rating word, disappearing
+  // right along with it) — without ever dropping any other cap in force.
+  const active = applyLiveRipCap(activeBase, liveRipCap, d.ripNow);
   const windows = (personalActive && personal ? personal.multiDayWindows : res.multiDayWindows) ?? [];
   const scoringOpts = personalActive ? resolveScoring(plus.profile) : DEFAULT_SCORING;
   const flagshipSlug = flagshipSlugOf(beaches);
@@ -567,7 +602,9 @@ export function ConditionsDashboard({
           water={snap.waterQuality}
           lightning={snap.lightning}
           nws={snap.nws}
+          ripNwps={snap.ripNwps}
           timezone={snap.location.timezone}
+          nowMs={nowMs}
         />
       </div>
 
@@ -1026,7 +1063,9 @@ export function ConditionsDashboard({
         {/* Hourly rip-current risk curve — anchored on (and never contradicting)
             the official NWS word, sitting in the safety cluster. Self-wraps its
             FlipCard and renders nothing when there's no official word to anchor. */}
-        {snap.ripRisk ? <RipRiskCard curve={snap.ripRisk} tz={tz} /> : null}
+        {snap.ripRisk || snap.ripNwps?.data ? (
+          <RipRiskCard curve={snap.ripRisk ?? null} tz={tz} ripNow={d.ripNow} ripNwps={snap.ripNwps?.data} nowMs={nowMs} />
+        ) : null}
         <LifeguardReport city={snap.cityOfficial} />
         <LocalCoverage location={snap.location} hasCams={cams.length > 0} />
       </section>

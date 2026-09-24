@@ -101,7 +101,7 @@ describe("evaluateAtBeach — hazards are judged independently (LOC-01)", () => 
         strikes: null,
         conditions: {
           lightning: { nearestMi: 4, nearestMinutesAgo: 3, lastMinutesAgo: 3 },
-          alerts: [{ event: "Tornado Warning", severity: "Extreme" }],
+          alerts: [{ event: "Tornado Warning", severity: "Extreme", onset: "2026-09-02T00:00:00Z", ends: "2026-09-03T00:00:00Z" }],
         },
       }),
     );
@@ -109,8 +109,8 @@ describe("evaluateAtBeach — hazards are judged independently (LOC-01)", () => 
   });
 
   it("B: a double-red closure is not hidden behind a high rip", () => {
-    const out = decisionsOf(input({ conditions: { rip: "high", flags: ["double-red"] } }));
-    expect(keys(out)).toEqual(["rip", "flag:double-red"]);
+    const out = decisionsOf(input({ conditions: { ripAlertInEffect: "high", flags: ["double-red"] } }));
+    expect(keys(out)).toEqual(["rip:test-rip-high", "flag:double-red"]);
   });
 
   it("C: turning water-advisory pushes off does not silence an enabled closure", () => {
@@ -128,9 +128,9 @@ describe("evaluateAtBeach — hazards are judged independently (LOC-01)", () => 
       input({
         conditions: {
           alerts: [
-            { event: "Tornado Warning", severity: "Extreme" },
-            { event: "Flash Flood Warning", severity: "Severe" },
-            { event: "Tornado Warning", severity: "Extreme" },
+            { event: "Tornado Warning", severity: "Extreme", onset: "2026-09-02T00:00:00Z", ends: "2026-09-03T00:00:00Z" },
+            { event: "Flash Flood Warning", severity: "Severe", onset: "2026-09-02T00:00:00Z", ends: "2026-09-03T00:00:00Z" },
+            { event: "Tornado Warning", severity: "Extreme", onset: "2026-09-02T00:00:00Z", ends: "2026-09-03T00:00:00Z" },
           ],
         },
       }),
@@ -220,17 +220,65 @@ describe("evaluateAtBeach — lightning, from the person's own fix", () => {
 describe("evaluateAtBeach — the snapshot hazards", () => {
   it("names a severe warning", () => {
     const out = decisionsOf(
-      input({ conditions: { alerts: [{ event: "Tornado Warning", severity: "Extreme" }] } }),
+      input({ conditions: { alerts: [{ event: "Tornado Warning", severity: "Extreme", onset: "2026-09-02T00:00:00Z", ends: "2026-09-03T00:00:00Z" }] } }),
     );
     expect(keys(out)).toEqual(["severe:Tornado Warning"]);
     expect(out[0].body).toBe("Tornado Warning in effect at Boca Raton.");
   });
 
-  it("carries a Beach Hazards Statement through as its own event", () => {
+  it("carries a Beach Hazards Statement through as its own event, once its onset has actually started", () => {
     const out = decisionsOf(
-      input({ conditions: { alerts: [{ event: "Beach Hazards Statement", severity: "Moderate" }] } }),
+      input({
+        conditions: {
+          alerts: [
+            {
+              event: "Beach Hazards Statement",
+              severity: "Moderate",
+              onset: "2026-09-02T00:00:00Z",
+              ends: "2026-09-03T00:00:00Z",
+            },
+          ],
+        },
+      }),
     );
     expect(out[0].body).toBe("Beach Hazards Statement in effect at Boca Raton.");
+  });
+
+  it("a Beach Hazards Statement scheduled but not yet started does NOT push (item 5: onset check)", () => {
+    const out = decisionsOf(
+      input({
+        conditions: {
+          alerts: [
+            {
+              event: "Beach Hazards Statement",
+              severity: "Moderate",
+              onset: "2099-01-01T00:00:00Z",
+              ends: "2099-01-02T00:00:00Z",
+            },
+          ],
+        },
+      }),
+    );
+    expect(keys(out)).not.toContain("severe:Beach Hazards Statement");
+  });
+
+  it("a Beach Hazards Statement that MENTIONS RIP CURRENTS never fires down the generic path (it's a rip alert instead)", () => {
+    const out = decisionsOf(
+      input({
+        conditions: {
+          alerts: [
+            {
+              event: "Beach Hazards Statement",
+              severity: "Moderate",
+              headline: "Beach Hazards Statement for dangerous rip currents",
+              onset: "2026-09-02T00:00:00Z",
+              ends: "2026-09-03T00:00:00Z",
+            },
+          ],
+        },
+      }),
+    );
+    expect(keys(out).some((k) => k.startsWith("severe:Beach Hazards"))).toBe(false);
   });
 
   it("fires a thunderstorm alert off a corroborated storm code", () => {
@@ -260,7 +308,7 @@ describe("evaluateAtBeach — the snapshot hazards", () => {
     const out = decisionsOf(
       input({
         conditions: {
-          alerts: [{ event: "Severe Thunderstorm Warning", severity: "Severe" }],
+          alerts: [{ event: "Severe Thunderstorm Warning", severity: "Severe", onset: "2026-09-02T00:00:00Z", ends: "2026-09-03T00:00:00Z" }],
           hourly: [{ time: "2026-09-02T18:00:00.000Z", weatherCode: 95, precipProbability: 80 }],
         },
       }),
@@ -275,14 +323,21 @@ describe("evaluateAtBeach — the snapshot hazards", () => {
   });
 
   it("flags a high rip current", () => {
-    const out = decisionsOf(input({ conditions: { rip: "high" } }));
-    expect(keys(out)).toEqual(["rip"]);
+    const out = decisionsOf(input({ conditions: { ripAlertInEffect: "high" } }));
+    expect(keys(out)).toEqual(["rip:test-rip-high"]);
     expect(out[0].body).toBe("High rip-current risk at Boca Raton — swim near a lifeguard.");
   });
 
   it("gives a moderate rip its own key, so an upgrade to high is not deduped away", () => {
-    const out = decisionsOf(input({ conditions: { rip: "moderate" } }));
-    expect(keys(out)).toEqual(["rip:moderate"]);
+    const out = decisionsOf(input({ conditions: { ripAlertInEffect: "moderate" } }));
+    expect(keys(out)).toEqual(["rip:test-rip-moderate"]);
+  });
+
+  it("2026-09-24 fix: a SCHEDULED (not-yet-started) rip alert pushes nothing — only the SRF word was set, no in-effect alert", () => {
+    // `rip: "high"` alone (the old flat SRF word, no alert) must never push —
+    // that was the whole bug: a scheduled/forecast-only word isn't "in effect".
+    const out = decisionsOf(input({ conditions: { rip: "high" } }));
+    expect(keys(out)).toEqual([]);
   });
 
   it("flags a red flag", () => {
@@ -300,7 +355,7 @@ describe("evaluateAtBeach — the snapshot hazards", () => {
   it("respects a hazard opt-out", () => {
     const out = decisionsOf(
       input({
-        conditions: { rip: "high" },
+        conditions: { ripAlertInEffect: "high" },
         device: { prefs: prefsWithout("rip"), profile: null },
       }),
     );
@@ -382,7 +437,7 @@ describe("evaluateAtBeach — the profile filter", () => {
 
   it("gives a surfer a high rip as news too", () => {
     const out = decisionsOf(
-      input({ conditions: { rip: "high" }, device: { prefs: defaultPrefs(), profile: SURF } }),
+      input({ conditions: { ripAlertInEffect: "high" }, device: { prefs: defaultPrefs(), profile: SURF } }),
     );
     expect(out[0].title).toBe("Boca Raton");
     expect(out[0].body).toBe("Conditions changed: high rip-current risk at Boca Raton.");
@@ -423,10 +478,10 @@ describe("evaluateAtBeach — ordering", () => {
       input({
         strikes: strikes({ nearestMi: 4, nearestMinutesAgo: 2 }),
         rain: { etaMinutes: 10, rainingNow: false, clearingSoon: false, source: "radar" },
-        conditions: { rip: "high", gustMph: 30 },
+        conditions: { ripAlertInEffect: "high", gustMph: 30 },
       }),
     );
-    expect(keys(out)).toEqual(["lightning", "rip", "wind-gust", "rain-soon"]);
+    expect(keys(out)).toEqual(["lightning", "rip:test-rip-high", "wind-gust", "rain-soon"]);
   });
 
   it("survives a missing conditions snapshot", () => {

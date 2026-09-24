@@ -18,6 +18,10 @@ import type {
 } from "@/lib/types";
 import { clamp, degToCardinal, dewPointFromTempRH, plateau, round } from "@/lib/util";
 import { assessLightning, assessRain, type HazardAssessment } from "@/lib/hazards/assess";
+import { resolveRipNow, ripCapFor, type RipNow } from "@/lib/ripRisk";
+import { isAlertInEffectAt } from "@/lib/ripRisk/resolve";
+import { isRipAlertEvent } from "@/lib/ripRisk/types";
+import { modelNowFromSeries } from "@/lib/sources/ripNwps";
 import { currentSandTempF, estimateSandTempF, hoursFromSolarNoon } from "@/lib/sandTemp";
 import { seaState } from "@/lib/format";
 import { scoreBand, SCORE_BANDS } from "@/lib/scoreBands";
@@ -69,8 +73,21 @@ export interface Derived {
   waterRating: WaterQualityRating;
   /** City-issued no-swim/beach advisory is active (myboca AlertCenter). */
   noSwimAdvisory: boolean;
-  /** NWS Surf Zone Forecast rip-current risk. */
+  /** NWS Surf Zone Forecast rip-current risk — the FIRST SRF period's word,
+   *  kept for back-compat (safetyTone/safetyLine's older callers). Prefer
+   *  `ripNow` for anything that needs to know whether a rip hazard is
+   *  actually in effect right now vs merely forecast/scheduled. */
   ripCurrentRisk: RipRisk;
+  /** Temporally-resolved rip status for this hour (lib/ripRisk's
+   *  resolveRipNow): an alert actually in effect (always High) > a fresh NOAA
+   *  rip current model reading (possibly softened one band below a
+   *  disagreeing SRF word, or upgrade-only once its run is aging) > the
+   *  current SRF period's word > unknown. Drives the rip cap below — never
+   *  the raw flat word. Optional so a hand-built test `Derived` (constructed
+   *  directly, not via `deriveMetrics`) doesn't have to supply it;
+   *  `deriveMetrics` itself always populates it. Absent is treated as
+   *  "unknown" (no cap) — see `ripCapFor`. */
+  ripNow?: RipNow;
   /** A severe NWS warning (hurricane/tropical storm/tsunami/high surf) is active. */
   severeAlert: boolean;
   /** A surf/coastal-flood ADVISORY (sub-warning tier) is active — soft swim cap. */
@@ -338,6 +355,7 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
   const c = s.cityOfficial.data;
   const q = s.waterQuality.data;
   const n = s.nws.data;
+  const rn = s.ripNwps?.data ?? null;
   const mn = s.metno.data;
   const g = s.gfs.data;
   // Open-Meteo's reading for the current hour — the third consensus voice.
@@ -508,12 +526,37 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
     waterRating: q?.overall ?? "unknown",
     noSwimAdvisory: !!c?.noSwimAdvisory,
     ripCurrentRisk: n?.ripCurrentRisk ?? "unknown",
-    severeAlert:
-      // Match by event name OR by NWS severity tier (Severe/Extreme).
-      (n?.alerts ?? []).some((a) => SEVERE_ALERT.test(a.event)) ||
-      (n?.alerts ?? []).some((a) => /^(Severe|Extreme)$/i.test(a.severity)),
-    surfAdvisory: (n?.alerts ?? []).some((a) =>
-      /beach hazards|high surf advisory|coastal flood advisory/i.test(a.event),
+    // Back-compat: older snapshots/fixtures/test data carry only the flat
+    // `ripCurrentRisk` word with no `srfPeriods` array. Treat that word as a
+    // single windowless "TODAY" period so resolveRipNow's forecast source
+    // still applies — a windowless period always matches "now" (see
+    // lib/ripRisk/resolve.ts's currentSrfPeriod fallback).
+    ripNow: resolveRipNow({
+      alerts: n?.alerts ?? [],
+      srfPeriods:
+        n?.srfPeriods ?? (n?.ripCurrentRisk && n.ripCurrentRisk !== "unknown"
+          ? [{ label: "TODAY", level: n.ripCurrentRisk }]
+          : []),
+      model: modelNowFromSeries(rn, nowMs),
+      now: nowMs,
+    }),
+    // Both gated on isAlertInEffectAt (item 1, shared with SafetyBanner/
+    // safetyTone/evaluate.ts's push path) — a Warning/Advisory scheduled for
+    // later, or already expired, must never cap the score as if active. Rip-
+    // related events (incl. a rip-mentioning Beach Hazards Statement) are
+    // excluded here too — they're the rip cap's job below, via d.ripNow,
+    // never double-counted through this generic path.
+    severeAlert: (n?.alerts ?? []).some(
+      (a) =>
+        !isRipAlertEvent(a) &&
+        isAlertInEffectAt(a, nowMs) &&
+        (SEVERE_ALERT.test(a.event) || /^(Severe|Extreme)$/i.test(a.severity)),
+    ),
+    surfAdvisory: (n?.alerts ?? []).some(
+      (a) =>
+        !isRipAlertEvent(a) &&
+        isAlertInEffectAt(a, nowMs) &&
+        /beach hazards|high surf advisory|coastal flood advisory/i.test(a.event),
     ),
     // Observed "now" signals — they override the forecast-based rain logic.
     // (Corroboration-gated: see nowcastCorroborated above — a phantom model
@@ -1037,13 +1080,14 @@ export function scoreBeachDay(d: Derived, opts: ScoringOptions = DEFAULT_SCORING
   // feed, which is independent of the weather pipeline — still registers as a cap
   // reason even when every forecast feed is down. (Math.min keeps the score at 0.)
   if (rawScore == null) {
-    const { caps } = applyBeachCaps(0, d, opts.capPolicy);
+    const { caps, scoreExceptRipCap } = applyBeachCaps(0, d, opts.capPolicy);
     return {
       score: 0,
       rawScore: 0,
       rating: "Unavailable",
       subScores: subs,
       caps,
+      scoreExceptRipCap,
       dataAvailable: false,
       completeness,
       dataCoverage,
@@ -1051,7 +1095,7 @@ export function scoreBeachDay(d: Derived, opts: ScoringOptions = DEFAULT_SCORING
       estimatedFactors,
     };
   }
-  let { score, caps } = applyBeachCaps(rawScore, d, opts.capPolicy);
+  let { score, caps, scoreExceptRipCap } = applyBeachCaps(rawScore, d, opts.capPolicy);
   // Thin-data honesty cap: a beach with under 60% of its weighted factors
   // reporting cannot read "Yes!"/"Absolutely!" on mostly-missing information.
   // Pushed through the same `caps` array the safety caps use, so it shows
@@ -1060,6 +1104,7 @@ export function scoreBeachDay(d: Derived, opts: ScoringOptions = DEFAULT_SCORING
   // including `partial`, which gets a quiet label but no numeric cap.
   if (dataCoverage === "limited") {
     score = Math.min(score, LIMITED_DATA_CAP);
+    scoreExceptRipCap = Math.min(scoreExceptRipCap, LIMITED_DATA_CAP);
     caps.push(
       `Limited data — ${missingFactors.length} factor${missingFactors.length === 1 ? "" : "s"} unavailable`,
     );
@@ -1070,6 +1115,7 @@ export function scoreBeachDay(d: Derived, opts: ScoringOptions = DEFAULT_SCORING
     rating: ratingFor(score),
     subScores: subs,
     caps,
+    scoreExceptRipCap,
     dataAvailable: true,
     completeness,
     dataCoverage,
@@ -1122,8 +1168,18 @@ export function applyBeachCaps(
   raw: number,
   d: Derived,
   policy: CapPolicy = "water",
-): { score: number; caps: string[] } {
+): { score: number; caps: string[]; scoreExceptRipCap: number } {
   let score = raw;
+  // Mirrors `score` through every cap EXCEPT the rip-current one (item 3):
+  // since a chain of `Math.min` is associative/commutative, this equals "the
+  // score with every OTHER cap applied, rip cap excluded" regardless of
+  // where in the chain the rip cap sits. The client uses it to recompute the
+  // rip cap against a LIVE clock in both directions — tightening when a new
+  // hazard applies that a cached response didn't know about, AND loosening
+  // when an alert has since ended — without ever dropping any of the OTHER
+  // caps (severe weather, wind, rain, flags, etc) that still legitimately
+  // constrain the number.
+  let scoreExceptRip = raw;
   const caps: string[] = [];
   // Swim-hazard caps (red flag, rip, surf advisory) apply to swimmers only.
   const swimCaps = policy === "water";
@@ -1141,18 +1197,22 @@ export function applyBeachCaps(
   // it's a near-constant in South Florida, so it carries no day-to-day signal.
   if (closureCaps && d.flags.includes("double-red")) {
     score = Math.min(score, 5);
+    scoreExceptRip = Math.min(scoreExceptRip, 5);
     caps.push("Double red flag — water access closed");
   } else if (swimCaps && d.flags.includes("red")) {
     score = Math.min(score, 85);
+    scoreExceptRip = Math.min(scoreExceptRip, 85);
     caps.push("Red flag — high hazard, swimming discouraged");
   }
   if (closureCaps && d.waterAdvisory) {
     score = Math.min(score, 40);
+    scoreExceptRip = Math.min(scoreExceptRip, 40);
     caps.push("Water quality advisory in effect");
   }
   // A City-issued no-swim advisory is a direct swim-safety override.
   if (closureCaps && d.noSwimAdvisory) {
     score = Math.min(score, 40);
+    scoreExceptRip = Math.min(scoreExceptRip, 40);
     caps.push("City no-swim advisory in effect");
   }
   // Heavy/moderate seaweed isn't a safety hazard but it genuinely degrades the
@@ -1180,27 +1240,44 @@ export function applyBeachCaps(
         caps.push(`${severity} — ~${Math.round(c)}% of the beach covered`);
       }
       score = Math.min(score, ceiling);
+      scoreExceptRip = Math.min(scoreExceptRip, ceiling);
     }
   }
-  // NWS rip-current risk: HIGH means life-threatening rip currents are likely.
+  // Rip-current risk: HIGH means life-threatening rip currents are likely.
   // Like a red flag, this is a swimmer-safety hazard rather than a beach-day
   // killer — you can still enjoy the sand — so it caps at 85, not lower.
-  if (swimCaps && d.ripCurrentRisk === "high") {
-    score = Math.min(score, 85);
-    caps.push("High rip current risk (NWS)");
-  } else if (swimCaps && d.ripCurrentRisk === "moderate") {
-    score = Math.min(score, 92);
-    caps.push("Moderate rip current risk (NWS)");
+  //
+  // TEMPORAL CORRECTNESS (2026-09-24 fix): the cap is driven by d.ripNow, NOT
+  // a flat word — an alert that hasn't started yet (scheduled) or has already
+  // ended must never cap the score. See lib/ripRisk/resolve.ts's
+  // resolveRipNow for the full freshness/disagreement hierarchy (alert in
+  // effect always High; a fresh NOAA model reading, possibly softened one
+  // band below a disagreeing SRF word; else the SRF word itself).
+  if (swimCaps) {
+    const cap = ripCapFor(d.ripNow);
+    if (cap != null) {
+      score = Math.min(score, cap);
+      const label = d.ripNow?.level === "high" ? "High" : "Moderate";
+      const sourceLabel =
+        d.ripNow?.source === "alert"
+          ? "NWS alert"
+          : d.ripNow?.source === "model"
+            ? "NOAA model"
+            : "NWS forecast";
+      caps.push(`${label} rip current risk (${sourceLabel})`);
+    }
   }
   // A surf/coastal-flood ADVISORY (sub-warning tier) discourages swimming — a
   // soft cap; the hard SEVERE_ALERT cap above already covers the *warning* tier.
   if (swimCaps && d.surfAdvisory) {
     score = Math.min(score, 85);
+    scoreExceptRip = Math.min(scoreExceptRip, 85);
     caps.push("High surf or coastal-flood advisory — swimming discouraged");
   }
   // A severe NWS warning (hurricane/tropical storm/tsunami/high surf) closes the day.
   if (d.severeAlert) {
     score = Math.min(score, 15);
+    scoreExceptRip = Math.min(scoreExceptRip, 15);
     caps.push("Severe weather warning in effect");
   }
   // Strong wind is a day-wrecker regardless of how nice everything else is: blown
@@ -1209,6 +1286,7 @@ export function applyBeachCaps(
   // this is the ceiling on a genuinely windy day.
   if ((d.windSpeedMph ?? 0) > 20) {
     score = Math.min(score, 15);
+    scoreExceptRip = Math.min(scoreExceptRip, 15);
     caps.push("High wind — over 20 mph");
   }
   // OBSERVED lightning (GOES GLM) within 5 mi in the recent scan window is a
@@ -1216,6 +1294,7 @@ export function applyBeachCaps(
   // This is observed data, so it bottoms the score regardless of the forecast.
   if (d.lightningWithin5mi) {
     score = Math.min(score, 10);
+    scoreExceptRip = Math.min(scoreExceptRip, 10);
     caps.push(
       d.hazardLightning?.latched
         ? "Lightning within 5 miles in the last 30 minutes"
@@ -1229,6 +1308,7 @@ export function applyBeachCaps(
   const rain = rainSeverity(d);
   if (rain === "thunder") {
     score = Math.min(score, 15);
+    scoreExceptRip = Math.min(scoreExceptRip, 15);
     caps.push("Thunderstorm in the forecast");
   } else if (d.nowcastRaining) {
     // It's observed-raining now. If an independent storm signal corroborates a
@@ -1239,9 +1319,11 @@ export function applyBeachCaps(
       /thunder|storm/i.test(d.shortForecast ?? "");
     if (stormSignal) {
       score = Math.min(score, 15);
+      scoreExceptRip = Math.min(scoreExceptRip, 15);
       caps.push("Thunderstorm — raining now");
     } else {
       score = Math.min(score, 25);
+      scoreExceptRip = Math.min(scoreExceptRip, 25);
       caps.push(d.hazardRain?.latched ? "Rain in the last 20 minutes" : "Raining right now");
     }
   } else if (rain === "rain" && !d.radarDryNow) {
@@ -1250,9 +1332,62 @@ export function applyBeachCaps(
     // hours keep their forecast caps). Thunder is deliberately NOT vetoed here:
     // the lightning feed owns that, and a dry radar says nothing about strikes.
     score = Math.min(score, 25);
+    scoreExceptRip = Math.min(scoreExceptRip, 25);
     caps.push("Rain in the forecast");
   }
-  return { score, caps };
+  return { score, caps, scoreExceptRipCap: scoreExceptRip };
+}
+
+const RIP_CAP_LABEL_PREFIX = "rip current risk (";
+
+/**
+ * Re-applies a LIVE rip cap to an already-computed `ScoreResult` (item 3,
+ * 2026-09-24 round 2/3 fix) — pure, so the client (ConditionsDashboard.tsx)
+ * can recompute the displayed score/rating/caps against a minute-ticking
+ * clock without re-running the whole scoring pipeline. Uses
+ * `base.scoreExceptRipCap` (every OTHER cap applied, rip cap excluded) as
+ * the foundation, so the result follows the clock in BOTH directions:
+ * tighter when `liveRipCap` newly applies, looser when it's gone (an
+ * expired alert's cap AND its "(NWS alert)"/"(NOAA model)" explanation both
+ * disappear on time) — without ever dropping any other cap still in force.
+ * `rating` is recomputed from the adjusted score via `scoreBand`, so the
+ * headline word (ScoreWheel's center label) never lags the number.
+ * Falls back to a simple tighten-only clamp against `base.score` itself
+ * when `base` predates `scoreExceptRipCap` (back-compat with an older
+ * cached payload).
+ */
+export function applyLiveRipCap(
+  base: ScoreResult,
+  liveRipCap: number | null,
+  ripNow: RipNow | null | undefined,
+): ScoreResult {
+  const otherCaps = base.caps.filter((c) => !c.toLowerCase().includes(RIP_CAP_LABEL_PREFIX));
+  const liveRipCapLabel =
+    liveRipCap != null && ripNow
+      ? `${ripNow.level === "high" ? "High" : "Moderate"} rip current risk (${
+          ripNow.source === "alert" ? "NWS alert" : ripNow.source === "model" ? "NOAA model" : "NWS forecast"
+        })`
+      : null;
+
+  if (base.scoreExceptRipCap != null) {
+    const adjustedScore = liveRipCap != null ? Math.min(base.scoreExceptRipCap, liveRipCap) : base.scoreExceptRipCap;
+    return {
+      ...base,
+      score: adjustedScore,
+      rating: scoreBand(adjustedScore).rating,
+      caps: liveRipCapLabel ? [...otherCaps, liveRipCapLabel] : otherCaps,
+    };
+  }
+  // Back-compat, tighten-only (no scoreExceptRipCap to recompute from).
+  if (liveRipCap != null && liveRipCap < base.score) {
+    return {
+      ...base,
+      score: liveRipCap,
+      rating: scoreBand(liveRipCap).rating,
+      caps: liveRipCapLabel && !otherCaps.includes(liveRipCapLabel) ? [...otherCaps, liveRipCapLabel] : base.caps,
+    };
+  }
+  return base;
 }
 
 export function computeScore(
@@ -1444,6 +1579,33 @@ function scoreAllHoursFull(
         waterRating: base.waterRating,
         noSwimAdvisory: base.noSwimAdvisory,
         ripCurrentRisk: isToday ? base.ripCurrentRisk : "unknown",
+        // Resolved against THIS hour's own clock (hStart), not global `now` —
+        // a future hour reflects whichever alert/SRF period will actually
+        // apply THEN (e.g. an alert whose onset lands mid-afternoon caps only
+        // the hours at/after onset, not the whole day). TODAY-only, same gate
+        // as every other NWS-alert-derived field above.
+        ripNow: isToday
+          ? resolveRipNow({
+              alerts: s.nws.data?.alerts ?? [],
+              srfPeriods:
+                s.nws.data?.srfPeriods ??
+                (base.ripCurrentRisk !== "unknown" ? [{ label: "TODAY", level: base.ripCurrentRisk }] : []),
+              model: modelNowFromSeries(s.ripNwps?.data ?? null, hStart),
+              now: hStart,
+              // Overlap, not point-in-time: an alert that starts/ends mid-hour
+              // still covers this whole bucket (item 11 — max severity within
+              // the hour, never missed because hStart itself precedes onset).
+              hourEndMs: hStart + 3_600_000,
+            })
+          : {
+              source: "unknown",
+              level: "unknown",
+              alert: null,
+              upcomingAlert: null,
+              period: null,
+              model: null,
+              watch: false,
+            },
         severeAlert: isToday ? base.severeAlert : false,
         surfAdvisory: isToday ? base.surfAdvisory : false,
         ...(isCurrentHour

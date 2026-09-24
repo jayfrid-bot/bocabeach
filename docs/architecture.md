@@ -54,6 +54,9 @@ flowchart TD
   SHARE --> PIPE
   PIPE --> SOURCES[lib/sources/*<br/>one adapter per external source<br/>each returns Wrapped&lt;T&gt;, never throws]
   PIPE --> SCORE[lib/score.ts<br/>deriveMetrics + computeScore<br/>hourly + multi-day windows]
+  SOURCES -->|"NWS alerts (onset/effective/ends)<br/>+ per-period SRF words +<br/>NOAA rip model (rip-data branch)"| RIPRISK[lib/ripRisk/*<br/>resolveRipNow: alert-in-effect (always High) &gt;<br/>fresh NOAA model (softened vs. a disagreeing<br/>SRF word, or upgrade-only once aging) &gt;<br/>current SRF period &gt; unknown — pure, `now`-passed]
+  RIPRISK -->|"rip cap (85/92)"| SCORE
+  RIPRISK -.->|"in-effect alert only, deduped by CAP id"| EVAL2[lib/alerts/evaluate.ts<br/>snapshotHazards rip push]
   SCORE --> HAZ[lib/hazards/assess.ts<br/>one lightning + rain assessment<br/>30-min / 20-min holds, pure]
   SCORE --> CACHE[(NEXT_INC_CACHE_KV<br/>OpenNext page/data cache)]
   PIPE --> CACHE
@@ -86,6 +89,7 @@ flowchart LR
     GOES["goes-cloud.yml — GOES Cloud Feed<br/>*/15 min"]
     MRMS["mrms.yml — MRMS Radar Rain Nowcast<br/>*/10 min"]
     SARG["sargassum.yml — Cam Vision Feed<br/>*/10 min, ~6a-8p ET"]
+    RIPNWPS["rip-nwps.yml — NOAA Rip Current Model Feed<br/>every 3h"]
     EVAL["eval.yml — Vision Eval<br/>every 2h, daylight"]
     PUSHCRON["push-cron.yml — Push notifications cron<br/>hourly at :05 (backstop)"]
     LAYOUT["layout-check.yml — Mobile Layout Check<br/>on push + PR"]
@@ -105,12 +109,17 @@ flowchart LR
   LGT -->|writes| LDATA[(lightning-data branch)]
   SARG -->|reads| VCAMS[config/vision-cams.json<br/>per-beach cam registry]
   SARG -->|writes| SDATA[(sargassum-data branch<br/>cam_seaweed.&lt;slug&gt;.json, one per beach)]
+  RIPNWPS -->|reads| NWPSMAP[config/nwpsRip.ts<br/>beach → NWS office + nearest model grid point,<br/>built by scripts/nwps_rip_map.mjs]
+  RIPNWPS -->|"downloads each mapped office's<br/>NOAA NWPS CG1 ripprob file ONCE"| NOMADS[["nomads.ncep.noaa.gov<br/>NWPS rip current model (Dusek &amp; Seim 2013)"]]
+  RIPNWPS -->|writes| RDATA[(rip-data branch<br/>rip_nwps.json — its OWN branch, NOT<br/>sargassum-data, which sargassum.yml/<br/>backfill-pct.yml force-push as an orphan<br/>and would silently wipe it)]
   GOES -->|writes| GDATA[(GOES cloud data)]
   MRMS -->|writes| MDATA[(MRMS rain nowcast data)]
   EVAL -->|archives + scores stills| SDATA
 
   LDATA --> SOURCES2[lib/sources/lightning.ts]
   SDATA --> SOURCES3[lib/sources/sargassum.ts, busyness.ts, clarity.ts]
+  RDATA -->|rip_nwps.json| SOURCES6[lib/sources/ripNwps.ts<br/>per-beach hourly probability series,<br/>stale &gt;36h treated as unavailable]
+  SOURCES6 --> RIPRESOLVE[lib/ripRisk/resolve.ts<br/>resolveRipNow: alert &gt; fresh model &gt; SRF forecast &gt; unknown]
   SOURCES3 -->|"last 2 weeks of read times"| CAMNEXT[lib/camNextRead.ts<br/>learns the next cam read time,<br/>no fixed schedule]
   GDATA --> SOURCES4[lib/sources/goesCloud.ts]
   MDATA --> SOURCES5[lib/sources/precipRadar.ts<br/>parses lastWetIso → wetMinutesAgo<br/>on the server clock]
@@ -174,6 +183,47 @@ both use it, and Boca Raton alone falls back to the pre-split single-file
 if its own per-beach file isn't there yet. The underwater "Spinner the Sea
 Cam" read stays a single per-run calibration signal — the same `uw` value is
 copied onto every beach's file, not read once per beach.
+
+**NOAA's rip current model is preprocessed, not fetched live.** NOAA's NWPS
+probabilistic rip current model (Dusek & Seim 2013) publishes one ~2.5MB text
+file per NWS office, hourly, 6 days out — too big to fetch per page load.
+`scripts/nwps_rip_map.mjs` is a one-time (re-runnable) script that, for every
+beach in `listLocations()`, finds the covering NWS office via
+`api.weather.gov/points` and the nearest model grid point (accepted only
+within 3km of the shoreline), writing the static `config/nwpsRip.ts` —
+currently 27 of 39 beaches (only coastal offices run the model). `rip-nwps.yml`
+runs `scripts/rip_nwps.mjs` every 3h: for each DISTINCT office in the map, it
+downloads that office's latest CG1 ripprob file ONCE (today 12z → 00z →
+yesterday 12z → 00z, each fetch under a 20s abort timeout), extracts every
+mapped beach's nearest point, and publishes a single small `rip_nwps.json`
+(72h of hourly probability + wave/period/direction per beach) to its OWN
+**`rip-data`** branch — deliberately NOT `sargassum-data`: that branch is
+force-pushed as a single-commit orphan by both `sargassum.yml` (~every 10 min)
+and `backfill-pct.yml`, which silently deletes anything else published there
+(a prior version of this file lived on `sargassum-data` and was wiped
+repeatedly). A downloaded run is only ACCEPTED if it sanity-checks (non-empty
+grid, in-range probabilities, hourly coverage of `now..+24h` with no gaps);
+one that fetches but fails those checks, or fails to fetch after one retry,
+falls through to an older cycle and ultimately carries that office's beaches
+forward from the previous publish with their ORIGINAL run time, never faking
+freshness. Every row's `prob` is validated to [0, 100] (sentinels like
+-999/9999 are dropped, not clamped) both in the job and again, defensively, in
+the adapter.
+
+`lib/sources/ripNwps.ts` reads that file (an in-flight promise shared by
+concurrent callers, so a cold build fetching many beaches at once issues ONE
+request; stale >36h = unavailable) and `lib/ripRisk/resolve.ts`'s
+`resolveRipNow` folds it in: an alert actually IN EFFECT always resolves
+HIGH; otherwise a model run ≤18h old can pull the result ONE band below a
+disagreeing Surf Zone Forecast word (never further), a run 18-36h old can only
+UPGRADE the SRF word, never downgrade it; with no fresh model, the SRF word
+governs; with neither, unknown. (An earlier experimental wave/tide/wind
+physics estimate was removed from this hierarchy — never wired past its own
+tests — see `lib/ripRiskCurve.ts`, which is a separate, still-used system
+that shapes the CARD's hourly curve for beaches with no model coverage.) The
+dashboard's own clock ticks every 60s post-mount (matching `RipRiskCard`'s
+convention) so this resolution — and the score's rip cap shown client-side —
+stays live rather than freezing at whatever was true when the tab loaded.
 
 ## 3. Beach Day Plus — device, presence, and alerts
 

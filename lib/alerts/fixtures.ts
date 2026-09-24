@@ -21,6 +21,7 @@ import type {
   NwsData,
   PrecipRadarData,
   SargassumData,
+  RipNwpsBeachSeries,
   SunData,
   TideData,
   TrafficData,
@@ -33,8 +34,20 @@ export interface ConditionsOver {
   score?: number;
   rating?: string;
   subScores?: unknown[];
-  alerts?: { event: string; severity?: string }[];
+  alerts?: {
+    event: string;
+    severity?: string;
+    headline?: string;
+    onset?: string;
+    ends?: string;
+  }[];
   rip?: "low" | "moderate" | "high" | "unknown";
+  /** When set, synthesizes a real "Rip Current Statement" NwsAlert with an
+   *  onset comfortably in the past and an end comfortably in the future (i.e.
+   *  IN EFFECT at the fixture's usual `now`, 2026-09-02T18:00Z) — the only way
+   *  a rip push actually fires post-2026-09-24 fix (a bare `rip` word alone
+   *  no longer pushes; see lib/alerts/evaluate.ts's snapshotHazards). */
+  ripAlertInEffect?: "moderate" | "high";
   flags?: string[];
   noSwim?: { title: string; url: string };
   waterAdvisory?: boolean;
@@ -70,7 +83,34 @@ export function conditionsFixture(over: ConditionsOver = {}): ConditionsResponse
     snapshot: {
       location: { slug: "boca-raton", name: "Boca Raton", timezone: "America/New_York" },
       lightning: { status: "ok", data: over.lightning ?? null },
-      nws: { status: "ok", data: { alerts: over.alerts ?? [], ripCurrentRisk: over.rip ?? "low" } },
+      nws: {
+        status: "ok",
+        data: {
+          alerts: [
+            ...(over.alerts ?? []),
+            ...(over.ripAlertInEffect
+              ? [
+                  {
+                    id: `test-rip-${over.ripAlertInEffect}`,
+                    event: "Rip Current Statement",
+                    // Real NWS Rip Current Statements carry severity "Moderate"
+                    // regardless of the risk word — Severe/Extreme severity would
+                    // (correctly, per LOC-01) ALSO fire the independent severe-
+                    // warning path, which isn't what these rip-only fixtures test.
+                    severity: "Moderate",
+                    status: "Actual",
+                    onset: "2026-09-02T00:00:00Z",
+                    ends: "2026-09-03T00:00:00Z",
+                  },
+                ]
+              : []),
+          ],
+          ripCurrentRisk: over.rip ?? "low",
+          srfPeriods: over.ripAlertInEffect
+            ? [{ label: "TODAY", level: over.ripAlertInEffect }]
+            : undefined,
+        },
+      },
       cityOfficial: {
         status: "ok",
         data: { flags: over.flags ?? [], noSwimAdvisory: over.noSwim },
@@ -159,6 +199,7 @@ export function scorableSnapshot(over: { waveHeightFt?: number } = {}): Conditio
     goesCloud: wrapped<GoesCloudData>(null),
     precipRadar: wrapped<PrecipRadarData>(null),
     sargassum: wrapped<SargassumData>({ level: "none" } as SargassumData),
+    ripNwps: wrapped<RipNwpsBeachSeries>(null),
     busyness: wrapped<BusynessData>(null),
     clarity: wrapped<ClarityData>(null),
     forecast: wrapped<ForecastDay[]>(null),

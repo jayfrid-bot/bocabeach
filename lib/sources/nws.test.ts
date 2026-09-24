@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseAlerts, parseRipRisk } from "@/lib/sources/nws";
+import { parseAlerts, parseRipRisk, parseSrfPeriods } from "@/lib/sources/nws";
 
 // Mirrors the structure of an NWS Surf Zone Forecast (SRF) product.
 const SRF = `
@@ -60,5 +60,92 @@ describe("parseAlerts", () => {
       ],
     });
     expect(a.map((x) => x.event)).toEqual(["Rip Current Statement", "Heat Advisory"]);
+  });
+
+  it("keeps onset/effective/ends/expires/id/status/messageType/description", () => {
+    const a = parseAlerts({
+      features: [
+        {
+          properties: {
+            id: "urn:oid:2.49.0.1.840.0.abc123",
+            event: "Rip Current Statement",
+            severity: "Moderate",
+            status: "Actual",
+            messageType: "Alert",
+            headline: "Rip Current Statement issued",
+            description: "Life-threatening rip currents expected.",
+            sent: "2026-09-24T14:00:00Z",
+            effective: "2026-09-24T14:00:00Z",
+            onset: "2026-09-25T06:00:00Z",
+            ends: "2026-09-26T12:00:00Z",
+            expires: "2026-09-26T12:00:00Z",
+          },
+        },
+      ],
+    });
+    expect(a[0]).toMatchObject({
+      id: "urn:oid:2.49.0.1.840.0.abc123",
+      status: "Actual",
+      messageType: "Alert",
+      onset: "2026-09-25T06:00:00Z",
+      effective: "2026-09-24T14:00:00Z",
+      ends: "2026-09-26T12:00:00Z",
+      expires: "2026-09-26T12:00:00Z",
+      description: "Life-threatening rip currents expected.",
+    });
+  });
+});
+
+describe("parseSrfPeriods", () => {
+  const MULTI_PERIOD_SRF = `
+FLZ168-...
+Coastal Broward-
+...HIGH RIP CURRENT RISK...
+.TODAY...
+Rip Current Risk*...........High.
+.TONIGHT...
+Rip Current Risk*...........Moderate.
+.FRIDAY...
+Rip Current Risk*...........High.
+$$`;
+
+  it("parses every period with its own label and word", () => {
+    const periods = parseSrfPeriods(MULTI_PERIOD_SRF, "Coastal Broward");
+    expect(periods).toEqual([
+      { label: "TODAY", level: "high" },
+      { label: "TONIGHT", level: "moderate" },
+      { label: "FRIDAY", level: "high" },
+    ]);
+  });
+
+  it("attaches TODAY/TONIGHT/named-day windows when issuedAt+tz are given", () => {
+    // Issued Thu 2026-09-24 14:00 UTC (10:00 AM EDT).
+    const periods = parseSrfPeriods(MULTI_PERIOD_SRF, "Coastal Broward", {
+      issuedAt: "2026-09-24T14:00:00Z",
+      tz: "America/New_York",
+    });
+    const today = periods.find((p) => p.label === "TODAY")!;
+    expect(today.start).toBe("2026-09-24T14:00:00Z");
+    expect(today.end).toBe("2026-09-24T22:00:00.000Z"); // 6 PM EDT = 22:00 UTC
+
+    const tonight = periods.find((p) => p.label === "TONIGHT")!;
+    expect(tonight.start).toBe("2026-09-24T22:00:00.000Z");
+    expect(tonight.end).toBe("2026-09-25T10:00:00.000Z"); // 6 AM EDT next day
+
+    const friday = periods.find((p) => p.label === "FRIDAY")!;
+    expect(friday.start).toBe("2026-09-25T10:00:00.000Z"); // 6 AM EDT Fri
+    expect(friday.end).toBe("2026-09-25T22:00:00.000Z"); // 6 PM EDT Fri
+  });
+
+  it("falls back to a single TODAY period with no headers", () => {
+    const periods = parseSrfPeriods(
+      "FLZ168-...\nCoastal Broward-\nRip Current Risk*...........Low.\n$$",
+      "Coastal Broward",
+    );
+    expect(periods).toEqual([{ label: "TODAY", level: "low" }]);
+  });
+
+  it("returns empty for a missing zone", () => {
+    expect(parseSrfPeriods(MULTI_PERIOD_SRF, "Monroe")).toEqual([]);
   });
 });

@@ -1,0 +1,92 @@
+name: NOAA Rip Current Model Feed
+
+# Builds a small rip_nwps.json of NOAA's hourly probabilistic rip current
+# model (NWPS, Dusek & Seim 2013) per beach, and publishes it to its OWN
+# dedicated `rip-data` branch (NOT main, and NOT `sargassum-data`). This
+# MUST be a separate branch: sargassum.yml and backfill-pct.yml both
+# force-push `sargassum-data` as a single-commit ORPHAN branch (see their
+# `git checkout -q -b sargassum-data` + `git push -f`) — anything else
+# published there gets silently deleted on their very next cycle (sargassum.yml
+# fires every ~10 min). A prior version of this workflow published
+# rip_nwps.json onto sargassum-data and it was wiped roughly every 10
+# minutes. `rip-data` is this feed's own branch, so nothing else can step on
+# it. The web app reads the published file via raw.githubusercontent.com
+# (lib/sources/ripNwps.ts).
+#
+# Unlike sargassum.yml/goes-cloud.yml, this feed does NOT need an in-job
+# ~10-min loop: the underlying NOAA model itself only issues a fresh cycle
+# twice a day (00z, sometimes 12z — see scripts/rip_nwps.mjs), so reading
+# every 3 hours already keeps pace with the source; there is nothing to gain
+# (and NOAA fetch quota to lose) from reading faster.
+#
+# scripts/rip_nwps.mjs finds each mapped office's latest cycle (today 12z ->
+# today 00z -> yesterday 12z -> yesterday 00z), downloads its CG1 ripprob
+# file ONCE per office, and extracts every beach in config/nwpsRip.ts. One
+# fetch retry on failure; if an office still fails (or its file doesn't pass
+# the sanity checks — non-empty grid, valid probs, covers now..+24h), its
+# beaches carry forward the PREVIOUS publish's data (their ORIGINAL run time
+# — never stamped as fresh) — so this job first pulls the currently-
+# published rip_nwps.json as --prev before running the script.
+
+on:
+  schedule:
+    - cron: "15 */3 * * *" # every 3 hours (:15 past, clear of other feeds' :00 fires)
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/rip-nwps.yml"
+      - "scripts/rip_nwps.mjs"
+      - "config/nwpsRip.ts"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rip-nwps
+  cancel-in-progress: true
+
+jobs:
+  build-feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Fetch previously published feed (for carry-forward on office failure)
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/prev_rip_nwps.json" \
+            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/rip-data/rip_nwps.json" \
+            || echo "no previous published feed yet — continuing without --prev"
+
+      - name: Build rip_nwps.json
+        run: |
+          node scripts/rip_nwps.mjs \
+            --out "${RUNNER_TEMP}/rip_nwps.json" \
+            --prev "${RUNNER_TEMP}/prev_rip_nwps.json"
+
+      - name: Publish to its OWN rip-data branch (single-commit orphan, like sargassum-data)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          [ -s "${RUNNER_TEMP}/rip_nwps.json" ] || { echo "no feed written — nothing to publish"; exit 1; }
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          work="${RUNNER_TEMP}/pub"
+          rm -rf "$work"; mkdir -p "$work"
+          cp "${RUNNER_TEMP}/rip_nwps.json" "$work/rip_nwps.json"
+          cd "$work"
+          git init -q
+          git config user.name "rip-nwps-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -q -b rip-data
+          git add rip_nwps.json
+          git commit -q -m "Rip current model feed $(date -u +%FT%TZ)"
+          # Force-push a single-commit orphan branch so history never grows —
+          # this branch carries ONLY rip_nwps.json, so unlike sargassum-data
+          # there is nothing else here to lose.
+          git push -f "$remote" rip-data

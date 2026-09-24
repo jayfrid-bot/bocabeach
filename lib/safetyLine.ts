@@ -67,8 +67,16 @@ export function swimSafety(
   if (d.noSwimAdvisory) stayOut.push("City no-swim advisory in effect");
   if (d.waterAdvisory) stayOut.push("Water quality advisory in effect");
 
-  if (d.ripCurrentRisk === "high") caution.push("High rip current risk (NWS)");
-  else if (d.ripCurrentRisk === "moderate") caution.push("Moderate rip current risk (NWS)");
+  // Only a rip status actually resolved now (an in-effect alert, a fresh
+  // NOAA model reading, or the CURRENT SRF period) reads as a caution here
+  // — a merely scheduled alert is surfaced elsewhere (SafetyBanner) as
+  // informational, not a swim caution.
+  const ripActive =
+    d.ripNow?.source === "alert" || d.ripNow?.source === "model" || d.ripNow?.source === "forecast";
+  const ripSourceLabel =
+    d.ripNow?.source === "alert" ? "NWS alert" : d.ripNow?.source === "model" ? "NOAA model" : "NWS forecast";
+  if (ripActive && d.ripNow?.level === "high") caution.push(`High rip current risk (${ripSourceLabel})`);
+  else if (ripActive && d.ripNow?.level === "moderate") caution.push(`Moderate rip current risk (${ripSourceLabel})`);
   if (d.waveHeightFt != null && d.waveHeightFt > 4) caution.push(waveReason(d.waveHeightFt));
   const thunder = thunderReason(d);
   if (thunder) caution.push(thunder);
@@ -100,7 +108,11 @@ export function surfConditions(
   if (d.severeAlert) closed.push("Severe weather warning in effect");
 
   if (d.flags?.includes("red")) experienced.push("Red flag — high hazard, experienced surfers only");
-  if (d.ripCurrentRisk === "high") experienced.push("High rip current risk (NWS)");
+  const ripActive =
+    d.ripNow?.source === "alert" || d.ripNow?.source === "model" || d.ripNow?.source === "forecast";
+  const ripSourceLabel =
+    d.ripNow?.source === "alert" ? "NWS alert" : d.ripNow?.source === "model" ? "NOAA model" : "NWS forecast";
+  if (ripActive && d.ripNow?.level === "high") experienced.push(`High rip current risk (${ripSourceLabel})`);
   if (d.surfAdvisory) experienced.push("High surf advisory — experienced surfers only");
   if (d.waveHeightFt != null && d.waveHeightFt > 6) {
     experienced.push(`Big surf — ${d.waveHeightFt} ft waves`);

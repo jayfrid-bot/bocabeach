@@ -21,12 +21,19 @@
 //    midpoint, with a `peakNote` that says so plainly. Still real numbers
 //    (the anchor is real), just honestly un-shaped rather than silently
 //    guessing a peak time we have no basis for.
-//  - This module is PURELY INFORMATIONAL. It does not feed the Beach Day
-//    score — lib/score.ts's existing rip-current CAP (High -> 85, Moderate
-//    -> 92) remains the only place rip risk touches the score, untouched by
-//    this file. See RipRiskCard's flip-back copy for the same disclaimer
-//    surfaced to users: this is an estimate layered on the official NWS
-//    level, and lifeguard flags are the real-time authority.
+//  - This module itself is still PURELY INFORMATIONAL and daylight-only — it
+//    renders RipRiskCard's sparkline, nothing more. It does NOT feed the
+//    Beach Day score directly. As of 2026-09-24, lib/score.ts's rip-current
+//    cap is driven entirely by lib/ripRisk/'s resolveRipNow: an alert
+//    actually in effect (always High), else a fresh NOAA rip current model
+//    reading (lib/sources/ripNwps.ts), possibly softened one band below a
+//    disagreeing Surf Zone Forecast word, else the SRF word itself. (An
+//    earlier rolling-24h physics estimate that reused this module's wave/
+//    tide/wind factor functions was removed from that hierarchy — never
+//    wired past its own tests — see lib/ripRisk/resolve.ts's header.) This
+//    file's own BAND_RANGE/daylight curve stays exactly as before, still the
+//    real, active source for RipRiskCard's sparkline on beaches the NOAA
+//    model doesn't cover — it is NOT "experimental" or a placeholder.
 // ---------------------------------------------------------------------------
 
 import type { RipRisk, TideEvent } from "@/lib/types";
@@ -247,7 +254,7 @@ export function shoreIncidenceFactor(
   return 1 - t * (1 - INCIDENCE_MIN);
 }
 
-function waveFactorAt(
+export function waveFactorAt(
   tMs: number,
   waves: RipRiskWaveSample[] | undefined,
   coastNormalDeg: number | undefined,
@@ -280,13 +287,13 @@ const LOW_TIDE_BUMP_MIN = 120;
  *  water movement, hence more outgoing-flow risk. */
 const TYPICAL_TIDE_RANGE_FT = 2.5;
 
-interface SortedTideEvent {
+export interface SortedTideEvent {
   type: "high" | "low";
   t: number;
   heightFt: number;
 }
 
-function toSortedTideEvents(tideEvents: TideEvent[] | undefined): SortedTideEvent[] {
+export function toSortedTideEvents(tideEvents: TideEvent[] | undefined): SortedTideEvent[] {
   if (!tideEvents || !tideEvents.length) return [];
   return tideEvents
     .map((e) => ({ type: e.type, t: Date.parse(e.time), heightFt: e.heightFt }))
@@ -334,7 +341,7 @@ function outgoingFlowFactor(tMs: number, sorted: SortedTideEvent[]): number {
  *  odd mid-ebb hour instead of "around low tide". */
 const OUTGOING_FLOW_DAMPING = 0.7;
 
-function tideFactorAt(tMs: number, sorted: SortedTideEvent[]): number {
+export function tideFactorAt(tMs: number, sorted: SortedTideEvent[]): number {
   if (!sorted.length) return NEUTRAL;
   const bump = Math.max(
     lowTideProximity(tMs, sorted),
@@ -350,7 +357,7 @@ function tideFactorAt(tMs: number, sorted: SortedTideEvent[]): number {
 /** Onshore mph at which the chop nudge saturates to its max (1.0). */
 const WIND_SATURATE_MPH = 20;
 
-function windFactorAt(
+export function windFactorAt(
   tMs: number,
   wind: RipRiskWindSample[] | undefined,
   coastNormalDeg: number | undefined,

@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   anchorCurrentHourScore,
+  applyBeachCaps,
+  applyLiveRipCap,
   bestBeachWindow,
   computeHourlyScores,
   computeMultiDayWindows,
@@ -13,6 +15,8 @@ import {
   satelliteCloudPct,
   scoreBeachDay,
 } from "@/lib/score";
+import { scoreBand } from "@/lib/scoreBands";
+import type { RipNow } from "@/lib/ripRisk";
 import type {
   AirQualityData,
   BuoyData,
@@ -32,7 +36,9 @@ import type {
   NowcastData,
   NwsData,
   SargassumData,
+  RipNwpsBeachSeries,
   SargassumRisk,
+  ScoreResult,
   SunData,
   TideData,
   TrafficData,
@@ -113,6 +119,7 @@ function snapshot(over: {
     // (and that change is meant to be reviewed, not incidental).
     precipRadar: wrap<PrecipRadarData>(null),
     sargassum: wrap(over.sargassum ?? null),
+    ripNwps: wrap<RipNwpsBeachSeries>(null),
     busyness: wrap(over.busyness ?? null),
     clarity: wrap<ClarityData>(null),
     forecast: wrap<ForecastDay[]>(null),
@@ -1016,7 +1023,7 @@ describe("scoring (Beach Day only — no surf)", () => {
       weather: NICE.weather.data,
       marine: NICE.marine.data,
       nws: {
-        alerts: [{ event: "Hurricane Warning", severity: "Extreme" }],
+        alerts: [{ event: "Hurricane Warning", severity: "Extreme", onset: "2000-01-01T00:00:00Z", ends: "2100-01-01T00:00:00Z" }],
         ripCurrentRisk: "high",
       },
     });
@@ -1036,7 +1043,7 @@ describe("scoring (Beach Day only — no surf)", () => {
             city: { flags: ["green"] },
             water: { overall: "good", advisory: false, sites: [] },
             // severity "Minor" so the cap rides on the event NAME, not the tier.
-            nws: { alerts: [{ event, severity: "Minor" }], ripCurrentRisk: "unknown" },
+            nws: { alerts: [{ event, severity: "Minor", onset: "2000-01-01T00:00:00Z", ends: "2100-01-01T00:00:00Z" }], ripCurrentRisk: "unknown" },
           }),
         ),
       );
@@ -1059,7 +1066,38 @@ describe("scoring (Beach Day only — no surf)", () => {
     const r = scoreBeachDay(deriveMetrics(snap));
     expect(r.score).toBeLessThanOrEqual(92);
     expect(r.score).toBeGreaterThan(40); // still a good beach day
-    expect(r.caps.join(" ")).toContain("Moderate rip current risk (NWS)");
+    expect(r.caps.join(" ")).toContain("Moderate rip current risk (NWS forecast)");
+  });
+
+  it("2026-09-24 Boca fixture: a not-yet-started rip alert caps via the SRF TODAY High word, not the alert", () => {
+    const snap = snapshot({
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
+      city: { flags: ["green"] },
+      water: { overall: "good", advisory: false, sites: [] },
+      nws: {
+        alerts: [
+          {
+            id: "urn:oid:2.49.0.1.840.0.boca-rip-1",
+            event: "Rip Current Statement",
+            severity: "Moderate",
+            status: "Actual",
+            onset: "2026-09-25T06:00:00Z",
+            ends: "2026-09-26T12:00:00Z",
+          },
+        ],
+        ripCurrentRisk: "high",
+        srfPeriods: [
+          { label: "TODAY", level: "high", start: "2026-09-24T10:00:00Z", end: "2026-09-24T22:00:00Z" },
+          { label: "FRIDAY", level: "high", start: "2026-09-25T10:00:00Z", end: "2026-09-25T22:00:00Z" },
+        ],
+      },
+    });
+    const now = Date.parse("2026-09-24T18:00:00Z");
+    const r = scoreBeachDay(deriveMetrics(snap, now));
+    expect(r.score).toBeLessThanOrEqual(85);
+    expect(r.caps.join(" ")).toContain("High rip current risk (NWS forecast)");
   });
 
   it("soft-caps the score at 85 under a high-surf / coastal-flood ADVISORY", () => {
@@ -1070,7 +1108,7 @@ describe("scoring (Beach Day only — no surf)", () => {
       city: { flags: ["green"] },
       water: { overall: "good", advisory: false, sites: [] },
       // ADVISORY tier (not a *-Warning): a soft swim cap, not a day-killer.
-      nws: { alerts: [{ event: "Coastal Flood Advisory", severity: "Moderate" }], ripCurrentRisk: "unknown" },
+      nws: { alerts: [{ event: "Coastal Flood Advisory", severity: "Moderate", onset: "2000-01-01T00:00:00Z", ends: "2100-01-01T00:00:00Z" }], ripCurrentRisk: "unknown" },
     });
     const r = scoreBeachDay(deriveMetrics(snap));
     expect(r.score).toBeLessThanOrEqual(85);
@@ -1082,6 +1120,169 @@ describe("scoring (Beach Day only — no surf)", () => {
     expect(r.caps.join(" ")).not.toMatch(/severe weather/i);
   });
 
+  it("a Tornado Warning SCHEDULED for later (not yet in effect) does NOT cap the score (round 2 item 1: onset check)", () => {
+    const snap = snapshot({
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
+      nws: {
+        alerts: [{ event: "Tornado Warning", severity: "Extreme", onset: "2099-01-01T00:00:00Z", ends: "2099-01-02T00:00:00Z" }],
+        ripCurrentRisk: "unknown",
+      },
+    });
+    const r = scoreBeachDay(deriveMetrics(snap));
+    expect(r.caps.join(" ")).not.toMatch(/severe weather/i);
+  });
+
+  it("a Beach Hazards Statement mentioning rip currents caps via the rip cap, not severeAlert/surfAdvisory too (round 2 item 1: no double-cap)", () => {
+    const snap = snapshot({
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
+      city: { flags: ["green"] },
+      water: { overall: "good", advisory: false, sites: [] },
+      nws: {
+        alerts: [
+          {
+            event: "Beach Hazards Statement",
+            severity: "Moderate",
+            headline: "Beach Hazards Statement for dangerous rip currents",
+            onset: "2000-01-01T00:00:00Z",
+            ends: "2100-01-01T00:00:00Z",
+          },
+        ],
+        ripCurrentRisk: "high",
+      },
+    });
+    const r = scoreBeachDay(deriveMetrics(snap));
+    // Rip cap applies (85 for High)…
+    expect(r.score).toBeLessThanOrEqual(85);
+    expect(r.caps.join(" ")).toMatch(/rip current risk/i);
+    // …but the generic surf-advisory/severe-alert paths must NOT ALSO fire
+    // for the same underlying rip-mentioning statement.
+    expect(r.caps.join(" ")).not.toMatch(/coastal-flood advisory — swimming discouraged/i);
+    expect(r.caps.join(" ")).not.toMatch(/severe weather warning/i);
+  });
+
+  it("scoreExceptRipCap (round 2 item 3): equals score when the rip cap is the ONLY thing capping", () => {
+    const snap = snapshot({
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
+      city: { flags: ["green"] },
+      water: { overall: "good", advisory: false, sites: [] },
+      nws: { alerts: [], ripCurrentRisk: "high" },
+    });
+    const d = deriveMetrics(snap);
+    const { score, scoreExceptRipCap } = applyBeachCaps(100, d, "water");
+    expect(score).toBeLessThanOrEqual(85); // rip cap applied
+    expect(scoreExceptRipCap).toBe(100); // no OTHER cap in play — raw, uncapped by rip
+  });
+
+  it("scoreExceptRipCap: keeps OTHER caps (e.g. high wind) even though the rip cap is excluded", () => {
+    const snap = snapshot({
+      buoy: NICE.buoy.data,
+      weather: { ...NICE.weather.data, windSpeedMph: 30 }, // > 20 mph hard-caps at 15
+      marine: NICE.marine.data,
+      city: { flags: ["green"] },
+      water: { overall: "good", advisory: false, sites: [] },
+      nws: { alerts: [], ripCurrentRisk: "high" },
+    });
+    const d = deriveMetrics(snap);
+    const { score, scoreExceptRipCap } = applyBeachCaps(100, d, "water");
+    expect(score).toBeLessThanOrEqual(15); // wind cap (tighter than rip's 85) wins
+    // scoreExceptRipCap excludes ONLY the rip cap — the wind cap still applies.
+    expect(scoreExceptRipCap).toBeLessThanOrEqual(15);
+  });
+
+  it("scoreExceptRipCap: with NO rip risk at all, equals score exactly", () => {
+    const snap = snapshot({
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
+      city: { flags: ["green"] },
+      water: { overall: "good", advisory: false, sites: [] },
+      nws: { alerts: [], ripCurrentRisk: "unknown" },
+    });
+    const d = deriveMetrics(snap);
+    const { score, scoreExceptRipCap } = applyBeachCaps(100, d, "water");
+    expect(scoreExceptRipCap).toBe(score);
+  });
+});
+
+describe("applyLiveRipCap (round 3 item 1: tightens AND loosens, rating tracks the adjusted score)", () => {
+  const BASE: ScoreResult = {
+    score: 100,
+    rawScore: 100,
+    rating: "Excellent",
+    subScores: [],
+    caps: [],
+    scoreExceptRipCap: 100,
+    dataAvailable: true,
+  };
+  const MODEL_HIGH_RIPNOW: RipNow = {
+    source: "model",
+    level: "high",
+    alert: null,
+    upcomingAlert: null,
+    period: null,
+    model: { prob: 60, level: "high", run: "2026-09-24T00:00:00Z" },
+    watch: false,
+  };
+
+  it("TIGHTENS: a newly-applicable live cap pulls score AND rating down, and adds its own cap label", () => {
+    const r = applyLiveRipCap(BASE, 85, MODEL_HIGH_RIPNOW);
+    expect(r.score).toBe(85);
+    expect(r.rating).toBe(scoreBand(85).rating);
+    expect(r.rating).not.toBe(BASE.rating);
+    expect(r.caps.join(" ")).toContain("High rip current risk (NOAA model)");
+  });
+
+  it("LOOSENS: an already-capped result with no live cap returns to scoreExceptRipCap, rating and cap label both clear", () => {
+    const capped: ScoreResult = {
+      ...BASE,
+      score: 85,
+      rating: scoreBand(85).rating,
+      caps: ["High rip current risk (NWS alert)"],
+    };
+    const r = applyLiveRipCap(capped, null, null);
+    expect(r.score).toBe(100); // back to scoreExceptRipCap — the cap is gone
+    expect(r.rating).toBe(scoreBand(100).rating);
+    expect(r.caps).toEqual([]); // the stale "(NWS alert)" explanation disappears
+  });
+
+  it("boundary: exactly at a scoreBand cutoff, rating matches scoreBand's own boundary rule", () => {
+    // 90 is the Excellent/Good boundary (scoreBand: min 90 -> Excellent).
+    const r = applyLiveRipCap({ ...BASE, scoreExceptRipCap: 90 }, null, null);
+    expect(r.score).toBe(90);
+    expect(r.rating).toBe("Excellent");
+    const r2 = applyLiveRipCap({ ...BASE, scoreExceptRipCap: 89 }, null, null);
+    expect(r2.rating).toBe("Good");
+  });
+
+  it("never drops a non-rip cap while loosening the rip one", () => {
+    const both: ScoreResult = {
+      ...BASE,
+      score: 15,
+      scoreExceptRipCap: 15, // wind cap already applied UNDER the rip exclusion
+      caps: ["High wind — over 20 mph", "High rip current risk (NWS alert)"],
+    };
+    const r = applyLiveRipCap(both, null, null); // alert has since ended
+    expect(r.score).toBe(15); // wind cap still holds
+    expect(r.caps).toContain("High wind — over 20 mph");
+    expect(r.caps).not.toContain("High rip current risk (NWS alert)");
+  });
+
+  it("back-compat: no scoreExceptRipCap on the payload — tighten-only clamp against score itself", () => {
+    const legacy = { score: 100, rawScore: 100, rating: "Excellent", subScores: [], caps: [] } as ScoreResult;
+    const tightened = applyLiveRipCap(legacy, 85, MODEL_HIGH_RIPNOW);
+    expect(tightened.score).toBe(85);
+    const untouched = applyLiveRipCap(legacy, null, null); // nothing to loosen without scoreExceptRipCap
+    expect(untouched.score).toBe(100);
+  });
+});
+
+describe("scoring (Beach Day only — no surf), part 2", () => {
   it("scores wind as a band: 5-13 mph ideal, calm and gusty both demerit", () => {
     const windSub = (mph: number) =>
       scoreBeachDay(deriveMetrics(snapshot({ weather: { windSpeedMph: mph } })))
@@ -1652,7 +1853,7 @@ describe("computeMultiDayWindows", () => {
       city: { flags: ["green"] },
       hourly: hourly72(),
       sun: SUN,
-      nws: { alerts: [{ event: "Tsunami Warning", severity: "Extreme" }], ripCurrentRisk: "low" },
+      nws: { alerts: [{ event: "Tsunami Warning", severity: "Extreme", onset: "2000-01-01T00:00:00Z", ends: "2100-01-01T00:00:00Z" }], ripCurrentRisk: "low" },
     });
     const days = computeMultiDayWindows(withWarning, now);
     expect(days[0].dow).toBe("Today");

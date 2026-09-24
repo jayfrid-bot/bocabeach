@@ -17,6 +17,20 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-09-24",
+    title: "Rip current risk now uses NOAA's official hourly model",
+    details:
+      "Rip current risk for the current hour now comes straight from NOAA's official hour-by-hour rip current model where it's available, instead of just today's single word — and it now covers more beaches nationwide.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-24",
+    title: "Hour-by-hour rip current risk",
+    details:
+      "Rip current risk now updates through the day instead of one word for all 24 hours. Alerts only show as active when they're actually in effect, not just scheduled for later — so a statement starting tonight no longer reads as already happening.",
+    tag: "improved",
+  },
+  {
     date: "2026-09-23",
     title: "Privacy page: how we count daily visitors",
     details:

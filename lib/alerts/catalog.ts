@@ -85,7 +85,7 @@ export type AlertSubject =
   | { key: "rain-clearing" }
   | { key: "wind-gust"; gustMph: number }
   | { key: "flag"; flag: "red" | "double-red" }
-  | { key: "rip"; level: "high" | "moderate" }
+  | { key: "rip"; level: "high" | "moderate"; alertId?: string }
   | { key: "water-advisory" }
   | { key: "score-excellent"; score: number; dedupKey: string };
 
@@ -174,7 +174,13 @@ function baseDedupKeyFor(subject: AlertSubject): string {
     case "flag":
       return `flag:${subject.flag}`;
     case "rip":
-      return subject.level === "high" ? "rip" : "rip:moderate";
+      // Dedup by the CAP alert id when we have one (a real NWS alert actually
+      // in effect — see lib/alerts/evaluate.ts's snapshotHazards) so an
+      // UPDATED alert (new id-scoped interval, same underlying hazard) still
+      // gets its own fresh push, while the SAME alert id never repeats within
+      // the window. Falls back to the level-only key for the rare caller that
+      // doesn't have an id (kept for back-compat).
+      return subject.alertId ? `rip:${subject.alertId}` : subject.level === "high" ? "rip" : "rip:moderate";
     case "score-excellent":
       return subject.dedupKey;
     default:
@@ -202,7 +208,7 @@ function metaFor(subject: AlertSubject): Record<string, unknown> | undefined {
     case "flag":
       return { flag: subject.flag };
     case "rip":
-      return { level: subject.level };
+      return { level: subject.level, alertId: subject.alertId };
     case "score-excellent":
       return { score: subject.score };
     default:
@@ -230,6 +236,22 @@ function collapseTag(subject: AlertSubject, ctx: AlertContext): string {
   return `safety:${subject.key}:${ctx.slug ?? ""}`;
 }
 
+/**
+ * How long THIS specific finding's dedup key stays quiet after it fires.
+ * Almost always the catalog's static `repeatMs` — except a rip finding tied
+ * to a real CAP alert id (dedupKey already `rip:<id>`, scoped to that exact
+ * incident — see baseDedupKeyFor), which must push ONCE per id, not every
+ * DEFAULT_REPEAT_MS (30 min) for as long as the statement stays in effect —
+ * a Rip Current Statement can run 12-24h+, and re-pushing it every 30 min
+ * for that whole window is spam, not safety. A NEW id (the CAP `references`
+ * chain breaks and a genuinely different incident is issued) naturally gets
+ * its OWN dedup key and pushes fresh — see evaluate.ts's onset gating.
+ */
+function repeatMsFor(subject: AlertSubject, spec: AlertSpec): number {
+  if (subject.key === "rip" && subject.alertId) return Number.MAX_SAFE_INTEGER;
+  return spec.repeatMs;
+}
+
 /** Turn one finding into a ready-to-send decision. */
 export function buildAlert(subject: AlertSubject, ctx: AlertContext): AlertDecision {
   const spec = CATALOG[subject.key];
@@ -238,7 +260,7 @@ export function buildAlert(subject: AlertSubject, ctx: AlertContext): AlertDecis
     alertKey: subject.key,
     dedupKey: dedupKeyFor(subject, ctx),
     priority: spec.priority,
-    repeatMs: spec.repeatMs,
+    repeatMs: repeatMsFor(subject, spec),
     title: alarm ? `⚠️ ${ctx.beach}` : ctx.beach,
     tag: collapseTag(subject, ctx),
     body: bodyFor(subject, ctx),

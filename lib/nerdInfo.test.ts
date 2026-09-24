@@ -69,6 +69,15 @@ const d: Derived = {
   waterRating: "good",
   noSwimAdvisory: false,
   ripCurrentRisk: "moderate",
+  ripNow: {
+    source: "forecast",
+    level: "moderate",
+    alert: null,
+    upcomingAlert: null,
+    period: { level: "moderate", periodLabel: "TODAY" },
+    model: null,
+    watch: false,
+  },
   severeAlert: false,
 };
 

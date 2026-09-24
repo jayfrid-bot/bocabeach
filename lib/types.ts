@@ -9,6 +9,8 @@ import type { WaterTrendResult } from "@/lib/waterTrend";
 import type { RipRiskCurve } from "@/lib/ripRiskCurve";
 import type { MarineStingerAdvisory } from "@/lib/marineStinger";
 import type { SharkContext } from "@/lib/sharkContext";
+import type { RipNwpsBeachSeries } from "@/lib/sources/ripNwps";
+export type { RipNwpsBeachSeries } from "@/lib/sources/ripNwps";
 
 export type SourceStatus = "ok" | "stale" | "error" | "best-effort";
 
@@ -827,16 +829,55 @@ export interface ClarityDaySummary {
 // --- NWS alerts + rip-current risk (api.weather.gov) -----------------------
 export type RipRisk = "low" | "moderate" | "high" | "unknown";
 export interface NwsAlert {
+  /** CAP alert id — the stable key for dedupe across polls/updates/cancels. */
+  id?: string;
   event: string; // "Rip Current Statement"
   severity: string; // "Moderate" | "Severe" | ...
   headline?: string;
+  description?: string;
+  /** CAP status: "Actual" | "Test" | "Exercise" | "Draft" | "System". */
+  status?: string;
+  /** CAP messageType: "Alert" | "Update" | "Cancel" | "Ack" | "Error". */
+  messageType?: string;
+  /** CAP `references`: space-separated `sender,identifier,sent` triples this
+   *  alert supersedes/updates. An "Update" typically issues a NEW `id`, so
+   *  `references` (not `id`) is the stable key across an incident's updates
+   *  — see lib/ripRisk/resolve.ts's `canonicalAlertId`, which walks this
+   *  chain back to the ORIGINAL identifier so a rip push fires once per
+   *  real-world incident, not once per CAP revision. */
+  references?: string;
+  sent?: string; // ISO
+  /** Active interval start = onset ?? effective. */
+  effective?: string; // ISO
+  onset?: string; // ISO
+  /** Active interval end = ends ?? expires. */
   ends?: string; // ISO
+  expires?: string; // ISO
 }
+
+/** One NWS Surf Zone Forecast period ("TODAY", "TONIGHT", "FRIDAY", ...) for a
+ *  zone, with its rip-current word and (when reliably derivable) a local time
+ *  window. See lib/sources/nws.ts's parseSrfPeriods for the window rules. */
+export interface SrfPeriod {
+  /** The SRF header label, e.g. "TODAY", "TONIGHT", "FRIDAY". */
+  label: string;
+  level: RipRisk;
+  /** ISO UTC. Present only when the label's window is reliably derivable. */
+  start?: string;
+  /** ISO UTC. Present only when the label's window is reliably derivable. */
+  end?: string;
+}
+
 export interface NwsData {
-  /** Active NWS alerts for the beach point. */
+  /** Active NWS alerts for the beach point (includes scheduled-but-not-yet-
+   *  started ones — callers must resolve in-effect status against `now`). */
   alerts: NwsAlert[];
-  /** Today's rip-current risk from the Surf Zone Forecast. */
+  /** Today's rip-current risk from the Surf Zone Forecast — the FIRST period's
+   *  word, kept for back-compat with the existing hourly-curve card. Prefer
+   *  `srfPeriods` for anything that needs to know WHICH period a word is for. */
   ripCurrentRisk: RipRisk;
+  /** Every parsed SRF period for the zone, in product order (today first). */
+  srfPeriods?: SrfPeriod[];
 }
 
 // --- Per-spot weather (Open-Meteo current) --------------------------------
@@ -893,6 +934,10 @@ export interface ConditionsSnapshot {
    *  feed the Beach Day score or its rain caps (see lib/rainNowcast.ts). */
   precipRadar: Wrapped<PrecipRadarData>;
   sargassum: Wrapped<SargassumData>;
+  /** NOAA's official hourly probabilistic rip current model (NWPS) for this
+   *  beach — see lib/sources/ripNwps.ts. Null when the beach has no mapped
+   *  WFO coverage (config/nwpsRip.ts) or the published run is stale. */
+  ripNwps: Wrapped<RipNwpsBeachSeries>;
   busyness: Wrapped<BusynessData>;
   /** Cam-based water clarity (Tier 1). Informational — not part of the score. */
   clarity: Wrapped<ClarityData>;
@@ -1001,6 +1046,13 @@ export interface ScoreResult {
   subScores: SubScore[];
   /** Explanations for any safety cap that lowered the score. */
   caps: string[];
+  /** `score` with every cap applied EXCEPT the rip-current one (item 3, 2026-
+   *  09-24 fix). The client uses this to recompute the rip cap against a
+   *  LIVE clock in both directions — an alert going into effect tightens the
+   *  displayed score immediately, and one that's since ended loosens it back
+   *  — without ever dropping any of the OTHER caps still legitimately in
+   *  force. Equal to `score` when no rip cap applied this build. */
+  scoreExceptRipCap?: number;
   /** false only when zero sub-scores were available (total data outage) so the UI can show "Conditions unavailable". */
   dataAvailable?: boolean;
   /** Share (0-1) of this profile's total weight that had a live reading.

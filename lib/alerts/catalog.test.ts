@@ -78,3 +78,21 @@ describe("buildAlert — collapse id (tag)", () => {
     expect(excellent.tag).toBe("excellent");
   });
 });
+
+describe("buildAlert — repeatMs (item 5: rip pushes once per CAP id, not every DEFAULT_REPEAT_MS)", () => {
+  it("a rip finding tied to a real CAP alert id gets an effectively infinite repeatMs — it fires once for that id", () => {
+    const d = buildAlert({ key: "rip", level: "high", alertId: "urn:oid:abc-123" }, BOCA);
+    expect(d.repeatMs).toBe(Number.MAX_SAFE_INTEGER);
+    expect(d.dedupKey).toBe("rip:urn:oid:abc-123@boca-raton");
+  });
+
+  it("a rip finding with no alert id (back-compat, no real CAP alert) keeps the normal repeat window", () => {
+    const d = buildAlert({ key: "rip", level: "high" }, BOCA);
+    expect(d.repeatMs).toBeLessThan(Number.MAX_SAFE_INTEGER);
+  });
+
+  it("other hazards are unaffected — still the normal DEFAULT_REPEAT_MS window", () => {
+    const d = buildAlert({ key: "flag", flag: "red" }, BOCA);
+    expect(d.repeatMs).toBeLessThan(Number.MAX_SAFE_INTEGER);
+  });
+});

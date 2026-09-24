@@ -18,10 +18,13 @@
 // personal.
 
 import { currentHourOf } from "@/lib/score";
+import { resolveRipNow } from "@/lib/ripRisk";
+import { isAlertInEffectAt } from "@/lib/ripRisk/resolve";
+import { isRipAlertEvent } from "@/lib/ripRisk/types";
 import { resolveScoring } from "@/lib/profile/resolve";
 import { isSevereAlert } from "@/lib/push/notify";
 import type { AlertKey, AlertPrefs, ScoreProfile } from "@/lib/db/types";
-import type { ConditionsResponse, FlagColor, LightningData } from "@/lib/types";
+import type { ConditionsResponse, FlagColor, LightningData, NwsAlert } from "@/lib/types";
 import { buildAlert, type AlertDecision, type AlertSubject } from "@/lib/alerts/catalog";
 import type { RainRead } from "@/lib/alerts/rain";
 import { assessLightning, type HazardAnchor, type HazardAssessment } from "@/lib/hazards/assess";
@@ -171,15 +174,26 @@ function snapshotHazards(res: ConditionsResponse, nowMs: number): AlertSubject[]
 
   // Severe warnings: one subject per distinct event, so a Flash Flood Warning
   // and a Tornado Warning both arrive (each has its own dedup key already).
+  // Gated on isAlertInEffectAt (item 1, shared with score.ts/SafetyBanner/
+  // safetyTone) — a Warning scheduled for later, or already expired, must
+  // never push as if active. Rip-related events are excluded from every
+  // generic path (isRipAlertEvent) — they're handled entirely by the rip
+  // block below, via resolveRipNow's own onset/status gating, so they never
+  // double-push down this generic path too.
   const seen = new Set<string>();
   let severeIsStorm = false;
   for (const a of alerts) {
-    if (!isSevereAlert(a) || seen.has(a.event)) continue;
+    if (!isSevereAlert(a) || isRipAlertEvent(a) || seen.has(a.event) || !isAlertInEffectAt(a, nowMs)) continue;
     seen.add(a.event);
     if (/thunderstorm/i.test(a.event)) severeIsStorm = true;
     out.push({ key: "severe", event: a.event });
   }
-  const hazardStatement = alerts.find((a) => /beach hazard/i.test(a.event));
+  // A Beach Hazards Statement about something OTHER than rip currents (e.g.
+  // strong longshore current, high surf) — same in-effect + rip-exclusion
+  // gate as the loop above.
+  const hazardStatement = alerts.find(
+    (a) => /beach hazard/i.test(a.event) && !isRipAlertEvent(a) && isAlertInEffectAt(a, nowMs),
+  );
   if (hazardStatement && !seen.has(hazardStatement.event)) {
     out.push({ key: "severe", event: hazardStatement.event });
   }
@@ -192,9 +206,24 @@ function snapshotHazards(res: ConditionsResponse, nowMs: number): AlertSubject[]
     out.push({ key: "water-advisory" });
   }
 
-  const rip = s?.nws?.data?.ripCurrentRisk;
-  if (rip === "high") out.push({ key: "rip", level: "high" });
-  else if (rip === "moderate") out.push({ key: "rip", level: "moderate" });
+  // Rip push ONLY on the transition into an alert ACTUALLY IN EFFECT right
+  // now, deduped by its own CAP alert id (see catalog.ts's baseDedupKeyFor) —
+  // NEVER from the flat SRF word or from the estimate. A scheduled (future)
+  // or ended alert produces no push at all (2026-09-24 fix: the old flat
+  // `ripCurrentRisk` word had no onset/effective concept, so a statement
+  // scheduled for 2 AM tomorrow could push as if already in effect today).
+  const ripNow = resolveRipNow({
+    alerts: s?.nws?.data?.alerts ?? [],
+    srfPeriods: s?.nws?.data?.srfPeriods,
+    now: nowMs,
+  });
+  if (ripNow.source === "alert" && ripNow.alert) {
+    out.push({
+      key: "rip",
+      level: ripNow.level === "high" ? "high" : "moderate",
+      alertId: ripNow.alert.id,
+    });
+  }
 
   const flag = postedFlag(res);
   if (flag) out.push({ key: "flag", flag });

@@ -31,7 +31,9 @@ import type {
   NowcastData,
   NwsData,
   PrecipRadarData,
+  RipRisk,
   SargassumData,
+  RipNwpsBeachSeries,
   ScoringOptions,
   SubKey,
   SunData,
@@ -42,16 +44,39 @@ import type {
   WeatherData,
   Wrapped,
 } from "@/lib/types";
+import type { RipNow } from "@/lib/ripRisk";
 
-const base = (over: Partial<Derived> = {}): Derived => ({
-  flags: ["green"],
-  waterAdvisory: false,
-  waterRating: "good",
-  noSwimAdvisory: false,
-  ripCurrentRisk: "low",
-  severeAlert: false,
-  ...over,
-});
+/** A rip status resolved via the "current SRF period" source — the simplest
+ *  way for a hand-built `Derived` to say "this rip word is in effect right
+ *  now" without constructing a whole alert object (mirrors safetyLine.test.ts's
+ *  `ripNowOf`). */
+const ripNowOf = (level: RipRisk): RipNow =>
+  level === "unknown"
+    ? { source: "unknown", level: "unknown", alert: null, upcomingAlert: null, period: null, model: null, watch: false }
+    : {
+        source: "forecast",
+        level,
+        alert: null,
+        upcomingAlert: null,
+        period: { level, periodLabel: "TODAY" },
+        model: null,
+        watch: false,
+      };
+
+const base = (over: Partial<Derived> & { ripCurrentRisk?: RipRisk } = {}): Derived => {
+  const { ripCurrentRisk, ripNow, ...rest } = over;
+  const rip = ripCurrentRisk ?? "low";
+  return {
+    flags: ["green"],
+    waterAdvisory: false,
+    waterRating: "good",
+    noSwimAdvisory: false,
+    ripCurrentRisk: rip,
+    ripNow: ripNow ?? ripNowOf(rip),
+    severeAlert: false,
+    ...rest,
+  };
+};
 
 /** A lovely day: everything scores high, nothing caps. Raw ≈ 97. */
 const NICE_DAY = base({
@@ -246,7 +271,7 @@ describe("cap policies", () => {
   });
 
   it("rip current and a surf advisory cap swimmers only", () => {
-    const rip = { ...nice(), ripCurrentRisk: "high" as const };
+    const rip = { ...nice(), ripCurrentRisk: "high" as const, ripNow: ripNowOf("high") };
     expect(scoreWith(rip, "water").score).toBe(85);
     expect(scoreWith(rip, "surf").score).toBeGreaterThan(85);
     expect(scoreWith(rip, "shore").score).toBeGreaterThan(85);
@@ -472,6 +497,7 @@ function snapshot(clarityPct: number | null): ConditionsSnapshot {
     goesCloud: wrap<GoesCloudData>(null),
     precipRadar: wrap<PrecipRadarData>(null),
     sargassum: wrap<SargassumData>(null),
+    ripNwps: wrap<RipNwpsBeachSeries>(null),
     busyness: wrap<BusynessData>(null),
     clarity: wrap<ClarityData>({ level: "clear", pct: clarityPct }),
     forecast: wrap<ForecastDay[]>(null),

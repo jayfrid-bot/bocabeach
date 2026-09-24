@@ -2,17 +2,39 @@ import { describe, expect, it } from "vitest";
 import { surfConditions, swimSafety } from "@/lib/safetyLine";
 import type { Derived } from "@/lib/score";
 import type { ConditionsSnapshot, LightningData, Wrapped } from "@/lib/types";
+import type { RipRisk } from "@/lib/types";
+import type { RipNow } from "@/lib/ripRisk";
 
-const base = (over: Partial<Derived> = {}): Derived => ({
-  flags: ["green"],
-  waterAdvisory: false,
-  waterRating: "good",
-  noSwimAdvisory: false,
-  ripCurrentRisk: "low",
-  severeAlert: false,
-  waveHeightFt: 1,
-  ...over,
-});
+/** A rip status currently "in effect" via the SRF forecast source — the
+ *  simplest way for a test to exercise "there's a rip hazard active right
+ *  now" without constructing a whole alert object. */
+const ripNowOf = (level: RipRisk): RipNow =>
+  level === "unknown"
+    ? { source: "unknown", level: "unknown", alert: null, upcomingAlert: null, period: null, model: null, watch: false }
+    : {
+        source: "forecast",
+        level,
+        alert: null,
+        upcomingAlert: null,
+        period: { level, periodLabel: "TODAY" },
+        model: null,
+        watch: false,
+      };
+
+const base = (over: Partial<Derived> & { ripCurrentRisk?: RipRisk } = {}): Derived => {
+  const { ripCurrentRisk, ...rest } = over;
+  return {
+    flags: ["green"],
+    waterAdvisory: false,
+    waterRating: "good",
+    noSwimAdvisory: false,
+    ripCurrentRisk: ripCurrentRisk ?? "low",
+    ripNow: ripCurrentRisk ? ripNowOf(ripCurrentRisk) : ripNowOf("low"),
+    severeAlert: false,
+    waveHeightFt: 1,
+    ...rest,
+  };
+};
 
 /** Only the field the safety line reads — enough to exercise the distance copy. */
 const snapWithStrike = (nearestMi: number) =>
@@ -70,6 +92,26 @@ describe("swimSafety", () => {
     const thunder = swimSafety(base({ weatherCode: 95, precipProbability: 80 }));
     expect(thunder.level).toBe("caution");
     expect(thunder.reasons).toContain("Thunderstorm in the forecast");
+  });
+
+  it("a merely SCHEDULED (not-yet-started) rip alert is NOT a swim caution", () => {
+    const scheduled: RipNow = {
+      source: "unknown",
+      level: "unknown",
+      alert: null,
+      upcomingAlert: {
+        id: "x",
+        event: "Rip Current Statement",
+        status: "scheduled",
+        onset: "2026-09-25T06:00:00Z",
+        end: "2026-09-26T12:00:00Z",
+      },
+      period: null,
+      model: null,
+      watch: false,
+    };
+    const r = swimSafety(base({ ripNow: scheduled }));
+    expect(r.level).toBe("safe");
   });
 
   it("4 ft is fine; over 4 ft is a caution, and says the height", () => {
