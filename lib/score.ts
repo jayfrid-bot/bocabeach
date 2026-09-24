@@ -1257,14 +1257,11 @@ export function applyBeachCaps(
     const cap = ripCapFor(d.ripNow);
     if (cap != null) {
       score = Math.min(score, cap);
-      const label = d.ripNow?.level === "high" ? "High" : "Moderate";
-      const sourceLabel =
+      caps.push(
         d.ripNow?.source === "alert"
-          ? "NWS alert"
-          : d.ripNow?.source === "model"
-            ? "NOAA model"
-            : "NWS forecast";
-      caps.push(`${label} rip current risk (${sourceLabel})`);
+          ? "Rip current warning in effect"
+          : `Rip current risk: ${d.ripNow?.level === "high" ? "High" : "Moderate"}`,
+      );
     }
   }
   // A surf/coastal-flood ADVISORY (sub-warning tier) discourages swimming — a
@@ -1338,7 +1335,7 @@ export function applyBeachCaps(
   return { score, caps, scoreExceptRipCap: scoreExceptRip };
 }
 
-const RIP_CAP_LABEL_PREFIX = "rip current risk (";
+const RIP_CAP_LABEL_PREFIX = "rip current";
 
 /**
  * Re-applies a LIVE rip cap to an already-computed `ScoreResult` (item 3,
@@ -1364,9 +1361,9 @@ export function applyLiveRipCap(
   const otherCaps = base.caps.filter((c) => !c.toLowerCase().includes(RIP_CAP_LABEL_PREFIX));
   const liveRipCapLabel =
     liveRipCap != null && ripNow
-      ? `${ripNow.level === "high" ? "High" : "Moderate"} rip current risk (${
-          ripNow.source === "alert" ? "NWS alert" : ripNow.source === "model" ? "NOAA model" : "NWS forecast"
-        })`
+      ? ripNow.source === "alert"
+        ? "Rip current warning in effect"
+        : `Rip current risk: ${ripNow.level === "high" ? "High" : "Moderate"}`
       : null;
 
   if (base.scoreExceptRipCap != null) {

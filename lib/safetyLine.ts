@@ -73,10 +73,9 @@ export function swimSafety(
   // informational, not a swim caution.
   const ripActive =
     d.ripNow?.source === "alert" || d.ripNow?.source === "model" || d.ripNow?.source === "forecast";
-  const ripSourceLabel =
-    d.ripNow?.source === "alert" ? "NWS alert" : d.ripNow?.source === "model" ? "NOAA model" : "NWS forecast";
-  if (ripActive && d.ripNow?.level === "high") caution.push(`High rip current risk (${ripSourceLabel})`);
-  else if (ripActive && d.ripNow?.level === "moderate") caution.push(`Moderate rip current risk (${ripSourceLabel})`);
+  if (ripActive && d.ripNow?.source === "alert") caution.push("Rip current warning in effect");
+  else if (ripActive && d.ripNow?.level === "high") caution.push("Rip current risk: High");
+  else if (ripActive && d.ripNow?.level === "moderate") caution.push("Rip current risk: Moderate");
   if (d.waveHeightFt != null && d.waveHeightFt > 4) caution.push(waveReason(d.waveHeightFt));
   const thunder = thunderReason(d);
   if (thunder) caution.push(thunder);
@@ -110,9 +109,8 @@ export function surfConditions(
   if (d.flags?.includes("red")) experienced.push("Red flag — high hazard, experienced surfers only");
   const ripActive =
     d.ripNow?.source === "alert" || d.ripNow?.source === "model" || d.ripNow?.source === "forecast";
-  const ripSourceLabel =
-    d.ripNow?.source === "alert" ? "NWS alert" : d.ripNow?.source === "model" ? "NOAA model" : "NWS forecast";
-  if (ripActive && d.ripNow?.level === "high") experienced.push(`High rip current risk (${ripSourceLabel})`);
+  if (ripActive && d.ripNow?.source === "alert") experienced.push("Rip current warning in effect");
+  else if (ripActive && d.ripNow?.level === "high") experienced.push("Rip current risk: High");
   if (d.surfAdvisory) experienced.push("High surf advisory — experienced surfers only");
   if (d.waveHeightFt != null && d.waveHeightFt > 6) {
     experienced.push(`Big surf — ${d.waveHeightFt} ft waves`);

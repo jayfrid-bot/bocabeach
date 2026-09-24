@@ -1066,7 +1066,7 @@ describe("scoring (Beach Day only — no surf)", () => {
     const r = scoreBeachDay(deriveMetrics(snap));
     expect(r.score).toBeLessThanOrEqual(92);
     expect(r.score).toBeGreaterThan(40); // still a good beach day
-    expect(r.caps.join(" ")).toContain("Moderate rip current risk (NWS forecast)");
+    expect(r.caps.join(" ")).toContain("Rip current risk: Moderate");
   });
 
   it("2026-09-24 Boca fixture: a not-yet-started rip alert caps via the SRF TODAY High word, not the alert", () => {
@@ -1097,7 +1097,7 @@ describe("scoring (Beach Day only — no surf)", () => {
     const now = Date.parse("2026-09-24T18:00:00Z");
     const r = scoreBeachDay(deriveMetrics(snap, now));
     expect(r.score).toBeLessThanOrEqual(85);
-    expect(r.caps.join(" ")).toContain("High rip current risk (NWS forecast)");
+    expect(r.caps.join(" ")).toContain("Rip current risk: High");
   });
 
   it("soft-caps the score at 85 under a high-surf / coastal-flood ADVISORY", () => {
@@ -1235,7 +1235,7 @@ describe("applyLiveRipCap (round 3 item 1: tightens AND loosens, rating tracks t
     expect(r.score).toBe(85);
     expect(r.rating).toBe(scoreBand(85).rating);
     expect(r.rating).not.toBe(BASE.rating);
-    expect(r.caps.join(" ")).toContain("High rip current risk (NOAA model)");
+    expect(r.caps.join(" ")).toContain("Rip current risk: High");
   });
 
   it("LOOSENS: an already-capped result with no live cap returns to scoreExceptRipCap, rating and cap label both clear", () => {
@@ -1243,7 +1243,7 @@ describe("applyLiveRipCap (round 3 item 1: tightens AND loosens, rating tracks t
       ...BASE,
       score: 85,
       rating: scoreBand(85).rating,
-      caps: ["High rip current risk (NWS alert)"],
+      caps: ["Rip current warning in effect"],
     };
     const r = applyLiveRipCap(capped, null, null);
     expect(r.score).toBe(100); // back to scoreExceptRipCap — the cap is gone
@@ -1265,12 +1265,12 @@ describe("applyLiveRipCap (round 3 item 1: tightens AND loosens, rating tracks t
       ...BASE,
       score: 15,
       scoreExceptRipCap: 15, // wind cap already applied UNDER the rip exclusion
-      caps: ["High wind — over 20 mph", "High rip current risk (NWS alert)"],
+      caps: ["High wind — over 20 mph", "Rip current warning in effect"],
     };
     const r = applyLiveRipCap(both, null, null); // alert has since ended
     expect(r.score).toBe(15); // wind cap still holds
     expect(r.caps).toContain("High wind — over 20 mph");
-    expect(r.caps).not.toContain("High rip current risk (NWS alert)");
+    expect(r.caps).not.toContain("Rip current warning in effect");
   });
 
   it("back-compat: no scoreExceptRipCap on the payload — tighten-only clamp against score itself", () => {

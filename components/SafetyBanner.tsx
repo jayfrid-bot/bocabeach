@@ -6,38 +6,15 @@ import type {
   WaterQualityData,
   Wrapped,
 } from "@/lib/types";
-import { fmtDate, fmtTime } from "@/lib/format";
+import { fmtDate } from "@/lib/format";
 import { safetyTone } from "@/lib/safetyTone";
 import { resolveRipNow } from "@/lib/ripRisk";
-import { isAlertInEffectAt, isAlertUpcomingAt, levelForModelProb } from "@/lib/ripRisk/resolve";
+import { isAlertInEffectAt, isAlertUpcomingAt } from "@/lib/ripRisk/resolve";
 import { isRipAlertEvent } from "@/lib/ripRisk/types";
+import { ripCopy } from "@/lib/ripRisk/copy";
 import { modelNowFromSeries } from "@/lib/sources/ripNwps";
 import { degToCardinal } from "@/lib/util";
 import { LifeguardFlag } from "@/components/LifeguardFlag";
-
-/** "high" -> "High" — the rip-level words read lowercase internally but want
- *  a capital when they open a sentence/phrase in the UI. */
-function cap(s: string): string {
-  return s.length ? s.charAt(0).toUpperCase() + s.slice(1) : s;
-}
-
-/** "begins 2 AM Fri" (or "begins 2 AM" when it starts the same beach-local
- *  day as `nowMs`) — the upcoming-alert onset, in the beach's own timezone
- *  rather than a bare calendar date, so a statement starting overnight
- *  reads as a time a reader can act on. Built from fmtTime (dropping a
- *  :00 minute for a clean "2 AM") plus a short weekday, both computed in
- *  `tz` so server render and client hydration always agree. */
-function fmtAlertBegins(iso: string, nowMs: number, tz: string): string {
-  const time = fmtTime(iso, tz).replace(/:00(?=\s)/, "");
-  const dayKey = (ms: number) =>
-    new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(ms));
-  const sameDay = dayKey(Date.parse(iso)) === dayKey(nowMs);
-  if (sameDay) return `begins ${time}`;
-  const weekday = new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: tz }).format(
-    new Date(iso)
-  );
-  return `begins ${time} ${weekday}`;
-}
 
 export function SafetyBanner({
   city,
@@ -114,6 +91,10 @@ export function SafetyBanner({
     flags,
     alertEvents: activeNonRipAlerts.map((a) => a.event),
   });
+
+  // Plain, non-contradicting rip copy (lib/ripRisk/copy.ts) — one line for
+  // the banner, built from the same resolved ripNow the tone/cap use.
+  const ripBannerCopy = ripCopy(ripNow, ripNwps?.data?.hours ?? null, nowMs, timezone);
 
   // Nothing worth surfacing in the safety header. Marine life and posted
   // hazards now live in their own LifeguardReport card lower on the page —
@@ -263,61 +244,15 @@ export function SafetyBanner({
               : "bg-amber-500/10 ring-amber-500/30"
           }`}
         >
-          {ripNow.source === "alert" ? (
-            // An actual NWS Rip Current Statement is in effect RIGHT NOW.
+          {hasRipToShow ? (
+            // One plain, non-contradicting line for whatever ripNow resolved
+            // to — warning/model/forecast, plus an upcoming-warning suffix
+            // when there is one (lib/ripRisk/copy.ts's ripCopy).
             <div
               className={`flex items-center gap-2 text-sm font-semibold ${RIP_TEXT[ripNow.level === "unknown" ? "high" : ripNow.level]}`}
             >
               <span aria-hidden>🌊</span>
-              <span>
-                {ripNow.alert?.event ?? "Rip Current Statement"} in effect
-                {ripNow.alert?.end ? ` — until ${fmtDate(ripNow.alert.end, timezone)}` : ""}
-              </span>
-            </div>
-          ) : ripNow.source === "model" && ripNow.level !== "low" && ripNow.level !== "unknown" ? (
-            // No alert in effect — NOAA's hourly model governs, shown with
-            // its raw probability. The RESOLVED level (e.g. "Moderate", one
-            // band pulled up from the model's own reading per the
-            // disagreement rule) can differ from the model's OWN band for
-            // that raw % (e.g. "Low") — both are named explicitly, plus the
-            // SRF word it disagrees with, using the SRF's actual period
-            // label ("TODAY"/"TONIGHT"/"FRIDAY"), never a hardcoded "today".
-            <div className={`flex items-center gap-2 text-sm font-semibold ${RIP_TEXT[ripNow.level]}`}>
-              <span aria-hidden>🌊</span>
-              <span>
-                {cap(ripNow.level)}
-                {ripNow.model != null ? ` — NOAA model ${Math.round(ripNow.model.prob)}%` : ""}
-                {ripNow.model != null && levelForModelProb(ripNow.model.prob) !== ripNow.level
-                  ? ` (model: ${cap(levelForModelProb(ripNow.model.prob))})`
-                  : ""}
-                {ripNow.period && ripNow.period.level !== "unknown" && ripNow.period.level !== ripNow.level
-                  ? ` · NWS forecast ${cap(ripNow.period.level)}${ripNow.period.periodLabel ? ` (${ripNow.period.periodLabel})` : ""}`
-                  : ""}
-              </span>
-            </div>
-          ) : ripNow.source === "forecast" && ripNow.level !== "unknown" && ripNow.level !== "low" ? (
-            // No alert or model in effect — this is the SRF's forecast word
-            // for the CURRENT period, read as a caution, not an "in effect"
-            // alarm. Names the actual period label, never a hardcoded "today".
-            <div
-              className={`flex items-center gap-2 text-sm font-semibold ${RIP_TEXT[ripNow.level]}`}
-            >
-              <span aria-hidden>🌊</span>
-              <span>
-                NWS forecast: {ripNow.level} rip current risk
-                {ripNow.period?.periodLabel ? ` (${ripNow.period.periodLabel})` : ""}
-              </span>
-            </div>
-          ) : null}
-          {ripNow.upcomingAlert ? (
-            // A statement is scheduled but hasn't started — informational,
-            // never styled as an active danger (2026-09-24 fix).
-            <div className="mt-1 flex items-center gap-2 text-xs font-medium text-amber-800 dark:text-amber-200">
-              <span aria-hidden>🕐</span>
-              <span>
-                {ripNow.upcomingAlert.event}{" "}
-                {fmtAlertBegins(ripNow.upcomingAlert.onset, nowMs, timezone)}
-              </span>
+              <span>{ripBannerCopy.bannerText}</span>
             </div>
           ) : null}
           {otherAlerts.length ? (

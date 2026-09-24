@@ -3,7 +3,8 @@
 import { BAND_RANGE, type BandedRipRisk, type RipRiskCurve } from "@/lib/ripRiskCurve";
 import type { RipNow } from "@/lib/ripRisk";
 import { levelForModelProb } from "@/lib/ripRisk/resolve";
-import { firstFutureHighHour, type RipNwpsBeachSeries } from "@/lib/sources/ripNwps";
+import { ripCopy } from "@/lib/ripRisk/copy";
+import type { RipNwpsBeachSeries } from "@/lib/sources/ripNwps";
 import type { NerdInfo } from "@/lib/nerdInfo";
 import { FlipCard, NerdBack } from "@/components/FlipCard";
 import { fmtTime, fmtTimeCompact } from "@/lib/format";
@@ -340,7 +341,7 @@ function ModelStrip({
       </div>
       {showAlertLabel ? (
         <div className="mt-0.5 text-center text-[9px] font-medium text-rose-600 dark:text-rose-400">
-          Rip Current Statement
+          Warning
         </div>
       ) : null}
       <div className="mt-1 flex text-[9px] text-slate-400 dark:text-slate-500" aria-hidden="true">
@@ -353,10 +354,6 @@ function ModelStrip({
             {i === 0 ? "Now" : fmtTimeCompact(next24[i].t, tz)}
           </span>
         ))}
-      </div>
-      <div className="mt-0.5 text-[10px] text-slate-400 dark:text-slate-500">
-        NOAA model run {fmtRunLabel(series.run, tz)} · % = that hour&apos;s published probability of a hazardous rip
-        {alert ? " · red underline = Rip Current Statement window" : ""}
       </div>
     </div>
   );
@@ -374,14 +371,41 @@ function sentence(s: string): string {
  * dependency on lib/nerdInfo.ts's snapshot-driven registry — same pattern as
  * MarineStingerCard's `buildInfo`.
  */
-function buildInfo(curve: RipRiskCurve | null, ripNwps: RipNwpsBeachSeries | null): NerdInfo {
+function buildInfo(
+  curve: RipRiskCurve | null,
+  ripNwps: RipNwpsBeachSeries | null,
+  ripNow: RipNow | undefined,
+  tz: string,
+): NerdInfo {
   const modelBlock: string[] = ripNwps
     ? [
         `NOAA rip current model (office ${ripNwps.office.toUpperCase()}) — nearest grid point ` +
           `${ripNwps.point.lat.toFixed(4)}, ${ripNwps.point.lon.toFixed(4)}`,
+        `Model run: ${fmtRunLabel(ripNwps.run, tz)}`,
         "Threshold mapping (this app's own — see formula below): Low < 20%, Moderate 20-49%, High ≥ 50%",
+        "Red underline on the hourly strip = when the official NWS rip current warning (a Rip Current Statement) is in effect",
       ]
     : [];
+
+  // Raw detail moved off the front of the card (2026-09-24 wording pass):
+  // the model's own raw %, the SRF word it's being read against, and any
+  // scheduled warning — named plainly, all on the flip-back only.
+  const ripNowBlock: string[] = [];
+  if (ripNow?.model) {
+    ripNowBlock.push(
+      `NOAA model reading right now: ${Math.round(ripNow.model.prob)}% → ${BAND_LABEL[levelForModelProb(ripNow.model.prob)]}`,
+    );
+  }
+  if (ripNow?.period && ripNow.period.level !== "unknown") {
+    ripNowBlock.push(
+      `NWS Surf Zone Forecast word for this period (${ripNow.period.periodLabel}): ${BAND_LABEL[ripNow.period.level as BandedRipRisk]}`,
+    );
+  }
+  if (ripNow?.upcomingAlert) {
+    ripNowBlock.push(
+      `${ripNow.upcomingAlert.event} scheduled: begins ${fmtRunLabel(ripNow.upcomingAlert.onset, tz)}`,
+    );
+  }
 
   // SRF/curve wording always describes the CURVE's own anchor word
   // (curve.level) — never the card's headline `band`, which is the
@@ -389,22 +413,25 @@ function buildInfo(curve: RipRiskCurve | null, ripNwps: RipNwpsBeachSeries | nul
   // a fresh model reading, can outrank the day's SRF word). Conflating the
   // two here would misdescribe the curve/SRF band math with the wrong word
   // (item 2).
-  const computation = !curve
-    ? modelBlock
-    : curve.unshaped
-      ? [...modelBlock, `Official NWS Surf Zone Forecast word today: ${BAND_LABEL[curve.level]}`, sentence(curve.peakNote)]
-      : (() => {
-          const { min, max } = BAND_RANGE[curve.level];
-          const scores = curve.hours.map((h) => h.score);
-          return [
-            ...modelBlock,
-            `Official NWS Surf Zone Forecast word today: ${BAND_LABEL[curve.level]} → curve lives in ${min}-${max}`,
-            Math.min(...scores) === Math.max(...scores)
-              ? `Modulators net flat today → ${scores[0]}/100 across daylight hours`
-              : `Today's curve ranges ${Math.min(...scores)}-${Math.max(...scores)}/100 across daylight hours`,
-            sentence(curve.peakNote),
-          ];
-        })();
+  const computation = [
+    ...(!curve
+      ? modelBlock
+      : curve.unshaped
+        ? [...modelBlock, `Official NWS Surf Zone Forecast word today: ${BAND_LABEL[curve.level]}`, sentence(curve.peakNote)]
+        : (() => {
+            const { min, max } = BAND_RANGE[curve.level];
+            const scores = curve.hours.map((h) => h.score);
+            return [
+              ...modelBlock,
+              `Official NWS Surf Zone Forecast word today: ${BAND_LABEL[curve.level]} → curve lives in ${min}-${max}`,
+              Math.min(...scores) === Math.max(...scores)
+                ? `Modulators net flat today → ${scores[0]}/100 across daylight hours`
+                : `Today's curve ranges ${Math.min(...scores)}-${Math.max(...scores)}/100 across daylight hours`,
+              sentence(curve.peakNote),
+            ];
+          })()),
+    ...ripNowBlock,
+  ];
 
   return {
     title: "Rip current risk",
@@ -509,45 +536,10 @@ export function RipRiskCard({ curve, tz, ripNow, ripNwps, nowMs }: RipRiskCardPr
       : curve != null
         ? curve.level
         : "low";
-  // The SRF forecast word to show as disagreement context — only when it
-  // actually differs from the headline band, so a beach where everything
-  // agrees shows one number, not a redundant second line.
-  const srfWord = ripNow?.period?.level ?? (curve && !curve.unshaped ? curve.level : curve?.level ?? null);
-  const srfDisagrees = srfWord != null && srfWord !== "unknown" && srfWord !== band;
-
-  // A live "/100 right now" is honest ONLY when the clock actually falls inside
-  // a represented daylight bucket. Before dawn / after the last bucket (and for
-  // an unshaped word-only curve) we show the official word WITHOUT a now-number,
-  // instead of silently pinning to the first/last bucket and still saying "now".
-  const HOUR_MS = 3_600_000;
-  const nowInWindow =
-    !!curve &&
-    !curve.unshaped &&
-    nowMs != null &&
-    curve.hours.length > 0 &&
-    nowMs >= Date.parse(curve.hours[0].t) &&
-    nowMs < Date.parse(curve.hours[curve.hours.length - 1].t) + HOUR_MS;
-  const current = nowInWindow ? curve!.hours[currentHourIndex(curve!.hours, nowMs as number)] : null;
-
-  // Watch message: only shown when the resolved level disagrees with the
-  // current SRF word (ripNow.watch). Prefer the model's OWN first future
-  // High hour ("rising to High by <time>") when one actually exists in the
-  // series; otherwise name the disagreement plainly rather than inventing a
-  // time from the alert's onset (item 9).
-  const risingHour = nowMs != null && ripNwps ? firstFutureHighHour(ripNwps, nowMs) : null;
-  const watchNote = !ripNow?.watch
-    ? null
-    : risingHour
-      ? `Rising to High by ${fmtRunLabel(risingHour.t, tz)}`
-      : // The model's OWN level (not the RESOLVED `band`, which the
-        // disagreement rule can pull up one step above the model's actual
-        // reading — e.g. a resolved "Moderate" from a model that itself
-        // reads "Low") — item 2.
-        `NOAA model ${
-          ripNow?.model ? BAND_LABEL[ripNow.model.level] : BAND_LABEL[band]
-        } now · NWS forecast ${
-          ripNow?.period?.level && ripNow.period.level !== "unknown" ? BAND_LABEL[ripNow.period.level] : "—"
-        }${ripNow?.upcomingAlert ? ` · ${ripNow.upcomingAlert.event} begins ${fmtRunLabel(ripNow.upcomingAlert.onset, tz)}` : ""}`;
+  // Plain, non-contradicting front-of-card copy (lib/ripRisk/copy.ts) — one
+  // level word, at most two short sentences, no percentages or model names.
+  // Pinned to the same nowMs the rest of the dashboard uses (SSR = generatedAt).
+  const copy = ripCopy(ripNow, ripNwps?.hours ?? null, nowMs ?? 0, tz);
 
   const front = (
     <div className="flex h-full flex-col rounded-2xl bg-white/80 p-4 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:ring-white/10">
@@ -556,42 +548,21 @@ export function RipRiskCard({ curve, tz, ripNow, ripNwps, nowMs }: RipRiskCardPr
         <span>Rip current risk</span>
         {sourceLabel(ripNow) ? (
           <span className="ml-auto rounded-full bg-slate-500/10 px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:text-slate-400">
-            {sourceLabel(ripNow)}
+            NOAA
           </span>
         ) : null}
       </div>
 
-      <div className="mt-1 flex flex-wrap items-baseline gap-2">
+      <div className="mt-1">
         <span className={`text-xl font-semibold sm:text-2xl ${BAND_TEXT_CLASS[band]}`}>
           {BAND_LABEL[band]}
         </span>
-        {ripNow?.source === "model" && ripNow.model ? (
-          <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
-            NOAA model {Math.round(ripNow.model.prob)}%
-            {levelForModelProb(ripNow.model.prob) !== band ? ` (model: ${BAND_LABEL[levelForModelProb(ripNow.model.prob)]})` : ""}
-          </span>
-        ) : current ? (
-          <span className="text-xs text-slate-500 dark:text-slate-400">{current.score}/100 right now</span>
-        ) : (
-          <span className="text-xs text-slate-500 dark:text-slate-400">
-            {curve?.unshaped || !curve ? "official level · hourly detail unavailable" : "official NWS level today"}
-          </span>
-        )}
       </div>
 
-      {srfDisagrees ? (
-        <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">
-          NWS forecast {BAND_LABEL[srfWord as BandedRipRisk]}
-          {ripNow?.period?.periodLabel ? ` (${ripNow.period.periodLabel})` : ""} — disagrees with the{" "}
-          {sourceLabel(ripNow) ?? "resolved"} reading above
-        </div>
-      ) : null}
-
-      {watchNote ? (
-        <div className="mt-1 rounded-md bg-amber-500/10 px-2 py-1 text-xs font-medium text-amber-700 dark:text-amber-400">
-          {watchNote}
-        </div>
-      ) : null}
+      <div className="mt-1 text-sm text-slate-700 dark:text-slate-300">
+        <div>{copy.line1}</div>
+        {copy.line2 ? <div>{copy.line2}</div> : null}
+      </div>
 
       {hasModel ? (
         <ModelStrip series={ripNwps!} ripNow={ripNow} nowMs={nowMs} tz={tz} />
@@ -600,14 +571,7 @@ export function RipRiskCard({ curve, tz, ripNow, ripNwps, nowMs }: RipRiskCardPr
       ) : null}
 
       <div className="mt-1 break-words text-xs text-slate-600 dark:text-slate-400">
-        {/* The SRF-anchored peakNote ("riskiest 2-4 PM…") describes the curve's
-            own wave/tide shape — once the model is present it's the model
-            strip's hourly bars doing that job, so showing both is redundant
-            (and can even read as contradicting the model's own hourly shape). */}
-        {!hasModel && curve ? <>{sentence(curve.peakNote)} </> : null}
-        {hasModel
-          ? "NOAA/NWS hourly model guidance — always follow the lifeguard flags."
-          : "Estimate layered on the official NWS level — always follow the lifeguard flags."}
+        Hourly rip current risk · Always follow the lifeguard flags.
       </div>
     </div>
   );
@@ -616,7 +580,7 @@ export function RipRiskCard({ curve, tz, ripNow, ripNwps, nowMs }: RipRiskCardPr
     <FlipCard
       label="Rip current risk"
       front={front}
-      back={<NerdBack info={buildInfo(curve, ripNwps ?? null)} />}
+      back={<NerdBack info={buildInfo(curve, ripNwps ?? null, ripNow, tz)} />}
     />
   );
 }

@@ -21,7 +21,7 @@ describe("capState", () => {
     expect(capState(base({ caps: ["Lightning within 5 miles — get out of the water"], score: 10, rawScore: 80 }))).toEqual({ show: true, safety: true });
   });
   it("safety tone for flags, advisories, rip, surf, severe", () => {
-    for (const c of ["Double red flag — water access closed", "Water quality advisory in effect", "High rip current risk (NWS)", "High surf or coastal-flood advisory — swimming discouraged", "Severe weather warning in effect"]) {
+    for (const c of ["Double red flag — water access closed", "Water quality advisory in effect", "Rip current risk: High", "High surf or coastal-flood advisory — swimming discouraged", "Severe weather warning in effect"]) {
       expect(capState(base({ caps: [c], score: 15, rawScore: 70 })).safety).toBe(true);
     }
   });
