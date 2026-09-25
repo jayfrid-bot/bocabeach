@@ -2,15 +2,22 @@
 // (non-hook) install-token bootstrap. useHazardsAtPoint and usePlus
 // themselves are React hooks wired to fetch/effects (untested directly, per
 // this repo's convention — see lib/plus/beachMode.ts's header);
-// hazardsInputKey and bootstrapInstallToken are the plain-function pieces
-// this file tests directly.
+// hazardsInputKey, bootstrapInstallToken, storeExpiryTimerMs, and
+// readSuperseded are the plain-function pieces this file tests directly —
+// including the store-expiry-timer arming decision (#2) and the read-vs-sync
+// generation check (#6), both pulled out of usePlus itself for exactly this
+// reason.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   bootstrapInstallToken,
   hazardsInputKey,
+  readSuperseded,
   resetInstallTokenLatch,
   shouldBootstrapInstallTokenOnMount,
+  STORE_EXPIRY_GRACE_MS,
+  STORE_EXPIRY_TIMER_MAX_MS,
+  storeExpiryTimerMs,
 } from "@/lib/plus/client";
 import type { Fix } from "@/lib/location/device";
 import * as store from "@/lib/plus/storage";
@@ -210,5 +217,67 @@ describe("hazardsInputKey", () => {
     const a = hazardsInputKey("boca-raton", fix());
     const b = hazardsInputKey("boca-raton", fix({ lat: 26.3588, lon: -80.0685 })); // sub-0.01° jitter
     expect(a).toBe(b);
+  });
+});
+
+describe("storeExpiryTimerMs", () => {
+  const now = 1_000_000;
+
+  it("arms for the time left until a store-based cache's end date, PLUS the grace period (L3)", () => {
+    const cache = { plan: "plus" as const, until: now + 60_000, checkedAt: now };
+    expect(storeExpiryTimerMs({ cache, storeBased: true, now })).toBe(60_000 + STORE_EXPIRY_GRACE_MS);
+  });
+
+  it("does not arm for a trial/code grant — self-heal has nothing to check for those", () => {
+    const cache = { plan: "plus" as const, until: now + 60_000, checkedAt: now };
+    expect(storeExpiryTimerMs({ cache, storeBased: false, now })).toBeNull();
+  });
+
+  it("does not arm with no cache, or a cache with no end date", () => {
+    expect(storeExpiryTimerMs({ cache: null, storeBased: true, now })).toBeNull();
+    const noEnd = { plan: "plus" as const, until: null, checkedAt: now };
+    expect(storeExpiryTimerMs({ cache: noEnd, storeBased: true, now })).toBeNull();
+  });
+
+  it("still arms (shorter) for an end date that already passed but is still inside the grace window", () => {
+    // RevenueCat may not have processed a renewal at the exact second it was
+    // due (L3) — an end date a few seconds in the past still deserves a
+    // (shorter) check, not silence until the next unrelated cache update.
+    const cache = { plan: "plus" as const, until: now - 10_000, checkedAt: now };
+    expect(storeExpiryTimerMs({ cache, storeBased: true, now })).toBe(STORE_EXPIRY_GRACE_MS - 10_000);
+  });
+
+  it("does not arm once even the grace window is behind us — nothing left to wait for", () => {
+    const cache = { plan: "plus" as const, until: now - STORE_EXPIRY_GRACE_MS - 1, checkedAt: now };
+    expect(storeExpiryTimerMs({ cache, storeBased: true, now })).toBeNull();
+  });
+
+  it("does not arm past the 24h cap — the effect re-checks on the next cache update instead", () => {
+    const justOver = {
+      plan: "plus" as const,
+      until: now + STORE_EXPIRY_TIMER_MAX_MS - STORE_EXPIRY_GRACE_MS + 1,
+      checkedAt: now,
+    };
+    expect(storeExpiryTimerMs({ cache: justOver, storeBased: true, now })).toBeNull();
+
+    const justUnder = {
+      plan: "plus" as const,
+      until: now + STORE_EXPIRY_TIMER_MAX_MS - STORE_EXPIRY_GRACE_MS,
+      checkedAt: now,
+    };
+    expect(storeExpiryTimerMs({ cache: justUnder, storeBased: true, now })).toBe(STORE_EXPIRY_TIMER_MAX_MS);
+  });
+});
+
+describe("readSuperseded", () => {
+  it("is false when no sync started after the read began", () => {
+    expect(readSuperseded(3, 3)).toBe(false);
+  });
+
+  it("is true once a sync has bumped the generation past the read's own", () => {
+    // A refresh() read captures generation 3 at dispatch; a purchase/restore
+    // sync starts (and bumps to 4) while that read is still in flight — its
+    // eventual answer must not overwrite what the sync applies (#6).
+    expect(readSuperseded(3, 4)).toBe(true);
   });
 });

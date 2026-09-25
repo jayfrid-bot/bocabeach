@@ -28,7 +28,7 @@ export interface PlanOffer {
   pkg: PurchasesPackage;
 }
 
-export type PurchaseOutcome = "purchased" | "cancelled" | "failed";
+export type PurchaseOutcome = "purchased" | "cancelled" | "pending" | "failed";
 
 /**
  * Whether the App Store account behind this device still owes a plan its
@@ -147,8 +147,23 @@ export async function purchasePlan(deviceId: string, offer: PlanOffer): Promise<
       await P.purchasePackage({ aPackage: offer.pkg });
       return "purchased";
     } catch (e) {
-      const err = e as { userCancelled?: boolean | null; readableErrorCode?: string };
-      if (err?.userCancelled || err?.readableErrorCode === "PURCHASE_CANCELLED") return "cancelled";
+      // The REAL Capacitor→native bridge rejects with { message, errorMessage,
+      // code } — it never sends `userCancelled` or `readableErrorCode` (those
+      // are the TS SDK's own shape; kept below in case some other platform
+      // does send them). `code` is the PURCHASES_ERROR_CODE string: "1" is
+      // PURCHASE_CANCELLED_ERROR, "20" is PAYMENT_PENDING_ERROR — "Ask to
+      // Buy", waiting on a family organizer, not a failure. Read defensively
+      // as a string in case a bridge ever sends the numeric form instead.
+      const err = e as {
+        userCancelled?: boolean | null;
+        readableErrorCode?: string;
+        code?: string | number;
+      };
+      const code = err?.code != null ? String(err.code) : undefined;
+      if (err?.userCancelled || err?.readableErrorCode === "PURCHASE_CANCELLED" || code === "1") {
+        return "cancelled";
+      }
+      if (code === "20") return "pending";
       return "failed";
     }
   } finally {

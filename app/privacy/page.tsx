@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
-const EFFECTIVE_DATE = "September 2, 2026";
+const EFFECTIVE_DATE = "September 25, 2026";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
@@ -110,7 +110,8 @@ export default function PrivacyPage() {
           A random device id — no account, no name, no email — ties your score
           profile, alert settings, and Plus status to your device, the same way
           the push token above does. There is still no sign-in. Deleting the app
-          clears all of it.
+          clears all of it, except purchase records, which Apple and
+          RevenueCat keep on their own.
         </p>
       </Section>
 
@@ -155,13 +156,21 @@ export default function PrivacyPage() {
 
       <Section title="What we share">
         <p>
-          We don&apos;t sell or share your data with anyone — there isn&apos;t a
-          data broker relationship to opt out of. The conditions on each beach
-          page are pulled from public data sources (NOAA, the National Weather
+          We don&apos;t sell your data, and we share it only with the services
+          named on this page. There isn&apos;t a data broker relationship to
+          opt out of. The conditions on each beach page are pulled from public
+          data sources (NOAA, the National Weather
           Service, Open-Meteo, EPA AirNow, MET Norway, and similar), which are
           listed on that beach&apos;s page under &quot;Data sources.&quot; We
           don&apos;t send your information to them — we only read their public
           data.
+        </p>
+        <p>
+          Beach Day Plus purchases are processed by Apple and by RevenueCat,
+          the service we use to confirm and manage subscriptions. They
+          receive your device&apos;s random app id, your purchase and
+          subscription status, and your phone&apos;s vendor identifier. We
+          use that only to turn Plus on and to restore it on your devices.
         </p>
       </Section>
 

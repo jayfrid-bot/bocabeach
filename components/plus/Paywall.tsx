@@ -92,9 +92,15 @@ export function PaywallBody({
   // exists inside the `billing` branch below.
   const [serverTrialOff, setServerTrialOff] = useState(false);
 
-  // Store billing: decided on the phone, after mount, so the server render and
-  // a browser both see the plain (no-billing) paywall.
-  const [billing, setBilling] = useState(false);
+  // Store billing: this body only ever mounts client-side, after an explicit
+  // tap opens the sheet (Sheet returns null while closed — see
+  // components/plus/Sheet.tsx), never as part of the page's initial server
+  // render, so there is no hydration mismatch to dodge here. Decided with a
+  // lazy initializer rather than a `useEffect` flipping it a moment later
+  // (#L4): waiting for an effect means the browser paints the no-billing
+  // "Have a code?" frame first and swaps it out a beat later, a visible
+  // flash. `native` itself is stable by the time anyone can open this sheet.
+  const [billing, setBilling] = useState(() => native && billingAvailable());
   const [offers, setOffers] = useState<PlanOffer[]>([]);
   const [offersStatus, setOffersStatus] = useState<OffersStatus>("loading");
   const [plan, setPlan] = useState<PlanChoice | null>(null);
@@ -103,7 +109,7 @@ export function PaywallBody({
   useEffect(() => {
     if (!native || !plus.deviceId || !billingAvailable()) return;
     let alive = true;
-    setBilling(true);
+    setBilling(true); // idempotent if the lazy initializer above already caught it
     setOffersStatus("loading");
     fetchPlanData(plus.deviceId).then((r) => {
       if (!alive) return;
@@ -161,6 +167,12 @@ export function PaywallBody({
           return;
         }
         setError(plusErrorMessage("purchase-unconfirmed"));
+        return;
+      }
+      if (outcome === "pending") {
+        // Ask to Buy: the store held it for a family organizer to approve.
+        // Not a failure — nothing more to retry here.
+        setNote("Waiting for approval from your family organizer.");
         return;
       }
       if (outcome === "failed") setError(plusErrorMessage("purchase-failed"));
@@ -230,6 +242,12 @@ export function PaywallBody({
       // or code row must not read back as a successful restore.
       if (res.ok && deviceEntitled(res.device, Date.now())) {
         onEntitled();
+        return;
+      }
+      if (res.error === "restore-pending") {
+        setNote(
+          "Found your purchase, but we couldn't reach our server. Plus turns on the next time you open the app, or tap Restore again.",
+        );
         return;
       }
       if (res.ok || res.error === "not-found") setNote("Nothing to restore on this device yet.");
@@ -343,7 +361,13 @@ export function PaywallBody({
           </>
         )}
 
-        {codeOpen ? (
+        {/* With store billing on, the App Store IS the checkout — a code
+            entry field next to real prices only invites confusion (and a
+            support question) over which path to use. A device already
+            unlocked by a code earlier keeps that entitlement either way;
+            this only hides the way to REDEEM a new one. Billing-off builds
+            (and the e2e no-billing path) still need it: it's the only way in. */}
+        {billing ? null : codeOpen ? (
           <div className="rounded-2xl bg-slate-900/5 p-3 dark:bg-white/5">
             <label
               htmlFor="plus-code"

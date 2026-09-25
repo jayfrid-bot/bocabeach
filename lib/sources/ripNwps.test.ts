@@ -53,8 +53,14 @@ describe("ripNwpsFeedUrl", () => {
 describe("fetchRipNwps", () => {
   beforeEach(() => {
     vi.resetModules();
+    // The fixture's model run is 2026-09-24T00:00Z; the adapter's 36-h
+    // staleness gate reads the real clock, so pin "now" to the fixture's day
+    // (this file failed once the calendar moved past that window).
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-24T17:30:00.000Z"));
   });
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -105,8 +111,14 @@ describe("fetchRipNwps", () => {
 describe("fetchRipNwps — validation (item 7)", () => {
   beforeEach(() => {
     vi.resetModules();
+    // The fixture's model run is 2026-09-24T00:00Z; the adapter's 36-h
+    // staleness gate reads the real clock, so pin "now" to the fixture's day
+    // (this file failed once the calendar moved past that window).
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-24T17:30:00.000Z"));
   });
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -174,8 +186,14 @@ describe("fetchRipNwps — validation (item 7)", () => {
 describe("fetchRipNwps — in-flight promise dedup / cold-build budget (item: shared fetch)", () => {
   beforeEach(() => {
     vi.resetModules();
+    // The fixture's model run is 2026-09-24T00:00Z; the adapter's 36-h
+    // staleness gate reads the real clock, so pin "now" to the fixture's day
+    // (this file failed once the calendar moved past that window).
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-24T17:30:00.000Z"));
   });
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });

@@ -27,7 +27,7 @@ import type { ConditionsResponse, LocationPublic } from "@/lib/types";
 import type { HazardAssessment } from "@/lib/hazards/assess";
 import { plusApi, type PlusResult, type PresenceBody } from "@/lib/plus/api";
 import { billingAvailable, restoreBilling } from "@/lib/plus/billing";
-import { cacheFromDevice, isEntitled, isStoreBased, shouldSelfHeal } from "@/lib/plus/entitlement";
+import { cacheFromDevice, deviceEntitled, isEntitled, isStoreBased, shouldSelfHeal } from "@/lib/plus/entitlement";
 import { isRetryableSaveError } from "@/lib/plus/pendingWrites";
 import { computePersonalScore, type PersonalScore } from "@/lib/plus/personalScore";
 import { establishesArrival } from "@/lib/plus/beachMode";
@@ -41,6 +41,47 @@ const REFRESH_THROTTLE_MS = 60_000;
 const PROFILE_SAVE_DEBOUNCE_MS = 600;
 /** How long an Advanced edit sits before the score is recomputed. */
 const SCORE_DEBOUNCE_MS = 150;
+/** Cap on the store-expiry timer below — nothing needs to sit armed for
+ *  days; a grant further out than this re-arms on the next cache update. */
+export const STORE_EXPIRY_TIMER_MAX_MS = 24 * 60 * 60 * 1000;
+/** Wait this long past the cached end date before asking — RevenueCat may
+ *  not have finished processing a renewal at the exact second it was due,
+ *  so firing right on time risks asking a beat too early (L3). */
+export const STORE_EXPIRY_GRACE_MS = 90_000;
+/** One guarded, one-shot retry after a restore that reached the store but
+ *  not our own server (#M2) — quick enough to catch a transient hiccup
+ *  without making someone wait for the next foreground/online flush. */
+const RESTORE_RETRY_MS = 10_000;
+
+/**
+ * How long to wait before asking the server again because a STORE-based
+ * entitlement's cached end date has passed (plus the grace above) — or null
+ * when there is nothing worth arming a timer for (not store-based, no end
+ * date on file, past even the grace window, or far enough out that the
+ * effect will simply re-check next time the cache updates). Pure, so the
+ * "when do we arm" decision is tested directly rather than through a
+ * rendered hook (see this file's test header).
+ */
+export function storeExpiryTimerMs(input: {
+  cache: PlusCache | null;
+  storeBased: boolean;
+  now: number;
+}): number | null {
+  const { cache, storeBased, now } = input;
+  if (!storeBased || !cache || cache.until == null) return null;
+  const ms = cache.until + STORE_EXPIRY_GRACE_MS - now;
+  if (ms <= 0 || ms > STORE_EXPIRY_TIMER_MAX_MS) return null;
+  return ms;
+}
+
+/** Whether a device READ that began when the generation counter read
+ *  `startGeneration` is now superseded by a purchase/restore SYNC that
+ *  started (bumping the counter) after it did — see `usePlus`'s `refresh`
+ *  vs `syncPurchase`/`restore` (#6: a slow read must never overwrite what a
+ *  faster, later sync already applied, however the two responses land). */
+export function readSuperseded(startGeneration: number, currentGeneration: number): boolean {
+  return currentGeneration !== startGeneration;
+}
 
 export interface PlusState {
   /** The phone has been read. Everything below is meaningless until this is true. */
@@ -62,7 +103,7 @@ export interface PlusState {
   preview: PreviewRecord | null;
   cache: PlusCache | null;
   deviceId: string;
-  refresh(): Promise<PlusResult | null>;
+  refresh(opts?: { forceSelfHeal?: boolean }): Promise<PlusResult | null>;
   /** Store restore (when billing is on) then the server's copy of this device. */
   restore(): Promise<PlusResult>;
   startTrial(): Promise<PlusResult>;
@@ -247,6 +288,16 @@ export function usePlus(): PlusState {
   // Throttle for the entitlement self-heal below — module-scope would leak
   // across devices in tests, so this lives per mounted hook instance instead.
   const lastSelfHealRef = useRef<number | null>(null);
+  // Bumped at the start of every purchase/restore SYNC (never by a plain
+  // read) — see `readSuperseded` above. Lets `refresh`'s device READ notice
+  // a sync started (and, being simpler, likely finished) while it was still
+  // in flight, and skip overwriting the sync's newer state with its own
+  // stale answer (#6).
+  const syncGenerationRef = useRef(0);
+  // One-shot guard for the restore-pending retry below (#M2) — a second
+  // restore tap (or a fast re-render) replaces rather than stacks a pending
+  // retry, and unmount clears it like any other timer.
+  const restoreRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // --- first read of the phone ---------------------------------------------
   useEffect(() => {
@@ -295,45 +346,60 @@ export function usePlus(): PlusState {
     return token;
   }, [applyDevice]);
 
-  const refresh = useCallback(async (): Promise<PlusResult | null> => {
-    const id = getDeviceId();
-    if (!id) return null;
-    lastRefreshRef.current = Date.now();
-    setLoading(true);
-    const res = await plusApi.getDevice(id);
-    setLoading(false);
-    if (res.ok && res.device) {
-      applyDevice(res.device);
-      // Entitlement self-heal (#3): a store grant that is about to expire or
-      // just lapsed gets one quiet resync with RevenueCat, throttled to once
-      // per SELF_HEAL_THROTTLE_MS, so a webhook outage never silently
-      // de-provisions a paying subscriber who happens to reopen the app. The
-      // decision itself is the pure `shouldSelfHeal` (lib/plus/entitlement.ts);
-      // this is only the plumbing to call it and act on it.
-      const healAt = Date.now();
-      if (
-        billingAvailable() &&
-        shouldSelfHeal({
-          cache: cacheFromDevice(res.device, healAt),
-          now: healAt,
-          storeBased: isStoreBased(res.device),
-          billingAvailable: true,
-          lastSyncedAt: lastSelfHealRef.current,
-        })
-      ) {
-        lastSelfHealRef.current = healAt;
-        const synced = await plusApi.syncPurchase(id);
-        if (synced.ok && synced.device) applyDevice(synced.device);
+  const refresh = useCallback(
+    async (opts?: { forceSelfHeal?: boolean }): Promise<PlusResult | null> => {
+      const id = getDeviceId();
+      if (!id) return null;
+      lastRefreshRef.current = Date.now();
+      // Captured before the request goes out (#6): if a purchase/restore
+      // sync STARTS while this read is in flight, that sync's own
+      // applyDevice call is the newer one and must win — this read began
+      // querying before the sync, so its own answer could be stale however
+      // the two responses happen to land.
+      const startGeneration = syncGenerationRef.current;
+      setLoading(true);
+      const res = await plusApi.getDevice(id);
+      setLoading(false);
+      const superseded = readSuperseded(startGeneration, syncGenerationRef.current);
+      if (res.ok && res.device) {
+        if (superseded) return res;
+        applyDevice(res.device);
+        // Entitlement self-heal (#3): a store grant that is about to expire or
+        // just lapsed gets one quiet resync with RevenueCat, throttled to once
+        // per SELF_HEAL_THROTTLE_MS, so a webhook outage never silently
+        // de-provisions a paying subscriber who happens to reopen the app. The
+        // decision itself is the pure `shouldSelfHeal` (lib/plus/entitlement.ts);
+        // this is only the plumbing to call it and act on it. `forceSelfHeal`
+        // (the store-expiry timer below) skips the throttle for one call —
+        // the cached end date passing IS the reason to ask right now, not a
+        // routine foreground check that should wait its turn.
+        const healAt = Date.now();
+        if (
+          billingAvailable() &&
+          shouldSelfHeal({
+            cache: cacheFromDevice(res.device, healAt),
+            now: healAt,
+            storeBased: isStoreBased(res.device),
+            billingAvailable: true,
+            lastSyncedAt: opts?.forceSelfHeal ? null : lastSelfHealRef.current,
+          })
+        ) {
+          lastSelfHealRef.current = healAt;
+          syncGenerationRef.current += 1;
+          const synced = await plusApi.syncPurchase(id);
+          if (synced.ok && synced.device) applyDevice(synced.device);
+        }
+      } else if (!superseded && res.error === "not-found") {
+        // The server has never seen this device: it is free, and saying so stops
+        // the app asking again on every foreground.
+        const free: PlusCache = { plan: "free", until: null, checkedAt: Date.now() };
+        setCache(free);
+        store.writeCache(free);
       }
-    } else if (res.error === "not-found") {
-      // The server has never seen this device: it is free, and saying so stops
-      // the app asking again on every foreground.
-      const free: PlusCache = { plan: "free", until: null, checkedAt: Date.now() };
-      setCache(free);
-      store.writeCache(free);
-    }
-    return res;
-  }, [applyDevice]);
+      return res;
+    },
+    [applyDevice],
+  );
 
   // --- device metadata: fetched once every mount, cache or no cache ---------
   // The entitlement cache can render on the very first frame, but prefs,
@@ -395,6 +461,31 @@ export function usePlus(): PlusState {
     return () => clearInterval(t);
   }, []);
 
+  // A store grant's cached end date is a known moment, not "eventually" —
+  // left open past it, the app would otherwise sit on a locally-expired
+  // entitlement until the next foreground check happens to fall due (up to
+  // REFRESH_THROTTLE_MS) or the every-60s `now` tick merely flips `entitled`
+  // false without ever asking RevenueCat for a renewal (#2). This arms a
+  // timer for STORE_EXPIRY_GRACE_MS after that moment instead (a renewal
+  // right at the deadline may not be processed yet at the exact second —
+  // L3), re-armed on every cache update (a renewal moves `until` further
+  // out, so the effect re-runs and re-arms for the new date), and cleared
+  // on unmount/re-arm like any other timer.
+  useEffect(() => {
+    if (!ready || !device) return;
+    const ms = storeExpiryTimerMs({ cache, storeBased: isStoreBased(device), now: Date.now() });
+    if (ms == null) return;
+    const t = setTimeout(() => {
+      // Ignores REFRESH_THROTTLE_MS (this isn't a routine foreground check)
+      // and SELF_HEAL_THROTTLE_MS (forceSelfHeal below) — the cached date
+      // passing is itself the reason to ask now. Still entitled with a new
+      // end date → the effect above re-arms for it. Not entitled → the UI
+      // locks, which is correct: RevenueCat had nothing newer to offer.
+      void refresh({ forceSelfHeal: true });
+    }, ms);
+    return () => clearTimeout(t);
+  }, [ready, device, cache, refresh]);
+
   // --- retry queue: saves that failed to reach the server --------------------
   // Merge/supersede rules live in lib/plus/pendingWrites.ts; this is only the
   // "when do we try again" half.
@@ -438,6 +529,7 @@ export function usePlus(): PlusState {
       // (#4) — retry the same RevenueCat confirmation syncPurchase() does.
       // Never clear this on a network failure: a paying subscriber's grant
       // must not quietly stop being retried just because one attempt failed.
+      syncGenerationRef.current += 1; // a sync, not a plain read (#6/#L2)
       const res = await plusApi.syncPurchase(id);
       if (res.ok && res.device) {
         applyDevice(res.device);
@@ -617,12 +709,26 @@ export function usePlus(): PlusState {
     // charged customer before the server hears about it.
     const release = holdReload();
     setLoading(true);
+    // A sync, never a plain read (#6): bumped before the request so any
+    // slower device read already in flight (e.g. a foreground refresh())
+    // knows, once it lands, that this call's answer is the newer one.
+    syncGenerationRef.current += 1;
     try {
       const res = await plusApi.syncPurchase(id);
       if (res.ok && res.device) {
         applyDevice(res.device);
-        // A retry queued by an earlier failed sync is now settled.
-        store.clearPendingPurchaseSync();
+        if (deviceEntitled(res.device, Date.now())) {
+          // A retry queued by an earlier failed sync is now settled.
+          store.clearPendingPurchaseSync();
+        } else {
+          // The store's purchase sheet just resolved "purchased", so the
+          // charge is real — but this 200 says the row isn't entitled (the
+          // server asked RevenueCat and it hadn't caught up yet, or the
+          // grant already lapsed again). Not the server's final word: queue
+          // the same retry the network-failure branch below uses (#4),
+          // rather than clearing the queue on a charged-but-unconfirmed sync.
+          store.queuePendingPurchaseSync();
+        }
       } else if (isRetryableSaveError(res)) {
         // The store already confirmed the purchase (that's the only reason a
         // caller calls syncPurchase after `buy()`); the server just didn't
@@ -653,12 +759,38 @@ export function usePlus(): PlusState {
       // the same Apple ID has a purchase the server has never been told
       // about. restoreBilling itself never throws (lib/plus/billing.ts).
       if (billingAvailable() && (await restoreBilling(id))) {
+        // A sync, not a plain read (#6) — see syncPurchase's own comment.
+        syncGenerationRef.current += 1;
         const synced = await plusApi.syncPurchase(id);
         if (synced.ok && synced.device) {
           applyDevice(synced.device, { adoptProfile: true });
-          return synced;
+          if (deviceEntitled(synced.device, Date.now())) {
+            store.clearPendingPurchaseSync();
+            return synced;
+          }
+          // The server answered, but this 200 isn't entitled yet (RevenueCat
+          // hasn't caught up, or the grant already lapsed again) — same
+          // non-final-word reasoning as syncPurchase's own not-entitled
+          // branch (#4/#L1). Falls through to the shared queue+retry below
+          // rather than reading as "nothing to restore".
         }
+        // Either the round trip itself failed, or it succeeded but wasn't
+        // entitled yet: the store already confirmed the purchase for this
+        // Apple ID, so this is not the server's final word. Queue the same
+        // retry #4 uses (mount/online/foreground), PLUS one guarded, one-shot
+        // retry ~10s from now (#M2) rather than making them wait for the
+        // next foreground — and never fall through to plusApi.getDevice()
+        // below, which would silently read back the OLD pre-restore row and
+        // look to the person like Restore found nothing (#5).
+        store.queuePendingPurchaseSync();
+        if (restoreRetryTimerRef.current) clearTimeout(restoreRetryTimerRef.current);
+        restoreRetryTimerRef.current = setTimeout(() => {
+          restoreRetryTimerRef.current = null;
+          void flushPending();
+        }, RESTORE_RETRY_MS);
+        return { ...synced, error: "restore-pending" };
       }
+      syncGenerationRef.current += 1;
       const res = await plusApi.getDevice(id);
       // Explicit Restore: the server's copy wins, profile included.
       if (res.ok && res.device) applyDevice(res.device, { adoptProfile: true });
@@ -667,7 +799,15 @@ export function usePlus(): PlusState {
       setLoading(false);
       release();
     }
-  }, [applyDevice]);
+  }, [applyDevice, flushPending]);
+
+  // Clears a still-pending guarded restore retry on unmount, same as every
+  // other timer ref here.
+  useEffect(() => {
+    return () => {
+      if (restoreRetryTimerRef.current) clearTimeout(restoreRetryTimerRef.current);
+    };
+  }, []);
 
   const savePreview = useCallback((record: PreviewRecord) => {
     setPreview(record);

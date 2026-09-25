@@ -164,7 +164,7 @@ export function plusErrorMessage(error: string | null): string {
     case "purchase-failed":
       return "The App Store could not complete that purchase. Try again.";
     case "purchase-unconfirmed":
-      return "You were charged. Plus unlocks automatically in a moment — or tap Restore.";
+      return "Your purchase went through, but we couldn't confirm it yet. Tap Restore in a moment, or reopen the app.";
     case "bad-request":
       return "Something about that request was wrong. Try again.";
     default:

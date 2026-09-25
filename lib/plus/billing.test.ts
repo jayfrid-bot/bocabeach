@@ -133,10 +133,47 @@ describe("purchasePlan", () => {
     expect(await billing.purchasePlan(DEVICE_ID, offer)).toBe("cancelled");
   });
 
+  // The REAL purchases-capacitor iOS bridge rejects with this shape — never
+  // `userCancelled`/`readableErrorCode` (confirmed against
+  // node_modules/@revenuecat/purchases-typescript-internal-esm's generated
+  // PURCHASES_ERROR_CODE: "1" = PURCHASE_CANCELLED_ERROR, "20" =
+  // PAYMENT_PENDING_ERROR).
+  it('resolves "cancelled" for the real bridge shape, code "1"', async () => {
+    mocks.configure.mockResolvedValue(undefined);
+    mocks.purchasePackage.mockRejectedValue({
+      message: "Purchase was cancelled",
+      errorMessage: "Purchase was cancelled",
+      code: "1",
+    });
+    expect(await billing.purchasePlan(DEVICE_ID, offer)).toBe("cancelled");
+  });
+
+  it('resolves "cancelled" when the bridge sends a numeric code (read defensively)', async () => {
+    mocks.configure.mockResolvedValue(undefined);
+    mocks.purchasePackage.mockRejectedValue({ message: "cancelled", errorMessage: "cancelled", code: 1 });
+    expect(await billing.purchasePlan(DEVICE_ID, offer)).toBe("cancelled");
+  });
+
+  it('resolves "pending" ("Ask to Buy") for the real bridge shape, code "20"', async () => {
+    mocks.configure.mockResolvedValue(undefined);
+    mocks.purchasePackage.mockRejectedValue({
+      message: "The payment is pending",
+      errorMessage: "The payment is pending",
+      code: "20",
+    });
+    expect(await billing.purchasePlan(DEVICE_ID, offer)).toBe("pending");
+  });
+
   it('resolves "failed", never rejects, on any other purchase error', async () => {
     mocks.configure.mockResolvedValue(undefined);
     mocks.purchasePackage.mockRejectedValue(new Error("declined"));
     await expect(billing.purchasePlan(DEVICE_ID, offer)).resolves.toBe("failed");
+  });
+
+  it('resolves "failed" for a real-bridge error whose code is neither "1" nor "20"', async () => {
+    mocks.configure.mockResolvedValue(undefined);
+    mocks.purchasePackage.mockRejectedValue({ message: "declined", errorMessage: "declined", code: "2" });
+    expect(await billing.purchasePlan(DEVICE_ID, offer)).toBe("failed");
   });
 
   it('resolves "failed" when configuration itself failed', async () => {

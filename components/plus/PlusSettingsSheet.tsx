@@ -15,6 +15,7 @@ import type {
 import type { AlertKey } from "@/lib/db/types";
 import { ALERT_GROUPS, ALERT_LABELS, FACTOR_LABELS, FACTOR_ORDER, MULTIPLIER_STOPS } from "@/lib/plus/labels";
 import { plusErrorMessage } from "@/lib/plus/api";
+import { billingAvailable } from "@/lib/plus/billing";
 import type { PlusState } from "@/lib/plus/client";
 import { deviceEntitled, entitlementRemaining } from "@/lib/plus/entitlement";
 import { isRetryableSaveError } from "@/lib/plus/pendingWrites";
@@ -71,6 +72,10 @@ export function PlusSettingsSheet({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // Same condition the paywall uses to decide it has store prices to show
+  // (components/plus/Paywall.tsx's `billing`): with the App Store as the
+  // checkout, a code field here is just a second, confusing way in.
+  const storeBilling = native && billingAvailable();
 
   useEffect(() => {
     if (open) setHome(getHomeBeach());
@@ -146,7 +151,11 @@ export function PlusSettingsSheet({
       // Entitled NOW, not merely "plan is plus" (issue #12): an expired
       // trial or code row must not read back as a successful restore.
       if (res.ok && deviceEntitled(res.device, Date.now())) setNote("Restored.");
-      else if (res.ok) setNote("Nothing to restore on this device yet.");
+      else if (res.error === "restore-pending") {
+        setNote(
+          "Found your purchase, but we couldn't reach our server. Plus turns on the next time you open the app, or tap Restore again.",
+        );
+      } else if (res.ok) setNote("Nothing to restore on this device yet.");
       else setError(plusErrorMessage(res.error));
     } finally {
       setBusy(false);
@@ -360,7 +369,7 @@ export function PlusSettingsSheet({
 
       {/* --- Account ------------------------------------------------------- */}
       <div className="mt-5 space-y-2 border-t border-slate-900/10 pt-4 dark:border-white/10">
-        {codeOpen ? (
+        {storeBilling ? null : codeOpen ? (
           <div className="rounded-2xl bg-slate-900/5 p-3 dark:bg-white/5">
             <label
               htmlFor="plus-settings-code"

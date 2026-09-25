@@ -173,4 +173,15 @@ describe("plusErrorMessage", () => {
   it("still has something to say about a slug it has never seen", () => {
     expect(plusErrorMessage("kaboom")).toMatch(/try again/i);
   });
+
+  // The unconfirmed-purchase copy used to promise Plus "unlocks
+  // automatically in a moment", which was not true when the sync itself had
+  // failed (that case now gets queued and retried — see client.test.ts's
+  // syncPurchase-generation coverage). The message now tells the truth about
+  // what to do next instead of promising something that may not happen.
+  it("tells someone what to do next after an unconfirmed purchase, not a promise it may not keep", () => {
+    expect(plusErrorMessage("purchase-unconfirmed")).toBe(
+      "Your purchase went through, but we couldn't confirm it yet. Tap Restore in a moment, or reopen the app.",
+    );
+  });
 });

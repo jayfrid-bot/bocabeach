@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-09-25",
+    title: "Smoother Plus purchases",
+    details:
+      "Backing out of the App Store payment sheet no longer shows an error, purchases that need a family organizer's approval say so, and Plus re-checks your subscription on its own when a billing period ends. The privacy page now explains what Apple and RevenueCat receive for a subscription.",
+    tag: "fixed",
+  },
+  {
     date: "2026-09-24",
     title: "Hour-by-hour rip current risk",
     details:
