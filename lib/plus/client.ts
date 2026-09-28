@@ -20,7 +20,7 @@ import {
   type Fix,
 } from "@/lib/location/device";
 import { isNativePlatform, nativePlatform } from "@/lib/push/native";
-import { defaultPrefs, type AlertKey, type AlertPrefs, type DeviceRecord } from "@/lib/db/types";
+import { defaultPrefs, type AlertKey, type AlertPrefs, type DeviceRecord, type SunColorMinBand } from "@/lib/db/types";
 import { resolveScoring } from "@/lib/profile/resolve";
 import type { ScoreProfile } from "@/lib/profile/types";
 import type { ConditionsResponse, LocationPublic } from "@/lib/types";
@@ -196,6 +196,10 @@ export interface PlusState {
   /** Local now, server before this resolves. For the reveal and the paywall. */
   commitProfile(profile: ScoreProfile, previewSeen?: boolean): Promise<PlusResult>;
   savePrefs(patch: Partial<AlertPrefs>): Promise<PlusResult>;
+  /** The "sun-color" alert's threshold and/or lead time — same save/retry
+   *  path as `savePrefs` (POST /api/devices, queued in the same pending-
+   *  writes store on a retryable failure). */
+  saveSunColorPrefs(patch: { minBand?: SunColorMinBand; leadMin?: number }): Promise<PlusResult>;
   setHome(slug: string): Promise<PlusResult>;
   savePreview(record: PreviewRecord): void;
   /** Beach Mode on — the window in which alerts use this phone's own position. */
@@ -654,6 +658,19 @@ export function usePlus(): PlusState {
         setPendingPrefsKeys([]);
       }
     }
+    if (pending.sunColor && Object.keys(pending.sunColor).length) {
+      const res = await plusApi.saveDevice(id, {
+        ...baseFields(),
+        ...(pending.sunColor.minBand !== undefined ? { sunColorMinBand: pending.sunColor.minBand } : {}),
+        ...(pending.sunColor.leadMin !== undefined ? { sunColorLeadMin: pending.sunColor.leadMin } : {}),
+      });
+      if (res.ok && res.device) {
+        applyDevice(res.device);
+        store.clearPendingSunColor();
+      } else if (!isRetryableSaveError(res)) {
+        store.clearPendingSunColor();
+      }
+    }
     if (pending.purchaseSync) {
       // A store purchase that confirmed but never made it to our server
       // (#4) — retry the same RevenueCat confirmation syncPurchase() does.
@@ -807,6 +824,38 @@ export function usePlus(): PlusState {
       return res;
     },
     [applyDevice],
+  );
+
+  const saveSunColorPrefs = useCallback(
+    async (patch: { minBand?: SunColorMinBand; leadMin?: number }): Promise<PlusResult> => {
+      const id = getDeviceId();
+      if (!id) return { ok: false, device: null, error: "network", status: 0 };
+      const prevSunColor = device?.sunColor;
+      // Optimistic: the chip moves now, the server catches up.
+      setDevice((d) => (d ? { ...d, sunColor: { ...d.sunColor, ...patch } } : d));
+      setLoading(true);
+      const res = await plusApi.saveDevice(id, {
+        ...baseFields(),
+        ...(patch.minBand !== undefined ? { sunColorMinBand: patch.minBand } : {}),
+        ...(patch.leadMin !== undefined ? { sunColorLeadMin: patch.leadMin } : {}),
+      });
+      setLoading(false);
+      if (res.ok && res.device) {
+        applyDevice(res.device);
+        store.clearPendingSunColor();
+      } else if (isRetryableSaveError(res)) {
+        // The server never confirmed it: put the chip back to what it showed
+        // before this tap and queue the intent so the retry loop lands it.
+        if (prevSunColor) setDevice((d) => (d ? { ...d, sunColor: prevSunColor } : d));
+        store.queuePendingSunColor(patch);
+      } else {
+        // The server rejected it outright — revert and drop it from the queue.
+        if (prevSunColor) setDevice((d) => (d ? { ...d, sunColor: prevSunColor } : d));
+        store.clearPendingSunColor();
+      }
+      return res;
+    },
+    [applyDevice, device],
   );
 
   const startTrial = useCallback(async (): Promise<PlusResult> => {
@@ -1024,6 +1073,7 @@ export function usePlus(): PlusState {
     saveProfile,
     commitProfile,
     savePrefs,
+    saveSunColorPrefs,
     setHome,
     savePreview,
     arm,

@@ -36,6 +36,7 @@ function device(over: Partial<DeviceRecord> = {}): DeviceRecord {
     grants: { storeUntil: null, codeUntil: null, trialUntil: null },
     trialUsed: false,
     previewSeen: false,
+    sunColor: { minBand: "vivid", leadMin: 60 },
     presence: null,
     ...over,
   };

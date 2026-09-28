@@ -101,7 +101,7 @@ export async function getD1(): Promise<D1Like | null> {
 const DEVICE_COLS =
   "id, platform, push_token, tz, home_slug, profile_json, prefs_json, plan, " +
   "entitlement_until, store_until, code_until, trial_until, trial_used, preview_seen, " +
-  "sent_json, created_at, updated_at";
+  "sent_json, created_at, updated_at, sun_color_min_band, sun_color_lead_min";
 
 /** `beach_hourly` columns, in the exact order both the INSERT and the
  *  positional binds below use — see migrations/0006_history.sql. */
@@ -145,7 +145,9 @@ const MAX_INSERT = "MAX(COALESCE(?8,0), COALESCE(?9,0), COALESCE(?10,0))";
 /**
  * One atomic upsert. Every column is either a plain bound value (?1..?15,
  * ?16 = now) or, for a field the caller can leave untouched, guarded by a
- * "present" flag (?17..?27): `CASE WHEN <present> THEN <new value> ELSE
+ * "present" flag (?17..?27, and ?28/?29 with their own flags ?30/?31 for the
+ * sun-color settings — appended rather than interleaved, see the comment
+ * above `UPSERT_DEVICE`): `CASE WHEN <present> THEN <new value> ELSE
  * <current column> END`. `plan` and `entitlement_until` are never taken from
  * the caller — they are always MAX(store, code, trial), recomputed from
  * whichever of the three this write actually touches (#4). `prefs_json` is
@@ -155,8 +157,13 @@ const MAX_INSERT = "MAX(COALESCE(?8,0), COALESCE(?9,0), COALESCE(?10,0))";
 const UPSERT_COLS =
   "id, platform, push_token, tz, home_slug, profile_json, prefs_json, " +
   "store_until, code_until, trial_until, plan, entitlement_until, trial_used, preview_seen, " +
-  "sent_json, created_at, updated_at";
+  "sent_json, created_at, updated_at, sun_color_min_band, sun_color_lead_min";
 
+// `sun_color_min_band`/`sun_color_lead_min` (migrations/0012_sun_color_prefs.sql)
+// are appended as ?28/?29 (values) and ?30/?31 (present flags) — new bind
+// positions at the END, rather than renumbering any of ?1..?27 above, so
+// every existing reference in this 27-parameter statement stays exactly as
+// it was.
 const UPSERT_DEVICE = `
 INSERT INTO devices (${UPSERT_COLS})
 VALUES (
@@ -166,7 +173,8 @@ VALUES (
   CASE WHEN ${MAX_INSERT} > ?16 THEN 'plus' ELSE 'free' END,
   CASE WHEN ${MAX_INSERT} = 0 THEN NULL ELSE ${MAX_INSERT} END,
   ?11, ?12,
-  ?13, ?14, ?15
+  ?13, ?14, ?15,
+  ?28, ?29
 )
 ON CONFLICT(id) DO UPDATE SET
   platform = CASE WHEN ?17 THEN ?2 ELSE devices.platform END,
@@ -183,10 +191,12 @@ ON CONFLICT(id) DO UPDATE SET
   trial_used = CASE WHEN ?25 THEN ?11 ELSE devices.trial_used END,
   preview_seen = CASE WHEN ?26 THEN ?12 ELSE devices.preview_seen END,
   sent_json = CASE WHEN ?27 THEN ?13 ELSE devices.sent_json END,
+  sun_color_min_band = CASE WHEN ?30 THEN ?28 ELSE devices.sun_color_min_band END,
+  sun_color_lead_min = CASE WHEN ?31 THEN ?29 ELSE devices.sun_color_lead_min END,
   updated_at = ?15
 `;
 
-/** DevicePatch → the 27 positional binds `UPSERT_DEVICE` expects. */
+/** DevicePatch → the 31 positional binds `UPSERT_DEVICE` expects. */
 function upsertBinds(id: string, patch: Record<string, unknown>, now: number): unknown[] {
   const has = (k: string) => Object.prototype.hasOwnProperty.call(patch, k) && patch[k] !== undefined;
   const val = <T,>(k: string, transform: (v: unknown) => T = (v) => v as T): T | null =>
@@ -228,6 +238,10 @@ function upsertBinds(id: string, patch: Record<string, unknown>, now: number): u
     has("trialUsed") ? 1 : 0, // 25
     has("previewSeen") ? 1 : 0, // 26
     has("sent") ? 1 : 0, // 27
+    val("sunColorMinBand"), // 28
+    val("sunColorLeadMin"), // 29
+    has("sunColorMinBand") ? 1 : 0, // 30
+    has("sunColorLeadMin") ? 1 : 0, // 31
   ];
 }
 

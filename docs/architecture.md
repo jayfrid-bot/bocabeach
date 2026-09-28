@@ -362,6 +362,13 @@ flowchart TD
   CUROUTE --> SEND
   CUROUTE -->|"completeComingUp / releaseComingUp"| CUD
 
+  %% Sunrise/sunset color alert — Plus, opt-in, standalone only (no
+  %% coalescing with the digest or "turned Excellent": its own short
+  %% lead-time window, not the 8 AM run those two share).
+  PIPE2 -.->|"same res already fetched<br/>for the digest/Excellent check, no extra call"| SUNCOLOR[lib/alerts/sunColor.ts<br/>sunColorDecision over lib/sunAlert.ts's predictNextSunEvent:<br/>score &ge; device's cutoff (Great 70 / Amazing 90) AND<br/>now in [event&minus;lead, event&minus;lead+10min) AND event &le;4h away]
+  SUNCOLOR --> CLAIM
+  SUNCOLOR -->|"alert_log key sun-color:&lt;kind&gt;:&lt;eventIso date-hour&gt;,<br/>once per event, ever"| D1
+
   %% Beach Session Live Activity (docs/LIVE_ACTIVITY_PLAN.md Phase 3) — one
   %% evaluation, two independent fan-outs from the SAME armed-session loop.
   ATBEACH -->|"listActiveLiveActivities + due-end sweep<br/>(expired presence or expires_at)"| D1
@@ -385,6 +392,30 @@ out exactly once, by whichever of three paths applies first: appended to the
 morning digest body, coalesced into a same-run "turned Excellent" push, or,
 if neither is due, sent standalone — a device is never sent two pushes for
 the same pick.
+
+**The sunrise/sunset color alert is opt-in, standalone-only, and off by
+default**, same as coming-up. `lib/sunAlert.ts`'s `predictNextSunEvent`
+assembles the exact same inputs `components/SunQualityCard.tsx` uses for its
+own render (golden-window sun times, the nearest hourly cloud/humidity
+reading, current air quality, a fresh-and-imminent satellite horizon
+reading) off the SAME conditions build the digest/Excellent check already
+fetched for that beach — no extra outbound call. `lib/alerts/sunColor.ts`'s
+`sunColorDecision` sends only when the predicted score clears the device's
+own threshold (Great-or-better, score &ge; 70, or Amazing-only, score &ge;
+90 — `lib/sunQuality.ts`'s own band cutoffs) AND `now` falls inside
+`[event − lead, event − lead + 10 min)`, where `lead` is the device's own
+30/60/120/180-minute choice — AND the predicted event is no more than 4
+hours away (a farther-out forecast isn't trustworthy enough to alert on).
+Both settings live on the `devices` row itself (`sun_color_min_band`/
+`sun_color_lead_min`, migrations/0012), not in `prefs_json`, since that blob
+is typed as a strict boolean map. Dedup is the plain `alert_log` mechanism
+every other home-tier alert uses — `sun-color:<kind>:<eventIso date-hour>`,
+once per event, ever, even if the score later climbs back over the cutoff.
+`slugConditionsNeed` (app/api/push/run/route.ts) marks a beach `candidate`
+whenever a sun-color subscriber's next event is 0-4h away (computed from
+`lib/sources/sun.ts`'s pure `computeSunTimes`, no fetch) and `due` only once
+inside the actual send window, so it is never starved by the beach-selection
+cap.
 
 **Grant-source model.** `devices` keeps three independent expiries —
 `store_until` (a purchase, mirrored from RevenueCat), `code_until` (an

@@ -199,6 +199,50 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
     });
   });
 
+  // --- sun-color alert settings (migrations/0012_sun_color_prefs.sql) ------
+  // Two plain nullable columns, appended to UPSERT_DEVICE's positional binds
+  // (?28/?29, present-flags ?30/?31) without renumbering ?1..?27 — this is
+  // the real SQL text against real SQLite, so a mistake in that append would
+  // fail here even though the in-memory store (a plain JS object patch)
+  // could never catch it.
+  describe("sun-color settings (real SQL, not the in-memory model)", () => {
+    it("a brand-new row reads back the defaults (NULL columns)", async () => {
+      await store.upsertDevice("sc1", {});
+      const dev = await store.getDevice("sc1");
+      expect(dev?.sunColor).toEqual({ minBand: "vivid", leadMin: 60 });
+    });
+
+    it("persists a chosen threshold and lead time", async () => {
+      await store.upsertDevice("sc2", { sunColorMinBand: "epic", sunColorLeadMin: 180 });
+      const dev = await store.getDevice("sc2");
+      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 180 });
+    });
+
+    it("an unrelated write afterward leaves the sun-color columns untouched", async () => {
+      await store.upsertDevice("sc3", { sunColorMinBand: "epic", sunColorLeadMin: 30 });
+      await store.upsertDevice("sc3", { tz: "America/New_York" });
+      const dev = await store.getDevice("sc3");
+      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 30 });
+    });
+
+    it("two concurrent writes to different sun-color fields both persist (the ?30/?31 present-flag guards)", async () => {
+      await store.upsertDevice("sc4", {});
+      await Promise.all([
+        store.upsertDevice("sc4", { sunColorMinBand: "epic" }),
+        store.upsertDevice("sc4", { sunColorLeadMin: 120 }),
+      ]);
+      const dev = await store.getDevice("sc4");
+      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 120 });
+    });
+
+    it("null resets a column back to NULL (the default), a real UPDATE ... = NULL, not a no-op", async () => {
+      await store.upsertDevice("sc5", { sunColorMinBand: "epic", sunColorLeadMin: 180 });
+      await store.upsertDevice("sc5", { sunColorMinBand: null, sunColorLeadMin: null });
+      const dev = await store.getDevice("sc5");
+      expect(dev?.sunColor).toEqual({ minBand: "vivid", leadMin: 60 });
+    });
+  });
+
   // --- #4: grant sources are independent, and only ever move access up -----
   describe("independent grant sources", () => {
     it("a 365-day code grant survives restoring a 30-day store subscription", async () => {

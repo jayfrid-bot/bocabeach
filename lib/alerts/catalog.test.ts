@@ -99,10 +99,10 @@ describe("buildAlert — repeatMs (item 5: rip pushes once per CAP id, not every
 });
 
 describe("buildAlert — coming-up (SKY_EVENTS_PLAN.md §10)", () => {
-  it("is opt-in: the only ALERT_KEY defaultPrefs() starts off", () => {
+  it("is opt-in: one of the only two ALERT_KEYs defaultPrefs() starts off (the other is sun-color)", () => {
     const prefs = defaultPrefs();
     for (const key of ALERT_KEYS) {
-      if (key === "coming-up") expect(prefs[key]).toBe(false);
+      if (key === "coming-up" || key === "sun-color") expect(prefs[key]).toBe(false);
       else expect(prefs[key]).toBe(true);
     }
   });

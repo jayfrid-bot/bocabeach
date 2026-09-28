@@ -59,6 +59,10 @@ export const ALERT_LABELS: Record<AlertKey, string> = {
   // Opt-in (SKY_EVENTS_PLAN.md §10) — the only key defaultPrefs() starts
   // off, so its label says up front how often it actually fires.
   "coming-up": "Coming up — tides, moon, meteors and launches (a few a month)",
+  // Opt-in, same reason — the label says what it's for; the threshold and
+  // lead-time choices live in their own rows, shown only while this is on
+  // (components/plus/PlusSettingsSheet.tsx).
+  "sun-color": "Great sunrise or sunset coming",
 };
 
 /** At-the-beach alerts first, then the daily ones. */
@@ -68,7 +72,7 @@ export const ALERT_GROUPS: { title: string; keys: AlertKey[] }[] = [
     keys: ["lightning", "thunder", "severe", "rain-soon", "rain-clearing", "wind-gust", "flag", "rip", "water-advisory"],
   },
   { title: "Every day", keys: ["morning", "score-excellent"] },
-  { title: "Sky and sea events", keys: ["coming-up"] },
+  { title: "Sky and sea events", keys: ["coming-up", "sun-color"] },
 ];
 
 /** Every alert key is in exactly one group — guards a future key being added

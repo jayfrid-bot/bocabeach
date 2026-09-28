@@ -14,10 +14,12 @@ describe("coming-up settings label", () => {
     expect(ALERT_LABELS["coming-up"]).toMatch(/month/i);
   });
 
-  it("is grouped on its own, separate from the daily 'Every day' group", () => {
+  it("is grouped with the other sky/sea events, separate from the daily 'Every day' group", () => {
     const group = ALERT_GROUPS.find((g) => g.keys.includes("coming-up"));
     expect(group?.title).toBe("Sky and sea events");
-    expect(group?.keys).toEqual(["coming-up"]);
+    // sun-color joined this group later — same "opt-in, sky-related" home,
+    // not the daily group.
+    expect(group?.keys).toEqual(["coming-up", "sun-color"]);
   });
 
   it("every ALERT_KEY (including coming-up) is homed in exactly one group", () => {

@@ -6,10 +6,19 @@
 // server (no localStorage there → the null/no-op path) AND unit-testable in the
 // node test environment by assigning a fake `globalThis.localStorage`.
 
-import { ALERT_KEYS, type AlertPrefs } from "@/lib/db/types";
+import { ALERT_KEYS, SUN_COLOR_LEAD_OPTIONS, type AlertPrefs, type SunColorMinBand } from "@/lib/db/types";
 import { isProfileId } from "@/lib/profile/presets";
 import type { AdvancedProfile, ScoreProfile, SubKey } from "@/lib/profile/types";
-import { clearField, clearPrefsKeys, isEmpty as pendingIsEmpty, mergeHomeSlug, mergePrefs, mergeProfile, mergePurchaseSync } from "@/lib/plus/pendingWrites";
+import {
+  clearField,
+  clearPrefsKeys,
+  isEmpty as pendingIsEmpty,
+  mergeHomeSlug,
+  mergePrefs,
+  mergeProfile,
+  mergePurchaseSync,
+  mergeSunColor,
+} from "@/lib/plus/pendingWrites";
 import type { LiveActivityDismissal, OffSuppression, PendingWrites, PlusCache, PreviewRecord } from "@/lib/plus/types";
 
 export const PLUS_KEYS = {
@@ -256,6 +265,15 @@ function cleanPendingWrites(v: unknown): PendingWrites {
     if (Object.keys(prefs).length) out.prefs = prefs;
   }
   if (raw.purchaseSync === true) out.purchaseSync = true;
+  if (raw.sunColor && typeof raw.sunColor === "object" && !Array.isArray(raw.sunColor)) {
+    const sc = raw.sunColor as Record<string, unknown>;
+    const patch: { minBand?: SunColorMinBand; leadMin?: number } = {};
+    if (sc.minBand === "vivid" || sc.minBand === "epic") patch.minBand = sc.minBand;
+    if (typeof sc.leadMin === "number" && (SUN_COLOR_LEAD_OPTIONS as readonly number[]).includes(sc.leadMin)) {
+      patch.leadMin = sc.leadMin;
+    }
+    if (Object.keys(patch).length) out.sunColor = patch;
+  }
   return out;
 }
 
@@ -293,6 +311,15 @@ export function queuePendingPurchaseSync(): void {
 
 export function clearPendingPurchaseSync(): void {
   writePendingRaw(clearField(readPending(), "purchaseSync"));
+}
+
+/** Merge a sun-color settings edit into what is pending, per field. */
+export function queuePendingSunColor(patch: { minBand?: SunColorMinBand; leadMin?: number }): void {
+  writePendingRaw(mergeSunColor(readPending(), patch));
+}
+
+export function clearPendingSunColor(): void {
+  writePendingRaw(clearField(readPending(), "sunColor"));
 }
 
 export function clearPendingProfile(): void {

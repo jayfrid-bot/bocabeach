@@ -7,7 +7,7 @@
 // decides WHEN to flush (foreground, online, mount) and calls the storage
 // wrappers.
 
-import type { AlertPrefs, PendingWrites } from "@/lib/plus/types";
+import type { AlertPrefs, PendingWrites, SunColorMinBand } from "@/lib/plus/types";
 import type { ScoreProfile } from "@/lib/profile/types";
 
 export type { PendingWrites };
@@ -38,6 +38,16 @@ export function mergePurchaseSync(pending: PendingWrites): PendingWrites {
   return { ...pending, purchaseSync: true };
 }
 
+/** Fold a sun-color settings edit into the queue per FIELD — mirrors
+ *  `mergePrefs`: changing the threshold then the lead time while offline
+ *  queues both, rather than the second edit discarding the first. */
+export function mergeSunColor(
+  pending: PendingWrites,
+  patch: { minBand?: SunColorMinBand; leadMin?: number },
+): PendingWrites {
+  return { ...pending, sunColor: { ...(pending.sunColor ?? {}), ...patch } };
+}
+
 /** Drop one kind of write from the queue entirely — used once it is
  *  confirmed saved, or once the server has rejected it outright (a 4xx,
  *  where retrying would only repeat the same rejected request). */
@@ -65,7 +75,8 @@ export function isEmpty(pending: PendingWrites): boolean {
     !pending.profile &&
     !pending.homeSlug &&
     !(pending.prefs && Object.keys(pending.prefs).length) &&
-    !pending.purchaseSync
+    !pending.purchaseSync &&
+    !(pending.sunColor && Object.keys(pending.sunColor).length)
   );
 }
 

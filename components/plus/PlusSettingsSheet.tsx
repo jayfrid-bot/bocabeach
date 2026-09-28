@@ -12,8 +12,10 @@ import type {
   SubKey,
   WaveMode,
 } from "@/lib/profile/types";
-import type { AlertKey } from "@/lib/db/types";
+import { SUN_COLOR_LEAD_OPTIONS, type AlertKey, type SunColorMinBand } from "@/lib/db/types";
 import { ALERT_GROUPS, ALERT_LABELS, FACTOR_LABELS, FACTOR_ORDER, MULTIPLIER_STOPS } from "@/lib/plus/labels";
+import { computeSunTimes } from "@/lib/sources/sun";
+import { fmtTime } from "@/lib/format";
 import { plusErrorMessage } from "@/lib/plus/api";
 import { billingAvailable } from "@/lib/plus/billing";
 import type { PlusState } from "@/lib/plus/client";
@@ -126,6 +128,12 @@ export function PlusSettingsSheet({
     // A retryable failure already reverted the toggle and queued the retry —
     // the per-row "Unsaved — retrying" note covers it, so only a genuine
     // rejection gets the sheet-wide error line.
+    if (!res.ok && !isRetryableSaveError(res)) setError(plusErrorMessage(res.error));
+  };
+
+  const changeSunColor = async (patch: { minBand?: SunColorMinBand; leadMin?: number }) => {
+    setError(null);
+    const res = await plus.saveSunColorPrefs(patch);
     if (!res.ok && !isRetryableSaveError(res)) setError(plusErrorMessage(res.error));
   };
 
@@ -377,6 +385,16 @@ export function PlusSettingsSheet({
                   />
                 ))}
               </div>
+              {/* The sun-color alert's own two settings — shown only while
+                  its toggle is on (Requirement #2). */}
+              {group.keys.includes("sun-color") && plus.prefs["sun-color"] ? (
+                <SunColorSettings
+                  sunColor={plus.device?.sunColor ?? null}
+                  home={beaches.find((b) => b.slug === home) ?? null}
+                  disabled={!plus.deviceLoaded}
+                  onChange={(patch) => void changeSunColor(patch)}
+                />
+              ) : null}
             </div>
           ))}
         </div>
@@ -591,6 +609,101 @@ function AlertToggle({
           Unsaved — retrying…
         </p>
       ) : null}
+    </div>
+  );
+}
+
+const SUN_COLOR_THRESHOLD_CHOICES: { value: SunColorMinBand; label: string }[] = [
+  { value: "vivid", label: "Great or better" },
+  { value: "epic", label: "Amazing only" },
+];
+
+const SUN_COLOR_LEAD_LABELS: Record<(typeof SUN_COLOR_LEAD_OPTIONS)[number], string> = {
+  30: "30 min",
+  60: "1 h",
+  120: "2 h",
+  180: "3 h",
+};
+
+/** Today's sunrise for a beach, minus a lead time, formatted for the "we'd
+ *  wake you about…" example line — purely local (computeSunTimes is pure,
+ *  no fetch), so it updates instantly as the chips change. Null when the sun
+ *  never rises there today (polar edge case) or there's no home beach yet. */
+function exampleWakeTime(
+  home: { lat: number; lon: number; timezone: string } | null,
+  leadMin: number,
+): string | null {
+  if (!home) return null;
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: home.timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+  const t = computeSunTimes(home.lat, home.lon, get("year"), get("month"), get("day"));
+  if (!t.sunrise) return null;
+  const alertAt = new Date(t.sunrise.getTime() - leadMin * 60_000);
+  return `we'd wake you about ${fmtTime(alertAt.toISOString(), home.timezone)} for a ${fmtTime(t.sunrise.toISOString(), home.timezone)} sunrise`;
+}
+
+/** The sun-color alert's own two settings — threshold and lead time — shown
+ *  only while its toggle is on (Requirement #2). The lead-time example line
+ *  makes an early lead a conscious choice ("a 3 h lead on a 7:00 AM sunrise
+ *  means 4:00 AM" per the spec), rather than a surprise the first time it
+ *  actually fires. */
+function SunColorSettings({
+  sunColor,
+  home,
+  disabled,
+  onChange,
+}: {
+  sunColor: { minBand: SunColorMinBand; leadMin: number } | null;
+  home: { lat: number; lon: number; timezone: string } | null;
+  disabled?: boolean;
+  onChange: (patch: { minBand?: SunColorMinBand; leadMin?: number }) => void;
+}) {
+  const minBand = sunColor?.minBand ?? "vivid";
+  const leadMin = sunColor?.leadMin ?? 60;
+  const example = exampleWakeTime(home, leadMin);
+  return (
+    <div className="ml-1 mt-2 space-y-3 border-l-2 border-slate-900/10 pl-3 dark:border-white/10">
+      <div>
+        <p className="text-xs font-medium text-slate-600 dark:text-slate-300">Which quality</p>
+        <div className="mt-1 flex flex-wrap gap-2">
+          {SUN_COLOR_THRESHOLD_CHOICES.map((c) => (
+            <Chip
+              key={c.value}
+              selected={minBand === c.value}
+              disabled={disabled}
+              onClick={() => onChange({ minBand: c.value })}
+            >
+              {c.label}
+            </Chip>
+          ))}
+        </div>
+      </div>
+      <div>
+        <p className="text-xs font-medium text-slate-600 dark:text-slate-300">How long before</p>
+        <div className="mt-1 flex flex-wrap gap-2">
+          {SUN_COLOR_LEAD_OPTIONS.map((v) => (
+            <Chip
+              key={v}
+              selected={leadMin === v}
+              disabled={disabled}
+              onClick={() => onChange({ leadMin: v })}
+            >
+              {SUN_COLOR_LEAD_LABELS[v]}
+            </Chip>
+          ))}
+        </div>
+        {example ? (
+          <p className="mt-1.5 text-xs leading-snug text-slate-500 dark:text-slate-400">
+            For example, {example}.
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }

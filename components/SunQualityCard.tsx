@@ -26,6 +26,7 @@ import {
   type SunEventTime,
 } from "@/lib/sunQuality";
 import { FlipCard, NerdBack } from "@/components/FlipCard";
+import { resolveSunHorizon } from "@/lib/sunAlert";
 
 // Gradient stops line up with lib/sunQuality.ts's BAND_CUTOFFS (dud <20,
 // plain <45, good <70, vivid <90, epic >=90) — same idiom as
@@ -36,11 +37,6 @@ const GRADIENT =
 /** The golden window itself, drawn on the timeline track: amber → orange → rose,
  *  the light the window is named for. No illustration, just the segment. */
 const GOLDEN_SEGMENT = "linear-gradient(to right, #fbbf24, #fb923c, #fb7185)";
-
-/** How close (minutes) the event must be for a "right now" satellite beam-path
- *  reading to speak for it — a live cloud observation can't vouch for a sunrise
- *  hours away. Aligns with nearestHourlyPoint's forecast tolerance. */
-const BEAM_IMMINENT_MINUTES = 90;
 
 export interface SunQualityCardProps {
   /** Current instant; injectable for tests/SSR determinism. Defaults to now. */
@@ -99,19 +95,16 @@ function cloudLine(cloud: CloudMix | undefined): string {
  * "ok" (not stale), and the event is within BEAM_IMMINENT_MINUTES of `now`
  * (deterministic: `now` is the server-pinned snapshot time, so SSR and hydration
  * agree). Beam-path cloud is preferred; overhead cloudPct is the honest fallback.
+ * Delegates to lib/sunAlert.ts's `resolveSunHorizon` — the "sun-color" push
+ * alert reads the exact same rule off the exact same function, so the card
+ * and the alert can never quietly disagree about what counts as "fresh".
  */
 function resolveHorizon(
   goes: SunQualityCardProps["goesCloud"],
   eventIso: string,
   now: Date,
 ): HorizonPath | undefined {
-  if (!goes || goes.status !== "ok") return undefined;
-  const pct = goes.beamCloudPct ?? goes.cloudPct;
-  if (pct == null) return undefined;
-  const dt = Math.abs(Date.parse(eventIso) - now.getTime());
-  if (!Number.isFinite(dt)) return undefined;
-  const fresh = dt <= BEAM_IMMINENT_MINUTES * 60_000;
-  return { cloudPct: pct, fresh };
+  return resolveSunHorizon(goes, eventIso, now.getTime());
 }
 
 /** Builds the flip-card back's NerdInfo. When the richer factor model ran, the

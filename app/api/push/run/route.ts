@@ -43,6 +43,8 @@ import {
   readSkyAlertCandidates,
   selectComingUpEvent,
 } from "@/lib/alerts/comingUp";
+import { predictNextSunEvent } from "@/lib/sunAlert";
+import { sunColorDecision, sunColorSlugNeed } from "@/lib/alerts/sunColor";
 import {
   SubrequestBudget,
   pushRunSubrequestBudget,
@@ -370,6 +372,8 @@ export async function POST(req: Request): Promise<Response> {
   /** Standalone coming-up pushes only (SKY_EVENTS_PLAN.md §10) — an
    *  appended one is counted inside `morningSent` (it rides the same push). */
   let comingUpSent = 0;
+  /** The opt-in sun-color alert — always standalone, never coalesced. */
+  let sunColorSent = 0;
   let pruned = 0;
   /** Devices the home loop could not finish. The run carries on to the next. */
   let errors = 0;
@@ -450,6 +454,15 @@ export async function POST(req: Request): Promise<Response> {
         if (sub.device.prefs["score-excellent"] !== false && isDaylightAt(loc, now, date)) {
           const already = await store.lastAlert(sub.device.id, `score-excellent:${date}`);
           if (!already) candidate = true;
+        }
+        // Sun-color (opt-in): candidate whenever the next sun event is 0-4h
+        // away (computed WITHOUT fetching conditions — computeSunTimes is
+        // pure), due once inside the actual send window so it's never
+        // starved by the cap below.
+        if (sub.device.prefs["sun-color"] === true) {
+          const need = sunColorSlugNeed(loc, sub.device, nowMs);
+          if (need.due) return { due: true, candidate: true };
+          if (need.candidate) candidate = true;
         }
       } catch {
         return { due: true, candidate: true }; // fail open — let the real error surface (and count) below
@@ -538,6 +551,11 @@ export async function POST(req: Request): Promise<Response> {
         // event must still be alert-eligible even if the card had to drop
         // it).
         const skyAlertCandidates = readSkyAlertCandidates(res.snapshot);
+        // Computed once per beach (like `skyAlertCandidates` above) — pure,
+        // off the SAME `res` this beach's group already fetched (Requirement
+        // #4: no extra outbound call), reused by every sun-color subscriber
+        // in `group` below.
+        const sunColorPrediction = predictNextSunEvent(res, nowMs);
 
         for (const sub of group) {
           // Every alert is Plus. A free device gets nothing here, and nothing is
@@ -763,6 +781,44 @@ export async function POST(req: Request): Promise<Response> {
               }
             }
 
+            // --- Sun-color alert (opt-in) — always standalone, no coalescing
+            // with the digest or "turned Excellent" (unlike coming-up, it
+            // fires on its own short lead-time window, not the 8 AM run those
+            // two share). The decision itself — cutoff, send window,
+            // 4h-trust gate, dedupe key — lives entirely in the pure
+            // `sunColorDecision` (lib/alerts/sunColor.ts); this block only
+            // does the same claim/send/mark dance every other standalone
+            // alert here does (mirrors "turned Excellent" above).
+            const sunColor = sunColorDecision({
+              device: sub.device,
+              prediction: sunColorPrediction,
+              beachName: loc.name,
+              tz: loc.timezone,
+              nowMs,
+            });
+            if (sunColor && !(await store.lastAlert(sub.device.id, sunColor.dedupKey))) {
+              const sunColorClaimKey = sendClaimKey(sub.device.id, "sun-color", sunColor.dedupKey);
+              if (await store.claimSend(sunColorClaimKey, nowMs)) {
+                const sent = await sendOne({
+                  tag: sunColor.tag,
+                  title: sunColor.title,
+                  body: sunColor.body,
+                  url: `/${slug}`,
+                });
+                if (sent.dead) {
+                  await prune(store, sub).catch((e) => console.error("push: prune failed", e));
+                  pruned += 1;
+                } else if (sent.ok) {
+                  sunColorSent += 1;
+                  await store.markAlert(sub.device.id, sunColor.dedupKey, nowMs, sunColor.meta);
+                  await store.markSent(sunColorClaimKey, nowMs);
+                }
+                // A transient failure (`!sent.ok && !sent.dead`) leaves the
+                // claim/dedup state untouched — the next tick inside the
+                // same send window (or the abandoned-claim reclaim) retries.
+              }
+            }
+
             await persistSentState();
           } catch (e) {
             errors += 1;
@@ -810,13 +866,14 @@ export async function POST(req: Request): Promise<Response> {
     subscriptions: subs.length,
     ios: subs.filter((s) => s.platform === "ios").length,
     android: subs.filter((s) => s.platform === "android").length,
-    sent: morningSent + excellentSent + alerts.sent + comingUpSent,
+    sent: morningSent + excellentSent + alerts.sent + comingUpSent + sunColorSent,
     morning: morningSent,
     excellent: excellentSent,
     // Standalone coming-up pushes only (SKY_EVENTS_PLAN.md §10) — one
     // appended to the morning digest is already counted inside `morning`
     // above, since it rides that same send.
     comingUp: comingUpSent,
+    sunColor: sunColorSent,
     armed: alerts.devices,
     alerts,
     conditionsFetched,

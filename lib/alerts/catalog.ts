@@ -11,6 +11,7 @@
 
 import type { AlertKey } from "@/lib/db/types";
 import type { SkyAlertEventType, SkyRatingLabel } from "@/lib/skyEventsTypes";
+import type { SunEventKind } from "@/lib/sunQuality";
 
 /** Which run sends this alert. */
 export type AlertTier = "at-beach" | "home";
@@ -58,6 +59,16 @@ export const CATALOG: Record<AlertKey, AlertSpec> = {
   // entry is never a surprising exception in code that reads CATALOG
   // generically (e.g. AT_BEACH_KEYS' filter).
   "coming-up": { key: "coming-up", tier: "home", priority: 12, repeatMs: DEFAULT_REPEAT_MS, alarm: false },
+  // The sunrise/sunset color alert — opt-in, "home" in the same sense as the
+  // two entries above ("not gated to being physically at the beach," never
+  // routed into the morning digest). Sent standalone only (no coalescing
+  // with score-excellent/coming-up — it fires on its own short lead-time
+  // window, not the 8 AM run those two share). `repeatMs` is unused in
+  // practice: the real once-per-event rule is the `alert_log` key
+  // `lib/alerts/sunColor.ts` builds (`sun-color:<kind>:<eventIso date-hour>`),
+  // set to the default so this entry is never a surprising exception to code
+  // that reads CATALOG generically.
+  "sun-color": { key: "sun-color", tier: "home", priority: 13, repeatMs: DEFAULT_REPEAT_MS, alarm: false },
 };
 
 /** The alerts an armed device can receive, most urgent first. */
@@ -157,6 +168,31 @@ export type ComingUpSubject =
       whenLabel: string;
     };
 
+/**
+ * The one "sun-color" subject — a heads-up that the next sunrise/sunset at
+ * the device's home beach is predicted to be top-tier color. Every
+ * date/time clause is precomputed by the caller (the push route, which
+ * knows the beach's own IANA timezone), same convention as `ComingUpSubject`
+ * — this module stays formatting-free, assembling only already-worded
+ * sentences. `eventKey` is the exact `alert_log` dedup key
+ * `lib/alerts/sunColor.ts` builds (`sun-color:<kind>:<eventIso date-hour>`)
+ * — once per event, never re-sent even if the score later climbs.
+ */
+export interface SunColorSubject {
+  key: "sun-color";
+  kind: SunEventKind;
+  /** "Great" | "Amazing" — `lib/sunQuality.ts`'s band label for the event. */
+  bandLabel: string;
+  /** "sunset 6:40 PM" — beach-local, already formatted. */
+  eventLabel: string;
+  /** "6:30 PM" — the estimated peak-color instant, beach-local. */
+  peakLabel: string;
+  /** "about an hour" / "the next half hour" — already worded, from the
+   *  device's own lead-time setting. */
+  leadPhrase: string;
+  eventKey: string;
+}
+
 /** What the engine found. One variant per line of copy. */
 export type AlertSubject =
   | { key: "lightning"; nearestMi: number | null; escalated: boolean }
@@ -169,7 +205,8 @@ export type AlertSubject =
   | { key: "rip"; level: "high" | "moderate"; alertId?: string }
   | { key: "water-advisory" }
   | { key: "score-excellent"; score: number; dedupKey: string }
-  | ComingUpSubject;
+  | ComingUpSubject
+  | SunColorSubject;
 
 /** Every `ComingUpSubject["eventType"]` value is one of `SkyAlertEventType`
  *  (lib/skyEventsTypes.ts's canonical list) — this assignment only
@@ -238,7 +275,21 @@ function bodyFor(subject: AlertSubject, ctx: AlertContext): string {
       return `🏖️ Your beach day just turned Excellent at ${beach} — ${subject.score}/100.`;
     case "coming-up":
       return comingUpBody(subject);
+    case "sun-color":
+      return `${beach}, ${subject.eventLabel} · rated ${subject.bandLabel}. Peak color about ${subject.peakLabel}. It's in ${subject.leadPhrase} if you're going.`;
   }
+}
+
+/**
+ * The push title. Every other key reads as the plain beach name (an alarm
+ * prefixes it with ⚠️) — see `buildAlert` below. "sun-color" is the one
+ * deliberate exception (Requirement #1's copy spec): the rating and event
+ * lead, since that IS the news ("Great sunset coming"), and the beach name
+ * already opens the body.
+ */
+function titleFor(subject: AlertSubject, ctx: AlertContext, alarm: boolean): string {
+  if (subject.key === "sun-color") return `${subject.bandLabel} ${subject.kind} coming`;
+  return alarm ? `⚠️ ${ctx.beach}` : ctx.beach;
 }
 
 /** The five §10/§12 copy branches for the one "coming-up" subject, switched
@@ -314,6 +365,12 @@ function baseDedupKeyFor(subject: AlertSubject): string {
       // durable once-ever dedupe and this decision's own dedupKey can never
       // disagree about which event they mean.
       return subject.eventKey;
+    case "sun-color":
+      // `sun-color:<kind>:<eventIso date-hour>` (lib/alerts/sunColor.ts) —
+      // already the exact string this decision's caller passes to
+      // `store.lastAlert`/`store.markAlert`, so the once-per-event dedupe
+      // and this decision's own dedupKey can never disagree.
+      return subject.eventKey;
     default:
       return subject.key;
   }
@@ -344,6 +401,8 @@ function metaFor(subject: AlertSubject): Record<string, unknown> | undefined {
       return { score: subject.score };
     case "coming-up":
       return { eventType: subject.eventType, eventKey: subject.eventKey };
+    case "sun-color":
+      return { kind: subject.kind, bandLabel: subject.bandLabel, eventKey: subject.eventKey };
     default:
       return undefined;
   }
@@ -374,6 +433,11 @@ function metaFor(subject: AlertSubject): Record<string, unknown> | undefined {
 function collapseTag(subject: AlertSubject, ctx: AlertContext): string {
   if (subject.key === "score-excellent") return "excellent";
   if (subject.key === "coming-up") return "coming-up";
+  // Its own stable id, for the same reason "coming-up" has one: a
+  // standalone sun-color push must never share a collapse window with an
+  // unrelated same-day Excellent or coming-up push — whichever APNs
+  // delivered last would otherwise silently displace the other in the tray.
+  if (subject.key === "sun-color") return "sun-color";
   const spec = CATALOG[subject.key];
   if (spec.tier === "home") return "excellent"; // unreachable today; safe fallback
   return `safety:${subject.key}:${ctx.slug ?? ""}`;
@@ -404,7 +468,7 @@ export function buildAlert(subject: AlertSubject, ctx: AlertContext): AlertDecis
     dedupKey: dedupKeyFor(subject, ctx),
     priority: spec.priority,
     repeatMs: repeatMsFor(subject, spec),
-    title: alarm ? `⚠️ ${ctx.beach}` : ctx.beach,
+    title: titleFor(subject, ctx, alarm),
     tag: collapseTag(subject, ctx),
     body: bodyFor(subject, ctx),
     // A lightning escalation replaces the plain lightning alert in the same run,
