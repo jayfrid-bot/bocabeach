@@ -392,6 +392,7 @@ export function PlusSettingsSheet({
                   sunColor={plus.device?.sunColor ?? null}
                   home={beaches.find((b) => b.slug === home) ?? null}
                   disabled={!plus.deviceLoaded}
+                  pendingKeys={plus.pendingSunColorKeys}
                   onChange={(patch) => void changeSunColor(patch)}
                 />
               ) : null}
@@ -657,20 +658,26 @@ function SunColorSettings({
   sunColor,
   home,
   disabled,
+  pendingKeys,
   onChange,
 }: {
   sunColor: { minBand: SunColorMinBand; leadMin: number } | null;
   home: { lat: number; lon: number; timezone: string } | null;
   disabled?: boolean;
+  /** Fields with an edit that failed to save and is waiting to retry — same
+   *  idea as AlertToggle's own `pending` prop (Requirement item 6b). */
+  pendingKeys: ("minBand" | "leadMin")[];
   onChange: (patch: { minBand?: SunColorMinBand; leadMin?: number }) => void;
 }) {
   const minBand = sunColor?.minBand ?? "vivid";
   const leadMin = sunColor?.leadMin ?? 60;
   const example = exampleWakeTime(home, leadMin);
+  const minBandPending = pendingKeys.includes("minBand");
+  const leadMinPending = pendingKeys.includes("leadMin");
   return (
     <div className="ml-1 mt-2 space-y-3 border-l-2 border-slate-900/10 pl-3 dark:border-white/10">
-      <div>
-        <p className="text-xs font-medium text-slate-600 dark:text-slate-300">Which quality</p>
+      <fieldset>
+        <legend className="text-xs font-medium text-slate-600 dark:text-slate-300">Which quality</legend>
         <div className="mt-1 flex flex-wrap gap-2">
           {SUN_COLOR_THRESHOLD_CHOICES.map((c) => (
             <Chip
@@ -683,9 +690,12 @@ function SunColorSettings({
             </Chip>
           ))}
         </div>
-      </div>
-      <div>
-        <p className="text-xs font-medium text-slate-600 dark:text-slate-300">How long before</p>
+        {minBandPending ? (
+          <p className="mt-1 text-xs leading-snug text-amber-600 dark:text-amber-400">Unsaved — retrying…</p>
+        ) : null}
+      </fieldset>
+      <fieldset>
+        <legend className="text-xs font-medium text-slate-600 dark:text-slate-300">How long before</legend>
         <div className="mt-1 flex flex-wrap gap-2">
           {SUN_COLOR_LEAD_OPTIONS.map((v) => (
             <Chip
@@ -698,12 +708,15 @@ function SunColorSettings({
             </Chip>
           ))}
         </div>
+        {leadMinPending ? (
+          <p className="mt-1 text-xs leading-snug text-amber-600 dark:text-amber-400">Unsaved — retrying…</p>
+        ) : null}
         {example ? (
           <p className="mt-1.5 text-xs leading-snug text-slate-500 dark:text-slate-400">
             For example, {example}.
           </p>
         ) : null}
-      </div>
+      </fieldset>
     </div>
   );
 }

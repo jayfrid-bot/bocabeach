@@ -183,8 +183,8 @@ export interface SunColorSubject {
   kind: SunEventKind;
   /** "Great" | "Amazing" — `lib/sunQuality.ts`'s band label for the event. */
   bandLabel: string;
-  /** "sunset 6:40 PM" — beach-local, already formatted. */
-  eventLabel: string;
+  /** "6:40 PM" — the event's own beach-local time, already formatted. */
+  eventTimeLabel: string;
   /** "6:30 PM" — the estimated peak-color instant, beach-local. */
   peakLabel: string;
   /** "about an hour" / "the next half hour" — already worded, from the
@@ -275,8 +275,13 @@ function bodyFor(subject: AlertSubject, ctx: AlertContext): string {
       return `🏖️ Your beach day just turned Excellent at ${beach} — ${subject.score}/100.`;
     case "coming-up":
       return comingUpBody(subject);
-    case "sun-color":
-      return `${beach}, ${subject.eventLabel} · rated ${subject.bandLabel}. Peak color about ${subject.peakLabel}. It's in ${subject.leadPhrase} if you're going.`;
+    case "sun-color": {
+      // "Sunset 6:40 PM at Boca Raton, rated Great. Peak color about
+      // 6:30 PM. Sunset is about an hour away." — direct, no "if you're
+      // going" (Codex review item 6c).
+      const kindCap = subject.kind === "sunrise" ? "Sunrise" : "Sunset";
+      return `${kindCap} ${subject.eventTimeLabel} at ${beach}, rated ${subject.bandLabel}. Peak color about ${subject.peakLabel}. ${kindCap} is ${subject.leadPhrase} away.`;
+    }
   }
 }
 

@@ -12,6 +12,7 @@ import type { AdvancedProfile, ScoreProfile, SubKey } from "@/lib/profile/types"
 import {
   clearField,
   clearPrefsKeys,
+  clearSunColorIfMatch,
   isEmpty as pendingIsEmpty,
   mergeHomeSlug,
   mergePrefs,
@@ -320,6 +321,13 @@ export function queuePendingSunColor(patch: { minBand?: SunColorMinBand; leadMin
 
 export function clearPendingSunColor(): void {
   writePendingRaw(clearField(readPending(), "sunColor"));
+}
+
+/** Compare-and-clear: drop a sun-color field from the queue only if the
+ *  value queued for it still matches what just succeeded/was rejected — see
+ *  `clearSunColorIfMatch`'s doc. */
+export function clearPendingSunColorIfMatch(patch: { minBand?: SunColorMinBand; leadMin?: number }): void {
+  writePendingRaw(clearSunColorIfMatch(readPending(), patch));
 }
 
 export function clearPendingProfile(): void {

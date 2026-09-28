@@ -12,6 +12,9 @@ const ctl = vi.hoisted(() => ({
   conditions: null as unknown,
   fcmMessages: [] as { title: string; body: string }[],
   fcmSends: [] as string[],
+  /** How many of the NEXT sendFcm calls should fail transiently (ok:false,
+   *  not dead) — item 1's retry-inside-the-window test. */
+  failNext: 0,
 }));
 
 vi.mock("@/lib/push/nativeStore", async (importActual) => {
@@ -30,6 +33,10 @@ vi.mock("@/lib/push/fcm", () => ({
   getFcmAccessToken: async () => "access-token",
   isDeadFcmToken: () => false,
   sendFcm: async (_a: string, _p: string, token: string, msg: { title: string; body: string }) => {
+    if (ctl.failNext > 0) {
+      ctl.failNext -= 1;
+      return { ok: false }; // transient — never counted as sent
+    }
     ctl.fcmSends.push(token);
     ctl.fcmMessages.push({ title: msg.title, body: msg.body });
     return { ok: true };
@@ -37,7 +44,16 @@ vi.mock("@/lib/push/fcm", () => ({
 }));
 
 vi.mock("@/lib/conditions", () => ({
-  getConditions: async () => ctl.conditions,
+  // `generatedAt` is stamped fresh at CALL time (reading the test's own
+  // faked clock) rather than baked into the static `conditions()` fixture —
+  // predictNextSunEvent scores off the snapshot's own `generatedAt`, not
+  // the route's wall clock (Requirement item 4), so it must land on the
+  // same fixed 2026-09-02 day as SUNRISE_ISO/SUNSET_ISO for `nextSunEvent`
+  // to pick the right event at all.
+  getConditions: async () => {
+    const c = ctl.conditions as ConditionsResponse;
+    return { ...c, snapshot: { ...c.snapshot, generatedAt: new Date().toISOString() } };
+  },
 }));
 
 // boca-raton's real coordinates/timezone (config/locations.ts) — sunset
@@ -145,6 +161,7 @@ describe("POST /api/push/run — sun-color alert", () => {
     ctl.conditions = conditions();
     ctl.fcmMessages = [];
     ctl.fcmSends = [];
+    ctl.failNext = 0;
     process.env.CRON_SECRET = "test-cron-secret";
     delete process.env.PUSH_SAFETY_ALERTS;
   });
@@ -167,6 +184,35 @@ describe("POST /api/push/run — sun-color alert", () => {
 
     const store = await getStore();
     expect(await store.lastAlert(DEV, "sun-color:sunset:2026-09-02T23")).not.toBeNull();
+  });
+
+  it("Codex review item 1: a transient failure on tick 1 retries and succeeds on tick 2 (5 min later) — exactly one push, never two", async () => {
+    vi.useFakeTimers();
+    const windowStart = Date.parse(SUNSET_ISO) - 60 * 60_000;
+    vi.setSystemTime(new Date(windowStart));
+    await seedDevice();
+
+    // Tick 1 (+0): the send transport fails transiently.
+    ctl.failNext = 1;
+    const body1 = (await (await run()).json()) as Record<string, unknown>;
+    expect(body1.sunColor).toBe(0);
+    expect(ctl.fcmMessages).toEqual([]);
+    // The claim must have been released immediately (item 1's `releaseSend`)
+    // rather than sitting unclaimable until ABANDONED_CLAIM_MS (10 min) —
+    // proven by tick 2, 5 min later, succeeding at all.
+
+    // Tick 2 (+5 min) — still comfortably inside the 15-minute window.
+    vi.setSystemTime(new Date(windowStart + 5 * 60_000));
+    const body2 = (await (await run()).json()) as Record<string, unknown>;
+    expect(body2.sunColor).toBe(1);
+    expect(ctl.fcmMessages).toHaveLength(1);
+    expect(ctl.fcmMessages[0].title).toBe("Great sunset coming");
+
+    // A third tick (+10) must not send again.
+    vi.setSystemTime(new Date(windowStart + 10 * 60_000));
+    const body3 = (await (await run()).json()) as Record<string, unknown>;
+    expect(body3.sunColor).toBe(0);
+    expect(ctl.fcmMessages).toHaveLength(1);
   });
 
   it("never sends when sun-color is off (the default)", async () => {

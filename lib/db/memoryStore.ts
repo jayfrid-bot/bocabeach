@@ -406,6 +406,16 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       await save();
     },
 
+    async releaseSend(key) {
+      await load();
+      const existing = claims.get(key);
+      // Never undo a confirmed send — same guard d1Store's SQL WHERE clause
+      // enforces.
+      if (!existing || existing.sent_at != null) return;
+      claims.delete(key);
+      await save();
+    },
+
     async pruneSendClaims(now) {
       await load();
       let changed = false;

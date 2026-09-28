@@ -75,6 +75,12 @@ describe("sunColorDecision", () => {
     expect(d?.body).toContain("rated Great");
   });
 
+  it("Codex review item 6c: direct push copy — 'Sunset <time> at <beach>, rated <band>. Peak color about <time>. Sunset is <lead> away.'", () => {
+    const d = sunColorDecision(baseInput());
+    expect(d?.body).toBe("Sunset 7:35 PM at Boca Raton, rated Great. Peak color about 7:35 PM. Sunset is about an hour away.");
+    expect(d?.body).not.toMatch(/if you'?re going/i);
+  });
+
   it("never sends when the pref is off", () => {
     expect(sunColorDecision(baseInput({ device: device({ prefs: { ...defaultPrefs(), "sun-color": false } }) }))).toBeNull();
   });
@@ -208,12 +214,161 @@ describe("nextSunEventEstimate", () => {
 
 describe("sunColorSlugNeed", () => {
   it("neither due nor candidate when the pref is off", () => {
-    const need = sunColorSlugNeed(BOCA, device({ prefs: { ...defaultPrefs(), "sun-color": false } }), Date.now());
-    expect(need).toEqual({ due: false, candidate: false });
+    const need = sunColorSlugNeed(BOCA, device({ prefs: { ...defaultPrefs(), "sun-color": false } }), {}, Date.now());
+    expect(need).toEqual({ due: false, candidate: false, eventKey: null });
   });
 
   it("neither due nor candidate without a home beach", () => {
-    const need = sunColorSlugNeed(BOCA, device({ homeSlug: null }), Date.now());
-    expect(need).toEqual({ due: false, candidate: false });
+    const need = sunColorSlugNeed(BOCA, device({ homeSlug: null }), {}, Date.now());
+    expect(need).toEqual({ due: false, candidate: false, eventKey: null });
+  });
+
+  it("candidate (not yet due) when the next event is a few hours out", () => {
+    // ~3.5h before Boca Raton's early-September sunset (~7:35 PM ET) — well
+    // under the 4h horizon, but well outside the 60-min-lead send window.
+    const nowMs = Date.parse("2026-09-02T20:00:00Z"); // ~4 PM ET
+    const need = sunColorSlugNeed(BOCA, device(), {}, nowMs);
+    expect(need.candidate).toBe(true);
+    expect(need.due).toBe(false);
+    expect(need.eventKey).toMatch(/^sun-color:sunset:/);
+  });
+
+  it("due once inside the send window", () => {
+    // Find the real sunset first via the estimate, then ask right at its
+    // 60-min-lead window start.
+    const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T18:00:00Z"));
+    const nowMs = probe!.eventMs - 60 * 60_000;
+    const need = sunColorSlugNeed(BOCA, device(), {}, nowMs);
+    expect(need.due).toBe(true);
+    expect(need.candidate).toBe(true);
+  });
+
+  it("neither due nor candidate once sunColorCheckedKey already names this exact event (Codex review item 2)", () => {
+    const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T18:00:00Z"));
+    const nowMs = probe!.eventMs - 60 * 60_000; // inside the window
+    const eventKey = sunColorEventKey(probe!.kind, new Date(probe!.eventMs).toISOString());
+    const need = sunColorSlugNeed(BOCA, device(), { sunColorCheckedKey: eventKey }, nowMs);
+    expect(need).toEqual({ due: false, candidate: false, eventKey });
+  });
+
+  it("a DIFFERENT device's/older event's checked key does not suppress a genuinely new event", () => {
+    const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T18:00:00Z"));
+    const nowMs = probe!.eventMs - 60 * 60_000;
+    const need = sunColorSlugNeed(BOCA, device(), { sunColorCheckedKey: "sun-color:sunset:2020-01-01T00" }, nowMs);
+    expect(need.due).toBe(true);
+  });
+
+  it("Requirement item 5: the estimate side tolerates a few minutes' disagreement with the real snapshot at the window edges", () => {
+    const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T18:00:00Z"));
+    const exactWindowStart = probe!.eventMs - 60 * 60_000;
+    // 3 minutes before the estimate's own window technically opens — still
+    // `due` thanks to the tolerance, so a beach isn't dropped from the
+    // fetch list moments before the real (slightly earlier) snapshot event
+    // would have made it due.
+    const need = sunColorSlugNeed(BOCA, device(), {}, exactWindowStart - 3 * 60_000);
+    expect(need.due).toBe(true);
+  });
+
+  it("Requirement item 5: a candidate just past the 4h horizon (within tolerance) still counts", () => {
+    const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T00:00:00Z"));
+    // 5 minutes past the strict 4h cutoff — inside the +15min tolerance.
+    const nowMs = probe!.eventMs - SUN_COLOR_MAX_LEAD_MS - 5 * 60_000;
+    const need = sunColorSlugNeed(BOCA, device(), {}, nowMs);
+    expect(need.candidate).toBe(true);
+  });
+
+  it("Requirement item 5 — estimate 3 min EARLIER than the real snapshot: still due right up to the true (later) window's close", () => {
+    const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T18:00:00Z"));
+    const estMs = probe!.eventMs;
+    const snapMs = estMs + 3 * 60_000; // the true snapshot event lands 3 min AFTER the estimate
+    const leadMin = 60;
+    const trueWindowEnd = snapMs - leadMin * 60_000 + SUN_COLOR_SEND_WINDOW_MS;
+    const nowMs = trueWindowEnd - 1; // 3 min past where the NAIVE estimate-only window would already have closed
+    const dev = device({ sunColor: { minBand: "vivid", leadMin } });
+    expect(sunColorSlugNeed(BOCA, dev, {}, nowMs).due).toBe(true);
+    // And the real decision, fed the true snapshot event, genuinely has
+    // something to send at that exact instant — the tolerance bought the
+    // fetch that made this possible.
+    const decision = sunColorDecision(
+      baseInput({ device: dev, prediction: prediction({ eventIso: new Date(snapMs).toISOString() }), nowMs }),
+    );
+    expect(decision).not.toBeNull();
+  });
+
+  it("Requirement item 5 — estimate 3 min LATER than the real snapshot: due catches the true (earlier) window already open", () => {
+    const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T18:00:00Z"));
+    const estMs = probe!.eventMs;
+    const snapMs = estMs - 3 * 60_000; // the true snapshot event lands 3 min BEFORE the estimate
+    const leadMin = 60;
+    const trueWindowStart = snapMs - leadMin * 60_000; // 3 min before the naive estimate window would open
+    const dev = device({ sunColor: { minBand: "vivid", leadMin } });
+    expect(sunColorSlugNeed(BOCA, dev, {}, trueWindowStart).due).toBe(true);
+    const decision = sunColorDecision(
+      baseInput({
+        device: dev,
+        prediction: prediction({ eventIso: new Date(snapMs).toISOString() }),
+        nowMs: trueWindowStart,
+      }),
+    );
+    expect(decision).not.toBeNull();
+  });
+
+  it("Requirement item 5 — a stale snapshot describing yesterday's already-passed event must not send", () => {
+    const staleEventIso = "2026-09-01T23:00:00Z"; // yesterday's sunset, long past
+    const input = baseInput({
+      prediction: prediction({ eventIso: staleEventIso }),
+      nowMs: Date.parse("2026-09-02T18:00:00Z"), // today, well after that stale event
+    });
+    expect(sunColorDecision(input)).toBeNull();
+  });
+
+  it("Requirement item 5 — sunrise/sunset kind mismatch: a checked key for the WRONG kind never suppresses the real event", () => {
+    const sameHourIso = "2026-09-02T10:00:00Z";
+    expect(sunColorEventKey("sunrise", sameHourIso)).not.toBe(sunColorEventKey("sunset", sameHourIso));
+
+    const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T18:00:00Z")); // a sunset
+    expect(probe?.kind).toBe("sunset");
+    const wrongKindKey = sunColorEventKey("sunrise", new Date(probe!.eventMs).toISOString());
+    const need = sunColorSlugNeed(BOCA, device(), { sunColorCheckedKey: wrongKindKey }, probe!.eventMs - 60 * 60_000);
+    expect(need.due).toBe(true);
+  });
+});
+
+// --- Regression pins (Codex review item 6e): the window math on a DST day
+// and on a sunset that lands after midnight UTC. ---------------------------
+
+describe("sunColorDecision — DST and midnight-UTC regressions", () => {
+  it("a DST spring-forward day (America/New_York, 2026-03-08): the window still opens exactly `lead` minutes before sunset", () => {
+    // Boca Raton's real sunset on 2026-03-08 (EST->EDT transition day,
+    // 2 AM local) is a plain evening event, unaffected by the AM
+    // transition — pin it via the real computeSunTimes/nextSunEventEstimate
+    // pipeline so a future change to the solar math would fail this test
+    // rather than silently drifting.
+    const probe = nextSunEventEstimate(BOCA, Date.parse("2026-03-08T17:00:00Z"));
+    expect(probe?.kind).toBe("sunset");
+    const windowStart = probe!.eventMs - 60 * 60_000;
+    const input = baseInput({
+      prediction: prediction({ eventIso: new Date(probe!.eventMs).toISOString() }),
+      nowMs: windowStart,
+    });
+    expect(sunColorDecision(input)).not.toBeNull();
+    expect(sunColorDecision({ ...input, nowMs: windowStart - 60_000 })).toBeNull();
+  });
+
+  it("a sunrise whose UTC instant falls after midnight UTC (crossing the UTC date line) still keys/scores correctly", () => {
+    // A Pacific-timezone-style early sunrise landing after 00:00 UTC (e.g.
+    // Waikiki-like longitude) — the point is the ISO date component rolling
+    // over must not confuse the date-hour dedupe bucket or the window math.
+    const eventIso = "2026-09-03T02:15:00Z"; // 00:15 local at UTC-10-ish, well after midnight UTC
+    expect(sunColorEventKey("sunrise", eventIso)).toBe("sun-color:sunrise:2026-09-03T02");
+    const windowStart = Date.parse(eventIso) - 30 * 60_000;
+    const input = baseInput({
+      device: device({ sunColor: { minBand: "vivid", leadMin: 30 } }),
+      prediction: prediction({ kind: "sunrise", eventIso }),
+      nowMs: windowStart,
+    });
+    expect(sunColorDecision(input)).not.toBeNull();
+    // Still never fires once the event (early UTC morning) has passed.
+    expect(sunColorDecision({ ...input, nowMs: Date.parse(eventIso) + 60_000 })).toBeNull();
   });
 });

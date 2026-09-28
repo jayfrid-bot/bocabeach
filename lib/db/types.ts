@@ -126,6 +126,25 @@ export interface SentState {
    *  stay "due" for the WHOLE 8 AM hour, crowding out other beaches'
    *  morning digests too). */
   comingUpCheckedDate?: string;
+  /** The sun-color alert's own dedupe key (`sun-color:<kind>:<eventIso
+   *  date-hour>`, lib/alerts/sunColor.ts) for the LAST event this device
+   *  was evaluated for INSIDE its own send window — set regardless of
+   *  outcome (nothing eligible / already sent / confirmed sent or dead
+   *  token), EXCEPT on a transient send failure, where it is left
+   *  unset/stale so a later tick inside the SAME window retries (same
+   *  "regardless of outcome, except a retryable failure" rule
+   *  `comingUpCheckedDate` follows for its own alert). Unlike
+   *  `comingUpCheckedDate` (a calendar date, since coming-up evaluates once
+   *  a day), this is keyed to the specific EVENT, since a device can have a
+   *  sun-color opportunity at a different hour on a different day — a stale
+   *  key for a past event simply never matches a future one's key, so there
+   *  is nothing to separately "expire" here. Read by `slugConditionsNeed`
+   *  (app/api/push/run/route.ts) via `lib/alerts/sunColor.ts`'s
+   *  `sunColorSlugNeed`, so a beach stops being kept `due` once this run's
+   *  device has nothing further to send for this hour — otherwise a
+   *  cluster of same-timezone beaches could starve each other for the
+   *  whole send window. */
+  sunColorCheckedKey?: string;
 }
 
 /** One row of `devices`, exactly as D1 stores it. */

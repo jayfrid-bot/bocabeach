@@ -44,7 +44,7 @@ import {
   selectComingUpEvent,
 } from "@/lib/alerts/comingUp";
 import { predictNextSunEvent } from "@/lib/sunAlert";
-import { sunColorDecision, sunColorSlugNeed } from "@/lib/alerts/sunColor";
+import { sunColorDecision, sunColorEventKey, sunColorInWindow, sunColorSlugNeed } from "@/lib/alerts/sunColor";
 import {
   SubrequestBudget,
   pushRunSubrequestBudget,
@@ -455,14 +455,25 @@ export async function POST(req: Request): Promise<Response> {
           const already = await store.lastAlert(sub.device.id, `score-excellent:${date}`);
           if (!already) candidate = true;
         }
-        // Sun-color (opt-in): candidate whenever the next sun event is 0-4h
-        // away (computed WITHOUT fetching conditions — computeSunTimes is
-        // pure), due once inside the actual send window so it's never
-        // starved by the cap below.
+        // Sun-color (opt-in): candidate whenever the next sun event is
+        // within ~4h (computed WITHOUT fetching conditions —
+        // computeSunTimes is pure), due once inside the actual send window
+        // so it's never starved by the cap below. Neither flag is set once
+        // this device's own `sunColorCheckedKey` already names the SAME
+        // event — otherwise a device with nothing further to send this
+        // hour would keep its beach `due`/`candidate` for the whole window,
+        // starving other same-timezone beaches' round-robin slots (Codex
+        // review item 2). One `lastAlert` check, only when there's
+        // something to gain from it.
         if (sub.device.prefs["sun-color"] === true) {
-          const need = sunColorSlugNeed(loc, sub.device, nowMs);
-          if (need.due) return { due: true, candidate: true };
-          if (need.candidate) candidate = true;
+          const need = sunColorSlugNeed(loc, sub.device, sub.sent, nowMs);
+          if (need.eventKey && (need.due || need.candidate)) {
+            const already = await store.lastAlert(sub.device.id, need.eventKey);
+            if (!already) {
+              if (need.due) return { due: true, candidate: true };
+              candidate = true;
+            }
+          }
         }
       } catch {
         return { due: true, candidate: true }; // fail open — let the real error surface (and count) below
@@ -552,10 +563,17 @@ export async function POST(req: Request): Promise<Response> {
         // it).
         const skyAlertCandidates = readSkyAlertCandidates(res.snapshot);
         // Computed once per beach (like `skyAlertCandidates` above) — pure,
-        // off the SAME `res` this beach's group already fetched (Requirement
-        // #4: no extra outbound call), reused by every sun-color subscriber
-        // in `group` below.
-        const sunColorPrediction = predictNextSunEvent(res, nowMs);
+        // off the SAME `res` this beach's group already fetched (no extra
+        // outbound call), reused by every sun-color subscriber in `group`
+        // below. Scored against the SNAPSHOT'S OWN clock
+        // (`generatedAt`), not this run's wall clock (Codex review item 4)
+        // — that's what makes the GOES-freshness read (and the "next event"
+        // pick, on a served-from-cache snapshot) agree with what
+        // components/SunQualityCard.tsx would show for this exact
+        // snapshot. The send-WINDOW decision below still uses the real
+        // wall clock (`nowMs`) — whether to push right now is a different
+        // question from how the snapshot itself should be read.
+        const sunColorPrediction = predictNextSunEvent(res, Date.parse(res.snapshot.generatedAt));
 
         for (const sub of group) {
           // Every alert is Plus. A free device gets nothing here, and nothing is
@@ -600,6 +618,16 @@ export async function POST(req: Request): Promise<Response> {
             // the 8 AM hour) and only ever becomes `true`/`false` inside the
             // block below.
             let comingUpTerminal: boolean | undefined;
+            // Sun-color's own "settled for this event" flags (Codex review
+            // item 2) — same "undefined until evaluated, true unless a
+            // transient failure" contract as `comingUpTerminal`, but keyed
+            // to the specific event (`sunColorEventKeyThisRun`) rather than
+            // a calendar date, since a device's next sun-color opportunity
+            // can land on a different hour on a different day. Populated
+            // below, after the coming-up/digest/Excellent steps (it's
+            // independent of all three), and read by `persistSentState`.
+            let sunColorTerminal: boolean | undefined;
+            let sunColorEventKeyThisRun: string | undefined;
             if (comingUpWindow && sub.device.prefs["coming-up"] === true) {
               const selection = selectComingUpEvent(
                 skyAlertCandidates,
@@ -686,6 +714,9 @@ export async function POST(req: Request): Promise<Response> {
               const patch: Partial<SentState> = {};
               if (r.morningDate !== undefined) patch.morningDate = r.morningDate;
               if (comingUpTerminal === true) patch.comingUpCheckedDate = beachDate;
+              if (sunColorTerminal === true && sunColorEventKeyThisRun) {
+                patch.sunColorCheckedKey = sunColorEventKeyThisRun;
+              }
               if (Object.keys(patch).length === 0) return;
               await store
                 .patchSent(sub.device.id, patch)
@@ -784,38 +815,75 @@ export async function POST(req: Request): Promise<Response> {
             // --- Sun-color alert (opt-in) — always standalone, no coalescing
             // with the digest or "turned Excellent" (unlike coming-up, it
             // fires on its own short lead-time window, not the 8 AM run those
-            // two share). The decision itself — cutoff, send window,
+            // two share). The send/no-send decision itself — cutoff, window,
             // 4h-trust gate, dedupe key — lives entirely in the pure
             // `sunColorDecision` (lib/alerts/sunColor.ts); this block only
-            // does the same claim/send/mark dance every other standalone
-            // alert here does (mirrors "turned Excellent" above).
-            const sunColor = sunColorDecision({
-              device: sub.device,
-              prediction: sunColorPrediction,
-              beachName: loc.name,
-              tz: loc.timezone,
-              nowMs,
-            });
-            if (sunColor && !(await store.lastAlert(sub.device.id, sunColor.dedupKey))) {
-              const sunColorClaimKey = sendClaimKey(sub.device.id, "sun-color", sunColor.dedupKey);
-              if (await store.claimSend(sunColorClaimKey, nowMs)) {
-                const sent = await sendOne({
-                  tag: sunColor.tag,
-                  title: sunColor.title,
-                  body: sunColor.body,
-                  url: `/${slug}`,
-                });
-                if (sent.dead) {
-                  await prune(store, sub).catch((e) => console.error("push: prune failed", e));
-                  pruned += 1;
-                } else if (sent.ok) {
-                  sunColorSent += 1;
-                  await store.markAlert(sub.device.id, sunColor.dedupKey, nowMs, sunColor.meta);
-                  await store.markSent(sunColorClaimKey, nowMs);
+            // does the claim/send/mark dance every other standalone alert
+            // here does, PLUS the "checked" bookkeeping (item 2) that keeps
+            // `slugConditionsNeed` from holding this beach `due`/`candidate`
+            // for the whole window once this device has nothing further to
+            // send this hour.
+            //
+            // Only evaluated (and only ever marked "checked") once this
+            // device's OWN send window has actually opened — evaluating
+            // (and marking checked) while merely a `candidate` (event still
+            // hours out) would wrongly latch "nothing to do" long before the
+            // window that matters even arrives.
+            if (
+              sub.device.prefs["sun-color"] === true &&
+              sub.device.homeSlug &&
+              sunColorInWindow(sunColorPrediction, sub.device.sunColor.leadMin, nowMs)
+            ) {
+              sunColorEventKeyThisRun = sunColorEventKey(sunColorPrediction!.kind, sunColorPrediction!.eventIso);
+              if (sub.sent.sunColorCheckedKey !== sunColorEventKeyThisRun) {
+                // Default: evaluated in-window this run, regardless of
+                // outcome — a transient send failure below flips this back
+                // to `false` so a later tick inside the SAME window retries.
+                sunColorTerminal = true;
+                if (!(await store.lastAlert(sub.device.id, sunColorEventKeyThisRun))) {
+                  const sunColor = sunColorDecision({
+                    device: sub.device,
+                    prediction: sunColorPrediction,
+                    beachName: loc.name,
+                    tz: loc.timezone,
+                    nowMs,
+                  });
+                  if (sunColor) {
+                    const sunColorClaimKey = sendClaimKey(sub.device.id, "sun-color", sunColor.dedupKey);
+                    if (await store.claimSend(sunColorClaimKey, nowMs)) {
+                      const sent = await sendOne({
+                        tag: sunColor.tag,
+                        title: sunColor.title,
+                        body: sunColor.body,
+                        url: `/${slug}`,
+                      });
+                      if (sent.dead) {
+                        await prune(store, sub).catch((e) => console.error("push: prune failed", e));
+                        pruned += 1;
+                      } else if (sent.ok) {
+                        sunColorSent += 1;
+                        await store.markAlert(sub.device.id, sunColor.dedupKey, nowMs, sunColor.meta);
+                        await store.markSent(sunColorClaimKey, nowMs);
+                      } else {
+                        // Transient failure: release the claim immediately
+                        // (item 1) rather than waiting out
+                        // ABANDONED_CLAIM_MS, and leave this device NOT
+                        // checked so a later tick inside the SAME window
+                        // can retry.
+                        await store.releaseSend(sunColorClaimKey);
+                        sunColorTerminal = false;
+                      }
+                    }
+                    // A lost claim race (another run already owns this
+                    // send) needs no action here — that run will mark
+                    // alert_log, and this device is still correctly
+                    // "checked" for this event from THIS run's own view.
+                  }
+                  // `sunColor === null` (score never reached the device's
+                  // cutoff, or an honest-null forecast) is also terminal —
+                  // nothing will change before the window closes.
                 }
-                // A transient failure (`!sent.ok && !sent.dead`) leaves the
-                // claim/dedup state untouched — the next tick inside the
-                // same send window (or the abandoned-claim reclaim) retries.
+                // Already in alert_log: terminal, nothing to do.
               }
             }
 

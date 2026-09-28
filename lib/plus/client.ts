@@ -164,6 +164,35 @@ export function purchaseSyncRetryOutcome(res: PlusResult, now: number): "clear" 
   return isRetryableSaveError(res) ? "keep" : "clear";
 }
 
+/**
+ * What a sun-color settings save (the live edit or flushPending's retry of
+ * it — they share one generation counter, `sunColorGenerationRef`) should do
+ * with its response (Requirement item 3):
+ *  - "ignore": a NEWER sun-color save started before this one's response
+ *    landed (`superseded`) — this response can never usefully apply,
+ *    revert, or touch the pending queue, since the newer call already owns
+ *    the field(s) it touched. The one deterministic outcome regardless of
+ *    what the response itself says.
+ *  - "apply": confirmed — adopt the server's device and clear this patch's
+ *    field(s) from the pending queue.
+ *  - "revert-and-queue": a retryable failure (network/5xx) — put the
+ *    optimistic edit back to what it showed before this call, and queue the
+ *    patch for the next retry.
+ *  - "revert-and-clear": the server rejected it outright (4xx) — revert,
+ *    and drop it from the queue (retrying would only repeat the same
+ *    rejected request).
+ */
+export type SunColorSaveOutcome = "ignore" | "apply" | "revert-and-queue" | "revert-and-clear";
+
+export function sunColorSaveOutcome(
+  res: Pick<PlusResult, "ok" | "error" | "status">,
+  superseded: boolean,
+): SunColorSaveOutcome {
+  if (superseded) return "ignore";
+  if (res.ok) return "apply";
+  return isRetryableSaveError(res) ? "revert-and-queue" : "revert-and-clear";
+}
+
 export interface PlusState {
   /** The phone has been read. Everything below is meaningless until this is true. */
   ready: boolean;
@@ -180,6 +209,10 @@ export interface PlusState {
   prefs: AlertPrefs;
   /** Alert keys with an edit that failed to save and is waiting to retry. */
   pendingPrefsKeys: AlertKey[];
+  /** Sun-color settings fields with an edit that failed to save and is
+   *  waiting to retry — same idea as `pendingPrefsKeys`, for
+   *  `saveSunColorPrefs`. */
+  pendingSunColorKeys: ("minBand" | "leadMin")[];
   previewSeen: boolean;
   preview: PreviewRecord | null;
   cache: PlusCache | null;
@@ -398,6 +431,9 @@ export function usePlus(): PlusState {
   const [deviceLoaded, setDeviceLoaded] = useState(false);
   const [profile, setProfile] = useState<ScoreProfile | null>(null);
   const [pendingPrefsKeys, setPendingPrefsKeys] = useState<AlertKey[]>([]);
+  /** Sun-color settings fields with an edit that failed to save and is
+   *  waiting to retry (mirrors `pendingPrefsKeys`). */
+  const [pendingSunColorKeys, setPendingSunColorKeys] = useState<("minBand" | "leadMin")[]>([]);
   const [previewSeen, setPreviewSeen] = useState(false);
   const [preview, setPreview] = useState<PreviewRecord | null>(null);
   const [loading, setLoading] = useState(false);
@@ -417,6 +453,16 @@ export function usePlus(): PlusState {
   // in flight, and skip overwriting the sync's newer state with its own
   // stale answer (#6).
   const syncGenerationRef = useRef(0);
+  // Bumped at the start of every sun-color settings save (both the live
+  // `saveSunColorPrefs` and `flushPending`'s own retry of it) and shared
+  // between the two — a live edit and a queued retry can be genuinely
+  // concurrent (two separate HTTP calls), and whichever one STARTED last is
+  // authoritative. Any response landing while a NEWER sun-color save is
+  // already in flight (or has already resolved) is superseded and ignored
+  // outright: it must never apply a stale device snapshot, revert an
+  // optimistic edit it didn't make, or touch the pending queue on a newer
+  // call's behalf (Requirement item 3, `readSuperseded`/`sunColorSaveOutcome`).
+  const sunColorGenerationRef = useRef(0);
   // One-shot guard for the restore-pending retry below (#M2) — a second
   // restore tap (or a fast re-render) replaces rather than stacks a pending
   // retry, and unmount clears it like any other timer.
@@ -428,6 +474,7 @@ export function usePlus(): PlusState {
     setCache(store.readCache());
     setProfile(store.readProfile());
     setPendingPrefsKeys(Object.keys(store.readPending().prefs ?? {}) as AlertKey[]);
+    setPendingSunColorKeys(Object.keys(store.readPending().sunColor ?? {}) as ("minBand" | "leadMin")[]);
     setPreviewSeen(store.readPreviewSeen());
     setPreview(store.readPreview());
     setNow(Date.now());
@@ -659,17 +706,26 @@ export function usePlus(): PlusState {
       }
     }
     if (pending.sunColor && Object.keys(pending.sunColor).length) {
+      const patch = pending.sunColor;
+      // Shares `sunColorGenerationRef` with `saveSunColorPrefs` — a live
+      // edit that starts while THIS retry is in flight must win, and this
+      // retry's own (now-stale) response must be ignored outright rather
+      // than reverting or clobbering the newer edit (Requirement item 3).
+      const generation = ++sunColorGenerationRef.current;
       const res = await plusApi.saveDevice(id, {
         ...baseFields(),
-        ...(pending.sunColor.minBand !== undefined ? { sunColorMinBand: pending.sunColor.minBand } : {}),
-        ...(pending.sunColor.leadMin !== undefined ? { sunColorLeadMin: pending.sunColor.leadMin } : {}),
+        ...(patch.minBand !== undefined ? { sunColorMinBand: patch.minBand } : {}),
+        ...(patch.leadMin !== undefined ? { sunColorLeadMin: patch.leadMin } : {}),
       });
-      if (res.ok && res.device) {
-        applyDevice(res.device);
-        store.clearPendingSunColor();
-      } else if (!isRetryableSaveError(res)) {
-        store.clearPendingSunColor();
+      const outcome = sunColorSaveOutcome(res, readSuperseded(generation, sunColorGenerationRef.current));
+      if (outcome === "apply" && res.device) applyDevice(res.device);
+      if (outcome === "apply" || outcome === "revert-and-clear") {
+        store.clearPendingSunColorIfMatch(patch);
+        setPendingSunColorKeys(Object.keys(store.readPending().sunColor ?? {}) as ("minBand" | "leadMin")[]);
       }
+      // "ignore" (superseded) and "revert-and-queue" both leave the pending
+      // queue exactly as it is — the former because a newer call owns it,
+      // the latter because it's already the queued value.
     }
     if (pending.purchaseSync) {
       // A store purchase that confirmed but never made it to our server
@@ -830,9 +886,15 @@ export function usePlus(): PlusState {
     async (patch: { minBand?: SunColorMinBand; leadMin?: number }): Promise<PlusResult> => {
       const id = getDeviceId();
       if (!id) return { ok: false, device: null, error: "network", status: 0 };
-      const prevSunColor = device?.sunColor;
+      const keys = Object.keys(patch) as ("minBand" | "leadMin")[];
+      // Only the field(s) THIS call touches — a revert must never stomp an
+      // unrelated field a different (successful) call already changed.
+      const prevByKey: Partial<{ minBand: SunColorMinBand; leadMin: number }> = {};
+      for (const k of keys) if (device?.sunColor) prevByKey[k] = device.sunColor[k] as never;
+
       // Optimistic: the chip moves now, the server catches up.
       setDevice((d) => (d ? { ...d, sunColor: { ...d.sunColor, ...patch } } : d));
+      const generation = ++sunColorGenerationRef.current;
       setLoading(true);
       const res = await plusApi.saveDevice(id, {
         ...baseFields(),
@@ -840,18 +902,28 @@ export function usePlus(): PlusState {
         ...(patch.leadMin !== undefined ? { sunColorLeadMin: patch.leadMin } : {}),
       });
       setLoading(false);
-      if (res.ok && res.device) {
-        applyDevice(res.device);
-        store.clearPendingSunColor();
-      } else if (isRetryableSaveError(res)) {
-        // The server never confirmed it: put the chip back to what it showed
-        // before this tap and queue the intent so the retry loop lands it.
-        if (prevSunColor) setDevice((d) => (d ? { ...d, sunColor: prevSunColor } : d));
+
+      const outcome = sunColorSaveOutcome(res, readSuperseded(generation, sunColorGenerationRef.current));
+      // "ignore": a newer sun-color save started (live edit or flushPending
+      // retry) before this response landed — it already owns these field(s);
+      // this stale response must not apply, revert, or touch the queue.
+      if (outcome === "apply") {
+        if (res.device) applyDevice(res.device);
+        store.clearPendingSunColorIfMatch(patch);
+      } else if (outcome === "revert-and-queue") {
+        // The server never confirmed it: put the chip(s) back to what they
+        // showed before this tap, and queue the intent so the retry loop
+        // lands it.
+        setDevice((d) => (d ? { ...d, sunColor: { ...d.sunColor, ...prevByKey } } : d));
         store.queuePendingSunColor(patch);
-      } else {
-        // The server rejected it outright — revert and drop it from the queue.
-        if (prevSunColor) setDevice((d) => (d ? { ...d, sunColor: prevSunColor } : d));
-        store.clearPendingSunColor();
+      } else if (outcome === "revert-and-clear") {
+        // The server rejected it outright — revert and drop it from the
+        // queue (retrying would only repeat the same rejected request).
+        setDevice((d) => (d ? { ...d, sunColor: { ...d.sunColor, ...prevByKey } } : d));
+        store.clearPendingSunColorIfMatch(patch);
+      }
+      if (outcome !== "ignore") {
+        setPendingSunColorKeys(Object.keys(store.readPending().sunColor ?? {}) as ("minBand" | "leadMin")[]);
       }
       return res;
     },
@@ -1061,6 +1133,7 @@ export function usePlus(): PlusState {
     profile,
     prefs,
     pendingPrefsKeys,
+    pendingSunColorKeys,
     previewSeen,
     preview,
     cache,

@@ -835,6 +835,12 @@ export function d1Store(db: D1Like): DeviceStore {
       await db.prepare("UPDATE send_claims SET sent_at = ? WHERE key = ?").bind(now, key).run();
     },
 
+    async releaseSend(key) {
+      // `AND sent_at IS NULL` guards against deleting a row a concurrent
+      // caller just marked sent — release only ever undoes an UNSENT claim.
+      await db.prepare("DELETE FROM send_claims WHERE key = ? AND sent_at IS NULL").bind(key).run();
+    },
+
     async pruneSendClaims(now) {
       await db
         .prepare("DELETE FROM send_claims WHERE claimed_at < ?")

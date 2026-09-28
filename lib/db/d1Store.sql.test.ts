@@ -243,6 +243,31 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
     });
   });
 
+  // --- releaseSend (migrations/0004_send_claims.sql) — real SQL DELETE ------
+  describe("releaseSend", () => {
+    it("deletes an unsent claim so it can be re-claimed immediately", async () => {
+      const now = Date.now();
+      expect(await store.claimSend("k1", now)).toBe(true);
+      expect(await store.claimSend("k1", now + 1)).toBe(false); // still held, not abandoned
+      await store.releaseSend("k1");
+      expect(await store.claimSend("k1", now + 2)).toBe(true); // free again, no wait for ABANDONED_CLAIM_MS
+    });
+
+    it("never undoes a claim already marked sent", async () => {
+      const now = Date.now();
+      await store.claimSend("k2", now);
+      await store.markSent("k2", now + 1);
+      await store.releaseSend("k2");
+      // Still "sent" — a fresh claim attempt must fail exactly as it would
+      // for any other confirmed send (not abandoned, not unsent).
+      expect(await store.claimSend("k2", now + 2)).toBe(false);
+    });
+
+    it("releasing a claim nobody holds is a harmless no-op", async () => {
+      await expect(store.releaseSend("k-never-claimed")).resolves.toBeUndefined();
+    });
+  });
+
   // --- #4: grant sources are independent, and only ever move access up -----
   describe("independent grant sources", () => {
     it("a 365-day code grant survives restoring a 30-day store subscription", async () => {

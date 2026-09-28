@@ -1,11 +1,12 @@
 // Server-usable sunrise/sunset color prediction — the SAME assembly
-// components/SunQualityCard.tsx does for its own render (golden-window sun
-// times, the nearest hourly cloud/humidity reading, current air quality, and
-// a fresh-and-imminent satellite horizon reading), extracted here so the
-// "sun-color" push alert (lib/alerts/sunColor.ts, app/api/push/run/route.ts)
-// reads off the exact same logic instead of a second, drifting copy of it.
-// The card imports `resolveSunHorizon`/`BEAM_IMMINENT_MINUTES` from here too
-// — see components/SunQualityCard.tsx.
+// components/SunQualityCard.tsx calls for its own render (nearest hourly
+// cloud/humidity reading, current air quality, a fresh-and-imminent
+// satellite horizon reading), so the "sun-color" push alert
+// (lib/alerts/sunColor.ts, app/api/push/run/route.ts) can never quietly
+// disagree with what the card itself would show for the same beach at the
+// same instant. `assembleSunEventQuality` is the ONE function both call —
+// the card imports it directly (see components/SunQualityCard.tsx) rather
+// than keeping its own parallel copy.
 //
 // Pure: no I/O, no clock reads (`nowMs` is always passed in).
 
@@ -18,7 +19,10 @@ import {
   type GoldenWindowIso,
   type HorizonPath,
   type HourlyCloudPoint,
+  type PeakColorTime,
   type SunEventKind,
+  type SunEventQuality,
+  type SunEventTime,
   type SunEventTimes,
   type SunQualityBand,
 } from "@/lib/sunQuality";
@@ -36,8 +40,7 @@ type GoesCloudInput = { beamCloudPct?: number | null; cloudPct?: number; status?
  * present (with `fresh: true`) only when GOES delivered a reading, its
  * wrapper is "ok" (not stale), and the event is within
  * `BEAM_IMMINENT_MINUTES` of `nowMs`. Beam-path cloud is preferred; overhead
- * `cloudPct` is the honest fallback. The exact rule
- * components/SunQualityCard.tsx uses for its own render.
+ * `cloudPct` is the honest fallback.
  */
 export function resolveSunHorizon(
   goes: GoesCloudInput,
@@ -83,28 +86,93 @@ export function sunQualityHourlyPoints(
   }));
 }
 
+export interface SunEventAssembly {
+  /** The nearest hourly forecast point to the event, when one is within
+   *  tolerance (see `nearestHourlyPoint`). */
+  point: HourlyCloudPoint | undefined;
+  horizon: HorizonPath | undefined;
+  /** Score/band/note/breakdown — see `lib/sunQuality.ts`'s `sunEventQuality`. */
+  result: SunEventQuality;
+  peak: PeakColorTime | null;
+}
+
+/**
+ * Given an ALREADY-CHOSEN sun event (the card picks its own via
+ * `goldenHourTiming`'s richer timing engine; `predictNextSunEvent` below
+ * picks its own via the plain `nextSunEvent`), read the cloud/air/horizon
+ * signals and score it. This is the piece that was genuinely duplicated
+ * between the card and the alert — now the one place either of them touches
+ * `nearestHourlyPoint`/`sunEventQuality`/`peakColorTime`/`resolveSunHorizon`
+ * directly.
+ */
+export function assembleSunEventQuality(
+  event: Pick<SunEventTime, "event" | "timeIso" | "peakAnchorIso">,
+  inputs: {
+    hourly: readonly HourlyCloudPoint[];
+    airQuality?: { aod?: number; pm2_5?: number } | null;
+    goesCloud?: GoesCloudInput;
+    nowMs: number;
+  },
+): SunEventAssembly {
+  const point = nearestHourlyPoint(event.timeIso, inputs.hourly);
+  const horizon = resolveSunHorizon(inputs.goesCloud, event.timeIso, inputs.nowMs);
+
+  const result = sunEventQuality({
+    cloud: point?.cloud,
+    humidityPct: point?.humidityPct,
+    aod: inputs.airQuality?.aod,
+    pm2_5: inputs.airQuality?.pm2_5,
+    horizon,
+  });
+
+  // Same rough clear-path estimate the card uses purely for the peak-color
+  // "reasonably clear" gate — mirrors the factor model's clearPath: fresh
+  // beam, else a low-cloud estimate.
+  const clearPathEstimate = horizon?.fresh
+    ? Math.max(0, 100 - horizon.cloudPct)
+    : point?.cloud.lowPct != null
+      ? Math.max(0, 100 - point.cloud.lowPct * 1.1)
+      : undefined;
+  const peak = peakColorTime({
+    event: event.event,
+    eventIso: event.timeIso,
+    peakAnchorIso: event.peakAnchorIso,
+    highPct: point?.cloud.highPct,
+    clearPathScore: clearPathEstimate,
+  });
+
+  return { point, horizon, result, peak };
+}
+
 export interface SunEventPrediction {
   kind: SunEventKind;
   /** ISO instant of the event itself. */
   eventIso: string;
   /** ISO instant of the estimated peak-color moment — equals `eventIso` when
-   *  there's no high-cloud deck to lag it (see `lib/sunQuality.ts`'s
-   *  `peakColorTime`). */
+   *  there's no high-cloud deck to lag it. */
   peakIso: string;
   /** 0-100, or null when there's no forecast cloud reading for the event
-   *  hour yet — see `lib/sunQuality.ts`'s `sunEventQuality`. */
+   *  hour yet. */
   score: number | null;
   band: SunQualityBand | null;
 }
 
 /**
  * The next sunrise/sunset at this beach, and how colorful it should be —
- * assembled from a `ConditionsResponse` exactly the way
- * components/SunQualityCard.tsx does for its own render, so the "sun-color"
- * push alert can never quietly disagree with what the card itself would
- * show for the same beach at the same instant. Returns null when there's no
- * sun-times reading for this beach at all (a fetch failure with no
- * fallback) or no next event to pick (see `nextSunEvent`).
+ * picks the event with the plain `nextSunEvent` (never the card's richer
+ * golden-window-aware `scored` target — that's a display refinement, not a
+ * different event), then scores it with the SAME `assembleSunEventQuality`
+ * the card calls. Returns null when there's no sun-times reading for this
+ * beach at all, or no next event to pick.
+ *
+ * `nowMs` should be the conditions snapshot's OWN `generatedAt` (Requirement
+ * item 4), not the caller's wall clock — that is what makes the GOES
+ * freshness check (and the "next event" pick, on a served-from-cache
+ * snapshot) agree with what the card would show for that exact snapshot;
+ * SSR and this alert both judge freshness relative to when the data was
+ * actually generated. The caller (app/api/push/run/route.ts) uses the real
+ * wall clock separately, only for the send-window decision
+ * (`lib/alerts/sunColor.ts`'s `sunColorDecision`).
  */
 export function predictNextSunEvent(res: ConditionsResponse, nowMs: number): SunEventPrediction | null {
   const snap = res.snapshot;
@@ -138,34 +206,14 @@ export function predictNextSunEvent(res: ConditionsResponse, nowMs: number): Sun
   if (!next) return null;
 
   const hourly = sunQualityHourlyPoints(snap.hourly?.data);
-  const point = nearestHourlyPoint(next.timeIso, hourly);
   const goes = snap.goesCloud?.data
     ? { ...snap.goesCloud.data, status: snap.goesCloud.status }
     : null;
-  const horizon = resolveSunHorizon(goes, next.timeIso, nowMs);
-
-  const result = sunEventQuality({
-    cloud: point?.cloud,
-    humidityPct: point?.humidityPct,
-    aod: snap.airQuality?.data?.aod,
-    pm2_5: snap.airQuality?.data?.pm2_5,
-    horizon,
-  });
-
-  // Same rough clear-path estimate the card uses purely for the peak-color
-  // "reasonably clear" gate — mirrors the factor model's clearPath: fresh
-  // beam, else a low-cloud estimate.
-  const clearPathEstimate = horizon?.fresh
-    ? Math.max(0, 100 - horizon.cloudPct)
-    : point?.cloud.lowPct != null
-      ? Math.max(0, 100 - point.cloud.lowPct * 1.1)
-      : undefined;
-  const peak = peakColorTime({
-    event: next.event,
-    eventIso: next.timeIso,
-    peakAnchorIso: next.peakAnchorIso,
-    highPct: point?.cloud.highPct,
-    clearPathScore: clearPathEstimate,
+  const { result, peak } = assembleSunEventQuality(next, {
+    hourly,
+    airQuality: snap.airQuality?.data,
+    goesCloud: goes,
+    nowMs,
   });
 
   return {

@@ -12,7 +12,7 @@
 // just decides what to do with its answer.
 
 import type { SunEventPrediction } from "@/lib/sunAlert";
-import type { DeviceRecord, SunColorMinBand } from "@/lib/db/types";
+import type { DeviceRecord, SentState, SunColorMinBand } from "@/lib/db/types";
 import { sunQualityBandMeta, type SunEventKind } from "@/lib/sunQuality";
 import { fmtTime } from "@/lib/format";
 import { localHourParts } from "@/lib/history/archive";
@@ -38,17 +38,62 @@ export function sunColorCutoffFor(minBand: SunColorMinBand): number {
   return minBand === "epic" ? SUN_COLOR_AMAZING_CUTOFF : SUN_COLOR_GREAT_CUTOFF;
 }
 
-/** A prediction more than this far out isn't trustworthy yet (§ requirement
+/** A prediction more than this far out isn't trustworthy yet (Requirement
  *  #3) — the forecast cloud reading for an event this far ahead is too
- *  coarse to promise a push over. This also caps how far ahead a slug is
- *  ever marked a sun-color `candidate` in `sunColorSlugNeed` below. */
+ *  coarse to promise a push over. */
 export const SUN_COLOR_MAX_LEAD_MS = 4 * 60 * 60 * 1000;
 
-/** The send window's width: `[event - lead, event - lead + 10 min)`. Wide
- *  enough that at least one of the 5-minute cron's two ticks inside it
- *  lands, per beach, but never so wide it could fire after the event (every
- *  offered lead — 30/60/120/180 min — is well over 10 min). */
-export const SUN_COLOR_SEND_WINDOW_MS = 10 * 60 * 1000;
+/**
+ * The send window's width: `[event - lead, event - lead + 15 min)`. Widened
+ * from an original 10 min (Codex review item 1): a transient send failure
+ * releases its claim (`store.releaseSend`) and must be retryable by a LATER
+ * tick inside the SAME window, not just the abandoned-claim reclaim
+ * (`ABANDONED_CLAIM_MS`, 10 min) — a 10-minute window equaled that timeout
+ * exactly, so a failure right at the window's start left no tick able to
+ * both see a reclaimable claim AND still be inside the window. 15 minutes
+ * gives the 5-minute cron's SECOND tick (at +5) room to retry after a
+ * failure at +0, with the third tick (+10) as a further backstop, while
+ * still comfortably under every offered lead time (30/60/120/180 min) —
+ * `windowEnd` (`event - lead + 15min`) stays before `event` even at the
+ * smallest lead, 30 min (`event - 15min < event`).
+ */
+export const SUN_COLOR_SEND_WINDOW_MS = 15 * 60 * 1000;
+
+/** `slugConditionsNeed`'s pure estimate (`nextSunEventEstimate`, off
+ *  `computeSunTimes`) and the real decision (off the conditions snapshot's
+ *  own `sun.data`) can disagree by a few minutes — different solar-position
+ *  evaluations of "now". This widens the estimate's OWN window check so a
+ *  few minutes of disagreement can never leave the real event un-fetched
+ *  (Requirement item 5); it does not change `sunColorDecision`'s own,
+ *  exact window. */
+export const SUN_COLOR_ESTIMATE_WINDOW_TOLERANCE_MS = 5 * 60 * 1000;
+
+/** Same idea for the 4-hour "worth fetching at all" horizon — the estimate
+ *  side gets a little extra room so a beach isn't dropped from `candidate`
+ *  status moments before the real prediction would have picked it up. */
+export const SUN_COLOR_ESTIMATE_HORIZON_TOLERANCE_MS = 15 * 60 * 1000;
+
+/** The send window for one event/lead pair, as `[start, end)` epoch ms. */
+export function sunColorSendWindow(eventMs: number, leadMin: number): { start: number; end: number } {
+  const start = eventMs - leadMin * 60_000;
+  return { start, end: start + SUN_COLOR_SEND_WINDOW_MS };
+}
+
+/** Is `nowMs` inside this prediction's own send window, for this device's
+ *  lead-time setting? Exact (no tolerance) — this is the real decision's
+ *  own gate, used both by `sunColorDecision` and by the route to decide
+ *  whether to evaluate (and mark "checked") a device this run. */
+export function sunColorInWindow(
+  prediction: Pick<SunEventPrediction, "eventIso"> | null,
+  leadMin: number,
+  nowMs: number,
+): boolean {
+  if (!prediction) return false;
+  const eventMs = Date.parse(prediction.eventIso);
+  if (!Number.isFinite(eventMs)) return false;
+  const { start, end } = sunColorSendWindow(eventMs, leadMin);
+  return nowMs >= start && nowMs < end;
+}
 
 /** The `alert_log` dedup key for one event: once per event, ever — even if
  *  the score later climbs back above the cutoff after dipping below it. */
@@ -76,20 +121,24 @@ export function sunColorLeadPhrase(leadMin: number): string {
 
 export interface SunColorAlertInput {
   device: Pick<DeviceRecord, "prefs" | "homeSlug" | "sunColor">;
-  /** From `predictNextSunEvent(res, nowMs)` — null when there's no sun-times
-   *  reading for this beach right now. */
+  /** From `predictNextSunEvent(res, generatedAtMs)` — null when there's no
+   *  sun-times reading for this beach right now. */
   prediction: SunEventPrediction | null;
   beachName: string;
   tz: string;
+  /** The real wall clock — the send-window decision is about whether to
+   *  push RIGHT NOW, unlike `prediction`'s own scoring clock (the
+   *  snapshot's `generatedAt` — see lib/sunAlert.ts's doc, Requirement
+   *  item 4). */
   nowMs: number;
 }
 
 /**
  * Decide whether to send the sun-color alert to one device this tick.
- * Requirement #3's send rule: score >= the device's own cutoff, AND `now`
- * is within `[event - lead, event - lead + 10 min)`, AND the predicted
- * event is <= 4h away (a farther-out prediction isn't trustworthy yet).
- * Returns a ready `AlertDecision` (title/body/tag/dedupKey) or null.
+ * Score >= the device's own cutoff, AND `now` is within
+ * `[event - lead, event - lead + 15 min)`, AND the predicted event is <= 4h
+ * away (a farther-out prediction isn't trustworthy yet). Returns a ready
+ * `AlertDecision` (title/body/tag/dedupKey) or null.
  */
 export function sunColorDecision(input: SunColorAlertInput): AlertDecision | null {
   const { device, prediction, beachName, tz, nowMs } = input;
@@ -103,18 +152,14 @@ export function sunColorDecision(input: SunColorAlertInput): AlertDecision | nul
   const eventMs = Date.parse(prediction.eventIso);
   if (!Number.isFinite(eventMs)) return null;
   if (eventMs - nowMs > SUN_COLOR_MAX_LEAD_MS) return null; // too far out to trust yet
-
-  const leadMs = device.sunColor.leadMin * 60_000;
-  const windowStart = eventMs - leadMs;
-  const windowEnd = windowStart + SUN_COLOR_SEND_WINDOW_MS;
-  if (nowMs < windowStart || nowMs >= windowEnd) return null; // outside the send window (windowEnd is always < eventMs, so this also guards "never after the event")
+  if (!sunColorInWindow(prediction, device.sunColor.leadMin, nowMs)) return null;
 
   const bandLabel = sunQualityBandMeta(prediction.band).label; // "Great" | "Amazing"
   const subject: SunColorSubject = {
     key: "sun-color",
     kind: prediction.kind,
     bandLabel,
-    eventLabel: `${prediction.kind} ${fmtTime(prediction.eventIso, tz)}`,
+    eventTimeLabel: fmtTime(prediction.eventIso, tz),
     peakLabel: fmtTime(prediction.peakIso, tz),
     leadPhrase: sunColorLeadPhrase(device.sunColor.leadMin),
     eventKey: sunColorEventKey(prediction.kind, prediction.eventIso),
@@ -145,29 +190,57 @@ export function nextSunEventEstimate(
   return null;
 }
 
+export interface SunColorSlugNeed {
+  due: boolean;
+  candidate: boolean;
+  /** The estimated dedupe key for the device's next event, whenever one
+   *  exists — null only when there's truly no next event to estimate
+   *  (never reachable for a real served beach). The caller
+   *  (app/api/push/run/route.ts) uses this to check `alert_log` (once,
+   *  only when `due || candidate`) without this module needing the store. */
+  eventKey: string | null;
+}
+
 /**
  * Does a device's home beach need its conditions fetched this tick, purely
  * for the sun-color alert? `candidate` (elastic — fine to pick up next
- * tick) whenever the next event is 0-4h away; `due` (must not be starved)
- * only once inside the actual send window, mirroring
- * app/api/push/run/route.ts's `slugConditionsNeed` "due vs candidate"
- * split for score-excellent/coming-up. Computed WITHOUT fetching
- * conditions (Requirement #3's budget rule) — `computeSunTimes` is pure.
+ * tick) whenever the next event is within roughly 4h (plus a little slack —
+ * see `SUN_COLOR_ESTIMATE_HORIZON_TOLERANCE_MS`); `due` (must not be
+ * starved) only once inside the actual send window (plus a little slack —
+ * `SUN_COLOR_ESTIMATE_WINDOW_TOLERANCE_MS`), mirroring
+ * app/api/push/run/route.ts's `slugConditionsNeed` "due vs candidate" split
+ * for score-excellent/coming-up. Computed WITHOUT fetching conditions —
+ * `computeSunTimes` is pure. Neither flag is ever true once this device's
+ * own `sunColorCheckedKey` already names the SAME event (Codex review item
+ * 2) — the round-robin must move on to a beach that still needs a look, not
+ * keep re-selecting one this device has nothing further to say about this
+ * hour.
  */
 export function sunColorSlugNeed(
   loc: { lat: number; lon: number; timezone: string },
   device: Pick<DeviceRecord, "prefs" | "homeSlug" | "sunColor">,
+  sent: Pick<SentState, "sunColorCheckedKey">,
   nowMs: number,
-): { due: boolean; candidate: boolean } {
-  if (device.prefs["sun-color"] !== true || !device.homeSlug) return { due: false, candidate: false };
+): SunColorSlugNeed {
+  if (device.prefs["sun-color"] !== true || !device.homeSlug) {
+    return { due: false, candidate: false, eventKey: null };
+  }
   const next = nextSunEventEstimate(loc, nowMs);
-  if (!next) return { due: false, candidate: false };
-  const aheadMs = next.eventMs - nowMs;
-  if (aheadMs < 0 || aheadMs > SUN_COLOR_MAX_LEAD_MS) return { due: false, candidate: false };
+  if (!next) return { due: false, candidate: false, eventKey: null };
 
-  const leadMs = device.sunColor.leadMin * 60_000;
-  const windowStart = next.eventMs - leadMs;
-  const windowEnd = windowStart + SUN_COLOR_SEND_WINDOW_MS;
-  const due = nowMs >= windowStart && nowMs < windowEnd;
-  return { due, candidate: true };
+  const eventKey = sunColorEventKey(next.kind, new Date(next.eventMs).toISOString());
+  if (sent.sunColorCheckedKey === eventKey) return { due: false, candidate: false, eventKey };
+
+  const aheadMs = next.eventMs - nowMs;
+  if (
+    aheadMs < -SUN_COLOR_ESTIMATE_WINDOW_TOLERANCE_MS ||
+    aheadMs > SUN_COLOR_MAX_LEAD_MS + SUN_COLOR_ESTIMATE_HORIZON_TOLERANCE_MS
+  ) {
+    return { due: false, candidate: false, eventKey };
+  }
+
+  const { start, end } = sunColorSendWindow(next.eventMs, device.sunColor.leadMin);
+  const due =
+    nowMs >= start - SUN_COLOR_ESTIMATE_WINDOW_TOLERANCE_MS && nowMs < end + SUN_COLOR_ESTIMATE_WINDOW_TOLERANCE_MS;
+  return { due, candidate: true, eventKey };
 }

@@ -20,7 +20,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-09-28",
     title: "Sunrise and sunset alerts",
     details:
-      "New opt-in alert: a heads-up when your next sunrise or sunset is expected to be great color, sent before it happens so you have time to get to the beach. Choose Great-or-better or Amazing-only, and how far ahead to hear about it — 30 minutes up to 3 hours. Off by default; turn it on in Alerts.",
+      "New opt-in alert: a heads-up when your next sunrise or sunset is expected to be especially colorful, sent before it happens so you have time to get to the beach. Choose Great-or-better or Amazing-only, and how far ahead to hear about it — 30 minutes up to 3 hours. Off by default; turn it on in Alerts.",
     tag: "new",
   },
   {

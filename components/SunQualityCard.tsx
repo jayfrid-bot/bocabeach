@@ -11,14 +11,10 @@ import {
   type GoldenWindowInput,
 } from "@/lib/goldenHourTiming";
 import {
-  nearestHourlyPoint,
   nextSunEvent,
-  peakColorTime,
-  sunEventQuality,
   sunQualityBandMeta,
   type CloudMix,
   type GoldenWindowIso,
-  type HorizonPath,
   type HourlyCloudPoint,
   type PeakColorTime,
   type SunEventKind,
@@ -26,7 +22,7 @@ import {
   type SunEventTime,
 } from "@/lib/sunQuality";
 import { FlipCard, NerdBack } from "@/components/FlipCard";
-import { resolveSunHorizon } from "@/lib/sunAlert";
+import { assembleSunEventQuality } from "@/lib/sunAlert";
 
 // Gradient stops line up with lib/sunQuality.ts's BAND_CUTOFFS (dud <20,
 // plain <45, good <70, vivid <90, epic >=90) — same idiom as
@@ -87,24 +83,6 @@ function cloudLine(cloud: CloudMix | undefined): string {
     return `${cloud.totalPct}% total cloud (level split not available)`;
   }
   return "No forecast cloud reading for this hour.";
-}
-
-/**
- * Resolve the satellite beam/horizon-path clearness for the factor model —
- * present (with `fresh:true`) only when GOES delivered a reading, its wrapper is
- * "ok" (not stale), and the event is within BEAM_IMMINENT_MINUTES of `now`
- * (deterministic: `now` is the server-pinned snapshot time, so SSR and hydration
- * agree). Beam-path cloud is preferred; overhead cloudPct is the honest fallback.
- * Delegates to lib/sunAlert.ts's `resolveSunHorizon` — the "sun-color" push
- * alert reads the exact same rule off the exact same function, so the card
- * and the alert can never quietly disagree about what counts as "fresh".
- */
-function resolveHorizon(
-  goes: SunQualityCardProps["goesCloud"],
-  eventIso: string,
-  now: Date,
-): HorizonPath | undefined {
-  return resolveSunHorizon(goes, eventIso, now.getTime());
 }
 
 /** Builds the flip-card back's NerdInfo. When the richer factor model ran, the
@@ -525,29 +503,15 @@ export function SunQualityCard({
     );
   }
 
-  const point = nearestHourlyPoint(scored.timeIso, hourly);
-  const horizon = resolveHorizon(goesCloud, scored.timeIso, nowD);
-  const result = sunEventQuality({
-    cloud: point?.cloud,
-    humidityPct: point?.humidityPct,
-    aod: airQuality?.aod,
-    pm2_5: airQuality?.pm2_5,
-    horizon,
-  });
-
-  // A rough clear-path estimate purely for the peak-color "reasonably clear"
-  // gate (mirrors the factor model's clearPath: fresh beam, else low-cloud est.).
-  const clearPathEstimate = horizon?.fresh
-    ? Math.max(0, 100 - horizon.cloudPct)
-    : point?.cloud.lowPct != null
-      ? Math.max(0, 100 - point.cloud.lowPct * 1.1)
-      : undefined;
-  const peak = peakColorTime({
-    event: scored.event,
-    eventIso: scored.timeIso,
-    peakAnchorIso: scored.peakAnchorIso,
-    highPct: point?.cloud.highPct,
-    clearPathScore: clearPathEstimate,
+  // The ONE assembly function the "sun-color" push alert also calls
+  // (lib/sunAlert.ts) — same nearest-hourly-point read, same horizon
+  // freshness rule, same peak-color estimate, so the card and the alert can
+  // never quietly disagree about the same beach at the same instant.
+  const { point, result, peak } = assembleSunEventQuality(scored, {
+    hourly,
+    airQuality,
+    goesCloud,
+    nowMs: nowD.getTime(),
   });
   const peakLine = peakColorLine(peak, scored.event, tz);
   const goldenLine = scored.goldenFromElevation

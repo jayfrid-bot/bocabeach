@@ -365,7 +365,7 @@ flowchart TD
   %% Sunrise/sunset color alert — Plus, opt-in, standalone only (no
   %% coalescing with the digest or "turned Excellent": its own short
   %% lead-time window, not the 8 AM run those two share).
-  PIPE2 -.->|"same res already fetched<br/>for the digest/Excellent check, no extra call"| SUNCOLOR[lib/alerts/sunColor.ts<br/>sunColorDecision over lib/sunAlert.ts's predictNextSunEvent:<br/>score &ge; device's cutoff (Great 70 / Amazing 90) AND<br/>now in [event&minus;lead, event&minus;lead+10min) AND event &le;4h away]
+  PIPE2 -.->|"same res already fetched<br/>for the digest/Excellent check, no extra call"| SUNCOLOR[lib/alerts/sunColor.ts<br/>sunColorDecision over lib/sunAlert.ts's predictNextSunEvent:<br/>score &ge; device's cutoff (Great 70 / Amazing 90) AND<br/>now in [event&minus;lead, event&minus;lead+15min) AND event &le;4h away]
   SUNCOLOR --> CLAIM
   SUNCOLOR -->|"alert_log key sun-color:&lt;kind&gt;:&lt;eventIso date-hour&gt;,<br/>once per event, ever"| D1
 
@@ -394,28 +394,46 @@ if neither is due, sent standalone — a device is never sent two pushes for
 the same pick.
 
 **The sunrise/sunset color alert is opt-in, standalone-only, and off by
-default**, same as coming-up. `lib/sunAlert.ts`'s `predictNextSunEvent`
-assembles the exact same inputs `components/SunQualityCard.tsx` uses for its
-own render (golden-window sun times, the nearest hourly cloud/humidity
-reading, current air quality, a fresh-and-imminent satellite horizon
-reading) off the SAME conditions build the digest/Excellent check already
-fetched for that beach — no extra outbound call. `lib/alerts/sunColor.ts`'s
+default**, same as coming-up. `lib/sunAlert.ts`'s `assembleSunEventQuality`
+is the ONE function both `components/SunQualityCard.tsx` and the alert
+(`predictNextSunEvent`) call for the nearest hourly cloud/humidity reading,
+current air quality, and a fresh-and-imminent satellite horizon reading —
+off the SAME conditions build the digest/Excellent check already fetched
+for that beach (no extra outbound call). `predictNextSunEvent` is scored
+against the conditions snapshot's OWN `generatedAt`, not the push run's
+wall clock — that's what makes the GOES-freshness read agree with what the
+card would show for that exact snapshot. `lib/alerts/sunColor.ts`'s
 `sunColorDecision` sends only when the predicted score clears the device's
 own threshold (Great-or-better, score &ge; 70, or Amazing-only, score &ge;
-90 — `lib/sunQuality.ts`'s own band cutoffs) AND `now` falls inside
-`[event − lead, event − lead + 10 min)`, where `lead` is the device's own
-30/60/120/180-minute choice — AND the predicted event is no more than 4
-hours away (a farther-out forecast isn't trustworthy enough to alert on).
+90 — `lib/sunQuality.ts`'s own band cutoffs) AND the REAL wall clock falls
+inside `[event − lead, event − lead + 15 min)`, where `lead` is the
+device's own 30/60/120/180-minute choice — AND the predicted event is no
+more than 4 hours away (a farther-out forecast isn't trustworthy enough to
+alert on). The 15-minute window (not 10) leaves room for a transient send
+failure — which releases its claim immediately via `store.releaseSend`
+rather than waiting out the 10-minute abandoned-claim window — to be
+retried by a LATER tick inside the SAME window, not just the next event.
 Both settings live on the `devices` row itself (`sun_color_min_band`/
 `sun_color_lead_min`, migrations/0012), not in `prefs_json`, since that blob
 is typed as a strict boolean map. Dedup is the plain `alert_log` mechanism
 every other home-tier alert uses — `sun-color:<kind>:<eventIso date-hour>`,
 once per event, ever, even if the score later climbs back over the cutoff.
+
 `slugConditionsNeed` (app/api/push/run/route.ts) marks a beach `candidate`
-whenever a sun-color subscriber's next event is 0-4h away (computed from
-`lib/sources/sun.ts`'s pure `computeSunTimes`, no fetch) and `due` only once
-inside the actual send window, so it is never starved by the beach-selection
-cap.
+whenever a sun-color subscriber's next event is within roughly 4h (a pure
+estimate off `lib/sources/sun.ts`'s `computeSunTimes`, no fetch) and `due`
+only once inside the actual send window — but the real guarantee is
+narrower than "never starved": once a device has been evaluated INSIDE its
+own send window this run (sent, below cutoff, or already sent — anything
+except a transient failure), `sent.sunColorCheckedKey` latches that event,
+and `slugConditionsNeed` stops treating the device as due/candidate for it.
+Without that latch, a device with nothing further to send would keep its
+beach `due` for the whole 15-minute window, and — on a tick where several
+same-timezone beaches are all in-window at once — crowd out THEIR
+round-robin slots under `PUSH_RUN_MAX_BEACHES`' cap. The latch is what
+actually prevents that; the cap itself still limits how many DISTINCT
+beaches one tick can visit; coverage across the full window depends on the
+5-minute cron's multiple passes per tick, same as the coming-up alert.
 
 **Grant-source model.** `devices` keeps three independent expiries —
 `store_until` (a purchase, mirrored from RevenueCat), `code_until` (an

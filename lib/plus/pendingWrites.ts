@@ -10,6 +10,8 @@
 import type { AlertPrefs, PendingWrites, SunColorMinBand } from "@/lib/plus/types";
 import type { ScoreProfile } from "@/lib/profile/types";
 
+type SunColorField = "minBand" | "leadMin";
+
 export type { PendingWrites };
 
 /** Fold a new profile edit into the queue. A profile saves as one whole
@@ -67,6 +69,34 @@ export function clearPrefsKeys(pending: PendingWrites, keys: readonly string[]):
   const out = { ...pending };
   if (Object.keys(next).length) out.prefs = next;
   else delete out.prefs;
+  return out;
+}
+
+/**
+ * Remove a sun-color field from the queue ONLY when the value queued for it
+ * still equals what just succeeded (or was rejected) — a later edit to the
+ * SAME field, queued (or re-queued) while this request was in flight, must
+ * survive rather than being silently treated as "handled" by an older
+ * response. Compare-and-clear, per field, mirroring `clearPrefsKeys`'
+ * per-key drop but value-gated (Requirement item 3).
+ */
+export function clearSunColorIfMatch(
+  pending: PendingWrites,
+  patch: { minBand?: SunColorMinBand; leadMin?: number },
+): PendingWrites {
+  if (!pending.sunColor) return pending;
+  const next = { ...pending.sunColor };
+  let changed = false;
+  for (const k of Object.keys(patch) as SunColorField[]) {
+    if (patch[k] !== undefined && next[k] === patch[k]) {
+      delete next[k];
+      changed = true;
+    }
+  }
+  if (!changed) return pending;
+  const out = { ...pending };
+  if (Object.keys(next).length) out.sunColor = next;
+  else delete out.sunColor;
   return out;
 }
 

@@ -251,6 +251,19 @@ export interface DeviceStore {
   claimSend(key: string, now: number): Promise<boolean>;
   /** Record that a claimed send actually went out. */
   markSent(key: string, now: number): Promise<void>;
+  /**
+   * Release a claimed-but-unsent send immediately (a transient transport
+   * failure, or a decision not to send after all) — deletes the row unless
+   * it was already marked sent (defensive: never undo a confirmed send).
+   * Freeing the claim right away, rather than waiting out
+   * `ABANDONED_CLAIM_MS`, lets a genuinely failed attempt be retried by the
+   * very next cron tick instead of sitting unclaimable until the
+   * abandonment window passes — which mattered for the sun-color alert's
+   * short (15-minute) send window: without this, a transient failure on the
+   * first tick could outlive the window before `ABANDONED_CLAIM_MS` (10 min)
+   * ever made the claim reclaimable.
+   */
+  releaseSend(key: string): Promise<void>;
   /** Drop claims old enough (`CLAIM_RETENTION_MS`) to never matter again. */
   pruneSendClaims(now: number): Promise<void>;
   /**

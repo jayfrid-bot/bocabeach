@@ -24,6 +24,7 @@ import {
   setPurchaseSyncRetryStateForTest,
   shouldBootstrapInstallTokenOnMount,
   startVisibleReconcileLoop,
+  sunColorSaveOutcome,
   STORE_EXPIRY_GRACE_MS,
   STORE_EXPIRY_TIMER_MAX_MS,
   storeExpiryTimerMs,
@@ -342,6 +343,41 @@ describe("purchaseSyncRetryOutcome", () => {
 
   it("clears on a non-retryable rejection — the server's final word", () => {
     expect(purchaseSyncRetryOutcome({ ok: false, device: null, error: "not-found", status: 404 }, now)).toBe("clear");
+  });
+});
+
+describe("sunColorSaveOutcome (Requirement item 3 — the request-generation guard)", () => {
+  it("ignores a superseded response outright, whatever it says — even a success", () => {
+    expect(sunColorSaveOutcome({ ok: true, error: null, status: 200 }, true)).toBe("ignore");
+    expect(sunColorSaveOutcome({ ok: false, error: "network", status: 0 }, true)).toBe("ignore");
+    expect(sunColorSaveOutcome({ ok: false, error: "bad-request", status: 400 }, true)).toBe("ignore");
+  });
+
+  it("applies a non-superseded success", () => {
+    expect(sunColorSaveOutcome({ ok: true, error: null, status: 200 }, false)).toBe("apply");
+  });
+
+  it("reverts and queues a non-superseded retryable failure (network or 5xx)", () => {
+    expect(sunColorSaveOutcome({ ok: false, error: "network", status: 0 }, false)).toBe("revert-and-queue");
+    expect(sunColorSaveOutcome({ ok: false, error: "server", status: 500 }, false)).toBe("revert-and-queue");
+  });
+
+  it("reverts and clears a non-superseded outright rejection (4xx) — the server's final word", () => {
+    expect(sunColorSaveOutcome({ ok: false, error: "bad-request", status: 400 }, false)).toBe("revert-and-clear");
+  });
+
+  it("out-of-order responses: readSuperseded correctly flags an older generation once a newer save has started", () => {
+    // Call A starts at generation 1; call B (a later edit) starts at
+    // generation 2 before A's response lands.
+    const startA = 1;
+    const currentAfterB = 2;
+    expect(readSuperseded(startA, currentAfterB)).toBe(true);
+    expect(sunColorSaveOutcome({ ok: true, error: null, status: 200 }, readSuperseded(startA, currentAfterB))).toBe(
+      "ignore",
+    );
+    // B itself, checked against the SAME current generation, is not superseded.
+    const startB = 2;
+    expect(readSuperseded(startB, currentAfterB)).toBe(false);
   });
 });
 
