@@ -327,6 +327,8 @@ export interface PlusState {
    *  path as `savePrefs` (POST /api/devices, queued in the same pending-
    *  writes store on a retryable failure). */
   saveSunColorPrefs(patch: { minBand?: SunColorMinBand; leadMin?: number }): Promise<PlusResult>;
+  /** Try every queued (failed) save again now. */
+  retryPending(): Promise<void>;
   setHome(slug: string): Promise<PlusResult>;
   savePreview(record: PreviewRecord): void;
   /** Beach Mode on — the window in which alerts use this phone's own position. */
@@ -1253,6 +1255,7 @@ export function usePlus(): PlusState {
     commitProfile,
     savePrefs,
     saveSunColorPrefs,
+    retryPending: flushPending,
     setHome,
     savePreview,
     arm,
