@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { disableNative, enableNative, isNativePlatform, nativeStatus } from "@/lib/push/native";
 
 type State = "init" | "hidden" | "off" | "on" | "denied" | "busy" | "error";
@@ -84,9 +84,29 @@ export function NotifyButton({
   // refines it to on/denied. Browsers start "init" → render nothing.
   const [state, setState] = useState<State>(serverNative ? "off" : "init");
   const [err, setErr] = useState<string | null>(null);
-  // Icon-only "on" state opens a small menu (Settings / Turn off) instead of
-  // showing those as separate inline links — same two actions, one tap away.
+  // Icon-only "on" state opens a small popover (Settings / Turn off) instead
+  // of showing those as separate inline links — same two actions, one tap
+  // away. Plain buttons, not an ARIA menu (see the a11y note above the
+  // popover markup below for why).
   const [menuOpen, setMenuOpen] = useState(false);
+  const bellRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Popover focus management: move focus in on open, Escape closes and
+  // returns focus to the bell. (Outside-click-closes is the backdrop button
+  // below; that one is excluded from the tab order.)
+  useEffect(() => {
+    if (!menuOpen) return;
+    menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setMenuOpen(false);
+      bellRef.current?.focus();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [menuOpen]);
 
   useEffect(() => {
     let alive = true;
@@ -171,9 +191,9 @@ export function NotifyButton({
     return (
       <span className="relative inline-block">
         <button
+          ref={bellRef}
           type="button"
           onClick={() => setMenuOpen((v) => !v)}
-          aria-haspopup="menu"
           aria-expanded={menuOpen}
           aria-label="Alerts on for this beach — tap for settings"
           className={`${iconBtn} bg-emerald-500/10 text-emerald-700 ring-emerald-500/20 hover:bg-emerald-500/20 dark:text-emerald-300`}
@@ -185,24 +205,29 @@ export function NotifyButton({
         </button>
         {menuOpen ? (
           <>
-            {/* Outside-tap dismiss — same pattern as Sheet's backdrop, just
-                without the scroll lock/focus trap a full modal needs for two
-                one-line actions. */}
+            {/* Outside-tap/click dismiss only — not a focusable control (no
+                real action of its own), so it's pulled out of the tab order
+                and hidden from assistive tech; Tab from the popover's own
+                buttons goes straight to whatever follows in the header. */}
             <button
               type="button"
-              aria-label="Close menu"
+              tabIndex={-1}
+              aria-hidden="true"
               onClick={() => setMenuOpen(false)}
               className="fixed inset-0 z-40 cursor-default"
             />
+            {/* Plain buttons in a popover, not role="menu"/"menuitem": a real
+                ARIA menu promises arrow-key/typeahead navigation, which two
+                one-line actions don't need and a half-implemented menu role
+                would misrepresent to a screen reader. Focus still moves in on
+                open and Escape still closes it (see the effect above). */}
             <div
-              role="menu"
-              aria-label="Alert options"
+              ref={menuRef}
               className="absolute right-0 top-full z-50 mt-2 w-44 overflow-hidden rounded-xl bg-white py-1 shadow-lg ring-1 ring-slate-900/10 dark:bg-slate-800 dark:ring-white/10"
             >
               {onSettings ? (
                 <button
                   type="button"
-                  role="menuitem"
                   onClick={() => {
                     setMenuOpen(false);
                     onSettings();
@@ -214,7 +239,6 @@ export function NotifyButton({
               ) : null}
               <button
                 type="button"
-                role="menuitem"
                 onClick={disable}
                 className="flex min-h-[44px] w-full items-center px-4 text-left text-sm text-slate-700 hover:bg-slate-900/5 dark:text-slate-200 dark:hover:bg-white/10"
               >
@@ -237,23 +261,38 @@ export function NotifyButton({
         ? "🔔 Alerts — try again"
         : "🔔 Alerts";
   return (
-    <button
-      type="button"
-      onClick={enable}
-      disabled={state === "busy"}
-      aria-label={label}
-      title={
-        err ??
-        (entitled
-          ? "Turn on safety and morning alerts for this beach"
-          : "Safety and morning alerts are part of Beach Day Plus")
-      }
-      className={iconBtnNeutral}
-    >
-      <span aria-hidden className="text-lg leading-none">
-        🔔
-      </span>
-      {state === "error" ? <StateDot color="rose" /> : null}
-    </button>
+    <span className="relative inline-block">
+      <button
+        ref={bellRef}
+        type="button"
+        onClick={enable}
+        disabled={state === "busy"}
+        aria-label={label}
+        title={
+          err ??
+          (entitled
+            ? "Turn on safety and morning alerts for this beach"
+            : "Safety and morning alerts are part of Beach Day Plus")
+        }
+        className={iconBtnNeutral}
+      >
+        <span aria-hidden className="text-lg leading-none">
+          🔔
+        </span>
+        {state === "error" ? <StateDot color="rose" /> : null}
+      </button>
+      {/* The retry error text a hover `title` can't show on a touch screen —
+          same message enableAlertsFlow returned, just visible now instead of
+          hover-only. Clears itself the moment `enable` runs again. */}
+      {state === "error" && err ? (
+        <span
+          role="status"
+          aria-live="polite"
+          className="absolute right-0 top-full z-50 mt-2 w-56 rounded-lg bg-rose-600 px-3 py-2 text-xs leading-snug text-white shadow-lg dark:bg-rose-500"
+        >
+          {err}
+        </span>
+      ) : null}
+    </span>
   );
 }
