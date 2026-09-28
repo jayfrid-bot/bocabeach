@@ -202,13 +202,24 @@ export function overlayPendingSunColor(rec: DeviceRecord, pendingSunColor: SunCo
  * device id change (a reinstall gets a fresh one) never carries over a
  * stale watermark from the old id. Pulled out as its own pure function — no
  * React — so it's directly testable (see lib/plus/client.test.ts).
+ *
+ * Round-5 item 1: rejects `<=`, not just `<`. Now that the server guarantees
+ * `updated_at` is strictly monotonic per row (every writer on `devices` —
+ * `d1Store.ts`'s UPSERT_DEVICE, `claimTrial`, `clearPushToken`,
+ * `setInstallTokenHash`, `setSent`, `patchSent`, and memoryStore's mirrored
+ * `applyPatch` — bumps it to `MAX(prior + 1, now)`), an EQUAL `updatedAt` can
+ * only mean this exact response (or an identical replay of it), never two
+ * genuinely different writes that happened to share a wall-clock reading —
+ * so treating equal as stale (a harmless re-apply skipped) is strictly safer
+ * than accepting it, and closes the gap the old strict-`<` check left open
+ * when `Date.now()` repeated across two real writes.
  */
 export function isStaleDeviceResponse(
   rec: Pick<DeviceRecord, "id" | "updatedAt">,
   lastApplied: ReadonlyMap<string, number>,
 ): boolean {
   const last = lastApplied.get(rec.id);
-  return last !== undefined && rec.updatedAt < last;
+  return last !== undefined && rec.updatedAt <= last;
 }
 
 /**

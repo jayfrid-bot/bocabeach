@@ -990,6 +990,14 @@ export async function POST(req: Request): Promise<Response> {
               retryableDueSlugs.add(slug);
             }
           } catch (e) {
+            // Round-5 item 2: an exception here means this device's own
+            // evaluation never reached a terminal outcome at all (unlike the
+            // `comingUpTerminal`/`sunColorTerminal === false` check above,
+            // which only runs when the try block completes) — just as
+            // retryable as a transient send failure, so this slug still owes
+            // real, time-sensitive work. Same "gated later, at read-time, by
+            // selectedDueSet" pattern as every other `retryableDueSlugs.add`.
+            retryableDueSlugs.add(slug);
             errors += 1;
             console.error("push: device failed", sub.device.id, e);
           }

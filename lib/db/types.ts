@@ -482,9 +482,17 @@ export function deriveEntitlement(grants: DeviceGrants, now: number): { plan: Pl
  * (and by legacy-import on both backends, which only ever creates a fresh
  * row). d1Store does NOT use this for a live upsert — it needs the patch
  * applied as one atomic SQL statement (#3), not read-then-write in JS.
+ *
+ * `updated_at` (round-5 item 1): strictly monotonic, mirroring d1Store's own
+ * `MAX(COALESCE(updated_at, 0) + 1, ?now)` SQL fix — plain `Date.now()` can
+ * repeat (two calls inside the same millisecond; Node's single-threaded, but
+ * two `await`-free writes in the same tick still share a clock reading) or
+ * go backwards (a clock adjustment), and the client's revisioning watermark
+ * (`isStaleDeviceResponse`, lib/plus/client.ts) needs a STRICT ordering to
+ * ever tell two responses apart.
  */
 export function applyPatch(row: DeviceRow, patch: DevicePatch, now: number): DeviceRow {
-  const next: DeviceRow = { ...row, updated_at: now };
+  const next: DeviceRow = { ...row, updated_at: Math.max((row.updated_at ?? 0) + 1, now) };
   if (patch.platform !== undefined) next.platform = patch.platform;
   if (patch.pushToken !== undefined) next.push_token = patch.pushToken;
   if (patch.tz !== undefined) next.tz = patch.tz;

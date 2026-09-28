@@ -153,6 +153,22 @@ const MAX_INSERT = "MAX(COALESCE(?8,0), COALESCE(?9,0), COALESCE(?10,0))";
  * whichever of the three this write actually touches (#4). `prefs_json` is
  * always a `json_patch` merge, so a caller who didn't mention prefs merges
  * `{}` — a no-op — instead of needing its own present flag.
+ *
+ * `updated_at` on the UPDATE branch (round-5 item 1): strictly monotonic per
+ * row, never plain wall-clock `?now` — `Date.now()` can repeat (two writes
+ * inside the same millisecond) or even go backwards (clock adjustment), and
+ * the client's revisioning watermark (`isStaleDeviceResponse`,
+ * lib/plus/client.ts) needs a STRICT ordering to tell two responses apart:
+ * `MAX(COALESCE(devices.updated_at, 0) + 1, ?now)` is always at least one ms
+ * past whatever the row already had, whether or not `?now` itself advanced.
+ * The INSERT branch keeps a plain `?now` — there is no existing row to read
+ * a prior `updated_at` from, so there's nothing to be monotonic AGAINST yet.
+ * Every other UPDATE-only statement on `devices` below (`claimTrial`,
+ * `clearPushToken`, `setInstallTokenHash`, `setSent`, `patchSent`) applies
+ * the identical `MAX(COALESCE(updated_at, 0) + 1, ?)` formula, unqualified
+ * (no `devices.` prefix — that qualification is only valid/needed inside an
+ * `ON CONFLICT DO UPDATE SET` block, which has both an `excluded` and a
+ * table-named row in scope; a plain `UPDATE devices SET …` has only the one).
  */
 const UPSERT_COLS =
   "id, platform, push_token, tz, home_slug, profile_json, prefs_json, " +
@@ -193,7 +209,7 @@ ON CONFLICT(id) DO UPDATE SET
   sent_json = CASE WHEN ?27 THEN ?13 ELSE devices.sent_json END,
   sun_color_min_band = CASE WHEN ?30 THEN ?28 ELSE devices.sun_color_min_band END,
   sun_color_lead_min = CASE WHEN ?31 THEN ?29 ELSE devices.sun_color_lead_min END,
-  updated_at = ?15
+  updated_at = MAX(COALESCE(devices.updated_at, 0) + 1, ?15)
 `;
 
 /** DevicePatch → the 31 positional binds `UPSERT_DEVICE` expects. */
@@ -516,7 +532,7 @@ export function d1Store(db: D1Like): DeviceStore {
             "entitlement_until = CASE WHEN MAX(COALESCE(store_until,0), COALESCE(code_until,0), COALESCE(?1,0)) = 0 " +
             "THEN NULL ELSE MAX(COALESCE(store_until,0), COALESCE(code_until,0), COALESCE(?1,0)) END, " +
             "plan = CASE WHEN MAX(COALESCE(store_until,0), COALESCE(code_until,0), COALESCE(?1,0)) > ?2 THEN 'plus' ELSE 'free' END, " +
-            "updated_at = ?2 WHERE id = ?3 AND trial_used = 0",
+            "updated_at = MAX(COALESCE(updated_at, 0) + 1, ?2) WHERE id = ?3 AND trial_used = 0",
         )
         .bind(until, now, id)
         .run();
@@ -530,7 +546,10 @@ export function d1Store(db: D1Like): DeviceStore {
       // already re-registered a new token by the time this runs, that new
       // token is what is live and must not be erased (#5).
       await db
-        .prepare("UPDATE devices SET push_token = NULL, updated_at = ? WHERE id = ? AND push_token = ?")
+        .prepare(
+          "UPDATE devices SET push_token = NULL, updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) " +
+            "WHERE id = ? AND push_token = ?",
+        )
         .bind(Date.now(), id, expectedToken)
         .run();
     },
@@ -547,7 +566,8 @@ export function d1Store(db: D1Like): DeviceStore {
     async setInstallTokenHash(id, tokenHash, issuedAt) {
       const result = await db
         .prepare(
-          "UPDATE devices SET token_hash = ?, token_issued_at = ?, updated_at = ? " +
+          "UPDATE devices SET token_hash = ?, token_issued_at = ?, " +
+            "updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) " +
             "WHERE id = ? AND token_hash IS NULL",
         )
         .bind(tokenHash, issuedAt, issuedAt, id)
@@ -696,7 +716,7 @@ export function d1Store(db: D1Like): DeviceStore {
     async setSent(deviceId, sent: SentState) {
       const keys = Object.keys(sent).filter((k) => (sent as Record<string, unknown>)[k] !== undefined);
       await db
-        .prepare("UPDATE devices SET sent_json = ?, updated_at = ? WHERE id = ?")
+        .prepare("UPDATE devices SET sent_json = ?, updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?")
         .bind(keys.length ? JSON.stringify(sent) : null, Date.now(), deviceId)
         .run();
     },
@@ -715,7 +735,10 @@ export function d1Store(db: D1Like): DeviceStore {
       const partial: Record<string, unknown> = {};
       for (const k of keys) partial[k] = (patch as Record<string, unknown>)[k];
       await db
-        .prepare("UPDATE devices SET sent_json = json_patch(COALESCE(sent_json, '{}'), ?), updated_at = ? WHERE id = ?")
+        .prepare(
+          "UPDATE devices SET sent_json = json_patch(COALESCE(sent_json, '{}'), ?), " +
+            "updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?",
+        )
         .bind(JSON.stringify(partial), Date.now(), deviceId)
         .run();
     },

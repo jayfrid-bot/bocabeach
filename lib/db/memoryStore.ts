@@ -199,7 +199,17 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       // No `await` between this read and the `devices.set` below — same
       // no-race guarantee as `claimTrial` above.
       if (!row || row.token_hash) return false;
-      devices.set(id, { ...row, token_hash: tokenHash, token_issued_at: issuedAt, updated_at: issuedAt });
+      // Round-5 item 1: monotonic, same as every other write here (via
+      // `applyPatch`) — this is the one memoryStore write that doesn't go
+      // through it, since it sets `token_issued_at` (a distinct column) to
+      // the SAME value as `updated_at`, which `applyPatch`'s `DevicePatch`
+      // shape has no field for.
+      devices.set(id, {
+        ...row,
+        token_hash: tokenHash,
+        token_issued_at: issuedAt,
+        updated_at: Math.max((row.updated_at ?? 0) + 1, issuedAt),
+      });
       await save();
       return true;
     },

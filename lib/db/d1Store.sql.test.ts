@@ -12,7 +12,7 @@
 // The schema comes from the real migration files, applied in order — so a
 // migration that doesn't actually produce a working schema fails here too.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import {
@@ -197,6 +197,62 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       const dev = await store.getDevice("d4");
       expect(dev?.trialUsed).toBe(true);
       expect(dev?.plan).toBe("plus");
+    });
+  });
+
+  // --- round-5 item 1: updated_at is strictly monotonic per row, never a
+  // plain `?now` on any UPDATE path --------------------------------------
+  // Real SQL only — the in-memory store's own `Math.max` in JS can't catch a
+  // typo'd `MAX(...)` SQL expression, or a bind position that quietly went
+  // back to plain `?now`, the way running the actual statement can.
+  describe("updated_at is strictly monotonic per device row (round-5 item 1)", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("two writes at the SAME wall-clock `now` still produce a strictly increasing updated_at", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+      const d1 = await store.upsertDevice("mono-1", { tz: "America/New_York" });
+      expect(d1.updatedAt).toBe(1_000_000);
+
+      // A second write at the EXACT same millisecond (Date.now() still
+      // stubbed to the same value) — without the fix this would write
+      // updated_at = 1_000_000 again, indistinguishable from the first.
+      const d2 = await store.upsertDevice("mono-1", { tz: "America/Chicago" });
+      expect(d2.updatedAt).toBe(1_000_001);
+      expect(d2.updatedAt).toBeGreaterThan(d1.updatedAt);
+    });
+
+    it("a write whose `now` is EARLIER than the row's current updated_at still increases it by 1", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(2_000_000);
+      const d1 = await store.upsertDevice("mono-2", { tz: "America/New_York" });
+      expect(d1.updatedAt).toBe(2_000_000);
+
+      // The wall clock moved BACKWARDS (an NTP adjustment, say) before the
+      // next write reaches this row.
+      vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+      const d2 = await store.upsertDevice("mono-2", { tz: "America/Chicago" });
+      expect(d2.updatedAt).toBe(2_000_001); // MAX(prior + 1, now) — now lost
+      expect(d2.updatedAt).toBeGreaterThan(d1.updatedAt);
+    });
+
+    it("holds for claimTrial's own UPDATE too, not just the main upsert", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(3_000_000);
+      const d1 = await store.upsertDevice("mono-3", { tz: "America/New_York" });
+      expect(d1.updatedAt).toBe(3_000_000);
+      const claimed = await store.claimTrial("mono-3", 3_000_000 + 3 * DAY);
+      expect(claimed).not.toBe("trial-used");
+      const d2 = await store.getDevice("mono-3");
+      expect(d2?.updatedAt).toBe(3_000_001); // same `now` as the upsert above
+    });
+
+    it("holds for patchSent's own UPDATE too", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(4_000_000);
+      const d1 = await store.upsertDevice("mono-4", { tz: "America/New_York" });
+      expect(d1.updatedAt).toBe(4_000_000);
+      await store.patchSent("mono-4", { morningDate: "2026-09-02" });
+      const d2 = await store.getDevice("mono-4");
+      expect(d2?.updatedAt).toBe(4_000_001);
     });
   });
 

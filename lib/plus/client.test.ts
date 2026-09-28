@@ -591,9 +591,14 @@ describe("isStaleDeviceResponse (Requirement round-4 item 3 — response revisio
     expect(isStaleDeviceResponse({ id: DEV, updatedAt: 100 }, lastApplied)).toBe(true);
   });
 
-  it("is NOT stale when equal to or newer than the tracked watermark", () => {
+  // Round-5 item 1: equal now counts as stale too (rejects `<=`, not just
+  // `<`) — the server guarantees `updated_at` is strictly monotonic per row,
+  // so an EQUAL value can only describe the SAME write this phone already
+  // applied, never a genuinely different one that happened to share a
+  // wall-clock reading.
+  it("is stale when EQUAL to the tracked watermark; NOT stale when strictly newer", () => {
     const lastApplied = new Map([[DEV, 200]]);
-    expect(isStaleDeviceResponse({ id: DEV, updatedAt: 200 }, lastApplied)).toBe(false);
+    expect(isStaleDeviceResponse({ id: DEV, updatedAt: 200 }, lastApplied)).toBe(true);
     expect(isStaleDeviceResponse({ id: DEV, updatedAt: 201 }, lastApplied)).toBe(false);
   });
 

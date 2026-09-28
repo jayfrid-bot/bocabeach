@@ -515,11 +515,21 @@ guard in front of all of this: two overlapping requests for the SAME device
 can resolve out of order (response ARRIVAL order isn't request order), so
 `applyDevice` tracks the `updatedAt` (bumped by the server on every write,
 now part of `DeviceRecord`) it last applied PER DEVICE ID, and ignores any
-response strictly older than that watermark outright — no cache write, no
-state change, before the pending overlay even runs. This is what protects
-against a case the overlay alone can't: a delayed reply to an EARLIER,
-unrelated request (its own pending entry already cleared) landing after a
-newer save has already applied.
+response `<=` that watermark outright — no cache write, no state change,
+before the pending overlay even runs. This is what protects against a case
+the overlay alone can't: a delayed reply to an EARLIER, unrelated request
+(its own pending entry already cleared) landing after a newer save has
+already applied. Round-5 item 1 closes the gap that made an EQUAL
+`updatedAt` unsafe to treat as fresh: `Date.now()` alone can repeat (two
+writes inside the same millisecond) or go backwards (a clock adjustment),
+so every writer on `devices` (the main upsert, `claimTrial`,
+`clearPushToken`, `setInstallTokenHash`, `setSent`, `patchSent` — d1Store's
+SQL, and memoryStore's mirrored `applyPatch`) now sets
+`updated_at = MAX(prior + 1, now)` on every UPDATE path (never plain
+`?now` — only the one-time INSERT keeps that, since there is no prior row
+to be monotonic against yet). With that guarantee, `applyDevice` rejects
+`<=`, not just `<`: an EQUAL value can only describe the exact write this
+phone already applied, never a genuinely different one.
 
 **Per-tick capacity is `passes x PUSH_RUN_MAX_BEACHES`, and `dueRemaining`
 counts retryable work too.** `PUSH_RUN_MAX_BEACHES`
@@ -530,12 +540,14 @@ moment a pass's JSON response reports `dueRemaining: 0` (every `due` slug
 this tick got served — the coming-up/morning-digest/sun-color alerts all
 share this one signal). `dueRemaining` isn't just slugs the round-robin cap
 excluded: a slug the pass DID reach, but where the conditions load itself
-threw or returned null, or where some device's evaluation ended
-non-terminal (a transient send failure, or a lost-claim race no other run
-has yet confirmed — `comingUpTerminal`/`sunColorTerminal === false`), is
-folded in too, once per slug — that beach still has real, time-sensitive
-work outstanding, so the cron must not treat it as settled. So one tick's
-real capacity is `passes x cap`
+threw or returned null, where some device's evaluation ended non-terminal
+(a transient send failure, or a lost-claim race no other run has yet
+confirmed — `comingUpTerminal`/`sunColorTerminal === false`), or where a
+device's own evaluation THREW outright (round-5 item 2 — the per-device
+`catch`, which used to only count toward `errors`), is folded in too, once
+per slug — that beach still has real, time-sensitive work outstanding, so
+the cron must not treat it as settled. So one tick's real capacity is
+`passes x cap`
 (6 x 2 = 12 by default), and a whole send window's capacity is that,
 times how many ticks the window spans. If a tick's LAST pass still reports
 `dueRemaining > 0`, `workers/plus-cron` logs a warning — the alarm that
