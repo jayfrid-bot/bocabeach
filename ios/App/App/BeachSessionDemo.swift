@@ -4,10 +4,12 @@
 //
 //  DEBUG-only, Phase-1 simulator demo for the Beach Session Live Activity.
 //  Launch with `--demo-live-activity` (see AppDelegate.swift) to start a
-//  fixture activity, update it with a lightning hero after ~20s, mark it
-//  unavailable after ~20s more, and end it at ~90s total. This proves the
-//  UI end-to-end in the simulator with NO Capacitor plugin, NO server, and
-//  NO push tokens — those are Phase 2/3.
+//  fixture activity, update it with a lightning hero after ~20s (score
+//  capped low, the common beach-anchored case), a SECOND lightning update
+//  after ~40s (score stays high, the device/beach-mismatch case — see that
+//  block's comment), mark it unavailable at ~60s, and end it at ~90s total.
+//  This proves the UI end-to-end in the simulator with NO Capacitor plugin,
+//  NO server, and NO push tokens — those are Phase 2/3.
 //
 //  Everything here is guarded so a device/OS that can't run Live Activities
 //  never crashes; it only prints why it didn't start.
@@ -87,13 +89,25 @@ enum BeachSessionDemo {
             return
         }
 
-        // T+20s: lightning breaks through and becomes the hero.
+        // T+20s: lightning breaks through and becomes the hero — the COMMON
+        // case, where the lightning read is beach-anchored (matches what
+        // score.ts itself scored against). Score drops to match what
+        // lib/score.ts actually does when GOES GLM observes a strike within
+        // 5 mi at the beach — it bottoms the score at 10 (see score.ts's
+        // lightningWithin5mi cap). The old fixture kept score at 84 here,
+        // which exposed a rendering bug where the score digit went red
+        // purely from the lightning flag while the (contradictory)
+        // green-band verdict text stayed "Yes — good beach day" — see
+        // BeachSessionActivityLiveActivity.swift's scoreAccent doc comment.
+        // NOTE: this beach-anchored case is common but NOT universal — see
+        // the T+40s block below for the device/beach-mismatch case, where a
+        // real lightning-active state does NOT imply a low score.
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
             let now = Date()
             let lightningState = BeachSessionAttributes.ContentState(
                 v: 1,
                 seq: 1,
-                score: 84,
+                score: 8,
                 windMph: 9,
                 gustMph: 14,
                 windDeg: 68,
@@ -117,16 +131,62 @@ enum BeachSessionDemo {
             let content = ActivityContent(state: lightningState, staleDate: now.addingTimeInterval(20 * 60))
             Task {
                 await activity.update(content)
-                print("[BeachSessionDemo] updated seq=1: lightning active 4.8mi bearing=225deg holdUntil=+30m")
+                print("[BeachSessionDemo] updated seq=1: score=8 lightning active 4.8mi bearing=225deg holdUntil=+30m")
             }
         }
 
-        // T+60s (20s + 40s): conditions unavailable.
+        // T+40s: a SEPARATE, more subtle case — lightning active from a
+        // DEVICE-anchored point read (lib/liveActivity/state.ts's
+        // `lightningPoint` branch: the CURRENT `/api/hazards` read for
+        // wherever the phone actually is) while the score stays high,
+        // because score.ts's own cap only ever keys off the BEACH-anchored
+        // reading (`snap.lightning`), not the device's. A beach's forecast
+        // can be sunny while a storm cell sits over the user's current
+        // location a few miles inland — real, not contrived. This is the
+        // scenario the rendering fix actually has to get right: the score
+        // digit must stay green/84 (score-band color, never lightning-flag
+        // color) and the header must read "Beach score 84", never a verdict
+        // word — see scoreAccent's and headerVerdictText's doc comments in
+        // BeachSessionActivityLiveActivity.swift.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 40) {
+            let now = Date()
+            let mismatchState = BeachSessionAttributes.ContentState(
+                v: 1,
+                seq: 2,
+                score: 84,
+                windMph: 9,
+                gustMph: 14,
+                windDeg: 68,
+                waveFt: 1.3,
+                clarity: "clear",
+                seaweed: "low",
+                nextTideAt: tideAt,
+                nextTideKind: "low",
+                sunsetAt: sunsetAt,
+                lightning: .init(
+                    active: true,
+                    latched: true,
+                    miles: 4.8,
+                    bearingDeg: 225, // SW
+                    observedAt: now.addingTimeInterval(-2 * 60),
+                    holdUntil: now.addingTimeInterval(30 * 60)
+                ),
+                updatedAt: now,
+                unavailable: false
+            )
+            let content = ActivityContent(state: mismatchState, staleDate: now.addingTimeInterval(20 * 60))
+            Task {
+                await activity.update(content)
+                print("[BeachSessionDemo] updated seq=2: score=84 (device/beach lightning mismatch) lightning active 4.8mi bearing=225deg holdUntil=+30m")
+            }
+        }
+
+        // T+60s: conditions unavailable.
         DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
             let now = Date()
             let unavailableState = BeachSessionAttributes.ContentState(
                 v: 1,
-                seq: 2,
+                seq: 3,
                 score: 84,
                 windMph: 9,
                 gustMph: 14,
@@ -145,7 +205,7 @@ enum BeachSessionDemo {
             let content = ActivityContent(state: unavailableState, staleDate: now)
             Task {
                 await activity.update(content)
-                print("[BeachSessionDemo] updated seq=2: unavailable=true (conditions unavailable)")
+                print("[BeachSessionDemo] updated seq=3: unavailable=true (conditions unavailable)")
             }
         }
 
@@ -156,7 +216,7 @@ enum BeachSessionDemo {
             let now = Date()
             let endedState = BeachSessionAttributes.ContentState(
                 v: 1,
-                seq: 3,
+                seq: 4,
                 score: 84,
                 windMph: 9,
                 gustMph: 14,
@@ -175,7 +235,7 @@ enum BeachSessionDemo {
             let content = ActivityContent(state: endedState, staleDate: now)
             Task {
                 await activity.update(content)
-                print("[BeachSessionDemo] updated seq=3: ended=true (session ended)")
+                print("[BeachSessionDemo] updated seq=4: ended=true (session ended)")
             }
         }
 
@@ -184,7 +244,7 @@ enum BeachSessionDemo {
             let now = Date()
             let finalState = BeachSessionAttributes.ContentState(
                 v: 1,
-                seq: 4,
+                seq: 5,
                 score: 84,
                 windMph: 9,
                 gustMph: 14,

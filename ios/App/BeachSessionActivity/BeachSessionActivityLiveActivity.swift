@@ -74,9 +74,41 @@ struct BeachSessionLiveActivity: Widget {
 
 // MARK: - Shared derived values
 
+/// Hazard-level accent for DECORATIVE, non-numeric surfaces only (currently
+/// just the Dynamic Island's keyline tint) — turns red while lightning is
+/// active regardless of score, same idea as the LightningRow banner. Never
+/// use this for the score digit itself: see `scoreAccent` below for why.
 private func effectiveAccent(state: BeachSessionAttributes.ContentState) -> Color {
     if state.lightning?.active == true { return Palette.lightning }
-    return Color(hex: BeachSessionVerdict.accentHex(forScore: state.score))
+    return scoreAccent(forScore: state.score)
+}
+
+/// Full-sentence VoiceOver text for an active lightning hazard — shared by
+/// every presentation that surfaces one (LightningRow on the Lock Screen and
+/// DI expanded-bottom, CompactTrailing, MinimalView) so they all say the
+/// same thing. Abbreviations like "mi" and "SW" in the visible text read
+/// poorly aloud, so this spells out "miles" and the compass direction via
+/// `cardinalSpoken`.
+private func lightningAccessibilityLabel(miles: Double?, bearingDeg: Double?) -> String {
+    if let miles {
+        let dir = BeachSessionFormat.cardinalSpoken(fromDegrees: bearingDeg).map { " \($0)" } ?? ""
+        let rounded = Int(miles.rounded())
+        let unit = rounded == 1 ? "mile" : "miles"
+        return "Lightning \(rounded) \(unit)\(dir). Get out of the water."
+    }
+    return "Lightning near you. Get out of the water."
+}
+
+/// The score digit's color, ALWAYS keyed to the score band and nothing else.
+/// Root cause of the red-84-next-to-"Yes" bug: `effectiveAccent` used to be
+/// called here too, so an active lightning flag forced the digit red even
+/// when the score itself was still in a green/amber band (real data can hit
+/// this — lib/liveActivity/state.ts's lightning field can come from a
+/// device-anchored point read that differs from the beach-anchored read
+/// score.ts caps the score with). The score digit must render what the
+/// score says; the lightning banner and keyline carry the hazard warning.
+private func scoreAccent(forScore score: Int) -> Color {
+    Color(hex: BeachSessionVerdict.accentHex(forScore: score))
 }
 
 /// True when a surface should show a neutral "unavailable" indicator instead
@@ -133,8 +165,18 @@ private struct LockScreenView: View {
     let isDegraded: Bool
     let hasEnded: Bool
 
+    /// Lightning active pulls the layout into a deliberately COMPACT mode:
+    /// the banner itself already spends a full row, and Live Activities have
+    /// a hard system height ceiling (~160pt at default text, less headroom
+    /// at accessibility text sizes) — so lightning mode drops the footer row
+    /// entirely (header + banner + at most one stats row) rather than risk
+    /// the footer or the header verdict getting clipped.
+    private var isLightningActive: Bool {
+        !hasEnded && !isDegraded && state.lightning?.active == true
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: isLightningActive ? 8 : 10) {
             header
             if hasEnded {
                 EndedRow()
@@ -146,13 +188,24 @@ private struct LockScreenView: View {
                 }
                 statsRow
             }
-            footer
+            if !isLightningActive {
+                footer
+            }
         }
         .padding(16)
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
+        // isLightningActive (not the raw `state.lightning?.active` flag)
+        // already excludes hasEnded/isDegraded — the wire payload's
+        // `lightning` field can be RETAINED on an ended or stale-unavailable
+        // update (nothing zeroes it out), so gating on the raw flag here
+        // would announce "Beach score N" over VoiceOver even while the
+        // visible text (from headerVerdictText, which checks hasEnded/
+        // isDegraded first) correctly says "Session ended" / "Conditions
+        // unavailable". Using the same gated flag for both keeps the
+        // spoken and visible states in agreement.
+        return HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(attributes.beachName)
                     .font(.subheadline.weight(.semibold))
@@ -160,11 +213,21 @@ private struct LockScreenView: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(hasEnded ? "—" : (isDegraded ? "—" : "\(state.score)"))
                         .font(.system(size: 40, weight: .bold, design: .rounded))
-                        .foregroundStyle((hasEnded || isDegraded) ? Palette.dim : effectiveAccent(state: state))
+                        .foregroundStyle((hasEnded || isDegraded) ? Palette.dim : scoreAccent(forScore: state.score))
                         .monospacedDigit()
-                    Text(hasEnded ? "Session ended" : (isDegraded ? "Conditions unavailable" : BeachSessionVerdict.verdict(forScore: state.score)))
+                        // Lightning mode folds the number into the label's
+                        // own accessibility text ("Beach score N out of
+                        // 100") below, so VoiceOver doesn't read the digit
+                        // twice.
+                        .accessibilityHidden(isLightningActive)
+                    Text(headerVerdictText(lightningActive: isLightningActive))
                         .font(.headline)
                         .foregroundStyle(Palette.ink)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.75)
+                        .accessibilityLabel(
+                            isLightningActive ? "Beach score \(state.score) out of 100" : headerVerdictText(lightningActive: isLightningActive)
+                        )
                 }
             }
             Spacer()
@@ -173,6 +236,31 @@ private struct LockScreenView: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+
+    /// While lightning is active, the header must never assert a positive
+    /// verdict ("Yes — good beach day") next to the red lightning banner —
+    /// that combination is exactly the contradiction this fix removes, and
+    /// it's reachable with real data, not just the demo: a device-anchored
+    /// lightning point read (lib/liveActivity/state.ts's `lightningPoint`
+    /// branch) can be active while the beach's own forecast-based score
+    /// stays high, since score.ts only caps the score for a BEACH-anchored
+    /// reading. So lightning mode shows a neutral "Beach score" label
+    /// instead of any verdict word — true whether the score itself is high
+    /// or the score.ts cap already pulled it down (see BeachSessionDemo's
+    /// two lightning phases for both cases). `.minimumScaleFactor` (not
+    /// `.fixedSize`) lets this shrink rather than clip if a larger Dynamic
+    /// Type size leaves no room — a forced full-height verdict could exceed
+    /// the Lock Screen's system height ceiling and get clipped outright.
+    /// The number itself is NOT repeated here — the big digit to the left
+    /// already shows it, so this just says "Beach score" (the digit is
+    /// hidden from VoiceOver and this label's own accessibility text
+    /// carries the number instead, so it's spoken exactly once).
+    private func headerVerdictText(lightningActive: Bool) -> String {
+        if hasEnded { return "Session ended" }
+        if isDegraded { return "Conditions unavailable" }
+        if lightningActive { return "Beach score" }
+        return BeachSessionVerdict.verdict(forScore: state.score)
     }
 
     private var statsRow: some View {
@@ -258,28 +346,51 @@ private struct StatChip: View {
 private struct LightningRow: View {
     let lightning: BeachSessionAttributes.ContentState.Lightning
 
+    /// Distance/direction inline in ONE short string, not a separate
+    /// trailing element — "Lightning near you — get out of the water" (the
+    /// earlier wording) needed an aggressive shrink to fit as a single line
+    /// and became hard to read; folding "5 mi SW" into the main phrase
+    /// keeps it short enough for a gentler, legible minimumScaleFactor.
+    private var mainText: String {
+        if let miles = lightning.miles {
+            let dir = BeachSessionFormat.cardinal(fromDegrees: lightning.bearingDeg).map { " \($0)" } ?? ""
+            return "Lightning \(String(format: "%.0f", miles)) mi\(dir) — leave the water"
+        }
+        return "Lightning near you — leave the water"
+    }
+
+    /// VoiceOver gets the fuller, spelled-out sentence — abbreviations like
+    /// "mi" and "SW" read poorly aloud. Shared with CompactTrailing and
+    /// MinimalView (see `lightningAccessibilityLabel`) so every Dynamic
+    /// Island presentation says the same thing as the Lock Screen.
+    private var accessibilityText: String {
+        lightningAccessibilityLabel(miles: lightning.miles, bearingDeg: lightning.bearingDeg)
+    }
+
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "cloud.bolt.fill")
                 .foregroundStyle(Palette.lightning)
-            Text("Lightning near you")
+            // lineLimit(1), NOT lineLimit(2): a Live Activity's Lock Screen
+            // presentation renders in a system-fixed-height container that
+            // does not grow to fit a second line just because lineLimit
+            // allows it (confirmed empirically). minimumScaleFactor is a
+            // gentle 0.75 floor now that distance/direction fold into this
+            // one short phrase instead of a separate trailing element —
+            // there's no longer a long string that needs an aggressive
+            // shrink to fit.
+            Text(mainText)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Palette.lightning)
-            Spacer()
-            if let miles = lightning.miles {
-                Text(String(format: "%.0f mi", miles) + (BeachSessionFormat.cardinal(fromDegrees: lightning.bearingDeg).map { " \($0)" } ?? ""))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(Palette.lightning)
-            }
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 10)
         .frame(maxWidth: .infinity)
         .background(Palette.lightning.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            "Lightning near you" + (lightning.miles.map { String(format: ", %.0f miles away", $0) } ?? "")
-        )
+        .accessibilityLabel(accessibilityText)
     }
 }
 
@@ -324,7 +435,7 @@ private struct CompactLeading: View {
         } else {
             Text("\(state.score)")
                 .font(.caption.bold().monospacedDigit())
-                .foregroundStyle(effectiveAccent(state: state))
+                .foregroundStyle(scoreAccent(forScore: state.score))
         }
     }
 }
@@ -350,7 +461,7 @@ private struct CompactTrailing: View {
             }
             .foregroundStyle(Palette.lightning)
             .accessibilityElement(children: .combine)
-            .accessibilityLabel("Lightning near you")
+            .accessibilityLabel(lightningAccessibilityLabel(miles: lightning.miles, bearingDeg: lightning.bearingDeg))
         } else if let sunsetAt = state.sunsetAt {
             HStack(spacing: 0) {
                 Text("Sunset in ")
@@ -381,11 +492,11 @@ private struct MinimalView: View {
         } else if state.lightning?.active == true {
             Text("⚡")
                 .foregroundStyle(Palette.lightning)
-                .accessibilityLabel("Lightning near you")
+                .accessibilityLabel(lightningAccessibilityLabel(miles: state.lightning?.miles, bearingDeg: state.lightning?.bearingDeg))
         } else {
             Text("\(state.score)")
                 .font(.caption2.bold().monospacedDigit())
-                .foregroundStyle(effectiveAccent(state: state))
+                .foregroundStyle(scoreAccent(forScore: state.score))
         }
     }
 }
@@ -415,11 +526,22 @@ private struct ExpandedLeading: View {
             } else {
                 Text("\(state.score)")
                     .font(.title2.bold().monospacedDigit())
-                    .foregroundStyle(effectiveAccent(state: state))
-                Text(shortVerdict(forScore: state.score))
+                    .foregroundStyle(scoreAccent(forScore: state.score))
+                    // Same reasoning as the Lock Screen header: the label
+                    // below already says the number for VoiceOver when
+                    // lightning is active, so don't say it twice.
+                    .accessibilityHidden(state.lightning?.active == true)
+                // Same rule as the Lock Screen header: ExpandedBottom shows
+                // the LightningRow banner in this same expanded presentation,
+                // so no verdict word here either while lightning is active.
+                Text(state.lightning?.active == true ? "Beach score" : shortVerdict(forScore: state.score))
                     .font(.caption2)
                     .foregroundStyle(Palette.dim)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .accessibilityLabel(
+                        state.lightning?.active == true ? "Beach score \(state.score) out of 100" : shortVerdict(forScore: state.score)
+                    )
             }
         }
     }

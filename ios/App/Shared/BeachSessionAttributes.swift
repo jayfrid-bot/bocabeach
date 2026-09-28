@@ -288,10 +288,27 @@ enum BeachSessionFormat {
         guard let deg else { return nil }
         let dirs = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
                     "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+        return dirs[cardinalIndex(fromDegrees: deg)]
+    }
+
+    /// Spelled-out form of `cardinal` for VoiceOver — abbreviations like
+    /// "SW" or "ENE" don't read well aloud, so accessibility labels use this
+    /// instead of the visible glyph-style compass text.
+    static func cardinalSpoken(fromDegrees deg: Double?) -> String? {
+        guard let deg else { return nil }
+        let dirs = [
+            "north", "north-northeast", "northeast", "east-northeast",
+            "east", "east-southeast", "southeast", "south-southeast",
+            "south", "south-southwest", "southwest", "west-southwest",
+            "west", "west-northwest", "northwest", "north-northwest",
+        ]
+        return dirs[cardinalIndex(fromDegrees: deg)]
+    }
+
+    private static func cardinalIndex(fromDegrees deg: Double) -> Int {
         let normalized = deg.truncatingRemainder(dividingBy: 360)
         let positive = normalized < 0 ? normalized + 360 : normalized
-        let index = Int((positive / 22.5).rounded()) % 16
-        return dirs[index]
+        return Int((positive / 22.5).rounded()) % 16
     }
 
     /// "Rising" / "Falling" from the *next* tide's kind: the water is doing
