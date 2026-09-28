@@ -394,6 +394,7 @@ export function BeachModeCard({
   const laLastHashRef = useRef<string | null>(null);
   const laLastUpdateAtRef = useRef(0);
   const laDismissedRef = useRef(false); // this session's activity was user-dismissed: no auto-recreate
+  const [laReshowTick, setLaReshowTick] = useState(0); // bumped by Turn on / Show again to re-run the start effect
   const laSessionStartRef = useRef<number | null>(null);
   const laStartingRef = useRef(false);
   // Codex round-4: the identity-teardown effect below fires end() without
@@ -699,6 +700,12 @@ export function BeachModeCard({
   const laTurnOn = useCallback(() => {
     writeLiveActivityPref("on");
     setLaPref("on");
+    // An explicit "Turn on" / "Show again" overrides an earlier swipe-away on
+    // the Lock Screen: without this the start effect keeps honoring that
+    // dismissal and the tap would do nothing until Beach Mode re-arms.
+    laDismissedRef.current = false;
+    writeLiveActivityDismissal(null);
+    setLaReshowTick((t) => t + 1);
     // No start() call here: flipping the pref back to "on" is all the
     // start/update effect below needs to begin a fresh activity — adoption
     // for this session identity has already settled.
@@ -883,7 +890,7 @@ export function BeachModeCard({
     // until some unrelated prop caused a re-render, stalling a genuine
     // start() for however long that takes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [armed, laPref, laAvailable, laConditions, armedTarget, plus.entitled, plus.deviceId, laAdoptionTick]);
+  }, [armed, laPref, laAvailable, laConditions, armedTarget, plus.entitled, plus.deviceId, laAdoptionTick, laReshowTick]);
 
   // Once a fix shows the phone has actually left the suppressed spot — or a
   // day has passed — drop the suppression so auto-arm is free to fire again
@@ -1171,8 +1178,17 @@ export function BeachModeCard({
             {laRow.kind === "on" ? (
               <>
                 <span className="min-w-0 flex-1 text-sm text-slate-700 dark:text-slate-300">
-                  {laRow.running ? "Showing on your Lock Screen." : "Lock Screen: on."}
+                  {laRow.running
+                    ? "Showing on your Lock Screen."
+                    : laDismissedRef.current
+                      ? "Swiped off your Lock Screen."
+                      : "Lock Screen: on."}
                 </span>
+                {!laRow.running && laDismissedRef.current ? (
+                  <button type="button" onClick={laTurnOn} className={CHIP}>
+                    Show again
+                  </button>
+                ) : null}
                 <button type="button" onClick={laTurnOff} className={CHIP}>
                   Turn off
                 </button>
