@@ -1240,7 +1240,7 @@ export function ConditionsDashboard({
             <button
               type="button"
               onClick={() => void copyFooterSupportId()}
-              className="hover:underline"
+              className="hover:underline inline-flex min-h-[44px] min-w-[44px] items-center justify-center"
             >
               {footerIdCopied ? "Copied" : "Copy"}
             </button>

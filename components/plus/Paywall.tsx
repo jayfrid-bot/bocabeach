@@ -473,7 +473,7 @@ export function PaywallBody({
             <button
               type="button"
               onClick={() => void copySupportId()}
-              className="text-ocean-700 underline-offset-2 hover:underline dark:text-ocean-300"
+              className="text-ocean-700 underline-offset-2 hover:underline dark:text-ocean-300 inline-flex min-h-[44px] min-w-[44px] items-center justify-center"
             >
               {idCopied ? "Copied" : "Copy"}
             </button>

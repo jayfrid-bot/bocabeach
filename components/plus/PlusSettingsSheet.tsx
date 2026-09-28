@@ -426,7 +426,7 @@ export function PlusSettingsSheet({
             <button
               type="button"
               onClick={() => void copySupportId()}
-              className="shrink-0 rounded-full px-2 py-1 font-medium text-ocean-700 transition hover:bg-slate-900/5 dark:text-ocean-300 dark:hover:bg-white/10"
+              className="shrink-0 rounded-full px-2 py-1 font-medium text-ocean-700 transition hover:bg-slate-900/5 dark:text-ocean-300 dark:hover:bg-white/10 inline-flex min-h-[44px] min-w-[44px] items-center justify-center"
             >
               {idCopied ? "Copied" : "Copy"}
             </button>
