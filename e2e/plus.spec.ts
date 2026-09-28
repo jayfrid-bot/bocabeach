@@ -327,6 +327,10 @@ test.describe("inside the app shell", () => {
     const settings = page.getByRole("dialog");
     await expect(settings.getByText("What you come here for")).toBeVisible();
     await expect(settings.getByLabel("Home beach")).toBeVisible();
+    // Alerts settings end in a Save button that confirms with "Saved".
+    await settings.getByRole("button", { name: "Save alerts" }).scrollIntoViewIfNeeded();
+    await settings.getByRole("button", { name: "Save alerts" }).click();
+    await expect(settings.getByRole("button", { name: "Saved" })).toBeVisible();
     expect(await clippedText(page, '[role="dialog"]')).toEqual([]);
     expect(await undersizedTapTargets(page, '[role="dialog"]')).toEqual([]);
 
