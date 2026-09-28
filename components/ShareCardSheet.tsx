@@ -39,6 +39,7 @@ export function ShareCardSheet({
   slug,
   beachName,
   shareUrl,
+  iconOnly = false,
 }: {
   slug: string;
   beachName: string;
@@ -46,6 +47,9 @@ export function ShareCardSheet({
    *  gets the apex). Passed in because only the page knows which beach is
    *  flagship. */
   shareUrl: string;
+  /** Header placement: a 44px icon button (aria-label carries "Share")
+   *  instead of the labeled pill. */
+  iconOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [format, setFormat] = useState<FormatKey>("story");
@@ -99,9 +103,15 @@ export function ShareCardSheet({
           setErr(null);
           setOpen(true);
         }}
-        className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full bg-slate-900/5 px-3 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-900/10 dark:bg-white/5 dark:text-slate-200 dark:ring-white/10 dark:hover:bg-white/10"
+        aria-label="Share"
+        title={iconOnly ? "Share" : undefined}
+        className={
+          iconOnly
+            ? "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-900/5 text-slate-600 ring-1 ring-slate-900/10 transition hover:bg-slate-900/10 dark:bg-white/5 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-white/10"
+            : "inline-flex min-h-[44px] items-center gap-1.5 rounded-full bg-slate-900/5 px-3 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-900/10 dark:bg-white/5 dark:text-slate-200 dark:ring-white/10 dark:hover:bg-white/10"
+        }
       >
-        Share
+        {iconOnly ? <span aria-hidden className="text-lg leading-none">📤</span> : "Share"}
       </button>
       <Sheet
         open={open}

@@ -18,6 +18,20 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-28",
+    title: "Score up top",
+    details:
+      "The beach name moved into the header, warnings got compact, and the score now shows without scrolling.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-28",
+    title: "Lock Screen switch in Beach Mode",
+    details:
+      "While Beach Mode is on, the card now always shows whether your Beach Session is on the Lock Screen, with a button to turn it on or off — and it tells you plainly when it's switched off in iPhone Settings.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-09-28",
     title: "Red flags and high surf now cap the score at 70",
     details:
       "On a red-flag day or under a High Surf Advisory the score now tops out at 70, so the app says \"Decent\" instead of \"Yes — good beach day\". Coastal flood advisories from king tides keep their gentler cap, since the surf is often calm.",
