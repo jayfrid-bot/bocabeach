@@ -183,7 +183,7 @@ describe("POST /api/push/run — sun-color alert", () => {
     expect(ctl.fcmMessages[0].body).toMatch(/rated Great/);
 
     const store = await getStore();
-    expect(await store.lastAlert(DEV, "sun-color:sunset:2026-09-02T23")).not.toBeNull();
+    expect(await store.lastAlert(DEV, "sun-color:sunset:2026-09-02")).not.toBeNull();
   });
 
   it("Codex review item 1: a transient failure on tick 1 retries and succeeds on tick 2 (5 min later) — exactly one push, never two", async () => {
@@ -201,14 +201,14 @@ describe("POST /api/push/run — sun-color alert", () => {
     // rather than sitting unclaimable until ABANDONED_CLAIM_MS (10 min) —
     // proven by tick 2, 5 min later, succeeding at all.
 
-    // Tick 2 (+5 min) — still comfortably inside the 15-minute window.
+    // Tick 2 (+5 min) — still inside the 10-minute window.
     vi.setSystemTime(new Date(windowStart + 5 * 60_000));
     const body2 = (await (await run()).json()) as Record<string, unknown>;
     expect(body2.sunColor).toBe(1);
     expect(ctl.fcmMessages).toHaveLength(1);
     expect(ctl.fcmMessages[0].title).toBe("Great sunset coming");
 
-    // A third tick (+10) must not send again.
+    // A third tick (+10, past the window's own close) must not send again.
     vi.setSystemTime(new Date(windowStart + 10 * 60_000));
     const body3 = (await (await run()).json()) as Record<string, unknown>;
     expect(body3.sunColor).toBe(0);

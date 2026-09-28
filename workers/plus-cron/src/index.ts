@@ -79,18 +79,32 @@ async function runOnce(env: Env): Promise<RunResult> {
 }
 
 /**
- * Nothing left for an IMMEDIATE next pass to usefully pick up: no home beach
- * was left waiting on capacity (`beachesDeferred`), and the at-beach engine
- * didn't defer any of its own stages either (`alerts.deferred` — lightning
- * feed load, ordinary alert sends, Live Activity updates/ends, all gated the
- * same way, lib/alerts/budget.ts's `STAGE_RESERVE`). A response this route
- * can't even parse is treated as "not idle" — better an extra harmless pass
- * than silently stopping short on a shape change.
+ * Nothing left for an IMMEDIATE next pass to usefully pick up: no `due`
+ * home beach was left waiting on capacity this pass (`dueRemaining`,
+ * round-2 item 4 — replaces the coarser `beachesDeferred`, which also
+ * folded in elastic `candidate`-only deferrals that are fine to pick up
+ * whenever), and the at-beach engine didn't defer any of its own stages
+ * either (`alerts.deferred` — lightning feed load, ordinary alert sends,
+ * Live Activity updates/ends, all gated the same way,
+ * lib/alerts/budget.ts's `STAGE_RESERVE`). A response this route can't
+ * even parse is treated as "not idle" — better an extra harmless pass than
+ * silently stopping short on a shape change.
  */
-function isIdle(body: string): boolean {
+function dueRemainingOf(body: string): number | null {
   try {
-    const j = JSON.parse(body) as { beachesDeferred?: number; alerts?: { deferred?: number } };
-    return (j.beachesDeferred ?? 0) === 0 && (j.alerts?.deferred ?? 0) === 0;
+    const j = JSON.parse(body) as { dueRemaining?: number };
+    return typeof j.dueRemaining === "number" ? j.dueRemaining : null;
+  } catch {
+    return null;
+  }
+}
+
+function isIdle(body: string): boolean {
+  const dueRemaining = dueRemainingOf(body);
+  if (dueRemaining === null) return false;
+  try {
+    const j = JSON.parse(body) as { alerts?: { deferred?: number } };
+    return dueRemaining === 0 && (j.alerts?.deferred ?? 0) === 0;
   } catch {
     return false;
   }
@@ -99,11 +113,24 @@ function isIdle(body: string): boolean {
 export default {
   async scheduled(_ctrl: ScheduledController, env: Env): Promise<void> {
     const passes = Math.min(6, Math.max(1, Number(env.PASSES_PER_TICK) || 3));
+    let last: RunResult | null = null;
     for (let i = 1; i <= passes; i++) {
       const r = await runOnce(env);
+      last = r;
       console.log(`plus-cron pass ${i}/${passes}:`, JSON.stringify(r));
       if (!r.ok) break; // a failing app answers the same way next pass — don't hammer it
       if (isIdle(r.body)) break; // every due beach and at-beach stage got a turn this tick
+    }
+    // The alarm for the documented per-tick capacity cap (docs/architecture.md
+    // — passes × PUSH_RUN_MAX_BEACHES): if the LAST pass this tick still
+    // reports due work waiting, the tick's own capacity genuinely wasn't
+    // enough (round-2 item 4) — worth a warn line in `wrangler tail`/logs
+    // even though the tick itself still completes; a persistently nonzero
+    // count here is the signal to raise PASSES_PER_TICK or
+    // PUSH_RUN_MAX_BEACHES.
+    const dueRemaining = last ? dueRemainingOf(last.body) : null;
+    if (dueRemaining !== null && dueRemaining > 0) {
+      console.warn(`plus-cron: ${dueRemaining} due beach(es) still unserved after ${passes} pass(es) this tick`);
     }
   },
 

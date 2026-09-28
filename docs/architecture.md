@@ -365,9 +365,9 @@ flowchart TD
   %% Sunrise/sunset color alert — Plus, opt-in, standalone only (no
   %% coalescing with the digest or "turned Excellent": its own short
   %% lead-time window, not the 8 AM run those two share).
-  PIPE2 -.->|"same res already fetched<br/>for the digest/Excellent check, no extra call"| SUNCOLOR[lib/alerts/sunColor.ts<br/>sunColorDecision over lib/sunAlert.ts's predictNextSunEvent:<br/>score &ge; device's cutoff (Great 70 / Amazing 90) AND<br/>now in [event&minus;lead, event&minus;lead+15min) AND event &le;4h away]
+  PIPE2 -.->|"same res already fetched<br/>for the digest/Excellent check, no extra call"| SUNCOLOR[lib/alerts/sunColor.ts<br/>sunColorDecision over lib/sunAlert.ts's predictNextSunEvent:<br/>score &ge; device's cutoff (Great 70 / Amazing 90) AND<br/>now in [event&minus;lead, event&minus;lead+10min) AND event &le;4h away]
   SUNCOLOR --> CLAIM
-  SUNCOLOR -->|"alert_log key sun-color:&lt;kind&gt;:&lt;eventIso date-hour&gt;,<br/>once per event, ever"| D1
+  SUNCOLOR -->|"alert_log key sun-color:&lt;kind&gt;:&lt;beach-local date&gt;,<br/>once per event, ever"| D1
 
   %% Beach Session Live Activity (docs/LIVE_ACTIVITY_PLAN.md Phase 3) — one
   %% evaluation, two independent fan-outs from the SAME armed-session loop.
@@ -406,34 +406,71 @@ card would show for that exact snapshot. `lib/alerts/sunColor.ts`'s
 `sunColorDecision` sends only when the predicted score clears the device's
 own threshold (Great-or-better, score &ge; 70, or Amazing-only, score &ge;
 90 — `lib/sunQuality.ts`'s own band cutoffs) AND the REAL wall clock falls
-inside `[event − lead, event − lead + 15 min)`, where `lead` is the
+inside `[event − lead, event − lead + 10 min)`, where `lead` is the
 device's own 30/60/120/180-minute choice — AND the predicted event is no
 more than 4 hours away (a farther-out forecast isn't trustworthy enough to
-alert on). The 15-minute window (not 10) leaves room for a transient send
-failure — which releases its claim immediately via `store.releaseSend`
-rather than waiting out the 10-minute abandoned-claim window — to be
-retried by a LATER tick inside the SAME window, not just the next event.
-Both settings live on the `devices` row itself (`sun_color_min_band`/
-`sun_color_lead_min`, migrations/0012), not in `prefs_json`, since that blob
-is typed as a strict boolean map. Dedup is the plain `alert_log` mechanism
-every other home-tier alert uses — `sun-color:<kind>:<eventIso date-hour>`,
-once per event, ever, even if the score later climbs back over the cutoff.
+alert on). A transient send failure releases its claim immediately via
+`store.releaseSend` (ownership-safe — see below) rather than waiting out
+the 10-minute abandoned-claim window, so the very next 5-minute cron tick
+can already retry it inside the same window. Both settings live on the
+`devices` row itself (`sun_color_min_band`/`sun_color_lead_min`,
+migrations/0012), not in `prefs_json`, since that blob is typed as a strict
+boolean map. Dedup is the plain `alert_log` mechanism every other
+home-tier alert uses — `sun-color:<kind>:<beach-local date>`, once per
+event, ever, even if the score later climbs back over the cutoff.
 
-`slugConditionsNeed` (app/api/push/run/route.ts) marks a beach `candidate`
-whenever a sun-color subscriber's next event is within roughly 4h (a pure
-estimate off `lib/sources/sun.ts`'s `computeSunTimes`, no fetch) and `due`
-only once inside the actual send window — but the real guarantee is
-narrower than "never starved": once a device has been evaluated INSIDE its
-own send window this run (sent, below cutoff, or already sent — anything
-except a transient failure), `sent.sunColorCheckedKey` latches that event,
-and `slugConditionsNeed` stops treating the device as due/candidate for it.
-Without that latch, a device with nothing further to send would keep its
-beach `due` for the whole 15-minute window, and — on a tick where several
-same-timezone beaches are all in-window at once — crowd out THEIR
-round-robin slots under `PUSH_RUN_MAX_BEACHES`' cap. The latch is what
-actually prevents that; the cap itself still limits how many DISTINCT
-beaches one tick can visit; coverage across the full window depends on the
-5-minute cron's multiple passes per tick, same as the coming-up alert.
+**Two distinct event identities, on purpose.** The dedupe key above comes
+from `sunColorDecision`, off the REAL conditions snapshot — that's the one
+that must never disagree with itself about whether a given event was
+already sent. `slugConditionsNeed`'s own SELECTOR uses a separate, cheaper
+ESTIMATE identity (`sunColorEstimateKey`, off `lib/sources/sun.ts`'s pure
+`computeSunTimes` — no fetch), built the exact same way
+(`sun-color:<kind>:<beach-local date>`) but from a pure calculation that can
+disagree with the real snapshot by a few minutes, or even — right at a
+boundary — name a different event kind. `slugConditionsNeed` marks a beach
+`candidate` whenever the ESTIMATE's next event is within roughly 4h, and
+`due` only once inside the estimate's own send window (with a little slack
+on the window's END only — never the start, so a beach is never selected
+before its window has genuinely opened) — but the real anti-starvation
+guarantee is narrower than "never starved": once a device has been
+evaluated INSIDE its (real, snapshot-based) send window this run — any
+outcome except a transient failure or an unsettled claim race —
+`sent.sunColorCheckedKey` latches the ESTIMATE's identity for that event
+(not the snapshot's), and `slugConditionsNeed` stops treating the device as
+due/candidate for it. Latching the ESTIMATE's identity, even when it
+disagrees with the snapshot, is deliberate: it's the estimate the SELECTOR
+reads, so it's the estimate that must stop being reselected; if the
+snapshot's true event later turns out to differ, it gets its own, later
+estimate window on its own terms. Without this latch, a device with
+nothing further to send would keep its beach `due` for the whole window,
+crowding out other same-timezone beaches' round-robin slots.
+
+**Ownership-safe send claims (`releaseSend`/`markSent`).** Both take the
+exact `nowMs` the caller originally passed to `claimSend` for that key, and
+both only take effect `WHERE claimed_at = <that value>` — if the claim was
+abandoned and reclaimed by a LATER run in the meantime (which stamps a NEW
+`claimed_at`), a stale caller's belated release or mark is a no-op rather
+than corrupting the reclaimer's live row. Both return whether they actually
+matched; the sun-color block logs a warning (never treated as a hard
+failure — the send itself, if any, already happened) when they don't. A
+lost `claimSend` race is itself non-terminal: the losing run checks
+`alert_log` before deciding whether to latch the estimate key — terminal
+only if another run has ALREADY confirmed the send, otherwise the device
+stays un-latched so a later tick can re-evaluate.
+
+**Per-tick capacity is `passes x PUSH_RUN_MAX_BEACHES`.** `PUSH_RUN_MAX_BEACHES`
+caps how many `due` slugs one `/api/push/run` request (one "pass") selects;
+`workers/plus-cron` makes up to 6 passes per 5-minute tick, SEQUENTIALLY,
+each its own request with its own subrequest budget, stopping early the
+moment a pass's JSON response reports `dueRemaining: 0` (every `due` slug
+this tick got served — the coming-up/morning-digest/sun-color alerts all
+share this one signal). So one tick's real capacity is `passes x cap`
+(6 x 2 = 12 by default), and a whole send window's capacity is that,
+times how many ticks the window spans. If a tick's LAST pass still reports
+`dueRemaining > 0`, `workers/plus-cron` logs a warning — the alarm that
+capacity genuinely wasn't enough this tick (raise `PASSES_PER_TICK` or
+`PUSH_RUN_MAX_BEACHES` if this fires routinely, rather than the window
+simply catching up next tick).
 
 **Grant-source model.** `devices` keeps three independent expiries —
 `store_until` (a purchase, mirrored from RevenueCat), `code_until` (an

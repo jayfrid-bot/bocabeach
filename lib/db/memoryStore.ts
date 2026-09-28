@@ -398,22 +398,27 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       return true;
     },
 
-    async markSent(key, now) {
+    async markSent(key, claimedAt) {
       await load();
       const existing = claims.get(key);
-      if (!existing) return; // nothing to mark — a send without a claim never happens
-      claims.set(key, { ...existing, sent_at: now });
+      // Ownership guard (round-2 item 1), mirroring d1Store's SQL WHERE:
+      // only the caller whose `claimedAt` still matches the row's CURRENT
+      // `claimed_at` may mark it sent — a reclaim by a later run (which
+      // stamps a new `claimed_at`) makes a stale caller's write a no-op.
+      if (!existing || existing.claimed_at !== claimedAt || existing.sent_at != null) return false;
+      claims.set(key, { ...existing, sent_at: claimedAt });
       await save();
+      return true;
     },
 
-    async releaseSend(key) {
+    async releaseSend(key, claimedAt) {
       await load();
       const existing = claims.get(key);
-      // Never undo a confirmed send — same guard d1Store's SQL WHERE clause
-      // enforces.
-      if (!existing || existing.sent_at != null) return;
+      // Same ownership guard as `markSent`, plus never undo a confirmed send.
+      if (!existing || existing.claimed_at !== claimedAt || existing.sent_at != null) return false;
       claims.delete(key);
       await save();
+      return true;
     },
 
     async pruneSendClaims(now) {

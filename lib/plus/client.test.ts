@@ -22,9 +22,9 @@ import {
   resetInstallTokenLatch,
   resetPurchaseSyncRetryState,
   setPurchaseSyncRetryStateForTest,
+  createSunColorFieldSaver,
   shouldBootstrapInstallTokenOnMount,
   startVisibleReconcileLoop,
-  sunColorSaveOutcome,
   STORE_EXPIRY_GRACE_MS,
   STORE_EXPIRY_TIMER_MAX_MS,
   storeExpiryTimerMs,
@@ -346,38 +346,117 @@ describe("purchaseSyncRetryOutcome", () => {
   });
 });
 
-describe("sunColorSaveOutcome (Requirement item 3 — the request-generation guard)", () => {
-  it("ignores a superseded response outright, whatever it says — even a success", () => {
-    expect(sunColorSaveOutcome({ ok: true, error: null, status: 200 }, true)).toBe("ignore");
-    expect(sunColorSaveOutcome({ ok: false, error: "network", status: 0 }, true)).toBe("ignore");
-    expect(sunColorSaveOutcome({ ok: false, error: "bad-request", status: 400 }, true)).toBe("ignore");
-  });
+describe("createSunColorFieldSaver (Requirement round-2 item 2)", () => {
+  /** A saver over a tiny in-memory "pending" box and a controllable `send`
+   *  — real timers (not fake ones) drive actual request ordering, same
+   *  pattern lib/plus/liveActivity.test.ts's own createSerialQueue tests
+   *  use, since createSerialQueue's ordering is about real promise
+   *  settlement, not a mocked clock. */
+  function harness(respond: (value: string) => Promise<PlusResult> | PlusResult) {
+    const sendCalls: string[] = [];
+    const applied: unknown[] = [];
+    let pendingValue: string | undefined;
+    const saver = createSunColorFieldSaver<string>({
+      send: async (value) => {
+        sendCalls.push(value);
+        return respond(value);
+      },
+      currentPending: () => pendingValue,
+      queuePending: (v) => {
+        pendingValue = v;
+      },
+      clearPendingIfMatch: (v) => {
+        if (pendingValue === v) pendingValue = undefined;
+      },
+      apply: (res) => applied.push(res.device),
+    });
+    return {
+      saver,
+      sendCalls,
+      applied,
+      pending: () => pendingValue,
+      setPending: (v: string | undefined) => {
+        pendingValue = v;
+      },
+    };
+  }
 
-  it("applies a non-superseded success", () => {
-    expect(sunColorSaveOutcome({ ok: true, error: null, status: 200 }, false)).toBe("apply");
-  });
-
-  it("reverts and queues a non-superseded retryable failure (network or 5xx)", () => {
-    expect(sunColorSaveOutcome({ ok: false, error: "network", status: 0 }, false)).toBe("revert-and-queue");
-    expect(sunColorSaveOutcome({ ok: false, error: "server", status: 500 }, false)).toBe("revert-and-queue");
-  });
-
-  it("reverts and clears a non-superseded outright rejection (4xx) — the server's final word", () => {
-    expect(sunColorSaveOutcome({ ok: false, error: "bad-request", status: 400 }, false)).toBe("revert-and-clear");
-  });
-
-  it("out-of-order responses: readSuperseded correctly flags an older generation once a newer save has started", () => {
-    // Call A starts at generation 1; call B (a later edit) starts at
-    // generation 2 before A's response lands.
-    const startA = 1;
-    const currentAfterB = 2;
-    expect(readSuperseded(startA, currentAfterB)).toBe(true);
-    expect(sunColorSaveOutcome({ ok: true, error: null, status: 200 }, readSuperseded(startA, currentAfterB))).toBe(
-      "ignore",
+  it("(a) offline failure queues the value; a later live edit that succeeds clears it and wins", async () => {
+    const h = harness(async (value) =>
+      value === "epic"
+        ? { ok: false, device: null, error: "network", status: 0 }
+        : { ok: true, device: fakeDevice({ id: value }), error: null, status: 200 },
     );
-    // B itself, checked against the SAME current generation, is not superseded.
-    const startB = 2;
-    expect(readSuperseded(startB, currentAfterB)).toBe(false);
+    const reverted: string[] = [];
+
+    await h.saver("epic", () => reverted.push("epic"));
+    expect(h.pending()).toBe("epic");
+    expect(reverted).toEqual(["epic"]);
+
+    await h.saver("vivid", () => reverted.push("vivid"));
+    expect(h.pending()).toBeUndefined();
+    expect(h.applied).toEqual([fakeDevice({ id: "vivid" })]);
+    expect(h.sendCalls).toEqual(["epic", "vivid"]);
+  });
+
+  it("(b) two fast edits A then B: exactly two requests, strictly in order — B's response wins, A's is suppressed", async () => {
+    const h = harness(async (value) => {
+      await new Promise((r) => setTimeout(r, 5));
+      return { ok: true, device: fakeDevice({ id: value }), error: null, status: 200 };
+    });
+    const reverted: string[] = [];
+
+    const pA = h.saver("A", () => reverted.push("A"));
+    const pB = h.saver("B", () => reverted.push("B"));
+    await Promise.all([pA, pB]);
+
+    // createSerialQueue never starts B's `send` until A's has fully
+    // settled — exactly two requests, strictly in submission order.
+    expect(h.sendCalls).toEqual(["A", "B"]);
+    // A's (successful!) response is still suppressed — by the time it's
+    // processed, B has already queued its own value, so A's `apply` never
+    // fires and never clobbers what B shows.
+    expect(h.applied).toEqual([fakeDevice({ id: "B" })]);
+    expect(reverted).toEqual([]); // neither failed, so neither reverts
+    expect(h.pending()).toBeUndefined();
+  });
+
+  it("(c) a retry of a stale queued value in flight when a live edit arrives — the edit wins", async () => {
+    const h = harness(async (value) => {
+      await new Promise((r) => setTimeout(r, 5));
+      return { ok: true, device: fakeDevice({ id: value }), error: null, status: 200 };
+    });
+    h.setPending("epic"); // a stale value already queued from an earlier failure
+
+    const retry = h.saver("epic", () => {}); // flushPending replaying the stale value
+    const edit = h.saver("vivid", () => {}); // a live edit arriving while the retry is in flight
+    await Promise.all([retry, edit]);
+
+    expect(h.sendCalls).toEqual(["epic", "vivid"]);
+    expect(h.applied).toEqual([fakeDevice({ id: "vivid" })]);
+    expect(h.pending()).toBeUndefined();
+  });
+
+  it("a stale RETRYABLE failure never reverts past a newer edit's own optimistic state", async () => {
+    const h = harness(async (value) => {
+      await new Promise((r) => setTimeout(r, 5));
+      return value === "A" ? { ok: false, device: null, error: "network", status: 0 } : { ok: true, device: fakeDevice({ id: value }), error: null, status: 200 };
+    });
+    const reverted: string[] = [];
+    const pA = h.saver("A", () => reverted.push("A")); // will fail
+    const pB = h.saver("B", () => reverted.push("B")); // will succeed, and by then owns the field
+    await Promise.all([pA, pB]);
+
+    expect(reverted).toEqual([]); // A's failure is suppressed — B already superseded it
+    expect(h.applied).toEqual([fakeDevice({ id: "B" })]);
+  });
+
+  it("an outright rejection (4xx) still clears the pending queue even when superseded-checked as current", async () => {
+    const h = harness(async () => ({ ok: false, device: null, error: "bad-request", status: 400 }));
+    const reverted: string[] = [];
+    await h.saver("epic", () => reverted.push("epic"));
+    expect(reverted).toEqual(["epic"]);
+    expect(h.pending()).toBeUndefined(); // dropped — retrying would only repeat the same rejection
   });
 });
 

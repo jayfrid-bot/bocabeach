@@ -29,6 +29,7 @@ import {
   COMING_UP_24H_MS,
   COMING_UP_30D_MS,
 } from "@/lib/db/comingUpClaims";
+import { ABANDONED_CLAIM_MS } from "@/lib/db/sendClaims";
 
 let DatabaseSyncCtor: (new (path: string) => {
   exec(sql: string): void;
@@ -244,27 +245,69 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
   });
 
   // --- releaseSend (migrations/0004_send_claims.sql) — real SQL DELETE ------
-  describe("releaseSend", () => {
+  describe("releaseSend / markSent — ownership-safe (round-2 item 1)", () => {
     it("deletes an unsent claim so it can be re-claimed immediately", async () => {
       const now = Date.now();
       expect(await store.claimSend("k1", now)).toBe(true);
       expect(await store.claimSend("k1", now + 1)).toBe(false); // still held, not abandoned
-      await store.releaseSend("k1");
+      expect(await store.releaseSend("k1", now)).toBe(true);
       expect(await store.claimSend("k1", now + 2)).toBe(true); // free again, no wait for ABANDONED_CLAIM_MS
     });
 
     it("never undoes a claim already marked sent", async () => {
       const now = Date.now();
       await store.claimSend("k2", now);
-      await store.markSent("k2", now + 1);
-      await store.releaseSend("k2");
+      expect(await store.markSent("k2", now)).toBe(true);
+      expect(await store.releaseSend("k2", now)).toBe(false); // no match — already sent
       // Still "sent" — a fresh claim attempt must fail exactly as it would
       // for any other confirmed send (not abandoned, not unsent).
       expect(await store.claimSend("k2", now + 2)).toBe(false);
     });
 
-    it("releasing a claim nobody holds is a harmless no-op", async () => {
-      await expect(store.releaseSend("k-never-claimed")).resolves.toBeUndefined();
+    it("releasing a claim nobody holds is a harmless no-op, returning false", async () => {
+      expect(await store.releaseSend("k-never-claimed", Date.now())).toBe(false);
+    });
+
+    it("markSent on a key nobody claimed is a harmless no-op, returning false", async () => {
+      expect(await store.markSent("k-never-claimed", Date.now())).toBe(false);
+    });
+
+    it("a stale caller's release/markSent never touches a claim a LATER run has since reclaimed", async () => {
+      // A claims at t0 and then crashes (never completes).
+      const t0 = Date.now();
+      expect(await store.claimSend("k3", t0)).toBe(true);
+
+      // B reclaims the abandoned claim at t0 + ABANDONED_CLAIM_MS + 1 —
+      // this stamps a NEW claimed_at, which is B's own ownership token.
+      const t1 = t0 + ABANDONED_CLAIM_MS + 1;
+      expect(await store.claimSend("k3", t1)).toBe(true);
+
+      // A (unaware it was reclaimed) finally gets around to releasing its
+      // OWN stale claim, using its OWN original token (t0) — this must NOT
+      // delete B's live row.
+      expect(await store.releaseSend("k3", t0)).toBe(false);
+
+      // B's claim is still live and can be marked sent normally.
+      expect(await store.markSent("k3", t1)).toBe(true);
+
+      // A stale release attempt with A's OLD token, now that B's row is
+      // SENT, still correctly fails to match (belt and suspenders: wrong
+      // token AND already sent).
+      expect(await store.releaseSend("k3", t0)).toBe(false);
+    });
+
+    it("a stale caller's markSent never marks a claim a LATER run has since reclaimed", async () => {
+      const t0 = Date.now();
+      expect(await store.claimSend("k4", t0)).toBe(true);
+      const t1 = t0 + ABANDONED_CLAIM_MS + 1;
+      expect(await store.claimSend("k4", t1)).toBe(true); // B reclaims
+
+      // A's belated markSent, with A's stale token, must not succeed —
+      // it would otherwise mark B's still-in-flight claim "sent" under A's
+      // send, which never actually confirmed anything for THIS claim.
+      expect(await store.markSent("k4", t0)).toBe(false);
+      // B's own markSent, with the correct current token, still works.
+      expect(await store.markSent("k4", t1)).toBe(true);
     });
   });
 

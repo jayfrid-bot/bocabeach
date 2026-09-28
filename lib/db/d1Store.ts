@@ -831,14 +831,29 @@ export function d1Store(db: D1Like): DeviceStore {
       return changes > 0;
     },
 
-    async markSent(key, now) {
-      await db.prepare("UPDATE send_claims SET sent_at = ? WHERE key = ?").bind(now, key).run();
+    async markSent(key, claimedAt) {
+      // `claimedAt` is both the value written to `sent_at` and the
+      // ownership check (round-2 item 1): a row whose `claimed_at` has
+      // since moved (an abandoned claim reclaimed by a later run) no
+      // longer matches, so this stale caller's write touches nothing.
+      const result = await db
+        .prepare("UPDATE send_claims SET sent_at = ? WHERE key = ? AND claimed_at = ? AND sent_at IS NULL")
+        .bind(claimedAt, key, claimedAt)
+        .run();
+      return ((result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0) > 0;
     },
 
-    async releaseSend(key) {
-      // `AND sent_at IS NULL` guards against deleting a row a concurrent
-      // caller just marked sent — release only ever undoes an UNSENT claim.
-      await db.prepare("DELETE FROM send_claims WHERE key = ? AND sent_at IS NULL").bind(key).run();
+    async releaseSend(key, claimedAt) {
+      // Same ownership guard as `markSent`, plus `sent_at IS NULL` so this
+      // can never undo a confirmed send (belt and suspenders — a row that
+      // matches `claimed_at` can only be unsent anyway, since `markSent`
+      // only ever writes the SAME `claimedAt` as `sent_at`, but the
+      // explicit check keeps the invariant obvious from the SQL alone).
+      const result = await db
+        .prepare("DELETE FROM send_claims WHERE key = ? AND claimed_at = ? AND sent_at IS NULL")
+        .bind(key, claimedAt)
+        .run();
+      return ((result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0) > 0;
     },
 
     async pruneSendClaims(now) {

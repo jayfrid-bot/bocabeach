@@ -126,14 +126,22 @@ export interface SentState {
    *  stay "due" for the WHOLE 8 AM hour, crowding out other beaches'
    *  morning digests too). */
   comingUpCheckedDate?: string;
-  /** The sun-color alert's own dedupe key (`sun-color:<kind>:<eventIso
-   *  date-hour>`, lib/alerts/sunColor.ts) for the LAST event this device
-   *  was evaluated for INSIDE its own send window — set regardless of
-   *  outcome (nothing eligible / already sent / confirmed sent or dead
-   *  token), EXCEPT on a transient send failure, where it is left
+  /** The sun-color alert's ESTIMATE-based event identity
+   *  (`sun-color:<kind>:<beach-local date>`, lib/alerts/sunColor.ts's
+   *  `sunColorEstimateKey`/`sunColorEventKey`) for the LAST event this
+   *  device was evaluated for INSIDE its own send window — set regardless
+   *  of outcome (nothing eligible / already sent / confirmed sent or dead
+   *  token / a lost claim race another run already confirmed), EXCEPT on a
+   *  transient send failure or an UNSETTLED claim race, where it is left
    *  unset/stale so a later tick inside the SAME window retries (same
-   *  "regardless of outcome, except a retryable failure" rule
-   *  `comingUpCheckedDate` follows for its own alert). Unlike
+   *  "regardless of outcome, except a retryable one" rule
+   *  `comingUpCheckedDate` follows for its own alert). Deliberately the
+   *  ESTIMATE's own identity, not the real conditions snapshot's — the two
+   *  can legitimately disagree at a boundary (a different local day, or
+   *  even a different kind), and the latch must still stop the SELECTOR
+   *  (which only ever sees the estimate) from re-selecting this beach for
+   *  the event it just evaluated; the snapshot's own true event, if
+   *  different, gets its own later estimate window. Unlike
    *  `comingUpCheckedDate` (a calendar date, since coming-up evaluates once
    *  a day), this is keyed to the specific EVENT, since a device can have a
    *  sun-color opportunity at a different hour on a different day — a stale

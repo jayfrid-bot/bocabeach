@@ -31,6 +31,7 @@ import { cacheFromDevice, deviceEntitled, isEntitled, isStoreBased, shouldSelfHe
 import { isRetryableSaveError } from "@/lib/plus/pendingWrites";
 import { computePersonalScore, type PersonalScore } from "@/lib/plus/personalScore";
 import { establishesArrival } from "@/lib/plus/beachMode";
+import { createSerialQueue } from "@/lib/plus/liveActivity";
 import * as store from "@/lib/plus/storage";
 import type { PlusCache, PreviewRecord } from "@/lib/plus/types";
 import { holdReload } from "@/lib/reloadGuard";
@@ -165,32 +166,60 @@ export function purchaseSyncRetryOutcome(res: PlusResult, now: number): "clear" 
 }
 
 /**
- * What a sun-color settings save (the live edit or flushPending's retry of
- * it — they share one generation counter, `sunColorGenerationRef`) should do
- * with its response (Requirement item 3):
- *  - "ignore": a NEWER sun-color save started before this one's response
- *    landed (`superseded`) — this response can never usefully apply,
- *    revert, or touch the pending queue, since the newer call already owns
- *    the field(s) it touched. The one deterministic outcome regardless of
- *    what the response itself says.
- *  - "apply": confirmed — adopt the server's device and clear this patch's
- *    field(s) from the pending queue.
- *  - "revert-and-queue": a retryable failure (network/5xx) — put the
- *    optimistic edit back to what it showed before this call, and queue the
- *    patch for the next retry.
- *  - "revert-and-clear": the server rejected it outright (4xx) — revert,
- *    and drop it from the queue (retrying would only repeat the same
- *    rejected request).
+ * Build a per-field sun-color save function (Requirement round-2 item 2).
+ * Every call for this field — a live edit AND flushPending's own retry of a
+ * previously-failed one — is serialized through ONE `createSerialQueue()`
+ * instance (lib/plus/liveActivity.ts, reused here), so two requests for the
+ * SAME field can never be in flight together, and since a serial queue
+ * resolves calls in the exact order they were submitted, the LAST call
+ * submitted is always the LAST one whose response is processed — no
+ * separate "is this response stale" generation counter is needed; the
+ * queue's own strict ordering makes an out-of-order response impossible.
+ *
+ * `opts.queuePending(value)` is called SYNCHRONOUSLY, before the network
+ * call even starts — the pending map always holds the CURRENT, latest
+ * intent for this field, immediately replacing whatever was queued before
+ * (a still-in-flight retry or an earlier failed value), durable across a
+ * reload even before this call's own request resolves.
+ *
+ * `opts.currentPending()` is re-read once the response lands and gates
+ * `apply`/`revert`: if a NEWER call has since queued a DIFFERENT value for
+ * this field (`currentPending() !== value`), this response is stale for UI
+ * purposes — its `apply`/`revert` effect is skipped so it can never
+ * overwrite what the newer call already shows, but `clearPendingIfMatch` is
+ * still attempted (a no-op when the newer value doesn't match, exactly the
+ * compare-and-clear rule). This is what replaces the old generation ref.
+ *
+ * Framework-agnostic (no React) so it's directly testable with controllable
+ * promise resolution — see lib/plus/client.test.ts.
  */
-export type SunColorSaveOutcome = "ignore" | "apply" | "revert-and-queue" | "revert-and-clear";
-
-export function sunColorSaveOutcome(
-  res: Pick<PlusResult, "ok" | "error" | "status">,
-  superseded: boolean,
-): SunColorSaveOutcome {
-  if (superseded) return "ignore";
-  if (res.ok) return "apply";
-  return isRetryableSaveError(res) ? "revert-and-queue" : "revert-and-clear";
+export function createSunColorFieldSaver<V>(opts: {
+  send: (value: V) => Promise<PlusResult>;
+  currentPending: () => V | undefined;
+  queuePending: (value: V) => void;
+  clearPendingIfMatch: (value: V) => void;
+  apply: (res: PlusResult) => void;
+}): (value: V, revert: () => void) => Promise<PlusResult> {
+  const run = createSerialQueue();
+  return (value, revert) => {
+    opts.queuePending(value);
+    return run(async () => {
+      const res = await opts.send(value);
+      const stillCurrent = opts.currentPending() === value;
+      if (res.ok) {
+        if (stillCurrent) opts.apply(res);
+        opts.clearPendingIfMatch(value);
+      } else if (isRetryableSaveError(res)) {
+        if (stillCurrent) revert();
+        // Left queued for the next retry — `queuePending` above already
+        // wrote this exact value; a newer call would have overwritten it.
+      } else {
+        if (stillCurrent) revert();
+        opts.clearPendingIfMatch(value);
+      }
+      return res;
+    });
+  };
 }
 
 export interface PlusState {
@@ -453,16 +482,14 @@ export function usePlus(): PlusState {
   // in flight, and skip overwriting the sync's newer state with its own
   // stale answer (#6).
   const syncGenerationRef = useRef(0);
-  // Bumped at the start of every sun-color settings save (both the live
-  // `saveSunColorPrefs` and `flushPending`'s own retry of it) and shared
-  // between the two — a live edit and a queued retry can be genuinely
-  // concurrent (two separate HTTP calls), and whichever one STARTED last is
-  // authoritative. Any response landing while a NEWER sun-color save is
-  // already in flight (or has already resolved) is superseded and ignored
-  // outright: it must never apply a stale device snapshot, revert an
-  // optimistic edit it didn't make, or touch the pending queue on a newer
-  // call's behalf (Requirement item 3, `readSuperseded`/`sunColorSaveOutcome`).
-  const sunColorGenerationRef = useRef(0);
+  // One serialized saver per sun-color field (Requirement round-2 item 2) —
+  // both the live edit (`saveSunColorPrefs`) and `flushPending`'s own retry
+  // of the SAME field go through the SAME `createSunColorFieldSaver`
+  // instance, so two requests for one field can never race, and the
+  // queue's own ordering (not a separate generation counter) is what makes
+  // an out-of-order response impossible. Built lazily (`sunColorSaverFor`
+  // below) so each hook instance gets its own independent queues.
+  const sunColorSaversRef = useRef<Partial<Record<"minBand" | "leadMin", ReturnType<typeof createSunColorFieldSaver<SunColorMinBand | number>>>>>({});
   // One-shot guard for the restore-pending retry below (#M2) — a second
   // restore tap (or a fast re-render) replaces rather than stacks a pending
   // retry, and unmount clears it like any other timer.
@@ -506,6 +533,39 @@ export function usePlus(): PlusState {
     },
     [],
   );
+
+  /** The shared, lazily-built per-field sun-color saver (Requirement
+   *  round-2 item 2) — both `saveSunColorPrefs` (the live edit) and
+   *  `flushPending`'s own retry call THIS, so a single `createSerialQueue()`
+   *  instance per field is what actually prevents the two from racing.
+   *  `field`'s own API body key (`sunColorMinBand`/`sunColorLeadMin`) is
+   *  resolved inside `send`, so callers only ever think in terms of the
+   *  plain field name. */
+  const sunColorSaverFor = (field: "minBand" | "leadMin") => {
+    const existing = sunColorSaversRef.current[field];
+    if (existing) return existing;
+    const saver = createSunColorFieldSaver<SunColorMinBand | number>({
+      send: async (value) => {
+        const id = getDeviceId();
+        if (!id) return { ok: false, device: null, error: "network", status: 0 };
+        return plusApi.saveDevice(id, {
+          ...baseFields(),
+          ...(field === "minBand" ? { sunColorMinBand: value as SunColorMinBand } : { sunColorLeadMin: value as number }),
+        });
+      },
+      currentPending: () => store.readPending().sunColor?.[field],
+      queuePending: (value) => store.queuePendingSunColor({ [field]: value }),
+      clearPendingIfMatch: (value) => {
+        store.clearPendingSunColorIfMatch({ [field]: value });
+        setPendingSunColorKeys(Object.keys(store.readPending().sunColor ?? {}) as ("minBand" | "leadMin")[]);
+      },
+      apply: (res) => {
+        if (res.device) applyDevice(res.device);
+      },
+    });
+    sunColorSaversRef.current[field] = saver;
+    return saver;
+  };
 
   // Wraps the module-level `bootstrapInstallToken` (see its doc above) to
   // also fold in whatever device row it happened to read along the way —
@@ -705,27 +765,23 @@ export function usePlus(): PlusState {
         setPendingPrefsKeys([]);
       }
     }
-    if (pending.sunColor && Object.keys(pending.sunColor).length) {
-      const patch = pending.sunColor;
-      // Shares `sunColorGenerationRef` with `saveSunColorPrefs` — a live
-      // edit that starts while THIS retry is in flight must win, and this
-      // retry's own (now-stale) response must be ignored outright rather
-      // than reverting or clobbering the newer edit (Requirement item 3).
-      const generation = ++sunColorGenerationRef.current;
-      const res = await plusApi.saveDevice(id, {
-        ...baseFields(),
-        ...(patch.minBand !== undefined ? { sunColorMinBand: patch.minBand } : {}),
-        ...(patch.leadMin !== undefined ? { sunColorLeadMin: patch.leadMin } : {}),
-      });
-      const outcome = sunColorSaveOutcome(res, readSuperseded(generation, sunColorGenerationRef.current));
-      if (outcome === "apply" && res.device) applyDevice(res.device);
-      if (outcome === "apply" || outcome === "revert-and-clear") {
-        store.clearPendingSunColorIfMatch(patch);
-        setPendingSunColorKeys(Object.keys(store.readPending().sunColor ?? {}) as ("minBand" | "leadMin")[]);
-      }
-      // "ignore" (superseded) and "revert-and-queue" both leave the pending
-      // queue exactly as it is — the former because a newer call owns it,
-      // the latter because it's already the queued value.
+    if (pending.sunColor) {
+      // Retries EACH pending field through the SAME per-field serial queue
+      // `saveSunColorPrefs` uses (`sunColorSaverFor`) — Requirement round-2
+      // item 2. A live edit that starts while this retry is in flight is
+      // simply the NEXT call in that same queue: it wins because it runs
+      // (and its response is processed) after this one, never because of a
+      // separate staleness check. No UI value to revert to here (a
+      // background retry, not a fresh tap) — a renewed failure just leaves
+      // the field queued for the next attempt.
+      const fields = Object.keys(pending.sunColor) as ("minBand" | "leadMin")[];
+      await Promise.all(
+        fields.map((field) => {
+          const value = pending.sunColor![field];
+          if (value === undefined) return Promise.resolve();
+          return sunColorSaverFor(field)(value, () => {});
+        }),
+      );
     }
     if (pending.purchaseSync) {
       // A store purchase that confirmed but never made it to our server
@@ -884,50 +940,30 @@ export function usePlus(): PlusState {
 
   const saveSunColorPrefs = useCallback(
     async (patch: { minBand?: SunColorMinBand; leadMin?: number }): Promise<PlusResult> => {
-      const id = getDeviceId();
-      if (!id) return { ok: false, device: null, error: "network", status: 0 };
       const keys = Object.keys(patch) as ("minBand" | "leadMin")[];
-      // Only the field(s) THIS call touches — a revert must never stomp an
-      // unrelated field a different (successful) call already changed.
-      const prevByKey: Partial<{ minBand: SunColorMinBand; leadMin: number }> = {};
-      for (const k of keys) if (device?.sunColor) prevByKey[k] = device.sunColor[k] as never;
-
-      // Optimistic: the chip moves now, the server catches up.
-      setDevice((d) => (d ? { ...d, sunColor: { ...d.sunColor, ...patch } } : d));
-      const generation = ++sunColorGenerationRef.current;
+      if (!keys.length) return { ok: false, device: null, error: "network", status: 0 };
       setLoading(true);
-      const res = await plusApi.saveDevice(id, {
-        ...baseFields(),
-        ...(patch.minBand !== undefined ? { sunColorMinBand: patch.minBand } : {}),
-        ...(patch.leadMin !== undefined ? { sunColorLeadMin: patch.leadMin } : {}),
-      });
+      const results = await Promise.all(
+        keys.map((field) => {
+          const value = patch[field] as SunColorMinBand | number;
+          // Captured per call, per field — the field saver only ever
+          // invokes this if NO newer call has since queued a different
+          // value for the SAME field (see createSunColorFieldSaver's doc),
+          // so it can never stomp a later edit's own optimistic state.
+          const prevValue = device?.sunColor[field];
+          // Optimistic: the chip moves now, the server catches up.
+          setDevice((d) => (d ? { ...d, sunColor: { ...d.sunColor, [field]: value } } : d));
+          const revert = () => {
+            if (prevValue === undefined) return;
+            setDevice((d) => (d ? { ...d, sunColor: { ...d.sunColor, [field]: prevValue } } : d));
+          };
+          return sunColorSaverFor(field)(value, revert);
+        }),
+      );
       setLoading(false);
-
-      const outcome = sunColorSaveOutcome(res, readSuperseded(generation, sunColorGenerationRef.current));
-      // "ignore": a newer sun-color save started (live edit or flushPending
-      // retry) before this response landed — it already owns these field(s);
-      // this stale response must not apply, revert, or touch the queue.
-      if (outcome === "apply") {
-        if (res.device) applyDevice(res.device);
-        store.clearPendingSunColorIfMatch(patch);
-      } else if (outcome === "revert-and-queue") {
-        // The server never confirmed it: put the chip(s) back to what they
-        // showed before this tap, and queue the intent so the retry loop
-        // lands it.
-        setDevice((d) => (d ? { ...d, sunColor: { ...d.sunColor, ...prevByKey } } : d));
-        store.queuePendingSunColor(patch);
-      } else if (outcome === "revert-and-clear") {
-        // The server rejected it outright — revert and drop it from the
-        // queue (retrying would only repeat the same rejected request).
-        setDevice((d) => (d ? { ...d, sunColor: { ...d.sunColor, ...prevByKey } } : d));
-        store.clearPendingSunColorIfMatch(patch);
-      }
-      if (outcome !== "ignore") {
-        setPendingSunColorKeys(Object.keys(store.readPending().sunColor ?? {}) as ("minBand" | "leadMin")[]);
-      }
-      return res;
+      return results[results.length - 1] ?? { ok: false, device: null, error: "network", status: 0 };
     },
-    [applyDevice, device],
+    [device],
   );
 
   const startTrial = useCallback(async (): Promise<PlusResult> => {

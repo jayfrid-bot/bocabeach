@@ -249,21 +249,34 @@ export interface DeviceStore {
    * `markSent` after `ABANDONED_CLAIM_MS` may be re-claimed.
    */
   claimSend(key: string, now: number): Promise<boolean>;
-  /** Record that a claimed send actually went out. */
-  markSent(key: string, now: number): Promise<void>;
+  /**
+   * Record that a claimed send actually went out. `claimedAt` MUST be the
+   * exact value the caller originally passed to `claimSend` for this key —
+   * it doubles as both `sent_at`'s value and the ownership check
+   * (`WHERE ... AND claimed_at = ?`, round-2 item 1): if the claim was
+   * abandoned and reclaimed by a LATER run in the meantime (which stamps a
+   * NEW `claimed_at`), this stale caller's write no longer matches and is a
+   * no-op — it must never mark a claim it no longer owns as sent. Returns
+   * whether the write actually matched (false = lost ownership to a
+   * reclaim; the caller should log this, not treat it as a hard failure —
+   * the send itself already happened).
+   */
+  markSent(key: string, claimedAt: number): Promise<boolean>;
   /**
    * Release a claimed-but-unsent send immediately (a transient transport
-   * failure, or a decision not to send after all) — deletes the row unless
-   * it was already marked sent (defensive: never undo a confirmed send).
-   * Freeing the claim right away, rather than waiting out
-   * `ABANDONED_CLAIM_MS`, lets a genuinely failed attempt be retried by the
-   * very next cron tick instead of sitting unclaimable until the
-   * abandonment window passes — which mattered for the sun-color alert's
-   * short (15-minute) send window: without this, a transient failure on the
-   * first tick could outlive the window before `ABANDONED_CLAIM_MS` (10 min)
-   * ever made the claim reclaimable.
+   * failure, or a decision not to send after all) — deletes the row only
+   * when it still belongs to THIS caller (`claimedAt` must match the row's
+   * current `claimed_at`, same ownership guard as `markSent`) and was never
+   * marked sent (defensive: never undo a confirmed send, and never delete a
+   * row a LATER run has since reclaimed). Freeing the claim right away,
+   * rather than waiting out `ABANDONED_CLAIM_MS`, lets a genuinely failed
+   * attempt be retried by the very next cron tick instead of sitting
+   * unclaimable until the abandonment window passes — which mattered for
+   * the sun-color alert's short send window. Returns whether the delete
+   * actually matched (false = lost ownership to a reclaim; the caller
+   * should log this — nothing to release anymore, the reclaimer owns it).
    */
-  releaseSend(key: string): Promise<void>;
+  releaseSend(key: string, claimedAt: number): Promise<boolean>;
   /** Drop claims old enough (`CLAIM_RETENTION_MS`) to never matter again. */
   pruneSendClaims(now: number): Promise<void>;
   /**

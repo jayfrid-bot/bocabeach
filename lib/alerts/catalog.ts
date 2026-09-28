@@ -65,7 +65,7 @@ export const CATALOG: Record<AlertKey, AlertSpec> = {
   // with score-excellent/coming-up — it fires on its own short lead-time
   // window, not the 8 AM run those two share). `repeatMs` is unused in
   // practice: the real once-per-event rule is the `alert_log` key
-  // `lib/alerts/sunColor.ts` builds (`sun-color:<kind>:<eventIso date-hour>`),
+  // `lib/alerts/sunColor.ts` builds (`sun-color:<kind>:<beach-local date>`),
   // set to the default so this entry is never a surprising exception to code
   // that reads CATALOG generically.
   "sun-color": { key: "sun-color", tier: "home", priority: 13, repeatMs: DEFAULT_REPEAT_MS, alarm: false },
@@ -175,7 +175,7 @@ export type ComingUpSubject =
  * knows the beach's own IANA timezone), same convention as `ComingUpSubject`
  * — this module stays formatting-free, assembling only already-worded
  * sentences. `eventKey` is the exact `alert_log` dedup key
- * `lib/alerts/sunColor.ts` builds (`sun-color:<kind>:<eventIso date-hour>`)
+ * `lib/alerts/sunColor.ts` builds (`sun-color:<kind>:<beach-local date>`)
  * — once per event, never re-sent even if the score later climbs.
  */
 export interface SunColorSubject {
@@ -371,7 +371,7 @@ function baseDedupKeyFor(subject: AlertSubject): string {
       // disagree about which event they mean.
       return subject.eventKey;
     case "sun-color":
-      // `sun-color:<kind>:<eventIso date-hour>` (lib/alerts/sunColor.ts) —
+      // `sun-color:<kind>:<beach-local date>` (lib/alerts/sunColor.ts) —
       // already the exact string this decision's caller passes to
       // `store.lastAlert`/`store.markAlert`, so the once-per-event dedupe
       // and this decision's own dedupKey can never disagree.
