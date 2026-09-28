@@ -104,18 +104,18 @@ describe("distanceTier — §7's range-tier boundaries", () => {
 });
 
 describe("describeBearing — plain-English where-to-look copy (§7, §12)", () => {
-  it('matches the plan\'s own citation: Boca Raton -> Cape Canaveral SLC-40 reads "bearing 349° (nearly due north)"', () => {
+  it('matches the plan\'s own citation: Boca Raton -> Cape Canaveral SLC-40 reads "Look north (349°)."', () => {
     // Live-verified 2026-09-28: bearingDeg(Boca, SLC-40) = 348.5..348.8°,
     // which Math.round takes to 349° — matching SKY_EVENTS_PLAN.md §7's own
     // "Boca -> Cape ≈349°" citation exactly.
-    expect(describeBearing(348.5)).toBe("bearing 349° (nearly due north)");
+    expect(describeBearing(348.5)).toBe("Look north (349°).");
   });
   it("says \"due X\" for an exact primary bearing", () => {
-    expect(describeBearing(90)).toBe("bearing 90° (due east)");
-    expect(describeBearing(180)).toBe("bearing 180° (due south)");
+    expect(describeBearing(90)).toBe("Look east (90°).");
+    expect(describeBearing(180)).toBe("Look south (180°).");
   });
   it("names the plain compass word for a non-primary bearing", () => {
-    expect(describeBearing(45)).toBe("bearing 45° (northeast)");
+    expect(describeBearing(45)).toBe("Look northeast (45°).");
   });
 });
 

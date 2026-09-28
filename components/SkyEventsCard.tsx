@@ -120,6 +120,7 @@ function SkyEventRow({ row, tz, nowMs }: { row: SkyEventsCardRow; tz: string; no
                 className="text-xs font-semibold leading-snug"
                 style={{ color: ratingColor(copy.rating.label) }}
               >
+                <span className="font-normal text-slate-500 dark:text-slate-400">Viewing: </span>
                 {copy.rating.label}
               </span>
             </>
@@ -333,7 +334,8 @@ function describeLaunch(e: LaunchSkyEvent, tz: string, nowMs: number): RowCopy {
   };
 }
 
-/** "Launches in 2h 14m." / "Launches in 42m." / a graceful "window open now"
+/** "Launches in 3 days, 19 hours." / "Launches in 2h 14m." / "Launches in
+ *  42m." / a graceful "window open now"
  *  once the countdown reaches zero (rather than ever going negative) —
  *  ticks against the caller's live clock, hydration-safe (§9's convention). */
 export function countdownLabel(targetIso: string, nowMs: number): string | null {
@@ -344,6 +346,13 @@ export function countdownLabel(targetIso: string, nowMs: number): string | null 
   const totalMin = Math.round(diffMs / 60_000);
   const h = Math.floor(totalMin / 60);
   const m = totalMin % 60;
+  // "90h 26m" is hard to read — past a day, say days and hours.
+  if (h >= 24) {
+    const days = Math.floor(h / 24);
+    const hours = h % 24;
+    const dayPart = `${days} ${days === 1 ? "day" : "days"}`;
+    return hours > 0 ? `Launches in ${dayPart}, ${hours} ${hours === 1 ? "hour" : "hours"}.` : `Launches in ${dayPart}.`;
+  }
   const parts = [h > 0 ? `${h}h` : null, `${m}m`].filter((p): p is string => p != null);
   return `Launches in ${parts.join(" ")}.`;
 }

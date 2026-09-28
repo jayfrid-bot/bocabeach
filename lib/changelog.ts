@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-28",
+    title: "Clearer rocket launch details",
+    details:
+      "Night launches of classified missions from the Cape now show too. Launch rows say which way to look in plain words, count down in days and hours, and label the sky rating as the viewing forecast. Also fixed a doubled word in the surf line.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-09-28",
     title: "Coming up: sky events for your beach",
     details:
       "See high tides that could flood the shore or are just unusually high, full moons and eclipses, meteor showers, and rocket launches you can actually see from your beach — each with a sky rating for that night. Plus members can turn on a few \"Coming up\" alerts a month.",

@@ -150,8 +150,8 @@ function reasonsFor(d: Derived, result: ScoreResult): {
     const ss = seaState(d.waveHeightFt);
     push(
       "waves",
-      `${ss.label} water (~${d.waveHeightFt} ft estimated surf) — ${ss.note}`,
-      `${ss.label} surf (~${d.waveHeightFt} ft, estimated) — ${ss.note}`,
+      `${ss.label} (~${d.waveHeightFt} ft estimated surf) — ${ss.note}`,
+      `${ss.label} (~${d.waveHeightFt} ft estimated surf) — ${ss.note}`,
     );
   }
 

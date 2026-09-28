@@ -108,7 +108,7 @@ function launchEvent(overrides: Partial<LaunchSkyEvent> = {}): LaunchSkyEvent {
     padLightState: "twilight",
     rangeTier: "near",
     knownOrbital: true,
-    whereToLook: { bearingDeg: 349, line: "bearing 349° (nearly due north)" },
+    whereToLook: { bearingDeg: 349, line: "Look north (349°)." },
     rating: null,
     source: { feedGeneratedAt: "2026-10-01T00:00:00Z", validThrough: "2026-10-08T22:00:00Z" },
     ...overrides,
@@ -261,7 +261,7 @@ describe("launchTimeLine / describeRow — launch (§7)", () => {
 
   it("a twilight launch gets the plume line; the where-to-look copy is shown verbatim", () => {
     const r = describeRow(row(launchEvent()), NY, 0);
-    expect(r.shortLine).toContain("bearing 349°");
+    expect(r.shortLine).toContain("Look north (349°).");
     expect(r.shortLine).toContain("Twilight launch");
     expect(r.shortLine).toContain("Status: Go.");
   });
@@ -278,6 +278,13 @@ describe("countdownLabel", () => {
     const target = "2026-10-08T21:15:00Z";
     const now = Date.parse("2026-10-08T20:33:00Z");
     expect(countdownLabel(target, now)).toBe("Launches in 42m.");
+  });
+
+  it("past a day, counts down in days and hours", () => {
+    const now = Date.parse("2026-09-28T09:27:00Z");
+    expect(countdownLabel("2026-10-02T03:53:00Z", now)).toBe("Launches in 3 days, 18 hours."); // 90h 26m = 3d 18h 26m
+    expect(countdownLabel("2026-09-29T09:27:00Z", now)).toBe("Launches in 1 day.");
+    expect(countdownLabel("2026-09-29T10:30:00Z", now)).toBe("Launches in 1 day, 1 hour.");
   });
 
   it("never goes negative — a passed target reads as 'window open now'", () => {

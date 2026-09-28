@@ -32,6 +32,20 @@ const mkResult = (
 });
 
 describe("explainScore", () => {
+  it("never doubles the word \"surf\" in the waves line, for any sea-state band (2026-09-28: \"Rough surf surf\")", () => {
+    for (const ft of [0.5, 1.5, 2.2, 2.8, 3.2, 5, 8]) {
+      const d: Derived = { ...baseDerived, waveHeightFt: ft };
+      const r = explainScore(d, mkResult([sub("waves", "Sea state", 10, 0.14, `${ft} ft`)]));
+      const r2 = explainScore(d, mkResult([sub("waves", "Sea state", 95, 0.14, `${ft} ft`)]));
+      const lines = [...r.hurting, ...r2.helping].map((x) => x.text).filter((t) => t.includes("estimated surf"));
+      expect(lines.length).toBeGreaterThan(0);
+      for (const line of lines) {
+        expect(line).not.toMatch(/surf surf/i);
+        expect(line).toContain(`~${ft} ft estimated surf`);
+      }
+    }
+  });
+
   it("puts high sub-scores in helping and low ones in hurting; skips middling", () => {
     const d: Derived = { ...baseDerived, airTempF: 84, windSpeedMph: 22, uvIndex: 11 };
     const r = explainScore(

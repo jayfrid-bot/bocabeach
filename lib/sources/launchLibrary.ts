@@ -351,13 +351,12 @@ const PRIMARY_DIRECTIONS: readonly [string, number][] = [
 ];
 
 /** Plain-English "where to look" line for a launch's bearing (§7, §12):
- *  "bearing 349° (nearly due north)" for a bearing within 15° of — but not
- *  exactly on — one of the 4 PRIMARY compass points (checked directly by
+ *  "Look north (349°)." for a bearing within 15° of one of the 4 PRIMARY
+ *  compass points (checked directly by
  *  angular distance to each of N/E/S/W, not by first snapping to the
  *  nearest 16-point cardinal — 349° snaps to "NNW" at the 16-point
  *  resolution, which would miss that it's actually only 11° off due
- *  north), "bearing N° (due north)" for an exact primary bearing, and the
- *  plain 16-point word (via `degToCardinal`) for anything farther from
+ *  north), and the plain 16-point word (via `degToCardinal`) for anything farther from
  *  every primary. Boca Raton -> the Cape Canaveral SLC-40 pad computes to
  *  348.5°, which rounds to 349° — matches SKY_EVENTS_PLAN.md §7's own
  *  "Boca -> Cape ≈349°" citation (verified in this file's test suite). */
@@ -372,9 +371,11 @@ export function describeBearing(deg: number): string {
       closestWord = word;
     }
   }
-  if (closestDist === 0) return `bearing ${rounded}° (due ${closestWord})`;
-  if (closestDist <= 15) return `bearing ${rounded}° (nearly due ${closestWord})`;
-  return `bearing ${rounded}° (${CARDINAL_WORDS[degToCardinal(deg)]})`;
+  // Within 15° of a primary point, just name that point — "nearly due
+  // north" read as jargon on the card (2026-09-28); the degrees stay for
+  // anyone holding a compass app.
+  if (closestDist <= 15) return `Look ${closestWord} (${rounded}°).`;
+  return `Look ${CARDINAL_WORDS[degToCardinal(deg)]} (${rounded}°).`;
 }
 
 // --- Range tier + pad resolution (§7) -----------------------------------
