@@ -93,9 +93,12 @@ export function seaState(waveHeightFt: number): { label: string; note: string } 
   const ft = Math.max(0, waveHeightFt);
   if (ft < 1) return { label: "Calm", note: "flat, glassy water" };
   if (ft < 2) return { label: "Gentle", note: "small lapping waves" };
-  if (ft < 2.5) return { label: "Light chop", note: "a little texture, easy swim" };
-  if (ft < 3) return { label: "Choppy", note: "noticeable waves and push" };
-  if (ft < 4.5) return { label: "Really choppy", note: "strong push — heads-up swimming" };
+  // The input is now estimated BREAKING SURF (lib/surfHeight.ts), which can come
+  // from a smooth long-period swell as easily as from wind chop — so these
+  // bands describe the surf, not "chop" (2026-09-28: a 14 s swell read "choppy").
+  if (ft < 2.5) return { label: "Small surf", note: "a little push, easy swim" };
+  if (ft < 3) return { label: "Moderate surf", note: "noticeable waves and push" };
+  if (ft < 4.5) return { label: "Rough surf", note: "strong push — heads-up swimming" };
   if (ft < 7) return { label: "Big waves", note: "powerful surf — watch the flags" };
   return { label: "Very rough", note: "heavy surf — follow lifeguard flags" };
 }
