@@ -236,8 +236,16 @@ export function SafetyBanner({
   // (see the `truncate` span below) is what makes "when it fits" work: it
   // always renders the real next item and lets the line ellipsize it rather
   // than deciding ahead of time whether there's room.
+  // Flags always render as their own swatches beside this label (flagsNode),
+  // so they're left out of the text count — otherwise "+2 more" just meant
+  // the two flag swatches already on screen. They can still be the headline.
+  const restText = rest.filter((r) => !r.id.startsWith("flag-"));
   const otherLabel =
-    rest.length === 0 ? null : rest.length === 1 ? rest[0].text : `${rest[0].text} +${rest.length - 1} more`;
+    restText.length === 0
+      ? null
+      : restText.length === 1
+        ? restText[0].text
+        : `${restText[0].text} +${restText.length - 1} more`;
   const flagsNode = data ? (
     flags.length === 0 ? (
       <span className="text-slate-500 dark:text-slate-400">No flags reported</span>
