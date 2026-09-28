@@ -346,6 +346,51 @@ export function resolveHistoryViewState(input: {
   return { kind: "data", data: input.data as HistoryResult & { ok: true } };
 }
 
+/** The shape `bootstrapInstallToken` (lib/plus/client.ts) exports — named
+ *  here so `retryHistoryFetch` below can take it as an injected dependency
+ *  (testable without rendering) instead of importing the module function
+ *  directly. */
+export type BootstrapInstallToken = (opts?: {
+  forceRefresh?: boolean;
+}) => Promise<{ token: string | null }>;
+
+/**
+ * The "Try again" button's behavior, split by error kind (Codex review —
+ * the bug this replaces: a single handler forced a token refresh on EVERY
+ * retry, including a plain network/429/500 failure with a perfectly good
+ * token already on file; since /api/devices mints a token exactly ONCE per
+ * device, forceRefresh's `clearInstallToken()` on that path could
+ * permanently strip a device of its only token, breaking history, hazards,
+ * and Live Activities for good — no server-side recovery exists).
+ *
+ * - `fetch-error` (the token is presumably fine; the FETCH failed): only
+ *   revalidates. Never calls `bootstrap` at all, so it can never clear
+ *   anything.
+ * - `no-token-error` (bootstrap already finished and found nothing): a
+ *   PLAIN bootstrap (no `forceRefresh`) — this either reads back whatever
+ *   is already cached or, for a device that has genuinely never had a
+ *   token minted, makes the ordinary upsert call that mints one. Still
+ *   never forceRefresh: that argument is reserved for a CONFIRMED-bad
+ *   token, which is exactly what the 401 path inside
+ *   `fetchHistoryWithRetry` above already handles, once, on its own —
+ *   this button must never repeat that.
+ *
+ * Pure aside from the two injected effects, so the forceRefresh boundary is
+ * unit-testable without rendering the component.
+ */
+export async function retryHistoryFetch(
+  kind: "no-token-error" | "fetch-error",
+  deps: { bootstrap: BootstrapInstallToken; mutate: () => unknown },
+): Promise<{ token: string | null } | null> {
+  if (kind === "fetch-error") {
+    await deps.mutate();
+    return null;
+  }
+  const { token } = await deps.bootstrap();
+  await deps.mutate();
+  return { token };
+}
+
 export function HistorySection({
   slug,
   native,
@@ -400,20 +445,20 @@ export function HistorySection({
     { revalidateOnFocus: false, dedupingInterval: 60_000 },
   );
 
-  // Shared by both error states (no token at all / a failed fetch): try the
-  // token again (a real round trip — forceRefresh — since the user
-  // explicitly asked), THEN revalidate. If the token comes back, the SWR
-  // key goes from null to real on the next render and fetches on its own;
-  // `mutate()` covers the OTHER case (a token was already on file and the
-  // FETCH itself failed) by revalidating the same key. Never leaves the
-  // view stuck — either branch ends back in `resolveHistoryViewState`.
+  const view = entitled ? resolveHistoryViewState({ bootstrapDone, installToken, data }) : null;
+
+  // Dispatches to `retryHistoryFetch` — a `fetch-error` retry never touches
+  // the token (see that function's doc for why a forced refresh there was a
+  // real bug); a `no-token-error` retry runs a plain, non-forced bootstrap.
+  // No-op outside the two error states (nothing to retry).
   const retry = useCallback(() => {
-    void bootstrapInstallToken({ forceRefresh: true }).then(({ token }) => {
-      setInstallToken(token);
+    if (view?.kind !== "no-token-error" && view?.kind !== "fetch-error") return;
+    void retryHistoryFetch(view.kind, { bootstrap: bootstrapInstallToken, mutate }).then((result) => {
+      if (!result) return; // fetch-error: nothing about the token changed
+      setInstallToken(result.token);
       setBootstrapDone(true);
-      void mutate();
     });
-  }, [mutate]);
+  }, [view?.kind, mutate]);
 
   // 30-day chip eligibility is a SPAN check (archiveStartedAt vs today), not
   // a row/day COUNT — a beach with real gaps in its archive can still have
@@ -431,7 +476,6 @@ export function HistorySection({
   if (!native) return null;
 
   const heading = entitled ? `Last ${days} days` : "Last 7 days";
-  const view = entitled ? resolveHistoryViewState({ bootstrapDone, installToken, data }) : null;
   const newestFirst = view?.kind === "data" ? [...view.data.days].reverse() : [];
   const tiles =
     view?.kind === "data" && view.data.records

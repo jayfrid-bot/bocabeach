@@ -3,8 +3,8 @@
 // components/plus/BeachModeCard.test.ts / Paywall.test.ts for the same
 // pattern elsewhere in this codebase).
 
-import { describe, it, expect } from "vitest";
-import { recordTiles, resolveHistoryViewState } from "@/components/plus/HistorySection";
+import { describe, it, expect, vi } from "vitest";
+import { recordTiles, resolveHistoryViewState, retryHistoryFetch } from "@/components/plus/HistorySection";
 import type { HistoryResult } from "@/lib/plus/api";
 import type { HistoryRecords } from "@/lib/history/summary";
 
@@ -138,5 +138,56 @@ describe("recordTiles", () => {
         null,
       ),
     ).toEqual([]);
+  });
+});
+
+// The bug this guards against: a single "Try again" handler used to force a
+// token refresh on EVERY retry. /api/devices mints an install token exactly
+// ONCE per device, so forceRefresh's clearInstallToken() on a plain
+// network/429/500 failure (a `fetch-error`, where the token is presumably
+// fine) could permanently strip a device of its only token — no
+// server-side recovery exists, breaking history, hazards, and Live
+// Activities for good. The single forced refresh belongs ONLY inside
+// fetchHistoryWithRetry's own 401 handling, never here.
+describe("retryHistoryFetch", () => {
+  it("fetch-error: only revalidates — never calls bootstrap, forced or not", async () => {
+    const bootstrap = vi.fn();
+    const mutate = vi.fn().mockResolvedValue(undefined);
+    const result = await retryHistoryFetch("fetch-error", { bootstrap, mutate });
+    expect(bootstrap).not.toHaveBeenCalled();
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(result).toBeNull();
+  });
+
+  it("no-token-error: calls bootstrap WITHOUT forceRefresh, then revalidates", async () => {
+    const bootstrap = vi.fn().mockResolvedValue({ token: "tok" });
+    const mutate = vi.fn().mockResolvedValue(undefined);
+    const result = await retryHistoryFetch("no-token-error", { bootstrap, mutate });
+    expect(bootstrap).toHaveBeenCalledTimes(1);
+    // No arguments at all — in particular, never `{ forceRefresh: true }`.
+    expect(bootstrap).toHaveBeenCalledWith();
+    const [callArgs] = bootstrap.mock.calls[0] as [{ forceRefresh?: boolean } | undefined];
+    expect(callArgs?.forceRefresh).not.toBe(true);
+    expect(mutate).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ token: "tok" });
+  });
+
+  it("no-token-error: bootstrap runs before mutate, not the other way around", async () => {
+    const order: string[] = [];
+    const bootstrap = vi.fn().mockImplementation(async () => {
+      order.push("bootstrap");
+      return { token: null };
+    });
+    const mutate = vi.fn().mockImplementation(async () => {
+      order.push("mutate");
+    });
+    await retryHistoryFetch("no-token-error", { bootstrap, mutate });
+    expect(order).toEqual(["bootstrap", "mutate"]);
+  });
+
+  it("no-token-error still resolves the (possibly still-null) token, never throwing when bootstrap finds nothing", async () => {
+    const bootstrap = vi.fn().mockResolvedValue({ token: null });
+    const result = await retryHistoryFetch("no-token-error", { bootstrap, mutate: vi.fn() });
+    expect(result).toEqual({ token: null });
   });
 });
