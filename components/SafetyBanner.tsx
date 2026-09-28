@@ -18,11 +18,12 @@ import { ripCopy } from "@/lib/ripRisk/copy";
 import { modelNowFromSeries } from "@/lib/sources/ripNwps";
 import { degToCardinal } from "@/lib/util";
 import { LifeguardFlag } from "@/components/LifeguardFlag";
+import { isWarningTierAlert, rankSafetyItems, type SafetyItem } from "@/lib/safetyBannerRank";
 
 // Plain labels for the compact headline only — the flags ROW (always shown,
 // see below) still renders the real swatches via LifeguardFlag; this is just
-// what stands in for "the headline warning" when nothing else in the banner
-// is active except a posted flag.
+// what a flag reads as when IT is the worst (or only) thing the banner has
+// to say.
 const FLAG_HEADLINE: Record<string, string> = {
   "double-red": "Double red flag — water access closed",
   red: "Red flag — high hazard",
@@ -30,7 +31,6 @@ const FLAG_HEADLINE: Record<string, string> = {
   yellow: "Yellow flag — medium hazard",
   green: "Green flag — low hazard",
 };
-const FLAG_PRIORITY = ["double-red", "red", "purple", "yellow", "green"] as const;
 
 export function SafetyBanner({
   city,
@@ -156,48 +156,88 @@ export function SafetyBanner({
     .pop();
 
   // --- Compact summary (item 2 of the redesign) --------------------------
-  // A short, worst-first list built ONLY to drive the collapsed headline +
-  // count — it never replaces the full blocks below, which still render off
-  // the same booleans they always have. Order roughly mirrors safetyTone's
-  // own danger-first priority.
-  const sections: { icon: string; text: string }[] = [];
-  if (advisory) {
-    sections.push({ icon: "🧫", text: "Water quality advisory — swimming not recommended" });
-  }
-  if (noSwim) sections.push({ icon: "🚫", text: noSwim.title });
+  // One candidate per hazard SOURCE (never batched — a Tornado Warning and a
+  // Coastal Flood Advisory must be able to sort apart even though the old
+  // code lumped every non-beach-hazard alert into one "otherAlerts" bucket),
+  // ranked worst-first by lib/safetyBannerRank.ts (unit-tested there). This
+  // list drives ONLY the collapsed headline + summary line — the full blocks
+  // below still render off the same booleans they always have.
+  const candidates: SafetyItem[] = [];
   if (lightningDanger) {
-    sections.push({ icon: "⛈️", text: "Lightning nearby — get out of the water and seek shelter" });
-  }
-  if (beachHazards.length) {
-    sections.push({
-      icon: "🚩",
-      text: `NWS Beach Hazard${beachHazards.length > 1 ? "s" : ""} Statement in effect`,
+    candidates.push({
+      kind: "lightning",
+      icon: "⛈️",
+      text: "Lightning nearby — get out of the water and seek shelter",
+      id: "lightning",
     });
   }
-  if (hasRipToShow) sections.push({ icon: "🌊", text: ripBannerCopy.bannerText });
-  if (otherAlerts.length) {
-    sections.push({
-      icon: "⚠️",
-      text: `${otherAlerts[0].event}${otherAlerts.length > 1 ? ` +${otherAlerts.length - 1} more` : ""}`,
+  for (const a of activeNonRipAlerts) {
+    candidates.push({
+      kind: isWarningTierAlert(a) ? "warningAlert" : "softAdvisory",
+      icon: /beach hazard/i.test(a.event) ? "🚩" : "⚠️",
+      // The plain product name ("Coastal Flood Advisory"), not `a.headline`
+      // — NWS headlines are full CAP sentences ("...issued September 27 at
+      // 4:15 PM EDT until...") that read fine in the expanded detail below
+      // but only clutter a one-line compact summary.
+      text: a.event,
+      id: `alert:${a.event}:${a.ends ?? ""}`,
+    });
+  }
+  if (advisory) {
+    candidates.push({
+      kind: "closure",
+      icon: "🧫",
+      text: "Water quality advisory — swimming not recommended",
+      id: "wq-advisory",
+    });
+  }
+  if (noSwim) candidates.push({ kind: "closure", icon: "🚫", text: noSwim.title, id: "no-swim" });
+  if (flags.includes("double-red")) {
+    candidates.push({ kind: "closure", icon: "🚩", text: FLAG_HEADLINE["double-red"], id: "flag-double-red" });
+  }
+  if (flags.includes("red")) {
+    candidates.push({ kind: "redFlagOrRipWarning", icon: "🚩", text: FLAG_HEADLINE.red, id: "flag-red" });
+  }
+  if (hasRipToShow) {
+    // An actual NWS Rip Current Statement/Warning in effect (resolveRipNow's
+    // source "alert", always "high") ranks with the red flag; a model/
+    // forecast reading is guidance, not a posted statement — softer tier.
+    // Mirrors lib/safetyTone.ts's own danger-vs-caution split for rip.
+    candidates.push({
+      kind: ripNow.source === "alert" ? "redFlagOrRipWarning" : "softAdvisory",
+      icon: "🌊",
+      text: ripBannerCopy.bannerText,
+      id: "rip",
     });
   }
   if (upcomingNonRipAlerts.length) {
-    sections.push({
+    candidates.push({
+      kind: "other",
       icon: "🕐",
       text: `${upcomingNonRipAlerts[0].event} begins soon${
         upcomingNonRipAlerts.length > 1 ? ` (+${upcomingNonRipAlerts.length - 1} more)` : ""
       }`,
+      id: "upcoming",
     });
   }
-  // Nothing above, but a flag is posted (e.g. a lone purple stinger flag) —
-  // the worst posted flag becomes the headline instead of an empty banner.
-  if (!sections.length) {
-    const worst = FLAG_PRIORITY.find((c) => flags.includes(c));
-    if (worst) sections.push({ icon: "🚩", text: FLAG_HEADLINE[worst] });
+  if (flags.includes("purple")) {
+    candidates.push({ kind: "other", icon: "🚩", text: FLAG_HEADLINE.purple, id: "flag-purple" });
   }
+  if (flags.includes("yellow")) {
+    candidates.push({ kind: "other", icon: "🚩", text: FLAG_HEADLINE.yellow, id: "flag-yellow" });
+  }
+  if (flags.includes("green")) {
+    candidates.push({ kind: "other", icon: "🚩", text: FLAG_HEADLINE.green, id: "flag-green" });
+  }
+  const sections = rankSafetyItems(candidates);
   const headline = sections[0] ?? null;
-  const otherCount = Math.max(sections.length - 1, 0);
-  const otherLabel = otherCount > 0 ? `+${otherCount} more ${otherCount === 1 ? "advisory" : "advisories"}` : null;
+  const rest = sections.slice(1);
+  // Names the next most severe thing (not just a count) — CSS truncation
+  // (see the `truncate` span below) is what makes "when it fits" work: it
+  // always renders the real next item and lets the line ellipsize it rather
+  // than deciding ahead of time whether there's room.
+  const otherLabel =
+    rest.length === 0 ? null : rest.length === 1 ? rest[0].text : `${rest[0].text} +${rest.length - 1} more`;
   const flagsNode = data ? (
     flags.length === 0 ? (
       <span className="text-slate-500 dark:text-slate-400">No flags reported</span>
@@ -245,7 +285,10 @@ export function SafetyBanner({
             </span>
           ) : null}
           <span className="mt-0.5 flex min-w-0 flex-nowrap items-center gap-x-2 overflow-hidden text-xs text-slate-600 dark:text-slate-300 sm:text-sm">
-            {otherLabel ? <span className="shrink-0 font-medium">{otherLabel}</span> : null}
+            {/* Names the next most severe item — truncates (not shrink-0)
+                so the flags after it stay fully visible when space is
+                tight; that's what "when it fits" means here. */}
+            {otherLabel ? <span className="min-w-0 truncate font-medium">{otherLabel}</span> : null}
             {otherLabel && flagsNode ? (
               <span aria-hidden className="shrink-0 text-slate-400">
                 ·
