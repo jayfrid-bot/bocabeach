@@ -105,21 +105,35 @@ function postJson(url: string, body: unknown): Promise<PlusResult> {
 }
 
 /** POST /api/history/<slug>'s answer — a different shape than `PlusResult`
- *  (no `device`), so it isn't folded into `request()` above. */
+ *  (no `device`), so it isn't folded into `request()` above. `records` and
+ *  `archiveStartedAt`/`dayCount` are LIFETIME (never bounded by `days`) —
+ *  see lib/history/summary.ts. */
 export interface HistoryResult {
   ok: boolean;
   since: string | null;
   days: DaySummary[];
   records: HistoryRecords | null;
+  archiveStartedAt: string | null;
+  dayCount: number;
   error: string | null;
   status: number;
 }
 
-/** Plus "Last 7 days" (docs/HISTORY_AND_IMAGERY_PLAN.md Part A). Same
+function emptyHistoryResult(): Pick<HistoryResult, "since" | "days" | "records" | "archiveStartedAt" | "dayCount"> {
+  return { since: null, days: [], records: null, archiveStartedAt: null, dayCount: 0 };
+}
+
+/** Plus "Last N days" (docs/HISTORY_AND_IMAGERY_PLAN.md Part A). Same
  *  deviceId + install-token plumbing every other Plus call uses
  *  (withInstallToken) — a device with no token yet simply omits the header,
  *  same as `request()`. Always resolves; a dead network or a bad body comes
- *  back as `{ ok: false, error }`, never a throw. */
+ *  back as `{ ok: false, error }`, never a throw. A 401 (no/stale install
+ *  token) is returned as-is via `status` — this function does not retry;
+ *  the caller (components/plus/HistorySection.tsx) owns the bootstrap-and-
+ *  retry-once decision, same as lib/plus/client.ts's useHazardsAtPoint does
+ *  for /api/hazards, since that needs `bootstrapInstallToken` from
+ *  lib/plus/client.ts, which itself imports this module — pulling that
+ *  logic in here would be circular. */
 async function fetchHistory(deviceId: string, slug: string, days: 7 | 14 | 30): Promise<HistoryResult> {
   let res: Response;
   try {
@@ -132,7 +146,7 @@ async function fetchHistory(deviceId: string, slug: string, days: 7 | 14 | 30): 
       }),
     );
   } catch {
-    return { ok: false, since: null, days: [], records: null, error: "network", status: 0 };
+    return { ok: false, ...emptyHistoryResult(), error: "network", status: 0 };
   }
   let body: unknown = null;
   try {
@@ -145,6 +159,8 @@ async function fetchHistory(deviceId: string, slug: string, days: 7 | 14 | 30): 
     since?: unknown;
     days?: unknown;
     records?: unknown;
+    archiveStartedAt?: unknown;
+    dayCount?: unknown;
     error?: unknown;
   };
   if (res.ok && obj.ok === true) {
@@ -153,12 +169,14 @@ async function fetchHistory(deviceId: string, slug: string, days: 7 | 14 | 30): 
       since: typeof obj.since === "string" ? obj.since : null,
       days: Array.isArray(obj.days) ? (obj.days as DaySummary[]) : [],
       records: (obj.records as HistoryRecords | undefined) ?? null,
+      archiveStartedAt: typeof obj.archiveStartedAt === "string" ? obj.archiveStartedAt : null,
+      dayCount: typeof obj.dayCount === "number" ? obj.dayCount : 0,
       error: null,
       status: res.status,
     };
   }
   const error = typeof obj.error === "string" ? obj.error : "server";
-  return { ok: false, since: null, days: [], records: null, error, status: res.status };
+  return { ok: false, ...emptyHistoryResult(), error, status: res.status };
 }
 
 export const plusApi = {

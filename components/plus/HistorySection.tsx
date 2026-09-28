@@ -11,31 +11,28 @@
  * onboarding/paywall (the same onDoor callback BeachModeCard's door uses —
  * never a dead end).
  * Plus, no rows yet: an honest "still collecting" line, no error.
- * Plus, with data: a horizontal strip of day cells; tap one for its hourly
- * score bar row, a one-line stat summary, and that day's caps. Below the
- * strip, a handful of records since the archive began.
+ * Plus, with data: a horizontal strip of day cells (newest first); tap one
+ * for its hourly score bar row, a one-line stat summary, and that day's
+ * caps. Below the strip, a handful of LIFETIME records — never bounded by
+ * the 7/14/30 window on screen (lib/history/summary.ts `recordsFromRows`).
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { scoreColor } from "@/lib/format";
 import { plusApi, type HistoryResult } from "@/lib/plus/api";
-import { weekdayOf, type DaySummary } from "@/lib/history/summary";
+import {
+  daysBetweenLocalDates,
+  shiftLocalDate,
+  shortMonthDay,
+  weekdayLongOf,
+  type DaySummary,
+} from "@/lib/history/summary";
+import { bootstrapInstallToken } from "@/lib/plus/client";
 import { MetricCard } from "@/components/MetricCard";
 import { LevelBarChart, type LevelBar } from "@/components/LevelBarChart";
 
 type DaysWindow = 7 | 14 | 30;
-
-/** "2026-09-22" -> "Sep 22". Pure calendar formatting — `date` is already a
- *  bare beach-local calendar day, so this reads it as UTC noon purely to get
- *  Intl to format the right day, never as a real instant. */
-function monthDayLabel(date: string): string {
-  const [y, m, d] = date.split("-").map(Number);
-  if (!y || !m || !d) return date;
-  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(
-    new Date(Date.UTC(y, m - 1, d)),
-  );
-}
 
 /** 0-23 -> "2 PM". */
 function hour12Label(hour: number): string {
@@ -49,43 +46,64 @@ function hour12Compact(hour: number): string {
   return `${h}${hour < 12 ? "a" : "p"}`;
 }
 
-/** "high 87°, water 85°, sand up to 137°, waves to 3.2 ft, crowds peak 40%,
- *  seaweed up to 5%" — only the fields this day actually has. */
+/** "high 87°, water 85°, sand up to 137°, surf to 3.2 ft, crowds peak 40%,
+ *  seaweed up to 5%" — only the fields this day actually has. Reads
+ *  `surfMaxFt` (the estimated breaking-surf height), never the raw
+ *  significant-wave-height column — see DaySummary.surfMaxFt's own doc. */
 function statsLine(d: DaySummary): string {
   const parts: string[] = [];
   if (d.airHighF != null) parts.push(`high ${Math.round(d.airHighF)}°`);
   if (d.waterF != null) parts.push(`water ${Math.round(d.waterF)}°`);
   if (d.sandMaxF != null) parts.push(`sand up to ${Math.round(d.sandMaxF)}°`);
-  if (d.waveMaxFt != null) parts.push(`waves to ${d.waveMaxFt.toFixed(1)} ft`);
+  if (d.surfMaxFt != null) parts.push(`surf to ${d.surfMaxFt.toFixed(1)} ft`);
   if (d.crowdPeakPct != null) parts.push(`crowds peak ${Math.round(d.crowdPeakPct)}%`);
   if (d.seaweedMaxPct != null) parts.push(`seaweed up to ${Math.round(d.seaweedMaxPct)}%`);
   return parts.join(" · ");
 }
 
-const CHIP_BASE = "inline-flex min-h-[40px] min-w-[40px] items-center justify-center rounded-full px-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40";
+/** Full weekday + date + best score, for the day cell's accessible name —
+ *  the visible cell only has room for the 3-letter weekday. */
+function dayCellAriaLabel(day: DaySummary): string {
+  const bits = [`${weekdayLongOf(day.date)} ${shortMonthDay(day.date)}`];
+  bits.push(day.best ? `best ${day.best.score} at ${hour12Label(day.best.localHour)}` : "no score available");
+  if (day.partial) bits.push("partial day");
+  return bits.join(", ");
+}
+
+const CHIP_BASE =
+  "inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full px-3 text-sm font-medium transition disabled:cursor-not-allowed";
 const CHIP_ON = "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white";
 const CHIP_OFF = "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white";
+const CHIP_DISABLED = "cursor-not-allowed text-slate-400 dark:text-slate-600";
 
 function DaysChip({
   value,
   label,
   active,
   disabled,
+  title,
   onSelect,
 }: {
   value: DaysWindow;
   label: string;
   active: boolean;
   disabled?: boolean;
+  title?: string;
   onSelect: (v: DaysWindow) => void;
 }) {
+  // aria-disabled (not the native `disabled` attribute) — the chip stays
+  // focusable so a `title` tooltip and the aria-disabled state are both
+  // discoverable, rather than the control disappearing from the tab order
+  // (Codex review: "the disabled chip gets aria-disabled and a visible
+  // title").
   return (
     <button
       type="button"
-      onClick={() => onSelect(value)}
-      disabled={disabled}
+      onClick={() => !disabled && onSelect(value)}
       aria-pressed={active}
-      className={`${CHIP_BASE} ${active ? CHIP_ON : CHIP_OFF}`}
+      aria-disabled={disabled || undefined}
+      title={title}
+      className={`${CHIP_BASE} ${disabled ? CHIP_DISABLED : active ? CHIP_ON : CHIP_OFF}`}
     >
       {label}
     </button>
@@ -109,6 +127,7 @@ function DayCell({
       disabled={!expandable}
       aria-expanded={expandable ? isOpen : undefined}
       aria-controls={expandable ? panelId : undefined}
+      aria-label={dayCellAriaLabel(day)}
       onClick={() => expandable && onToggle()}
       className={`min-h-[64px] w-16 shrink-0 rounded-xl bg-white/80 p-1.5 text-center ring-1 ring-slate-900/10 transition dark:bg-slate-900/70 dark:ring-white/10 sm:w-20 sm:rounded-2xl sm:p-2 ${
         expandable
@@ -116,26 +135,29 @@ function DayCell({
           : "cursor-default"
       } ${isOpen ? "ring-2 ring-ocean-500 dark:ring-ocean-400" : ""}`}
     >
-      <div className="truncate text-[9px] font-medium uppercase leading-tight text-slate-600 dark:text-slate-400 sm:text-xs">
+      <div className="truncate text-[9px] font-medium uppercase leading-tight text-slate-600 dark:text-slate-400 sm:text-xs" aria-hidden>
         {day.weekday}
       </div>
       <div className="truncate text-[8px] leading-tight text-slate-400 dark:text-slate-500 sm:text-[10px]" aria-hidden>
-        {monthDayLabel(day.date)}
+        {shortMonthDay(day.date)}
       </div>
       {day.best ? (
         <div
           className="mx-auto mt-1 flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold tabular-nums text-slate-950 sm:h-9 sm:w-9 sm:text-sm"
           style={{ background: scoreColor(day.best.score) }}
-          title={`Best score: ${day.best.score} at ${hour12Label(day.best.localHour)}`}
+          aria-hidden
         >
           {day.best.score}
         </div>
       ) : (
-        <div className="mx-auto mt-1 flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-[11px] font-bold text-slate-500 dark:bg-slate-800 sm:h-9 sm:w-9 sm:text-sm">
-          —
+        <div
+          className="mx-auto mt-1 flex h-7 w-7 items-center justify-center rounded-full bg-slate-200 text-[11px] font-bold text-slate-500 dark:bg-slate-800 sm:h-9 sm:w-9 sm:text-sm"
+          aria-hidden
+        >
+          {"—"}
         </div>
       )}
-      <div className="mt-0.5 truncate text-[8px] tabular-nums leading-tight text-slate-600 dark:text-slate-300 sm:text-[10px]">
+      <div className="mt-0.5 truncate text-[8px] tabular-nums leading-tight text-slate-600 dark:text-slate-300 sm:text-[10px]" aria-hidden>
         {day.best ? `best ${hour12Label(day.best.localHour)}` : " "}
       </div>
       {day.partial ? (
@@ -148,11 +170,17 @@ function DayCell({
 }
 
 function DayDetail({ day }: { day: DaySummary }) {
-  const bars: LevelBar[] = day.hourly.map((h) => ({
-    key: String(h.localHour),
+  // Every hour is a bar; only every 3rd hour gets an x-axis label ("6a 9a
+  // 12p 3p 6p" style) so a full day's worth of bars doesn't crowd into
+  // unreadable text at 390px (Codex review). Keyed by hourUtc, not
+  // localHour — a fall-back DST day has two hours that both read as
+  // local_hour 1 (see lib/history/archive.ts), and only hourUtc tells them
+  // apart.
+  const bars: LevelBar[] = day.hourly.map((h, i) => ({
+    key: h.hourUtc,
     rank: h.score,
     color: scoreColor(h.score),
-    label: hour12Compact(h.localHour),
+    label: i % 3 === 0 ? hour12Compact(h.localHour) : "",
     tooltip: `${hour12Label(h.localHour)} — score ${h.score}`,
   }));
   const line = statsLine(day);
@@ -161,11 +189,11 @@ function DayDetail({ day }: { day: DaySummary }) {
     <div
       id={`history-day-${day.date}`}
       role="region"
-      aria-label={`${day.weekday} ${monthDayLabel(day.date)} details`}
+      aria-label={`${day.weekday} ${shortMonthDay(day.date)} details`}
       className="col-span-full rounded-xl bg-white/90 p-3 ring-1 ring-slate-900/10 dark:bg-slate-900/80 dark:ring-white/10 sm:rounded-2xl sm:p-4"
     >
       <h3 className="text-sm font-semibold text-slate-900 dark:text-white sm:text-base">
-        {day.weekday} {monthDayLabel(day.date)}
+        {day.weekday} {shortMonthDay(day.date)}
         {day.partial ? (
           <span className="ml-2 align-middle text-[10px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
             partial day
@@ -178,7 +206,7 @@ function DayDetail({ day }: { day: DaySummary }) {
           <LevelBarChart
             title="Hourly score"
             subtitle="Beach Day score for each archived hour"
-            ariaLabel={`Hourly Beach Day score, ${day.weekday} ${monthDayLabel(day.date)}`}
+            ariaLabel={`Hourly Beach Day score, ${day.weekday} ${shortMonthDay(day.date)}`}
             bars={bars}
             maxRank={100}
             axisLow="0"
@@ -187,9 +215,7 @@ function DayDetail({ day }: { day: DaySummary }) {
         </div>
       ) : null}
 
-      {line ? (
-        <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">{line}</p>
-      ) : null}
+      {line ? <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">{line}</p> : null}
 
       {day.caps.length > 0 ? (
         <ul className="mt-2 flex flex-wrap gap-1.5">
@@ -207,7 +233,7 @@ function DayDetail({ day }: { day: DaySummary }) {
   );
 }
 
-const RECORD_TILES = (r: NonNullable<HistoryResult["records"]>) => {
+function recordTiles(r: NonNullable<HistoryResult["records"]>) {
   const tiles: { key: string; icon: string; label: string; value: string; sub: string }[] = [];
   if (r.bestDay) {
     tiles.push({
@@ -215,7 +241,7 @@ const RECORD_TILES = (r: NonNullable<HistoryResult["records"]>) => {
       icon: "\u{1f3c6}",
       label: "Best day",
       value: String(r.bestDay.score),
-      sub: `${weekdayOf(r.bestDay.date)} ${monthDayLabel(r.bestDay.date)}`,
+      sub: `${shortMonthDay(r.bestDay.date)}, ${hour12Label(r.bestDay.localHour)}`,
     });
   }
   if (r.hottestSand) {
@@ -224,16 +250,16 @@ const RECORD_TILES = (r: NonNullable<HistoryResult["records"]>) => {
       icon: "\u{1f525}",
       label: "Hottest sand",
       value: `${Math.round(r.hottestSand.sandTempF)}°`,
-      sub: `${monthDayLabel(r.hottestSand.date)}, ${hour12Label(r.hottestSand.localHour)}`,
+      sub: `${shortMonthDay(r.hottestSand.date)}, ${hour12Label(r.hottestSand.localHour)}`,
     });
   }
-  if (r.biggestWaves) {
+  if (r.biggestSurf) {
     tiles.push({
-      key: "waves",
+      key: "surf",
       icon: "\u{1f30a}",
-      label: "Biggest waves",
-      value: `${r.biggestWaves.waveFt.toFixed(1)} ft`,
-      sub: `${monthDayLabel(r.biggestWaves.date)}, ${hour12Label(r.biggestWaves.localHour)}`,
+      label: "Biggest surf",
+      value: `${r.biggestSurf.surfFt.toFixed(1)} ft`,
+      sub: `${shortMonthDay(r.biggestSurf.date)}, ${hour12Label(r.biggestSurf.localHour)}`,
     });
   }
   if (r.quietestDay) {
@@ -241,12 +267,26 @@ const RECORD_TILES = (r: NonNullable<HistoryResult["records"]>) => {
       key: "quiet",
       icon: "\u{1f9d8}",
       label: "Quietest day",
-      value: `${Math.round(r.quietestDay.crowdPct)}% peak`,
-      sub: `${weekdayOf(r.quietestDay.date)} ${monthDayLabel(r.quietestDay.date)}`,
+      value: `${Math.round(r.quietestDay.crowdPct)}%`,
+      sub: `${shortMonthDay(r.quietestDay.date)}, ${hour12Label(r.quietestDay.localHour)}`,
     });
   }
   return tiles;
-};
+}
+
+type HistoryKey = readonly ["history", string, DaysWindow, string];
+
+/** Fetch, then — on a 401 (no/stale install token server-side) — re-bootstrap
+ *  the token ONCE and retry, the same shape lib/plus/client.ts's
+ *  useHazardsAtPoint uses for /api/hazards. Anything other than 401 (ok,
+ *  network, 403, 429, 500…) returns as-is, no retry. */
+async function fetchHistoryWithRetry(deviceId: string, slug: string, days: DaysWindow): Promise<HistoryResult> {
+  const first = await plusApi.fetchHistory(deviceId, slug, days);
+  if (first.status !== 401) return first;
+  const { token } = await bootstrapInstallToken({ forceRefresh: true });
+  if (!token) return first;
+  return plusApi.fetchHistory(deviceId, slug, days);
+}
 
 export function HistorySection({
   slug,
@@ -269,31 +309,49 @@ export function HistorySection({
   const [days, setDays] = useState<DaysWindow>(7);
   const [openDate, setOpenDate] = useState<string | null>(null);
 
-  const canFetch = native && entitled && !!deviceId;
+  // Don't fetch until this device actually has an install token (Codex
+  // review): bootstrapping is deduped/cached at module scope
+  // (lib/plus/client.ts), so this is a cache hit whenever usePlus's own
+  // mount effect already minted one — this just makes the SWR key wait for
+  // it instead of racing a fetch that's certain to 401/token-required.
+  const [installToken, setInstallToken] = useState<string | null>(null);
+  useEffect(() => {
+    if (!native || !entitled || !deviceId) return;
+    let cancelled = false;
+    void bootstrapInstallToken().then(({ token }) => {
+      if (!cancelled) setInstallToken(token);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [native, entitled, deviceId]);
 
-  type HistoryKey = readonly [string, string, DaysWindow, string];
-  type EligibilityKey = readonly [string, string, DaysWindow, string, string];
+  const canFetch = native && entitled && !!deviceId && !!installToken;
 
-  const { data } = useSWR<HistoryResult, Error, HistoryKey | null>(
+  const { data, mutate } = useSWR<HistoryResult, Error, HistoryKey | null>(
     canFetch ? (["history", slug, days, deviceId] as const) : null,
-    (key: HistoryKey) => plusApi.fetchHistory(key[3], key[1], key[2]),
+    (key) => fetchHistoryWithRetry(key[3], key[1], key[2]),
     { revalidateOnFocus: false, dedupingInterval: 60_000 },
   );
 
-  // A quiet second read at the 14-day window, purely to learn whether the
-  // 30-day chip should unlock — independent of whichever window is on
-  // screen, and cached separately (SWR key includes "eligibility") so
-  // switching chips never re-triggers it.
-  const { data: eligibility } = useSWR<HistoryResult, Error, EligibilityKey | null>(
-    canFetch ? (["history", slug, 14, deviceId, "eligibility"] as const) : null,
-    (key: EligibilityKey) => plusApi.fetchHistory(key[3], key[1], key[2]),
-    { revalidateOnFocus: false, dedupingInterval: 300_000 },
+  // 30-day chip eligibility is a SPAN check (archiveStartedAt vs today), not
+  // a row/day COUNT — a beach with real gaps in its archive can still have
+  // earned the 30-day window on the calendar (Codex review). `since` is
+  // this response's own lower bound (today - (days-1)), so today is
+  // recoverable from it without a second request.
+  const todayLocal = data?.ok && data.since ? shiftLocalDate(data.since, days - 1) : null;
+  const thirtyEnabled = !!(
+    data?.ok &&
+    data.archiveStartedAt &&
+    todayLocal &&
+    daysBetweenLocalDates(data.archiveStartedAt, todayLocal) >= 14
   );
-  const thirtyEnabled = !!eligibility?.ok && eligibility.days.length >= 14;
 
   if (!native) return null;
 
   const heading = entitled ? `Last ${days} days` : "Last 7 days";
+  const newestFirst = data?.ok ? [...data.days].reverse() : [];
+  const tiles = data?.ok && data.records ? recordTiles(data.records) : [];
 
   return (
     <section aria-labelledby="history-heading">
@@ -305,7 +363,14 @@ export function HistorySection({
           <div role="group" aria-label="Days shown" className="inline-flex rounded-full bg-slate-900/5 p-1 dark:bg-white/5">
             <DaysChip value={7} label="7" active={days === 7} onSelect={setDays} />
             <DaysChip value={14} label="14" active={days === 14} onSelect={setDays} />
-            <DaysChip value={30} label="30" active={days === 30} disabled={!thirtyEnabled} onSelect={setDays} />
+            <DaysChip
+              value={30}
+              label="30"
+              active={days === 30}
+              disabled={!thirtyEnabled}
+              title={thirtyEnabled ? undefined : "After 14 days of history"}
+              onSelect={setDays}
+            />
           </div>
         ) : null}
       </div>
@@ -329,45 +394,57 @@ export function HistorySection({
       ) : !data ? (
         <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">Loading…</p>
       ) : !data.ok ? (
-        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-          Couldn&apos;t load history right now. Try again in a minute.
-        </p>
-      ) : data.days.length === 0 ? (
-        <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">
-          History starts collecting the first time someone opens this beach — check back tomorrow.
-        </p>
-      ) : data.days.length === 1 ? (
-        <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">
-          Collecting — check back in a few days.
-        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <p className="text-sm text-slate-600 dark:text-slate-400">Couldn&apos;t load history right now.</p>
+          <button
+            type="button"
+            onClick={() => void mutate()}
+            className="inline-flex min-h-[44px] items-center rounded-full bg-slate-900/5 px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-900/10 dark:bg-white/10 dark:text-slate-200 dark:hover:bg-white/20"
+          >
+            Try again
+          </button>
+        </div>
       ) : (
         <>
-          <div className="mt-3 grid grid-cols-1 gap-2">
-            <div className="flex gap-1.5 overflow-x-auto pb-1 sm:gap-2">
-              {data.days.map((d) => (
-                <DayCell
-                  key={d.date}
-                  day={d}
-                  isOpen={openDate === d.date}
-                  onToggle={() => setOpenDate((cur) => (cur === d.date ? null : d.date))}
-                />
-              ))}
-            </div>
-            {openDate ? (
-              (() => {
-                const day = data.days.find((d) => d.date === openDate);
-                return day ? <DayDetail day={day} /> : null;
-              })()
-            ) : null}
-          </div>
+          {data.days.length === 0 ? (
+            <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">
+              No history for this beach yet — it&apos;s still collecting. Check back tomorrow.
+            </p>
+          ) : (
+            <>
+              {data.days.length === 1 ? (
+                <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+                  Still collecting — check back in a few days.
+                </p>
+              ) : null}
+              <div className="mt-3 grid grid-cols-1 gap-2">
+                <div className="flex gap-1.5 overflow-x-auto pb-1 sm:gap-2">
+                  {newestFirst.map((d) => (
+                    <DayCell
+                      key={d.date}
+                      day={d}
+                      isOpen={openDate === d.date}
+                      onToggle={() => setOpenDate((cur) => (cur === d.date ? null : d.date))}
+                    />
+                  ))}
+                </div>
+                {openDate
+                  ? (() => {
+                      const day = data.days.find((d) => d.date === openDate);
+                      return day ? <DayDetail day={day} /> : null;
+                    })()
+                  : null}
+              </div>
+            </>
+          )}
 
-          {data.records && RECORD_TILES(data.records).length > 0 ? (
+          {tiles.length > 0 ? (
             <div className="mt-4">
               <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
-                Records since Sept 22
+                Records since {data.archiveStartedAt ? shortMonthDay(data.archiveStartedAt) : ""}
               </h3>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                {RECORD_TILES(data.records).map((t) => (
+                {tiles.map((t) => (
                   <MetricCard key={t.key} icon={t.icon} label={t.label} value={t.value} sub={t.sub} />
                 ))}
               </div>

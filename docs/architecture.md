@@ -445,16 +445,21 @@ upgrade — see `docs/BUILD_PLAN.md`'s Later section.
 **"Last N days" history (`/api/history/[slug]`, docs/HISTORY_AND_IMAGERY_
 PLAN.md Part A).** A Plus-only, read-only look at the `beach_hourly` archive
 the 1-minute history cron has been writing since 2026-09-22 (diagram 2).
-Gated like `/api/hazards`: native app only, a rate-limited deviceId, the
-install token once one is on file, then `entitled(device, now)` — a free
-device gets 403 `not-entitled`, never a peek at the data. The route itself
-never calls `getConditions`; it is one bounded D1 read
-(`DeviceStore.hourlyHistory`, `WHERE slug = ? AND row_kind = 'snapshot' AND
-local_date >= ?`, capped at 31 days) fed through the pure summarizer
-`lib/history/summary.ts`, which turns the flat hourly rows into per-day
-summaries (best/worst/avg score, highs, an hourly bar-chart array, that
-day's caps) plus a handful of records (best day, hottest sand, biggest
-waves, quietest day) — never a second `getConditions` build.
+Gated like `/api/hazards`: native app only, a rate-limited deviceId (300/hr
+by IP, 60/hr by device), the install token once one is on file, then
+`entitled(device, now)` — a free device gets 403 `not-entitled`, never a
+peek at the data. The route itself never calls `getConditions`; it makes two
+independent, bounded D1 reads in parallel — `DeviceStore.hourlyHistory`
+(`WHERE slug = ? AND row_kind = 'snapshot' AND local_date BETWEEN ? AND ?`,
+capped at 31 days, for the on-screen 7/14/30-day strip) and
+`DeviceStore.historyRecords` (one UNION ALL of four single-row subqueries —
+best score, hottest sand, biggest surf, quietest 10 AM-6 PM reading — plus
+`MIN(local_date)`/`COUNT(DISTINCT local_date)`) — fed through the pure
+summarizer `lib/history/summary.ts`. Records are deliberately NOT bounded by
+the `days` window: they read the WHOLE archive for the beach, so switching
+the 7/14/30 chip can never make a record vanish or regress, and the "biggest
+surf" record reads the `surf_ft` column only (the breaking-surf estimate),
+never `wave_ft` (the raw significant wave height) — the two must never mix.
 
 **Live Activity register: rotation + one-active-per-device.** The native
 plugin sends a monotonic `rotation` counter with each token; `registerLiveActivity`

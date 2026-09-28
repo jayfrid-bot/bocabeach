@@ -36,7 +36,7 @@ import {
   COMING_UP_RETENTION_MS,
 } from "@/lib/db/comingUpClaims";
 import type { ComingUpDeliveryRow } from "@/lib/db/store";
-import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
+import type { ArchiveCandidate, BeachHourlyRow, HistoryRecordRow, HistoryRecordsResult } from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
 import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
 import type {
@@ -528,14 +528,71 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       if (historyClaims.delete(key)) await save();
     },
 
-    // --- Hourly history READ (Plus "Last 7 days" feature) -------------------
+    // --- Hourly history READ (Plus "Last N days" feature) -------------------
     // Mirrors d1Store's single-query filter: this slug, snapshot rows only,
-    // on or after sinceLocalDate, oldest first.
-    async hourlyHistory(slug: string, sinceLocalDate: string) {
+    // local_date within [sinceLocalDate, untilLocalDate] inclusive, oldest
+    // first.
+    async hourlyHistory(slug: string, sinceLocalDate: string, untilLocalDate: string) {
       await load();
       return [...beachHourly.values()]
-        .filter((r) => r.slug === slug && r.row_kind === "snapshot" && r.local_date >= sinceLocalDate)
+        .filter(
+          (r) =>
+            r.slug === slug &&
+            r.row_kind === "snapshot" &&
+            r.local_date >= sinceLocalDate &&
+            r.local_date <= untilLocalDate,
+        )
         .sort((a, b) => (a.hour_utc < b.hour_utc ? -1 : a.hour_utc > b.hour_utc ? 1 : 0));
+    },
+
+    // Lifetime records — mirrors d1Store's UNION ALL: for each kind, the
+    // single row that wins (max for best/hottest_sand/biggest_surf, min for
+    // quietest), ties broken by the earliest hour_utc, same rule the SQL's
+    // own `ORDER BY value [ASC|DESC], hour_utc ASC LIMIT 1` encodes.
+    async historyRecords(slug: string): Promise<HistoryRecordsResult> {
+      await load();
+      const rowsForSlug = [...beachHourly.values()].filter((r) => r.slug === slug && r.row_kind === "snapshot");
+
+      function pick(
+        key: keyof BeachHourlyRow,
+        direction: "max" | "min",
+        extraFilter?: (r: BeachHourlyRow) => boolean,
+      ): { local_date: string; local_hour: number; value: number } | null {
+        let winner: BeachHourlyRow | null = null;
+        for (const r of rowsForSlug) {
+          const v = r[key];
+          if (typeof v !== "number" || !Number.isFinite(v)) continue;
+          if (extraFilter && !extraFilter(r)) continue;
+          if (!winner) {
+            winner = r;
+            continue;
+          }
+          const wv = winner[key] as number;
+          const better = direction === "max" ? v > wv : v < wv;
+          const tie = v === wv;
+          if (better || (tie && r.hour_utc < winner.hour_utc)) winner = r;
+        }
+        return winner ? { local_date: winner.local_date, local_hour: winner.local_hour, value: winner[key] as number } : null;
+      }
+
+      const records: HistoryRecordRow[] = [];
+      const best = pick("score", "max");
+      if (best) records.push({ kind: "best", ...best });
+      const sand = pick("sand_temp_f", "max");
+      if (sand) records.push({ kind: "hottest_sand", ...sand });
+      const surf = pick("surf_ft", "max");
+      if (surf) records.push({ kind: "biggest_surf", ...surf });
+      const quiet = pick("crowd_pct", "min", (r) => r.local_hour >= 10 && r.local_hour <= 18);
+      if (quiet) records.push({ kind: "quietest", ...quiet });
+
+      let archiveStartedAt: string | null = null;
+      const dates = new Set<string>();
+      for (const r of rowsForSlug) {
+        dates.add(r.local_date);
+        if (archiveStartedAt === null || r.local_date < archiveStartedAt) archiveStartedAt = r.local_date;
+      }
+
+      return { records, archiveStartedAt, dayCount: dates.size };
     },
 
     // --- Beach Session Live Activity (migrations/0007_live_activities.sql) -

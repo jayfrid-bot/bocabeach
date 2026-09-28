@@ -1,9 +1,13 @@
-// POST /api/history/[slug] — Plus "Last 7 days" for one beach
+// POST /api/history/[slug] — Plus "Last N days" for one beach
 // (docs/HISTORY_AND_IMAGERY_PLAN.md Part A). Body { deviceId, days?: 7|14|30 },
 // header x-install-token. Reads the archive `beach_hourly` has been
 // collecting hourly since 2026-09-22 (migrations/0006_history.sql,
-// lib/history/archive.ts) and turns it into day-by-day summaries plus a
-// handful of records — see lib/history/summary.ts for the pure aggregation.
+// lib/history/archive.ts) and turns it into day-by-day summaries
+// (lib/history/summary.ts `summarizeHistory`, bounded by `days`) plus a
+// handful of LIFETIME records (`summary.ts` `recordsFromRows`, fed by
+// `DeviceStore.historyRecords` — one UNION ALL query, never bounded by
+// `days`, so switching the 7/14/30 chip can never make a record vanish or
+// regress).
 //
 // Gate: the same shape live-activity/register and hazards use, combined —
 // app-only (Plus is sold and delivered only inside the phone app), a valid
@@ -26,13 +30,17 @@ import { requireInstallToken } from "@/lib/db/installTokenAuth";
 import { isNativeRequest } from "@/lib/nativeRequest";
 import { checkRateLimit, clientIp } from "@/lib/plus/rateLimit";
 import { localHourParts } from "@/lib/history/archive";
-import { shiftLocalDate, summarizeHistory } from "@/lib/history/summary";
+import { recordsFromRows, shiftLocalDate, summarizeHistory } from "@/lib/history/summary";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const MAX_ATTEMPTS_DEVICE = 30;
-const MAX_ATTEMPTS_IP = 120;
+// Same IP limit as /api/hazards (300/hr — generous for carrier NAT, the
+// deviceId is the real throttling signal); device limit set slightly above
+// hazards' own 30/hr since a device legitimately re-fetches on every 7/14/30
+// chip tap, not just once per arrival.
+const MAX_ATTEMPTS_DEVICE = 60;
+const MAX_ATTEMPTS_IP = 300;
 const WINDOW_MS = 60 * 60 * 1000;
 
 /** The only windows the UI offers (7 / 14 / 30 day chips) — anything else
@@ -87,11 +95,25 @@ export async function POST(
     const { date: todayLocal } = localHourParts(loc.timezone, now);
     const sinceLocalDate = shiftLocalDate(todayLocal, -(Math.min(days, MAX_DAYS) - 1));
 
-    const rows = await store.hourlyHistory(slug, sinceLocalDate);
-    const { days: daySummaries, records } = summarizeHistory(rows);
+    // Two independent reads: the window (bounded, for the day strip) and the
+    // lifetime records (unbounded — a reading from before this window, or
+    // before the archive was even this old, must still be nameable).
+    const [rows, recordsResult] = await Promise.all([
+      store.hourlyHistory(slug, sinceLocalDate, todayLocal),
+      store.historyRecords(slug),
+    ]);
+    const daySummaries = summarizeHistory(rows);
+    const records = recordsFromRows(recordsResult.records);
 
     return Response.json(
-      { ok: true, since: sinceLocalDate, days: daySummaries, records },
+      {
+        ok: true,
+        since: sinceLocalDate,
+        days: daySummaries,
+        records,
+        archiveStartedAt: recordsResult.archiveStartedAt,
+        dayCount: recordsResult.dayCount,
+      },
       { headers: { "Cache-Control": "private, no-store" } },
     );
   } catch (e) {

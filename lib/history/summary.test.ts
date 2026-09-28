@@ -1,6 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { shiftLocalDate, summarizeHistory, weekdayOf } from "@/lib/history/summary";
-import type { BeachHourlyRow } from "@/lib/history/types";
+import {
+  daysBetweenLocalDates,
+  recordsFromRows,
+  shiftLocalDate,
+  shortMonthDay,
+  summarizeHistory,
+  weekdayLongOf,
+  weekdayOf,
+} from "@/lib/history/summary";
+import type { BeachHourlyRow, HistoryRecordRow } from "@/lib/history/types";
 
 function row(over: Partial<BeachHourlyRow> = {}): BeachHourlyRow {
   return {
@@ -48,16 +56,34 @@ function row(over: Partial<BeachHourlyRow> = {}): BeachHourlyRow {
   };
 }
 
-describe("weekdayOf", () => {
-  it("labels a known date correctly", () => {
+function recordRow(over: Partial<HistoryRecordRow> & { kind: HistoryRecordRow["kind"] }): HistoryRecordRow {
+  return { local_date: "2026-09-22", local_hour: 10, value: 0, ...over };
+}
+
+describe("weekdayOf / weekdayLongOf", () => {
+  it("labels a known date correctly, short and long", () => {
     // 2026-09-22 is a Tuesday.
     expect(weekdayOf("2026-09-22")).toBe("Tue");
+    expect(weekdayLongOf("2026-09-22")).toBe("Tuesday");
     // 2026-09-28 (today, per the app's own clock) is a Monday.
     expect(weekdayOf("2026-09-28")).toBe("Mon");
+    expect(weekdayLongOf("2026-09-28")).toBe("Monday");
   });
 
   it("returns '' for a malformed date rather than throwing", () => {
     expect(weekdayOf("not-a-date")).toBe("");
+    expect(weekdayLongOf("not-a-date")).toBe("");
+  });
+});
+
+describe("shortMonthDay", () => {
+  it("uses 'Sept', not Intl's 3-letter 'Sep'", () => {
+    expect(shortMonthDay("2026-09-22")).toBe("Sept 22");
+  });
+
+  it("uses the ordinary 3-letter abbreviation for every other month", () => {
+    expect(shortMonthDay("2026-01-05")).toBe("Jan 5");
+    expect(shortMonthDay("2026-12-31")).toBe("Dec 31");
   });
 });
 
@@ -75,24 +101,29 @@ describe("shiftLocalDate", () => {
   });
 });
 
+describe("daysBetweenLocalDates", () => {
+  it("counts whole calendar days, positive when b is later", () => {
+    expect(daysBetweenLocalDates("2026-09-22", "2026-09-28")).toBe(6);
+    expect(daysBetweenLocalDates("2026-09-22", "2026-10-06")).toBe(14);
+  });
+
+  it("is negative when b is earlier, and zero for the same date", () => {
+    expect(daysBetweenLocalDates("2026-09-28", "2026-09-22")).toBe(-6);
+    expect(daysBetweenLocalDates("2026-09-22", "2026-09-22")).toBe(0);
+  });
+});
+
 describe("summarizeHistory — empty input", () => {
-  it("returns no days and every record null", () => {
-    const out = summarizeHistory([]);
-    expect(out.days).toEqual([]);
-    expect(out.records).toEqual({
-      bestDay: null,
-      hottestSand: null,
-      biggestWaves: null,
-      quietestDay: null,
-    });
+  it("returns no days", () => {
+    expect(summarizeHistory([])).toEqual([]);
   });
 });
 
 describe("summarizeHistory — one hour", () => {
   it("a single row makes a single, partial day whose best/worst/avg all equal that one score", () => {
-    const out = summarizeHistory([row({ score: 72, local_hour: 14 })]);
-    expect(out.days).toHaveLength(1);
-    const d = out.days[0];
+    const days = summarizeHistory([row({ score: 72, local_hour: 14 })]);
+    expect(days).toHaveLength(1);
+    const d = days[0];
     expect(d.date).toBe("2026-09-22");
     expect(d.weekday).toBe("Tue");
     expect(d.hours).toBe(1);
@@ -106,16 +137,16 @@ describe("summarizeHistory — one hour", () => {
 describe("summarizeHistory — partial vs full day", () => {
   it("flags a day with fewer than 6 scored hours partial", () => {
     const rows = [0, 1, 2, 3, 4].map((h) => row({ local_hour: h, score: 50 + h }));
-    const out = summarizeHistory(rows);
-    expect(out.days[0].hours).toBe(5);
-    expect(out.days[0].partial).toBe(true);
+    const days = summarizeHistory(rows);
+    expect(days[0].hours).toBe(5);
+    expect(days[0].partial).toBe(true);
   });
 
   it("a day with exactly 6 scored hours is NOT partial", () => {
     const rows = [0, 1, 2, 3, 4, 5].map((h) => row({ local_hour: h, score: 50 + h }));
-    const out = summarizeHistory(rows);
-    expect(out.days[0].hours).toBe(6);
-    expect(out.days[0].partial).toBe(false);
+    const days = summarizeHistory(rows);
+    expect(days[0].hours).toBe(6);
+    expect(days[0].partial).toBe(false);
   });
 
   it("a row with no score at all doesn't count toward 'hours' but still contributes its other fields", () => {
@@ -123,42 +154,24 @@ describe("summarizeHistory — partial vs full day", () => {
       row({ local_hour: 8, score: null, air_temp_f: 90 }),
       ...[9, 10, 11, 12, 13, 14].map((h) => row({ local_hour: h, score: 70 })),
     ];
-    const out = summarizeHistory(rows);
-    expect(out.days[0].hours).toBe(6);
-    expect(out.days[0].partial).toBe(false);
-    expect(out.days[0].airHighF).toBe(90); // the unscored row's reading still counts toward the high
+    const days = summarizeHistory(rows);
+    expect(days[0].hours).toBe(6);
+    expect(days[0].partial).toBe(false);
+    expect(days[0].airHighF).toBe(90); // the unscored row's reading still counts toward the high
   });
 });
 
-describe("summarizeHistory — ties break to the earliest hour/date", () => {
-  it("best/worst hour ties within a day resolve to the earlier hour", () => {
+describe("summarizeHistory — best/worst hour ties within a day resolve to the earlier hour", () => {
+  it("resolves ties to the earlier hour", () => {
     const rows = [
       row({ local_hour: 9, score: 90 }),
       row({ local_hour: 15, score: 90 }), // tied best — 9 AM should win
       row({ local_hour: 10, score: 40 }),
       row({ local_hour: 16, score: 40 }), // tied worst — 10 AM should win
     ];
-    const out = summarizeHistory(rows);
-    expect(out.days[0].best).toEqual({ score: 90, localHour: 9 });
-    expect(out.days[0].worst).toEqual({ score: 40, localHour: 10 });
-  });
-
-  it("a tied 'best day' record resolves to the earlier date", () => {
-    const rows = [
-      row({ local_date: "2026-09-23", local_hour: 10, score: 95 }),
-      row({ local_date: "2026-09-22", local_hour: 10, score: 95 }),
-    ];
-    const out = summarizeHistory(rows);
-    expect(out.records.bestDay).toEqual({ date: "2026-09-22", score: 95 });
-  });
-
-  it("a tied 'hottest sand' record resolves to the earlier reading (date, then row order)", () => {
-    const rows = [
-      row({ local_date: "2026-09-23", local_hour: 12, sand_temp_f: 130 }),
-      row({ local_date: "2026-09-22", local_hour: 13, sand_temp_f: 130 }),
-    ];
-    const out = summarizeHistory(rows);
-    expect(out.records.hottestSand).toEqual({ date: "2026-09-22", sandTempF: 130, localHour: 13 });
+    const days = summarizeHistory(rows);
+    expect(days[0].best).toEqual({ score: 90, localHour: 9 });
+    expect(days[0].worst).toEqual({ score: 40, localHour: 10 });
   });
 });
 
@@ -170,13 +183,13 @@ describe("summarizeHistory — caps dedupe", () => {
       row({ local_hour: 11, caps_json: JSON.stringify(["Rip current"]) }),
       row({ local_hour: 12, caps_json: null }),
     ];
-    const out = summarizeHistory(rows);
-    expect(out.days[0].caps).toEqual(["High UV", "Red flag", "Rip current"]);
+    const days = summarizeHistory(rows);
+    expect(days[0].caps).toEqual(["High UV", "Red flag", "Rip current"]);
   });
 
   it("a day with no caps anywhere gets an empty array, not undefined", () => {
-    const out = summarizeHistory([row({ caps_json: "[]" })]);
-    expect(out.days[0].caps).toEqual([]);
+    const days = summarizeHistory([row({ caps_json: "[]" })]);
+    expect(days[0].caps).toEqual([]);
   });
 });
 
@@ -191,12 +204,19 @@ describe("summarizeHistory — timezone: local_date/local_hour are trusted verba
       row({ hour_utc: "2026-11-01T05:30:00.000Z", local_date: "2026-11-01", local_hour: 1, score: 60 }),
       row({ hour_utc: "2026-11-01T06:30:00.000Z", local_date: "2026-11-01", local_hour: 1, score: 65 }),
     ];
-    const out = summarizeHistory(rows);
-    expect(out.days).toHaveLength(1);
-    expect(out.days[0].date).toBe("2026-11-01");
+    const days = summarizeHistory(rows);
+    expect(days).toHaveLength(1);
+    expect(days[0].date).toBe("2026-11-01");
     // Both rows read as local_hour 1 — a tie broken by row/array order, not
     // by their very different hour_utc values.
-    expect(out.days[0].best).toEqual({ score: 65, localHour: 1 });
+    expect(days[0].best).toEqual({ score: 65, localHour: 1 });
+    // Each hourly entry still carries its OWN distinct hourUtc, so a caller
+    // keying a list on it (React keys, the sr-only list) never collides —
+    // the whole point of keying on hourUtc instead of localHour.
+    expect(days[0].hourly.map((h) => h.hourUtc)).toEqual([
+      "2026-11-01T05:30:00.000Z",
+      "2026-11-01T06:30:00.000Z",
+    ]);
   });
 
   it("a row whose hour_utc falls on a different UTC calendar day than local_date is still grouped by local_date", () => {
@@ -207,72 +227,95 @@ describe("summarizeHistory — timezone: local_date/local_hour are trusted verba
       local_hour: 22,
       timezone: "America/New_York",
     });
-    const out = summarizeHistory([r]);
-    expect(out.days[0].date).toBe("2026-09-22");
-    expect(out.days[0].best?.localHour).toBe(22);
+    const days = summarizeHistory([r]);
+    expect(days[0].date).toBe("2026-09-22");
+    expect(days[0].best?.localHour).toBe(22);
   });
 });
 
 describe("summarizeHistory — day-level aggregates", () => {
   it("computes highs/maxes/peaks and a representative water average", () => {
     const rows = [
-      row({ local_hour: 8, air_temp_f: 80, water_temp_f: 83, sand_temp_f: 90, wave_ft: 1.5, crowd_pct: 20, seaweed_pct: 2 }),
-      row({ local_hour: 14, air_temp_f: 87, water_temp_f: 85, sand_temp_f: 137, wave_ft: 3.2, crowd_pct: 40, seaweed_pct: 5 }),
-      row({ local_hour: 18, air_temp_f: 82, water_temp_f: 84, sand_temp_f: 100, wave_ft: 2.0, crowd_pct: 10, seaweed_pct: 1 }),
+      row({ local_hour: 8, air_temp_f: 80, water_temp_f: 83, sand_temp_f: 90, surf_ft: 1.5, crowd_pct: 20, seaweed_pct: 2 }),
+      row({ local_hour: 14, air_temp_f: 87, water_temp_f: 85, sand_temp_f: 137, surf_ft: 3.2, crowd_pct: 40, seaweed_pct: 5 }),
+      row({ local_hour: 18, air_temp_f: 82, water_temp_f: 84, sand_temp_f: 100, surf_ft: 2.0, crowd_pct: 10, seaweed_pct: 1 }),
     ];
-    const out = summarizeHistory(rows);
-    const d = out.days[0];
+    const days = summarizeHistory(rows);
+    const d = days[0];
     expect(d.airHighF).toBe(87);
     expect(d.waterF).toBe(84); // (83+85+84)/3 = 84
     expect(d.sandMaxF).toBe(137);
-    expect(d.waveMaxFt).toBe(3.2);
+    expect(d.surfMaxFt).toBe(3.2);
     expect(d.crowdPeakPct).toBe(40);
     expect(d.seaweedMaxPct).toBe(5);
   });
 
   it("a field with no data anywhere that day reads null, not 0", () => {
-    const out = summarizeHistory([row({ crowd_pct: null, water_temp_f: null })]);
-    expect(out.days[0].crowdPeakPct).toBeNull();
-    expect(out.days[0].waterF).toBeNull();
+    const days = summarizeHistory([row({ crowd_pct: null, water_temp_f: null })]);
+    expect(days[0].crowdPeakPct).toBeNull();
+    expect(days[0].waterF).toBeNull();
   });
 
-  it("hourly carries every SCORED hour, ascending by localHour, skipping unscored ones", () => {
+  it("surfMaxFt comes from surf_ft ONLY — wave_ft never substitutes for it", () => {
+    // wave_ft is set (raw Hs) but surf_ft is null on every row (pre-migration
+    // 0010 data) — surfMaxFt must read null, never fall back to wave_ft.
+    const days = summarizeHistory([row({ wave_ft: 4.5, surf_ft: null })]);
+    expect(days[0].surfMaxFt).toBeNull();
+  });
+
+  it("hourly carries every SCORED hour with its own hourUtc, ascending by localHour, skipping unscored ones", () => {
     const rows = [
-      row({ local_hour: 14, score: 90 }),
-      row({ local_hour: 8, score: 60 }),
-      row({ local_hour: 11, score: null }), // no score — excluded from hourly
+      row({ local_hour: 14, hour_utc: "2026-09-22T18:00:00.000Z", score: 90 }),
+      row({ local_hour: 8, hour_utc: "2026-09-22T12:00:00.000Z", score: 60 }),
+      row({ local_hour: 11, hour_utc: "2026-09-22T15:00:00.000Z", score: null }), // no score — excluded
     ];
-    const out = summarizeHistory(rows);
-    expect(out.days[0].hourly).toEqual([
-      { localHour: 8, score: 60 },
-      { localHour: 14, score: 90 },
+    const days = summarizeHistory(rows);
+    expect(days[0].hourly).toEqual([
+      { localHour: 8, hourUtc: "2026-09-22T12:00:00.000Z", score: 60 },
+      { localHour: 14, hourUtc: "2026-09-22T18:00:00.000Z", score: 90 },
     ]);
   });
 });
 
-describe("summarizeHistory — multi-day ordering and quietest-day record", () => {
+describe("summarizeHistory — multi-day ordering", () => {
   it("orders days ascending by date regardless of input order", () => {
     const rows = [
       row({ local_date: "2026-09-24", local_hour: 10 }),
       row({ local_date: "2026-09-22", local_hour: 10 }),
       row({ local_date: "2026-09-23", local_hour: 10 }),
     ];
-    const out = summarizeHistory(rows);
-    expect(out.days.map((d) => d.date)).toEqual(["2026-09-22", "2026-09-23", "2026-09-24"]);
+    const days = summarizeHistory(rows);
+    expect(days.map((d) => d.date)).toEqual(["2026-09-22", "2026-09-23", "2026-09-24"]);
+  });
+});
+
+// --- recordsFromRows: maps the store's raw kind-tagged UNION rows into the
+// API's friendly shape. The SQL itself already picked the winning row per
+// kind (ORDER BY/LIMIT 1) — this is a thin, pure mapping step.
+describe("recordsFromRows", () => {
+  it("maps every kind present into its friendly field", () => {
+    const out = recordsFromRows([
+      recordRow({ kind: "best", local_date: "2026-09-26", local_hour: 14, value: 88 }),
+      recordRow({ kind: "hottest_sand", local_date: "2026-09-26", local_hour: 14, value: 137 }),
+      recordRow({ kind: "biggest_surf", local_date: "2026-09-27", local_hour: 12, value: 3.2 }),
+      recordRow({ kind: "quietest", local_date: "2026-09-28", local_hour: 10, value: 15 }),
+    ]);
+    expect(out.bestDay).toEqual({ date: "2026-09-26", score: 88, localHour: 14 });
+    expect(out.hottestSand).toEqual({ date: "2026-09-26", sandTempF: 137, localHour: 14 });
+    expect(out.biggestSurf).toEqual({ date: "2026-09-27", surfFt: 3.2, localHour: 12 });
+    expect(out.quietestDay).toEqual({ date: "2026-09-28", crowdPct: 15, localHour: 10 });
   });
 
-  it("quietest day is the lowest daily PEAK crowd, only among days with any crowd data", () => {
-    const rows = [
-      row({ local_date: "2026-09-22", local_hour: 10, crowd_pct: 60 }),
-      row({ local_date: "2026-09-23", local_hour: 10, crowd_pct: 15 }),
-      row({ local_date: "2026-09-24", local_hour: 10, crowd_pct: null }), // no cam data this day — excluded
-    ];
-    const out = summarizeHistory(rows);
-    expect(out.records.quietestDay).toEqual({ date: "2026-09-23", crowdPct: 15 });
+  it("a kind that's absent from the rows maps to null, never a fabricated value", () => {
+    const out = recordsFromRows([recordRow({ kind: "best", value: 80 })]);
+    expect(out.bestDay).not.toBeNull();
+    expect(out.hottestSand).toBeNull();
+    expect(out.biggestSurf).toBeNull();
+    expect(out.quietestDay).toBeNull();
   });
 
-  it("quietestDay is null when no day has any crowd data at all", () => {
-    const out = summarizeHistory([row({ crowd_pct: null })]);
-    expect(out.records.quietestDay).toBeNull();
+  it("an empty row list maps to every field null", () => {
+    const out = recordsFromRows([]);
+    expect(out).toEqual({ bestDay: null, hottestSand: null, biggestSurf: null, quietestDay: null });
   });
 });

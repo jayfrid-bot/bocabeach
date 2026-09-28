@@ -1,14 +1,20 @@
-// Pure summarizer for the Plus "Last 7 days" history feature
+// Pure summarizer for the Plus "Last N days" history feature
 // (docs/HISTORY_AND_IMAGERY_PLAN.md Part A). Turns the flat hourly rows
-// `DeviceStore.hourlyHistory` returns into per-day summaries plus a handful
-// of records. No I/O, no Date.now() — every date/hour comes straight off
-// the row's own `local_date`/`local_hour` fields, exactly as the archiver
-// stored them (never recomputed from `hour_utc`, which would silently
-// misplace an hour across a DST boundary the row's own fields already
-// resolved correctly at write time — see lib/history/archive.ts
-// `localHourParts`).
+// `DeviceStore.hourlyHistory` returns into per-day summaries. No I/O, no
+// Date.now() — every date/hour comes straight off the row's own
+// `local_date`/`local_hour` fields, exactly as the archiver stored them
+// (never recomputed from `hour_utc`, which would silently misplace an hour
+// across a DST boundary the row's own fields already resolved correctly at
+// write time — see lib/history/archive.ts `localHourParts`).
+//
+// Records (best day, hottest sand, biggest surf, quietest) are NOT computed
+// here — they are a LIFETIME read across the whole archive, independent of
+// whatever `days` window a caller asked `hourlyHistory` for, so they come
+// from a separate store method (`DeviceStore.historyRecords`, one UNION ALL
+// SQL query in d1Store.ts). `recordsFromRows` below only maps that store
+// row shape into the API's friendlier shape — still pure, still no I/O.
 
-import type { BeachHourlyRow } from "@/lib/history/types";
+import type { BeachHourlyRow, HistoryRecordRow, HistoryRecordsResult } from "@/lib/history/types";
 
 /** A day needs at least this many SCORED hours to count as a full day —
  *  fewer and `partial: true` warns the UI the number is thin (e.g. the
@@ -16,14 +22,44 @@ import type { BeachHourlyRow } from "@/lib/history/types";
 const MIN_SCORED_HOURS_FOR_FULL_DAY = 6;
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const WEEKDAY_LABELS_LONG = [
+  "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
+] as const;
+/** "Sept", not Intl's 3-letter "Sep" — matches this app's existing changelog/
+ *  copy voice ("Records since Sept 22"). Every other month is the ordinary
+ *  3-letter abbreviation. */
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"] as const;
+
+function ymd(localDate: string): [number, number, number] | null {
+  const [y, m, d] = localDate.split("-").map(Number);
+  return y && m && d ? [y, m, d] : null;
+}
 
 /** Short weekday label ("Mon") for a YYYY-MM-DD calendar date. Pure calendar
  *  math (Date.UTC on the parsed y/m/d) — `localDate` is already the beach's
  *  own local calendar day, so there is no timezone left to apply. */
 export function weekdayOf(localDate: string): string {
-  const [y, m, d] = localDate.split("-").map(Number);
-  if (!y || !m || !d) return "";
+  const parts = ymd(localDate);
+  if (!parts) return "";
+  const [y, m, d] = parts;
   return WEEKDAY_LABELS[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+}
+
+/** Full weekday name ("Monday") — for accessible names, where the visible
+ *  cell only has room for the 3-letter form. */
+export function weekdayLongOf(localDate: string): string {
+  const parts = ymd(localDate);
+  if (!parts) return "";
+  const [y, m, d] = parts;
+  return WEEKDAY_LABELS_LONG[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+}
+
+/** "2026-09-22" -> "Sept 22". */
+export function shortMonthDay(localDate: string): string {
+  const parts = ymd(localDate);
+  if (!parts) return localDate;
+  const [, m, d] = parts;
+  return `${SHORT_MONTHS[m - 1]} ${d}`;
 }
 
 /** `localDate` shifted by `deltaDays` (negative = earlier), as a new
@@ -31,13 +67,30 @@ export function weekdayOf(localDate: string): string {
  *  route to turn a `days` window (7/14/30) into the `sinceLocalDate` bound
  *  `DeviceStore.hourlyHistory` queries on. */
 export function shiftLocalDate(localDate: string, deltaDays: number): string {
-  const [y, m, d] = localDate.split("-").map(Number);
+  const parts = ymd(localDate);
+  if (!parts) return localDate;
+  const [y, m, d] = parts;
   const dt = new Date(Date.UTC(y, m - 1, d));
   dt.setUTCDate(dt.getUTCDate() + deltaDays);
   const yy = String(dt.getUTCFullYear()).padStart(4, "0");
   const mm = String(dt.getUTCMonth() + 1).padStart(2, "0");
   const dd = String(dt.getUTCDate()).padStart(2, "0");
   return `${yy}-${mm}-${dd}`;
+}
+
+/** Whole calendar days between two YYYY-MM-DD strings (`b` minus `a`),
+ *  positive when `b` is later. Pure Date.UTC diff — both inputs are already
+ *  bare calendar dates, never instants. Used client-side to decide whether
+ *  the 30-day chip should unlock: `daysBetweenLocalDates(archiveStartedAt,
+ *  today) >= 14` — a SPAN check, not a row/day COUNT (a beach with gaps in
+ *  its archive can still have earned the 30-day window on the calendar). */
+export function daysBetweenLocalDates(a: string, b: string): number {
+  const pa = ymd(a);
+  const pb = ymd(b);
+  if (!pa || !pb) return 0;
+  const ua = Date.UTC(pa[0], pa[1] - 1, pa[2]);
+  const ub = Date.UTC(pb[0], pb[1] - 1, pb[2]);
+  return Math.round((ub - ua) / 86_400_000);
 }
 
 export interface DaySummary {
@@ -53,36 +106,40 @@ export interface DaySummary {
   /** Mean water temp for the day, rounded — unlike the other fields below,
    *  water temperature barely moves hour to hour, so a representative
    *  average reads truer than a peak would (there's no "up to" framing for
-   *  this one in the UI, unlike sand/waves/crowds/seaweed). */
+   *  this one in the UI, unlike sand/surf/crowds/seaweed). */
   waterF: number | null;
   sandMaxF: number | null;
-  waveMaxFt: number | null;
+  /** Estimated SURF (breaking) height, from `surf_ft` ONLY — never
+   *  `wave_ft` (the raw significant wave height). `surf_ft` is null on
+   *  every row archived before migration 0010, so a day whose rows are all
+   *  that old contributes nothing here (null), not a wave_ft stand-in —
+   *  mixing the two columns would silently misreport what "biggest surf"
+   *  means depending on which rows happened to be old or new. */
+  surfMaxFt: number | null;
   crowdPeakPct: number | null;
   seaweedMaxPct: number | null;
   /** Distinct cap strings active at any hour this day, alphabetical. */
   caps: string[];
   /** Fewer than MIN_SCORED_HOURS_FOR_FULL_DAY scored hours this day. */
   partial: boolean;
-  /** Every scored hour this day, ascending by localHour — compact enough to
-   *  ship in the day summary itself (at most 24 pairs) rather than a second
-   *  round trip, and what the UI's tap-to-expand hourly bar row draws
-   *  directly (components/plus/HistorySection.tsx). */
-  hourly: { localHour: number; score: number }[];
+  /** Every scored hour this day, ascending by localHour. `hourUtc` (not just
+   *  `localHour`) is what callers key React lists on — a fall-back DST day
+   *  has TWO hours that both read as local_hour 1, and only hour_utc tells
+   *  them apart (see lib/history/archive.ts). */
+  hourly: { localHour: number; hourUtc: string; score: number }[];
 }
 
+/** The API's friendly shape for one lifetime record — `recordsFromRows`
+ *  below maps `DeviceStore.historyRecords`'s raw kind-tagged rows into this. */
 export interface HistoryRecords {
-  bestDay: { date: string; score: number } | null;
+  bestDay: { date: string; score: number; localHour: number } | null;
   hottestSand: { date: string; sandTempF: number; localHour: number } | null;
-  biggestWaves: { date: string; waveFt: number; localHour: number } | null;
-  /** Lowest daily PEAK crowd — "quietest" means the calmest the busiest
-   *  moment of that day ever got, not the lowest single reading. Only
-   *  considers days with at least one crowd reading (cam beaches only). */
-  quietestDay: { date: string; crowdPct: number } | null;
-}
-
-export interface HistorySummary {
-  days: DaySummary[];
-  records: HistoryRecords;
+  biggestSurf: { date: string; surfFt: number; localHour: number } | null;
+  /** The single least-crowded midday (10 AM-6 PM local) reading on file —
+   *  not a per-day peak-crowd minimum (see docs/HISTORY_AND_IMAGERY_PLAN.md
+   *  Part A / the Codex review that set this rule: a day-level aggregate
+   *  can't be expressed as one row in the UNION ALL query this comes from). */
+  quietestDay: { date: string; crowdPct: number; localHour: number } | null;
 }
 
 function round(v: number): number {
@@ -155,66 +212,64 @@ function summarizeDay(date: string, rowsForDate: BeachHourlyRow[]): DaySummary {
     airHighF: maxOf(sorted, "air_temp_f"),
     waterF: waterAvg === null ? null : round(waterAvg),
     sandMaxF: maxOf(sorted, "sand_temp_f"),
-    waveMaxFt: maxOf(sorted, "wave_ft"),
+    surfMaxFt: maxOf(sorted, "surf_ft"),
     crowdPeakPct: maxOf(sorted, "crowd_pct"),
     seaweedMaxPct: maxOf(sorted, "seaweed_pct"),
     caps: [...capsSet].sort(),
     partial: scored.length < MIN_SCORED_HOURS_FOR_FULL_DAY,
-    hourly: scored.map((r) => ({ localHour: r.local_hour, score: r.score })),
+    hourly: scored.map((r) => ({ localHour: r.local_hour, hourUtc: r.hour_utc, score: r.score })),
   };
 }
 
 /**
  * Group `rows` (already filtered to one beach/one row_kind by the store) by
- * `local_date`, summarize each day, and compute records across the whole
- * set. Rows need not arrive pre-sorted; the output `days` is always
- * date-ascending. On every tie (a record shared by two+ days/hours) the
- * EARLIEST date/hour wins — deterministic, and matches how a person reading
- * "records since" would expect the first time something happened to be the
- * one that's named.
+ * `local_date` and summarize each day. Rows need not arrive pre-sorted; the
+ * output is always date-ascending (oldest first) — callers that want
+ * newest-first (the UI strip) reverse it themselves, since "chronological"
+ * is the more natural order for a pure data function to hand back.
  */
-export function summarizeHistory(rows: BeachHourlyRow[]): HistorySummary {
+export function summarizeHistory(rows: BeachHourlyRow[]): DaySummary[] {
   const byDate = new Map<string, BeachHourlyRow[]>();
   for (const r of rows) {
     const list = byDate.get(r.local_date);
     if (list) list.push(r);
     else byDate.set(r.local_date, [r]);
   }
-  const days = [...byDate.keys()].sort().map((date) => summarizeDay(date, byDate.get(date) ?? []));
+  return [...byDate.keys()].sort().map((date) => summarizeDay(date, byDate.get(date) ?? []));
+}
 
-  let bestDay: HistoryRecords["bestDay"] = null;
-  for (const d of days) {
-    if (!d.best) continue;
-    if (!bestDay || d.best.score > bestDay.score) bestDay = { date: d.date, score: d.best.score };
-  }
+/**
+ * Map `DeviceStore.historyRecords`'s raw kind-tagged rows (already the
+ * winning row per kind, per the UNION ALL query's own ORDER BY/LIMIT 1) into
+ * the API's friendly shape. A kind simply absent from `rows` (e.g. no beach
+ * has ever had a 'quietest' reading if it has no cam) maps to `null`, never
+ * a fabricated zero.
+ */
+export function recordsFromRows(rows: HistoryRecordRow[]): HistoryRecords {
+  const byKind = new Map(rows.map((r) => [r.kind, r]));
+  const best = byKind.get("best");
+  const sand = byKind.get("hottest_sand");
+  const surf = byKind.get("biggest_surf");
+  const quiet = byKind.get("quietest");
+  return {
+    bestDay: best ? { date: best.local_date, score: best.value, localHour: best.local_hour } : null,
+    hottestSand: sand ? { date: sand.local_date, sandTempF: sand.value, localHour: sand.local_hour } : null,
+    biggestSurf: surf ? { date: surf.local_date, surfFt: surf.value, localHour: surf.local_hour } : null,
+    quietestDay: quiet ? { date: quiet.local_date, crowdPct: quiet.value, localHour: quiet.local_hour } : null,
+  };
+}
 
-  // Hottest sand / biggest waves are single-READING records, not per-day
-  // maxes of a max — scanned across every row directly so the exact hour is
-  // nameable, not just the day. Sorted chronologically first (not just left
-  // in whatever order the caller passed `rows`) so a tie's "first found"
-  // really is the EARLIEST date/hour, matching the doc above and
-  // `summarizeDay`'s own tie rule for best/worst.
-  const chronological = [...rows].sort((a, b) =>
-    a.local_date === b.local_date ? a.local_hour - b.local_hour : a.local_date < b.local_date ? -1 : 1,
-  );
-  let hottestSand: HistoryRecords["hottestSand"] = null;
-  let biggestWaves: HistoryRecords["biggestWaves"] = null;
-  for (const r of chronological) {
-    if (typeof r.sand_temp_f === "number" && (!hottestSand || r.sand_temp_f > hottestSand.sandTempF)) {
-      hottestSand = { date: r.local_date, sandTempF: r.sand_temp_f, localHour: r.local_hour };
-    }
-    if (typeof r.wave_ft === "number" && (!biggestWaves || r.wave_ft > biggestWaves.waveFt)) {
-      biggestWaves = { date: r.local_date, waveFt: r.wave_ft, localHour: r.local_hour };
-    }
-  }
-
-  let quietestDay: HistoryRecords["quietestDay"] = null;
-  for (const d of days) {
-    if (d.crowdPeakPct == null) continue;
-    if (!quietestDay || d.crowdPeakPct < quietestDay.crowdPct) {
-      quietestDay = { date: d.date, crowdPct: d.crowdPeakPct };
-    }
-  }
-
-  return { days, records: { bestDay, hottestSand, biggestWaves, quietestDay } };
+/** Convenience wrapper some callers prefer over destructuring the store
+ *  result themselves — same mapping, plus passes `archiveStartedAt`/
+ *  `dayCount` through untouched. */
+export function recordsFromResult(result: HistoryRecordsResult): {
+  records: HistoryRecords;
+  archiveStartedAt: string | null;
+  dayCount: number;
+} {
+  return {
+    records: recordsFromRows(result.records),
+    archiveStartedAt: result.archiveStartedAt,
+    dayCount: result.dayCount,
+  };
 }

@@ -81,3 +81,30 @@ export interface ArchiveCandidate {
   /** 'curated' beaches archive every hour; 'auto' beaches only in daylight. */
   tier: "curated" | "auto";
 }
+
+// --- Lifetime records (Plus "Last N days" history feature) -----------------
+// One row per kind, straight off `DeviceStore.historyRecords`'s UNION ALL
+// query (d1Store.ts) — each kind is the single (slug, hour) reading that
+// wins its own ORDER BY/LIMIT 1, across the WHOLE archive for this beach,
+// never bounded by whatever `days` window a caller asked hourlyHistory for.
+
+export type HistoryRecordKind = "best" | "hottest_sand" | "biggest_surf" | "quietest";
+
+export interface HistoryRecordRow {
+  kind: HistoryRecordKind;
+  local_date: string;
+  local_hour: number;
+  value: number;
+}
+
+export interface HistoryRecordsResult {
+  /** 0-4 rows — a kind is simply absent when this beach has no row with a
+   *  non-null value for that column yet (e.g. a beach with no cams has no
+   *  'quietest' row, ever). */
+  records: HistoryRecordRow[];
+  /** MIN(local_date) across every snapshot row for this beach, or null when
+   *  this beach has never been archived at all. */
+  archiveStartedAt: string | null;
+  /** COUNT(DISTINCT local_date) across every snapshot row for this beach. */
+  dayCount: number;
+}

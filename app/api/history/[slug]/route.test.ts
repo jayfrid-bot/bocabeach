@@ -161,7 +161,7 @@ describe("POST /api/history/[slug]", () => {
     await store.upsertDevice(DEV, { codeUntil: Date.now() + 30 * DAY });
     const { POST } = await import("@/app/api/history/[slug]/route");
     let last: Response | null = null;
-    for (let i = 0; i < 31; i++) {
+    for (let i = 0; i < 61; i++) {
       last = await POST(post(SLUG, { deviceId: DEV }, { ip: `9.9.9.${i % 250}` }), params(SLUG));
     }
     expect(last?.status).toBe(429);
@@ -185,19 +185,21 @@ describe("POST /api/history/[slug]", () => {
       expect(body.records).toEqual({
         bestDay: null,
         hottestSand: null,
-        biggestWaves: null,
+        biggestSurf: null,
         quietestDay: null,
       });
+      expect(body.archiveStartedAt).toBeNull();
+      expect(body.dayCount).toBe(0);
       expect(typeof body.since).toBe("string");
     });
 
-    it("returns day summaries and records built from real beach_hourly rows", async () => {
+    it("returns day summaries built from real beach_hourly rows, within the requested window", async () => {
       const store = await getStore();
       await store.upsertBeachHourly(
         row({ hour_utc: hourUtcOf(Date.now() - DAY), local_date: "2026-09-21", local_hour: 10, score: 72 }),
       );
       await store.upsertBeachHourly(
-        row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-22", local_hour: 14, score: 88 }),
+        row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-22", local_hour: 14, score: 88, sand_temp_f: 137, surf_ft: 3.2 }),
       );
       const { POST } = await import("@/app/api/history/[slug]/route");
       const res = await POST(post(SLUG, { deviceId: DEV, days: 14 }), params(SLUG));
@@ -205,7 +207,29 @@ describe("POST /api/history/[slug]", () => {
       const body = await res.json();
       expect(body.ok).toBe(true);
       expect(body.days.map((d: { date: string }) => d.date)).toEqual(["2026-09-21", "2026-09-22"]);
-      expect(body.records.bestDay).toEqual({ date: "2026-09-22", score: 88 });
+      expect(body.records.bestDay).toEqual({ date: "2026-09-22", score: 88, localHour: 14 });
+      expect(body.archiveStartedAt).toBe("2026-09-21");
+      expect(body.dayCount).toBe(2);
+    });
+
+    it("records are LIFETIME — a record-setting row outside the requested window still shows up", async () => {
+      const store = await getStore();
+      // 40 days before "today" — outside even a 30-day window.
+      await store.upsertBeachHourly(
+        row({ hour_utc: hourUtcOf(Date.now() - 40 * DAY), local_date: "2026-08-19", local_hour: 10, score: 99 }),
+      );
+      // Inside the 7-day window, but a lower score.
+      await store.upsertBeachHourly(
+        row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-28", local_hour: 10, score: 70 }),
+      );
+      const { POST } = await import("@/app/api/history/[slug]/route");
+      const res = await POST(post(SLUG, { deviceId: DEV, days: 7 }), params(SLUG));
+      const body = await res.json();
+      // The 7-day window itself never even reaches back to Aug 19...
+      expect(body.days.some((d: { date: string }) => d.date === "2026-08-19")).toBe(false);
+      // ...but the lifetime record still names it.
+      expect(body.records.bestDay).toMatchObject({ date: "2026-08-19", score: 99 });
+      expect(body.archiveStartedAt).toBe("2026-08-19");
     });
 
     it("only rows for THIS beach are returned — a different slug's rows never leak in", async () => {
@@ -217,6 +241,7 @@ describe("POST /api/history/[slug]", () => {
       const res = await POST(post(SLUG, { deviceId: DEV }), params(SLUG));
       const body = await res.json();
       expect(body.days).toEqual([]);
+      expect(body.records.bestDay).toBeNull();
     });
 
     it("sets Cache-Control: private, no-store", async () => {

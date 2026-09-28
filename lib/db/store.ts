@@ -16,7 +16,7 @@ import type {
   SentState,
 } from "@/lib/db/types";
 import type { NativeSub } from "@/lib/push/nativeStore";
-import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
+import type { ArchiveCandidate, BeachHourlyRow, HistoryRecordsResult } from "@/lib/history/types";
 import { d1Store, getD1 } from "@/lib/db/d1Store";
 import { memoryStore } from "@/lib/db/memoryStore";
 
@@ -317,20 +317,36 @@ export interface DeviceStore {
    */
   releaseHistoryClaim(slug: string, hourUtc: string): Promise<void>;
 
-  // --- Hourly history READ (Plus "Last 7 days" feature, docs/HISTORY_AND_ ---
+  // --- Hourly history READ (Plus "Last N days" feature, docs/HISTORY_AND_ ---
   // --- IMAGERY_PLAN.md Part A) -----------------------------------------------
   /**
-   * Every `beach_hourly` row for `slug` on or after `sinceLocalDate`
-   * (YYYY-MM-DD, beach-local — the same `local_date` column the archiver
-   * writes), oldest first. Only `row_kind = 'snapshot'` rows come back — a
-   * `cam-backfill` row has no score and must never be summarized as if it
-   * did. One query, no aggregation here: `lib/history/summary.ts` turns the
-   * rows into day summaries + records. Callers keep `sinceLocalDate` to at
-   * most 31 days back (the API route's own `days` cap) — this method does
-   * not enforce that itself, same as every other store method here trusting
-   * its caller for range shape.
+   * Every `beach_hourly` row for `slug` with `local_date` in
+   * [`sinceLocalDate`, `untilLocalDate`] inclusive (YYYY-MM-DD, beach-local —
+   * the same `local_date` column the archiver writes), oldest first. Only
+   * `row_kind = 'snapshot'` rows come back — a `cam-backfill` row has no
+   * score and must never be summarized as if it did. One query, no
+   * aggregation here: `lib/history/summary.ts` turns the rows into day
+   * summaries. `untilLocalDate` is normally "today" (the API route passes
+   * its own beach-local today) — bounding BOTH ends keeps the route's "≤31
+   * days" claim literally true, since without it a clock skew or a stray
+   * future-dated row could pull in more than the caller asked for.
    */
-  hourlyHistory(slug: string, sinceLocalDate: string): Promise<BeachHourlyRow[]>;
+  hourlyHistory(slug: string, sinceLocalDate: string, untilLocalDate: string): Promise<BeachHourlyRow[]>;
+  /**
+   * Lifetime records for `slug` — best score, hottest sand, biggest surf,
+   * quietest midday reading — each the single (slug, hour) row that wins
+   * its own ORDER BY/LIMIT 1 across the WHOLE `beach_hourly` archive for
+   * this beach, never bounded by any `days` window (Codex review: records
+   * must survive switching the 7/14/30 chip, and must not silently regress
+   * as a beach accumulates more history than the widest window shows).
+   * `archiveStartedAt` (MIN(local_date)) and `dayCount`
+   * (COUNT(DISTINCT local_date)) describe the same lifetime archive — the
+   * UI's "Records since <archiveStartedAt>" caption and its 30-day chip gate
+   * both read off `archiveStartedAt`, never a hardcoded date. A beach with
+   * no snapshot rows at all returns `{ records: [], archiveStartedAt: null,
+   * dayCount: 0 }`.
+   */
+  historyRecords(slug: string): Promise<HistoryRecordsResult>;
 
   // --- Install token identity (migrations/0008_device_tokens.sql, Codex ----
   // combined-review #1) --------------------------------------------------
