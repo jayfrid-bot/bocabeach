@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import useSWR from "swr";
 import { fmtTime } from "@/lib/format";
 import { SAFETY_ALERT_KEYS } from "@/lib/db/types";
@@ -404,6 +404,27 @@ export function BeachModeCard({
   // adoption's getStatus(), which carries no slug/window to tell activities
   // apart) can see the old activity still "running" mid-teardown.
   const laPendingEndRef = useRef<Promise<unknown> | null>(null);
+  // Codex review: serializes every native start()/update()/end() call this
+  // card makes (lib/plus/liveActivity.ts's createSerialQueue) so the plugin
+  // always sees them strictly one at a time, in the order they were queued.
+  // The race this closes: Off then On fired quickly while a start() is
+  // still in flight — the tickets above decide that stale call should undo
+  // itself, but without ordering its cleanup end() can land AFTER the
+  // newer start() and end the wrong activity. One queue instance per card
+  // (lazy ref init: `useRef(fn)` would otherwise build a throwaway queue on
+  // every render).
+  const laQueueRef = useRef<ReturnType<typeof liveActivity.createSerialQueue> | null>(null);
+  if (!laQueueRef.current) laQueueRef.current = liveActivity.createSerialQueue();
+  const laSerial = useCallback(<T,>(fn: () => Promise<T>): Promise<T> => laQueueRef.current!(fn), []);
+  // Render-visible status (the Lock Screen row) must not depend on refs
+  // alone: laActivityIdRef/laDismissedRef are written from async callbacks
+  // (a native listener, a start() resolving) that otherwise cause no
+  // re-render of their own — the row would then show "Showing" after a
+  // swipe-away, or "Off" long after Turn on actually succeeded, until some
+  // UNRELATED prop happened to re-render this component. Called at every
+  // site that writes either ref outside of a state update that already
+  // re-renders on its own.
+  const [, bumpLaUi] = useReducer((n: number) => n + 1, 0);
   // The single armed-session identity (see `laSessionIdentity`) eligible for
   // adoption: only the FIRST one observed after mount (a reload/relaunch
   // while already armed — see the identity-teardown effect below, which is
@@ -463,7 +484,7 @@ export function BeachModeCard({
     if (laActivityIdRef.current) {
       const id = laActivityIdRef.current;
       laActivityIdRef.current = null;
-      const endPromise = liveActivity.end(id, { dismissal: "immediate" });
+      const endPromise = laSerial(() => liveActivity.end(id, { dismissal: "immediate" }));
       laPendingEndRef.current = endPromise;
       void endPromise.finally(() => {
         if (laPendingEndRef.current === endPromise) laPendingEndRef.current = null;
@@ -474,8 +495,9 @@ export function BeachModeCard({
     laLastHashRef.current = null;
     laSeqRef.current = 0;
     laStartingRef.current = false;
+    bumpLaUi(); // laActivityIdRef and/or laDismissedRef may have just changed
     if (hadPriorSession) writeLiveActivityDismissal(null); // previous session is over
-  }, [armed, presence]);
+  }, [armed, presence, laSerial]);
 
   // A dismissal saved for THIS armed session (bd:live-activity-dismissed)
   // survives a remount that a plain ref can't — a backgrounded app or a
@@ -488,6 +510,7 @@ export function BeachModeCard({
     const saved = readLiveActivityDismissal();
     if (saved && saved.slug === presence.slug && saved.armedUntil === presence.armedUntil) {
       laDismissedRef.current = true;
+      bumpLaUi();
     }
   }, [armed, presence]);
 
@@ -612,6 +635,7 @@ export function BeachModeCard({
         // immediately rather than waiting out a throttle window measured
         // from before this card even mounted.
         laLastUpdateAtRef.current = 0;
+        bumpLaUi(); // adopted an already-running activity — "running" just became true
       } finally {
         // Resolved, errored, or the plugin was simply unreachable — either
         // way the check for this identity is done; mark it so the
@@ -637,9 +661,10 @@ export function BeachModeCard({
     if (laActivityIdRef.current) {
       const id = laActivityIdRef.current;
       laActivityIdRef.current = null;
-      void liveActivity.end(id, { dismissal: "immediate" });
+      bumpLaUi();
+      void laSerial(() => liveActivity.end(id, { dismissal: "immediate" }));
     }
-  }, [plus.entitled, laAvailable]);
+  }, [plus.entitled, laAvailable, laSerial]);
 
   // Native activity-state listener — dismissal suppresses auto-recreation for
   // the rest of this session (persisted, so it also survives a remount), but
@@ -651,6 +676,7 @@ export function BeachModeCard({
       if (e.state === "dismissed") {
         laDismissedRef.current = true;
         laActivityIdRef.current = null;
+        bumpLaUi(); // a native event callback — nothing else re-renders this
         const identity = laIdentityRef.current;
         if (identity) writeLiveActivityDismissal({ slug: identity.slug, armedUntil: identity.armedUntil });
       }
@@ -693,9 +719,9 @@ export function BeachModeCard({
     if (laActivityIdRef.current) {
       const id = laActivityIdRef.current;
       laActivityIdRef.current = null;
-      void liveActivity.end(id, { dismissal: "immediate" });
+      void laSerial(() => liveActivity.end(id, { dismissal: "immediate" }));
     }
-  }, []);
+  }, [laSerial]);
 
   const laTurnOn = useCallback(() => {
     writeLiveActivityPref("on");
@@ -765,7 +791,7 @@ export function BeachModeCard({
       laLastHashRef.current = hash;
       laLastUpdateAtRef.current = now;
       laSeqRef.current = seq + 1;
-      void liveActivity.update(id, wire);
+      void laSerial(() => liveActivity.update(id, wire));
       return;
     }
 
@@ -806,7 +832,11 @@ export function BeachModeCard({
       }
       if (decision === "update") {
         laStartingRef.current = false;
-        void liveActivity.update(laActivityIdRef.current!, wire);
+        // Capture the id NOW, synchronously — laActivityIdRef can be
+        // cleared by a later effect (Off, entitlement loss) before this
+        // queued call actually reaches the front of the line.
+        const id = laActivityIdRef.current!;
+        void laSerial(() => liveActivity.update(id, wire));
         laLastHashRef.current = hash;
         laLastUpdateAtRef.current = Date.now();
         laSeqRef.current = seq + 1;
@@ -840,41 +870,46 @@ export function BeachModeCard({
       }
       if (postEndDecision === "update") {
         laStartingRef.current = false;
-        void liveActivity.update(laActivityIdRef.current!, wire);
+        // Same capture-before-enqueue reasoning as the branch above.
+        const id = laActivityIdRef.current!;
+        void laSerial(() => liveActivity.update(id, wire));
         laLastHashRef.current = hash;
         laLastUpdateAtRef.current = Date.now();
         laSeqRef.current = seq + 1;
         return;
       }
-      void liveActivity
-        .start(
+      void laSerial(() =>
+        liveActivity.start(
           { beachName: armedTarget.name, slug: armedTarget.slug, sessionStart },
           wire,
           plus.deviceId,
           LA_APP_BUILD,
-        )
-        .then((res) => {
-          laStartingRef.current = false;
-          if (!res.ok) return;
-          const postStartDecision = decideLiveActivityStart({
-            stale: isStaleLiveActivityTicket(ticket, laSessionSeqRef.current),
-            adoptionChecked: true,
-            hasActivityId: !!laActivityIdRef.current,
-          });
-          if (postStartDecision !== "start") {
-            // Either the armed session this was for is already gone (Off,
-            // or a newer session started before this resolved), or adoption
-            // (or another tick) already recorded a different activity id
-            // while this native call was in flight — end what we just
-            // started rather than record and leave a second one running.
-            void liveActivity.end(res.activityId, { dismissal: "immediate" });
-            return;
-          }
-          laActivityIdRef.current = res.activityId;
-          laLastHashRef.current = hash;
-          laLastUpdateAtRef.current = Date.now();
-          laSeqRef.current = seq + 1;
+        ),
+      ).then((res) => {
+        laStartingRef.current = false;
+        if (!res.ok) return;
+        const postStartDecision = decideLiveActivityStart({
+          stale: isStaleLiveActivityTicket(ticket, laSessionSeqRef.current),
+          adoptionChecked: true,
+          hasActivityId: !!laActivityIdRef.current,
         });
+        if (postStartDecision !== "start") {
+          // Either the armed session this was for is already gone (Off,
+          // or a newer session started before this resolved), or adoption
+          // (or another tick) already recorded a different activity id
+          // while this native call was in flight — end what we just
+          // started rather than record and leave a second one running.
+          // Still queued: this end() must wait its turn behind whatever
+          // else this card has since enqueued, same as every other call.
+          void laSerial(() => liveActivity.end(res.activityId, { dismissal: "immediate" }));
+          return;
+        }
+        laActivityIdRef.current = res.activityId;
+        laLastHashRef.current = hash;
+        laLastUpdateAtRef.current = Date.now();
+        laSeqRef.current = seq + 1;
+        bumpLaUi(); // the activity just started running — nothing else re-renders this
+      });
     });
     // hazards is read for its CURRENT value only when this effect runs (on a
     // fresh conditions poll) — it is not itself a trigger, so it is left out
@@ -890,7 +925,18 @@ export function BeachModeCard({
     // until some unrelated prop caused a re-render, stalling a genuine
     // start() for however long that takes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [armed, laPref, laAvailable, laConditions, armedTarget, plus.entitled, plus.deviceId, laAdoptionTick, laReshowTick]);
+  }, [
+    armed,
+    laPref,
+    laAvailable,
+    laConditions,
+    armedTarget,
+    plus.entitled,
+    plus.deviceId,
+    laAdoptionTick,
+    laReshowTick,
+    laSerial,
+  ]);
 
   // Once a fix shows the phone has actually left the suppressed spot — or a
   // day has passed — drop the suppression so auto-arm is free to fire again
