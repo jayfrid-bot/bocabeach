@@ -300,6 +300,7 @@ flowchart TD
     HAZ2["/api/hazards<br/>POST — native-only, rate-limited<br/>'where you stand' lightning + rain"]
     LAREG["/api/live-activity/register<br/>POST — native-only, rate-limited<br/>start/rotate a Beach Session token"]
     LAEND["/api/live-activity/end<br/>POST — native-only, rate-limited<br/>Off / dismiss"]
+    HIST2["/api/history/[slug]<br/>POST — native-only, rate-limited<br/>'Last N days': day summaries + records"]
   end
 
   APPSTORE[(App Store<br/>monthly · yearly, 3-day trial)] -->|"purchase via RevenueCat SDK<br/>appUserID = deviceId"| BUY
@@ -318,6 +319,7 @@ flowchart TD
   STORE -->|production| D1[(D1: isitbeachday-plus<br/>devices · presence · alert_log · send_claims<br/>scan_log · scan_tap · scan_claim · install_attrib<br/>live_activities · app_opens)]
   LAREG -->|"entitled + armed at slug (listArmed gate)<br/>one active session/device, token rotation"| STORE
   LAEND -->|markLiveActivityEnded 'user'| STORE
+  HIST2 -->|"hourlyHistory: read-only beach_hourly<br/>(same D1, written by the archiver — diagram 2)"| STORE
   STICKER -->|"count scan (bot-filtered), fail-soft"| D1
   GETAPP -->|"count store tap, fail-soft"| D1
   DEV -->|"after the upsert: credit a fresh native install<br/>to a recent scan on the same network (probable)"| ATTRIB[lib/db/scanFunnel.ts<br/>attributeInstall]
@@ -439,6 +441,31 @@ A reinstall gets a fresh deviceId, and RevenueCat restore-purchases (keyed
 off the store account, not deviceId) carries the Plus entitlement back
 without the old token. App Attest (device-bound auth) is the planned
 upgrade — see `docs/BUILD_PLAN.md`'s Later section.
+
+**"Last N days" history (`/api/history/[slug]`, docs/HISTORY_AND_IMAGERY_
+PLAN.md Part A).** A Plus-only, read-only look at the `beach_hourly` archive
+the 1-minute history cron has been writing since 2026-09-22 (diagram 2).
+Gated like `/api/hazards`: native app only, a rate-limited deviceId (300/hr
+by IP, 60/hr by device), the install token once one is on file, then
+`entitled(device, now)` — a free device gets 403 `not-entitled`, never a
+peek at the data. The route itself never calls `getConditions`; it runs
+exactly THREE D1 statements, two of them in parallel with the third:
+`DeviceStore.hourlyHistory` (`WHERE slug = ? AND row_kind = 'snapshot' AND
+local_date BETWEEN ? AND ?`, capped at 31 days, for the on-screen 7/14/30-day
+strip) plus `DeviceStore.historyRecords`'s own two statements — one UNION
+ALL of four single-row subqueries (best score, hottest sand, biggest surf,
+quietest 10 AM-6 PM reading) and one small meta aggregate
+(`MIN(local_date)`, `COUNT(DISTINCT local_date)`, and `MIN(CASE WHEN
+surf_ft IS NOT NULL THEN local_date END)` as `surfSince`, folded into the
+SAME statement rather than a 4th) — fed through the pure summarizer
+`lib/history/summary.ts`. Records are deliberately NOT bounded by the `days`
+window: they read the WHOLE archive for the beach, so switching the 7/14/30
+chip can never make a record vanish or regress, and the "biggest surf"
+record reads the `surf_ft` column only (the breaking-surf estimate), never
+`wave_ft` (the raw significant wave height) — the two must never mix. Since
+`surf_ft` postdates the archive itself (migration 0010), `surfSince` is
+normally later than `archiveStartedAt`; the "Biggest surf" tile captions
+that gap ("since Sept 28") instead of implying full-archive coverage.
 
 **Live Activity register: rotation + one-active-per-device.** The native
 plugin sends a monotonic `rotation` counter with each token; `registerLiveActivity`

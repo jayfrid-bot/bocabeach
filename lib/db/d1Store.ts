@@ -41,7 +41,7 @@ import {
   COMING_UP_MAX_PER_30D,
   COMING_UP_RETENTION_MS,
 } from "@/lib/db/comingUpClaims";
-import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
+import type { ArchiveCandidate, BeachHourlyRow, HistoryRecordRow, HistoryRecordsResult } from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
 import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
 import type {
@@ -123,6 +123,39 @@ ON CONFLICT(slug, hour_utc) DO UPDATE SET
     .map((c) => `${c} = excluded.${c}`)
     .join(", ")}
 WHERE excluded.snapshot_generated_at > beach_hourly.snapshot_generated_at
+`;
+
+/** Lifetime records — one UNION ALL of four parenthesized single-row
+ *  subqueries (see `historyRecords` below for the tie-break/window
+ *  rationale). Four `?` placeholders, the same `slug` bound to each. */
+const HISTORY_RECORDS_UNION = `
+SELECT * FROM (
+  SELECT 'best' AS kind, local_date, local_hour, score AS value
+  FROM beach_hourly
+  WHERE slug = ? AND row_kind = 'snapshot' AND score IS NOT NULL
+  ORDER BY score DESC, hour_utc ASC LIMIT 1
+)
+UNION ALL
+SELECT * FROM (
+  SELECT 'hottest_sand' AS kind, local_date, local_hour, sand_temp_f AS value
+  FROM beach_hourly
+  WHERE slug = ? AND row_kind = 'snapshot' AND sand_temp_f IS NOT NULL
+  ORDER BY sand_temp_f DESC, hour_utc ASC LIMIT 1
+)
+UNION ALL
+SELECT * FROM (
+  SELECT 'biggest_surf' AS kind, local_date, local_hour, surf_ft AS value
+  FROM beach_hourly
+  WHERE slug = ? AND row_kind = 'snapshot' AND surf_ft IS NOT NULL
+  ORDER BY surf_ft DESC, hour_utc ASC LIMIT 1
+)
+UNION ALL
+SELECT * FROM (
+  SELECT 'quietest' AS kind, local_date, local_hour, crowd_pct AS value
+  FROM beach_hourly
+  WHERE slug = ? AND row_kind = 'snapshot' AND crowd_pct IS NOT NULL AND local_hour BETWEEN 10 AND 18
+  ORDER BY crowd_pct ASC, hour_utc ASC LIMIT 1
+)
 `;
 
 /** A device with never-touched prefs stores no row at all for them — this is
@@ -950,6 +983,55 @@ export function d1Store(db: D1Like): DeviceStore {
 
     async releaseHistoryClaim(slug: string, hourUtc: string) {
       await db.prepare("DELETE FROM history_claims WHERE key = ?").bind(`history:${slug}:${hourUtc}`).run();
+    },
+
+    // --- Hourly history READ (Plus "Last N days" feature) -------------------
+    // ONE query: the same HOURLY_COLS list the archiver's upsert uses, so the
+    // returned rows are already shaped exactly like BeachHourlyRow with no
+    // per-field mapping. `row_kind = 'snapshot'` excludes cam-backfill rows,
+    // which never have a score. Bounded on BOTH ends (`local_date` between
+    // `sinceLocalDate` and `untilLocalDate` inclusive) so the "≤31 days"
+    // claim documented on the store interface is literally true regardless
+    // of clock skew or a stray future-dated row.
+    async hourlyHistory(slug: string, sinceLocalDate: string, untilLocalDate: string) {
+      const result = await db
+        .prepare(
+          `SELECT ${HOURLY_COLS.join(", ")} FROM beach_hourly ` +
+            "WHERE slug = ? AND row_kind = 'snapshot' AND local_date >= ? AND local_date <= ? ORDER BY hour_utc",
+        )
+        .bind(slug, sinceLocalDate, untilLocalDate)
+        .all<BeachHourlyRow>();
+      return result.results ?? [];
+    },
+
+    // Lifetime records — ONE UNION ALL query, each arm a parenthesized
+    // subquery that picks its own single winning row (ORDER BY ... LIMIT 1),
+    // never bounded by any `days` window. Ties break to the EARLIEST hour
+    // (the secondary `hour_utc ASC` inside each arm), matching
+    // lib/history/summary.ts's "earliest wins" rule everywhere else in this
+    // feature. `quietest` only considers local_hour 10-18 (Codex review: a
+    // 3 AM near-zero reading would otherwise "win" quietest for a reason
+    // that has nothing to do with the beach being pleasant then).
+    async historyRecords(slug: string) {
+      const recordsResult = await db.prepare(HISTORY_RECORDS_UNION).bind(slug, slug, slug, slug).all<HistoryRecordRow>();
+      // Same meta query as before, plus `surf_since` — the earliest
+      // local_date with a non-null surf_ft, folded into this ONE aggregate
+      // (via a CASE inside MIN) rather than a 4th statement, so the route
+      // still runs exactly three D1 statements total (window + UNION + this).
+      const summaryRow = await db
+        .prepare(
+          "SELECT MIN(local_date) AS min_date, COUNT(DISTINCT local_date) AS day_count, " +
+            "MIN(CASE WHEN surf_ft IS NOT NULL THEN local_date END) AS surf_since " +
+            "FROM beach_hourly WHERE slug = ? AND row_kind = 'snapshot'",
+        )
+        .bind(slug)
+        .first<{ min_date: string | null; day_count: number; surf_since: string | null }>();
+      return {
+        records: recordsResult.results ?? [],
+        archiveStartedAt: summaryRow?.min_date ?? null,
+        dayCount: summaryRow?.day_count ?? 0,
+        surfSince: summaryRow?.surf_since ?? null,
+      };
     },
 
     // --- Beach Session Live Activity (migrations/0007_live_activities.sql) -
