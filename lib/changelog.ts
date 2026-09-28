@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-28",
+    title: "Score up top",
+    details:
+      "The beach name moved into the header, warnings got compact, and the score now shows without scrolling.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-28",
     title: "Easier to read on small phones",
     details:
       "The wave height stands out against the wave picture, card titles and labels no longer run under the flip icon, and today's best time stays on one line.",

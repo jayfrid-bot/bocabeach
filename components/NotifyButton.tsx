@@ -25,8 +25,24 @@ export async function enableAlertsFlow(
   }
 }
 
-const pill =
-  "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 transition";
+// Shared 44px icon-button chrome, matching the other two header buttons
+// (Share, dark-mode) it sits beside — see components/ConditionsDashboard.tsx.
+const iconBtn =
+  "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full ring-1 transition disabled:opacity-60";
+const iconBtnNeutral = `${iconBtn} bg-slate-900/5 text-slate-600 ring-slate-900/10 hover:bg-slate-900/10 dark:bg-white/5 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-white/10`;
+
+/** A small state dot pinned to the bell's corner — the on/off/blocked signal
+ *  a screen reader gets from `aria-label` alone, and a sighted glance gets
+ *  from color without reading anything. */
+function StateDot({ color }: { color: "emerald" | "rose" }) {
+  const bg = color === "emerald" ? "bg-emerald-500" : "bg-rose-500";
+  return (
+    <span
+      aria-hidden
+      className={`absolute right-1.5 top-1.5 h-2 w-2 rounded-full ${bg} ring-2 ring-white dark:ring-slate-950`}
+    />
+  );
+}
 
 /**
  * The Alerts door.
@@ -68,6 +84,9 @@ export function NotifyButton({
   // refines it to on/denied. Browsers start "init" → render nothing.
   const [state, setState] = useState<State>(serverNative ? "off" : "init");
   const [err, setErr] = useState<string | null>(null);
+  // Icon-only "on" state opens a small menu (Settings / Turn off) instead of
+  // showing those as separate inline links — same two actions, one tap away.
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -122,6 +141,7 @@ export function NotifyButton({
   };
 
   const disable = async () => {
+    setMenuOpen(false);
     setState("busy");
     try {
       await disableNative(slug);
@@ -135,50 +155,105 @@ export function NotifyButton({
   if (state === "denied") {
     return (
       <span
-        className={`${pill} bg-slate-900/5 text-slate-500 ring-slate-900/10 dark:bg-white/5 dark:ring-white/10`}
+        className={`${iconBtnNeutral} cursor-default text-slate-500 dark:text-slate-400`}
         title="Notifications are blocked. Enable them for Is It Beach Day in your device Settings."
+        aria-label="Alerts blocked — enable notifications in your device Settings"
       >
-        🔕 Notifications blocked
+        <span aria-hidden className="text-lg leading-none">
+          🔕
+        </span>
+        <StateDot color="rose" />
       </span>
     );
   }
 
   if (state === "on") {
     return (
-      <span className={`${pill} bg-emerald-500/10 text-emerald-700 ring-emerald-500/20 dark:text-emerald-300`}>
-        🔔 Alerts on
-        {onSettings ? (
-          <button onClick={onSettings} className="ml-1 underline hover:no-underline">
-            settings
-          </button>
-        ) : null}
-        <button onClick={disable} className="ml-1 underline hover:no-underline">
-          turn off
+      <span className="relative inline-block">
+        <button
+          type="button"
+          onClick={() => setMenuOpen((v) => !v)}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          aria-label="Alerts on for this beach — tap for settings"
+          className={`${iconBtn} bg-emerald-500/10 text-emerald-700 ring-emerald-500/20 hover:bg-emerald-500/20 dark:text-emerald-300`}
+        >
+          <span aria-hidden className="text-lg leading-none">
+            🔔
+          </span>
+          <StateDot color="emerald" />
         </button>
+        {menuOpen ? (
+          <>
+            {/* Outside-tap dismiss — same pattern as Sheet's backdrop, just
+                without the scroll lock/focus trap a full modal needs for two
+                one-line actions. */}
+            <button
+              type="button"
+              aria-label="Close menu"
+              onClick={() => setMenuOpen(false)}
+              className="fixed inset-0 z-40 cursor-default"
+            />
+            <div
+              role="menu"
+              aria-label="Alert options"
+              className="absolute right-0 top-full z-50 mt-2 w-44 overflow-hidden rounded-xl bg-white py-1 shadow-lg ring-1 ring-slate-900/10 dark:bg-slate-800 dark:ring-white/10"
+            >
+              {onSettings ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onSettings();
+                  }}
+                  className="flex min-h-[44px] w-full items-center px-4 text-left text-sm text-slate-700 hover:bg-slate-900/5 dark:text-slate-200 dark:hover:bg-white/10"
+                >
+                  Alert settings
+                </button>
+              ) : null}
+              <button
+                type="button"
+                role="menuitem"
+                onClick={disable}
+                className="flex min-h-[44px] w-full items-center px-4 text-left text-sm text-slate-700 hover:bg-slate-900/5 dark:text-slate-200 dark:hover:bg-white/10"
+              >
+                Turn off alerts
+              </button>
+            </div>
+          </>
+        ) : null}
       </span>
     );
   }
 
+  // off / busy / error — one tap enables (or, without an entitlement, opens
+  // the Plus door); the aria-label carries the same "🔔 Alerts" wording the
+  // free-tap flow has always been found by (see e2e/plus.spec.ts).
+  const label =
+    state === "busy"
+      ? "🔔 Alerts — enabling…"
+      : state === "error"
+        ? "🔔 Alerts — try again"
+        : "🔔 Alerts";
   return (
-    <span className="inline-flex flex-col items-start gap-1">
-      <button
-        onClick={enable}
-        disabled={state === "busy"}
-        className={`${pill} bg-ocean-500/10 text-ocean-700 ring-ocean-500/20 hover:bg-ocean-500/20 disabled:opacity-60 dark:text-ocean-300`}
-        title={
-          err ??
-          (entitled
-            ? "Turn on safety and morning alerts for this beach"
-            : "Safety and morning alerts are part of Beach Day Plus")
-        }
-      >
-        🔔 {state === "busy" ? "Enabling…" : state === "error" ? "Try again" : "Alerts"}
-      </button>
-      {state === "error" && err ? (
-        <span className="max-w-[280px] text-[11px] leading-tight text-rose-600 dark:text-rose-400">
-          {err}
-        </span>
-      ) : null}
-    </span>
+    <button
+      type="button"
+      onClick={enable}
+      disabled={state === "busy"}
+      aria-label={label}
+      title={
+        err ??
+        (entitled
+          ? "Turn on safety and morning alerts for this beach"
+          : "Safety and morning alerts are part of Beach Day Plus")
+      }
+      className={iconBtnNeutral}
+    >
+      <span aria-hidden className="text-lg leading-none">
+        🔔
+      </span>
+      {state === "error" ? <StateDot color="rose" /> : null}
+    </button>
   );
 }

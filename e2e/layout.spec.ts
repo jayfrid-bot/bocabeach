@@ -195,17 +195,18 @@ async function findClippedText(page: Page): Promise<ClipOffender[]> {
 // blanket exemption. A brand-new small button that doesn't match one of
 // these patterns will still fail the check.
 const INLINE_LINK_ALLOWLIST: RegExp[] = [
-  /^Is it beach day\?$/, // site wordmark/logo link — header chrome, not a primary action
-  /(Light|Dark) mode$|^Theme$/, // ThemeToggle — site-wide 36px pill-button chrome
+  // NOTE: the header logo, beach-name/picker link, and the three action
+  // icons (share/alerts/theme) are NOT on this list — the redesign (2026-09-28)
+  // sizes each of them to the real 40px+ floor directly instead of relying on
+  // an allowlist exemption. The old wordmark-link, ThemeToggle-pill, and
+  // "＋ Other beaches"-pill entries that used to live here went with them.
   /^↻\s?Refresh(ing…)?$/, // desktop-only refresh affordance (mobile has pull-to-refresh)
-  /^＋ Other beaches$/, // secondary nav pill under the score
   /^Show (all|less)/, // ChangelogSection expand/collapse
   /^Support$/,
   /^Privacy$/,
   /^iPhone app$/,
   /^hello@isitbeachday\.com$/,
   /^Tell us where to add next\??$/,
-  /^turn off$/, // NotifyButton's inline "disable" link
   /^Clear$/, // BeachFinder's "clear location" link
 ];
 
