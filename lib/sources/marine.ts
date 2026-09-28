@@ -39,11 +39,20 @@ async function getCurrent(
 /**
  * Reduce Open-Meteo marine `hourly` arrays into the compact wave samples the
  * hourly rip-current curve (lib/ripRiskCurve.ts) anchors on: height (ft) +
- * period (s) + approach direction per hour, dominant `wave_period` /
- * `wave_direction` preferred, each falling back to its `swell_wave_*`
- * counterpart. Times come back in GMT (no `timezone=` on the URL), so
- * each is pinned to an absolute UTC ISO string — matching lib/sources/
- * hourlyForecast.ts's convention so they line up with the wind/tide hours.
+ * period (s) + approach direction per hour, plus the swell-only height/period
+ * reported separately. `wave_period`/`wave_direction` are this hour's own
+ * TOTAL fields; `waveDirDeg` alone falls back to `swell_wave_direction` when
+ * the total direction is missing (direction isn't part of the breaker-height
+ * physics, so that fallback is harmless) — but `wavePeriodS` is NEVER filled
+ * from `swell_wave_period` here (Codex review 2026-09-28 #2): a period read
+ * off the swell-only field does not describe the TOTAL height it would end up
+ * paired with. The swell height/period are carried through as their own
+ * fields instead, so a consumer that needs to fall back to the swell
+ * component (lib/surfHeight.ts's `estimateSurfFromSources`) can pair them
+ * with EACH OTHER, never with the total height. Times come back in GMT (no
+ * `timezone=` on the URL), so each is pinned to an absolute UTC ISO string —
+ * matching lib/sources/hourlyForecast.ts's convention so they line up with
+ * the wind/tide hours.
  */
 export function parseMarineHourly(
   h: MarineHourly | null,
@@ -57,12 +66,16 @@ export function parseMarineHourly(
     const t = new Date(`${time[i]}:00Z`);
     if (!Number.isFinite(t.getTime())) continue;
     const waveM = num(h.wave_height, i);
-    const periodS = num(h.wave_period, i) ?? num(h.swell_wave_period, i);
+    const periodS = num(h.wave_period, i); // TOTAL period only — no swell fallback.
+    const swellM = num(h.swell_wave_height, i);
+    const swellPeriodS = num(h.swell_wave_period, i);
     const dirDeg = num(h.wave_direction, i) ?? num(h.swell_wave_direction, i);
     out.push({
       time: t.toISOString(),
       waveHeightFt: waveM !== undefined ? round(mToFt(waveM), 1) : undefined,
       wavePeriodS: periodS !== undefined ? round(periodS, 1) : undefined,
+      swellHeightFt: swellM !== undefined ? round(mToFt(swellM), 1) : undefined,
+      swellPeriodS: swellPeriodS !== undefined ? round(swellPeriodS, 1) : undefined,
       waveDirDeg: dirDeg !== undefined ? round(dirDeg) : undefined,
     });
   }

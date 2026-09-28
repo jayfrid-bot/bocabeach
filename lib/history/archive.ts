@@ -158,7 +158,18 @@ export function rowFromConditions(
     air_temp_f: numOrNull(d.airTempF),
     water_temp_f: numOrNull(d.waterTempF),
     sand_temp_f: numOrNull(d.sandTempF),
-    wave_ft: numOrNull(d.waveHeightFt),
+    // wave_ft has always meant the RAW TOTAL significant wave height (Hs),
+    // not the estimated surf (breaking) height — every row before migration
+    // 0010 was written on that meaning, so writing the surf estimate here
+    // instead would silently corrupt history (Codex review 2026-09-28 #1).
+    // Reads `d.waveTotalHsFt`, NOT `d.waveSwellHeightFt` — the latter can
+    // legitimately BE the swell component (Codex review round-2 #1: when the
+    // total's own period was missing, `estimateSurfFromSources` may pair the
+    // surf estimate with the swell reading instead), so it can no longer
+    // stand in for "the raw total Hs" here. The surf estimate goes in the
+    // new surf_ft column below.
+    wave_ft: numOrNull(d.waveTotalHsFt),
+    surf_ft: numOrNull(d.waveHeightFt),
     wave_source: waveSource,
     wind_mph: numOrNull(d.windSpeedMph),
     gust_mph: numOrNull(snap.buoy.data?.windGustMph),

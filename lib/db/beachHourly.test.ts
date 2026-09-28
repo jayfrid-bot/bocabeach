@@ -29,6 +29,7 @@ function row(over: Partial<BeachHourlyRow> = {}): BeachHourlyRow {
     water_temp_f: 84,
     sand_temp_f: 95,
     wave_ft: 2,
+    surf_ft: null,
     wave_source: "model",
     wind_mph: 8,
     gust_mph: 12,

@@ -163,8 +163,19 @@ export interface MarineData {
    */
   hourlyWaves?: {
     time: string;
+    /** TOTAL combined-sea-state height, ft — this hour's own `wave_height`. */
     waveHeightFt?: number;
+    /** The period paired with `waveHeightFt` FROM THE SAME `wave_period`
+     *  field — never a swell-period fallback (Codex review 2026-09-28 #2):
+     *  see `estimateSurfFromSources` (lib/surfHeight.ts) for why total height
+     *  must never be cross-paired with a swell-only period. */
     wavePeriodS?: number;
+    /** This hour's SWELL-only height, ft (`swell_wave_height`), independent
+     *  of the total above. */
+    swellHeightFt?: number;
+    /** The period paired with `swellHeightFt` from that same swell reading
+     *  (`swell_wave_period`) — matched to it, never to `waveHeightFt`. */
+    swellPeriodS?: number;
     /**
      * Direction the waves are coming FROM, degrees (same convention as
      * `Location.coastNormalDeg`). Feeds the rip curve's shore-incidence

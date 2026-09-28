@@ -40,9 +40,11 @@ function thunderReason(d: Derived): string | null {
   return null;
 }
 
-/** Waves as a plain sentence: "Rough water — 5 ft waves". */
+/** Waves as a plain sentence: "Rough water — ~5 ft waves (estimated)". `ft`
+ *  is an ESTIMATED surf height (lib/surfHeight.ts), not a measured reading —
+ *  say so (Codex review round-2 #3), same as the wave card. */
 function waveReason(ft: number): string {
-  return `Rough water — ${ft} ft waves`;
+  return `Rough water — ~${ft} ft waves (estimated)`;
 }
 
 /**
@@ -113,7 +115,8 @@ export function surfConditions(
   else if (ripActive && d.ripNow?.level === "high") experienced.push("Rip current risk: High");
   if (d.surfAdvisory) experienced.push("High surf advisory — experienced surfers only");
   if (d.waveHeightFt != null && d.waveHeightFt > 6) {
-    experienced.push(`Big surf — ${d.waveHeightFt} ft waves`);
+    // Estimated, not measured — see waveReason's comment above.
+    experienced.push(`Big surf — ~${d.waveHeightFt} ft waves (estimated)`);
   }
 
   if (d.waterAdvisory) notes.push("Water quality advisory in effect");

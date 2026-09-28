@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-09-28",
+    title: "Truer wave heights",
+    details:
+      "Wave height now shows the surf you'll actually see at the shore, estimated from the buoy's swell and its period — long, slow swells break bigger than the buoy number suggests.",
+    tag: "fixed",
+  },
+  {
     date: "2026-09-25",
     title: "Smoother Plus purchases",
     details:

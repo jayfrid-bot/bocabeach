@@ -1,0 +1,30 @@
+-- D1 tracks which migrations have already been applied (the `d1_migrations`
+-- bookkeeping table `wrangler d1 migrations apply` maintains), so this file
+-- runs exactly once per database — the ALTER TABLE ADD COLUMN statement below
+-- is NOT wrapped in an "IF NOT EXISTS" guard (SQLite has no such clause for
+-- ADD COLUMN, unlike CREATE TABLE/INDEX) and relies entirely on that
+-- once-only tracking to stay safe. Do not hand-run this file twice against
+-- the same database outside that mechanism.
+--
+-- Surf-height / raw-Hs split (Codex review 2026-09-28, surf-height estimate
+-- feature). `beach_hourly.wave_ft` has always meant the RAW significant wave
+-- height (Hs) reported by the buoy/model — every row archived before today
+-- was written on that meaning. The surf-height feature (lib/surfHeight.ts)
+-- started writing the ESTIMATED SURF (breaking) height into that same column
+-- instead, which would silently corrupt history: a trend chart mixing
+-- raw-Hs rows with surf-estimate rows under one column name, with no way to
+-- tell which is which after the fact — a long-period swell day would read as
+-- if the sea calmed down, or vice versa, purely from the column's meaning
+-- changing underneath it. Fix: `wave_ft` keeps meaning raw TOTAL Hs (see
+-- lib/history/archive.ts's rowFromConditions, which now reads
+-- `d.waveTotalHsFt` — not `d.waveHeightFt` (the surf estimate) and not
+-- `d.waveSwellHeightFt`, which can itself become the swell component when
+-- the total's own period is missing (Codex review round-2 #1) — for it),
+-- and this new `surf_ft` column holds the estimated surf height going
+-- forward.
+--
+-- Nullable, and NULL on every pre-existing row — there is no honest way to
+-- retroactively estimate surf for an old row that only ever kept Hs with no
+-- period stored alongside it, and NULL says "not computed for this row",
+-- never a fabricated 0 ft.
+ALTER TABLE beach_hourly ADD COLUMN surf_ft REAL;

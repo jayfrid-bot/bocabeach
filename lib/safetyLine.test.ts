@@ -116,7 +116,7 @@ describe("swimSafety", () => {
 
   it("4 ft is fine; over 4 ft is a caution, and says the height", () => {
     expect(swimSafety(base({ waveHeightFt: 4 })).level).toBe("safe");
-    expect(swimSafety(base({ waveHeightFt: 4.5 })).reasons[0]).toBe("Rough water — 4.5 ft waves");
+    expect(swimSafety(base({ waveHeightFt: 4.5 })).reasons[0]).toBe("Rough water — ~4.5 ft waves (estimated)");
   });
 
   it("leads with the reason that decided the call", () => {
@@ -159,6 +159,6 @@ describe("surfConditions", () => {
   });
 
   it("names big surf with the height", () => {
-    expect(surfConditions(base({ waveHeightFt: 8 })).reasons[0]).toBe("Big surf — 8 ft waves");
+    expect(surfConditions(base({ waveHeightFt: 8 })).reasons[0]).toBe("Big surf — ~8 ft waves (estimated)");
   });
 });

@@ -149,6 +149,71 @@ describe("deriveMetrics", () => {
     expect(d.airTempF).toBe(84);
     expect(d.waveHeightFt).toBe(2);
   });
+
+  // Codex review round-2 #1: waveTotalHsFt must always be the TRUE raw total
+  // Hs, even in the one case where waveSwellHeightFt legitimately becomes the
+  // SWELL component instead (total period missing, swell surf estimate beats
+  // the raw total) — this is exactly what `lib/history/archive.ts` archives
+  // into `beach_hourly.wave_ft`.
+  it("waveTotalHsFt stays the raw total Hs even when the surf estimate falls back to the swell component", () => {
+    const s = snapshot({
+      marine: { waveHeightFt: 1.5, swellHeightFt: 1.2, swellPeriodS: 15, uvIndex: 7 },
+    });
+    const d = deriveMetrics(s);
+    // Swell-only surf (1.2 ft @ 15s) beats the raw 1.5 ft total, so the
+    // estimate — and the secondary "reading" line — legitimately switch to
+    // the swell component...
+    expect(d.waveSwellHeightFt).toBe(1.2);
+    expect(d.wavePeriodS).toBe(15);
+    expect(d.waveHeightFt).toBeCloseTo(2.7, 1);
+    // ...but the TRUE total Hs must still read 1.5, untouched.
+    expect(d.waveTotalHsFt).toBe(1.5);
+    expect(d.waveHeightSource).toEqual({ kind: "model" });
+  });
+
+  // Codex review round-2 #2: a source with a swell reading but no total
+  // reading at all must still produce a surf estimate from the swell pair,
+  // not silently drop the factor — and waveTotalHsFt is honestly undefined
+  // (there is no total Hs to report).
+  it("estimates surf from the swell pair alone when there is no total reading at all", () => {
+    const s = snapshot({
+      marine: { swellHeightFt: 1.2, swellPeriodS: 15, uvIndex: 7 },
+    });
+    const d = deriveMetrics(s);
+    expect(d.waveHeightFt).toBeCloseTo(2.7, 1);
+    expect(d.waveSwellHeightFt).toBe(1.2);
+    expect(d.wavePeriodS).toBe(15);
+    expect(d.waveTotalHsFt).toBeUndefined();
+    // Codex review round-3 #2: a surf estimate that came from a swell-only
+    // MODEL pair must still carry model provenance — leaving this undefined
+    // (the old bug: only `m?.waveHeightFt`, the TOTAL field, was checked)
+    // wrongly gave "waves" full completeness credit instead of the correct
+    // 0.5 model credit, dropped it from `estimatedFactors`, and archived
+    // `wave_source` as null instead of "model".
+    expect(d.waveHeightSource).toEqual({ kind: "model" });
+  });
+
+  // End-to-end: the provenance fix above must actually change what
+  // scoreBeachDay reports, not just what deriveMetrics returns in isolation.
+  it("a swell-only model wave reading gets HALF completeness credit end to end, listed in estimatedFactors", () => {
+    const withBuoyWaves = snapshot({
+      buoy: { waterTempF: 82, windSpeedMph: 8, windDirDeg: 90, waveHeightFt: 1.2, dominantPeriodS: 15 },
+      weather: { airTempF: 84, shortForecast: "Sunny", precipProbability: 10, humidityPct: 60, dewPointF: 62 },
+      city: { flags: ["green"] },
+      water: { overall: "good", advisory: false, sites: [] },
+    });
+    const swellOnly = snapshot({
+      weather: { airTempF: 84, shortForecast: "Sunny", precipProbability: 10, humidityPct: 60, dewPointF: 62 },
+      marine: { swellHeightFt: 1.2, swellPeriodS: 15 },
+      city: { flags: ["green"] },
+      water: { overall: "good", advisory: false, sites: [] },
+    });
+    const buoyResult = scoreBeachDay(deriveMetrics(withBuoyWaves));
+    const swellResult = scoreBeachDay(deriveMetrics(swellOnly));
+    // Same wave reading, buoy (full credit) vs swell-only model (half credit).
+    expect(buoyResult.completeness).toBeGreaterThan(swellResult.completeness!);
+    expect(swellResult.estimatedFactors).toContain("waves");
+  });
 });
 
 describe("UV under a satellite-observed deck (2026-07-16 fix)", () => {

@@ -211,32 +211,47 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
   },
 
   waves: ({ d, snap }) => {
-    const ft = d.waveHeightFt;
+    const ft = d.waveHeightFt; // the ESTIMATED SURF height — what's scored
+    const hsFt = d.waveSwellHeightFt; // the raw buoy/model Hs it was estimated from
+    const periodS = d.wavePeriodS;
     const feed = feedLabel(
       d.waveHeightSource,
       "the Open-Meteo marine model at this beach's coordinates",
       `the nearest wave-reporting buoy is ~${NEAREST_WAVE_BUOY_MI} mi north`,
     );
+    const swellLine =
+      hsFt != null
+        ? periodS != null
+          ? `Reading: ${hsFt} ft Hs (significant wave height) @ ${periodS}s period`
+          : `Reading: ${hsFt} ft Hs, no period — surf estimate falls back to Hs (no amplification)`
+        : undefined;
     const computation =
       ft != null
         ? (() => {
             const s = r0(clamp(100 - Math.max(0, ft - 1) * 25, 0, 100));
-            return [`${ft} ft → waveCalm ${s}/100`, pts(s, SCORE_WEIGHTS_PCT.waves), feed];
+            return [
+              swellLine,
+              `→ estimated surf ${ft} ft → waveCalm ${s}/100`,
+              pts(s, SCORE_WEIGHTS_PCT.waves),
+              feed,
+            ].filter((l): l is string => !!l);
           })()
         : ["No wave reading — this factor is dropped from the weighted average."];
     return {
       title: "Sea state",
       weightPct: SCORE_WEIGHTS_PCT.waves,
       explainer:
-        `This reads the ocean's roughness as a swimming-calmness proxy — how easy it is to wade in and float, not how good the surf is. Knee-high water (about a foot or less) scores a perfect 100; the score bleeds off as the combined wave-and-swell height climbs, hitting zero by roughly 5 ft of churn. Where it comes from, plainly: this is the Open-Meteo marine model evaluated at the beach's own coordinates, not a buoy reading. The two NOAA stations we watch here are C-MAN masts on fixed structures with no wave sensor — they report wind and water temperature and leave the wave columns blank on every single tick. The nearest buoy that does measure waves is about ${NEAREST_WAVE_BUOY_MI} mi up the coast, far enough that a model run at this exact spot is the more representative number anyway. If a buoy ever does report a wave height here, it takes precedence and this card names it.`,
-      formula: "waveCalm = 100 − max(0, waveFt − 1) × 25  (≤1 ft = 100, hits 0 by 5 ft)",
+        `This reads the ocean's roughness as a swimming-calmness proxy — how easy it is to wade in and float, not how good the surf is. What's actually scored is an ESTIMATED SURF (breaking) height, not the raw buoy/model reading. A buoy or model reports "significant wave height" (Hs) — a statistical average measured well offshore — but a long, slow-arriving swell breaks much bigger at the shore than its own Hs suggests. This is the bug that made "Waves 1.3 ft" show up on a day the National Weather Service called 4-6 ft of surf and lifeguards flew red flags: the buoy's Hs was honest, it just wasn't what breaks on the sand. We correct for it with the Komar & Gaughan (1972) breaker-height formula, fed the reading's own dominant period (how many seconds apart the swells arrive) — a short-period local chop barely gets amplified, while a long-period groundswell can break at up to 2.5x its offshore Hs. Knee-high SURF (about a foot or less) scores a perfect 100; the score bleeds off as the estimate climbs, hitting zero by roughly 5 ft. Where the underlying reading comes from, plainly: this is the Open-Meteo marine model evaluated at the beach's own coordinates, not a buoy reading, unless a station names itself below.`,
+      formula:
+        "surf ≈ 0.39·g^(1/5)·(period·Hs²)^(2/5), clamped to [Hs, 2.5×Hs] " +
+        "(no trusted period → surf = Hs); waveCalm = 100 − max(0, surfFt − 1) × 25 (≤1 ft = 100, hits 0 by 5 ft)",
       computation,
       sources: src(
-        `${snap.marine.source} — modeled wave + swell height at the beach coordinates`,
-        `${snap.buoy.source} — used only if a station actually reports waves (these don't)`,
+        `${snap.marine.source} — modeled wave height + dominant period at the beach coordinates`,
+        `${snap.buoy.source} — used (with its own DPD) whenever a station actually reports waves`,
       ),
       notes:
-        `Combined sea state (wave + swell height) as a swimming-calmness proxy — not a surf-quality rating. Modeled, not measured: no wave-reporting buoy sits within ~${NEAREST_WAVE_BUOY_MI} mi of here.`,
+        `Estimated SURF height (Komar & Gaughan 1972, from Hs + dominant period) as a swimming-calmness proxy — not a certified surf-quality rating. It's a deep-water approximation that ignores refraction and this beach's own shelf profile, and the nearest wave-reporting buoy sits ~${NEAREST_WAVE_BUOY_MI} mi away in ~16 m of water — not fully "deep" for a long swell either. Validation: docs/benchmarks/2026-09-28-surf-height-validation.md.`,
     };
   },
 

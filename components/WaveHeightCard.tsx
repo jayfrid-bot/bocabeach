@@ -48,10 +48,18 @@ interface WaveLayer {
  */
 export function WaveHeightCard({
   waveHeightFt,
+  swellHeightFt,
   swellPeriodS,
 }: {
+  /** ESTIMATED SURF height — the number shown big and scored. See
+   *  lib/surfHeight.ts: this is Hs run through the Komar & Gaughan (1972)
+   *  breaker formula, not the raw buoy/model reading. */
   waveHeightFt?: number;
-  /** Optional extra context (dominant swell period, seconds) — shown if given. */
+  /** The raw Hs (significant wave height) that fed the estimate above —
+   *  shown as a secondary line so the underlying reading is never hidden
+   *  behind the surf number. */
+  swellHeightFt?: number;
+  /** The dominant/peak period (seconds) paired with `swellHeightFt`. */
   swellPeriodS?: number;
 }) {
   if (waveHeightFt == null) return null;
@@ -120,16 +128,23 @@ export function WaveHeightCard({
 
         <div className="relative flex h-full flex-col items-start justify-end p-3">
           <div className="text-2xl font-bold text-white drop-shadow-sm sm:text-3xl">
-            {waveHeightFt.toFixed(1).replace(/\.0$/, "")} ft
+            Estimated surf ~{waveHeightFt.toFixed(1).replace(/\.0$/, "")} ft
           </div>
-          <div className="text-xs font-medium text-white/90 drop-shadow-sm">
-            {state.label}
-            {swellPeriodS != null ? ` · ${Math.round(swellPeriodS)}s period` : ""}
-          </div>
+          <div className="text-xs font-medium text-white/90 drop-shadow-sm">{state.label}</div>
         </div>
       </div>
 
       <div className="mt-2 text-xs text-slate-600 dark:text-slate-400">{state.note}</div>
+      {swellHeightFt != null ? (
+        // The raw reading behind the surf estimate above — nothing hidden.
+        // Not necessarily the SWELL component specifically (it can be the
+        // TOTAL sea-state reading — see estimateSurfFromSources), so this
+        // says "wave height", not "swell".
+        <div className="text-[11px] text-slate-500 dark:text-slate-500">
+          {swellHeightFt.toFixed(1).replace(/\.0$/, "")} ft wave height
+          {swellPeriodS != null ? ` · waves ${Math.round(swellPeriodS)}s apart` : ""}
+        </div>
+      ) : null}
     </div>
   );
 }

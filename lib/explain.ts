@@ -143,13 +143,15 @@ function reasonsFor(d: Derived, result: ScoreResult): {
     );
   }
 
-  // Waves — use seaState ladder.
+  // Waves — use seaState ladder. `d.waveHeightFt` is an ESTIMATED surf
+  // (breaking) height, not a measured reading (lib/surfHeight.ts) — say so,
+  // same as the wave card (Codex review round-2 #3).
   if (d.waveHeightFt != null) {
     const ss = seaState(d.waveHeightFt);
     push(
       "waves",
-      `${ss.label} water (${d.waveHeightFt} ft) — ${ss.note}`,
-      `${ss.label} seas (${d.waveHeightFt} ft) — ${ss.note}`,
+      `${ss.label} water (~${d.waveHeightFt} ft estimated surf) — ${ss.note}`,
+      `${ss.label} surf (~${d.waveHeightFt} ft, estimated) — ${ss.note}`,
     );
   }
 

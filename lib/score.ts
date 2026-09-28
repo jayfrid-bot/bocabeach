@@ -17,6 +17,7 @@ import type {
   WaveMode,
 } from "@/lib/types";
 import { clamp, degToCardinal, dewPointFromTempRH, plateau, round } from "@/lib/util";
+import { estimateSurfFromSources } from "@/lib/surfHeight";
 import { assessLightning, assessRain, type HazardAssessment } from "@/lib/hazards/assess";
 import { resolveRipNow, ripCapFor, type RipNow } from "@/lib/ripRisk";
 import { isAlertInEffectAt } from "@/lib/ripRisk/resolve";
@@ -49,7 +50,45 @@ export interface Derived {
   waveHeightSource?: MetricSource;
   windSpeedMph?: number;
   windDirDeg?: number;
-  waveHeightFt?: number; // combined sea state (for swimming calmness)
+  /**
+   * ESTIMATED SURF (breaking) HEIGHT, not the raw buoy/model significant
+   * wave height (Hs) — this is what shows and scores as "waves" everywhere
+   * in the app. Hs is an offshore average; for a long-period swell, the
+   * height that actually breaks at the shore runs well above it. Derived
+   * from `waveSwellHeightFt` + `wavePeriodS` below via
+   * `lib/surfHeight.ts`'s `estimateSurfFromSources` (Komar & Gaughan 1972) —
+   * see docs/benchmarks/2026-09-28-surf-height-validation.md for why. The
+   * rip-current model/curve (lib/ripRiskCurve.ts, lib/sources/ripNwps.ts)
+   * reads its own wave data straight from the marine model, NOT this field,
+   * so it keeps using the raw Hs it always has.
+   */
+  waveHeightFt?: number; // combined sea state (for swimming calmness) — SURF estimate
+  /**
+   * The TRUE raw TOTAL significant wave height (buoy WVHT, or the model's
+   * own `wave_height`) — untouched, never the swell component (Codex review
+   * round-2 #1). `waveSwellHeightFt` below can legitimately BE the swell
+   * component when the total's own period was missing (see
+   * `estimateSurfFromSources`), so it can no longer stand in for "the raw
+   * total Hs" everywhere — this field is the one place that always does.
+   * `lib/history/archive.ts` archives THIS into `beach_hourly.wave_ft`,
+   * which has always meant the raw total Hs. Undefined when the source
+   * reported no total height at all (only a swell reading, if any).
+   */
+  waveTotalHsFt?: number;
+  /** The raw Hs (buoy WVHT, or model TOTAL/SWELL wave height — whichever
+   *  reading actually fed the estimate, per `estimateSurfFromSources`) that
+   *  fed `waveHeightFt` above — shown as the card's secondary "wave height"
+   *  line so the underlying reading is never hidden behind the surf estimate.
+   *  Not labeled "swell" in the UI: it can be the TOTAL sea-state reading,
+   *  not the swell component specifically. Use `waveTotalHsFt` above, not
+   *  this field, whenever "the raw total Hs" specifically is what's needed
+   *  (e.g. archiving) — this one can legitimately be the swell component. */
+  waveSwellHeightFt?: number;
+  /** The dominant/peak wave period (s) paired with `waveSwellHeightFt` —
+   *  the buoy's DPD when the buoy supplied the height, or the marine
+   *  model's own dominant wave period when the model did. Never a period
+   *  from one source paired with a height from the other. */
+  wavePeriodS?: number;
   precipProbability?: number;
   shortForecast?: string;
   uvIndex?: number;
@@ -463,6 +502,30 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
   // + no wet-recently) — read it back here instead of re-deriving it, so score
   // and the alert engine can never disagree about what counts as "dry".
   const radarDryNow = !!hazardRain.confidentDryVeto;
+  // Hs (raw significant wave height) + its OWN source's period — buoy WVHT
+  // pairs only with the buoy's DPD (BuoyData has no separate swell field, so
+  // there is nothing to cross-pair there); the model's TOTAL wave height
+  // pairs with the model's own TOTAL period when it has one, and only falls
+  // back to the model's SWELL height+period (matched to each other, never
+  // spliced onto the total height) when the model's total period is missing
+  // — see `estimateSurfFromSources` (lib/surfHeight.ts, Codex review
+  // 2026-09-28 #2) for why a swell-only period can never pair with a total
+  // height. Then converted to an estimated surf height — see lib/surfHeight.ts
+  // + the validation doc cited on `Derived.waveHeightFt` above.
+  // The TRUE raw total Hs (Codex review round-2 #1) — computed independently
+  // of `estimateSurfFromSources`'s result, so it always names the actual
+  // total reading (buoy WVHT or the model's `wave_height`), never the swell
+  // component the estimate may have fallen back to. `undefined` when neither
+  // source reported a total height at all.
+  const waveTotalHsFt = b?.waveHeightFt ?? m?.waveHeightFt;
+  const surfSource = b?.waveHeightFt != null
+    ? estimateSurfFromSources({ totalHeightFt: b.waveHeightFt, totalPeriodS: b?.dominantPeriodS })
+    : estimateSurfFromSources({
+        totalHeightFt: m?.waveHeightFt,
+        totalPeriodS: m?.wavePeriodS,
+        swellHeightFt: m?.swellHeightFt,
+        swellPeriodS: m?.swellPeriodS,
+      });
   return {
     // Shared metrics are the MEDIAN of NWS (real station obs), MET Norway, and
     // Open-Meteo, so no single provider or model can skew the dashboard.
@@ -472,11 +535,26 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
     // the card used to imply — see MetricSource. Both follow the exact `??`
     // preference above/below them, so the label can never drift from the value.
     waterTempSource: metricSource(b?.waterTempF, b?.sources?.waterTempF, m?.seaSurfaceTempF),
-    waveHeightSource: metricSource(b?.waveHeightFt, b?.sources?.waveHeightFt, m?.waveHeightFt),
+    // Model provenance whenever ANY surf estimate came from model data —
+    // including the swell-only fallback (Codex review round-3 #2), where
+    // `m?.waveHeightFt` alone (the model's TOTAL height) is undefined even
+    // though `surfSource` DID compute a reading from `m.swellHeightFt` +
+    // `m.swellPeriodS`. Leaving this undefined in that case wrongly gave the
+    // "waves" factor full (not 0.5 estimated) completeness credit, dropped
+    // it from `estimatedFactors`, and archived `wave_source` as null instead
+    // of "model" (lib/history/archive.ts).
+    waveHeightSource: metricSource(
+      b?.waveHeightFt,
+      b?.sources?.waveHeightFt,
+      b?.waveHeightFt != null ? undefined : surfSource.surfFt,
+    ),
     windSpeedMph:
       median(w?.windSpeedMph, mn?.windSpeedMph, om?.windSpeedMph, g?.windSpeedMph) ?? b?.windSpeedMph,
     windDirDeg: w?.windDirDeg ?? mn?.windDirDeg ?? b?.windDirDeg,
-    waveHeightFt: b?.waveHeightFt ?? m?.waveHeightFt,
+    waveHeightFt: surfSource.surfFt,
+    waveTotalHsFt,
+    waveSwellHeightFt: surfSource.rawHeightFt,
+    wavePeriodS: surfSource.rawPeriodS,
     precipProbability,
     shortForecast: w?.shortForecast,
     // The current hour's forecast UV (marine "/current" lags hours behind — a
@@ -662,7 +740,14 @@ function waveScore(ft: number, mode: WaveMode): number {
 // limited on the unrounded ratio instead of the rounded display value —
 // both change which days get capped/annotated, so old archived rows are not
 // reproducible from this version alone.
-export const SCORING_ENGINE_VERSION = "2026-09-22.1";
+// 2026-09-28.1: the "waves" factor now scores an ESTIMATED SURF (breaking)
+// height instead of the raw buoy/model significant wave height (Hs) — see
+// lib/surfHeight.ts and docs/benchmarks/2026-09-28-surf-height-validation.md.
+// For a long-period swell this raises the number substantially (e.g. Boca
+// on 2026-09-27: Hs ~2.5 ft, DPD 15s -> surf ~4.8 ft), which lowers the
+// "waves" sub-score on real swell days that used to read as flat-calm — not
+// reproducible from an older version.
+export const SCORING_ENGINE_VERSION = "2026-09-28.1";
 /** Bump whenever `DEFAULT_SCORING` itself (weights/curves as DATA) changes,
  *  independent of `SCORING_ENGINE_VERSION` above — kept distinct in case a
  *  future release lets Plus users pick among named configs. */
@@ -1458,9 +1543,31 @@ function scoreAllHoursFull(
   // same sea state (2026-09-10: "3 ft · really choppy" for a week that was
   // forecast to calm to under 2 ft). An hour outside the marine horizon still
   // falls back to today's reading.
-  const waveByTime = new Map<string, number>();
+  // Raw Hs (total + swell, each with its OWN period) per hour — converted to
+  // a surf estimate below via `estimateSurfFromSources`, alongside `base`'s
+  // already-converted current reading (see `Derived.waveHeightFt`'s doc
+  // comment for why a height and period must stay paired to the same
+  // reading — total with total, swell with swell, never cross-paired).
+  const waveByTime = new Map<
+    string,
+    { waveHeightFt?: number; wavePeriodS?: number; swellHeightFt?: number; swellPeriodS?: number }
+  >();
   for (const w of s.marine.data?.hourlyWaves ?? []) {
-    if (w.waveHeightFt != null) waveByTime.set(w.time, w.waveHeightFt);
+    // A usable hour has a total height OR a complete swell height+period
+    // pair (Codex review round-3 #1) — requiring the total unconditionally
+    // dropped every swell-only hour before it ever reached
+    // `estimateSurfFromSources`, which is able to estimate from the swell
+    // pair alone.
+    const hasTotal = w.waveHeightFt != null;
+    const hasSwellPair = w.swellHeightFt != null && w.swellPeriodS != null;
+    if (hasTotal || hasSwellPair) {
+      waveByTime.set(w.time, {
+        waveHeightFt: w.waveHeightFt,
+        wavePeriodS: w.wavePeriodS,
+        swellHeightFt: w.swellHeightFt,
+        swellPeriodS: w.swellPeriodS,
+      });
+    }
   }
 
   // Crowds vary through the day: map each LOCAL hour to its typical fullness.
@@ -1530,19 +1637,33 @@ function scoreAllHoursFull(
       // hour and bestBeachWindow could pick an uncapped future hour today) — but
       // NOT to future days; see the isToday gates below.
       const isCurrentHour = hStart <= nowMs && nowMs < hStart + HOUR_MS;
+      const hourlyWave = waveByTime.get(h.time);
+      const hourlySurf = hourlyWave
+        ? estimateSurfFromSources({
+            totalHeightFt: hourlyWave.waveHeightFt,
+            totalPeriodS: hourlyWave.wavePeriodS,
+            swellHeightFt: hourlyWave.swellHeightFt,
+            swellPeriodS: hourlyWave.swellPeriodS,
+          })
+        : undefined;
       const d: Derived = {
         airTempF: h.airTempF,
         waterTempF: base.waterTempF,
         windSpeedMph: h.windSpeedMph,
         windDirDeg: h.windDirDeg,
-        waveHeightFt: waveByTime.get(h.time) ?? base.waveHeightFt,
+        waveHeightFt: hourlySurf ? hourlySurf.surfFt : base.waveHeightFt,
+        // This hour's own TOTAL height (whatever the model reported for THIS
+        // hour), never the swell component — same round-2 #1 fix as `base`.
+        waveTotalHsFt: hourlyWave ? hourlyWave.waveHeightFt : base.waveTotalHsFt,
+        waveSwellHeightFt: hourlySurf ? hourlySurf.rawHeightFt : base.waveSwellHeightFt,
+        wavePeriodS: hourlySurf ? hourlySurf.rawPeriodS : base.wavePeriodS,
         // Water temp is day-constant (reuses the snapshot's source); waves
         // above come from the marine model's per-hour forecast whenever it
         // covers this hour, so THAT hour's source is "model" even though
         // `base.waveHeightSource` may say "buoy" for today's current reading
         // — otherwise every future hour would misreport itself as observed.
         waterTempSource: base.waterTempSource,
-        waveHeightSource: waveByTime.has(h.time) ? { kind: "model" } : base.waveHeightSource,
+        waveHeightSource: hourlyWave ? { kind: "model" } : base.waveHeightSource,
         precipProbability: h.precipProbability,
         shortForecast: h.shortForecast,
         uvIndex: h.uvIndex,

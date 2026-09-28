@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { getLocation } from "@/config/locations";
 import { scorableResponse } from "@/lib/alerts/fixtures";
+import { estimateSurfHeightFt } from "@/lib/surfHeight";
 import {
   coverageTier,
   hourUtcOf,
@@ -107,6 +108,73 @@ describe("rowFromConditions", () => {
     expect(row.local_hour).toBe(expected.hour);
     expect(row.utc_offset_minutes).toBe(expected.offsetMinutes);
     expect(row.timezone).toBe(boca.timezone);
+  });
+
+  // Codex review 2026-09-28 #1: wave_ft has always meant the RAW significant
+  // wave height (Hs) — the surf-height feature must not silently redefine it
+  // to mean the estimated surf (breaking) height, or a trend chart mixing
+  // old and new rows under the same column name would read a long-period
+  // swell day as if the sea calmed down. The estimate belongs in the new
+  // surf_ft column (migration 0010) instead.
+  it("wave_ft stays the raw Hs while surf_ft carries the estimated surf height", () => {
+    const res = scorableResponse();
+    res.snapshot.marine = {
+      source: "test",
+      status: "ok",
+      fetchedAt: "",
+      attribution: "test",
+      data: { waveHeightFt: 2.6, wavePeriodS: 15 }, // long-period swell — amplifies
+    };
+    const row = rowFromConditions(res, boca, Date.now());
+    expect(row.wave_ft).toBe(2.6); // raw Hs, unamplified
+    expect(row.surf_ft).toBe(estimateSurfHeightFt(2.6, 15));
+    expect(row.surf_ft).toBeGreaterThan(row.wave_ft!);
+  });
+
+  it("surf_ft is null when there's no wave reading at all", () => {
+    const res = scorableResponse();
+    res.snapshot.marine = { source: "test", status: "error", fetchedAt: "", attribution: "test", data: null };
+    const row = rowFromConditions(res, boca, Date.now());
+    expect(row.wave_ft).toBeNull();
+    expect(row.surf_ft).toBeNull();
+  });
+
+  // Codex review round-2 #1: wave_ft must read the TRUE raw total Hs even
+  // when the surf estimate itself falls back to the swell component (total
+  // period missing, swell-based surf beats the raw total) — reading
+  // `d.waveSwellHeightFt` here (which can legitimately BECOME the swell
+  // height in that case) would have silently swapped in 1.2 instead of 1.5.
+  it("wave_ft stays the raw TOTAL Hs even when the surf estimate falls back to the swell component", () => {
+    const res = scorableResponse();
+    res.snapshot.marine = {
+      source: "test",
+      status: "ok",
+      fetchedAt: "",
+      attribution: "test",
+      data: { waveHeightFt: 1.5, swellHeightFt: 1.2, swellPeriodS: 15 }, // no total period
+    };
+    const row = rowFromConditions(res, boca, Date.now());
+    expect(row.wave_ft).toBe(1.5); // raw TOTAL Hs, not the 1.2 ft swell component
+    expect(row.surf_ft).toBeCloseTo(2.7, 1);
+  });
+
+  // Codex review round-3 #2: a surf estimate computed from a swell-only
+  // MODEL pair (no total height reported at all) must still archive
+  // wave_source as "model", not null — the old bug only checked the
+  // model's TOTAL field for provenance, missing the swell-only fallback.
+  it("wave_source archives as 'model' when the surf estimate came from a swell-only model pair", () => {
+    const res = scorableResponse();
+    res.snapshot.marine = {
+      source: "test",
+      status: "ok",
+      fetchedAt: "",
+      attribution: "test",
+      data: { swellHeightFt: 1.2, swellPeriodS: 15 }, // no total height at all
+    };
+    const row = rowFromConditions(res, boca, Date.now());
+    expect(row.wave_ft).toBeNull(); // no total Hs to report
+    expect(row.surf_ft).toBeCloseTo(2.7, 1);
+    expect(row.wave_source).toBe("model");
   });
 
   it("serializes caps/factors/missing as JSON arrays", () => {

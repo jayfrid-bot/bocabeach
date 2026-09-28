@@ -113,7 +113,10 @@ export function shareCardModel(
   const sandDisplay = subByKey.get("sandTemp")?.display;
   push("sandTemp", "Sand temp", sandDisplay ? stripEstimateHedge(sandDisplay) : undefined);
 
-  push("waves", "Waves", subByKey.get("waves")?.display);
+  // "Est. surf" — this is the ESTIMATED SURF (breaking) height, not the raw
+  // buoy/model reading (lib/surfHeight.ts) — see the WaveHeightCard's same
+  // wording.
+  push("waves", "Est. surf", subByKey.get("waves")?.display);
 
   const uvDisplay = subByKey.get("uv")?.display;
   const uvNum = asNumber(uvDisplay);

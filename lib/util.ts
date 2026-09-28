@@ -2,6 +2,7 @@
 
 export const cToF = (c: number): number => (c * 9) / 5 + 32;
 export const mToFt = (m: number): number => m * 3.280839895;
+export const ftToM = (ft: number): number => ft / 3.280839895;
 export const msToMph = (ms: number): number => ms * 2.236936;
 export const knotsToMph = (kt: number): number => kt * 1.150779;
 export const kmhToMph = (kmh: number): number => kmh * 0.621371;

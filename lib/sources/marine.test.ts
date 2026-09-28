@@ -8,6 +8,7 @@ const HOURLY = {
   wave_height: [0.61, 0.73, null],
   wave_period: [8.5, 9.1, null],
   wave_direction: [88, 121, null],
+  swell_wave_height: [0.5, 0.6, 0.7],
   swell_wave_period: [11.2, 11.4, 11.6],
   swell_wave_direction: [95, 100, 143],
 };
@@ -29,10 +30,31 @@ describe("parseMarineHourly", () => {
 
   it("falls back to swell_wave_direction when the dominant direction is missing", () => {
     const out = parseMarineHourly(HOURLY)!;
-    // Hour 3: wave_direction is null, so the swell direction stands in — same
-    // preference order the period already used.
+    // Hour 3: wave_direction is null, so the swell direction stands in —
+    // direction isn't part of the breaker-height physics, so this fallback is
+    // harmless (unlike period — see the next test).
     expect(out[2].waveDirDeg).toBe(143);
-    expect(out[2].wavePeriodS).toBe(11.6);
+  });
+
+  // Codex review 2026-09-28 #2: wavePeriodS must be the TOTAL wave_period
+  // ONLY — never filled from swell_wave_period, or a consumer pairing it
+  // with the TOTAL waveHeightFt would fabricate an amplification the physics
+  // doesn't support (a swell-only period does not describe the total height,
+  // which includes short-period local wind chop the swell period says
+  // nothing about).
+  it("does NOT fall back to swell_wave_period when the total wave_period is missing", () => {
+    const out = parseMarineHourly(HOURLY)!;
+    // Hour 3: wave_period is null. Old (buggy) behavior filled wavePeriodS
+    // from swell_wave_period (11.6); it must now stay undefined.
+    expect(out[2].wavePeriodS).toBeUndefined();
+  });
+
+  it("carries the swell height/period as their own separate fields, matched to each other", () => {
+    const out = parseMarineHourly(HOURLY)!;
+    expect(out[0].swellHeightFt).toBe(1.6); // 0.5 m
+    expect(out[0].swellPeriodS).toBe(11.2);
+    expect(out[2].swellHeightFt).toBe(2.3); // 0.7 m
+    expect(out[2].swellPeriodS).toBe(11.6);
   });
 
   it("leaves waveDirDeg undefined when NEITHER direction field is present", () => {

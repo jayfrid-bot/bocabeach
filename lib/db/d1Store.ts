@@ -101,7 +101,7 @@ const HOURLY_COLS = [
   "slug", "hour_utc", "snapshot_generated_at", "archived_at", "local_date", "local_hour",
   "utc_offset_minutes", "timezone", "score", "raw_score", "rating", "available_weight",
   "observed_weight", "coverage_tier", "air_temp_f", "water_temp_f", "sand_temp_f", "wave_ft",
-  "wave_source", "wind_mph", "gust_mph", "uv", "cloud_pct", "rain_now", "lightning_near",
+  "surf_ft", "wave_source", "wind_mph", "gust_mph", "uv", "cloud_pct", "rain_now", "lightning_near",
   "tide_state", "crowd_pct", "seaweed_pct", "seaweed_level", "clarity_pct", "engine_version",
   "scoring_config_version", "build_sha", "row_kind", "archive_reason", "caps_json",
   "factors_json", "missing_json", "extra_json",

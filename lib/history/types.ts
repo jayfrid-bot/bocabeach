@@ -22,7 +22,17 @@ export interface BeachHourlyRow {
   air_temp_f: number | null;
   water_temp_f: number | null;
   sand_temp_f: number | null;
+  /** RAW significant wave height (Hs) from the buoy/model — never the
+   *  estimated surf (breaking) height. Has meant this since migration 0006;
+   *  keep it that way so older rows stay comparable to new ones. See
+   *  `surf_ft` below for the estimated-surf number (migration 0010). */
   wave_ft: number | null;
+  /** Estimated SURF (breaking) height (lib/surfHeight.ts) — what the app
+   *  shows/scores as "waves". NULL on every row archived before migration
+   *  0010 (and on any row whose wave reading had no raw Hs at all); never
+   *  back-filled, since there's no way to retroactively estimate surf for a
+   *  row that only ever kept Hs with no period stored alongside it. */
+  surf_ft: number | null;
   wave_source: "observed" | "model" | null;
   wind_mph: number | null;
   gust_mph: number | null;
