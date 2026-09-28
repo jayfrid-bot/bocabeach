@@ -127,10 +127,15 @@ export function WaveHeightCard({
         </svg>
 
         <div className="relative flex h-full flex-col items-start justify-end p-3">
+          {/* Short headline so it fits the phone's half-width tile (the longer
+              "Estimated surf ~2.8 ft" clipped at 390 px); "estimated" moves to
+              the label line below, so the number still never reads as measured. */}
           <div className="text-2xl font-bold text-white drop-shadow-sm sm:text-3xl">
-            Estimated surf ~{waveHeightFt.toFixed(1).replace(/\.0$/, "")} ft
+            ~{waveHeightFt.toFixed(1).replace(/\.0$/, "")} ft
           </div>
-          <div className="text-xs font-medium text-white/90 drop-shadow-sm">{state.label}</div>
+          <div className="text-xs font-medium text-white/90 drop-shadow-sm">
+            {state.label} · estimated
+          </div>
         </div>
       </div>
 
