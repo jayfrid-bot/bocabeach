@@ -111,7 +111,16 @@ export function ShareCardSheet({
             : "inline-flex min-h-[44px] items-center gap-1.5 rounded-full bg-slate-900/5 px-3 py-1 text-xs font-medium text-slate-700 ring-1 ring-slate-900/10 transition hover:bg-slate-900/10 dark:bg-white/5 dark:text-slate-200 dark:ring-white/10 dark:hover:bg-white/10"
         }
       >
-        {iconOnly ? <span aria-hidden className="text-lg leading-none">📤</span> : "Share"}
+        {iconOnly ? (
+          // The iOS share glyph (box + up arrow) — the tray emoji didn't read as "share".
+          <svg aria-hidden width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 3v12" />
+            <path d="M8 7l4-4 4 4" />
+            <path d="M6 11H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1" />
+          </svg>
+        ) : (
+          "Share"
+        )}
       </button>
       <Sheet
         open={open}

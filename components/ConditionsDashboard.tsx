@@ -556,8 +556,10 @@ export function ConditionsDashboard({
                 aria-label={`${snap.location.name} — choose a different beach`}
                 className="flex min-h-[44px] min-w-0 items-center gap-1 rounded-lg py-1 pr-1 transition hover:opacity-80"
               >
+                {/* Wraps to a second line rather than cutting a long name off
+                    ("Fort Lauderd…", "South Padre Isl…") next to the icons. */}
                 <h1
-                  className="truncate text-xl font-bold leading-tight text-slate-900 dark:text-white sm:text-2xl"
+                  className="line-clamp-2 break-words text-xl font-bold leading-tight text-slate-900 dark:text-white sm:text-2xl"
                   title={snap.location.region}
                 >
                   {snap.location.name}
@@ -568,7 +570,7 @@ export function ConditionsDashboard({
               </Link>
             ) : (
               <h1
-                className="min-w-0 truncate py-1 text-xl font-bold leading-tight text-slate-900 dark:text-white sm:text-2xl"
+                className="line-clamp-2 min-w-0 break-words py-1 text-xl font-bold leading-tight text-slate-900 dark:text-white sm:text-2xl"
                 title={snap.location.region}
               >
                 {snap.location.name}
