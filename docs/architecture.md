@@ -453,15 +453,30 @@ own prediction is ALSO in its send window (or already past its cutoff) →
 latch the ESTIMATE key now, same as before. (2) the snapshot has a
 prediction of the SAME kind whose window starts in the future but within 15
 minutes (`SUN_COLOR_MISMATCH_DEFER_MAX_MS`) → don't latch; instead
-`sent.sunColorDeferUntilMs` is set to that real window's start, and
-`sunColorSlugNeed` holds the beach at `candidate` (never `due`, so never
-refetched) until that instant, then it's due again and the later fetch
-latches normally. (3) anything else — no prediction, a different kind, or a
-real window more than 15 minutes away, or already closed — → latch the
-ESTIMATE key immediately; nothing can be sent for that estimated event no
-matter how many more times this beach is asked. Every branch still resolves
-within a bounded number of fetches per event, which is what keeps a
-disagreement from holding a beach `due` (and re-fetching) forever.
+`sent.sunColorDeferUntilMs` is set to that real window's start. (3) anything
+else — no prediction, a different kind, or a real window more than 15
+minutes away, or already closed — → latch the ESTIMATE key immediately;
+nothing can be sent for that estimated event no matter how many more times
+this beach is asked. Every branch still resolves within a bounded number of
+fetches per event, which is what keeps a disagreement from holding a beach
+`due` (and re-fetching) forever.
+
+**A persisted defer is itself a due window, not a single instant a 5-minute
+tick can step right over (round-4 item 1).** The first cut of outcome (2)
+above held the beach at `candidate` for the whole wait — but `candidate`
+alone still triggers a real conditions fetch, the same as `due` does, so it
+never actually stopped the pointless re-fetching it was meant to stop.
+`sunColorSlugNeed` now reads `sunColorDeferUntilMs` as three ranges:
+strictly before it → NEITHER `due` nor `candidate` (genuinely no fetch at
+all); from it through one real send-window's width past it
+(`SUN_COLOR_SEND_WINDOW_MS`, since the value literally IS that real
+window's own start) → both `true`, so a fetch lands and the route runs its
+ordinary decision (the real window should now be open; if a later snapshot
+has moved again, the outcome check above settles it either way); past that
+width — a tick never landed inside it — → expired, falls through to the
+plain estimate check, which by then finds the window long closed and
+returns not-due (the same practical effect as a latch, without literally
+writing `sunColorCheckedKey`).
 
 **Ownership-safe send claims (`releaseSend`/`markSent`).** Both take the
 exact `nowMs` the caller originally passed to `claimSend` for that key, and
@@ -476,9 +491,9 @@ lost `claimSend` race is itself non-terminal: the losing run checks
 only if another run has ALREADY confirmed the send, otherwise the device
 stays un-latched so a later tick can re-evaluate.
 
-**Sun-color settings saves — one queue, and a pending overlay that
-survives any response (`lib/plus/client.ts`).** Both fields
-(`minBand`/`leadMin`) go through a SINGLE `createSunColorSaver`
+**Sun-color settings saves — one queue, a pending overlay that survives any
+response, AND a response-revisioning watermark (`lib/plus/client.ts`).**
+Both fields (`minBand`/`leadMin`) go through a SINGLE `createSunColorSaver`
 (`createSerialQueue`-backed, same helper Live Activity's client already
 used), so a live edit and `flushPending`'s own retry can never race each
 other into two concurrent `POST /api/devices` calls — whichever was
@@ -495,7 +510,16 @@ an edit that hasn't resolved yet — the protection lives centrally in
 `applyDevice`, not duplicated in the saver itself. `revert` (only called on
 a failure) still checks the patch is still the CURRENT pending value before
 touching local state, since it mutates state directly rather than going
-through `applyDevice`'s overlay.
+through `applyDevice`'s overlay. Round-4 item 3 adds a second, earlier
+guard in front of all of this: two overlapping requests for the SAME device
+can resolve out of order (response ARRIVAL order isn't request order), so
+`applyDevice` tracks the `updatedAt` (bumped by the server on every write,
+now part of `DeviceRecord`) it last applied PER DEVICE ID, and ignores any
+response strictly older than that watermark outright — no cache write, no
+state change, before the pending overlay even runs. This is what protects
+against a case the overlay alone can't: a delayed reply to an EARLIER,
+unrelated request (its own pending entry already cleared) landing after a
+newer save has already applied.
 
 **Per-tick capacity is `passes x PUSH_RUN_MAX_BEACHES`, and `dueRemaining`
 counts retryable work too.** `PUSH_RUN_MAX_BEACHES`
@@ -505,10 +529,11 @@ each its own request with its own subrequest budget, stopping early the
 moment a pass's JSON response reports `dueRemaining: 0` (every `due` slug
 this tick got served — the coming-up/morning-digest/sun-color alerts all
 share this one signal). `dueRemaining` isn't just slugs the round-robin cap
-excluded: a slug the pass DID reach, but where some device's evaluation
-ended non-terminal (a transient send failure, or a lost-claim race no other
-run has yet confirmed — `comingUpTerminal`/`sunColorTerminal === false`),
-is folded in too, once per slug — that beach still has real, time-sensitive
+excluded: a slug the pass DID reach, but where the conditions load itself
+threw or returned null, or where some device's evaluation ended
+non-terminal (a transient send failure, or a lost-claim race no other run
+has yet confirmed — `comingUpTerminal`/`sunColorTerminal === false`), is
+folded in too, once per slug — that beach still has real, time-sensitive
 work outstanding, so the cron must not treat it as settled. So one tick's
 real capacity is `passes x cap`
 (6 x 2 = 12 by default), and a whole send window's capacity is that,

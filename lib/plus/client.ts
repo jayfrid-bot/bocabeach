@@ -189,6 +189,29 @@ export function overlayPendingSunColor(rec: DeviceRecord, pendingSunColor: SunCo
 }
 
 /**
+ * Round-4 item 3: should `applyDevice` ignore this response as stale? Two
+ * overlapping requests for the SAME device can resolve in either order —
+ * response ARRIVAL order is not request order — so `applyDevice` can't just
+ * trust "whatever landed most recently is the truth". The server bumps
+ * `updated_at` on every write, though, so a response whose `updatedAt` is
+ * OLDER than one already applied for this device id is necessarily a reply
+ * to a request the server processed BEFORE a newer one this phone has
+ * already shown — ignoring it outright (no cache write, no state change at
+ * all) is strictly safer than adopting it and possibly reverting a newer
+ * edit. `lastApplied` is keyed by device id (not a single scalar) so a
+ * device id change (a reinstall gets a fresh one) never carries over a
+ * stale watermark from the old id. Pulled out as its own pure function — no
+ * React — so it's directly testable (see lib/plus/client.test.ts).
+ */
+export function isStaleDeviceResponse(
+  rec: Pick<DeviceRecord, "id" | "updatedAt">,
+  lastApplied: ReadonlyMap<string, number>,
+): boolean {
+  const last = lastApplied.get(rec.id);
+  return last !== undefined && rec.updatedAt < last;
+}
+
+/**
  * Build the ONE sun-color save function (Requirement round-3 item 2 —
  * replaces round-2's per-field savers: edits are rare, so serializing BOTH
  * fields through a single queue is simpler and just as correct). Every
@@ -523,6 +546,12 @@ export function usePlus(): PlusState {
   // lazily (`sunColorSaver` below) so each hook instance gets its own
   // independent queue.
   const sunColorSaverRef = useRef<ReturnType<typeof createSunColorSaver> | null>(null);
+  // Round-4 item 3: the `updatedAt` watermark `applyDevice` checks every
+  // response against — see `isStaleDeviceResponse`'s doc. A ref (not
+  // state): every `applyDevice` call must read the CURRENT value
+  // synchronously, including two calls in the same tick, and updating it
+  // must never itself trigger a re-render.
+  const lastAppliedUpdatedAtRef = useRef<Map<string, number>>(new Map());
   // One-shot guard for the restore-pending retry below (#M2) — a second
   // restore tap (or a fast re-render) replaces rather than stacks a pending
   // retry, and unmount clears it like any other timer.
@@ -544,6 +573,10 @@ export function usePlus(): PlusState {
   // Adopt whatever the server just told us about this device.
   const applyDevice = useCallback(
     (rec: DeviceRecord, opts?: { adoptProfile?: boolean }) => {
+      // Round-4 item 3: a response OLDER than one already applied for this
+      // device is ignored outright — see `isStaleDeviceResponse`'s doc.
+      if (isStaleDeviceResponse(rec, lastAppliedUpdatedAtRef.current)) return;
+      lastAppliedUpdatedAtRef.current.set(rec.id, rec.updatedAt);
       const at = Date.now();
       const next = cacheFromDevice(rec, at);
       setCache(next);

@@ -459,19 +459,59 @@ describe("sunColorSlugNeed", () => {
     expect(need.due).toBe(true);
   });
 
-  it("round-3 item 1: candidate (never due) while sunColorDeferUntilMs is still in the future", () => {
+  it("round-4 item 1: NEITHER due NOR candidate while sunColorDeferUntilMs is still in the future — no refetch at all", () => {
     const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T18:00:00Z"));
-    const nowMs = probe!.eventMs - 60 * 60_000; // inside the window — would normally be due
+    const nowMs = probe!.eventMs - 60 * 60_000; // inside the ESTIMATE's own window — would normally be due
     const need = sunColorSlugNeed(BOCA, device(), { sunColorDeferUntilMs: nowMs + 8 * 60_000 }, nowMs);
     expect(need.due).toBe(false);
+    // Round-4 item 1: `candidate` alone still triggers a real conditions
+    // fetch in the route, so it must be false too during the wait — the
+    // whole point of persisting a defer is to stop fetching until it's
+    // actually worth it again.
+    expect(need.candidate).toBe(false);
+  });
+
+  it("round-4 item 1: due AND candidate for exactly one real send-window's width once sunColorDeferUntilMs is reached", () => {
+    const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T18:00:00Z"));
+    const nowMs = probe!.eventMs - 60 * 60_000;
+    const deferUntil = nowMs + 8 * 60_000;
+    // Exactly at deferUntil.
+    let need = sunColorSlugNeed(BOCA, device(), { sunColorDeferUntilMs: deferUntil }, deferUntil);
+    expect(need.due).toBe(true);
+    expect(need.candidate).toBe(true);
+    // Just inside the window's far end (deferUntil + 10 min - 1ms).
+    need = sunColorSlugNeed(
+      BOCA,
+      device(),
+      { sunColorDeferUntilMs: deferUntil },
+      deferUntil + SUN_COLOR_SEND_WINDOW_MS - 1,
+    );
+    expect(need.due).toBe(true);
     expect(need.candidate).toBe(true);
   });
 
-  it("round-3 item 1: due again the instant sunColorDeferUntilMs has passed", () => {
+  it("round-4 item 1: expired once the deferred window's own width has fully passed — falls through (no longer due)", () => {
     const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T18:00:00Z"));
     const nowMs = probe!.eventMs - 60 * 60_000;
-    expect(sunColorSlugNeed(BOCA, device(), { sunColorDeferUntilMs: nowMs }, nowMs).due).toBe(true); // exactly at it
-    expect(sunColorSlugNeed(BOCA, device(), { sunColorDeferUntilMs: nowMs - 1 }, nowMs).due).toBe(true); // just past it
+    const deferUntil = nowMs + 8 * 60_000;
+    // A tick that lands exactly at (or past) the window's own end — a
+    // 5-minute cadence never landed inside [deferUntil, deferUntil+10min).
+    const need = sunColorSlugNeed(BOCA, device(), { sunColorDeferUntilMs: deferUntil }, deferUntil + SUN_COLOR_SEND_WINDOW_MS);
+    expect(need.due).toBe(false);
+  });
+
+  it("round-4 item 1: real cron cadence — +0 defer set (real window opens at +11), +5 and +10 no fetch, +15 due", () => {
+    const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T18:00:00Z"));
+    const t0 = probe!.eventMs - 60 * 60_000;
+    const deferUntil = t0 + 11 * 60_000; // the real snapshot's own window start
+    const sent = { sunColorDeferUntilMs: deferUntil };
+    const FIVE_MIN = 5 * 60_000;
+    expect(sunColorSlugNeed(BOCA, device(), sent, t0).due).toBe(false); // +0 (defer just set)
+    expect(sunColorSlugNeed(BOCA, device(), sent, t0 + FIVE_MIN).candidate).toBe(false); // +5
+    expect(sunColorSlugNeed(BOCA, device(), sent, t0 + 2 * FIVE_MIN).candidate).toBe(false); // +10
+    const at15 = sunColorSlugNeed(BOCA, device(), sent, t0 + 3 * FIVE_MIN); // +15
+    expect(at15.due).toBe(true);
+    expect(at15.candidate).toBe(true);
   });
 });
 

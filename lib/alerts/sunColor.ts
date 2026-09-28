@@ -309,11 +309,17 @@ export interface SunColorSlugNeed {
  * own `sunColorCheckedKey` already names the SAME event (Codex review item
  * 2) — the round-robin must move on to a beach that still needs a look, not
  * keep re-selecting one this device has nothing further to say about this
- * hour. Also held to `candidate` (never `due`) while `sent.sunColorDeferUntilMs`
- * is still in the future (round-3 item 1) — a PRIOR fetch already found the
- * real snapshot's window opening soon but not yet, so there is nothing to
- * gain from re-fetching every tick in between; once that instant passes,
- * evaluation resumes normally.
+ * hour. When `sent.sunColorDeferUntilMs` is set (round-3 item 1 — a PRIOR
+ * fetch already found the real snapshot's window opening soon but not yet),
+ * round-4 item 1 makes the persisted defer itself behave like a real due
+ * window on 5-minute cron ticks rather than a single instant a tick can
+ * step right over: neither `due` NOR `candidate` (so genuinely no
+ * conditions fetch at all — `candidate` alone still triggers one) while
+ * `nowMs` hasn't reached it yet; both `true` for exactly one real send
+ * window's width once it has (`sunColorDeferUntilMs` literally IS that real
+ * window's own start); and past that width, treated as expired — falls
+ * through to the ordinary estimate-based check below, which by then finds
+ * the real window has closed and (in the route) latches.
  */
 export function sunColorSlugNeed(
   loc: { lat: number; lon: number; timezone: string },
@@ -329,8 +335,29 @@ export function sunColorSlugNeed(
 
   const eventKey = sunColorEventKey(next.kind, new Date(next.eventMs).toISOString(), loc.timezone);
   if (sent.sunColorCheckedKey === eventKey) return { due: false, candidate: false, eventKey };
-  if (sent.sunColorDeferUntilMs != null && nowMs < sent.sunColorDeferUntilMs) {
-    return { due: false, candidate: true, eventKey };
+  if (sent.sunColorDeferUntilMs != null) {
+    const deferUntil = sent.sunColorDeferUntilMs;
+    if (nowMs < deferUntil) {
+      // Still waiting — genuinely nothing to do yet, not even a fetch.
+      return { due: false, candidate: false, eventKey };
+    }
+    if (nowMs < deferUntil + SUN_COLOR_SEND_WINDOW_MS) {
+      // `deferUntil` IS the real window's own start (round-3 item 1 set it
+      // to exactly that) — this span is that real window itself, so a
+      // fetch here should find it genuinely open (or, if a subsequent
+      // snapshot has since moved again, the route's own outcome check
+      // settles it either way).
+      return { due: true, candidate: true, eventKey };
+    }
+    // Expired — a 5-minute tick never landed inside the deferred window
+    // (a missed run, say). Fall through to the ordinary estimate check
+    // below: by now the ESTIMATE's own window (which was already open when
+    // the mismatch was first detected) is long closed too, so `due` there
+    // reads false — this device simply stops being selected for this
+    // event, the same practical outcome as a latch, without literally
+    // writing `sunColorCheckedKey` (nothing to gain from it: once the
+    // ESTIMATE's own next event rolls over past this one, the stale key
+    // would never be recomputed or matched again anyway).
   }
 
   const aheadMs = next.eventMs - nowMs;

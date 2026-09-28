@@ -162,14 +162,21 @@ export interface SentState {
    * hasn't opened yet, but WILL within 15 minutes (same kind as the
    * estimate), this is set to that real window's own start (epoch ms)
    * INSTEAD of latching `sunColorCheckedKey` — `sunColorSlugNeed` then
-   * reads this to hold the beach at `candidate` (not `due`) until that
-   * instant, so the estimate's own due window doesn't keep forcing a
-   * pointless re-fetch every tick in between, but the beach is also never
-   * latched "checked" for an event it hasn't actually had a chance to send
-   * for yet. Once `nowMs` reaches it, evaluation resumes normally (and may
-   * then latch `sunColorCheckedKey`, or send). Left stale (never cleared)
-   * once it has passed — a past instant simply never gates anything again,
-   * same non-expiring-key reasoning as `sunColorCheckedKey` above. */
+   * reads this to hold the beach at NEITHER `due` NOR `candidate` (round-4
+   * item 1 — `candidate` alone still triggers a real conditions fetch in
+   * app/api/push/run/route.ts, same as `due` does, so `candidate` before
+   * the deferred instant would defeat the whole point of deferring) until
+   * that instant, so the estimate's own due window doesn't keep forcing a
+   * pointless re-fetch every tick in between. Once `nowMs` reaches this
+   * value, `sunColorSlugNeed` treats the beach as `due`/`candidate` for
+   * exactly one real send-window's width (`SUN_COLOR_SEND_WINDOW_MS`) —
+   * this value literally IS that real window's own start, so that span is
+   * the real window itself, widened only enough to guarantee a 5-minute
+   * cron tick actually lands inside it. Past that width, evaluation falls
+   * through to the normal (now-expired) estimate logic, which latches.
+   * Left stale (never cleared) once fully expired — a past instant simply
+   * never gates anything again, same non-expiring-key reasoning as
+   * `sunColorCheckedKey` above. */
   sunColorDeferUntilMs?: number;
 }
 
@@ -253,6 +260,12 @@ export interface DeviceGrants {
 /** The API shape: what every Plus route returns as `device`. */
 export interface DeviceRecord {
   id: string;
+  /** The row's own `updated_at` (epoch ms) — bumped on every write. Round-4
+   *  item 3: the client's `applyDevice` uses this to ignore a server
+   *  response OLDER than what it's already applied (a delayed reply to a
+   *  now-superseded request), rather than trusting response ARRIVAL order,
+   *  which two overlapping requests can't guarantee. */
+  updatedAt: number;
   platform: Platform | null;
   tz: string | null;
   homeSlug: string | null;
@@ -511,6 +524,7 @@ export function applyPatch(row: DeviceRow, patch: DevicePatch, now: number): Dev
 export function toRecord(row: DeviceRow, presence?: PresenceRow | null): DeviceRecord {
   return {
     id: row.id,
+    updatedAt: row.updated_at,
     platform: isPlatform(row.platform) ? row.platform : null,
     tz: row.tz ?? null,
     homeSlug: row.home_slug ?? null,

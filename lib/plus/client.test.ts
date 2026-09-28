@@ -24,6 +24,7 @@ import {
   setPurchaseSyncRetryStateForTest,
   createSunColorSaver,
   overlayPendingSunColor,
+  isStaleDeviceResponse,
   shouldBootstrapInstallTokenOnMount,
   startVisibleReconcileLoop,
   STORE_EXPIRY_GRACE_MS,
@@ -300,6 +301,7 @@ describe("readSuperseded", () => {
 function fakeDevice(over: Partial<DeviceRecord> = {}): DeviceRecord {
   return {
     id: DEV,
+    updatedAt: 0,
     platform: "ios",
     tz: null,
     homeSlug: null,
@@ -570,6 +572,81 @@ describe("overlayPendingSunColor (Requirement round-3 item 2 — preserve pendin
     const rec = fakeDevice({ sunColor: { minBand: "vivid", leadMin: 60 } } as Partial<DeviceRecord>);
     const merged = overlayPendingSunColor(rec, { minBand: "epic", leadMin: 120 });
     expect(merged.sunColor).toEqual({ minBand: "epic", leadMin: 120 });
+  });
+});
+
+// Round-4 item 3: response ARRIVAL order isn't request order — two
+// overlapping requests for the same device can resolve either way round.
+// `isStaleDeviceResponse` is the pure gate `applyDevice` runs every response
+// through FIRST (before the round-3 item 2 pending overlay even runs): a
+// response older, by its own server-stamped `updatedAt`, than one already
+// applied for this device id is ignored outright.
+describe("isStaleDeviceResponse (Requirement round-4 item 3 — response revisioning)", () => {
+  it("is never stale the first time a device id is seen (no watermark yet)", () => {
+    expect(isStaleDeviceResponse({ id: DEV, updatedAt: 100 }, new Map())).toBe(false);
+  });
+
+  it("is stale when strictly older than the tracked watermark for this device id", () => {
+    const lastApplied = new Map([[DEV, 200]]);
+    expect(isStaleDeviceResponse({ id: DEV, updatedAt: 100 }, lastApplied)).toBe(true);
+  });
+
+  it("is NOT stale when equal to or newer than the tracked watermark", () => {
+    const lastApplied = new Map([[DEV, 200]]);
+    expect(isStaleDeviceResponse({ id: DEV, updatedAt: 200 }, lastApplied)).toBe(false);
+    expect(isStaleDeviceResponse({ id: DEV, updatedAt: 201 }, lastApplied)).toBe(false);
+  });
+
+  it("a watermark for a DIFFERENT device id never gates this one", () => {
+    const lastApplied = new Map([["some-other-device", 999]]);
+    expect(isStaleDeviceResponse({ id: DEV, updatedAt: 1 }, lastApplied)).toBe(false);
+  });
+
+  // The exact scenario the review named: a sun-color save succeeds and
+  // applies (updatedAt t2, and its pending entry clears); a prefs response
+  // issued EARLIER (updatedAt t1 < t2) but resolving LATER arrives after
+  // that — it must not be applied, so the sun-color settings stay at their
+  // new values. Built as a small harness that composes the two pieces
+  // `applyDevice` itself composes (the revisioning gate, then the round-3
+  // item 2 pending overlay) exactly the way `applyDevice` does, without
+  // rendering the hook.
+  it("a delayed OLDER prefs response arriving after a NEWER sun-color save must not be applied — settings stay at the new values", () => {
+    const lastApplied = new Map<string, number>();
+    let deviceState = fakeDevice({ sunColor: { minBand: "vivid", leadMin: 60 }, prefs: { morning: false } } as Partial<DeviceRecord>);
+    let pending: SunColorPatch = {};
+
+    function applyDeviceLike(rec: DeviceRecord): void {
+      if (isStaleDeviceResponse(rec, lastApplied)) return; // round-4 item 3
+      lastApplied.set(rec.id, rec.updatedAt);
+      deviceState = overlayPendingSunColor(rec, pending); // round-3 item 2
+    }
+
+    const T1 = 1_000; // the prefs-toggle request's own server-side write time
+    const T2 = 2_000; // the sun-color save's own server-side write time (later)
+
+    // The sun-color save is in flight: queue its pending value, same as
+    // `createSunColorSaver` does synchronously before its request starts.
+    pending = { minBand: "epic" };
+
+    // It resolves FIRST (server processed it after the prefs toggle, and
+    // its response also arrives first): applies cleanly, watermark -> T2.
+    applyDeviceLike(
+      fakeDevice({ id: DEV, updatedAt: T2, sunColor: { minBand: "epic", leadMin: 60 }, prefs: { morning: false } } as Partial<DeviceRecord>),
+    );
+    pending = {}; // the save's own clearPendingIfMatch, now that it's confirmed
+    expect(deviceState.sunColor).toEqual({ minBand: "epic", leadMin: 60 });
+
+    // NOW the earlier prefs-toggle request's response finally arrives —
+    // older `updatedAt`, and pending has already cleared, so nothing about
+    // round-3's overlay would have protected against it either.
+    applyDeviceLike(
+      fakeDevice({ id: DEV, updatedAt: T1, sunColor: { minBand: "vivid", leadMin: 60 }, prefs: { morning: true } } as Partial<DeviceRecord>),
+    );
+
+    // Ignored outright — the sun-color settings (AND everything else) stay
+    // exactly as the newer response left them.
+    expect(deviceState.sunColor).toEqual({ minBand: "epic", leadMin: 60 });
+    expect(deviceState.prefs).toEqual({ morning: false });
   });
 });
 

@@ -553,9 +553,24 @@ export async function POST(req: Request): Promise<Response> {
         try {
           res = await countedGetConditions(slug);
         } catch {
+          // Round-4 item 2: a thrown load is exactly as retryable as a
+          // budget-aborted one below — this beach's group gets nothing
+          // built off it this pass. Folded into `retryableDueSlugs` (read
+          // out after the whole loop, same as the per-device outcomes
+          // round-3 item 3 already tracks there) rather than bumping
+          // `dueRemaining` inline, so a slug that fails here AND has a
+          // device hit a transient failure later isn't double-counted.
+          homeBeachesDeferred += 1;
+          retryableDueSlugs.add(slug);
           continue;
         }
-        if (!res) continue;
+        if (!res) {
+          // A null return (no throw, but nothing usable) is the same
+          // "try again next pass" case as the throw just above.
+          homeBeachesDeferred += 1;
+          retryableDueSlugs.add(slug);
+          continue;
+        }
         if (res.budgetAborted) {
           // Codex round-5 #1: this build ran out of subrequest budget
           // partway through — one or more sources are deliberately missing,
