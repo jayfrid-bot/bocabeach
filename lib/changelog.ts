@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-28",
+    title: "Coming up: sky events for your beach",
+    details:
+      "See high tides that could flood the shore or are just unusually high, full moons and eclipses, meteor showers, and rocket launches you can actually see from your beach — each with a sky rating for that night. Plus members can turn on a few \"Coming up\" alerts a month.",
+    tag: "new",
+  },
+  {
+    date: "2026-09-28",
     title: "Truer wave heights",
     details:
       "Wave height now shows the surf you'll actually see at the shore, estimated from the buoy's swell and its period — long, slow swells break bigger than the buoy number suggests.",

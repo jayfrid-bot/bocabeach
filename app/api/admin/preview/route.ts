@@ -2,7 +2,7 @@
 // (not-yet-configured) Location, so the console can live-render the dashboard.
 // Gated like the rest of the admin surface.
 
-import { getConditionsForLocation } from "@/lib/conditions";
+import { getConditionsForLocation, stripInternalSnapshotFields } from "@/lib/conditions";
 import type { Location } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -37,7 +37,10 @@ export async function POST(req: Request): Promise<Response> {
 
   try {
     const data = await getConditionsForLocation(loc);
-    return Response.json(data);
+    // skyAlertCandidates (Codex round-2 review HIGH #2) is server-only —
+    // this JSON response still leaves the server, so strip it here too even
+    // though this route is admin-gated.
+    return Response.json(stripInternalSnapshotFields(data));
   } catch {
     return Response.json({ error: "preview failed" }, { status: 500 });
   }

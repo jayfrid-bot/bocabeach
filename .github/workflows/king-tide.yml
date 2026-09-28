@@ -1,0 +1,94 @@
+name: King Tide / High-Tide-Flooding Feed
+
+# Builds a small king_tide_data.json (NOAA CO-OPS station-local calendar-year
+# hi/lo predictions -> flood-threshold and top-1%-of-the-year classification,
+# episode-merged — see docs/SKY_EVENTS_PLAN.md §3, §13 Crew D) and publishes
+# it to its OWN dedicated `king-tide-data` branch (NOT main, and NOT
+# `sargassum-data`). This MUST be a separate branch: sargassum.yml and
+# backfill-pct.yml both force-push `sargassum-data` as a single-commit
+# ORPHAN branch every ~10 min — anything else published there gets silently
+# deleted on their very next cycle (see rip-nwps.yml's header for the same
+# lesson, already learned once). `king-tide-data` is this feed's own branch.
+# The web app reads the published file via raw.githubusercontent.com
+# (lib/sources/kingTide.ts).
+#
+# Unlike sargassum.yml/goes-cloud.yml/lightning.yml, this feed does NOT need
+# the in-job polling loop those use for genuinely live, minute-to-minute
+# sources: tide predictions are deterministic astronomy, not a model run
+# that goes stale by the hour. A "weekly-ish" cron cadence is intentional —
+# see scripts/king_tide.mjs's header for why `generatedAt` freshness exists
+# here (proving the pipeline itself is alive) rather than to catch decaying
+# data. If a cron fire is skipped (§2's documented GitHub cron
+# unreliability), the next one catches up fine; there is nothing to lose by
+# reading slowly for a feed whose underlying numbers don't change hour to
+# hour. A failed or partial run publishes NOTHING — see the publish step.
+
+on:
+  schedule:
+    - cron: "40 7 * * 1,4" # twice a week (Mon + Thu, :40 past, clear of other feeds' :00/:15 fires)
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/king-tide.yml"
+      - "scripts/king_tide.mjs"
+      - "config/tideStations.ts"
+      - "config/locations.ts"
+      - "config/locations.generated.json"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: king-tide
+  cancel-in-progress: true
+
+jobs:
+  build-feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Fetch previously published feed (for carry-forward on a station's fetch failure)
+        run: |
+          curl -fsSL -o "${RUNNER_TEMP}/prev_king_tide_data.json" \
+            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/king-tide-data/king_tide_data.json" \
+            || echo "no previous published feed yet — continuing without --prev"
+
+      - name: Build king_tide_data.json
+        run: |
+          node scripts/king_tide.mjs \
+            --out "${RUNNER_TEMP}/king_tide_data.json" \
+            --prev "${RUNNER_TEMP}/prev_king_tide_data.json"
+
+      - name: Publish to its OWN king-tide-data branch (single-commit orphan, like rip-data)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          # A failed or partial run must publish NOTHING — this check is the
+          # whole enforcement of that: an empty/missing file here means the
+          # script itself already exited non-zero (main() throws on a hard
+          # failure), so there's nothing to push and the branch's last good
+          # publish is left untouched.
+          [ -s "${RUNNER_TEMP}/king_tide_data.json" ] || { echo "no feed written — nothing to publish"; exit 1; }
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          work="${RUNNER_TEMP}/pub"
+          rm -rf "$work"; mkdir -p "$work"
+          cp "${RUNNER_TEMP}/king_tide_data.json" "$work/king_tide_data.json"
+          cd "$work"
+          git init -q
+          git config user.name "king-tide-bot"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -q -b king-tide-data
+          git add king_tide_data.json
+          git commit -q -m "King tide feed $(date -u +%FT%TZ)"
+          # Force-push a single-commit orphan branch so history never grows —
+          # this branch carries ONLY king_tide_data.json, so there is nothing
+          # else here to lose.
+          git push -f "$remote" king-tide-data

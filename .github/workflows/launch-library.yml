@@ -1,0 +1,303 @@
+name: Rocket Launch Feed (LL2)
+
+# Builds a small launch_data.json of upcoming rocket launches across the 4
+# ranges the "Coming up" sky-events card covers (Cape Canaveral/KSC,
+# Vandenberg, Wallops, Starbase — config/launchPads.ts) from LL2 (Launch
+# Library 2, thespacedevs.com), and publishes it to its OWN dedicated
+# `launch-data` branch (NOT main, and NOT any other feed's branch — the
+# sargassum-data force-push wipeout lesson: SKY_EVENTS_PLAN.md §2). The web
+# app reads the published file via raw.githubusercontent.com
+# (lib/sources/launchLibrary.ts).
+#
+# Same long-running-loop fix as lightning.yml/sargassum.yml, for the same
+# reason (GitHub's cron is unreliable, not just coarse — see
+# lightning.yml's own header, re-verified against sargassum.yml Aug 2026):
+# once a run starts, it polls LL2 every 30 MINUTES for up to ~4h45m inside
+# the same job, with a unique `concurrency` group that cancels a still-
+# running loop when a new one starts, so overlapping fires never double the
+# request rate.
+#
+# 30-min cadence (not lightning's ~1-min) because LL2's unauthenticated tier
+# throttles at ~15 requests/hour (confirmed LIVE 2026-09-28 — see
+# scripts/launch_library.mjs's header for the exact throttle response).
+# scripts/launch_library.mjs requests a date/location-filtered window
+# (net__gte/net__lte/location__ids) and paginates via LL2's own `next` link,
+# stopping as soon as a page runs past the 14-day window — but bounds
+# worst-case cost with MAX_PAGES=3 regardless, in case those filters are
+# silently ignored server side. Each page costs up to 2 requests (1 fetch +
+# 1 retry), so one invocation costs AT MOST 3 * 2 = 6 requests. At 30-min
+# cadence (2 cycles/hour) that's AT MOST 6 * 2 = 12 requests/hour worst
+# case — under the ~15/hour limit, with 3 requests/hour of headroom for an
+# occasional manual workflow_dispatch run on top. In practice, near-term
+# global launch volume rarely exceeds one 100-result page, so most cycles
+# cost just 1-2 requests, far below this ceiling.
+#
+# The OUTER cron trigger below is deliberately >= the 30-min internal loop
+# cadence (unlike lightning.yml's */10, which is fine because ITS internal
+# cadence is ~1 min — far shorter than 10 min, so an early restart never
+# costs a full cycle). If this workflow's cron fired reliably every 30 min
+# or less, `cancel-in-progress` could keep restarting the loop before it
+# ever completes even ONE 30-min cycle. Hourly keeps a 2x margin.
+#
+# PACING GATE (Codex round-2 review): `cancel-in-progress` means a
+# workflow_dispatch (or any fresh trigger) CANCELS an in-progress loop and
+# starts a brand-new one — and that new run's first cycle would otherwise
+# fire IMMEDIATELY, with none of the in-loop 30-min pacing applied yet. If
+# it lands soon after the cancelled loop's own last cycle, the two runs'
+# cycles can stack inside one rolling hour — worst case: a cycle at :00, a
+# second at :30 (12 requests so far, per the rate-limit math above), then a
+# workflow_dispatch at :35 that cancels the loop and immediately fires a
+# THIRD 6-request cycle — 18 requests inside that rolling hour, over the
+# ~15/hour limit. Every run (cron, push, OR workflow_dispatch alike) closes
+# this gap the same way, in the "Pacing gate" step below: before touching
+# LL2 at all, it waits out whatever's left of a 30-min gap since the most
+# recent LL2 activity it can find (via scripts/launch_library.mjs's
+# `computePacingWaitMs`), capped at 30 min so an unreadable/missing/
+# implausibly-future history (bootstrapping, a transient fetch hiccup, or
+# clock skew) never blocks longer than one full cycle.
+#
+# DURABLE ATTEMPT RECORD (Codex round-3 review, HIGH): "most recent LL2
+# activity" can NOT be just the published feed's own `generatedAt` — a
+# cycle that spends real LL2 requests and then FAILS (validation, hitting
+# the page cap, or the publish push itself failing) leaves `generatedAt`
+# unchanged at its old value, so a pacing check based on the feed alone
+# sees a "stale" feed and computes `wait = 0`, letting an immediate restart
+# spend MORE requests on top of the failed cycle's already-spent ones —
+# still exceeding the hourly bound even with round-2's gate in place. Fix:
+# EVERY cycle (inside the main loop below) writes a tiny, durable
+# `last_attempt.json` ({attemptedAt, requests}) to the SAME launch-data
+# branch BEFORE ever contacting LL2 — a small, separate commit/push from
+# the feed publish itself, always co-pushed with whatever the branch's
+# OTHER file currently is (carried forward unchanged) so neither push ever
+# wipes the other (the same force-push-wipeout lesson §2 teaches about
+# separate feeds' branches, now also true of this ONE branch's two files).
+# If that attempt-recording push itself fails, the cycle is skipped
+# entirely — LL2 is never contacted without a durable record of the
+# attempt existing first. The Pacing gate reads BOTH `last_attempt.
+# attemptedAt` and the feed's own `generatedAt`, and paces from whichever
+# is more recent — so a failed-but-request-spending cycle still counts.
+# With both fixes together, EVERY 30-min window (not just each run's own
+# loop, and not just successful cycles) is bounded to at most one
+# 6-request cycle, so the true worst case across any rolling hour stays at
+# <=12 requests, workflow_dispatch and mid-cycle failures both included.
+#
+# SAFE TWO-FILE PUBLISHING (Codex round-4 review, HIGH): this branch now
+# carries TWO files (launch_data.json + last_attempt.json), and updating
+# either one must never risk erasing the other. The earlier approach
+# curl'd the "other" (untouched) file's raw content and rebuilt the branch
+# as a fresh orphan commit every time, force-pushed — if that curl failed
+# for ANY reason (a transient network hiccup, unrelated to LL2), the local
+# copy of the untouched file would simply be absent, and the force-push
+# would then ERASE it from the branch for good. Fixed: `push_branch_files`
+# below now does a real, shallow `git clone` of the branch's CURRENT tip
+# (when it already exists) into a clean working tree, replaces only the
+# file(s) actually changing, commits, and pushes NORMALLY — fast-forward,
+# never `-f` — so a push can only ever add a commit, never discard one. If
+# the clone/checkout itself fails, nothing is pushed and the caller skips
+# that cycle entirely, rather than publish from an unknown state. This does
+# mean the branch's history now grows (one small commit per cycle) instead
+# of staying single-commit like the repo's other data branches — an
+# accepted tradeoff: this branch is a private automation artifact, never
+# part of the app's own history, and correctness matters far more here than
+# a few KB of extra git objects over time.
+#
+# scripts/launch_library.mjs is ONE-SHOT: it fetches LL2 (a bounded,
+# paginated pull — see the rate-limit math above), validates, writes
+# launch_data.json, and exits — this workflow's loop calls it fresh every
+# cycle. On a failed/partial fetch the script exits
+# non-zero and writes NOTHING; this job only publishes when the script
+# exits 0 AND its output file exists, so a failed cycle can never re-stamp
+# the PREVIOUSLY published feed with a fresh `generatedAt` (§8) — the old
+# publish just stays live untouched until a cycle succeeds. A successful
+# run with zero qualifying launches right now is still a valid, publishable
+# empty result (§8) — that's the script's call, not this workflow's.
+
+on:
+  schedule:
+    - cron: "0 * * * *" # hourly heartbeat; the loop itself covers the ~4h45m between fires
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/launch-library.yml"
+      - "scripts/launch_library.mjs"
+      - "config/launchPads.ts"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: launch-library
+  cancel-in-progress: true # a new firing restarts a fresh loop (only one ever runs)
+
+jobs:
+  build-feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300 # 5h (GitHub's hard cap is 6h); internal deadline below leaves a buffer
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Pacing gate — wait out any remaining 30-min gap since the last LL2 activity (Codex round 2 + round 3)
+        run: |
+          set +e
+          fetch_field() { # $1 = branch file name, $2 = JSON field name
+            curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/launch-data/$1" 2>/dev/null \
+              | FIELD="$2" node -e '
+                  let d = "";
+                  process.stdin.on("data", (c) => (d += c));
+                  process.stdin.on("end", () => {
+                    try {
+                      const j = JSON.parse(d);
+                      const v = j[process.env.FIELD];
+                      if (typeof v === "string") process.stdout.write(v);
+                    } catch {}
+                  });
+                '
+          }
+          last_generated_at=$(fetch_field launch_data.json generatedAt)
+          last_attempted_at=$(fetch_field last_attempt.json attemptedAt)
+          wait_ms=$(LAST_GENERATED_AT="$last_generated_at" LAST_ATTEMPTED_AT="$last_attempted_at" node -e '
+              import("./scripts/launch_library.mjs").then(({ computePacingWaitMs }) => {
+                const candidates = [process.env.LAST_GENERATED_AT || null, process.env.LAST_ATTEMPTED_AT || null];
+                process.stdout.write(String(computePacingWaitMs(candidates, Date.now())));
+              });
+            ')
+          wait_s=$(( (wait_ms + 999) / 1000 ))
+          if [ "$wait_s" -gt 0 ] 2>/dev/null; then
+            echo "pacing gate: last publish '${last_generated_at:-none}', last attempt '${last_attempted_at:-none}' — waiting ${wait_s}s before this run's first cycle"
+            sleep "$wait_s"
+          else
+            echo "pacing gate: last publish '${last_generated_at:-none}', last attempt '${last_attempted_at:-none}' — no wait needed"
+          fi
+
+      - name: Poll LL2 every 30 minutes for ~4h45m, publishing only on success
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LL2_OUT: ${{ runner.temp }}/launch_data.json
+          ATTEMPT_OUT: ${{ runner.temp }}/last_attempt.json
+        run: |
+          set +e # one bad cycle (a throttled/unreachable LL2) must not kill the loop
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          work="${RUNNER_TEMP}/pub"
+          deadline=$(( $(date +%s) + 17100 )) # ~4h45m, then the next hourly firing takes over
+          max_pages_requests=$(node -e "import('./scripts/launch_library.mjs').then(({ MAX_PAGES }) => process.stdout.write(String(MAX_PAGES * 2)))")
+
+          # Writes launch_data.json (from $1) and/or last_attempt.json (from
+          # $2) — either arg may be "" to mean "leave that file untouched
+          # this call." Codex round-4 (HIGH): the PREVIOUS version of this
+          # function curl'd the "other" (untouched) file's raw content and
+          # always rebuilt the branch as a fresh orphan commit, force-pushed.
+          # If that curl failed (a transient network hiccup, not even an
+          # LL2 problem), the local copy of the untouched file would simply
+          # be ABSENT, and the force-push would then ERASE it from the
+          # branch for good — exactly the data-loss bug §2 warns about,
+          # reintroduced by this file. Fixed: when the branch already
+          # exists, this does a real `git clone --depth 1` of its CURRENT
+          # tip into a clean working tree (so the untouched file is
+          # whatever's REALLY there, never a best-effort curl guess),
+          # replaces only the file(s) actually being written, commits, and
+          # pushes NORMALLY (fast-forward — no `-f`) — so a push can only
+          # ever ADD this commit on top of history, never discard anything.
+          # If the clone/checkout itself fails, this returns non-zero
+          # WITHOUT pushing anything, and the caller skips the cycle rather
+          # than risk publishing from an unknown starting state. Only on
+          # true bootstrap (the branch doesn't exist yet at all) does this
+          # fall back to creating it fresh — there is nothing to preserve
+          # yet, so an orphan first commit is correct and safe.
+          push_branch_files() {
+            new_feed="$1"
+            new_attempt="$2"
+            rm -rf "$work"
+
+            if git ls-remote --exit-code "$remote" launch-data >/dev/null 2>&1; then
+              if ! git clone -q --depth 1 --branch launch-data --single-branch "$remote" "$work" 2>/dev/null; then
+                echo "launch-data branch exists but its current commit could not be fetched — refusing to push (would risk erasing the untouched file)" >&2
+                return 1
+              fi
+              cd "$work" || return 1
+              git config user.name "launch-library-bot"
+              git config user.email "github-actions[bot]@users.noreply.github.com"
+              if [ -n "$new_feed" ] && ! { [ -s "$new_feed" ] && cp "$new_feed" launch_data.json; }; then
+                echo "feed file missing or copy failed — refusing to push" >&2; cd - >/dev/null; return 1
+              fi
+              if [ -n "$new_attempt" ] && ! { [ -s "$new_attempt" ] && cp "$new_attempt" last_attempt.json; }; then
+                echo "attempt file missing or copy failed — refusing to push" >&2; cd - >/dev/null; return 1
+              fi
+              added=0
+              [ -n "$new_feed" ] && [ -s launch_data.json ] && { git add launch_data.json; added=1; }
+              [ -n "$new_attempt" ] && [ -s last_attempt.json ] && { git add last_attempt.json; added=1; }
+              if [ "$added" -ne 1 ]; then cd - >/dev/null; return 1; fi
+              if git diff --cached --quiet; then
+                cd - >/dev/null
+                return 0 # identical content — nothing to commit, not a failure
+              fi
+              git commit -q -m "Launch feed update $(date -u +%FT%TZ)"
+              git push -q "$remote" HEAD:launch-data # fast-forward only — never -f
+              rc=$?
+              cd - >/dev/null
+              return $rc
+            fi
+
+            # Bootstrap: the branch doesn't exist yet — nothing to preserve.
+            mkdir -p "$work"
+            if [ -n "$new_feed" ] && ! { [ -s "$new_feed" ] && cp "$new_feed" "$work/launch_data.json"; }; then
+              echo "feed file missing or copy failed — refusing to push" >&2; return 1
+            fi
+            if [ -n "$new_attempt" ] && ! { [ -s "$new_attempt" ] && cp "$new_attempt" "$work/last_attempt.json"; }; then
+              echo "attempt file missing or copy failed — refusing to push" >&2; return 1
+            fi
+            cd "$work" || return 1
+            git init -q
+            git config user.name "launch-library-bot"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout -q -b launch-data
+            added=0
+            [ -s launch_data.json ] && { git add launch_data.json; added=1; }
+            [ -s last_attempt.json ] && { git add last_attempt.json; added=1; }
+            if [ "$added" -ne 1 ]; then cd - >/dev/null; return 1; fi
+            git commit -q -m "Launch feed update $(date -u +%FT%TZ)"
+            git push -q "$remote" launch-data # first-ever push creating the branch
+            rc=$?
+            cd - >/dev/null
+            return $rc
+          }
+
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            start=$(date +%s)
+
+            # Record the attempt BEFORE contacting LL2 (Codex round 3): a
+            # cycle that spends requests and then fails must still be
+            # visible to the NEXT run's pacing gate, so this durable record
+            # is written and pushed FIRST — carrying the current
+            # launch_data.json forward unchanged. If this push itself
+            # fails, LL2 is never contacted this cycle at all.
+            node -e "require('node:fs').writeFileSync(process.argv[1], JSON.stringify({ attemptedAt: new Date().toISOString(), requests: ${max_pages_requests} }))" "${ATTEMPT_OUT}"
+            if ! push_branch_files "" "${ATTEMPT_OUT}"; then
+              echo "attempt-record push failed — skipping this cycle's LL2 call entirely (never call LL2 without a durable attempt record)"
+              rem=$(( 1800 - ($(date +%s) - start) ))
+              [ "$rem" -lt 30 ] && rem=30
+              sleep "$rem"
+              continue
+            fi
+
+            rm -f "${LL2_OUT}"
+            if node scripts/launch_library.mjs --out "${LL2_OUT}" && [ -s "${LL2_OUT}" ]; then
+              # Script exited 0 AND actually wrote output (incl. a valid
+              # empty result, §8) — publish it, carrying the just-written
+              # attempt record forward unchanged. A non-zero exit or a
+              # missing/empty file means the script itself already decided
+              # this cycle failed and wrote nothing; the feed is left
+              # untouched (§8) — but last_attempt.json already recorded the
+              # attempt above, so the next pacing check still sees it.
+              push_branch_files "${LL2_OUT}" "" && echo "published $(date -u +%FT%TZ)" || echo "publish step failed; feed left untouched, will retry next cycle"
+            else
+              echo "cycle failed (LL2 fetch/validation) — feed left untouched; the attempt was still recorded for pacing"
+            fi
+            rem=$(( 1800 - ($(date +%s) - start) )) # pace to ~30-min cycles
+            [ "$rem" -lt 30 ] && rem=30
+            sleep "$rem"
+          done

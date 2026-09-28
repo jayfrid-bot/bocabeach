@@ -872,6 +872,299 @@ describe("POST /api/push/run", () => {
     });
   });
 
+  // --- Sky-events "coming up" alert (Phase 3, SKY_EVENTS_PLAN.md §10) ------
+  describe("coming-up alert", () => {
+    const NOW_ISO = "2026-09-02T12:00:00Z"; // 08:00 America/New_York — boca-raton's morning hour
+    const NOW_MS = Date.parse(NOW_ISO);
+
+    /** A single alert-eligible launch — Go, Minute precision, 6h ahead of
+     *  NOW_MS, a fresh feed. This is a raw `skyAlertCandidates` entry (the
+     *  UNCAPPED list, HIGH #2), not a "Coming up" card row. */
+    function launchEvent(over: Record<string, unknown> = {}) {
+      const net = new Date(NOW_MS + 6 * 3600 * 1000).toISOString();
+      return {
+        eventType: "launch",
+        ll2Id: "uuid-test-1",
+        name: "SpaceX Falcon 9",
+        net,
+        netPrecision: "Minute",
+        windowStart: net,
+        windowEnd: new Date(Date.parse(net) + 30 * 60_000).toISOString(),
+        status: "Go",
+        padId: 235,
+        padLocationId: 143,
+        observerLightState: "twilight",
+        padLightState: "night",
+        rangeTier: "near",
+        knownOrbital: true,
+        whereToLook: { bearingDeg: 349, line: "bearing 349° (nearly due north)" },
+        rating: null,
+        source: {
+          feedGeneratedAt: new Date(NOW_MS - 5 * 60_000).toISOString(),
+          validThrough: new Date(NOW_MS + 24 * 3600 * 1000).toISOString(),
+        },
+        ...over,
+      };
+    }
+
+    function withSkyCandidates(skyAlertCandidates: unknown[]) {
+      ctl.conditions = {
+        ...CONDITIONS,
+        snapshot: { ...CONDITIONS.snapshot, skyAlertCandidates },
+      } as unknown as ConditionsResponse;
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date(NOW_ISO));
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("appends the event to the morning digest instead of sending a second push, when both are due", async () => {
+      await seedDevice();
+      const store = await getStore();
+      await store.upsertDevice(DEV, { prefs: { "coming-up": true } });
+      withSkyCandidates([launchEvent()]);
+
+      const body = (await (await run()).json()) as Record<string, number>;
+      expect(body.sent).toBe(1);
+      expect(body.morning).toBe(1);
+      expect(body.comingUp).toBe(0); // appended, not standalone
+      expect(ctl.fcmMessages).toHaveLength(1);
+      expect(ctl.fcmMessages[0].body).toMatch(/SpaceX Falcon 9 is targeting/);
+
+      // The durable once-ever record is written for the event's own key.
+      expect(await store.lastAlert(DEV, "launch:uuid-test-1")).not.toBeNull();
+    });
+
+    it("sends a standalone push when coming-up is on but the morning digest is off", async () => {
+      await seedDevice();
+      const store = await getStore();
+      await store.upsertDevice(DEV, { prefs: { morning: false, "coming-up": true } });
+      withSkyCandidates([launchEvent()]);
+
+      const body = (await (await run()).json()) as Record<string, number>;
+      expect(body.morning).toBe(0);
+      expect(body.comingUp).toBe(1);
+      expect(body.sent).toBe(1);
+      expect(ctl.fcmMessages).toHaveLength(1);
+      expect(ctl.fcmMessages[0].body).toMatch(/SpaceX Falcon 9 is targeting/);
+      expect(await store.lastAlert(DEV, "launch:uuid-test-1")).not.toBeNull();
+    });
+
+    it("never sends anything while coming-up stays at its default (off), even with an eligible event present", async () => {
+      await seedDevice(); // coming-up left at its default: false
+      withSkyCandidates([launchEvent()]);
+      const body = (await (await run()).json()) as Record<string, number>;
+      expect(body.comingUp).toBe(0);
+      expect(ctl.fcmMessages).toHaveLength(1); // just the ordinary morning digest
+      expect(ctl.fcmMessages[0].body).not.toMatch(/SpaceX/);
+    });
+
+    it("no overnight delivery: outside the 8 AM run (and no ?force=), a standalone push never fires even though the event is eligible", async () => {
+      vi.setSystemTime(new Date("2026-09-02T18:00:00Z")); // 2 PM America/New_York — not the morning hour
+      await seedDevice();
+      const store = await getStore();
+      await store.upsertDevice(DEV, { prefs: { morning: false, "coming-up": true } });
+      withSkyCandidates([launchEvent()]);
+      const body = (await (await run()).json()) as Record<string, number>;
+      expect(body.comingUp).toBe(0);
+      expect(ctl.fcmMessages).toEqual([]);
+    });
+
+    it("?force=morning never fires or consumes a coming-up alert — the weather-summary test path only", async () => {
+      await seedDevice();
+      const store = await getStore();
+      // Morning off so the digest can't be what's masking this: if force
+      // were touching coming-up at all, it would have to go out standalone.
+      await store.upsertDevice(DEV, { prefs: { morning: false, "coming-up": true } });
+      withSkyCandidates([launchEvent()]);
+      const body = (await (await run("?force=morning")).json()) as Record<string, number>;
+      expect(body.comingUp).toBe(0);
+      expect(ctl.fcmMessages).toEqual([]);
+      // Not even claimed — a later REAL 8 AM run must still see it fresh.
+      expect(await store.lastAlert(DEV, "launch:uuid-test-1")).toBeNull();
+    });
+
+    it("mode=safety never runs the coming-up path (no ad-hoc send outside the normal digest run)", async () => {
+      await seedDevice();
+      const store = await getStore();
+      await store.upsertDevice(DEV, { prefs: { morning: false, "coming-up": true } });
+      withSkyCandidates([launchEvent()]);
+      const body = (await (await run("?mode=safety")).json()) as Record<string, number>;
+      expect(body.comingUp).toBe(0);
+      expect(ctl.fcmMessages).toEqual([]);
+    });
+
+    it("does not send twice: a device already alerted about this exact event gets nothing on a later run", async () => {
+      await seedDevice();
+      const store = await getStore();
+      await store.upsertDevice(DEV, { prefs: { "coming-up": true } });
+      withSkyCandidates([launchEvent()]);
+      await run(); // first run: appends + completes the claim
+      ctl.fcmMessages = [];
+      // A second run the same morning (e.g. the 5-min cron firing again) — the
+      // digest itself is already sent today (dedup), and the event's own
+      // once-ever record blocks a repeat regardless.
+      const body = (await (await run()).json()) as Record<string, number>;
+      expect(body.comingUp).toBe(0);
+      expect(body.morning).toBe(0); // today's digest already sent
+    });
+
+    it("HIGH #1: a coming-up-only device (morning AND score-excellent both off) still makes its beach due", async () => {
+      await seedDevice();
+      const store = await getStore();
+      await store.upsertDevice(DEV, { prefs: { morning: false, "score-excellent": false, "coming-up": true } });
+      withSkyCandidates([launchEvent()]);
+      const body = (await (await run()).json()) as Record<string, number>;
+      // Without the fix, this beach would never be selected into `bySlug` at
+      // all (nothing else marks it due or even candidate), and none of this
+      // would fire.
+      expect(body.beaches).toBe(1);
+      expect(body.comingUp).toBe(1);
+      expect(ctl.fcmMessages).toHaveLength(1);
+      expect(ctl.fcmMessages[0].body).toMatch(/SpaceX Falcon 9 is targeting/);
+    });
+
+    it("MED #9: coalesces into 'turned Excellent' instead of a second push, when both are due the same run", async () => {
+      await seedDevice();
+      const store = await getStore();
+      await store.upsertDevice(DEV, { prefs: { morning: false, "coming-up": true } });
+      // A 90+ score triggers "turned Excellent"; excellentDecision's own
+      // isDaylight check reads snapshot.sun directly (not the mocked
+      // computeSunTimes, which only gates slugConditionsNeed's candidacy
+      // check) — an always-daylight sun row, same as the beach-local
+      // scheduling tests below use.
+      ctl.conditions = {
+        ...CONDITIONS,
+        score: { ...CONDITIONS.score, score: 95, rating: "Excellent" },
+        snapshot: {
+          ...CONDITIONS.snapshot,
+          sun: wrapped({ date: "2026-09-02", sunrise: "1970-01-01T00:00:00Z", sunset: "2100-01-01T00:00:00Z" }),
+          skyAlertCandidates: [launchEvent()],
+        },
+      } as unknown as ConditionsResponse;
+
+      const body = (await (await run()).json()) as Record<string, number>;
+      expect(body.excellent).toBe(1);
+      expect(body.comingUp).toBe(0); // coalesced, not a second standalone push
+      expect(body.morning).toBe(0);
+      expect(ctl.fcmMessages).toHaveLength(1); // ONE push total, not two
+      expect(ctl.fcmMessages[0].body).toMatch(/turned Excellent/);
+      expect(ctl.fcmMessages[0].body).toMatch(/SpaceX Falcon 9 is targeting/);
+      // Still counted as an inclusion in the durable ledger/cap accounting.
+      expect(await store.lastAlert(DEV, "launch:uuid-test-1")).not.toBeNull();
+    });
+
+    it("MED #8: a failed standalone send releases the claim for retry, and never double-sends once it succeeds", async () => {
+      await seedDevice();
+      const store = await getStore();
+      await store.upsertDevice(DEV, { prefs: { morning: false, "coming-up": true } });
+      withSkyCandidates([launchEvent()]);
+
+      // First attempt: the transport fails transiently (not a dead token).
+      ctl.sendResult = { ok: false, dead: false };
+      const first = (await (await run()).json()) as Record<string, number>;
+      expect(first.comingUp).toBe(0);
+      expect(await store.lastAlert(DEV, "launch:uuid-test-1")).toBeNull(); // never confirmed
+
+      // Retried on a later tick: the SAME reservation (coming_up_deliveries
+      // is the SOLE claim for this path, MED #8) is still claimable, since
+      // the failed attempt released it rather than leaving it stuck.
+      ctl.sendResult = { ok: true, dead: false };
+      ctl.fcmMessages = [];
+      const second = (await (await run()).json()) as Record<string, number>;
+      expect(second.comingUp).toBe(1);
+      expect(ctl.fcmMessages).toHaveLength(1);
+      expect(await store.lastAlert(DEV, "launch:uuid-test-1")).not.toBeNull();
+
+      // A third tick never sends it again — the once-ever record blocks it.
+      ctl.fcmMessages = [];
+      const third = (await (await run()).json()) as Record<string, number>;
+      expect(third.comingUp).toBe(0);
+      expect(ctl.fcmMessages).toEqual([]);
+    });
+
+    it("HIGH round 3: morning off + excellent OFF + coming-up on + a transient standalone failure — the beach stays due (never wrongly 'checked') and the alert lands exactly once on retry", async () => {
+      await seedDevice();
+      const store = await getStore();
+      // Excellent explicitly off too (not just under-threshold) — the exact
+      // scenario the regression needed: with NEITHER other path attempted
+      // this run, comingUpCheckedDate must not be persisted before the
+      // standalone send's own outcome is known.
+      await store.upsertDevice(DEV, { prefs: { morning: false, "score-excellent": false, "coming-up": true } });
+      withSkyCandidates([launchEvent()]);
+
+      ctl.sendResult = { ok: false, dead: false }; // transient transport failure
+      const first = (await (await run()).json()) as Record<string, number>;
+      expect(first.comingUp).toBe(0);
+      expect(await store.lastAlert(DEV, "launch:uuid-test-1")).toBeNull();
+
+      // The regression: deliverMorning used to persist comingUpCheckedDate
+      // BEFORE the standalone send even ran, so — even though the failed
+      // send correctly released the coming_up_deliveries reservation — the
+      // beach itself would never be selected into `bySlug` again this hour
+      // (slugConditionsNeed sees comingUpCheckedDate already set to today
+      // and stops calling it due), so `beaches` would read 0 here and the
+      // retry below would silently never happen.
+      ctl.sendResult = { ok: true, dead: false };
+      ctl.fcmMessages = [];
+      const second = (await (await run()).json()) as Record<string, number>;
+      expect(second.beaches).toBe(1); // the beach was actually revisited
+      expect(second.comingUp).toBe(1); // delivered exactly once, this retry
+      expect(ctl.fcmMessages).toHaveLength(1);
+      expect(ctl.fcmMessages[0].body).toMatch(/SpaceX Falcon 9 is targeting/);
+      expect(await store.lastAlert(DEV, "launch:uuid-test-1")).not.toBeNull();
+
+      // A further tick never sends it again — the once-ever record blocks it.
+      ctl.fcmMessages = [];
+      const third = (await (await run()).json()) as Record<string, number>;
+      expect(third.comingUp).toBe(0);
+      expect(ctl.fcmMessages).toEqual([]);
+    });
+
+    it("Codex round-4 HIGH: a concurrent run's live claim leaves this device 'in-flight' (stays due), and the retry after it's released delivers exactly once", async () => {
+      await seedDevice();
+      const store = await getStore();
+      await store.upsertDevice(DEV, { prefs: { morning: false, "score-excellent": false, "coming-up": true } });
+      withSkyCandidates([launchEvent()]);
+      const eventKey = "launch:uuid-test-1";
+
+      // Simulate run "A" already holding a live reservation for this exact
+      // event — e.g. the 5-min Worker cron and the hourly GitHub Actions
+      // fallback overlapping.
+      await store.claimComingUp(DEV, eventKey, "tok-A", Date.now());
+
+      // Run "B" (this route, racing A): sees the claim is in-flight, sends
+      // nothing, and — the actual regression — must NOT mark the device
+      // "checked" for today, since A hasn't resolved it yet.
+      const first = (await (await run()).json()) as Record<string, number>;
+      expect(first.comingUp).toBe(0);
+      expect(ctl.fcmMessages).toEqual([]);
+
+      // A's own attempt fails transiently and releases its claim.
+      await store.releaseComingUp(DEV, eventKey, "tok-A");
+
+      // B's retry (a later pass): the beach is still due (never wrongly
+      // "checked" while A's claim was live), claims fresh, and delivers
+      // exactly once.
+      const second = (await (await run()).json()) as Record<string, number>;
+      expect(second.beaches).toBe(1);
+      expect(second.comingUp).toBe(1);
+      expect(ctl.fcmMessages).toHaveLength(1);
+      expect(await store.lastAlert(DEV, eventKey)).not.toBeNull();
+
+      // Never delivered a second time.
+      ctl.fcmMessages = [];
+      const third = (await (await run()).json()) as Record<string, number>;
+      expect(third.comingUp).toBe(0);
+      expect(ctl.fcmMessages).toEqual([]);
+    });
+
+  });
+
   // --- Scheduling runs on the BEACH's clock, never the phone's (#13) --------
   describe("beach-local scheduling", () => {
     afterEach(() => {

@@ -54,6 +54,42 @@ export function installTokenMatches(storedHash: string, candidateToken: string):
 
 export type LiveActivityStatus = "active" | "ended";
 
+// --- "Coming up" sky-events alert ledger (migrations/0011_coming_up_ ------
+// --- deliveries.sql, docs/SKY_EVENTS_PLAN.md §10, lib/db/comingUpClaims.ts)
+
+export type ComingUpDeliveryStatus = "reserved" | "sent";
+
+/** One `coming_up_deliveries` row, camelCase — mirrors the D1 columns 1:1. */
+export interface ComingUpDeliveryRow {
+  deviceId: string;
+  eventKey: string;
+  claimToken: string;
+  claimedAt: number;
+  sentAt: number | null;
+  status: ComingUpDeliveryStatus;
+}
+
+/**
+ * `claimComingUp`'s outcome (Codex round-4 HIGH — a bare boolean can't tell
+ * "someone else's claim is still live, try again once it resolves" apart
+ * from "this event is permanently done for this device", and the caller
+ * needs that distinction to decide whether the device should stay `due`:
+ *  - `"claimed"`: this call won the reservation — go ahead and build/send.
+ *  - `"already-sent"`: `alert_log` already has this exact event for this
+ *    device — the once-ever dedupe. Nothing to retry, ever.
+ *  - `"capped"`: no once-ever record, but the device's 24h/30d cap is
+ *    already used up. Nothing to retry THIS event this run, and retrying
+ *    sooner won't help (the cap window hasn't moved) — but a DIFFERENT
+ *    event next hour might.
+ *  - `"in-flight"`: another run currently holds a live (non-abandoned)
+ *    reservation for this exact (device, event) pair — a genuine race, not
+ *    a terminal outcome. The caller must NOT mark this device "checked"
+ *    for today: it should stay `due` so a LATER pass can see whether the
+ *    other run finished (→ `already-sent` next time) or abandoned its claim
+ *    (→ reclaimable next time).
+ */
+export type ComingUpClaimResult = "claimed" | "already-sent" | "capped" | "in-flight";
+
 /** One `live_activities` row, camelCase — mirrors the D1 columns 1:1. */
 export interface LiveActivityRow {
   activityId: string;
@@ -172,7 +208,27 @@ export interface DeviceStore {
   setPresence(deviceId: string, p: PresenceInput): Promise<void>;
   clearPresence(deviceId: string): Promise<void>;
   getSent(deviceId: string): Promise<SentState>;
+  /** Replace the WHOLE sent-state blob — a field left out of `sent` is
+   *  CLEARED, not preserved (the opposite of `patchSent` below). Callers
+   *  that only mean to update one or two fields alongside whatever else is
+   *  already there want `patchSent`, not this. */
   setSent(deviceId: string, sent: SentState): Promise<void>;
+  /**
+   * Atomically merge `patch`'s keys into the device's CURRENT sent-state —
+   * a field the caller doesn't mention is left exactly as it is, even if
+   * another concurrent call changes it in between (Codex round-4 HIGH: the
+   * push route's home-digest loop and the at-beach/hourly-fallback runs can
+   * overlap, each merging a DIFFERENT field — `morningDate` vs
+   * `comingUpCheckedDate` — off the SAME request-start snapshot; a
+   * wholesale `setSent({...stale, ...patch})` from either one can silently
+   * erase the other's write). D1 does this with a single `json_patch` SQL
+   * UPDATE (no read-then-write); the memory backend's own no-await-between-
+   * read-and-write guarantee gets there without one. A key set to
+   * `undefined` in `patch` is treated as "not mentioned", same as every
+   * other patch shape in this file — `SentState` has no nullable fields, so
+   * there is no "explicitly clear" case to support here.
+   */
+  patchSent(deviceId: string, patch: Partial<SentState>): Promise<void>;
   lastAlert(deviceId: string, key: string): Promise<AlertMark | null>;
   markAlert(deviceId: string, key: string, at: number, meta?: unknown): Promise<void>;
   /** Import legacy KV push subscriptions. Idempotent: a token that already has
@@ -401,6 +457,61 @@ export interface DeviceStore {
    *  clock-injectable like every other method here). Returns how many rows
    *  were deleted. */
   purgeLiveActivities(cutoffMs: number): Promise<number>;
+
+  // --- "Coming up" sky-events alert ledger (migrations/0011_coming_up_ ----
+  // --- deliveries.sql, docs/SKY_EVENTS_PLAN.md §10) ------------------------
+  //
+  // Every clock is an explicit `nowMs` parameter — no `Date.now()` inside
+  // any of these, same SSR-safety rule as every other clock-taking method
+  // here (§9).
+  /**
+   * Atomically reserve the right to deliver `eventKey` to `deviceId`, or
+   * refuse on any of three independent grounds (§10, discriminated per
+   * `ComingUpClaimResult` above — Codex round-4 HIGH): (a) `eventKey`
+   * already has a row in `alert_log` for this device — the once-ever
+   * dedupe, which survives `coming_up_deliveries` being pruned, since
+   * `alert_log` is the durable record, not this ledger (→ `"already-sent"`);
+   * (b) granting the reservation would push this device's SENT rows plus
+   * still-live (non-abandoned) reservations, within the trailing 24-hour or
+   * 30-day window, to or past the cap (`COMING_UP_MAX_PER_24H`/
+   * `COMING_UP_MAX_PER_30D`, lib/db/comingUpClaims.ts) (→ `"capped"`); or
+   * (c) a DIFFERENT, still-live (non-abandoned) reservation for this exact
+   * (deviceId, eventKey) already exists — another run got there first and
+   * hasn't finished yet (→ `"in-flight"`, never treated as terminal by a
+   * caller). All checks and the reservation insert happen atomically. A
+   * previously ABANDONED reservation for the same (deviceId, eventKey) —
+   * unsent and older than `ABANDONED_CLAIM_MS` — may be reclaimed with a
+   * fresh token, re-checked against the caps at the moment of reclaim
+   * (→ `"claimed"`).
+   */
+  claimComingUp(deviceId: string, eventKey: string, claimToken: string, nowMs: number): Promise<ComingUpClaimResult>;
+  /**
+   * Confirm a claimed send: sets `sent_at = nowMs` on the reservation AND
+   * writes the durable `alert_log` row (`alert_key = eventKey`) — together,
+   * in one atomic write, so a crash between the two can never leave the
+   * ledger and the once-ever dedupe record disagreeing. Only the caller
+   * holding the CURRENT `claim_token` for this row may complete it — a
+   * stale claimant that lost a race to a newer (reclaimed) token silently
+   * does nothing.
+   */
+  completeComingUp(deviceId: string, eventKey: string, claimToken: string, nowMs: number): Promise<void>;
+  /**
+   * Release a claimed-but-unsent reservation immediately (a transient send
+   * failure, a dead token, or a decision not to send after all) — only when
+   * the caller's token still matches the stored one, same stale-claimant
+   * guard as `completeComingUp`. Freeing the row right away (rather than
+   * waiting out `ABANDONED_CLAIM_MS`) lets a genuinely failed attempt not
+   * count against the cap for the full abandonment window.
+   */
+  releaseComingUp(deviceId: string, eventKey: string, claimToken: string): Promise<void>;
+  /**
+   * Prune two kinds of row (§10): SENT rows older than
+   * `COMING_UP_RETENTION_MS` (30 days — the cap math needs the full
+   * window), and UNSENT rows past `ABANDONED_CLAIM_MS` regardless of age
+   * (a crashed reservation must not sit forever). Called on the same
+   * cadence other pruning already runs on (`pruneSendClaims`).
+   */
+  pruneComingUp(nowMs: number): Promise<void>;
 }
 
 /**

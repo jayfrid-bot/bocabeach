@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getConditions } from "@/lib/conditions";
+import { getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
 
 // Cached at the edge for 5 min; individual upstream calls have their own revalidate.
 export const revalidate = 300;
@@ -39,7 +39,10 @@ export async function GET(
   }
   // budgetAborted (lib/conditions.ts, Codex round-5 #1) is an internal
   // signal for push-run consumers only — never expose it in public JSON.
-  const { budgetAborted: _budgetAborted, ...publicData } = data;
+  // skyAlertCandidates (Codex round-2 review HIGH #2) is the uncapped
+  // sky-event alert-selection pool nested in `snapshot` — stripped by
+  // stripInternalSnapshotFields before the top-level destructure below.
+  const { budgetAborted: _budgetAborted, ...publicData } = stripInternalSnapshotFields(data);
 
   // `?fresh=1` ONLY (components/ConditionsDashboard.tsx's staleness retry,
   // Codex round 3): earlier versions used a unique `Date.now()` value with

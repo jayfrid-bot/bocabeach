@@ -52,6 +52,7 @@ import { FeelsLikeCard } from "@/components/FeelsLikeCard";
 import { SunQualityCard } from "@/components/SunQualityCard";
 import { WaterTrendCard } from "@/components/WaterTrendCard";
 import { RipRiskCard } from "@/components/RipRiskCard";
+import { SkyEventsCard } from "@/components/SkyEventsCard";
 import { SeasonalHazards } from "@/components/SeasonalHazards";
 import { seaweedVsAvgPhrase } from "@/lib/vsAveragePhrase";
 import { clarityTileCopy } from "@/lib/sources/clarity";
@@ -1141,6 +1142,27 @@ export function ConditionsDashboard({
           }
         />
       </section>
+
+      {/* "Coming up" sky events (moon/eclipse, meteor showers, king-tide
+          flooding, rocket launches) — placed right after Tides/Sun & moon:
+          it's the natural continuation of both (lunar events pair with Sun &
+          moon; the king-tide-flooding row pairs with Tides), and its own
+          full-width layout (see SkyEventsCard.tsx's file header) doesn't fit
+          the 2-up grid those two cards share above. `nowMs` is the same
+          pinned-then-live clock every other time-aware element on this page
+          uses (SSR/first paint = the snapshot's own generatedAt via
+          generatedMs; a live tick takes over after mount, see the nowMs
+          derivation above) — SkyEventsCard.tsx layers its own client-only
+          countdown clock on top of it the same hydration-safe way
+          SunQualityCard/RipRiskCard already do. Gated on `snap.skyEvents`
+          itself (not just the component's own internal null-check) so an
+          empty beach never even gets an empty section wrapper in the DOM —
+          the card must hide entirely, never an empty/placeholder card. */}
+      {snap.skyEvents ? (
+        <section className="mb-6">
+          <SkyEventsCard data={snap.skyEvents} tz={tz} nowMs={nowMs} />
+        </section>
+      ) : null}
 
       {/* Always-on seasonal heads-up (SE-US-Atlantic beaches only) — a calm,
           glanceable "what's in the water" reference for man-o'-war, sea lice, and

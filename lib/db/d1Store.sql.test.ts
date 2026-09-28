@@ -24,6 +24,11 @@ import {
   type D1Stmt,
 } from "@/lib/db/d1Store";
 import type { DeviceStore } from "@/lib/db/store";
+import {
+  ABANDONED_CLAIM_MS as COMING_UP_ABANDONED_CLAIM_MS,
+  COMING_UP_24H_MS,
+  COMING_UP_30D_MS,
+} from "@/lib/db/comingUpClaims";
 
 let DatabaseSyncCtor: (new (path: string) => {
   exec(sql: string): void;
@@ -627,6 +632,194 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       expect(deleted).toBe(1);
       const remaining = await store.listLiveActivitiesForDevice("dev-1");
       expect(remaining.map((r) => r.activityId)).toEqual(["active"]);
+    });
+  });
+
+  // --- coming_up_deliveries — real atomic claim (SKY_EVENTS_PLAN.md §10) ---
+  describe("coming-up alert ledger — real atomic claim/complete/release/prune", () => {
+    const NOW = 2_000_000_000_000;
+
+    it("claims a fresh event, then completeComingUp writes sent_at AND alert_log in one go", async () => {
+      const claimed = await store.claimComingUp("dev-1", "eclipse:2027-03-08T06:58:00Z", "tok-1", NOW);
+      expect(claimed).toBe("claimed");
+      await store.completeComingUp("dev-1", "eclipse:2027-03-08T06:58:00Z", "tok-1", NOW + 1000);
+      const mark = await store.lastAlert("dev-1", "eclipse:2027-03-08T06:58:00Z");
+      expect(mark?.sentAt).toBe(NOW + 1000);
+    });
+
+    it("once-ever dedupe: a second claim for the SAME event fails after alert_log has the row — even after the ledger row is pruned", async () => {
+      await store.claimComingUp("dev-2", "launch:uuid-1", "tok-1", NOW);
+      await store.completeComingUp("dev-2", "launch:uuid-1", "tok-1", NOW);
+      expect(await store.claimComingUp("dev-2", "launch:uuid-1", "tok-2", NOW + HOUR)).toBe("already-sent");
+      // Prune the ledger row away (it's well past the 30-day retention) —
+      // the durable alert_log record survives pruning and still blocks a
+      // fresh claim for the identical event.
+      await store.pruneComingUp(NOW + COMING_UP_30D_MS + DAY);
+      expect(
+        await store.claimComingUp("dev-2", "launch:uuid-1", "tok-3", NOW + COMING_UP_30D_MS + DAY),
+      ).toBe("already-sent");
+    });
+
+    it("24-hour cap: a second DIFFERENT event within 24h is refused once one has already sent", async () => {
+      await store.claimComingUp("dev-3", "tide:8722670:2027-01-01T00:00:00Z", "tok-1", NOW);
+      await store.completeComingUp("dev-3", "tide:8722670:2027-01-01T00:00:00Z", "tok-1", NOW);
+      expect(await store.claimComingUp("dev-3", "supermoon:2027-01-02T00:00:00Z", "tok-2", NOW + HOUR)).toBe(
+        "capped",
+      );
+      // Outside the 24h window, the 24h cap no longer blocks it (the 30-day
+      // cap, still under 3, doesn't either).
+      expect(
+        await store.claimComingUp("dev-3", "supermoon:2027-01-02T00:00:00Z", "tok-3", NOW + COMING_UP_24H_MS + 1),
+      ).toBe("claimed");
+    });
+
+    it("30-day cap: a 4th distinct event within 30 days is refused, spaced beyond the 24h cap", async () => {
+      const SPACING = COMING_UP_24H_MS + HOUR; // clears the 24h cap each time
+      for (let i = 0; i < 3; i++) {
+        const key = `meteor:perseids:202${i}`;
+        const t = NOW + i * SPACING;
+        expect(await store.claimComingUp("dev-4", key, `tok-${i}`, t)).toBe("claimed");
+        await store.completeComingUp("dev-4", key, `tok-${i}`, t);
+      }
+      const t4 = NOW + 3 * SPACING;
+      expect(await store.claimComingUp("dev-4", "meteor:geminids:2030", "tok-3", t4)).toBe("capped");
+      // Past the 30-day window from the FIRST send, the oldest send ages out
+      // of the cap count and a new event is claimable again.
+      const t5 = NOW + COMING_UP_30D_MS + HOUR;
+      expect(await store.claimComingUp("dev-4", "meteor:geminids:2030", "tok-4", t5)).toBe("claimed");
+    });
+
+    it("a live (non-abandoned) reservation cannot be reclaimed by a second caller", async () => {
+      await store.claimComingUp("dev-5", "launch:uuid-2", "tok-1", NOW);
+      expect(await store.claimComingUp("dev-5", "launch:uuid-2", "tok-2", NOW + 1000)).toBe("in-flight");
+    });
+
+    it("an ABANDONED reservation (unsent, past ABANDONED_CLAIM_MS) can be reclaimed with a fresh token", async () => {
+      await store.claimComingUp("dev-6", "launch:uuid-3", "tok-1", NOW);
+      const reclaimAt = NOW + COMING_UP_ABANDONED_CLAIM_MS + 1;
+      expect(await store.claimComingUp("dev-6", "launch:uuid-3", "tok-2", reclaimAt)).toBe("claimed");
+    });
+
+    it("token race: a stale claimant (lost to a reclaim) cannot complete or release the newer claim", async () => {
+      await store.claimComingUp("dev-7", "launch:uuid-4", "tok-old", NOW);
+      const reclaimAt = NOW + COMING_UP_ABANDONED_CLAIM_MS + 1;
+      await store.claimComingUp("dev-7", "launch:uuid-4", "tok-new", reclaimAt);
+      // The stale token can neither confirm nor clear the row the new token
+      // now owns.
+      await store.completeComingUp("dev-7", "launch:uuid-4", "tok-old", reclaimAt + 1);
+      expect(await store.lastAlert("dev-7", "launch:uuid-4")).toBeNull();
+      await store.releaseComingUp("dev-7", "launch:uuid-4", "tok-old");
+      // The current (new-token) reservation is still there and still
+      // completable by its OWN token.
+      await store.completeComingUp("dev-7", "launch:uuid-4", "tok-new", reclaimAt + 2);
+      expect((await store.lastAlert("dev-7", "launch:uuid-4"))?.sentAt).toBe(reclaimAt + 2);
+    });
+
+    it("releaseComingUp frees the reservation immediately so a fresh claim succeeds right away", async () => {
+      await store.claimComingUp("dev-8", "launch:uuid-5", "tok-1", NOW);
+      await store.releaseComingUp("dev-8", "launch:uuid-5", "tok-1");
+      expect(await store.claimComingUp("dev-8", "launch:uuid-5", "tok-2", NOW + 1)).toBe("claimed");
+    });
+
+    it("pruneComingUp deletes a SENT row past 30 days and an ABANDONED unsent row past ABANDONED_CLAIM_MS, but keeps a live reservation and a recent sent row", async () => {
+      // Direct raw-DB access alongside the store, so this test can inspect
+      // `coming_up_deliveries` rows directly — `alert_log`'s once-ever
+      // dedupe would otherwise mask whether a SENT row's LEDGER row (as
+      // opposed to its durable alert_log record) actually got pruned.
+      const raw = freshRawDb();
+      if (!raw) return;
+      const rawStore = d1Store(raw);
+      const rowExists = async (deviceId: string, eventKey: string): Promise<boolean> => {
+        const row = await raw
+          .prepare("SELECT 1 FROM coming_up_deliveries WHERE device_id = ? AND event_key = ?")
+          .bind(deviceId, eventKey)
+          .first();
+        return row != null;
+      };
+
+      // Four different devices, one row each, so the 24h/30d CAP logic
+      // (covered by its own tests above) can never interfere with this
+      // test's only concern: which rows `pruneComingUp` removes.
+      const pruneAt = NOW + 40 * DAY;
+
+      // Sent 40 days before pruneAt → past the 30-day retention → its LEDGER
+      // row is pruned (its `alert_log` record is untouched — separately
+      // covered by the once-ever-after-prune test above).
+      await rawStore.claimComingUp("dev-sent-old", "k", "t1", NOW);
+      await rawStore.completeComingUp("dev-sent-old", "k", "t1", NOW);
+
+      // Sent only 5 days before pruneAt → still within 30 days → kept.
+      const recentSentAt = pruneAt - 5 * DAY;
+      await rawStore.claimComingUp("dev-sent-recent", "k", "t2", recentSentAt);
+      await rawStore.completeComingUp("dev-sent-recent", "k", "t2", recentSentAt);
+
+      // Claimed 1 hour before pruneAt, never sent — well past
+      // ABANDONED_CLAIM_MS (10 min), even though it's not otherwise "old" →
+      // pruned regardless of age.
+      await rawStore.claimComingUp("dev-abandoned", "k", "t3", pruneAt - HOUR);
+
+      // Claimed 1 minute before pruneAt, never sent — still inside the
+      // abandonment window → a live reservation, kept.
+      await rawStore.claimComingUp("dev-still-live", "k", "t4", pruneAt - 60_000);
+
+      await rawStore.pruneComingUp(pruneAt);
+
+      expect(await rowExists("dev-sent-old", "k")).toBe(false);
+      expect(await rowExists("dev-abandoned", "k")).toBe(false);
+      expect(await rowExists("dev-sent-recent", "k")).toBe(true);
+      expect(await rowExists("dev-still-live", "k")).toBe(true);
+    });
+
+    it("device deletion removes this device's coming_up_deliveries rows", async () => {
+      await store.upsertDevice("dev-10", {});
+      await store.claimComingUp("dev-10", "launch:uuid-6", "tok-1", NOW);
+      await store.completeComingUp("dev-10", "launch:uuid-6", "tok-1", NOW);
+      await store.deleteDevice("dev-10");
+      // The device's own row is gone from the ledger — a fresh claim for the
+      // SAME event now succeeds (alert_log was also cleared by deleteDevice,
+      // same as every other per-device table).
+      expect(await store.claimComingUp("dev-10", "launch:uuid-6", "tok-2", NOW + 1)).toBe("claimed");
+    });
+  });
+
+  // --- patchSent — real json_patch UPDATE (Codex round-4 HIGH) -------------
+  describe("patchSent — atomic partial merge via the real json_patch SQL", () => {
+    it("merges a partial patch onto whatever's already there, leaving other keys untouched", async () => {
+      await store.upsertDevice("dev-p1", {});
+      await store.setSent("dev-p1", { safetyKey: "k", safetyAt: "2026-09-01T00:00:00Z" });
+      await store.patchSent("dev-p1", { morningDate: "2026-09-02" });
+      expect(await store.getSent("dev-p1")).toEqual({
+        safetyKey: "k",
+        safetyAt: "2026-09-01T00:00:00Z",
+        morningDate: "2026-09-02",
+      });
+    });
+
+    it("two overlapping calls merging DIFFERENT keys off the SAME starting state both survive — neither clobbers the other", async () => {
+      await store.upsertDevice("dev-p2", {});
+      expect(await store.getSent("dev-p2")).toEqual({});
+      // The exact shape app/api/push/run/route.ts's per-device
+      // `persistSentState()` produces when the 5-min Worker cron and the
+      // hourly GitHub Actions fallback overlap — each deciding a DIFFERENT
+      // field off the SAME request-start snapshot. This is the real
+      // `json_patch` SQL doing the merge server-side, not a JS re-
+      // implementation of it — proof the actual UPDATE statement is safe
+      // under two real overlapping writes, not just the abstraction.
+      await Promise.all([
+        store.patchSent("dev-p2", { morningDate: "2026-09-02" }),
+        store.patchSent("dev-p2", { comingUpCheckedDate: "2026-09-02" }),
+      ]);
+      expect(await store.getSent("dev-p2")).toEqual({
+        morningDate: "2026-09-02",
+        comingUpCheckedDate: "2026-09-02",
+      });
+    });
+
+    it("a key set to undefined is treated as 'not mentioned', and an all-undefined patch is a no-op", async () => {
+      await store.upsertDevice("dev-p3", {});
+      await store.setSent("dev-p3", { morningDate: "2026-09-01" });
+      await store.patchSent("dev-p3", { morningDate: undefined, comingUpCheckedDate: "2026-09-02" });
+      expect(await store.getSent("dev-p3")).toEqual({ morningDate: "2026-09-01", comingUpCheckedDate: "2026-09-02" });
     });
   });
 });

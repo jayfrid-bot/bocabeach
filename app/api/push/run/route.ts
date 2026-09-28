@@ -23,7 +23,7 @@
 // legacy KV subscription that has no device row yet, so subscribers from before
 // Plus keep getting their summary without re-registering.
 
-import { timingSafeEqual } from "node:crypto";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { getConditions } from "@/lib/conditions";
 import { getLocation } from "@/config/locations";
 import { computeSunTimes } from "@/lib/sources/sun";
@@ -36,6 +36,13 @@ import { sendClaimKey } from "@/lib/db/sendClaims";
 import { decideNotifications, MORNING_HOUR, type PushDecision, type PushSummary } from "@/lib/push/notify";
 import { excellentDecision, newSummaryCache, personalSummary } from "@/lib/alerts/morning";
 import { runAtBeachAlerts, type AtBeachCounts } from "@/lib/alerts/run";
+import { buildAlert } from "@/lib/alerts/catalog";
+import {
+  beachLocal8amWindow,
+  buildComingUpSubject,
+  readSkyAlertCandidates,
+  selectComingUpEvent,
+} from "@/lib/alerts/comingUp";
 import {
   SubrequestBudget,
   pushRunSubrequestBudget,
@@ -100,7 +107,19 @@ type SendOne = (msg: PushDecision) => Promise<{ ok: boolean; dead: boolean }>;
 /**
  * Decide + deliver the morning digest for one device. `sendOne` sends a single
  * message over its transport and reports {ok, dead}; a dead token is pruned and
- * its remaining sends skipped. Persists dedup state unless pruned.
+ * its remaining sends skipped.
+ *
+ * Does NOT persist `sent`/dedup state itself (Codex round-3 HIGH) — it only
+ * REPORTS what `morningDate` should become, via the returned `morningDate`.
+ * The caller (below) is responsible for ONE combined `setSent` write per
+ * device per run, merging this alongside whatever the coming-up alert
+ * decided (`comingUpCheckedDate`). Two independent writes for the same
+ * device in the same run would each merge against the SAME stale `sub.sent`
+ * snapshot — whichever ran second would silently clobber the first's
+ * change, which is exactly how a transient standalone-send failure used to
+ * leave a device permanently "checked" (comingUpCheckedDate already
+ * persisted by this function, moments before the standalone attempt that
+ * then failed) with no way for a later pass to retry it.
  *
  * Only reached for an entitled device on a run that includes the home channel,
  * so a narrowed run can never swallow the alert it did not look at.
@@ -112,8 +131,18 @@ async function deliverMorning(
   beachTz: string,
   now: Date,
   sendOne: SendOne,
-  opts?: { force?: "morning" },
-): Promise<{ sent: number; pruned: number }> {
+  opts?: {
+    force?: "morning";
+    /** A coming-up event line to append to THIS digest, when one was
+     *  claimed for this device this run (SKY_EVENTS_PLAN.md §10 — "appended
+     *  to that same push, not a second notification"). Only ever appended
+     *  to a message actually sent below (tag "morning") — if `due` turns
+     *  out empty for some other reason, this text is simply never used, and
+     *  the caller (app/api/push/run/route.ts) reads `sent` back to decide
+     *  whether to confirm or release its coming-up claim. */
+    appendToBody?: string;
+  },
+): Promise<{ sent: number; pruned: number; morningDate?: string }> {
   // The digest is due at 08:00 in the BEACH's timezone, never the phone's — see
   // #13. `sub.device.tz` is the phone's zone; it stays on the device row for
   // display purposes but must never drive scheduling.
@@ -144,7 +173,8 @@ async function deliverMorning(
       failed = true;
       continue;
     }
-    const r = await sendOne(msg);
+    const outgoing = opts?.appendToBody ? { ...msg, body: `${msg.body}\n\n${opts.appendToBody}` } : msg;
+    const r = await sendOne(outgoing);
     if (r.ok) {
       sent += 1;
       await store.markSent(claimKey, now.getTime());
@@ -157,15 +187,7 @@ async function deliverMorning(
       failed = true;
     }
   }
-  if (!removed && !failed) {
-    const next: SentState = { ...sub.sent, morningDate: nextSent.morningDate };
-    if (JSON.stringify(next) !== JSON.stringify(sub.sent)) {
-      await store
-        .setSent(sub.device.id, next)
-        .catch((e) => console.error("push: persist dedup failed for", sub.device.homeSlug, e));
-    }
-  }
-  return { sent, pruned };
+  return { sent, pruned, morningDate: !removed && !failed ? nextSent.morningDate : undefined };
 }
 
 /**
@@ -232,6 +254,15 @@ export async function POST(req: Request): Promise<Response> {
     await store.pruneSendClaims(nowMs);
   } catch (e) {
     console.error("push: claim prune failed", e);
+  }
+  // Same spirit for the coming-up alert ledger (SKY_EVENTS_PLAN.md §10,
+  // migrations/0011_coming_up_deliveries.sql) — its own retention window is
+  // 30 days (the cap math needs the full history), not send_claims' 3 days,
+  // so it gets its own prune call rather than piggybacking on the one above.
+  try {
+    await store.pruneComingUp(nowMs);
+  } catch (e) {
+    console.error("push: coming-up ledger prune failed", e);
   }
   // Same spirit for presence: once a window has run out, the phone's stored
   // coordinates are dropped (the row and its slug stay). Nothing reads a fix
@@ -336,6 +367,9 @@ export async function POST(req: Request): Promise<Response> {
 
   let morningSent = 0;
   let excellentSent = 0;
+  /** Standalone coming-up pushes only (SKY_EVENTS_PLAN.md §10) — an
+   *  appended one is counted inside `morningSent` (it rides the same push). */
+  let comingUpSent = 0;
   let pruned = 0;
   /** Devices the home loop could not finish. The run carries on to the next. */
   let errors = 0;
@@ -368,9 +402,23 @@ export async function POST(req: Request): Promise<Response> {
   /**
    * Does ANY device in this beach's group actually need conditions fetched
    * right now? Two kinds, so the selection below can prioritize correctly:
-   *  - `due`: the morning digest's own MORNING_HOUR gate (or `?force=morning`)
-   *    — time-sensitive, missing it this run means missing it for the whole
-   *    day, so a `due` slug is never left out by the cap below.
+   *  - `due`: the morning digest's own MORNING_HOUR gate (or `?force=morning`),
+   *    OR a coming-up-only device (morning off) at its own beach-local 8:00
+   *    AM hour that HASN'T been checked yet today (SKY_EVENTS_PLAN.md §10 —
+   *    without the base check, a device with morning off and coming-up on
+   *    would never get its beach selected at all, since nothing else would
+   *    mark the slug `due`; without the `comingUpCheckedDate` guard, once
+   *    checked it would stay `due` for the REST of the 8 AM hour with
+   *    nothing left to do, quietly starving every OTHER beach's morning
+   *    digest of round-robin slots — Codex round-2 HIGH. `comingUpCheckedDate`
+   *    is set by the per-device loop below the moment it evaluates
+   *    coming-up eligibility for a device, regardless of outcome — same
+   *    "already handled today" role `morningDate` already plays for the
+   *    digest). Never gated by `force`: `?force=morning` is the on-demand
+   *    weather-summary test path only and must never fire or consume a
+   *    coming-up alert. Either way, time-sensitive — missing it this run
+   *    means missing it for the whole day, so a `due` slug is never left
+   *    out by the cap below.
    *  - `candidate`: merely eligible for "just turned Excellent" — elastic,
    *    fine to pick up next tick instead.
    * A device whose own local-hour lookup throws (a corrupt stored tz) fails
@@ -389,6 +437,14 @@ export async function POST(req: Request): Promise<Response> {
         // Beach-local, not phone-local — see #13.
         const { hour, date } = localHourAndDate(loc.timezone, now);
         if (sub.device.prefs.morning && (force || (hour === MORNING_HOUR && sub.sent.morningDate !== date))) {
+          return { due: true, candidate: true };
+        }
+        if (
+          !force &&
+          sub.device.prefs["coming-up"] === true &&
+          hour === MORNING_HOUR &&
+          sub.sent.comingUpCheckedDate !== date
+        ) {
           return { due: true, candidate: true };
         }
         if (sub.device.prefs["score-excellent"] !== false && isDaylightAt(loc, now, date)) {
@@ -465,6 +521,23 @@ export async function POST(req: Request): Promise<Response> {
           continue;
         }
         const place = { slug, name: loc.name, tz: loc.timezone };
+        // Computed once per beach (every device in `group` shares the same
+        // tz) — reused below both for the digest's own due-gate and for the
+        // coming-up alert's "is this the 8:00 AM run" gate (§10). Never true
+        // under `force`: `?force=morning` is the on-demand weather-summary
+        // test path only and must never fire or consume a coming-up alert.
+        const { hour: beachHour, date: beachDate } = localHourAndDate(loc.timezone, now);
+        const isMorningRun = beachHour === MORNING_HOUR && !force;
+        // The exact [current 8:00 AM, next 8:00 AM) window, DST-aware — only
+        // computed when this really is that beach's 8:00 AM run; a naive
+        // `nowMs + 24h` would land an hour off on a DST transition day.
+        const comingUpWindow = isMorningRun ? beachLocal8amWindow(nowMs, loc.timezone) : null;
+        // The UNCAPPED candidate list for this beach — every alert-relevant
+        // SkyEvent the conditions build produced, never the "Coming up"
+        // card's own already-3-row-capped rows (a 4th simultaneous rare
+        // event must still be alert-eligible even if the card had to drop
+        // it).
+        const skyAlertCandidates = readSkyAlertCandidates(res.snapshot);
 
         for (const sub of group) {
           // Every alert is Plus. A free device gets nothing here, and nothing is
@@ -479,36 +552,218 @@ export async function POST(req: Request): Promise<Response> {
           try {
             const summary = personalSummary(res, place, sub.device, nowMs, summaries);
 
-            const r = await deliverMorning(store, sub, summary, loc.timezone, now, sendOne, force);
+            // --- Sky events "coming up" alert (Phase 3, §10) -----------------
+            // Claimed up front, then resolved by EXACTLY ONE of the three
+            // paths below — append to the digest, coalesce into "turned
+            // Excellent", or a standalone push — decided by what else is
+            // due for this device this run. Coming-up and Excellent must
+            // never fire as two separate pushes back-to-back for the same
+            // device, so they share one another's "is it actually going
+            // out" outcome via `comingUpConsumed`, never send twice.
+            // `comingUpClaim`'s reservation (coming_up_deliveries) IS the
+            // sole concurrency guard for the standalone/coalesced paths —
+            // no separate send_claims claim for them, so the ledger,
+            // alert_log, and the caps can never disagree about a send
+            // send_claims doesn't know about.
+            let comingUpClaim: { eventKey: string; token: string; body: string; tag: string; title: string } | null =
+              null;
+            let comingUpConsumed = false;
+            // Whether this device's coming-up status is DEFINITIVELY settled
+            // for today — persisted (as `comingUpCheckedDate`) only when
+            // true, in the ONE combined write at the end of this block
+            // (Codex round-3 HIGH). True for "nothing eligible" / "claim
+            // lost" (nothing to gain from retrying within the same hour) and
+            // for a CONFIRMED complete/dead outcome on whichever path
+            // resolves the claim; explicitly FALSE on a transient send
+            // failure (a `releaseComingUp` call for any reason OTHER than a
+            // dead token) — that reservation is retryable, so the beach must
+            // stay "due" for a later pass to pick it back up. Starts
+            // `undefined` (not evaluated this run at all — pref off, or not
+            // the 8 AM hour) and only ever becomes `true`/`false` inside the
+            // block below.
+            let comingUpTerminal: boolean | undefined;
+            if (comingUpWindow && sub.device.prefs["coming-up"] === true) {
+              const selection = selectComingUpEvent(
+                skyAlertCandidates,
+                nowMs,
+                comingUpWindow.windowStart,
+                comingUpWindow.windowEnd,
+              );
+              if (selection) {
+                const subject = buildComingUpSubject(selection, loc.timezone);
+                const decision = buildAlert(subject, { beach: loc.name });
+                const token = randomUUID();
+                const claim = await store.claimComingUp(sub.device.id, selection.eventKey, token, nowMs);
+                switch (claim) {
+                  case "claimed":
+                    comingUpClaim = {
+                      eventKey: selection.eventKey,
+                      token,
+                      body: decision.body,
+                      tag: decision.tag,
+                      title: decision.title,
+                    };
+                    comingUpTerminal = false; // claimed but not yet resolved by any path below
+                    break;
+                  case "already-sent":
+                  case "capped":
+                    // Terminal: nothing to retry this hour — a once-ever
+                    // record won't change, and the cap window hasn't moved.
+                    comingUpTerminal = true;
+                    break;
+                  case "in-flight":
+                    // Codex round-4 HIGH: another run holds a LIVE
+                    // reservation for this exact event right now — a race,
+                    // not a terminal outcome. Stay `due` so a later pass can
+                    // see whether that run finished (→ already-sent next
+                    // time) or abandoned its claim (→ reclaimable).
+                    comingUpTerminal = false;
+                    break;
+                }
+              } else {
+                comingUpTerminal = true; // no eligible event this run
+              }
+            }
+
+            // --- 1) Append to the morning digest, when it's due this run ----
+            // Same predicate `deliverMorning`'s own `decideNotifications` due
+            // filter resolves to for the "morning" tag (mirrors the identical
+            // check `slugConditionsNeed` above already relies on) — whether
+            // it's accurate is self-correcting below either way: completion
+            // only happens once `r.sent > 0` confirms a real send went out.
+            const morningDueNow =
+              sub.device.prefs.morning && (force || (beachHour === MORNING_HOUR && sub.sent.morningDate !== beachDate));
+
+            const r = await deliverMorning(store, sub, summary, loc.timezone, now, sendOne, {
+              force: force?.force,
+              appendToBody: comingUpClaim && morningDueNow ? comingUpClaim.body : undefined,
+            });
             morningSent += r.sent;
             pruned += r.pruned;
-            if (r.pruned) continue; // the device is gone
+            if (comingUpClaim && morningDueNow) {
+              comingUpConsumed = true;
+              if (r.sent > 0) {
+                await store.completeComingUp(sub.device.id, comingUpClaim.eventKey, comingUpClaim.token, nowMs);
+                comingUpTerminal = true;
+              } else {
+                await store.releaseComingUp(sub.device.id, comingUpClaim.eventKey, comingUpClaim.token);
+                comingUpTerminal = false; // transient (or the digest wasn't actually due) — retry later
+              }
+            }
+
+            /** ONE combined `patchSent` call for this device's `sent` state
+             *  this run — `morningDate` (from `deliverMorning`) and
+             *  `comingUpCheckedDate` (only when `comingUpTerminal === true`),
+             *  merged ATOMICALLY server-side via `json_patch` (Codex round-4
+             *  HIGH). Deliberately NOT a `{...sub.sent, ...patch}` read-
+             *  modify-write against the request-start snapshot — two
+             *  overlapping runs (the 5-min Worker cron and the hourly GitHub
+             *  Actions fallback both hit this route close together) can each
+             *  merge a DIFFERENT field for the SAME device off that SAME
+             *  stale snapshot, and whichever finishes last would silently
+             *  erase the other's write. `patchSent` only ever names the
+             *  keys THIS call actually means to change, so two such calls
+             *  can land in either order and both survive. */
+            async function persistSentState(): Promise<void> {
+              const patch: Partial<SentState> = {};
+              if (r.morningDate !== undefined) patch.morningDate = r.morningDate;
+              if (comingUpTerminal === true) patch.comingUpCheckedDate = beachDate;
+              if (Object.keys(patch).length === 0) return;
+              await store
+                .patchSent(sub.device.id, patch)
+                .catch((e) => console.error("push: persist dedup failed for", sub.device.homeSlug, e));
+            }
+
+            if (r.pruned) {
+              // The device is gone — nothing left to coalesce into or send
+              // standalone to. Release an unresolved claim now rather than
+              // leaving it reserved until the abandonment window passes.
+              // Whether comingUpCheckedDate persists doesn't matter for a
+              // tokenless device (senderFor will skip it either way), so a
+              // best-effort write is fine here too.
+              if (comingUpClaim && !comingUpConsumed) {
+                await store.releaseComingUp(sub.device.id, comingUpClaim.eventKey, comingUpClaim.token);
+              }
+              await persistSentState();
+              continue;
+            }
 
             // The Excellent daily-dedup key is a calendar day in the BEACH's
-            // timezone too, so it can't drift from the same day the digest uses.
-            const { date } = localHourAndDate(loc.timezone, now);
+            // timezone too, so it can't drift from the same day the digest uses
+            // — the same `beachDate` already computed above for this slug.
+            const date = beachDate;
             const excellent = excellentDecision({ device: sub.device, summary, res, nowMs, date });
-            if (!excellent) continue;
-            if (await store.lastAlert(sub.device.id, excellent.dedupKey)) continue; // once per day
-            // The send claim (#14): a concurrent run could have read the same
-            // "not sent today" answer above, a moment before either of us
-            // wrote alert_log. Only the run that wins this claim may send.
-            const claimKey = sendClaimKey(sub.device.id, "score-excellent", date);
-            if (!(await store.claimSend(claimKey, nowMs))) continue;
-            const sent = await sendOne({
-              tag: excellent.tag,
-              title: excellent.title,
-              body: excellent.body,
-              url: `/${slug}`,
-            });
-            if (sent.dead) {
-              await prune(store, sub).catch((e) => console.error("push: prune failed", e));
-              pruned += 1;
-            } else if (sent.ok) {
-              excellentSent += 1;
-              await store.markAlert(sub.device.id, excellent.dedupKey, nowMs, excellent.meta);
-              await store.markSent(claimKey, nowMs);
+            // --- 2) Coalesce into "turned Excellent", when IT's due this run
+            if (excellent && !(await store.lastAlert(sub.device.id, excellent.dedupKey))) {
+              // The send claim (#14): a concurrent run could have read the same
+              // "not sent today" answer above, a moment before either of us
+              // wrote alert_log. Only the run that wins this claim may send.
+              const claimKey = sendClaimKey(sub.device.id, "score-excellent", date);
+              if (await store.claimSend(claimKey, nowMs)) {
+                const coalesceComingUp = !!comingUpClaim && !comingUpConsumed;
+                const body = coalesceComingUp ? `${excellent.body}\n\n${comingUpClaim!.body}` : excellent.body;
+                const sent = await sendOne({ tag: excellent.tag, title: excellent.title, body, url: `/${slug}` });
+                if (sent.dead) {
+                  await prune(store, sub).catch((e) => console.error("push: prune failed", e));
+                  pruned += 1;
+                  if (coalesceComingUp) {
+                    comingUpConsumed = true;
+                    await store.releaseComingUp(sub.device.id, comingUpClaim!.eventKey, comingUpClaim!.token);
+                    comingUpTerminal = true; // device gone — moot either way
+                  }
+                } else if (sent.ok) {
+                  excellentSent += 1;
+                  await store.markAlert(sub.device.id, excellent.dedupKey, nowMs, excellent.meta);
+                  await store.markSent(claimKey, nowMs);
+                  if (coalesceComingUp) {
+                    comingUpConsumed = true;
+                    await store.completeComingUp(sub.device.id, comingUpClaim!.eventKey, comingUpClaim!.token, nowMs);
+                    comingUpTerminal = true;
+                  }
+                }
+                // A transient failure (`!sent.ok && !sent.dead`) leaves BOTH
+                // Excellent's own claim/dedup state AND an unresolved
+                // coming-up claim untouched (`comingUpTerminal` stays
+                // `false`) — the latter still falls through to a standalone
+                // attempt below, and remains retryable later even if THAT
+                // attempt also doesn't land this run.
+              }
+              // A lost send-claim race (another run already owns today's
+              // Excellent) leaves an unresolved coming-up claim untouched
+              // too — falls through to standalone below.
             }
+
+            // --- 3) Standalone, when neither of the above claimed it ---------
+            if (comingUpClaim && !comingUpConsumed) {
+              const sent = await sendOne({
+                tag: comingUpClaim.tag,
+                title: comingUpClaim.title,
+                body: comingUpClaim.body,
+                url: `/${slug}`,
+              });
+              if (sent.dead) {
+                await prune(store, sub).catch((e) => console.error("push: prune failed", e));
+                pruned += 1;
+                await store.releaseComingUp(sub.device.id, comingUpClaim.eventKey, comingUpClaim.token);
+                comingUpTerminal = true; // device gone — moot either way
+              } else if (sent.ok) {
+                comingUpSent += 1;
+                await store.completeComingUp(sub.device.id, comingUpClaim.eventKey, comingUpClaim.token, nowMs);
+                comingUpTerminal = true;
+              } else {
+                // Transient failure — release so the reservation is
+                // immediately reclaimable, and explicitly do NOT mark this
+                // device "checked" today: `persistSentState()` below must
+                // skip `comingUpCheckedDate` so `slugConditionsNeed` keeps
+                // this beach `due` for a later pass to retry (Codex round-3
+                // HIGH — this is exactly the "morning off + excellent off +
+                // coming-up on" scenario that regressed without this).
+                await store.releaseComingUp(sub.device.id, comingUpClaim.eventKey, comingUpClaim.token);
+                comingUpTerminal = false;
+              }
+            }
+
+            await persistSentState();
           } catch (e) {
             errors += 1;
             console.error("push: device failed", sub.device.id, e);
@@ -555,9 +810,13 @@ export async function POST(req: Request): Promise<Response> {
     subscriptions: subs.length,
     ios: subs.filter((s) => s.platform === "ios").length,
     android: subs.filter((s) => s.platform === "android").length,
-    sent: morningSent + excellentSent + alerts.sent,
+    sent: morningSent + excellentSent + alerts.sent + comingUpSent,
     morning: morningSent,
     excellent: excellentSent,
+    // Standalone coming-up pushes only (SKY_EVENTS_PLAN.md §10) — one
+    // appended to the morning digest is already counted inside `morning`
+    // above, since it rides that same send.
+    comingUp: comingUpSent,
     armed: alerts.devices,
     alerts,
     conditionsFetched,

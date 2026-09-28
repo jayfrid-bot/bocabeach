@@ -10,6 +10,7 @@
 // keep it short, and lead with the action ("get out of the water", "take cover").
 
 import type { AlertKey } from "@/lib/db/types";
+import type { SkyAlertEventType, SkyRatingLabel } from "@/lib/skyEventsTypes";
 
 /** Which run sends this alert. */
 export type AlertTier = "at-beach" | "home";
@@ -45,6 +46,18 @@ export const CATALOG: Record<AlertKey, AlertSpec> = {
   "rain-clearing": { key: "rain-clearing", tier: "at-beach", priority: 9, repeatMs: DEFAULT_REPEAT_MS, alarm: false },
   "score-excellent": { key: "score-excellent", tier: "home", priority: 10, repeatMs: DEFAULT_REPEAT_MS, alarm: false },
   morning: { key: "morning", tier: "home", priority: 11, repeatMs: DEFAULT_REPEAT_MS, alarm: false },
+  // "home" here means the same thing it means for score-excellent/morning:
+  // "not gated to being physically at the beach" — NOT "part of the morning
+  // digest". Whether a coming-up event is appended to the digest or sent
+  // standalone is the push route's own §10 decision (app/api/push/run/
+  // route.ts), made once per beach-local 8:00 AM run; this spec only says
+  // "at most one of these a day, not at-beach". repeatMs is unused for this
+  // key in practice — the real once-per-event cadence is enforced by the
+  // durable coming_up_deliveries ledger (lib/db/comingUpClaims.ts), not this
+  // catalog's repeat window — but it's set to the default anyway so this
+  // entry is never a surprising exception in code that reads CATALOG
+  // generically (e.g. AT_BEACH_KEYS' filter).
+  "coming-up": { key: "coming-up", tier: "home", priority: 12, repeatMs: DEFAULT_REPEAT_MS, alarm: false },
 };
 
 /** The alerts an armed device can receive, most urgent first. */
@@ -76,6 +89,74 @@ export interface AlertDecision {
   meta?: Record<string, unknown>;
 }
 
+/**
+ * The one "coming-up" subject (SKY_EVENTS_PLAN.md §10) — a single closed
+ * union keyed on `eventType`, not five separate `AlertSubject` variants, per
+ * the plan's "ONE AlertSubject variant, five copy/dedupe branches" rule.
+ * Every field the copy needs is precomputed by the caller (the push route,
+ * which knows the beach's own IANA timezone) — this module stays
+ * formatting-free, exactly like every other subject above; it only
+ * interpolates already-worded strings.
+ */
+export type ComingUpSubject =
+  | {
+      key: "coming-up";
+      eventType: "eclipse";
+      /** `eclipse:<peak-iso>` (§10). */
+      eventKey: string;
+      kindLabel: "Total" | "Partial";
+      /** "Sun Mar 8" — beach-local weekday + date. */
+      whenLabel: string;
+      /** Set only when the eclipse's own peak instant falls inside the
+       *  visible interval — picks the "peak 1:58 AM" copy form (§4, §12). */
+      peakTimeLabel?: string;
+      /** Set only when `peakTimeLabel` is not — the visible interval's own
+       *  start-end range, e.g. "1:10-1:42 AM" (§4, §12). */
+      visibleRangeLabel?: string;
+      ratingLabel?: SkyRatingLabel;
+    }
+  | {
+      key: "coming-up";
+      eventType: "tide";
+      /** `tide:<station>:<episode-start>` (§10). */
+      eventKey: string;
+      /** "Thu Oct 15, 11:42 AM" — the episode's first qualifying high. */
+      whenLabel: string;
+    }
+  | {
+      key: "coming-up";
+      eventType: "meteor";
+      /** `meteor:<shower>:<year>` (§10). */
+      eventKey: string;
+      showerName: string;
+      /** "Wed Aug 12" — the shower's peak, beach-local. */
+      whenLabel: string;
+      ratingLabel?: SkyRatingLabel;
+    }
+  | {
+      key: "coming-up";
+      eventType: "supermoon";
+      /** `supermoon:<full-moon-iso>` (§10). */
+      eventKey: string;
+      /** "Fri Oct 3" — the full-moon date, beach-local. */
+      whenLabel: string;
+      /** Present only at a curated beach with a reviewed shore normal —
+       *  e.g. "rises over the water at 7:12 PM" (§4, §12). */
+      overWaterLine?: string;
+      /** True only for the year's #1-ranked supermoon (§4) — picks the
+       *  "the closest full moon of the year" copy clause. */
+      isClosestOfYear: boolean;
+    }
+  | {
+      key: "coming-up";
+      eventType: "launch";
+      /** `launch:<ll2-uuid>` (§10). */
+      eventKey: string;
+      name: string;
+      /** "9:15 PM Wed Oct 8" — the launch's own `net`, beach-local. */
+      whenLabel: string;
+    };
+
 /** What the engine found. One variant per line of copy. */
 export type AlertSubject =
   | { key: "lightning"; nearestMi: number | null; escalated: boolean }
@@ -87,7 +168,14 @@ export type AlertSubject =
   | { key: "flag"; flag: "red" | "double-red" }
   | { key: "rip"; level: "high" | "moderate"; alertId?: string }
   | { key: "water-advisory" }
-  | { key: "score-excellent"; score: number; dedupKey: string };
+  | { key: "score-excellent"; score: number; dedupKey: string }
+  | ComingUpSubject;
+
+/** Every `ComingUpSubject["eventType"]` value is one of `SkyAlertEventType`
+ *  (lib/skyEventsTypes.ts's canonical list) — this assignment only
+ *  type-checks when the two stay in sync, so a future edit to either union
+ *  that drifts from the other fails `tsc`, not just a runtime test. */
+export const COMING_UP_EVENT_TYPES_MATCH_SKY_EVENTS: SkyAlertEventType[] = [] as ComingUpSubject["eventType"][];
 
 export interface AlertContext {
   /** The beach the person is at (or whose day just turned Excellent). */
@@ -148,6 +236,41 @@ function bodyFor(subject: AlertSubject, ctx: AlertContext): string {
       return `Water-quality advisory at ${beach} — swimming not recommended.`;
     case "score-excellent":
       return `🏖️ Your beach day just turned Excellent at ${beach} — ${subject.score}/100.`;
+    case "coming-up":
+      return comingUpBody(subject);
+  }
+}
+
+/** The five §10/§12 copy branches for the one "coming-up" subject, switched
+ *  on `eventType`. Every date/time clause is already beach-local, formatted
+ *  by the caller (the push route) — this function only assembles sentences,
+ *  never math or `Intl` calls, matching the rest of this module. */
+function comingUpBody(subject: ComingUpSubject): string {
+  switch (subject.eventType) {
+    case "tide":
+      return (
+        `High-tide flooding possible ${subject.whenLabel}. The predicted astronomical tide reaches this ` +
+        `station's minor flood level. Wind and weather can change the actual water level.`
+      );
+    case "eclipse": {
+      const kind = `${subject.kindLabel} lunar eclipse`;
+      const headline = subject.peakTimeLabel
+        ? `${kind} ${subject.whenLabel}, peak ${subject.peakTimeLabel}, visible here.`
+        : `${kind} ${subject.whenLabel} — visible here from ${subject.visibleRangeLabel}.`;
+      return subject.ratingLabel ? `${headline} Sky rating: ${subject.ratingLabel}.` : headline;
+    }
+    case "meteor": {
+      const headline = `${subject.showerName} peak ${subject.whenLabel}, best after midnight.`;
+      return subject.ratingLabel ? `${headline} Sky rating: ${subject.ratingLabel}.` : headline;
+    }
+    case "supermoon": {
+      const headline = subject.overWaterLine
+        ? `Supermoon ${subject.whenLabel}, ${subject.overWaterLine}`
+        : `Supermoon ${subject.whenLabel}`;
+      return subject.isClosestOfYear ? `${headline} — the closest full moon of the year.` : `${headline}.`;
+    }
+    case "launch":
+      return `${subject.name} is targeting a ${subject.whenLabel} launch. Status: Go.`;
   }
 }
 
@@ -183,6 +306,14 @@ function baseDedupKeyFor(subject: AlertSubject): string {
       return subject.alertId ? `rip:${subject.alertId}` : subject.level === "high" ? "rip" : "rip:moderate";
     case "score-excellent":
       return subject.dedupKey;
+    case "coming-up":
+      // One of the five §10 dedupe keys (tide:<station>:<episode-start>,
+      // eclipse:<peak-iso>, meteor:<shower>:<year>, supermoon:<full-moon-
+      // iso>, launch:<ll2-uuid>) — the SAME string
+      // lib/db/store.ts's completeComingUp writes to alert_log, so the
+      // durable once-ever dedupe and this decision's own dedupKey can never
+      // disagree about which event they mean.
+      return subject.eventKey;
     default:
       return subject.key;
   }
@@ -211,6 +342,8 @@ function metaFor(subject: AlertSubject): Record<string, unknown> | undefined {
       return { level: subject.level, alertId: subject.alertId };
     case "score-excellent":
       return { score: subject.score };
+    case "coming-up":
+      return { eventType: subject.eventType, eventKey: subject.eventKey };
     default:
       return undefined;
   }
@@ -225,14 +358,24 @@ function metaFor(subject: AlertSubject): Record<string, unknown> | undefined {
  * hazard at two different beaches never shares a window. Lightning's
  * escalation shares "lightning" as its hazardKey (see dedupKeyFor, which
  * gives it a finer DEDUP key) so the 2-mile notice collapses the plain one.
- * Morning and Excellent keep their own stable ids — see #8. (Only
- * `score-excellent` reaches this function via the "home" tier: the morning
- * digest is built by `decideNotifications` in lib/push/notify.ts, not the
- * catalog, and hardcodes its own "morning" tag there.)
+ * Morning and Excellent keep their own stable ids — see #8. Coming-up gets
+ * its own stable "coming-up" id too — it must NEVER share Excellent's,
+ * since a standalone coming-up push and a same-day "turned Excellent" push
+ * are two unrelated pieces of news; sharing a collapse id would mean
+ * whichever APNs delivers last silently displaces the other in the tray.
+ * (Score-excellent and coming-up are the only two subjects that reach this
+ * function via the "home" tier: the morning digest itself is built by
+ * `decideNotifications` in lib/push/notify.ts, not the catalog, and
+ * hardcodes its own "morning" tag there — a coming-up line APPENDED to that
+ * digest rides along under that SAME "morning" tag, never this function's;
+ * this function's own "coming-up" tag is only ever used for a STANDALONE
+ * coming-up push, built directly from this module's `buildAlert`.)
  */
 function collapseTag(subject: AlertSubject, ctx: AlertContext): string {
+  if (subject.key === "score-excellent") return "excellent";
+  if (subject.key === "coming-up") return "coming-up";
   const spec = CATALOG[subject.key];
-  if (spec.tier === "home") return "excellent";
+  if (spec.tier === "home") return "excellent"; // unreachable today; safe fallback
   return `safety:${subject.key}:${ctx.slug ?? ""}`;
 }
 

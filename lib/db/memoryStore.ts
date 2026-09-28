@@ -27,6 +27,15 @@ import { applyPatch, entitled, newDeviceRow, parseSent, toRecord } from "@/lib/d
 import { legacyDeviceId, legacyPatch } from "@/lib/db/legacy";
 import type { DeviceStore } from "@/lib/db/store";
 import { ABANDONED_CLAIM_MS, CLAIM_RETENTION_MS } from "@/lib/db/sendClaims";
+import {
+  ABANDONED_CLAIM_MS as COMING_UP_ABANDONED_CLAIM_MS,
+  COMING_UP_24H_MS,
+  COMING_UP_30D_MS,
+  COMING_UP_MAX_PER_24H,
+  COMING_UP_MAX_PER_30D,
+  COMING_UP_RETENTION_MS,
+} from "@/lib/db/comingUpClaims";
+import type { ComingUpDeliveryRow } from "@/lib/db/store";
 import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
 import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
@@ -69,9 +78,11 @@ interface Snapshot {
   historyBudget?: { day: string; builds: number }[];
   historyClaims?: HistoryClaimRow[];
   liveActivities?: LiveActivityRow[];
+  comingUpDeliveries?: ComingUpDeliveryRow[];
 }
 
 const alertKey = (deviceId: string, key: string) => `${deviceId}${key}`;
+const comingUpKey = (deviceId: string, eventKey: string) => `${deviceId}|${eventKey}`;
 
 /**
  * Build a store over its own maps. `file` = null keeps it purely in memory
@@ -87,6 +98,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
   const historyBudget = new Map<string, number>(); // key: day
   const historyClaims = new Map<string, HistoryClaimRow>(); // key: `history:<slug>:<hour_utc>`
   const liveActivities = new Map<string, LiveActivityRow>(); // key: activityId
+  const comingUpDeliveries = new Map<string, ComingUpDeliveryRow>(); // key: `${deviceId}|${eventKey}`
   let loaded = file === null;
 
   async function load(): Promise<void> {
@@ -102,6 +114,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       for (const b of raw.historyBudget ?? []) historyBudget.set(b.day, b.builds);
       for (const c of raw.historyClaims ?? []) historyClaims.set(c.key, c);
       for (const a of raw.liveActivities ?? []) liveActivities.set(a.activityId, a);
+      for (const c of raw.comingUpDeliveries ?? []) comingUpDeliveries.set(comingUpKey(c.deviceId, c.eventKey), c);
     } catch {
       /* no file yet, or unreadable → start empty */
     }
@@ -118,6 +131,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       historyBudget: [...historyBudget.entries()].map(([day, builds]) => ({ day, builds })),
       historyClaims: [...historyClaims.values()],
       liveActivities: [...liveActivities.values()],
+      comingUpDeliveries: [...comingUpDeliveries.values()],
     };
     try {
       await fs.writeFile(file, JSON.stringify(snap, null, 2));
@@ -218,6 +232,9 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       for (const k of [...alerts.keys()]) {
         if (alerts.get(k)?.device_id === id) alerts.delete(k);
       }
+      for (const k of [...comingUpDeliveries.keys()]) {
+        if (comingUpDeliveries.get(k)?.deviceId === id) comingUpDeliveries.delete(k);
+      }
       await save();
     },
 
@@ -281,6 +298,22 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       const row = devices.get(deviceId);
       if (!row) return;
       devices.set(deviceId, applyPatch(row, { sent }, Date.now()));
+      await save();
+    },
+
+    // Atomic partial merge (Codex round-4 HIGH) — see lib/db/store.ts's doc.
+    // No `await` between reading the current sent-state and writing the
+    // merged one back, same no-race guarantee every other read-modify-write
+    // in this file relies on (see the file header).
+    async patchSent(deviceId, patch: Partial<SentState>) {
+      await load();
+      const row = devices.get(deviceId);
+      if (!row) return;
+      const keys = Object.keys(patch).filter((k) => (patch as Record<string, unknown>)[k] !== undefined);
+      if (!keys.length) return;
+      const merged: SentState = { ...parseSent(row.sent_json) };
+      for (const k of keys) (merged as Record<string, unknown>)[k] = (patch as Record<string, unknown>)[k];
+      devices.set(deviceId, applyPatch(row, { sent: merged }, Date.now()));
       await save();
     },
 
@@ -684,6 +717,107 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       }
       if (purged) await save();
       return purged;
+    },
+
+    // --- "Coming up" sky-events alert ledger (migrations/0011_coming_up_ ---
+    // --- deliveries.sql, docs/SKY_EVENTS_PLAN.md §10) -----------------------
+    //
+    // Same no-`await`-between-read-and-write guarantee as every other
+    // read-modify-write in this store (see file header) — that is what makes
+    // the dedupe check + cap counts + reservation write atomic here without a
+    // real SQL statement, mirroring d1Store's single CLAIM_COMING_UP query.
+    async claimComingUp(deviceId, eventKey, claimToken, nowMs) {
+      await load();
+      // (a) once-ever dedupe: a durable alert_log row for this exact event
+      // survives this ledger being pruned.
+      if (alerts.get(alertKey(deviceId, eventKey))) return "already-sent";
+
+      const abandonCutoff = nowMs - COMING_UP_ABANDONED_CLAIM_MS;
+
+      // (b) a DIFFERENT, still-live reservation for this EXACT (device,
+      // event) pair — Codex round-4 HIGH — checked before the cap counts,
+      // same priority `already-sent` has, since it is likewise about THIS
+      // one event, not the device's aggregate cap.
+      const key = comingUpKey(deviceId, eventKey);
+      const existing = comingUpDeliveries.get(key);
+      if (existing) {
+        if (existing.sentAt != null) return "already-sent"; // defensive; alert_log should have caught this above
+        const abandoned = existing.claimedAt <= abandonCutoff;
+        if (!abandoned) return "in-flight";
+        // else: genuinely abandoned — falls through to reclaim below.
+      }
+
+      const window30 = nowMs - COMING_UP_30D_MS;
+      const window24 = nowMs - COMING_UP_24H_MS;
+      // "Live" = confirmed sent within the window, OR an unsent reservation
+      // that hasn't been abandoned yet (it represents a send in flight right
+      // now, regardless of when it was first claimed).
+      const isLive = (r: ComingUpDeliveryRow, windowStart: number): boolean =>
+        (r.sentAt != null && r.sentAt >= windowStart) || (r.sentAt == null && r.claimedAt > abandonCutoff);
+      let count30 = 0;
+      let count24 = 0;
+      for (const r of comingUpDeliveries.values()) {
+        if (r.deviceId !== deviceId) continue;
+        if (isLive(r, window30)) count30 += 1;
+        if (isLive(r, window24)) count24 += 1;
+      }
+      if (count30 >= COMING_UP_MAX_PER_30D || count24 >= COMING_UP_MAX_PER_24H) return "capped";
+
+      comingUpDeliveries.set(key, {
+        deviceId,
+        eventKey,
+        claimToken,
+        claimedAt: nowMs,
+        sentAt: null,
+        status: "reserved",
+      });
+      await save();
+      return "claimed";
+    },
+
+    async completeComingUp(deviceId, eventKey, claimToken, nowMs) {
+      await load();
+      const key = comingUpKey(deviceId, eventKey);
+      const existing = comingUpDeliveries.get(key);
+      // Stale/unknown claimant (lost a race to a newer reclaim, or this
+      // reservation was already released/never existed) → silently do
+      // nothing, same as d1Store's WHERE-guarded UPDATE affecting 0 rows.
+      if (!existing || existing.claimToken !== claimToken) return;
+      // Both writes happen with no `await` between them — the same
+      // one-batch atomicity d1Store gets from a real D1 `.batch()` call.
+      comingUpDeliveries.set(key, { ...existing, sentAt: nowMs, status: "sent" });
+      alerts.set(alertKey(deviceId, eventKey), {
+        device_id: deviceId,
+        alert_key: eventKey,
+        sent_at: nowMs,
+        meta_json: null,
+      });
+      await save();
+    },
+
+    async releaseComingUp(deviceId, eventKey, claimToken) {
+      await load();
+      const key = comingUpKey(deviceId, eventKey);
+      const existing = comingUpDeliveries.get(key);
+      if (!existing || existing.claimToken !== claimToken) return;
+      comingUpDeliveries.delete(key);
+      await save();
+    },
+
+    async pruneComingUp(nowMs) {
+      await load();
+      let changed = false;
+      const cutoffSent = nowMs - COMING_UP_RETENTION_MS;
+      const cutoffAbandoned = nowMs - COMING_UP_ABANDONED_CLAIM_MS;
+      for (const [key, row] of comingUpDeliveries) {
+        const expiredSent = row.sentAt != null && row.sentAt < cutoffSent;
+        const abandonedUnsent = row.sentAt == null && row.claimedAt < cutoffAbandoned;
+        if (expiredSent || abandonedUnsent) {
+          comingUpDeliveries.delete(key);
+          changed = true;
+        }
+      }
+      if (changed) await save();
     },
   };
 }

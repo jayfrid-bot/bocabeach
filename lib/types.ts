@@ -10,6 +10,7 @@ import type { RipRiskCurve } from "@/lib/ripRiskCurve";
 import type { MarineStingerAdvisory } from "@/lib/marineStinger";
 import type { SharkContext } from "@/lib/sharkContext";
 import type { RipNwpsBeachSeries } from "@/lib/sources/ripNwps";
+import type { SkyEvent, SkyEventsCardData } from "@/lib/skyEventsTypes";
 export type { RipNwpsBeachSeries } from "@/lib/sources/ripNwps";
 
 export type SourceStatus = "ok" | "stale" | "error" | "best-effort";
@@ -977,6 +978,34 @@ export interface ConditionsSnapshot {
    *  water" seasonal heads-up panel. True even off-season / on a quiet day, when
    *  marineStinger + sharkContext are both null, so the panel stays visible. */
   atlanticOriented?: boolean;
+  /** The "Coming up" sky-events card (moon/eclipse, meteor showers, king-tide
+   *  flooding, rocket launches) — built server-side in lib/conditions.ts by
+   *  merging lib/sources/{moonEvents,meteorShowers,kingTide,launchLibrary}.ts
+   *  via lib/skyEvents.ts's buildComingUp(). See docs/SKY_EVENTS_PLAN.md.
+   *  `null` when there's nothing genuine to show for this beach right now —
+   *  components/SkyEventsCard.tsx hides itself entirely in that case, never
+   *  rendering an empty/placeholder card. This is already the exact,
+   *  display-ready shape the card needs (at most 3 rows) — never the raw
+   *  per-source Wrapped arrays, so the public conditions route exposes
+   *  nothing beyond what the card itself renders. Optional so every existing
+   *  snapshot literal (tests, cached payloads predating this field) still
+   *  type-checks. */
+  skyEvents?: SkyEventsCardData | null;
+  /** SERVER-ONLY — every fresh, still-upcoming, rated, merged sky event from
+   *  the same buildComingUp() pass as `skyEvents`, but UNCAPPED (never
+   *  trimmed to 3 rows, never subject to the reserved-rare-row selection
+   *  `skyEvents` applies). Codex round-2 review HIGH #2: alert selection
+   *  (lib/alerts/*, Crew G) must read this, not `skyEvents` — a routine
+   *  event bumped off the visible card by the 3-row cap can still be
+   *  alert-eligible on its own terms, so selection needs the full pool, not
+   *  the display subset. MUST NEVER reach a public API response or client
+   *  component props — call `lib/conditions.ts`'s
+   *  `stripInternalSnapshotFields()` on every `ConditionsResponse` before it
+   *  crosses that boundary (the public conditions route and every server
+   *  page that renders `<ConditionsDashboard initial={...} />` already do).
+   *  Optional/nullable for the same reason `skyEvents` is (existing snapshot
+   *  literals predating this field, and a failed buildComingUp() pass). */
+  skyAlertCandidates?: SkyEvent[] | null;
 }
 
 // --- Scores ----------------------------------------------------------------

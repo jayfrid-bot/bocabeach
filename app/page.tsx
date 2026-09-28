@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { listLocations, toPublicLocation } from "@/config/locations";
-import { getConditions } from "@/lib/conditions";
+import { getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
 import { LogoMark } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ConditionsDashboard } from "@/components/ConditionsDashboard";
@@ -46,10 +46,14 @@ export default async function Home() {
   const isNativeApp = await isNativeAppRequest();
   const data = await getConditions(primary.slug);
   if (data) {
+    // skyAlertCandidates (Codex round-2 review HIGH #2) is server-only —
+    // strip it before this snapshot crosses into the client component's
+    // props (it'd otherwise reach the client via RSC serialization
+    // regardless of ConditionsDashboard's own narrower prop type).
     return (
       <ConditionsDashboard
         slug={primary.slug}
-        initial={data}
+        initial={stripInternalSnapshotFields(data)}
         browseHref={browseHref}
         isNativeApp={isNativeApp}
         // The served-beach list powers the location features (nearest beach,

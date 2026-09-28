@@ -5,7 +5,10 @@
 
 import type { ScoreProfile } from "@/lib/profile/types";
 
-/** Every alert the engine can send. Prefs default to all-on. */
+/** Every alert the engine can send. Prefs default to all-on, EXCEPT
+ *  `"coming-up"` (SKY_EVENTS_PLAN.md §10) — the one opt-in key, overridden
+ *  explicitly in `defaultPrefs()` below rather than by a blanket rule
+ *  change, so a future reader can't miss it. */
 export type AlertKey =
   | "lightning"
   | "thunder"
@@ -17,7 +20,8 @@ export type AlertKey =
   | "rip"
   | "water-advisory"
   | "morning"
-  | "score-excellent";
+  | "score-excellent"
+  | "coming-up";
 
 export const ALERT_KEYS: readonly AlertKey[] = [
   "lightning",
@@ -31,6 +35,7 @@ export const ALERT_KEYS: readonly AlertKey[] = [
   "water-advisory",
   "morning",
   "score-excellent",
+  "coming-up",
 ] as const;
 
 /**
@@ -49,10 +54,16 @@ export const SAFETY_ALERT_KEYS: readonly AlertKey[] = [
 
 export type AlertPrefs = Record<AlertKey, boolean>;
 
-/** All-on prefs — the default for a device that has never set any. */
+/** All-on prefs — the default for a device that has never set any —
+ *  EXCEPT `"coming-up"` (SKY_EVENTS_PLAN.md §10), which starts OFF: a
+ *  subscriber opts in rather than opting out of the sky-events alert. This
+ *  applies to every existing device (its stored prefs blob has no
+ *  `"coming-up"` key yet, so `parsePrefs` falls back to this default too)
+ *  and every brand-new one. */
 export function defaultPrefs(): AlertPrefs {
   const out = {} as AlertPrefs;
   for (const k of ALERT_KEYS) out[k] = true;
+  out["coming-up"] = false;
   return out;
 }
 
@@ -73,6 +84,17 @@ export interface SentState {
   morningDate?: string;
   safetyKey?: string;
   safetyAt?: string;
+  /** Beach-local date (YYYY-MM-DD) this device's coming-up eligibility was
+   *  last EVALUATED at an 8:00 AM run (SKY_EVENTS_PLAN.md §10) — set
+   *  regardless of whether an event was found, claimed, or sent. Mirrors
+   *  `morningDate`'s role exactly: once it matches today, the push route's
+   *  `slugConditionsNeed` stops treating this device as making its beach
+   *  "due", so a limited-capacity tick's round-robin slots go to a beach
+   *  that still needs a look, not one already checked today (Codex round-2
+   *  HIGH — a coming-up-only device with nothing to say would otherwise
+   *  stay "due" for the WHOLE 8 AM hour, crowding out other beaches'
+   *  morning digests too). */
+  comingUpCheckedDate?: string;
 }
 
 /** One row of `devices`, exactly as D1 stores it. */

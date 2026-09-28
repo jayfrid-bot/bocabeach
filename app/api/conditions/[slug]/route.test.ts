@@ -7,9 +7,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConditionsResponse } from "@/lib/types";
 
-vi.mock("@/lib/conditions", () => ({
-  getConditions: vi.fn(),
-}));
+// Partial mock: only `getConditions` is faked — `stripInternalSnapshotFields`
+// stays the REAL implementation so the skyAlertCandidates-stripping test
+// below (Codex round-2 review HIGH #2) exercises genuine behavior, not a
+// stub that could silently drift from what the route actually does.
+vi.mock("@/lib/conditions", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/conditions")>();
+  return {
+    ...actual,
+    getConditions: vi.fn(),
+  };
+});
 
 import { GET } from "@/app/api/conditions/[slug]/route";
 import { getConditions } from "@/lib/conditions";
@@ -48,6 +56,18 @@ describe("GET /api/conditions/[slug]", () => {
     const res = await GET(...req("boca-raton"));
     const body = await res.json();
     expect(body.budgetAborted).toBeUndefined();
+  });
+
+  it("strips snapshot.skyAlertCandidates from the public response (Codex round-2 review HIGH #2 — server-only alert-selection pool)", async () => {
+    const snapshotWithCandidates = {
+      generatedAt: "2026-09-23T12:00:00.000Z",
+      skyAlertCandidates: [{ eventType: "meteor" }],
+    } as unknown as ConditionsResponse["snapshot"];
+    vi.mocked(getConditions).mockResolvedValue(fixture({ snapshot: snapshotWithCandidates }));
+    const res = await GET(...req("boca-raton"));
+    const body = await res.json();
+    expect(body.snapshot.skyAlertCandidates).toBeUndefined();
+    expect("skyAlertCandidates" in body.snapshot).toBe(false);
   });
 
   it("is edge-cacheable for a plain request", async () => {

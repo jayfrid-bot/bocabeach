@@ -38,6 +38,18 @@ import { marineStinger } from "@/lib/marineStinger";
 import { sharkContext } from "@/lib/sharkContext";
 import { nowIso, round } from "@/lib/util";
 import { currentBudget } from "@/lib/alerts/budget";
+// "Coming up" sky-events card (docs/SKY_EVENTS_PLAN.md, INTEGRATION/Crew H).
+// Moon + meteor are pure local computation (astronomy-engine is SERVER-ONLY —
+// lib/sources/moonEvents.ts's own runtime guard — and this file is never
+// reachable from a client bundle, see the build+grep proof in this crew's
+// report). Launch + king-tide are each one small outbound fetch, budgeted
+// below (§9).
+import { fetchKingTide } from "@/lib/sources/kingTide";
+import { fetchLaunchEvents } from "@/lib/sources/launchLibrary";
+import { fetchMeteorShowers } from "@/lib/sources/meteorShowers";
+import { fetchMoonEvents } from "@/lib/sources/moonEvents";
+import { buildComingUp } from "@/lib/skyEvents";
+import type { WrappedLaunchEvents, WrappedTideEvents } from "@/lib/skyEventsTypes";
 
 /**
  * Fetch every source for a location in parallel and assemble a snapshot.
@@ -105,6 +117,50 @@ function derive<T>(fn: () => T | null): T | null {
   } catch {
     return null;
   }
+}
+
+// --- "Coming up" sky-events feed gating (SKY_EVENTS_PLAN.md §9) ------------
+//
+// Moon + meteor cost zero extra fetches (pure local computation) and are
+// always computed. Launch + king-tide are each one small outbound fetch —
+// "at most 2 extra outbound fetches per conditions build" (§9) — fetched
+// together, after the core conditions sources, ONLY when the ambient
+// push-run subrequest budget still has room for both; outside a push run
+// (a normal page load or /api/conditions request has no ambient budget at
+// all — currentBudget() reads undefined) they're always fetched. This is a
+// read-only pre-flight check (`.reserve()` never spends) — the two fetches
+// still go through the same fetchWithTimeout/setSubrequestHook metering
+// every other adapter call does, so this is "is it even worth trying", not
+// the thing that actually charges the budget.
+function canFetchSkyFeeds(): boolean {
+  const budget = currentBudget();
+  return !budget || budget.reserve(2);
+}
+
+/** Placeholder for a sky feed skipped this run for lack of budget — never
+ *  cached as if it were a real reading (status "best-effort", data null),
+ *  same honest-unavailable shape every other adapter uses when it has
+ *  nothing to report. */
+function skySkippedLaunch(fetchedAt: string): WrappedLaunchEvents {
+  return {
+    source: "Launch Library 2 (LL2)",
+    status: "best-effort",
+    fetchedAt,
+    attribution: "The Space Devs Launch Library 2 (thespacedevs.com)",
+    data: null,
+    note: "skipped this run — push-run subrequest budget had no room for the sky-events feeds (SKY_EVENTS_PLAN.md §9)",
+  };
+}
+
+function skySkippedTide(fetchedAt: string): WrappedTideEvents {
+  return {
+    source: "NOAA CO-OPS (king tide)",
+    status: "best-effort",
+    fetchedAt,
+    attribution: "NOAA Tides & Currents (tidesandcurrents.noaa.gov)",
+    data: null,
+    note: "skipped this run — push-run subrequest budget had no room for the sky-events feeds (SKY_EVENTS_PLAN.md §9)",
+  };
 }
 
 /**
@@ -268,6 +324,64 @@ export async function getSnapshotForLocation(
       )
     : null;
 
+  // --- "Coming up" sky-events card (§9) --------------------------------
+  // Pinned to the snapshot's OWN generatedAt — never a fresh clock read —
+  // so this stays cache-deterministic and matches the SSR-safety rule every
+  // other sky-events module already follows (buildComingUp, moonEvents.ts,
+  // meteorShowers.ts: "no Date.now()/new Date() inside a pure helper").
+  const skyNowMs = Date.parse(base.generatedAt);
+  const skyBeach = {
+    lat: loc.lat,
+    lon: loc.lon,
+    timezone: loc.timezone,
+    // Reviewed shore-normal (curated beaches only) — sourced server-side
+    // from the full Location, never the client-facing LocationPublic shape
+    // (SKY_EVENTS_PLAN.md §2, §4).
+    coastNormalDeg: loc.coastNormalDeg,
+  };
+  const moonEvents = fetchMoonEvents(skyBeach, new Date(skyNowMs), 14);
+  const meteorEvents = fetchMeteorShowers({ lat: loc.lat, lon: loc.lon, timezone: loc.timezone }, skyNowMs);
+  const [launchEvents, tideEvents] = canFetchSkyFeeds()
+    ? await Promise.all([
+        fetchLaunchEvents({ lat: loc.lat, lon: loc.lon }, new Date(skyNowMs)),
+        fetchKingTide(loc, skyNowMs),
+      ])
+    : [skySkippedLaunch(base.generatedAt), skySkippedTide(base.generatedAt)];
+  // buildComingUp is pure but defended the same way every other derived
+  // advisory here is — a bug in the merge/rating path degrades to "no card"
+  // rather than sinking the whole snapshot. It now returns BOTH the capped
+  // display card and the uncapped `alertCandidates` pool (Codex round-2
+  // review HIGH #2) — alert selection must read the latter, never the
+  // card's own 3-row subset, or an eligible event bumped off the visible
+  // card by the reserved-rare-row trim would be invisible to selection too.
+  const skyResult = derive(() =>
+    buildComingUp({
+      tide: tideEvents,
+      moon: moonEvents,
+      meteor: meteorEvents,
+      launch: launchEvents,
+      // HourlyMetrics is a structural superset of SkyHourlyPoint (same field
+      // names/types for time/cloud*/precip*/weatherCode) — passed straight
+      // through, no mapping needed (same convention
+      // components/ConditionsDashboard.tsx's sunQualityHourly note documents
+      // for SunQualityCard's own hourly prop).
+      hourly: hourly.data ?? [],
+      nowMs: skyNowMs,
+      tz: loc.timezone,
+      // The real Moon altitude/illumination sweep (§5's moonlight penalty)
+      // needs the actual observer location, not just its timezone.
+      lat: loc.lat,
+      lon: loc.lon,
+    }),
+  );
+  const skyEvents = skyResult?.card ?? null;
+  // SERVER-ONLY FIELD (Codex round-2 review HIGH #2) — the uncapped, rated,
+  // merged candidate pool Crew G's alert selection reads. Must never reach a
+  // public API response or client component props: see this module's
+  // `stripInternalSnapshotFields`, which every such surface must call before
+  // serializing a ConditionsResponse.
+  const skyAlertCandidates = skyResult ? [...skyResult.alertCandidates] : null;
+
   return {
     ...base,
     waterTrend: waterTrendData,
@@ -278,7 +392,29 @@ export async function getSnapshotForLocation(
     // regardless of season or live data (the two advisories above go null on a
     // quiet day; this stays true so the panel keeps showing).
     atlanticOriented,
+    skyEvents,
+    skyAlertCandidates,
   };
+}
+
+/**
+ * Strips `snapshot.skyAlertCandidates` from a {@link ConditionsResponse}
+ * (Codex round-2 review HIGH #2) — the uncapped sky-event candidate pool
+ * Crew G's alert selection reads server-side only; the public conditions
+ * API and the client dashboard's props must never see it (it's not display
+ * data — it's every fresh upcoming event this pass found, unfiltered by the
+ * card's own 3-row cap). Every server page that passes a
+ * `ConditionsResponse` to a client component (`initial={...}`), and every
+ * route that serializes one to public JSON, must call this first — the
+ * same way each of those surfaces already strips the unrelated
+ * `budgetAborted` internal field on its own (untouched here; this helper is
+ * additive, not a replacement for that existing handling). A no-op, same
+ * reference back, when there's nothing to strip.
+ */
+export function stripInternalSnapshotFields(response: ConditionsResponse): ConditionsResponse {
+  if (response.snapshot.skyAlertCandidates == null) return response;
+  const { skyAlertCandidates: _skyAlertCandidates, ...publicSnapshot } = response.snapshot;
+  return { ...response, snapshot: publicSnapshot };
 }
 
 /**

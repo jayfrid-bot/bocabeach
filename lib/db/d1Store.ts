@@ -33,6 +33,14 @@ import { applyPatch, defaultPrefs, newDeviceRow, parseSent, toRecord } from "@/l
 import { legacyDeviceId, legacyPatch } from "@/lib/db/legacy";
 import type { DeviceStore } from "@/lib/db/store";
 import { ABANDONED_CLAIM_MS, CLAIM_RETENTION_MS } from "@/lib/db/sendClaims";
+import {
+  ABANDONED_CLAIM_MS as COMING_UP_ABANDONED_CLAIM_MS,
+  COMING_UP_24H_MS,
+  COMING_UP_30D_MS,
+  COMING_UP_MAX_PER_24H,
+  COMING_UP_MAX_PER_30D,
+  COMING_UP_RETENTION_MS,
+} from "@/lib/db/comingUpClaims";
 import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
 import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
@@ -222,6 +230,87 @@ function upsertBinds(id: string, patch: Record<string, unknown>, now: number): u
     has("sent") ? 1 : 0, // 27
   ];
 }
+
+// --- "Coming up" sky-events alert ledger (migrations/0011_coming_up_ -------
+// --- deliveries.sql, docs/SKY_EVENTS_PLAN.md §10) --------------------------
+//
+// One statement: insert the reservation, or — for a previously ABANDONED
+// (unsent, past ABANDONED_CLAIM_MS) row for the same (device_id, event_key)
+// — hand it to this caller with a fresh token, both gated on the SAME three
+// conditions: (a) `event_key` has no `alert_log` row for this device yet
+// (the once-ever dedupe, durable across this table being pruned); (b) the
+// device's 30-day count of sent-or-still-live rows is under the cap; (c) the
+// SAME count within the trailing 24h is under ITS cap. A "still-live"
+// reservation counts as if it were happening right now (its own claimed_at
+// doesn't matter as long as it hasn't been abandoned) — it represents a send
+// in flight this instant. Mirrors `reserveHistoryBuild`/`claimHistoryBuild`'s
+// "ON CONFLICT DO UPDATE WHERE" shape (round-2 finding #4) for the reclaim
+// branch; here the WHERE guard on the INSERT's own SELECT does double duty
+// as the gate for BOTH a fresh insert and a reclaimed conflict, since SQLite
+// only attempts the ON CONFLICT branch when the SELECT actually yields a
+// candidate row.
+const CLAIM_COMING_UP = `
+INSERT INTO coming_up_deliveries (device_id, event_key, claim_token, claimed_at, sent_at, status)
+SELECT ?1, ?2, ?3, ?4, NULL, 'reserved'
+WHERE NOT EXISTS (SELECT 1 FROM alert_log WHERE device_id = ?1 AND alert_key = ?2)
+  AND (
+    SELECT COUNT(*) FROM coming_up_deliveries
+    WHERE device_id = ?1
+      AND ((sent_at IS NOT NULL AND sent_at >= ?5) OR (sent_at IS NULL AND claimed_at > ?7))
+  ) < ?8
+  AND (
+    SELECT COUNT(*) FROM coming_up_deliveries
+    WHERE device_id = ?1
+      AND ((sent_at IS NOT NULL AND sent_at >= ?6) OR (sent_at IS NULL AND claimed_at > ?7))
+  ) < ?9
+ON CONFLICT(device_id, event_key) DO UPDATE SET
+  claim_token = excluded.claim_token,
+  claimed_at = excluded.claimed_at,
+  sent_at = NULL,
+  status = 'reserved'
+WHERE coming_up_deliveries.sent_at IS NULL AND coming_up_deliveries.claimed_at <= ?7
+`;
+
+// Discriminate WHY the claim above didn't land (Codex round-4 HIGH —
+// `ComingUpClaimResult`). Run in the SAME batch as CLAIM_COMING_UP (below),
+// so both probes see the identical post-claim-attempt state, not a
+// separately-read one a concurrent writer could shift out from under them.
+// Self-updates (`SET col = col`), not reads: this codebase's `D1Like.batch()`
+// only returns `D1RunResult[]` (changes/success), never row data, for EVERY
+// statement in a batch — a `.first()`/`.all()` read has nowhere to put its
+// result there. `changes > 0` after a self-update is the same "did a row
+// match this WHERE" signal a real read would give, with no schema/interface
+// change needed. Harmless when the claim itself succeeded (both probes are
+// simply never consulted in that case, and a same-value self-write changes
+// nothing real either way).
+const PROBE_ALREADY_SENT = `
+UPDATE alert_log SET meta_json = meta_json WHERE device_id = ?1 AND alert_key = ?2
+`;
+const PROBE_IN_FLIGHT = `
+UPDATE coming_up_deliveries SET claim_token = claim_token
+WHERE device_id = ?1 AND event_key = ?2 AND sent_at IS NULL AND claimed_at > ?3
+`;
+
+// Confirm a claimed send, only for the caller holding the CURRENT token, and
+// write the durable `alert_log` row in the SAME batch (Codex/plan
+// requirement: a crash between the two must never leave them disagreeing).
+// The second statement's WHERE EXISTS re-checks that the FIRST statement's
+// UPDATE actually landed (token matched) before writing alert_log — so a
+// stale token makes BOTH statements no-ops, without any app-level branching
+// between them.
+const COMPLETE_COMING_UP_DELIVERY = `
+UPDATE coming_up_deliveries SET sent_at = ?4, status = 'sent'
+WHERE device_id = ?1 AND event_key = ?2 AND claim_token = ?3
+`;
+const COMPLETE_COMING_UP_ALERT_LOG = `
+INSERT INTO alert_log (device_id, alert_key, sent_at, meta_json)
+SELECT ?1, ?2, ?4, NULL
+WHERE EXISTS (
+  SELECT 1 FROM coming_up_deliveries
+  WHERE device_id = ?1 AND event_key = ?2 AND claim_token = ?3 AND sent_at = ?4
+)
+ON CONFLICT(device_id, alert_key) DO UPDATE SET sent_at = excluded.sent_at, meta_json = excluded.meta_json
+`;
 
 /** `live_activities` columns, in the exact order the row mapper below reads
  *  them (migrations/0007_live_activities.sql). */
@@ -481,6 +570,7 @@ export function d1Store(db: D1Like): DeviceStore {
     async deleteDevice(id) {
       await db.prepare("DELETE FROM presence WHERE device_id = ?").bind(id).run();
       await db.prepare("DELETE FROM alert_log WHERE device_id = ?").bind(id).run();
+      await db.prepare("DELETE FROM coming_up_deliveries WHERE device_id = ?").bind(id).run();
       await db.prepare("DELETE FROM devices WHERE id = ?").bind(id).run();
     },
 
@@ -594,6 +684,25 @@ export function d1Store(db: D1Like): DeviceStore {
       await db
         .prepare("UPDATE devices SET sent_json = ?, updated_at = ? WHERE id = ?")
         .bind(keys.length ? JSON.stringify(sent) : null, Date.now(), deviceId)
+        .run();
+    },
+
+    // Atomic partial merge (Codex round-4 HIGH) — `json_patch` does the
+    // read-modify-write server-side, in the SAME statement, the same
+    // technique UPSERT_DEVICE already uses for `prefs_json`: two overlapping
+    // callers merging DIFFERENT keys (the 5-min Worker cron and the hourly
+    // GitHub Actions fallback both hitting /api/push/run around the same
+    // moment, say) can never clobber each other, because neither ever reads
+    // `sent_json` into JS and writes a whole replacement back — SQLite reads
+    // the CURRENT value and merges `?2` into it as one indivisible step.
+    async patchSent(deviceId, patch: Partial<SentState>) {
+      const keys = Object.keys(patch).filter((k) => (patch as Record<string, unknown>)[k] !== undefined);
+      if (!keys.length) return;
+      const partial: Record<string, unknown> = {};
+      for (const k of keys) partial[k] = (patch as Record<string, unknown>)[k];
+      await db
+        .prepare("UPDATE devices SET sent_json = json_patch(COALESCE(sent_json, '{}'), ?), updated_at = ? WHERE id = ?")
+        .bind(JSON.stringify(partial), Date.now(), deviceId)
         .run();
     },
 
@@ -1065,6 +1174,58 @@ export function d1Store(db: D1Like): DeviceStore {
         .bind(cutoffMs)
         .run();
       return Number(r.meta?.changes ?? 0);
+    },
+
+    // --- "Coming up" sky-events alert ledger (migrations/0011_coming_up_ ---
+    // --- deliveries.sql, docs/SKY_EVENTS_PLAN.md §10) -----------------------
+    async claimComingUp(deviceId, eventKey, claimToken, nowMs) {
+      const abandonCutoff = nowMs - COMING_UP_ABANDONED_CLAIM_MS; // ?7 / ?3 (probe)
+      const changesOf = (r: unknown) => (r as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
+      const [claimResult, sentProbe, flightProbe] = await runBatch(db, [
+        db
+          .prepare(CLAIM_COMING_UP)
+          .bind(
+            deviceId, // ?1
+            eventKey, // ?2
+            claimToken, // ?3
+            nowMs, // ?4
+            nowMs - COMING_UP_30D_MS, // ?5 — 30-day window start
+            nowMs - COMING_UP_24H_MS, // ?6 — 24-hour window start
+            abandonCutoff, // ?7
+            COMING_UP_MAX_PER_30D, // ?8
+            COMING_UP_MAX_PER_24H, // ?9
+          ),
+        db.prepare(PROBE_ALREADY_SENT).bind(deviceId, eventKey),
+        db.prepare(PROBE_IN_FLIGHT).bind(deviceId, eventKey, abandonCutoff),
+      ]);
+      if (changesOf(claimResult) > 0) return "claimed";
+      if (changesOf(sentProbe) > 0) return "already-sent";
+      if (changesOf(flightProbe) > 0) return "in-flight";
+      return "capped";
+    },
+
+    async completeComingUp(deviceId, eventKey, claimToken, nowMs) {
+      await runBatch(db, [
+        db.prepare(COMPLETE_COMING_UP_DELIVERY).bind(deviceId, eventKey, claimToken, nowMs),
+        db.prepare(COMPLETE_COMING_UP_ALERT_LOG).bind(deviceId, eventKey, claimToken, nowMs),
+      ]);
+    },
+
+    async releaseComingUp(deviceId, eventKey, claimToken) {
+      await db
+        .prepare("DELETE FROM coming_up_deliveries WHERE device_id = ? AND event_key = ? AND claim_token = ?")
+        .bind(deviceId, eventKey, claimToken)
+        .run();
+    },
+
+    async pruneComingUp(nowMs) {
+      await db
+        .prepare(
+          "DELETE FROM coming_up_deliveries WHERE " +
+            "(sent_at IS NOT NULL AND sent_at < ?) OR (sent_at IS NULL AND claimed_at < ?)",
+        )
+        .bind(nowMs - COMING_UP_RETENTION_MS, nowMs - COMING_UP_ABANDONED_CLAIM_MS)
+        .run();
     },
   };
 }

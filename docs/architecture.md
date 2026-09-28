@@ -54,7 +54,7 @@ flowchart TD
   SHARE --> PIPE
   PIPE --> SOURCES[lib/sources/*<br/>one adapter per external source<br/>each returns Wrapped&lt;T&gt;, never throws]
   PIPE --> SCORE[lib/score.ts<br/>deriveMetrics + computeScore<br/>hourly + multi-day windows]
-  SOURCES -->|"NWS alerts (onset/effective/ends)<br/>+ per-period SRF words +<br/>NOAA rip model (rip-data branch)"| RIPRISK[lib/ripRisk/*<br/>resolveRipNow: alert-in-effect (always High) &gt;<br/>fresh NOAA model (softened vs. a disagreeing<br/>SRF word, or upgrade-only once aging) &gt;<br/>current SRF period &gt; unknown — pure, `now`-passed]
+  SOURCES -->|"NWS alerts (onset/effective/ends)<br/>+ per-period SRF words +<br/>NOAA rip model (rip-data branch)"| RIPRISK["lib/ripRisk/*<br/>resolveRipNow: alert-in-effect (always High) &gt;<br/>fresh NOAA model (softened vs. a disagreeing<br/>SRF word, or upgrade-only once aging) &gt;<br/>current SRF period &gt; unknown — pure, now-passed"]
   RIPRISK -->|"rip cap (85/92)"| SCORE
   RIPRISK -.->|"in-effect alert only, deduped by CAP id"| EVAL2[lib/alerts/evaluate.ts<br/>snapshotHazards rip push]
   SCORE --> HAZ[lib/hazards/assess.ts<br/>one lightning + rain assessment<br/>30-min / 20-min holds, pure]
@@ -63,6 +63,16 @@ flowchart TD
   CAM --> SOURCES
   SHARE --> CARDMODEL[lib/shareCard.ts<br/>pick + format the on-card tiles]
   CARDMODEL --> IMG[next/og ImageResponse<br/>satori + resvg → PNG, default font only]
+
+  PIPE --> SKYADAPT["lib/sources/launchLibrary.ts, kingTide.ts<br/>read launch-data / king-tide-data branches (section 2)"]
+  PIPE --> SKYLIVE["lib/sources/moonEvents.ts (astronomy-engine, server-only)<br/>+ meteorShowers.ts (static yearly calendar)"]
+  SKYADAPT --> SKYBUILD[lib/skyEvents.ts<br/>buildComingUp: merge tide+moon+meteor+launch,<br/>episode-group, 3-row cap w/ reserved rare row]
+  SKYLIVE --> SKYBUILD
+  SKYBUILD -->|"rates each event's own window"| SKYQUAL[lib/skyVisibilityQuality.ts<br/>clear-sky-best curve; hard caps: rain/fog/heavy low cloud;<br/>moonlight penalty &gt;70% lit]
+  SKYBUILD -->|"card, always ≤3 rows"| SKYCARDUI[components/SkyEventsCard.tsx<br/>full-width dashboard row]
+  SKYBUILD -.->|"uncapped alertCandidates<br/>SERVER-ONLY, stripped before any public response"| SKYALERT[snap.skyAlertCandidates]
+  SKYCARDUI -.-> APPUI
+  SKYCARDUI -.-> PAGE
 
   RESOLVE --> LOC[config/locations.ts<br/>source of truth for served beaches]
   SITEMAP --> LOC
@@ -93,6 +103,8 @@ flowchart LR
     EVAL["eval.yml — Vision Eval<br/>every 2h, daylight"]
     PUSHCRON["push-cron.yml — Push notifications cron<br/>hourly at :05 (backstop)"]
     LAYOUT["layout-check.yml — Mobile Layout Check<br/>on push + PR"]
+    LAUNCHLIB["launch-library.yml — Rocket Launch Feed (LL2)<br/>hourly heartbeat + internal ~30-min poll loop (~4h45m)"]
+    KINGTIDE["king-tide.yml — King Tide / High-Tide-Flooding Feed<br/>twice weekly, Mon + Thu"]
   end
 
   subgraph cf [Cloudflare Cron Triggers]
@@ -115,6 +127,10 @@ flowchart LR
   GOES -->|writes| GDATA[(GOES cloud data)]
   MRMS -->|writes| MDATA[(MRMS rain nowcast data)]
   EVAL -->|archives + scores stills| SDATA
+  LAUNCHLIB -->|"paginated pull, throttle-aware (≤15 req/hour)"| LL2API[["Launch Library 2<br/>thespacedevs.com"]]
+  LAUNCHLIB -->|"writes, single-commit orphan"| LLDATA[(launch-data branch<br/>launch_data.json)]
+  KINGTIDE -->|"per-station hi/lo predictions + flood levels"| COOPSAPI[["NOAA CO-OPS<br/>tidesandcurrents.noaa.gov"]]
+  KINGTIDE -->|"writes, single-commit orphan"| KTDATA[(king-tide-data branch<br/>king_tide_data.json)]
 
   LDATA --> SOURCES2[lib/sources/lightning.ts]
   SDATA --> SOURCES3[lib/sources/sargassum.ts, busyness.ts, clarity.ts]
@@ -123,6 +139,8 @@ flowchart LR
   SOURCES3 -->|"last 2 weeks of read times"| CAMNEXT[lib/camNextRead.ts<br/>learns the next cam read time,<br/>no fixed schedule]
   GDATA --> SOURCES4[lib/sources/goesCloud.ts]
   MDATA --> SOURCES5[lib/sources/precipRadar.ts<br/>parses lastWetIso → wetMinutesAgo<br/>on the server clock]
+  LLDATA --> SOURCES7[lib/sources/launchLibrary.ts<br/>per-beach LaunchSkyEvent: bearing/distance,<br/>range-tier eligibility, day/twilight/night light state]
+  KTDATA --> SOURCES8[lib/sources/kingTide.ts<br/>per-station flood-threshold + top-1%-of-year<br/>episodes, episode-merged]
 
   PUSHCRON -->|POST x-cron-secret| RUN["/api/push/run?mode=all"]
   RUN -->|"at-beach hazards read the SAME<br/>assessment the score caps use"| HAZ2[lib/hazards/assess.ts<br/>lightning from the device fix,<br/>rain from the beach radar or the fix's cell forecast]
@@ -225,6 +243,35 @@ dashboard's own clock ticks every 60s post-mount (matching `RipRiskCard`'s
 convention) so this resolution — and the score's rip cap shown client-side —
 stays live rather than freezing at whatever was true when the tab loaded.
 
+**The "Coming up" sky-events card follows the same "preprocess, don't fetch
+live" pattern.** `launch-library.yml` polls Launch Library 2 every 30
+minutes, inside an hourly-triggered ~4h45m loop (the same GitHub-cron-
+unreliability workaround as `lightning.yml`), and publishes `launch_data.json`
+to its own `launch-data` branch. `king-tide.yml` runs twice a week — tide
+predictions are deterministic astronomy, not a live model, so a fast cadence
+buys nothing — and publishes `king_tide_data.json` to its own
+`king-tide-data` branch. Each feed gets its own branch for the same reason
+`rip-data` does: `sargassum-data` is force-pushed as an orphan branch by two
+other jobs and would silently wipe anything else stored there. A failed or
+partial run on either feed publishes nothing, so the previous good file stays
+live. `lib/sources/launchLibrary.ts` turns each feed entry into a per-beach
+`LaunchSkyEvent`: bearing, distance, a range-tier eligibility check, and
+day/twilight/night light state, each worked out at the launch's own liftoff
+time. `lib/sources/kingTide.ts` turns each station's predictions into merged
+flood-threshold and top-1%-of-year episodes. Two more event types need no
+feed at all: `lib/sources/moonEvents.ts` computes full moons, supermoons, and
+eclipses live with `astronomy-engine` (server-only — it must never reach a
+client bundle), and `lib/sources/meteorShowers.ts` reads a static yearly
+calendar. `lib/skyEvents.ts`'s `buildComingUp` merges all four sources into
+one ordered card, capped at 3 rows (an eclipse or a launch reserves its row
+over routine events when there are more than 3), and rates each event's own
+window with `lib/skyVisibilityQuality.ts`: clear sky scores best, any cloud
+only lowers the score, and rain, fog, near-total low cloud, or a Moon over
+70% lit each cap the result outright. `components/SkyEventsCard.tsx` renders
+the capped card full-width in the dashboard; the uncapped candidate list
+stays server-only (`snap.skyAlertCandidates`) for the alert path in section 3
+below.
+
 ## 3. Beach Day Plus — device, presence, and alerts
 
 ```mermaid
@@ -290,6 +337,17 @@ flowchart TD
   SEND -->|APNs| APNS[(Apple Push Notification service)]
   SEND -->|FCM| FCM[(Firebase Cloud Messaging)]
 
+  %% "Coming up" sky-events alert (Phase 3) — Plus, opt-in, at most one sky
+  %% event a day and three a month per device (coming_up_deliveries own
+  %% caps), never a second push alongside "turned Excellent".
+  RUN -->|"beach-local 8:00 AM window only (DST-aware)"| COMINGUP[lib/alerts/comingUp.ts<br/>selectComingUpEvent over snap.skyAlertCandidates:<br/>eclipse &gt; validated tide &gt; meteor &gt; supermoon &gt; launch]
+  PIPE2 -.->|"snap.skyAlertCandidates<br/>uncapped, SERVER-ONLY"| COMINGUP
+  COMINGUP -->|"claimComingUp: 24h/30d caps"| CUD[(coming_up_deliveries<br/>migrations/0011, one row per device+event)]
+  CUD -->|"reserved"| CUROUTE{{"resolved by exactly ONE:<br/>1) append to morning digest body<br/>2) else coalesce into 'turned Excellent' body<br/>3) else standalone push"}}
+  MORNING --> CUROUTE
+  CUROUTE --> SEND
+  CUROUTE -->|"completeComingUp / releaseComingUp"| CUD
+
   %% Beach Session Live Activity (docs/LIVE_ACTIVITY_PLAN.md Phase 3) — one
   %% evaluation, two independent fan-outs from the SAME armed-session loop.
   ATBEACH -->|"listActiveLiveActivities + due-end sweep<br/>(expired presence or expires_at)"| D1
@@ -299,6 +357,20 @@ flowchart TD
   CLAIM --> LASEND["lib/push/apns.ts<br/>sendLiveActivityUpdate<br/>apns-push-type: liveactivity"]
   LASEND -->|APNs| APNS
 ```
+
+**The "coming up" sky-events alert only runs during a beach's own 8:00 AM
+window** (the same beach-local, DST-aware boundary the morning digest uses),
+and only for a Plus device that opted in. `lib/alerts/comingUp.ts` picks at
+most one event from that beach's uncapped candidate list, by priority:
+eclipse, then a validated flood-threshold tide crossing, then a major meteor
+peak, then a supermoon, then a launch. The pick is claimed in
+`coming_up_deliveries` (migrations/0011) before anything is sent — that
+claim is the whole concurrency guard, and also enforces the caps (one
+sky-event push a day, three a month per device). The claimed event then goes
+out exactly once, by whichever of three paths applies first: appended to the
+morning digest body, coalesced into a same-run "turned Excellent" push, or,
+if neither is due, sent standalone — a device is never sent two pushes for
+the same pick.
 
 **Grant-source model.** `devices` keeps three independent expiries —
 `store_until` (a purchase, mirrored from RevenueCat), `code_until` (an
@@ -430,7 +502,8 @@ window has passed. `/api/admin/scans` reads the whole chain in two queries.
 | RevenueCat | Beach Day Plus billing: the app buys through its SDK; the server confirms with its REST API (`/api/devices/purchase`), and `/api/revenuecat/webhook` re-asks that same REST API for the live subscriber state on any renewal/expiration/pause/cancellation ping rather than trusting the event itself (see docs/BILLING_SETUP.md) |
 | Open-Meteo | Forecast, hourly forecast, nowcast, minutely rain (Plus alert fallback) |
 | National Weather Service (NWS) | Alerts, forecast |
-| NOAA CO-OPS | Tide predictions and real water level |
+| NOAA CO-OPS | Tide predictions, real water level, and flood levels (king tide feed) |
+| Launch Library 2 (LL2) | Upcoming rocket launches across 4 US ranges (Coming up card) |
 | NDBC | Buoy observations (waves, water temp) |
 | MET Norway | Secondary forecast model (consensus) |
 | EPA AirNow / CAMS | Air quality |
