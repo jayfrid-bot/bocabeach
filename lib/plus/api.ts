@@ -165,6 +165,8 @@ export function plusErrorMessage(error: string | null): string {
       return "The App Store could not complete that purchase. Try again.";
     case "purchase-unconfirmed":
       return "Your purchase went through, but we couldn't confirm it yet. Tap Restore in a moment, or reopen the app.";
+    case "store-restore-error":
+      return "We couldn't reach the App Store. Check your connection and tap Restore again.";
     case "bad-request":
       return "Something about that request was wrong. Try again.";
     default:

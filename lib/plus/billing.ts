@@ -171,14 +171,26 @@ export async function purchasePlan(deviceId: string, offer: PlanOffer): Promise<
   }
 }
 
-/** Ask the store for anything this Apple ID already bought. True if Plus is among it. */
-export async function restoreBilling(deviceId: string): Promise<boolean> {
-  if (!(await configureBilling(deviceId))) return false;
+/**
+ * "active" — the store confirmed Plus is among this Apple ID's purchases.
+ * "none" — the store answered, but nothing matched: there is genuinely
+ * nothing to restore. "error" — configuration or the restore call itself
+ * failed, so the store was never actually asked (or its answer never came
+ * back). Tri-state rather than a plain boolean (Codex review #2): the
+ * caller must not read "error" the same as "none" — a device that could not
+ * even reach the App Store has no business being told there is nothing on
+ * it, which is what a plain `false` used to collapse both cases into.
+ */
+export type RestoreOutcome = "active" | "none" | "error";
+
+/** Ask the store for anything this Apple ID already bought. */
+export async function restoreBilling(deviceId: string): Promise<RestoreOutcome> {
+  if (!(await configureBilling(deviceId))) return "error";
   const P = getPlugin();
   try {
     const { customerInfo } = await P.restorePurchases();
-    return customerInfo.entitlements.active[ENTITLEMENT] != null;
+    return customerInfo.entitlements.active[ENTITLEMENT] != null ? "active" : "none";
   } catch {
-    return false;
+    return "error";
   }
 }

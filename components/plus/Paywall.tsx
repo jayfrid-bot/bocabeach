@@ -23,6 +23,33 @@ const PRIVACY_URL = "/privacy";
 const NO_ELIGIBILITY: Record<PlanChoice, Eligibility> = { monthly: "unknown", yearly: "unknown" };
 
 /**
+ * With store billing available, the App Store IS the checkout — a code
+ * field next to real prices only invites confusion (and a support
+ * question) over which path to use. This must NEVER flip back on just
+ * because offers failed to load this one time (App Review risk, Codex
+ * round 2 #2 — reverts round 1's "show it when offers fail" change): a code
+ * stays available only for builds with no billing key at all (dev/e2e).
+ * Shared with components/plus/PlusSettingsSheet.tsx's own code-entry block.
+ * Pure so this is unit-tested directly.
+ */
+export function shouldShowCodeEntry(billing: boolean): boolean {
+  return !billing;
+}
+
+/** The short, shareable form of a device id shown as "Support ID" (Codex
+ *  round 2 #1): our privacy page points people who want their record
+ *  deleted at support@ with this, since the full id is otherwise not
+ *  visible anywhere in the app. Just the first 12 characters (Codex round 3
+ *  #1) — enough for us to find the row without ambiguity, short enough to
+ *  read over the phone; the Copy button next to it still copies the FULL
+ *  id. Defined here (not in components/plus/PlusSettingsSheet.tsx, which
+ *  already imports shouldShowCodeEntry from this file) so the two files
+ *  don't import each other both ways. Pure so it is unit-tested directly. */
+export function supportId(deviceId: string): string {
+  return deviceId.slice(0, 12);
+}
+
+/**
  * Ask the store for prices, then (only once there is something to ask about)
  * whether this Apple account still owes each plan a trial. Both legs are
  * never-throw contracts (see lib/plus/billing.ts), so this never rejects
@@ -84,6 +111,7 @@ export function PaywallBody({
   const [note, setNote] = useState<string | null>(null);
   const [codeOpen, setCodeOpen] = useState(false);
   const [code, setCode] = useState("");
+  const [idCopied, setIdCopied] = useState(false);
   // Known from the device row, or learned the moment the server answers 409.
   const [trialUsed, setTrialUsed] = useState(plus.device?.trialUsed ?? false);
   // The server trial route is a billing-outage fallback, off by default (see
@@ -232,6 +260,17 @@ export function PaywallBody({
     }
   };
 
+  const copySupportId = async () => {
+    try {
+      await navigator.clipboard.writeText(plus.deviceId);
+      setIdCopied(true);
+      setTimeout(() => setIdCopied(false), 1500);
+    } catch {
+      // Clipboard API can be unavailable (e.g. no secure context) — the id
+      // is still right there on screen to copy by hand.
+    }
+  };
+
   const restore = async () => {
     setBusy(true);
     setError(null);
@@ -361,13 +400,13 @@ export function PaywallBody({
           </>
         )}
 
-        {/* With store billing on, the App Store IS the checkout — a code
-            entry field next to real prices only invites confusion (and a
-            support question) over which path to use. A device already
+        {/* See shouldShowCodeEntry above: with store billing available, the
+            App Store IS the checkout — a code field next to real prices
+            only invites confusion (and App Review risk). A device already
             unlocked by a code earlier keeps that entitlement either way;
             this only hides the way to REDEEM a new one. Billing-off builds
-            (and the e2e no-billing path) still need it: it's the only way in. */}
-        {billing ? null : codeOpen ? (
+            (and the e2e no-billing path) always show it. */}
+        {!shouldShowCodeEntry(billing) ? null : codeOpen ? (
           <div className="rounded-2xl bg-slate-900/5 p-3 dark:bg-white/5">
             <label
               htmlFor="plus-code"
@@ -419,6 +458,25 @@ export function PaywallBody({
             >
               Privacy Policy
             </a>
+          </div>
+        ) : null}
+
+        {/* Codex round 2 #1: the Settings gear (and its own Support ID row)
+            is subscriber-only, so a free or not-yet-entitled person could
+            never reach a Support ID at all — this is the one place every
+            app user who opens Plus passes through, whatever their plan. */}
+        {plus.deviceId ? (
+          <div className="flex items-center justify-center gap-1.5 text-xs text-slate-400 dark:text-slate-600">
+            <span>
+              Support ID: <span className="font-mono">{supportId(plus.deviceId)}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => void copySupportId()}
+              className="text-ocean-700 underline-offset-2 hover:underline dark:text-ocean-300"
+            >
+              {idCopied ? "Copied" : "Copy"}
+            </button>
           </div>
         ) : null}
 

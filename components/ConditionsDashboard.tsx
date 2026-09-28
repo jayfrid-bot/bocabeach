@@ -65,7 +65,7 @@ import { BeachModeCard } from "@/components/plus/BeachModeCard";
 import { FirstRunBanner } from "@/components/plus/FirstRunBanner";
 import { HomeBeachRedirect } from "@/components/plus/HomeBeachRedirect";
 import { NearYouChip } from "@/components/plus/NearYouChip";
-import { Paywall } from "@/components/plus/Paywall";
+import { Paywall, supportId } from "@/components/plus/Paywall";
 import { PersonalizeCard } from "@/components/plus/PersonalizeCard";
 import { PlusInAppCard } from "@/components/plus/PlusInAppCard";
 import { PlusOnboarding } from "@/components/plus/PlusOnboarding";
@@ -344,6 +344,25 @@ export function ConditionsDashboard({
   useEffect(() => {
     if (!isNativeApp && isNativePlatform()) setNative(true);
   }, [isNativeApp]);
+  // Support ID in the footer (Codex round 2 #1) reuses this same
+  // hydration-safe native flag — app-only, since a plain web visitor has no
+  // device row on our server worth a support id for.
+  const [footerIdCopied, setFooterIdCopied] = useState(false);
+  // Same try/catch shape as components/plus/Paywall.tsx's copySupportId
+  // (Codex round 3 #2): `navigator.clipboard` itself can be undefined (no
+  // secure context, older WebView) — a bare `.writeText(...).catch(...)`
+  // chain does NOT guard that, since the TypeError from reading `.writeText`
+  // off `undefined` throws synchronously, before there is any promise to
+  // catch. try/catch around the whole `await` catches both.
+  const copyFooterSupportId = async () => {
+    try {
+      await navigator.clipboard.writeText(plus.deviceId);
+      setFooterIdCopied(true);
+      setTimeout(() => setFooterIdCopied(false), 1500);
+    } catch {
+      // Clipboard API unavailable — the id is still right there to copy by hand.
+    }
+  };
   // Plus is delivered only inside the phone app — billing, location and push all
   // live there. A browser is never entitled, whatever an old cached trial in its
   // localStorage says; the site shows what Plus is and points to the App Store.
@@ -756,7 +775,13 @@ export function ConditionsDashboard({
           <FlipCard
             label="Waves"
             back={nerdBack("waves")}
-            front={<WaveHeightCard waveHeightFt={d.waveHeightFt} />}
+            front={
+              <WaveHeightCard
+                waveHeightFt={d.waveHeightFt}
+                swellHeightFt={d.waveSwellHeightFt}
+                swellPeriodS={d.wavePeriodS}
+              />
+            }
           />
         ) : null}
         <FlipCard
@@ -1202,6 +1227,25 @@ export function ConditionsDashboard({
           </button>
         </div>
         <ChangelogSection />
+        {/* Codex round 2 #1: the only reliable, always-reachable place for a
+            free user who never opens the (subscriber-only) Settings gear or
+            the Paywall to find their Support ID. `native` is already
+            hydration-safe (server UA sniff first, client probe only adds
+            the app afterward — see above), so this never mismatches SSR. */}
+        {native && plus.deviceId ? (
+          <p className="flex items-center justify-center gap-1.5 text-center text-xs text-slate-400 dark:text-slate-600">
+            <span>
+              Support ID: <span className="font-mono">{supportId(plus.deviceId)}</span>
+            </span>
+            <button
+              type="button"
+              onClick={() => void copyFooterSupportId()}
+              className="hover:underline"
+            >
+              {footerIdCopied ? "Copied" : "Copy"}
+            </button>
+          </p>
+        ) : null}
       </footer>
 
       {/* The Plus screens. All three are modal, all three are opened by a tap,

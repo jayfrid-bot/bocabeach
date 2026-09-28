@@ -52,6 +52,18 @@ export const STORE_EXPIRY_GRACE_MS = 90_000;
  *  not our own server (#M2) — quick enough to catch a transient hiccup
  *  without making someone wait for the next foreground/online flush. */
 const RESTORE_RETRY_MS = 10_000;
+/** Bounds flushPending's purchaseSync retry (Codex review #1): a store
+ *  purchase that keeps coming back "not entitled yet" (RevenueCat hasn't
+ *  caught up, or a webhook outage) is retried at most this many times, or
+ *  for this long since the FIRST unconfirmed retry this session — whichever
+ *  comes first — so a stuck row does not turn into a silent, endless
+ *  network hammer on every foreground/online/mount. Session-scoped (module
+ *  state below, never persisted): a fresh app open gets its own full budget,
+ *  same reasoning as the install-token latches above. The pending flag
+ *  itself is never cleared by exhaustion — only a confirmed entitlement, or
+ *  the server's outright rejection, may do that (see purchaseSyncRetryOutcome). */
+export const PURCHASE_SYNC_MAX_ATTEMPTS = 6;
+export const PURCHASE_SYNC_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 /**
  * How long to wait before asking the server again because a STORE-based
@@ -74,6 +86,54 @@ export function storeExpiryTimerMs(input: {
   return ms;
 }
 
+/** How often to reconcile with the server purely because the app has stayed
+ *  in the foreground a long time (Codex review #5). The store-expiry timer
+ *  above only ever arms for a grant expiring within STORE_EXPIRY_TIMER_MAX_MS
+ *  (24h) — a yearly plan sits outside that entirely, so someone who simply
+ *  never backgrounds the app would otherwise never get another check after
+ *  mount (the 60s `now` tick only moves the local clock; it never asks the
+ *  server). */
+export const VISIBLE_RECONCILE_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * Run `reconcile` on a `VISIBLE_RECONCILE_MS` interval for as long as the
+ * document stays visible, pausing while it is hidden and resuming (fresh
+ * interval, not a backlog) when it becomes visible again. Returns the
+ * cleanup — clears the interval and drops the listener, same contract as a
+ * `useEffect` return.
+ *
+ * Pulled out of `usePlus` as a plain function over a minimal `doc` so the
+ * scheduling itself (not just the interval constant) is unit-tested with
+ * fake timers, per this file's no-hook-rendering convention (see header) —
+ * `usePlus` below only wires it to `refresh`.
+ */
+export function startVisibleReconcileLoop(
+  reconcile: () => void,
+  doc: Pick<Document, "visibilityState" | "addEventListener" | "removeEventListener"> = document,
+): () => void {
+  let timer: ReturnType<typeof setInterval> | null = null;
+  const start = () => {
+    if (timer || doc.visibilityState !== "visible") return;
+    timer = setInterval(reconcile, VISIBLE_RECONCILE_MS);
+  };
+  const stop = () => {
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+  };
+  const onVisibility = () => {
+    if (doc.visibilityState === "visible") start();
+    else stop();
+  };
+  start();
+  doc.addEventListener("visibilitychange", onVisibility);
+  return () => {
+    stop();
+    doc.removeEventListener("visibilitychange", onVisibility);
+  };
+}
+
 /** Whether a device READ that began when the generation counter read
  *  `startGeneration` is now superseded by a purchase/restore SYNC that
  *  started (bumping the counter) after it did — see `usePlus`'s `refresh`
@@ -81,6 +141,27 @@ export function storeExpiryTimerMs(input: {
  *  faster, later sync already applied, however the two responses land). */
 export function readSuperseded(startGeneration: number, currentGeneration: number): boolean {
   return currentGeneration !== startGeneration;
+}
+
+/** Has flushPending's purchaseSync retry used up its budget (see
+ *  PURCHASE_SYNC_MAX_ATTEMPTS/_MAX_AGE_MS above)? Pure so the bound itself is
+ *  unit-tested directly rather than through the retry loop. */
+export function purchaseSyncRetryExhausted(state: { since: number; attempts: number }, now: number): boolean {
+  return state.attempts >= PURCHASE_SYNC_MAX_ATTEMPTS || now - state.since >= PURCHASE_SYNC_MAX_AGE_MS;
+}
+
+/**
+ * What flushPending should do with the queued purchase-sync flag after one
+ * retry attempt (Codex review #1): only a CONFIRMED entitlement clears it —
+ * a 200 whose device still isn't entitled means RevenueCat hasn't caught up
+ * yet (or the grant lapsed again), not "nothing to restore", so the queue
+ * must survive it exactly like a network failure would. A non-retryable
+ * rejection (a 4xx) is the server's final word and clears it, same as every
+ * other pending kind (lib/plus/pendingWrites.ts's isRetryableSaveError).
+ */
+export function purchaseSyncRetryOutcome(res: PlusResult, now: number): "clear" | "keep" {
+  if (res.ok && res.device) return deviceEntitled(res.device, now) ? "clear" : "keep";
+  return isRetryableSaveError(res) ? "keep" : "clear";
 }
 
 export interface PlusState {
@@ -265,6 +346,44 @@ export async function bootstrapInstallToken(opts?: {
 export function resetInstallTokenLatch(): void {
   noTokenLatchedThisSession = false;
   tokenRefreshAttemptedThisSession = false;
+}
+
+// Module-scope, not per-hook-instance (same reasoning as the install-token
+// latches above): flushPending can run from several usePlus mounts across a
+// reload boundary, and the retry budget it bounds is meant to be "this app
+// session", not "this one component instance".
+let purchaseSyncRetryState: { since: number; attempts: number } | null = null;
+
+/** Test-only: clear the purchaseSync retry budget between tests. */
+export function resetPurchaseSyncRetryState(): void {
+  purchaseSyncRetryState = null;
+}
+
+/** Test-only: read the purchaseSync retry budget back, so the "does a
+ *  confirmed entitlement reset it" behavior (Codex round 2 #3) is
+ *  observable without rendering usePlus. */
+export function peekPurchaseSyncRetryState(): { since: number; attempts: number } | null {
+  return purchaseSyncRetryState;
+}
+
+/** Test-only: force the purchaseSync retry budget to a specific value, so a
+ *  test can start from "mid-episode" (some attempts already spent) without
+ *  driving flushPending's retry loop to get there. */
+export function setPurchaseSyncRetryStateForTest(state: { since: number; attempts: number } | null): void {
+  purchaseSyncRetryState = state;
+}
+
+/**
+ * A store purchase is confirmed entitled: drop the queued retry flag AND
+ * reset the in-memory retry budget together (Codex round 2 #3) — used by
+ * flushPending, syncPurchase, and restore alike, so a budget left over from
+ * an episode that has actually resolved can never make a later, unrelated
+ * one look prematurely exhausted. The one place any of the three may ever
+ * clear the pending flag on a genuine confirmation.
+ */
+export function clearPurchaseSyncQueue(): void {
+  store.clearPendingPurchaseSync();
+  purchaseSyncRetryState = null;
 }
 
 export function usePlus(): PlusState {
@@ -486,6 +605,17 @@ export function usePlus(): PlusState {
     return () => clearTimeout(t);
   }, [ready, device, cache, refresh]);
 
+  // A long, continuously-foregrounded session otherwise only ever gets the
+  // mount refresh plus whatever the store-expiry timer above happens to arm
+  // for — nothing for a grant expiring more than 24h out (#5). This runs
+  // independently of both: a plain reconcile, not a self-heal, so it is
+  // throttled by `refresh`'s own REFRESH_THROTTLE_MS just like a foreground
+  // event would be.
+  useEffect(() => {
+    if (!ready) return;
+    return startVisibleReconcileLoop(() => void refresh());
+  }, [ready, refresh]);
+
   // --- retry queue: saves that failed to reach the server --------------------
   // Merge/supersede rules live in lib/plus/pendingWrites.ts; this is only the
   // "when do we try again" half.
@@ -527,15 +657,21 @@ export function usePlus(): PlusState {
     if (pending.purchaseSync) {
       // A store purchase that confirmed but never made it to our server
       // (#4) — retry the same RevenueCat confirmation syncPurchase() does.
-      // Never clear this on a network failure: a paying subscriber's grant
-      // must not quietly stop being retried just because one attempt failed.
-      syncGenerationRef.current += 1; // a sync, not a plain read (#6/#L2)
-      const res = await plusApi.syncPurchase(id);
-      if (res.ok && res.device) {
-        applyDevice(res.device);
-        store.clearPendingPurchaseSync();
-      } else if (!isRetryableSaveError(res)) {
-        store.clearPendingPurchaseSync();
+      // Never clear this just because the HTTP call succeeded (#1): a 200
+      // whose device isn't entitled yet means RevenueCat hasn't caught up,
+      // not "resolved" — see purchaseSyncRetryOutcome. Bounded so a stuck
+      // row doesn't retry forever: after ~6 tries or 24h this session, stop
+      // asking silently (still queued, never cleared) — a manual Restore
+      // tap, or the fresh budget a full app relaunch starts, is the way
+      // forward from there.
+      const nowCheck = Date.now();
+      if (!purchaseSyncRetryState) purchaseSyncRetryState = { since: nowCheck, attempts: 0 };
+      if (!purchaseSyncRetryExhausted(purchaseSyncRetryState, nowCheck)) {
+        purchaseSyncRetryState.attempts += 1;
+        syncGenerationRef.current += 1; // a sync, not a plain read (#6/#L2)
+        const res = await plusApi.syncPurchase(id);
+        if (res.ok && res.device) applyDevice(res.device);
+        if (purchaseSyncRetryOutcome(res, Date.now()) === "clear") clearPurchaseSyncQueue();
       }
     }
   }, [applyDevice]);
@@ -718,8 +854,12 @@ export function usePlus(): PlusState {
       if (res.ok && res.device) {
         applyDevice(res.device);
         if (deviceEntitled(res.device, Date.now())) {
-          // A retry queued by an earlier failed sync is now settled.
-          store.clearPendingPurchaseSync();
+          // A retry queued by an earlier failed sync is now settled —
+          // clearPurchaseSyncQueue also resets flushPending's own retry
+          // budget (#3, Codex round 2), so a stale attempts/since pair left
+          // over from THIS resolved episode can't make a brand-new one look
+          // prematurely exhausted.
+          clearPurchaseSyncQueue();
         } else {
           // The store's purchase sheet just resolved "purchased", so the
           // charge is real — but this 200 says the row isn't entitled (the
@@ -757,22 +897,35 @@ export function usePlus(): PlusState {
     try {
       // With billing on, ask the store first: a reinstall or a new phone on
       // the same Apple ID has a purchase the server has never been told
-      // about. restoreBilling itself never throws (lib/plus/billing.ts).
-      if (billingAvailable() && (await restoreBilling(id))) {
+      // about. restoreBilling itself never throws (lib/plus/billing.ts) and
+      // is tri-state (Codex review #2): "active", "none", or "error" — an
+      // "error" (config failed, or the restore call itself failed) must
+      // never be read the same as "none".
+      const storeResult = billingAvailable() ? await restoreBilling(id) : "none";
+      if (storeResult === "error") {
+        // The store was never actually asked (or its answer never came
+        // back) — falling through to plusApi.getDevice() below would
+        // silently read the OLD pre-restore row and tell the person there
+        // is "nothing to restore", when the truth is we simply couldn't
+        // check. A retryable message instead: they still have Restore.
+        return { ok: false, device: null, error: "store-restore-error", status: 0 };
+      }
+      if (storeResult === "active") {
         // A sync, not a plain read (#6) — see syncPurchase's own comment.
         syncGenerationRef.current += 1;
         const synced = await plusApi.syncPurchase(id);
         if (synced.ok && synced.device) {
           applyDevice(synced.device, { adoptProfile: true });
           if (deviceEntitled(synced.device, Date.now())) {
-            store.clearPendingPurchaseSync();
+            // Same reset as syncPurchase's own success branch above (#3).
+            clearPurchaseSyncQueue();
             return synced;
           }
           // The server answered, but this 200 isn't entitled yet (RevenueCat
           // hasn't caught up, or the grant already lapsed again) — same
           // non-final-word reasoning as syncPurchase's own not-entitled
-          // branch (#4/#L1). Falls through to the shared queue+retry below
-          // rather than reading as "nothing to restore".
+          // branch (#4/#L1). Falls through to the queue+retry below rather
+          // than reading as "nothing to restore".
         }
         // Either the round trip itself failed, or it succeeded but wasn't
         // entitled yet: the store already confirmed the purchase for this
@@ -790,6 +943,9 @@ export function usePlus(): PlusState {
         }, RESTORE_RETRY_MS);
         return { ...synced, error: "restore-pending" };
       }
+      // storeResult === "none" (or billing is off): nothing the store knows
+      // about — the shared GET below is the honest "is there anything on
+      // file at all" check, same as it has always been.
       syncGenerationRef.current += 1;
       const res = await plusApi.getDevice(id);
       // Explicit Restore: the server's copy wins, profile included.

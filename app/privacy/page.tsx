@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
-const EFFECTIVE_DATE = "September 25, 2026";
+const EFFECTIVE_DATE = "September 28, 2026";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
@@ -71,9 +71,13 @@ export default function PrivacyPage() {
           account, no identity of any kind.
         </p>
         <p>
-          Deleting the app, or turning notifications off, ends it — the token is
-          removed. We only ever send the notifications you opted into; there are
-          no marketing pushes.
+          Turning notifications off removes that token right away. Deleting the
+          app does not send us any signal, so the token stays on file until the
+          next time we try to use it — at that point the App Store or Google
+          Play tells us it can no longer reach your phone, and we delete it
+          automatically. Either way, no notification is ever sent to a device
+          that stopped listening. We only ever send the notifications you
+          opted into; there are no marketing pushes.
         </p>
       </Section>
 
@@ -109,9 +113,24 @@ export default function PrivacyPage() {
         <p>
           A random device id — no account, no name, no email — ties your score
           profile, alert settings, and Plus status to your device, the same way
-          the push token above does. There is still no sign-in. Deleting the app
-          clears all of it, except purchase records, which Apple and
-          RevenueCat keep on their own.
+          the push token above does. There is still no sign-in.
+        </p>
+        <p>
+          Deleting the app does not delete that record. Nothing tells our
+          server the app is gone, so your device id, score profile, alert
+          settings, and any Plus grant all stay on file — only a dead push
+          token is cleared automatically, as described above. To have your
+          record deleted outright, email{" "}
+          <a
+            href="mailto:support@isitbeachday.com"
+            className="text-ocean-700 hover:underline dark:text-ocean-300"
+          >
+            support@isitbeachday.com
+          </a>{" "}
+          with your Support ID — shown at the bottom of the Beach Day Plus
+          screen, or at the very bottom of any beach page in the app — and
+          we&apos;ll remove it. Purchase records themselves are kept by Apple
+          and RevenueCat, on their own retention terms, not ours.
         </p>
       </Section>
 

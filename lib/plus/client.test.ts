@@ -11,14 +11,26 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   bootstrapInstallToken,
+  clearPurchaseSyncQueue,
   hazardsInputKey,
+  peekPurchaseSyncRetryState,
+  PURCHASE_SYNC_MAX_AGE_MS,
+  PURCHASE_SYNC_MAX_ATTEMPTS,
+  purchaseSyncRetryExhausted,
+  purchaseSyncRetryOutcome,
   readSuperseded,
   resetInstallTokenLatch,
+  resetPurchaseSyncRetryState,
+  setPurchaseSyncRetryStateForTest,
   shouldBootstrapInstallTokenOnMount,
+  startVisibleReconcileLoop,
   STORE_EXPIRY_GRACE_MS,
   STORE_EXPIRY_TIMER_MAX_MS,
   storeExpiryTimerMs,
+  VISIBLE_RECONCILE_MS,
 } from "@/lib/plus/client";
+import type { PlusResult } from "@/lib/plus/api";
+import type { DeviceRecord } from "@/lib/db/types";
 import type { Fix } from "@/lib/location/device";
 import * as store from "@/lib/plus/storage";
 
@@ -279,5 +291,175 @@ describe("readSuperseded", () => {
     // sync starts (and bumps to 4) while that read is still in flight — its
     // eventual answer must not overwrite what the sync applies (#6).
     expect(readSuperseded(3, 4)).toBe(true);
+  });
+});
+
+function fakeDevice(over: Partial<DeviceRecord> = {}): DeviceRecord {
+  return {
+    id: DEV,
+    platform: "ios",
+    tz: null,
+    homeSlug: null,
+    profile: null,
+    prefs: {},
+    plan: "free",
+    entitlementUntil: null,
+    grants: {},
+    trialUsed: false,
+    previewSeen: false,
+    presence: null,
+    ...over,
+  } as unknown as DeviceRecord;
+}
+
+// Codex review #1: flushPending must only clear the queued purchaseSync flag
+// on a CONFIRMED entitlement — a 200 that still isn't entitled (RevenueCat
+// hasn't caught up yet) has to read exactly like a network failure, not like
+// "resolved". Both pulled out of the flush loop as plain functions per this
+// file's no-hook-rendering convention (see header).
+describe("purchaseSyncRetryOutcome", () => {
+  const now = 1_000_000;
+
+  it("clears once the synced device is entitled right now", () => {
+    const res: PlusResult = { ok: true, device: fakeDevice({ plan: "plus", entitlementUntil: now + 60_000 }), error: null, status: 200 };
+    expect(purchaseSyncRetryOutcome(res, now)).toBe("clear");
+  });
+
+  it("keeps it when the response is ok but the device still isn't entitled yet", () => {
+    const res: PlusResult = { ok: true, device: fakeDevice({ plan: "free", entitlementUntil: null }), error: null, status: 200 };
+    expect(purchaseSyncRetryOutcome(res, now)).toBe("keep");
+  });
+
+  it("keeps it when the response is ok but the entitlement already lapsed", () => {
+    const res: PlusResult = { ok: true, device: fakeDevice({ plan: "plus", entitlementUntil: now - 1 }), error: null, status: 200 };
+    expect(purchaseSyncRetryOutcome(res, now)).toBe("keep");
+  });
+
+  it("keeps it on a retryable failure (network or 5xx)", () => {
+    expect(purchaseSyncRetryOutcome({ ok: false, device: null, error: "network", status: 0 }, now)).toBe("keep");
+    expect(purchaseSyncRetryOutcome({ ok: false, device: null, error: "server", status: 500 }, now)).toBe("keep");
+  });
+
+  it("clears on a non-retryable rejection — the server's final word", () => {
+    expect(purchaseSyncRetryOutcome({ ok: false, device: null, error: "not-found", status: 404 }, now)).toBe("clear");
+  });
+});
+
+describe("purchaseSyncRetryExhausted", () => {
+  const since = 1_000_000;
+
+  it("is not exhausted with attempts and age both under budget", () => {
+    expect(purchaseSyncRetryExhausted({ since, attempts: PURCHASE_SYNC_MAX_ATTEMPTS - 1 }, since + 1_000)).toBe(
+      false,
+    );
+  });
+
+  it("is exhausted once attempts reach the cap", () => {
+    expect(purchaseSyncRetryExhausted({ since, attempts: PURCHASE_SYNC_MAX_ATTEMPTS }, since + 1_000)).toBe(true);
+  });
+
+  it("is exhausted once the age cap passes, even with attempts to spare", () => {
+    expect(purchaseSyncRetryExhausted({ since, attempts: 1 }, since + PURCHASE_SYNC_MAX_AGE_MS)).toBe(true);
+  });
+});
+
+// Codex round 2 #3: syncPurchase, restore, and flushPending must all clear
+// the retry budget together with the pending flag — a stale attempts/since
+// pair left over from an episode that already resolved must not make a
+// later, unrelated one look prematurely exhausted.
+describe("clearPurchaseSyncQueue", () => {
+  beforeEach(() => {
+    installFakeLocalStorage();
+    resetPurchaseSyncRetryState();
+  });
+  afterEach(() => {
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+    resetPurchaseSyncRetryState();
+  });
+
+  it("drops both the persisted pending flag and the in-memory retry budget", () => {
+    store.queuePendingPurchaseSync();
+    setPurchaseSyncRetryStateForTest({ since: 1_000_000, attempts: 3 });
+    expect(store.readPending().purchaseSync).toBeTruthy();
+    expect(peekPurchaseSyncRetryState()).not.toBeNull();
+
+    clearPurchaseSyncQueue();
+
+    expect(store.readPending().purchaseSync).toBeUndefined();
+    expect(peekPurchaseSyncRetryState()).toBeNull();
+  });
+
+  it("is a no-op-safe reset when nothing was queued or spent yet", () => {
+    expect(() => clearPurchaseSyncQueue()).not.toThrow();
+    expect(peekPurchaseSyncRetryState()).toBeNull();
+  });
+});
+
+describe("startVisibleReconcileLoop", () => {
+  function fakeDoc(initial: "visible" | "hidden" = "visible") {
+    let visibilityState: "visible" | "hidden" = initial;
+    const listeners = new Set<() => void>();
+    return {
+      get visibilityState() {
+        return visibilityState;
+      },
+      set(v: "visible" | "hidden") {
+        visibilityState = v;
+        for (const l of listeners) l();
+      },
+      addEventListener: (_type: string, fn: () => void) => listeners.add(fn),
+      removeEventListener: (_type: string, fn: () => void) => listeners.delete(fn),
+    };
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reconciles every VISIBLE_RECONCILE_MS while the document stays visible", () => {
+    const doc = fakeDoc("visible");
+    const reconcile = vi.fn();
+    startVisibleReconcileLoop(reconcile, doc as unknown as Document);
+    expect(reconcile).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(VISIBLE_RECONCILE_MS);
+    expect(reconcile).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(VISIBLE_RECONCILE_MS * 2);
+    expect(reconcile).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not start a timer at all while hidden", () => {
+    const doc = fakeDoc("hidden");
+    const reconcile = vi.fn();
+    startVisibleReconcileLoop(reconcile, doc as unknown as Document);
+    vi.advanceTimersByTime(VISIBLE_RECONCILE_MS * 5);
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it("pauses on hide and resumes (fresh interval, not a backlog) on show", () => {
+    const doc = fakeDoc("visible");
+    const reconcile = vi.fn();
+    startVisibleReconcileLoop(reconcile, doc as unknown as Document);
+    vi.advanceTimersByTime(VISIBLE_RECONCILE_MS / 2);
+    doc.set("hidden");
+    // Backgrounded for a long time — none of it should count once resumed.
+    vi.advanceTimersByTime(VISIBLE_RECONCILE_MS * 10);
+    expect(reconcile).not.toHaveBeenCalled();
+    doc.set("visible");
+    vi.advanceTimersByTime(VISIBLE_RECONCILE_MS - 1);
+    expect(reconcile).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
+  it("cleanup stops the timer and drops the listener", () => {
+    const doc = fakeDoc("visible");
+    const reconcile = vi.fn();
+    const stop = startVisibleReconcileLoop(reconcile, doc as unknown as Document);
+    stop();
+    vi.advanceTimersByTime(VISIBLE_RECONCILE_MS * 5);
+    expect(reconcile).not.toHaveBeenCalled();
   });
 });

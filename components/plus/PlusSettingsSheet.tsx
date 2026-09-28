@@ -21,6 +21,7 @@ import { deviceEntitled, entitlementRemaining } from "@/lib/plus/entitlement";
 import { isRetryableSaveError } from "@/lib/plus/pendingWrites";
 import { getHomeBeach, setHomeBeach } from "@/lib/homeBeach";
 import type { LocationPublic } from "@/lib/types";
+import { shouldShowCodeEntry, supportId } from "@/components/plus/Paywall";
 import { Chip, ErrorLine, PrimaryButton, SecondaryButton, Sheet } from "@/components/plus/Sheet";
 
 const HEAT_CHOICES: { value: HeatPreference; label: string }[] = [
@@ -72,9 +73,12 @@ export function PlusSettingsSheet({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  // Same condition the paywall uses to decide it has store prices to show
-  // (components/plus/Paywall.tsx's `billing`): with the App Store as the
-  // checkout, a code field here is just a second, confusing way in.
+  const [idCopied, setIdCopied] = useState(false);
+  // Same condition the paywall uses (components/plus/Paywall.tsx's
+  // `billing`): with the App Store as the checkout, a code field here is
+  // just a second, confusing way in — and (Codex round 2 #2) this must stay
+  // true whatever the store answers, never flip back on for a transient
+  // offers failure (App Review risk).
   const storeBilling = native && billingAvailable();
 
   useEffect(() => {
@@ -140,6 +144,17 @@ export function PlusSettingsSheet({
       setCodeOpen(false);
       setCode("");
     } else setError(plusErrorMessage(res.error));
+  };
+
+  const copySupportId = async () => {
+    try {
+      await navigator.clipboard.writeText(plus.deviceId);
+      setIdCopied(true);
+      setTimeout(() => setIdCopied(false), 1500);
+    } catch {
+      // Clipboard API can be unavailable (e.g. no secure context) — the id
+      // is still right there on screen to copy by hand.
+    }
   };
 
   const restore = async () => {
@@ -369,7 +384,7 @@ export function PlusSettingsSheet({
 
       {/* --- Account ------------------------------------------------------- */}
       <div className="mt-5 space-y-2 border-t border-slate-900/10 pt-4 dark:border-white/10">
-        {storeBilling ? null : codeOpen ? (
+        {!shouldShowCodeEntry(storeBilling) ? null : codeOpen ? (
           <div className="rounded-2xl bg-slate-900/5 p-3 dark:bg-white/5">
             <label
               htmlFor="plus-settings-code"
@@ -400,6 +415,23 @@ export function PlusSettingsSheet({
         <SecondaryButton onClick={restore} disabled={busy}>
           Restore
         </SecondaryButton>
+        {plus.deviceId ? (
+          <div className="flex items-center justify-between gap-2 px-1 text-xs text-slate-500 dark:text-slate-400">
+            <span>
+              Support ID:{" "}
+              <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
+                {supportId(plus.deviceId)}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => void copySupportId()}
+              className="shrink-0 rounded-full px-2 py-1 font-medium text-ocean-700 transition hover:bg-slate-900/5 dark:text-ocean-300 dark:hover:bg-white/10"
+            >
+              {idCopied ? "Copied" : "Copy"}
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {note ? (

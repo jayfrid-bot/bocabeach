@@ -184,29 +184,32 @@ describe("purchasePlan", () => {
 });
 
 describe("restoreBilling", () => {
-  it("resolves true when Plus is among the restored entitlements", async () => {
+  it('resolves "active" when Plus is among the restored entitlements', async () => {
     mocks.configure.mockResolvedValue(undefined);
     mocks.restorePurchases.mockResolvedValue({
       customerInfo: { entitlements: { active: { plus: { productIdentifier: "annual_id" } } } },
     });
-    expect(await billing.restoreBilling(DEVICE_ID)).toBe(true);
+    expect(await billing.restoreBilling(DEVICE_ID)).toBe("active");
   });
 
-  it("resolves false when nothing active matches the entitlement", async () => {
+  it('resolves "none" when the store answered but nothing active matches the entitlement', async () => {
     mocks.configure.mockResolvedValue(undefined);
     mocks.restorePurchases.mockResolvedValue({ customerInfo: { entitlements: { active: {} } } });
-    expect(await billing.restoreBilling(DEVICE_ID)).toBe(false);
+    expect(await billing.restoreBilling(DEVICE_ID)).toBe("none");
   });
 
-  it("resolves false, never rejects, when restorePurchases() rejects", async () => {
+  // Codex review #2: "error" must stay distinct from "none" — the caller
+  // (lib/plus/client.ts's restore()) treats a failed round trip as
+  // retryable, never as "there is nothing to restore".
+  it('resolves "error", never rejects, when restorePurchases() rejects', async () => {
     mocks.configure.mockResolvedValue(undefined);
     mocks.restorePurchases.mockRejectedValue(new Error("network"));
-    await expect(billing.restoreBilling(DEVICE_ID)).resolves.toBe(false);
+    await expect(billing.restoreBilling(DEVICE_ID)).resolves.toBe("error");
   });
 
-  it("resolves false when configuration itself failed", async () => {
+  it('resolves "error" when configuration itself failed', async () => {
     mocks.configure.mockRejectedValue(new Error("no bridge"));
-    await expect(billing.restoreBilling(DEVICE_ID)).resolves.toBe(false);
+    await expect(billing.restoreBilling(DEVICE_ID)).resolves.toBe("error");
     expect(mocks.restorePurchases).not.toHaveBeenCalled();
   });
 });

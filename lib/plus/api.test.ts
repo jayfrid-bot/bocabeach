@@ -184,4 +184,13 @@ describe("plusErrorMessage", () => {
       "Your purchase went through, but we couldn't confirm it yet. Tap Restore in a moment, or reopen the app.",
     );
   });
+
+  // Codex review #2: a failed App Store restore round trip must read as
+  // retryable, not as "nothing to restore" — that reading is client.ts's
+  // job (restore()'s storeResult === "error" branch); this is just the copy.
+  it("gives a retryable message for a failed App Store restore round trip, not a false negative", () => {
+    expect(plusErrorMessage("store-restore-error")).toBe(
+      "We couldn't reach the App Store. Check your connection and tap Restore again.",
+    );
+  });
 });
