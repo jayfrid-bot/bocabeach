@@ -68,6 +68,7 @@ import { HeaderSubtitle } from "@/components/plus/HeaderSubtitle";
 import { HomeBeachRedirect } from "@/components/plus/HomeBeachRedirect";
 import { Paywall, supportId } from "@/components/plus/Paywall";
 import { PersonalizeCard } from "@/components/plus/PersonalizeCard";
+import { HistorySection } from "@/components/plus/HistorySection";
 import { PlusInAppCard } from "@/components/plus/PlusInAppCard";
 import { PlusOnboarding } from "@/components/plus/PlusOnboarding";
 import { PlusSettingsSheet } from "@/components/plus/PlusSettingsSheet";
@@ -769,6 +770,22 @@ export function ConditionsDashboard({
       {windows.length || snap.forecast.data?.length ? (
         <section className="mb-6">
           <DayOutlookStrip days={windows} forecast={snap.forecast} tz={tz} />
+        </section>
+      ) : null}
+
+      {/* Plus "Last N days" — a look back at recent archived conditions.
+          Gated like BeachModeCard: only on real beach pages (not the admin
+          preview), and the component itself renders nothing off the native
+          app shell (the API route is app-only). */}
+      {plusOn ? (
+        <section className="mb-6">
+          <HistorySection
+            slug={slug}
+            native={native}
+            entitled={plusEntitled}
+            deviceId={plus.deviceId}
+            onDoor={() => setSheet(plus.previewSeen ? "paywall" : "onboarding")}
+          />
         </section>
       ) : null}
 

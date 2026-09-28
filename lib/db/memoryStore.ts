@@ -528,6 +528,16 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       if (historyClaims.delete(key)) await save();
     },
 
+    // --- Hourly history READ (Plus "Last 7 days" feature) -------------------
+    // Mirrors d1Store's single-query filter: this slug, snapshot rows only,
+    // on or after sinceLocalDate, oldest first.
+    async hourlyHistory(slug: string, sinceLocalDate: string) {
+      await load();
+      return [...beachHourly.values()]
+        .filter((r) => r.slug === slug && r.row_kind === "snapshot" && r.local_date >= sinceLocalDate)
+        .sort((a, b) => (a.hour_utc < b.hour_utc ? -1 : a.hour_utc > b.hour_utc ? 1 : 0));
+    },
+
     // --- Beach Session Live Activity (migrations/0007_live_activities.sql) -
     async upsertLiveActivity(input: UpsertLiveActivityInput) {
       await load();

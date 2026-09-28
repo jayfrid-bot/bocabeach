@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-28",
+    title: "Look back: your beach's last 7 days (Plus)",
+    details:
+      "See the last 7, 14, or 30 days at your beach: each day's best score and time, high temps, wave height, crowds, and seaweed, plus records for the best day, hottest sand, biggest waves, and quietest day since we started keeping history.",
+    tag: "new",
+  },
+  {
+    date: "2026-09-28",
     title: "Score up top",
     details:
       "The beach name moved into the header, warnings got compact, and the score now shows without scrolling.",

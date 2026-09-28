@@ -286,6 +286,59 @@ describe("claimHistoryBuild — one build per (slug, hour_utc)", () => {
   });
 });
 
+describe("hourlyHistory — one slug, snapshot rows only, on/after sinceLocalDate", () => {
+  it("returns rows for this slug on/after the date, oldest first, excluding other slugs", async () => {
+    const store = await getStore();
+    await store.upsertBeachHourly(
+      row({ hour_utc: hourUtcOf(Date.parse("2026-09-23T14:00:00Z")), local_date: "2026-09-23" }),
+    );
+    await store.upsertBeachHourly(
+      row({ hour_utc: hourUtcOf(Date.parse("2026-09-22T14:00:00Z")), local_date: "2026-09-22" }),
+    );
+    await store.upsertBeachHourly(
+      row({ hour_utc: hourUtcOf(Date.parse("2026-09-20T14:00:00Z")), local_date: "2026-09-20" }),
+    );
+    await store.upsertBeachHourly(
+      row({
+        slug: "deerfield-beach",
+        hour_utc: hourUtcOf(Date.parse("2026-09-23T15:00:00Z")),
+        local_date: "2026-09-23",
+      }),
+    );
+
+    const rows = await store.hourlyHistory("boca-raton", "2026-09-21");
+    expect(rows.map((r) => r.local_date)).toEqual(["2026-09-22", "2026-09-23"]);
+    expect(rows.every((r) => r.slug === "boca-raton")).toBe(true);
+  });
+
+  it("excludes cam-backfill rows", async () => {
+    const store = await getStore();
+    await store.upsertBeachHourly(
+      row({
+        hour_utc: hourUtcOf(Date.parse("2026-09-22T14:00:00Z")),
+        local_date: "2026-09-22",
+        row_kind: "snapshot",
+      }),
+    );
+    await store.upsertBeachHourly(
+      row({
+        hour_utc: hourUtcOf(Date.parse("2026-09-22T15:00:00Z")),
+        local_date: "2026-09-22",
+        row_kind: "cam-backfill",
+        score: null,
+      }),
+    );
+    const rows = await store.hourlyHistory("boca-raton", "2026-09-22");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].row_kind).toBe("snapshot");
+  });
+
+  it("a beach with no rows at all returns an empty array", async () => {
+    const store = await getStore();
+    expect(await store.hourlyHistory("boca-raton", "2026-09-01")).toEqual([]);
+  });
+});
+
 describe("memory store persistence round-trip", () => {
   it("beach_hourly, history_budget and history_claims survive a save/load cycle", async () => {
     const { createMemoryStore } = await import("@/lib/db/memoryStore");
@@ -311,6 +364,20 @@ describe("memory store persistence round-trip", () => {
     const wayLater = Date.now() + 24 * 60 * 60 * 1000;
     const wonAgain = await store2.claimHistoryBuild("boca-raton", hourUtc, wayLater);
     expect(wonAgain).toBe(false);
+  });
+
+  it("hourlyHistory persists across a save/load cycle too", async () => {
+    const { createMemoryStore } = await import("@/lib/db/memoryStore");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const file = path.join(os.tmpdir(), `history-read-store-test-${Date.now()}-${Math.random()}.json`);
+
+    const store1 = createMemoryStore({ file });
+    await store1.upsertBeachHourly(row({ hour_utc: hourUtcOf(Date.parse("2026-09-22T14:00:00Z")), local_date: "2026-09-22" }));
+
+    const store2 = createMemoryStore({ file });
+    const rows = await store2.hourlyHistory("boca-raton", "2026-09-22");
+    expect(rows).toHaveLength(1);
   });
 
   // Codex round-2 finding #5: upsertBeachHourly mutated the in-memory map but

@@ -300,6 +300,7 @@ flowchart TD
     HAZ2["/api/hazards<br/>POST — native-only, rate-limited<br/>'where you stand' lightning + rain"]
     LAREG["/api/live-activity/register<br/>POST — native-only, rate-limited<br/>start/rotate a Beach Session token"]
     LAEND["/api/live-activity/end<br/>POST — native-only, rate-limited<br/>Off / dismiss"]
+    HIST2["/api/history/[slug]<br/>POST — native-only, rate-limited<br/>'Last N days': day summaries + records"]
   end
 
   APPSTORE[(App Store<br/>monthly · yearly, 3-day trial)] -->|"purchase via RevenueCat SDK<br/>appUserID = deviceId"| BUY
@@ -318,6 +319,7 @@ flowchart TD
   STORE -->|production| D1[(D1: isitbeachday-plus<br/>devices · presence · alert_log · send_claims<br/>scan_log · scan_tap · scan_claim · install_attrib<br/>live_activities · app_opens)]
   LAREG -->|"entitled + armed at slug (listArmed gate)<br/>one active session/device, token rotation"| STORE
   LAEND -->|markLiveActivityEnded 'user'| STORE
+  HIST2 -->|"hourlyHistory: read-only beach_hourly<br/>(same D1, written by the archiver — diagram 2)"| STORE
   STICKER -->|"count scan (bot-filtered), fail-soft"| D1
   GETAPP -->|"count store tap, fail-soft"| D1
   DEV -->|"after the upsert: credit a fresh native install<br/>to a recent scan on the same network (probable)"| ATTRIB[lib/db/scanFunnel.ts<br/>attributeInstall]
@@ -439,6 +441,20 @@ A reinstall gets a fresh deviceId, and RevenueCat restore-purchases (keyed
 off the store account, not deviceId) carries the Plus entitlement back
 without the old token. App Attest (device-bound auth) is the planned
 upgrade — see `docs/BUILD_PLAN.md`'s Later section.
+
+**"Last N days" history (`/api/history/[slug]`, docs/HISTORY_AND_IMAGERY_
+PLAN.md Part A).** A Plus-only, read-only look at the `beach_hourly` archive
+the 1-minute history cron has been writing since 2026-09-22 (diagram 2).
+Gated like `/api/hazards`: native app only, a rate-limited deviceId, the
+install token once one is on file, then `entitled(device, now)` — a free
+device gets 403 `not-entitled`, never a peek at the data. The route itself
+never calls `getConditions`; it is one bounded D1 read
+(`DeviceStore.hourlyHistory`, `WHERE slug = ? AND row_kind = 'snapshot' AND
+local_date >= ?`, capped at 31 days) fed through the pure summarizer
+`lib/history/summary.ts`, which turns the flat hourly rows into per-day
+summaries (best/worst/avg score, highs, an hourly bar-chart array, that
+day's caps) plus a handful of records (best day, hottest sand, biggest
+waves, quietest day) — never a second `getConditions` build.
 
 **Live Activity register: rotation + one-active-per-device.** The native
 plugin sends a monotonic `rotation` counter with each token; `registerLiveActivity`

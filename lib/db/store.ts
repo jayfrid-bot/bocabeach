@@ -317,6 +317,21 @@ export interface DeviceStore {
    */
   releaseHistoryClaim(slug: string, hourUtc: string): Promise<void>;
 
+  // --- Hourly history READ (Plus "Last 7 days" feature, docs/HISTORY_AND_ ---
+  // --- IMAGERY_PLAN.md Part A) -----------------------------------------------
+  /**
+   * Every `beach_hourly` row for `slug` on or after `sinceLocalDate`
+   * (YYYY-MM-DD, beach-local — the same `local_date` column the archiver
+   * writes), oldest first. Only `row_kind = 'snapshot'` rows come back — a
+   * `cam-backfill` row has no score and must never be summarized as if it
+   * did. One query, no aggregation here: `lib/history/summary.ts` turns the
+   * rows into day summaries + records. Callers keep `sinceLocalDate` to at
+   * most 31 days back (the API route's own `days` cap) — this method does
+   * not enforce that itself, same as every other store method here trusting
+   * its caller for range shape.
+   */
+  hourlyHistory(slug: string, sinceLocalDate: string): Promise<BeachHourlyRow[]>;
+
   // --- Install token identity (migrations/0008_device_tokens.sql, Codex ----
   // combined-review #1) --------------------------------------------------
   /** The stored sha256 hex digest, or null when this device has never been

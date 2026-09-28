@@ -6,6 +6,7 @@
 
 import type { AlertPrefs, DeviceRecord } from "@/lib/db/types";
 import type { ScoreProfile } from "@/lib/profile/types";
+import type { DaySummary, HistoryRecords } from "@/lib/history/summary";
 import { readInstallToken, writeInstallToken } from "@/lib/plus/storage";
 
 export interface PlusResult {
@@ -103,6 +104,63 @@ function postJson(url: string, body: unknown): Promise<PlusResult> {
   });
 }
 
+/** POST /api/history/<slug>'s answer — a different shape than `PlusResult`
+ *  (no `device`), so it isn't folded into `request()` above. */
+export interface HistoryResult {
+  ok: boolean;
+  since: string | null;
+  days: DaySummary[];
+  records: HistoryRecords | null;
+  error: string | null;
+  status: number;
+}
+
+/** Plus "Last 7 days" (docs/HISTORY_AND_IMAGERY_PLAN.md Part A). Same
+ *  deviceId + install-token plumbing every other Plus call uses
+ *  (withInstallToken) — a device with no token yet simply omits the header,
+ *  same as `request()`. Always resolves; a dead network or a bad body comes
+ *  back as `{ ok: false, error }`, never a throw. */
+async function fetchHistory(deviceId: string, slug: string, days: 7 | 14 | 30): Promise<HistoryResult> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `/api/history/${encodeURIComponent(slug)}`,
+      withInstallToken({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, days }),
+      }),
+    );
+  } catch {
+    return { ok: false, since: null, days: [], records: null, error: "network", status: 0 };
+  }
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+  const obj = (body ?? {}) as {
+    ok?: unknown;
+    since?: unknown;
+    days?: unknown;
+    records?: unknown;
+    error?: unknown;
+  };
+  if (res.ok && obj.ok === true) {
+    return {
+      ok: true,
+      since: typeof obj.since === "string" ? obj.since : null,
+      days: Array.isArray(obj.days) ? (obj.days as DaySummary[]) : [],
+      records: (obj.records as HistoryRecords | undefined) ?? null,
+      error: null,
+      status: res.status,
+    };
+  }
+  const error = typeof obj.error === "string" ? obj.error : "server";
+  return { ok: false, since: null, days: [], records: null, error, status: res.status };
+}
+
 export const plusApi = {
   /** Read this device's row. 404 `not-found` for a device the server never saw. */
   getDevice(deviceId: string): Promise<PlusResult> {
@@ -133,6 +191,8 @@ export const plusApi = {
       body: JSON.stringify({ deviceId }),
     });
   },
+  /** Plus "Last 7 days" — day summaries + records for one beach. */
+  fetchHistory,
 };
 
 /** Plain English for every error slug the Plus routes can answer with. */

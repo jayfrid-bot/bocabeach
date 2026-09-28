@@ -952,6 +952,22 @@ export function d1Store(db: D1Like): DeviceStore {
       await db.prepare("DELETE FROM history_claims WHERE key = ?").bind(`history:${slug}:${hourUtc}`).run();
     },
 
+    // --- Hourly history READ (Plus "Last 7 days" feature) -------------------
+    // ONE query: the same HOURLY_COLS list the archiver's upsert uses, so the
+    // returned rows are already shaped exactly like BeachHourlyRow with no
+    // per-field mapping. `row_kind = 'snapshot'` excludes cam-backfill rows,
+    // which never have a score.
+    async hourlyHistory(slug: string, sinceLocalDate: string) {
+      const result = await db
+        .prepare(
+          `SELECT ${HOURLY_COLS.join(", ")} FROM beach_hourly ` +
+            "WHERE slug = ? AND row_kind = 'snapshot' AND local_date >= ? ORDER BY hour_utc",
+        )
+        .bind(slug, sinceLocalDate)
+        .all<BeachHourlyRow>();
+      return result.results ?? [];
+    },
+
     // --- Beach Session Live Activity (migrations/0007_live_activities.sql) -
     async upsertLiveActivity(input: UpsertLiveActivityInput) {
       const now = Date.now();
