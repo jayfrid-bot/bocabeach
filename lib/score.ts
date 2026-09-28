@@ -129,8 +129,12 @@ export interface Derived {
   ripNow?: RipNow;
   /** A severe NWS warning (hurricane/tropical storm/tsunami/high surf) is active. */
   severeAlert: boolean;
-  /** A surf/coastal-flood ADVISORY (sub-warning tier) is active — soft swim cap. */
+  /** A coastal-flood ADVISORY or a Beach Hazards Statement (sub-warning tier)
+   *  is active — soft swim cap (85). NOT high surf: see highSurfAdvisory. */
   surfAdvisory?: boolean;
+  /** An NWS High Surf ADVISORY is active — dangerous breaking surf, capped at 70
+   *  like a red flag (owner 2026-09-28). The WARNING tier is severeAlert. */
+  highSurfAdvisory?: boolean;
   /** Live nowcast says it's precipitating RIGHT NOW (observed, beats the forecast). */
   nowcastRaining?: boolean;
   /**
@@ -634,7 +638,10 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
       (a) =>
         !isRipAlertEvent(a) &&
         isAlertInEffectAt(a, nowMs) &&
-        /beach hazards|high surf advisory|coastal flood advisory/i.test(a.event),
+        /beach hazards|coastal flood advisory/i.test(a.event),
+    ),
+    highSurfAdvisory: (n?.alerts ?? []).some(
+      (a) => !isRipAlertEvent(a) && isAlertInEffectAt(a, nowMs) && /high surf advisory/i.test(a.event),
     ),
     // Observed "now" signals — they override the forecast-based rain logic.
     // (Corroboration-gated: see nowcastCorroborated above — a phantom model
@@ -747,7 +754,11 @@ function waveScore(ft: number, mode: WaveMode): number {
 // on 2026-09-27: Hs ~2.5 ft, DPD 15s -> surf ~4.8 ft), which lowers the
 // "waves" sub-score on real swell days that used to read as flat-calm — not
 // reproducible from an older version.
-export const SCORING_ENGINE_VERSION = "2026-09-28.1";
+// 2026-09-28.2: a red flag and an NWS High Surf Advisory now cap the default
+// score at 70 (were 85); a coastal-flood advisory / Beach Hazards Statement
+// keeps its 85 cap under its own name. Red-flag days read "Decent", not
+// "Yes — good beach day".
+export const SCORING_ENGINE_VERSION = "2026-09-28.2";
 /** Bump whenever `DEFAULT_SCORING` itself (weights/curves as DATA) changes,
  *  independent of `SCORING_ENGINE_VERSION` above — kept distinct in case a
  *  future release lets Plus users pick among named configs. */
@@ -1275,9 +1286,9 @@ export function applyBeachCaps(
   //  - DOUBLE-RED means the water is closed — there's no beach day to be had, so
   //    it bottoms the score out.
   //  - A single RED flag means rough/hazardous surf where swimming is
-  //    discouraged. That's a swimmer-safety issue, not a beach-day-killer: you
-  //    can still have a great day on the sand, so it only caps at 85 (and stays
-  //    surfaced in the safety banner regardless).
+  //    discouraged. Not a closure — the sand is still there — but a red-flag
+  //    day must not read "Yes — good beach day": it caps at 70 ("Decent").
+  //    Was 85 until 2026-09-28 (owner: red flags and high surf cap at 70).
   // The purple (dangerous marine life) flag is intentionally NOT a score cap —
   // it's a near-constant in South Florida, so it carries no day-to-day signal.
   if (closureCaps && d.flags.includes("double-red")) {
@@ -1285,8 +1296,8 @@ export function applyBeachCaps(
     scoreExceptRip = Math.min(scoreExceptRip, 5);
     caps.push("Double red flag — water access closed");
   } else if (swimCaps && d.flags.includes("red")) {
-    score = Math.min(score, 85);
-    scoreExceptRip = Math.min(scoreExceptRip, 85);
+    score = Math.min(score, 70);
+    scoreExceptRip = Math.min(scoreExceptRip, 70);
     caps.push("Red flag — high hazard, swimming discouraged");
   }
   if (closureCaps && d.waterAdvisory) {
@@ -1349,12 +1360,20 @@ export function applyBeachCaps(
       );
     }
   }
-  // A surf/coastal-flood ADVISORY (sub-warning tier) discourages swimming — a
-  // soft cap; the hard SEVERE_ALERT cap above already covers the *warning* tier.
+  // A HIGH SURF advisory means dangerous breaking surf: capped at 70 like a
+  // red flag (owner 2026-09-28). A coastal-flood advisory or Beach Hazards
+  // Statement stays a soft 85 — king tides trigger coastal-flood advisories
+  // on many calm fall days, and those days should not read "Decent". The
+  // WARNING tier of either is the hard SEVERE_ALERT cap below.
+  if (swimCaps && d.highSurfAdvisory) {
+    score = Math.min(score, 70);
+    scoreExceptRip = Math.min(scoreExceptRip, 70);
+    caps.push("High surf advisory — dangerous surf, swimming discouraged");
+  }
   if (swimCaps && d.surfAdvisory) {
     score = Math.min(score, 85);
     scoreExceptRip = Math.min(scoreExceptRip, 85);
-    caps.push("High surf or coastal-flood advisory — swimming discouraged");
+    caps.push("Coastal flood or beach hazards advisory — swimming discouraged");
   }
   // A severe NWS warning (hurricane/tropical storm/tsunami/high surf) closes the day.
   if (d.severeAlert) {
@@ -1726,6 +1745,7 @@ function scoreAllHoursFull(
             },
         severeAlert: isToday ? base.severeAlert : false,
         surfAdvisory: isToday ? base.surfAdvisory : false,
+        highSurfAdvisory: isToday ? base.highSurfAdvisory : false,
         ...(isCurrentHour
           ? {
               nowcastRaining: base.nowcastRaining,

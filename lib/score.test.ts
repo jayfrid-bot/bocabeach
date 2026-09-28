@@ -1165,7 +1165,7 @@ describe("scoring (Beach Day only — no surf)", () => {
     expect(r.caps.join(" ")).toContain("Rip current risk: High");
   });
 
-  it("soft-caps the score at 85 under a high-surf / coastal-flood ADVISORY", () => {
+  it("soft-caps the score at 85 under a coastal-flood ADVISORY (king tides — often calm surf)", () => {
     const snap = snapshot({
       buoy: NICE.buoy.data,
       weather: NICE.weather.data,
@@ -1177,12 +1177,44 @@ describe("scoring (Beach Day only — no surf)", () => {
     });
     const r = scoreBeachDay(deriveMetrics(snap));
     expect(r.score).toBeLessThanOrEqual(85);
-    expect(r.score).toBeGreaterThan(40);
-    expect(r.caps.join(" ")).toContain(
-      "High surf or coastal-flood advisory — swimming discouraged",
-    );
+    expect(r.score).toBeGreaterThan(70);
+    expect(r.caps.join(" ")).toContain("Coastal flood or beach hazards advisory — swimming discouraged");
+    expect(r.caps.join(" ")).not.toMatch(/high surf/i);
     // An advisory is NOT a severe-warning closure.
     expect(r.caps.join(" ")).not.toMatch(/severe weather/i);
+  });
+
+  it("caps the score at 70 under a HIGH SURF advisory (owner 2026-09-28: like a red flag)", () => {
+    const snap = snapshot({
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
+      city: { flags: ["green"] },
+      water: { overall: "good", advisory: false, sites: [] },
+      nws: { alerts: [{ event: "High Surf Advisory", severity: "Moderate", onset: "2000-01-01T00:00:00Z", ends: "2100-01-01T00:00:00Z" }], ripCurrentRisk: "unknown" },
+    });
+    const d = deriveMetrics(snap);
+    expect(d.highSurfAdvisory).toBe(true);
+    expect(d.surfAdvisory).toBe(false);
+    const r = scoreBeachDay(d);
+    expect(r.score).toBeLessThanOrEqual(70);
+    expect(r.score).toBeGreaterThan(40);
+    expect(r.caps.join(" ")).toContain("High surf advisory — dangerous surf, swimming discouraged");
+    expect(r.caps.join(" ")).not.toMatch(/severe weather/i);
+  });
+
+  it("caps a red-flag day at 70 so it never reads \"Yes — good beach day\"", () => {
+    const snap = snapshot({
+      buoy: NICE.buoy.data,
+      weather: NICE.weather.data,
+      marine: NICE.marine.data,
+      city: { flags: ["red"] },
+      water: { overall: "good", advisory: false, sites: [] },
+      nws: { alerts: [], ripCurrentRisk: "unknown" },
+    });
+    const r = scoreBeachDay(deriveMetrics(snap));
+    expect(r.score).toBeLessThanOrEqual(70);
+    expect(r.caps.join(" ")).toMatch(/Red flag/);
   });
 
   it("a Tornado Warning SCHEDULED for later (not yet in effect) does NOT cap the score (round 2 item 1: onset check)", () => {

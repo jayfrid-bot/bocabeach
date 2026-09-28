@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-28",
+    title: "Red flags and high surf now cap the score at 70",
+    details:
+      "On a red-flag day or under a High Surf Advisory the score now tops out at 70, so the app says \"Decent\" instead of \"Yes — good beach day\". Coastal flood advisories from king tides keep their gentler cap, since the surf is often calm.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-28",
     title: "Easier to read on small phones",
     details:
       "The wave height stands out against the wave picture, card titles and labels no longer run under the flip icon, and today's best time stays on one line.",

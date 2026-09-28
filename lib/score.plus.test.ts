@@ -247,7 +247,8 @@ describe("cap policies", () => {
 
   it("a red flag caps a swimmer, not a sunbather or a surfer", () => {
     const d = { ...nice(), flags: ["red" as const] };
-    expect(scoreWith(d, "water").score).toBe(85);
+    // 70 since 2026-09-28 (owner): a red-flag day reads "Decent", not "Yes".
+    expect(scoreWith(d, "water").score).toBe(70);
     expect(scoreWith(d, "water").caps.join(" ")).toMatch(/Red flag/);
     expect(scoreWith(d, "shore").score).toBeGreaterThan(85);
     expect(scoreWith(d, "shore").caps).toEqual([]);
@@ -319,7 +320,7 @@ describe("cap policies", () => {
   it("applyBeachCaps defaults to the swimmer's policy (today's behavior)", () => {
     const d = { ...nice(), flags: ["red" as const] };
     expect(applyBeachCaps(97, d)).toEqual(applyBeachCaps(97, d, "water"));
-    expect(applyBeachCaps(97, d).score).toBe(85);
+    expect(applyBeachCaps(97, d).score).toBe(70);
   });
 });
 

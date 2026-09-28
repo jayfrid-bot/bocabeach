@@ -140,10 +140,12 @@ describe("surfConditions", () => {
     expect(surfConditions(base({ severeAlert: true })).level).toBe("closed");
   });
 
-  it("experienced only for a red flag, a high rip, a surf advisory, or 6+ ft", () => {
+  it("experienced only for a red flag, a high rip, a HIGH SURF advisory, or 6+ ft", () => {
     expect(surfConditions(base({ flags: ["red"] })).level).toBe("experienced");
     expect(surfConditions(base({ ripCurrentRisk: "high" })).level).toBe("experienced");
-    expect(surfConditions(base({ surfAdvisory: true })).level).toBe("experienced");
+    expect(surfConditions(base({ highSurfAdvisory: true })).level).toBe("experienced");
+    // A coastal-flood / beach-hazards advisory is not a surf call.
+    expect(surfConditions(base({ surfAdvisory: true })).level).toBe("go");
     expect(surfConditions(base({ waveHeightFt: 8 })).level).toBe("experienced");
     expect(surfConditions(base({ waveHeightFt: 6 })).level).toBe("go");
   });
