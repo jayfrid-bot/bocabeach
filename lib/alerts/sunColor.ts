@@ -72,6 +72,16 @@ export const SUN_COLOR_ESTIMATE_WINDOW_END_TOLERANCE_MS = 5 * 60 * 1000;
  *  status moments before the real prediction would have picked it up. */
 export const SUN_COLOR_ESTIMATE_HORIZON_TOLERANCE_MS = 15 * 60 * 1000;
 
+/**
+ * Round-3 item 1: how far in the future the real snapshot's own window may
+ * still open for a fetch made while the ESTIMATE was due to count as
+ * "coming soon, worth waiting for" (`sunColorMismatchOutcome`'s "defer"
+ * outcome) rather than "latch now, nothing to gain from this estimated
+ * event". Kept equal to the horizon tolerance's own spirit — a bounded,
+ * short grace window, not an open-ended wait.
+ */
+export const SUN_COLOR_MISMATCH_DEFER_MAX_MS = 15 * 60 * 1000;
+
 /** The send window for one event/lead pair, as `[start, end)` epoch ms. */
 export function sunColorSendWindow(eventMs: number, leadMin: number): { start: number; end: number } {
   const start = eventMs - leadMin * 60_000;
@@ -201,6 +211,53 @@ export function sunColorDecision(input: SunColorAlertInput): AlertDecision | nul
   return buildAlert(subject, { beach: beachName });
 }
 
+/**
+ * What a fetch made because the ESTIMATE was due should do about the
+ * "checked" latch, when the real conditions snapshot doesn't simply agree
+ * that we're in-window right now (round-3 item 1 — "disagreement must
+ * converge"). Without this, a beach whose estimate and real snapshot
+ * disagree about the event's kind, day, or exact minute would never latch
+ * `sunColorCheckedKey` (the route only latched when the snapshot ALSO said
+ * "in window"), so `sunColorSlugNeed` would keep calling it `due` forever.
+ *
+ * - `"in-window"`: the snapshot agrees we're in its own send window right
+ *   now — proceed with the ordinary send/no-send decision, and latch the
+ *   estimate key once evaluated (the existing round-2 behavior).
+ * - `"defer"`: the snapshot has a prediction, the SAME kind as the
+ *   estimate, and its window hasn't opened yet but will within
+ *   `SUN_COLOR_MISMATCH_DEFER_MAX_MS` — don't latch anything; the caller
+ *   persists `sunColorDeferUntilMs = deferUntilMs` instead, so
+ *   `sunColorSlugNeed` holds the beach at `candidate` (not `due`, no more
+ *   pointless re-fetches) until that real window opens, then evaluates
+ *   normally.
+ * - `"latch"`: anything else (no prediction, a different kind, the
+ *   snapshot's window already closed, or its start is more than
+ *   `SUN_COLOR_MISMATCH_DEFER_MAX_MS` away) — nothing can be sent for the
+ *   ESTIMATED event; latch its key now so the selector moves on.
+ */
+export type SunColorMismatchOutcome = { kind: "in-window" } | { kind: "defer"; deferUntilMs: number } | { kind: "latch" };
+
+export function sunColorMismatchOutcome(
+  estimateKind: SunEventKind,
+  prediction: SunEventPrediction | null,
+  leadMin: number,
+  nowMs: number,
+): SunColorMismatchOutcome {
+  if (sunColorInWindow(prediction, leadMin, nowMs)) return { kind: "in-window" };
+  if (!prediction || prediction.kind !== estimateKind) return { kind: "latch" };
+
+  const eventMs = Date.parse(prediction.eventIso);
+  if (!Number.isFinite(eventMs)) return { kind: "latch" };
+  const { start, end } = sunColorSendWindow(eventMs, leadMin);
+  if (nowMs >= end) return { kind: "latch" }; // the snapshot's own window already closed
+
+  const untilStart = start - nowMs;
+  if (untilStart > 0 && untilStart <= SUN_COLOR_MISMATCH_DEFER_MAX_MS) {
+    return { kind: "defer", deferUntilMs: start };
+  }
+  return { kind: "latch" };
+}
+
 /** A cheap, fetch-free estimate of the next sun event's kind + instant, off
  *  `computeSunTimes` (lib/sources/sun.ts, pure — no network) rather than a
  *  full conditions build. Mirrors `lib/sunQuality.ts`'s `nextSunEvent`
@@ -252,12 +309,16 @@ export interface SunColorSlugNeed {
  * own `sunColorCheckedKey` already names the SAME event (Codex review item
  * 2) — the round-robin must move on to a beach that still needs a look, not
  * keep re-selecting one this device has nothing further to say about this
- * hour.
+ * hour. Also held to `candidate` (never `due`) while `sent.sunColorDeferUntilMs`
+ * is still in the future (round-3 item 1) — a PRIOR fetch already found the
+ * real snapshot's window opening soon but not yet, so there is nothing to
+ * gain from re-fetching every tick in between; once that instant passes,
+ * evaluation resumes normally.
  */
 export function sunColorSlugNeed(
   loc: { lat: number; lon: number; timezone: string },
   device: Pick<DeviceRecord, "prefs" | "homeSlug" | "sunColor">,
-  sent: Pick<SentState, "sunColorCheckedKey">,
+  sent: Pick<SentState, "sunColorCheckedKey" | "sunColorDeferUntilMs">,
   nowMs: number,
 ): SunColorSlugNeed {
   if (device.prefs["sun-color"] !== true || !device.homeSlug) {
@@ -268,6 +329,9 @@ export function sunColorSlugNeed(
 
   const eventKey = sunColorEventKey(next.kind, new Date(next.eventMs).toISOString(), loc.timezone);
   if (sent.sunColorCheckedKey === eventKey) return { due: false, candidate: false, eventKey };
+  if (sent.sunColorDeferUntilMs != null && nowMs < sent.sunColorDeferUntilMs) {
+    return { due: false, candidate: true, eventKey };
+  }
 
   const aheadMs = next.eventMs - nowMs;
   // No slack on the near/negative side: an event the estimate already

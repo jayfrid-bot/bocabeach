@@ -44,7 +44,7 @@ import {
   selectComingUpEvent,
 } from "@/lib/alerts/comingUp";
 import { predictNextSunEvent } from "@/lib/sunAlert";
-import { sunColorDecision, sunColorEstimateKey, sunColorInWindow, sunColorSlugNeed } from "@/lib/alerts/sunColor";
+import { sunColorDecision, sunColorMismatchOutcome, sunColorSlugNeed, nextSunEventEstimate } from "@/lib/alerts/sunColor";
 import {
   SubrequestBudget,
   pushRunSubrequestBudget,
@@ -521,6 +521,17 @@ export async function POST(req: Request): Promise<Response> {
   const selectedDueSet = new Set(selectedDue);
   const slugsThisRunSet = new Set([...selectedDue, ...selectedCandidates]);
   const bySlug = new Map([...bySlugAll].filter(([slug]) => slugsThisRunSet.has(slug)));
+  // Round-3 item 3: a slug this pass DID reach (so it isn't already counted
+  // by the budget-aborted/stage-skip increments below) but where some
+  // device's evaluation ended NOT terminal — a transient send failure, or a
+  // lost-claim race no other run has yet confirmed (`comingUpTerminal` /
+  // `sunColorTerminal` explicitly `false`, set below) — still has real,
+  // time-sensitive work outstanding. Folded into `dueRemaining` after the
+  // home-digest loop finishes, once per slug (matching the granularity of
+  // every other `dueRemaining` increment here), so the cron's early-stop
+  // correctly keeps making passes instead of treating a transient failure
+  // as "nothing left to do this tick".
+  const retryableDueSlugs = new Set<string>();
 
   try {
     await runWithBudget(budget, async () => {
@@ -639,6 +650,14 @@ export async function POST(req: Request): Promise<Response> {
             // independent of all three), and read by `persistSentState`.
             let sunColorTerminal: boolean | undefined;
             let sunColorEventKeyThisRun: string | undefined;
+            // Round-3 item 1: set only on the "defer" outcome below — a
+            // fetch made because the ESTIMATE was due found the real
+            // snapshot's own window opening soon but not yet (same kind,
+            // within SUN_COLOR_MISMATCH_DEFER_MAX_MS). Persisted instead of
+            // latching, so `sunColorSlugNeed` holds the beach at
+            // `candidate` until this instant instead of re-fetching every
+            // tick in between.
+            let sunColorDeferUntilMsThisRun: number | undefined;
             if (comingUpWindow && sub.device.prefs["coming-up"] === true) {
               const selection = selectComingUpEvent(
                 skyAlertCandidates,
@@ -727,6 +746,9 @@ export async function POST(req: Request): Promise<Response> {
               if (comingUpTerminal === true) patch.comingUpCheckedDate = beachDate;
               if (sunColorTerminal === true && sunColorEventKeyThisRun) {
                 patch.sunColorCheckedKey = sunColorEventKeyThisRun;
+              }
+              if (sunColorDeferUntilMsThisRun !== undefined) {
+                patch.sunColorDeferUntilMs = sunColorDeferUntilMsThisRun;
               }
               if (Object.keys(patch).length === 0) return;
               await store
@@ -830,109 +852,142 @@ export async function POST(req: Request): Promise<Response> {
             // 4h-trust gate — lives entirely in the pure `sunColorDecision`
             // (lib/alerts/sunColor.ts); this block does the claim/send/mark
             // dance every other standalone alert here does, PLUS the
-            // "checked" bookkeeping (item 2) that keeps `slugConditionsNeed`
-            // from holding this beach `due`/`candidate` for the whole window
-            // once this device has nothing further to send this hour.
+            // "checked"/"defer" bookkeeping (round-2 item 2, round-3 item 1)
+            // that keeps `slugConditionsNeed` from holding this beach
+            // `due` for longer than it can possibly matter.
             //
-            // The LATCH uses the ESTIMATE's own event identity
-            // (`sunColorEstimateKey`, computed the SAME way
-            // `sunColorSlugNeed` does — round-2 item 3), never the
-            // snapshot's own dedupKey: the two may legitimately disagree at
-            // a boundary (different local day, or even a different kind),
-            // and it's the SELECTOR (which only ever sees the estimate)
-            // that must stop re-selecting this beach for the event it just
-            // evaluated. The DEDUPE that actually guards a double send
-            // below still uses `sunColorDecision`'s own dedupKey, built off
-            // the real conditions snapshot.
-            //
-            // Only evaluated (and only ever marked "checked") once this
-            // device's OWN send window has actually opened — evaluating
-            // (and marking checked) while merely a `candidate` (event still
-            // hours out) would wrongly latch "nothing to do" long before the
-            // window that matters even arrives.
+            // Gated on the ESTIMATE being due — the SAME call
+            // `slugConditionsNeed` already made for this device during
+            // selection (pure, so calling it again here is safe and cheap)
+            // — never on the snapshot alone: round-3 item 1 is precisely
+            // about handling the case where the estimate is due but the
+            // real snapshot DISAGREES (a different kind, a window that
+            // hasn't opened yet, or one that already closed). Evaluating
+            // only once merely a `candidate` is wrong the same way it
+            // always was — hours-out is not this device's moment — but
+            // `sunColorSlugNeed` already encodes that distinction, so
+            // checking `need.due` covers it.
             if (sub.device.prefs["sun-color"] === true && sub.device.homeSlug) {
-              const estimateKey = sunColorEstimateKey(loc, nowMs);
-              if (
-                estimateKey &&
-                sub.sent.sunColorCheckedKey !== estimateKey &&
-                sunColorInWindow(sunColorPrediction, sub.device.sunColor.leadMin, nowMs)
-              ) {
-                sunColorEventKeyThisRun = estimateKey;
-                // Default: evaluated in-window this run, regardless of
-                // outcome — a transient send failure, or a lost claim race
-                // no other run has yet confirmed, flips this back to
-                // `false` below so a later tick inside the SAME window
-                // retries.
-                sunColorTerminal = true;
-                const sunColor = sunColorDecision({
-                  device: sub.device,
-                  prediction: sunColorPrediction,
-                  beachName: loc.name,
-                  tz: loc.timezone,
-                  nowMs,
-                });
-                if (sunColor && !(await store.lastAlert(sub.device.id, sunColor.dedupKey))) {
-                  const sunColorClaimKey = sendClaimKey(sub.device.id, "sun-color", sunColor.dedupKey);
-                  if (await store.claimSend(sunColorClaimKey, nowMs)) {
-                    const sent = await sendOne({
-                      tag: sunColor.tag,
-                      title: sunColor.title,
-                      body: sunColor.body,
-                      url: `/${slug}`,
+              const need = sunColorSlugNeed(loc, sub.device, sub.sent, nowMs);
+              if (need.due && need.eventKey) {
+                sunColorEventKeyThisRun = need.eventKey;
+                const estimate = nextSunEventEstimate(loc, nowMs);
+                const outcome = estimate
+                  ? sunColorMismatchOutcome(estimate.kind, sunColorPrediction, sub.device.sunColor.leadMin, nowMs)
+                  : ({ kind: "latch" } as const);
+
+                if (outcome.kind === "defer") {
+                  // The real snapshot's own window is coming, just not yet
+                  // — don't latch; persistSentState below writes
+                  // sunColorDeferUntilMs instead, so slugConditionsNeed
+                  // holds this beach at `candidate` until that instant.
+                  sunColorDeferUntilMsThisRun = outcome.deferUntilMs;
+                } else {
+                  // Default: evaluated this run, regardless of outcome — a
+                  // transient send failure, or a lost claim race no other
+                  // run has yet confirmed, flips this back to `false` below
+                  // so a later tick inside the SAME window retries.
+                  sunColorTerminal = true;
+
+                  if (outcome.kind === "in-window") {
+                    const sunColor = sunColorDecision({
+                      device: sub.device,
+                      prediction: sunColorPrediction,
+                      beachName: loc.name,
+                      tz: loc.timezone,
+                      nowMs,
                     });
-                    if (sent.dead) {
-                      await prune(store, sub).catch((e) => console.error("push: prune failed", e));
-                      pruned += 1;
-                    } else if (sent.ok) {
-                      sunColorSent += 1;
-                      await store.markAlert(sub.device.id, sunColor.dedupKey, nowMs, sunColor.meta);
-                      // Ownership-safe (round-2 item 1): a false return means
-                      // the claim was reclaimed by a later run before this
-                      // write landed — the send already happened (and
-                      // alert_log is already written above), so this is a
-                      // bookkeeping race, not a failure; just log it.
-                      if (!(await store.markSent(sunColorClaimKey, nowMs))) {
-                        console.warn("push: sun-color markSent lost ownership (claim reclaimed)", sunColorClaimKey);
+                    if (sunColor && !(await store.lastAlert(sub.device.id, sunColor.dedupKey))) {
+                      const sunColorClaimKey = sendClaimKey(sub.device.id, "sun-color", sunColor.dedupKey);
+                      if (await store.claimSend(sunColorClaimKey, nowMs)) {
+                        const sent = await sendOne({
+                          tag: sunColor.tag,
+                          title: sunColor.title,
+                          body: sunColor.body,
+                          url: `/${slug}`,
+                        });
+                        if (sent.dead) {
+                          await prune(store, sub).catch((e) => console.error("push: prune failed", e));
+                          pruned += 1;
+                        } else if (sent.ok) {
+                          sunColorSent += 1;
+                          await store.markAlert(sub.device.id, sunColor.dedupKey, nowMs, sunColor.meta);
+                          // Ownership-safe (round-2 item 1): a false return
+                          // means the claim was reclaimed by a later run
+                          // before this write landed — the send already
+                          // happened (and alert_log is already written
+                          // above), so this is a bookkeeping race, not a
+                          // failure; just log it.
+                          if (!(await store.markSent(sunColorClaimKey, nowMs))) {
+                            console.warn(
+                              "push: sun-color markSent lost ownership (claim reclaimed)",
+                              sunColorClaimKey,
+                            );
+                          }
+                        } else {
+                          // Transient failure: release the claim
+                          // immediately (item 1) rather than waiting out
+                          // ABANDONED_CLAIM_MS, and leave this device NOT
+                          // checked so a later tick inside the SAME window
+                          // can retry.
+                          if (!(await store.releaseSend(sunColorClaimKey, nowMs))) {
+                            console.warn(
+                              "push: sun-color releaseSend lost ownership (claim reclaimed)",
+                              sunColorClaimKey,
+                            );
+                          }
+                          sunColorTerminal = false;
+                        }
+                      } else {
+                        // Lost the claim race (round-2 item 1): another run
+                        // holds it right now. Terminal ONLY if that run has
+                        // ALREADY confirmed the send — otherwise this is a
+                        // live race, not a settled outcome, and the device
+                        // must stay un-latched so a later tick re-evaluates
+                        // (sees `already-sent` next time, or a reclaimable
+                        // abandoned claim if that run crashed).
+                        sunColorTerminal = !!(await store.lastAlert(sub.device.id, sunColor.dedupKey));
                       }
-                    } else {
-                      // Transient failure: release the claim immediately
-                      // (item 1) rather than waiting out
-                      // ABANDONED_CLAIM_MS, and leave this device NOT
-                      // checked so a later tick inside the SAME window can
-                      // retry.
-                      if (!(await store.releaseSend(sunColorClaimKey, nowMs))) {
-                        console.warn(
-                          "push: sun-color releaseSend lost ownership (claim reclaimed)",
-                          sunColorClaimKey,
-                        );
-                      }
-                      sunColorTerminal = false;
                     }
-                  } else {
-                    // Lost the claim race (round-2 item 1): another run
-                    // holds it right now. Terminal ONLY if that run has
-                    // ALREADY confirmed the send — otherwise this is a live
-                    // race, not a settled outcome, and the device must stay
-                    // un-latched so a later tick re-evaluates (sees
-                    // `already-sent` next time, or a reclaimable abandoned
-                    // claim if that run crashed).
-                    sunColorTerminal = !!(await store.lastAlert(sub.device.id, sunColor.dedupKey));
+                    // `sunColor === null` (score never reached the
+                    // device's cutoff, an honest-null forecast, or already
+                    // in alert_log) is also terminal — nothing will change
+                    // before the window closes.
                   }
+                  // `outcome.kind === "latch"`: the estimate and the real
+                  // snapshot disagree beyond any hope of converging (no
+                  // prediction, a different kind, the snapshot's window
+                  // already closed, or it's more than
+                  // SUN_COLOR_MISMATCH_DEFER_MAX_MS away) — nothing more to
+                  // do; `sunColorTerminal` stays at its default `true`.
                 }
-                // `sunColor === null` (score never reached the device's
-                // cutoff, an honest-null forecast, or already in alert_log)
-                // is also terminal — nothing will change before the window
-                // closes.
               }
             }
 
             await persistSentState();
+            // Round-3 item 3: this device's evaluation this pass is fully
+            // settled once we get here — `comingUpTerminal`/`sunColorTerminal`
+            // hold their FINAL values (each starts `undefined` — "not
+            // evaluated" — and is only ever flipped to `true`/`false` by the
+            // blocks above). `false` means a transient send failure or an
+            // unresolved lost-claim race — real work this slug still owes.
+            if (comingUpTerminal === false || sunColorTerminal === false) {
+              retryableDueSlugs.add(slug);
+            }
           } catch (e) {
             errors += 1;
             console.error("push: device failed", sub.device.id, e);
           }
         }
       }
+    }
+    // Round-3 item 3: fold retryable-this-pass slugs into `dueRemaining` —
+    // only for slugs actually selected as `due` this run (a `candidate`-only
+    // slug's own retry isn't time-sensitive the same way, same distinction
+    // `dueRemaining`'s other increments already draw), and only once per
+    // slug regardless of how many of its devices hit a retryable outcome.
+    for (const slug of retryableDueSlugs) {
+      if (selectedDueSet.has(slug)) dueRemaining += 1;
     }
 
     // --- At the beach: hazard alerts from each person's own fix. -------------

@@ -80,15 +80,19 @@ async function runOnce(env: Env): Promise<RunResult> {
 
 /**
  * Nothing left for an IMMEDIATE next pass to usefully pick up: no `due`
- * home beach was left waiting on capacity this pass (`dueRemaining`,
- * round-2 item 4 — replaces the coarser `beachesDeferred`, which also
- * folded in elastic `candidate`-only deferrals that are fine to pick up
- * whenever), and the at-beach engine didn't defer any of its own stages
- * either (`alerts.deferred` — lightning feed load, ordinary alert sends,
- * Live Activity updates/ends, all gated the same way,
- * lib/alerts/budget.ts's `STAGE_RESERVE`). A response this route can't
- * even parse is treated as "not idle" — better an extra harmless pass than
- * silently stopping short on a shape change.
+ * home beach was left waiting on capacity this pass, or on a retryable
+ * outcome from this same pass (`dueRemaining`, round-2 item 4 — replaces
+ * the coarser `beachesDeferred`, which also folded in elastic
+ * `candidate`-only deferrals that are fine to pick up whenever; round-3
+ * item 3 widened `dueRemaining` itself to also count a slug where some
+ * device hit a transient send failure or an unsettled lost-claim race THIS
+ * pass — still genuinely due, not merely capacity-excluded, so it must
+ * drive the same immediate-retry behavior), and the at-beach engine didn't
+ * defer any of its own stages either (`alerts.deferred` — lightning feed
+ * load, ordinary alert sends, Live Activity updates/ends, all gated the
+ * same way, lib/alerts/budget.ts's `STAGE_RESERVE`). A response this route
+ * can't even parse is treated as "not idle" — better an extra harmless pass
+ * than silently stopping short on a shape change.
  */
 function dueRemainingOf(body: string): number | null {
   try {

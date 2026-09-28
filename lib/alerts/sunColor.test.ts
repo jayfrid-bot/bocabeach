@@ -9,12 +9,14 @@ import {
   SUN_COLOR_ESTIMATE_WINDOW_END_TOLERANCE_MS,
   SUN_COLOR_GREAT_CUTOFF,
   SUN_COLOR_MAX_LEAD_MS,
+  SUN_COLOR_MISMATCH_DEFER_MAX_MS,
   SUN_COLOR_SEND_WINDOW_MS,
   sunColorCutoffFor,
   sunColorDecision,
   sunColorEstimateKey,
   sunColorEventKey,
   sunColorLeadPhrase,
+  sunColorMismatchOutcome,
   sunColorSlugNeed,
   nextSunEventEstimate,
   type SunColorAlertInput,
@@ -219,6 +221,61 @@ describe("sunColorDecision", () => {
   });
 });
 
+describe("sunColorMismatchOutcome (round-3 item 1 — disagreement must converge)", () => {
+  const leadMin = 60;
+  const eventMs = Date.parse(EVENT_ISO);
+  const windowStart = eventMs - leadMin * 60_000;
+
+  it("in-window when the snapshot agrees we're inside its own window right now", () => {
+    expect(sunColorMismatchOutcome("sunset", prediction(), leadMin, windowStart)).toEqual({ kind: "in-window" });
+  });
+
+  it("latches when there's no prediction at all", () => {
+    expect(sunColorMismatchOutcome("sunset", null, leadMin, windowStart - 8 * 60_000)).toEqual({ kind: "latch" });
+  });
+
+  it("latches when the snapshot's kind differs from the estimate's", () => {
+    const outcome = sunColorMismatchOutcome(
+      "sunrise",
+      prediction({ kind: "sunset" }),
+      leadMin,
+      windowStart - 8 * 60_000,
+    );
+    expect(outcome).toEqual({ kind: "latch" });
+  });
+
+  it("latches when the snapshot's own window has already closed", () => {
+    const outcome = sunColorMismatchOutcome("sunset", prediction(), leadMin, windowStart + SUN_COLOR_SEND_WINDOW_MS);
+    expect(outcome).toEqual({ kind: "latch" });
+  });
+
+  it("defers when the snapshot's window opens soon (same kind, within the max defer distance)", () => {
+    const nowMs = windowStart - 8 * 60_000; // the real window opens in 8 minutes
+    expect(sunColorMismatchOutcome("sunset", prediction(), leadMin, nowMs)).toEqual({
+      kind: "defer",
+      deferUntilMs: windowStart,
+    });
+  });
+
+  it("defer boundary: exactly at the max defer distance still defers", () => {
+    const nowMs = windowStart - SUN_COLOR_MISMATCH_DEFER_MAX_MS;
+    expect(sunColorMismatchOutcome("sunset", prediction(), leadMin, nowMs)).toEqual({
+      kind: "defer",
+      deferUntilMs: windowStart,
+    });
+  });
+
+  it("latches once the snapshot's window is more than the max defer distance away", () => {
+    const nowMs = windowStart - SUN_COLOR_MISMATCH_DEFER_MAX_MS - 1;
+    expect(sunColorMismatchOutcome("sunset", prediction(), leadMin, nowMs)).toEqual({ kind: "latch" });
+  });
+
+  it("an invalid eventIso latches (defensive)", () => {
+    const outcome = sunColorMismatchOutcome("sunset", prediction({ eventIso: "not-a-date" }), leadMin, windowStart);
+    expect(outcome).toEqual({ kind: "latch" });
+  });
+});
+
 describe("sunColorLeadPhrase", () => {
   it("words every offered lead time", () => {
     expect(sunColorLeadPhrase(30)).toMatch(/half hour/);
@@ -400,6 +457,21 @@ describe("sunColorSlugNeed", () => {
     const wrongKindKey = sunColorEventKey("sunrise", new Date(probe!.eventMs).toISOString(), BOCA.timezone);
     const need = sunColorSlugNeed(BOCA, device(), { sunColorCheckedKey: wrongKindKey }, probe!.eventMs - 60 * 60_000);
     expect(need.due).toBe(true);
+  });
+
+  it("round-3 item 1: candidate (never due) while sunColorDeferUntilMs is still in the future", () => {
+    const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T18:00:00Z"));
+    const nowMs = probe!.eventMs - 60 * 60_000; // inside the window — would normally be due
+    const need = sunColorSlugNeed(BOCA, device(), { sunColorDeferUntilMs: nowMs + 8 * 60_000 }, nowMs);
+    expect(need.due).toBe(false);
+    expect(need.candidate).toBe(true);
+  });
+
+  it("round-3 item 1: due again the instant sunColorDeferUntilMs has passed", () => {
+    const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T18:00:00Z"));
+    const nowMs = probe!.eventMs - 60 * 60_000;
+    expect(sunColorSlugNeed(BOCA, device(), { sunColorDeferUntilMs: nowMs }, nowMs).due).toBe(true); // exactly at it
+    expect(sunColorSlugNeed(BOCA, device(), { sunColorDeferUntilMs: nowMs - 1 }, nowMs).due).toBe(true); // just past it
   });
 });
 

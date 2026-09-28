@@ -153,6 +153,24 @@ export interface SentState {
    *  cluster of same-timezone beaches could starve each other for the
    *  whole send window. */
   sunColorCheckedKey?: string;
+  /**
+   * Round-3 item 1: the ESTIMATE and the real conditions snapshot can
+   * legitimately disagree about exactly when a sun-color event happens —
+   * not just by a few minutes (round-2 item 5's tolerance covers that) but
+   * by disagreeing about WHICH window is currently open. When a fetch made
+   * because the estimate was due finds the real snapshot's own window
+   * hasn't opened yet, but WILL within 15 minutes (same kind as the
+   * estimate), this is set to that real window's own start (epoch ms)
+   * INSTEAD of latching `sunColorCheckedKey` — `sunColorSlugNeed` then
+   * reads this to hold the beach at `candidate` (not `due`) until that
+   * instant, so the estimate's own due window doesn't keep forcing a
+   * pointless re-fetch every tick in between, but the beach is also never
+   * latched "checked" for an event it hasn't actually had a chance to send
+   * for yet. Once `nowMs` reaches it, evaluation resumes normally (and may
+   * then latch `sunColorCheckedKey`, or send). Left stale (never cleared)
+   * once it has passed — a past instant simply never gates anything again,
+   * same non-expiring-key reasoning as `sunColorCheckedKey` above. */
+  sunColorDeferUntilMs?: number;
 }
 
 /** One row of `devices`, exactly as D1 stores it. */

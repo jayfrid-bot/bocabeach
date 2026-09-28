@@ -445,6 +445,24 @@ estimate window on its own terms. Without this latch, a device with
 nothing further to send would keep its beach `due` for the whole window,
 crowding out other same-timezone beaches' round-robin slots.
 
+**Disagreement must converge (`sunColorMismatchOutcome`).** The ESTIMATE
+and the real snapshot can disagree right up to the moment a fetch actually
+happens, so a fetch made because the ESTIMATE came due resolves into exactly
+one of three outcomes, never a repeat fetch loop: (1) the real snapshot's
+own prediction is ALSO in its send window (or already past its cutoff) →
+latch the ESTIMATE key now, same as before. (2) the snapshot has a
+prediction of the SAME kind whose window starts in the future but within 15
+minutes (`SUN_COLOR_MISMATCH_DEFER_MAX_MS`) → don't latch; instead
+`sent.sunColorDeferUntilMs` is set to that real window's start, and
+`sunColorSlugNeed` holds the beach at `candidate` (never `due`, so never
+refetched) until that instant, then it's due again and the later fetch
+latches normally. (3) anything else — no prediction, a different kind, or a
+real window more than 15 minutes away, or already closed — → latch the
+ESTIMATE key immediately; nothing can be sent for that estimated event no
+matter how many more times this beach is asked. Every branch still resolves
+within a bounded number of fetches per event, which is what keeps a
+disagreement from holding a beach `due` (and re-fetching) forever.
+
 **Ownership-safe send claims (`releaseSend`/`markSent`).** Both take the
 exact `nowMs` the caller originally passed to `claimSend` for that key, and
 both only take effect `WHERE claimed_at = <that value>` — if the claim was
@@ -458,13 +476,41 @@ lost `claimSend` race is itself non-terminal: the losing run checks
 only if another run has ALREADY confirmed the send, otherwise the device
 stays un-latched so a later tick can re-evaluate.
 
-**Per-tick capacity is `passes x PUSH_RUN_MAX_BEACHES`.** `PUSH_RUN_MAX_BEACHES`
+**Sun-color settings saves — one queue, and a pending overlay that
+survives any response (`lib/plus/client.ts`).** Both fields
+(`minBand`/`leadMin`) go through a SINGLE `createSunColorSaver`
+(`createSerialQueue`-backed, same helper Live Activity's client already
+used), so a live edit and `flushPending`'s own retry can never race each
+other into two concurrent `POST /api/devices` calls — whichever was
+submitted LAST is always the last one processed. `queuePending` writes the
+patch to local storage synchronously, before the network call even starts,
+so it survives a reload. On success, `apply` is called UNGATED (no
+"is this response stale" check of its own) because `applyDevice` itself —
+the one place EVERY server response of any kind gets adopted — overlays
+whatever sun-color field is still pending/in-flight (`overlayPendingSunColor`)
+on top of that response before rendering it. That overlay is what actually
+keeps an unrelated response (an older sun-color save's own now-superseded
+reply, or even a completely unrelated prefs toggle) from visibly reverting
+an edit that hasn't resolved yet — the protection lives centrally in
+`applyDevice`, not duplicated in the saver itself. `revert` (only called on
+a failure) still checks the patch is still the CURRENT pending value before
+touching local state, since it mutates state directly rather than going
+through `applyDevice`'s overlay.
+
+**Per-tick capacity is `passes x PUSH_RUN_MAX_BEACHES`, and `dueRemaining`
+counts retryable work too.** `PUSH_RUN_MAX_BEACHES`
 caps how many `due` slugs one `/api/push/run` request (one "pass") selects;
 `workers/plus-cron` makes up to 6 passes per 5-minute tick, SEQUENTIALLY,
 each its own request with its own subrequest budget, stopping early the
 moment a pass's JSON response reports `dueRemaining: 0` (every `due` slug
 this tick got served — the coming-up/morning-digest/sun-color alerts all
-share this one signal). So one tick's real capacity is `passes x cap`
+share this one signal). `dueRemaining` isn't just slugs the round-robin cap
+excluded: a slug the pass DID reach, but where some device's evaluation
+ended non-terminal (a transient send failure, or a lost-claim race no other
+run has yet confirmed — `comingUpTerminal`/`sunColorTerminal === false`),
+is folded in too, once per slug — that beach still has real, time-sensitive
+work outstanding, so the cron must not treat it as settled. So one tick's
+real capacity is `passes x cap`
 (6 x 2 = 12 by default), and a whole send window's capacity is that,
 times how many ticks the window spans. If a tick's LAST pass still reports
 `dueRemaining > 0`, `workers/plus-cron` logs a warning — the alarm that
