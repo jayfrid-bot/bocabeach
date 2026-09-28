@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-09-28",
+    title: "Easier to read on small phones",
+    details:
+      "The wave height stands out against the wave picture, card titles and labels no longer run under the flip icon, and today's best time stays on one line.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-09-28",
     title: "Clearer rocket launch details",
     details:
       "Night launches of classified missions from the Cape now show too. Launch rows say which way to look in plain words, count down in days and hours, and label the sky rating as the viewing forecast. Also fixed a doubled word in the surf line.",

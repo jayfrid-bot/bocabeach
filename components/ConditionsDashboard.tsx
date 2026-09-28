@@ -729,10 +729,10 @@ export function ConditionsDashboard({
             </span>
           ) : null}
           {bw ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-200/80 dark:bg-slate-800/70 px-3 py-1 text-slate-700 dark:text-slate-200 ring-1 ring-slate-900/10 dark:ring-white/10">
+            <span className="inline-flex flex-wrap items-center gap-x-1.5 rounded-full bg-slate-200/80 dark:bg-slate-800/70 px-3 py-1 text-slate-700 dark:text-slate-200 ring-1 ring-slate-900/10 dark:ring-white/10">
               <span aria-hidden>⭐</span>
-              Best remaining window today:{" "}
-              <span className="tabular-nums">
+              Best time left today:{" "}
+              <span className="whitespace-nowrap tabular-nums">
                 {fmtTime(bw.startIso, tz)}–{fmtTime(bw.endIso, tz)}
               </span>
             </span>
