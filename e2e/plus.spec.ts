@@ -66,6 +66,9 @@ async function openDashboard(page: Page): Promise<string[]> {
       page.request.post("/api/devices/trial", { data: {} }).catch(() => {}),
       page.request.post("/api/devices/unlock", { data: {} }).catch(() => {}),
       page.request.post("/api/presence", { data: {} }).catch(() => {}),
+      // The Plus history route (components/plus/HistorySection.tsx) fetches on
+      // the app shell too — warm it for the same lazy-compile reason.
+      page.request.post("/api/history/boca-raton", { data: {} }).catch(() => {}),
     ]);
   }
   await page.goto("/", { waitUntil: "domcontentloaded" });
