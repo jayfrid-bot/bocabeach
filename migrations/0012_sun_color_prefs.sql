@@ -1,0 +1,27 @@
+-- D1 tracks which migrations have already been applied (see
+-- 0008_device_tokens.sql's header note), so this file runs exactly once per
+-- database — the two ALTER TABLE ADD COLUMN statements below rely entirely
+-- on that once-only tracking to stay safe.
+--
+-- The "sun-color" alert (a heads-up when the next sunrise/sunset at the
+-- device's home beach is predicted to be top-tier color) has two per-device
+-- settings: which quality counts ("Great or better" vs "Amazing only") and
+-- how long before the event to send. Both are plain nullable columns on
+-- `devices` rather than folded into `prefs_json` — that blob is a strict
+-- Record<AlertKey, boolean> map (see lib/db/types.ts's `parsePrefs`, which
+-- only ever reads a boolean out of it), so a band enum and a lead-time enum
+-- don't fit its shape without weakening its typing for every other key too.
+-- Two typed columns, resolved to a default when NULL (see lib/db/types.ts's
+-- `DEFAULT_SUN_COLOR_MIN_BAND`/`DEFAULT_SUN_COLOR_LEAD_MIN`), mirror how
+-- `profile_json`/the grant columns already carry non-boolean, per-device
+-- settings alongside the boolean prefs blob.
+--
+-- `sun_color_min_band`: NULL (default) or 'vivid' ("Great or better") or
+-- 'epic' ("Amazing only") — lib/sunQuality.ts's own SunQualityBand values.
+-- `sun_color_lead_min`: NULL (default, 60) or one of 30/60/120/180 — how
+-- many minutes before the event to send. Neither is constrained by a SQL
+-- CHECK — every write path (app/api/devices/route.ts's `patchFromBody`)
+-- validates against the same lists, and an unrecognized value read back
+-- resolves to the default (lib/db/types.ts) rather than erroring.
+ALTER TABLE devices ADD COLUMN sun_color_min_band TEXT;
+ALTER TABLE devices ADD COLUMN sun_color_lead_min INTEGER;

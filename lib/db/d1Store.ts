@@ -101,7 +101,7 @@ export async function getD1(): Promise<D1Like | null> {
 const DEVICE_COLS =
   "id, platform, push_token, tz, home_slug, profile_json, prefs_json, plan, " +
   "entitlement_until, store_until, code_until, trial_until, trial_used, preview_seen, " +
-  "sent_json, created_at, updated_at";
+  "sent_json, created_at, updated_at, sun_color_min_band, sun_color_lead_min";
 
 /** `beach_hourly` columns, in the exact order both the INSERT and the
  *  positional binds below use — see migrations/0006_history.sql. */
@@ -178,18 +178,41 @@ const MAX_INSERT = "MAX(COALESCE(?8,0), COALESCE(?9,0), COALESCE(?10,0))";
 /**
  * One atomic upsert. Every column is either a plain bound value (?1..?15,
  * ?16 = now) or, for a field the caller can leave untouched, guarded by a
- * "present" flag (?17..?27): `CASE WHEN <present> THEN <new value> ELSE
+ * "present" flag (?17..?27, and ?28/?29 with their own flags ?30/?31 for the
+ * sun-color settings — appended rather than interleaved, see the comment
+ * above `UPSERT_DEVICE`): `CASE WHEN <present> THEN <new value> ELSE
  * <current column> END`. `plan` and `entitlement_until` are never taken from
  * the caller — they are always MAX(store, code, trial), recomputed from
  * whichever of the three this write actually touches (#4). `prefs_json` is
  * always a `json_patch` merge, so a caller who didn't mention prefs merges
  * `{}` — a no-op — instead of needing its own present flag.
+ *
+ * `updated_at` on the UPDATE branch (round-5 item 1): strictly monotonic per
+ * row, never plain wall-clock `?now` — `Date.now()` can repeat (two writes
+ * inside the same millisecond) or even go backwards (clock adjustment), and
+ * the client's revisioning watermark (`isStaleDeviceResponse`,
+ * lib/plus/client.ts) needs a STRICT ordering to tell two responses apart:
+ * `MAX(COALESCE(devices.updated_at, 0) + 1, ?now)` is always at least one ms
+ * past whatever the row already had, whether or not `?now` itself advanced.
+ * The INSERT branch keeps a plain `?now` — there is no existing row to read
+ * a prior `updated_at` from, so there's nothing to be monotonic AGAINST yet.
+ * Every other UPDATE-only statement on `devices` below (`claimTrial`,
+ * `clearPushToken`, `setInstallTokenHash`, `setSent`, `patchSent`) applies
+ * the identical `MAX(COALESCE(updated_at, 0) + 1, ?)` formula, unqualified
+ * (no `devices.` prefix — that qualification is only valid/needed inside an
+ * `ON CONFLICT DO UPDATE SET` block, which has both an `excluded` and a
+ * table-named row in scope; a plain `UPDATE devices SET …` has only the one).
  */
 const UPSERT_COLS =
   "id, platform, push_token, tz, home_slug, profile_json, prefs_json, " +
   "store_until, code_until, trial_until, plan, entitlement_until, trial_used, preview_seen, " +
-  "sent_json, created_at, updated_at";
+  "sent_json, created_at, updated_at, sun_color_min_band, sun_color_lead_min";
 
+// `sun_color_min_band`/`sun_color_lead_min` (migrations/0012_sun_color_prefs.sql)
+// are appended as ?28/?29 (values) and ?30/?31 (present flags) — new bind
+// positions at the END, rather than renumbering any of ?1..?27 above, so
+// every existing reference in this 27-parameter statement stays exactly as
+// it was.
 const UPSERT_DEVICE = `
 INSERT INTO devices (${UPSERT_COLS})
 VALUES (
@@ -199,7 +222,8 @@ VALUES (
   CASE WHEN ${MAX_INSERT} > ?16 THEN 'plus' ELSE 'free' END,
   CASE WHEN ${MAX_INSERT} = 0 THEN NULL ELSE ${MAX_INSERT} END,
   ?11, ?12,
-  ?13, ?14, ?15
+  ?13, ?14, ?15,
+  ?28, ?29
 )
 ON CONFLICT(id) DO UPDATE SET
   platform = CASE WHEN ?17 THEN ?2 ELSE devices.platform END,
@@ -216,10 +240,12 @@ ON CONFLICT(id) DO UPDATE SET
   trial_used = CASE WHEN ?25 THEN ?11 ELSE devices.trial_used END,
   preview_seen = CASE WHEN ?26 THEN ?12 ELSE devices.preview_seen END,
   sent_json = CASE WHEN ?27 THEN ?13 ELSE devices.sent_json END,
-  updated_at = ?15
+  sun_color_min_band = CASE WHEN ?30 THEN ?28 ELSE devices.sun_color_min_band END,
+  sun_color_lead_min = CASE WHEN ?31 THEN ?29 ELSE devices.sun_color_lead_min END,
+  updated_at = MAX(COALESCE(devices.updated_at, 0) + 1, ?15)
 `;
 
-/** DevicePatch → the 27 positional binds `UPSERT_DEVICE` expects. */
+/** DevicePatch → the 31 positional binds `UPSERT_DEVICE` expects. */
 function upsertBinds(id: string, patch: Record<string, unknown>, now: number): unknown[] {
   const has = (k: string) => Object.prototype.hasOwnProperty.call(patch, k) && patch[k] !== undefined;
   const val = <T,>(k: string, transform: (v: unknown) => T = (v) => v as T): T | null =>
@@ -261,6 +287,10 @@ function upsertBinds(id: string, patch: Record<string, unknown>, now: number): u
     has("trialUsed") ? 1 : 0, // 25
     has("previewSeen") ? 1 : 0, // 26
     has("sent") ? 1 : 0, // 27
+    val("sunColorMinBand"), // 28
+    val("sunColorLeadMin"), // 29
+    has("sunColorMinBand") ? 1 : 0, // 30
+    has("sunColorLeadMin") ? 1 : 0, // 31
   ];
 }
 
@@ -535,7 +565,7 @@ export function d1Store(db: D1Like): DeviceStore {
             "entitlement_until = CASE WHEN MAX(COALESCE(store_until,0), COALESCE(code_until,0), COALESCE(?1,0)) = 0 " +
             "THEN NULL ELSE MAX(COALESCE(store_until,0), COALESCE(code_until,0), COALESCE(?1,0)) END, " +
             "plan = CASE WHEN MAX(COALESCE(store_until,0), COALESCE(code_until,0), COALESCE(?1,0)) > ?2 THEN 'plus' ELSE 'free' END, " +
-            "updated_at = ?2 WHERE id = ?3 AND trial_used = 0",
+            "updated_at = MAX(COALESCE(updated_at, 0) + 1, ?2) WHERE id = ?3 AND trial_used = 0",
         )
         .bind(until, now, id)
         .run();
@@ -549,7 +579,10 @@ export function d1Store(db: D1Like): DeviceStore {
       // already re-registered a new token by the time this runs, that new
       // token is what is live and must not be erased (#5).
       await db
-        .prepare("UPDATE devices SET push_token = NULL, updated_at = ? WHERE id = ? AND push_token = ?")
+        .prepare(
+          "UPDATE devices SET push_token = NULL, updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) " +
+            "WHERE id = ? AND push_token = ?",
+        )
         .bind(Date.now(), id, expectedToken)
         .run();
     },
@@ -566,7 +599,8 @@ export function d1Store(db: D1Like): DeviceStore {
     async setInstallTokenHash(id, tokenHash, issuedAt) {
       const result = await db
         .prepare(
-          "UPDATE devices SET token_hash = ?, token_issued_at = ?, updated_at = ? " +
+          "UPDATE devices SET token_hash = ?, token_issued_at = ?, " +
+            "updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) " +
             "WHERE id = ? AND token_hash IS NULL",
         )
         .bind(tokenHash, issuedAt, issuedAt, id)
@@ -678,30 +712,46 @@ export function d1Store(db: D1Like): DeviceStore {
       });
     },
 
+    // Round-6: `presence` is its own table — a write here changes what a
+    // `DeviceRecord` carries (its `presence` field) WITHOUT touching any
+    // `devices` column, so without also bumping `devices.updated_at` here,
+    // `isStaleDeviceResponse` (lib/plus/client.ts) would see the SAME
+    // revision as before and drop a response that's actually carrying
+    // fresh arm/disarm state. Both statements run in the SAME `db.batch()`
+    // as `setPresence`/`clearPresence`'s own presence write — atomic, so a
+    // caller can never observe the presence table changed but the owning
+    // device row's revision NOT reflecting it (or vice versa).
     async setPresence(deviceId, p: PresenceInput) {
-      await db
-        .prepare(
-          "INSERT INTO presence (device_id, slug, lat, lon, accuracy_m, fix_at, armed_until, source, updated_at) " +
-            "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET slug=excluded.slug, " +
-            "lat=excluded.lat, lon=excluded.lon, accuracy_m=excluded.accuracy_m, fix_at=excluded.fix_at, " +
-            "armed_until=excluded.armed_until, source=excluded.source, updated_at=excluded.updated_at",
-        )
-        .bind(
-          deviceId,
-          p.slug,
-          p.lat ?? null,
-          p.lon ?? null,
-          p.accuracyM ?? null,
-          p.fixAt ?? null,
-          p.armedUntil,
-          p.source,
-          Date.now(),
-        )
-        .run();
+      const now = Date.now();
+      await runBatch(db, [
+        db
+          .prepare(
+            "INSERT INTO presence (device_id, slug, lat, lon, accuracy_m, fix_at, armed_until, source, updated_at) " +
+              "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET slug=excluded.slug, " +
+              "lat=excluded.lat, lon=excluded.lon, accuracy_m=excluded.accuracy_m, fix_at=excluded.fix_at, " +
+              "armed_until=excluded.armed_until, source=excluded.source, updated_at=excluded.updated_at",
+          )
+          .bind(
+            deviceId,
+            p.slug,
+            p.lat ?? null,
+            p.lon ?? null,
+            p.accuracyM ?? null,
+            p.fixAt ?? null,
+            p.armedUntil,
+            p.source,
+            now,
+          ),
+        db.prepare("UPDATE devices SET updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?").bind(now, deviceId),
+      ]);
     },
 
     async clearPresence(deviceId) {
-      await db.prepare("DELETE FROM presence WHERE device_id = ?").bind(deviceId).run();
+      const now = Date.now();
+      await runBatch(db, [
+        db.prepare("DELETE FROM presence WHERE device_id = ?").bind(deviceId),
+        db.prepare("UPDATE devices SET updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?").bind(now, deviceId),
+      ]);
     },
 
     async getSent(deviceId) {
@@ -715,7 +765,7 @@ export function d1Store(db: D1Like): DeviceStore {
     async setSent(deviceId, sent: SentState) {
       const keys = Object.keys(sent).filter((k) => (sent as Record<string, unknown>)[k] !== undefined);
       await db
-        .prepare("UPDATE devices SET sent_json = ?, updated_at = ? WHERE id = ?")
+        .prepare("UPDATE devices SET sent_json = ?, updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?")
         .bind(keys.length ? JSON.stringify(sent) : null, Date.now(), deviceId)
         .run();
     },
@@ -734,7 +784,10 @@ export function d1Store(db: D1Like): DeviceStore {
       const partial: Record<string, unknown> = {};
       for (const k of keys) partial[k] = (patch as Record<string, unknown>)[k];
       await db
-        .prepare("UPDATE devices SET sent_json = json_patch(COALESCE(sent_json, '{}'), ?), updated_at = ? WHERE id = ?")
+        .prepare(
+          "UPDATE devices SET sent_json = json_patch(COALESCE(sent_json, '{}'), ?), " +
+            "updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?",
+        )
         .bind(JSON.stringify(partial), Date.now(), deviceId)
         .run();
     },
@@ -850,8 +903,29 @@ export function d1Store(db: D1Like): DeviceStore {
       return changes > 0;
     },
 
-    async markSent(key, now) {
-      await db.prepare("UPDATE send_claims SET sent_at = ? WHERE key = ?").bind(now, key).run();
+    async markSent(key, claimedAt) {
+      // `claimedAt` is both the value written to `sent_at` and the
+      // ownership check (round-2 item 1): a row whose `claimed_at` has
+      // since moved (an abandoned claim reclaimed by a later run) no
+      // longer matches, so this stale caller's write touches nothing.
+      const result = await db
+        .prepare("UPDATE send_claims SET sent_at = ? WHERE key = ? AND claimed_at = ? AND sent_at IS NULL")
+        .bind(claimedAt, key, claimedAt)
+        .run();
+      return ((result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0) > 0;
+    },
+
+    async releaseSend(key, claimedAt) {
+      // Same ownership guard as `markSent`, plus `sent_at IS NULL` so this
+      // can never undo a confirmed send (belt and suspenders — a row that
+      // matches `claimed_at` can only be unsent anyway, since `markSent`
+      // only ever writes the SAME `claimedAt` as `sent_at`, but the
+      // explicit check keeps the invariant obvious from the SQL alone).
+      const result = await db
+        .prepare("DELETE FROM send_claims WHERE key = ? AND claimed_at = ? AND sent_at IS NULL")
+        .bind(key, claimedAt)
+        .run();
+      return ((result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0) > 0;
     },
 
     async pruneSendClaims(now) {

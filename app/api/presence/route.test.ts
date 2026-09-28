@@ -3,7 +3,7 @@
 // vitest.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { POST } from "@/app/api/presence/route";
+import { POST, DELETE } from "@/app/api/presence/route";
 import { getStore } from "@/lib/db/store";
 import { FIX_MAX_FUTURE_SKEW_MS } from "@/lib/alerts/run";
 
@@ -80,5 +80,51 @@ describe("POST /api/presence — delivery readiness (LOC-03)", () => {
     await store.upsertDevice(DEV, { pushToken: "t".repeat(64) });
     const json = (await (await post(base())).json()) as { pushReady: boolean };
     expect(json.pushReady).toBe(true);
+  });
+});
+
+// Round-6 regression: setPresence/clearPresence must bump the OWNING device
+// row's `updatedAt` — not just write the separate `presence` table — so the
+// client's strict `<=` revisioning check (round-5 item 1,
+// lib/plus/client.ts's isStaleDeviceResponse) never drops an arm/disarm
+// response for looking "no newer" than what the phone already has.
+describe("arm/disarm bump the device's own revision (round-6)", () => {
+  function del(deviceId: string): Promise<Response> {
+    return DELETE(
+      new Request(`http://localhost/api/presence?deviceId=${encodeURIComponent(deviceId)}`, { method: "DELETE" }),
+    );
+  }
+
+  it("POST (arm) returns a strictly newer updatedAt than the device had before arming", async () => {
+    const store = await getStore();
+    const before = await store.getDevice(DEV);
+
+    const res = await post(base());
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as { device: { updatedAt: number } };
+    expect(json.device.updatedAt).toBeGreaterThan(before!.updatedAt);
+  });
+
+  it("DELETE (disarm) returns presence:null with an updatedAt strictly newer than the arm that preceded it", async () => {
+    const armRes = (await (await post(base())).json()) as { device: { updatedAt: number } };
+
+    const disarmRes = await del(DEV);
+    expect(disarmRes.status).toBe(200);
+    const json = (await disarmRes.json()) as { device: { presence: unknown; updatedAt: number } };
+    expect(json.device.presence).toBeNull();
+    expect(json.device.updatedAt).toBeGreaterThan(armRes.device.updatedAt);
+  });
+
+  it("a full arm -> disarm sequence produces three strictly increasing revisions", async () => {
+    const store = await getStore();
+    const r0 = (await store.getDevice(DEV))!.updatedAt;
+
+    const armJson = (await (await post(base())).json()) as { device: { updatedAt: number } };
+    const r1 = armJson.device.updatedAt;
+    expect(r1).toBeGreaterThan(r0);
+
+    const disarmJson = (await (await del(DEV)).json()) as { device: { updatedAt: number } };
+    const r2 = disarmJson.device.updatedAt;
+    expect(r2).toBeGreaterThan(r1);
   });
 });

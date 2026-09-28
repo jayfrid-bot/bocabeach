@@ -43,6 +43,8 @@ import {
   readSkyAlertCandidates,
   selectComingUpEvent,
 } from "@/lib/alerts/comingUp";
+import { predictNextSunEvent } from "@/lib/sunAlert";
+import { sunColorDecision, sunColorMismatchOutcome, sunColorSlugNeed, nextSunEventEstimate } from "@/lib/alerts/sunColor";
 import {
   SubrequestBudget,
   pushRunSubrequestBudget,
@@ -370,6 +372,8 @@ export async function POST(req: Request): Promise<Response> {
   /** Standalone coming-up pushes only (SKY_EVENTS_PLAN.md §10) — an
    *  appended one is counted inside `morningSent` (it rides the same push). */
   let comingUpSent = 0;
+  /** The opt-in sun-color alert — always standalone, never coalesced. */
+  let sunColorSent = 0;
   let pruned = 0;
   /** Devices the home loop could not finish. The run carries on to the next. */
   let errors = 0;
@@ -451,6 +455,26 @@ export async function POST(req: Request): Promise<Response> {
           const already = await store.lastAlert(sub.device.id, `score-excellent:${date}`);
           if (!already) candidate = true;
         }
+        // Sun-color (opt-in): candidate whenever the next sun event is
+        // within ~4h (computed WITHOUT fetching conditions —
+        // computeSunTimes is pure), due once inside the actual send window
+        // so it's never starved by the cap below. Neither flag is set once
+        // this device's own `sunColorCheckedKey` already names the SAME
+        // event — otherwise a device with nothing further to send this
+        // hour would keep its beach `due`/`candidate` for the whole window,
+        // starving other same-timezone beaches' round-robin slots (Codex
+        // review item 2). One `lastAlert` check, only when there's
+        // something to gain from it.
+        if (sub.device.prefs["sun-color"] === true) {
+          const need = sunColorSlugNeed(loc, sub.device, sub.sent, nowMs);
+          if (need.eventKey && (need.due || need.candidate)) {
+            const already = await store.lastAlert(sub.device.id, need.eventKey);
+            if (!already) {
+              if (need.due) return { due: true, candidate: true };
+              candidate = true;
+            }
+          }
+        }
       } catch {
         return { due: true, candidate: true }; // fail open — let the real error surface (and count) below
       }
@@ -485,9 +509,29 @@ export async function POST(req: Request): Promise<Response> {
   const selectedDue = timeRoundRobinSlice(dueSlugs, (slug) => slug, maxBeaches, nowMs, TICK_MS);
   const candidateRoom = Math.max(0, maxBeaches - selectedDue.length);
   const selectedCandidates = timeRoundRobinSlice(candidateSlugs, (slug) => slug, candidateRoom, nowMs, TICK_MS);
-  homeBeachesDeferred = dueSlugs.length - selectedDue.length + (candidateSlugs.length - selectedCandidates.length);
+  // `due` slugs the cap left unserved THIS pass (round-2 item 4) — the
+  // precise signal workers/plus-cron's early-stop now uses: unlike the
+  // coarser `beachesDeferred` below (which also folds in `candidate`
+  // deferrals, elastic and fine to pick up later), a nonzero `dueRemaining`
+  // means something time-sensitive (a morning digest, a coming-up/sun-color
+  // window) is genuinely waiting on capacity RIGHT NOW, so the cron should
+  // keep making passes rather than stopping early.
+  let dueRemaining = dueSlugs.length - selectedDue.length;
+  homeBeachesDeferred = dueRemaining + (candidateSlugs.length - selectedCandidates.length);
+  const selectedDueSet = new Set(selectedDue);
   const slugsThisRunSet = new Set([...selectedDue, ...selectedCandidates]);
   const bySlug = new Map([...bySlugAll].filter(([slug]) => slugsThisRunSet.has(slug)));
+  // Round-3 item 3: a slug this pass DID reach (so it isn't already counted
+  // by the budget-aborted/stage-skip increments below) but where some
+  // device's evaluation ended NOT terminal — a transient send failure, or a
+  // lost-claim race no other run has yet confirmed (`comingUpTerminal` /
+  // `sunColorTerminal` explicitly `false`, set below) — still has real,
+  // time-sensitive work outstanding. Folded into `dueRemaining` after the
+  // home-digest loop finishes, once per slug (matching the granularity of
+  // every other `dueRemaining` increment here), so the cron's early-stop
+  // correctly keeps making passes instead of treating a transient failure
+  // as "nothing left to do this tick".
+  const retryableDueSlugs = new Set<string>();
 
   try {
     await runWithBudget(budget, async () => {
@@ -498,6 +542,7 @@ export async function POST(req: Request): Promise<Response> {
     // deferrals above.
     if (mode !== "safety" && budget.left < STAGE_RESERVE.homeDigests) {
       homeBeachesDeferred += bySlug.size;
+      for (const slug of bySlug.keys()) if (selectedDueSet.has(slug)) dueRemaining += 1;
     } else if (mode !== "safety") {
       const summaries = newSummaryCache();
       for (const [slug, group] of bySlug) {
@@ -508,9 +553,24 @@ export async function POST(req: Request): Promise<Response> {
         try {
           res = await countedGetConditions(slug);
         } catch {
+          // Round-4 item 2: a thrown load is exactly as retryable as a
+          // budget-aborted one below — this beach's group gets nothing
+          // built off it this pass. Folded into `retryableDueSlugs` (read
+          // out after the whole loop, same as the per-device outcomes
+          // round-3 item 3 already tracks there) rather than bumping
+          // `dueRemaining` inline, so a slug that fails here AND has a
+          // device hit a transient failure later isn't double-counted.
+          homeBeachesDeferred += 1;
+          retryableDueSlugs.add(slug);
           continue;
         }
-        if (!res) continue;
+        if (!res) {
+          // A null return (no throw, but nothing usable) is the same
+          // "try again next pass" case as the throw just above.
+          homeBeachesDeferred += 1;
+          retryableDueSlugs.add(slug);
+          continue;
+        }
         if (res.budgetAborted) {
           // Codex round-5 #1: this build ran out of subrequest budget
           // partway through — one or more sources are deliberately missing,
@@ -518,6 +578,7 @@ export async function POST(req: Request): Promise<Response> {
           // it; leave this beach's group for next tick instead. Counted in
           // beaches (one slug), the same unit as the cap deferrals above.
           homeBeachesDeferred += 1;
+          if (selectedDueSet.has(slug)) dueRemaining += 1;
           continue;
         }
         const place = { slug, name: loc.name, tz: loc.timezone };
@@ -538,6 +599,18 @@ export async function POST(req: Request): Promise<Response> {
         // event must still be alert-eligible even if the card had to drop
         // it).
         const skyAlertCandidates = readSkyAlertCandidates(res.snapshot);
+        // Computed once per beach (like `skyAlertCandidates` above) — pure,
+        // off the SAME `res` this beach's group already fetched (no extra
+        // outbound call), reused by every sun-color subscriber in `group`
+        // below. Scored against the SNAPSHOT'S OWN clock
+        // (`generatedAt`), not this run's wall clock (Codex review item 4)
+        // — that's what makes the GOES-freshness read (and the "next event"
+        // pick, on a served-from-cache snapshot) agree with what
+        // components/SunQualityCard.tsx would show for this exact
+        // snapshot. The send-WINDOW decision below still uses the real
+        // wall clock (`nowMs`) — whether to push right now is a different
+        // question from how the snapshot itself should be read.
+        const sunColorPrediction = predictNextSunEvent(res, Date.parse(res.snapshot.generatedAt));
 
         for (const sub of group) {
           // Every alert is Plus. A free device gets nothing here, and nothing is
@@ -582,6 +655,24 @@ export async function POST(req: Request): Promise<Response> {
             // the 8 AM hour) and only ever becomes `true`/`false` inside the
             // block below.
             let comingUpTerminal: boolean | undefined;
+            // Sun-color's own "settled for this event" flags (Codex review
+            // item 2) — same "undefined until evaluated, true unless a
+            // transient failure" contract as `comingUpTerminal`, but keyed
+            // to the specific event (`sunColorEventKeyThisRun`) rather than
+            // a calendar date, since a device's next sun-color opportunity
+            // can land on a different hour on a different day. Populated
+            // below, after the coming-up/digest/Excellent steps (it's
+            // independent of all three), and read by `persistSentState`.
+            let sunColorTerminal: boolean | undefined;
+            let sunColorEventKeyThisRun: string | undefined;
+            // Round-3 item 1: set only on the "defer" outcome below — a
+            // fetch made because the ESTIMATE was due found the real
+            // snapshot's own window opening soon but not yet (same kind,
+            // within SUN_COLOR_MISMATCH_DEFER_MAX_MS). Persisted instead of
+            // latching, so `sunColorSlugNeed` holds the beach at
+            // `candidate` until this instant instead of re-fetching every
+            // tick in between.
+            let sunColorDeferUntilMsThisRun: number | undefined;
             if (comingUpWindow && sub.device.prefs["coming-up"] === true) {
               const selection = selectComingUpEvent(
                 skyAlertCandidates,
@@ -668,6 +759,12 @@ export async function POST(req: Request): Promise<Response> {
               const patch: Partial<SentState> = {};
               if (r.morningDate !== undefined) patch.morningDate = r.morningDate;
               if (comingUpTerminal === true) patch.comingUpCheckedDate = beachDate;
+              if (sunColorTerminal === true && sunColorEventKeyThisRun) {
+                patch.sunColorCheckedKey = sunColorEventKeyThisRun;
+              }
+              if (sunColorDeferUntilMsThisRun !== undefined) {
+                patch.sunColorDeferUntilMs = sunColorDeferUntilMsThisRun;
+              }
               if (Object.keys(patch).length === 0) return;
               await store
                 .patchSent(sub.device.id, patch)
@@ -763,13 +860,157 @@ export async function POST(req: Request): Promise<Response> {
               }
             }
 
+            // --- Sun-color alert (opt-in) — always standalone, no coalescing
+            // with the digest or "turned Excellent" (unlike coming-up, it
+            // fires on its own short lead-time window, not the 8 AM run those
+            // two share). The send/no-send decision itself — cutoff, window,
+            // 4h-trust gate — lives entirely in the pure `sunColorDecision`
+            // (lib/alerts/sunColor.ts); this block does the claim/send/mark
+            // dance every other standalone alert here does, PLUS the
+            // "checked"/"defer" bookkeeping (round-2 item 2, round-3 item 1)
+            // that keeps `slugConditionsNeed` from holding this beach
+            // `due` for longer than it can possibly matter.
+            //
+            // Gated on the ESTIMATE being due — the SAME call
+            // `slugConditionsNeed` already made for this device during
+            // selection (pure, so calling it again here is safe and cheap)
+            // — never on the snapshot alone: round-3 item 1 is precisely
+            // about handling the case where the estimate is due but the
+            // real snapshot DISAGREES (a different kind, a window that
+            // hasn't opened yet, or one that already closed). Evaluating
+            // only once merely a `candidate` is wrong the same way it
+            // always was — hours-out is not this device's moment — but
+            // `sunColorSlugNeed` already encodes that distinction, so
+            // checking `need.due` covers it.
+            if (sub.device.prefs["sun-color"] === true && sub.device.homeSlug) {
+              const need = sunColorSlugNeed(loc, sub.device, sub.sent, nowMs);
+              if (need.due && need.eventKey) {
+                sunColorEventKeyThisRun = need.eventKey;
+                const estimate = nextSunEventEstimate(loc, nowMs);
+                const outcome = estimate
+                  ? sunColorMismatchOutcome(estimate.kind, sunColorPrediction, sub.device.sunColor.leadMin, nowMs)
+                  : ({ kind: "latch" } as const);
+
+                if (outcome.kind === "defer") {
+                  // The real snapshot's own window is coming, just not yet
+                  // — don't latch; persistSentState below writes
+                  // sunColorDeferUntilMs instead, so slugConditionsNeed
+                  // holds this beach at `candidate` until that instant.
+                  sunColorDeferUntilMsThisRun = outcome.deferUntilMs;
+                } else {
+                  // Default: evaluated this run, regardless of outcome — a
+                  // transient send failure, or a lost claim race no other
+                  // run has yet confirmed, flips this back to `false` below
+                  // so a later tick inside the SAME window retries.
+                  sunColorTerminal = true;
+
+                  if (outcome.kind === "in-window") {
+                    const sunColor = sunColorDecision({
+                      device: sub.device,
+                      prediction: sunColorPrediction,
+                      beachName: loc.name,
+                      tz: loc.timezone,
+                      nowMs,
+                    });
+                    if (sunColor && !(await store.lastAlert(sub.device.id, sunColor.dedupKey))) {
+                      const sunColorClaimKey = sendClaimKey(sub.device.id, "sun-color", sunColor.dedupKey);
+                      if (await store.claimSend(sunColorClaimKey, nowMs)) {
+                        const sent = await sendOne({
+                          tag: sunColor.tag,
+                          title: sunColor.title,
+                          body: sunColor.body,
+                          url: `/${slug}`,
+                        });
+                        if (sent.dead) {
+                          await prune(store, sub).catch((e) => console.error("push: prune failed", e));
+                          pruned += 1;
+                        } else if (sent.ok) {
+                          sunColorSent += 1;
+                          await store.markAlert(sub.device.id, sunColor.dedupKey, nowMs, sunColor.meta);
+                          // Ownership-safe (round-2 item 1): a false return
+                          // means the claim was reclaimed by a later run
+                          // before this write landed — the send already
+                          // happened (and alert_log is already written
+                          // above), so this is a bookkeeping race, not a
+                          // failure; just log it.
+                          if (!(await store.markSent(sunColorClaimKey, nowMs))) {
+                            console.warn(
+                              "push: sun-color markSent lost ownership (claim reclaimed)",
+                              sunColorClaimKey,
+                            );
+                          }
+                        } else {
+                          // Transient failure: release the claim
+                          // immediately (item 1) rather than waiting out
+                          // ABANDONED_CLAIM_MS, and leave this device NOT
+                          // checked so a later tick inside the SAME window
+                          // can retry.
+                          if (!(await store.releaseSend(sunColorClaimKey, nowMs))) {
+                            console.warn(
+                              "push: sun-color releaseSend lost ownership (claim reclaimed)",
+                              sunColorClaimKey,
+                            );
+                          }
+                          sunColorTerminal = false;
+                        }
+                      } else {
+                        // Lost the claim race (round-2 item 1): another run
+                        // holds it right now. Terminal ONLY if that run has
+                        // ALREADY confirmed the send — otherwise this is a
+                        // live race, not a settled outcome, and the device
+                        // must stay un-latched so a later tick re-evaluates
+                        // (sees `already-sent` next time, or a reclaimable
+                        // abandoned claim if that run crashed).
+                        sunColorTerminal = !!(await store.lastAlert(sub.device.id, sunColor.dedupKey));
+                      }
+                    }
+                    // `sunColor === null` (score never reached the
+                    // device's cutoff, an honest-null forecast, or already
+                    // in alert_log) is also terminal — nothing will change
+                    // before the window closes.
+                  }
+                  // `outcome.kind === "latch"`: the estimate and the real
+                  // snapshot disagree beyond any hope of converging (no
+                  // prediction, a different kind, the snapshot's window
+                  // already closed, or it's more than
+                  // SUN_COLOR_MISMATCH_DEFER_MAX_MS away) — nothing more to
+                  // do; `sunColorTerminal` stays at its default `true`.
+                }
+              }
+            }
+
             await persistSentState();
+            // Round-3 item 3: this device's evaluation this pass is fully
+            // settled once we get here — `comingUpTerminal`/`sunColorTerminal`
+            // hold their FINAL values (each starts `undefined` — "not
+            // evaluated" — and is only ever flipped to `true`/`false` by the
+            // blocks above). `false` means a transient send failure or an
+            // unresolved lost-claim race — real work this slug still owes.
+            if (comingUpTerminal === false || sunColorTerminal === false) {
+              retryableDueSlugs.add(slug);
+            }
           } catch (e) {
+            // Round-5 item 2: an exception here means this device's own
+            // evaluation never reached a terminal outcome at all (unlike the
+            // `comingUpTerminal`/`sunColorTerminal === false` check above,
+            // which only runs when the try block completes) — just as
+            // retryable as a transient send failure, so this slug still owes
+            // real, time-sensitive work. Same "gated later, at read-time, by
+            // selectedDueSet" pattern as every other `retryableDueSlugs.add`.
+            retryableDueSlugs.add(slug);
             errors += 1;
             console.error("push: device failed", sub.device.id, e);
           }
         }
       }
+    }
+    // Round-3 item 3: fold retryable-this-pass slugs into `dueRemaining` —
+    // only for slugs actually selected as `due` this run (a `candidate`-only
+    // slug's own retry isn't time-sensitive the same way, same distinction
+    // `dueRemaining`'s other increments already draw), and only once per
+    // slug regardless of how many of its devices hit a retryable outcome.
+    for (const slug of retryableDueSlugs) {
+      if (selectedDueSet.has(slug)) dueRemaining += 1;
     }
 
     // --- At the beach: hazard alerts from each person's own fix. -------------
@@ -810,13 +1051,14 @@ export async function POST(req: Request): Promise<Response> {
     subscriptions: subs.length,
     ios: subs.filter((s) => s.platform === "ios").length,
     android: subs.filter((s) => s.platform === "android").length,
-    sent: morningSent + excellentSent + alerts.sent + comingUpSent,
+    sent: morningSent + excellentSent + alerts.sent + comingUpSent + sunColorSent,
     morning: morningSent,
     excellent: excellentSent,
     // Standalone coming-up pushes only (SKY_EVENTS_PLAN.md §10) — one
     // appended to the morning digest is already counted inside `morning`
     // above, since it rides that same send.
     comingUp: comingUpSent,
+    sunColor: sunColorSent,
     armed: alerts.devices,
     alerts,
     conditionsFetched,
@@ -824,11 +1066,21 @@ export async function POST(req: Request): Promise<Response> {
     errors,
     // Diagnostics for the subrequest budget (round-2 #4) — how much of the
     // ceiling this run had left when it finished, and how many home beaches
-    // with real work due (candidate-only — `due` digests are never deferred)
-    // got left for next tick, either by PUSH_RUN_MAX_BEACHES' own selection
-    // or by the home-digests stage sitting out the whole run for lack of
-    // budget (Codex round-3 #4).
+    // with real work due got left for next tick, either by
+    // PUSH_RUN_MAX_BEACHES' own selection or by the home-digests stage
+    // sitting out the whole run for lack of budget (Codex round-3 #4).
+    // `beachesDeferred` folds in `candidate`-only deferrals too (elastic,
+    // fine to pick up later); `dueRemaining` below is the narrower,
+    // time-sensitive subset (a morning digest, a coming-up/sun-color
+    // window genuinely waiting on capacity right now).
     subrequestBudgetLeft: budget.left,
     beachesDeferred: homeBeachesDeferred,
+    // `due` slugs not served THIS pass (round-2 item 4) — the signal
+    // workers/plus-cron's early-stop reads: 0 means every beach with
+    // time-sensitive work due this tick got served, so the cron can stop
+    // making passes; a run whose LAST pass this tick still reports > 0
+    // logs a warning (the alarm for the documented per-tick capacity cap —
+    // see docs/architecture.md).
+    dueRemaining,
   });
 }

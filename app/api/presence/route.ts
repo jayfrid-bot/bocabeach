@@ -94,7 +94,16 @@ export async function DELETE(req: Request): Promise<Response> {
     const device = await store.getDevice(deviceId);
     if (!device) return fail("not-found", 404);
     await store.clearPresence(deviceId);
-    return okDevice({ ...device, presence: null });
+    // Round-6: re-read rather than locally overlaying `presence: null` onto
+    // the pre-clear `device` — that object still carries the OLD
+    // `updatedAt`, which `isStaleDeviceResponse` (lib/plus/client.ts) would
+    // then judge no newer than whatever the phone already applied, and drop
+    // this response outright even though it's telling the phone it just
+    // disarmed. `clearPresence` bumps the owning row's revision as part of
+    // its own write (same batch, d1Store; same call, memoryStore), so this
+    // read is guaranteed to see it.
+    const updated = await store.getDevice(deviceId);
+    return okDevice(updated ?? { ...device, presence: null });
   } catch (e) {
     console.error("presence: disarm failed", e);
     return fail("store-unavailable", 500);

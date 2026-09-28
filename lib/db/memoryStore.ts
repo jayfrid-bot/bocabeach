@@ -142,6 +142,20 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
 
   const record = (row: DeviceRow): DeviceRecord => toRecord(row, presence.get(row.id) ?? null);
 
+  // Round-6: bumps the OWNING device row's `updated_at` for a write that
+  // changes what a `DeviceRecord` carries (its `presence` field) without
+  // touching any column ON `devices` itself — mirrors d1Store's own
+  // same-batch devices-bump for `setPresence`/`clearPresence`. Without
+  // this, `isStaleDeviceResponse` (lib/plus/client.ts) would see the SAME
+  // revision as before and drop a response that's actually carrying fresh
+  // arm/disarm state. A no-op when the device row doesn't exist (a
+  // presence write for an id with no devices row is not a real scenario
+  // this store needs to invent one for).
+  const touchDevice = (id: string, now: number): void => {
+    const row = devices.get(id);
+    if (row) devices.set(id, { ...row, updated_at: Math.max((row.updated_at ?? 0) + 1, now) });
+  };
+
   return {
     async getDevice(id) {
       await load();
@@ -199,7 +213,17 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       // No `await` between this read and the `devices.set` below — same
       // no-race guarantee as `claimTrial` above.
       if (!row || row.token_hash) return false;
-      devices.set(id, { ...row, token_hash: tokenHash, token_issued_at: issuedAt, updated_at: issuedAt });
+      // Round-5 item 1: monotonic, same as every other write here (via
+      // `applyPatch`) — this is the one memoryStore write that doesn't go
+      // through it, since it sets `token_issued_at` (a distinct column) to
+      // the SAME value as `updated_at`, which `applyPatch`'s `DevicePatch`
+      // shape has no field for.
+      devices.set(id, {
+        ...row,
+        token_hash: tokenHash,
+        token_issued_at: issuedAt,
+        updated_at: Math.max((row.updated_at ?? 0) + 1, issuedAt),
+      });
       await save();
       return true;
     },
@@ -268,6 +292,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
 
     async setPresence(deviceId, p: PresenceInput) {
       await load();
+      const now = Date.now();
       presence.set(deviceId, {
         device_id: deviceId,
         slug: p.slug,
@@ -277,14 +302,16 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
         fix_at: p.fixAt ?? null,
         armed_until: p.armedUntil,
         source: p.source,
-        updated_at: Date.now(),
+        updated_at: now,
       });
+      touchDevice(deviceId, now);
       await save();
     },
 
     async clearPresence(deviceId) {
       await load();
       presence.delete(deviceId);
+      touchDevice(deviceId, Date.now());
       await save();
     },
 
@@ -398,12 +425,27 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       return true;
     },
 
-    async markSent(key, now) {
+    async markSent(key, claimedAt) {
       await load();
       const existing = claims.get(key);
-      if (!existing) return; // nothing to mark — a send without a claim never happens
-      claims.set(key, { ...existing, sent_at: now });
+      // Ownership guard (round-2 item 1), mirroring d1Store's SQL WHERE:
+      // only the caller whose `claimedAt` still matches the row's CURRENT
+      // `claimed_at` may mark it sent — a reclaim by a later run (which
+      // stamps a new `claimed_at`) makes a stale caller's write a no-op.
+      if (!existing || existing.claimed_at !== claimedAt || existing.sent_at != null) return false;
+      claims.set(key, { ...existing, sent_at: claimedAt });
       await save();
+      return true;
+    },
+
+    async releaseSend(key, claimedAt) {
+      await load();
+      const existing = claims.get(key);
+      // Same ownership guard as `markSent`, plus never undo a confirmed send.
+      if (!existing || existing.claimed_at !== claimedAt || existing.sent_at != null) return false;
+      claims.delete(key);
+      await save();
+      return true;
     },
 
     async pruneSendClaims(now) {

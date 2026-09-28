@@ -2,12 +2,14 @@ import { describe, it, expect } from "vitest";
 import {
   clearField,
   clearPrefsKeys,
+  clearSunColorIfMatch,
   isEmpty,
   isRetryableSaveError,
   mergeHomeSlug,
   mergePrefs,
   mergeProfile,
   mergePurchaseSync,
+  mergeSunColor,
   type PendingWrites,
 } from "@/lib/plus/pendingWrites";
 import type { ScoreProfile } from "@/lib/profile/types";
@@ -60,6 +62,64 @@ describe("revert-on-prefs-failure composition (what savePrefs does with these)",
     let pending: PendingWrites = { prefs: { rip: false } };
     pending = mergePrefs(pending, { lightning: true });
     expect(pending.prefs).toEqual({ rip: false, lightning: true });
+  });
+});
+
+describe("mergeSunColor — per-field merge (Requirement item 3, mirrors mergePrefs)", () => {
+  it("editing the threshold then the lead time offline queues both", () => {
+    let pending: PendingWrites = {};
+    pending = mergeSunColor(pending, { minBand: "epic" });
+    pending = mergeSunColor(pending, { leadMin: 120 });
+    expect(pending.sunColor).toEqual({ minBand: "epic", leadMin: 120 });
+  });
+
+  it("a later edit of the SAME field wins over the earlier one", () => {
+    let pending: PendingWrites = {};
+    pending = mergeSunColor(pending, { leadMin: 60 });
+    pending = mergeSunColor(pending, { leadMin: 30 });
+    expect(pending.sunColor).toEqual({ leadMin: 30 });
+  });
+
+  it("queuing sunColor does not disturb an unrelated pending prefs entry", () => {
+    let pending: PendingWrites = { prefs: { rip: false } };
+    pending = mergeSunColor(pending, { minBand: "epic" });
+    expect(pending).toEqual({ prefs: { rip: false }, sunColor: { minBand: "epic" } });
+  });
+});
+
+describe("clearSunColorIfMatch — compare-and-clear (Requirement item 3)", () => {
+  it("offline threshold edit + later lead save: the threshold stays queued", () => {
+    // Simulates: minBand="epic" failed once and is queued; a LATER,
+    // unrelated leadMin save then succeeds and clears only its own field.
+    let pending: PendingWrites = { sunColor: { minBand: "epic" } };
+    pending = clearSunColorIfMatch(pending, { leadMin: 120 });
+    expect(pending.sunColor).toEqual({ minBand: "epic" });
+  });
+
+  it("clears a field only when the pending value still matches what just succeeded", () => {
+    let pending: PendingWrites = { sunColor: { leadMin: 60 } };
+    pending = clearSunColorIfMatch(pending, { leadMin: 60 });
+    expect(pending.sunColor).toBeUndefined();
+  });
+
+  it("edit-during-retry survives: a NEWER queued value for the same field is not cleared by an older response", () => {
+    // The retry loop sent leadMin=60 (now stale); while it was in flight,
+    // the user changed their mind again and re-queued leadMin=120. The
+    // OLDER response (still carrying patch={leadMin:60}) must not clear the
+    // newer pending value.
+    let pending: PendingWrites = { sunColor: { leadMin: 120 } };
+    pending = clearSunColorIfMatch(pending, { leadMin: 60 });
+    expect(pending.sunColor).toEqual({ leadMin: 120 });
+  });
+
+  it("removes the sunColor field entirely once every queued key is cleared", () => {
+    let pending: PendingWrites = { homeSlug: "delray", sunColor: { minBand: "epic", leadMin: 60 } };
+    pending = clearSunColorIfMatch(pending, { minBand: "epic", leadMin: 60 });
+    expect(pending).toEqual({ homeSlug: "delray" });
+  });
+
+  it("is a no-op when nothing is pending", () => {
+    expect(clearSunColorIfMatch({}, { leadMin: 60 })).toEqual({});
   });
 });
 

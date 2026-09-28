@@ -4,7 +4,7 @@
 //
 // Routes and shapes are the contract in docs/PLUS_BUILD_SPEC.md.
 
-import type { AlertPrefs, DeviceRecord } from "@/lib/db/types";
+import type { AlertPrefs, DeviceRecord, SunColorMinBand } from "@/lib/db/types";
 import type { ScoreProfile } from "@/lib/profile/types";
 import type { DaySummary, HistoryRecords } from "@/lib/history/summary";
 import { readInstallToken, writeInstallToken } from "@/lib/plus/storage";
@@ -31,6 +31,10 @@ export interface DevicePatchBody {
   profile?: ScoreProfile;
   prefs?: Partial<AlertPrefs>;
   previewSeen?: boolean;
+  /** `null` resets to the default. */
+  sunColorMinBand?: SunColorMinBand | null;
+  /** `null` resets to the default. */
+  sunColorLeadMin?: number | null;
 }
 
 /** One armed "I am at this beach" window. */

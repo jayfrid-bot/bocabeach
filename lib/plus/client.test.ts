@@ -22,6 +22,9 @@ import {
   resetInstallTokenLatch,
   resetPurchaseSyncRetryState,
   setPurchaseSyncRetryStateForTest,
+  createSunColorSaver,
+  overlayPendingSunColor,
+  isStaleDeviceResponse,
   shouldBootstrapInstallTokenOnMount,
   startVisibleReconcileLoop,
   STORE_EXPIRY_GRACE_MS,
@@ -29,6 +32,7 @@ import {
   storeExpiryTimerMs,
   VISIBLE_RECONCILE_MS,
 } from "@/lib/plus/client";
+import type { SunColorPatch } from "@/lib/plus/client";
 import type { PlusResult } from "@/lib/plus/api";
 import type { DeviceRecord } from "@/lib/db/types";
 import type { Fix } from "@/lib/location/device";
@@ -297,6 +301,7 @@ describe("readSuperseded", () => {
 function fakeDevice(over: Partial<DeviceRecord> = {}): DeviceRecord {
   return {
     id: DEV,
+    updatedAt: 0,
     platform: "ios",
     tz: null,
     homeSlug: null,
@@ -342,6 +347,370 @@ describe("purchaseSyncRetryOutcome", () => {
 
   it("clears on a non-retryable rejection — the server's final word", () => {
     expect(purchaseSyncRetryOutcome({ ok: false, device: null, error: "not-found", status: 404 }, now)).toBe("clear");
+  });
+});
+
+/** A patch's own label — tags the fake device `send` resolves with, so a
+ *  test can tell which patch's response actually got applied. */
+function label(patch: SunColorPatch): string {
+  return JSON.stringify(patch);
+}
+
+describe("createSunColorSaver (Requirement round-3 item 2 — one queue for both fields)", () => {
+  /** A saver over a tiny in-memory "pending" box and a controllable `send`
+   *  — real timers (not fake ones) drive actual request ordering, same
+   *  pattern lib/plus/liveActivity.test.ts's own createSerialQueue tests
+   *  use, since createSerialQueue's ordering is about real promise
+   *  settlement, not a mocked clock. */
+  function harness(respond: (patch: SunColorPatch) => Promise<PlusResult> | PlusResult) {
+    const sendCalls: SunColorPatch[] = [];
+    const applied: unknown[] = [];
+    let pending: SunColorPatch = {};
+    const saver = createSunColorSaver({
+      send: async (patch) => {
+        sendCalls.push(patch);
+        return respond(patch);
+      },
+      currentPending: () => pending,
+      queuePending: (patch) => {
+        pending = { ...pending, ...patch };
+      },
+      clearPendingIfMatch: (patch) => {
+        const next = { ...pending };
+        for (const k of Object.keys(patch) as (keyof SunColorPatch)[]) {
+          if (next[k] === patch[k]) delete next[k];
+        }
+        pending = next;
+      },
+      apply: (res) => applied.push(res.device),
+    });
+    return {
+      saver,
+      sendCalls,
+      applied,
+      pending: () => pending,
+      setPending: (p: SunColorPatch) => {
+        pending = p;
+      },
+    };
+  }
+
+  it("(a) offline failure queues the patch; a later live edit that succeeds clears it and wins", async () => {
+    const h = harness(async (patch) =>
+      patch.minBand === "epic"
+        ? { ok: false, device: null, error: "network", status: 0 }
+        : { ok: true, device: fakeDevice({ id: label(patch) }), error: null, status: 200 },
+    );
+    const reverted: string[] = [];
+
+    await h.saver({ minBand: "epic" }, () => reverted.push("epic"));
+    expect(h.pending()).toEqual({ minBand: "epic" });
+    expect(reverted).toEqual(["epic"]);
+
+    await h.saver({ minBand: "vivid" }, () => reverted.push("vivid"));
+    expect(h.pending()).toEqual({});
+    expect(h.applied).toEqual([fakeDevice({ id: label({ minBand: "vivid" }) })]);
+    expect(h.sendCalls).toEqual([{ minBand: "epic" }, { minBand: "vivid" }]);
+  });
+
+  it("(b) two fast edits A then B: exactly two requests, strictly in order, both applied in order — B ends up on top", async () => {
+    const h = harness(async (patch) => {
+      await new Promise((r) => setTimeout(r, 5));
+      return { ok: true, device: fakeDevice({ id: label(patch) }), error: null, status: 200 };
+    });
+    const reverted: string[] = [];
+
+    const pA = h.saver({ minBand: "epic" }, () => reverted.push("A"));
+    const pB = h.saver({ minBand: "vivid" }, () => reverted.push("B"));
+    await Promise.all([pA, pB]);
+
+    // createSerialQueue never starts B's `send` until A's has fully
+    // settled — exactly two requests, strictly in submission order.
+    expect(h.sendCalls).toEqual([{ minBand: "epic" }, { minBand: "vivid" }]);
+    // Round-3 item 2: `apply` fires UNGATED on every success — A's included
+    // — because staleness protection now lives entirely in `applyDevice`'s
+    // pending-overlay (see the `overlayPendingSunColor` tests below), not
+    // here. Both land, strictly in order, so the real hook's last-applied
+    // state is always B's.
+    expect(h.applied).toEqual([fakeDevice({ id: label({ minBand: "epic" }) }), fakeDevice({ id: label({ minBand: "vivid" }) })]);
+    expect(reverted).toEqual([]); // neither failed, so neither reverts
+    expect(h.pending()).toEqual({});
+  });
+
+  it("(c) a retry of a stale queued patch in flight when a live edit arrives — both are sent, strictly in order", async () => {
+    const h = harness(async (patch) => {
+      await new Promise((r) => setTimeout(r, 5));
+      return { ok: true, device: fakeDevice({ id: label(patch) }), error: null, status: 200 };
+    });
+    h.setPending({ minBand: "epic" }); // a stale value already queued from an earlier failure
+
+    const retry = h.saver({ minBand: "epic" }, () => {}); // flushPending replaying the stale value
+    const edit = h.saver({ minBand: "vivid" }, () => {}); // a live edit arriving while the retry is in flight
+    await Promise.all([retry, edit]);
+
+    expect(h.sendCalls).toEqual([{ minBand: "epic" }, { minBand: "vivid" }]);
+    expect(h.applied).toEqual([fakeDevice({ id: label({ minBand: "epic" }) }), fakeDevice({ id: label({ minBand: "vivid" }) })]);
+    expect(h.pending()).toEqual({});
+  });
+
+  it("a stale RETRYABLE failure never reverts past a newer edit's own optimistic state", async () => {
+    const h = harness(async (patch) => {
+      await new Promise((r) => setTimeout(r, 5));
+      return patch.minBand === "epic"
+        ? { ok: false, device: null, error: "network", status: 0 }
+        : { ok: true, device: fakeDevice({ id: label(patch) }), error: null, status: 200 };
+    });
+    const reverted: string[] = [];
+    const pA = h.saver({ minBand: "epic" }, () => reverted.push("A")); // will fail
+    const pB = h.saver({ minBand: "vivid" }, () => reverted.push("B")); // will succeed, and by then owns the field
+    await Promise.all([pA, pB]);
+
+    expect(reverted).toEqual([]); // A's failure is suppressed — B already superseded it
+    expect(h.applied).toEqual([fakeDevice({ id: label({ minBand: "vivid" }) })]);
+  });
+
+  it("an outright rejection (4xx) still clears the pending queue even when superseded-checked as current", async () => {
+    const h = harness(async () => ({ ok: false, device: null, error: "bad-request", status: 400 }));
+    const reverted: string[] = [];
+    await h.saver({ minBand: "epic" }, () => reverted.push("epic"));
+    expect(reverted).toEqual(["epic"]);
+    expect(h.pending()).toEqual({}); // dropped — retrying would only repeat the same rejection
+  });
+
+  it("round-3: a single patch carrying both fields at once is sent as one request", async () => {
+    const h = harness(async (patch) => ({ ok: true, device: fakeDevice({ id: label(patch) }), error: null, status: 200 }));
+    await h.saver({ minBand: "epic", leadMin: 30 }, () => {});
+    expect(h.sendCalls).toEqual([{ minBand: "epic", leadMin: 30 }]);
+    expect(h.pending()).toEqual({});
+  });
+
+  // Round-3 item 2's own required test, end to end: a two-field edit
+  // sequence (one call per field, fired moments apart) sends exactly two
+  // requests, strictly in order, on the SAME shared queue, and the final
+  // LOCAL device state — computed the same way `applyDevice` computes it,
+  // via `overlayPendingSunColor` on top of each response — has BOTH new
+  // values. This harness wires `apply` to actually simulate `applyDevice`'s
+  // own overlay step (rather than just recording raw responses like the
+  // harness above), so it's the closest thing to an integration test this
+  // file's no-hook-rendering convention allows.
+  it("round-3: two-field edit sequence — two requests strictly in order, final local state has both new values", async () => {
+    const sendCalls: SunColorPatch[] = [];
+    let pending: SunColorPatch = {};
+    let deviceState = fakeDevice({ sunColor: { minBand: "vivid", leadMin: 60 } } as Partial<DeviceRecord>);
+    const saver = createSunColorSaver({
+      send: async (patch) => {
+        sendCalls.push(patch);
+        await new Promise((r) => setTimeout(r, 5));
+        // The server's own response reflects only what IT knew at that
+        // moment — its view of the OTHER field may already be stale by the
+        // time this resolves, same as any real round trip.
+        return { ok: true, device: { ...deviceState, sunColor: { ...deviceState.sunColor, ...patch } }, error: null, status: 200 };
+      },
+      currentPending: () => pending,
+      queuePending: (patch) => {
+        pending = { ...pending, ...patch };
+      },
+      clearPendingIfMatch: (patch) => {
+        const next = { ...pending };
+        for (const k of Object.keys(patch) as (keyof SunColorPatch)[]) {
+          if (next[k] === patch[k]) delete next[k];
+        }
+        pending = next;
+      },
+      apply: (res) => {
+        if (res.device) deviceState = overlayPendingSunColor(res.device, pending);
+      },
+    });
+
+    const p1 = saver({ minBand: "epic" }, () => {});
+    const p2 = saver({ leadMin: 120 }, () => {});
+    await Promise.all([p1, p2]);
+
+    expect(sendCalls).toEqual([{ minBand: "epic" }, { leadMin: 120 }]);
+    expect(pending).toEqual({});
+    expect(deviceState.sunColor).toEqual({ minBand: "epic", leadMin: 120 });
+  });
+});
+
+// Round-3 item 2's other half: `applyDevice` overlays any still-pending
+// sun-color field on top of EVERY response it adopts, so an unrelated
+// response (an older save, a prefs toggle) can never visibly revert an edit
+// that's still being saved. `overlayPendingSunColor` is the pure piece of
+// that logic `applyDevice` itself calls — tested directly here rather than
+// through the hook, per this file's convention.
+describe("overlayPendingSunColor (Requirement round-3 item 2 — preserve pending on apply)", () => {
+  it("leaves the record untouched when nothing is pending", () => {
+    const rec = fakeDevice({ sunColor: { minBand: "vivid", leadMin: 60 } } as Partial<DeviceRecord>);
+    expect(overlayPendingSunColor(rec, undefined)).toBe(rec);
+    expect(overlayPendingSunColor(rec, {})).toBe(rec);
+  });
+
+  it("overlays a pending field on top of the server's own value for that field", () => {
+    const rec = fakeDevice({ sunColor: { minBand: "vivid", leadMin: 60 } } as Partial<DeviceRecord>);
+    const merged = overlayPendingSunColor(rec, { minBand: "epic" });
+    expect(merged.sunColor).toEqual({ minBand: "epic", leadMin: 60 });
+  });
+
+  it("a prefs-toggle response (unrelated to sun-color) arriving mid-save must not revert the pending sun-color field", () => {
+    // The server's own response after a prefs toggle still carries a
+    // sunColor snapshot — but it's whatever was true BEFORE this save
+    // started, since the toggle and the sun-color edit raced independently.
+    const staleServerSunColor = { minBand: "vivid" as const, leadMin: 60 };
+    const prefsToggleResponse = fakeDevice({
+      prefs: { morning: true },
+      sunColor: staleServerSunColor,
+    } as Partial<DeviceRecord>);
+
+    const pendingFromInFlightSave: SunColorPatch = { minBand: "epic" }; // still saving, not yet confirmed
+    const applied = overlayPendingSunColor(prefsToggleResponse, pendingFromInFlightSave);
+
+    expect(applied.sunColor).toEqual({ minBand: "epic", leadMin: 60 }); // NOT reverted to "vivid"
+    expect(applied.prefs).toEqual({ morning: true }); // the toggle's own change still lands
+  });
+
+  it("overlays both fields when both are pending", () => {
+    const rec = fakeDevice({ sunColor: { minBand: "vivid", leadMin: 60 } } as Partial<DeviceRecord>);
+    const merged = overlayPendingSunColor(rec, { minBand: "epic", leadMin: 120 });
+    expect(merged.sunColor).toEqual({ minBand: "epic", leadMin: 120 });
+  });
+});
+
+// Round-4 item 3: response ARRIVAL order isn't request order — two
+// overlapping requests for the same device can resolve either way round.
+// `isStaleDeviceResponse` is the pure gate `applyDevice` runs every response
+// through FIRST (before the round-3 item 2 pending overlay even runs): a
+// response older, by its own server-stamped `updatedAt`, than one already
+// applied for this device id is ignored outright.
+describe("isStaleDeviceResponse (Requirement round-4 item 3 — response revisioning)", () => {
+  it("is never stale the first time a device id is seen (no watermark yet)", () => {
+    expect(isStaleDeviceResponse({ id: DEV, updatedAt: 100 }, new Map())).toBe(false);
+  });
+
+  it("is stale when strictly older than the tracked watermark for this device id", () => {
+    const lastApplied = new Map([[DEV, 200]]);
+    expect(isStaleDeviceResponse({ id: DEV, updatedAt: 100 }, lastApplied)).toBe(true);
+  });
+
+  // Round-5 item 1: equal now counts as stale too (rejects `<=`, not just
+  // `<`) — the server guarantees `updated_at` is strictly monotonic per row,
+  // so an EQUAL value can only describe the SAME write this phone already
+  // applied, never a genuinely different one that happened to share a
+  // wall-clock reading.
+  it("is stale when EQUAL to the tracked watermark; NOT stale when strictly newer", () => {
+    const lastApplied = new Map([[DEV, 200]]);
+    expect(isStaleDeviceResponse({ id: DEV, updatedAt: 200 }, lastApplied)).toBe(true);
+    expect(isStaleDeviceResponse({ id: DEV, updatedAt: 201 }, lastApplied)).toBe(false);
+  });
+
+  it("a watermark for a DIFFERENT device id never gates this one", () => {
+    const lastApplied = new Map([["some-other-device", 999]]);
+    expect(isStaleDeviceResponse({ id: DEV, updatedAt: 1 }, lastApplied)).toBe(false);
+  });
+
+  // The exact scenario the review named: a sun-color save succeeds and
+  // applies (updatedAt t2, and its pending entry clears); a prefs response
+  // issued EARLIER (updatedAt t1 < t2) but resolving LATER arrives after
+  // that — it must not be applied, so the sun-color settings stay at their
+  // new values. Built as a small harness that composes the two pieces
+  // `applyDevice` itself composes (the revisioning gate, then the round-3
+  // item 2 pending overlay) exactly the way `applyDevice` does, without
+  // rendering the hook.
+  it("a delayed OLDER prefs response arriving after a NEWER sun-color save must not be applied — settings stay at the new values", () => {
+    const lastApplied = new Map<string, number>();
+    let deviceState = fakeDevice({ sunColor: { minBand: "vivid", leadMin: 60 }, prefs: { morning: false } } as Partial<DeviceRecord>);
+    let pending: SunColorPatch = {};
+
+    function applyDeviceLike(rec: DeviceRecord): void {
+      if (isStaleDeviceResponse(rec, lastApplied)) return; // round-4 item 3
+      lastApplied.set(rec.id, rec.updatedAt);
+      deviceState = overlayPendingSunColor(rec, pending); // round-3 item 2
+    }
+
+    const T1 = 1_000; // the prefs-toggle request's own server-side write time
+    const T2 = 2_000; // the sun-color save's own server-side write time (later)
+
+    // The sun-color save is in flight: queue its pending value, same as
+    // `createSunColorSaver` does synchronously before its request starts.
+    pending = { minBand: "epic" };
+
+    // It resolves FIRST (server processed it after the prefs toggle, and
+    // its response also arrives first): applies cleanly, watermark -> T2.
+    applyDeviceLike(
+      fakeDevice({ id: DEV, updatedAt: T2, sunColor: { minBand: "epic", leadMin: 60 }, prefs: { morning: false } } as Partial<DeviceRecord>),
+    );
+    pending = {}; // the save's own clearPendingIfMatch, now that it's confirmed
+    expect(deviceState.sunColor).toEqual({ minBand: "epic", leadMin: 60 });
+
+    // NOW the earlier prefs-toggle request's response finally arrives —
+    // older `updatedAt`, and pending has already cleared, so nothing about
+    // round-3's overlay would have protected against it either.
+    applyDeviceLike(
+      fakeDevice({ id: DEV, updatedAt: T1, sunColor: { minBand: "vivid", leadMin: 60 }, prefs: { morning: true } } as Partial<DeviceRecord>),
+    );
+
+    // Ignored outright — the sun-color settings (AND everything else) stay
+    // exactly as the newer response left them.
+    expect(deviceState.sunColor).toEqual({ minBand: "epic", leadMin: 60 });
+    expect(deviceState.prefs).toEqual({ morning: false });
+  });
+
+  // Round-6 regression: setPresence/clearPresence used to leave the OWNING
+  // device row's `updated_at` untouched (only the separate `presence` table
+  // changed) — so an arm or disarm response carried the SAME `updatedAt` as
+  // whatever the phone had already applied, and the strict `<=` rejection
+  // (round-5 item 1) dropped it outright, leaving the UI stuck on stale
+  // armed/disarmed state. Now that every write that changes what a
+  // `DeviceRecord` carries also bumps the owning row's revision
+  // (lib/db/d1Store.ts's setPresence/clearPresence, in the SAME batch;
+  // memoryStore's mirrored `touchDevice`), this whole sequence must adopt
+  // cleanly. Same `applyDeviceLike` composition as the test above.
+  it("refresh (rev N) -> arm (rev N+1) -> disarm (rev N+2): all three responses adopt, presence shows unarmed -> armed -> unarmed", () => {
+    const lastApplied = new Map<string, number>();
+    let deviceState: DeviceRecord | null = null;
+
+    function applyDeviceLike(rec: DeviceRecord): void {
+      if (isStaleDeviceResponse(rec, lastApplied)) return;
+      lastApplied.set(rec.id, rec.updatedAt);
+      deviceState = overlayPendingSunColor(rec, {});
+    }
+
+    const N = 1_000;
+
+    // 1) The initial refresh() read — not yet armed.
+    applyDeviceLike(fakeDevice({ id: DEV, updatedAt: N, presence: null } as Partial<DeviceRecord>));
+    expect(deviceState!.presence).toBeNull();
+
+    // 2) arm() — setPresence's own write bumped devices.updated_at to N+1
+    // (round-6's fix) alongside the presence row, so this response is
+    // strictly newer, not equal — it must be adopted, not dropped.
+    applyDeviceLike(
+      fakeDevice({
+        id: DEV,
+        updatedAt: N + 1,
+        presence: { slug: "boca-raton", armedUntil: N + 3600_000, source: "manual", hasFix: false },
+      } as Partial<DeviceRecord>),
+    );
+    expect(deviceState!.presence).not.toBeNull();
+    expect(deviceState!.presence?.slug).toBe("boca-raton");
+
+    // 3) disarm() — clearPresence's own write bumps devices.updated_at
+    // again, to N+2.
+    applyDeviceLike(fakeDevice({ id: DEV, updatedAt: N + 2, presence: null } as Partial<DeviceRecord>));
+    expect(deviceState!.presence).toBeNull();
+
+    // The watermark tracked every step — nothing was silently dropped.
+    expect(lastApplied.get(DEV)).toBe(N + 2);
+  });
+
+  // What the round-6 bug actually looked like: an arm response carrying the
+  // SAME `updatedAt` as the read that preceded it (the pre-fix behavior,
+  // since setPresence never touched `devices.updated_at`) is correctly
+  // rejected by the strict `<=` check — proving that fix (round-5 item 1) is
+  // exactly why round-6's OWN fix (bumping the owning row) was necessary.
+  it("without the owning-row bump, an arm response reusing the prior revision would have been dropped", () => {
+    const lastApplied = new Map([[DEV, 1_000]]);
+    const armResponseAtSameRevision = { id: DEV, updatedAt: 1_000 }; // the pre-fix shape
+    expect(isStaleDeviceResponse(armResponseAtSameRevision, lastApplied)).toBe(true);
   });
 });
 

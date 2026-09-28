@@ -6,9 +6,9 @@
 import type { ScoreProfile } from "@/lib/profile/types";
 
 /** Every alert the engine can send. Prefs default to all-on, EXCEPT
- *  `"coming-up"` (SKY_EVENTS_PLAN.md §10) — the one opt-in key, overridden
- *  explicitly in `defaultPrefs()` below rather than by a blanket rule
- *  change, so a future reader can't miss it. */
+ *  `"coming-up"` (SKY_EVENTS_PLAN.md §10) and `"sun-color"` — two opt-in
+ *  keys, each overridden explicitly in `defaultPrefs()` below rather than by
+ *  a blanket rule change, so a future reader can't miss either one. */
 export type AlertKey =
   | "lightning"
   | "thunder"
@@ -21,7 +21,8 @@ export type AlertKey =
   | "water-advisory"
   | "morning"
   | "score-excellent"
-  | "coming-up";
+  | "coming-up"
+  | "sun-color";
 
 export const ALERT_KEYS: readonly AlertKey[] = [
   "lightning",
@@ -36,6 +37,7 @@ export const ALERT_KEYS: readonly AlertKey[] = [
   "morning",
   "score-excellent",
   "coming-up",
+  "sun-color",
 ] as const;
 
 /**
@@ -55,16 +57,45 @@ export const SAFETY_ALERT_KEYS: readonly AlertKey[] = [
 export type AlertPrefs = Record<AlertKey, boolean>;
 
 /** All-on prefs — the default for a device that has never set any —
- *  EXCEPT `"coming-up"` (SKY_EVENTS_PLAN.md §10), which starts OFF: a
- *  subscriber opts in rather than opting out of the sky-events alert. This
- *  applies to every existing device (its stored prefs blob has no
- *  `"coming-up"` key yet, so `parsePrefs` falls back to this default too)
+ *  EXCEPT `"coming-up"` (SKY_EVENTS_PLAN.md §10) and `"sun-color"` (the
+ *  sunrise/sunset color alert), which both start OFF: a subscriber opts in
+ *  rather than opting out of either sky-related alert. This applies to
+ *  every existing device (its stored prefs blob has no `"coming-up"` or
+ *  `"sun-color"` key yet, so `parsePrefs` falls back to this default too)
  *  and every brand-new one. */
 export function defaultPrefs(): AlertPrefs {
   const out = {} as AlertPrefs;
   for (const k of ALERT_KEYS) out[k] = true;
   out["coming-up"] = false;
+  out["sun-color"] = false;
   return out;
+}
+
+/**
+ * Which sunrise/sunset color quality counts for the "sun-color" alert —
+ * `"vivid"`/`"epic"` are `lib/sunQuality.ts`'s own `SunQualityBand` values
+ * (labels "Great"/"Amazing"); this is deliberately narrowed to just the two
+ * a person can pick as a THRESHOLD (never "good" or worse — nobody wants to
+ * be woken for a merely decent sky). See `lib/alerts/sunColor.ts` for the
+ * score cutoff each one maps to.
+ */
+export type SunColorMinBand = "vivid" | "epic";
+
+export const DEFAULT_SUN_COLOR_MIN_BAND: SunColorMinBand = "vivid"; // "Great or better"
+
+/** How long before the event to send the alert — the only choices the
+ *  settings sheet offers (components/plus/PlusSettingsSheet.tsx). */
+export const SUN_COLOR_LEAD_OPTIONS = [30, 60, 120, 180] as const;
+export type SunColorLeadMin = (typeof SUN_COLOR_LEAD_OPTIONS)[number];
+
+export const DEFAULT_SUN_COLOR_LEAD_MIN: SunColorLeadMin = 60;
+
+/** A device's sun-color settings, always resolved to real values (never
+ *  null) — `toRecord` below fills in the default the moment a column reads
+ *  NULL, so every caller gets a value it can use directly. */
+export interface SunColorPrefs {
+  minBand: SunColorMinBand;
+  leadMin: number;
 }
 
 export type Platform = "ios" | "android" | "web";
@@ -95,6 +126,58 @@ export interface SentState {
    *  stay "due" for the WHOLE 8 AM hour, crowding out other beaches'
    *  morning digests too). */
   comingUpCheckedDate?: string;
+  /** The sun-color alert's ESTIMATE-based event identity
+   *  (`sun-color:<kind>:<beach-local date>`, lib/alerts/sunColor.ts's
+   *  `sunColorEstimateKey`/`sunColorEventKey`) for the LAST event this
+   *  device was evaluated for INSIDE its own send window — set regardless
+   *  of outcome (nothing eligible / already sent / confirmed sent or dead
+   *  token / a lost claim race another run already confirmed), EXCEPT on a
+   *  transient send failure or an UNSETTLED claim race, where it is left
+   *  unset/stale so a later tick inside the SAME window retries (same
+   *  "regardless of outcome, except a retryable one" rule
+   *  `comingUpCheckedDate` follows for its own alert). Deliberately the
+   *  ESTIMATE's own identity, not the real conditions snapshot's — the two
+   *  can legitimately disagree at a boundary (a different local day, or
+   *  even a different kind), and the latch must still stop the SELECTOR
+   *  (which only ever sees the estimate) from re-selecting this beach for
+   *  the event it just evaluated; the snapshot's own true event, if
+   *  different, gets its own later estimate window. Unlike
+   *  `comingUpCheckedDate` (a calendar date, since coming-up evaluates once
+   *  a day), this is keyed to the specific EVENT, since a device can have a
+   *  sun-color opportunity at a different hour on a different day — a stale
+   *  key for a past event simply never matches a future one's key, so there
+   *  is nothing to separately "expire" here. Read by `slugConditionsNeed`
+   *  (app/api/push/run/route.ts) via `lib/alerts/sunColor.ts`'s
+   *  `sunColorSlugNeed`, so a beach stops being kept `due` once this run's
+   *  device has nothing further to send for this hour — otherwise a
+   *  cluster of same-timezone beaches could starve each other for the
+   *  whole send window. */
+  sunColorCheckedKey?: string;
+  /**
+   * Round-3 item 1: the ESTIMATE and the real conditions snapshot can
+   * legitimately disagree about exactly when a sun-color event happens —
+   * not just by a few minutes (round-2 item 5's tolerance covers that) but
+   * by disagreeing about WHICH window is currently open. When a fetch made
+   * because the estimate was due finds the real snapshot's own window
+   * hasn't opened yet, but WILL within 15 minutes (same kind as the
+   * estimate), this is set to that real window's own start (epoch ms)
+   * INSTEAD of latching `sunColorCheckedKey` — `sunColorSlugNeed` then
+   * reads this to hold the beach at NEITHER `due` NOR `candidate` (round-4
+   * item 1 — `candidate` alone still triggers a real conditions fetch in
+   * app/api/push/run/route.ts, same as `due` does, so `candidate` before
+   * the deferred instant would defeat the whole point of deferring) until
+   * that instant, so the estimate's own due window doesn't keep forcing a
+   * pointless re-fetch every tick in between. Once `nowMs` reaches this
+   * value, `sunColorSlugNeed` treats the beach as `due`/`candidate` for
+   * exactly one real send-window's width (`SUN_COLOR_SEND_WINDOW_MS`) —
+   * this value literally IS that real window's own start, so that span is
+   * the real window itself, widened only enough to guarantee a 5-minute
+   * cron tick actually lands inside it. Past that width, evaluation falls
+   * through to the normal (now-expired) estimate logic, which latches.
+   * Left stale (never cleared) once fully expired — a past instant simply
+   * never gates anything again, same non-expiring-key reasoning as
+   * `sunColorCheckedKey` above. */
+  sunColorDeferUntilMs?: number;
 }
 
 /** One row of `devices`, exactly as D1 stores it. */
@@ -138,6 +221,18 @@ export interface DeviceRow {
    *  and lib/db/installTokenAuth.ts. `?` for the same reason as the two
    *  columns above: only the dedicated install-token store methods touch it. */
   token_used_at?: number | null;
+  /** The "sun-color" alert's two settings (migrations/0012_sun_color_prefs.sql).
+   *  Two plain nullable columns, not `prefs_json` — that blob is typed as a
+   *  strict `Record<AlertKey, boolean>` (see `parsePrefs`/`ALERT_KEYS` below),
+   *  and these are a band enum + a lead-time enum, not booleans. NULL means
+   *  "use the default" (see `DEFAULT_SUN_COLOR_MIN_BAND`/
+   *  `DEFAULT_SUN_COLOR_LEAD_MIN`) — `toRecord` resolves that default so
+   *  every reader gets real values. `?` because, like the token columns
+   *  above, only devices that ever changed a sun-color setting have these
+   *  set; every other query building a `DeviceRow` by hand (not through
+   *  `DEVICE_COLS`) is still a valid row without them. */
+  sun_color_min_band?: string | null;
+  sun_color_lead_min?: number | null;
 }
 
 /** One row of `presence`, exactly as D1 stores it. */
@@ -165,6 +260,12 @@ export interface DeviceGrants {
 /** The API shape: what every Plus route returns as `device`. */
 export interface DeviceRecord {
   id: string;
+  /** The row's own `updated_at` (epoch ms) — bumped on every write. Round-4
+   *  item 3: the client's `applyDevice` uses this to ignore a server
+   *  response OLDER than what it's already applied (a delayed reply to a
+   *  now-superseded request), rather than trusting response ARRIVAL order,
+   *  which two overlapping requests can't guarantee. */
+  updatedAt: number;
   platform: Platform | null;
   tz: string | null;
   homeSlug: string | null;
@@ -177,6 +278,9 @@ export interface DeviceRecord {
   grants: DeviceGrants;
   trialUsed: boolean;
   previewSeen: boolean;
+  /** The "sun-color" alert's two settings, always resolved (never null) —
+   *  see `SunColorPrefs`. */
+  sunColor: SunColorPrefs;
   presence: {
     slug: string;
     armedUntil: number;
@@ -212,6 +316,10 @@ export interface DevicePatch {
   trialUsed?: boolean;
   previewSeen?: boolean;
   sent?: SentState;
+  /** `null` resets to the default (`DEFAULT_SUN_COLOR_MIN_BAND`). */
+  sunColorMinBand?: SunColorMinBand | null;
+  /** `null` resets to the default (`DEFAULT_SUN_COLOR_LEAD_MIN`). */
+  sunColorLeadMin?: number | null;
 }
 
 /** An armed "I'm at the beach" window. */
@@ -333,7 +441,25 @@ export function newDeviceRow(id: string, now: number): DeviceRow {
     token_hash: null,
     token_issued_at: null,
     token_used_at: null,
+    sun_color_min_band: null,
+    sun_color_lead_min: null,
   };
+}
+
+/** Resolve a possibly-NULL/invalid stored band into a real one — an unknown
+ *  string (a corrupt write, or a future value this build doesn't know about)
+ *  falls back to the default rather than propagating garbage. */
+function resolveSunColorMinBand(v: string | null | undefined): SunColorMinBand {
+  return v === "epic" ? "epic" : v === "vivid" ? "vivid" : DEFAULT_SUN_COLOR_MIN_BAND;
+}
+
+/** Same fallback rule for the lead time — anything not one of the offered
+ *  choices (corrupt write, or a future option this build predates) reads as
+ *  the default. */
+function resolveSunColorLeadMin(v: number | null | undefined): number {
+  return typeof v === "number" && (SUN_COLOR_LEAD_OPTIONS as readonly number[]).includes(v)
+    ? v
+    : DEFAULT_SUN_COLOR_LEAD_MIN;
 }
 
 /**
@@ -356,9 +482,17 @@ export function deriveEntitlement(grants: DeviceGrants, now: number): { plan: Pl
  * (and by legacy-import on both backends, which only ever creates a fresh
  * row). d1Store does NOT use this for a live upsert — it needs the patch
  * applied as one atomic SQL statement (#3), not read-then-write in JS.
+ *
+ * `updated_at` (round-5 item 1): strictly monotonic, mirroring d1Store's own
+ * `MAX(COALESCE(updated_at, 0) + 1, ?now)` SQL fix — plain `Date.now()` can
+ * repeat (two calls inside the same millisecond; Node's single-threaded, but
+ * two `await`-free writes in the same tick still share a clock reading) or
+ * go backwards (a clock adjustment), and the client's revisioning watermark
+ * (`isStaleDeviceResponse`, lib/plus/client.ts) needs a STRICT ordering to
+ * ever tell two responses apart.
  */
 export function applyPatch(row: DeviceRow, patch: DevicePatch, now: number): DeviceRow {
-  const next: DeviceRow = { ...row, updated_at: now };
+  const next: DeviceRow = { ...row, updated_at: Math.max((row.updated_at ?? 0) + 1, now) };
   if (patch.platform !== undefined) next.platform = patch.platform;
   if (patch.pushToken !== undefined) next.push_token = patch.pushToken;
   if (patch.tz !== undefined) next.tz = patch.tz;
@@ -375,6 +509,8 @@ export function applyPatch(row: DeviceRow, patch: DevicePatch, now: number): Dev
   if (patch.trialUntil !== undefined) next.trial_until = patch.trialUntil;
   if (patch.trialUsed !== undefined) next.trial_used = patch.trialUsed ? 1 : 0;
   if (patch.previewSeen !== undefined) next.preview_seen = patch.previewSeen ? 1 : 0;
+  if (patch.sunColorMinBand !== undefined) next.sun_color_min_band = patch.sunColorMinBand;
+  if (patch.sunColorLeadMin !== undefined) next.sun_color_lead_min = patch.sunColorLeadMin;
   if (patch.sent !== undefined) {
     const keys = Object.keys(patch.sent).filter(
       (k) => (patch.sent as Record<string, unknown>)[k] !== undefined,
@@ -396,6 +532,7 @@ export function applyPatch(row: DeviceRow, patch: DevicePatch, now: number): Dev
 export function toRecord(row: DeviceRow, presence?: PresenceRow | null): DeviceRecord {
   return {
     id: row.id,
+    updatedAt: row.updated_at,
     platform: isPlatform(row.platform) ? row.platform : null,
     tz: row.tz ?? null,
     homeSlug: row.home_slug ?? null,
@@ -410,6 +547,10 @@ export function toRecord(row: DeviceRow, presence?: PresenceRow | null): DeviceR
     },
     trialUsed: !!row.trial_used,
     previewSeen: !!row.preview_seen,
+    sunColor: {
+      minBand: resolveSunColorMinBand(row.sun_color_min_band),
+      leadMin: resolveSunColorLeadMin(row.sun_color_lead_min),
+    },
     presence: presence
       ? {
           slug: presence.slug,

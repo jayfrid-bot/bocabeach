@@ -12,7 +12,7 @@
 // The schema comes from the real migration files, applied in order — so a
 // migration that doesn't actually produce a working schema fails here too.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import {
@@ -30,6 +30,7 @@ import {
   COMING_UP_24H_MS,
   COMING_UP_30D_MS,
 } from "@/lib/db/comingUpClaims";
+import { ABANDONED_CLAIM_MS } from "@/lib/db/sendClaims";
 
 let DatabaseSyncCtor: (new (path: string) => {
   exec(sql: string): void;
@@ -197,6 +198,237 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       const dev = await store.getDevice("d4");
       expect(dev?.trialUsed).toBe(true);
       expect(dev?.plan).toBe("plus");
+    });
+  });
+
+  // --- round-5 item 1: updated_at is strictly monotonic per row, never a
+  // plain `?now` on any UPDATE path --------------------------------------
+  // Real SQL only — the in-memory store's own `Math.max` in JS can't catch a
+  // typo'd `MAX(...)` SQL expression, or a bind position that quietly went
+  // back to plain `?now`, the way running the actual statement can.
+  describe("updated_at is strictly monotonic per device row (round-5 item 1)", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("two writes at the SAME wall-clock `now` still produce a strictly increasing updated_at", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+      const d1 = await store.upsertDevice("mono-1", { tz: "America/New_York" });
+      expect(d1.updatedAt).toBe(1_000_000);
+
+      // A second write at the EXACT same millisecond (Date.now() still
+      // stubbed to the same value) — without the fix this would write
+      // updated_at = 1_000_000 again, indistinguishable from the first.
+      const d2 = await store.upsertDevice("mono-1", { tz: "America/Chicago" });
+      expect(d2.updatedAt).toBe(1_000_001);
+      expect(d2.updatedAt).toBeGreaterThan(d1.updatedAt);
+    });
+
+    it("a write whose `now` is EARLIER than the row's current updated_at still increases it by 1", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(2_000_000);
+      const d1 = await store.upsertDevice("mono-2", { tz: "America/New_York" });
+      expect(d1.updatedAt).toBe(2_000_000);
+
+      // The wall clock moved BACKWARDS (an NTP adjustment, say) before the
+      // next write reaches this row.
+      vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+      const d2 = await store.upsertDevice("mono-2", { tz: "America/Chicago" });
+      expect(d2.updatedAt).toBe(2_000_001); // MAX(prior + 1, now) — now lost
+      expect(d2.updatedAt).toBeGreaterThan(d1.updatedAt);
+    });
+
+    it("holds for claimTrial's own UPDATE too, not just the main upsert", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(3_000_000);
+      const d1 = await store.upsertDevice("mono-3", { tz: "America/New_York" });
+      expect(d1.updatedAt).toBe(3_000_000);
+      const claimed = await store.claimTrial("mono-3", 3_000_000 + 3 * DAY);
+      expect(claimed).not.toBe("trial-used");
+      const d2 = await store.getDevice("mono-3");
+      expect(d2?.updatedAt).toBe(3_000_001); // same `now` as the upsert above
+    });
+
+    it("holds for patchSent's own UPDATE too", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(4_000_000);
+      const d1 = await store.upsertDevice("mono-4", { tz: "America/New_York" });
+      expect(d1.updatedAt).toBe(4_000_000);
+      await store.patchSent("mono-4", { morningDate: "2026-09-02" });
+      const d2 = await store.getDevice("mono-4");
+      expect(d2?.updatedAt).toBe(4_000_001);
+    });
+
+    // Round-6: setPresence/clearPresence write ONLY the `presence` table —
+    // no column on `devices` itself changes — yet the `DeviceRecord` they
+    // hand back (via a separate getDevice, the route's own pattern) DOES
+    // change (its `presence` field). Without also bumping the OWNING
+    // device row's `updated_at` in the same batch, `isStaleDeviceResponse`
+    // would see the same revision as before and the phone would drop an
+    // arm/disarm response that's actually carrying fresh state — exactly
+    // the regression this round fixes.
+    it("setPresence bumps the OWNING device row's updated_at, even though only the presence table's own columns changed", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(5_000_000);
+      const d1 = await store.upsertDevice("mono-5", { tz: "America/New_York" });
+      expect(d1.updatedAt).toBe(5_000_000);
+
+      await store.setPresence("mono-5", {
+        slug: "boca-raton",
+        lat: 26.35,
+        lon: -80.08,
+        accuracyM: 10,
+        fixAt: 5_000_000,
+        armedUntil: 5_000_000 + 3600_000,
+        source: "manual",
+      });
+      const d2 = await store.getDevice("mono-5");
+      expect(d2?.updatedAt).toBe(5_000_001);
+      expect(d2?.presence?.slug).toBe("boca-raton");
+
+      // A second arm at the SAME `now` (a fast re-arm) must still advance —
+      // same monotonic guarantee every other writer gets.
+      await store.setPresence("mono-5", {
+        slug: "boca-raton",
+        lat: null,
+        lon: null,
+        accuracyM: null,
+        fixAt: null,
+        armedUntil: 5_000_000 + 7200_000,
+        source: "manual",
+      });
+      const d3 = await store.getDevice("mono-5");
+      expect(d3?.updatedAt).toBe(5_000_002);
+    });
+
+    it("clearPresence bumps the OWNING device row's updated_at too", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(6_000_000);
+      await store.upsertDevice("mono-6", { tz: "America/New_York" });
+      await store.setPresence("mono-6", {
+        slug: "boca-raton",
+        lat: null,
+        lon: null,
+        accuracyM: null,
+        fixAt: null,
+        armedUntil: 6_000_000 + 3600_000,
+        source: "manual",
+      });
+      const armed = await store.getDevice("mono-6");
+      expect(armed?.updatedAt).toBe(6_000_001);
+      expect(armed?.presence).not.toBeNull();
+
+      await store.clearPresence("mono-6");
+      const disarmed = await store.getDevice("mono-6");
+      expect(disarmed?.presence).toBeNull();
+      expect(disarmed?.updatedAt).toBe(6_000_002);
+      expect(disarmed?.updatedAt).toBeGreaterThan(armed!.updatedAt);
+    });
+  });
+
+  // --- sun-color alert settings (migrations/0012_sun_color_prefs.sql) ------
+  // Two plain nullable columns, appended to UPSERT_DEVICE's positional binds
+  // (?28/?29, present-flags ?30/?31) without renumbering ?1..?27 — this is
+  // the real SQL text against real SQLite, so a mistake in that append would
+  // fail here even though the in-memory store (a plain JS object patch)
+  // could never catch it.
+  describe("sun-color settings (real SQL, not the in-memory model)", () => {
+    it("a brand-new row reads back the defaults (NULL columns)", async () => {
+      await store.upsertDevice("sc1", {});
+      const dev = await store.getDevice("sc1");
+      expect(dev?.sunColor).toEqual({ minBand: "vivid", leadMin: 60 });
+    });
+
+    it("persists a chosen threshold and lead time", async () => {
+      await store.upsertDevice("sc2", { sunColorMinBand: "epic", sunColorLeadMin: 180 });
+      const dev = await store.getDevice("sc2");
+      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 180 });
+    });
+
+    it("an unrelated write afterward leaves the sun-color columns untouched", async () => {
+      await store.upsertDevice("sc3", { sunColorMinBand: "epic", sunColorLeadMin: 30 });
+      await store.upsertDevice("sc3", { tz: "America/New_York" });
+      const dev = await store.getDevice("sc3");
+      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 30 });
+    });
+
+    it("two concurrent writes to different sun-color fields both persist (the ?30/?31 present-flag guards)", async () => {
+      await store.upsertDevice("sc4", {});
+      await Promise.all([
+        store.upsertDevice("sc4", { sunColorMinBand: "epic" }),
+        store.upsertDevice("sc4", { sunColorLeadMin: 120 }),
+      ]);
+      const dev = await store.getDevice("sc4");
+      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 120 });
+    });
+
+    it("null resets a column back to NULL (the default), a real UPDATE ... = NULL, not a no-op", async () => {
+      await store.upsertDevice("sc5", { sunColorMinBand: "epic", sunColorLeadMin: 180 });
+      await store.upsertDevice("sc5", { sunColorMinBand: null, sunColorLeadMin: null });
+      const dev = await store.getDevice("sc5");
+      expect(dev?.sunColor).toEqual({ minBand: "vivid", leadMin: 60 });
+    });
+  });
+
+  // --- releaseSend (migrations/0004_send_claims.sql) — real SQL DELETE ------
+  describe("releaseSend / markSent — ownership-safe (round-2 item 1)", () => {
+    it("deletes an unsent claim so it can be re-claimed immediately", async () => {
+      const now = Date.now();
+      expect(await store.claimSend("k1", now)).toBe(true);
+      expect(await store.claimSend("k1", now + 1)).toBe(false); // still held, not abandoned
+      expect(await store.releaseSend("k1", now)).toBe(true);
+      expect(await store.claimSend("k1", now + 2)).toBe(true); // free again, no wait for ABANDONED_CLAIM_MS
+    });
+
+    it("never undoes a claim already marked sent", async () => {
+      const now = Date.now();
+      await store.claimSend("k2", now);
+      expect(await store.markSent("k2", now)).toBe(true);
+      expect(await store.releaseSend("k2", now)).toBe(false); // no match — already sent
+      // Still "sent" — a fresh claim attempt must fail exactly as it would
+      // for any other confirmed send (not abandoned, not unsent).
+      expect(await store.claimSend("k2", now + 2)).toBe(false);
+    });
+
+    it("releasing a claim nobody holds is a harmless no-op, returning false", async () => {
+      expect(await store.releaseSend("k-never-claimed", Date.now())).toBe(false);
+    });
+
+    it("markSent on a key nobody claimed is a harmless no-op, returning false", async () => {
+      expect(await store.markSent("k-never-claimed", Date.now())).toBe(false);
+    });
+
+    it("a stale caller's release/markSent never touches a claim a LATER run has since reclaimed", async () => {
+      // A claims at t0 and then crashes (never completes).
+      const t0 = Date.now();
+      expect(await store.claimSend("k3", t0)).toBe(true);
+
+      // B reclaims the abandoned claim at t0 + ABANDONED_CLAIM_MS + 1 —
+      // this stamps a NEW claimed_at, which is B's own ownership token.
+      const t1 = t0 + ABANDONED_CLAIM_MS + 1;
+      expect(await store.claimSend("k3", t1)).toBe(true);
+
+      // A (unaware it was reclaimed) finally gets around to releasing its
+      // OWN stale claim, using its OWN original token (t0) — this must NOT
+      // delete B's live row.
+      expect(await store.releaseSend("k3", t0)).toBe(false);
+
+      // B's claim is still live and can be marked sent normally.
+      expect(await store.markSent("k3", t1)).toBe(true);
+
+      // A stale release attempt with A's OLD token, now that B's row is
+      // SENT, still correctly fails to match (belt and suspenders: wrong
+      // token AND already sent).
+      expect(await store.releaseSend("k3", t0)).toBe(false);
+    });
+
+    it("a stale caller's markSent never marks a claim a LATER run has since reclaimed", async () => {
+      const t0 = Date.now();
+      expect(await store.claimSend("k4", t0)).toBe(true);
+      const t1 = t0 + ABANDONED_CLAIM_MS + 1;
+      expect(await store.claimSend("k4", t1)).toBe(true); // B reclaims
+
+      // A's belated markSent, with A's stale token, must not succeed —
+      // it would otherwise mark B's still-in-flight claim "sent" under A's
+      // send, which never actually confirmed anything for THIS claim.
+      expect(await store.markSent("k4", t0)).toBe(false);
+      // B's own markSent, with the correct current token, still works.
+      expect(await store.markSent("k4", t1)).toBe(true);
     });
   });
 

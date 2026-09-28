@@ -364,6 +364,13 @@ flowchart TD
   CUROUTE --> SEND
   CUROUTE -->|"completeComingUp / releaseComingUp"| CUD
 
+  %% Sunrise/sunset color alert — Plus, opt-in, standalone only (no
+  %% coalescing with the digest or "turned Excellent": its own short
+  %% lead-time window, not the 8 AM run those two share).
+  PIPE2 -.->|"same res already fetched<br/>for the digest/Excellent check, no extra call"| SUNCOLOR[lib/alerts/sunColor.ts<br/>sunColorDecision over lib/sunAlert.ts's predictNextSunEvent:<br/>score &ge; device's cutoff (Great 70 / Amazing 90) AND<br/>now in [event&minus;lead, event&minus;lead+10min) AND event &le;4h away]
+  SUNCOLOR --> CLAIM
+  SUNCOLOR -->|"alert_log key sun-color:&lt;kind&gt;:&lt;beach-local date&gt;,<br/>once per event, ever"| D1
+
   %% Beach Session Live Activity (docs/LIVE_ACTIVITY_PLAN.md Phase 3) — one
   %% evaluation, two independent fan-outs from the SAME armed-session loop.
   ATBEACH -->|"listActiveLiveActivities + due-end sweep<br/>(expired presence or expires_at)"| D1
@@ -387,6 +394,185 @@ out exactly once, by whichever of three paths applies first: appended to the
 morning digest body, coalesced into a same-run "turned Excellent" push, or,
 if neither is due, sent standalone — a device is never sent two pushes for
 the same pick.
+
+**The sunrise/sunset color alert is opt-in, standalone-only, and off by
+default**, same as coming-up. `lib/sunAlert.ts`'s `assembleSunEventQuality`
+is the ONE function both `components/SunQualityCard.tsx` and the alert
+(`predictNextSunEvent`) call for the nearest hourly cloud/humidity reading,
+current air quality, and a fresh-and-imminent satellite horizon reading —
+off the SAME conditions build the digest/Excellent check already fetched
+for that beach (no extra outbound call). `predictNextSunEvent` is scored
+against the conditions snapshot's OWN `generatedAt`, not the push run's
+wall clock — that's what makes the GOES-freshness read agree with what the
+card would show for that exact snapshot. `lib/alerts/sunColor.ts`'s
+`sunColorDecision` sends only when the predicted score clears the device's
+own threshold (Great-or-better, score &ge; 70, or Amazing-only, score &ge;
+90 — `lib/sunQuality.ts`'s own band cutoffs) AND the REAL wall clock falls
+inside `[event − lead, event − lead + 10 min)`, where `lead` is the
+device's own 30/60/120/180-minute choice — AND the predicted event is no
+more than 4 hours away (a farther-out forecast isn't trustworthy enough to
+alert on). A transient send failure releases its claim immediately via
+`store.releaseSend` (ownership-safe — see below) rather than waiting out
+the 10-minute abandoned-claim window, so the very next 5-minute cron tick
+can already retry it inside the same window. Both settings live on the
+`devices` row itself (`sun_color_min_band`/`sun_color_lead_min`,
+migrations/0012), not in `prefs_json`, since that blob is typed as a strict
+boolean map. Dedup is the plain `alert_log` mechanism every other
+home-tier alert uses — `sun-color:<kind>:<beach-local date>`, once per
+event, ever, even if the score later climbs back over the cutoff.
+
+**Two distinct event identities, on purpose.** The dedupe key above comes
+from `sunColorDecision`, off the REAL conditions snapshot — that's the one
+that must never disagree with itself about whether a given event was
+already sent. `slugConditionsNeed`'s own SELECTOR uses a separate, cheaper
+ESTIMATE identity (`sunColorEstimateKey`, off `lib/sources/sun.ts`'s pure
+`computeSunTimes` — no fetch), built the exact same way
+(`sun-color:<kind>:<beach-local date>`) but from a pure calculation that can
+disagree with the real snapshot by a few minutes, or even — right at a
+boundary — name a different event kind. `slugConditionsNeed` marks a beach
+`candidate` whenever the ESTIMATE's next event is within roughly 4h, and
+`due` only once inside the estimate's own send window (with a little slack
+on the window's END only — never the start, so a beach is never selected
+before its window has genuinely opened) — but the real anti-starvation
+guarantee is narrower than "never starved": once a device has been
+evaluated INSIDE its (real, snapshot-based) send window this run — any
+outcome except a transient failure or an unsettled claim race —
+`sent.sunColorCheckedKey` latches the ESTIMATE's identity for that event
+(not the snapshot's), and `slugConditionsNeed` stops treating the device as
+due/candidate for it. Latching the ESTIMATE's identity, even when it
+disagrees with the snapshot, is deliberate: it's the estimate the SELECTOR
+reads, so it's the estimate that must stop being reselected; if the
+snapshot's true event later turns out to differ, it gets its own, later
+estimate window on its own terms. Without this latch, a device with
+nothing further to send would keep its beach `due` for the whole window,
+crowding out other same-timezone beaches' round-robin slots.
+
+**Disagreement must converge (`sunColorMismatchOutcome`).** The ESTIMATE
+and the real snapshot can disagree right up to the moment a fetch actually
+happens, so a fetch made because the ESTIMATE came due resolves into exactly
+one of three outcomes, never a repeat fetch loop: (1) the real snapshot's
+own prediction is ALSO in its send window (or already past its cutoff) →
+latch the ESTIMATE key now, same as before. (2) the snapshot has a
+prediction of the SAME kind whose window starts in the future but within 15
+minutes (`SUN_COLOR_MISMATCH_DEFER_MAX_MS`) → don't latch; instead
+`sent.sunColorDeferUntilMs` is set to that real window's start. (3) anything
+else — no prediction, a different kind, or a real window more than 15
+minutes away, or already closed — → latch the ESTIMATE key immediately;
+nothing can be sent for that estimated event no matter how many more times
+this beach is asked. Every branch still resolves within a bounded number of
+fetches per event, which is what keeps a disagreement from holding a beach
+`due` (and re-fetching) forever.
+
+**A persisted defer is itself a due window, not a single instant a 5-minute
+tick can step right over (round-4 item 1).** The first cut of outcome (2)
+above held the beach at `candidate` for the whole wait — but `candidate`
+alone still triggers a real conditions fetch, the same as `due` does, so it
+never actually stopped the pointless re-fetching it was meant to stop.
+`sunColorSlugNeed` now reads `sunColorDeferUntilMs` as three ranges:
+strictly before it → NEITHER `due` nor `candidate` (genuinely no fetch at
+all); from it through one real send-window's width past it
+(`SUN_COLOR_SEND_WINDOW_MS`, since the value literally IS that real
+window's own start) → both `true`, so a fetch lands and the route runs its
+ordinary decision (the real window should now be open; if a later snapshot
+has moved again, the outcome check above settles it either way); past that
+width — a tick never landed inside it — → expired, falls through to the
+plain estimate check, which by then finds the window long closed and
+returns not-due (the same practical effect as a latch, without literally
+writing `sunColorCheckedKey`).
+
+**Ownership-safe send claims (`releaseSend`/`markSent`).** Both take the
+exact `nowMs` the caller originally passed to `claimSend` for that key, and
+both only take effect `WHERE claimed_at = <that value>` — if the claim was
+abandoned and reclaimed by a LATER run in the meantime (which stamps a NEW
+`claimed_at`), a stale caller's belated release or mark is a no-op rather
+than corrupting the reclaimer's live row. Both return whether they actually
+matched; the sun-color block logs a warning (never treated as a hard
+failure — the send itself, if any, already happened) when they don't. A
+lost `claimSend` race is itself non-terminal: the losing run checks
+`alert_log` before deciding whether to latch the estimate key — terminal
+only if another run has ALREADY confirmed the send, otherwise the device
+stays un-latched so a later tick can re-evaluate.
+
+**Sun-color settings saves — one queue, a pending overlay that survives any
+response, AND a response-revisioning watermark (`lib/plus/client.ts`).**
+Both fields (`minBand`/`leadMin`) go through a SINGLE `createSunColorSaver`
+(`createSerialQueue`-backed, same helper Live Activity's client already
+used), so a live edit and `flushPending`'s own retry can never race each
+other into two concurrent `POST /api/devices` calls — whichever was
+submitted LAST is always the last one processed. `queuePending` writes the
+patch to local storage synchronously, before the network call even starts,
+so it survives a reload. On success, `apply` is called UNGATED (no
+"is this response stale" check of its own) because `applyDevice` itself —
+the one place EVERY server response of any kind gets adopted — overlays
+whatever sun-color field is still pending/in-flight (`overlayPendingSunColor`)
+on top of that response before rendering it. That overlay is what actually
+keeps an unrelated response (an older sun-color save's own now-superseded
+reply, or even a completely unrelated prefs toggle) from visibly reverting
+an edit that hasn't resolved yet — the protection lives centrally in
+`applyDevice`, not duplicated in the saver itself. `revert` (only called on
+a failure) still checks the patch is still the CURRENT pending value before
+touching local state, since it mutates state directly rather than going
+through `applyDevice`'s overlay. Round-4 item 3 adds a second, earlier
+guard in front of all of this: two overlapping requests for the SAME device
+can resolve out of order (response ARRIVAL order isn't request order), so
+`applyDevice` tracks the `updatedAt` (bumped by the server on every write,
+now part of `DeviceRecord`) it last applied PER DEVICE ID, and ignores any
+response `<=` that watermark outright — no cache write, no state change,
+before the pending overlay even runs. This is what protects against a case
+the overlay alone can't: a delayed reply to an EARLIER, unrelated request
+(its own pending entry already cleared) landing after a newer save has
+already applied. Round-5 item 1 closes the gap that made an EQUAL
+`updatedAt` unsafe to treat as fresh: `Date.now()` alone can repeat (two
+writes inside the same millisecond) or go backwards (a clock adjustment),
+so every writer on `devices` (the main upsert, `claimTrial`,
+`clearPushToken`, `setInstallTokenHash`, `setSent`, `patchSent` — d1Store's
+SQL, and memoryStore's mirrored `applyPatch`) now sets
+`updated_at = MAX(prior + 1, now)` on every UPDATE path (never plain
+`?now` — only the one-time INSERT keeps that, since there is no prior row
+to be monotonic against yet). With that guarantee, `applyDevice` rejects
+`<=`, not just `<`: an EQUAL value can only describe the exact write this
+phone already applied, never a genuinely different one.
+
+**Every write that changes what a `DeviceRecord` carries must bump the
+OWNING device row's revision — even one that writes a different table
+entirely (round-6).** `setPresence`/`clearPresence` write only the
+`presence` table (arm/disarm), never a column on `devices` itself — but the
+`DeviceRecord` an arm/disarm response hands back DOES change (its
+`presence` field). Without bumping `devices.updated_at` too, that response
+would carry the SAME revision as whatever the phone already applied, and
+the strict `<=` check above would silently drop it — the phone stays stuck
+showing "unarmed" after a successful arm, or vice versa. Both methods now
+also `UPDATE devices SET updated_at = MAX(COALESCE(updated_at, 0) + 1,
+?now) WHERE id = ?`, in the SAME `db.batch()` as their own presence
+write (d1Store) or the same synchronous call (memoryStore) — atomic, so the
+presence table and the owning row's revision can never be observed out of
+step. `live_activities` registration (`/api/live-activity/register`, `/end`)
+needed no equivalent fix: neither route ever returns a `DeviceRecord` in the
+first place.
+
+**Per-tick capacity is `passes x PUSH_RUN_MAX_BEACHES`, and `dueRemaining`
+counts retryable work too.** `PUSH_RUN_MAX_BEACHES`
+caps how many `due` slugs one `/api/push/run` request (one "pass") selects;
+`workers/plus-cron` makes up to 6 passes per 5-minute tick, SEQUENTIALLY,
+each its own request with its own subrequest budget, stopping early the
+moment a pass's JSON response reports `dueRemaining: 0` (every `due` slug
+this tick got served — the coming-up/morning-digest/sun-color alerts all
+share this one signal). `dueRemaining` isn't just slugs the round-robin cap
+excluded: a slug the pass DID reach, but where the conditions load itself
+threw or returned null, where some device's evaluation ended non-terminal
+(a transient send failure, or a lost-claim race no other run has yet
+confirmed — `comingUpTerminal`/`sunColorTerminal === false`), or where a
+device's own evaluation THREW outright (round-5 item 2 — the per-device
+`catch`, which used to only count toward `errors`), is folded in too, once
+per slug — that beach still has real, time-sensitive work outstanding, so
+the cron must not treat it as settled. So one tick's real capacity is
+`passes x cap`
+(6 x 2 = 12 by default), and a whole send window's capacity is that,
+times how many ticks the window spans. If a tick's LAST pass still reports
+`dueRemaining > 0`, `workers/plus-cron` logs a warning — the alarm that
+capacity genuinely wasn't enough this tick (raise `PASSES_PER_TICK` or
+`PUSH_RUN_MAX_BEACHES` if this fires routinely, rather than the window
+simply catching up next tick).
 
 **Grant-source model.** `devices` keeps three independent expiries —
 `store_until` (a purchase, mirrored from RevenueCat), `code_until` (an
