@@ -20,7 +20,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-09-28",
     title: "Look back: your beach's last 7 days (Plus)",
     details:
-      "See the last 7, 14, or 30 days at your beach: each day's best score and time, high temps, wave height, crowds, and seaweed, plus records for the best day, hottest sand, biggest waves, and quietest day since we started keeping history.",
+      "See the last 7, 14, or 30 days at your beach: each day's best score and time, high temps, surf height, crowds, and seaweed, plus records for the best day, hottest sand, biggest surf, and quietest time since we started keeping history.",
     tag: "new",
   },
   {

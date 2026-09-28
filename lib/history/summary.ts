@@ -14,7 +14,7 @@
 // SQL query in d1Store.ts). `recordsFromRows` below only maps that store
 // row shape into the API's friendlier shape — still pure, still no I/O.
 
-import type { BeachHourlyRow, HistoryRecordRow, HistoryRecordsResult } from "@/lib/history/types";
+import type { BeachHourlyRow, HistoryRecordRow } from "@/lib/history/types";
 
 /** A day needs at least this many SCORED hours to count as a full day —
  *  fewer and `partial: true` warns the UI the number is thin (e.g. the
@@ -256,20 +256,5 @@ export function recordsFromRows(rows: HistoryRecordRow[]): HistoryRecords {
     hottestSand: sand ? { date: sand.local_date, sandTempF: sand.value, localHour: sand.local_hour } : null,
     biggestSurf: surf ? { date: surf.local_date, surfFt: surf.value, localHour: surf.local_hour } : null,
     quietestDay: quiet ? { date: quiet.local_date, crowdPct: quiet.value, localHour: quiet.local_hour } : null,
-  };
-}
-
-/** Convenience wrapper some callers prefer over destructuring the store
- *  result themselves — same mapping, plus passes `archiveStartedAt`/
- *  `dayCount` through untouched. */
-export function recordsFromResult(result: HistoryRecordsResult): {
-  records: HistoryRecords;
-  archiveStartedAt: string | null;
-  dayCount: number;
-} {
-  return {
-    records: recordsFromRows(result.records),
-    archiveStartedAt: result.archiveStartedAt,
-    dayCount: result.dayCount,
   };
 }

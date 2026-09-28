@@ -1014,17 +1014,23 @@ export function d1Store(db: D1Like): DeviceStore {
     // that has nothing to do with the beach being pleasant then).
     async historyRecords(slug: string) {
       const recordsResult = await db.prepare(HISTORY_RECORDS_UNION).bind(slug, slug, slug, slug).all<HistoryRecordRow>();
+      // Same meta query as before, plus `surf_since` — the earliest
+      // local_date with a non-null surf_ft, folded into this ONE aggregate
+      // (via a CASE inside MIN) rather than a 4th statement, so the route
+      // still runs exactly three D1 statements total (window + UNION + this).
       const summaryRow = await db
         .prepare(
-          "SELECT MIN(local_date) AS min_date, COUNT(DISTINCT local_date) AS day_count " +
+          "SELECT MIN(local_date) AS min_date, COUNT(DISTINCT local_date) AS day_count, " +
+            "MIN(CASE WHEN surf_ft IS NOT NULL THEN local_date END) AS surf_since " +
             "FROM beach_hourly WHERE slug = ? AND row_kind = 'snapshot'",
         )
         .bind(slug)
-        .first<{ min_date: string | null; day_count: number }>();
+        .first<{ min_date: string | null; day_count: number; surf_since: string | null }>();
       return {
         records: recordsResult.results ?? [],
         archiveStartedAt: summaryRow?.min_date ?? null,
         dayCount: summaryRow?.day_count ?? 0,
+        surfSince: summaryRow?.surf_since ?? null,
       };
     },
 

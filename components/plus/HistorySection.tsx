@@ -17,7 +17,7 @@
  * the 7/14/30 window on screen (lib/history/summary.ts `recordsFromRows`).
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import { scoreColor } from "@/lib/format";
 import { plusApi, type HistoryResult } from "@/lib/plus/api";
@@ -26,6 +26,7 @@ import {
   shiftLocalDate,
   shortMonthDay,
   weekdayLongOf,
+  weekdayOf,
   type DaySummary,
 } from "@/lib/history/summary";
 import { bootstrapInstallToken } from "@/lib/plus/client";
@@ -233,8 +234,24 @@ function DayDetail({ day }: { day: DaySummary }) {
   );
 }
 
-function recordTiles(r: NonNullable<HistoryResult["records"]>) {
-  const tiles: { key: string; icon: string; label: string; value: string; sub: string }[] = [];
+export interface RecordTile {
+  key: string;
+  icon: string;
+  label: string;
+  value: string;
+  sub: string;
+  /** A small quiet second line (MetricCard's own `extra`) — only the
+   *  "Biggest surf" tile uses this, to caption itself honestly when the
+   *  surf estimate doesn't cover the whole archive (Codex review #2). */
+  note?: string;
+}
+
+export function recordTiles(
+  r: NonNullable<HistoryResult["records"]>,
+  archiveStartedAt: string | null,
+  surfSince: string | null,
+): RecordTile[] {
+  const tiles: RecordTile[] = [];
   if (r.bestDay) {
     tiles.push({
       key: "best",
@@ -254,21 +271,32 @@ function recordTiles(r: NonNullable<HistoryResult["records"]>) {
     });
   }
   if (r.biggestSurf) {
+    // The surf estimate (migration 0010) is newer than the archive itself,
+    // so surfSince is normally LATER than archiveStartedAt — captioning
+    // that gap keeps the tile honest instead of implying full coverage.
+    // Never a wave_ft fallback: a beach whose surf_ft is always null simply
+    // has no 'biggest_surf' record at all (r.biggestSurf would be null).
+    const coverageNote =
+      surfSince && archiveStartedAt && surfSince > archiveStartedAt ? `since ${shortMonthDay(surfSince)}` : undefined;
     tiles.push({
       key: "surf",
       icon: "\u{1f30a}",
       label: "Biggest surf",
       value: `${r.biggestSurf.surfFt.toFixed(1)} ft`,
       sub: `${shortMonthDay(r.biggestSurf.date)}, ${hour12Label(r.biggestSurf.localHour)}`,
+      note: coverageNote,
     });
   }
   if (r.quietestDay) {
+    // "Quietest time", not "day" — this is the single least-crowded 10 AM-6
+    // PM reading on file, not a per-day aggregate, so the caption carries
+    // the weekday too ("Mon Sept 28, 3 PM") to anchor it to a real moment.
     tiles.push({
       key: "quiet",
       icon: "\u{1f9d8}",
-      label: "Quietest day",
+      label: "Quietest time",
       value: `${Math.round(r.quietestDay.crowdPct)}%`,
-      sub: `${shortMonthDay(r.quietestDay.date)}, ${hour12Label(r.quietestDay.localHour)}`,
+      sub: `${weekdayOf(r.quietestDay.date)} ${shortMonthDay(r.quietestDay.date)}, ${hour12Label(r.quietestDay.localHour)}`,
     });
   }
   return tiles;
@@ -286,6 +314,36 @@ async function fetchHistoryWithRetry(deviceId: string, slug: string, days: DaysW
   const { token } = await bootstrapInstallToken({ forceRefresh: true });
   if (!token) return first;
   return plusApi.fetchHistory(deviceId, slug, days);
+}
+
+/**
+ * The entitled-user render state, as a pure function of three independent
+ * signals — never a permanent "Loading…" (Codex review round 2 #1): a
+ * device that finished bootstrapping with NO install token is a genuine
+ * dead end for this feature (the route requires one), so it renders the
+ * SAME error + "Try again" a failed fetch does, rather than spinning
+ * forever waiting for a token that isn't coming. `bootstrapDone` is tracked
+ * SEPARATELY from `installToken` specifically so "still bootstrapping" and
+ * "bootstrapped, but got nothing" are distinguishable — collapsing them
+ * into one nullable field can't tell "haven't checked yet" from "checked,
+ * there's nothing".
+ */
+export type HistoryViewState =
+  | { kind: "loading" }
+  | { kind: "no-token-error" }
+  | { kind: "fetch-error" }
+  | { kind: "data"; data: HistoryResult & { ok: true } };
+
+export function resolveHistoryViewState(input: {
+  bootstrapDone: boolean;
+  installToken: string | null;
+  data: HistoryResult | undefined;
+}): HistoryViewState {
+  if (!input.bootstrapDone) return { kind: "loading" };
+  if (!input.installToken) return { kind: "no-token-error" };
+  if (!input.data) return { kind: "loading" };
+  if (!input.data.ok) return { kind: "fetch-error" };
+  return { kind: "data", data: input.data as HistoryResult & { ok: true } };
 }
 
 export function HistorySection({
@@ -314,12 +372,20 @@ export function HistorySection({
   // (lib/plus/client.ts), so this is a cache hit whenever usePlus's own
   // mount effect already minted one — this just makes the SWR key wait for
   // it instead of racing a fetch that's certain to 401/token-required.
+  // `bootstrapDone` is tracked separately from `installToken` (round-2 #1)
+  // so "still checking" and "checked, got nothing" render differently —
+  // the latter is a genuine dead end for this feature and must show the
+  // SAME error + retry a failed fetch does, never a permanent "Loading…".
   const [installToken, setInstallToken] = useState<string | null>(null);
+  const [bootstrapDone, setBootstrapDone] = useState(false);
   useEffect(() => {
     if (!native || !entitled || !deviceId) return;
     let cancelled = false;
+    setBootstrapDone(false);
     void bootstrapInstallToken().then(({ token }) => {
-      if (!cancelled) setInstallToken(token);
+      if (cancelled) return;
+      setInstallToken(token);
+      setBootstrapDone(true);
     });
     return () => {
       cancelled = true;
@@ -333,6 +399,21 @@ export function HistorySection({
     (key) => fetchHistoryWithRetry(key[3], key[1], key[2]),
     { revalidateOnFocus: false, dedupingInterval: 60_000 },
   );
+
+  // Shared by both error states (no token at all / a failed fetch): try the
+  // token again (a real round trip — forceRefresh — since the user
+  // explicitly asked), THEN revalidate. If the token comes back, the SWR
+  // key goes from null to real on the next render and fetches on its own;
+  // `mutate()` covers the OTHER case (a token was already on file and the
+  // FETCH itself failed) by revalidating the same key. Never leaves the
+  // view stuck — either branch ends back in `resolveHistoryViewState`.
+  const retry = useCallback(() => {
+    void bootstrapInstallToken({ forceRefresh: true }).then(({ token }) => {
+      setInstallToken(token);
+      setBootstrapDone(true);
+      void mutate();
+    });
+  }, [mutate]);
 
   // 30-day chip eligibility is a SPAN check (archiveStartedAt vs today), not
   // a row/day COUNT — a beach with real gaps in its archive can still have
@@ -350,8 +431,12 @@ export function HistorySection({
   if (!native) return null;
 
   const heading = entitled ? `Last ${days} days` : "Last 7 days";
-  const newestFirst = data?.ok ? [...data.days].reverse() : [];
-  const tiles = data?.ok && data.records ? recordTiles(data.records) : [];
+  const view = entitled ? resolveHistoryViewState({ bootstrapDone, installToken, data }) : null;
+  const newestFirst = view?.kind === "data" ? [...view.data.days].reverse() : [];
+  const tiles =
+    view?.kind === "data" && view.data.records
+      ? recordTiles(view.data.records, view.data.archiveStartedAt, view.data.surfSince)
+      : [];
 
   return (
     <section aria-labelledby="history-heading">
@@ -391,28 +476,28 @@ export function HistorySection({
             {"›"}
           </span>
         </button>
-      ) : !data ? (
+      ) : view?.kind === "loading" ? (
         <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">Loading…</p>
-      ) : !data.ok ? (
+      ) : view?.kind === "no-token-error" || view?.kind === "fetch-error" ? (
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <p className="text-sm text-slate-600 dark:text-slate-400">Couldn&apos;t load history right now.</p>
           <button
             type="button"
-            onClick={() => void mutate()}
+            onClick={retry}
             className="inline-flex min-h-[44px] items-center rounded-full bg-slate-900/5 px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-900/10 dark:bg-white/10 dark:text-slate-200 dark:hover:bg-white/20"
           >
             Try again
           </button>
         </div>
-      ) : (
+      ) : view?.kind === "data" ? (
         <>
-          {data.days.length === 0 ? (
+          {view.data.days.length === 0 ? (
             <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">
               No history for this beach yet — it&apos;s still collecting. Check back tomorrow.
             </p>
           ) : (
             <>
-              {data.days.length === 1 ? (
+              {view.data.days.length === 1 ? (
                 <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
                   Still collecting — check back in a few days.
                 </p>
@@ -430,7 +515,7 @@ export function HistorySection({
                 </div>
                 {openDate
                   ? (() => {
-                      const day = data.days.find((d) => d.date === openDate);
+                      const day = view.data.days.find((d) => d.date === openDate);
                       return day ? <DayDetail day={day} /> : null;
                     })()
                   : null}
@@ -441,17 +526,17 @@ export function HistorySection({
           {tiles.length > 0 ? (
             <div className="mt-4">
               <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
-                Records since {data.archiveStartedAt ? shortMonthDay(data.archiveStartedAt) : ""}
+                Records since {view.data.archiveStartedAt ? shortMonthDay(view.data.archiveStartedAt) : ""}
               </h3>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {tiles.map((t) => (
-                  <MetricCard key={t.key} icon={t.icon} label={t.label} value={t.value} sub={t.sub} />
+                  <MetricCard key={t.key} icon={t.icon} label={t.label} value={t.value} sub={t.sub} extra={t.note} />
                 ))}
               </div>
             </div>
           ) : null}
         </>
-      )}
+      ) : null}
     </section>
   );
 }

@@ -190,6 +190,7 @@ describe("POST /api/history/[slug]", () => {
       });
       expect(body.archiveStartedAt).toBeNull();
       expect(body.dayCount).toBe(0);
+      expect(body.surfSince).toBeNull();
       expect(typeof body.since).toBe("string");
     });
 
@@ -208,8 +209,12 @@ describe("POST /api/history/[slug]", () => {
       expect(body.ok).toBe(true);
       expect(body.days.map((d: { date: string }) => d.date)).toEqual(["2026-09-21", "2026-09-22"]);
       expect(body.records.bestDay).toEqual({ date: "2026-09-22", score: 88, localHour: 14 });
+      expect(body.records.biggestSurf).toEqual({ date: "2026-09-22", surfFt: 3.2, localHour: 14 });
       expect(body.archiveStartedAt).toBe("2026-09-21");
       expect(body.dayCount).toBe(2);
+      // The first row (2026-09-21) has no surf_ft — coverage only starts
+      // the next day, so surfSince is later than archiveStartedAt.
+      expect(body.surfSince).toBe("2026-09-22");
     });
 
     it("records are LIFETIME — a record-setting row outside the requested window still shows up", async () => {

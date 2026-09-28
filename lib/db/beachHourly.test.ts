@@ -375,6 +375,37 @@ describe("historyRecords — lifetime, never bounded by a days window", () => {
     expect(byKind.quietest).toMatchObject({ local_date: "2026-09-28", local_hour: 10, value: 15 });
     expect(result.archiveStartedAt).toBe("2026-09-20");
     expect(result.dayCount).toBe(4);
+    // Every row here has a surf_ft value, including the earliest — coverage
+    // starts on day one, so surfSince equals archiveStartedAt.
+    expect(result.surfSince).toBe("2026-09-20");
+  });
+
+  it("surfSince is the earliest date with a non-null surf_ft — later than archiveStartedAt when older rows predate the surf estimate", async () => {
+    const store = await getStore();
+    // The archive's first two days have no surf_ft at all (pre-migration
+    // 0010 data); surf_ft only starts showing up on the third day.
+    await store.upsertBeachHourly(
+      row({ hour_utc: hourUtcOf(Date.parse("2026-09-20T14:00:00Z")), local_date: "2026-09-20", surf_ft: null }),
+    );
+    await store.upsertBeachHourly(
+      row({ hour_utc: hourUtcOf(Date.parse("2026-09-21T14:00:00Z")), local_date: "2026-09-21", surf_ft: null }),
+    );
+    await store.upsertBeachHourly(
+      row({ hour_utc: hourUtcOf(Date.parse("2026-09-22T14:00:00Z")), local_date: "2026-09-22", surf_ft: 2.5 }),
+    );
+    const result = await store.historyRecords("boca-raton");
+    expect(result.archiveStartedAt).toBe("2026-09-20");
+    expect(result.surfSince).toBe("2026-09-22");
+  });
+
+  it("surfSince is null when no row has ever had a surf_ft value", async () => {
+    const store = await getStore();
+    await store.upsertBeachHourly(
+      row({ hour_utc: hourUtcOf(Date.parse("2026-09-22T14:00:00Z")), local_date: "2026-09-22", surf_ft: null }),
+    );
+    const result = await store.historyRecords("boca-raton");
+    expect(result.surfSince).toBeNull();
+    expect(result.records.find((r) => r.kind === "biggest_surf")).toBeUndefined();
   });
 
   it("'quietest' only considers local_hour 10-18 — an overnight near-zero reading never wins it", async () => {
@@ -403,7 +434,7 @@ describe("historyRecords — lifetime, never bounded by a days window", () => {
   it("a beach with no rows at all returns no records and a null archiveStartedAt", async () => {
     const store = await getStore();
     const result = await store.historyRecords("nowhere-beach");
-    expect(result).toEqual({ records: [], archiveStartedAt: null, dayCount: 0 });
+    expect(result).toEqual({ records: [], archiveStartedAt: null, dayCount: 0, surfSince: null });
   });
 
   it("ties break to the EARLIEST hour_utc", async () => {

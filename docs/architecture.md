@@ -448,18 +448,24 @@ the 1-minute history cron has been writing since 2026-09-22 (diagram 2).
 Gated like `/api/hazards`: native app only, a rate-limited deviceId (300/hr
 by IP, 60/hr by device), the install token once one is on file, then
 `entitled(device, now)` — a free device gets 403 `not-entitled`, never a
-peek at the data. The route itself never calls `getConditions`; it makes two
-independent, bounded D1 reads in parallel — `DeviceStore.hourlyHistory`
-(`WHERE slug = ? AND row_kind = 'snapshot' AND local_date BETWEEN ? AND ?`,
-capped at 31 days, for the on-screen 7/14/30-day strip) and
-`DeviceStore.historyRecords` (one UNION ALL of four single-row subqueries —
-best score, hottest sand, biggest surf, quietest 10 AM-6 PM reading — plus
-`MIN(local_date)`/`COUNT(DISTINCT local_date)`) — fed through the pure
-summarizer `lib/history/summary.ts`. Records are deliberately NOT bounded by
-the `days` window: they read the WHOLE archive for the beach, so switching
-the 7/14/30 chip can never make a record vanish or regress, and the "biggest
-surf" record reads the `surf_ft` column only (the breaking-surf estimate),
-never `wave_ft` (the raw significant wave height) — the two must never mix.
+peek at the data. The route itself never calls `getConditions`; it runs
+exactly THREE D1 statements, two of them in parallel with the third:
+`DeviceStore.hourlyHistory` (`WHERE slug = ? AND row_kind = 'snapshot' AND
+local_date BETWEEN ? AND ?`, capped at 31 days, for the on-screen 7/14/30-day
+strip) plus `DeviceStore.historyRecords`'s own two statements — one UNION
+ALL of four single-row subqueries (best score, hottest sand, biggest surf,
+quietest 10 AM-6 PM reading) and one small meta aggregate
+(`MIN(local_date)`, `COUNT(DISTINCT local_date)`, and `MIN(CASE WHEN
+surf_ft IS NOT NULL THEN local_date END)` as `surfSince`, folded into the
+SAME statement rather than a 4th) — fed through the pure summarizer
+`lib/history/summary.ts`. Records are deliberately NOT bounded by the `days`
+window: they read the WHOLE archive for the beach, so switching the 7/14/30
+chip can never make a record vanish or regress, and the "biggest surf"
+record reads the `surf_ft` column only (the breaking-surf estimate), never
+`wave_ft` (the raw significant wave height) — the two must never mix. Since
+`surf_ft` postdates the archive itself (migration 0010), `surfSince` is
+normally later than `archiveStartedAt`; the "Biggest surf" tile captions
+that gap ("since Sept 28") instead of implying full-archive coverage.
 
 **Live Activity register: rotation + one-active-per-device.** The native
 plugin sends a monotonic `rotation` counter with each token; `registerLiveActivity`

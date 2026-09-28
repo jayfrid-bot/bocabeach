@@ -505,6 +505,32 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       expect(byKind.quietest).toMatchObject({ local_date: "2026-09-28", local_hour: 10, value: 15 });
       expect(result.archiveStartedAt).toBe("2026-09-20");
       expect(result.dayCount).toBe(4);
+      // Every row here has a surf_ft value, including the earliest.
+      expect(result.surfSince).toBe("2026-09-20");
+    });
+
+    it("surfSince (real MIN(CASE...) aggregate) is later than archiveStartedAt when older rows predate the surf estimate", async () => {
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-20T14:00:00.000Z", local_date: "2026-09-20", surf_ft: null }),
+      );
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-21T14:00:00.000Z", local_date: "2026-09-21", surf_ft: null }),
+      );
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-22T14:00:00.000Z", local_date: "2026-09-22", surf_ft: 2.5 }),
+      );
+      const result = await store.historyRecords("boca-raton");
+      expect(result.archiveStartedAt).toBe("2026-09-20");
+      expect(result.surfSince).toBe("2026-09-22");
+    });
+
+    it("surfSince is null when no row has ever had a surf_ft value", async () => {
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-22T14:00:00.000Z", local_date: "2026-09-22", surf_ft: null }),
+      );
+      const result = await store.historyRecords("boca-raton");
+      expect(result.surfSince).toBeNull();
+      expect(result.records.find((r) => r.kind === "biggest_surf")).toBeUndefined();
     });
 
     it("'quietest' only considers local_hour 10-18", async () => {
@@ -545,7 +571,7 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
 
     it("a beach with no rows at all returns no records and a null archiveStartedAt", async () => {
       const result = await store.historyRecords("nowhere-beach");
-      expect(result).toEqual({ records: [], archiveStartedAt: null, dayCount: 0 });
+      expect(result).toEqual({ records: [], archiveStartedAt: null, dayCount: 0, surfSince: null });
     });
   });
 

@@ -5,9 +5,11 @@
 // lib/history/archive.ts) and turns it into day-by-day summaries
 // (lib/history/summary.ts `summarizeHistory`, bounded by `days`) plus a
 // handful of LIFETIME records (`summary.ts` `recordsFromRows`, fed by
-// `DeviceStore.historyRecords` — one UNION ALL query, never bounded by
-// `days`, so switching the 7/14/30 chip can never make a record vanish or
-// regress).
+// `DeviceStore.historyRecords`, never bounded by `days`, so switching the
+// 7/14/30 chip can never make a record vanish or regress). Three D1
+// statements total: the window SELECT (`hourlyHistory`), the UNION ALL of
+// four single-row subqueries, and one small meta aggregate — both of the
+// latter inside `historyRecords`.
 //
 // Gate: the same shape live-activity/register and hazards use, combined —
 // app-only (Plus is sold and delivered only inside the phone app), a valid
@@ -113,6 +115,7 @@ export async function POST(
         records,
         archiveStartedAt: recordsResult.archiveStartedAt,
         dayCount: recordsResult.dayCount,
+        surfSince: recordsResult.surfSince,
       },
       { headers: { "Cache-Control": "private, no-store" } },
     );

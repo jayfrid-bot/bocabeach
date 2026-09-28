@@ -586,13 +586,15 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       if (quiet) records.push({ kind: "quietest", ...quiet });
 
       let archiveStartedAt: string | null = null;
+      let surfSince: string | null = null;
       const dates = new Set<string>();
       for (const r of rowsForSlug) {
         dates.add(r.local_date);
         if (archiveStartedAt === null || r.local_date < archiveStartedAt) archiveStartedAt = r.local_date;
+        if (typeof r.surf_ft === "number" && (surfSince === null || r.local_date < surfSince)) surfSince = r.local_date;
       }
 
-      return { records, archiveStartedAt, dayCount: dates.size };
+      return { records, archiveStartedAt, dayCount: dates.size, surfSince };
     },
 
     // --- Beach Session Live Activity (migrations/0007_live_activities.sql) -

@@ -115,12 +115,19 @@ export interface HistoryResult {
   records: HistoryRecords | null;
   archiveStartedAt: string | null;
   dayCount: number;
+  /** MIN(local_date) among rows with a non-null surf_ft — normally later
+   *  than `archiveStartedAt`; the "Biggest surf" tile uses the gap to
+   *  caption itself honestly instead of implying full-archive coverage. */
+  surfSince: string | null;
   error: string | null;
   status: number;
 }
 
-function emptyHistoryResult(): Pick<HistoryResult, "since" | "days" | "records" | "archiveStartedAt" | "dayCount"> {
-  return { since: null, days: [], records: null, archiveStartedAt: null, dayCount: 0 };
+function emptyHistoryResult(): Pick<
+  HistoryResult,
+  "since" | "days" | "records" | "archiveStartedAt" | "dayCount" | "surfSince"
+> {
+  return { since: null, days: [], records: null, archiveStartedAt: null, dayCount: 0, surfSince: null };
 }
 
 /** Plus "Last N days" (docs/HISTORY_AND_IMAGERY_PLAN.md Part A). Same
@@ -161,6 +168,7 @@ async function fetchHistory(deviceId: string, slug: string, days: 7 | 14 | 30): 
     records?: unknown;
     archiveStartedAt?: unknown;
     dayCount?: unknown;
+    surfSince?: unknown;
     error?: unknown;
   };
   if (res.ok && obj.ok === true) {
@@ -171,6 +179,7 @@ async function fetchHistory(deviceId: string, slug: string, days: 7 | 14 | 30): 
       records: (obj.records as HistoryRecords | undefined) ?? null,
       archiveStartedAt: typeof obj.archiveStartedAt === "string" ? obj.archiveStartedAt : null,
       dayCount: typeof obj.dayCount === "number" ? obj.dayCount : 0,
+      surfSince: typeof obj.surfSince === "string" ? obj.surfSince : null,
       error: null,
       status: res.status,
     };

@@ -107,4 +107,12 @@ export interface HistoryRecordsResult {
   archiveStartedAt: string | null;
   /** COUNT(DISTINCT local_date) across every snapshot row for this beach. */
   dayCount: number;
+  /** MIN(local_date) among rows that actually have a non-null `surf_ft` —
+   *  the surf estimate (lib/surfHeight.ts, migration 0010) is newer than
+   *  the archive itself, so this is normally LATER than `archiveStartedAt`,
+   *  sometimes by several days. The UI uses the gap to caption the
+   *  "Biggest surf" tile honestly ("since <surfSince>") instead of implying
+   *  it covers the whole archive. Null when no row has ever had a surf_ft
+   *  value (in which case the 'biggest_surf' record itself is also absent). */
+  surfSince: string | null;
 }
