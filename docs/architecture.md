@@ -95,15 +95,15 @@ inside a Worker, call the app's own API).
 ```mermaid
 flowchart LR
   subgraph gh [GitHub Actions — .github/workflows]
-    LGT["lightning.yml — GLM Lightning Feed<br/>*/10 min"]
-    GOES["goes-cloud.yml — GOES Cloud Feed<br/>*/15 min"]
-    MRMS["mrms.yml — MRMS Radar Rain Nowcast<br/>*/10 min"]
-    SARG["sargassum.yml — Cam Vision Feed<br/>*/10 min, ~6a-8p ET"]
+    LGT["lightning.yml — GLM Lightning Feed<br/>~1-min reads in ~5.5h loops, each loop dispatches the next<br/>(*/10 cron = fallback)"]
+    GOES["goes-cloud.yml — GOES Cloud Feed<br/>15-min reads 5:55a-8:35p ET, idles overnight;<br/>~340-min loops, each dispatches the next (*/15 cron = fallback)"]
+    MRMS["mrms.yml — MRMS Radar Rain Nowcast<br/>10-min reads around the clock;<br/>~340-min loops, each dispatches the next (*/10 cron = fallback)"]
+    SARG["sargassum.yml — Cam Vision Feed<br/>10-min reads 5:55a-8:05p ET, idles overnight;<br/>~340-min loops, each dispatches the next (daytime cron = fallback)"]
     RIPNWPS["rip-nwps.yml — NOAA Rip Current Model Feed<br/>every 3h"]
     EVAL["eval.yml — Vision Eval<br/>every 2h, daylight"]
     PUSHCRON["push-cron.yml — Push notifications cron<br/>hourly at :05 (backstop)"]
     LAYOUT["layout-check.yml — Mobile Layout Check<br/>on push + PR"]
-    LAUNCHLIB["launch-library.yml — Rocket Launch Feed (LL2)<br/>hourly heartbeat + internal ~30-min poll loop (~4h45m)"]
+    LAUNCHLIB["launch-library.yml — Rocket Launch Feed (LL2)<br/>~30-min polls in ~4h45m loops, each dispatches the next<br/>(hourly cron = fallback)"]
     KINGTIDE["king-tide.yml — King Tide / High-Tide-Flooding Feed<br/>twice weekly, Mon + Thu"]
   end
 
@@ -182,6 +182,20 @@ home connection — grabs each frame and sends it to the Worker instead. Both
 paths write through the same guard, so neither can overwrite the other's
 newer good frame; `GET /cams` shows which path supplied each camera's
 current frame in its `source` field ("courier" or "browser").
+
+**Feed loops relay to themselves.** GitHub's cron is best-effort — Sep 24-28
+2026 it left loops unrestarted for hours (lightning 109 min with stale
+lightning data; goes-cloud and the cam feed 4-5 h late every morning). So the
+five looping feeds (`lightning`, `goes-cloud`, `mrms`, `sargassum`,
+`launch-library`) each end with a small `handoff` job that dispatches the
+next loop (`gh workflow run`, `actions: write` on that job only — GITHUB_TOKEN
+may trigger `workflow_dispatch`, so no secret). It skips a cancelled run (a
+newer run already replaced it under `cancel-in-progress`) and a loop that
+ended within 15 min (no tight respawn cycle), and only runs on `main`. The two
+daylight feeds idle overnight instead of exiting, so the first morning read
+lands at ~06:00 ET (the first :00/:10/:15 grid point after the 05:55 window
+opens), not whenever the cron next fires. Each workflow's own cron stays as the fallback if a run
+dies before its handoff.
 
 `push-cron.yml` and `plus-cron` both hit the same route — GitHub's schedule is
 best-effort, so the Cloudflare cron is the reliable path and GitHub is the

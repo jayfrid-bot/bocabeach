@@ -9,8 +9,9 @@ name: GLM Lightning Feed
 # which is too sparse for a near-real-time safety feature. So each run does NOT
 # refresh once and exit — it stays awake and republishes every ~1 min for ~5.5h
 # (GLM publishes 20-second granules, so this is about as live as the source gets).
-# Since GitHub re-fires more often than that, the runs overlap and the feed stays
-# continuously fresh, with zero external services or tokens.
+# When that shift ends, the `handoff` job dispatches the next loop right away —
+# the cron alone did NOT reliably overlap the loops (2026-09-28: a 109-min gap
+# with stale lightning data). No external services or tokens either way.
 
 on:
   schedule:
@@ -29,9 +30,14 @@ concurrency:
 
 jobs:
   build-feed:
+    outputs:
+      started: ${{ steps.t0.outputs.started }}
     runs-on: ubuntu-latest
     timeout-minutes: 345 # ~5h45m (GitHub's hard cap is 6h)
     steps:
+      - id: t0
+        name: Note when this loop started (the handoff job's fast-exit guard)
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
       - name: Checkout (for the script)
         uses: actions/checkout@v4
 
@@ -50,7 +56,7 @@ jobs:
           set +e # one bad cycle (e.g. an S3 hiccup) must not kill the loop
           remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           work="${RUNNER_TEMP}/pub"
-          deadline=$(( $(date +%s) + 19800 )) # ~5.5 hours, then the next firing takes over
+          deadline=$(( $(date +%s) + 19800 )) # ~5.5 hours, then the handoff job starts the next loop
 
           publish() {
             rm -rf "$work"; mkdir -p "$work"
@@ -80,3 +86,48 @@ jobs:
             [ "$rem" -lt 5 ] && rem=5
             sleep "$rem"
           done
+
+  # Starts the next loop the moment this one ends. GitHub's cron is best-effort:
+  # Sep 24-28 2026 it left loops unrestarted for hours (lightning 109 min,
+  # goes-cloud and the cam feed 4-5 h late every morning), so each loop relays
+  # to its own successor. GITHUB_TOKEN may trigger workflow_dispatch (the one
+  # event it is allowed to start), so this needs no secret. `actions: write`
+  # lives on this small job only, never on the job that runs the feed scripts.
+  # The cron above stays as the fallback if a run dies before reaching here.
+  #  - Not after a cancel: with cancel-in-progress, a cancelled loop was
+  #    already replaced by a newer run; dispatching again would ping-pong.
+  #  - Not after a loop that ended within 15 min (setup broke, or a logic
+  #    bug): no tight respawn cycle; the cron retries that instead.
+  #  - Only from main, so a branch test run never starts a chain.
+  handoff:
+    needs: build-feed
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch the next loop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.build-feed.result }}
+          STARTED: ${{ needs.build-feed.outputs.started }}
+        run: |
+          if [ -z "$STARTED" ]; then
+            echo "build-feed never recorded its start ('${RESULT}') — not respawning; the cron retries it"
+            exit 0
+          fi
+          ran=$(( $(date +%s) - STARTED ))
+          if [ "$ran" -lt 900 ]; then
+            echo "build-feed ended '${RESULT}' after only ${ran}s — not a normal shift end, so no respawn; the cron retries it"
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            if gh workflow run lightning.yml --repo "$GITHUB_REPOSITORY" --ref main; then
+              echo "next loop dispatched (build-feed ended '${RESULT}' after ${ran}s)"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::could not dispatch the next loop — the cron is the only fallback now"
+          exit 1
