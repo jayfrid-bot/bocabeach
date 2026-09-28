@@ -174,6 +174,11 @@ function sanitizeFeedEntry(raw: unknown): LaunchFeedEntry | null {
   // §7/§9 defense-in-depth: re-check against the allowlist here too — never
   // trust the published field's non-null-ness alone as proof of "orbital".
   const orbitAbbrev = rawOrbitAbbrev !== null && ORBIT_ALLOWLIST.has(rawOrbitAbbrev) ? rawOrbitAbbrev : null;
+  // Strict boolean: a missing field (feeds published before 2026-09-28) or
+  // any non-`true` value means false — never coerced from a string/number.
+  // A corrupted entry that also says "Sub" is never orbital (the script
+  // itself can't emit that pair — defense in depth, §9).
+  const orbitalLauncher = r.orbitalLauncher === true && rawOrbitAbbrev !== "Sub";
   return {
     id,
     name,
@@ -185,6 +190,7 @@ function sanitizeFeedEntry(raw: unknown): LaunchFeedEntry | null {
     padId: r.padId,
     padLocationId: r.padLocationId,
     orbitAbbrev,
+    orbitalLauncher,
     lastUpdated: r.lastUpdated as string,
   };
 }
@@ -433,7 +439,9 @@ export function buildLaunchSkyEvent(
   const observerLightState = lightStateForAltitude(observerAlt);
   const padLightState = lightStateForAltitude(padAlt);
 
-  const knownOrbital = entry.orbitAbbrev !== null;
+  // Known orbital = LL2 names an allowlisted orbit, OR the orbit is
+  // undisclosed but LL2's launcher record is orbital-class (§7 amendment).
+  const knownOrbital = entry.orbitAbbrev !== null || entry.orbitalLauncher === true;
   if (tier === "mid" && !(knownOrbital && observerAlt < 0)) {
     // 50-200mi: only known-orbital launches, and only when the OBSERVER's
     // own sky is already below the day/twilight line at `net` (§7) — a

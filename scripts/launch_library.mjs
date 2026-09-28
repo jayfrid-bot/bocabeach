@@ -340,6 +340,14 @@ function toFeedEntry(raw, rangeLocationIds, now, windowEndMs) {
 
   const rawOrbitAbbrev = raw.mission && raw.mission.orbit && typeof raw.mission.orbit.abbrev === "string" ? raw.mission.orbit.abbrev : null;
   const orbitAbbrev = rawOrbitAbbrev && ORBIT_ALLOWLIST.has(rawOrbitAbbrev) ? rawOrbitAbbrev : null; // §7: unrecognized/missing -> null, never assumed orbital
+  // §7 amendment (2026-09-28): classified missions (NROL, USSF) publish
+  // orbit "N/A"/"Unknown", which hid e.g. a night Falcon Heavy from every
+  // 50-200 mi beach. LL2's own launcher record says whether the VEHICLE is
+  // orbital-class: a positive `leo_capacity`. Still data, never the name.
+  // A mission LL2 marks "Sub" (suborbital) is never orbital, whatever flies it.
+  const config = raw.rocket && raw.rocket.configuration;
+  const leoKg = config && config.leo_capacity;
+  const orbitalLauncher = rawOrbitAbbrev !== "Sub" && typeof leoKg === "number" && Number.isFinite(leoKg) && leoKg > 0;
 
   return {
     id,
@@ -352,6 +360,7 @@ function toFeedEntry(raw, rangeLocationIds, now, windowEndMs) {
     padId,
     padLocationId,
     orbitAbbrev,
+    orbitalLauncher,
     lastUpdated: raw.last_updated,
   };
 }

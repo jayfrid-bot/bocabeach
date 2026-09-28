@@ -178,6 +178,18 @@ describe("buildLaunchSkyEvent — per-beach eligibility (§7)", () => {
     expect(e).toBeNull();
   });
 
+  it("mid tier: an undisclosed orbit on an orbital-class launcher is shown at night (§7 amendment — NROL-97 on Falcon Heavy)", () => {
+    const night = { net: "2026-10-08T02:00:00Z", windowStart: "2026-10-08T02:00:00Z", windowEnd: "2026-10-08T03:00:00Z" };
+    const e = buildLaunchSkyEvent(entry({ ...night, orbitAbbrev: null, orbitalLauncher: true }), BOCA, FEED_GENERATED_AT);
+    expect(e).not.toBeNull();
+    expect(e!.rangeTier).toBe("mid");
+    expect(e!.knownOrbital).toBe(true);
+    // ...but still never in daylight at 50-200 mi.
+    expect(buildLaunchSkyEvent(entry({ orbitAbbrev: null, orbitalLauncher: true }), BOCA, FEED_GENERATED_AT)).toBeNull();
+    // A feed from before the field existed (undefined) keeps the old rule.
+    expect(buildLaunchSkyEvent(entry({ ...night, orbitAbbrev: null, orbitalLauncher: undefined }), BOCA, FEED_GENERATED_AT)).toBeNull();
+  });
+
   it("far tier (>200mi): always omitted, never becomes an event", () => {
     const e = buildLaunchSkyEvent(entry({ padLocationId: VANDENBERG_LOCATION_ID, padId: 999999 }), BOCA, FEED_GENERATED_AT);
     expect(e).toBeNull();
@@ -312,6 +324,25 @@ describe("fetchLaunchEvents", () => {
     expect(r.status).toBe("ok");
     expect(r.data).toHaveLength(1);
     expect(r.data![0].knownOrbital).toBe(false); // "Sub" is not in the allowlist — never trusted at face value
+  });
+
+  it("orbitalLauncher is read as a strict boolean — a string, number, or missing field is false", async () => {
+    const nearBeach = { lat: 28.3, lon: -80.6 }; // near tier, so the event is built either way
+    const base = { ...FEED_PAYLOAD.launches[0], orbitAbbrev: null };
+    const launches = [
+      { ...base, id: "a", orbitalLauncher: true },
+      { ...base, id: "b", orbitalLauncher: "true" },
+      { ...base, id: "c", orbitalLauncher: 1 },
+      { ...base, id: "d" },
+      { ...base, id: "e", orbitAbbrev: "Sub", orbitalLauncher: true },
+    ];
+    delete (launches[3] as Record<string, unknown>).orbitalLauncher;
+    const payload = { schemaVersion: 1, generatedAt: "2026-10-08T14:00:00Z", launches };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(jsonResponse(payload)));
+    const { fetchLaunchEvents } = await import("@/lib/sources/launchLibrary");
+    const r = await fetchLaunchEvents(nearBeach, new Date(Date.parse(payload.generatedAt) + 60_000));
+    const byId = Object.fromEntries(r.data!.map((e) => [e.ll2Id, e.knownOrbital]));
+    expect(byId).toEqual({ a: true, b: false, c: false, d: false, e: false });
   });
 
   it("review item b: an entry whose padId/padLocationId disagree with config/launchPads.ts is dropped", async () => {

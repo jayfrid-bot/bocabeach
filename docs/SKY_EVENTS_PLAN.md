@@ -349,6 +349,16 @@ rocket or mission name. A launch with a missing or unrecognized
 `mission.orbit` is **excluded** at the 50-200 mi tier (treated as
 not-known-orbital), never assumed orbital by default.
 
+**Amendment (2026-09-28, first live feed):** classified missions (NROL,
+USSF) publish `mission.orbit` as "N/A"/"Unknown", which hid a night Falcon
+Heavy from KSC from every 50-200 mi beach. A launch with an undisclosed
+orbit now also counts as known orbital when LL2's own launcher record
+(`rocket.configuration.leo_capacity`, already in the `mode=detailed`
+response) is positive — still LL2 data, never the name. A mission LL2
+marks "Sub" (suborbital) never counts, whatever vehicle flies it. The feed
+publishes this as `orbitalLauncher: boolean`; the adapter reads it as a
+strict boolean (missing = false).
+
 **Where to look**: the **great-circle bearing from the beach to the pad**
 (a standard bearing calculation from the two known lat/lons), never a
 "typical corridor azimuth" guess — that only gets mentioned as a

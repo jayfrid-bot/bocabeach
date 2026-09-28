@@ -225,6 +225,20 @@ describe("toFeedEntry — validation (§7)", () => {
     expect(toFeedEntry(ll2Result({ mission: { orbit: null } }), RANGE_IDS, NOW, WINDOW_END_MS)?.orbitAbbrev).toBeNull();
   });
 
+  it("orbitalLauncher (§7 amendment): an undisclosed orbit on an orbital-class launcher counts; suborbital or no capacity never does", () => {
+    const fh = { configuration: { id: 161, name: "Falcon Heavy", leo_capacity: 63800 } };
+    const classified = toFeedEntry(ll2Result({ rocket: fh, mission: { orbit: { abbrev: "N/A", name: "Unknown" } } }), RANGE_IDS, NOW, WINDOW_END_MS)!;
+    expect(classified.orbitAbbrev).toBeNull(); // the orbit itself stays honest
+    expect(classified.orbitalLauncher).toBe(true);
+    expect(toFeedEntry(ll2Result({ rocket: fh, mission: null }), RANGE_IDS, NOW, WINDOW_END_MS)!.orbitalLauncher).toBe(true);
+    // LL2 says suborbital — never orbital, whatever the vehicle can lift.
+    expect(toFeedEntry(ll2Result({ rocket: fh, mission: { orbit: { abbrev: "Sub" } } }), RANGE_IDS, NOW, WINDOW_END_MS)!.orbitalLauncher).toBe(false);
+    // No capacity data, zero, a string, or no rocket at all — false.
+    for (const rocket of [undefined, null, { configuration: null }, { configuration: { leo_capacity: null } }, { configuration: { leo_capacity: 0 } }, { configuration: { leo_capacity: "63800" } }]) {
+      expect(toFeedEntry(ll2Result({ rocket, mission: { orbit: { abbrev: "N/A" } } }), RANGE_IDS, NOW, WINDOW_END_MS)!.orbitalLauncher).toBe(false);
+    }
+  });
+
   it("a scrub/reschedule (same id, new net/window/status on the next poll) is represented as the SAME id with the new fields — no duplicate identity", () => {
     const before = toFeedEntry(ll2Result(), RANGE_IDS, NOW, WINDOW_END_MS)!;
     const rescheduled = toFeedEntry(

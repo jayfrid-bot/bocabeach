@@ -197,9 +197,10 @@ export interface LaunchSkyEvent {
    *  below 0° only), far = >200mi (never shown, §7 — a `far`-tier launch
    *  is filtered out before it becomes a `LaunchSkyEvent` at all). */
   rangeTier: "near" | "mid";
-  /** True only via LL2's own `mission.orbit` allowlist match — never
-   *  inferred from the rocket/mission name; missing or unrecognized orbit
-   *  data means `false` (§7). */
+  /** True via LL2's own `mission.orbit` allowlist match, or — when the
+   *  orbit is undisclosed — LL2's launcher record being orbital-class
+   *  (`orbitalLauncher`, §7 amendment). Never inferred from the rocket or
+   *  mission name; otherwise `false` (§7). */
   knownOrbital: boolean;
   whereToLook: WhereToLook;
   rating: SkyRating | null;
@@ -323,6 +324,11 @@ export interface LaunchFeedEntry {
    *  allowlist (§7); `null` means unknown/unrecognized, never assumed
    *  orbital. */
   orbitAbbrev: string | null;
+  /** True when LL2's launcher record has a positive LEO capacity and the
+   *  mission isn't marked suborbital (§7 amendment, 2026-09-28) — lets a
+   *  classified mission with an undisclosed orbit still count as orbital.
+   *  Optional: feeds published before this field existed mean false. */
+  orbitalLauncher?: boolean;
   lastUpdated: IsoInstant;
 }
 
