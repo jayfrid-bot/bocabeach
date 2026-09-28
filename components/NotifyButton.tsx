@@ -28,7 +28,7 @@ export async function enableAlertsFlow(
 // Shared 44px icon-button chrome, matching the other two header buttons
 // (Share, dark-mode) it sits beside — see components/ConditionsDashboard.tsx.
 const iconBtn =
-  "relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full ring-1 transition disabled:opacity-60";
+  "relative inline-flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-full ring-1 transition disabled:opacity-60";
 const iconBtnNeutral = `${iconBtn} bg-slate-900/5 text-slate-600 ring-slate-900/10 hover:bg-slate-900/10 dark:bg-white/5 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-white/10`;
 
 /** A small state dot pinned to the bell's corner — the on/off/blocked signal

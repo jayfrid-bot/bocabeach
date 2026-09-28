@@ -244,7 +244,7 @@ export function SafetyBanner({
     ) : (
       <span className="flex min-w-0 items-center gap-2 overflow-hidden">
         {flags.map((f) => (
-          <LifeguardFlag key={f} flag={f} inline compact />
+          <LifeguardFlag key={f} flag={f} inline compact swatchOnly={!!otherLabel} />
         ))}
       </span>
     )

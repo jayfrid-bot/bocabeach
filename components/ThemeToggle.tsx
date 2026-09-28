@@ -71,7 +71,7 @@ export function ThemeToggle({ iconOnly = false }: { iconOnly?: boolean }) {
         onClick={toggle}
         title={label}
         aria-label={label}
-        className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-900/5 text-slate-600 ring-1 ring-slate-900/10 transition hover:bg-slate-900/10 dark:bg-white/5 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-white/10"
+        className="inline-flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-full bg-slate-900/5 text-slate-600 ring-1 ring-slate-900/10 transition hover:bg-slate-900/10 dark:bg-white/5 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-white/10"
       >
         <span aria-hidden className="text-lg leading-none">
           {icon}

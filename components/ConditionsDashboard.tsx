@@ -546,7 +546,7 @@ export function ConditionsDashboard({
             <Link
               href="/"
               aria-label="Is It Beach Day — home"
-              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition hover:opacity-80"
+              className="inline-flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-full transition hover:opacity-80"
             >
               <LogoMark size={26} />
             </Link>
@@ -559,7 +559,7 @@ export function ConditionsDashboard({
                 {/* Wraps to a second line rather than cutting a long name off
                     ("Fort Lauderd…", "South Padre Isl…") next to the icons. */}
                 <h1
-                  className="line-clamp-2 break-words text-xl font-bold leading-tight text-slate-900 dark:text-white sm:text-2xl"
+                  className="line-clamp-2 break-words text-lg font-bold leading-tight text-slate-900 dark:text-white sm:text-2xl"
                   title={snap.location.region}
                 >
                   {snap.location.name}
@@ -570,7 +570,7 @@ export function ConditionsDashboard({
               </Link>
             ) : (
               <h1
-                className="line-clamp-2 min-w-0 break-words py-1 text-xl font-bold leading-tight text-slate-900 dark:text-white sm:text-2xl"
+                className="line-clamp-2 min-w-0 break-words py-1 text-lg font-bold leading-tight text-slate-900 dark:text-white sm:text-2xl"
                 title={snap.location.region}
               >
                 {snap.location.name}

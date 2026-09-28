@@ -24,6 +24,7 @@ export function LifeguardFlag({
   flag,
   inline = false,
   compact = false,
+  swatchOnly = false,
 }: {
   flag: FlagColor;
   inline?: boolean;
@@ -31,6 +32,10 @@ export function LifeguardFlag({
    *  on one line of the collapsed banner; the swatch color carries the rest
    *  and the aria-label/title keep the full meaning. */
   compact?: boolean;
+  /** Inline only: the colored swatch without any word, for a collapsed line
+   *  that already names another advisory — the aria-label/title still carry
+   *  the full meaning and the expanded view spells it out. */
+  swatchOnly?: boolean;
 }) {
   const m = FLAG_META[flag];
   const patch = "block h-8 w-8 rounded-[2px] shadow-md ring-1 ring-black/30";
@@ -47,9 +52,11 @@ export function LifeguardFlag({
           <span className={swatch} style={{ background: m.color }} />
           {m.double ? <span className={swatch} style={{ background: m.color }} /> : null}
         </span>
-        <span className="truncate text-xs font-medium leading-none text-slate-700 dark:text-slate-300 sm:text-sm">
-          {compact ? m.short : m.label}
-        </span>
+        {swatchOnly ? null : (
+          <span className="truncate text-xs font-medium leading-none text-slate-700 dark:text-slate-300 sm:text-sm">
+            {compact ? m.short : m.label}
+          </span>
+        )}
       </span>
     );
   }
