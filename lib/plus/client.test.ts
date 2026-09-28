@@ -653,6 +653,65 @@ describe("isStaleDeviceResponse (Requirement round-4 item 3 — response revisio
     expect(deviceState.sunColor).toEqual({ minBand: "epic", leadMin: 60 });
     expect(deviceState.prefs).toEqual({ morning: false });
   });
+
+  // Round-6 regression: setPresence/clearPresence used to leave the OWNING
+  // device row's `updated_at` untouched (only the separate `presence` table
+  // changed) — so an arm or disarm response carried the SAME `updatedAt` as
+  // whatever the phone had already applied, and the strict `<=` rejection
+  // (round-5 item 1) dropped it outright, leaving the UI stuck on stale
+  // armed/disarmed state. Now that every write that changes what a
+  // `DeviceRecord` carries also bumps the owning row's revision
+  // (lib/db/d1Store.ts's setPresence/clearPresence, in the SAME batch;
+  // memoryStore's mirrored `touchDevice`), this whole sequence must adopt
+  // cleanly. Same `applyDeviceLike` composition as the test above.
+  it("refresh (rev N) -> arm (rev N+1) -> disarm (rev N+2): all three responses adopt, presence shows unarmed -> armed -> unarmed", () => {
+    const lastApplied = new Map<string, number>();
+    let deviceState: DeviceRecord | null = null;
+
+    function applyDeviceLike(rec: DeviceRecord): void {
+      if (isStaleDeviceResponse(rec, lastApplied)) return;
+      lastApplied.set(rec.id, rec.updatedAt);
+      deviceState = overlayPendingSunColor(rec, {});
+    }
+
+    const N = 1_000;
+
+    // 1) The initial refresh() read — not yet armed.
+    applyDeviceLike(fakeDevice({ id: DEV, updatedAt: N, presence: null } as Partial<DeviceRecord>));
+    expect(deviceState!.presence).toBeNull();
+
+    // 2) arm() — setPresence's own write bumped devices.updated_at to N+1
+    // (round-6's fix) alongside the presence row, so this response is
+    // strictly newer, not equal — it must be adopted, not dropped.
+    applyDeviceLike(
+      fakeDevice({
+        id: DEV,
+        updatedAt: N + 1,
+        presence: { slug: "boca-raton", armedUntil: N + 3600_000, source: "manual", hasFix: false },
+      } as Partial<DeviceRecord>),
+    );
+    expect(deviceState!.presence).not.toBeNull();
+    expect(deviceState!.presence?.slug).toBe("boca-raton");
+
+    // 3) disarm() — clearPresence's own write bumps devices.updated_at
+    // again, to N+2.
+    applyDeviceLike(fakeDevice({ id: DEV, updatedAt: N + 2, presence: null } as Partial<DeviceRecord>));
+    expect(deviceState!.presence).toBeNull();
+
+    // The watermark tracked every step — nothing was silently dropped.
+    expect(lastApplied.get(DEV)).toBe(N + 2);
+  });
+
+  // What the round-6 bug actually looked like: an arm response carrying the
+  // SAME `updatedAt` as the read that preceded it (the pre-fix behavior,
+  // since setPresence never touched `devices.updated_at`) is correctly
+  // rejected by the strict `<=` check — proving that fix (round-5 item 1) is
+  // exactly why round-6's OWN fix (bumping the owning row) was necessary.
+  it("without the owning-row bump, an arm response reusing the prior revision would have been dropped", () => {
+    const lastApplied = new Map([[DEV, 1_000]]);
+    const armResponseAtSameRevision = { id: DEV, updatedAt: 1_000 }; // the pre-fix shape
+    expect(isStaleDeviceResponse(armResponseAtSameRevision, lastApplied)).toBe(true);
+  });
 });
 
 describe("purchaseSyncRetryExhausted", () => {

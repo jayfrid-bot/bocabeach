@@ -531,6 +531,23 @@ to be monotonic against yet). With that guarantee, `applyDevice` rejects
 `<=`, not just `<`: an EQUAL value can only describe the exact write this
 phone already applied, never a genuinely different one.
 
+**Every write that changes what a `DeviceRecord` carries must bump the
+OWNING device row's revision — even one that writes a different table
+entirely (round-6).** `setPresence`/`clearPresence` write only the
+`presence` table (arm/disarm), never a column on `devices` itself — but the
+`DeviceRecord` an arm/disarm response hands back DOES change (its
+`presence` field). Without bumping `devices.updated_at` too, that response
+would carry the SAME revision as whatever the phone already applied, and
+the strict `<=` check above would silently drop it — the phone stays stuck
+showing "unarmed" after a successful arm, or vice versa. Both methods now
+also `UPDATE devices SET updated_at = MAX(COALESCE(updated_at, 0) + 1,
+?now) WHERE id = ?`, in the SAME `db.batch()` as their own presence
+write (d1Store) or the same synchronous call (memoryStore) — atomic, so the
+presence table and the owning row's revision can never be observed out of
+step. `live_activities` registration (`/api/live-activity/register`, `/end`)
+needed no equivalent fix: neither route ever returns a `DeviceRecord` in the
+first place.
+
 **Per-tick capacity is `passes x PUSH_RUN_MAX_BEACHES`, and `dueRemaining`
 counts retryable work too.** `PUSH_RUN_MAX_BEACHES`
 caps how many `due` slugs one `/api/push/run` request (one "pass") selects;

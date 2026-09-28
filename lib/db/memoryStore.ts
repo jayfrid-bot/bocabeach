@@ -142,6 +142,20 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
 
   const record = (row: DeviceRow): DeviceRecord => toRecord(row, presence.get(row.id) ?? null);
 
+  // Round-6: bumps the OWNING device row's `updated_at` for a write that
+  // changes what a `DeviceRecord` carries (its `presence` field) without
+  // touching any column ON `devices` itself — mirrors d1Store's own
+  // same-batch devices-bump for `setPresence`/`clearPresence`. Without
+  // this, `isStaleDeviceResponse` (lib/plus/client.ts) would see the SAME
+  // revision as before and drop a response that's actually carrying fresh
+  // arm/disarm state. A no-op when the device row doesn't exist (a
+  // presence write for an id with no devices row is not a real scenario
+  // this store needs to invent one for).
+  const touchDevice = (id: string, now: number): void => {
+    const row = devices.get(id);
+    if (row) devices.set(id, { ...row, updated_at: Math.max((row.updated_at ?? 0) + 1, now) });
+  };
+
   return {
     async getDevice(id) {
       await load();
@@ -278,6 +292,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
 
     async setPresence(deviceId, p: PresenceInput) {
       await load();
+      const now = Date.now();
       presence.set(deviceId, {
         device_id: deviceId,
         slug: p.slug,
@@ -287,14 +302,16 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
         fix_at: p.fixAt ?? null,
         armed_until: p.armedUntil,
         source: p.source,
-        updated_at: Date.now(),
+        updated_at: now,
       });
+      touchDevice(deviceId, now);
       await save();
     },
 
     async clearPresence(deviceId) {
       await load();
       presence.delete(deviceId);
+      touchDevice(deviceId, Date.now());
       await save();
     },
 

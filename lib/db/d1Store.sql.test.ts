@@ -254,6 +254,70 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       const d2 = await store.getDevice("mono-4");
       expect(d2?.updatedAt).toBe(4_000_001);
     });
+
+    // Round-6: setPresence/clearPresence write ONLY the `presence` table —
+    // no column on `devices` itself changes — yet the `DeviceRecord` they
+    // hand back (via a separate getDevice, the route's own pattern) DOES
+    // change (its `presence` field). Without also bumping the OWNING
+    // device row's `updated_at` in the same batch, `isStaleDeviceResponse`
+    // would see the same revision as before and the phone would drop an
+    // arm/disarm response that's actually carrying fresh state — exactly
+    // the regression this round fixes.
+    it("setPresence bumps the OWNING device row's updated_at, even though only the presence table's own columns changed", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(5_000_000);
+      const d1 = await store.upsertDevice("mono-5", { tz: "America/New_York" });
+      expect(d1.updatedAt).toBe(5_000_000);
+
+      await store.setPresence("mono-5", {
+        slug: "boca-raton",
+        lat: 26.35,
+        lon: -80.08,
+        accuracyM: 10,
+        fixAt: 5_000_000,
+        armedUntil: 5_000_000 + 3600_000,
+        source: "manual",
+      });
+      const d2 = await store.getDevice("mono-5");
+      expect(d2?.updatedAt).toBe(5_000_001);
+      expect(d2?.presence?.slug).toBe("boca-raton");
+
+      // A second arm at the SAME `now` (a fast re-arm) must still advance —
+      // same monotonic guarantee every other writer gets.
+      await store.setPresence("mono-5", {
+        slug: "boca-raton",
+        lat: null,
+        lon: null,
+        accuracyM: null,
+        fixAt: null,
+        armedUntil: 5_000_000 + 7200_000,
+        source: "manual",
+      });
+      const d3 = await store.getDevice("mono-5");
+      expect(d3?.updatedAt).toBe(5_000_002);
+    });
+
+    it("clearPresence bumps the OWNING device row's updated_at too", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(6_000_000);
+      await store.upsertDevice("mono-6", { tz: "America/New_York" });
+      await store.setPresence("mono-6", {
+        slug: "boca-raton",
+        lat: null,
+        lon: null,
+        accuracyM: null,
+        fixAt: null,
+        armedUntil: 6_000_000 + 3600_000,
+        source: "manual",
+      });
+      const armed = await store.getDevice("mono-6");
+      expect(armed?.updatedAt).toBe(6_000_001);
+      expect(armed?.presence).not.toBeNull();
+
+      await store.clearPresence("mono-6");
+      const disarmed = await store.getDevice("mono-6");
+      expect(disarmed?.presence).toBeNull();
+      expect(disarmed?.updatedAt).toBe(6_000_002);
+      expect(disarmed?.updatedAt).toBeGreaterThan(armed!.updatedAt);
+    });
   });
 
   // --- sun-color alert settings (migrations/0012_sun_color_prefs.sql) ------

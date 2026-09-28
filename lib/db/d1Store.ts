@@ -679,30 +679,46 @@ export function d1Store(db: D1Like): DeviceStore {
       });
     },
 
+    // Round-6: `presence` is its own table — a write here changes what a
+    // `DeviceRecord` carries (its `presence` field) WITHOUT touching any
+    // `devices` column, so without also bumping `devices.updated_at` here,
+    // `isStaleDeviceResponse` (lib/plus/client.ts) would see the SAME
+    // revision as before and drop a response that's actually carrying
+    // fresh arm/disarm state. Both statements run in the SAME `db.batch()`
+    // as `setPresence`/`clearPresence`'s own presence write — atomic, so a
+    // caller can never observe the presence table changed but the owning
+    // device row's revision NOT reflecting it (or vice versa).
     async setPresence(deviceId, p: PresenceInput) {
-      await db
-        .prepare(
-          "INSERT INTO presence (device_id, slug, lat, lon, accuracy_m, fix_at, armed_until, source, updated_at) " +
-            "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET slug=excluded.slug, " +
-            "lat=excluded.lat, lon=excluded.lon, accuracy_m=excluded.accuracy_m, fix_at=excluded.fix_at, " +
-            "armed_until=excluded.armed_until, source=excluded.source, updated_at=excluded.updated_at",
-        )
-        .bind(
-          deviceId,
-          p.slug,
-          p.lat ?? null,
-          p.lon ?? null,
-          p.accuracyM ?? null,
-          p.fixAt ?? null,
-          p.armedUntil,
-          p.source,
-          Date.now(),
-        )
-        .run();
+      const now = Date.now();
+      await runBatch(db, [
+        db
+          .prepare(
+            "INSERT INTO presence (device_id, slug, lat, lon, accuracy_m, fix_at, armed_until, source, updated_at) " +
+              "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET slug=excluded.slug, " +
+              "lat=excluded.lat, lon=excluded.lon, accuracy_m=excluded.accuracy_m, fix_at=excluded.fix_at, " +
+              "armed_until=excluded.armed_until, source=excluded.source, updated_at=excluded.updated_at",
+          )
+          .bind(
+            deviceId,
+            p.slug,
+            p.lat ?? null,
+            p.lon ?? null,
+            p.accuracyM ?? null,
+            p.fixAt ?? null,
+            p.armedUntil,
+            p.source,
+            now,
+          ),
+        db.prepare("UPDATE devices SET updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?").bind(now, deviceId),
+      ]);
     },
 
     async clearPresence(deviceId) {
-      await db.prepare("DELETE FROM presence WHERE device_id = ?").bind(deviceId).run();
+      const now = Date.now();
+      await runBatch(db, [
+        db.prepare("DELETE FROM presence WHERE device_id = ?").bind(deviceId),
+        db.prepare("UPDATE devices SET updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?").bind(now, deviceId),
+      ]);
     },
 
     async getSent(deviceId) {
