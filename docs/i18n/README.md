@@ -1,8 +1,8 @@
-# Spanish version: inventory and decision (2026-09-30)
+# Spanish version: inventory and recommendation (2026-09-30)
 
-The owner asked for a Spanish version, then asked if it is worth it. The answer on 2026-09-30 was "not yet". These files keep the research so a later attempt does not repeat it.
+The owner asked for a Spanish version, then asked if it is worth it. The recommendation on 2026-09-30 was "not yet". The owner had not decided when this was written. These files keep the research so a later attempt does not repeat it.
 
-## Decision
+## Recommendation
 
 Wait. The limit on growth is finding users, not language.
 
