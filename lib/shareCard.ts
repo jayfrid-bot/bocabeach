@@ -12,7 +12,8 @@ import { beachDayVerdict } from "@/lib/format";
 import { uvBand } from "@/lib/uv";
 import { clarityDisplayWord } from "@/lib/sources/clarity";
 import { listLocations } from "@/config/locations";
-import { deriveMetrics } from "@/lib/score";
+import { applyLiveRipCap, deriveMetrics } from "@/lib/score";
+import { ripCapFor } from "@/lib/ripRisk/resolve";
 import { swimSafety, type SwimSafetyLevel } from "@/lib/safetyLine";
 import { fmtTime } from "@/lib/format";
 
@@ -45,13 +46,18 @@ export interface ShareCardModel {
   verdict: string;
   /** Up to SHARE_CARD_MAX_TILES metric tiles, in priority order, data-permitting. */
   tiles: ShareCardTile[];
-  /** Can you get in the water — the same call the app's safety line makes. */
+  /** A detected swim hazard, the same call the app's safety line makes.
+   *  `label` is empty when none was detected (the card then shows no strip). */
   safety: { level: SwimSafetyLevel; label: string; reasons: string[] };
   /** "Best time today: 5–7 PM", or tomorrow's once today's window has passed. */
   bestTime?: string;
   capped: boolean;
   /** Why the score was capped, when it was. */
   capNote?: string;
+  /** The next known moment the card's safety picture changes (a rip alert
+   *  starting or ending, an NWS rip forecast period ending), when one is
+   *  ahead. The route keeps its cached PNG no longer than this. */
+  changesAtMs?: number;
   /** "isitbeachday.com/<slug>" — for on-card display. */
   pageUrl: string;
   /** The tracked link the share sheet hands off (never shown as visible
@@ -93,27 +99,38 @@ function safeTime(iso: string, tz: string): string | undefined {
 }
 
 const SAFETY_LABEL: Record<SwimSafetyLevel, string> = {
-  safe: "Safe to swim",
+  safe: "",
   caution: "Swim with caution",
   "stay-out": "Stay out of the water",
 };
 
+/** The swim-safety strip shows only a hazard the data actually detected.
+ *  `swimSafety` reads "no hazard found" as safe, and a failed source finds
+ *  no hazard, so a shared image never claims "safe to swim". */
 function safetyFor(
   derived: ReturnType<typeof deriveMetrics> | null,
   snapshot: ConditionsResponse["snapshot"] | undefined,
 ): ShareCardModel["safety"] {
   if (!derived) return { level: "safe", label: "", reasons: [] };
   const line = swimSafety(derived, snapshot);
+  if (line.level === "safe") return { level: "safe", label: "", reasons: [] };
   return { level: line.level, label: SAFETY_LABEL[line.level], reasons: line.reasons.slice(0, 2) };
 }
 
-/** Today's best window while it is still ahead, else tomorrow's. A window
- *  already under way reads "until 12 PM" rather than starting at an odd
- *  minute like "10:59 AM". */
-function bestTimeLabel(res: ConditionsResponse | null | undefined, nowMs: number, tz: string): string | undefined {
+/** Today's best window while it is still ahead, else tomorrow's, chosen by
+ *  date. A window already under way reads "now until 12 PM" rather than
+ *  starting at an odd minute like "10:59 AM". `endIso` is the exclusive end
+ *  of the window's last hour (lib/score.ts), so "5 PM–7 PM" is exact. */
+function bestTimeLabel(
+  res: ConditionsResponse | null | undefined,
+  nowMs: number,
+  tz: string,
+  today: string | undefined,
+  tomorrow: string | undefined,
+): string | undefined {
   const days = res?.multiDayWindows ?? [];
-  const pick = (i: number, word: string) => {
-    const best = days[i]?.best;
+  const pick = (date: string | undefined, word: string) => {
+    const best = date ? days.find((d) => d.date === date)?.best : undefined;
     if (!best || Date.parse(best.endIso) <= nowMs) return undefined;
     const b = safeHourLabel(best.endIso, tz);
     if (!b) return undefined;
@@ -122,7 +139,33 @@ function bestTimeLabel(res: ConditionsResponse | null | undefined, nowMs: number
     if (!a) return undefined;
     return `Best time ${word}: ${a === b ? a : `${a}–${b}`}`;
   };
-  return pick(0, "today") ?? pick(1, "tomorrow");
+  return pick(today, "today") ?? pick(tomorrow, "tomorrow");
+}
+
+/** Earliest known future boundary of the resolved rip status. */
+function nextRipChange(rip: NonNullable<ReturnType<typeof deriveMetrics>["ripNow"]> | undefined, nowMs: number): number | undefined {
+  if (!rip) return undefined;
+  const times = [rip.alert?.end, rip.upcomingAlert?.onset, rip.period?.end]
+    .map((iso) => (iso ? Date.parse(iso) : NaN))
+    .filter((t) => Number.isFinite(t) && t > nowMs);
+  return times.length ? Math.min(...times) : undefined;
+}
+
+/** "2026-09-14" in the beach's timezone. */
+function localDateKey(ms: number, tz: string): string | undefined {
+  try {
+    return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: tz }).format(
+      new Date(ms),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+/** The calendar day after a "YYYY-MM-DD" key (plain date math, no clock). */
+function nextDateKey(key: string): string {
+  const [y, m, d] = key.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
 }
 
 /** "5 PM" / "5:30 PM". */
@@ -136,11 +179,28 @@ export function shareCardModel(
   nowMs: number = Date.now(),
 ): ShareCardModel {
   const snapshot = res?.snapshot;
-  const score = res?.score;
   const loc = snapshot?.location;
   const tz = loc?.timezone || "America/New_York";
+
+  // The cached score was computed on the server's clock at build time. Rip
+  // status is re-resolved against now, and the score follows it both ways,
+  // exactly as the dashboard does (components/ConditionsDashboard.tsx).
+  let derived: ReturnType<typeof deriveMetrics> | null = null;
+  try {
+    derived = snapshot ? deriveMetrics(snapshot, nowMs) : null;
+  } catch {
+    derived = null;
+  }
+  const score =
+    res?.score && derived ? applyLiveRipCap(res.score, ripCapFor(derived.ripNow), derived.ripNow) : res?.score;
   const scoreValue = score?.score ?? 0;
   const band = scoreBand(scoreValue);
+
+  // Pick daily entries by their beach-local date, never by array position: a
+  // response built before local midnight is still served after it.
+  const today = localDateKey(nowMs, tz);
+  const tomorrow = today ? nextDateKey(today) : undefined;
+  const todayForecast = today ? snapshot?.forecast?.data?.find((f) => f.date === today) : undefined;
 
   let dateLabel = "";
   let timeLabel = "";
@@ -173,7 +233,7 @@ export function shareCardModel(
   push("waterTemp", "Water temp", subByKey.get("waterTemp")?.display);
 
   const airTempNum = asNumber(subByKey.get("airTemp")?.display);
-  const todayHi = snapshot?.forecast?.data?.[0]?.hi;
+  const todayHi = todayForecast?.hi;
   push(
     "airTemp",
     "Air temp",
@@ -186,12 +246,6 @@ export function shareCardModel(
   // reading (lib/surfHeight.ts), same wording as the WaveHeightCard.
   push("waves", "Est. surf", waves.value, waves.note);
 
-  let derived: ReturnType<typeof deriveMetrics> | null = null;
-  try {
-    derived = snapshot ? deriveMetrics(snapshot, nowMs) : null;
-  } catch {
-    derived = null;
-  }
   const rip = derived?.ripNow;
   if (rip && rip.source !== "unknown" && rip.level !== "unknown") {
     push("rip", "Rip current", capitalize(rip.level), rip.source === "alert" ? "warning in effect" : undefined);
@@ -227,12 +281,27 @@ export function shareCardModel(
   const busynessToday = snapshot?.busyness?.data && snapshot.busyness.data.level !== "unknown";
   if (busynessToday) push("crowds", "Crowd", stripEstimateHedge(subByKey.get("crowds")?.display ?? "") || undefined);
 
-  const todayRain = snapshot?.forecast?.data?.[0]?.rain;
-  if (typeof todayRain === "number") push("rain", "Rain", `${Math.round(todayRain)}%`, "chance today");
-
   const sun = snapshot?.sun?.data;
-  if (sun?.sunset && Date.parse(sun.sunset) > nowMs) push("sun", "Sunset", safeTime(sun.sunset, tz));
-  else if (sun?.tomorrowSunrise) push("sun", "Sunrise", safeTime(sun.tomorrowSunrise, tz), "tomorrow");
+  const sunsetAhead = !!sun?.sunset && Date.parse(sun.sunset) > nowMs && localDateKey(Date.parse(sun.sunset), tz) === today;
+
+  // Today's chance of rain is a whole-day figure, so it stops being useful
+  // once the day is over: it shows only until sunset.
+  const todayRain = todayForecast?.rain;
+  if (typeof todayRain === "number" && (sunsetAhead || !sun?.sunset)) {
+    push("rain", "Rain", `${Math.round(todayRain)}%`, "chance today");
+  }
+
+  if (sunsetAhead && sun?.sunset) {
+    push("sun", "Sunset", safeTime(sun.sunset, tz));
+  } else {
+    const nextRise = [sun?.sunrise, sun?.tomorrowSunrise].find(
+      (iso): iso is string => !!iso && Date.parse(iso) > nowMs,
+    );
+    if (nextRise) {
+      const riseDay = localDateKey(Date.parse(nextRise), tz);
+      push("sun", "Sunrise", safeTime(nextRise, tz), riseDay === tomorrow ? "tomorrow" : riseDay === today ? "today" : undefined);
+    }
+  }
 
   const nextTide = snapshot?.tides?.data?.next?.find((t) => Date.parse(t.time) > nowMs);
   if (nextTide) {
@@ -261,10 +330,22 @@ export function shareCardModel(
     verdict: beachDayVerdict(scoreValue),
     tiles: tiles.slice(0, SHARE_CARD_MAX_TILES),
     safety: safetyFor(derived, snapshot),
-    bestTime: bestTimeLabel(res, nowMs, tz),
+    bestTime: bestTimeLabel(res, nowMs, tz, today, tomorrow),
+    changesAtMs: nextRipChange(derived?.ripNow, nowMs),
     capped: caps.length > 0,
     capNote: caps[0],
     pageUrl: `isitbeachday.com${path}`,
     shareUrl: `https://isitbeachday.com${path}`,
   };
+}
+
+/** 15 minutes normally. When a rip alert starts or ends sooner than that,
+ *  the cached image expires at that moment instead (never under a minute),
+ *  with no stale serving, so a shared card can't keep the old safety call. */
+export function shareCacheControl(changesAtMs: number | undefined, nowMs: number): string {
+  const FULL = 900;
+  const untilChange = changesAtMs != null ? Math.floor((changesAtMs - nowMs) / 1000) : Infinity;
+  if (untilChange >= FULL) return `public, max-age=${FULL}, s-maxage=${FULL}, stale-while-revalidate=600`;
+  const ttl = Math.max(60, untilChange);
+  return `public, max-age=${ttl}, s-maxage=${ttl}`;
 }

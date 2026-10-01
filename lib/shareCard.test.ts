@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SHARE_CARD_MAX_TILES, shareCardModel } from "@/lib/shareCard";
+import { SHARE_CARD_MAX_TILES, shareCacheControl, shareCardModel } from "@/lib/shareCard";
 import type {
   BusynessData,
   ClarityData,
@@ -291,7 +291,7 @@ describe("shareCardModel", () => {
 
   describe("best time", () => {
     const day = (startIso: string, endIso: string) => ({
-      date: "2026-09-14",
+      date: startIso.slice(0, 10),
       dow: "Today",
       best: { startIso, endIso, score: 80 },
       peakScore: 80,
@@ -324,10 +324,95 @@ describe("shareCardModel", () => {
     });
   });
 
-  it("calls an empty snapshot safe, with no reasons", () => {
+  it("never claims 'safe to swim': no detected hazard means no safety strip", () => {
     const m = shareCardModel(response(), NOW_MS);
-    expect(m.safety.level).toBe("safe");
+    expect(m.safety.label).toBe("");
     expect(m.safety.reasons).toEqual([]);
+  });
+
+  describe("live rip status", () => {
+    const highRip = (end?: string) =>
+      ({
+        ripCurrentRisk: "high",
+        srfPeriods: [{ label: "TODAY", level: "high", start: "2026-09-14T10:00:00.000Z", end }],
+        alerts: [],
+      }) as unknown as NonNullable<ConditionsSnapshot["nws"]["data"]>;
+
+    it("caps the cached score by the rip risk in force now, as the dashboard does", () => {
+      const res = response(
+        { nws: wrap(highRip()) as ConditionsSnapshot["nws"] },
+        { score: 95, rawScore: 95, scoreExceptRipCap: 95 },
+      );
+      const m = shareCardModel(res, NOW_MS);
+      expect(m.score).toBe(85);
+      expect(m.safety).toMatchObject({ level: "caution", label: "Swim with caution" });
+      expect(m.safety.reasons).toContain("Rip current risk: High");
+      expect(m.tiles.find((t) => t.key === "rip")).toMatchObject({ value: "High" });
+    });
+
+    it("reports when the rip picture next changes, so the image cache can expire then", () => {
+      const end = "2026-09-14T20:13:00.000Z"; // 5 minutes after NOW_MS
+      const m = shareCardModel(response({ nws: wrap(highRip(end)) as ConditionsSnapshot["nws"] }), NOW_MS);
+      expect(m.changesAtMs).toBe(Date.parse(end));
+    });
+  });
+
+  describe("shareCacheControl", () => {
+    it("keeps 15 minutes with stale serving when nothing changes sooner", () => {
+      expect(shareCacheControl(undefined, NOW_MS)).toBe("public, max-age=900, s-maxage=900, stale-while-revalidate=600");
+      expect(shareCacheControl(NOW_MS + 20 * 60_000, NOW_MS)).toContain("max-age=900");
+    });
+
+    it("expires at the change, with no stale serving, never under a minute", () => {
+      expect(shareCacheControl(NOW_MS + 5 * 60_000, NOW_MS)).toBe("public, max-age=300, s-maxage=300");
+      expect(shareCacheControl(NOW_MS + 10_000, NOW_MS)).toBe("public, max-age=60, s-maxage=60");
+    });
+  });
+
+  describe("days are picked by local date, not array position", () => {
+    const AFTER_MIDNIGHT = Date.parse("2026-09-15T04:30:00.000Z"); // 12:30 AM Sep 15, New York
+    const built = (overrides: Partial<ConditionsSnapshot> = {}) =>
+      ({
+        ...response(overrides),
+        // A response built the evening before: index 0 is Sep 14.
+        multiDayWindows: [
+          { date: "2026-09-14", dow: "Today", best: { startIso: "2026-09-14T21:00:00.000Z", endIso: "2026-09-14T23:00:00.000Z", score: 80 }, peakScore: 80 },
+          { date: "2026-09-15", dow: "Tue", best: { startIso: "2026-09-15T14:00:00.000Z", endIso: "2026-09-15T17:00:00.000Z", score: 82 }, peakScore: 82 },
+        ],
+      }) as unknown as ConditionsResponse;
+
+    it("calls the Sep 15 window 'today' after local midnight", () => {
+      expect(shareCardModel(built(), AFTER_MIDNIGHT).bestTime).toBe("Best time today: 10 AM–1 PM");
+    });
+
+    it("uses the forecast entry for the local date, not entry 0", () => {
+      const forecast = wrap([
+        { date: "2026-09-14", dow: "Mon", hi: 91, lo: 79, rain: 80 },
+        { date: "2026-09-15", dow: "Tue", hi: 87, lo: 77, rain: 10 },
+      ]) as ConditionsSnapshot["forecast"];
+      const m = shareCardModel(
+        built({ forecast, sun: wrap({ sunset: "2026-09-15T23:20:00.000Z" }) as ConditionsSnapshot["sun"] }),
+        AFTER_MIDNIGHT,
+      );
+      expect(m.tiles.find((t) => t.key === "airTemp")?.note).toBeUndefined(); // no air temp sub-score
+      expect(m.tiles.find((t) => t.key === "rain")).toMatchObject({ value: "10%" });
+    });
+
+    it("labels the next sunrise 'today' when it falls on the local date", () => {
+      const sun = wrap({
+        sunset: "2026-09-14T23:25:00.000Z",
+        tomorrowSunrise: "2026-09-15T10:55:00.000Z",
+      }) as ConditionsSnapshot["sun"];
+      const m = shareCardModel(built({ sun }), AFTER_MIDNIGHT);
+      expect(m.tiles.find((t) => t.key === "sun")).toMatchObject({ label: "Sunrise", value: "6:55 AM", note: "today" });
+    });
+
+    it("drops today's rain chance once the sun has set", () => {
+      const forecast = wrap([{ date: "2026-09-14", dow: "Mon", hi: 91, lo: 79, rain: 60 }]) as ConditionsSnapshot["forecast"];
+      const sun = wrap({ sunset: "2026-09-14T23:25:00.000Z" }) as ConditionsSnapshot["sun"];
+      const LATE = Date.parse("2026-09-15T01:00:00.000Z"); // 9 PM Sep 14, New York
+      expect(shareCardModel(response({ forecast, sun }), LATE).tiles.find((t) => t.key === "rain")).toBeUndefined();
+    });
   });
 
   it("uses crowd only when a camera read the beach today, and only as a fallback slot", () => {

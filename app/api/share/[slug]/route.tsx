@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 import { NextResponse } from "next/server";
 import { getConditions } from "@/lib/conditions";
-import { shareCardModel, type ShareCardModel, type ShareCardTile } from "@/lib/shareCard";
+import { shareCacheControl, shareCardModel, type ShareCardModel, type ShareCardTile } from "@/lib/shareCard";
 
 // The shareable social card: a phone-native PNG of today's conditions, built
 // for the Share sheet (components/ShareCardSheet.tsx) rather than link
@@ -541,15 +541,14 @@ export async function GET(
     return NextResponse.json({ error: "Unknown location" }, { status: 404 });
   }
 
-  const model = shareCardModel(data, Date.now());
+  const nowMs = Date.now();
+  const model = shareCardModel(data, nowMs);
   const { width, height } = SIZES[formatParam];
 
   const image = new ImageResponse(<ShareCard model={model} format={formatParam} />, {
     width,
     height,
-    headers: {
-      "Cache-Control": "public, max-age=900, s-maxage=900, stale-while-revalidate=600",
-    },
+    headers: { "Cache-Control": shareCacheControl(model.changesAtMs, nowMs) },
   });
 
   if (cache) {
