@@ -193,8 +193,8 @@ function SkyBand({ height, cardWidth, sun }: { height: number; cardWidth: number
  *  parse declaration" the moment it renders one); a dial of tiny rotated
  *  divs was tried next, but it reads as jagged rather than a clean ring. A
  *  stroked <circle> with stroke-dasharray is exact and cheap. */
-function ScoreRing({ diameter, thickness, score, color, numSize, slashSize }: { diameter: number; thickness: number; score: number; color: string; numSize: number; slashSize: number }) {
-  const pct = Math.max(0, Math.min(100, score));
+function ScoreRing({ diameter, thickness, score, color, numSize, slashSize }: { diameter: number; thickness: number; score: number | null; color: string; numSize: number; slashSize: number }) {
+  const pct = score == null ? 0 : Math.max(0, Math.min(100, score));
   const c = diameter / 2;
   const r = (diameter - thickness) / 2;
   const circ = 2 * Math.PI * r;
@@ -204,6 +204,7 @@ function ScoreRing({ diameter, thickness, score, color, numSize, slashSize }: { 
     <div style={{ position: "relative", width: diameter, height: diameter, display: "flex" }}>
       <svg width={diameter} height={diameter} viewBox={`0 0 ${diameter} ${diameter}`} style={{ display: "flex" }}>
         <circle cx={c} cy={c} r={r} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth={thickness} />
+        {pct > 0 ? (
         <circle
           cx={c}
           cy={c}
@@ -215,6 +216,7 @@ function ScoreRing({ diameter, thickness, score, color, numSize, slashSize }: { 
           strokeDasharray={`${filled} ${circ}`}
           transform={`rotate(-90 ${c} ${c})`}
         />
+        ) : null}
       </svg>
       <div
         style={{
@@ -230,7 +232,7 @@ function ScoreRing({ diameter, thickness, score, color, numSize, slashSize }: { 
         }}
       >
         <div style={{ display: "flex", fontSize: numSize, fontWeight: 800, color: INK, lineHeight: 1 }}>
-          {Math.round(score)}
+          {score == null ? "—" : Math.round(score)}
         </div>
         <div style={{ display: "flex", fontSize: slashSize, fontWeight: 600, color: MUTED, marginTop: 2 }}>
           /100
@@ -357,7 +359,7 @@ function ShareCard({ model, format }: { model: ShareCardModel; format: Format })
   const footerUrl = isStory ? 28 : 17;
   const gapY = isStory ? 32 : 16;
 
-  const dateTime = [model.dateLabel, model.timeLabel].filter(Boolean).join(" · ");
+  const dateTime = [model.dateLabel, model.timeLabel ? `as of ${model.timeLabel}` : ""].filter(Boolean).join(" · ");
   const safety = SAFETY_STYLE[model.safety.level];
 
   return (
@@ -385,7 +387,7 @@ function ShareCard({ model, format }: { model: ShareCardModel; format: Format })
               <ScoreRing
                 diameter={ring.d}
                 thickness={ring.thick}
-                score={model.score}
+                score={model.available ? model.score : null}
                 color={model.color}
                 numSize={ring.num}
                 slashSize={ring.slash}
@@ -405,6 +407,11 @@ function ShareCard({ model, format }: { model: ShareCardModel; format: Format })
               ) : null}
               {dateTime ? (
                 <div style={{ display: "flex", fontSize: metaSize, lineHeight: 1.2, color: MUTED, marginTop: 4 }}>{dateTime}</div>
+              ) : null}
+              {model.limitedNote ? (
+                <div style={{ display: "flex", fontSize: metaSize, lineHeight: 1.2, color: SUN_YELLOW, marginTop: isStory ? 10 : 6 }}>
+                  {model.limitedNote}
+                </div>
               ) : null}
             </div>
           </div>
@@ -548,7 +555,7 @@ export async function GET(
   const image = new ImageResponse(<ShareCard model={model} format={formatParam} />, {
     width,
     height,
-    headers: { "Cache-Control": shareCacheControl(model.changesAtMs, nowMs) },
+    headers: { "Cache-Control": shareCacheControl(model, nowMs) },
   });
 
   if (cache) {

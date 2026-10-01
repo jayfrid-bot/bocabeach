@@ -16,6 +16,7 @@ import { applyLiveRipCap, deriveMetrics } from "@/lib/score";
 import { ripCapFor } from "@/lib/ripRisk/resolve";
 import { swimSafety, type SwimSafetyLevel } from "@/lib/safetyLine";
 import { fmtTime } from "@/lib/format";
+import { CONDITIONS_MAX_STALE_MS } from "@/lib/conditionsFreshness";
 
 export interface ShareCardTile {
   key: string;
@@ -34,10 +35,17 @@ export interface ShareCardModel {
   slug: string;
   beachName: string;
   region: string;
-  /** "Mon Sep 14", local to the beach. */
+  /** "Mon Sep 14", local to the beach — when the conditions were measured. */
   dateLabel: string;
-  /** "4:08 PM", local to the beach. */
+  /** "4:08 PM", local to the beach — when the conditions were measured
+   *  (snapshot.generatedAt), not when the image was drawn. */
   timeLabel: string;
+  /** False on a total data outage: the card shows no number or verdict. */
+  available: boolean;
+  /** Set when the score rests on too few readings (lib/score.ts caps it). */
+  limitedNote?: string;
+  /** The conditions are older than the dashboard's own freshness limit. */
+  stale: boolean;
   score: number;
   rating: string;
   /** Accent hex for the rating band (see lib/scoreBands.ts). */
@@ -174,13 +182,20 @@ function safeHourLabel(iso: string, tz: string): string | undefined {
   return t?.replace(":00 ", " ");
 }
 
+const UNAVAILABLE_COLOR = "#94a3b8";
+
 export function shareCardModel(
   res: ConditionsResponse | null | undefined,
-  nowMs: number = Date.now(),
+  requestMs: number = Date.now(),
 ): ShareCardModel {
   const snapshot = res?.snapshot;
   const loc = snapshot?.location;
   const tz = loc?.timezone || "America/New_York";
+  // Never resolve conditions earlier than they were measured (clock skew
+  // between edge locations), same clamp as the dashboard.
+  const generatedMs = Date.parse(snapshot?.generatedAt ?? "");
+  const nowMs = Number.isFinite(generatedMs) ? Math.max(requestMs, generatedMs) : requestMs;
+  const asOfMs = Number.isFinite(generatedMs) ? generatedMs : nowMs;
 
   // The cached score was computed on the server's clock at build time. Rip
   // status is re-resolved against now, and the score follows it both ways,
@@ -193,7 +208,10 @@ export function shareCardModel(
   }
   const score =
     res?.score && derived ? applyLiveRipCap(res.score, ripCapFor(derived.ripNow), derived.ripNow) : res?.score;
-  const scoreValue = score?.score ?? 0;
+  // A total outage scores 0 only as an internal fallback (lib/score.ts); the
+  // card must say "unavailable", never "Definitely not".
+  const available = !!score && score.dataAvailable !== false;
+  const scoreValue = available ? (score?.score ?? 0) : 0;
   const band = scoreBand(scoreValue);
 
   // Pick daily entries by their beach-local date, never by array position: a
@@ -210,12 +228,12 @@ export function shareCardModel(
       month: "short",
       day: "numeric",
       timeZone: tz,
-    }).format(new Date(nowMs));
+    }).format(new Date(asOfMs));
     timeLabel = new Intl.DateTimeFormat("en-US", {
       hour: "numeric",
       minute: "2-digit",
       timeZone: tz,
-    }).format(new Date(nowMs));
+    }).format(new Date(asOfMs));
   } catch {
     // An unrecognized timezone (corrupt config) degrades to blank labels
     // rather than throwing the whole card away.
@@ -324,10 +342,13 @@ export function shareCardModel(
     region: loc?.region ?? "",
     dateLabel,
     timeLabel,
+    available,
     score: scoreValue,
-    rating: score?.rating ?? "Unavailable",
-    color: band.color,
-    verdict: beachDayVerdict(scoreValue),
+    rating: available ? (score?.rating ?? "Unavailable") : "Unavailable",
+    color: available ? band.color : UNAVAILABLE_COLOR,
+    verdict: available ? beachDayVerdict(scoreValue) : "Conditions unavailable",
+    limitedNote: available && score?.dataCoverage === "limited" ? "Limited data — some readings unavailable" : undefined,
+    stale: Number.isFinite(generatedMs) && requestMs - generatedMs > CONDITIONS_MAX_STALE_MS,
     tiles: tiles.slice(0, SHARE_CARD_MAX_TILES),
     safety: safetyFor(derived, snapshot),
     bestTime: bestTimeLabel(res, nowMs, tz, today, tomorrow),
@@ -339,13 +360,21 @@ export function shareCardModel(
   };
 }
 
-/** 15 minutes normally. When a rip alert starts or ends sooner than that,
- *  the cached image expires at that moment instead (never under a minute),
- *  with no stale serving, so a shared card can't keep the old safety call. */
-export function shareCacheControl(changesAtMs: number | undefined, nowMs: number): string {
+/** 15 minutes normally, with up to 10 more of stale serving. Shorter, with
+ *  no stale serving, when:
+ *  - the conditions behind the card are already stale (60 s, so the next
+ *    view draws from fresh data instead of pinning old readings);
+ *  - a known rip change (alert start or end) falls inside that 25-minute
+ *    window: the image then expires at the change, never under 60 s, the
+ *    same minute cadence the dashboard re-resolves on. */
+export function shareCacheControl(model: Pick<ShareCardModel, "changesAtMs" | "stale">, nowMs: number): string {
   const FULL = 900;
-  const untilChange = changesAtMs != null ? Math.floor((changesAtMs - nowMs) / 1000) : Infinity;
-  if (untilChange >= FULL) return `public, max-age=${FULL}, s-maxage=${FULL}, stale-while-revalidate=600`;
-  const ttl = Math.max(60, untilChange);
+  const STALE_SERVE = 600;
+  if (model.stale) return "public, max-age=60, s-maxage=60";
+  const untilChange = model.changesAtMs != null ? Math.floor((model.changesAtMs - nowMs) / 1000) : Infinity;
+  if (untilChange >= FULL + STALE_SERVE) {
+    return `public, max-age=${FULL}, s-maxage=${FULL}, stale-while-revalidate=${STALE_SERVE}`;
+  }
+  const ttl = Math.min(FULL, Math.max(60, untilChange));
   return `public, max-age=${ttl}, s-maxage=${ttl}`;
 }

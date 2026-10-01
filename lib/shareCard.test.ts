@@ -105,10 +105,31 @@ describe("shareCardModel", () => {
     expect((m as unknown as Record<string, unknown>).flags).toBeUndefined();
   });
 
-  it("formats the local date and time from the beach's timezone", () => {
+  it("labels the card with when the conditions were measured, in the beach's timezone", () => {
+    // generatedAt is 20:00Z; the request comes 8 minutes later.
     const m = shareCardModel(response(), NOW_MS);
     expect(m.dateLabel).toBe("Mon, Sep 14");
-    expect(m.timeLabel).toBe("4:08 PM");
+    expect(m.timeLabel).toBe("4:00 PM");
+    expect(m.stale).toBe(false);
+  });
+
+  it("flags conditions older than the dashboard's freshness limit", () => {
+    const m = shareCardModel(response(), Date.parse("2026-09-14T20:45:00.000Z"));
+    expect(m.stale).toBe(true);
+    expect(m.timeLabel).toBe("4:00 PM");
+  });
+
+  it("shows no number or verdict on a total data outage", () => {
+    const m = shareCardModel(response({}, { score: 0, rawScore: 0, rating: "Unavailable", dataAvailable: false }), NOW_MS);
+    expect(m.available).toBe(false);
+    expect(m.verdict).toBe("Conditions unavailable");
+    expect(m.verdict).not.toBe("Definitely not");
+  });
+
+  it("keeps the limited-data warning when the score rests on too few readings", () => {
+    const m = shareCardModel(response({}, { score: 70, dataCoverage: "limited" }), NOW_MS);
+    expect(m.limitedNote).toBe("Limited data — some readings unavailable");
+    expect(shareCardModel(response(), NOW_MS).limitedNote).toBeUndefined();
   });
 
   it("carries the score, rating, band color, and verdict", () => {
@@ -358,16 +379,29 @@ describe("shareCardModel", () => {
   });
 
   describe("shareCacheControl", () => {
-    it("keeps 15 minutes with stale serving when nothing changes sooner", () => {
-      expect(shareCacheControl(undefined, NOW_MS)).toBe("public, max-age=900, s-maxage=900, stale-while-revalidate=600");
-      expect(shareCacheControl(NOW_MS + 20 * 60_000, NOW_MS)).toContain("max-age=900");
+    const fresh = (changesAtMs?: number) => ({ changesAtMs, stale: false });
+
+    it("keeps 15 minutes with stale serving when nothing changes within 25 minutes", () => {
+      expect(shareCacheControl(fresh(), NOW_MS)).toBe("public, max-age=900, s-maxage=900, stale-while-revalidate=600");
+      expect(shareCacheControl(fresh(NOW_MS + 30 * 60_000), NOW_MS)).toContain("stale-while-revalidate=600");
     });
 
-    it("expires at the change, with no stale serving, never under a minute", () => {
-      expect(shareCacheControl(NOW_MS + 5 * 60_000, NOW_MS)).toBe("public, max-age=300, s-maxage=300");
-      expect(shareCacheControl(NOW_MS + 10_000, NOW_MS)).toBe("public, max-age=60, s-maxage=60");
+    it("drops stale serving when a known change falls inside the stale window", () => {
+      // 1,000 s away: max-age 900 alone would end before it, but stale
+      // serving would carry the old card past it.
+      expect(shareCacheControl(fresh(NOW_MS + 1_000_000), NOW_MS)).toBe("public, max-age=900, s-maxage=900");
+    });
+
+    it("expires at the change, never under a minute", () => {
+      expect(shareCacheControl(fresh(NOW_MS + 5 * 60_000), NOW_MS)).toBe("public, max-age=300, s-maxage=300");
+      expect(shareCacheControl(fresh(NOW_MS + 10_000), NOW_MS)).toBe("public, max-age=60, s-maxage=60");
+    });
+
+    it("keeps a card drawn from stale conditions for only a minute", () => {
+      expect(shareCacheControl({ stale: true }, NOW_MS)).toBe("public, max-age=60, s-maxage=60");
     });
   });
+
 
   describe("days are picked by local date, not array position", () => {
     const AFTER_MIDNIGHT = Date.parse("2026-09-15T04:30:00.000Z"); // 12:30 AM Sep 15, New York
