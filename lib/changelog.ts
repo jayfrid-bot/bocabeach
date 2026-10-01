@@ -27,7 +27,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-10-01",
     title: "A fuller share card",
     details:
-      "The picture you share now fits up to 12 readings — rip current, seaweed, rain, sunset, and the next tide join the temperatures, surf, wind, and UV — plus any swim warning in effect and the best time to go. The score sits beside the beach name, and long text no longer runs into itself.",
+      "The picture you share now fits up to 12 readings — rip current, seaweed, rain, sunset, and the next tide join the temperatures, surf, wind, and UV — plus any swim warning in effect and the best time to go — or a plain \"No good beach time today\" when nothing scores at least Decent. The score sits beside the beach name, and long text no longer runs into itself.",
     tag: "improved",
   },
   {

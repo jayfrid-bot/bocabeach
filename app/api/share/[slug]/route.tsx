@@ -489,7 +489,7 @@ function ShareCard({ model, format }: { model: ShareCardModel; format: Format })
                 fontSize: bestSize,
                 fontWeight: 700,
                 lineHeight: 1.2,
-                color: SUN_YELLOW,
+                color: model.bestTimeGood === false ? MUTED : SUN_YELLOW,
               }}
             >
               {model.bestTime}

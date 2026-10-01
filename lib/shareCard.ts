@@ -59,6 +59,8 @@ export interface ShareCardModel {
   safety: { level: SwimSafetyLevel; label: string; reasons: string[] };
   /** "Best time today: 5–7 PM", or tomorrow's once today's window has passed. */
   bestTime?: string;
+  /** False when the line says there is no good time today. */
+  bestTimeGood?: boolean;
   capped: boolean;
   /** Why the score was capped, when it was. */
   capNote?: string;
@@ -125,29 +127,54 @@ function safetyFor(
   return { level: line.level, label: SAFETY_LABEL[line.level], reasons: line.reasons.slice(0, 2) };
 }
 
-/** Today's best window while it is still ahead, else tomorrow's, chosen by
- *  date. A window already under way reads "now until 12 PM" rather than
- *  starting at an odd minute like "10:59 AM". `endIso` is the exclusive end
- *  of the window's last hour (lib/score.ts), so "5 PM–7 PM" is exact. */
+function bestTimeFields(label: { text: string; good: boolean } | undefined) {
+  return label ? { bestTime: label.text, bestTimeGood: label.good } : {};
+}
+
+/** A window must reach the "Decent" band to be called a good time. */
+export const GOOD_WINDOW_MIN_SCORE = 65;
+
+/** The best-time line, chosen by beach-local date. Today's window counts only
+ *  while it is still ahead AND scores at least GOOD_WINDOW_MIN_SCORE; a bad
+ *  day says so instead of naming its least-bad hours. A window already under
+ *  way reads "now until 7 PM". `endIso` is the exclusive end of the window's
+ *  last hour (lib/score.ts), so "5 PM–7 PM" is exact. */
 function bestTimeLabel(
   res: ConditionsResponse | null | undefined,
   nowMs: number,
   tz: string,
   today: string | undefined,
   tomorrow: string | undefined,
-): string | undefined {
+): { text: string; good: boolean } | undefined {
   const days = res?.multiDayWindows ?? [];
-  const pick = (date: string | undefined, word: string) => {
+  const windowFor = (date: string | undefined) => {
     const best = date ? days.find((d) => d.date === date)?.best : undefined;
-    if (!best || Date.parse(best.endIso) <= nowMs) return undefined;
+    return best && Date.parse(best.endIso) > nowMs ? best : undefined;
+  };
+  const range = (best: { startIso: string; endIso: string }) => {
     const b = safeHourLabel(best.endIso, tz);
     if (!b) return undefined;
-    if (Date.parse(best.startIso) <= nowMs) return `Best time ${word}: now until ${b}`;
+    if (Date.parse(best.startIso) <= nowMs) return `now until ${b}`;
     const a = safeHourLabel(best.startIso, tz);
-    if (!a) return undefined;
-    return `Best time ${word}: ${a === b ? a : `${a}–${b}`}`;
+    return a ? (a === b ? a : `${a}–${b}`) : undefined;
   };
-  return pick(today, "today") ?? pick(tomorrow, "tomorrow");
+  const good = (best: { score: number } | undefined) => !!best && best.score >= GOOD_WINDOW_MIN_SCORE;
+
+  const t = windowFor(today);
+  const n = windowFor(tomorrow);
+  if (good(t)) {
+    const r = range(t!);
+    if (r) return { text: `Best time today: ${r}`, good: true };
+  }
+  const tomorrowRange = good(n) ? range(n!) : undefined;
+  if (t) {
+    // Today still has hours left, but none of them is good.
+    return {
+      text: tomorrowRange ? `No good time today · Best tomorrow: ${tomorrowRange}` : "No good beach time today",
+      good: false,
+    };
+  }
+  return tomorrowRange ? { text: `Best time tomorrow: ${tomorrowRange}`, good: true } : undefined;
 }
 
 /** Earliest known future boundary of the resolved rip status. */
@@ -351,7 +378,7 @@ export function shareCardModel(
     stale: Number.isFinite(generatedMs) && requestMs - generatedMs > CONDITIONS_MAX_STALE_MS,
     tiles: tiles.slice(0, SHARE_CARD_MAX_TILES),
     safety: safetyFor(derived, snapshot),
-    bestTime: bestTimeLabel(res, nowMs, tz, today, tomorrow),
+    ...bestTimeFields(bestTimeLabel(res, nowMs, tz, today, tomorrow)),
     changesAtMs: nextRipChange(derived?.ripNow, nowMs),
     capped: caps.length > 0,
     capNote: caps[0],

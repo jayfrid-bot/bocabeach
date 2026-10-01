@@ -340,6 +340,20 @@ describe("shareCardModel", () => {
       expect(m.bestTime).toBe("Best time tomorrow: 10 AM–2 PM");
     });
 
+    it("says there is no good time when today's best window is poor", () => {
+      const poor = { ...day("2026-09-14T21:00:00.000Z", "2026-09-14T23:00:00.000Z"), best: { startIso: "2026-09-14T21:00:00.000Z", endIso: "2026-09-14T23:00:00.000Z", score: 15 } };
+      expect(shareCardModel(withDays([poor]), NOW_MS).bestTime).toBe("No good beach time today");
+      expect(
+        shareCardModel(withDays([poor, day("2026-09-15T14:00:00.000Z", "2026-09-15T18:00:00.000Z")]), NOW_MS).bestTime,
+      ).toBe("No good time today · Best tomorrow: 10 AM–2 PM");
+    });
+
+    it("never names a poor window for tomorrow either", () => {
+      const pastToday = day("2026-09-14T14:00:00.000Z", "2026-09-14T16:00:00.000Z");
+      const poorTomorrow = { ...day("2026-09-15T14:00:00.000Z", "2026-09-15T18:00:00.000Z"), best: { startIso: "2026-09-15T14:00:00.000Z", endIso: "2026-09-15T18:00:00.000Z", score: 40 } };
+      expect(shareCardModel(withDays([pastToday, poorTomorrow]), NOW_MS).bestTime).toBeUndefined();
+    });
+
     it("is absent when there is no window", () => {
       expect(shareCardModel(response(), NOW_MS).bestTime).toBeUndefined();
     });
