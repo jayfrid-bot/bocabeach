@@ -269,10 +269,20 @@ function Tile({ tile, sizes }: { tile: ShareCardTile; sizes: TileSizes }) {
       <div style={line({ fontSize: sizes.label, fontWeight: 600, color: MUTED, textTransform: "uppercase", letterSpacing: 1.2 })}>
         {tile.label}
       </div>
-      <div style={line({ fontSize: sizes.value, fontWeight: 700, color: INK, marginTop: 4 })}>{tile.value}</div>
+      <div style={line({ fontSize: valueSizeFor(tile.value, sizes.value), fontWeight: 700, color: INK, marginTop: 4 })}>
+        {tile.value}
+      </div>
       <div style={line({ fontSize: sizes.note, color: MUTED, marginTop: 2 })}>{tile.note ?? " "}</div>
     </div>
   );
+}
+
+/** Steps a long value ("Crystal clear", "Churned up") down so it fits its
+ *  third-width tile instead of ending in an ellipsis. */
+function valueSizeFor(value: string, base: number): number {
+  if (value.length <= 8) return base;
+  if (value.length <= 11) return Math.round(base * 0.8);
+  return Math.round(base * 0.68);
 }
 
 interface TileSizes {
