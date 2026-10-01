@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-01",
+    title: "A fuller share card",
+    details:
+      "The picture you share now fits up to 12 readings — rip current, seaweed, rain, sunset, and the next tide join the temperatures, surf, wind, and UV — plus whether it's safe to swim and the best time to go. The score sits beside the beach name, and long text no longer runs into itself.",
+    tag: "improved",
+  },
+  {
     date: "2026-09-28",
     title: "A Save button for your alerts",
     details:

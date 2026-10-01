@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shareCardModel } from "@/lib/shareCard";
+import { SHARE_CARD_MAX_TILES, shareCardModel } from "@/lib/shareCard";
 import type {
   BusynessData,
   ClarityData,
@@ -212,7 +212,7 @@ describe("shareCardModel", () => {
     }
   });
 
-  it("caps at six tiles even when every slot has data", () => {
+  it("orders every tile by priority and caps the list at SHARE_CARD_MAX_TILES", () => {
     const subScores: SubScore[] = [
       sub("waterTemp", "Water temperature", "82°F"),
       sub("airTemp", "Air temperature", "88°F"),
@@ -220,31 +220,114 @@ describe("shareCardModel", () => {
       sub("waves", "Sea state (swim calmness)", "1.4 ft · gentle"),
       sub("uv", "UV index", "7"),
       sub("wind", "Wind (sea breeze)", "10 mph SE"),
-      sub("crowds", "Crowds", "40% full"),
+      sub("crowds", "Crowds", "~40% full"),
     ];
     const res = response(
       {
         busyness: wrap<BusynessData>({ level: "moderate" }),
         clarity: wrap<ClarityData>({ level: "clear", pct: 92 }),
+        sargassum: wrap({ level: "low", coveragePct: 8 }) as ConditionsSnapshot["sargassum"],
+        forecast: wrap([{ date: "2026-09-14", dow: "Mon", hi: 90.4, lo: 78, rain: 20 }]) as ConditionsSnapshot["forecast"],
+        sun: wrap({ sunset: "2026-09-14T23:30:00.000Z" }) as ConditionsSnapshot["sun"],
+        tides: wrap({ next: [{ type: "low", time: "2026-09-14T22:00:00.000Z", heightFt: 0.4 }] }) as ConditionsSnapshot["tides"],
       },
       { subScores },
     );
     const m = shareCardModel(res, NOW_MS);
-    expect(m.tiles).toHaveLength(6);
     expect(m.tiles.map((t) => t.key)).toEqual([
       "waterTemp",
       "airTemp",
-      "clarity",
-      "sandTemp",
       "waves",
+      "wind",
       "uv",
+      "sandTemp",
+      "seaweed",
+      "clarity",
+      "crowds",
+      "rain",
+      "sun",
+      "tide",
     ]);
+    expect(m.tiles.length).toBeLessThanOrEqual(SHARE_CARD_MAX_TILES);
+    expect(m.tiles.find((t) => t.key === "airTemp")).toMatchObject({ value: "88°F", note: "high 90°F" });
+    expect(m.tiles.find((t) => t.key === "seaweed")).toMatchObject({ value: "Low", note: "8% covered" });
+    expect(m.tiles.find((t) => t.key === "crowds")?.value).toBe("40% full");
+    expect(m.tiles.find((t) => t.key === "rain")).toMatchObject({ value: "20%", note: "chance today" });
+    expect(m.tiles.find((t) => t.key === "sun")).toMatchObject({ label: "Sunset", value: "7:30 PM" });
+    expect(m.tiles.find((t) => t.key === "tide")).toMatchObject({ label: "Low tide", value: "6:00 PM" });
   });
 
-  it("appends the UV level word to the UV tile", () => {
+  it("splits a long reading into a short value and a note, so no tile wraps", () => {
+    const res = response(
+      {},
+      {
+        subScores: [
+          sub("waves", "Sea state (swim calmness)", "4.8 ft · big waves"),
+          sub("wind", "Wind (sea breeze)", "18 mph ESE"),
+        ],
+      },
+    );
+    const m = shareCardModel(res, NOW_MS);
+    expect(m.tiles.find((t) => t.key === "waves")).toMatchObject({ value: "4.8 ft", note: "big waves" });
+    expect(m.tiles.find((t) => t.key === "wind")).toMatchObject({ value: "18 mph", note: "from ESE" });
+  });
+
+  it("shows sunrise tomorrow once today's sunset has passed", () => {
+    const res = response({
+      sun: wrap({ sunset: "2026-09-14T19:00:00.000Z", tomorrowSunrise: "2026-09-15T10:55:00.000Z" }) as ConditionsSnapshot["sun"],
+    });
+    expect(shareCardModel(res, NOW_MS).tiles.find((t) => t.key === "sun")).toMatchObject({
+      label: "Sunrise",
+      value: "6:55 AM",
+      note: "tomorrow",
+    });
+  });
+
+  it("puts the UV level word under the UV number", () => {
     const res = response({}, { subScores: [sub("uv", "UV index", "9")] });
     const m = shareCardModel(res, NOW_MS);
-    expect(m.tiles.find((t) => t.key === "uv")?.value).toBe("9 · Very High");
+    expect(m.tiles.find((t) => t.key === "uv")).toMatchObject({ value: "9", note: "Very High" });
+  });
+
+  describe("best time", () => {
+    const day = (startIso: string, endIso: string) => ({
+      date: "2026-09-14",
+      dow: "Today",
+      best: { startIso, endIso, score: 80 },
+      peakScore: 80,
+    });
+    const withDays = (days: unknown[]) => ({ ...response(), multiDayWindows: days } as unknown as ConditionsResponse);
+
+    it("names today's window while it is still ahead", () => {
+      const m = shareCardModel(withDays([day("2026-09-14T21:00:00.000Z", "2026-09-14T23:00:00.000Z")]), NOW_MS);
+      expect(m.bestTime).toBe("Best time today: 5 PM–7 PM");
+    });
+
+    it("says 'now until' for a window already under way, never an odd start minute", () => {
+      const m = shareCardModel(withDays([day("2026-09-14T19:00:00.000Z", "2026-09-14T22:00:00.000Z")]), NOW_MS);
+      expect(m.bestTime).toBe("Best time today: now until 6 PM");
+    });
+
+    it("moves to tomorrow once today's window has passed", () => {
+      const m = shareCardModel(
+        withDays([
+          day("2026-09-14T14:00:00.000Z", "2026-09-14T16:00:00.000Z"),
+          day("2026-09-15T14:00:00.000Z", "2026-09-15T18:00:00.000Z"),
+        ]),
+        NOW_MS,
+      );
+      expect(m.bestTime).toBe("Best time tomorrow: 10 AM–2 PM");
+    });
+
+    it("is absent when there is no window", () => {
+      expect(shareCardModel(response(), NOW_MS).bestTime).toBeUndefined();
+    });
+  });
+
+  it("calls an empty snapshot safe, with no reasons", () => {
+    const m = shareCardModel(response(), NOW_MS);
+    expect(m.safety.level).toBe("safe");
+    expect(m.safety.reasons).toEqual([]);
   });
 
   it("uses crowd only when a camera read the beach today, and only as a fallback slot", () => {
