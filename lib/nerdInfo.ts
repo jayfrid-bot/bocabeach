@@ -541,7 +541,7 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
       title: "Seaweed",
       weightPct: SCORE_WEIGHTS_PCT.sargassum,
       explainer:
-        "Sargassum is the brown seaweed that can pile up on Florida sand and make the water unpleasant to wade through. We read its coverage off the cams — preferring the early-morning shot, before the city's cleaning tractor runs — so the more covered the beach, the lower the score. A heavy mat (50% or more) also slides a ceiling onto the whole score, but never far enough to read as a full beach closure. The \"more/less seaweed than average\" line compares today's reads against the same hours on prior days over a rolling ~8-week window (all weekdays, since seaweed doesn't follow a work-week rhythm), and needs a week or two of history before it appears.",
+        "Sargassum is the brown seaweed that can pile up on Florida sand and make the water unpleasant to wade through. We read its coverage off the cams — preferring the early-morning shot, before the city's cleaning tractor runs — so the more covered the beach, the lower the score. A heavy mat (50% or more) also slides a ceiling onto the whole score, but never far enough to read as a full beach closure. The \"more/less than usual\" line compares today's reads against the same hours on prior days over a rolling ~8-week window (all weekdays, since seaweed doesn't follow a work-week rhythm), and needs a week or two of history before it appears.",
       formula: "coverage curve 0%→100, 10%→85, 30%→55, 60%→20, 100%→0  (else category none/low/moderate/high = 100/85/55/20)",
       computation,
       sources: src(snap.sargassum.source),

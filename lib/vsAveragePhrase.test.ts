@@ -64,20 +64,20 @@ describe("seaweedVsAvgPhrase", () => {
   });
 
   it("treats ±10% as typical and rounds the rest to the nearest 5%", () => {
-    expect(seaweedVsAvgPhrase({ deltaPct: 8.19 })).toBe(" · typical seaweed for this beach");
-    expect(seaweedVsAvgPhrase({ deltaPct: 22.3 })).toBe(" · ≈20% more seaweed than average");
-    expect(seaweedVsAvgPhrase({ deltaPct: -33 })).toBe(" · ≈35% less seaweed than average");
+    expect(seaweedVsAvgPhrase({ deltaPct: 8.19 })).toBe("Typical for this beach");
+    expect(seaweedVsAvgPhrase({ deltaPct: 22.3 })).toBe("≈20% more than usual");
+    expect(seaweedVsAvgPhrase({ deltaPct: -33 })).toBe("≈35% less than usual");
   });
 
   it("names the unit on the deltaPts fallback and never renders +0", () => {
     expect(seaweedVsAvgPhrase({ deltaPct: null, deltaPts: 12 })).toBe(
-      " · ≈12 points more coverage than usual",
+      "≈12 pts above usual",
     );
     expect(seaweedVsAvgPhrase({ deltaPct: null, deltaPts: -12 })).toBe(
-      " · ≈12 points less coverage than usual",
+      "≈12 pts below usual",
     );
     expect(seaweedVsAvgPhrase({ deltaPct: null, deltaPts: 0.3 })).toBe(
-      " · typical seaweed for this beach",
+      "Typical for this beach",
     );
   });
 });

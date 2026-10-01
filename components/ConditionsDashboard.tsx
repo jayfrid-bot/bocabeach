@@ -1042,12 +1042,18 @@ export function ConditionsDashboard({
                 // Deterministic facts only — the cam's free-text note is any
                 // length (it overflowed the 3-line clamp even on desktop), so
                 // it lives on the flip back's "right now" section instead.
+                // The compared-to-usual phrase rides on the unclamped `extra`
+                // line: inside the clamped sub it ran to 4 lines on a 390 px
+                // phone and was cut off (CI, Deerfield, 2026-10-01).
                 sub={
                   `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
-                  (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "") +
-                  seaweedVsAvgPhrase(sg.vsAvg)
+                  (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "")
                 }
-                extra={nextCamReadPhrase(sg.nextReadIso, tz, nowMs) ?? undefined}
+                extra={
+                  [seaweedVsAvgPhrase(sg.vsAvg), nextCamReadPhrase(sg.nextReadIso, tz, nowMs)]
+                    .filter(Boolean)
+                    .join(" · ") || undefined
+                }
               />
             }
           />

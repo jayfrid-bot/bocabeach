@@ -60,9 +60,10 @@ export function busynessVsAvgPhrase(vsAvg: {
 }
 
 /**
- * Seaweed sub-line fragment (leading " · "), for the seaweed tile. Returns "" until
- * there's enough history. Same rounding/band rules as busyness; the deltaPts
- * fallback names its unit ("coverage") and a 0 reads as typical, never "+0".
+ * Seaweed comparison line for the seaweed tile, or "" until there's enough
+ * history. Same rounding/band rules as busyness; the deltaPts fallback names
+ * its unit ("pts") and a 0 reads as typical, never "+0". Kept short: it sits
+ * in a ~140 px tile on a phone.
  */
 export function seaweedVsAvgPhrase(vsAvg?: {
   deltaPct: number | null;
@@ -70,17 +71,17 @@ export function seaweedVsAvgPhrase(vsAvg?: {
 }): string {
   if (!vsAvg) return "";
   const { deltaPct, deltaPts } = vsAvg;
-  const typical = " · typical seaweed for this beach";
+  const typical = "Typical for this beach";
   if (deltaPct != null) {
     if (Math.abs(deltaPct) <= TYPICAL_BAND_PCT) return typical;
     const abs = roundToNearest5(Math.abs(deltaPct));
     if (abs === 0) return typical;
-    return ` · ≈${abs}% ${deltaPct > 0 ? "more" : "less"} seaweed than average`;
+    return `≈${abs}% ${deltaPct > 0 ? "more" : "less"} than usual`;
   }
   if (deltaPts != null) {
     const n = Math.round(deltaPts);
     if (n === 0) return typical;
-    return ` · ≈${Math.abs(n)} points ${n > 0 ? "more" : "less"} coverage than usual`;
+    return `≈${Math.abs(n)} pts ${n > 0 ? "above" : "below"} usual`;
   }
   return "";
 }

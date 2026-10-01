@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-01",
+    title: "Seaweed tile no longer cuts off on phones",
+    details:
+      "The \"compared with usual\" note on the seaweed tile is shorter and sits on its own line, so it no longer gets cut off on narrow phone screens.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-10-01",
     title: "A fuller share card",
     details:
       "The picture you share now fits up to 12 readings — rip current, seaweed, rain, sunset, and the next tide join the temperatures, surf, wind, and UV — plus any swim warning in effect and the best time to go. The score sits beside the beach name, and long text no longer runs into itself.",
