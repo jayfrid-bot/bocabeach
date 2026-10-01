@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scoreBand, SCORE_BANDS } from "@/lib/scoreBands";
+import { goodWindow, scoreBand, SCORE_BANDS } from "@/lib/scoreBands";
 import { beachDayVerdict, scoreColor, scoreTextClass } from "@/lib/format";
 
 describe("scoreBands (owner-set 2026-07-17 bands: 90 / 75 / 65 / 25)", () => {
@@ -45,5 +45,15 @@ describe("scoreBands (owner-set 2026-07-17 bands: 90 / 75 / 65 / 25)", () => {
   it("clamps out-of-range scores to the end bands", () => {
     expect(scoreBand(150).rating).toBe("Excellent");
     expect(scoreBand(-5).rating).toBe("Poor");
+  });
+});
+
+describe("goodWindow", () => {
+  it("offers a window only at the Decent band or above", () => {
+    expect(goodWindow({ score: 65 })).toEqual({ score: 65 });
+    expect(goodWindow({ score: 64 })).toBeNull();
+    expect(goodWindow({ score: 15 })).toBeNull();
+    expect(goodWindow(null)).toBeNull();
+    expect(goodWindow(undefined)).toBeNull();
   });
 });

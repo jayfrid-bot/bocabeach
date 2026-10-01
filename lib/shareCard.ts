@@ -7,7 +7,7 @@
 // valid (mostly empty) model rather than sinking the image route.
 
 import type { ConditionsResponse } from "@/lib/types";
-import { scoreBand } from "@/lib/scoreBands";
+import { GOOD_WINDOW_MIN_SCORE, scoreBand } from "@/lib/scoreBands";
 import { beachDayVerdict } from "@/lib/format";
 import { uvBand } from "@/lib/uv";
 import { clarityDisplayWord } from "@/lib/sources/clarity";
@@ -130,9 +130,6 @@ function safetyFor(
 function bestTimeFields(label: { text: string; good: boolean } | undefined) {
   return label ? { bestTime: label.text, bestTimeGood: label.good } : {};
 }
-
-/** A window must reach the "Decent" band to be called a good time. */
-export const GOOD_WINDOW_MIN_SCORE = 65;
 
 /** The best-time line, chosen by beach-local date. Today's window counts only
  *  while it is still ahead AND scores at least GOOD_WINDOW_MIN_SCORE; a bad

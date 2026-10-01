@@ -44,3 +44,12 @@ export function scoreBand(score: number): ScoreBand {
   }
   return SCORE_BANDS[SCORE_BANDS.length - 1];
 }
+
+/** A best-time window must reach the "Decent" band to be offered as a good
+ *  time to go; below that the app says there is no good time instead. */
+export const GOOD_WINDOW_MIN_SCORE = 65;
+
+/** The window itself when it is good enough to recommend, else null. */
+export function goodWindow<T extends { score: number }>(best: T | null | undefined): T | null {
+  return best && best.score >= GOOD_WINDOW_MIN_SCORE ? best : null;
+}

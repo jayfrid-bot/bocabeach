@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-01",
+    title: "No more \"best time\" on a bad day",
+    details:
+      "The 7-day outlook and the \"Best time left today\" pill now only suggest a time that scores at least Decent. On a day where every hour is poor, the outlook says \"no good window\" instead of naming the least-bad hours.",
+    tag: "improved",
+  },
+  {
+    date: "2026-10-01",
     title: "Seaweed tile no longer cuts off on phones",
     details:
       "The \"compared with usual\" note on the seaweed tile is shorter and sits on its own line, so it no longer gets cut off on narrow phone screens.",

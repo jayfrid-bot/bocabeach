@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { DayWindow, ForecastDay, Wrapped } from "@/lib/types";
 import { fmtTime, fmtTimeCompact, scoreColor, scoreTextClass } from "@/lib/format";
+import { goodWindow } from "@/lib/scoreBands";
 
 /**
  * One row per upcoming day, merging the sky/temps/rain forecast with the
@@ -44,7 +45,9 @@ function mergeDays(days: DayWindow[], forecast: ForecastDay[]): MergedDay[] {
       lo: f?.lo,
       rain: f?.rain,
       peakScore: d.peakScore,
-      best: d.best,
+      // A poor day's least-bad hours are not a "best time": below the Decent
+      // band the tile reads "no good window" (same cutoff as the share card).
+      best: goodWindow(d.best),
       peakBreakdown: d.peakBreakdown,
     };
   });

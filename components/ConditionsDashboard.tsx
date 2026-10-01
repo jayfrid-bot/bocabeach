@@ -9,6 +9,7 @@ import { applyLiveRipCap, consensusCloudPct, currentHourOf, deriveMetrics, DEFAU
 import { computeStormActivity } from "@/lib/stormActivity";
 import { rainNowcast } from "@/lib/rainNowcast";
 import { beachDayVerdict, fmtDate, fmtTime, nextCamReadPhrase, scoreTextClass } from "@/lib/format";
+import { goodWindow } from "@/lib/scoreBands";
 import { LogoMark } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ScoreExplainer } from "@/components/ScoreExplainer";
@@ -430,7 +431,8 @@ export function ConditionsDashboard({
   // multiDayWindows[0] so the pill and the Best-times strip always show the SAME
   // window (a client recompute used different daylight bounds + a different clock).
   // With a personal score active, both come off the personal curve.
-  const bw = windows[0]?.best ?? null;
+  // Only a window that reaches the Decent band is offered (lib/scoreBands.ts).
+  const bw = goodWindow(windows[0]?.best);
   // "Now" cloud is the multi-source consensus (the Sky card's number) — a single
   // model's hourly cloud flip-flops and mis-drives the overcast damping.
   const nowCloudPct = consensusCloudPct(snap);
