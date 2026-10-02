@@ -5,7 +5,7 @@ import {
 } from "@/lib/seasonalHazards";
 
 /** Status-pill tone classes, reusing the app's existing pill language:
- *  the slate "wind-only" badge (AdvisoryStrip) for calm, the amber
+ *  a slate badge for calm, the amber
  *  "improved" chip (ChangelogSection) for in-season / peak / watch. */
 const PILL_TONE: Record<HazardTone, string> = {
   calm: "bg-slate-500/10 text-slate-600 ring-slate-500/25 dark:text-slate-300",

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
-const EFFECTIVE_DATE = "September 28, 2026";
+const EFFECTIVE_DATE = "October 1, 2026";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
@@ -62,8 +62,9 @@ export default function PrivacyPage() {
 
       <Section title="Push notifications (app only)">
         <p>
-          In the iOS/Android app, you can opt in to &quot;Notify me&quot; for a beach —
-          a morning Beach Day summary and, with Beach Day Plus, safety alerts.
+          In the iPhone app, you can turn on alerts for a beach with the bell
+          (🔔 Alerts) — a morning Beach Day summary, safety alerts, or both.
+          Alerts are part of Beach Day Plus.
           Turning this on stores your device&apos;s push token (an APNs token on
           iOS, an FCM token on Android) in our database, tied to a random device
           id — see &quot;Location and your device id&quot; below for what else that

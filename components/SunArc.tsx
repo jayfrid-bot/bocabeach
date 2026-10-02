@@ -41,7 +41,7 @@ const nightArcPath = Array.from({ length: STEPS + 1 }, (_, i) => {
  * glowing sun dot at "now" (honest to real solar noon when known), golden-hour
  * shading near both ends, and — on the arc's underside — the moon, either
  * traveling tonight's dark span or (by day) a compact readout of tonight's
- * phase so the retired MoonPanel's info still lives here.
+ * phase so the retired moon panel's info still lives here.
  */
 export function SunArc({ sun, tz }: { sun: SunData; tz: string }) {
   // Clock is client-only (set after mount) so SSR and hydration HTML match —
@@ -268,7 +268,7 @@ export function SunArc({ sun, tz }: { sun: SunData; tz: string }) {
 
       {/* daytime compact moon readout — keeps tonight's phase visible even
           while the SVG is showing the sun, so nothing from the retired
-          MoonPanel is lost. Hidden at night (the arc already carries it). */}
+          moon panel is lost. Hidden at night (the arc already carries it). */}
       {daylight && moon ? (
         <div className="mt-1.5 flex items-center justify-center gap-1.5 text-[11px] text-slate-500 dark:text-slate-500">
           <span aria-hidden>{moon.emoji}</span>

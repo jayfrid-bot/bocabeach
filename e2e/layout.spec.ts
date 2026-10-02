@@ -212,9 +212,7 @@ const INLINE_LINK_ALLOWLIST: RegExp[] = [
 
 /** Elements whose only accessible name is an icon (e.g. the "ⓘ" info toggle)
  *  are matched by aria-label instead of visible text. */
-const ARIA_LABEL_ALLOWLIST: RegExp[] = [
-  /^(Show|Hide) the science behind/, // AdvisoryStrip's 24x24 info-disclosure toggle
-];
+const ARIA_LABEL_ALLOWLIST: RegExp[] = [];
 
 const MIN_TAP = 40;
 
