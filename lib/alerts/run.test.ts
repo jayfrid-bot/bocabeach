@@ -2,7 +2,7 @@
 // gets skipped, what the counts mean, and what the kill switch does. No network:
 // the feed, the conditions and the rain read are all injected.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createMemoryStore } from "@/lib/db/memoryStore";
 import type { DeviceStore } from "@/lib/db/store";
 import type { ArmedDevice } from "@/lib/db/types";
@@ -102,6 +102,12 @@ async function seed(
 }
 
 beforeEach(() => {
+  // The fixture lives on its own date (NOW); the store stamps a device's plan
+  // from the wall clock when it is written, so the wall clock must agree or a
+  // fixture grant like NOW + 30 days reads as expired once real time passes
+  // it (these tests started failing on 2026-10-02). Only Date is faked.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
   store = createMemoryStore({ file: null });
   sent = [];
   conditionsCalls = [];
@@ -109,6 +115,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   delete process.env.PUSH_SAFETY_ALERTS;
 });
 

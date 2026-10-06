@@ -4,7 +4,7 @@
 // token, minted directly via the store rather than round-tripping through
 // POST /api/devices).
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { resetMemoryRateLimit } from "@/lib/plus/rateLimit";
 import { getStore, hashInstallToken } from "@/lib/db/store";
 import { resetMemoryStore } from "@/lib/db/memoryStore";
@@ -87,7 +87,20 @@ function row(over: Partial<BeachHourlyRow> = {}): BeachHourlyRow {
   };
 }
 
+// The archive rows below carry fixed local dates ("2026-09-22", "2026-09-28")
+// next to hour_utc values taken from the clock, and the route picks its
+// window from the clock — so the clock is pinned to the fixtures' own week
+// (these tests started failing on 2026-10-06, when real time left the
+// 14-day window). Only Date is faked.
+const FIXTURE_NOW = Date.parse("2026-09-28T18:00:00Z");
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(FIXTURE_NOW);
   resetMemoryRateLimit();
   resetMemoryStore();
   const store = await getStore();
