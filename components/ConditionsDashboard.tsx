@@ -9,7 +9,8 @@ import { applyLiveRipCap, consensusCloudPct, currentHourOf, deriveMetrics, DEFAU
 import { computeStormActivity } from "@/lib/stormActivity";
 import { rainNowcast } from "@/lib/rainNowcast";
 import { beachDayVerdict, fmtDate, fmtTime, nextCamReadPhrase, scoreTextClass } from "@/lib/format";
-import { Logo } from "@/components/Logo";
+import { goodWindow } from "@/lib/scoreBands";
+import { LogoMark } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ScoreExplainer } from "@/components/ScoreExplainer";
 import { PullToRefresh } from "@/components/PullToRefresh";
@@ -64,10 +65,11 @@ import { usePersonalScore, usePlus } from "@/lib/plus/client";
 import { isNativePlatform } from "@/lib/push/native";
 import { BeachModeCard } from "@/components/plus/BeachModeCard";
 import { FirstRunBanner } from "@/components/plus/FirstRunBanner";
+import { HeaderSubtitle } from "@/components/plus/HeaderSubtitle";
 import { HomeBeachRedirect } from "@/components/plus/HomeBeachRedirect";
-import { NearYouChip } from "@/components/plus/NearYouChip";
 import { Paywall, supportId } from "@/components/plus/Paywall";
 import { PersonalizeCard } from "@/components/plus/PersonalizeCard";
+import { HistorySection } from "@/components/plus/HistorySection";
 import { PlusInAppCard } from "@/components/plus/PlusInAppCard";
 import { PlusOnboarding } from "@/components/plus/PlusOnboarding";
 import { PlusSettingsSheet } from "@/components/plus/PlusSettingsSheet";
@@ -142,8 +144,9 @@ export function ConditionsDashboard({
    */
   preview?: boolean;
   /**
-   * When set, show a small "＋ Other beaches" link to the national picker. Used
-   * on the homepage (which stays the flagship beach) and on each beach page.
+   * When set, the header's beach name + chevron link to the national picker.
+   * Used on the homepage (which stays the flagship beach) and on each beach
+   * page. Empty renders the name as plain (non-linked) text.
    */
   browseHref?: string;
   /** Server-detected native shell (request UA) — drives the Notify button. */
@@ -428,7 +431,8 @@ export function ConditionsDashboard({
   // multiDayWindows[0] so the pill and the Best-times strip always show the SAME
   // window (a client recompute used different daylight bounds + a different clock).
   // With a personal score active, both come off the personal curve.
-  const bw = windows[0]?.best ?? null;
+  // Only a window that reaches the Decent band is offered (lib/scoreBands.ts).
+  const bw = goodWindow(windows[0]?.best);
   // "Now" cloud is the multi-source consensus (the Sky card's number) — a single
   // model's hourly cloud flip-flops and mis-drives the overcast damping.
   const nowCloudPct = consensusCloudPct(snap);
@@ -532,89 +536,86 @@ export function ConditionsDashboard({
   return (
     <PullToRefresh onRefresh={onRefresh}>
     <main className="mx-auto max-w-5xl px-4 pb-6 pt-3 sm:px-6 sm:py-8">
+      {/* ONE header row: logo mark + beach name/picker on the left, three
+          icon-only doors (share / alerts / theme) on the right. The old
+          wordmark line, the big name line and the pills row below it (incl.
+          the "＋ Other beaches" pill) are gone — together they were what
+          pushed the score below the fold on a phone. The beach name is
+          still the tap target into the picker (same browseHref the pill
+          used to carry), and it's still a real <h1> for a11y/SEO. */}
       <header className="mb-3 sm:mb-6">
-        <div className="flex items-center justify-between">
-          <Link
-            href="/"
-            className="inline-flex min-h-[36px] items-center text-sm hover:opacity-80"
-            aria-label="Is It Beach Day — home"
-          >
-            <Logo markSize={28} />
-          </Link>
-          <ThemeToggle />
-        </div>
-        {/* The beach name only — the county line was dropped to pull the score
-            above the fold on a phone (it stays in the page title/metadata). */}
-        <h1
-          className="mt-1 text-2xl font-bold leading-tight text-slate-900 dark:text-white sm:text-3xl"
-          title={snap.location.region}
-        >
-          {snap.location.name}
-        </h1>
-        {snap.location.tier === "auto" ? (
-          <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-ocean-500/10 px-2.5 py-0.5 text-[11px] font-medium text-ocean-700 ring-1 ring-ocean-500/20 dark:text-ocean-300">
-            ✨ Auto-resolved · core conditions live, some local data pending
-          </span>
-        ) : null}
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          {browseHref ? (
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex min-w-0 items-center gap-1">
             <Link
-              href={browseHref}
-              className="inline-flex items-center gap-1.5 rounded-full bg-ocean-500/10 px-3 py-1 text-xs font-medium text-ocean-700 ring-1 ring-ocean-500/20 transition hover:bg-ocean-500/20 dark:text-ocean-300"
+              href="/"
+              aria-label="Is It Beach Day — home"
+              className="inline-flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-full transition hover:opacity-80"
             >
-              <span aria-hidden className="text-sm leading-none">＋</span> Other beaches
+              <LogoMark size={26} />
             </Link>
-          ) : null}
-          {!preview ? (
-            <NotifyButton
-              slug={slug}
-              serverNative={isNativeApp}
-              entitled={plusEntitled}
-              prefs={pushPrefs}
-              onDoor={() => setSheet(plus.previewSeen ? "paywall" : "onboarding")}
-              onSettings={() => setSheet("settings")}
-            />
-          ) : null}
-          {!preview ? (
-            <ShareCardSheet
-              slug={slug}
-              beachName={snap.location.name}
-              shareUrl={
-                slug === flagshipSlugOf(beaches)
-                  ? "https://isitbeachday.com"
-                  : `https://isitbeachday.com/${slug}`
-              }
-            />
-          ) : null}
-          {plusOn ? <NearYouChip beaches={beaches} currentSlug={slug} /> : null}
+            {browseHref ? (
+              <Link
+                href={browseHref}
+                aria-label={`${snap.location.name} — choose a different beach`}
+                className="flex min-h-[44px] min-w-0 items-center gap-1 rounded-lg py-1 pr-1 transition hover:opacity-80"
+              >
+                {/* Wraps to a second line rather than cutting a long name off
+                    ("Fort Lauderd…", "South Padre Isl…") next to the icons. */}
+                <h1
+                  className="line-clamp-2 break-words text-lg font-bold leading-tight text-slate-900 dark:text-white sm:text-2xl"
+                  title={snap.location.region}
+                >
+                  {snap.location.name}
+                </h1>
+                <span aria-hidden className="shrink-0 text-sm text-slate-400 dark:text-slate-500">
+                  ▾
+                </span>
+              </Link>
+            ) : (
+              <h1
+                className="line-clamp-2 min-w-0 break-words py-1 text-lg font-bold leading-tight text-slate-900 dark:text-white sm:text-2xl"
+                title={snap.location.region}
+              >
+                {snap.location.name}
+              </h1>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {!preview ? (
+              <ShareCardSheet
+                slug={slug}
+                beachName={snap.location.name}
+                shareUrl={
+                  slug === flagshipSlugOf(beaches)
+                    ? "https://isitbeachday.com"
+                    : `https://isitbeachday.com/${slug}`
+                }
+                iconOnly
+              />
+            ) : null}
+            {!preview ? (
+              <NotifyButton
+                slug={slug}
+                serverNative={isNativeApp}
+                entitled={plusEntitled}
+                prefs={pushPrefs}
+                onDoor={() => setSheet(plus.previewSeen ? "paywall" : "onboarding")}
+                onSettings={() => setSheet("settings")}
+              />
+            ) : null}
+            <ThemeToggle iconOnly />
+          </div>
         </div>
+        {/* One muted subtitle line: distance (when a fix is already known)
+            plus the auto-tier heads-up, shortened. Beach Mode's "alerts on
+            until …" isn't included — see HeaderSubtitle's own doc comment
+            for why. */}
+        <HeaderSubtitle beach={snap.location} isAutoTier={snap.location.tier === "auto"} />
       </header>
 
-      {/* Someone reading this inside the iOS app already has the app — never
-          ask them to go download it. Only the web/PWA surface sees the band. */}
-      {!isNativeApp ? <AppStoreBand /> : null}
-
-      {/* First launch only: one line offering the nearest beach. It never
-          blocks anything — the whole dashboard is already rendered below it. */}
-      {plusOn ? (
-        <>
-          <HomeBeachRedirect flagshipSlug={flagshipSlug} beaches={beaches} />
-          <FirstRunBanner
-            plus={plus}
-            beaches={beaches}
-            currentSlug={slug}
-            flagshipSlug={flagshipSlug}
-          />
-          <BeachModeCard
-            plus={plus}
-            native={native}
-            slug={slug}
-            beaches={beaches}
-            tz={tz}
-            onDoor={() => setSheet(plus.previewSeen ? "paywall" : "onboarding")}
-          />
-        </>
-      ) : null}
+      {/* Renders nothing visible (a client-side redirect only), so it can
+          stay right here without moving anything else on screen. */}
+      {plusOn ? <HomeBeachRedirect flagshipSlug={flagshipSlug} beaches={beaches} /> : null}
 
       <div className="mb-4 sm:mb-6">
         <SafetyBanner
@@ -649,6 +650,12 @@ export function ConditionsDashboard({
           </div>
         ) : (
           <>
+            <div
+              className={`mb-2 text-center text-3xl font-bold ${scoreTextClass(active.score)}`}
+            >
+              {beachDayVerdict(active.score)}
+            </div>
+            <ScoreWheel result={active} />
             {/* Plus: the personal number leads, everyone's is one tap away. */}
             {plusOn && personal ? (
               <ScoreToggle
@@ -658,12 +665,6 @@ export function ConditionsDashboard({
               />
             ) : null}
             <ScoreCapBanner result={active} />
-            <div
-              className={`mb-2 text-center text-3xl font-bold ${scoreTextClass(active.score)}`}
-            >
-              {beachDayVerdict(active.score)}
-            </div>
-            <ScoreWheel result={active} />
             <DataCoverageNote result={active} />
             {/* The score is personal; the water is not. This line carries every
                 hazard to everybody, whichever score is on screen. */}
@@ -697,6 +698,34 @@ export function ConditionsDashboard({
         ) : null}
       </section>
 
+      {/* Beach Mode, the first-run nudge, and the App Store band all move
+          below the score block in this redesign — the score itself is the
+          thing that must clear the fold on a phone; these are worth a
+          scroll, not a race with it. BeachModeCard's OWN inside is another
+          crew's work in flight; only where it renders moved here. */}
+      {plusOn ? (
+        <>
+          <FirstRunBanner
+            plus={plus}
+            beaches={beaches}
+            currentSlug={slug}
+            flagshipSlug={flagshipSlug}
+          />
+          <BeachModeCard
+            plus={plus}
+            native={native}
+            slug={slug}
+            beaches={beaches}
+            tz={tz}
+            onDoor={() => setSheet(plus.previewSeen ? "paywall" : "onboarding")}
+          />
+        </>
+      ) : null}
+
+      {/* Someone reading this inside the iOS app already has the app — never
+          ask them to go download it. Only the web/PWA surface sees the band. */}
+      {!isNativeApp ? <AppStoreBand /> : null}
+
       <section className="mb-6">
         <ScoreExplainer
           derived={d}
@@ -729,10 +758,10 @@ export function ConditionsDashboard({
             </span>
           ) : null}
           {bw ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-200/80 dark:bg-slate-800/70 px-3 py-1 text-slate-700 dark:text-slate-200 ring-1 ring-slate-900/10 dark:ring-white/10">
+            <span className="inline-flex flex-wrap items-center gap-x-1.5 rounded-full bg-slate-200/80 dark:bg-slate-800/70 px-3 py-1 text-slate-700 dark:text-slate-200 ring-1 ring-slate-900/10 dark:ring-white/10">
               <span aria-hidden>⭐</span>
-              Best remaining window today:{" "}
-              <span className="tabular-nums">
+              Best time left today:{" "}
+              <span className="whitespace-nowrap tabular-nums">
                 {fmtTime(bw.startIso, tz)}–{fmtTime(bw.endIso, tz)}
               </span>
             </span>
@@ -743,6 +772,22 @@ export function ConditionsDashboard({
       {windows.length || snap.forecast.data?.length ? (
         <section className="mb-6">
           <DayOutlookStrip days={windows} forecast={snap.forecast} tz={tz} />
+        </section>
+      ) : null}
+
+      {/* Plus "Last N days" — a look back at recent archived conditions.
+          Gated like BeachModeCard: only on real beach pages (not the admin
+          preview), and the component itself renders nothing off the native
+          app shell (the API route is app-only). */}
+      {plusOn ? (
+        <section className="mb-6">
+          <HistorySection
+            slug={slug}
+            native={native}
+            entitled={plusEntitled}
+            deviceId={plus.deviceId}
+            onDoor={() => setSheet(plus.previewSeen ? "paywall" : "onboarding")}
+          />
         </section>
       ) : null}
 
@@ -999,12 +1044,18 @@ export function ConditionsDashboard({
                 // Deterministic facts only — the cam's free-text note is any
                 // length (it overflowed the 3-line clamp even on desktop), so
                 // it lives on the flip back's "right now" section instead.
+                // The compared-to-usual phrase rides on the unclamped `extra`
+                // line: inside the clamped sub it ran to 4 lines on a 390 px
+                // phone and was cut off (CI, Deerfield, 2026-10-01).
                 sub={
                   `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
-                  (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "") +
-                  seaweedVsAvgPhrase(sg.vsAvg)
+                  (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "")
                 }
-                extra={nextCamReadPhrase(sg.nextReadIso, tz, nowMs) ?? undefined}
+                extra={
+                  [seaweedVsAvgPhrase(sg.vsAvg), nextCamReadPhrase(sg.nextReadIso, tz, nowMs)]
+                    .filter(Boolean)
+                    .join(" · ") || undefined
+                }
               />
             }
           />

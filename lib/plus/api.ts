@@ -4,8 +4,9 @@
 //
 // Routes and shapes are the contract in docs/PLUS_BUILD_SPEC.md.
 
-import type { AlertPrefs, DeviceRecord } from "@/lib/db/types";
+import type { AlertPrefs, DeviceRecord, SunColorMinBand } from "@/lib/db/types";
 import type { ScoreProfile } from "@/lib/profile/types";
+import type { DaySummary, HistoryRecords } from "@/lib/history/summary";
 import { readInstallToken, writeInstallToken } from "@/lib/plus/storage";
 
 export interface PlusResult {
@@ -30,6 +31,10 @@ export interface DevicePatchBody {
   profile?: ScoreProfile;
   prefs?: Partial<AlertPrefs>;
   previewSeen?: boolean;
+  /** `null` resets to the default. */
+  sunColorMinBand?: SunColorMinBand | null;
+  /** `null` resets to the default. */
+  sunColorLeadMin?: number | null;
 }
 
 /** One armed "I am at this beach" window. */
@@ -103,6 +108,90 @@ function postJson(url: string, body: unknown): Promise<PlusResult> {
   });
 }
 
+/** POST /api/history/<slug>'s answer — a different shape than `PlusResult`
+ *  (no `device`), so it isn't folded into `request()` above. `records` and
+ *  `archiveStartedAt`/`dayCount` are LIFETIME (never bounded by `days`) —
+ *  see lib/history/summary.ts. */
+export interface HistoryResult {
+  ok: boolean;
+  since: string | null;
+  days: DaySummary[];
+  records: HistoryRecords | null;
+  archiveStartedAt: string | null;
+  dayCount: number;
+  /** MIN(local_date) among rows with a non-null surf_ft — normally later
+   *  than `archiveStartedAt`; the "Biggest surf" tile uses the gap to
+   *  caption itself honestly instead of implying full-archive coverage. */
+  surfSince: string | null;
+  error: string | null;
+  status: number;
+}
+
+function emptyHistoryResult(): Pick<
+  HistoryResult,
+  "since" | "days" | "records" | "archiveStartedAt" | "dayCount" | "surfSince"
+> {
+  return { since: null, days: [], records: null, archiveStartedAt: null, dayCount: 0, surfSince: null };
+}
+
+/** Plus "Last N days" (docs/HISTORY_AND_IMAGERY_PLAN.md Part A). Same
+ *  deviceId + install-token plumbing every other Plus call uses
+ *  (withInstallToken) — a device with no token yet simply omits the header,
+ *  same as `request()`. Always resolves; a dead network or a bad body comes
+ *  back as `{ ok: false, error }`, never a throw. A 401 (no/stale install
+ *  token) is returned as-is via `status` — this function does not retry;
+ *  the caller (components/plus/HistorySection.tsx) owns the bootstrap-and-
+ *  retry-once decision, same as lib/plus/client.ts's useHazardsAtPoint does
+ *  for /api/hazards, since that needs `bootstrapInstallToken` from
+ *  lib/plus/client.ts, which itself imports this module — pulling that
+ *  logic in here would be circular. */
+async function fetchHistory(deviceId: string, slug: string, days: 7 | 14 | 30): Promise<HistoryResult> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `/api/history/${encodeURIComponent(slug)}`,
+      withInstallToken({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, days }),
+      }),
+    );
+  } catch {
+    return { ok: false, ...emptyHistoryResult(), error: "network", status: 0 };
+  }
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+  const obj = (body ?? {}) as {
+    ok?: unknown;
+    since?: unknown;
+    days?: unknown;
+    records?: unknown;
+    archiveStartedAt?: unknown;
+    dayCount?: unknown;
+    surfSince?: unknown;
+    error?: unknown;
+  };
+  if (res.ok && obj.ok === true) {
+    return {
+      ok: true,
+      since: typeof obj.since === "string" ? obj.since : null,
+      days: Array.isArray(obj.days) ? (obj.days as DaySummary[]) : [],
+      records: (obj.records as HistoryRecords | undefined) ?? null,
+      archiveStartedAt: typeof obj.archiveStartedAt === "string" ? obj.archiveStartedAt : null,
+      dayCount: typeof obj.dayCount === "number" ? obj.dayCount : 0,
+      surfSince: typeof obj.surfSince === "string" ? obj.surfSince : null,
+      error: null,
+      status: res.status,
+    };
+  }
+  const error = typeof obj.error === "string" ? obj.error : "server";
+  return { ok: false, ...emptyHistoryResult(), error, status: res.status };
+}
+
 export const plusApi = {
   /** Read this device's row. 404 `not-found` for a device the server never saw. */
   getDevice(deviceId: string): Promise<PlusResult> {
@@ -133,6 +222,8 @@ export const plusApi = {
       body: JSON.stringify({ deviceId }),
     });
   },
+  /** Plus "Last 7 days" — day summaries + records for one beach. */
+  fetchHistory,
 };
 
 /** Plain English for every error slug the Plus routes can answer with. */

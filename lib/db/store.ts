@@ -16,7 +16,15 @@ import type {
   SentState,
 } from "@/lib/db/types";
 import type { NativeSub } from "@/lib/push/nativeStore";
-import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
+import type {
+  ArchiveCandidate,
+  BeachHourlyRow,
+  CamObservationRow,
+  CamReadRow,
+  HistoryRecordsResult,
+  SunEventObservationRow,
+  SunEventPredictionRow,
+} from "@/lib/history/types";
 import { d1Store, getD1 } from "@/lib/db/d1Store";
 import { memoryStore } from "@/lib/db/memoryStore";
 
@@ -249,8 +257,34 @@ export interface DeviceStore {
    * `markSent` after `ABANDONED_CLAIM_MS` may be re-claimed.
    */
   claimSend(key: string, now: number): Promise<boolean>;
-  /** Record that a claimed send actually went out. */
-  markSent(key: string, now: number): Promise<void>;
+  /**
+   * Record that a claimed send actually went out. `claimedAt` MUST be the
+   * exact value the caller originally passed to `claimSend` for this key —
+   * it doubles as both `sent_at`'s value and the ownership check
+   * (`WHERE ... AND claimed_at = ?`, round-2 item 1): if the claim was
+   * abandoned and reclaimed by a LATER run in the meantime (which stamps a
+   * NEW `claimed_at`), this stale caller's write no longer matches and is a
+   * no-op — it must never mark a claim it no longer owns as sent. Returns
+   * whether the write actually matched (false = lost ownership to a
+   * reclaim; the caller should log this, not treat it as a hard failure —
+   * the send itself already happened).
+   */
+  markSent(key: string, claimedAt: number): Promise<boolean>;
+  /**
+   * Release a claimed-but-unsent send immediately (a transient transport
+   * failure, or a decision not to send after all) — deletes the row only
+   * when it still belongs to THIS caller (`claimedAt` must match the row's
+   * current `claimed_at`, same ownership guard as `markSent`) and was never
+   * marked sent (defensive: never undo a confirmed send, and never delete a
+   * row a LATER run has since reclaimed). Freeing the claim right away,
+   * rather than waiting out `ABANDONED_CLAIM_MS`, lets a genuinely failed
+   * attempt be retried by the very next cron tick instead of sitting
+   * unclaimable until the abandonment window passes — which mattered for
+   * the sun-color alert's short send window. Returns whether the delete
+   * actually matched (false = lost ownership to a reclaim; the caller
+   * should log this — nothing to release anymore, the reclaimer owns it).
+   */
+  releaseSend(key: string, claimedAt: number): Promise<boolean>;
   /** Drop claims old enough (`CLAIM_RETENTION_MS`) to never matter again. */
   pruneSendClaims(now: number): Promise<void>;
   /**
@@ -269,6 +303,60 @@ export interface DeviceStore {
    * Returns whether a write actually happened.
    */
   upsertBeachHourly(row: BeachHourlyRow): Promise<{ written: boolean }>;
+  /**
+   * Sun-event prediction log (migrations/0013): upsert the (0-2) rows built
+   * for one archive pass — ONE statement on D1. Keyed by (slug, event_kind,
+   * event_iso, as_of_hour_utc); an existing row is replaced only by a
+   * strictly newer `snapshot_generated_at`, and the reserved observed_*
+   * columns are never touched. Kept permanently. Returns rows changed.
+   */
+  upsertSunEventPredictions(rows: SunEventPredictionRow[]): Promise<{ written: number }>;
+  // --- Cam archive (migrations/0006 cam_observations + 0014 cam_reads) ------
+  /** Newest `captured_at_utc` stored for a beach, or null when none. */
+  latestCamObservationUtc(slug: string): Promise<string | null>;
+  /** Stored `captured_at_utc` values for a beach at or after `sinceUtc`. */
+  camObservationUtcsSince(slug: string, sinceUtc: string): Promise<string[]>;
+  /** INSERT OR IGNORE on (slug, captured_at_utc) — re-archiving the same feed
+   *  entry is a no-op. Returns rows actually inserted. */
+  insertCamObservations(rows: CamObservationRow[]): Promise<{ written: number }>;
+  /** INSERT OR IGNORE on (slug, captured_at_utc, cam_id). */
+  insertCamReads(rows: CamReadRow[]): Promise<{ written: number }>;
+  /** A beach's stored cam observations at or after `sinceUtc`, oldest first. */
+  camObservationsSince(slug: string, sinceUtc: string): Promise<CamObservationRow[]>;
+  /** Every stored per-cam read for one beach + capture instant. */
+  camReadsAt(slug: string, capturedAtUtc: string): Promise<CamReadRow[]>;
+  /** Every prediction logged for one beach's one event, oldest `as_of_hour_utc`
+   *  first — how the forecast for that event evolved as it approached. */
+  sunEventPredictionsFor(slug: string, eventIso: string): Promise<SunEventPredictionRow[]>;
+  /**
+   * Sun-event observations (migrations/0015, scripts/sun_cam_check.py): upsert
+   * one cam's scored observation of one event (keyed slug + event_kind +
+   * event_date_local + cam_id), THEN fill observed_score / observed_source /
+   * observed_at on the matching sun_event_predictions rows (same slug +
+   * event_kind, event_iso within +-15 min).
+   *
+   * The upsert replaces a stored row only when the incoming (score_version,
+   * scored_at) is strictly newer (isNewerSunScore), so an exact duplicate or a
+   * stale replay is a no-op (`stored: false`) and a late retry can never
+   * overwrite a newer re-score. created_at keeps the first-received time.
+   *
+   * When several cams have reported the same event, the BEST one is written
+   * onto the predictions: solar view before antisolar, then the smaller
+   * distance_mi, then cam_id. So an antisolar observation never overwrites a
+   * solar one, whatever order they arrive in. A prediction row whose
+   * observed_source was set by something other than a sun cam (a manual label)
+   * is left alone, and a row that already holds the best observation is not
+   * rewritten. Returns whether the row was stored and how many prediction rows
+   * changed.
+   */
+  recordSunEventObservation(row: SunEventObservationRow): Promise<{ stored: boolean; predictionsUpdated: number }>;
+  /** Every observation of one beach's one event, best first (solar before
+   *  antisolar, then nearest cam). */
+  sunEventObservationsFor(
+    slug: string,
+    eventKind: "sunrise" | "sunset",
+    eventDateLocal: string,
+  ): Promise<SunEventObservationRow[]>;
   /**
    * Every served beach (curated + generated) that has no `beach_hourly` row
    * for the CURRENT UTC hour yet, filtered by the daylight rule for
@@ -316,6 +404,37 @@ export interface DeviceStore {
    * instead of waiting out the full abandonment window.
    */
   releaseHistoryClaim(slug: string, hourUtc: string): Promise<void>;
+
+  // --- Hourly history READ (Plus "Last N days" feature, docs/HISTORY_AND_ ---
+  // --- IMAGERY_PLAN.md Part A) -----------------------------------------------
+  /**
+   * Every `beach_hourly` row for `slug` with `local_date` in
+   * [`sinceLocalDate`, `untilLocalDate`] inclusive (YYYY-MM-DD, beach-local —
+   * the same `local_date` column the archiver writes), oldest first. Only
+   * `row_kind = 'snapshot'` rows come back — a `cam-backfill` row has no
+   * score and must never be summarized as if it did. One query, no
+   * aggregation here: `lib/history/summary.ts` turns the rows into day
+   * summaries. `untilLocalDate` is normally "today" (the API route passes
+   * its own beach-local today) — bounding BOTH ends keeps the route's "≤31
+   * days" claim literally true, since without it a clock skew or a stray
+   * future-dated row could pull in more than the caller asked for.
+   */
+  hourlyHistory(slug: string, sinceLocalDate: string, untilLocalDate: string): Promise<BeachHourlyRow[]>;
+  /**
+   * Lifetime records for `slug` — best score, hottest sand, biggest surf,
+   * quietest midday reading — each the single (slug, hour) row that wins
+   * its own ORDER BY/LIMIT 1 across the WHOLE `beach_hourly` archive for
+   * this beach, never bounded by any `days` window (Codex review: records
+   * must survive switching the 7/14/30 chip, and must not silently regress
+   * as a beach accumulates more history than the widest window shows).
+   * `archiveStartedAt` (MIN(local_date)) and `dayCount`
+   * (COUNT(DISTINCT local_date)) describe the same lifetime archive — the
+   * UI's "Records since <archiveStartedAt>" caption and its 30-day chip gate
+   * both read off `archiveStartedAt`, never a hardcoded date. A beach with
+   * no snapshot rows at all returns `{ records: [], archiveStartedAt: null,
+   * dayCount: 0 }`.
+   */
+  historyRecords(slug: string): Promise<HistoryRecordsResult>;
 
   // --- Install token identity (migrations/0008_device_tokens.sql, Codex ----
   // combined-review #1) --------------------------------------------------

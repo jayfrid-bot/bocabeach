@@ -52,8 +52,8 @@ function waveReason(ft: number): string {
  *
  * stay-out: double red, red flag, lightning within 5 miles, severe weather, a
  * city no-swim advisory, or a water-quality advisory.
- * caution: moderate or high rip current, waves over 4 ft, a thunderstorm, or a
- * high-surf / coastal-flood advisory.
+ * caution: moderate or high rip current, waves over 4 ft, a thunderstorm, a
+ * high-surf advisory, or a coastal-flood / beach-hazards advisory.
  */
 export function swimSafety(
   d: Derived,
@@ -81,7 +81,8 @@ export function swimSafety(
   if (d.waveHeightFt != null && d.waveHeightFt > 4) caution.push(waveReason(d.waveHeightFt));
   const thunder = thunderReason(d);
   if (thunder) caution.push(thunder);
-  if (d.surfAdvisory) caution.push("High surf or coastal-flood advisory — swimming discouraged");
+  if (d.highSurfAdvisory) caution.push("High surf advisory — dangerous surf, swimming discouraged");
+  if (d.surfAdvisory) caution.push("Coastal flood or beach hazards advisory — swimming discouraged");
 
   if (stayOut.length) return { level: "stay-out", reasons: [...stayOut, ...caution] };
   if (caution.length) return { level: "caution", reasons: caution };
@@ -113,7 +114,7 @@ export function surfConditions(
     d.ripNow?.source === "alert" || d.ripNow?.source === "model" || d.ripNow?.source === "forecast";
   if (ripActive && d.ripNow?.source === "alert") experienced.push("Rip current warning in effect");
   else if (ripActive && d.ripNow?.level === "high") experienced.push("Rip current risk: High");
-  if (d.surfAdvisory) experienced.push("High surf advisory — experienced surfers only");
+  if (d.highSurfAdvisory) experienced.push("High surf advisory — experienced surfers only");
   if (d.waveHeightFt != null && d.waveHeightFt > 6) {
     // Estimated, not measured — see waveReason's comment above.
     experienced.push(`Big surf — ~${d.waveHeightFt} ft waves (estimated)`);

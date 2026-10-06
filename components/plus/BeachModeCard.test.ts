@@ -4,6 +4,8 @@ import {
   decideLiveActivityStart,
   isFirstArmedIdentityEligibleForAdoption,
   isStaleLiveActivityTicket,
+  lockScreenRowState,
+  parseIOSMajorMinor,
   resolveLiveActivityAdoption,
   shouldAutoArm,
 } from "@/components/plus/BeachModeCard";
@@ -166,5 +168,121 @@ describe("retarget end-then-start ordering", () => {
     const pendingEnd = Promise.reject(new Error("native end failed"));
     await expect(pendingEnd.catch(() => {})).resolves.toBeUndefined();
     expect(decideLiveActivityStart({ stale: false, adoptionChecked: true, hasActivityId: false })).toBe("start");
+  });
+});
+
+describe("parseIOSMajorMinor", () => {
+  it("reads major.minor out of a Capacitor WebView user agent", () => {
+    expect(
+      parseIOSMajorMinor("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15"),
+    ).toEqual({ major: 18, minor: 0 });
+  });
+
+  it("reads a two-digit minor version", () => {
+    expect(parseIOSMajorMinor("Mozilla/5.0 (iPhone; CPU iPhone OS 16_11 like Mac OS X)")).toEqual({
+      major: 16,
+      minor: 11,
+    });
+  });
+
+  it("returns null when the user agent has no iPhone OS token (desktop, Android, a gutted test UA)", () => {
+    expect(parseIOSMajorMinor("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15")).toBeNull();
+    expect(parseIOSMajorMinor("")).toBeNull();
+  });
+});
+
+describe("lockScreenRowState", () => {
+  // A fully-available, freshly-armed phone that hasn't answered the prompt
+  // yet — each test overrides just the one thing it's exercising.
+  const base = {
+    native: true,
+    entitled: true,
+    armed: true,
+    pluginAvailable: true,
+    osEnabled: true,
+    iosMajorMinor: { major: 18, minor: 0 },
+    pref: null as "on" | "off" | null,
+    running: false,
+  };
+
+  it("is hidden off Beach Mode, off native, or off entitlement — the three gates the card itself already checks", () => {
+    expect(lockScreenRowState({ ...base, armed: false })).toEqual({ kind: "hidden" });
+    expect(lockScreenRowState({ ...base, native: false })).toEqual({ kind: "hidden" });
+    expect(lockScreenRowState({ ...base, entitled: false })).toEqual({ kind: "hidden" });
+  });
+
+  it("shows the one-time Yes/No prompt when nothing has been answered yet and everything is available", () => {
+    expect(lockScreenRowState({ ...base, pref: null })).toEqual({ kind: "prompt" });
+  });
+
+  it("shows on/Turn off when the pref is on, carrying whether the activity is actually running", () => {
+    expect(lockScreenRowState({ ...base, pref: "on", running: false })).toEqual({ kind: "on", running: false });
+    expect(lockScreenRowState({ ...base, pref: "on", running: true })).toEqual({ kind: "on", running: true });
+  });
+
+  it("shows off/Turn on when the pref is off", () => {
+    expect(lockScreenRowState({ ...base, pref: "off" })).toEqual({ kind: "off" });
+  });
+
+  it("reads as unavailable (plugin missing) ahead of everything else, regardless of a saved pref", () => {
+    expect(lockScreenRowState({ ...base, pluginAvailable: false, pref: "on" })).toEqual({
+      kind: "unavailable",
+      reason: "plugin-missing",
+      message: "Update the app to show this on your Lock Screen.",
+    });
+    expect(lockScreenRowState({ ...base, pluginAvailable: false, osEnabled: false, pref: null })).toMatchObject({
+      reason: "plugin-missing",
+    }); // a stale-enough build could fail both checks — plugin missing still wins
+  });
+
+  it("reads as unavailable (iOS too old) below 16.2, ahead of asking the plugin's own Settings answer", () => {
+    expect(lockScreenRowState({ ...base, iosMajorMinor: { major: 16, minor: 1 }, pref: "off" })).toEqual({
+      kind: "unavailable",
+      reason: "ios-too-old",
+      message: "Needs iOS 16.2 or later.",
+    });
+    expect(lockScreenRowState({ ...base, iosMajorMinor: { major: 15, minor: 4 }, osEnabled: true })).toMatchObject({
+      reason: "ios-too-old",
+    });
+  });
+
+  it("16.2 exactly, and anything newer, is new enough", () => {
+    expect(lockScreenRowState({ ...base, iosMajorMinor: { major: 16, minor: 2 }, pref: "on" }).kind).toBe("on");
+    expect(lockScreenRowState({ ...base, iosMajorMinor: { major: 17, minor: 0 }, pref: "on" }).kind).toBe("on");
+  });
+
+  it("reads as unavailable (Settings off) when the plugin is present and iOS is new enough, but getStatus says disabled", () => {
+    expect(lockScreenRowState({ ...base, osEnabled: false, pref: "on" })).toEqual({
+      kind: "unavailable",
+      reason: "os-disabled",
+      message:
+        "Live Activities are off for this app — turn them on in iPhone Settings → Is It Beach Day → Live Activities.",
+    });
+  });
+
+  it("keeps the saved pref through every unavailable reason instead of resetting it", () => {
+    // The row's job is to show a REASON, not to forget what the user chose —
+    // so a temporarily-off Setting (or an old iOS, or a stale build) never
+    // silently reverts someone's "on" back to unasked.
+    for (const reason of [
+      { pluginAvailable: false },
+      { iosMajorMinor: { major: 15, minor: 0 } },
+      { osEnabled: false },
+    ] as const) {
+      const state = lockScreenRowState({ ...base, ...reason, pref: "on" });
+      expect(state.kind).toBe("unavailable");
+    }
+  });
+
+  it("falls back to the plugin's own Settings answer when the user agent has no parseable iOS version", () => {
+    expect(lockScreenRowState({ ...base, iosMajorMinor: null, osEnabled: true, pref: "off" })).toEqual({
+      kind: "off",
+    });
+    expect(lockScreenRowState({ ...base, iosMajorMinor: null, osEnabled: false, pref: "off" })).toEqual({
+      kind: "unavailable",
+      reason: "os-disabled",
+      message:
+        "Live Activities are off for this app — turn them on in iPhone Settings → Is It Beach Day → Live Activities.",
+    });
   });
 });

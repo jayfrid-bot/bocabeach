@@ -19,7 +19,13 @@ import { badRequest, fail, isDeviceId, okDevice, readBody } from "@/lib/db/api";
 import { getD1 } from "@/lib/db/d1Store";
 import { attributeInstall, clientIp, fingerprint, fpSalt } from "@/lib/db/scanFunnel";
 import { getStore, hashInstallToken, mintInstallToken } from "@/lib/db/store";
-import { ALERT_KEYS, entitled, type AlertPrefs, type DevicePatch } from "@/lib/db/types";
+import {
+  ALERT_KEYS,
+  entitled,
+  SUN_COLOR_LEAD_OPTIONS,
+  type AlertPrefs,
+  type DevicePatch,
+} from "@/lib/db/types";
 // The same validator the phone runs before it saves (lib/plus/storage.ts is
 // pure and guards on `localStorage`, so it is safe here) — one definition of
 // "a profile we accept", server and client.
@@ -98,6 +104,19 @@ function patchFromBody(body: Record<string, unknown>): DevicePatch | null {
   if (body.previewSeen !== undefined) {
     if (typeof body.previewSeen !== "boolean") return null;
     patch.previewSeen = body.previewSeen;
+  }
+
+  // The "sun-color" alert's two settings (migrations/0012_sun_color_prefs.sql)
+  // — `null` resets either one to its default (lib/db/types.ts).
+  if (body.sunColorMinBand !== undefined) {
+    const v = body.sunColorMinBand;
+    if (v !== null && v !== "vivid" && v !== "epic") return null;
+    patch.sunColorMinBand = v;
+  }
+  if (body.sunColorLeadMin !== undefined) {
+    const v = body.sunColorLeadMin;
+    if (v !== null && !(SUN_COLOR_LEAD_OPTIONS as readonly unknown[]).includes(v)) return null;
+    patch.sunColorLeadMin = v as number | null;
   }
 
   return patch;

@@ -31,7 +31,7 @@ const syncThemeColor = (dark: boolean) => {
  * the override and returns you to auto-follow — so "auto" just works without
  * a confusing third state.
  */
-export function ThemeToggle() {
+export function ThemeToggle({ iconOnly = false }: { iconOnly?: boolean }) {
   const [isDark, setIsDark] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -62,13 +62,30 @@ export function ThemeToggle() {
   // The label/icon describe the RESULT of a click (the opposite of what shows).
   const switchTo = isDark == null ? null : isDark ? "Light" : "Dark";
   const icon = switchTo === "Light" ? "☀️" : switchTo === "Dark" ? "🌙" : "🌓";
+  const label = switchTo ? `Switch to ${switchTo.toLowerCase()} mode` : "Switch theme";
+
+  if (iconOnly) {
+    return (
+      <button
+        type="button"
+        onClick={toggle}
+        title={label}
+        aria-label={label}
+        className="inline-flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-full bg-slate-900/5 text-slate-600 ring-1 ring-slate-900/10 transition hover:bg-slate-900/10 dark:bg-white/5 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-white/10"
+      >
+        <span aria-hidden className="text-lg leading-none">
+          {icon}
+        </span>
+      </button>
+    );
+  }
 
   return (
     <button
       type="button"
       onClick={toggle}
-      title={switchTo ? `Switch to ${switchTo.toLowerCase()} mode` : "Switch theme"}
-      aria-label={switchTo ? `Switch to ${switchTo.toLowerCase()} mode` : "Switch theme"}
+      title={label}
+      aria-label={label}
       className="inline-flex min-h-[36px] items-center gap-1.5 rounded-full bg-slate-900/5 px-3 py-1 text-xs text-slate-600 ring-1 ring-slate-900/10 transition hover:bg-slate-900/10 dark:bg-white/5 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-white/10"
     >
       <span aria-hidden>{icon}</span>

@@ -238,3 +238,40 @@ export function onActivityState(listener: (event: ActivityStateEvent) => void): 
     .catch(() => {});
   return () => handle?.remove();
 }
+
+/**
+ * A tiny FIFO queue: each call to the returned `run(fn)` waits for every
+ * previously queued `fn` to SETTLE (resolve or reject) before its own `fn`
+ * is invoked, so a caller that fires off several async calls back-to-back
+ * gets them delivered in the order they were queued — never two in flight
+ * at once, never out of order.
+ *
+ * Why BeachModeCard needs this for start()/update()/end(): each of those
+ * plugin calls runs in its own native Task (BeachSessionActivityPlugin.swift),
+ * and native `start()` unconditionally ends whatever activity is currently
+ * visible before creating its own. Without ordering, a STALE start() (e.g.
+ * from a start/On that a quick Off/On raced) can resolve AFTER a newer one
+ * and end the activity that newer call just created; this card's own
+ * stale-ticket cleanup then ends the stale one too, and the phone is left
+ * with zero running activities (or, the other direction, two briefly
+ * co-existing). Serializing calls doesn't replace the ticket checks
+ * (`isStaleLiveActivityTicket`/`decideLiveActivityStart`) — those still
+ * decide WHAT each call should do once its turn comes; this queue only
+ * decides WHEN the native side actually sees it.
+ *
+ * A factory, not a single shared queue, so each caller (each BeachModeCard
+ * instance) gets its own independent ordering.
+ */
+export function createSerialQueue(): <T>(fn: () => Promise<T>) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve();
+  return function run<T>(fn: () => Promise<T>): Promise<T> {
+    const result = tail.then(fn, fn);
+    // Advance the tail regardless of how `fn` settles — a failed call must
+    // never leave every call queued after it waiting forever.
+    tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
+}

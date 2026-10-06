@@ -15,9 +15,10 @@ name: GOES Cloud Feed
 # fallback into the sand-temperature model and under-read ground truth by
 # 21degF. So — same fix as sargassum.yml and lightning.yml — each fire does
 # NOT read once and exit. It loops INSIDE the job on its own ~15-minute
-# wall-clock cadence for as long as it's daylight (up to ~340 min of job
-# time), so whenever GitHub's sparse re-fires do land, they just restart a
-# loop that was already keeping the cadence, and the feed never goes stale.
+# wall-clock cadence (reading only in daylight, idling overnight) for up to
+# ~340 min of job time, then the `handoff` job dispatches the next loop. The
+# cron alone never kept the loops going: Sep 24-28 2026 the morning loop
+# started 4-5 h late, so the handoff (not the cron) is what keeps it live.
 #
 # CADENCE MATH is unchanged by this fix and MUST be respected by the loop:
 # the ACMC cloud-mask product itself only updates on a ~5-min cadence, so
@@ -54,12 +55,17 @@ concurrency:
 
 jobs:
   build-feed:
+    outputs:
+      started: ${{ steps.t0.outputs.started }}
     runs-on: ubuntu-latest
     # Long-running loop job now, not a single read. GitHub's hard cap on a
     # job is 360 min (6h); 350 leaves headroom for the runner's own
     # setup/teardown.
     timeout-minutes: 350
     steps:
+      - id: t0
+        name: Note when this loop started (the handoff job's fast-exit guard)
+        run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
       - name: Checkout (for the script + beach config)
         uses: actions/checkout@v4
 
@@ -95,7 +101,9 @@ jobs:
             local now rem
             now=$(date +%s)
             rem=$(( now % 900 ))
-            if [ "$rem" -eq 0 ]; then echo 0; else echo $(( 900 - rem )); fi
+            # Always a strictly FUTURE boundary (never 0): no two passes can
+            # share a grid point, and an idle night pass can't spin.
+            echo $(( 900 - rem ))
           }
 
           # True while local (America/New_York) time is inside the daylight
@@ -125,8 +133,20 @@ jobs:
             cd - >/dev/null
           }
 
+          # True in the first ~20 min after the daylight window closes — a
+          # loop that STARTS then (the previous one's shift ended right at
+          # dusk) still owes the one dusk read below.
+          just_after_dusk() {
+            local hm hm10
+            hm=$(TZ="America/New_York" date +%H%M)
+            hm10=$((10#$hm))
+            [ "$hm10" -ge 2036 ] && [ "$hm10" -le 2055 ]
+          }
+
           consecutive_fail=0
           start_epoch=$(date +%s)
+          did_day=0 # this loop has read in daylight since the last dusk read
+          first=1   # first pass of this loop
 
           run_cycle() {
             rm -f "$feed"
@@ -142,16 +162,32 @@ jobs:
           while true; do
             elapsed_min=$(( ($(date +%s) - start_epoch) / 60 ))
             if [ "$elapsed_min" -ge "$budget_min" ]; then
-              echo "time budget exhausted after ${elapsed_min}m — exiting loop (next fire picks up)"
+              echo "time budget exhausted after ${elapsed_min}m — exiting loop (the handoff job starts the next one)"
               break
             fi
 
             if ! in_daylight; then
-              echo "outside daylight window (05:55-20:35 America/New_York) — running one final read for carry-forward/night publish, then exiting"
-              run_cycle
-              break
+              # Night: idle instead of exiting, so this loop (or the successor
+              # the handoff job starts) is already awake for the first morning
+              # read. Exiting here left that read to GitHub's cron, which landed
+              # 4-5 h late on Sep 26-28 2026. One read right at dusk still
+              # publishes the night carry-forward; no other reads until morning.
+              if [ "$did_day" -eq 1 ] || { [ "$first" -eq 1 ] && just_after_dusk; }; then
+                echo "outside daylight window (05:55-20:35 America/New_York) — one final read for the night carry-forward, then idling until morning"
+                run_cycle
+                if [ "$consecutive_fail" -ge 5 ]; then
+                  echo "5 consecutive cycle failures (last one the dusk read) — bailing so this shows as a red run"
+                  exit 1
+                fi
+              fi
+              did_day=0
+              first=0
+              sleep "$(sleep_to_boundary)"
+              continue
             fi
 
+            did_day=1
+            first=0
             run_cycle
 
             if [ "$consecutive_fail" -ge 5 ]; then
@@ -161,3 +197,48 @@ jobs:
 
             sleep "$(sleep_to_boundary)"
           done
+
+  # Starts the next loop the moment this one ends. GitHub's cron is best-effort:
+  # Sep 24-28 2026 it left loops unrestarted for hours (lightning 109 min,
+  # goes-cloud and the cam feed 4-5 h late every morning), so each loop relays
+  # to its own successor. GITHUB_TOKEN may trigger workflow_dispatch (the one
+  # event it is allowed to start), so this needs no secret. `actions: write`
+  # lives on this small job only, never on the job that runs the feed scripts.
+  # The cron above stays as the fallback if a run dies before reaching here.
+  #  - Not after a cancel: with cancel-in-progress, a cancelled loop was
+  #    already replaced by a newer run; dispatching again would ping-pong.
+  #  - Not after a loop that ended within 15 min (setup broke, or a logic
+  #    bug): no tight respawn cycle; the cron retries that instead.
+  #  - Only from main, so a branch test run never starts a chain.
+  handoff:
+    needs: build-feed
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch the next loop
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.build-feed.result }}
+          STARTED: ${{ needs.build-feed.outputs.started }}
+        run: |
+          if [ -z "$STARTED" ]; then
+            echo "build-feed never recorded its start ('${RESULT}') — not respawning; the cron retries it"
+            exit 0
+          fi
+          ran=$(( $(date +%s) - STARTED ))
+          if [ "$ran" -lt 900 ]; then
+            echo "build-feed ended '${RESULT}' after only ${ran}s — not a normal shift end, so no respawn; the cron retries it"
+            exit 0
+          fi
+          for attempt in 1 2 3; do
+            if gh workflow run goes-cloud.yml --repo "$GITHUB_REPOSITORY" --ref main; then
+              echo "next loop dispatched (build-feed ended '${RESULT}' after ${ran}s)"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::could not dispatch the next loop — the cron is the only fallback now"
+          exit 1

@@ -81,6 +81,9 @@ async function openDashboard(page: Page): Promise<string[]> {
       page.request.post("/api/devices/trial", { data: {}, headers: FRESH_CONNECTION }).catch(() => {}),
       page.request.post("/api/devices/unlock", { data: {}, headers: FRESH_CONNECTION }).catch(() => {}),
       page.request.post("/api/presence", { data: {}, headers: FRESH_CONNECTION }).catch(() => {}),
+      // The Plus history route (components/plus/HistorySection.tsx) fetches on
+      // the app shell too — warm it for the same lazy-compile reason.
+      page.request.post("/api/history/boca-raton", { data: {}, headers: FRESH_CONNECTION }).catch(() => {}),
     ]);
   }
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -341,6 +344,10 @@ test.describe("inside the app shell", () => {
     const settings = page.getByRole("dialog");
     await expect(settings.getByText("What you come here for")).toBeVisible();
     await expect(settings.getByLabel("Home beach")).toBeVisible();
+    // Alerts settings end in a Save button that confirms with "Saved".
+    await settings.getByRole("button", { name: "Save alerts" }).scrollIntoViewIfNeeded();
+    await settings.getByRole("button", { name: "Save alerts" }).click();
+    await expect(settings.getByRole("button", { name: "Saved" })).toBeVisible();
     expect(await clippedText(page, '[role="dialog"]')).toEqual([]);
     expect(await undersizedTapTargets(page, '[role="dialog"]')).toEqual([]);
 

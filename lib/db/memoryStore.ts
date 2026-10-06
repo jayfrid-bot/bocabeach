@@ -36,7 +36,17 @@ import {
   COMING_UP_RETENTION_MS,
 } from "@/lib/db/comingUpClaims";
 import type { ComingUpDeliveryRow } from "@/lib/db/store";
-import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
+import type {
+  ArchiveCandidate,
+  BeachHourlyRow,
+  CamObservationRow,
+  CamReadRow,
+  HistoryRecordRow,
+  HistoryRecordsResult,
+  SunEventObservationRow,
+  SunEventPredictionRow,
+} from "@/lib/history/types";
+import { isNewerSunScore, sunCamObservedSource } from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
 import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
 import type {
@@ -75,12 +85,26 @@ interface Snapshot {
   alerts: AlertRow[];
   claims?: ClaimRow[];
   beachHourly?: BeachHourlyRow[];
+  sunEventPredictions?: SunEventPredictionRow[];
+  sunEventObservations?: SunEventObservationRow[];
+  camObservations?: CamObservationRow[];
+  camReads?: CamReadRow[];
   historyBudget?: { day: string; builds: number }[];
   historyClaims?: HistoryClaimRow[];
   liveActivities?: LiveActivityRow[];
   comingUpDeliveries?: ComingUpDeliveryRow[];
 }
 
+const sunPredKey = (r: Pick<SunEventPredictionRow, "slug" | "event_kind" | "event_iso" | "as_of_hour_utc">) =>
+  `${r.slug}|${r.event_kind}|${r.event_iso}|${r.as_of_hour_utc}`;
+const sunObsKey = (r: Pick<SunEventObservationRow, "slug" | "event_kind" | "event_date_local" | "cam_id">) =>
+  `${r.slug}|${r.event_kind}|${r.event_date_local}|${r.cam_id}`;
+/** Solar before antisolar, then the nearest cam, then cam_id (mirrors d1Store's BEST_SUN_OBSERVATION). */
+const compareSunObservations = (a: SunEventObservationRow, b: SunEventObservationRow): number =>
+  Number(b.view === "solar") - Number(a.view === "solar") ||
+  a.distance_mi - b.distance_mi ||
+  (a.cam_id < b.cam_id ? -1 : a.cam_id > b.cam_id ? 1 : 0);
+const SUN_OBS_MATCH_WINDOW_MS = 15 * 60_000;
 const alertKey = (deviceId: string, key: string) => `${deviceId}${key}`;
 const comingUpKey = (deviceId: string, eventKey: string) => `${deviceId}|${eventKey}`;
 
@@ -95,6 +119,10 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
   const alerts = new Map<string, AlertRow>();
   const claims = new Map<string, ClaimRow>();
   const beachHourly = new Map<string, BeachHourlyRow>(); // key: `${slug}|${hour_utc}`
+  const sunPredictions = new Map<string, SunEventPredictionRow>(); // key: `${slug}|${kind}|${event_iso}|${as_of_hour_utc}`
+  const sunObservations = new Map<string, SunEventObservationRow>(); // key: `${slug}|${kind}|${event_date_local}|${cam_id}`
+  const camObservations = new Map<string, CamObservationRow>(); // key: `${slug}|${captured_at_utc}`
+  const camReads = new Map<string, CamReadRow>(); // key: `${slug}|${captured_at_utc}|${cam_id}`
   const historyBudget = new Map<string, number>(); // key: day
   const historyClaims = new Map<string, HistoryClaimRow>(); // key: `history:<slug>:<hour_utc>`
   const liveActivities = new Map<string, LiveActivityRow>(); // key: activityId
@@ -111,6 +139,10 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       for (const a of raw.alerts ?? []) alerts.set(alertKey(a.device_id, a.alert_key), a);
       for (const c of raw.claims ?? []) claims.set(c.key, c);
       for (const h of raw.beachHourly ?? []) beachHourly.set(`${h.slug}|${h.hour_utc}`, h);
+      for (const r of raw.sunEventPredictions ?? []) sunPredictions.set(sunPredKey(r), r);
+      for (const r of raw.sunEventObservations ?? []) sunObservations.set(sunObsKey(r), r);
+      for (const o of raw.camObservations ?? []) camObservations.set(`${o.slug}|${o.captured_at_utc}`, o);
+      for (const c of raw.camReads ?? []) camReads.set(`${c.slug}|${c.captured_at_utc}|${c.cam_id}`, c);
       for (const b of raw.historyBudget ?? []) historyBudget.set(b.day, b.builds);
       for (const c of raw.historyClaims ?? []) historyClaims.set(c.key, c);
       for (const a of raw.liveActivities ?? []) liveActivities.set(a.activityId, a);
@@ -128,6 +160,10 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       alerts: [...alerts.values()],
       claims: [...claims.values()],
       beachHourly: [...beachHourly.values()],
+      sunEventPredictions: [...sunPredictions.values()],
+      sunEventObservations: [...sunObservations.values()],
+      camObservations: [...camObservations.values()],
+      camReads: [...camReads.values()],
       historyBudget: [...historyBudget.entries()].map(([day, builds]) => ({ day, builds })),
       historyClaims: [...historyClaims.values()],
       liveActivities: [...liveActivities.values()],
@@ -141,6 +177,20 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
   }
 
   const record = (row: DeviceRow): DeviceRecord => toRecord(row, presence.get(row.id) ?? null);
+
+  // Round-6: bumps the OWNING device row's `updated_at` for a write that
+  // changes what a `DeviceRecord` carries (its `presence` field) without
+  // touching any column ON `devices` itself — mirrors d1Store's own
+  // same-batch devices-bump for `setPresence`/`clearPresence`. Without
+  // this, `isStaleDeviceResponse` (lib/plus/client.ts) would see the SAME
+  // revision as before and drop a response that's actually carrying fresh
+  // arm/disarm state. A no-op when the device row doesn't exist (a
+  // presence write for an id with no devices row is not a real scenario
+  // this store needs to invent one for).
+  const touchDevice = (id: string, now: number): void => {
+    const row = devices.get(id);
+    if (row) devices.set(id, { ...row, updated_at: Math.max((row.updated_at ?? 0) + 1, now) });
+  };
 
   return {
     async getDevice(id) {
@@ -199,7 +249,17 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       // No `await` between this read and the `devices.set` below — same
       // no-race guarantee as `claimTrial` above.
       if (!row || row.token_hash) return false;
-      devices.set(id, { ...row, token_hash: tokenHash, token_issued_at: issuedAt, updated_at: issuedAt });
+      // Round-5 item 1: monotonic, same as every other write here (via
+      // `applyPatch`) — this is the one memoryStore write that doesn't go
+      // through it, since it sets `token_issued_at` (a distinct column) to
+      // the SAME value as `updated_at`, which `applyPatch`'s `DevicePatch`
+      // shape has no field for.
+      devices.set(id, {
+        ...row,
+        token_hash: tokenHash,
+        token_issued_at: issuedAt,
+        updated_at: Math.max((row.updated_at ?? 0) + 1, issuedAt),
+      });
       await save();
       return true;
     },
@@ -268,6 +328,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
 
     async setPresence(deviceId, p: PresenceInput) {
       await load();
+      const now = Date.now();
       presence.set(deviceId, {
         device_id: deviceId,
         slug: p.slug,
@@ -277,14 +338,16 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
         fix_at: p.fixAt ?? null,
         armed_until: p.armedUntil,
         source: p.source,
-        updated_at: Date.now(),
+        updated_at: now,
       });
+      touchDevice(deviceId, now);
       await save();
     },
 
     async clearPresence(deviceId) {
       await load();
       presence.delete(deviceId);
+      touchDevice(deviceId, Date.now());
       await save();
     },
 
@@ -398,12 +461,27 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       return true;
     },
 
-    async markSent(key, now) {
+    async markSent(key, claimedAt) {
       await load();
       const existing = claims.get(key);
-      if (!existing) return; // nothing to mark — a send without a claim never happens
-      claims.set(key, { ...existing, sent_at: now });
+      // Ownership guard (round-2 item 1), mirroring d1Store's SQL WHERE:
+      // only the caller whose `claimedAt` still matches the row's CURRENT
+      // `claimed_at` may mark it sent — a reclaim by a later run (which
+      // stamps a new `claimed_at`) makes a stale caller's write a no-op.
+      if (!existing || existing.claimed_at !== claimedAt || existing.sent_at != null) return false;
+      claims.set(key, { ...existing, sent_at: claimedAt });
       await save();
+      return true;
+    },
+
+    async releaseSend(key, claimedAt) {
+      await load();
+      const existing = claims.get(key);
+      // Same ownership guard as `markSent`, plus never undo a confirmed send.
+      if (!existing || existing.claimed_at !== claimedAt || existing.sent_at != null) return false;
+      claims.delete(key);
+      await save();
+      return true;
     },
 
     async pruneSendClaims(now) {
@@ -446,6 +524,143 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       // instance against the same file) silently lost every archived row.
       await save();
       return { written: true };
+    },
+
+    // Sun-event prediction log (migrations/0013) — mirrors d1Store: replace
+    // only on a strictly newer snapshot, never touch the observed_* truth
+    // columns of an existing row.
+    async upsertSunEventPredictions(rows: SunEventPredictionRow[]) {
+      await load();
+      let written = 0;
+      for (const row of rows) {
+        const key = sunPredKey(row);
+        const existing = sunPredictions.get(key);
+        if (existing && !(row.snapshot_generated_at > existing.snapshot_generated_at)) continue;
+        sunPredictions.set(key, {
+          ...row,
+          observed_score: existing?.observed_score ?? row.observed_score,
+          observed_source: existing?.observed_source ?? row.observed_source,
+          observed_at: existing?.observed_at ?? row.observed_at,
+        });
+        written += 1;
+      }
+      if (written) await save();
+      return { written };
+    },
+
+    // Cam archive — INSERT OR IGNORE semantics, mirroring d1Store.
+    async latestCamObservationUtc(slug: string) {
+      await load();
+      let max: string | null = null;
+      for (const o of camObservations.values()) {
+        if (o.slug === slug && (max === null || o.captured_at_utc > max)) max = o.captured_at_utc;
+      }
+      return max;
+    },
+
+    async camObservationUtcsSince(slug: string, sinceUtc: string) {
+      await load();
+      return [...camObservations.values()]
+        .filter((o) => o.slug === slug && o.captured_at_utc >= sinceUtc)
+        .map((o) => o.captured_at_utc);
+    },
+
+    async insertCamObservations(rows: CamObservationRow[]) {
+      await load();
+      let written = 0;
+      for (const r of rows) {
+        const key = `${r.slug}|${r.captured_at_utc}`;
+        if (camObservations.has(key)) continue;
+        camObservations.set(key, { ...r });
+        written += 1;
+      }
+      if (written) await save();
+      return { written };
+    },
+
+    async insertCamReads(rows: CamReadRow[]) {
+      await load();
+      let written = 0;
+      for (const r of rows) {
+        const key = `${r.slug}|${r.captured_at_utc}|${r.cam_id}`;
+        if (camReads.has(key)) continue;
+        camReads.set(key, { ...r });
+        written += 1;
+      }
+      if (written) await save();
+      return { written };
+    },
+
+    async camObservationsSince(slug: string, sinceUtc: string) {
+      await load();
+      return [...camObservations.values()]
+        .filter((o) => o.slug === slug && o.captured_at_utc >= sinceUtc)
+        .sort((a, b) => (a.captured_at_utc < b.captured_at_utc ? -1 : a.captured_at_utc > b.captured_at_utc ? 1 : 0))
+        .map((o) => ({ ...o }));
+    },
+
+    async camReadsAt(slug: string, capturedAtUtc: string) {
+      await load();
+      return [...camReads.values()]
+        .filter((c) => c.slug === slug && c.captured_at_utc === capturedAtUtc)
+        .sort((a, b) => (a.cam_id < b.cam_id ? -1 : a.cam_id > b.cam_id ? 1 : 0))
+        .map((c) => ({ ...c }));
+    },
+
+    async sunEventPredictionsFor(slug: string, eventIso: string) {
+      await load();
+      return [...sunPredictions.values()]
+        .filter((r) => r.slug === slug && r.event_iso === eventIso)
+        .sort((a, b) => (a.as_of_hour_utc < b.as_of_hour_utc ? -1 : a.as_of_hour_utc > b.as_of_hour_utc ? 1 : 0))
+        .map((r) => ({ ...r }));
+    },
+
+    // Sun-event observations (migrations/0015) — mirrors d1Store: upsert the
+    // observation, then write the BEST observation of that event (solar first,
+    // nearest cam) onto every prediction row within +-15 min, leaving rows a
+    // human labelled alone.
+    async recordSunEventObservation(row: SunEventObservationRow) {
+      await load();
+      const key = sunObsKey(row);
+      const existing = sunObservations.get(key);
+      let stored = false;
+      if (!existing) {
+        sunObservations.set(key, { ...row });
+        stored = true;
+      } else if (isNewerSunScore(row, existing)) {
+        // a re-score: everything replaced except when the key was first received
+        sunObservations.set(key, { ...row, created_at: existing.created_at });
+        stored = true;
+      }
+      const best = [...sunObservations.values()]
+        .filter((o) => o.slug === row.slug && o.event_kind === row.event_kind && o.event_date_local === row.event_date_local)
+        .sort(compareSunObservations)[0];
+      const eventMs = Date.parse(row.event_iso);
+      const source = sunCamObservedSource(best.cam_id, best.view);
+      let predictionsUpdated = 0;
+      for (const [pkey, pred] of sunPredictions) {
+        if (pred.slug !== row.slug || pred.event_kind !== row.event_kind) continue;
+        if (!(Math.abs(Date.parse(pred.event_iso) - eventMs) <= SUN_OBS_MATCH_WINDOW_MS)) continue;
+        if (pred.observed_source !== null && !pred.observed_source.startsWith("sun-cam:")) continue;
+        if (pred.observed_score === best.observed_score && pred.observed_source === source && pred.observed_at === best.scored_at) continue;
+        sunPredictions.set(pkey, {
+          ...pred,
+          observed_score: best.observed_score,
+          observed_source: source,
+          observed_at: best.scored_at,
+        });
+        predictionsUpdated += 1;
+      }
+      if (stored || predictionsUpdated) await save();
+      return { stored, predictionsUpdated };
+    },
+
+    async sunEventObservationsFor(slug: string, eventKind: "sunrise" | "sunset", eventDateLocal: string) {
+      await load();
+      return [...sunObservations.values()]
+        .filter((o) => o.slug === slug && o.event_kind === eventKind && o.event_date_local === eventDateLocal)
+        .sort(compareSunObservations)
+        .map((o) => ({ ...o }));
     },
 
     // Fair ordering, mirroring d1Store (Codex round-3 finding #1): compute
@@ -526,6 +741,75 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       await load();
       const key = `history:${slug}:${hourUtc}`;
       if (historyClaims.delete(key)) await save();
+    },
+
+    // --- Hourly history READ (Plus "Last N days" feature) -------------------
+    // Mirrors d1Store's single-query filter: this slug, snapshot rows only,
+    // local_date within [sinceLocalDate, untilLocalDate] inclusive, oldest
+    // first.
+    async hourlyHistory(slug: string, sinceLocalDate: string, untilLocalDate: string) {
+      await load();
+      return [...beachHourly.values()]
+        .filter(
+          (r) =>
+            r.slug === slug &&
+            r.row_kind === "snapshot" &&
+            r.local_date >= sinceLocalDate &&
+            r.local_date <= untilLocalDate,
+        )
+        .sort((a, b) => (a.hour_utc < b.hour_utc ? -1 : a.hour_utc > b.hour_utc ? 1 : 0));
+    },
+
+    // Lifetime records — mirrors d1Store's UNION ALL: for each kind, the
+    // single row that wins (max for best/hottest_sand/biggest_surf, min for
+    // quietest), ties broken by the earliest hour_utc, same rule the SQL's
+    // own `ORDER BY value [ASC|DESC], hour_utc ASC LIMIT 1` encodes.
+    async historyRecords(slug: string): Promise<HistoryRecordsResult> {
+      await load();
+      const rowsForSlug = [...beachHourly.values()].filter((r) => r.slug === slug && r.row_kind === "snapshot");
+
+      function pick(
+        key: keyof BeachHourlyRow,
+        direction: "max" | "min",
+        extraFilter?: (r: BeachHourlyRow) => boolean,
+      ): { local_date: string; local_hour: number; value: number } | null {
+        let winner: BeachHourlyRow | null = null;
+        for (const r of rowsForSlug) {
+          const v = r[key];
+          if (typeof v !== "number" || !Number.isFinite(v)) continue;
+          if (extraFilter && !extraFilter(r)) continue;
+          if (!winner) {
+            winner = r;
+            continue;
+          }
+          const wv = winner[key] as number;
+          const better = direction === "max" ? v > wv : v < wv;
+          const tie = v === wv;
+          if (better || (tie && r.hour_utc < winner.hour_utc)) winner = r;
+        }
+        return winner ? { local_date: winner.local_date, local_hour: winner.local_hour, value: winner[key] as number } : null;
+      }
+
+      const records: HistoryRecordRow[] = [];
+      const best = pick("score", "max");
+      if (best) records.push({ kind: "best", ...best });
+      const sand = pick("sand_temp_f", "max");
+      if (sand) records.push({ kind: "hottest_sand", ...sand });
+      const surf = pick("surf_ft", "max");
+      if (surf) records.push({ kind: "biggest_surf", ...surf });
+      const quiet = pick("crowd_pct", "min", (r) => r.local_hour >= 10 && r.local_hour <= 18);
+      if (quiet) records.push({ kind: "quietest", ...quiet });
+
+      let archiveStartedAt: string | null = null;
+      let surfSince: string | null = null;
+      const dates = new Set<string>();
+      for (const r of rowsForSlug) {
+        dates.add(r.local_date);
+        if (archiveStartedAt === null || r.local_date < archiveStartedAt) archiveStartedAt = r.local_date;
+        if (typeof r.surf_ft === "number" && (surfSince === null || r.local_date < surfSince)) surfSince = r.local_date;
+      }
+
+      return { records, archiveStartedAt, dayCount: dates.size, surfSince };
     },
 
     // --- Beach Session Live Activity (migrations/0007_live_activities.sql) -

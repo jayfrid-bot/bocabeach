@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { disableNative, enableNative, isNativePlatform, nativeStatus } from "@/lib/push/native";
 
 type State = "init" | "hidden" | "off" | "on" | "denied" | "busy" | "error";
@@ -25,8 +25,24 @@ export async function enableAlertsFlow(
   }
 }
 
-const pill =
-  "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 transition";
+// Shared 44px icon-button chrome, matching the other two header buttons
+// (Share, dark-mode) it sits beside — see components/ConditionsDashboard.tsx.
+const iconBtn =
+  "relative inline-flex h-10 w-10 sm:h-11 sm:w-11 shrink-0 items-center justify-center rounded-full ring-1 transition disabled:opacity-60";
+const iconBtnNeutral = `${iconBtn} bg-slate-900/5 text-slate-600 ring-slate-900/10 hover:bg-slate-900/10 dark:bg-white/5 dark:text-slate-300 dark:ring-white/10 dark:hover:bg-white/10`;
+
+/** A small state dot pinned to the bell's corner — the on/off/blocked signal
+ *  a screen reader gets from `aria-label` alone, and a sighted glance gets
+ *  from color without reading anything. */
+function StateDot({ color }: { color: "emerald" | "rose" }) {
+  const bg = color === "emerald" ? "bg-emerald-500" : "bg-rose-500";
+  return (
+    <span
+      aria-hidden
+      className={`absolute right-1.5 top-1.5 h-2 w-2 rounded-full ${bg} ring-2 ring-white dark:ring-slate-950`}
+    />
+  );
+}
 
 /**
  * The Alerts door.
@@ -68,6 +84,29 @@ export function NotifyButton({
   // refines it to on/denied. Browsers start "init" → render nothing.
   const [state, setState] = useState<State>(serverNative ? "off" : "init");
   const [err, setErr] = useState<string | null>(null);
+  // Icon-only "on" state opens a small popover (Settings / Turn off) instead
+  // of showing those as separate inline links — same two actions, one tap
+  // away. Plain buttons, not an ARIA menu (see the a11y note above the
+  // popover markup below for why).
+  const [menuOpen, setMenuOpen] = useState(false);
+  const bellRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  // Popover focus management: move focus in on open, Escape closes and
+  // returns focus to the bell. (Outside-click-closes is the backdrop button
+  // below; that one is excluded from the tab order.)
+  useEffect(() => {
+    if (!menuOpen) return;
+    menuRef.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      setMenuOpen(false);
+      bellRef.current?.focus();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [menuOpen]);
 
   useEffect(() => {
     let alive = true;
@@ -122,6 +161,7 @@ export function NotifyButton({
   };
 
   const disable = async () => {
+    setMenuOpen(false);
     setState("busy");
     try {
       await disableNative(slug);
@@ -135,47 +175,121 @@ export function NotifyButton({
   if (state === "denied") {
     return (
       <span
-        className={`${pill} bg-slate-900/5 text-slate-500 ring-slate-900/10 dark:bg-white/5 dark:ring-white/10`}
+        className={`${iconBtnNeutral} cursor-default text-slate-500 dark:text-slate-400`}
         title="Notifications are blocked. Enable them for Is It Beach Day in your device Settings."
+        aria-label="Alerts blocked — enable notifications in your device Settings"
       >
-        🔕 Notifications blocked
+        <span aria-hidden className="text-lg leading-none">
+          🔕
+        </span>
+        <StateDot color="rose" />
       </span>
     );
   }
 
   if (state === "on") {
     return (
-      <span className={`${pill} bg-emerald-500/10 text-emerald-700 ring-emerald-500/20 dark:text-emerald-300`}>
-        🔔 Alerts on
-        {onSettings ? (
-          <button onClick={onSettings} className="ml-1 underline hover:no-underline">
-            settings
-          </button>
-        ) : null}
-        <button onClick={disable} className="ml-1 underline hover:no-underline">
-          turn off
+      <span className="relative inline-block">
+        <button
+          ref={bellRef}
+          type="button"
+          onClick={() => setMenuOpen((v) => !v)}
+          aria-expanded={menuOpen}
+          aria-label="Alerts on for this beach — tap for settings"
+          className={`${iconBtn} bg-emerald-500/10 text-emerald-700 ring-emerald-500/20 hover:bg-emerald-500/20 dark:text-emerald-300`}
+        >
+          <span aria-hidden className="text-lg leading-none">
+            🔔
+          </span>
+          <StateDot color="emerald" />
         </button>
+        {menuOpen ? (
+          <>
+            {/* Outside-tap/click dismiss only — not a focusable control (no
+                real action of its own), so it's pulled out of the tab order
+                and hidden from assistive tech; Tab from the popover's own
+                buttons goes straight to whatever follows in the header. */}
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-hidden="true"
+              onClick={() => setMenuOpen(false)}
+              className="fixed inset-0 z-40 cursor-default"
+            />
+            {/* Plain buttons in a popover, not role="menu"/"menuitem": a real
+                ARIA menu promises arrow-key/typeahead navigation, which two
+                one-line actions don't need and a half-implemented menu role
+                would misrepresent to a screen reader. Focus still moves in on
+                open and Escape still closes it (see the effect above). */}
+            <div
+              ref={menuRef}
+              className="absolute right-0 top-full z-50 mt-2 w-44 overflow-hidden rounded-xl bg-white py-1 shadow-lg ring-1 ring-slate-900/10 dark:bg-slate-800 dark:ring-white/10"
+            >
+              {onSettings ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onSettings();
+                  }}
+                  className="flex min-h-[44px] w-full items-center px-4 text-left text-sm text-slate-700 hover:bg-slate-900/5 dark:text-slate-200 dark:hover:bg-white/10"
+                >
+                  Alert settings
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={disable}
+                className="flex min-h-[44px] w-full items-center px-4 text-left text-sm text-slate-700 hover:bg-slate-900/5 dark:text-slate-200 dark:hover:bg-white/10"
+              >
+                Turn off alerts
+              </button>
+            </div>
+          </>
+        ) : null}
       </span>
     );
   }
 
+  // off / busy / error — one tap enables (or, without an entitlement, opens
+  // the Plus door); the aria-label carries the same "🔔 Alerts" wording the
+  // free-tap flow has always been found by (see e2e/plus.spec.ts).
+  const label =
+    state === "busy"
+      ? "🔔 Alerts — enabling…"
+      : state === "error"
+        ? "🔔 Alerts — try again"
+        : "🔔 Alerts";
   return (
-    <span className="inline-flex flex-col items-start gap-1">
+    <span className="relative inline-block">
       <button
+        ref={bellRef}
+        type="button"
         onClick={enable}
         disabled={state === "busy"}
-        className={`${pill} bg-ocean-500/10 text-ocean-700 ring-ocean-500/20 hover:bg-ocean-500/20 disabled:opacity-60 dark:text-ocean-300`}
+        aria-label={label}
         title={
           err ??
           (entitled
             ? "Turn on safety and morning alerts for this beach"
             : "Safety and morning alerts are part of Beach Day Plus")
         }
+        className={iconBtnNeutral}
       >
-        🔔 {state === "busy" ? "Enabling…" : state === "error" ? "Try again" : "Alerts"}
+        <span aria-hidden className="text-lg leading-none">
+          🔔
+        </span>
+        {state === "error" ? <StateDot color="rose" /> : null}
       </button>
+      {/* The retry error text a hover `title` can't show on a touch screen —
+          same message enableAlertsFlow returned, just visible now instead of
+          hover-only. Clears itself the moment `enable` runs again. */}
       {state === "error" && err ? (
-        <span className="max-w-[280px] text-[11px] leading-tight text-rose-600 dark:text-rose-400">
+        <span
+          role="status"
+          aria-live="polite"
+          className="absolute right-0 top-full z-50 mt-2 w-56 rounded-lg bg-rose-600 px-3 py-2 text-xs leading-snug text-white shadow-lg dark:bg-rose-500"
+        >
           {err}
         </span>
       ) : null}

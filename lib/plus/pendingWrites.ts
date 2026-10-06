@@ -7,8 +7,10 @@
 // decides WHEN to flush (foreground, online, mount) and calls the storage
 // wrappers.
 
-import type { AlertPrefs, PendingWrites } from "@/lib/plus/types";
+import type { AlertPrefs, PendingWrites, SunColorMinBand } from "@/lib/plus/types";
 import type { ScoreProfile } from "@/lib/profile/types";
+
+type SunColorField = "minBand" | "leadMin";
 
 export type { PendingWrites };
 
@@ -38,6 +40,16 @@ export function mergePurchaseSync(pending: PendingWrites): PendingWrites {
   return { ...pending, purchaseSync: true };
 }
 
+/** Fold a sun-color settings edit into the queue per FIELD — mirrors
+ *  `mergePrefs`: changing the threshold then the lead time while offline
+ *  queues both, rather than the second edit discarding the first. */
+export function mergeSunColor(
+  pending: PendingWrites,
+  patch: { minBand?: SunColorMinBand; leadMin?: number },
+): PendingWrites {
+  return { ...pending, sunColor: { ...(pending.sunColor ?? {}), ...patch } };
+}
+
 /** Drop one kind of write from the queue entirely — used once it is
  *  confirmed saved, or once the server has rejected it outright (a 4xx,
  *  where retrying would only repeat the same rejected request). */
@@ -60,12 +72,41 @@ export function clearPrefsKeys(pending: PendingWrites, keys: readonly string[]):
   return out;
 }
 
+/**
+ * Remove a sun-color field from the queue ONLY when the value queued for it
+ * still equals what just succeeded (or was rejected) — a later edit to the
+ * SAME field, queued (or re-queued) while this request was in flight, must
+ * survive rather than being silently treated as "handled" by an older
+ * response. Compare-and-clear, per field, mirroring `clearPrefsKeys`'
+ * per-key drop but value-gated (Requirement item 3).
+ */
+export function clearSunColorIfMatch(
+  pending: PendingWrites,
+  patch: { minBand?: SunColorMinBand; leadMin?: number },
+): PendingWrites {
+  if (!pending.sunColor) return pending;
+  const next = { ...pending.sunColor };
+  let changed = false;
+  for (const k of Object.keys(patch) as SunColorField[]) {
+    if (patch[k] !== undefined && next[k] === patch[k]) {
+      delete next[k];
+      changed = true;
+    }
+  }
+  if (!changed) return pending;
+  const out = { ...pending };
+  if (Object.keys(next).length) out.sunColor = next;
+  else delete out.sunColor;
+  return out;
+}
+
 export function isEmpty(pending: PendingWrites): boolean {
   return (
     !pending.profile &&
     !pending.homeSlug &&
     !(pending.prefs && Object.keys(pending.prefs).length) &&
-    !pending.purchaseSync
+    !pending.purchaseSync &&
+    !(pending.sunColor && Object.keys(pending.sunColor).length)
   );
 }
 

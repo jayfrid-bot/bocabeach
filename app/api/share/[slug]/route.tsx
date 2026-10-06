@@ -1,7 +1,7 @@
 import { ImageResponse } from "next/og";
 import { NextResponse } from "next/server";
 import { getConditions } from "@/lib/conditions";
-import { shareCardModel, type ShareCardModel, type ShareCardTile } from "@/lib/shareCard";
+import { shareCacheControl, shareCardModel, type ShareCardModel, type ShareCardTile } from "@/lib/shareCard";
 
 // The shareable social card: a phone-native PNG of today's conditions, built
 // for the Share sheet (components/ShareCardSheet.tsx) rather than link
@@ -142,7 +142,7 @@ function SkyBand({ height, cardWidth, sun }: { height: number; cardWidth: number
   const waveTopH = Math.round(height * 0.16);
   const waveMidH = Math.round(height * 0.13);
   const waveBlendH = Math.round(height * 0.1);
-  const sunTop = Math.round(height * 0.16);
+  const sunTop = Math.round(height * 0.14);
   return (
     <div
       style={{
@@ -193,8 +193,8 @@ function SkyBand({ height, cardWidth, sun }: { height: number; cardWidth: number
  *  parse declaration" the moment it renders one); a dial of tiny rotated
  *  divs was tried next, but it reads as jagged rather than a clean ring. A
  *  stroked <circle> with stroke-dasharray is exact and cheap. */
-function ScoreRing({ diameter, thickness, score, color, numSize, slashSize }: { diameter: number; thickness: number; score: number; color: string; numSize: number; slashSize: number }) {
-  const pct = Math.max(0, Math.min(100, score));
+function ScoreRing({ diameter, thickness, score, color, numSize, slashSize }: { diameter: number; thickness: number; score: number | null; color: string; numSize: number; slashSize: number }) {
+  const pct = score == null ? 0 : Math.max(0, Math.min(100, score));
   const c = diameter / 2;
   const r = (diameter - thickness) / 2;
   const circ = 2 * Math.PI * r;
@@ -204,6 +204,7 @@ function ScoreRing({ diameter, thickness, score, color, numSize, slashSize }: { 
     <div style={{ position: "relative", width: diameter, height: diameter, display: "flex" }}>
       <svg width={diameter} height={diameter} viewBox={`0 0 ${diameter} ${diameter}`} style={{ display: "flex" }}>
         <circle cx={c} cy={c} r={r} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth={thickness} />
+        {pct > 0 ? (
         <circle
           cx={c}
           cy={c}
@@ -215,6 +216,7 @@ function ScoreRing({ diameter, thickness, score, color, numSize, slashSize }: { 
           strokeDasharray={`${filled} ${circ}`}
           transform={`rotate(-90 ${c} ${c})`}
         />
+        ) : null}
       </svg>
       <div
         style={{
@@ -230,7 +232,7 @@ function ScoreRing({ diameter, thickness, score, color, numSize, slashSize }: { 
         }}
       >
         <div style={{ display: "flex", fontSize: numSize, fontWeight: 800, color: INK, lineHeight: 1 }}>
-          {Math.round(score)}
+          {score == null ? "—" : Math.round(score)}
         </div>
         <div style={{ display: "flex", fontSize: slashSize, fontWeight: 600, color: MUTED, marginTop: 2 }}>
           /100
@@ -240,64 +242,68 @@ function ScoreRing({ diameter, thickness, score, color, numSize, slashSize }: { 
   );
 }
 
-function Tile({ tile, valueSize, labelSize, tilePad }: { tile: ShareCardTile; valueSize: number; labelSize: number; tilePad: string }) {
+function Tile({ tile, sizes }: { tile: ShareCardTile; sizes: TileSizes }) {
+  // One line per row, clipped with an ellipsis: a long reading must never
+  // grow the tile (a wrapped value once pushed the hero text into itself).
+  const line = (extra: Record<string, string | number>) => ({
+    display: "block" as const,
+    whiteSpace: "nowrap" as const,
+    overflow: "hidden" as const,
+    textOverflow: "ellipsis" as const,
+    lineHeight: 1.15,
+    ...extra,
+  });
   return (
     <div
       style={{
         display: "flex",
         flexDirection: "column",
         flex: 1,
+        minWidth: 0,
         background: TILE_BG,
         border: `1px solid ${TILE_RING}`,
-        borderRadius: 28,
-        padding: tilePad,
+        borderRadius: sizes.radius,
+        padding: sizes.pad,
       }}
     >
-      <div
-        style={{
-          display: "flex",
-          fontSize: labelSize,
-          fontWeight: 600,
-          lineHeight: 1.15,
-          color: MUTED,
-          textTransform: "uppercase",
-          letterSpacing: 1.5,
-        }}
-      >
+      <div style={line({ fontSize: sizes.label, fontWeight: 600, color: MUTED, textTransform: "uppercase", letterSpacing: 1.2 })}>
         {tile.label}
       </div>
-      <div style={{ display: "flex", fontSize: valueSize, fontWeight: 700, lineHeight: 1.15, color: INK, marginTop: 6 }}>
+      <div style={line({ fontSize: valueSizeFor(tile.value, sizes.value), fontWeight: 700, color: INK, marginTop: 4 })}>
         {tile.value}
       </div>
+      <div style={line({ fontSize: sizes.note, color: MUTED, marginTop: 2 })}>{tile.note ?? " "}</div>
     </div>
   );
 }
 
+/** Steps a long value ("Crystal clear", "Churned up") down so it fits its
+ *  third-width tile instead of ending in an ellipsis. */
+function valueSizeFor(value: string, base: number): number {
+  if (value.length <= 8) return base;
+  if (value.length <= 11) return Math.round(base * 0.8);
+  return Math.round(base * 0.68);
+}
+
+interface TileSizes {
+  label: number;
+  value: number;
+  note: number;
+  pad: string;
+  radius: number;
+}
+
 /** Chunk tiles into rows of `cols` — a plain flex grid (satori has no CSS Grid). */
-function TileGrid({
-  tiles,
-  cols,
-  valueSize,
-  labelSize,
-  tilePad,
-  gap,
-}: {
-  tiles: ShareCardTile[];
-  cols: number;
-  valueSize: number;
-  labelSize: number;
-  tilePad: string;
-  gap: number;
-}) {
+function TileGrid({ tiles, cols, sizes, gap }: { tiles: ShareCardTile[]; cols: number; sizes: TileSizes; gap: number }) {
   const rows: ShareCardTile[][] = [];
   for (let i = 0; i < tiles.length; i += cols) rows.push(tiles.slice(i, i + cols));
   return (
-    <div style={{ display: "flex", flexDirection: "column", width: "100%" }}>
+    <div style={{ display: "flex", flexDirection: "column", width: "100%", flexShrink: 0 }}>
       {rows.map((row, i) => (
         <div key={i} style={{ display: "flex", flexDirection: "row", width: "100%", marginTop: i === 0 ? 0 : gap }}>
           {row.map((tile, j) => (
-            <div key={tile.key} style={{ display: "flex", flex: 1, marginLeft: j === 0 ? 0 : gap }}>
-              <Tile tile={tile} valueSize={valueSize} labelSize={labelSize} tilePad={tilePad} />
+            <div key={tile.key} style={{ display: "flex", flex: 1, minWidth: 0, marginLeft: j === 0 ? 0 : gap }}>
+              <Tile tile={tile} sizes={sizes} />
             </div>
           ))}
           {row.length < cols
@@ -311,34 +317,60 @@ function TileGrid({
   );
 }
 
+const SAFETY_STYLE: Record<ShareCardModel["safety"]["level"], { bg: string; ring: string; dot: string; text: string }> = {
+  safe: { bg: "rgba(52,211,153,0.16)", ring: "rgba(52,211,153,0.45)", dot: "#34d399", text: "#d1fae5" },
+  caution: { bg: "rgba(251,191,36,0.16)", ring: "rgba(251,191,36,0.5)", dot: "#fbbf24", text: "#fef3c7" },
+  "stay-out": { bg: "rgba(251,113,133,0.18)", ring: "rgba(251,113,133,0.5)", dot: "#fb7185", text: "#ffe4e9" },
+};
+
+/** Up to `max` tiles, trimmed to whole rows so no tile sits alone at the end
+ *  (the list is in priority order, so the lowest-priority ones drop). */
+function fullRows(tiles: ShareCardTile[], cols: number, max: number): ShareCardTile[] {
+  const n = Math.min(tiles.length, max);
+  return tiles.slice(0, n < cols ? n : n - (n % cols));
+}
+
+/** Beach name size that keeps long names to two lines in the hero column. */
+function nameSizeFor(name: string, base: number): number {
+  if (name.length > 18) return Math.round(base * 0.78);
+  if (name.length > 13) return Math.round(base * 0.88);
+  return base;
+}
+
 function ShareCard({ model, format }: { model: ShareCardModel; format: Format }) {
   const isStory = format === "story";
   const { width, height } = SIZES[format];
 
-  const pad = isStory ? 60 : 56;
-  const skyH = Math.round(height * (isStory ? 0.245 : 0.25));
-  const sun = isStory ? { d: 128, rayLen: 34, rayW: 12, gap: 12 } : { d: 106, rayLen: 28, rayW: 9, gap: 11 };
+  // Every size below is fixed, and every block is flexShrink: 0, so the
+  // layout can never squeeze one text line into the next. The story budget
+  // (sky 300 + hero 360 + safety ~130 + 4 tile rows ~620 + best ~40 + footer
+  // ~100 + gaps ~130) sits under 1920; the square one under 1080.
+  const pad = isStory ? 56 : 44;
+  const skyH = isStory ? 300 : 150;
+  const sun = isStory ? { d: 96, rayLen: 26, rayW: 10, gap: 10 } : { d: 58, rayLen: 16, rayW: 7, gap: 7 };
 
-  const ringDiameter = isStory ? 545 : 280;
-  const ringThickness = isStory ? 26 : 20;
-  const ringNumSize = isStory ? 222 : 80;
-  const ringSlashSize = isStory ? 52 : 22;
+  const ring = isStory
+    ? { d: 360, thick: 24, num: 146, slash: 38 }
+    : { d: 228, thick: 16, num: 92, slash: 26 };
+  const verdictSize = isStory ? 50 : 34;
+  const nameSize = nameSizeFor(model.beachName, isStory ? 80 : 54);
+  const metaSize = isStory ? 30 : 21;
 
-  const verdictSize = isStory ? 64 : 32;
-  const nameSize = isStory ? 84 : 36;
-  const metaSize = isStory ? 36 : 21;
-  const capSize = isStory ? 28 : 19;
+  const cols = 3;
+  const tileCount = isStory ? 12 : 9;
+  const tileSizes: TileSizes = isStory
+    ? { label: 22, value: 50, note: 25, pad: "18px 22px", radius: 24 }
+    : { label: 15, value: 31, note: 17, pad: "10px 14px", radius: 18 };
+  const tileGap = isStory ? 16 : 10;
 
-  const cols = isStory ? 2 : 3;
-  const tileValueSize = isStory ? 56 : 25;
-  const tileLabelSize = isStory ? 28 : 16;
-  const tileGap = isStory ? 18 : 12;
-  const tilePad = isStory ? "14px 22px" : "14px 14px";
+  const safetySize = isStory ? { title: 34, reason: 26, pad: "18px 26px", dot: 20 } : { title: 23, reason: 18, pad: "10px 16px", dot: 13 };
+  const bestSize = isStory ? 32 : 21;
+  const footerWordmark = isStory ? 38 : 22;
+  const footerUrl = isStory ? 28 : 17;
+  const gapY = isStory ? 32 : 16;
 
-  const footerWordmark = isStory ? 40 : 22;
-  const footerUrl = isStory ? 32 : 18;
-
-  const metaLine = [model.region, model.dateLabel, model.timeLabel].filter(Boolean).join(" · ");
+  const dateTime = [model.dateLabel, model.timeLabel ? `as of ${model.timeLabel}` : ""].filter(Boolean).join(" · ");
+  const safety = SAFETY_STYLE[model.safety.level];
 
   return (
     <div
@@ -356,124 +388,134 @@ function ShareCard({ model, format }: { model: ShareCardModel; format: Format })
       <SkyBand height={skyH} cardWidth={width} sun={sun} />
 
       <div style={{ display: "flex", flexDirection: "column", flex: 1, padding: pad, position: "relative" }}>
-        {/* Pushes everything below down past the sky band's painted area —
-            without this the hero would render on top of the sun/waves. */}
         <div style={{ display: "flex", height: Math.max(0, skyH - pad), flexShrink: 0 }} />
 
-        {/* Centers the hero+tiles+footer block in the space left below the
-            sky band, so any slack lands evenly above and below instead of
-            as one large empty band at the bottom. */}
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            flex: 1,
-            justifyContent: "center",
-          }}
-        >
-          <ScoreRing
-            diameter={ringDiameter}
-            thickness={ringThickness}
-            score={model.score}
-            color={model.color}
-            numSize={ringNumSize}
-            slashSize={ringSlashSize}
-          />
-
-          <div
-            style={{
-              display: "flex",
-              fontSize: verdictSize,
-              fontWeight: 800,
-              lineHeight: 1.15,
-              color: model.color,
-              marginTop: isStory ? 22 : 20,
-              textAlign: "center",
-            }}
-          >
-            {model.verdict}
+        <div style={{ display: "flex", flexDirection: "column", flex: 1, justifyContent: "center" }}>
+          {/* Hero: the score ring beside the verdict, beach, and time. */}
+          <div style={{ display: "flex", flexDirection: "row", alignItems: "center", width: "100%", flexShrink: 0 }}>
+            <div style={{ display: "flex", flexShrink: 0 }}>
+              <ScoreRing
+                diameter={ring.d}
+                thickness={ring.thick}
+                score={model.available ? model.score : null}
+                color={model.color}
+                numSize={ring.num}
+                slashSize={ring.slash}
+              />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, marginLeft: isStory ? 40 : 28 }}>
+              <div style={{ display: "flex", fontSize: verdictSize, fontWeight: 800, lineHeight: 1.1, color: model.color }}>
+                {model.verdict}
+              </div>
+              <div style={{ display: "flex", fontSize: nameSize, fontWeight: 800, lineHeight: 1.05, color: INK, marginTop: isStory ? 12 : 8 }}>
+                {model.beachName}
+              </div>
+              {model.region ? (
+                <div style={{ display: "flex", fontSize: metaSize, lineHeight: 1.2, color: MUTED, marginTop: isStory ? 14 : 8 }}>
+                  {model.region}
+                </div>
+              ) : null}
+              {dateTime ? (
+                <div style={{ display: "flex", fontSize: metaSize, lineHeight: 1.2, color: MUTED, marginTop: 4 }}>{dateTime}</div>
+              ) : null}
+              {model.limitedNote ? (
+                <div style={{ display: "flex", fontSize: metaSize, lineHeight: 1.2, color: SUN_YELLOW, marginTop: isStory ? 10 : 6 }}>
+                  {model.limitedNote}
+                </div>
+              ) : null}
+            </div>
           </div>
 
-          <div
-            style={{
-              display: "flex",
-              fontSize: nameSize,
-              fontWeight: 800,
-              lineHeight: 1.15,
-              color: INK,
-              marginTop: isStory ? 14 : 18,
-              textAlign: "center",
-            }}
-          >
-            {model.beachName}
-          </div>
-          {metaLine ? (
+          {model.safety.label ? (
             <div
               style={{
                 display: "flex",
-                fontSize: metaSize,
-                lineHeight: 1.15,
-                color: MUTED,
-                marginTop: isStory ? 10 : 18,
-                textAlign: "center",
+                flexDirection: "column",
+                flexShrink: 0,
+                marginTop: gapY,
+                padding: safetySize.pad,
+                borderRadius: isStory ? 24 : 16,
+                background: safety.bg,
+                border: `1px solid ${safety.ring}`,
               }}
             >
-              {metaLine}
+              <div style={{ display: "flex", alignItems: "center" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    width: safetySize.dot,
+                    height: safetySize.dot,
+                    borderRadius: 999,
+                    background: safety.dot,
+                    marginRight: isStory ? 14 : 10,
+                  }}
+                />
+                <div style={{ display: "flex", fontSize: safetySize.title, fontWeight: 800, lineHeight: 1.15, color: INK }}>
+                  {model.safety.label}
+                </div>
+              </div>
+              {model.safety.reasons.slice(0, isStory ? 2 : 1).map((reason) => (
+                <div
+                  key={reason}
+                  style={{
+                    display: "block",
+                    fontSize: safetySize.reason,
+                    lineHeight: 1.25,
+                    color: safety.text,
+                    marginTop: isStory ? 6 : 4,
+                    marginLeft: safetySize.dot + (isStory ? 14 : 10),
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {reason}
+                </div>
+              ))}
             </div>
           ) : null}
 
-          {model.capped && model.capNote ? (
+          <div style={{ display: "flex", width: "100%", marginTop: gapY, flexShrink: 0 }}>
+            <TileGrid tiles={fullRows(model.tiles, cols, tileCount)} cols={cols} sizes={tileSizes} gap={tileGap} />
+          </div>
+
+          {model.bestTime ? (
             <div
               style={{
                 display: "flex",
-                marginTop: isStory ? 16 : 14,
-                padding: isStory ? "12px 20px" : "8px 14px",
-                borderRadius: 999,
-                background: "rgba(251,113,133,0.18)",
-                border: "1px solid rgba(251,113,133,0.45)",
-                fontSize: capSize,
-                color: "#ffd7de",
-                textAlign: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+                marginTop: gapY,
+                fontSize: bestSize,
+                fontWeight: 700,
+                lineHeight: 1.2,
+                color: model.bestTimeGood === false ? MUTED : SUN_YELLOW,
               }}
             >
-              {model.capNote}
+              {model.bestTime}
             </div>
           ) : null}
 
-          <div style={{ display: "flex", width: "100%", marginTop: isStory ? 24 : 26 }}>
-            <TileGrid
-              tiles={model.tiles}
-              cols={cols}
-              valueSize={tileValueSize}
-              labelSize={tileLabelSize}
-              tilePad={tilePad}
-              gap={tileGap}
-            />
-          </div>
-
-          {/* Footer: wordmark + plain URL line — no QR code. Kept inside the
-              centered block so it hugs the tiles instead of pinning to the
-              card's bottom edge with a big gap above it. */}
           <div
             style={{
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
               width: "100%",
-              marginTop: isStory ? 18 : 18,
-              paddingTop: isStory ? 20 : 16,
+              flexShrink: 0,
+              marginTop: gapY,
+              paddingTop: isStory ? 20 : 12,
               borderTop: `1px solid ${TILE_RING}`,
             }}
           >
-          <div style={{ display: "flex", fontSize: footerWordmark, fontWeight: 800, lineHeight: 1.15, color: INK }}>
-            <span style={{ display: "flex" }}>Is it beach day</span>
-            <span style={{ display: "flex", color: SUN_YELLOW }}>?</span>
+            <div style={{ display: "flex", fontSize: footerWordmark, fontWeight: 800, lineHeight: 1.15, color: INK }}>
+              <span style={{ display: "flex" }}>Is it beach day</span>
+              <span style={{ display: "flex", color: SUN_YELLOW }}>?</span>
+            </div>
+            <div style={{ display: "flex", fontSize: footerUrl, lineHeight: 1.15, color: WORDMARK_MUTED, marginTop: 6 }}>
+              {model.pageUrl}
+            </div>
           </div>
-          <div style={{ display: "flex", fontSize: footerUrl, lineHeight: 1.15, color: WORDMARK_MUTED, marginTop: 6 }}>
-            {model.pageUrl}
-          </div>
-        </div>
         </div>
       </div>
     </div>
@@ -516,15 +558,14 @@ export async function GET(
     return NextResponse.json({ error: "Unknown location" }, { status: 404 });
   }
 
-  const model = shareCardModel(data, Date.now());
+  const nowMs = Date.now();
+  const model = shareCardModel(data, nowMs);
   const { width, height } = SIZES[formatParam];
 
   const image = new ImageResponse(<ShareCard model={model} format={formatParam} />, {
     width,
     height,
-    headers: {
-      "Cache-Control": "public, max-age=900, s-maxage=900, stale-while-revalidate=600",
-    },
+    headers: { "Cache-Control": shareCacheControl(model, nowMs) },
   });
 
   if (cache) {

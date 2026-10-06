@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import useSWR from "swr";
 import { fmtTime } from "@/lib/format";
 import { SAFETY_ALERT_KEYS } from "@/lib/db/types";
@@ -167,6 +167,91 @@ export function isFirstArmedIdentityEligibleForAdoption(
   return identity !== null && !hadPriorRealIdentity;
 }
 
+// --- Lock Screen row (the compact "Lock Screen: on/off" control inside the
+// armed card) -----------------------------------------------------------
+//
+// Bug this fixes: the old one-time prompt only ever rendered while
+// `laPref === null` AND the plugin read as available at that exact moment.
+// Once a user answered — or once availability happened to read false on the
+// one check the old effect ran (tied to `armed`, never re-checked) — the
+// card fell silent forever: no way to see the pref, and no way to change it.
+// This row is shown any time the card is armed, native, and entitled, in
+// every state, so the control is never simply gone.
+
+/** iOS major.minor, parsed from `navigator.userAgent` (e.g. "iPhone OS 18_0
+ *  like Mac OS X" -> {major:18, minor:0}). `null` when the UA carries no
+ *  recognizable "iPhone OS" token — the row then falls back to whatever the
+ *  native plugin itself reports (`osEnabled`) instead of guessing a version
+ *  it can't read. */
+export interface IOSVersion {
+  major: number;
+  minor: number;
+}
+
+export function parseIOSMajorMinor(userAgent: string): IOSVersion | null {
+  const m = /iPhone OS (\d+)_(\d+)/.exec(userAgent);
+  if (!m) return null;
+  return { major: Number(m[1]), minor: Number(m[2]) };
+}
+
+function iosAtLeast16_2(v: IOSVersion): boolean {
+  return v.major > 16 || (v.major === 16 && v.minor >= 2);
+}
+
+/** What the Lock Screen row should show, and why — pure so every branch is
+ *  unit-testable without rendering the card. Checked in order: plugin
+ *  reachable at all, then the phone's own iOS version (this bridge's UA
+ *  parse, independent of whatever native reports), then the native
+ *  Settings toggle (`getStatus().enabled`) — matching the three distinct
+ *  reasons a phone can fail to show a Beach Session. An unparseable iOS
+ *  version (`iosMajorMinor: null`) skips straight to asking the plugin
+ *  rather than being treated as "too old". */
+export type LockScreenRowState =
+  | { kind: "hidden" }
+  | { kind: "prompt" }
+  | { kind: "on"; running: boolean }
+  | { kind: "off" }
+  | {
+      kind: "unavailable";
+      reason: "plugin-missing" | "ios-too-old" | "os-disabled";
+      message: string;
+    };
+
+export function lockScreenRowState(opts: {
+  native: boolean;
+  entitled: boolean;
+  armed: boolean;
+  pluginAvailable: boolean;
+  osEnabled: boolean;
+  iosMajorMinor: IOSVersion | null;
+  pref: "on" | "off" | null;
+  running: boolean;
+}): LockScreenRowState {
+  const { native, entitled, armed, pluginAvailable, osEnabled, iosMajorMinor, pref, running } = opts;
+  if (!native || !entitled || !armed) return { kind: "hidden" };
+
+  if (!pluginAvailable) {
+    return {
+      kind: "unavailable",
+      reason: "plugin-missing",
+      message: "Update the app to show this on your Lock Screen.",
+    };
+  }
+  if (iosMajorMinor && !iosAtLeast16_2(iosMajorMinor)) {
+    return { kind: "unavailable", reason: "ios-too-old", message: "Needs iOS 16.2 or later." };
+  }
+  if (!osEnabled) {
+    return {
+      kind: "unavailable",
+      reason: "os-disabled",
+      message:
+        "Live Activities are off for this app — turn them on in iPhone Settings → Is It Beach Day → Live Activities.",
+    };
+  }
+  if (pref === null) return { kind: "prompt" };
+  return pref === "on" ? { kind: "on", running } : { kind: "off" };
+}
+
 /** The identity of an armed session for Live Activity purposes: which beach,
  *  for which window. Retargeting (LOC-02, auto sessions follow the phone)
  *  can leave `armedUntil` unchanged — `extendArmedUntil` is a no-op when the
@@ -309,6 +394,7 @@ export function BeachModeCard({
   const laLastHashRef = useRef<string | null>(null);
   const laLastUpdateAtRef = useRef(0);
   const laDismissedRef = useRef(false); // this session's activity was user-dismissed: no auto-recreate
+  const [laReshowTick, setLaReshowTick] = useState(0); // bumped by Turn on / Show again to re-run the start effect
   const laSessionStartRef = useRef<number | null>(null);
   const laStartingRef = useRef(false);
   // Codex round-4: the identity-teardown effect below fires end() without
@@ -318,6 +404,27 @@ export function BeachModeCard({
   // adoption's getStatus(), which carries no slug/window to tell activities
   // apart) can see the old activity still "running" mid-teardown.
   const laPendingEndRef = useRef<Promise<unknown> | null>(null);
+  // Codex review: serializes every native start()/update()/end() call this
+  // card makes (lib/plus/liveActivity.ts's createSerialQueue) so the plugin
+  // always sees them strictly one at a time, in the order they were queued.
+  // The race this closes: Off then On fired quickly while a start() is
+  // still in flight — the tickets above decide that stale call should undo
+  // itself, but without ordering its cleanup end() can land AFTER the
+  // newer start() and end the wrong activity. One queue instance per card
+  // (lazy ref init: `useRef(fn)` would otherwise build a throwaway queue on
+  // every render).
+  const laQueueRef = useRef<ReturnType<typeof liveActivity.createSerialQueue> | null>(null);
+  if (!laQueueRef.current) laQueueRef.current = liveActivity.createSerialQueue();
+  const laSerial = useCallback(<T,>(fn: () => Promise<T>): Promise<T> => laQueueRef.current!(fn), []);
+  // Render-visible status (the Lock Screen row) must not depend on refs
+  // alone: laActivityIdRef/laDismissedRef are written from async callbacks
+  // (a native listener, a start() resolving) that otherwise cause no
+  // re-render of their own — the row would then show "Showing" after a
+  // swipe-away, or "Off" long after Turn on actually succeeded, until some
+  // UNRELATED prop happened to re-render this component. Called at every
+  // site that writes either ref outside of a state update that already
+  // re-renders on its own.
+  const [, bumpLaUi] = useReducer((n: number) => n + 1, 0);
   // The single armed-session identity (see `laSessionIdentity`) eligible for
   // adoption: only the FIRST one observed after mount (a reload/relaunch
   // while already armed — see the identity-teardown effect below, which is
@@ -377,7 +484,7 @@ export function BeachModeCard({
     if (laActivityIdRef.current) {
       const id = laActivityIdRef.current;
       laActivityIdRef.current = null;
-      const endPromise = liveActivity.end(id, { dismissal: "immediate" });
+      const endPromise = laSerial(() => liveActivity.end(id, { dismissal: "immediate" }));
       laPendingEndRef.current = endPromise;
       void endPromise.finally(() => {
         if (laPendingEndRef.current === endPromise) laPendingEndRef.current = null;
@@ -388,8 +495,9 @@ export function BeachModeCard({
     laLastHashRef.current = null;
     laSeqRef.current = 0;
     laStartingRef.current = false;
+    bumpLaUi(); // laActivityIdRef and/or laDismissedRef may have just changed
     if (hadPriorSession) writeLiveActivityDismissal(null); // previous session is over
-  }, [armed, presence]);
+  }, [armed, presence, laSerial]);
 
   // A dismissal saved for THIS armed session (bd:live-activity-dismissed)
   // survives a remount that a plain ref can't — a backgrounded app or a
@@ -402,6 +510,7 @@ export function BeachModeCard({
     const saved = readLiveActivityDismissal();
     if (saved && saved.slug === presence.slug && saved.armedUntil === presence.armedUntil) {
       laDismissedRef.current = true;
+      bumpLaUi();
     }
   }, [armed, presence]);
 
@@ -416,11 +525,24 @@ export function BeachModeCard({
       return;
     }
     let alive = true;
-    void liveActivity.getStatus().then((status) => {
-      if (alive) setLaAvailable(status.enabled);
-    });
+    const check = () => {
+      void liveActivity.getStatus().then((status) => {
+        if (alive) setLaAvailable(status.enabled);
+      });
+    };
+    check();
+    // Flipping Settings -> Is It Beach Day -> Live Activities fires no event
+    // of its own — only returning to the app does. Re-check then so the Lock
+    // Screen row updates on its own, without needing Beach Mode to re-arm.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") check();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", check);
     return () => {
       alive = false;
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", check);
     };
   }, [native, plus.entitled, armed]);
 
@@ -513,6 +635,7 @@ export function BeachModeCard({
         // immediately rather than waiting out a throttle window measured
         // from before this card even mounted.
         laLastUpdateAtRef.current = 0;
+        bumpLaUi(); // adopted an already-running activity — "running" just became true
       } finally {
         // Resolved, errored, or the plugin was simply unreachable — either
         // way the check for this identity is done; mark it so the
@@ -538,9 +661,10 @@ export function BeachModeCard({
     if (laActivityIdRef.current) {
       const id = laActivityIdRef.current;
       laActivityIdRef.current = null;
-      void liveActivity.end(id, { dismissal: "immediate" });
+      bumpLaUi();
+      void laSerial(() => liveActivity.end(id, { dismissal: "immediate" }));
     }
-  }, [plus.entitled, laAvailable]);
+  }, [plus.entitled, laAvailable, laSerial]);
 
   // Native activity-state listener — dismissal suppresses auto-recreation for
   // the rest of this session (persisted, so it also survives a remount), but
@@ -552,6 +676,7 @@ export function BeachModeCard({
       if (e.state === "dismissed") {
         laDismissedRef.current = true;
         laActivityIdRef.current = null;
+        bumpLaUi(); // a native event callback — nothing else re-renders this
         const identity = laIdentityRef.current;
         if (identity) writeLiveActivityDismissal({ slug: identity.slug, armedUntil: identity.armedUntil });
       }
@@ -565,12 +690,63 @@ export function BeachModeCard({
     { refreshInterval: LIVE_ACTIVITY_MIN_UPDATE_MS, revalidateOnFocus: false },
   );
 
-  const laShowPrompt = armed && laPrefLoaded && laAvailable && laPref === null;
-
   const laRespondToPrompt = useCallback((choice: "on" | "off") => {
     writeLiveActivityPref(choice);
     setLaPref(choice);
   }, []);
+
+  // Reachability the OS/Settings answer (`laAvailable`, re-checked above)
+  // can't distinguish on its own: whether the native plugin exists at all,
+  // and whether this phone's iOS is even new enough for Live Activities.
+  // Both are static for the life of this page load, so read them directly
+  // rather than duplicate them in state.
+  const laPluginAvailable = liveActivity.isAvailable();
+  const laIosVersion = useMemo(
+    () => (typeof navigator === "undefined" ? null : parseIOSMajorMinor(navigator.userAgent)),
+    [],
+  );
+
+  const laTurnOff = useCallback(() => {
+    writeLiveActivityPref("off");
+    setLaPref("off");
+    // Same ticket the identity-teardown effect bumps on Off/retarget (R-02):
+    // invalidates any start()/update() already in flight for this session,
+    // so it recognizes itself as stale on its next check and ends whatever
+    // it just started, instead of resurrecting the activity the user just
+    // turned off.
+    laSessionSeqRef.current += 1;
+    laStartingRef.current = false;
+    if (laActivityIdRef.current) {
+      const id = laActivityIdRef.current;
+      laActivityIdRef.current = null;
+      void laSerial(() => liveActivity.end(id, { dismissal: "immediate" }));
+    }
+  }, [laSerial]);
+
+  const laTurnOn = useCallback(() => {
+    writeLiveActivityPref("on");
+    setLaPref("on");
+    // An explicit "Turn on" / "Show again" overrides an earlier swipe-away on
+    // the Lock Screen: without this the start effect keeps honoring that
+    // dismissal and the tap would do nothing until Beach Mode re-arms.
+    laDismissedRef.current = false;
+    writeLiveActivityDismissal(null);
+    setLaReshowTick((t) => t + 1);
+    // No start() call here: flipping the pref back to "on" is all the
+    // start/update effect below needs to begin a fresh activity — adoption
+    // for this session identity has already settled.
+  }, []);
+
+  const laRow = lockScreenRowState({
+    native,
+    entitled: plus.entitled,
+    armed,
+    pluginAvailable: laPluginAvailable,
+    osEnabled: laAvailable,
+    iosMajorMinor: laIosVersion,
+    pref: laPref,
+    running: laActivityIdRef.current !== null,
+  });
 
   // Off (armed -> not armed) is handled by the session-identity effect above,
   // which tears down and resets on ANY identity change, including this one.
@@ -615,7 +791,7 @@ export function BeachModeCard({
       laLastHashRef.current = hash;
       laLastUpdateAtRef.current = now;
       laSeqRef.current = seq + 1;
-      void liveActivity.update(id, wire);
+      void laSerial(() => liveActivity.update(id, wire));
       return;
     }
 
@@ -656,7 +832,11 @@ export function BeachModeCard({
       }
       if (decision === "update") {
         laStartingRef.current = false;
-        void liveActivity.update(laActivityIdRef.current!, wire);
+        // Capture the id NOW, synchronously — laActivityIdRef can be
+        // cleared by a later effect (Off, entitlement loss) before this
+        // queued call actually reaches the front of the line.
+        const id = laActivityIdRef.current!;
+        void laSerial(() => liveActivity.update(id, wire));
         laLastHashRef.current = hash;
         laLastUpdateAtRef.current = Date.now();
         laSeqRef.current = seq + 1;
@@ -690,41 +870,46 @@ export function BeachModeCard({
       }
       if (postEndDecision === "update") {
         laStartingRef.current = false;
-        void liveActivity.update(laActivityIdRef.current!, wire);
+        // Same capture-before-enqueue reasoning as the branch above.
+        const id = laActivityIdRef.current!;
+        void laSerial(() => liveActivity.update(id, wire));
         laLastHashRef.current = hash;
         laLastUpdateAtRef.current = Date.now();
         laSeqRef.current = seq + 1;
         return;
       }
-      void liveActivity
-        .start(
+      void laSerial(() =>
+        liveActivity.start(
           { beachName: armedTarget.name, slug: armedTarget.slug, sessionStart },
           wire,
           plus.deviceId,
           LA_APP_BUILD,
-        )
-        .then((res) => {
-          laStartingRef.current = false;
-          if (!res.ok) return;
-          const postStartDecision = decideLiveActivityStart({
-            stale: isStaleLiveActivityTicket(ticket, laSessionSeqRef.current),
-            adoptionChecked: true,
-            hasActivityId: !!laActivityIdRef.current,
-          });
-          if (postStartDecision !== "start") {
-            // Either the armed session this was for is already gone (Off,
-            // or a newer session started before this resolved), or adoption
-            // (or another tick) already recorded a different activity id
-            // while this native call was in flight — end what we just
-            // started rather than record and leave a second one running.
-            void liveActivity.end(res.activityId, { dismissal: "immediate" });
-            return;
-          }
-          laActivityIdRef.current = res.activityId;
-          laLastHashRef.current = hash;
-          laLastUpdateAtRef.current = Date.now();
-          laSeqRef.current = seq + 1;
+        ),
+      ).then((res) => {
+        laStartingRef.current = false;
+        if (!res.ok) return;
+        const postStartDecision = decideLiveActivityStart({
+          stale: isStaleLiveActivityTicket(ticket, laSessionSeqRef.current),
+          adoptionChecked: true,
+          hasActivityId: !!laActivityIdRef.current,
         });
+        if (postStartDecision !== "start") {
+          // Either the armed session this was for is already gone (Off,
+          // or a newer session started before this resolved), or adoption
+          // (or another tick) already recorded a different activity id
+          // while this native call was in flight — end what we just
+          // started rather than record and leave a second one running.
+          // Still queued: this end() must wait its turn behind whatever
+          // else this card has since enqueued, same as every other call.
+          void laSerial(() => liveActivity.end(res.activityId, { dismissal: "immediate" }));
+          return;
+        }
+        laActivityIdRef.current = res.activityId;
+        laLastHashRef.current = hash;
+        laLastUpdateAtRef.current = Date.now();
+        laSeqRef.current = seq + 1;
+        bumpLaUi(); // the activity just started running — nothing else re-renders this
+      });
     });
     // hazards is read for its CURRENT value only when this effect runs (on a
     // fresh conditions poll) — it is not itself a trigger, so it is left out
@@ -740,7 +925,18 @@ export function BeachModeCard({
     // until some unrelated prop caused a re-render, stalling a genuine
     // start() for however long that takes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [armed, laPref, laAvailable, laConditions, armedTarget, plus.entitled, plus.deviceId, laAdoptionTick]);
+  }, [
+    armed,
+    laPref,
+    laAvailable,
+    laConditions,
+    armedTarget,
+    plus.entitled,
+    plus.deviceId,
+    laAdoptionTick,
+    laReshowTick,
+    laSerial,
+  ]);
 
   // Once a fix shows the phone has actually left the suppressed spot — or a
   // day has passed — drop the suppression so auto-arm is free to fire again
@@ -1008,19 +1204,55 @@ export function BeachModeCard({
         {hazardLine ? (
           <p className="mt-1 text-xs leading-snug text-slate-500 dark:text-slate-400">{hazardLine}</p>
         ) : null}
-        {laShowPrompt ? (
+        {laPrefLoaded && laRow.kind !== "hidden" ? (
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
-            <span className="min-w-0 flex-1 text-sm text-slate-700 dark:text-slate-300">
-              Show a Beach Session on your Lock Screen while Beach Mode is on?
-            </span>
-            <div className="flex shrink-0 gap-2">
-              <button type="button" onClick={() => laRespondToPrompt("on")} className={CHIP}>
-                Yes
-              </button>
-              <button type="button" onClick={() => laRespondToPrompt("off")} className={CHIP}>
-                No
-              </button>
-            </div>
+            {laRow.kind === "prompt" ? (
+              <>
+                <span className="min-w-0 flex-1 text-sm text-slate-700 dark:text-slate-300">
+                  Show a Beach Session on your Lock Screen while Beach Mode is on?
+                </span>
+                <div className="flex shrink-0 gap-2">
+                  <button type="button" onClick={() => laRespondToPrompt("on")} className={CHIP}>
+                    Yes
+                  </button>
+                  <button type="button" onClick={() => laRespondToPrompt("off")} className={CHIP}>
+                    No
+                  </button>
+                </div>
+              </>
+            ) : null}
+            {laRow.kind === "on" ? (
+              <>
+                <span className="min-w-0 flex-1 text-sm text-slate-700 dark:text-slate-300">
+                  {laRow.running
+                    ? "Showing on your Lock Screen."
+                    : laDismissedRef.current
+                      ? "Swiped off your Lock Screen."
+                      : "Lock Screen: on."}
+                </span>
+                {!laRow.running && laDismissedRef.current ? (
+                  <button type="button" onClick={laTurnOn} className={CHIP}>
+                    Show again
+                  </button>
+                ) : null}
+                <button type="button" onClick={laTurnOff} className={CHIP}>
+                  Turn off
+                </button>
+              </>
+            ) : null}
+            {laRow.kind === "off" ? (
+              <>
+                <span className="min-w-0 flex-1 text-sm text-slate-700 dark:text-slate-300">Lock Screen: off.</span>
+                <button type="button" onClick={laTurnOn} className={CHIP}>
+                  Turn on
+                </button>
+              </>
+            ) : null}
+            {laRow.kind === "unavailable" ? (
+              <span className="min-w-0 flex-1 text-xs leading-snug text-slate-500 dark:text-slate-400">
+                {laRow.message}
+              </span>
+            ) : null}
           </div>
         ) : null}
         {delivery === "needs-setup" ? (

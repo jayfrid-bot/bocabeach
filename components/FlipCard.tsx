@@ -125,7 +125,10 @@ export function FlipCard({
           aria-hidden={flipped}
           className={
             (flipped ? "absolute inset-0 " : "relative ") +
-            "h-full w-full " +
+            // The card's header row (first child of the card) leaves room for
+            // the corner flip glyph, so a wrapped title or a right-side chip
+            // (NOAA, "Hot") never runs underneath it.
+            "h-full w-full [&>*:first-child>*:first-child]:pr-4 " +
             (spin
               ? "[backface-visibility:hidden]"
               : "transition-opacity duration-200 " +

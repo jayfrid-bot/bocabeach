@@ -26,6 +26,7 @@ function cache(over: Partial<PlusCache> = {}): PlusCache {
 function device(over: Partial<DeviceRecord> = {}): DeviceRecord {
   return {
     id: "11111111-2222-4333-8444-555555555555",
+    updatedAt: NOW,
     platform: "ios",
     tz: "America/New_York",
     homeSlug: null,
@@ -36,6 +37,7 @@ function device(over: Partial<DeviceRecord> = {}): DeviceRecord {
     grants: { storeUntil: null, codeUntil: null, trialUntil: null },
     trialUsed: false,
     previewSeen: false,
+    sunColor: { minBand: "vivid", leadMin: 60 },
     presence: null,
     ...over,
   };

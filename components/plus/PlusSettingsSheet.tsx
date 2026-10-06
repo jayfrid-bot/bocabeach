@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PROFILE_IDS, profileChip } from "@/lib/profile/presets";
 import { resolveScoring } from "@/lib/profile/resolve";
 import type {
@@ -12,13 +12,16 @@ import type {
   SubKey,
   WaveMode,
 } from "@/lib/profile/types";
-import type { AlertKey } from "@/lib/db/types";
+import { SUN_COLOR_LEAD_OPTIONS, type AlertKey, type SunColorMinBand } from "@/lib/db/types";
 import { ALERT_GROUPS, ALERT_LABELS, FACTOR_LABELS, FACTOR_ORDER, MULTIPLIER_STOPS } from "@/lib/plus/labels";
-import { plusErrorMessage } from "@/lib/plus/api";
+import { computeSunTimes } from "@/lib/sources/sun";
+import { fmtTime } from "@/lib/format";
+import { plusErrorMessage, type PlusResult } from "@/lib/plus/api";
 import { billingAvailable } from "@/lib/plus/billing";
 import type { PlusState } from "@/lib/plus/client";
 import { deviceEntitled, entitlementRemaining } from "@/lib/plus/entitlement";
 import { isRetryableSaveError } from "@/lib/plus/pendingWrites";
+import { alertSaveStatus } from "@/lib/plus/saveStatus";
 import { getHomeBeach, setHomeBeach } from "@/lib/homeBeach";
 import type { LocationPublic } from "@/lib/types";
 import { shouldShowCodeEntry, supportId } from "@/components/plus/Paywall";
@@ -74,6 +77,32 @@ export function PlusSettingsSheet({
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [idCopied, setIdCopied] = useState(false);
+  const [alertSaves, setAlertSaves] = useState(0);
+  const [justSaved, setJustSaved] = useState(false);
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (savedTimer.current) clearTimeout(savedTimer.current);
+    },
+    [],
+  );
+  const flashSaved = () => {
+    setJustSaved(true);
+    if (savedTimer.current) clearTimeout(savedTimer.current);
+    savedTimer.current = setTimeout(() => setJustSaved(false), 2500);
+  };
+  const trackAlertSave = async (run: () => Promise<PlusResult>) => {
+    setError(null);
+    setJustSaved(false);
+    setAlertSaves((n) => n + 1);
+    try {
+      const res = await run();
+      if (res.ok) flashSaved();
+      else if (!isRetryableSaveError(res)) setError(plusErrorMessage(res.error));
+    } finally {
+      setAlertSaves((n) => n - 1);
+    }
+  };
   // Same condition the paywall uses (components/plus/Paywall.tsx's
   // `billing`): with the App Store as the checkout, a code field here is
   // just a second, confusing way in — and (Codex round 2 #2) this must stay
@@ -120,13 +149,21 @@ export function PlusSettingsSheet({
     if (!res.ok && !isRetryableSaveError(res)) setError(plusErrorMessage(res.error));
   };
 
-  const toggleAlert = async (key: AlertKey, on: boolean) => {
-    setError(null);
-    const res = await plus.savePrefs({ [key]: on } as Partial<Record<AlertKey, boolean>>);
-    // A retryable failure already reverted the toggle and queued the retry —
-    // the per-row "Unsaved — retrying" note covers it, so only a genuine
-    // rejection gets the sheet-wide error line.
-    if (!res.ok && !isRetryableSaveError(res)) setError(plusErrorMessage(res.error));
+  const toggleAlert = (key: AlertKey, on: boolean) =>
+    trackAlertSave(() => plus.savePrefs({ [key]: on } as Partial<Record<AlertKey, boolean>>));
+
+  const changeSunColor = (patch: { minBand?: SunColorMinBand; leadMin?: number }) =>
+    trackAlertSave(() => plus.saveSunColorPrefs(patch));
+
+  const alertPendingCount = plus.pendingPrefsKeys.length + plus.pendingSunColorKeys.length;
+  const saveAlerts = async () => {
+    setAlertSaves((n) => n + 1);
+    try {
+      if (alertPendingCount > 0) await plus.retryPending();
+      flashSaved();
+    } finally {
+      setAlertSaves((n) => n - 1);
+    }
   };
 
   const redeem = async () => {
@@ -377,8 +414,24 @@ export function PlusSettingsSheet({
                   />
                 ))}
               </div>
+              {/* The sun-color alert's own two settings — shown only while
+                  its toggle is on (Requirement #2). */}
+              {group.keys.includes("sun-color") && plus.prefs["sun-color"] ? (
+                <SunColorSettings
+                  sunColor={plus.device?.sunColor ?? null}
+                  home={beaches.find((b) => b.slug === home) ?? null}
+                  disabled={!plus.deviceLoaded}
+                  pendingKeys={plus.pendingSunColorKeys}
+                  onChange={(patch) => void changeSunColor(patch)}
+                />
+              ) : null}
             </div>
           ))}
+          <AlertsSaveButton
+            status={alertSaveStatus({ inFlight: alertSaves, pendingCount: alertPendingCount, justSaved })}
+            disabled={!plus.deviceLoaded}
+            onClick={() => void saveAlerts()}
+          />
         </div>
       ) : null}
 
@@ -543,6 +596,62 @@ function RangeEditor({
   );
 }
 
+function AlertsSaveButton({
+  status,
+  disabled,
+  onClick,
+}: {
+  status: "idle" | "saving" | "saved" | "retrying";
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  const tone =
+    status === "saved"
+      ? "bg-emerald-600 text-white"
+      : status === "retrying"
+        ? "bg-amber-500 text-white"
+        : "bg-ocean-600 text-white hover:bg-ocean-700";
+  return (
+    <div className="mt-4">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled || status === "saving"}
+        aria-live="polite"
+        // Re-keyed on "saved" so the pop replays on every save.
+        key={status === "saved" ? "saved" : "other"}
+        className={`flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition-colors disabled:opacity-60 ${tone} ${
+          status === "saved" ? "save-pop" : ""
+        }`}
+      >
+        {status === "saving" ? (
+          <>
+            <svg viewBox="0 0 24 24" className="save-spin h-4 w-4" fill="none" stroke="currentColor" strokeWidth="3" aria-hidden>
+              <circle cx="12" cy="12" r="9" opacity="0.3" />
+              <path d="M21 12a9 9 0 0 0-9-9" strokeLinecap="round" />
+            </svg>
+            Saving…
+          </>
+        ) : status === "saved" ? (
+          <>
+            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="3" aria-hidden>
+              <path className="save-check" d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Saved
+          </>
+        ) : status === "retrying" ? (
+          "Not saved yet — tap to retry"
+        ) : (
+          "Save alerts"
+        )}
+      </button>
+      <p className="mt-1 text-center text-xs text-slate-500 dark:text-slate-400">
+        Changes also save the moment you make them.
+      </p>
+    </div>
+  );
+}
+
 function AlertToggle({
   label,
   on,
@@ -591,6 +700,113 @@ function AlertToggle({
           Unsaved — retrying…
         </p>
       ) : null}
+    </div>
+  );
+}
+
+const SUN_COLOR_THRESHOLD_CHOICES: { value: SunColorMinBand; label: string }[] = [
+  { value: "vivid", label: "Great or better" },
+  { value: "epic", label: "Amazing only" },
+];
+
+const SUN_COLOR_LEAD_LABELS: Record<(typeof SUN_COLOR_LEAD_OPTIONS)[number], string> = {
+  30: "30 min",
+  60: "1 h",
+  120: "2 h",
+  180: "3 h",
+};
+
+/** Today's sunrise for a beach, minus a lead time, formatted for the "we'd
+ *  wake you about…" example line — purely local (computeSunTimes is pure,
+ *  no fetch), so it updates instantly as the chips change. Null when the sun
+ *  never rises there today (polar edge case) or there's no home beach yet. */
+function exampleWakeTime(
+  home: { lat: number; lon: number; timezone: string } | null,
+  leadMin: number,
+): string | null {
+  if (!home) return null;
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: home.timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+  const t = computeSunTimes(home.lat, home.lon, get("year"), get("month"), get("day"));
+  if (!t.sunrise) return null;
+  const alertAt = new Date(t.sunrise.getTime() - leadMin * 60_000);
+  return `we'd wake you about ${fmtTime(alertAt.toISOString(), home.timezone)} for a ${fmtTime(t.sunrise.toISOString(), home.timezone)} sunrise`;
+}
+
+/** The sun-color alert's own two settings — threshold and lead time — shown
+ *  only while its toggle is on (Requirement #2). The lead-time example line
+ *  makes an early lead a conscious choice ("a 3 h lead on a 7:00 AM sunrise
+ *  means 4:00 AM" per the spec), rather than a surprise the first time it
+ *  actually fires. */
+function SunColorSettings({
+  sunColor,
+  home,
+  disabled,
+  pendingKeys,
+  onChange,
+}: {
+  sunColor: { minBand: SunColorMinBand; leadMin: number } | null;
+  home: { lat: number; lon: number; timezone: string } | null;
+  disabled?: boolean;
+  /** Fields with an edit that failed to save and is waiting to retry — same
+   *  idea as AlertToggle's own `pending` prop (Requirement item 6b). */
+  pendingKeys: ("minBand" | "leadMin")[];
+  onChange: (patch: { minBand?: SunColorMinBand; leadMin?: number }) => void;
+}) {
+  const minBand = sunColor?.minBand ?? "vivid";
+  const leadMin = sunColor?.leadMin ?? 60;
+  const example = exampleWakeTime(home, leadMin);
+  const minBandPending = pendingKeys.includes("minBand");
+  const leadMinPending = pendingKeys.includes("leadMin");
+  return (
+    <div className="ml-1 mt-2 space-y-3 border-l-2 border-slate-900/10 pl-3 dark:border-white/10">
+      <fieldset>
+        <legend className="text-xs font-medium text-slate-600 dark:text-slate-300">Which quality</legend>
+        <div className="mt-1 flex flex-wrap gap-2">
+          {SUN_COLOR_THRESHOLD_CHOICES.map((c) => (
+            <Chip
+              key={c.value}
+              selected={minBand === c.value}
+              disabled={disabled}
+              onClick={() => onChange({ minBand: c.value })}
+            >
+              {c.label}
+            </Chip>
+          ))}
+        </div>
+        {minBandPending ? (
+          <p className="mt-1 text-xs leading-snug text-amber-600 dark:text-amber-400">Unsaved — retrying…</p>
+        ) : null}
+      </fieldset>
+      <fieldset>
+        <legend className="text-xs font-medium text-slate-600 dark:text-slate-300">How long before</legend>
+        <div className="mt-1 flex flex-wrap gap-2">
+          {SUN_COLOR_LEAD_OPTIONS.map((v) => (
+            <Chip
+              key={v}
+              selected={leadMin === v}
+              disabled={disabled}
+              onClick={() => onChange({ leadMin: v })}
+            >
+              {SUN_COLOR_LEAD_LABELS[v]}
+            </Chip>
+          ))}
+        </div>
+        {leadMinPending ? (
+          <p className="mt-1 text-xs leading-snug text-amber-600 dark:text-amber-400">Unsaved — retrying…</p>
+        ) : null}
+        {example ? (
+          <p className="mt-1.5 text-xs leading-snug text-slate-500 dark:text-slate-400">
+            For example, {example}.
+          </p>
+        ) : null}
+      </fieldset>
     </div>
   );
 }

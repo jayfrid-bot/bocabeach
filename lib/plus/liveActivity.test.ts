@@ -162,3 +162,84 @@ describe("native bridge present", () => {
     expect(remove).toHaveBeenCalled();
   });
 });
+
+describe("createSerialQueue", () => {
+  it("runs queued calls strictly one at a time, in the order they were queued, even when a later call would resolve first", async () => {
+    // A slower first call and a faster second call: without serializing,
+    // the second would finish (and observe/mutate shared state) before the
+    // first even starts running. This is the exact shape of the bug —
+    // BeachModeCard's Off-then-On — start() takes a while (ensureInstallToken
+    // + a native round trip) and a quick end() queued right after it must
+    // still not be allowed to run ahead of it.
+    const mod = await import("@/lib/plus/liveActivity");
+    const run = mod.createSerialQueue();
+    const order: string[] = [];
+    const running: string[] = []; // names currently mid-flight — length > 1 means overlap
+
+    const task = (name: string, ms: number) => async () => {
+      running.push(name);
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      order.push(name);
+      running.splice(running.indexOf(name), 1);
+      // Nothing else may be mid-flight while this one is: overlap would mean
+      // the native plugin could see two calls at once.
+      expect(running.length).toBe(0);
+      return name;
+    };
+
+    const a = run(task("slow-first", 20));
+    const b = run(task("fast-second", 0));
+    const c = run(task("fast-third", 0));
+
+    const results = await Promise.all([a, b, c]);
+    expect(results).toEqual(["slow-first", "fast-second", "fast-third"]);
+    expect(order).toEqual(["slow-first", "fast-second", "fast-third"]);
+  });
+
+  it("a rejected call never blocks the ones queued after it, and each queued fn still sees its own error/success", async () => {
+    const mod = await import("@/lib/plus/liveActivity");
+    const run = mod.createSerialQueue();
+    const order: string[] = [];
+
+    const ok = (name: string) => async () => {
+      order.push(name);
+      return name;
+    };
+    const boom = (name: string) => async () => {
+      order.push(name);
+      throw new Error(name);
+    };
+
+    const a = run(ok("first"));
+    const b = run(boom("second-fails"));
+    const c = run(ok("third"));
+
+    await expect(a).resolves.toBe("first");
+    await expect(b).rejects.toThrow("second-fails");
+    await expect(c).resolves.toBe("third");
+    expect(order).toEqual(["first", "second-fails", "third"]);
+  });
+
+  it("two independently-created queues never block each other", async () => {
+    const mod = await import("@/lib/plus/liveActivity");
+    const runA = mod.createSerialQueue();
+    const runB = mod.createSerialQueue();
+    const order: string[] = [];
+
+    const task = (name: string, ms: number) => async () => {
+      await new Promise((resolve) => setTimeout(resolve, ms));
+      order.push(name);
+      return name;
+    };
+
+    // A's first call is slow; if the queues shared state, B's call would
+    // wait behind it too — it must not.
+    const slowA = runA(task("a-slow", 20));
+    const fastB = runB(task("b-fast", 0));
+
+    await fastB;
+    expect(order).toEqual(["b-fast"]); // B finished without waiting on A
+    await slowA;
+    expect(order).toEqual(["b-fast", "a-slow"]);
+  });
+});

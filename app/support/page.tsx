@@ -89,11 +89,13 @@ export default function SupportPage() {
 
         <Faq q="How do notifications work?">
           <p>
-            In the iOS/Android app, tap &quot;Notify me&quot; on a beach to opt
-            in to a morning Beach Day summary, safety alerts, or both. It&apos;s
-            app-only (no notifications in a browser), entirely opt-in, and we
-            never send marketing pushes — just what you asked for. Turn it off
-            any time from the same button.
+            In the iPhone app, tap the bell (🔔 Alerts) at the top of a beach to
+            turn on alerts: a morning Beach Day summary, safety alerts, or both.
+            Alerts are part of Beach Day Plus and work only in the app (no
+            notifications in a browser). They&apos;re entirely opt-in, and we
+            never send marketing pushes — just what you asked for. Choose which
+            alerts you get in your beach settings, or turn them off any time
+            from the bell. Android is coming.
           </p>
         </Faq>
 

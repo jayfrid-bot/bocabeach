@@ -2,14 +2,14 @@ import type { FlagColor } from "@/lib/types";
 
 const FLAG_META: Record<
   FlagColor,
-  { color: string; label: string; double?: boolean }
+  { color: string; label: string; short: string; double?: boolean }
 > = {
-  green: { color: "#16a34a", label: "Low hazard" },
-  yellow: { color: "#facc15", label: "Medium hazard" },
-  red: { color: "#dc2626", label: "High hazard" },
-  "double-red": { color: "#dc2626", label: "Water closed", double: true },
-  purple: { color: "#9333ea", label: "Dangerous marine life" },
-  unknown: { color: "#64748b", label: "Unavailable" },
+  green: { color: "#16a34a", label: "Low hazard", short: "Low" },
+  yellow: { color: "#facc15", label: "Medium hazard", short: "Medium" },
+  red: { color: "#dc2626", label: "High hazard", short: "High" },
+  "double-red": { color: "#dc2626", label: "Water closed", short: "Closed", double: true },
+  purple: { color: "#9333ea", label: "Dangerous marine life", short: "Marine life" },
+  unknown: { color: "#64748b", label: "Unavailable", short: "No data" },
 };
 
 /**
@@ -20,7 +20,23 @@ const FLAG_META: Record<
  * places where the flag is one line of a banner rather than a display graphic
  * (see SafetyBanner) — same swatch colors, a fraction of the height.
  */
-export function LifeguardFlag({ flag, inline = false }: { flag: FlagColor; inline?: boolean }) {
+export function LifeguardFlag({
+  flag,
+  inline = false,
+  compact = false,
+  swatchOnly = false,
+}: {
+  flag: FlagColor;
+  inline?: boolean;
+  /** Inline only: the short word ("Medium", "Marine life") so two flags fit
+   *  on one line of the collapsed banner; the swatch color carries the rest
+   *  and the aria-label/title keep the full meaning. */
+  compact?: boolean;
+  /** Inline only: the colored swatch without any word, for a collapsed line
+   *  that already names another advisory — the aria-label/title still carry
+   *  the full meaning and the expanded view spells it out. */
+  swatchOnly?: boolean;
+}) {
   const m = FLAG_META[flag];
   const patch = "block h-8 w-8 rounded-[2px] shadow-md ring-1 ring-black/30";
 
@@ -36,9 +52,11 @@ export function LifeguardFlag({ flag, inline = false }: { flag: FlagColor; inlin
           <span className={swatch} style={{ background: m.color }} />
           {m.double ? <span className={swatch} style={{ background: m.color }} /> : null}
         </span>
-        <span className="truncate text-xs font-medium leading-none text-slate-700 dark:text-slate-300 sm:text-sm">
-          {m.label}
-        </span>
+        {swatchOnly ? null : (
+          <span className="truncate text-xs font-medium leading-none text-slate-700 dark:text-slate-300 sm:text-sm">
+            {compact ? m.short : m.label}
+          </span>
+        )}
       </span>
     );
   }

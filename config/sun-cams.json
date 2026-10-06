@@ -1,0 +1,88 @@
+{
+  "$comment": [
+    "Registry for scripts/sun_cam_check.py and POST /api/sun-observations (docs/SUN_CAM_CHECK.md).",
+    "Every cam here is a 24/7 YouTube livestream facing EAST over the Atlantic, so a sunrise is a 'solar' view and a sunset an 'antisolar' view.",
+    "sky_regions are [x0, y0, x1, y1] as fractions of the frame (0,0 = top-left). They keep the sky and drop the flagpole, palms, pier, beach, water and the burned-in text overlays. They were drawn from real 1280x720 frames (Elbo: the 2026-10-06 sunrise frames; Deerfield: live frames pulled from the uw-frame worker on 2026-10-06).",
+    "beaches[].lat/lon repeat config/locations.ts; distance_mi is the great-circle distance from that beach's pin to the cam, rounded to 0.1 mi. lib/sunCamsConfig.test.ts keeps both in lockstep with locations.ts.",
+    "credit is stored with every observation and the ingest route rejects any other string. Elbo Room gave the owner permission to use its stream as long as it is credited."
+  ],
+  "version": 1,
+  "timezone": "America/New_York",
+  "cams": [
+    {
+      "id": "ftl-elbo-beach-cam",
+      "name": "Fort Lauderdale Beach Cam (Elbo Room)",
+      "youtube_id": "1j1lgppb0PY",
+      "facing_azimuth_deg": 90,
+      "lat": 26.1195,
+      "lon": -80.1035,
+      "credit": "Live stream courtesy Elbo Room (ElboRoom.com)",
+      "fallback": {
+        "page": "https://www.elboroom.com/beach-cam/",
+        "title_contains": "Surf"
+      },
+      "beaches": [
+        { "slug": "fort-lauderdale", "lat": 26.1195, "lon": -80.1035, "distance_mi": 0.0 }
+      ],
+      "sky_regions": [
+        [0.0, 0.1, 0.3, 0.46],
+        [0.4, 0.0, 0.9, 0.55],
+        [0.9, 0.0, 1.0, 0.5]
+      ]
+    },
+    {
+      "id": "deerfield-beach-cam",
+      "name": "Deerfield Beach Cam",
+      "youtube_id": "rdeoEeJ00xA",
+      "facing_azimuth_deg": 90,
+      "lat": 26.3165,
+      "lon": -80.0742,
+      "credit": "Live stream courtesy City of Deerfield Beach",
+      "beaches": [
+        { "slug": "deerfield-beach", "lat": 26.3165, "lon": -80.0742, "distance_mi": 0.0 },
+        { "slug": "boca-raton", "lat": 26.3587, "lon": -80.0686, "distance_mi": 2.9 }
+      ],
+      "sky_regions": [
+        [0.13, 0.0, 0.73, 0.4],
+        [0.5, 0.4, 0.73, 0.49],
+        [0.73, 0.1, 1.0, 0.49]
+      ]
+    },
+    {
+      "id": "deerfield-surf-cam",
+      "name": "Deerfield Beach - Surf Cam",
+      "note": "A PTZ camera: it pans between presets, and the horizon sits anywhere from y=0.27 to y=0.46. The sky region is therefore only the top slice that is sky in every pose.",
+      "youtube_id": "hIeFPNHfuoY",
+      "facing_azimuth_deg": 90,
+      "lat": 26.3165,
+      "lon": -80.0742,
+      "credit": "Live stream courtesy City of Deerfield Beach",
+      "beaches": [
+        { "slug": "deerfield-beach", "lat": 26.3165, "lon": -80.0742, "distance_mi": 0.0 },
+        { "slug": "boca-raton", "lat": 26.3587, "lon": -80.0686, "distance_mi": 2.9 }
+      ],
+      "sky_regions": [
+        [0.0, 0.05, 0.78, 0.25],
+        [0.78, 0.1, 1.0, 0.25]
+      ]
+    },
+    {
+      "id": "deerfield-pier-cam",
+      "name": "Deerfield Beach - Fishing Pier Cam",
+      "youtube_id": "H33wtprQqSM",
+      "facing_azimuth_deg": 90,
+      "lat": 26.3172,
+      "lon": -80.0738,
+      "credit": "Live stream courtesy City of Deerfield Beach",
+      "beaches": [
+        { "slug": "deerfield-beach", "lat": 26.3165, "lon": -80.0742, "distance_mi": 0.1 },
+        { "slug": "boca-raton", "lat": 26.3587, "lon": -80.0686, "distance_mi": 2.9 }
+      ],
+      "sky_regions": [
+        [0.0, 0.08, 0.27, 0.13],
+        [0.27, 0.0, 0.89, 0.13],
+        [0.89, 0.08, 1.0, 0.13]
+      ]
+    }
+  ]
+}

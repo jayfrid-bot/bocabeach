@@ -1,10 +1,10 @@
 // Client-side Beach Day Plus types. What the phone remembers between launches
 // and what the Plus API answers with. Pure types — importable from anywhere.
 
-import type { AlertPrefs, DeviceRecord } from "@/lib/db/types";
+import type { AlertPrefs, DeviceRecord, SunColorMinBand } from "@/lib/db/types";
 import type { ScoreProfile } from "@/lib/profile/types";
 
-export type { AlertPrefs, DeviceRecord, ScoreProfile };
+export type { AlertPrefs, DeviceRecord, ScoreProfile, SunColorMinBand };
 
 /** The entitlement the phone last read from the server (`bd:plus`). */
 export interface PlusCache {
@@ -58,6 +58,10 @@ export interface PendingWrites {
    *  "merge": either a sync is owed or it isn't, so this is a flag, not a
    *  value. flushPending retries it on the next foreground/online/mount. */
   purchaseSync?: boolean;
+  /** A sun-color settings edit (threshold and/or lead time) that failed to
+   *  save — merged per-field, same rule `prefs` uses, so changing the
+   *  threshold then the lead time while offline queues both. */
+  sunColor?: { minBand?: SunColorMinBand; leadMin?: number };
 }
 
 /**

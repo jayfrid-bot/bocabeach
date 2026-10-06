@@ -12,7 +12,7 @@
 // The schema comes from the real migration files, applied in order — so a
 // migration that doesn't actually produce a working schema fails here too.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import {
@@ -24,11 +24,14 @@ import {
   type D1Stmt,
 } from "@/lib/db/d1Store";
 import type { DeviceStore } from "@/lib/db/store";
+import type { BeachHourlyRow, CamObservationRow, CamReadRow, SunEventPredictionRow } from "@/lib/history/types";
 import {
   ABANDONED_CLAIM_MS as COMING_UP_ABANDONED_CLAIM_MS,
   COMING_UP_24H_MS,
   COMING_UP_30D_MS,
 } from "@/lib/db/comingUpClaims";
+import { ABANDONED_CLAIM_MS } from "@/lib/db/sendClaims";
+import { observationRow, predictionRow } from "@/lib/sunObservations.fixtures";
 
 let DatabaseSyncCtor: (new (path: string) => {
   exec(sql: string): void;
@@ -199,6 +202,237 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
     });
   });
 
+  // --- round-5 item 1: updated_at is strictly monotonic per row, never a
+  // plain `?now` on any UPDATE path --------------------------------------
+  // Real SQL only — the in-memory store's own `Math.max` in JS can't catch a
+  // typo'd `MAX(...)` SQL expression, or a bind position that quietly went
+  // back to plain `?now`, the way running the actual statement can.
+  describe("updated_at is strictly monotonic per device row (round-5 item 1)", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("two writes at the SAME wall-clock `now` still produce a strictly increasing updated_at", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+      const d1 = await store.upsertDevice("mono-1", { tz: "America/New_York" });
+      expect(d1.updatedAt).toBe(1_000_000);
+
+      // A second write at the EXACT same millisecond (Date.now() still
+      // stubbed to the same value) — without the fix this would write
+      // updated_at = 1_000_000 again, indistinguishable from the first.
+      const d2 = await store.upsertDevice("mono-1", { tz: "America/Chicago" });
+      expect(d2.updatedAt).toBe(1_000_001);
+      expect(d2.updatedAt).toBeGreaterThan(d1.updatedAt);
+    });
+
+    it("a write whose `now` is EARLIER than the row's current updated_at still increases it by 1", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(2_000_000);
+      const d1 = await store.upsertDevice("mono-2", { tz: "America/New_York" });
+      expect(d1.updatedAt).toBe(2_000_000);
+
+      // The wall clock moved BACKWARDS (an NTP adjustment, say) before the
+      // next write reaches this row.
+      vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+      const d2 = await store.upsertDevice("mono-2", { tz: "America/Chicago" });
+      expect(d2.updatedAt).toBe(2_000_001); // MAX(prior + 1, now) — now lost
+      expect(d2.updatedAt).toBeGreaterThan(d1.updatedAt);
+    });
+
+    it("holds for claimTrial's own UPDATE too, not just the main upsert", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(3_000_000);
+      const d1 = await store.upsertDevice("mono-3", { tz: "America/New_York" });
+      expect(d1.updatedAt).toBe(3_000_000);
+      const claimed = await store.claimTrial("mono-3", 3_000_000 + 3 * DAY);
+      expect(claimed).not.toBe("trial-used");
+      const d2 = await store.getDevice("mono-3");
+      expect(d2?.updatedAt).toBe(3_000_001); // same `now` as the upsert above
+    });
+
+    it("holds for patchSent's own UPDATE too", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(4_000_000);
+      const d1 = await store.upsertDevice("mono-4", { tz: "America/New_York" });
+      expect(d1.updatedAt).toBe(4_000_000);
+      await store.patchSent("mono-4", { morningDate: "2026-09-02" });
+      const d2 = await store.getDevice("mono-4");
+      expect(d2?.updatedAt).toBe(4_000_001);
+    });
+
+    // Round-6: setPresence/clearPresence write ONLY the `presence` table —
+    // no column on `devices` itself changes — yet the `DeviceRecord` they
+    // hand back (via a separate getDevice, the route's own pattern) DOES
+    // change (its `presence` field). Without also bumping the OWNING
+    // device row's `updated_at` in the same batch, `isStaleDeviceResponse`
+    // would see the same revision as before and the phone would drop an
+    // arm/disarm response that's actually carrying fresh state — exactly
+    // the regression this round fixes.
+    it("setPresence bumps the OWNING device row's updated_at, even though only the presence table's own columns changed", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(5_000_000);
+      const d1 = await store.upsertDevice("mono-5", { tz: "America/New_York" });
+      expect(d1.updatedAt).toBe(5_000_000);
+
+      await store.setPresence("mono-5", {
+        slug: "boca-raton",
+        lat: 26.35,
+        lon: -80.08,
+        accuracyM: 10,
+        fixAt: 5_000_000,
+        armedUntil: 5_000_000 + 3600_000,
+        source: "manual",
+      });
+      const d2 = await store.getDevice("mono-5");
+      expect(d2?.updatedAt).toBe(5_000_001);
+      expect(d2?.presence?.slug).toBe("boca-raton");
+
+      // A second arm at the SAME `now` (a fast re-arm) must still advance —
+      // same monotonic guarantee every other writer gets.
+      await store.setPresence("mono-5", {
+        slug: "boca-raton",
+        lat: null,
+        lon: null,
+        accuracyM: null,
+        fixAt: null,
+        armedUntil: 5_000_000 + 7200_000,
+        source: "manual",
+      });
+      const d3 = await store.getDevice("mono-5");
+      expect(d3?.updatedAt).toBe(5_000_002);
+    });
+
+    it("clearPresence bumps the OWNING device row's updated_at too", async () => {
+      vi.spyOn(Date, "now").mockReturnValue(6_000_000);
+      await store.upsertDevice("mono-6", { tz: "America/New_York" });
+      await store.setPresence("mono-6", {
+        slug: "boca-raton",
+        lat: null,
+        lon: null,
+        accuracyM: null,
+        fixAt: null,
+        armedUntil: 6_000_000 + 3600_000,
+        source: "manual",
+      });
+      const armed = await store.getDevice("mono-6");
+      expect(armed?.updatedAt).toBe(6_000_001);
+      expect(armed?.presence).not.toBeNull();
+
+      await store.clearPresence("mono-6");
+      const disarmed = await store.getDevice("mono-6");
+      expect(disarmed?.presence).toBeNull();
+      expect(disarmed?.updatedAt).toBe(6_000_002);
+      expect(disarmed?.updatedAt).toBeGreaterThan(armed!.updatedAt);
+    });
+  });
+
+  // --- sun-color alert settings (migrations/0012_sun_color_prefs.sql) ------
+  // Two plain nullable columns, appended to UPSERT_DEVICE's positional binds
+  // (?28/?29, present-flags ?30/?31) without renumbering ?1..?27 — this is
+  // the real SQL text against real SQLite, so a mistake in that append would
+  // fail here even though the in-memory store (a plain JS object patch)
+  // could never catch it.
+  describe("sun-color settings (real SQL, not the in-memory model)", () => {
+    it("a brand-new row reads back the defaults (NULL columns)", async () => {
+      await store.upsertDevice("sc1", {});
+      const dev = await store.getDevice("sc1");
+      expect(dev?.sunColor).toEqual({ minBand: "vivid", leadMin: 60 });
+    });
+
+    it("persists a chosen threshold and lead time", async () => {
+      await store.upsertDevice("sc2", { sunColorMinBand: "epic", sunColorLeadMin: 180 });
+      const dev = await store.getDevice("sc2");
+      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 180 });
+    });
+
+    it("an unrelated write afterward leaves the sun-color columns untouched", async () => {
+      await store.upsertDevice("sc3", { sunColorMinBand: "epic", sunColorLeadMin: 30 });
+      await store.upsertDevice("sc3", { tz: "America/New_York" });
+      const dev = await store.getDevice("sc3");
+      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 30 });
+    });
+
+    it("two concurrent writes to different sun-color fields both persist (the ?30/?31 present-flag guards)", async () => {
+      await store.upsertDevice("sc4", {});
+      await Promise.all([
+        store.upsertDevice("sc4", { sunColorMinBand: "epic" }),
+        store.upsertDevice("sc4", { sunColorLeadMin: 120 }),
+      ]);
+      const dev = await store.getDevice("sc4");
+      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 120 });
+    });
+
+    it("null resets a column back to NULL (the default), a real UPDATE ... = NULL, not a no-op", async () => {
+      await store.upsertDevice("sc5", { sunColorMinBand: "epic", sunColorLeadMin: 180 });
+      await store.upsertDevice("sc5", { sunColorMinBand: null, sunColorLeadMin: null });
+      const dev = await store.getDevice("sc5");
+      expect(dev?.sunColor).toEqual({ minBand: "vivid", leadMin: 60 });
+    });
+  });
+
+  // --- releaseSend (migrations/0004_send_claims.sql) — real SQL DELETE ------
+  describe("releaseSend / markSent — ownership-safe (round-2 item 1)", () => {
+    it("deletes an unsent claim so it can be re-claimed immediately", async () => {
+      const now = Date.now();
+      expect(await store.claimSend("k1", now)).toBe(true);
+      expect(await store.claimSend("k1", now + 1)).toBe(false); // still held, not abandoned
+      expect(await store.releaseSend("k1", now)).toBe(true);
+      expect(await store.claimSend("k1", now + 2)).toBe(true); // free again, no wait for ABANDONED_CLAIM_MS
+    });
+
+    it("never undoes a claim already marked sent", async () => {
+      const now = Date.now();
+      await store.claimSend("k2", now);
+      expect(await store.markSent("k2", now)).toBe(true);
+      expect(await store.releaseSend("k2", now)).toBe(false); // no match — already sent
+      // Still "sent" — a fresh claim attempt must fail exactly as it would
+      // for any other confirmed send (not abandoned, not unsent).
+      expect(await store.claimSend("k2", now + 2)).toBe(false);
+    });
+
+    it("releasing a claim nobody holds is a harmless no-op, returning false", async () => {
+      expect(await store.releaseSend("k-never-claimed", Date.now())).toBe(false);
+    });
+
+    it("markSent on a key nobody claimed is a harmless no-op, returning false", async () => {
+      expect(await store.markSent("k-never-claimed", Date.now())).toBe(false);
+    });
+
+    it("a stale caller's release/markSent never touches a claim a LATER run has since reclaimed", async () => {
+      // A claims at t0 and then crashes (never completes).
+      const t0 = Date.now();
+      expect(await store.claimSend("k3", t0)).toBe(true);
+
+      // B reclaims the abandoned claim at t0 + ABANDONED_CLAIM_MS + 1 —
+      // this stamps a NEW claimed_at, which is B's own ownership token.
+      const t1 = t0 + ABANDONED_CLAIM_MS + 1;
+      expect(await store.claimSend("k3", t1)).toBe(true);
+
+      // A (unaware it was reclaimed) finally gets around to releasing its
+      // OWN stale claim, using its OWN original token (t0) — this must NOT
+      // delete B's live row.
+      expect(await store.releaseSend("k3", t0)).toBe(false);
+
+      // B's claim is still live and can be marked sent normally.
+      expect(await store.markSent("k3", t1)).toBe(true);
+
+      // A stale release attempt with A's OLD token, now that B's row is
+      // SENT, still correctly fails to match (belt and suspenders: wrong
+      // token AND already sent).
+      expect(await store.releaseSend("k3", t0)).toBe(false);
+    });
+
+    it("a stale caller's markSent never marks a claim a LATER run has since reclaimed", async () => {
+      const t0 = Date.now();
+      expect(await store.claimSend("k4", t0)).toBe(true);
+      const t1 = t0 + ABANDONED_CLAIM_MS + 1;
+      expect(await store.claimSend("k4", t1)).toBe(true); // B reclaims
+
+      // A's belated markSent, with A's stale token, must not succeed —
+      // it would otherwise mark B's still-in-flight claim "sent" under A's
+      // send, which never actually confirmed anything for THIS claim.
+      expect(await store.markSent("k4", t0)).toBe(false);
+      // B's own markSent, with the correct current token, still works.
+      expect(await store.markSent("k4", t1)).toBe(true);
+    });
+  });
+
   // --- #4: grant sources are independent, and only ever move access up -----
   describe("independent grant sources", () => {
     it("a 365-day code grant survives restoring a 30-day store subscription", async () => {
@@ -336,6 +570,574 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       await store.releaseHistoryClaim("boca-raton", hourUtc);
       expect(await store.claimHistoryBuild("boca-raton", hourUtc, claimedAt + 1)).toBe(true);
     });
+  });
+
+  // --- hourlyHistory — real SELECT (Plus "Last 7 days" feature) -------------
+  describe("hourlyHistory — real SELECT against beach_hourly", () => {
+    function hourlyRow(over: Partial<BeachHourlyRow> = {}): BeachHourlyRow {
+      return {
+        slug: "boca-raton",
+        hour_utc: "2026-09-22T14:00:00.000Z",
+        snapshot_generated_at: "2026-09-22T14:05:00.000Z",
+        archived_at: "2026-09-22T14:05:01.000Z",
+        local_date: "2026-09-22",
+        local_hour: 10,
+        utc_offset_minutes: -240,
+        timezone: "America/New_York",
+        score: 80,
+        raw_score: 80,
+        rating: "Good",
+        available_weight: 1,
+        observed_weight: 0.2,
+        coverage_tier: "full",
+        air_temp_f: 85,
+        water_temp_f: 84,
+        sand_temp_f: 95,
+        wave_ft: 2,
+        surf_ft: null,
+        wave_source: "model",
+        wind_mph: 8,
+        gust_mph: 12,
+        uv: 6,
+        cloud_pct: 10,
+        rain_now: 0,
+        lightning_near: 0,
+        tide_state: "rising",
+        crowd_pct: null,
+        seaweed_pct: 5,
+        seaweed_level: "low",
+        clarity_pct: null,
+        engine_version: "test-1",
+        scoring_config_version: "test-1",
+        build_sha: "abc123",
+        row_kind: "snapshot",
+        archive_reason: "cron",
+        caps_json: "[]",
+        factors_json: "[]",
+        missing_json: "[]",
+        extra_json: null,
+        ...over,
+      };
+    }
+
+    it("returns only this slug's snapshot rows on/after sinceLocalDate, oldest first", async () => {
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-22T14:00:00.000Z", local_date: "2026-09-22", score: 70 }),
+      );
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-23T14:00:00.000Z", local_date: "2026-09-23", score: 80 }),
+      );
+      // Before the window — excluded.
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-20T14:00:00.000Z", local_date: "2026-09-20", score: 60 }),
+      );
+      // A different beach — excluded regardless of date.
+      await store.upsertBeachHourly(
+        hourlyRow({ slug: "deerfield-beach", hour_utc: "2026-09-23T15:00:00.000Z", local_date: "2026-09-23" }),
+      );
+
+      const rows = await store.hourlyHistory("boca-raton", "2026-09-21", "2026-09-30");
+      expect(rows.map((r) => r.hour_utc)).toEqual([
+        "2026-09-22T14:00:00.000Z",
+        "2026-09-23T14:00:00.000Z",
+      ]);
+      expect(rows.every((r) => r.slug === "boca-raton")).toBe(true);
+    });
+
+    it("excludes rows after untilLocalDate — both bounds are real, not just the lower one", async () => {
+      await store.upsertBeachHourly(hourlyRow({ hour_utc: "2026-09-22T14:00:00.000Z", local_date: "2026-09-22" }));
+      await store.upsertBeachHourly(hourlyRow({ hour_utc: "2026-09-23T14:00:00.000Z", local_date: "2026-09-23" }));
+      const rows = await store.hourlyHistory("boca-raton", "2026-09-01", "2026-09-22");
+      expect(rows.map((r) => r.local_date)).toEqual(["2026-09-22"]);
+    });
+
+    it("excludes cam-backfill rows — they never have a score", async () => {
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-22T14:00:00.000Z", row_kind: "snapshot", score: 70 }),
+      );
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-22T15:00:00.000Z", row_kind: "cam-backfill", score: null }),
+      );
+      const rows = await store.hourlyHistory("boca-raton", "2026-09-22", "2026-09-30");
+      expect(rows).toHaveLength(1);
+      expect(rows[0].row_kind).toBe("snapshot");
+    });
+
+    it("an unknown slug with no rows returns an empty array", async () => {
+      expect(await store.hourlyHistory("nowhere", "2026-09-01", "2026-09-30")).toEqual([]);
+    });
+  });
+
+  // --- historyRecords — real UNION ALL query (Plus "Last N days" feature) ---
+  describe("historyRecords — real UNION ALL against beach_hourly", () => {
+    function hourlyRow(over: Partial<BeachHourlyRow> = {}): BeachHourlyRow {
+      return {
+        slug: "boca-raton",
+        hour_utc: "2026-09-22T14:00:00.000Z",
+        snapshot_generated_at: "2026-09-22T14:05:00.000Z",
+        archived_at: "2026-09-22T14:05:01.000Z",
+        local_date: "2026-09-22",
+        local_hour: 10,
+        utc_offset_minutes: -240,
+        timezone: "America/New_York",
+        score: 80,
+        raw_score: 80,
+        rating: "Good",
+        available_weight: 1,
+        observed_weight: 0.2,
+        coverage_tier: "full",
+        air_temp_f: 85,
+        water_temp_f: 84,
+        sand_temp_f: 95,
+        wave_ft: 2,
+        surf_ft: null,
+        wave_source: "model",
+        wind_mph: 8,
+        gust_mph: 12,
+        uv: 6,
+        cloud_pct: 10,
+        rain_now: 0,
+        lightning_near: 0,
+        tide_state: "rising",
+        crowd_pct: null,
+        seaweed_pct: 5,
+        seaweed_level: "low",
+        clarity_pct: null,
+        engine_version: "test-1",
+        scoring_config_version: "test-1",
+        build_sha: "abc123",
+        row_kind: "snapshot",
+        archive_reason: "cron",
+        caps_json: "[]",
+        factors_json: "[]",
+        missing_json: "[]",
+        extra_json: null,
+        ...over,
+      };
+    }
+
+    it("the UNION ALL runs against real SQLite and returns the winning row per kind", async () => {
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-20T14:00:00.000Z", local_date: "2026-09-20", local_hour: 10, score: 60, sand_temp_f: 90, surf_ft: 1.0, crowd_pct: 50 }),
+      );
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-26T18:00:00.000Z", local_date: "2026-09-26", local_hour: 14, score: 88, sand_temp_f: 137, surf_ft: 2.2, crowd_pct: 55 }),
+      );
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-27T16:00:00.000Z", local_date: "2026-09-27", local_hour: 12, score: 50, sand_temp_f: 120, surf_ft: 3.2, crowd_pct: 40 }),
+      );
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-28T14:00:00.000Z", local_date: "2026-09-28", local_hour: 10, score: 77, sand_temp_f: 98, surf_ft: 1.2, crowd_pct: 15 }),
+      );
+
+      const result = await store.historyRecords("boca-raton");
+      const byKind = Object.fromEntries(result.records.map((r) => [r.kind, r]));
+      expect(byKind.best).toMatchObject({ local_date: "2026-09-26", local_hour: 14, value: 88 });
+      expect(byKind.hottest_sand).toMatchObject({ local_date: "2026-09-26", local_hour: 14, value: 137 });
+      expect(byKind.biggest_surf).toMatchObject({ local_date: "2026-09-27", local_hour: 12, value: 3.2 });
+      expect(byKind.quietest).toMatchObject({ local_date: "2026-09-28", local_hour: 10, value: 15 });
+      expect(result.archiveStartedAt).toBe("2026-09-20");
+      expect(result.dayCount).toBe(4);
+      // Every row here has a surf_ft value, including the earliest.
+      expect(result.surfSince).toBe("2026-09-20");
+    });
+
+    it("surfSince (real MIN(CASE...) aggregate) is later than archiveStartedAt when older rows predate the surf estimate", async () => {
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-20T14:00:00.000Z", local_date: "2026-09-20", surf_ft: null }),
+      );
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-21T14:00:00.000Z", local_date: "2026-09-21", surf_ft: null }),
+      );
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-22T14:00:00.000Z", local_date: "2026-09-22", surf_ft: 2.5 }),
+      );
+      const result = await store.historyRecords("boca-raton");
+      expect(result.archiveStartedAt).toBe("2026-09-20");
+      expect(result.surfSince).toBe("2026-09-22");
+    });
+
+    it("surfSince is null when no row has ever had a surf_ft value", async () => {
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-22T14:00:00.000Z", local_date: "2026-09-22", surf_ft: null }),
+      );
+      const result = await store.historyRecords("boca-raton");
+      expect(result.surfSince).toBeNull();
+      expect(result.records.find((r) => r.kind === "biggest_surf")).toBeUndefined();
+    });
+
+    it("'quietest' only considers local_hour 10-18", async () => {
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-22T07:00:00.000Z", local_date: "2026-09-22", local_hour: 3, crowd_pct: 1 }),
+      );
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-22T14:00:00.000Z", local_date: "2026-09-22", local_hour: 10, crowd_pct: 20 }),
+      );
+      const result = await store.historyRecords("boca-raton");
+      const quiet = result.records.find((r) => r.kind === "quietest");
+      expect(quiet).toMatchObject({ local_hour: 10, value: 20 });
+    });
+
+    it("ties break to the earliest hour_utc (ORDER BY value, hour_utc ASC)", async () => {
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-23T14:00:00.000Z", local_date: "2026-09-23", local_hour: 10, score: 90 }),
+      );
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-22T14:00:00.000Z", local_date: "2026-09-22", local_hour: 10, score: 90 }),
+      );
+      const result = await store.historyRecords("boca-raton");
+      const best = result.records.find((r) => r.kind === "best");
+      expect(best).toMatchObject({ local_date: "2026-09-22" });
+    });
+
+    it("is NOT bounded by any window — a reading far outside 30 days still wins", async () => {
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-08-19T14:00:00.000Z", local_date: "2026-08-19", local_hour: 10, score: 99 }),
+      );
+      await store.upsertBeachHourly(
+        hourlyRow({ hour_utc: "2026-09-28T14:00:00.000Z", local_date: "2026-09-28", local_hour: 10, score: 70 }),
+      );
+      const result = await store.historyRecords("boca-raton");
+      const best = result.records.find((r) => r.kind === "best");
+      expect(best).toMatchObject({ local_date: "2026-08-19", value: 99 });
+    });
+
+    it("a beach with no rows at all returns no records and a null archiveStartedAt", async () => {
+      const result = await store.historyRecords("nowhere-beach");
+      expect(result).toEqual({ records: [], archiveStartedAt: null, dayCount: 0, surfSince: null });
+    });
+  });
+
+  // --- sun-event prediction log (migrations/0013) — real multi-row upsert ---
+  describe("sun_event_predictions — real multi-row UPSERT", () => {
+  function sunRow(over: Partial<SunEventPredictionRow> = {}): SunEventPredictionRow {
+    return {
+      slug: "boca-raton",
+      event_kind: "sunrise",
+      event_iso: "2026-10-06T11:15:00.000Z",
+      as_of_hour_utc: "2026-10-06T11:00:00.000Z",
+      snapshot_generated_at: "2026-10-06T11:05:00.000Z",
+      archived_at: "2026-10-06T11:05:01.000Z",
+      lead_minutes: 10,
+      score: 58,
+      band: "good",
+      model_path: "factor",
+      note: "test note",
+      breakdown_json: '{"horizonPath":"x","cloudCanvas":"y"}',
+      low_cloud_pct: 0,
+      mid_cloud_pct: 67,
+      high_cloud_pct: 48,
+      total_cloud_pct: 67,
+      humidity_pct: 87,
+      aod: 0.14,
+      pm2_5: 13.6,
+      horizon_cloud_pct: 40,
+      horizon_source: "overhead",
+      horizon_fresh: 1,
+      seasonal_prior: 55,
+      point_time: "2026-10-06T11:00:00.000Z",
+      peak_color_iso: "2026-10-06T11:15:00.000Z",
+      peak_offset_minutes: 0,
+      algo_version: "2026-10-06.1",
+      engine_version: "test-1",
+      build_sha: "abc123",
+      observed_score: null,
+      observed_source: null,
+      observed_at: null,
+      ...over,
+    };
+  }
+
+    it("writes a sunrise+sunset pair as ONE statement and round-trips every column", async () => {
+      const rows = [
+        sunRow(),
+        sunRow({ event_kind: "sunset", event_iso: "2026-10-06T23:10:00.000Z", model_path: null, score: null, band: null, breakdown_json: null, horizon_source: null, horizon_fresh: null, horizon_cloud_pct: null, point_time: null }),
+      ];
+      expect(await store.upsertSunEventPredictions(rows)).toEqual({ written: 2 });
+      const back = await store.sunEventPredictionsFor("boca-raton", "2026-10-06T11:15:00.000Z");
+      expect(back).toHaveLength(1);
+      const { observed_score, observed_source, observed_at, ...rest } = rows[0];
+      expect(back[0]).toMatchObject(rest);
+      expect([observed_score, observed_source, observed_at]).toEqual([null, null, null]);
+      const set = await store.sunEventPredictionsFor("boca-raton", "2026-10-06T23:10:00.000Z");
+      expect(set[0].score).toBeNull();
+      expect(set[0].model_path).toBeNull();
+    });
+
+    it("an older or equal snapshot never regresses a row; a newer one replaces it but leaves observed_* alone", async () => {
+      const raw = freshRawDb() as D1Like;
+      const s = d1Store(raw);
+      await s.upsertSunEventPredictions([sunRow()]);
+      await raw
+        .prepare("UPDATE sun_event_predictions SET observed_score = 88, observed_source = 'manual', observed_at = 'x'")
+        .run();
+      expect((await s.upsertSunEventPredictions([sunRow({ score: 1 })])).written).toBe(0);
+      expect(
+        (await s.upsertSunEventPredictions([sunRow({ snapshot_generated_at: "2026-10-06T11:30:00.000Z", score: 61 })])).written,
+      ).toBe(1);
+      const [r] = await s.sunEventPredictionsFor("boca-raton", "2026-10-06T11:15:00.000Z");
+      expect(r.score).toBe(61);
+      expect(r.observed_score).toBe(88);
+      expect(r.observed_source).toBe("manual");
+    });
+
+    it("different as_of hours of one event are separate rows, oldest first", async () => {
+      await store.upsertSunEventPredictions([sunRow({ as_of_hour_utc: "2026-10-06T10:00:00.000Z", snapshot_generated_at: "2026-10-06T10:05:00.000Z", score: 40 })]);
+      await store.upsertSunEventPredictions([sunRow()]);
+      const hist = await store.sunEventPredictionsFor("boca-raton", "2026-10-06T11:15:00.000Z");
+      expect(hist.map((r) => r.score)).toEqual([40, 58]);
+    });
+  });
+
+  // --- sun-event observations (migrations/0015) — the real SQL ---------------
+  describe("sun_event_observations — upsert and the write-back onto sun_event_predictions", () => {
+    const EVENT = "2026-10-06T11:15:09.672Z";
+    const at = (min: number) => new Date(Date.parse(EVENT) + min * 60_000).toISOString();
+    const truth = async (iso = EVENT, s: DeviceStore = store) =>
+      (await s.sunEventPredictionsFor("boca-raton", iso))
+        .filter((r) => r.event_kind === "sunrise")
+        .map((r) => [r.observed_score, r.observed_source, r.observed_at]);
+
+    it("round-trips every column", async () => {
+      const row = observationRow({ series_json: '[{"t":"x","score":1}]' });
+      expect(await store.recordSunEventObservation(row)).toEqual({ stored: true, predictionsUpdated: 0 });
+      expect(await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06")).toEqual([row]);
+    });
+
+    it("replaces only on a newer (score_version, scored_at); a duplicate or stale replay writes nothing", async () => {
+      await store.upsertSunEventPredictions([predictionRow()]);
+      const first = observationRow({ observed_score: 70, scored_at: "2026-10-06T14:00:00.000Z", created_at: "2026-10-06T14:00:01.000Z" });
+      expect((await store.recordSunEventObservation(first)).stored).toBe(true);
+
+      // exact duplicate (even with a later created_at): meta.changes = 0, nothing propagates
+      expect(await store.recordSunEventObservation({ ...first, created_at: "2026-10-06T15:00:00.000Z" })).toEqual({ stored: false, predictionsUpdated: 0 });
+      // same version, older scored_at; older version, later scored_at; same pair, different content
+      expect((await store.recordSunEventObservation({ ...first, observed_score: 5, scored_at: "2026-10-06T13:00:00.000Z" })).stored).toBe(false);
+      expect((await store.recordSunEventObservation({ ...first, observed_score: 6, score_version: "2026-10-05.9", scored_at: "2026-10-06T16:00:00.000Z" })).stored).toBe(false);
+      expect((await store.recordSunEventObservation({ ...first, observed_score: 7 })).stored).toBe(false);
+      expect((await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06"))[0]).toEqual(first);
+      expect(await truth()).toEqual([[70, "sun-cam:deerfield-beach-cam:solar", "2026-10-06T14:00:00.000Z"]]);
+
+      // a real re-score replaces everything but created_at, and propagates once
+      const r = await store.recordSunEventObservation({ ...first, observed_score: 91, series_json: "[1]", scored_at: "2026-10-06T14:30:00.000Z", created_at: "2026-10-06T14:30:01.000Z" });
+      expect(r).toEqual({ stored: true, predictionsUpdated: 1 });
+      expect((await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06"))[0]).toMatchObject({
+        observed_score: 91,
+        series_json: "[1]",
+        scored_at: "2026-10-06T14:30:00.000Z",
+        created_at: "2026-10-06T14:00:01.000Z",
+      });
+      expect(await truth()).toEqual([[91, "sun-cam:deerfield-beach-cam:solar", "2026-10-06T14:30:00.000Z"]]);
+    });
+
+    it("score_version orders by date, then the counter as a NUMBER ('.10' beats '.9')", async () => {
+      const row = (v: string, scored: string) => observationRow({ score_version: v, scored_at: scored, observed_score: 50 });
+      await store.recordSunEventObservation(row("2026-10-06.9", "2026-10-06T14:00:00.000Z"));
+      expect((await store.recordSunEventObservation(row("2026-10-06.10", "2026-10-06T13:00:00.000Z"))).stored).toBe(true);
+      expect((await store.recordSunEventObservation(row("2026-10-06.9", "2026-10-06T15:00:00.000Z"))).stored).toBe(false);
+      expect((await store.recordSunEventObservation(row("2026-10-07.1", "2026-10-06T12:00:00.000Z"))).stored).toBe(true);
+      expect((await store.recordSunEventObservation(row("2026-10-06.99", "2026-10-06T18:00:00.000Z"))).stored).toBe(false);
+      expect((await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06"))[0].score_version).toBe("2026-10-07.1");
+    });
+
+    it("a stale replay leaves the prediction rows alone, but heals rows an earlier crash never filled", async () => {
+      await store.recordSunEventObservation(observationRow({ observed_score: 80 })); // stored with no prediction row yet
+      await store.upsertSunEventPredictions([predictionRow()]);
+      expect(await truth()).toEqual([[null, null, null]]);
+      // the same payload is retried: the observation is a duplicate (not stored) but the idempotent write-back fills the row
+      expect(await store.recordSunEventObservation(observationRow({ observed_score: 80 }))).toEqual({ stored: false, predictionsUpdated: 1 });
+      expect(await truth()).toEqual([[80, "sun-cam:deerfield-beach-cam:solar", "2026-10-06T14:05:00.000Z"]]);
+      expect((await store.recordSunEventObservation(observationRow({ observed_score: 80 }))).predictionsUpdated).toBe(0);
+    });
+
+    it("orders solar before antisolar, then nearest, then cam_id", async () => {
+      await store.recordSunEventObservation(observationRow({ cam_id: "z-cam", view: "antisolar", distance_mi: 0 }));
+      await store.recordSunEventObservation(observationRow({ cam_id: "b-cam", view: "solar", distance_mi: 2.9 }));
+      await store.recordSunEventObservation(observationRow({ cam_id: "a-cam", view: "solar", distance_mi: 2.9 }));
+      await store.recordSunEventObservation(observationRow({ cam_id: "c-cam", view: "solar", distance_mi: 0.5 }));
+      const order = (await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06")).map((r) => r.cam_id);
+      expect(order).toEqual(["c-cam", "a-cam", "b-cam", "z-cam"]);
+    });
+
+    it("fills the matching prediction rows (event_iso within 15 min, inclusive) and no others", async () => {
+      await store.upsertSunEventPredictions([
+        predictionRow({ event_iso: at(-15), as_of_hour_utc: "2026-10-06T08:00:00.000Z", snapshot_generated_at: "2026-10-06T08:05:00.000Z" }),
+        predictionRow({ event_iso: EVENT, as_of_hour_utc: "2026-10-06T09:00:00.000Z", snapshot_generated_at: "2026-10-06T09:05:00.000Z" }),
+        predictionRow({ event_iso: at(15), as_of_hour_utc: "2026-10-06T10:00:00.000Z", snapshot_generated_at: "2026-10-06T10:05:00.000Z" }),
+        predictionRow({ event_iso: at(-16), as_of_hour_utc: "2026-10-06T07:00:00.000Z", snapshot_generated_at: "2026-10-06T07:05:00.000Z" }),
+        predictionRow({ event_iso: at(16), as_of_hour_utc: "2026-10-06T06:00:00.000Z", snapshot_generated_at: "2026-10-06T06:05:00.000Z" }),
+        predictionRow({ slug: "fort-lauderdale", event_iso: EVENT }),
+        predictionRow({ event_kind: "sunset", event_iso: EVENT, as_of_hour_utc: "2026-10-06T05:00:00.000Z" }),
+      ]);
+      const r = await store.recordSunEventObservation(observationRow({ cam_id: "deerfield-beach-cam" }));
+      expect(r.predictionsUpdated).toBe(3);
+      for (const m of [-15, 0, 15]) {
+        expect((await truth(at(m)))[0]).toEqual([90, "sun-cam:deerfield-beach-cam:solar", "2026-10-06T14:05:00.000Z"]);
+      }
+      expect((await truth(at(-16)))[0]).toEqual([null, null, null]);
+      expect((await truth(at(16)))[0]).toEqual([null, null, null]);
+      // another beach and the other kind are untouched
+      expect((await store.sunEventPredictionsFor("fort-lauderdale", EVENT))[0].observed_score).toBeNull();
+      const sunset = (await store.sunEventPredictionsFor("boca-raton", EVENT)).find((p) => p.event_kind === "sunset");
+      expect(sunset?.observed_score).toBeNull();
+      // the model's own columns are left as they were
+      expect((await store.sunEventPredictionsFor("boca-raton", EVENT)).find((p) => p.event_kind === "sunrise")).toMatchObject({ score: 58, band: "good" });
+    });
+
+    it("never overwrites a solar observation with an antisolar one, in either arrival order", async () => {
+      await store.upsertSunEventPredictions([predictionRow()]);
+      await store.recordSunEventObservation(observationRow({ cam_id: "solar-cam", view: "solar", distance_mi: 2.9, observed_score: 85 }));
+      await store.recordSunEventObservation(observationRow({ cam_id: "anti-cam", view: "antisolar", distance_mi: 0, observed_score: 30 }));
+      expect(await truth()).toEqual([[85, "sun-cam:solar-cam:solar", "2026-10-06T14:05:00.000Z"]]);
+
+      const other = freshStore() as DeviceStore;
+      await other.upsertSunEventPredictions([predictionRow()]);
+      await other.recordSunEventObservation(observationRow({ cam_id: "anti-cam", view: "antisolar", distance_mi: 0, observed_score: 30 }));
+      expect((await truth(EVENT, other))[0][1]).toBe("sun-cam:anti-cam:antisolar");
+      await other.recordSunEventObservation(observationRow({ cam_id: "solar-cam", view: "solar", distance_mi: 2.9, observed_score: 85 }));
+      expect((await truth(EVENT, other))[0]).toEqual([85, "sun-cam:solar-cam:solar", "2026-10-06T14:05:00.000Z"]);
+    });
+
+    it("among solar cams the nearest wins; a tie goes to the lower cam_id; a re-score refreshes the label", async () => {
+      await store.upsertSunEventPredictions([predictionRow()]);
+      await store.recordSunEventObservation(observationRow({ cam_id: "pier", distance_mi: 2.9, observed_score: 50 }));
+      await store.recordSunEventObservation(observationRow({ cam_id: "surf", distance_mi: 0.1, observed_score: 60 }));
+      expect((await truth())[0][1]).toBe("sun-cam:surf:solar");
+      await store.recordSunEventObservation(observationRow({ cam_id: "beach", distance_mi: 0.1, observed_score: 70 }));
+      expect((await truth())[0]).toEqual([70, "sun-cam:beach:solar", "2026-10-06T14:05:00.000Z"]);
+      await store.recordSunEventObservation(observationRow({ cam_id: "beach", distance_mi: 0.1, observed_score: 75, scored_at: "2026-10-06T16:00:00.000Z" }));
+      expect((await truth())[0]).toEqual([75, "sun-cam:beach:solar", "2026-10-06T16:00:00.000Z"]);
+    });
+
+    it("leaves a hand-labelled prediction row alone", async () => {
+      // upsertSunEventPredictions never writes observed_*, so label the row by hand, as an owner would
+      const raw = freshRawDb() as D1Like;
+      const s = d1Store(raw);
+      await s.upsertSunEventPredictions([predictionRow()]);
+      await raw
+        .prepare("UPDATE sun_event_predictions SET observed_score = 88, observed_source = 'manual', observed_at = '2026-10-06T13:00:00.000Z'")
+        .run();
+      expect((await s.recordSunEventObservation(observationRow())).predictionsUpdated).toBe(0);
+      expect(await truth(EVENT, s)).toEqual([[88, "manual", "2026-10-06T13:00:00.000Z"]]);
+      expect(await s.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06")).toHaveLength(1);
+    });
+
+    it("the table refuses a bad kind or view (CHECK constraints) and a duplicate key is an upsert, not a second row", async () => {
+      const raw = freshRawDb() as D1Like;
+      const insert = (kind: string, view: string) =>
+        raw
+          .prepare(
+            "INSERT INTO sun_event_observations (slug, event_kind, event_date_local, cam_id, event_iso, view, distance_mi, observed_score, warm_frac, colorfulness, peak_frame_iso, series_json, score_version, scored_at, credit, created_at) " +
+              "VALUES ('s', ?1, '2026-10-06', 'c', 'x', ?2, 0, 1, 0, 0, 'x', '[]', '2026-10-06.1', 'x', 'c', 'x')",
+          )
+          .bind(kind, view)
+          .run();
+      await expect(insert("noon", "solar")).rejects.toThrow();
+      await expect(insert("sunrise", "sideways")).rejects.toThrow();
+      await insert("sunrise", "solar");
+      await expect(insert("sunrise", "solar")).rejects.toThrow(); // plain INSERT collides on the primary key
+    });
+  });
+
+  // --- cam archive (migrations/0006 + 0014) — real INSERT OR IGNORE ---------
+  describe("cam_observations / cam_reads — real multi-row INSERT OR IGNORE", () => {
+    function obs(i: number, over: Partial<CamObservationRow> = {}): CamObservationRow {
+      return {
+        slug: "boca-raton",
+        captured_at_utc: new Date(Date.UTC(2026, 9, 6, 11, i)).toISOString(),
+        crowd_pct: 10 + i,
+        people: i,
+        seaweed_level: "low",
+        cov_pct: 5,
+        clarity_pct: 70,
+        water_word: "clear",
+        uw_pct: null,
+        source: "feed",
+        raw_json: `{"i":${i}}`,
+        crowd_level: "light",
+        uw_level: null,
+        ...over,
+      };
+    }
+    const read = (cam: string, over: Partial<CamReadRow> = {}): CamReadRow => ({
+      slug: "boca-raton",
+      captured_at_utc: "2026-10-06T12:00:00.000Z",
+      cam_id: cam,
+      cam_name: `Cam ${cam}`,
+      seaweed_level: "low",
+      cov_pct: 4,
+      seaweed_note: "n",
+      crowd_level: "light",
+      crowd_pct: 9,
+      people: 3,
+      crowd_note: "c",
+      water_word: "clear",
+      water_pct: 80,
+      water_note: "w",
+      raw_json: "{}",
+      ...over,
+    });
+
+    it("inserts more rows than fit in one statement (100-param cap) and round-trips them", async () => {
+      const rows = Array.from({ length: 20 }, (_, i) => obs(i, i === 3 ? { uw_pct: 55, uw_level: "hazy" } : {}));
+      expect(await store.insertCamObservations(rows)).toEqual({ written: 20 });
+      const back = await store.camObservationsSince("boca-raton", "2026-10-06T00:00:00.000Z");
+      expect(back).toHaveLength(20);
+      expect(back[3]).toMatchObject({ uw_pct: 55, uw_level: "hazy", crowd_level: "light", raw_json: '{"i":3}' });
+      expect(await store.latestCamObservationUtc("boca-raton")).toBe(rows[19].captured_at_utc);
+      expect(await store.latestCamObservationUtc("nowhere")).toBeNull();
+    });
+
+    it("is idempotent: re-inserting the same reads writes nothing and never overwrites", async () => {
+      await store.insertCamObservations([obs(0), obs(1)]);
+      const again = await store.insertCamObservations([obs(0, { crowd_pct: 99 }), obs(1), obs(2)]);
+      expect(again).toEqual({ written: 1 });
+      const back = await store.camObservationsSince("boca-raton", "2026-10-06T00:00:00.000Z");
+      expect(back[0].crowd_pct).toBe(10); // the first write stands
+    });
+
+    it("camObservationUtcsSince is bounded below and per beach", async () => {
+      await store.insertCamObservations([obs(0), obs(5), obs(0, { slug: "deerfield-beach" })]);
+      const got = await store.camObservationUtcsSince("boca-raton", obs(3).captured_at_utc);
+      expect(got).toEqual([obs(5).captured_at_utc]);
+    });
+
+    it("stores per-cam reads and ignores repeats", async () => {
+      const rows = ["a", "b", "c", "d", "e", "f", "g", "h"].map((c) => read(c)); // > 6 per statement
+      expect(await store.insertCamReads(rows)).toEqual({ written: 8 });
+      expect(await store.insertCamReads(rows)).toEqual({ written: 0 });
+      const back = await store.camReadsAt("boca-raton", "2026-10-06T12:00:00.000Z");
+      expect(back.map((r) => r.cam_id)).toEqual(["a", "b", "c", "d", "e", "f", "g", "h"]);
+      expect(back[0]).toMatchObject({ water_pct: 80, seaweed_note: "n" });
+    });
+
+    it("an empty batch is a no-op", async () => {
+      expect(await store.insertCamObservations([])).toEqual({ written: 0 });
+      expect(await store.insertCamReads([])).toEqual({ written: 0 });
+    });
+  });
+
+  it("migration 0014 back-fills crowd_level / uw_level / uw_pct on pre-existing rows from raw_json", () => {
+    const dir = path.join(process.cwd(), "migrations");
+    const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
+    const db = new DatabaseSyncCtor!(":memory:");
+    for (const f of files.filter((f) => f < "0014")) db.exec(readFileSync(path.join(dir, f), "utf8"));
+    const ins = db.prepare(
+      "INSERT INTO cam_observations (slug, captured_at_utc, source, raw_json) VALUES (?, ?, 'feed', ?)",
+    );
+    ins.run("boca-raton", "2026-09-22T11:00:00.000Z", JSON.stringify({ level: "heavy", uw: 40, uwLevel: "hazy" }));
+    ins.run("boca-raton", "2026-09-22T12:00:00.000Z", JSON.stringify({ level: "light" }));
+    ins.run("boca-raton", "2026-09-22T13:00:00.000Z", "not json{");
+    ins.run("boca-raton", "2026-09-22T14:00:00.000Z", null as unknown as string);
+    db.exec(readFileSync(path.join(dir, files.find((f) => f.startsWith("0014"))!), "utf8"));
+    const rows = db
+      .prepare("SELECT captured_at_utc, crowd_level, uw_level, uw_pct FROM cam_observations ORDER BY captured_at_utc")
+      .all();
+    expect(rows[0]).toMatchObject({ crowd_level: "heavy", uw_level: "hazy", uw_pct: 40 });
+    expect(rows[1]).toMatchObject({ crowd_level: "light", uw_level: null, uw_pct: null });
+    expect(rows[2]).toMatchObject({ crowd_level: null }); // invalid JSON left alone, no error
+    expect(rows[3]).toMatchObject({ crowd_level: null });
+    db.close();
   });
 
   // --- presence fix purge (housekeeping in app/api/push/run/route.ts) -------

@@ -18,7 +18,12 @@ const config: CapacitorConfig = {
     url: "https://app.isitbeachday.com",
   },
   ios: {
-    contentInset: "automatic",
+    // "never": the page's own CSS (globals.css, env(safe-area-inset-top/bottom))
+    // is the ONE source of the status-bar / home-indicator inset. With
+    // "automatic", once the app adopted UIScene (build 2026092303, iOS 27 crash
+    // fix) the scroll view ALSO insets the page, so the status-bar gap showed
+    // twice — a ~60 pt blank band above the header (owner 2026-09-28).
+    contentInset: "never",
     backgroundColor: "#f3f7fb",
     // Build-stamped marker so the web app can detect the native shell even when
     // the bundled @capacitor/core mis-detects "web" on the remote URL.

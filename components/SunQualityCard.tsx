@@ -8,17 +8,12 @@ import {
   goldenTrack,
   type GoldenHourTiming,
   type GoldenTarget,
-  type GoldenWindowInput,
 } from "@/lib/goldenHourTiming";
+import { sunCardTiming } from "@/lib/sunCardEvent";
 import {
-  nearestHourlyPoint,
-  nextSunEvent,
-  peakColorTime,
-  sunEventQuality,
   sunQualityBandMeta,
   type CloudMix,
   type GoldenWindowIso,
-  type HorizonPath,
   type HourlyCloudPoint,
   type PeakColorTime,
   type SunEventKind,
@@ -26,6 +21,7 @@ import {
   type SunEventTime,
 } from "@/lib/sunQuality";
 import { FlipCard, NerdBack } from "@/components/FlipCard";
+import { assembleSunEventQuality } from "@/lib/sunAlert";
 
 // Gradient stops line up with lib/sunQuality.ts's BAND_CUTOFFS (dud <20,
 // plain <45, good <70, vivid <90, epic >=90) — same idiom as
@@ -36,11 +32,6 @@ const GRADIENT =
 /** The golden window itself, drawn on the timeline track: amber → orange → rose,
  *  the light the window is named for. No illustration, just the segment. */
 const GOLDEN_SEGMENT = "linear-gradient(to right, #fbbf24, #fb923c, #fb7185)";
-
-/** How close (minutes) the event must be for a "right now" satellite beam-path
- *  reading to speak for it — a live cloud observation can't vouch for a sunrise
- *  hours away. Aligns with nearestHourlyPoint's forecast tolerance. */
-const BEAM_IMMINENT_MINUTES = 90;
 
 export interface SunQualityCardProps {
   /** Current instant; injectable for tests/SSR determinism. Defaults to now. */
@@ -91,27 +82,6 @@ function cloudLine(cloud: CloudMix | undefined): string {
     return `${cloud.totalPct}% total cloud (level split not available)`;
   }
   return "No forecast cloud reading for this hour.";
-}
-
-/**
- * Resolve the satellite beam/horizon-path clearness for the factor model —
- * present (with `fresh:true`) only when GOES delivered a reading, its wrapper is
- * "ok" (not stale), and the event is within BEAM_IMMINENT_MINUTES of `now`
- * (deterministic: `now` is the server-pinned snapshot time, so SSR and hydration
- * agree). Beam-path cloud is preferred; overhead cloudPct is the honest fallback.
- */
-function resolveHorizon(
-  goes: SunQualityCardProps["goesCloud"],
-  eventIso: string,
-  now: Date,
-): HorizonPath | undefined {
-  if (!goes || goes.status !== "ok") return undefined;
-  const pct = goes.beamCloudPct ?? goes.cloudPct;
-  if (pct == null) return undefined;
-  const dt = Math.abs(Date.parse(eventIso) - now.getTime());
-  if (!Number.isFinite(dt)) return undefined;
-  const fresh = dt <= BEAM_IMMINENT_MINUTES * 60_000;
-  return { cloudPct: pct, fresh };
 }
 
 /** Builds the flip-card back's NerdInfo. When the richer factor model ran, the
@@ -181,20 +151,19 @@ function buildSunQualityNerdInfo(args: {
       </div>
     ),
     explainer:
-      "How colorful will this sunrise or sunset be — rich color, or clear but plain? The best ones aren't the clearest ones — they need a mid/high cloud DECK to act as a canvas the low sun's red and orange light can paint onto, AND a clear enough horizon for that low beam to reach it. Golden hour here is the 40 minutes around the event: 20 minutes before to 20 minutes after sunrise or sunset. Roughly 30-60% mid/high cloud is the color sweet spot; a perfectly clear sky is clean but plain; and a heavy LOW cloud deck sitting on the horizon blocks the beam before it reaches whatever's above.",
+      "How colorful will this sunrise or sunset be — rich color, or clear but plain? The best ones aren't the clearest ones — they need a mid/high cloud DECK to act as a canvas the low sun's red and orange light can paint onto, AND a clear enough horizon for that low beam to reach it. Golden hour here runs while the sun is between 6° above and 4° below the horizon (about 20 minutes either side when that can't be computed). Anything from a moderate to a near-full mid/high deck can light up, as long as the horizon is clear; a perfectly clear sky is clean but plain; a solid gray mid-level lid usually stays gray; and a heavy LOW cloud deck sitting on the horizon blocks the beam before it reaches whatever's above. We're starting to check the model against what the beach cams see.",
     formula:
-      "score = 0.40·clearPath + 0.40·canvas + 0.20·seasonalPrior, × aerosol × humidity modifiers. clearPath = 100 − beam-path cloud% (satellite, when a fresh sample is near the event) else 100 − low-cloud est. canvas = 100 − |0.5·mid + 0.7·high − 50|·2.2 − 0.9·low (high cloud weighted above mid). Modifiers: clean air (AOD<0.15) small bonus, haze/PM2.5 penalties (−25%/−35% caps), humidity >60% penalty (−15% cap). Peak color lags to the sun's −2°→−4° window when there's a high-cloud deck. Every constant is a tuned heuristic except the low-cloud clear-path blocker (Corfidi/NOAA). Without the atmospheric/satellite inputs, a simpler cloud-canvas curve is used instead. Golden hour is a fixed ±20-min window around sunrise/sunset; blue hour comes from a solar-elevation solve (sun at −6°) out to the golden window's edge.",
+      "score = 0.85·canvas·(clearPath ÷ 100) + 0.15·seasonalPrior, × aerosol × humidity modifiers — the clear path scales the canvas, so a cloudless sky earns little. clearPath = 100 for low cloud ≤20%, then falls to 0 at 90% (forecast low cloud). canvas = 100 − 2.2·(distance of 0.5·mid + 0.7·high outside 35–80), × a solid-mid-deck factor (1.0 at ≤80% mid down to 0.35 at 100%). Modifiers: clean air (AOD<0.15) small bonus, haze/PM2.5 penalties (−25%/−35% caps); humidity only when there's no aerosol reading, and only above 92% (−8% cap). Calibrated on Jul–Oct 2026 Boca history so ~20% of events score Great or better and ~10% Amazing. Peak color lags to the sun's −2°→−4° window when there's a high-cloud deck. Every constant is a tuned heuristic except the low-cloud clear-path blocker (Corfidi/NOAA). Without the low/mid/high split, a flatter total-cloud curve is used instead. Golden hour is the sun between +6° and −4° (a ±20-min window only as a fallback); blue hour comes from a solar-elevation solve (sun at −6°) out to the golden window's edge.",
     computation,
     sources: [
       "Open-Meteo hourly forecast — cloud cover by level (low/mid/high) + humidity",
       "Open-Meteo air quality — aerosol optical depth (CAMS) + PM2.5",
-      "NOAA GOES-19 ABI — beam-path cloud (horizon clearness), when fresh",
       "Sun/golden-hour times — computed locally (NOAA solar-position algorithm)",
     ],
     notes: knownTotalOnly
       ? "Cloud-by-level wasn't available for this hour, so this falls back to total cloud cover on a flatter, more conservative curve — the real color potential could be higher or lower."
       : b && b.horizonPath.startsWith("~")
-        ? "The horizon path here is estimated from low cloud, not confirmed by satellite (no fresh beam-path sample near the event) — treat clear-path as a best guess."
+        ? "The horizon path is estimated from the forecast's low cloud. The satellite can't tell a low deck on the horizon from the high deck that lights up, so it isn't used here."
         : "Needs BOTH a moderate mid/high deck AND a low deck that stays out of the way. Peak-color timing and the modifiers are research-informed heuristics, not guarantees.",
   };
 }
@@ -218,27 +187,6 @@ function fmtRange(startIso: string, endIso: string, tz: string): string {
   const [aTime, aMer] = a.split(" ");
   const [, bMer] = b.split(" ");
   return aMer && aMer === bMer ? `${aTime}–${b}` : `${a}–${b}`;
-}
-
-/** The card's ISO windows in the shape lib/goldenHourTiming.ts wants. Undefined
- *  when the snapshot didn't carry that elevation window. */
-function toWindow(w: GoldenWindowIso | undefined): GoldenWindowInput | undefined {
-  if (!w?.goldenStartIso || !w.goldenEndIso) return undefined;
-  return { start: w.goldenStartIso, end: w.goldenEndIso, peakAnchorIso: w.peakAnchorIso };
-}
-
-/** The sun event a timing target is built around, in lib/sunQuality.ts's shape,
- *  so the color score and the flip back describe the window the front shows. */
-function targetEvent(target: GoldenTarget | null): SunEventTime | null {
-  if (!target?.eventIso) return null;
-  return {
-    event: target.kind === "am" ? "sunrise" : "sunset",
-    timeIso: target.eventIso,
-    goldenStartIso: target.start.toISOString(),
-    goldenEndIso: target.end.toISOString(),
-    goldenFromElevation: true,
-    peakAnchorIso: target.peakAnchorIso,
-  };
 }
 
 /**
@@ -478,45 +426,17 @@ export function SunQualityCard({
 
   const fmt = (d: Date) => fmtTime(d.toISOString(), tz);
 
-  // Real elevation windows when the snapshot carries them; otherwise fall back
-  // to whatever window `nextSunEvent` can build (an older snapshot's ±60-min
-  // approximation), so the card still counts down rather than going blank.
-  const next = nextSunEvent(nowD, today, tomorrow);
-  const realWindows = { am: toWindow(today.goldenAm), eve: toWindow(today.goldenEve) };
-  const hasReal = !!realWindows.am || !!realWindows.eve;
-  const fallback: GoldenWindowInput | undefined = next
-    ? { start: next.goldenStartIso, end: next.goldenEndIso, peakAnchorIso: next.peakAnchorIso }
-    : undefined;
-  const sunsetMs = today.sunset ? Date.parse(today.sunset) : Number.NaN;
-  const fallbackIsTomorrow =
-    !!next && next.event === "sunrise" && Number.isFinite(sunsetMs) && nowD.getTime() >= sunsetMs;
-
-  const timingArgs = {
-    windows: hasReal
-      ? realWindows
-      : fallbackIsTomorrow
-        ? {}
-        : next?.event === "sunrise"
-          ? { am: fallback }
-          : { eve: fallback },
-    sunrise: today.sunrise,
-    sunset: today.sunset,
-    tomorrowAmWindow: hasReal
-      ? toWindow(tomorrow?.goldenAm)
-      : fallbackIsTomorrow
-        ? fallback
-        : undefined,
-    tomorrowSunrise: tomorrow?.sunriseIso ?? (fallbackIsTomorrow ? next?.timeIso : undefined),
-    formatTime: fmt,
-  };
-
+  // The card's timing + scored event — lib/sunCardEvent.ts, shared with the
+  // history archiver so what is archived is exactly what is shown. Real
+  // elevation windows when the snapshot carries them; otherwise the window
+  // `nextSunEvent` can build (an older snapshot's approximation), so the card
+  // still counts down rather than going blank.
+  //
   // Pinned timing drives everything the server must reproduce (the scored event,
   // the color score, the flip back); the live one only refreshes the countdown
   // and the marker after mount.
-  const pinned = goldenHourTiming({ ...timingArgs, now: nowD });
+  const { timingArgs, pinned, scored } = sunCardTiming({ nowD, today, tomorrow, formatTime: fmt });
   const live = clientNowMs == null ? pinned : goldenHourTiming({ ...timingArgs, now: clientNowMs });
-
-  const scored = targetEvent(pinned.target) ?? next;
 
   if (!scored) {
     return (
@@ -532,29 +452,15 @@ export function SunQualityCard({
     );
   }
 
-  const point = nearestHourlyPoint(scored.timeIso, hourly);
-  const horizon = resolveHorizon(goesCloud, scored.timeIso, nowD);
-  const result = sunEventQuality({
-    cloud: point?.cloud,
-    humidityPct: point?.humidityPct,
-    aod: airQuality?.aod,
-    pm2_5: airQuality?.pm2_5,
-    horizon,
-  });
-
-  // A rough clear-path estimate purely for the peak-color "reasonably clear"
-  // gate (mirrors the factor model's clearPath: fresh beam, else low-cloud est.).
-  const clearPathEstimate = horizon?.fresh
-    ? Math.max(0, 100 - horizon.cloudPct)
-    : point?.cloud.lowPct != null
-      ? Math.max(0, 100 - point.cloud.lowPct * 1.1)
-      : undefined;
-  const peak = peakColorTime({
-    event: scored.event,
-    eventIso: scored.timeIso,
-    peakAnchorIso: scored.peakAnchorIso,
-    highPct: point?.cloud.highPct,
-    clearPathScore: clearPathEstimate,
+  // The ONE assembly function the "sun-color" push alert also calls
+  // (lib/sunAlert.ts) — same nearest-hourly-point read, same horizon
+  // freshness rule, same peak-color estimate, so the card and the alert can
+  // never quietly disagree about the same beach at the same instant.
+  const { point, result, peak } = assembleSunEventQuality(scored, {
+    hourly,
+    airQuality,
+    goesCloud,
+    nowMs: nowD.getTime(),
   });
   const peakLine = peakColorLine(peak, scored.event, tz);
   const goldenLine = scored.goldenFromElevation

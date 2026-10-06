@@ -119,11 +119,21 @@ describe("GET /api/share/[slug]", () => {
   // do (commit 2d78363). `stale-while-revalidate` keeps the next viewer on the
   // cached card while a fresh one renders behind them.
   it("caches the rendered card at the edge for 15 minutes", async () => {
-    vi.mocked(getConditions).mockResolvedValue(fixture());
+    const fresh = fixture();
+    fresh.snapshot.generatedAt = new Date().toISOString();
+    vi.mocked(getConditions).mockResolvedValue(fresh);
     const res = await GET(...req("boca-raton"));
     expect(res.headers.get("cache-control")).toBe(
       "public, max-age=900, s-maxage=900, stale-while-revalidate=600",
     );
+  });
+
+  // A card drawn from conditions older than the dashboard's freshness limit
+  // is kept a minute only, so the next view draws from fresh readings.
+  it("caches a card drawn from stale conditions for one minute", async () => {
+    vi.mocked(getConditions).mockResolvedValue(fixture()); // generatedAt is in 2026-09
+    const res = await GET(...req("boca-raton"));
+    expect(res.headers.get("cache-control")).toBe("public, max-age=60, s-maxage=60");
   });
 
   it("404s for an unknown slug", async () => {

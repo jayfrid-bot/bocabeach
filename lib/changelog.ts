@@ -17,6 +17,83 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-06",
+    title: "Sharper sunrise and sunset ratings",
+    details:
+      "The sunrise and sunset color rating had been underrating big, colorful skies. It counted the very clouds that light up as clouds in the way, and it docked every humid Florida dawn. It now rewards a big cloud deck over a clear horizon, and we've started checking it against what the beach cams see. Expect more Great and Amazing calls on the mornings that earn them, and fewer on clear, plain skies.",
+    tag: "improved",
+  },
+  {
+    date: "2026-10-01",
+    title: "No more \"best time\" on a bad day",
+    details:
+      "The 7-day outlook and the \"Best time left today\" pill now only suggest a time that scores at least Decent. On a day where every hour is poor, the outlook says \"no good window\" instead of naming the least-bad hours.",
+    tag: "improved",
+  },
+  {
+    date: "2026-10-01",
+    title: "Seaweed tile no longer cuts off on phones",
+    details:
+      "The \"compared with usual\" note on the seaweed tile is shorter and sits on its own line, so it no longer gets cut off on narrow phone screens.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-10-01",
+    title: "A fuller share card",
+    details:
+      "The picture you share now fits up to 12 readings — rip current, seaweed, rain, sunset, and the next tide join the temperatures, surf, wind, and UV — plus any swim warning in effect and the best time to go — or a plain \"No good beach time today\" when nothing scores at least Decent. The score sits beside the beach name, and long text no longer runs into itself.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-28",
+    title: "A Save button for your alerts",
+    details:
+      "The Alerts settings now have a clear Save button. It shows Saving, then a green Saved check when your change is safe. If a change can't reach us yet, it says so and lets you retry.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-28",
+    title: "Sunrise and sunset alerts",
+    details:
+      "New opt-in alert: a heads-up when your next sunrise or sunset is expected to be especially colorful, sent before it happens so you have time to get to the beach. Choose Great-or-better or Amazing-only, and how far ahead to hear about it — 30 minutes up to 3 hours. Off by default; turn it on in Alerts.",
+    tag: "new",
+  },
+  {
+    date: "2026-09-28",
+    title: "Look back: your beach's last 7 days (Plus)",
+    details:
+      "See the last 7, 14, or 30 days at your beach: each day's best score and time, high temps, surf height, crowds, and seaweed, plus records for the best day, hottest sand, biggest surf, and quietest time since we started keeping history.",
+    tag: "new",
+  },
+  {
+    date: "2026-09-28",
+    title: "Score up top",
+    details:
+      "The beach name moved into the header, warnings got compact, and the score now shows without scrolling.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-28",
+    title: "Lock Screen switch in Beach Mode",
+    details:
+      "While Beach Mode is on, the card now always shows whether your Beach Session is on the Lock Screen, with a button to turn it on or off — and it tells you plainly when it's switched off in iPhone Settings.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-09-28",
+    title: "Red flags and high surf now cap the score at 70",
+    details:
+      "On a red-flag day or under a High Surf Advisory the score now tops out at 70, so the app says \"Decent\" instead of \"Yes — good beach day\". Coastal flood advisories from king tides keep their gentler cap, since the surf is often calm.",
+    tag: "improved",
+  },
+  {
+    date: "2026-09-28",
+    title: "Easier to read on small phones",
+    details:
+      "The wave height stands out against the wave picture, card titles and labels no longer run under the flip icon, and today's best time stays on one line.",
+    tag: "fixed",
+  },
+  {
     date: "2026-09-28",
     title: "Clearer rocket launch details",
     details:

@@ -41,7 +41,16 @@ import {
   COMING_UP_MAX_PER_30D,
   COMING_UP_RETENTION_MS,
 } from "@/lib/db/comingUpClaims";
-import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
+import type {
+  ArchiveCandidate,
+  BeachHourlyRow,
+  CamObservationRow,
+  CamReadRow,
+  HistoryRecordRow,
+  HistoryRecordsResult,
+  SunEventObservationRow,
+  SunEventPredictionRow,
+} from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
 import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
 import type {
@@ -101,7 +110,7 @@ export async function getD1(): Promise<D1Like | null> {
 const DEVICE_COLS =
   "id, platform, push_token, tz, home_slug, profile_json, prefs_json, plan, " +
   "entitlement_until, store_until, code_until, trial_until, trial_used, preview_seen, " +
-  "sent_json, created_at, updated_at";
+  "sent_json, created_at, updated_at, sun_color_min_band, sun_color_lead_min";
 
 /** `beach_hourly` columns, in the exact order both the INSERT and the
  *  positional binds below use — see migrations/0006_history.sql. */
@@ -125,6 +134,173 @@ ON CONFLICT(slug, hour_utc) DO UPDATE SET
 WHERE excluded.snapshot_generated_at > beach_hourly.snapshot_generated_at
 `;
 
+// Sun-event prediction log (migrations/0013). Columns in table order minus the
+// reserved observed_* truth columns, which an upsert never writes or clears.
+const SUN_PRED_COLS = [
+  "slug", "event_kind", "event_iso", "as_of_hour_utc", "snapshot_generated_at", "archived_at",
+  "lead_minutes", "score", "band", "model_path", "note", "breakdown_json", "low_cloud_pct",
+  "mid_cloud_pct", "high_cloud_pct", "total_cloud_pct", "humidity_pct", "aod", "pm2_5",
+  "horizon_cloud_pct", "horizon_source", "horizon_fresh", "seasonal_prior", "point_time",
+  "peak_color_iso", "peak_offset_minutes", "algo_version", "engine_version", "build_sha",
+] as const satisfies readonly (keyof SunEventPredictionRow)[];
+
+const SUN_PRED_KEY_COLS = ["slug", "event_kind", "event_iso", "as_of_hour_utc"];
+
+/** ONE statement for any number of rows (a pass writes 0-2): a multi-row
+ *  INSERT, so a beach's whole sunrise+sunset pair costs a single D1 write. */
+function upsertSunPredictionsSql(rowCount: number): string {
+  const n = SUN_PRED_COLS.length;
+  const tuples = Array.from(
+    { length: rowCount },
+    (_, r) => `(${SUN_PRED_COLS.map((_c, i) => `?${r * n + i + 1}`).join(", ")})`,
+  ).join(", ");
+  return (
+    `INSERT INTO sun_event_predictions (${SUN_PRED_COLS.join(", ")}) VALUES ${tuples} ` +
+    `ON CONFLICT(${SUN_PRED_KEY_COLS.join(", ")}) DO UPDATE SET ` +
+    SUN_PRED_COLS.filter((c) => !SUN_PRED_KEY_COLS.includes(c))
+      .map((c) => `${c} = excluded.${c}`)
+      .join(", ") +
+    " WHERE excluded.snapshot_generated_at > sun_event_predictions.snapshot_generated_at"
+  );
+}
+
+// Sun-event observations (migrations/0015). All 16 columns, in table order.
+const SUN_OBS_COLS = [
+  "slug", "event_kind", "event_date_local", "cam_id", "event_iso", "view", "distance_mi",
+  "observed_score", "warm_frac", "colorfulness", "peak_frame_iso", "series_json",
+  "score_version", "scored_at", "credit", "created_at",
+] as const satisfies readonly (keyof SunEventObservationRow)[];
+
+const SUN_OBS_KEY_COLS = ["slug", "event_kind", "event_date_local", "cam_id"];
+
+/** The ordering key of a stored or incoming observation: score_version's date
+ *  part, its counter as a number ('.10' beats '.9'), then scored_at. The same
+ *  rule as isNewerSunScore in lib/history/types.ts. */
+const SUN_SCORE_KEY = (t: string) =>
+  `substr(${t}.score_version, 1, 10), CAST(substr(${t}.score_version, 12) AS INTEGER), ${t}.scored_at`;
+
+/** Insert, or replace ONLY when the incoming (score_version, scored_at) is strictly
+ *  newer than the stored one: an exact duplicate or a stale replay writes nothing
+ *  (meta.changes = 0). created_at is the first-received time and is never
+ *  rewritten. */
+const UPSERT_SUN_OBSERVATION = `
+INSERT INTO sun_event_observations (${SUN_OBS_COLS.join(", ")})
+VALUES (${SUN_OBS_COLS.map((_, i) => `?${i + 1}`).join(", ")})
+ON CONFLICT(${SUN_OBS_KEY_COLS.join(", ")}) DO UPDATE SET
+  ${SUN_OBS_COLS.filter((c) => !SUN_OBS_KEY_COLS.includes(c) && c !== "created_at")
+    .map((c) => `${c} = excluded.${c}`)
+    .join(", ")}
+WHERE (${SUN_SCORE_KEY("excluded")}) > (${SUN_SCORE_KEY("sun_event_observations")})
+`;
+
+/** The one observation of an event that goes onto its prediction rows: solar
+ *  view before antisolar, then the nearest cam, then cam_id for a stable tie. */
+const BEST_SUN_OBSERVATION = (col: string) =>
+  `(SELECT ${col} FROM sun_event_observations o
+     WHERE o.slug = ?1 AND o.event_kind = ?2 AND o.event_date_local = ?3
+     ORDER BY (o.view = 'solar') DESC, o.distance_mi ASC, o.cam_id ASC LIMIT 1)`;
+
+/** Fill observed_* on the predictions of that event (event_iso within 15 min).
+ *  Recomputes the best observation from the table, so arrival order never
+ *  matters and a solar observation is never replaced by an antisolar one. Rows
+ *  labelled by hand (any observed_source not starting 'sun-cam:') stay as they
+ *  are, and rows that already hold exactly the best observation are not touched,
+ *  so a duplicate or stale replay (which leaves the table unchanged) changes
+ *  nothing here either. Params: ?1 slug, ?2 event_kind, ?3 event_date_local,
+ *  ?4 event_iso. */
+const APPLY_SUN_OBSERVATION_TO_PREDICTIONS = `
+UPDATE sun_event_predictions
+SET observed_score = ${BEST_SUN_OBSERVATION("o.observed_score")},
+    observed_source = ${BEST_SUN_OBSERVATION("'sun-cam:' || o.cam_id || ':' || o.view")},
+    observed_at = ${BEST_SUN_OBSERVATION("o.scored_at")}
+WHERE slug = ?1 AND event_kind = ?2
+  AND ABS(julianday(event_iso) - julianday(?4)) <= 15.0 / 1440.0 + 0.0000001 -- +-15 min, inclusive (the epsilon is ~9 ms of float slack)
+  AND (observed_source IS NULL OR observed_source LIKE 'sun-cam:%')
+  AND ${BEST_SUN_OBSERVATION("1")} IS NOT NULL
+  AND (observed_score IS NOT ${BEST_SUN_OBSERVATION("o.observed_score")}
+    OR observed_source IS NOT ${BEST_SUN_OBSERVATION("'sun-cam:' || o.cam_id || ':' || o.view")}
+    OR observed_at IS NOT ${BEST_SUN_OBSERVATION("o.scored_at")})
+`;
+// Cam archive (migrations/0006 + 0014). INSERT OR IGNORE: the feed re-publishes
+// the same rolling history every cycle, so a repeat is a no-op, never an error.
+const CAM_OBS_COLS = [
+  "slug", "captured_at_utc", "crowd_pct", "people", "seaweed_level", "cov_pct", "clarity_pct",
+  "water_word", "uw_pct", "source", "raw_json", "crowd_level", "uw_level",
+] as const satisfies readonly (keyof CamObservationRow)[];
+
+const CAM_READ_COLS = [
+  "slug", "captured_at_utc", "cam_id", "cam_name", "seaweed_level", "cov_pct", "seaweed_note",
+  "crowd_level", "crowd_pct", "people", "crowd_note", "water_word", "water_pct", "water_note", "raw_json",
+] as const satisfies readonly (keyof CamReadRow)[];
+
+/** D1 allows 100 bound parameters per statement — rows per multi-row INSERT. */
+const camRowsPerStatement = (cols: number) => Math.max(1, Math.floor(100 / cols));
+
+function insertOrIgnoreSql(table: string, cols: readonly string[], rowCount: number): string {
+  const n = cols.length;
+  const tuples = Array.from(
+    { length: rowCount },
+    (_, r) => `(${cols.map((_c, i) => `?${r * n + i + 1}`).join(", ")})`,
+  ).join(", ");
+  return `INSERT OR IGNORE INTO ${table} (${cols.join(", ")}) VALUES ${tuples}`;
+}
+
+/** Chunk `rows` into multi-row INSERT OR IGNOREs and run them as ONE D1 batch;
+ *  returns total rows actually inserted. */
+async function insertOrIgnoreRows<R extends object>(
+  db: D1Like,
+  table: string,
+  cols: readonly (keyof R & string)[],
+  rows: R[],
+): Promise<{ written: number }> {
+  if (!rows.length) return { written: 0 };
+  const per = camRowsPerStatement(cols.length);
+  const stmts: D1Stmt[] = [];
+  for (let i = 0; i < rows.length; i += per) {
+    const chunk = rows.slice(i, i + per);
+    stmts.push(
+      db
+        .prepare(insertOrIgnoreSql(table, cols, chunk.length))
+        .bind(...chunk.flatMap((row) => cols.map((c) => (row[c] as unknown) ?? null))),
+    );
+  }
+  const results = await runBatch(db, stmts);
+  return { written: results.reduce((n, r) => n + Number(r?.meta?.changes ?? 0), 0) };
+}
+
+/** Lifetime records — one UNION ALL of four parenthesized single-row
+ *  subqueries (see `historyRecords` below for the tie-break/window
+ *  rationale). Four `?` placeholders, the same `slug` bound to each. */
+const HISTORY_RECORDS_UNION = `
+SELECT * FROM (
+  SELECT 'best' AS kind, local_date, local_hour, score AS value
+  FROM beach_hourly
+  WHERE slug = ? AND row_kind = 'snapshot' AND score IS NOT NULL
+  ORDER BY score DESC, hour_utc ASC LIMIT 1
+)
+UNION ALL
+SELECT * FROM (
+  SELECT 'hottest_sand' AS kind, local_date, local_hour, sand_temp_f AS value
+  FROM beach_hourly
+  WHERE slug = ? AND row_kind = 'snapshot' AND sand_temp_f IS NOT NULL
+  ORDER BY sand_temp_f DESC, hour_utc ASC LIMIT 1
+)
+UNION ALL
+SELECT * FROM (
+  SELECT 'biggest_surf' AS kind, local_date, local_hour, surf_ft AS value
+  FROM beach_hourly
+  WHERE slug = ? AND row_kind = 'snapshot' AND surf_ft IS NOT NULL
+  ORDER BY surf_ft DESC, hour_utc ASC LIMIT 1
+)
+UNION ALL
+SELECT * FROM (
+  SELECT 'quietest' AS kind, local_date, local_hour, crowd_pct AS value
+  FROM beach_hourly
+  WHERE slug = ? AND row_kind = 'snapshot' AND crowd_pct IS NOT NULL AND local_hour BETWEEN 10 AND 18
+  ORDER BY crowd_pct ASC, hour_utc ASC LIMIT 1
+)
+`;
+
 /** A device with never-touched prefs stores no row at all for them — this is
  *  the merge base `json_patch` starts from, so a bare "all alerts on" device
  *  never needs a row here in the first place. Fixed content, safe to inline
@@ -145,18 +321,41 @@ const MAX_INSERT = "MAX(COALESCE(?8,0), COALESCE(?9,0), COALESCE(?10,0))";
 /**
  * One atomic upsert. Every column is either a plain bound value (?1..?15,
  * ?16 = now) or, for a field the caller can leave untouched, guarded by a
- * "present" flag (?17..?27): `CASE WHEN <present> THEN <new value> ELSE
+ * "present" flag (?17..?27, and ?28/?29 with their own flags ?30/?31 for the
+ * sun-color settings — appended rather than interleaved, see the comment
+ * above `UPSERT_DEVICE`): `CASE WHEN <present> THEN <new value> ELSE
  * <current column> END`. `plan` and `entitlement_until` are never taken from
  * the caller — they are always MAX(store, code, trial), recomputed from
  * whichever of the three this write actually touches (#4). `prefs_json` is
  * always a `json_patch` merge, so a caller who didn't mention prefs merges
  * `{}` — a no-op — instead of needing its own present flag.
+ *
+ * `updated_at` on the UPDATE branch (round-5 item 1): strictly monotonic per
+ * row, never plain wall-clock `?now` — `Date.now()` can repeat (two writes
+ * inside the same millisecond) or even go backwards (clock adjustment), and
+ * the client's revisioning watermark (`isStaleDeviceResponse`,
+ * lib/plus/client.ts) needs a STRICT ordering to tell two responses apart:
+ * `MAX(COALESCE(devices.updated_at, 0) + 1, ?now)` is always at least one ms
+ * past whatever the row already had, whether or not `?now` itself advanced.
+ * The INSERT branch keeps a plain `?now` — there is no existing row to read
+ * a prior `updated_at` from, so there's nothing to be monotonic AGAINST yet.
+ * Every other UPDATE-only statement on `devices` below (`claimTrial`,
+ * `clearPushToken`, `setInstallTokenHash`, `setSent`, `patchSent`) applies
+ * the identical `MAX(COALESCE(updated_at, 0) + 1, ?)` formula, unqualified
+ * (no `devices.` prefix — that qualification is only valid/needed inside an
+ * `ON CONFLICT DO UPDATE SET` block, which has both an `excluded` and a
+ * table-named row in scope; a plain `UPDATE devices SET …` has only the one).
  */
 const UPSERT_COLS =
   "id, platform, push_token, tz, home_slug, profile_json, prefs_json, " +
   "store_until, code_until, trial_until, plan, entitlement_until, trial_used, preview_seen, " +
-  "sent_json, created_at, updated_at";
+  "sent_json, created_at, updated_at, sun_color_min_band, sun_color_lead_min";
 
+// `sun_color_min_band`/`sun_color_lead_min` (migrations/0012_sun_color_prefs.sql)
+// are appended as ?28/?29 (values) and ?30/?31 (present flags) — new bind
+// positions at the END, rather than renumbering any of ?1..?27 above, so
+// every existing reference in this 27-parameter statement stays exactly as
+// it was.
 const UPSERT_DEVICE = `
 INSERT INTO devices (${UPSERT_COLS})
 VALUES (
@@ -166,7 +365,8 @@ VALUES (
   CASE WHEN ${MAX_INSERT} > ?16 THEN 'plus' ELSE 'free' END,
   CASE WHEN ${MAX_INSERT} = 0 THEN NULL ELSE ${MAX_INSERT} END,
   ?11, ?12,
-  ?13, ?14, ?15
+  ?13, ?14, ?15,
+  ?28, ?29
 )
 ON CONFLICT(id) DO UPDATE SET
   platform = CASE WHEN ?17 THEN ?2 ELSE devices.platform END,
@@ -183,10 +383,12 @@ ON CONFLICT(id) DO UPDATE SET
   trial_used = CASE WHEN ?25 THEN ?11 ELSE devices.trial_used END,
   preview_seen = CASE WHEN ?26 THEN ?12 ELSE devices.preview_seen END,
   sent_json = CASE WHEN ?27 THEN ?13 ELSE devices.sent_json END,
-  updated_at = ?15
+  sun_color_min_band = CASE WHEN ?30 THEN ?28 ELSE devices.sun_color_min_band END,
+  sun_color_lead_min = CASE WHEN ?31 THEN ?29 ELSE devices.sun_color_lead_min END,
+  updated_at = MAX(COALESCE(devices.updated_at, 0) + 1, ?15)
 `;
 
-/** DevicePatch → the 27 positional binds `UPSERT_DEVICE` expects. */
+/** DevicePatch → the 31 positional binds `UPSERT_DEVICE` expects. */
 function upsertBinds(id: string, patch: Record<string, unknown>, now: number): unknown[] {
   const has = (k: string) => Object.prototype.hasOwnProperty.call(patch, k) && patch[k] !== undefined;
   const val = <T,>(k: string, transform: (v: unknown) => T = (v) => v as T): T | null =>
@@ -228,6 +430,10 @@ function upsertBinds(id: string, patch: Record<string, unknown>, now: number): u
     has("trialUsed") ? 1 : 0, // 25
     has("previewSeen") ? 1 : 0, // 26
     has("sent") ? 1 : 0, // 27
+    val("sunColorMinBand"), // 28
+    val("sunColorLeadMin"), // 29
+    has("sunColorMinBand") ? 1 : 0, // 30
+    has("sunColorLeadMin") ? 1 : 0, // 31
   ];
 }
 
@@ -502,7 +708,7 @@ export function d1Store(db: D1Like): DeviceStore {
             "entitlement_until = CASE WHEN MAX(COALESCE(store_until,0), COALESCE(code_until,0), COALESCE(?1,0)) = 0 " +
             "THEN NULL ELSE MAX(COALESCE(store_until,0), COALESCE(code_until,0), COALESCE(?1,0)) END, " +
             "plan = CASE WHEN MAX(COALESCE(store_until,0), COALESCE(code_until,0), COALESCE(?1,0)) > ?2 THEN 'plus' ELSE 'free' END, " +
-            "updated_at = ?2 WHERE id = ?3 AND trial_used = 0",
+            "updated_at = MAX(COALESCE(updated_at, 0) + 1, ?2) WHERE id = ?3 AND trial_used = 0",
         )
         .bind(until, now, id)
         .run();
@@ -516,7 +722,10 @@ export function d1Store(db: D1Like): DeviceStore {
       // already re-registered a new token by the time this runs, that new
       // token is what is live and must not be erased (#5).
       await db
-        .prepare("UPDATE devices SET push_token = NULL, updated_at = ? WHERE id = ? AND push_token = ?")
+        .prepare(
+          "UPDATE devices SET push_token = NULL, updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) " +
+            "WHERE id = ? AND push_token = ?",
+        )
         .bind(Date.now(), id, expectedToken)
         .run();
     },
@@ -533,7 +742,8 @@ export function d1Store(db: D1Like): DeviceStore {
     async setInstallTokenHash(id, tokenHash, issuedAt) {
       const result = await db
         .prepare(
-          "UPDATE devices SET token_hash = ?, token_issued_at = ?, updated_at = ? " +
+          "UPDATE devices SET token_hash = ?, token_issued_at = ?, " +
+            "updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) " +
             "WHERE id = ? AND token_hash IS NULL",
         )
         .bind(tokenHash, issuedAt, issuedAt, id)
@@ -645,30 +855,46 @@ export function d1Store(db: D1Like): DeviceStore {
       });
     },
 
+    // Round-6: `presence` is its own table — a write here changes what a
+    // `DeviceRecord` carries (its `presence` field) WITHOUT touching any
+    // `devices` column, so without also bumping `devices.updated_at` here,
+    // `isStaleDeviceResponse` (lib/plus/client.ts) would see the SAME
+    // revision as before and drop a response that's actually carrying
+    // fresh arm/disarm state. Both statements run in the SAME `db.batch()`
+    // as `setPresence`/`clearPresence`'s own presence write — atomic, so a
+    // caller can never observe the presence table changed but the owning
+    // device row's revision NOT reflecting it (or vice versa).
     async setPresence(deviceId, p: PresenceInput) {
-      await db
-        .prepare(
-          "INSERT INTO presence (device_id, slug, lat, lon, accuracy_m, fix_at, armed_until, source, updated_at) " +
-            "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET slug=excluded.slug, " +
-            "lat=excluded.lat, lon=excluded.lon, accuracy_m=excluded.accuracy_m, fix_at=excluded.fix_at, " +
-            "armed_until=excluded.armed_until, source=excluded.source, updated_at=excluded.updated_at",
-        )
-        .bind(
-          deviceId,
-          p.slug,
-          p.lat ?? null,
-          p.lon ?? null,
-          p.accuracyM ?? null,
-          p.fixAt ?? null,
-          p.armedUntil,
-          p.source,
-          Date.now(),
-        )
-        .run();
+      const now = Date.now();
+      await runBatch(db, [
+        db
+          .prepare(
+            "INSERT INTO presence (device_id, slug, lat, lon, accuracy_m, fix_at, armed_until, source, updated_at) " +
+              "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET slug=excluded.slug, " +
+              "lat=excluded.lat, lon=excluded.lon, accuracy_m=excluded.accuracy_m, fix_at=excluded.fix_at, " +
+              "armed_until=excluded.armed_until, source=excluded.source, updated_at=excluded.updated_at",
+          )
+          .bind(
+            deviceId,
+            p.slug,
+            p.lat ?? null,
+            p.lon ?? null,
+            p.accuracyM ?? null,
+            p.fixAt ?? null,
+            p.armedUntil,
+            p.source,
+            now,
+          ),
+        db.prepare("UPDATE devices SET updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?").bind(now, deviceId),
+      ]);
     },
 
     async clearPresence(deviceId) {
-      await db.prepare("DELETE FROM presence WHERE device_id = ?").bind(deviceId).run();
+      const now = Date.now();
+      await runBatch(db, [
+        db.prepare("DELETE FROM presence WHERE device_id = ?").bind(deviceId),
+        db.prepare("UPDATE devices SET updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?").bind(now, deviceId),
+      ]);
     },
 
     async getSent(deviceId) {
@@ -682,7 +908,7 @@ export function d1Store(db: D1Like): DeviceStore {
     async setSent(deviceId, sent: SentState) {
       const keys = Object.keys(sent).filter((k) => (sent as Record<string, unknown>)[k] !== undefined);
       await db
-        .prepare("UPDATE devices SET sent_json = ?, updated_at = ? WHERE id = ?")
+        .prepare("UPDATE devices SET sent_json = ?, updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?")
         .bind(keys.length ? JSON.stringify(sent) : null, Date.now(), deviceId)
         .run();
     },
@@ -701,7 +927,10 @@ export function d1Store(db: D1Like): DeviceStore {
       const partial: Record<string, unknown> = {};
       for (const k of keys) partial[k] = (patch as Record<string, unknown>)[k];
       await db
-        .prepare("UPDATE devices SET sent_json = json_patch(COALESCE(sent_json, '{}'), ?), updated_at = ? WHERE id = ?")
+        .prepare(
+          "UPDATE devices SET sent_json = json_patch(COALESCE(sent_json, '{}'), ?), " +
+            "updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?",
+        )
         .bind(JSON.stringify(partial), Date.now(), deviceId)
         .run();
     },
@@ -817,8 +1046,29 @@ export function d1Store(db: D1Like): DeviceStore {
       return changes > 0;
     },
 
-    async markSent(key, now) {
-      await db.prepare("UPDATE send_claims SET sent_at = ? WHERE key = ?").bind(now, key).run();
+    async markSent(key, claimedAt) {
+      // `claimedAt` is both the value written to `sent_at` and the
+      // ownership check (round-2 item 1): a row whose `claimed_at` has
+      // since moved (an abandoned claim reclaimed by a later run) no
+      // longer matches, so this stale caller's write touches nothing.
+      const result = await db
+        .prepare("UPDATE send_claims SET sent_at = ? WHERE key = ? AND claimed_at = ? AND sent_at IS NULL")
+        .bind(claimedAt, key, claimedAt)
+        .run();
+      return ((result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0) > 0;
+    },
+
+    async releaseSend(key, claimedAt) {
+      // Same ownership guard as `markSent`, plus `sent_at IS NULL` so this
+      // can never undo a confirmed send (belt and suspenders — a row that
+      // matches `claimed_at` can only be unsent anyway, since `markSent`
+      // only ever writes the SAME `claimedAt` as `sent_at`, but the
+      // explicit check keeps the invariant obvious from the SQL alone).
+      const result = await db
+        .prepare("DELETE FROM send_claims WHERE key = ? AND claimed_at = ? AND sent_at IS NULL")
+        .bind(key, claimedAt)
+        .run();
+      return ((result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0) > 0;
     },
 
     async pruneSendClaims(now) {
@@ -847,6 +1097,93 @@ export function d1Store(db: D1Like): DeviceStore {
         .run();
       const changes = (result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
       return { written: changes > 0 };
+    },
+
+    async upsertSunEventPredictions(rows: SunEventPredictionRow[]) {
+      if (!rows.length) return { written: 0 };
+      const result = await db
+        .prepare(upsertSunPredictionsSql(rows.length))
+        .bind(...rows.flatMap((row) => SUN_PRED_COLS.map((c) => row[c] ?? null)))
+        .run();
+      return { written: Number((result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0) };
+    },
+
+    async latestCamObservationUtc(slug: string) {
+      const row = await db
+        .prepare("SELECT MAX(captured_at_utc) AS m FROM cam_observations WHERE slug = ?")
+        .bind(slug)
+        .first<{ m: string | null }>();
+      return row?.m ?? null;
+    },
+
+    async camObservationUtcsSince(slug: string, sinceUtc: string) {
+      const r = await db
+        .prepare("SELECT captured_at_utc FROM cam_observations WHERE slug = ? AND captured_at_utc >= ?")
+        .bind(slug, sinceUtc)
+        .all<{ captured_at_utc: string }>();
+      return (r.results ?? []).map((x) => x.captured_at_utc);
+    },
+
+    async insertCamObservations(rows: CamObservationRow[]) {
+      return insertOrIgnoreRows(db, "cam_observations", CAM_OBS_COLS, rows);
+    },
+
+    async insertCamReads(rows: CamReadRow[]) {
+      return insertOrIgnoreRows(db, "cam_reads", CAM_READ_COLS, rows);
+    },
+
+    async camObservationsSince(slug: string, sinceUtc: string) {
+      const r = await db
+        .prepare(
+          `SELECT ${CAM_OBS_COLS.join(", ")} FROM cam_observations WHERE slug = ? AND captured_at_utc >= ? ORDER BY captured_at_utc`,
+        )
+        .bind(slug, sinceUtc)
+        .all<CamObservationRow>();
+      return r.results ?? [];
+    },
+
+    async camReadsAt(slug: string, capturedAtUtc: string) {
+      const r = await db
+        .prepare(
+          `SELECT ${CAM_READ_COLS.join(", ")} FROM cam_reads WHERE slug = ? AND captured_at_utc = ? ORDER BY cam_id`,
+        )
+        .bind(slug, capturedAtUtc)
+        .all<CamReadRow>();
+      return r.results ?? [];
+    },
+
+    async sunEventPredictionsFor(slug: string, eventIso: string) {
+      const result = await db
+        .prepare(
+          "SELECT * FROM sun_event_predictions WHERE slug = ? AND event_iso = ? ORDER BY as_of_hour_utc",
+        )
+        .bind(slug, eventIso)
+        .all<SunEventPredictionRow>();
+      return result.results ?? [];
+    },
+
+    async recordSunEventObservation(row: SunEventObservationRow) {
+      const [upserted, applied] = await runBatch(db, [
+        db.prepare(UPSERT_SUN_OBSERVATION).bind(...SUN_OBS_COLS.map((c) => row[c] ?? null)),
+        db
+          .prepare(APPLY_SUN_OBSERVATION_TO_PREDICTIONS)
+          .bind(row.slug, row.event_kind, row.event_date_local, row.event_iso),
+      ]);
+      return {
+        stored: Number(upserted?.meta?.changes ?? 0) > 0,
+        predictionsUpdated: Number(applied?.meta?.changes ?? 0),
+      };
+    },
+
+    async sunEventObservationsFor(slug: string, eventKind: "sunrise" | "sunset", eventDateLocal: string) {
+      const result = await db
+        .prepare(
+          "SELECT * FROM sun_event_observations WHERE slug = ? AND event_kind = ? AND event_date_local = ? " +
+            "ORDER BY (view = 'solar') DESC, distance_mi ASC, cam_id ASC",
+        )
+        .bind(slug, eventKind, eventDateLocal)
+        .all<SunEventObservationRow>();
+      return result.results ?? [];
     },
 
     // Codex round-3 finding #1: candidates used to come back in fixed config
@@ -950,6 +1287,55 @@ export function d1Store(db: D1Like): DeviceStore {
 
     async releaseHistoryClaim(slug: string, hourUtc: string) {
       await db.prepare("DELETE FROM history_claims WHERE key = ?").bind(`history:${slug}:${hourUtc}`).run();
+    },
+
+    // --- Hourly history READ (Plus "Last N days" feature) -------------------
+    // ONE query: the same HOURLY_COLS list the archiver's upsert uses, so the
+    // returned rows are already shaped exactly like BeachHourlyRow with no
+    // per-field mapping. `row_kind = 'snapshot'` excludes cam-backfill rows,
+    // which never have a score. Bounded on BOTH ends (`local_date` between
+    // `sinceLocalDate` and `untilLocalDate` inclusive) so the "≤31 days"
+    // claim documented on the store interface is literally true regardless
+    // of clock skew or a stray future-dated row.
+    async hourlyHistory(slug: string, sinceLocalDate: string, untilLocalDate: string) {
+      const result = await db
+        .prepare(
+          `SELECT ${HOURLY_COLS.join(", ")} FROM beach_hourly ` +
+            "WHERE slug = ? AND row_kind = 'snapshot' AND local_date >= ? AND local_date <= ? ORDER BY hour_utc",
+        )
+        .bind(slug, sinceLocalDate, untilLocalDate)
+        .all<BeachHourlyRow>();
+      return result.results ?? [];
+    },
+
+    // Lifetime records — ONE UNION ALL query, each arm a parenthesized
+    // subquery that picks its own single winning row (ORDER BY ... LIMIT 1),
+    // never bounded by any `days` window. Ties break to the EARLIEST hour
+    // (the secondary `hour_utc ASC` inside each arm), matching
+    // lib/history/summary.ts's "earliest wins" rule everywhere else in this
+    // feature. `quietest` only considers local_hour 10-18 (Codex review: a
+    // 3 AM near-zero reading would otherwise "win" quietest for a reason
+    // that has nothing to do with the beach being pleasant then).
+    async historyRecords(slug: string) {
+      const recordsResult = await db.prepare(HISTORY_RECORDS_UNION).bind(slug, slug, slug, slug).all<HistoryRecordRow>();
+      // Same meta query as before, plus `surf_since` — the earliest
+      // local_date with a non-null surf_ft, folded into this ONE aggregate
+      // (via a CASE inside MIN) rather than a 4th statement, so the route
+      // still runs exactly three D1 statements total (window + UNION + this).
+      const summaryRow = await db
+        .prepare(
+          "SELECT MIN(local_date) AS min_date, COUNT(DISTINCT local_date) AS day_count, " +
+            "MIN(CASE WHEN surf_ft IS NOT NULL THEN local_date END) AS surf_since " +
+            "FROM beach_hourly WHERE slug = ? AND row_kind = 'snapshot'",
+        )
+        .bind(slug)
+        .first<{ min_date: string | null; day_count: number; surf_since: string | null }>();
+      return {
+        records: recordsResult.results ?? [],
+        archiveStartedAt: summaryRow?.min_date ?? null,
+        dayCount: summaryRow?.day_count ?? 0,
+        surfSince: summaryRow?.surf_since ?? null,
+      };
     },
 
     // --- Beach Session Live Activity (migrations/0007_live_activities.sql) -

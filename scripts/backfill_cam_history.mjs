@@ -19,9 +19,10 @@
 //   everyone else      cam_seaweed.<slug>.json
 //
 // Each `history` entry's `t` field is an offset-bearing local ISO timestamp,
-// e.g. "2026-06-04T13:00-04:00" — `parseCapturedAtUtc` below converts it to a
-// UTC ISO string, which is what `cam_observations.captured_at_utc` (and the
-// primary key) is keyed by.
+// e.g. "2026-06-04T13:00-04:00" — `parseCapturedAtUtc` converts it to a UTC
+// ISO string, which is what `cam_observations.captured_at_utc` (and the
+// primary key) is keyed by. Needs migration 0014 applied (crowd_level,
+// uw_level columns). The hourly archiver keeps this table current from here on.
 
 import { execSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
@@ -42,18 +43,11 @@ export function feedUrlFor(slug) {
   return slug === "boca-raton" ? `${FEED_BASE}/cam_seaweed.json` : `${FEED_BASE}/cam_seaweed.${slug}.json`;
 }
 
-/**
- * Convert a feed history entry's offset-bearing local `t` (e.g.
- * "2026-06-04T13:00-04:00") to a UTC ISO string. Returns null for anything
- * that doesn't parse to a real instant, so a malformed row is skipped rather
- * than inserted with a garbage key.
- */
-export function parseCapturedAtUtc(t) {
-  if (typeof t !== "string" || !t) return null;
-  const ms = Date.parse(t);
-  if (!Number.isFinite(ms)) return null;
-  return new Date(ms).toISOString();
-}
+// parseCapturedAtUtc / rowFromHistoryEntry live in ONE shared module, also
+// imported by the hourly archiver (lib/history/camObservations.ts), so the
+// one-shot backfill and the continuous writer can never drift.
+import { parseCapturedAtUtc, rowFromHistoryEntry } from "../lib/history/camObservationRow.mjs";
+export { parseCapturedAtUtc, rowFromHistoryEntry };
 
 /** SQL-escape a string literal (single-quote doubling — the only special
  *  character SQLite string literals need escaped). */
@@ -66,29 +60,9 @@ function sqlVal(v) {
   return sqlStr(v);
 }
 
-/** One feed history entry -> a `cam_observations` row, or null if it has no
- *  usable capture time. Never touches `beach_hourly`. */
-export function rowFromHistoryEntry(slug, entry) {
-  const capturedAtUtc = parseCapturedAtUtc(entry?.t);
-  if (!capturedAtUtc) return null;
-  return {
-    slug,
-    captured_at_utc: capturedAtUtc,
-    crowd_pct: typeof entry.crowdPct === "number" ? entry.crowdPct : null,
-    people: typeof entry.people === "number" ? entry.people : null,
-    seaweed_level: typeof entry.seaweed === "string" ? entry.seaweed : null,
-    cov_pct: typeof entry.cov === "number" ? entry.cov : null,
-    clarity_pct: typeof entry.clr === "number" ? entry.clr : null,
-    water_word: typeof entry.water === "string" ? entry.water : null,
-    uw_pct: null, // no underwater-cam % field in the published feed today
-    source: "feed",
-    raw_json: JSON.stringify(entry),
-  };
-}
-
 const COLS = [
   "slug", "captured_at_utc", "crowd_pct", "people", "seaweed_level", "cov_pct",
-  "clarity_pct", "water_word", "uw_pct", "source", "raw_json",
+  "clarity_pct", "water_word", "uw_pct", "source", "raw_json", "crowd_level", "uw_level",
 ];
 
 /** One row -> an idempotent INSERT statement (PK collision = already imported). */
@@ -97,15 +71,14 @@ export function insertSqlFor(row) {
   return `INSERT OR IGNORE INTO cam_observations (${COLS.join(", ")}) VALUES (${values});`;
 }
 
-async function fetchHistory(slug) {
+async function fetchFeed(slug) {
   const url = feedUrlFor(slug);
   const res = await fetch(url);
   if (!res.ok) {
     console.error(`  ${slug}: ${url} -> HTTP ${res.status}, skipping`);
-    return [];
+    return null;
   }
-  const feed = await res.json();
-  return Array.isArray(feed?.history) ? feed.history : [];
+  return res.json();
 }
 
 async function main() {
@@ -119,11 +92,12 @@ async function main() {
   let totalSkipped = 0;
 
   for (const slug of slugs) {
-    const history = await fetchHistory(slug);
+    const feed = await fetchFeed(slug);
+    const history = Array.isArray(feed?.history) ? feed.history : [];
     let kept = 0;
     let skipped = 0;
     for (const entry of history) {
-      const row = rowFromHistoryEntry(slug, entry);
+      const row = rowFromHistoryEntry(slug, entry, feed);
       if (!row) {
         skipped += 1;
         continue;

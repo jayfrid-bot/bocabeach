@@ -32,6 +32,7 @@ const response = (s: ConditionsSnapshot): ConditionsResponse => ({
 function device(over: Partial<DeviceRecord> = {}): DeviceRecord {
   return {
     id: "dev-1",
+    updatedAt: NOW,
     platform: "ios",
     tz: "America/New_York",
     homeSlug: "boca-raton",
@@ -42,6 +43,7 @@ function device(over: Partial<DeviceRecord> = {}): DeviceRecord {
     grants: { storeUntil: null, codeUntil: NOW + 30 * 24 * 3600 * 1000, trialUntil: null },
     trialUsed: false,
     previewSeen: true,
+    sunColor: { minBand: "vivid", leadMin: 60 },
     presence: null,
     ...over,
   };
