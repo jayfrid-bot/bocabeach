@@ -96,6 +96,7 @@ import { getConditions } from "@/lib/conditions";
 import { getLocation } from "@/config/locations";
 import { getStore } from "@/lib/db/store";
 import { hourUtcOf, rowFromConditions } from "@/lib/history/archive";
+import { sunEventRowsFromConditions } from "@/lib/history/sunPredictions";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -262,6 +263,15 @@ export async function POST(req: Request): Promise<Response> {
     try {
       const row = rowFromConditions(res, loc, nowMs, { hourUtc: claimedHourUtc });
       const { written } = await store.upsertBeachHourly(row);
+      // Sun-event prediction log (migrations/0013): the next sunrise + sunset,
+      // same pass. Best-effort — a failure here logs and is skipped; it must
+      // never fail the beach_hourly row that already landed above.
+      try {
+        const sunRows = sunEventRowsFromConditions(res, loc, nowMs, { hourUtc: claimedHourUtc });
+        if (sunRows.length) await store.upsertSunEventPredictions(sunRows);
+      } catch (e) {
+        console.error("history: sun-event predictions failed", slug, e);
+      }
       await store.completeHistoryClaim(slug, claimedHourUtc, Date.now());
       if (written) archived += 1;
       else deduped += 1;

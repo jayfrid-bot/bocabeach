@@ -147,7 +147,8 @@ flowchart LR
   PLUSCRON -->|POST x-cron-secret, every 5 min| RUN
   HISTCRON["workers/history-cron<br/>Cloudflare Cron every minute"] -->|POST x-cron-secret| HIST["/api/history/archive<br/>ONE build per call (Workers Free = 50 subrequests/request;<br/>a cold build is ~25); scans candidates least-recently-archived first,<br/>claims (slug, hour_utc) with a 10-min abandonment window,<br/>reserves budget BEFORE fetching"]
   HIST -->|getConditions per beach<br/>daylight-only for auto beaches| PIPE
-  HIST -->|"beach_hourly (score as shown + inputs),<br/>history_budget (free-tier guard, 600 builds/UTC-day;<br/>HISTORY_ENABLED=off pauses it)"| D1[(D1 isitbeachday-plus)]
+  HIST -->|"beach_hourly (score as shown + inputs, plus extra_json:<br/>surf, sand, rip, storm, feels-like, water trend, vs-average,<br/>safety levels, best window, sky ratings — lib/history/extra.ts),<br/>history_budget (free-tier guard, 600 builds/UTC-day;<br/>HISTORY_ENABLED=off pauses it)"| D1[(D1 isitbeachday-plus)]
+  HIST -->|"sun_event_predictions (migrations/0013): next sunrise + next sunset,<br/>one row per beach per archive hour, score + every input,<br/>one multi-row upsert — lib/history/sunPredictions.ts,<br/>same assembleSunEventQuality as the card and the alert;<br/>never fails the beach_hourly row"| D1
   BACKFILL[scripts/backfill_cam_history.mjs] -->|cam_observations| D1
   UWFRAME -->|one headless-Chrome launch/tick,<br/>reused across every cam + the flag read| UWKV[(UW_FRAME KV<br/>frame:&lt;id&gt;, meta:&lt;id&gt;,<br/>flags:deerfield-beach, flags:fort-lauderdale)]
 ```

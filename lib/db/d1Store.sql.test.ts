@@ -24,7 +24,7 @@ import {
   type D1Stmt,
 } from "@/lib/db/d1Store";
 import type { DeviceStore } from "@/lib/db/store";
-import type { BeachHourlyRow } from "@/lib/history/types";
+import type { BeachHourlyRow, SunEventPredictionRow } from "@/lib/history/types";
 import {
   ABANDONED_CLAIM_MS as COMING_UP_ABANDONED_CLAIM_MS,
   COMING_UP_24H_MS,
@@ -804,6 +804,87 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
     it("a beach with no rows at all returns no records and a null archiveStartedAt", async () => {
       const result = await store.historyRecords("nowhere-beach");
       expect(result).toEqual({ records: [], archiveStartedAt: null, dayCount: 0, surfSince: null });
+    });
+  });
+
+  // --- sun-event prediction log (migrations/0013) — real multi-row upsert ---
+  describe("sun_event_predictions — real multi-row UPSERT", () => {
+  function sunRow(over: Partial<SunEventPredictionRow> = {}): SunEventPredictionRow {
+    return {
+      slug: "boca-raton",
+      event_kind: "sunrise",
+      event_iso: "2026-10-06T11:15:00.000Z",
+      as_of_hour_utc: "2026-10-06T11:00:00.000Z",
+      snapshot_generated_at: "2026-10-06T11:05:00.000Z",
+      archived_at: "2026-10-06T11:05:01.000Z",
+      lead_minutes: 10,
+      score: 58,
+      band: "good",
+      model_path: "factor",
+      note: "test note",
+      breakdown_json: '{"horizonPath":"x","cloudCanvas":"y"}',
+      low_cloud_pct: 0,
+      mid_cloud_pct: 67,
+      high_cloud_pct: 48,
+      total_cloud_pct: 67,
+      humidity_pct: 87,
+      aod: 0.14,
+      pm2_5: 13.6,
+      horizon_cloud_pct: 40,
+      horizon_source: "overhead",
+      horizon_fresh: 1,
+      seasonal_prior: 55,
+      point_time: "2026-10-06T11:00:00.000Z",
+      peak_color_iso: "2026-10-06T11:15:00.000Z",
+      peak_offset_minutes: 0,
+      algo_version: "2026-10-06.1",
+      engine_version: "test-1",
+      build_sha: "abc123",
+      observed_score: null,
+      observed_source: null,
+      observed_at: null,
+      ...over,
+    };
+  }
+
+    it("writes a sunrise+sunset pair as ONE statement and round-trips every column", async () => {
+      const rows = [
+        sunRow(),
+        sunRow({ event_kind: "sunset", event_iso: "2026-10-06T23:10:00.000Z", model_path: null, score: null, band: null, breakdown_json: null, horizon_source: null, horizon_fresh: null, horizon_cloud_pct: null, point_time: null }),
+      ];
+      expect(await store.upsertSunEventPredictions(rows)).toEqual({ written: 2 });
+      const back = await store.sunEventPredictionsFor("boca-raton", "2026-10-06T11:15:00.000Z");
+      expect(back).toHaveLength(1);
+      const { observed_score, observed_source, observed_at, ...rest } = rows[0];
+      expect(back[0]).toMatchObject(rest);
+      expect([observed_score, observed_source, observed_at]).toEqual([null, null, null]);
+      const set = await store.sunEventPredictionsFor("boca-raton", "2026-10-06T23:10:00.000Z");
+      expect(set[0].score).toBeNull();
+      expect(set[0].model_path).toBeNull();
+    });
+
+    it("an older or equal snapshot never regresses a row; a newer one replaces it but leaves observed_* alone", async () => {
+      const raw = freshRawDb() as D1Like;
+      const s = d1Store(raw);
+      await s.upsertSunEventPredictions([sunRow()]);
+      await raw
+        .prepare("UPDATE sun_event_predictions SET observed_score = 88, observed_source = 'manual', observed_at = 'x'")
+        .run();
+      expect((await s.upsertSunEventPredictions([sunRow({ score: 1 })])).written).toBe(0);
+      expect(
+        (await s.upsertSunEventPredictions([sunRow({ snapshot_generated_at: "2026-10-06T11:30:00.000Z", score: 61 })])).written,
+      ).toBe(1);
+      const [r] = await s.sunEventPredictionsFor("boca-raton", "2026-10-06T11:15:00.000Z");
+      expect(r.score).toBe(61);
+      expect(r.observed_score).toBe(88);
+      expect(r.observed_source).toBe("manual");
+    });
+
+    it("different as_of hours of one event are separate rows, oldest first", async () => {
+      await store.upsertSunEventPredictions([sunRow({ as_of_hour_utc: "2026-10-06T10:00:00.000Z", snapshot_generated_at: "2026-10-06T10:05:00.000Z", score: 40 })]);
+      await store.upsertSunEventPredictions([sunRow()]);
+      const hist = await store.sunEventPredictionsFor("boca-raton", "2026-10-06T11:15:00.000Z");
+      expect(hist.map((r) => r.score)).toEqual([40, 58]);
     });
   });
 

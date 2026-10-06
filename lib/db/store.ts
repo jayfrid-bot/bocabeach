@@ -16,7 +16,12 @@ import type {
   SentState,
 } from "@/lib/db/types";
 import type { NativeSub } from "@/lib/push/nativeStore";
-import type { ArchiveCandidate, BeachHourlyRow, HistoryRecordsResult } from "@/lib/history/types";
+import type {
+  ArchiveCandidate,
+  BeachHourlyRow,
+  HistoryRecordsResult,
+  SunEventPredictionRow,
+} from "@/lib/history/types";
 import { d1Store, getD1 } from "@/lib/db/d1Store";
 import { memoryStore } from "@/lib/db/memoryStore";
 
@@ -295,6 +300,17 @@ export interface DeviceStore {
    * Returns whether a write actually happened.
    */
   upsertBeachHourly(row: BeachHourlyRow): Promise<{ written: boolean }>;
+  /**
+   * Sun-event prediction log (migrations/0013): upsert the (0-2) rows built
+   * for one archive pass — ONE statement on D1. Keyed by (slug, event_kind,
+   * event_iso, as_of_hour_utc); an existing row is replaced only by a
+   * strictly newer `snapshot_generated_at`, and the reserved observed_*
+   * columns are never touched. Kept permanently. Returns rows changed.
+   */
+  upsertSunEventPredictions(rows: SunEventPredictionRow[]): Promise<{ written: number }>;
+  /** Every prediction logged for one beach's one event, oldest `as_of_hour_utc`
+   *  first — how the forecast for that event evolved as it approached. */
+  sunEventPredictionsFor(slug: string, eventIso: string): Promise<SunEventPredictionRow[]>;
   /**
    * Every served beach (curated + generated) that has no `beach_hourly` row
    * for the CURRENT UTC hour yet, filtered by the daylight rule for

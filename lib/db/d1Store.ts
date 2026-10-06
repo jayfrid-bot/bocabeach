@@ -41,7 +41,13 @@ import {
   COMING_UP_MAX_PER_30D,
   COMING_UP_RETENTION_MS,
 } from "@/lib/db/comingUpClaims";
-import type { ArchiveCandidate, BeachHourlyRow, HistoryRecordRow, HistoryRecordsResult } from "@/lib/history/types";
+import type {
+  ArchiveCandidate,
+  BeachHourlyRow,
+  HistoryRecordRow,
+  HistoryRecordsResult,
+  SunEventPredictionRow,
+} from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
 import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
 import type {
@@ -124,6 +130,36 @@ ON CONFLICT(slug, hour_utc) DO UPDATE SET
     .join(", ")}
 WHERE excluded.snapshot_generated_at > beach_hourly.snapshot_generated_at
 `;
+
+// Sun-event prediction log (migrations/0013). Columns in table order minus the
+// reserved observed_* truth columns, which an upsert never writes or clears.
+const SUN_PRED_COLS = [
+  "slug", "event_kind", "event_iso", "as_of_hour_utc", "snapshot_generated_at", "archived_at",
+  "lead_minutes", "score", "band", "model_path", "note", "breakdown_json", "low_cloud_pct",
+  "mid_cloud_pct", "high_cloud_pct", "total_cloud_pct", "humidity_pct", "aod", "pm2_5",
+  "horizon_cloud_pct", "horizon_source", "horizon_fresh", "seasonal_prior", "point_time",
+  "peak_color_iso", "peak_offset_minutes", "algo_version", "engine_version", "build_sha",
+] as const satisfies readonly (keyof SunEventPredictionRow)[];
+
+const SUN_PRED_KEY_COLS = ["slug", "event_kind", "event_iso", "as_of_hour_utc"];
+
+/** ONE statement for any number of rows (a pass writes 0-2): a multi-row
+ *  INSERT, so a beach's whole sunrise+sunset pair costs a single D1 write. */
+function upsertSunPredictionsSql(rowCount: number): string {
+  const n = SUN_PRED_COLS.length;
+  const tuples = Array.from(
+    { length: rowCount },
+    (_, r) => `(${SUN_PRED_COLS.map((_c, i) => `?${r * n + i + 1}`).join(", ")})`,
+  ).join(", ");
+  return (
+    `INSERT INTO sun_event_predictions (${SUN_PRED_COLS.join(", ")}) VALUES ${tuples} ` +
+    `ON CONFLICT(${SUN_PRED_KEY_COLS.join(", ")}) DO UPDATE SET ` +
+    SUN_PRED_COLS.filter((c) => !SUN_PRED_KEY_COLS.includes(c))
+      .map((c) => `${c} = excluded.${c}`)
+      .join(", ") +
+    " WHERE excluded.snapshot_generated_at > sun_event_predictions.snapshot_generated_at"
+  );
+}
 
 /** Lifetime records — one UNION ALL of four parenthesized single-row
  *  subqueries (see `historyRecords` below for the tie-break/window
@@ -954,6 +990,25 @@ export function d1Store(db: D1Like): DeviceStore {
         .run();
       const changes = (result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
       return { written: changes > 0 };
+    },
+
+    async upsertSunEventPredictions(rows: SunEventPredictionRow[]) {
+      if (!rows.length) return { written: 0 };
+      const result = await db
+        .prepare(upsertSunPredictionsSql(rows.length))
+        .bind(...rows.flatMap((row) => SUN_PRED_COLS.map((c) => row[c] ?? null)))
+        .run();
+      return { written: Number((result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0) };
+    },
+
+    async sunEventPredictionsFor(slug: string, eventIso: string) {
+      const result = await db
+        .prepare(
+          "SELECT * FROM sun_event_predictions WHERE slug = ? AND event_iso = ? ORDER BY as_of_hour_utc",
+        )
+        .bind(slug, eventIso)
+        .all<SunEventPredictionRow>();
+      return result.results ?? [];
     },
 
     // Codex round-3 finding #1: candidates used to come back in fixed config

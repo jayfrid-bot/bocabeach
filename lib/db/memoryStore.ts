@@ -36,7 +36,13 @@ import {
   COMING_UP_RETENTION_MS,
 } from "@/lib/db/comingUpClaims";
 import type { ComingUpDeliveryRow } from "@/lib/db/store";
-import type { ArchiveCandidate, BeachHourlyRow, HistoryRecordRow, HistoryRecordsResult } from "@/lib/history/types";
+import type {
+  ArchiveCandidate,
+  BeachHourlyRow,
+  HistoryRecordRow,
+  HistoryRecordsResult,
+  SunEventPredictionRow,
+} from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
 import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
 import type {
@@ -75,12 +81,15 @@ interface Snapshot {
   alerts: AlertRow[];
   claims?: ClaimRow[];
   beachHourly?: BeachHourlyRow[];
+  sunEventPredictions?: SunEventPredictionRow[];
   historyBudget?: { day: string; builds: number }[];
   historyClaims?: HistoryClaimRow[];
   liveActivities?: LiveActivityRow[];
   comingUpDeliveries?: ComingUpDeliveryRow[];
 }
 
+const sunPredKey = (r: Pick<SunEventPredictionRow, "slug" | "event_kind" | "event_iso" | "as_of_hour_utc">) =>
+  `${r.slug}|${r.event_kind}|${r.event_iso}|${r.as_of_hour_utc}`;
 const alertKey = (deviceId: string, key: string) => `${deviceId}${key}`;
 const comingUpKey = (deviceId: string, eventKey: string) => `${deviceId}|${eventKey}`;
 
@@ -95,6 +104,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
   const alerts = new Map<string, AlertRow>();
   const claims = new Map<string, ClaimRow>();
   const beachHourly = new Map<string, BeachHourlyRow>(); // key: `${slug}|${hour_utc}`
+  const sunPredictions = new Map<string, SunEventPredictionRow>(); // key: `${slug}|${kind}|${event_iso}|${as_of_hour_utc}`
   const historyBudget = new Map<string, number>(); // key: day
   const historyClaims = new Map<string, HistoryClaimRow>(); // key: `history:<slug>:<hour_utc>`
   const liveActivities = new Map<string, LiveActivityRow>(); // key: activityId
@@ -111,6 +121,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       for (const a of raw.alerts ?? []) alerts.set(alertKey(a.device_id, a.alert_key), a);
       for (const c of raw.claims ?? []) claims.set(c.key, c);
       for (const h of raw.beachHourly ?? []) beachHourly.set(`${h.slug}|${h.hour_utc}`, h);
+      for (const r of raw.sunEventPredictions ?? []) sunPredictions.set(sunPredKey(r), r);
       for (const b of raw.historyBudget ?? []) historyBudget.set(b.day, b.builds);
       for (const c of raw.historyClaims ?? []) historyClaims.set(c.key, c);
       for (const a of raw.liveActivities ?? []) liveActivities.set(a.activityId, a);
@@ -128,6 +139,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       alerts: [...alerts.values()],
       claims: [...claims.values()],
       beachHourly: [...beachHourly.values()],
+      sunEventPredictions: [...sunPredictions.values()],
       historyBudget: [...historyBudget.entries()].map(([day, builds]) => ({ day, builds })),
       historyClaims: [...historyClaims.values()],
       liveActivities: [...liveActivities.values()],
@@ -488,6 +500,36 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       // instance against the same file) silently lost every archived row.
       await save();
       return { written: true };
+    },
+
+    // Sun-event prediction log (migrations/0013) — mirrors d1Store: replace
+    // only on a strictly newer snapshot, never touch the observed_* truth
+    // columns of an existing row.
+    async upsertSunEventPredictions(rows: SunEventPredictionRow[]) {
+      await load();
+      let written = 0;
+      for (const row of rows) {
+        const key = sunPredKey(row);
+        const existing = sunPredictions.get(key);
+        if (existing && !(row.snapshot_generated_at > existing.snapshot_generated_at)) continue;
+        sunPredictions.set(key, {
+          ...row,
+          observed_score: existing?.observed_score ?? row.observed_score,
+          observed_source: existing?.observed_source ?? row.observed_source,
+          observed_at: existing?.observed_at ?? row.observed_at,
+        });
+        written += 1;
+      }
+      if (written) await save();
+      return { written };
+    },
+
+    async sunEventPredictionsFor(slug: string, eventIso: string) {
+      await load();
+      return [...sunPredictions.values()]
+        .filter((r) => r.slug === slug && r.event_iso === eventIso)
+        .sort((a, b) => (a.as_of_hour_utc < b.as_of_hour_utc ? -1 : a.as_of_hour_utc > b.as_of_hour_utc ? 1 : 0))
+        .map((r) => ({ ...r }));
     },
 
     // Fair ordering, mirroring d1Store (Codex round-3 finding #1): compute
