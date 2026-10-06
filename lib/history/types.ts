@@ -103,6 +103,37 @@ export interface SunEventPredictionRow {
 }
 
 /**
+ * One row of `sun_event_observations` (migrations/0015): what the sky actually
+ * did at one sunrise/sunset, scored from one cam's livestream by
+ * scripts/sun_cam_check.py. Keyed (slug, event_kind, event_date_local, cam_id).
+ */
+export interface SunEventObservationRow {
+  slug: string;
+  event_kind: "sunrise" | "sunset";
+  /** Beach-local calendar day, YYYY-MM-DD. */
+  event_date_local: string;
+  cam_id: string;
+  event_iso: string;
+  /** 'solar' = the cam looks at the sun; 'antisolar' = it looks away. */
+  view: "solar" | "antisolar";
+  distance_mi: number;
+  /** 0-100, the peak frame's score. */
+  observed_score: number;
+  warm_frac: number;
+  colorfulness: number;
+  peak_frame_iso: string;
+  series_json: string;
+  score_version: string;
+  credit: string;
+  created_at: string;
+}
+
+/** The `observed_source` text a sun-cam observation writes onto prediction rows. */
+export function sunCamObservedSource(camId: string, view: "solar" | "antisolar"): string {
+  return `sun-cam:${camId}:${view}`;
+}
+
+/**
  * Shape of `beach_hourly.extra_json` (schema version `v`): the app's other
  * proprietary computed readouts as of the archived hour — compact numbers and
  * enums only, no prose. Every block is optional: a model that had no input,

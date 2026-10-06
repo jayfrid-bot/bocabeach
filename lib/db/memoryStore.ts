@@ -41,8 +41,10 @@ import type {
   BeachHourlyRow,
   HistoryRecordRow,
   HistoryRecordsResult,
+  SunEventObservationRow,
   SunEventPredictionRow,
 } from "@/lib/history/types";
+import { sunCamObservedSource } from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
 import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
 import type {
@@ -82,6 +84,7 @@ interface Snapshot {
   claims?: ClaimRow[];
   beachHourly?: BeachHourlyRow[];
   sunEventPredictions?: SunEventPredictionRow[];
+  sunEventObservations?: SunEventObservationRow[];
   historyBudget?: { day: string; builds: number }[];
   historyClaims?: HistoryClaimRow[];
   liveActivities?: LiveActivityRow[];
@@ -90,6 +93,14 @@ interface Snapshot {
 
 const sunPredKey = (r: Pick<SunEventPredictionRow, "slug" | "event_kind" | "event_iso" | "as_of_hour_utc">) =>
   `${r.slug}|${r.event_kind}|${r.event_iso}|${r.as_of_hour_utc}`;
+const sunObsKey = (r: Pick<SunEventObservationRow, "slug" | "event_kind" | "event_date_local" | "cam_id">) =>
+  `${r.slug}|${r.event_kind}|${r.event_date_local}|${r.cam_id}`;
+/** Solar before antisolar, then the nearest cam, then cam_id (mirrors d1Store's BEST_SUN_OBSERVATION). */
+const compareSunObservations = (a: SunEventObservationRow, b: SunEventObservationRow): number =>
+  Number(b.view === "solar") - Number(a.view === "solar") ||
+  a.distance_mi - b.distance_mi ||
+  (a.cam_id < b.cam_id ? -1 : a.cam_id > b.cam_id ? 1 : 0);
+const SUN_OBS_MATCH_WINDOW_MS = 15 * 60_000;
 const alertKey = (deviceId: string, key: string) => `${deviceId}${key}`;
 const comingUpKey = (deviceId: string, eventKey: string) => `${deviceId}|${eventKey}`;
 
@@ -105,6 +116,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
   const claims = new Map<string, ClaimRow>();
   const beachHourly = new Map<string, BeachHourlyRow>(); // key: `${slug}|${hour_utc}`
   const sunPredictions = new Map<string, SunEventPredictionRow>(); // key: `${slug}|${kind}|${event_iso}|${as_of_hour_utc}`
+  const sunObservations = new Map<string, SunEventObservationRow>(); // key: `${slug}|${kind}|${event_date_local}|${cam_id}`
   const historyBudget = new Map<string, number>(); // key: day
   const historyClaims = new Map<string, HistoryClaimRow>(); // key: `history:<slug>:<hour_utc>`
   const liveActivities = new Map<string, LiveActivityRow>(); // key: activityId
@@ -122,6 +134,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       for (const c of raw.claims ?? []) claims.set(c.key, c);
       for (const h of raw.beachHourly ?? []) beachHourly.set(`${h.slug}|${h.hour_utc}`, h);
       for (const r of raw.sunEventPredictions ?? []) sunPredictions.set(sunPredKey(r), r);
+      for (const r of raw.sunEventObservations ?? []) sunObservations.set(sunObsKey(r), r);
       for (const b of raw.historyBudget ?? []) historyBudget.set(b.day, b.builds);
       for (const c of raw.historyClaims ?? []) historyClaims.set(c.key, c);
       for (const a of raw.liveActivities ?? []) liveActivities.set(a.activityId, a);
@@ -140,6 +153,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       claims: [...claims.values()],
       beachHourly: [...beachHourly.values()],
       sunEventPredictions: [...sunPredictions.values()],
+      sunEventObservations: [...sunObservations.values()],
       historyBudget: [...historyBudget.entries()].map(([day, builds]) => ({ day, builds })),
       historyClaims: [...historyClaims.values()],
       liveActivities: [...liveActivities.values()],
@@ -530,6 +544,42 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
         .filter((r) => r.slug === slug && r.event_iso === eventIso)
         .sort((a, b) => (a.as_of_hour_utc < b.as_of_hour_utc ? -1 : a.as_of_hour_utc > b.as_of_hour_utc ? 1 : 0))
         .map((r) => ({ ...r }));
+    },
+
+    // Sun-event observations (migrations/0015) — mirrors d1Store: upsert the
+    // observation, then write the BEST observation of that event (solar first,
+    // nearest cam) onto every prediction row within +-15 min, leaving rows a
+    // human labelled alone.
+    async recordSunEventObservation(row: SunEventObservationRow) {
+      await load();
+      sunObservations.set(sunObsKey(row), { ...row });
+      const best = [...sunObservations.values()]
+        .filter((o) => o.slug === row.slug && o.event_kind === row.event_kind && o.event_date_local === row.event_date_local)
+        .sort(compareSunObservations)[0];
+      const eventMs = Date.parse(row.event_iso);
+      let predictionsUpdated = 0;
+      for (const [key, pred] of sunPredictions) {
+        if (pred.slug !== row.slug || pred.event_kind !== row.event_kind) continue;
+        if (!(Math.abs(Date.parse(pred.event_iso) - eventMs) <= SUN_OBS_MATCH_WINDOW_MS)) continue;
+        if (pred.observed_source !== null && !pred.observed_source.startsWith("sun-cam:")) continue;
+        sunPredictions.set(key, {
+          ...pred,
+          observed_score: best.observed_score,
+          observed_source: sunCamObservedSource(best.cam_id, best.view),
+          observed_at: best.created_at,
+        });
+        predictionsUpdated += 1;
+      }
+      await save();
+      return { predictionsUpdated };
+    },
+
+    async sunEventObservationsFor(slug: string, eventKind: "sunrise" | "sunset", eventDateLocal: string) {
+      await load();
+      return [...sunObservations.values()]
+        .filter((o) => o.slug === slug && o.event_kind === eventKind && o.event_date_local === eventDateLocal)
+        .sort(compareSunObservations)
+        .map((o) => ({ ...o }));
     },
 
     // Fair ordering, mirroring d1Store (Codex round-3 finding #1): compute

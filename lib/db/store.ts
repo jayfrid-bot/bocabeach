@@ -20,6 +20,7 @@ import type {
   ArchiveCandidate,
   BeachHourlyRow,
   HistoryRecordsResult,
+  SunEventObservationRow,
   SunEventPredictionRow,
 } from "@/lib/history/types";
 import { d1Store, getD1 } from "@/lib/db/d1Store";
@@ -311,6 +312,27 @@ export interface DeviceStore {
   /** Every prediction logged for one beach's one event, oldest `as_of_hour_utc`
    *  first — how the forecast for that event evolved as it approached. */
   sunEventPredictionsFor(slug: string, eventIso: string): Promise<SunEventPredictionRow[]>;
+  /**
+   * Sun-event observations (migrations/0015, scripts/sun_cam_check.py): upsert
+   * one cam's scored observation of one event (keyed slug + event_kind +
+   * event_date_local + cam_id; a re-post replaces the row), THEN fill
+   * observed_score / observed_source / observed_at on the matching
+   * sun_event_predictions rows (same slug + event_kind, event_iso within
+   * +-15 min). When several cams have reported the same event, the BEST one
+   * is written: solar view before antisolar, then the smaller distance_mi, then
+   * cam_id. So an antisolar observation never overwrites a solar one, whatever
+   * order they arrive in. A prediction row whose observed_source was set by
+   * something other than a sun cam (a manual label) is left alone. Returns how
+   * many prediction rows were updated.
+   */
+  recordSunEventObservation(row: SunEventObservationRow): Promise<{ predictionsUpdated: number }>;
+  /** Every observation of one beach's one event, best first (solar before
+   *  antisolar, then nearest cam). */
+  sunEventObservationsFor(
+    slug: string,
+    eventKind: "sunrise" | "sunset",
+    eventDateLocal: string,
+  ): Promise<SunEventObservationRow[]>;
   /**
    * Every served beach (curated + generated) that has no `beach_hourly` row
    * for the CURRENT UTC hour yet, filtered by the daylight rule for

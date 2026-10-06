@@ -114,6 +114,7 @@ flowchart LR
 
   subgraph mac [Owner's Mac — launchd, not a scheduler above]
     CAMCOURIER["scripts/cam_courier_local.sh<br/>hourly, residential IP"]
+    SUNCAM["scripts/sun_cam_check.py<br/>every 30 min, residential IP<br/>(YouTube blocks datacenter IPs)"]
   end
 
   CAMCOURIER -->|"POST /ingest?cam=&lt;id&gt;<br/>Bearer token, JPEG bytes"| UWFRAME
@@ -148,8 +149,12 @@ flowchart LR
   HISTCRON["workers/history-cron<br/>Cloudflare Cron every minute"] -->|POST x-cron-secret| HIST["/api/history/archive<br/>ONE build per call (Workers Free = 50 subrequests/request;<br/>a cold build is ~25); scans candidates least-recently-archived first,<br/>claims (slug, hour_utc) with a 10-min abandonment window,<br/>reserves budget BEFORE fetching"]
   HIST -->|getConditions per beach<br/>daylight-only for auto beaches| PIPE
   HIST -->|"beach_hourly (score as shown + inputs, plus extra_json:<br/>surf, sand, rip, storm, feels-like, water trend, vs-average,<br/>safety levels, best window, sky ratings — lib/history/extra.ts),<br/>history_budget (free-tier guard, 600 builds/UTC-day;<br/>HISTORY_ENABLED=off pauses it)"| D1[(D1 isitbeachday-plus)]
-  HIST -->|"sun_event_predictions (migrations/0013): next sunrise + next sunset,<br/>one row per beach per archive hour, score + every input,<br/>one multi-row upsert — lib/history/sunPredictions.ts,<br/>same assembleSunEventQuality as the card and the alert;<br/>never fails the beach_hourly row"| D1
+  HIST -->|"sun_event_predictions (migrations/0013): next sunrise + next sunset,<br/>one row per beach per archive hour, score + every input,<br/>one multi-row upsert — lib/history/sunPredictions.ts,<br/>same assembleSunEventQuality as the card and the alert;<br/>never fails the beach_hourly row; observed_* filled later by SUNOBS"| D1
   BACKFILL[scripts/backfill_cam_history.mjs] -->|cam_observations| D1
+  SUNCAM -->|"yt-dlp -J → HLS playlist (~4 h DVR); one frame every 2.5 min,<br/>event −35 … +25 min, per config/sun-cams.json cam"| YTLIVE[["YouTube livestream DVR<br/>Elbo Room + 3 Deerfield cams, all facing east"]]
+  SUNCAM -->|"POST /api/sun-observations — Bearer INGEST_TOKEN<br/>peak-frame score + series, per beach / event / cam"| SUNOBS["/api/sun-observations<br/>constant-time auth, strict body validation<br/>(lib/sunObservations.ts)"]
+  SUNOBS -->|"sun_event_observations (migrations/0015)<br/>upsert, one row per slug + event + local day + cam, credit stored"| D1
+  SUNOBS -->|"observed_score / observed_source / observed_at on the<br/>sun_event_predictions rows (event within 15 min; best cam:<br/>solar view first, then nearest; never a hand label)"| D1
   UWFRAME -->|one headless-Chrome launch/tick,<br/>reused across every cam + the flag read| UWKV[(UW_FRAME KV<br/>frame:&lt;id&gt;, meta:&lt;id&gt;,<br/>flags:deerfield-beach, flags:fort-lauderdale)]
 ```
 
@@ -183,6 +188,21 @@ home connection — grabs each frame and sends it to the Worker instead. Both
 paths write through the same guard, so neither can overwrite the other's
 newer good frame; `GET /cams` shows which path supplied each camera's
 current frame in its `source` field ("courier" or "browser").
+
+**The sun-cam check gives every sunrise and sunset a "what actually happened"
+score.** `scripts/sun_cam_check.py` runs on the owner's Mac every 30 minutes
+(`scripts/com.isitbeachday.suncam.plist`; YouTube blocks datacenter IPs, so it
+cannot run in a Worker or Action). It reads the 24/7 east-facing livestreams in
+`config/sun-cams.json`. YouTube keeps ~4 hours of DVR for each, so a run up to
+3.5 hours after an event rebuilds it: one frame every 2.5 minutes from 35
+minutes before to 25 minutes after the event, each scored 0-100 on how much of
+the sky is lit warm (the peak frame is the event's score). The result goes to
+`POST /api/sun-observations` with the courier's `INGEST_TOKEN`, lands in
+`sun_event_observations` (migrations/0015), and the best observation (solar view
+first, then nearest cam) is copied onto the matching `sun_event_predictions`
+rows. Sunrise views are `solar`, sunset views `antisolar`. Every stored row
+carries the cam owner's credit string (Elbo Room asked for one). See
+`docs/SUN_CAM_CHECK.md`.
 
 **Feed loops relay to themselves.** GitHub's cron is best-effort — Sep 24-28
 2026 it left loops unrestarted for hours (lightning 109 min with stale
@@ -368,7 +388,7 @@ flowchart TD
   %% Sunrise/sunset color alert — Plus, opt-in, standalone only (no
   %% coalescing with the digest or "turned Excellent": its own short
   %% lead-time window, not the 8 AM run those two share).
-  PIPE2 -.->|"same res already fetched<br/>for the digest/Excellent check, no extra call"| SUNCOLOR[lib/alerts/sunColor.ts<br/>sunColorDecision over lib/sunAlert.ts's predictNextSunEvent:<br/>score &ge; device's cutoff (Great 70 / Amazing 90) AND<br/>now in [event&minus;lead, event&minus;lead+10min) AND event &le;4h away]
+  PIPE2 -.->|"same res already fetched<br/>for the digest/Excellent check, no extra call"| SUNCOLOR["lib/alerts/sunColor.ts<br/>sunColorDecision over lib/sunAlert.ts's predictNextSunEvent:<br/>score &ge; device's cutoff (Great 70 / Amazing 90) AND<br/>now in [event&minus;lead, event&minus;lead+10min) AND event &le;4h away"]
   SUNCOLOR --> CLAIM
   SUNCOLOR -->|"alert_log key sun-color:&lt;kind&gt;:&lt;beach-local date&gt;,<br/>once per event, ever"| D1
 

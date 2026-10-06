@@ -46,6 +46,7 @@ import type {
   BeachHourlyRow,
   HistoryRecordRow,
   HistoryRecordsResult,
+  SunEventObservationRow,
   SunEventPredictionRow,
 } from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
@@ -160,6 +161,47 @@ function upsertSunPredictionsSql(rowCount: number): string {
     " WHERE excluded.snapshot_generated_at > sun_event_predictions.snapshot_generated_at"
   );
 }
+
+// Sun-event observations (migrations/0015). All 15 columns, in table order.
+const SUN_OBS_COLS = [
+  "slug", "event_kind", "event_date_local", "cam_id", "event_iso", "view", "distance_mi",
+  "observed_score", "warm_frac", "colorfulness", "peak_frame_iso", "series_json",
+  "score_version", "credit", "created_at",
+] as const satisfies readonly (keyof SunEventObservationRow)[];
+
+const SUN_OBS_KEY_COLS = ["slug", "event_kind", "event_date_local", "cam_id"];
+
+const UPSERT_SUN_OBSERVATION = `
+INSERT INTO sun_event_observations (${SUN_OBS_COLS.join(", ")})
+VALUES (${SUN_OBS_COLS.map((_, i) => `?${i + 1}`).join(", ")})
+ON CONFLICT(${SUN_OBS_KEY_COLS.join(", ")}) DO UPDATE SET
+  ${SUN_OBS_COLS.filter((c) => !SUN_OBS_KEY_COLS.includes(c))
+    .map((c) => `${c} = excluded.${c}`)
+    .join(", ")}
+`;
+
+/** The one observation of an event that goes onto its prediction rows: solar
+ *  view before antisolar, then the nearest cam, then cam_id for a stable tie. */
+const BEST_SUN_OBSERVATION = (col: string) =>
+  `(SELECT ${col} FROM sun_event_observations o
+     WHERE o.slug = ?1 AND o.event_kind = ?2 AND o.event_date_local = ?3
+     ORDER BY (o.view = 'solar') DESC, o.distance_mi ASC, o.cam_id ASC LIMIT 1)`;
+
+/** Fill observed_* on the predictions of that event (event_iso within 15 min).
+ *  Recomputes the best observation from the table, so arrival order never
+ *  matters and a solar observation is never replaced by an antisolar one. Rows
+ *  labelled by hand (any observed_source not starting 'sun-cam:') stay as they
+ *  are. Params: ?1 slug, ?2 event_kind, ?3 event_date_local, ?4 event_iso. */
+const APPLY_SUN_OBSERVATION_TO_PREDICTIONS = `
+UPDATE sun_event_predictions
+SET observed_score = ${BEST_SUN_OBSERVATION("o.observed_score")},
+    observed_source = ${BEST_SUN_OBSERVATION("'sun-cam:' || o.cam_id || ':' || o.view")},
+    observed_at = ${BEST_SUN_OBSERVATION("o.created_at")}
+WHERE slug = ?1 AND event_kind = ?2
+  AND ABS(julianday(event_iso) - julianday(?4)) <= 15.0 / 1440.0 + 0.0000001 -- +-15 min, inclusive (the epsilon is ~9 ms of float slack)
+  AND (observed_source IS NULL OR observed_source LIKE 'sun-cam:%')
+  AND ${BEST_SUN_OBSERVATION("1")} IS NOT NULL
+`;
 
 /** Lifetime records — one UNION ALL of four parenthesized single-row
  *  subqueries (see `historyRecords` below for the tie-break/window
@@ -1008,6 +1050,27 @@ export function d1Store(db: D1Like): DeviceStore {
         )
         .bind(slug, eventIso)
         .all<SunEventPredictionRow>();
+      return result.results ?? [];
+    },
+
+    async recordSunEventObservation(row: SunEventObservationRow) {
+      const [, applied] = await runBatch(db, [
+        db.prepare(UPSERT_SUN_OBSERVATION).bind(...SUN_OBS_COLS.map((c) => row[c] ?? null)),
+        db
+          .prepare(APPLY_SUN_OBSERVATION_TO_PREDICTIONS)
+          .bind(row.slug, row.event_kind, row.event_date_local, row.event_iso),
+      ]);
+      return { predictionsUpdated: Number(applied?.meta?.changes ?? 0) };
+    },
+
+    async sunEventObservationsFor(slug: string, eventKind: "sunrise" | "sunset", eventDateLocal: string) {
+      const result = await db
+        .prepare(
+          "SELECT * FROM sun_event_observations WHERE slug = ? AND event_kind = ? AND event_date_local = ? " +
+            "ORDER BY (view = 'solar') DESC, distance_mi ASC, cam_id ASC",
+        )
+        .bind(slug, eventKind, eventDateLocal)
+        .all<SunEventObservationRow>();
       return result.results ?? [];
     },
 
