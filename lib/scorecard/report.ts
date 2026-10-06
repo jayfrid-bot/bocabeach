@@ -22,6 +22,7 @@ import {
   type ErrorGroup,
   type HealthResult,
   type HourlyRow,
+  type Rate,
   type RainResult,
   type SafetyResult,
   type SunColorResult,
@@ -47,7 +48,17 @@ export type RawDatasetName =
   | "sunPredictions"
   | "sunObservations"
   | "camLatest"
-  | "sunPredictionsLast24h";
+  | "sunPredictionsLast24h"
+  | "sunLifetime";
+
+/** Lifetime counts for the sun-color log (the pairs below are only the last `sunWindowDays`). */
+export interface SunLifetime {
+  forecastRows: number;
+  forecastEvents: number;
+  pairedRows: number;
+  observations: number;
+  firstArchivedAt: string | null;
+}
 
 /** Saved query results. A dataset that failed to load is null, with the reason in `errors`. */
 export interface RawData {
@@ -60,6 +71,9 @@ export interface RawData {
   sunObservations: RawSunObservation[] | null;
   camLatest: { slug: string; captured_at_utc: string }[] | null;
   sunPredictionsLast24h: number | null;
+  /** Days back the sun-color forecasts and camera readings were read (events in this window). */
+  sunWindowDays?: number;
+  sunLifetime?: SunLifetime | null;
   /** Dataset -> first line of its error. A dataset with an error AND rows is partial. */
   errors: Partial<Record<RawDatasetName, string>>;
 }
@@ -81,11 +95,15 @@ export interface SunSection extends SunColorResult {
   observations: number | null;
   /** Forecast rows loaded. */
   forecastRows: number;
+  windowDays: number | null;
+  lifetime: SunLifetime | null;
 }
 
 export interface Scorecard {
   asOf: string;
   days: number;
+  /** Days back the sun-color forecasts were read (null when unknown). */
+  sunWindowDays: number | null;
   headlines: { sun: string; rain: string; window: string; safety: string; health: string };
   warnings: string[];
   sun: Section<SunSection>;
@@ -104,6 +122,8 @@ const num = (v: number | null | undefined, d = 1): string => (v == null ? DASH :
 const signed = (v: number | null | undefined, d = 1): string =>
   v == null ? DASH : `${v > 0 ? "+" : ""}${v.toFixed(d)}`;
 const plural = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+/** A rate as a percent, or "n=<count>, collecting" while its own denominator is too small. */
+const rateCell = (r: Rate): string => (r.value != null ? pct(r.value) : (r.collecting ?? DASH));
 const oneLine = (s: string): string => s.split("\n")[0].trim();
 
 function table(headers: string[], rows: (string | number)[][]): string {
@@ -127,7 +147,7 @@ const LEAD_LABEL: Record<string, string> = {
   "2–6h": "2–6 h before",
   "6–12h": "6–12 h before",
   "12–24h": "12–24 h before",
-  ">24h": "More than 24 h before",
+  "24h+": "24 h or more before",
 };
 
 function errorRows(groups: ErrorGroup[], label: (k: string) => string): (string | number)[][] {
@@ -186,6 +206,8 @@ export function buildScorecard(raw: RawData, opts: BuildOptions = {}): Scorecard
         return {
           ...m,
           forecastRows: (raw.sunPredictions as SunPredictionRow[]).length,
+          windowDays: raw.sunWindowDays ?? null,
+          lifetime: raw.sunLifetime ?? null,
           observations: obs ? obs.length : null,
           observationsWithoutForecast: obs ? obs.filter((o) => !matchesForecast(o, pairedRows)).length : null,
         };
@@ -197,7 +219,9 @@ export function buildScorecard(raw: RawData, opts: BuildOptions = {}): Scorecard
   const window: Section<WindowResult> = rows
     ? guard("window", () => windowMetrics(rows, { daylight: opts.daylight }))
     : hourlyOff();
-  const safety: Section<SafetyResult> = rows ? guard("safety", () => safetyMetrics(rows)) : hourlyOff();
+  const safety: Section<SafetyResult> = rows
+    ? guard("safety", () => safetyMetrics(rows, { daylight: opts.daylight }))
+    : hourlyOff();
   const health: Section<HealthResult> = guard("data health", () =>
     dataHealth({
       rows: rows ?? [],
@@ -227,6 +251,7 @@ export function buildScorecard(raw: RawData, opts: BuildOptions = {}): Scorecard
   return {
     asOf: raw.asOf,
     days: raw.days,
+    sunWindowDays: raw.sunWindowDays ?? null,
     headlines: {
       sun: sunHeadline(sun),
       rain: rainHeadline(rain),
@@ -273,27 +298,35 @@ function rainHeadline(s: Section<RainResult>): string {
   const r = s.result;
   if (!r.ready) return `${r.collecting}. (${plural(r.calls, "rain call")} archived.)`;
   const p = r.dryPromise;
-  if (p.n === 0) return `${plural(r.scored, "scored call")}; none said "dry for 2+ hrs".`;
-  return `Of ${plural(p.n, '"dry for the next 2+ hrs" call')}, ${p.rainedOn} (${pct(p.rate)}) saw radar rain within 2 hours.`;
+  if (p.n === 0) return `${plural(r.scored, "scored call")}; none said "dry for the next 2+ hrs".`;
+  if (p.rate.value == null) {
+    return `"Dry for the next 2+ hrs" calls: ${p.rate.collecting} (needs ${p.rate.min}); ${p.rainedOn} of ${p.n} saw radar rain within 2 hours.`;
+  }
+  return `Of ${plural(p.n, '"dry for the next 2+ hrs" call')}, ${p.rainedOn} (${pct(p.rate.value)}) saw radar rain within 2 hours.`;
 }
 
 function windowHeadline(s: Section<WindowResult>): string {
   if (!s.ok) return na(s) as string;
   const r = s.result;
-  if (!r.ready) return `${r.collecting}. (${plural(r.daysWithHours, "finished day")} with enough hours.)`;
+  const censored = `${plural(r.skipped.censoredDay, "day")} left out for missing hours`;
+  if (!r.ready) return `${r.collecting}. (${plural(r.completeDays, "complete day")}; ${censored}.)`;
   return (
-    `${plural(r.daysScored, "day")}. Our window averaged ${num(r.realizedInWindow)} on the day; the best 3 hours averaged ${num(r.realizedBest3h)} ` +
-    `(gap ${num(r.gapPts)}). The best hour fell inside our window on ${pct(r.peakInWindowShare)} of days.`
+    `${plural(r.daysScored, "complete day")} (${censored}). Inside our window the archived hours averaged ${num(r.realizedInWindow)}; ` +
+    `the best 3 hours in a row averaged ${num(r.realizedBest3h)} (gap ${num(r.gapPts)}). ` +
+    `The best hour fell inside our window on ${pct(r.peakInWindowShare)} of those days.`
   );
 }
 
 function safetyHeadline(s: Section<SafetyResult>): string {
   if (!s.ok) return na(s) as string;
   const r = s.result;
-  if (!r.ready) return `${r.collecting}. (${plural(r.informative.hours, "hour")} with a green or yellow flag.)`;
+  if (!r.ready) return `${r.collecting}. (${plural(r.informative.beachDays, "beach-day")} with a green or yellow flag.)`;
   const i = r.informative;
-  if (!i.ready) return `${plural(r.hours, "hour")} with a flag. Green/yellow agreement: ${i.collecting}.`;
-  return `${plural(r.hours, "hour")} with a flag. With no red flag, our swim message agreed with the flag ${pct(i.agreementRate)} of the time (${i.agreeHours} of ${i.hours}).`;
+  if (!i.ready) return `${plural(r.beachDays, "beach-day")} with a flag. Green/yellow agreement: ${i.collecting}.`;
+  return (
+    `${plural(r.beachDays, "beach-day")} with a flag. On green and yellow days our swim message agreed with the flag ` +
+    `${rateCell(i.agreement)} of the time (${i.agreeDays} of ${i.beachDays}).`
+  );
 }
 
 /** "16, 17, 18, 19" for the local hours that go missing. */
@@ -326,12 +359,21 @@ function sunSection(s: Section<SunSection>): string {
     "We forecast the color of each sunrise and sunset. Then we compare with what the beach cameras saw. " +
       "One pair is one event (one beach, one sunrise or sunset) that has both a forecast and a camera reading.",
     "",
-    `- Events loaded (a forecast made ${CALL_MIN_LEAD_MIN}+ minutes ahead, or a camera reading): ${r.events}.`,
+    `- Events loaded (a forecast made ${CALL_MIN_LEAD_MIN}+ minutes ahead, or a camera reading)` +
+      (r.windowDays != null ? `, last ${r.windowDays} days` : "") +
+      `: ${r.events}.`,
     `- Pairs: ${r.pairedEvents} (${r.pairedRows} forecast rows). ${r.ready ? "Enough to score." : `Status: ${r.collecting}.`}`,
   ];
+  if (r.lifetime) {
+    out.push(
+      `- Lifetime: ${r.lifetime.forecastEvents} events and ${r.lifetime.forecastRows} forecast rows logged` +
+        (r.lifetime.firstArchivedAt ? ` since ${r.lifetime.firstArchivedAt.slice(0, 10)}` : "") +
+        `; ${r.lifetime.pairedRows} rows paired; ${plural(r.lifetime.observations, "camera reading")}.`,
+    );
+  }
   if (r.observations != null) {
     out.push(
-      `- Camera readings in the archive: ${r.observations}` +
+      `- Camera readings in the window: ${r.observations}` +
         (r.observationsWithoutForecast ? `; ${r.observationsWithoutForecast} of them matched no forecast row, so they cannot be scored.` : "."),
     );
   }
@@ -362,7 +404,8 @@ function sunSection(s: Section<SunSection>): string {
       "",
       `The call is our last forecast made at least ${CALL_MIN_LEAD_MIN} minutes before the event. ` +
         `Great means ${GREAT_CUTOFF} or more. Amazing means ${AMAZING_CUTOFF} or more. ` +
-        (c.ready ? "" : `Rates wait for 10 pairs (${c.collecting}). Counts so far:`),
+        `Each rate needs 10 cases in its own denominator; until then it shows "n=<count>, collecting". ` +
+        (c.ready ? "" : `Pairs: ${c.collecting}. Counts so far:`),
       "",
       table(
         ["", `Great (${GREAT_CUTOFF}+)`, `Amazing (${AMAZING_CUTOFF}+)`],
@@ -372,9 +415,13 @@ function sunSection(s: Section<SunSection>): string {
           ["We called it, and it did not (false alarm)", c.great.falseAlarms, c.amazing.falseAlarms],
           ["It happened, and we did not call it (miss)", c.great.misses, c.amazing.misses],
           ["Neither", c.great.correctNegatives, c.amazing.correctNegatives],
-          ["Hit rate (share of our calls that happened)", pct(c.great.hitRate), pct(c.amazing.hitRate)],
-          ["False-alarm rate (share of our calls that did not)", pct(c.great.falseAlarmRate), pct(c.amazing.falseAlarmRate)],
-          ["Miss rate (share of real ones we did not call)", pct(c.great.missRate), pct(c.amazing.missRate)],
+          ["Hit rate (share of our calls that happened)", rateCell(c.great.hitRate), rateCell(c.amazing.hitRate)],
+          [
+            "False-alarm rate (share of our calls that did not)",
+            rateCell(c.great.falseAlarmRate),
+            rateCell(c.amazing.falseAlarmRate),
+          ],
+          ["Miss rate (share of real ones we did not call)", rateCell(c.great.missRate), rateCell(c.amazing.missRate)],
         ],
       ),
     );
@@ -417,14 +464,14 @@ function confusionTable(label: string, c: RainResult["next1h"]): string {
     table(
       ["Forecast said", "Radar saw rain", "Radar saw no rain"],
       [
-        ["Raining", c.hits, c.falseAlarms],
+        ["Rain", c.hits, c.falseAlarms],
         ["Dry", c.misses, c.correctDry],
       ],
     ),
     "",
-    `When we said raining: it rained ${pct(c.hitRate)} of the time, and did not ${pct(c.falseAlarmRate)}. ` +
-      `Of the times radar saw rain, we had said dry ${pct(c.missRate)}. ` +
-      `Of our dry calls, ${pct(c.dryRainedOnRate)} got rained on.`,
+    `When we forecast rain: radar confirmed it ${rateCell(c.hitRate)} of the time, and did not ${rateCell(c.falseAlarmRate)}. ` +
+      `Of the times radar saw rain, we had forecast dry ${rateCell(c.missRate)}. ` +
+      `Of our dry forecasts, ${rateCell(c.dryRainedOnRate)} got rained on.`,
   ].join("\n");
 }
 
@@ -432,22 +479,28 @@ function rainSection(s: Section<RainResult>): string {
   if (!s.ok) return `Not available — ${s.error}`;
   const r = s.result;
   const out = [
-    'The app says "dry" or "raining" from a weather model. We check it against the radar reading one and two hours later. ' +
-      "Radar rain means a rate above 0 mm/hr, or a fresh frame that saw rain at or near the beach in the last 20 minutes.",
+    'The app says "dry" or "raining" from a weather model, with a note on when that changes. ' +
+      'We turn that into a forecast for one hour ahead and two hours ahead. "Dry, rain in 25 min" is a rain forecast for both. ' +
+      '"Raining, easing in 25 min" is a dry forecast for both. A change at or after the hour has not happened by then. ' +
+      "Then we check each forecast against the radar reading one and two hours later. " +
+      "Radar rain means a rate above 0 mm/hr, or a fresh frame that saw rain at or near the beach in the last 20 minutes. " +
+      "A radar frame older than 25 minutes is not used.",
     "",
     `- Hours with a rain call: ${r.calls}.`,
-    `- Scored (radar one and two hours later): ${r.scored}. ${r.ready ? "Enough to score." : `Status: ${r.collecting}.`}`,
+    `- Scored (radar available one and two hours later): ${r.scored}. ${r.ready ? "Enough to score." : `Status: ${r.collecting}.`}`,
+    `- Each rate needs enough cases in its own denominator (10 for the matrices, ${r.dryPromise.rate.min} for the headline); until then it shows "n=<count>, collecting".`,
   ];
   if (r.scored > 0) {
     const p = r.dryPromise;
     out.push(
       "",
-      `Headline: ${plural(p.n, '"dry for the next 2+ hrs" call')} scored; ${p.rainedOn} got rained on within 2 hours` +
-        (r.ready ? ` (${pct(p.rate)}).` : ` (rate waits for ${r.min} scored calls).`),
+      `Headline, the promise "Dry for the next 2+ hrs" (dry now, no rain forecast for 2 hours): ${plural(p.n, "call")} scored; ` +
+        `${p.rainedOn} saw radar rain within 2 hours` +
+        (p.rate.value != null ? ` (${pct(p.rate.value)}).` : ` (${p.rate.collecting}; needs ${p.rate.min}).`),
       "",
-      confusionTable("Next hour", r.next1h),
+      confusionTable("Forecast one hour ahead, against radar one hour later", r.next1h),
       "",
-      confusionTable("Next 2 hours", r.next2h),
+      confusionTable("Forecast two hours ahead, against radar two hours later", r.next2h),
     );
   }
   return out.join("\n");
@@ -458,11 +511,14 @@ function windowSection(s: Section<WindowResult>): string {
   const r = s.result;
   const out = [
     "Each morning the app names a best window for the beach. We take the window it named by 10 AM local time. " +
-      "Then we compare it with the hourly scores the day really had, over daylight hours, for finished days only.",
+      "Then we compare it with the hourly scores we archived for that day. " +
+      "Only a complete day counts: it must be over, have at least 8 scored daylight hours, have 80% of the daylight hours between its first and last archived hour, " +
+      "start within 2 hours of sunrise, and reach 5 PM local (or the last daylight hour). " +
+      "A day that fails this is censored: its archived hours cover only part of the day, so it has no honest best hour.",
     "",
-    `- Finished days with 8 or more scored daylight hours: ${r.daysWithHours}.`,
+    `- Complete days: ${r.completeDays}.`,
     `- Of those, with a window named by 10 AM: ${r.daysScored}. ${r.ready ? "Enough to score." : `Status: ${r.collecting}.`}`,
-    `- Left out: ${r.skipped.incompleteDay} still in progress, ${r.skipped.tooFewHours} with too few hours, ${r.skipped.noEarlyWindow} with no early window.`,
+    `- Left out: ${r.skipped.censoredDay} censored days (missing hours), ${r.skipped.incompleteDay} still in progress, ${r.skipped.noEarlyWindow} with no early window.`,
   ];
   if (r.ready) {
     out.push(
@@ -473,12 +529,12 @@ function windowSection(s: Section<WindowResult>): string {
           ["Days scored", r.daysScored],
           ["Average window length (hours)", num(r.meanWindowHours)],
           ["Local hour the window was named (average)", num(r.meanPredictedAtHour)],
-          ["Average score inside our window", num(r.realizedInWindow)],
-          ["Average of the day's best 3 hours in a row", num(r.realizedBest3h)],
+          ["Average archived score inside our window", num(r.realizedInWindow)],
+          ["Average of the best 3 archived hours in a row", num(r.realizedBest3h)],
           ["Gap (points we left on the table)", num(r.gapPts)],
           ["Days the best hour fell inside our window", pct(r.peakInWindowShare)],
-          ["Days our window score was within 10 points of the day", pct(r.within10Share)],
-          ["Window score minus real average inside it (pts)", signed(r.windowScoreBias)],
+          ["Days our window score was within 10 points of the archived average inside it", pct(r.within10Share)],
+          ["Window score minus archived average inside it (pts)", signed(r.windowScoreBias)],
         ],
       ),
       "",
@@ -490,7 +546,7 @@ function windowSection(s: Section<WindowResult>): string {
       "",
       "### Days ahead",
       "",
-      "The peak score we promised some days ahead, against that day's real best hour. Bias is promised minus real.",
+      "The peak score we promised some days ahead, against the best archived hour of that day. Only complete days count. Bias is promised minus archived.",
       "",
       table(
         ["Days ahead", "Days scored", "Typical miss (pts)", "Bias (pts)"],
@@ -508,35 +564,37 @@ function safetySection(s: Section<SafetyResult>): string {
   const r = s.result;
   const out = [
     "We compare our swim message (safe, caution, stay out) with the lifeguard flag that was flying. " +
+      "The City posts one flag a beach a day, so we count beach-days, not hours. " +
+      "A beach-day's flag is its most common flag. Our message is its most common swim level; a tie goes to the more serious one. " +
       "Only beaches with a posted flag count.",
     "",
-    `- Hours with a swim message and a known flag: ${r.hours}. ${r.ready ? "Enough to score." : `Status: ${r.collecting}.`}`,
+    `- Beach-days with a swim message and a known flag: ${r.beachDays} (from ${r.hours} hourly rows). ${r.ready ? "Enough to score." : `Status: ${r.collecting}.`}`,
   ];
-  if (r.hours > 0) {
+  if (r.beachDays > 0) {
     const flagRows = FLAG_ORDER.filter((f) => SWIM_LEVELS.some((l) => (r.crossTab[f]?.[l] ?? 0) > 0)).map((f) => [
       f,
       ...SWIM_LEVELS.map((l) => r.crossTab[f]?.[l] ?? 0),
     ]);
     out.push(
       "",
-      "### Swim message by flag (hours)",
+      "### Swim message by flag (beach-days)",
       "",
       table(["Flag", "Safe", "Caution", "Stay out"], flagRows),
       "",
-      "A red or double-red flag sets \"stay out\" directly (lib/safetyLine.ts). Those rows say nothing about our own judgement. The next table leaves them out.",
+      "A red or double-red flag sets \"stay out\" directly (lib/safetyLine.ts). Those rows say nothing about our own judgement. The next section leaves them out.",
     );
     const i = r.informative;
     out.push(
       "",
       "### Green and yellow flags only",
       "",
-      `- Hours: ${i.hours} (${i.yellowHours} yellow, ${i.greenHours} green). ${i.ready ? "" : `Rate status: ${i.collecting}.`}`,
-      `- Agreement: yellow with caution or stay out, or green with safe. ${i.agreeHours} of ${i.hours}${i.ready ? ` (${pct(i.agreementRate)})` : ""}.`,
+      `- Beach-days: ${i.beachDays} (${i.yellowDays} yellow, ${i.greenDays} green). ${i.ready ? "" : `Status: ${i.collecting}.`}`,
+      `- Agreement (yellow with caution or stay out, or green with safe): ${i.agreeDays} of ${i.beachDays}; rate ${rateCell(i.agreement)}.`,
       `- Yellow flag, but we said safe: ${i.yellowWeSaidSafe}.`,
       `- Green flag, but we said caution or stay out: ${i.greenWeCautioned}.`,
     );
     if (i.greenReasons.length) {
-      out.push("", "Why we cautioned under a green flag:", "", ...i.greenReasons.map((x) => `- ${x.reason}: ${plural(x.hours, "hour")}`));
+      out.push("", "Why we cautioned under a green flag:", "", ...i.greenReasons.map((x) => `- ${x.reason}: ${plural(x.days, "beach-day")}`));
     }
   }
   return out.join("\n");
@@ -619,7 +677,9 @@ export function renderMarkdown(card: Scorecard): string {
     `# Prediction scorecard — ${day}`,
     "",
     `Data as of ${card.asOf.slice(0, 16).replace("T", " ")} UTC. Hourly rows cover the last ${card.days} days. ` +
-      "Sun-color events cover everything since the log began. " +
+      (card.sunWindowDays != null
+        ? `Sun-color events cover the last ${card.sunWindowDays} days; lifetime counts are shown in that section. `
+        : "Sun-color events cover everything since the log began. ") +
       'A system with too little data says "collecting" and shows counts only. That is expected early on. ' +
       "See docs/scorecards/README.md for definitions and minimums.",
     "",

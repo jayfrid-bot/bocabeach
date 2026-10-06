@@ -19,7 +19,12 @@ import type { FlagColor } from "@/lib/types";
 export const MIN_SUN_EVENTS = 10;
 export const MIN_RAIN_CALLS = 50;
 export const MIN_WINDOW_DAYS = 10;
-export const MIN_SAFETY_HOURS = 50;
+/** Safety vs flags counts beach-days (one flag posting per beach per day), not hours. */
+export const MIN_SAFETY_BEACH_DAYS = 30;
+/** A published rate needs at least this many cases in ITS OWN denominator. */
+export const MIN_RATE_CALLS = 10;
+/** The "Dry for the next 2+ hrs" headline needs at least this many such calls. */
+export const MIN_DRY_PROMISE_CALLS = 30;
 
 /** Sun color "Great" (vivid) and "Amazing" (epic) cutoffs — lib/sunQuality.ts bands. */
 export const GREAT_CUTOFF = 70;
@@ -53,6 +58,29 @@ export function collectingText(have: number, need: number, unit: string): string
   return `collecting — ${have} of ${need} ${unit}`;
 }
 
+/**
+ * A published rate. It is gated on ITS OWN denominator (`n`): below `min`, or
+ * when the caller's wider gate (`open`) is shut, `value` is null and
+ * `collecting` reads "n=<count>, collecting".
+ */
+export interface Rate {
+  value: number | null;
+  /** The denominator the rate is a share of. */
+  n: number;
+  min: number;
+  collecting: string | null;
+}
+
+export function rateOf(numerator: number, denominator: number, min: number, open = true): Rate {
+  const ok = open && denominator >= min && denominator > 0;
+  return {
+    value: ok ? numerator / denominator : null,
+    n: denominator,
+    min,
+    collecting: ok ? null : `n=${denominator}, collecting`,
+  };
+}
+
 // ============================================================================
 // 1. Sunrise / sunset color
 // ============================================================================
@@ -79,7 +107,7 @@ export function sunBandOf(score: number): "dud" | "plain" | "good" | "vivid" | "
   return "dud";
 }
 
-export const LEAD_BUCKETS = ["<0", "0–2h", "2–6h", "6–12h", "12–24h", ">24h"] as const;
+export const LEAD_BUCKETS = ["<0", "0–2h", "2–6h", "6–12h", "12–24h", "24h+"] as const;
 export type LeadBucket = (typeof LEAD_BUCKETS)[number];
 
 /** `<0` is the post-event golden window; the others are time before the event. */
@@ -89,7 +117,7 @@ export function leadBucketOf(leadMinutes: number): LeadBucket {
   if (leadMinutes < 360) return "2–6h";
   if (leadMinutes < 720) return "6–12h";
   if (leadMinutes < 1440) return "12–24h";
-  return ">24h";
+  return "24h+"; // 1,440 minutes exactly is the first minute of this bucket
 }
 
 export interface ErrorGroup {
@@ -116,12 +144,13 @@ export interface CallCell {
   calls: number;
   /** Events that really reached the cutoff. */
   observedAtOrAbove: number;
-  /** Of our calls, the share that really reached the cutoff. */
-  hitRate: number | null;
-  /** Of our calls, the share that did not. */
-  falseAlarmRate: number | null;
-  /** Of the events that really reached the cutoff, the share we did not call. */
-  missRate: number | null;
+  /** Of our calls, the share that really reached the cutoff (needs 10+ calls). */
+  hitRate: Rate;
+  /** Of our calls, the share that did not (needs 10+ calls). */
+  falseAlarmRate: Rate;
+  /** Of the events that really reached the cutoff, the share we did not call
+   *  (needs 10+ such events). */
+  missRate: Rate;
 }
 
 export interface SunDistRow {
@@ -215,7 +244,12 @@ function observedOf(eventRows: SunPredictionRow[], call: SunPredictionRow | null
   return row ? (row.observed_score as number) : null;
 }
 
-function callCell(cutoff: number, pairs: { pred: number; obs: number }[], ready: boolean): CallCell {
+function callCell(
+  cutoff: number,
+  pairs: { pred: number; obs: number }[],
+  ready: boolean,
+  rateMin: number,
+): CallCell {
   let hits = 0;
   let falseAlarms = 0;
   let misses = 0;
@@ -238,9 +272,9 @@ function callCell(cutoff: number, pairs: { pred: number; obs: number }[], ready:
     correctNegatives,
     calls,
     observedAtOrAbove,
-    hitRate: ready ? share(hits, calls) : null,
-    falseAlarmRate: ready ? share(falseAlarms, calls) : null,
-    missRate: ready ? share(misses, observedAtOrAbove) : null,
+    hitRate: rateOf(hits, calls, rateMin, ready),
+    falseAlarmRate: rateOf(falseAlarms, calls, rateMin, ready),
+    missRate: rateOf(misses, observedAtOrAbove, rateMin, ready),
   };
 }
 
@@ -284,9 +318,10 @@ export function sunViewOf(observedSource: string | null): string {
  */
 export function sunColorMetrics(
   rows: SunPredictionRow[],
-  opts: { min?: number; nowMs?: number } = {},
+  opts: { min?: number; rateMin?: number; nowMs?: number } = {},
 ): SunColorResult {
   const min = opts.min ?? MIN_SUN_EVENTS;
+  const rateMin = opts.rateMin ?? MIN_RATE_CALLS;
   const scored = rows.filter((r) => finite(r.score));
   const byEvent = groupBy(scored, eventKey);
   const paired = scored.filter((r) => finite(r.observed_score));
@@ -343,8 +378,8 @@ export function sunColorMetrics(
       events: pairedCalls.length,
       ready: callsReady,
       collecting: callsReady ? null : collectingText(pairedCalls.length, min, "pairs"),
-      great: callCell(GREAT_CUTOFF, pairedCalls, callsReady),
-      amazing: callCell(AMAZING_CUTOFF, pairedCalls, callsReady),
+      great: callCell(GREAT_CUTOFF, pairedCalls, callsReady, rateMin),
+      amazing: callCell(AMAZING_CUTOFF, pairedCalls, callsReady, rateMin),
     },
     distribution: {
       target: { ...SUN_DESIGN_TARGET },
@@ -417,25 +452,53 @@ export interface HourlyRow {
 
 export type RainRow = Pick<HourlyRow, "slug" | "hour_utc" | "rain">;
 
+/** What the nowcast says the sky is doing at one horizon. */
+export type ForecastState = "dry" | "rain";
+
+/**
+ * The state the nowcast forecasts `horizonMin` minutes ahead, from its current
+ * state and `changeInMin` (minutes until it flips; null = no flip in the next
+ * 2 hours). "Dry, rain in 25 min" is a rain call at +1 h and +2 h. "Raining,
+ * easing in 25 min" is a dry call at +1 h and +2 h. A flip at or after the
+ * horizon has not happened yet at the horizon. null = cannot tell (no
+ * nowcast, or a row that never recorded changeInMin).
+ */
+export function forecastStateAt(
+  nowcast: "dry" | "raining" | null | undefined,
+  changeInMin: number | null | undefined,
+  horizonMin: number,
+): ForecastState | null {
+  if (!nowcast || changeInMin === undefined) return null;
+  const flipped = changeInMin !== null && changeInMin < horizonMin;
+  if (nowcast === "dry") return flipped ? "rain" : "dry";
+  return flipped ? "dry" : "rain";
+}
+
+/** The user-facing promise: "Dry for the next 2+ hrs" (dry now, no rain expected for 2 h). */
+export function isDryPromise(r: RainBlock | null | undefined): boolean {
+  if (!r || r.nowcast !== "dry" || r.changeInMin === undefined) return false;
+  return r.changeInMin === null || r.changeInMin >= 120;
+}
+
 export interface RainConfusion {
-  /** Nowcast "raining" and radar rain followed. */
+  /** Forecast rain at the horizon and radar saw rain. */
   hits: number;
-  /** Nowcast "raining" and no radar rain followed. */
+  /** Forecast rain and radar saw none. */
   falseAlarms: number;
-  /** Nowcast "dry" and radar rain followed. */
+  /** Forecast dry and radar saw rain. */
   misses: number;
-  /** Nowcast "dry" and no radar rain followed. */
+  /** Forecast dry and radar saw none. */
   correctDry: number;
   rainCalls: number;
   dryCalls: number;
-  /** Of the "raining" calls, the share followed by radar rain. */
-  hitRate: number | null;
-  /** Of the "raining" calls, the share with no radar rain after. */
-  falseAlarmRate: number | null;
-  /** Of the times radar rain followed, the share the nowcast called dry. */
-  missRate: number | null;
-  /** Of the "dry" calls, the share that got rained on. */
-  dryRainedOnRate: number | null;
+  /** Of the rain calls, the share radar confirmed (needs 10+ rain calls). */
+  hitRate: Rate;
+  /** Of the rain calls, the share radar did not confirm (needs 10+ rain calls). */
+  falseAlarmRate: Rate;
+  /** Of the times radar saw rain, the share we had forecast dry (needs 10+ such times). */
+  missRate: Rate;
+  /** Of the dry calls, the share that got rained on (needs 30+ dry calls). */
+  dryRainedOnRate: Rate;
 }
 
 export interface RainResult {
@@ -446,32 +509,48 @@ export interface RainResult {
   min: number;
   ready: boolean;
   collecting: string | null;
+  /** The forecast at +1 h (60 min) against radar one hour later. */
   next1h: RainConfusion;
+  /** The forecast at +2 h (120 min) against radar two hours later. */
   next2h: RainConfusion;
-  /** The user-facing promise: nowcast "dry" with no change expected in 2 h
-   *  ("Dry for the next 2+ hrs"). Scored over the next 2 h. */
-  dryPromise: { n: number; rainedOn: number; rate: number | null };
+  /** "Dry for the next 2+ hrs" calls: radar rain at +1 h or +2 h breaks the promise. */
+  dryPromise: {
+    n: number;
+    rainedOn: number;
+    /** Share rained on (needs 30+ such calls). */
+    rate: Rate;
+  };
 }
 
-/** Radar says rain (true), says dry (false), or cannot say (null). */
+/**
+ * Radar says rain (true), says dry (false), or cannot say (null). A frame older
+ * than RADAR_MAX_AGE_MIN is not an observation, so it is checked FIRST: a stale
+ * frame is "unknown" whatever its radarDry or rate say. A row with no recorded
+ * age is read as fresh (the archive always records the age with a reading).
+ */
 export function radarRainAt(r: RainBlock | null | undefined, thresholdMmHr = RADAR_RAIN_MM_HR): boolean | null {
   if (!r) return null;
-  const ageOk = !finite(r.radarAgeMin) || r.radarAgeMin <= RADAR_MAX_AGE_MIN;
+  if (finite(r.radarAgeMin) && r.radarAgeMin > RADAR_MAX_AGE_MIN) return null;
   if (r.radarDry === 0) return true;
-  if (finite(r.radarMmHr) && ageOk && r.radarMmHr > thresholdMmHr) return true;
+  if (finite(r.radarMmHr) && r.radarMmHr > thresholdMmHr) return true;
   if (r.radarDry === 1) return false;
-  if (finite(r.radarMmHr) && ageOk) return false;
+  if (finite(r.radarMmHr)) return false;
   return null;
 }
 
-function confusion(items: { raining: boolean; rain: boolean }[], ready: boolean): RainConfusion {
+function confusion(
+  items: { forecastRain: boolean; rain: boolean }[],
+  open: boolean,
+  rateMin: number,
+  dryMin: number,
+): RainConfusion {
   let hits = 0;
   let falseAlarms = 0;
   let misses = 0;
   let correctDry = 0;
   for (const i of items) {
-    if (i.raining && i.rain) hits++;
-    else if (i.raining) falseAlarms++;
+    if (i.forecastRain && i.rain) hits++;
+    else if (i.forecastRain) falseAlarms++;
     else if (i.rain) misses++;
     else correctDry++;
   }
@@ -484,24 +563,28 @@ function confusion(items: { raining: boolean; rain: boolean }[], ready: boolean)
     correctDry,
     rainCalls,
     dryCalls,
-    hitRate: ready ? share(hits, rainCalls) : null,
-    falseAlarmRate: ready ? share(falseAlarms, rainCalls) : null,
-    missRate: ready ? share(misses, hits + misses) : null,
-    dryRainedOnRate: ready ? share(misses, dryCalls) : null,
+    hitRate: rateOf(hits, rainCalls, rateMin, open),
+    falseAlarmRate: rateOf(falseAlarms, rainCalls, rateMin, open),
+    missRate: rateOf(misses, hits + misses, rateMin, open),
+    dryRainedOnRate: rateOf(misses, dryCalls, dryMin, open),
   };
 }
 
 /**
- * Score the rain nowcast against the radar one and two hours later. A row is
- * scored when it has a nowcast and the same beach has radar truth at hour+1
- * and hour+2. Radar rain = rate above `thresholdMmHr`, or a fresh frame that is
- * not "confident dry" (see RainBlock.radarDry).
+ * Score the rain nowcast against the radar one and two hours later. The
+ * forecast state at each horizon comes from (nowcast, changeInMin) — see
+ * forecastStateAt — and is graded against the radar reading at hour+1 / hour+2
+ * for the same beach. A row is scored when it has a nowcast with a known
+ * changeInMin and radar truth at BOTH hours. Radar rain = rate above
+ * `thresholdMmHr`, or a fresh frame that is not "confident dry" (RainBlock.radarDry).
  */
 export function rainMetrics(
   rows: RainRow[],
-  opts: { min?: number; thresholdMmHr?: number } = {},
+  opts: { min?: number; rateMin?: number; dryMin?: number; thresholdMmHr?: number } = {},
 ): RainResult {
   const min = opts.min ?? MIN_RAIN_CALLS;
+  const rateMin = opts.rateMin ?? MIN_RATE_CALLS;
+  const dryMin = opts.dryMin ?? MIN_DRY_PROMISE_CALLS;
   const thr = opts.thresholdMmHr ?? RADAR_RAIN_MM_HR;
   const at = new Map<string, RainBlock>();
   for (const r of rows) {
@@ -510,21 +593,22 @@ export function rainMetrics(
   }
 
   let calls = 0;
-  const items1: { raining: boolean; rain: boolean }[] = [];
-  const items2: { raining: boolean; rain: boolean }[] = [];
+  const items1: { forecastRain: boolean; rain: boolean }[] = [];
+  const items2: { forecastRain: boolean; rain: boolean }[] = [];
   let promiseN = 0;
   let promiseRainedOn = 0;
   for (const r of rows) {
     const ms = Date.parse(r.hour_utc);
     if (!r.rain?.nowcast || !Number.isFinite(ms)) continue;
     calls++;
+    const f1 = forecastStateAt(r.rain.nowcast, r.rain.changeInMin, 60);
+    const f2 = forecastStateAt(r.rain.nowcast, r.rain.changeInMin, 120);
     const t1 = radarRainAt(at.get(`${r.slug}|${ms + HOUR_MS}`), thr);
     const t2 = radarRainAt(at.get(`${r.slug}|${ms + 2 * HOUR_MS}`), thr);
-    if (t1 == null || t2 == null) continue;
-    const raining = r.rain.nowcast === "raining";
-    items1.push({ raining, rain: t1 });
-    items2.push({ raining, rain: t1 || t2 });
-    if (!raining && r.rain.changeInMin === null) {
+    if (f1 == null || f2 == null || t1 == null || t2 == null) continue;
+    items1.push({ forecastRain: f1 === "rain", rain: t1 });
+    items2.push({ forecastRain: f2 === "rain", rain: t2 });
+    if (isDryPromise(r.rain)) {
       promiseN++;
       if (t1 || t2) promiseRainedOn++;
     }
@@ -538,9 +622,13 @@ export function rainMetrics(
     min,
     ready,
     collecting: ready ? null : collectingText(scored, min, "scored calls"),
-    next1h: confusion(items1, ready),
-    next2h: confusion(items2, ready),
-    dryPromise: { n: promiseN, rainedOn: promiseRainedOn, rate: ready ? share(promiseRainedOn, promiseN) : null },
+    next1h: confusion(items1, ready, rateMin, dryMin),
+    next2h: confusion(items2, ready, rateMin, dryMin),
+    dryPromise: {
+      n: promiseN,
+      rainedOn: promiseRainedOn,
+      rate: rateOf(promiseRainedOn, promiseN, dryMin, ready),
+    },
   };
 }
 
@@ -562,14 +650,22 @@ export interface OutlookLead {
 }
 
 export interface WindowResult {
-  /** Finished (beach, day) pairs with >= 8 scored daylight hours. */
-  daysWithHours: number;
+  /** Finished (beach, day) pairs with near-complete daylight coverage, so
+   *  their hourly scores are a fair record of the day. */
+  completeDays: number;
   /** Of those, the days that also have a window predicted by 10 AM local. */
   daysScored: number;
   min: number;
   ready: boolean;
   collecting: string | null;
-  skipped: { incompleteDay: number; tooFewHours: number; noEarlyWindow: number };
+  skipped: {
+    /** The beach's latest archived day: still in progress. */
+    incompleteDay: number;
+    /** Finished days whose archived daylight hours have gaps or stop early
+     *  (the normal pattern while the archive loses afternoons). */
+    censoredDay: number;
+    noEarlyWindow: number;
+  };
   /** Mean length of the predicted windows, hours. */
   meanWindowHours: number | null;
   /** Mean realized score inside the predicted window. */
@@ -596,6 +692,12 @@ const defaultDaylight: DaylightFn = () => ({ from: 7, to: 19 });
 
 const MIN_DAYLIGHT_HOURS = 8;
 const EARLY_HOUR_MAX = 10;
+/** Of the daylight hours between the first and last archived one, this share must be present. */
+export const MIN_DAY_DENSITY = 0.8;
+/** A day must be archived through this local hour (or the last daylight hour, if earlier). */
+export const DAY_MUST_REACH_HOUR = 17;
+/** ...and start within this many hours of sunrise. */
+export const DAY_START_SLACK_HOURS = 2;
 
 function daysBetween(a: string, b: string): number {
   return Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / DAY_MS);
@@ -615,6 +717,24 @@ function bestContiguous3(byHour: Map<number, number>): number | null {
   return best;
 }
 
+/**
+ * Do a day's archived daylight scores cover it well enough to stand as the
+ * day's realized record? Needs: 8+ scored daylight hours; at least 80% of the
+ * hours between the first and the last archived one; a first hour within 2
+ * hours of sunrise; and a last hour at 5 PM local (or the last daylight hour,
+ * when sunset comes sooner). A day failing this is "censored": its realized
+ * peak and averages would describe only part of the day.
+ */
+export function dayCoverageOk(hours: Iterable<number>, dl: { from: number; to: number }): boolean {
+  const hs = [...hours].sort((a, b) => a - b);
+  if (hs.length < MIN_DAYLIGHT_HOURS) return false;
+  const first = hs[0];
+  const last = hs[hs.length - 1];
+  if (hs.length / (last - first + 1) < MIN_DAY_DENSITY) return false;
+  if (first > dl.from + DAY_START_SLACK_HOURS) return false;
+  return last >= Math.min(DAY_MUST_REACH_HOUR, dl.to - 1);
+}
+
 export function windowMetrics(
   rows: WindowRow[],
   opts: { min?: number; daylight?: DaylightFn } = {},
@@ -624,7 +744,11 @@ export function windowMetrics(
 
   // Group by beach, then local date.
   const bySlug = groupBy(rows, (r) => r.slug);
-  type Day = { rows: WindowRow[]; scores: Map<number, { score: number; hourMs: number }> };
+  type Day = {
+    rows: WindowRow[];
+    scores: Map<number, { score: number; hourMs: number }>;
+    daylight: { from: number; to: number } | null;
+  };
   const days = new Map<string, Map<string, Day>>(); // slug -> date -> day
   const lastDate = new Map<string, string>();
   for (const [slug, rs] of bySlug) {
@@ -634,16 +758,15 @@ export function windowMetrics(
       if (r.local_date > last) last = r.local_date;
       let d = m.get(r.local_date);
       if (!d) {
-        d = { rows: [], scores: new Map() };
+        d = { rows: [], scores: new Map(), daylight: daylightOf(slug, r.local_date) };
         m.set(r.local_date, d);
       }
       d.rows.push(r);
     }
-    for (const [date, d] of m) {
-      const dl = daylightOf(slug, date);
-      if (!dl) continue;
+    for (const d of m.values()) {
+      if (!d.daylight) continue;
       for (const r of d.rows.sort((a, b) => (a.hour_utc < b.hour_utc ? -1 : 1))) {
-        if (!finite(r.score) || r.local_hour < dl.from || r.local_hour >= dl.to) continue;
+        if (!finite(r.score) || r.local_hour < d.daylight.from || r.local_hour >= d.daylight.to) continue;
         d.scores.set(r.local_hour, { score: r.score, hourMs: Date.parse(r.hour_utc) });
       }
     }
@@ -651,20 +774,20 @@ export function windowMetrics(
     lastDate.set(slug, last);
   }
 
-  const skipped = { incompleteDay: 0, tooFewHours: 0, noEarlyWindow: 0 };
-  /** Realized daylight scores per finished (slug, date). */
-  const finished = new Map<string, { slug: string; date: string; day: Day }>();
+  const skipped = { incompleteDay: 0, censoredDay: 0, noEarlyWindow: 0 };
+  /** Realized daylight scores per finished, well-covered (slug, date). */
+  const complete = new Map<string, { slug: string; date: string; day: Day }>();
   for (const [slug, m] of days) {
     for (const [date, day] of m) {
       if (date >= (lastDate.get(slug) as string)) {
         skipped.incompleteDay++;
         continue;
       }
-      if (day.scores.size < MIN_DAYLIGHT_HOURS) {
-        skipped.tooFewHours++;
+      if (!day.daylight || !dayCoverageOk(day.scores.keys(), day.daylight)) {
+        skipped.censoredDay++;
         continue;
       }
-      finished.set(`${slug}|${date}`, { slug, date, day });
+      complete.set(`${slug}|${date}`, { slug, date, day });
     }
   }
 
@@ -685,7 +808,7 @@ export function windowMetrics(
   const bias: number[] = [];
   let peakIn = 0;
   let within10 = 0;
-  for (const { day } of finished.values()) {
+  for (const { day } of complete.values()) {
     const row = earliestRow(day, (r) => r.window != null);
     if (!row || !row.window) {
       skipped.noEarlyWindow++;
@@ -715,6 +838,8 @@ export function windowMetrics(
   const ready = daysScored >= min;
 
   // Outlook: the peak promised N days ahead vs the realized peak that day.
+  // Only well-covered target days count: a day with the afternoon missing has
+  // no honest "realized peak".
   const errsByLead = new Map<number, number[]>();
   for (const [slug, m] of days) {
     for (const [date, day] of m) {
@@ -723,7 +848,7 @@ export function windowMetrics(
       for (const o of row.outlook.days) {
         const lead = daysBetween(date, o.date);
         if (lead < 1 || lead > 6 || !finite(o.peak)) continue;
-        const target = finished.get(`${slug}|${o.date}`);
+        const target = complete.get(`${slug}|${o.date}`);
         if (!target) continue;
         const realizedPeak = Math.max(...[...target.day.scores.values()].map((v) => v.score));
         const a = errsByLead.get(lead) ?? [];
@@ -750,7 +875,7 @@ export function windowMetrics(
   const realizedInWindow = r1(inWin);
   const realizedBest3h = r1(best3);
   return {
-    daysWithHours: finished.size,
+    completeDays: complete.size,
     daysScored,
     min,
     ready,
@@ -772,7 +897,10 @@ export function windowMetrics(
 // 4. Safety message vs lifeguard flags
 // ============================================================================
 
-export type SafetyRow = Pick<HourlyRow, "slug" | "hour_utc" | "safety" | "flags" | "rip">;
+export type SafetyRow = Pick<
+  HourlyRow,
+  "slug" | "hour_utc" | "local_date" | "local_hour" | "safety" | "flags" | "rip"
+>;
 
 export const FLAG_ORDER = ["double-red", "red", "yellow", "green", "purple"] as const;
 export type DominantFlag = (typeof FLAG_ORDER)[number] | "unknown";
@@ -786,31 +914,33 @@ export function dominantFlag(colors: readonly string[] | null | undefined): Domi
 }
 
 export interface SafetyResult {
-  /** Hours with a swim level and a known flag color. */
+  /** Beach-days with a swim message and a known flag (one flag posting per beach per day). */
+  beachDays: number;
+  /** The hourly rows those beach-days summarize. */
   hours: number;
   min: number;
   ready: boolean;
   collecting: string | null;
-  /** flag -> swim level -> hours. */
+  /** flag -> swim level -> beach-days. */
   crossTab: Record<string, Record<string, number>>;
-  /** Hours with no red or double-red flag and a yellow or green flag. Red
-   *  flags directly set "stay-out" (lib/safetyLine.ts), so those hours say
-   *  nothing about our own judgement. */
+  /** Beach-days whose flag is green or yellow. Red flags directly set
+   *  "stay-out" (lib/safetyLine.ts), so red days say nothing about our own
+   *  judgement. */
   informative: {
-    hours: number;
+    beachDays: number;
     ready: boolean;
     collecting: string | null;
-    yellowHours: number;
-    greenHours: number;
-    /** Yellow and we said caution or stay-out, or green and we said safe. */
-    agreeHours: number;
-    agreementRate: number | null;
+    yellowDays: number;
+    greenDays: number;
+    /** Yellow and we said caution or stay out, or green and we said safe. */
+    agreeDays: number;
+    agreement: Rate;
     /** A yellow flag flew and we said "safe". */
     yellowWeSaidSafe: number;
-    /** A green flag flew and we said caution or stay-out. */
+    /** A green flag flew and we said caution or stay out. */
     greenWeCautioned: number;
-    /** Why we cautioned on those green hours (from the archived rip block). */
-    greenReasons: { reason: string; hours: number }[];
+    /** Why we cautioned on those green days (from the archived rip block). */
+    greenReasons: { reason: string; days: number }[];
   };
 }
 
@@ -823,60 +953,119 @@ function cautionReason(rip: RipBlock | null | undefined): string {
   return "other (waves, thunder or an advisory)";
 }
 
-export function safetyMetrics(rows: SafetyRow[], min = MIN_SAFETY_HOURS): SafetyResult {
+/** Most frequent key; ties go to the earliest in `priority` (the more serious). */
+function modeOf<T extends string>(counts: Map<T, number>, priority: readonly T[]): T | null {
+  let best: T | null = null;
+  let bestN = 0;
+  for (const [k, n] of counts) {
+    const better =
+      n > bestN ||
+      (n === bestN && best != null && priority.indexOf(k) !== -1 && priority.indexOf(k) < priority.indexOf(best));
+    if (better) {
+      best = k;
+      bestN = n;
+    }
+  }
+  return best;
+}
+
+const SWIM_SERIOUS_FIRST = ["stay-out", "caution", "safe"] as const;
+
+/**
+ * Safety message against the lifeguard flag, one beach-day at a time. The City
+ * posts one flag a day, so 24 hourly rows are one observation, not 24. A
+ * beach-day's flag is its most frequent flag; our message is its most frequent
+ * swim level (ties go to the more serious one). With `opts.daylight`, only
+ * daylight hours count, so a quiet night does not outvote the beach day.
+ */
+export function safetyMetrics(
+  rows: SafetyRow[],
+  opts: { min?: number; daylight?: DaylightFn } = {},
+): SafetyResult {
+  const min = opts.min ?? MIN_SAFETY_BEACH_DAYS;
   const crossTab: Record<string, Record<string, number>> = {};
   for (const f of FLAG_ORDER) crossTab[f] = Object.fromEntries(SWIM_LEVELS.map((l) => [l, 0]));
+
+  const byDay = groupBy(rows, (r) => `${r.slug}|${r.local_date}`);
+  let beachDays = 0;
   let hours = 0;
-  let infHours = 0;
-  let yellowHours = 0;
-  let greenHours = 0;
+  let infDays = 0;
+  let yellowDays = 0;
+  let greenDays = 0;
   let agree = 0;
   let yellowSafe = 0;
   let greenCaution = 0;
   const reasons = new Map<string, number>();
-  for (const r of rows) {
-    const swim = r.safety?.swim;
+
+  for (const dayRows of byDay.values()) {
+    const first = dayRows[0];
+    const dl = opts.daylight?.(first.slug, first.local_date);
+    if (opts.daylight && !dl) continue;
+    const used = dayRows.filter(
+      (r) => r.safety?.swim && (!dl || (r.local_hour >= dl.from && r.local_hour < dl.to)),
+    );
+    const flagCounts = new Map<DominantFlag, number>();
+    const known: SafetyRow[] = [];
+    for (const r of used) {
+      const f = dominantFlag(r.flags?.colors);
+      if (f === "unknown") continue;
+      flagCounts.set(f, (flagCounts.get(f) ?? 0) + 1);
+      known.push(r);
+    }
+    const flag = modeOf(flagCounts, FLAG_ORDER);
+    if (!flag) continue;
+    const swimCounts = new Map<string, number>();
+    for (const r of known) swimCounts.set(r.safety!.swim, (swimCounts.get(r.safety!.swim) ?? 0) + 1);
+    const swim = modeOf(swimCounts, SWIM_SERIOUS_FIRST as readonly string[]);
     if (!swim) continue;
-    const flag = dominantFlag(r.flags?.colors);
-    if (flag === "unknown") continue;
-    hours++;
-    const row = crossTab[flag];
-    row[swim] = (row[swim] ?? 0) + 1;
+
+    beachDays++;
+    hours += known.length;
+    crossTab[flag][swim] = (crossTab[flag][swim] ?? 0) + 1;
     if (flag !== "yellow" && flag !== "green") continue;
-    infHours++;
+    infDays++;
     if (flag === "yellow") {
-      yellowHours++;
+      yellowDays++;
       if (swim === "safe") yellowSafe++;
       else agree++;
     } else {
-      greenHours++;
+      greenDays++;
       if (swim === "safe") agree++;
       else {
         greenCaution++;
-        const k = cautionReason(r.rip);
-        reasons.set(k, (reasons.get(k) ?? 0) + 1);
+        // The day's reason: the most common one among the hours that said so.
+        const rc = new Map<string, number>();
+        for (const r of known) {
+          if (r.safety!.swim !== swim) continue;
+          const k = cautionReason(r.rip);
+          rc.set(k, (rc.get(k) ?? 0) + 1);
+        }
+        const top = [...rc].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0];
+        if (top) reasons.set(top[0], (reasons.get(top[0]) ?? 0) + 1);
       }
     }
   }
-  const ready = hours >= min;
-  const infReady = infHours >= min;
+
+  const ready = beachDays >= min;
+  const infReady = infDays >= min;
   return {
+    beachDays,
     hours,
     min,
     ready,
-    collecting: ready ? null : collectingText(hours, min, "hours"),
+    collecting: ready ? null : collectingText(beachDays, min, "beach-days"),
     crossTab,
     informative: {
-      hours: infHours,
+      beachDays: infDays,
       ready: infReady,
-      collecting: infReady ? null : collectingText(infHours, min, "hours"),
-      yellowHours,
-      greenHours,
-      agreeHours: agree,
-      agreementRate: infReady ? share(agree, infHours) : null,
+      collecting: infReady ? null : collectingText(infDays, min, "beach-days"),
+      yellowDays,
+      greenDays,
+      agreeDays: agree,
+      agreement: rateOf(agree, infDays, min, infReady),
       yellowWeSaidSafe: yellowSafe,
       greenWeCautioned: greenCaution,
-      greenReasons: [...reasons].map(([reason, h]) => ({ reason, hours: h })).sort((a, b) => b.hours - a.hours),
+      greenReasons: [...reasons].map(([reason, d]) => ({ reason, days: d })).sort((a, b) => b.days - a.days),
     },
   };
 }

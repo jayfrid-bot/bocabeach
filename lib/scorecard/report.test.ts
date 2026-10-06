@@ -41,7 +41,7 @@ describe("buildScorecard — nothing collected yet", () => {
     expect(card.headlines.sun).toContain("collecting — 0 of 10 pairs");
     expect(card.headlines.rain).toContain("collecting — 0 of 50 scored calls");
     expect(card.headlines.window).toContain("collecting — 0 of 10 days");
-    expect(card.headlines.safety).toContain("collecting — 0 of 50 hours");
+    expect(card.headlines.safety).toContain("collecting — 0 of 30 beach-days");
   });
 
   it("renders the sections in order under plain headings, with no error numbers", () => {
@@ -159,20 +159,15 @@ describe("buildScorecard — enough data", () => {
       });
     }
   }
-  // Safety: 60 hours with a green or yellow flag (yellow -> we said caution, green -> safe: all agree),
-  // then 6 hours under a red flag (we said stay out). Red hours must not count toward agreement.
-  const flagHour = (date: string, hour: number, color: string, swim: string) => {
-    const r = hourly.find((x) => x.local_date === date && x.local_hour === hour)!;
+  // Safety: one flag posting per day. Days 1-9 alternate yellow (we said caution) and green (we said safe),
+  // so we agree; days 10-12 are red (we said stay out). That is 12 beach-days, under the 30 needed.
+  for (const r of hourly) {
+    const day = Number(r.local_date.slice(8));
+    const color = day >= 10 ? "red" : day % 2 ? "yellow" : "green";
+    const swim = day >= 10 ? "stay-out" : day % 2 ? "caution" : "safe";
     r.flags = { colors: [color] };
     r.safety = { swim };
-  };
-  for (let hour = 0; hour < 24; hour++) {
-    for (const date of ["2026-10-04", "2026-10-05"]) {
-      flagHour(date, hour, hour % 2 ? "yellow" : "green", hour % 2 ? "caution" : "safe");
-    }
   }
-  for (let hour = 0; hour < 12; hour++) flagHour("2026-10-06", hour, hour % 2 ? "yellow" : "green", hour % 2 ? "caution" : "safe");
-  for (let hour = 12; hour < 18; hour++) flagHour("2026-10-06", hour, "red", "stay-out");
 
   const card = buildScorecard(
     emptyRaw({
@@ -225,7 +220,7 @@ describe("buildScorecard — enough data", () => {
 
   it("window: 10+ finished days score the window against the realized hours", () => {
     expect(card.window.ok && card.window.result.ready).toBe(true);
-    expect(card.headlines.window).toContain("day");
+    expect(card.headlines.window).toContain("complete day");
     if (card.window.ok) {
       expect(card.window.result.realizedInWindow).toBe(60);
       expect(card.window.result.realizedBest3h).toBe(60);
@@ -234,13 +229,14 @@ describe("buildScorecard — enough data", () => {
     }
   });
 
-  it("safety: excludes red hours from the agreement rate", () => {
-    expect(card.safety.ok && card.safety.result.ready).toBe(true);
+  it("safety: counts beach-days, so 12 flagged days stay under the 30 needed", () => {
+    expect(card.safety.ok && card.safety.result.ready).toBe(false);
     if (card.safety.ok) {
-      expect(card.safety.result.hours).toBe(66);
-      expect(card.safety.result.informative.hours).toBe(60);
+      expect(card.safety.result.beachDays).toBe(12);
+      expect(card.safety.result.hours).toBe(12 * 24);
+      expect(card.safety.result.informative.beachDays).toBe(9);
     }
-    expect(card.headlines.safety).toContain("our swim message agreed with the flag 100%");
+    expect(card.headlines.safety).toContain("collecting — 12 of 30 beach-days");
   });
 
   it("data health: no beach under the minimum when every hour is archived", () => {
@@ -257,10 +253,139 @@ describe("buildScorecard — enough data", () => {
     const md = renderMarkdown(card);
     expect(md).toContain("### Error overall and by group");
     expect(md).toContain("### Our call versus what happened");
-    expect(md).toContain("### Swim message by flag (hours)");
+    expect(md).toContain("### Swim message by flag (beach-days)");
     expect(md).toContain("### Green and yellow flags only");
     expect(md).not.toContain("NaN");
     expect(md).not.toContain("undefined");
     expect(md).not.toContain("collecting —  ");
+  });
+});
+
+describe("buildScorecard — enough safety beach-days", () => {
+  // 4 beaches x 10 days, a flag posting a day: 30 green/yellow beach-days + 10 red = 40.
+  const hourly: HourlyRow[] = [];
+  for (const [bi, slug] of ["a", "b", "c", "d"].entries()) {
+    for (let day = 1; day <= 10; day++) {
+      const red = bi === 3;
+      for (let hour = 7; hour < 19; hour++) {
+        hourly.push({
+          slug,
+          hour_utc: new Date(Date.UTC(2026, 9, day, hour + 4)).toISOString(),
+          local_date: `2026-10-${String(day).padStart(2, "0")}`,
+          local_hour: hour,
+          score: 60,
+          has_extra: true,
+          flags: { colors: [red ? "red" : day % 2 ? "yellow" : "green"] },
+          safety: { swim: red ? "stay-out" : day % 2 ? "caution" : "safe" },
+        });
+      }
+    }
+  }
+  const card = buildScorecard(emptyRaw({ asOf: "2026-10-12T00:00:00.000Z", hourly }));
+
+  it("reports the agreement rate once 30 green or yellow beach-days exist, red days left out", () => {
+    expect(card.safety.ok && card.safety.result.ready).toBe(true);
+    if (card.safety.ok) {
+      expect(card.safety.result.beachDays).toBe(40);
+      expect(card.safety.result.informative.beachDays).toBe(30);
+      expect(card.safety.result.informative.agreement.value).toBe(1);
+    }
+    expect(card.headlines.safety).toContain("40 beach-days with a flag");
+    expect(card.headlines.safety).toContain("agreed with the flag 100% of the time (30 of 30)");
+  });
+});
+
+describe("buildScorecard — partial days and gated rates in the Markdown", () => {
+  /** 12 days (the last one still in progress) of the normal archive pattern: local hours 16-19 missing, a window named at 8 AM. */
+  const hourly: HourlyRow[] = [];
+  for (let day = 1; day <= 12; day++) {
+    for (let hour = 0; hour < 24; hour++) {
+      if (hour >= 16 && hour <= 19) continue;
+      hourly.push({
+        slug: "boca-raton",
+        hour_utc: new Date(Date.UTC(2026, 9, day, hour + 4)).toISOString(),
+        local_date: `2026-10-${String(day).padStart(2, "0")}`,
+        local_hour: hour,
+        score: hour >= 7 && hour < 19 ? 60 : 70,
+        has_extra: true,
+        window:
+          hour === 8
+            ? {
+                startIso: new Date(Date.UTC(2026, 9, day, 13)).toISOString(),
+                endIso: new Date(Date.UTC(2026, 9, day, 19)).toISOString(),
+                score: 90,
+              }
+            : null,
+      });
+    }
+  }
+  const card = buildScorecard(emptyRaw({ asOf: "2026-10-13T12:00:00.000Z", hourly }));
+  const md = renderMarkdown(card);
+
+  it("counts the censored days and never scores them", () => {
+    expect(card.window.ok).toBe(true);
+    if (card.window.ok) {
+      expect(card.window.result.daysScored).toBe(0);
+      expect(card.window.result.skipped.censoredDay).toBe(11);
+      expect(card.window.result.skipped.incompleteDay).toBe(1); // the latest day is still going
+    }
+    expect(card.headlines.window).toContain("collecting — 0 of 10 days");
+    expect(card.headlines.window).toContain("11 days left out for missing hours");
+  });
+
+  it("never calls a partial day 'the day really had'", () => {
+    expect(md).not.toMatch(/really had/i);
+    expect(md).toContain("11 censored days (missing hours)");
+    expect(md).toContain("archived");
+  });
+});
+
+describe("buildScorecard — rates show their own count while collecting", () => {
+  it("the rain section says n=<count>, collecting for a rate under its own minimum", () => {
+    // 60 scored calls, but only 5 are rain calls: hit and false-alarm rates wait.
+    const rows: HourlyRow[] = [];
+    for (let i = 0; i < 60; i++) {
+      const raining = i >= 55;
+      for (let h = 0; h < 3; h++) {
+        rows.push({
+          slug: `b${i}`,
+          hour_utc: new Date(Date.UTC(2026, 9, 5, 12 + h)).toISOString(),
+          local_date: "2026-10-05",
+          local_hour: 8 + h,
+          score: 60,
+          has_extra: true,
+          rain:
+            h === 0
+              ? { nowcast: raining ? "raining" : "dry", changeInMin: null, radarMmHr: 0, radarDry: 1, radarAgeMin: 5 }
+              : { nowcast: null, changeInMin: null, radarMmHr: raining ? 2 : 0, radarDry: raining ? 0 : 1, radarAgeMin: 5 },
+        });
+      }
+    }
+    const card = buildScorecard(emptyRaw({ asOf: "2026-10-06T00:00:00.000Z", hourly: rows }));
+    const md = renderMarkdown(card);
+    expect(card.rain.ok && card.rain.result.ready).toBe(true);
+    expect(md).toContain("radar confirmed it n=5, collecting of the time");
+    // The headline (55 dry-for-2h calls, none rained on) is published.
+    expect(card.headlines.rain).toContain('Of 55 "dry for the next 2+ hrs" calls, 0 (0%) saw radar rain');
+  });
+
+  it("the sun call table shows n=<count>, collecting under 10 calls", () => {
+    const sun: SunPredictionRow[] = Array.from({ length: 12 }, (_, n) => sunRow(n, n < 3 ? 80 : 30, 40 + n));
+    const card = buildScorecard(emptyRaw({ asOf: "2026-12-01T00:00:00.000Z", sunPredictions: sun }));
+    expect(renderMarkdown(card)).toContain("n=3, collecting");
+  });
+});
+
+describe("buildScorecard — sun evaluation window", () => {
+  it("shows the window and the lifetime counts when the runner supplies them", () => {
+    const card = buildScorecard(
+      emptyRaw({
+        sunWindowDays: 90,
+        sunLifetime: { forecastRows: 5000, forecastEvents: 400, pairedRows: 120, observations: 9, firstArchivedAt: "2026-10-06T15:00:01.514Z" },
+      }),
+    );
+    const md = renderMarkdown(card);
+    expect(md).toContain("last 90 days");
+    expect(md).toContain("Lifetime: 400 events and 5000 forecast rows logged since 2026-10-06; 120 rows paired; 9 camera readings.");
   });
 });

@@ -15,7 +15,8 @@
 //   --from-json FILE  score saved query results instead of querying D1
 //   --save-raw FILE   save the query results (for --from-json, tests, offline work)
 //
-// A query that fails never stops the run: its section prints "Not available —"
+// Hourly rows cover --days days; sun-color events cover the last 90 days (lifetime
+// counts are read apart). A query that fails never stops the run: its section prints "Not available —"
 // with the first line of the error. All maths lives in lib/scorecard/metrics.ts
 // (pure, unit-tested); the Markdown is built in lib/scorecard/report.ts.
 
@@ -27,11 +28,21 @@ import { getLocation } from "@/config/locations";
 import { computeSunTimes } from "@/lib/sources/sun";
 import { buildScorecard, renderMarkdown, type RawData, type RawDatasetName } from "@/lib/scorecard/report";
 import { errorLineOf, parseWranglerJson } from "@/lib/scorecard/wrangler";
+import {
+  hourlyQuery,
+  sqlStr,
+  sunCallsQuery,
+  sunLifetimeQuery,
+  sunObservationsQuery,
+  sunPairedQuery,
+} from "@/lib/scorecard/queries";
 import type { DaylightFn, HourlyRow, SunPredictionRow } from "@/lib/scorecard/metrics";
 
 const DB_NAME = "isitbeachday-plus";
 const HOURLY_CHUNK_DAYS = 3;
 const SUN_ROW_LIMIT = 20_000;
+/** Sun-color events newer than this many days are scored; lifetime counts are kept apart. */
+const SUN_WINDOW_DAYS = 90;
 const DAY_MS = 86_400_000;
 
 const here = (() => {
@@ -103,8 +114,6 @@ function d1(sql: string): Row[] {
   return first.results ?? [];
 }
 
-const sqlStr = (s: string): string => `'${s.replace(/'/g, "''")}'`;
-
 function jsonOf(v: unknown): unknown {
   if (typeof v !== "string") return v ?? null;
   try {
@@ -119,23 +128,6 @@ function jsonOf(v: unknown): unknown {
 const log = (msg: string): void => {
   process.stderr.write(`${msg}\n`);
 };
-
-function hourlyQuery(fromIso: string, toIso: string): string {
-  // json_extract pulls only the blocks the scorecard reads, so a row is ~100
-  // bytes instead of the whole ~2 KB extra_json. `win` not `window`: WINDOW is
-  // an SQL keyword.
-  return `SELECT slug, hour_utc, local_date, local_hour, score,
-  CASE WHEN extra_json IS NULL THEN 0 ELSE 1 END AS has_extra,
-  json_extract(extra_json, '$.window') AS win,
-  json_extract(extra_json, '$.rain') AS rain,
-  json_extract(extra_json, '$.flags') AS flags,
-  json_extract(extra_json, '$.outlook') AS outlook,
-  json_extract(extra_json, '$.safety') AS safety,
-  json_extract(extra_json, '$.rip') AS rip
-FROM beach_hourly
-WHERE row_kind = 'snapshot' AND hour_utc >= ${sqlStr(fromIso)} AND hour_utc < ${sqlStr(toIso)}
-ORDER BY hour_utc, slug`;
-}
 
 function toHourly(r: Row): HourlyRow {
   return {
@@ -154,9 +146,6 @@ function toHourly(r: Row): HourlyRow {
   };
 }
 
-const SUN_PRED_COLS =
-  "slug, event_kind, event_iso, as_of_hour_utc, lead_minutes, score, band, algo_version, observed_score, observed_source";
-
 function fetchRaw(days: number, now: Date): RawData {
   const raw: RawData = {
     asOf: now.toISOString(),
@@ -166,6 +155,7 @@ function fetchRaw(days: number, now: Date): RawData {
     sunObservations: null,
     camLatest: null,
     sunPredictionsLast24h: null,
+    sunLifetime: null,
     errors: {},
   };
   const fail = (name: RawDatasetName, e: unknown): void => {
@@ -192,21 +182,16 @@ function fetchRaw(days: number, now: Date): RawData {
   if (okChunks > 0) raw.hourly = rows;
   log(`  hourly: ${rows.length} rows`);
 
-  // Sun-color forecasts: every paired row (all leads), plus each event's call
-  // row (latest forecast made >= 60 min ahead) so unpaired events still feed
-  // the predicted-distribution check. Bounded: not the whole table.
-  log("Reading sun-color forecasts...");
+  // Sun-color forecasts for events in the last SUN_WINDOW_DAYS days: every
+  // paired row (all leads), plus each event's call row (latest scored forecast
+  // made >= 60 min ahead) so unpaired events still feed the predicted-
+  // distribution check. Newest events first, so a row cap drops the OLDEST.
+  log(`Reading sun-color forecasts (events in the last ${SUN_WINDOW_DAYS} days)...`);
+  const sunSince = new Date(now.getTime() - SUN_WINDOW_DAYS * DAY_MS).toISOString();
+  raw.sunWindowDays = SUN_WINDOW_DAYS;
   try {
-    const paired = d1(
-      `SELECT ${SUN_PRED_COLS} FROM sun_event_predictions WHERE observed_score IS NOT NULL ORDER BY event_iso, as_of_hour_utc LIMIT ${SUN_ROW_LIMIT}`,
-    );
-    const calls = d1(
-      `SELECT ${SUN_PRED_COLS.split(", ").map((c) => `p.${c}`).join(", ")} FROM sun_event_predictions p
-WHERE p.lead_minutes >= 60 AND p.as_of_hour_utc = (
-  SELECT MAX(q.as_of_hour_utc) FROM sun_event_predictions q
-  WHERE q.slug = p.slug AND q.event_kind = p.event_kind AND q.event_iso = p.event_iso AND q.lead_minutes >= 60)
-LIMIT ${SUN_ROW_LIMIT}`,
-    );
+    const paired = d1(sunPairedQuery(sunSince, SUN_ROW_LIMIT));
+    const calls = d1(sunCallsQuery(sunSince, SUN_ROW_LIMIT));
     const seen = new Set<string>();
     const merged: SunPredictionRow[] = [];
     for (const r of [...paired, ...calls]) {
@@ -215,13 +200,34 @@ LIMIT ${SUN_ROW_LIMIT}`,
       seen.add(k);
       merged.push(r as unknown as SunPredictionRow);
     }
+    merged.sort(
+      (a, b) =>
+        (a.event_iso < b.event_iso ? -1 : a.event_iso > b.event_iso ? 1 : 0) ||
+        (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0) ||
+        (a.event_kind < b.event_kind ? -1 : a.event_kind > b.event_kind ? 1 : 0) ||
+        (a.as_of_hour_utc < b.as_of_hour_utc ? -1 : a.as_of_hour_utc > b.as_of_hour_utc ? 1 : 0),
+    );
     raw.sunPredictions = merged;
     if (paired.length >= SUN_ROW_LIMIT || calls.length >= SUN_ROW_LIMIT) {
-      raw.errors.sunPredictions = `Row limit of ${SUN_ROW_LIMIT} reached; older events may be missing.`;
+      raw.errors.sunPredictions = `Row limit of ${SUN_ROW_LIMIT} reached; the oldest events in the last ${SUN_WINDOW_DAYS} days may be missing.`;
     }
     log(`  sunPredictions: ${merged.length} rows (${paired.length} paired)`);
   } catch (e) {
     fail("sunPredictions", e);
+  }
+  try {
+    const r = d1(sunLifetimeQuery())[0];
+    raw.sunLifetime = r
+      ? {
+          forecastRows: Number(r.forecast_rows ?? 0),
+          forecastEvents: Number(r.forecast_events ?? 0),
+          pairedRows: Number(r.paired_rows ?? 0),
+          observations: Number(r.observations ?? 0),
+          firstArchivedAt: typeof r.first_archived_at === "string" ? r.first_archived_at : null,
+        }
+      : null;
+  } catch (e) {
+    fail("sunLifetime", e);
   }
 
   try {
@@ -236,9 +242,7 @@ LIMIT ${SUN_ROW_LIMIT}`,
 
   log("Reading sun-camera readings and camera captures...");
   try {
-    raw.sunObservations = d1(
-      "SELECT slug, event_kind, event_date_local, cam_id, event_iso, view, observed_score, scored_at FROM sun_event_observations ORDER BY event_iso",
-    ) as unknown as RawData["sunObservations"];
+    raw.sunObservations = d1(sunObservationsQuery(sunSince)) as unknown as RawData["sunObservations"];
   } catch (e) {
     fail("sunObservations", e);
   }

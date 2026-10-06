@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   collectingText,
   dataHealth,
+  dayCoverageOk,
   dominantFlag,
+  forecastStateAt,
+  isDryPromise,
   leadBucketOf,
   radarRainAt,
   rainMetrics,
+  rateOf,
   safetyMetrics,
   sunBandOf,
   sunColorMetrics,
@@ -78,8 +82,8 @@ describe("sunBandOf / leadBucketOf", () => {
     expect(leadBucketOf(719)).toBe("6–12h");
     expect(leadBucketOf(720)).toBe("12–24h");
     expect(leadBucketOf(1439)).toBe("12–24h");
-    expect(leadBucketOf(1440)).toBe(">24h");
-    expect(leadBucketOf(5000)).toBe(">24h");
+    expect(leadBucketOf(1440)).toBe("24h+"); // exactly 24 h is the first minute of the last bucket
+    expect(leadBucketOf(5000)).toBe("24h+");
   });
 });
 
@@ -91,7 +95,7 @@ describe("sunColorMetrics — not enough data", () => {
     expect(r.overall.mae).toBeNull();
     expect(r.overall.bias).toBeNull();
     expect(r.calls.ready).toBe(false);
-    expect(r.calls.great.hitRate).toBeNull();
+    expect(r.calls.great.hitRate.value).toBeNull();
   });
 
   it("counts events, not rows, against the minimum", () => {
@@ -248,7 +252,8 @@ describe("sunColorMetrics — the call analysis", () => {
     rows.push(pred(n, 120, s.pred, s.obs)); // the call
     rows.push(pred(n, 30, s.obs, s.obs)); // too close to the event: never the call
   });
-  const r = sunColorMetrics(rows);
+  // rateMin 1 so the arithmetic is visible; the next tests use the real gates.
+  const r = sunColorMetrics(rows, { rateMin: 1 });
 
   it("picks the latest forecast made at least 60 minutes ahead", () => {
     expect(r.calls.events).toBe(12);
@@ -265,9 +270,9 @@ describe("sunColorMetrics — the call analysis", () => {
       calls: 5,
       observedAtOrAbove: 6,
     });
-    expect(r.calls.great.hitRate).toBeCloseTo(3 / 5);
-    expect(r.calls.great.falseAlarmRate).toBeCloseTo(2 / 5);
-    expect(r.calls.great.missRate).toBeCloseTo(3 / 6);
+    expect(r.calls.great.hitRate.value).toBeCloseTo(3 / 5);
+    expect(r.calls.great.falseAlarmRate.value).toBeCloseTo(2 / 5);
+    expect(r.calls.great.missRate.value).toBeCloseTo(3 / 6);
   });
 
   it("Amazing cutoff (90)", () => {
@@ -278,17 +283,39 @@ describe("sunColorMetrics — the call analysis", () => {
       misses: 1,
       correctNegatives: 9,
     });
-    expect(r.calls.amazing.hitRate).toBeCloseTo(0.5);
-    expect(r.calls.amazing.missRate).toBeCloseTo(0.5);
+    expect(r.calls.amazing.hitRate.value).toBeCloseTo(0.5);
+    expect(r.calls.amazing.missRate.value).toBeCloseTo(0.5);
+  });
+
+  it("every rate is gated on ITS OWN denominator, not on the number of pairs", () => {
+    // 12 paired events (>= 10) but only 5 Great calls and 6 real Great events: all three rates wait.
+    const gated = sunColorMetrics(rows);
+    expect(gated.calls.ready).toBe(true);
+    expect(gated.calls.great.hitRate).toEqual({ value: null, n: 5, min: 10, collecting: "n=5, collecting" });
+    expect(gated.calls.great.falseAlarmRate.collecting).toBe("n=5, collecting");
+    expect(gated.calls.great.missRate.collecting).toBe("n=6, collecting");
+    expect(gated.calls.amazing.hitRate.collecting).toBe("n=2, collecting");
+    // The counts stay visible.
+    expect(gated.calls.great.hits).toBe(3);
+  });
+
+  it("publishes a rate once its own denominator reaches 10", () => {
+    // 14 events, all called Great (80): 11 really were >= 70, 3 were not.
+    const big = Array.from({ length: 14 }, (_, n) => pred(n, 120, 80, n < 11 ? 75 : 40));
+    const g = sunColorMetrics(big).calls.great;
+    expect(g.calls).toBe(14);
+    expect(g.hitRate.value).toBeCloseTo(11 / 14);
+    expect(g.falseAlarmRate.value).toBeCloseTo(3 / 14);
+    expect(g.missRate).toEqual({ value: 0, n: 11, min: 10, collecting: null }); // 11 real ones, none missed
   });
 
   it("the call counts are visible even while collecting, but rates are not", () => {
-    const few = sunColorMetrics(rows.slice(0, 9)); // first 3 events
+    const few = sunColorMetrics(rows.slice(0, 9), { rateMin: 1 }); // first 3 events
     expect(few.calls.ready).toBe(false);
     expect(few.calls.collecting).toBe("collecting — 3 of 10 pairs");
     expect(few.calls.great.hits).toBe(2);
-    expect(few.calls.great.hitRate).toBeNull();
-    expect(few.calls.great.missRate).toBeNull();
+    expect(few.calls.great.hitRate.value).toBeNull();
+    expect(few.calls.great.missRate.value).toBeNull();
   });
 
   it("an event with no forecast made >= 60 minutes ahead has no call", () => {
@@ -298,12 +325,13 @@ describe("sunColorMetrics — the call analysis", () => {
   });
 
   it("does not divide by zero when nothing was called", () => {
-    const none = sunColorMetrics(Array.from({ length: 10 }, (_, n) => pred(n, 120, 30, 30)));
+    const none = sunColorMetrics(Array.from({ length: 10 }, (_, n) => pred(n, 120, 30, 30)), { rateMin: 1 });
     expect(none.calls.ready).toBe(true);
     expect(none.calls.great.calls).toBe(0);
-    expect(none.calls.great.hitRate).toBeNull();
-    expect(none.calls.great.falseAlarmRate).toBeNull();
-    expect(none.calls.great.missRate).toBeNull();
+    expect(none.calls.great.hitRate.value).toBeNull();
+    expect(none.calls.great.falseAlarmRate.value).toBeNull();
+    expect(none.calls.great.missRate.value).toBeNull();
+    expect(none.calls.great.hitRate.collecting).toBe("n=0, collecting");
   });
 });
 
@@ -356,6 +384,17 @@ const call = (nowcast: "dry" | "raining", over: Partial<RainBlock> = {}): RainBl
 const wet: RainBlock = { nowcast: null, radarMmHr: 2, radarDry: 0, radarAgeMin: 5 };
 const dry: RainBlock = { nowcast: null, radarMmHr: 0, radarDry: 1, radarAgeMin: 5 };
 
+describe("rateOf", () => {
+  it("gates on its own denominator", () => {
+    expect(rateOf(3, 10, 10)).toEqual({ value: 0.3, n: 10, min: 10, collecting: null });
+    expect(rateOf(3, 9, 10)).toEqual({ value: null, n: 9, min: 10, collecting: "n=9, collecting" });
+    expect(rateOf(0, 0, 1)).toEqual({ value: null, n: 0, min: 1, collecting: "n=0, collecting" });
+  });
+  it("a shut outer gate holds the rate back even when the denominator is big", () => {
+    expect(rateOf(5, 100, 10, false)).toEqual({ value: null, n: 100, min: 10, collecting: "n=100, collecting" });
+  });
+});
+
 describe("radarRainAt", () => {
   it("rain when a fresh frame is not confident-dry, or the rate is over the threshold", () => {
     expect(radarRainAt({ nowcast: null, radarMmHr: 0, radarDry: 0, radarAgeMin: 5 })).toBe(true);
@@ -368,9 +407,16 @@ describe("radarRainAt", () => {
   it("unknown without a usable radar reading", () => {
     expect(radarRainAt(null)).toBeNull();
     expect(radarRainAt({ nowcast: null, radarMmHr: null, radarDry: null })).toBeNull();
-    // A stale frame is not a current observation, even if it showed rain.
+  });
+  it("a stale frame is unknown BEFORE radarDry or the rate are read — never rain", () => {
+    expect(radarRainAt({ nowcast: null, radarMmHr: null, radarDry: 0, radarAgeMin: 90 })).toBeNull();
+    expect(radarRainAt({ nowcast: null, radarMmHr: 0, radarDry: 0, radarAgeMin: 90 })).toBeNull();
     expect(radarRainAt({ nowcast: null, radarMmHr: 4, radarDry: null, radarAgeMin: 40 })).toBeNull();
+    expect(radarRainAt({ nowcast: null, radarMmHr: 0, radarDry: 1, radarAgeMin: 40 })).toBeNull();
     expect(radarRainAt({ nowcast: null, radarMmHr: 0, radarDry: null, radarAgeMin: 40 })).toBeNull();
+    // 25 minutes is still fresh; 26 is not.
+    expect(radarRainAt({ nowcast: null, radarMmHr: 0, radarDry: 0, radarAgeMin: 25 })).toBe(true);
+    expect(radarRainAt({ nowcast: null, radarMmHr: 0, radarDry: 0, radarAgeMin: 26 })).toBeNull();
   });
   it("honours a custom threshold", () => {
     const r = { nowcast: null, radarMmHr: 0.3, radarDry: null, radarAgeMin: 5 } as const;
@@ -379,108 +425,243 @@ describe("radarRainAt", () => {
   });
 });
 
+describe("forecastStateAt", () => {
+  it("dry now: rain forecast once the flip is before the horizon", () => {
+    expect(forecastStateAt("dry", null, 60)).toBe("dry");
+    expect(forecastStateAt("dry", null, 120)).toBe("dry");
+    expect(forecastStateAt("dry", 25, 60)).toBe("rain"); // "dry, rain in 25 min": rain at +1 h ...
+    expect(forecastStateAt("dry", 25, 120)).toBe("rain"); // ... and at +2 h
+    expect(forecastStateAt("dry", 90, 60)).toBe("dry"); // not yet at +1 h
+    expect(forecastStateAt("dry", 90, 120)).toBe("rain");
+    expect(forecastStateAt("dry", 60, 60)).toBe("dry"); // a flip AT the horizon has not happened yet
+    expect(forecastStateAt("dry", 120, 120)).toBe("dry");
+  });
+  it("raining now: dry forecast once the rain is due to stop before the horizon", () => {
+    expect(forecastStateAt("raining", null, 60)).toBe("rain");
+    expect(forecastStateAt("raining", null, 120)).toBe("rain");
+    expect(forecastStateAt("raining", 25, 60)).toBe("dry"); // "raining, easing in 25 min"
+    expect(forecastStateAt("raining", 25, 120)).toBe("dry");
+    expect(forecastStateAt("raining", 90, 60)).toBe("rain");
+    expect(forecastStateAt("raining", 90, 120)).toBe("dry");
+  });
+  it("cannot tell without a nowcast, or for a row that never recorded changeInMin", () => {
+    expect(forecastStateAt(null, null, 60)).toBeNull();
+    expect(forecastStateAt(undefined, 25, 60)).toBeNull();
+    expect(forecastStateAt("dry", undefined, 60)).toBeNull();
+  });
+});
+
+describe("isDryPromise", () => {
+  it("is 'Dry for the next 2+ hrs': dry now and no change for 2 hours or more", () => {
+    expect(isDryPromise(call("dry"))).toBe(true);
+    expect(isDryPromise(call("dry", { changeInMin: 120 }))).toBe(true);
+    expect(isDryPromise(call("dry", { changeInMin: 119 }))).toBe(false);
+    expect(isDryPromise(call("dry", { changeInMin: 25 }))).toBe(false);
+    expect(isDryPromise(call("raining"))).toBe(false);
+    expect(isDryPromise({ nowcast: "dry", radarMmHr: 0, radarDry: 1 })).toBe(false); // changeInMin never recorded
+    expect(isDryPromise(null)).toBe(false);
+  });
+});
+
+/** Small samples need open gates; the real gates have their own tests. */
+const OPEN = { min: 1, rateMin: 1, dryMin: 1 } as const;
+
 describe("rainMetrics", () => {
   it("empty input is collecting", () => {
     const r = rainMetrics([]);
     expect(r.scored).toBe(0);
     expect(r.ready).toBe(false);
     expect(r.collecting).toBe("collecting — 0 of 50 scored calls");
-    expect(r.next2h.dryRainedOnRate).toBeNull();
-    expect(r.dryPromise.rate).toBeNull();
+    expect(r.next2h.dryRainedOnRate.value).toBeNull();
+    expect(r.dryPromise.rate.value).toBeNull();
+    expect(r.dryPromise.rate.collecting).toBe("n=0, collecting");
   });
 
-  it("scores a nowcast against radar at +1 h and +2 h", () => {
-    // Call at hour 0 (dry). Radar: +1 dry, +2 wet -> rain within 2 h, not within 1 h.
-    const r = rainMetrics([rainRow(0, call("dry")), rainRow(1, dry), rainRow(2, wet)], { min: 1 });
+  it("scores the forecast at +1 h and +2 h against radar at +1 h and +2 h", () => {
+    // Call at hour 0: dry, no change. Radar: +1 dry, +2 wet.
+    const r = rainMetrics([rainRow(0, call("dry")), rainRow(1, dry), rainRow(2, wet)], OPEN);
     expect(r.scored).toBe(1);
     expect(r.next1h).toMatchObject({ misses: 0, correctDry: 1 });
     expect(r.next2h).toMatchObject({ misses: 1, correctDry: 0 });
-    expect(r.next2h.dryRainedOnRate).toBe(1);
-    expect(r.dryPromise).toEqual({ n: 1, rainedOn: 1, rate: 1 });
+    expect(r.next2h.dryRainedOnRate.value).toBe(1);
+    expect(r.dryPromise).toMatchObject({ n: 1, rainedOn: 1 });
+    expect(r.dryPromise.rate.value).toBe(1);
+  });
+
+  it('"dry, rain in 25 min" is a RAIN forecast: radar rain at +1 h and +2 h is a hit, not a miss', () => {
+    const r = rainMetrics(
+      [rainRow(0, call("dry", { changeInMin: 25 })), rainRow(1, wet), rainRow(2, wet)],
+      OPEN,
+    );
+    expect(r.next1h).toMatchObject({ hits: 1, misses: 0, falseAlarms: 0, correctDry: 0 });
+    expect(r.next2h).toMatchObject({ hits: 1, misses: 0, falseAlarms: 0, correctDry: 0 });
+    // ...and it is not part of the "Dry for 2+ hrs" promise at all.
+    expect(r.dryPromise.n).toBe(0);
+  });
+
+  it('"dry, rain in 25 min" with a dry sky afterwards is a FALSE ALARM', () => {
+    const r = rainMetrics([rainRow(0, call("dry", { changeInMin: 25 })), rainRow(1, dry), rainRow(2, dry)], OPEN);
+    expect(r.next1h).toMatchObject({ falseAlarms: 1, hits: 0 });
+    expect(r.next2h).toMatchObject({ falseAlarms: 1, hits: 0 });
+  });
+
+  it('"raining, easing in 25 min" is a DRY forecast: a dry sky is a correct dry, not a false alarm', () => {
+    const r = rainMetrics(
+      [rainRow(0, call("raining", { changeInMin: 25 })), rainRow(1, dry), rainRow(2, dry)],
+      OPEN,
+    );
+    expect(r.next1h).toMatchObject({ correctDry: 1, falseAlarms: 0 });
+    expect(r.next2h).toMatchObject({ correctDry: 1, falseAlarms: 0 });
+    // Radar still raining at +1 h after "easing in 25 min" is a miss.
+    const miss = rainMetrics(
+      [rainRow(0, call("raining", { changeInMin: 25 })), rainRow(1, wet), rainRow(2, dry)],
+      OPEN,
+    );
+    expect(miss.next1h).toMatchObject({ misses: 1 });
+    expect(miss.next2h).toMatchObject({ correctDry: 1 });
+  });
+
+  it("a flip between the horizons splits the two matrices", () => {
+    // Dry now, rain at ~90 min: dry at +1 h, rain at +2 h.
+    const r = rainMetrics([rainRow(0, call("dry", { changeInMin: 90 })), rainRow(1, dry), rainRow(2, wet)], OPEN);
+    expect(r.next1h).toMatchObject({ correctDry: 1 });
+    expect(r.next2h).toMatchObject({ hits: 1 });
+  });
+
+  it("a row that never recorded changeInMin is a call but is not scored", () => {
+    const noChange: RainBlock = { nowcast: "dry", radarMmHr: 0, radarDry: 1, radarAgeMin: 5 };
+    const r = rainMetrics([rainRow(0, noChange), rainRow(1, dry), rainRow(2, dry)], OPEN);
+    expect(r.calls).toBe(1);
+    expect(r.scored).toBe(0);
   });
 
   it("needs radar truth at BOTH +1 h and +2 h", () => {
-    const missing2 = rainMetrics([rainRow(0, call("dry")), rainRow(1, dry)], { min: 1 });
+    const missing2 = rainMetrics([rainRow(0, call("dry")), rainRow(1, dry)], OPEN);
     expect(missing2.calls).toBe(1);
     expect(missing2.scored).toBe(0);
     const unknown1 = rainMetrics(
       [rainRow(0, call("dry")), rainRow(1, { nowcast: null, radarMmHr: null, radarDry: null }), rainRow(2, dry)],
-      { min: 1 },
+      OPEN,
     );
     expect(unknown1.scored).toBe(0);
   });
 
-  it("builds the confusion matrix and the three rates", () => {
+  it("builds the confusion matrices and the rates", () => {
     // Each call gets its own beach so the rows never interact.
     const rows: RainRow[] = [];
     const add = (slug: string, c: RainBlock, r1: RainBlock, r2: RainBlock) => {
       rows.push(rainRow(0, c, slug), rainRow(1, r1, slug), rainRow(2, r2, slug));
     };
-    // 4 "raining" calls: 3 followed by rain, 1 not.
+    // 4 "raining" calls (no change expected, so rain forecast at both horizons).
     add("a", call("raining"), wet, wet);
     add("b", call("raining"), wet, dry);
     add("c", call("raining"), dry, wet);
     add("d", call("raining"), dry, dry);
-    // 6 "dry" calls: 2 rained on within 2 h, 4 stayed dry.
+    // 6 "dry" calls (dry at both horizons).
     add("e", call("dry"), wet, dry);
     add("f", call("dry"), dry, wet);
     add("g", call("dry"), dry, dry);
     add("h", call("dry"), dry, dry);
     add("i", call("dry"), dry, dry);
     add("j", call("dry"), dry, dry);
-    const r = rainMetrics(rows, { min: 10 });
+    const r = rainMetrics(rows, OPEN);
     expect(r.scored).toBe(10);
     expect(r.ready).toBe(true);
-    expect(r.next2h).toMatchObject({ hits: 3, falseAlarms: 1, misses: 2, correctDry: 4, rainCalls: 4, dryCalls: 6 });
-    expect(r.next2h.hitRate).toBeCloseTo(3 / 4);
-    expect(r.next2h.falseAlarmRate).toBeCloseTo(1 / 4);
-    expect(r.next2h.missRate).toBeCloseTo(2 / 5); // 5 rain cases, 2 called dry
-    expect(r.next2h.dryRainedOnRate).toBeCloseTo(2 / 6);
-    // Next hour only: rain at +1 h is wet for a, b, e only.
-    expect(r.next1h).toMatchObject({ hits: 2, falseAlarms: 2, misses: 1, correctDry: 5 });
+    // +1 h: radar wet for a, b, e.
+    expect(r.next1h).toMatchObject({ hits: 2, falseAlarms: 2, misses: 1, correctDry: 5, rainCalls: 4, dryCalls: 6 });
+    // +2 h: radar wet for a, c, f.
+    expect(r.next2h).toMatchObject({ hits: 2, falseAlarms: 2, misses: 1, correctDry: 5 });
+    expect(r.next2h.hitRate.value).toBeCloseTo(2 / 4);
+    expect(r.next2h.falseAlarmRate.value).toBeCloseTo(2 / 4);
+    expect(r.next2h.missRate.value).toBeCloseTo(1 / 3); // 3 radar-rain cases, 1 forecast dry
+    expect(r.next2h.dryRainedOnRate.value).toBeCloseTo(1 / 6);
+    // The promise: all 6 dry calls; rain at +1 h or +2 h for e and f.
+    expect(r.dryPromise).toMatchObject({ n: 6, rainedOn: 2 });
+    expect(r.dryPromise.rate.value).toBeCloseTo(2 / 6);
   });
 
   it("holds rates back below the minimum but still shows the counts", () => {
     const r = rainMetrics([rainRow(0, call("dry")), rainRow(1, dry), rainRow(2, wet)]);
     expect(r.ready).toBe(false);
     expect(r.next2h.misses).toBe(1);
-    expect(r.next2h.dryRainedOnRate).toBeNull();
-    expect(r.dryPromise.rate).toBeNull();
+    expect(r.next2h.dryRainedOnRate.value).toBeNull();
+    expect(r.dryPromise.rate.value).toBeNull();
     expect(r.dryPromise.rainedOn).toBe(1);
+    expect(r.dryPromise.rate.collecting).toBe("n=1, collecting");
+  });
+
+  it("each rate is gated on ITS OWN denominator once 50 calls are scored", () => {
+    // 60 scored calls: 55 dry-for-2h calls (3 got rained on) and 5 rain calls.
+    const rows: RainRow[] = [];
+    for (let i = 0; i < 60; i++) {
+      const slug = `b${i}`;
+      const raining = i >= 55;
+      const rainedOn = i < 3 || raining;
+      rows.push(
+        rainRow(0, call(raining ? "raining" : "dry"), slug),
+        rainRow(1, rainedOn ? wet : dry, slug),
+        rainRow(2, dry, slug),
+      );
+    }
+    const r = rainMetrics(rows);
+    expect(r.scored).toBe(60);
+    expect(r.ready).toBe(true);
+    // 55 dry-promise calls >= 30: the headline rate is published.
+    expect(r.dryPromise.n).toBe(55);
+    expect(r.dryPromise.rate.value).toBeCloseTo(3 / 55);
+    // Only 5 rain calls (< 10): hit and false-alarm rates wait.
+    expect(r.next1h.rainCalls).toBe(5);
+    expect(r.next1h.hitRate).toEqual({ value: null, n: 5, min: 10, collecting: "n=5, collecting" });
+    expect(r.next1h.falseAlarmRate.collecting).toBe("n=5, collecting");
+    // 8 radar-rain cases at +1 h (3 + 5): the miss rate (< 10) waits too.
+    expect(r.next1h.missRate.collecting).toBe("n=8, collecting");
+    // 55 dry calls >= 30: that rate is published.
+    expect(r.next1h.dryRainedOnRate.value).toBeCloseTo(3 / 55);
+  });
+
+  it("the headline needs 30 'dry for 2+ hrs' calls even when 50 calls are scored", () => {
+    const rows: RainRow[] = [];
+    for (let i = 0; i < 60; i++) {
+      // Only 20 are dry-for-2h; the rest are "raining" calls.
+      rows.push(rainRow(0, call(i < 20 ? "dry" : "raining"), `b${i}`), rainRow(1, dry, `b${i}`), rainRow(2, dry, `b${i}`));
+    }
+    const r = rainMetrics(rows);
+    expect(r.ready).toBe(true);
+    expect(r.dryPromise.n).toBe(20);
+    expect(r.dryPromise.rate).toEqual({ value: null, n: 20, min: 30, collecting: "n=20, collecting" });
   });
 
   it("the headline only counts 'dry for 2+ hrs' calls, not 'dry, rain in 25 min'", () => {
     const rows = [
-      // dry with rain expected in 25 min, and it rained: a correct call, not a broken promise
       rainRow(0, call("dry", { changeInMin: 25 }), "a"),
       rainRow(1, wet, "a"),
       rainRow(2, wet, "a"),
-      // dry for 2+ hrs, and it stayed dry
       rainRow(0, call("dry"), "b"),
       rainRow(1, dry, "b"),
       rainRow(2, dry, "b"),
-      // dry for 2+ hrs, and it rained
       rainRow(0, call("dry"), "c"),
       rainRow(1, dry, "c"),
       rainRow(2, wet, "c"),
     ];
-    const r = rainMetrics(rows, { min: 3 });
-    expect(r.next2h.dryCalls).toBe(3);
-    expect(r.dryPromise).toEqual({ n: 2, rainedOn: 1, rate: 0.5 });
+    const r = rainMetrics(rows, OPEN);
+    expect(r.dryPromise).toMatchObject({ n: 2, rainedOn: 1 });
+    expect(r.dryPromise.rate.value).toBe(0.5);
   });
 
   it("does not mix beaches when looking up the next hours", () => {
     const rows = [rainRow(0, call("dry"), "a"), rainRow(1, wet, "b"), rainRow(2, wet, "b")];
-    expect(rainMetrics(rows, { min: 1 }).scored).toBe(0);
+    expect(rainMetrics(rows, OPEN).scored).toBe(0);
   });
 
   it("a stale radar frame is not scored as truth", () => {
     const stale: RainBlock = { nowcast: null, radarMmHr: 0, radarDry: null, radarAgeMin: 90 };
-    expect(rainMetrics([rainRow(0, call("dry")), rainRow(1, stale), rainRow(2, dry)], { min: 1 }).scored).toBe(0);
+    expect(rainMetrics([rainRow(0, call("dry")), rainRow(1, stale), rainRow(2, dry)], OPEN).scored).toBe(0);
+    const staleWet: RainBlock = { nowcast: null, radarMmHr: 0, radarDry: 0, radarAgeMin: 90 };
+    expect(rainMetrics([rainRow(0, call("dry")), rainRow(1, staleWet), rainRow(2, dry)], OPEN).scored).toBe(0);
   });
 
   it("rows without a nowcast are not calls", () => {
-    const r = rainMetrics([rainRow(0, wet), rainRow(1, dry), rainRow(2, dry), rainRow(3, null)], { min: 1 });
+    const r = rainMetrics([rainRow(0, wet), rainRow(1, dry), rainRow(2, dry), rainRow(3, null)], OPEN);
     expect(r.calls).toBe(0);
   });
 });
@@ -604,9 +785,9 @@ describe("windowMetrics", () => {
     expect(r.windowScoreBias).toBe(0); // score 60 vs realized 60 in window 9..12
   });
 
-  it("skips days that are not finished, thin, or have no early window — and says so", () => {
+  it("skips days that are not finished, censored, or have no early window — and says so", () => {
     const rows = [
-      // finished but with only 5 daylight hours
+      // finished but with only 5 daylight hours: censored
       ...dayRows({ date: "2026-10-09", scores: { 9: 60, 10: 60, 11: 60, 12: 60, 13: 60 }, window: { start: 9, end: 14, score: 60 } }),
       // full day but no window ever archived by 10 AM
       ...dayRows({ date: "2026-10-10", scores: flat(60), window: null }),
@@ -616,7 +797,7 @@ describe("windowMetrics", () => {
     ];
     const r = windowMetrics(rows, { min: 1 });
     expect(r.daysScored).toBe(0);
-    expect(r.skipped.tooFewHours).toBe(1);
+    expect(r.skipped.censoredDay).toBe(1);
     expect(r.skipped.noEarlyWindow).toBe(1);
     expect(r.skipped.incompleteDay).toBe(1);
   });
@@ -650,9 +831,112 @@ describe("windowMetrics", () => {
 
     // Hour 10 was never archived. Hours 9 and 11 are NOT neighbours, so [9, 11, 12]
     // (90, 90, 50) must not be read as a run; the best real run is 63.3.
-    const gappy = { 7: 50, 8: 50, 9: 90, 11: 90, 12: 50, 13: 50, 14: 50, 15: 50 };
+    const gappy = { 7: 50, 8: 50, 9: 90, 11: 90, 12: 50, 13: 50, 14: 50, 15: 50, 16: 50, 17: 50 };
     const rows2 = [...dayRows({ date: "2026-10-10", scores: gappy, window: { start: 9, end: 16, score: 90 } }), closer("2026-10-11")];
     expect(windowMetrics(rows2, { min: 1 }).realizedBest3h).toBeCloseTo((50 + 50 + 90) / 3, 1);
+  });
+
+  describe("partial days are censored, not scored", () => {
+    /** The archive's normal pattern while the daily build budget runs out: no rows for local hours 16-19. */
+    const missingAfternoon = (date: string, over: Partial<DaySpec> = {}): WindowRow[] =>
+      dayRows({
+        date,
+        scores: flat(60, { 12: 90 }) as Record<number, number>,
+        window: { start: 9, end: 15, score: 90 },
+        ...over,
+      }).filter((r) => r.local_hour < 16 || r.local_hour > 19);
+    const afternoonScores = (): Record<number, number> => {
+      const o: Record<number, number> = {};
+      for (let h = 7; h <= 15; h++) o[h] = 60; // hours 16, 17, 18 never archived
+      o[12] = 90;
+      return o;
+    };
+
+    it("a day with the normal missing afternoon is censored and counted, never scored", () => {
+      const rows: WindowRow[] = [];
+      for (let d = 1; d <= 12; d++) {
+        const date = `2026-10-${String(d).padStart(2, "0")}`;
+        rows.push(...missingAfternoon(date, { scores: afternoonScores() }));
+      }
+      rows.push(closer("2026-10-13"));
+      const r = windowMetrics(rows);
+      // Hours 7..15 look 100% dense, but the day stops at 3 PM: it never reaches 5 PM.
+      expect(r.daysScored).toBe(0);
+      expect(r.completeDays).toBe(0);
+      expect(r.skipped.censoredDay).toBe(12);
+      expect(r.ready).toBe(false);
+      expect(r.collecting).toBe("collecting — 0 of 10 days");
+      expect(r.realizedBest3h).toBeNull();
+    });
+
+    it("the same days WOULD have scored a misleading answer if they were taken at face value", () => {
+      // Control: with the afternoon present, the realized peak (90) and the in-window mean are real.
+      const full = [
+        ...dayRows({ date: "2026-10-10", scores: flat(60, { 12: 90 }), window: { start: 9, end: 15, score: 90 } }),
+        closer("2026-10-11"),
+      ];
+      expect(windowMetrics(full, { min: 1 }).daysScored).toBe(1);
+      // Without hours 16-18 it is censored, even with min 1.
+      const partial = [
+        ...missingAfternoon("2026-10-10", { scores: afternoonScores() }),
+        closer("2026-10-11"),
+      ];
+      const r = windowMetrics(partial, { min: 1 });
+      expect(r.daysScored).toBe(0);
+      expect(r.skipped.censoredDay).toBe(1);
+    });
+
+    it("outlook never uses a censored target day as 'what really happened'", () => {
+      const rows = [
+        ...dayRows({
+          date: "2026-10-10",
+          scores: flat(60),
+          window: { start: 9, end: 14, score: 60 },
+          outlook: [{ date: "2026-10-11", peak: 80 }],
+        }),
+        // The target day lost its afternoon.
+        ...missingAfternoon("2026-10-11", { scores: afternoonScores(), window: null }),
+        closer("2026-10-12"),
+      ];
+      expect(windowMetrics(rows, { min: 1 }).outlook).toEqual([]);
+    });
+
+    it("needs 80% of the hours between the first and last archived hour", () => {
+      // Hours 7..18 (12 of them). Missing 2 -> 10/12 = 83% passes; missing 3 -> 9/12 = 75% fails.
+      const without = (...hours: number[]) => {
+        const o = flat(60);
+        for (const h of hours) delete o[h];
+        return o;
+      };
+      const ok = [...dayRows({ date: "2026-10-10", scores: without(9, 13), window: { start: 9, end: 15, score: 60 } }), closer("2026-10-11")];
+      expect(windowMetrics(ok, { min: 1 }).daysScored).toBe(1);
+      const bad = [...dayRows({ date: "2026-10-10", scores: without(9, 11, 13), window: { start: 9, end: 15, score: 60 } }), closer("2026-10-11")];
+      const r = windowMetrics(bad, { min: 1 });
+      expect(r.daysScored).toBe(0);
+      expect(r.skipped.censoredDay).toBe(1);
+    });
+
+    it("a day that starts late (missing the morning) is censored too", () => {
+      const scores: Record<number, number> = {};
+      for (let h = 12; h <= 18; h++) scores[h] = 60; // starts at noon; sunrise hour is 7
+      const rows = [...dayRows({ date: "2026-10-10", scores, window: { start: 12, end: 17, score: 60, predictedAtHour: 10 } }), closer("2026-10-11")];
+      expect(windowMetrics(rows, { min: 1 }).skipped.censoredDay).toBe(1);
+    });
+
+    it("dayCoverageOk: the rule in one place", () => {
+      const dl = { from: 7, to: 19 };
+      const hours = (a: number, b: number) => Array.from({ length: b - a + 1 }, (_, i) => a + i);
+      expect(dayCoverageOk(hours(7, 18), dl)).toBe(true);
+      expect(dayCoverageOk(hours(7, 17), dl)).toBe(true); // reaches 5 PM
+      expect(dayCoverageOk(hours(7, 16), dl)).toBe(false); // stops before 5 PM
+      expect(dayCoverageOk(hours(7, 14), dl)).toBe(false); // 8 hours but stops at 2 PM
+      expect(dayCoverageOk(hours(10, 18), dl)).toBe(false); // starts 3 hours after sunrise
+      expect(dayCoverageOk(hours(9, 18), dl)).toBe(true); // starts within 2 hours of sunrise
+      expect(dayCoverageOk(hours(7, 13), dl)).toBe(false); // fewer than 8 hours
+      // Winter: the last daylight hour is 16 (sunset in the 17:00 hour), so 16 is enough.
+      expect(dayCoverageOk(hours(7, 16), { from: 7, to: 17 })).toBe(true);
+      expect(dayCoverageOk(hours(7, 15), { from: 7, to: 17 })).toBe(false);
+    });
   });
 
   it("holds numbers back below the minimum of 10 days", () => {
@@ -713,19 +997,36 @@ describe("windowMetrics", () => {
 
 // --- Safety fixtures --------------------------------------------------------
 
+/** One hourly row. `day` is the day of October 2026; `hour` the local hour. */
 const safe = (
   swim: string,
   colors: string[],
   rip?: SafetyRow["rip"],
   slug = "boca-raton",
-  i = 0,
+  day = 1,
+  hour = 12,
 ): SafetyRow => ({
   slug,
-  hour_utc: hourIso(i),
+  hour_utc: new Date(Date.UTC(2026, 9, day, hour + 4)).toISOString(),
+  local_date: `2026-10-${String(day).padStart(2, "0")}`,
+  local_hour: hour,
   safety: { swim },
   flags: { colors },
   rip: rip ?? null,
 });
+
+/** A whole beach-day: `hours` rows, one flag, one swim level. */
+function beachDay(
+  slug: string,
+  day: number,
+  color: string,
+  swim: string,
+  rip?: SafetyRow["rip"],
+  hours = 12,
+  startHour = 7,
+): SafetyRow[] {
+  return Array.from({ length: hours }, (_, i) => safe(swim, [color], rip, slug, day, startHour + i));
+}
 
 describe("dominantFlag", () => {
   it("picks the most serious posted color", () => {
@@ -739,63 +1040,121 @@ describe("dominantFlag", () => {
   });
 });
 
-describe("safetyMetrics", () => {
-  it("empty input is collecting", () => {
+describe("safetyMetrics — one flag posting per beach per day", () => {
+  it("empty input is collecting, in beach-days", () => {
     const r = safetyMetrics([]);
-    expect(r.hours).toBe(0);
-    expect(r.collecting).toBe("collecting — 0 of 50 hours");
-    expect(r.informative.agreementRate).toBeNull();
+    expect(r.beachDays).toBe(0);
+    expect(r.collecting).toBe("collecting — 0 of 30 beach-days");
+    expect(r.informative.agreement).toEqual({ value: null, n: 0, min: 30, collecting: "n=0, collecting" });
   });
 
-  it("cross-tabs swim level by flag and ignores unknown flags", () => {
+  it("24 hourly rows of one posting are ONE beach-day, not 24 observations", () => {
+    const r = safetyMetrics(beachDay("boca-raton", 1, "yellow", "caution", null, 24, 0));
+    expect(r.beachDays).toBe(1);
+    expect(r.hours).toBe(24);
+    expect(r.crossTab.yellow.caution).toBe(1);
+    expect(r.ready).toBe(false);
+  });
+
+  it("gates on 30 beach-days, however many hours there are", () => {
+    // 29 beach-days of 24 hours each = 696 hourly rows: still collecting.
+    const rows: SafetyRow[] = [];
+    for (let d = 1; d <= 29; d++) rows.push(...beachDay("boca-raton", d, "green", "safe", null, 24, 0));
+    const r = safetyMetrics(rows);
+    expect(r.hours).toBe(696);
+    expect(r.beachDays).toBe(29);
+    expect(r.ready).toBe(false);
+    expect(r.collecting).toBe("collecting — 29 of 30 beach-days");
+    // The 30th beach-day opens the gate.
+    const r30 = safetyMetrics([...rows, ...beachDay("deerfield-beach", 1, "green", "safe")]);
+    expect(r30.beachDays).toBe(30);
+    expect(r30.ready).toBe(true);
+  });
+
+  it("two beaches on the same day are two beach-days", () => {
+    const r = safetyMetrics([...beachDay("boca-raton", 1, "green", "safe"), ...beachDay("deerfield-beach", 1, "yellow", "caution")]);
+    expect(r.beachDays).toBe(2);
+  });
+
+  it("cross-tabs swim level by flag and ignores unknown flags and missing messages", () => {
     const rows = [
-      safe("stay-out", ["red"]),
-      safe("stay-out", ["double-red"]),
-      safe("caution", ["yellow"]),
-      safe("safe", ["yellow"]),
-      safe("safe", ["green"]),
-      safe("safe", ["unknown"]), // no flag known: not counted
-      { slug: "x", hour_utc: hourIso(0), safety: null, flags: { colors: ["green"] } } as SafetyRow, // no swim level
+      ...beachDay("a", 1, "red", "stay-out"),
+      ...beachDay("a", 2, "double-red", "stay-out"),
+      ...beachDay("a", 3, "yellow", "caution"),
+      ...beachDay("a", 4, "yellow", "safe"),
+      ...beachDay("a", 5, "green", "safe"),
+      ...beachDay("a", 6, "unknown", "safe"), // no flag known: not counted
+      { ...safe("safe", ["green"], null, "a", 7), safety: null }, // no swim level
     ];
-    const r = safetyMetrics(rows, 5);
-    expect(r.hours).toBe(5);
+    const r = safetyMetrics(rows, { min: 5 });
+    expect(r.beachDays).toBe(5);
     expect(r.crossTab.red["stay-out"]).toBe(1);
     expect(r.crossTab["double-red"]["stay-out"]).toBe(1);
     expect(r.crossTab.yellow).toMatchObject({ safe: 1, caution: 1, "stay-out": 0 });
     expect(r.crossTab.green.safe).toBe(1);
   });
 
-  it("the informative subset leaves out red and double-red hours", () => {
+  it("a beach-day takes its most common flag and its most common swim level", () => {
+    // 8 hours green + 4 yellow; 9 hours safe + 3 caution -> green, safe.
     const rows: SafetyRow[] = [];
-    for (let i = 0; i < 40; i++) rows.push(safe("stay-out", ["red"])); // circular, must not inflate agreement
-    rows.push(safe("caution", ["yellow"])); // agree
-    rows.push(safe("stay-out", ["yellow"])); // agree
-    rows.push(safe("safe", ["yellow"])); // we said safe under a yellow flag
-    rows.push(safe("safe", ["green"])); // agree
-    rows.push(safe("safe", ["green"])); // agree
-    rows.push(safe("caution", ["green"], { level: "moderate", source: "model" })); // we were more careful
-    const r = safetyMetrics(rows, 6);
-    expect(r.hours).toBe(46);
-    expect(r.informative.hours).toBe(6);
-    expect(r.informative.yellowHours).toBe(3);
-    expect(r.informative.greenHours).toBe(3);
-    expect(r.informative.agreeHours).toBe(4);
-    expect(r.informative.agreementRate).toBeCloseTo(4 / 6);
-    expect(r.informative.yellowWeSaidSafe).toBe(1);
-    expect(r.informative.greenWeCautioned).toBe(1);
-    expect(r.informative.greenReasons).toEqual([{ reason: "moderate rip risk", hours: 1 }]);
+    for (let h = 7; h < 19; h++) rows.push(safe(h < 16 ? "safe" : "caution", [h < 15 ? "green" : "yellow"], null, "a", 1, h));
+    const r = safetyMetrics(rows, { min: 1 });
+    expect(r.crossTab.green.safe).toBe(1);
+    expect(r.beachDays).toBe(1);
   });
 
-  it("explains green-flag cautions from the archived rip block", () => {
+  it("a tie goes to the more serious flag and the more serious swim level", () => {
+    const rows: SafetyRow[] = [];
+    for (let h = 7; h < 19; h++) rows.push(safe(h < 13 ? "safe" : "caution", [h < 13 ? "green" : "yellow"], null, "a", 1, h));
+    const r = safetyMetrics(rows, { min: 1 });
+    expect(r.crossTab.yellow.caution).toBe(1);
+  });
+
+  it("only daylight hours count when a daylight rule is given", () => {
+    // 12 quiet night hours say safe; 10 daylight hours say caution. By hours alone: safe wins.
+    const rows: SafetyRow[] = [];
+    for (let h = 0; h < 24; h++) rows.push(safe(h >= 8 && h < 18 ? "caution" : "safe", ["yellow"], null, "a", 1, h));
+    expect(safetyMetrics(rows, { min: 1 }).crossTab.yellow.safe).toBe(1);
+    const day = safetyMetrics(rows, { min: 1, daylight: () => ({ from: 7, to: 19 }) });
+    expect(day.crossTab.yellow.caution).toBe(1);
+    expect(day.hours).toBe(12);
+    // A beach with unknown daylight is skipped when a rule is in force.
+    expect(safetyMetrics(rows, { min: 1, daylight: () => null }).beachDays).toBe(0);
+  });
+});
+
+describe("safetyMetrics — green and yellow days only", () => {
+  it("leaves red and double-red days out of the agreement rate", () => {
+    const rows: SafetyRow[] = [];
+    for (let d = 1; d <= 20; d++) rows.push(...beachDay("a", d, "red", "stay-out")); // circular: must not inflate agreement
+    rows.push(...beachDay("b", 1, "yellow", "caution")); // agree
+    rows.push(...beachDay("b", 2, "yellow", "stay-out")); // agree
+    rows.push(...beachDay("b", 3, "yellow", "safe")); // we said safe under a yellow flag
+    rows.push(...beachDay("b", 4, "green", "safe")); // agree
+    rows.push(...beachDay("b", 5, "green", "safe")); // agree
+    rows.push(...beachDay("b", 6, "green", "caution", { level: "moderate", source: "model" })); // more careful
+    const r = safetyMetrics(rows, { min: 6 });
+    expect(r.beachDays).toBe(26);
+    expect(r.informative.beachDays).toBe(6);
+    expect(r.informative.yellowDays).toBe(3);
+    expect(r.informative.greenDays).toBe(3);
+    expect(r.informative.agreeDays).toBe(4);
+    expect(r.informative.agreement.value).toBeCloseTo(4 / 6);
+    expect(r.informative.yellowWeSaidSafe).toBe(1);
+    expect(r.informative.greenWeCautioned).toBe(1);
+    expect(r.informative.greenReasons).toEqual([{ reason: "moderate rip risk", days: 1 }]);
+  });
+
+  it("explains green-flag cautions from the archived rip block, one reason per beach-day", () => {
     const rows = [
-      safe("caution", ["green"], { level: "high", source: "model" }),
-      safe("stay-out", ["green"], { level: "high", source: "alert", alert: 1 }),
-      safe("caution", ["green"], { level: "low", source: "model" }),
-      safe("caution", ["green"], null),
-      safe("caution", ["green"], { level: "high", source: "none" }),
+      ...beachDay("a", 1, "green", "caution", { level: "high", source: "model" }),
+      ...beachDay("a", 2, "green", "stay-out", { level: "high", source: "alert", alert: 1 }),
+      ...beachDay("a", 3, "green", "caution", { level: "low", source: "model" }),
+      ...beachDay("a", 4, "green", "caution", null),
+      ...beachDay("a", 5, "green", "caution", { level: "high", source: "none" }),
     ];
-    const r = safetyMetrics(rows, 1);
-    const reasons = Object.fromEntries(r.informative.greenReasons.map((x) => [x.reason, x.hours]));
+    const r = safetyMetrics(rows, { min: 1 });
+    const reasons = Object.fromEntries(r.informative.greenReasons.map((x) => [x.reason, x.days]));
     expect(reasons).toEqual({
       "high rip risk": 1,
       "rip current warning": 1,
@@ -804,13 +1163,26 @@ describe("safetyMetrics", () => {
     });
   });
 
-  it("holds the agreement rate back below the minimum", () => {
-    const rows = [safe("safe", ["green"]), safe("caution", ["yellow"])];
+  it("holds the agreement rate back below 30 beach-days but keeps the counts", () => {
+    const rows = [...beachDay("a", 1, "green", "safe"), ...beachDay("a", 2, "yellow", "caution")];
     const r = safetyMetrics(rows);
     expect(r.ready).toBe(false);
-    expect(r.informative.collecting).toBe("collecting — 2 of 50 hours");
-    expect(r.informative.agreementRate).toBeNull();
-    expect(r.informative.agreeHours).toBe(2); // counts stay visible
+    expect(r.informative.collecting).toBe("collecting — 2 of 30 beach-days");
+    expect(r.informative.agreement.value).toBeNull();
+    expect(r.informative.agreement.collecting).toBe("n=2, collecting");
+    expect(r.informative.agreeDays).toBe(2); // counts stay visible
+  });
+
+  it("gates the agreement rate on its OWN beach-days, not on all flagged days", () => {
+    // 30 flagged beach-days, but 28 are red: only 2 are informative.
+    const rows: SafetyRow[] = [];
+    for (let d = 1; d <= 28; d++) rows.push(...beachDay("a", d, "red", "stay-out"));
+    rows.push(...beachDay("b", 1, "green", "safe"), ...beachDay("b", 2, "yellow", "caution"));
+    const r = safetyMetrics(rows);
+    expect(r.ready).toBe(true);
+    expect(r.informative.ready).toBe(false);
+    expect(r.informative.agreement.value).toBeNull();
+    expect(r.informative.agreement.n).toBe(2);
   });
 });
 
