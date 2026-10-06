@@ -21,6 +21,7 @@ import { currentSandInput, estimateSandRangeF, estimateSandTempF } from "@/lib/s
 import { computeStormActivity } from "@/lib/stormActivity";
 import { feelsLikeBeach } from "@/lib/feelsLikeBeach";
 import { surfConditions, swimSafety } from "@/lib/safetyLine";
+import { PRECIP_RADAR_STALE_MINUTES } from "@/lib/sources/precipRadar";
 import type { BeachHourlyExtra } from "@/lib/history/types";
 
 /** Schema version of the whole extra_json document. */
@@ -44,6 +45,9 @@ export const MODEL_VERSIONS = {
   safety: "2026-10-06.1", // lib/safetyLine.ts
   window: "2026-10-06.1", // lib/score.ts bestBeachWindow
   sky: "2026-10-06.1", // lib/skyEvents.ts + lib/skyVisibilityQuality.ts
+  rain: "2026-10-06.1", // lib/sources/nowcast.ts (model) + MRMS radar (truth) — scorecard input
+  flags: "2026-10-06.1", // lifeguard flags as posted (lib/sources/cityOfficial.ts)
+  outlook: "2026-10-06.1", // lib/score.ts computeMultiDayWindows, days 1..6
 } as const;
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
@@ -217,6 +221,57 @@ export function buildExtra(res: ConditionsResponse, d: Derived, anchorMs: number
     return events.length ? { av: MODEL_VERSIONS.sky, events } : undefined;
   });
   if (sky) out.sky = sky;
+
+  // --- Scorecard inputs (scripts/scorecard.ts). Each is a prediction paired
+  // with the truth it will later be judged against. ---
+
+  // The rain loop. `nowcast` is the MODEL's call (Open-Meteo minutely_15) —
+  // beach_hourly.rain_now is NOT independent truth (archive.ts builds it from
+  // the nowcast plus the weather code), so the radar reading is stored here as
+  // the truth to score later hours against.
+  const rain = guard("rain", slug, () => {
+    const nc = snap.nowcast?.data ?? null;
+    const rd = snap.precipRadar?.status === "ok" ? (snap.precipRadar.data ?? null) : null;
+    if (!nc && !rd) return undefined;
+    const ageMin = rd ? num(rd.frameAgeMinutes) : null;
+    const fresh = ageMin != null && ageMin <= PRECIP_RADAR_STALE_MINUTES;
+    const mm = rd ? num(rd.rainNowMmHr) : null;
+    return {
+      av: MODEL_VERSIONS.rain,
+      nowcast: nc ? nc.state : null,
+      changeInMin: num(nc?.changeInMin),
+      radarMmHr: mm == null ? null : Math.round(mm * 100) / 100,
+      // d.radarDryNow (the score's own confident-dry read: fresh frame, no rain
+      // now, none in the last 20 min). null when there is no usable reading:
+      // no/stale frame, or a beach the radar cannot see (rainNowMmHr null).
+      radarDry: rd && fresh && mm != null ? (d.radarDryNow ? (1 as const) : (0 as const)) : null,
+      radarAgeMin: ageMin == null ? null : Math.round(ageMin),
+    };
+  });
+  if (rain) out.rain = rain;
+
+  // Lifeguard flags as the City posted them, for the safety-vs-flags check.
+  const flags = guard("flags", slug, () => ({
+    av: MODEL_VERSIONS.flags,
+    colors: [...d.flags],
+    status: snap.cityOfficial?.status ?? null,
+  }));
+  if (flags) out.flags = flags;
+
+  // Best-day outlook for days 1..6 (day 0 is the `window` block above): the
+  // peak score we promised N days ahead, to compare with that day's realized
+  // hourly scores.
+  const outlook = guard("outlook", slug, () => {
+    const days = (res.multiDayWindows ?? []).slice(1, 7).map((w) => ({
+      date: w.date,
+      peak: num(w.peakScore),
+      start: w.best?.startIso ?? null,
+      end: w.best?.endIso ?? null,
+      score: num(w.best?.score),
+    }));
+    return days.length ? { av: MODEL_VERSIONS.outlook, days } : undefined;
+  });
+  if (outlook) out.outlook = outlook;
 
   return out;
 }
