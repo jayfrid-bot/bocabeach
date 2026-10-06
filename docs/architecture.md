@@ -148,7 +148,7 @@ flowchart LR
   PLUSCRON -->|POST x-cron-secret, every 5 min| RUN
   HISTCRON["workers/history-cron<br/>Cloudflare Cron every minute"] -->|POST x-cron-secret| HIST["/api/history/archive<br/>ONE build per call (Workers Free = 50 subrequests/request;<br/>a cold build is ~25); scans candidates least-recently-archived first,<br/>claims (slug, hour_utc) with a 10-min abandonment window,<br/>reserves budget BEFORE fetching"]
   HIST -->|getConditions per beach<br/>daylight-only for auto beaches| PIPE
-  HIST -->|"beach_hourly (score as shown + inputs, plus extra_json:<br/>surf, sand, rip, storm, feels-like, water trend, vs-average,<br/>safety levels, best window, sky ratings — lib/history/extra.ts),<br/>history_budget (free-tier guard, 600 builds/UTC-day;<br/>HISTORY_ENABLED=off pauses it)"| D1[(D1 isitbeachday-plus)]
+  HIST -->|"beach_hourly (score as shown + inputs, plus extra_json:<br/>surf, sand, rip, storm, feels-like, water trend, vs-average,<br/>safety levels, best window, sky ratings, plus the scorecard inputs:<br/>rain nowcast + radar truth, lifeguard flags, days 1-6 outlook — lib/history/extra.ts),<br/>history_budget (free-tier guard, 600 builds/UTC-day;<br/>HISTORY_ENABLED=off pauses it)"| D1[(D1 isitbeachday-plus)]
   HIST -->|"sun_event_predictions (migrations/0013): the sunrise + sunset the card shows<br/>(event kept until its golden window closes — lib/sunCardEvent.ts, shared with the card),<br/>one row per beach per archive hour, score + every input, one multi-row upsert,<br/>same assembleSunEventQuality as the card and the alert; retried once inline,<br/>never fails the beach_hourly row; observed_* filled later by SUNOBS"| D1
   SDATA -->|"history[] + latest/morning per-cam reads, read through the same<br/>lib/sources/camFeed.ts URL resolver the live sources use"| HIST
   HIST -->|"cam_observations (every history[] read not yet stored: crowd, seaweed, water,<br/>clarity, underwater uw) + cam_reads (per-cam detail), migrations 0006/0014,<br/>INSERT OR IGNORE, vision-cam beaches only (config/vision-cams.json),<br/>lib/history/camObservations.ts; a feed failure never fails the beach_hourly row"| D1
@@ -157,6 +157,9 @@ flowchart LR
   SUNCAM -->|"POST /api/sun-observations — Bearer INGEST_TOKEN<br/>robust-peak score + series + scored_at, per beach / event / cam;<br/>incomplete captures are never sent"| SUNOBS["/api/sun-observations<br/>constant-time auth, bounded 32 KB read, strict validation<br/>that recomputes coverage + robust peak (lib/sunObservations.ts)"]
   SUNOBS -->|"sun_event_observations (migrations/0015)<br/>upsert only when (score_version, scored_at) is newer —<br/>duplicates and stale replays are no-ops; credit stored"| D1
   SUNOBS -->|"observed_score / observed_source / observed_at on the<br/>sun_event_predictions rows (event within 15 min; best cam:<br/>solar view first, then nearest; never a hand label)"| D1
+  SCORECARD["scripts/scorecard.ts — by hand or a weekly Claude scheduled task<br/>read-only wrangler SELECTs, then lib/scorecard/metrics.ts (pure maths)<br/>and report.ts (Markdown); never writes to D1"]
+  D1 -->|"beach_hourly (extra_json blocks), sun_event_predictions,<br/>sun_event_observations, cam_observations"| SCORECARD
+  SCORECARD -->|"docs/scorecards/YYYY-MM-DD.md + latest.md<br/>predicted vs what happened: sun color, rain, best window,<br/>safety vs flags, data health"| SCARDS[(docs/scorecards)]
   UWFRAME -->|one headless-Chrome launch/tick,<br/>reused across every cam + the flag read| UWKV[(UW_FRAME KV<br/>frame:&lt;id&gt;, meta:&lt;id&gt;,<br/>flags:deerfield-beach, flags:fort-lauderdale)]
 ```
 
@@ -207,6 +210,19 @@ first, then nearest cam) is copied onto the matching `sun_event_predictions`
 rows. Sunrise views are `solar`, sunset views `antisolar`. Every stored row
 carries the cam owner's credit string (Elbo Room asked for one). See
 `docs/SUN_CAM_CHECK.md`.
+
+**The scorecard closes the loop: predict, measure, score.**
+`scripts/scorecard.ts` runs by hand or from a weekly Claude scheduled task
+(`npx vite-node -c vitest.config.ts scripts/scorecard.ts`). It only reads D1,
+through read-only `wrangler d1 execute --remote` queries, so it adds no route,
+no job, and no write. It scores the sun-color forecasts against the cam
+readings, the rain nowcast against the MRMS radar, the best-window and
+multi-day outlook against the hourly scores the days really had, and the
+swim-safety message against the lifeguard flags. Each system shows
+"collecting" until it passes its minimum sample. The pure maths is
+`lib/scorecard/metrics.ts`; the Markdown is `lib/scorecard/report.ts`. Reports
+land in `docs/scorecards/` (see its `README.md`). The `rain`, `flags` and
+`outlook` blocks of `beach_hourly.extra_json` exist for it.
 
 **Feed loops relay to themselves.** GitHub's cron is best-effort — Sep 24-28
 2026 it left loops unrestarted for hours (lightning 109 min with stale
