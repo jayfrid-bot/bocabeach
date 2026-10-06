@@ -214,3 +214,10 @@ lifeguard flag.
 - `lib/scorecard/queries.ts` — the SQL the runner sends. Read-only `SELECT`s.
 - `lib/scorecard/wrangler.ts` — reads wrangler's JSON output.
 - `lib/history/extra.ts` — writes the `rain`, `flags` and `outlook` blocks.
+
+## Model changes
+
+Read each week's numbers against these dates. Archived rows carry `engine_version`, so a before/after split is possible.
+
+- **2026-10-06 — scoring 2026-10-06.1:** comfort (dew point) curve retuned for the shore: free up to 65°F, −2.5 points per °F above (was free to 60°F, −5 per °F). Expected effect from history: average daytime score +1.9, Excellent hours roughly doubled.
+- **2026-10-06 — sun color 2026-10-06.2:** satellite overhead cloud no longer scored as a horizon blocker; canvas plateau 35–80; humidity only without an aerosol reading.

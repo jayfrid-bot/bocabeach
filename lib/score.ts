@@ -758,7 +758,12 @@ function waveScore(ft: number, mode: WaveMode): number {
 // score at 70 (were 85); a coastal-flood advisory / Beach Hazards Statement
 // keeps its 85 cap under its own name. Red-flag days read "Decent", not
 // "Yes — good beach day".
-export const SCORING_ENGINE_VERSION = "2026-09-28.2";
+export const SCORING_ENGINE_VERSION = "2026-10-06.1";
+
+/** Comfort curve (see comfortScore): dew point up to this is a perfect 100… */
+export const COMFORT_FREE_DEW_F = 65;
+/** …and each °F above it costs this many points. */
+export const COMFORT_PER_DEG_F = 2.5;
 /** Bump whenever `DEFAULT_SCORING` itself (weights/curves as DATA) changes,
  *  independent of `SCORING_ENGINE_VERSION` above — kept distinct in case a
  *  future release lets Plus users pick among named configs. */
@@ -970,13 +975,18 @@ function sub(
 
 /**
  * Comfort (mugginess) from dew point — the real "how heavy does the air feel"
- * signal (sweat can't evaporate as the dew point climbs). <=60°F feels great;
- * each °F above subtracts ~5 (≈68°F→60, 72°F→40, ≥80°F→0). Very high relative
- * humidity (>85%) adds a small extra penalty. Null when no dew point is known.
+ * signal (sweat can't evaporate as the dew point climbs). Tuned for the
+ * SHORE, not inland: water and a sea breeze make humidity far more tolerable,
+ * so <=65°F is a perfect 100 and each °F above costs 2.5 (70°F→88, 75°F→75,
+ * 80°F→63). The old curve (free to 60°F, −5/°F) made comfort the single most
+ * expensive factor on good days — 3.8 points on average, more than waves or
+ * sky — and scored every Florida summer day 25–40 here (owner, 2026-10-06,
+ * docs/scorecards/README.md "Model changes"). Very high relative humidity
+ * (>85%) adds a small extra penalty. Null when no dew point is known.
  */
 function comfortScore(d: Derived): number | null {
   if (d.dewPointF == null) return null;
-  let s = clamp(100 - Math.max(0, d.dewPointF - 60) * 5, 0, 100);
+  let s = clamp(100 - Math.max(0, d.dewPointF - COMFORT_FREE_DEW_F) * COMFORT_PER_DEG_F, 0, 100);
   if (d.humidityPct != null && d.humidityPct > 85) {
     s = clamp(s - (d.humidityPct - 85) * 1.5, 0, 100);
   }

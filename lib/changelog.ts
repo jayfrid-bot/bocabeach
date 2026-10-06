@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-06",
+    title: "Humidity counts less against a beach day",
+    details:
+      "The comfort part of the score was written for inland air. At the shore, the water and the sea breeze take the edge off humidity, so a 65°F dew point no longer costs anything and a 70°F one costs a little instead of half. Expect summer scores a couple of points higher, and a few more Excellent days.",
+    tag: "improved",
+  },
+  {
+    date: "2026-10-06",
     title: "Sharper sunrise and sunset ratings",
     details:
       "The sunrise and sunset color rating had been underrating big, colorful skies. It counted the very clouds that light up as clouds in the way, and it docked every humid Florida dawn. It now rewards a big cloud deck over a clear horizon, and we've started checking it against what the beach cams see. Expect more Great and Amazing calls on the mornings that earn them, and fewer on clear, plain skies.",
