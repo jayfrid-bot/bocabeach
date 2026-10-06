@@ -149,8 +149,10 @@ flowchart LR
   HISTCRON["workers/history-cron<br/>Cloudflare Cron every minute"] -->|POST x-cron-secret| HIST["/api/history/archive<br/>ONE build per call (Workers Free = 50 subrequests/request;<br/>a cold build is ~25); scans candidates least-recently-archived first,<br/>claims (slug, hour_utc) with a 10-min abandonment window,<br/>reserves budget BEFORE fetching"]
   HIST -->|getConditions per beach<br/>daylight-only for auto beaches| PIPE
   HIST -->|"beach_hourly (score as shown + inputs, plus extra_json:<br/>surf, sand, rip, storm, feels-like, water trend, vs-average,<br/>safety levels, best window, sky ratings — lib/history/extra.ts),<br/>history_budget (free-tier guard, 600 builds/UTC-day;<br/>HISTORY_ENABLED=off pauses it)"| D1[(D1 isitbeachday-plus)]
-  HIST -->|"sun_event_predictions (migrations/0013): next sunrise + next sunset,<br/>one row per beach per archive hour, score + every input,<br/>one multi-row upsert — lib/history/sunPredictions.ts,<br/>same assembleSunEventQuality as the card and the alert;<br/>never fails the beach_hourly row; observed_* filled later by SUNOBS"| D1
-  BACKFILL[scripts/backfill_cam_history.mjs] -->|cam_observations| D1
+  HIST -->|"sun_event_predictions (migrations/0013): the sunrise + sunset the card shows<br/>(event kept until its golden window closes — lib/sunCardEvent.ts, shared with the card),<br/>one row per beach per archive hour, score + every input, one multi-row upsert,<br/>same assembleSunEventQuality as the card and the alert; retried once inline,<br/>never fails the beach_hourly row; observed_* filled later by SUNOBS"| D1
+  SDATA -->|"history[] + latest/morning per-cam reads, read through the same<br/>lib/sources/camFeed.ts URL resolver the live sources use"| HIST
+  HIST -->|"cam_observations (every history[] read not yet stored: crowd, seaweed, water,<br/>clarity, underwater uw) + cam_reads (per-cam detail), migrations 0006/0014,<br/>INSERT OR IGNORE, vision-cam beaches only (config/vision-cams.json),<br/>lib/history/camObservations.ts; a feed failure never fails the beach_hourly row"| D1
+  BACKFILL["scripts/backfill_cam_history.mjs (one-shot; shares<br/>lib/history/camObservationRow.mjs with the archiver)"] -->|cam_observations| D1
   SUNCAM -->|"yt-dlp -J → HLS playlist (~4 h DVR); one frame every 2.5 min,<br/>event −35 … +25 min, per config/sun-cams.json cam"| YTLIVE[["YouTube livestream DVR<br/>Elbo Room + 3 Deerfield cams, all facing east"]]
   SUNCAM -->|"POST /api/sun-observations — Bearer INGEST_TOKEN<br/>peak-frame score + series, per beach / event / cam"| SUNOBS["/api/sun-observations<br/>constant-time auth, strict body validation<br/>(lib/sunObservations.ts)"]
   SUNOBS -->|"sun_event_observations (migrations/0015)<br/>upsert, one row per slug + event + local day + cam, credit stored"| D1
@@ -419,13 +421,15 @@ the same pick.
 **The sunrise/sunset color alert is opt-in, standalone-only, and off by
 default**, same as coming-up. `lib/sunAlert.ts`'s `assembleSunEventQuality`
 is the ONE function both `components/SunQualityCard.tsx` and the alert
-(`predictNextSunEvent`) call for the nearest hourly cloud/humidity reading,
-current air quality, and a fresh-and-imminent satellite horizon reading —
-off the SAME conditions build the digest/Excellent check already fetched
+(`predictNextSunEvent`) call for the nearest hourly cloud/humidity reading
+and current air quality — off the SAME conditions build the digest/Excellent check already fetched
 for that beach (no extra outbound call). `predictNextSunEvent` is scored
 against the conditions snapshot's OWN `generatedAt`, not the push run's
-wall clock — that's what makes the GOES-freshness read agree with what the
-card would show for that exact snapshot. `lib/alerts/sunColor.ts`'s
+wall clock, so it agrees with what the card would show for that exact
+snapshot. The GOES reading is resolved and archived but, since sun model
+version 2026-10-06.2, not scored: near sunrise/sunset the clear-sky mask only
+has cloud overhead, which is the color canvas, not a horizon blocker
+(docs/benchmarks/2026-10-06-sun-model). `lib/alerts/sunColor.ts`'s
 `sunColorDecision` sends only when the predicted score clears the device's
 own threshold (Great-or-better, score &ge; 70, or Amazing-only, score &ge;
 90 — `lib/sunQuality.ts`'s own band cutoffs) AND the REAL wall clock falls

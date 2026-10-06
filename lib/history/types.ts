@@ -60,8 +60,9 @@ export interface BeachHourlyRow {
 
 /**
  * One row of `sun_event_predictions` (migrations/0013): the sunrise/sunset
- * color model's output for ONE upcoming sun event, as of one archive hour,
- * with every input it used. See lib/history/sunPredictions.ts.
+ * color model's output for ONE sun event — the one the card shows, which
+ * stays current through its golden window, so `lead_minutes` is negative
+ * just after the event — as of one archive hour, with every input it used. See lib/history/sunPredictions.ts.
  */
 export interface SunEventPredictionRow {
   slug: string;
@@ -74,7 +75,7 @@ export interface SunEventPredictionRow {
 
   score: number | null;
   band: string | null;
-  model_path: "factor" | "level-curve" | "total-only" | null;
+  model_path: "factor" | "total-only" | null;
   note: string | null;
   breakdown_json: string | null;
 
@@ -223,6 +224,29 @@ export interface CamObservationRow {
   water_word: string | null;
   uw_pct: number | null;
   source: "feed" | "live";
+  raw_json: string | null;
+  /** Busiest-cam crowd word (migration 0014). */
+  crowd_level: string | null;
+  /** Underwater read's level word (migration 0014). */
+  uw_level: string | null;
+}
+
+/** One cam's own read within a capture (migrations/0014 `cam_reads`). */
+export interface CamReadRow {
+  slug: string;
+  captured_at_utc: string;
+  cam_id: string;
+  cam_name: string | null;
+  seaweed_level: string | null;
+  cov_pct: number | null;
+  seaweed_note: string | null;
+  crowd_level: string | null;
+  crowd_pct: number | null;
+  people: number | null;
+  crowd_note: string | null;
+  water_word: string | null;
+  water_pct: number | null;
+  water_note: string | null;
   raw_json: string | null;
 }
 

@@ -94,7 +94,7 @@ const FCM_TOKEN = "m".repeat(80);
  *  independent of the ESTIMATE above. `snapshotSunriseIso`/
  *  `snapshotSunsetIso` are both today's readings; `tomorrowSunriseIso` is
  *  used once both of today's have passed (scenario (a)'s kind mismatch). A
- *  vivid-scoring (Great, ~79) cloud mix sits at whichever instant
+ *  vivid-scoring (Great, ~73) cloud mix sits at whichever instant
  *  `hourlyTimeIso` names, so a genuine send is possible when the two
  *  windows do align. */
 function conditions(opts: {
@@ -120,7 +120,7 @@ function conditions(opts: {
       },
       hourly: {
         status: "ok",
-        data: [{ time: opts.hourlyTimeIso, cloudCoverLowPct: 10, cloudCoverMidPct: 25, cloudCoverHighPct: 0 }],
+        data: [{ time: opts.hourlyTimeIso, cloudCoverLowPct: 10, cloudCoverMidPct: 35, cloudCoverHighPct: 10 }],
       },
       airQuality: { status: "ok", data: null },
       goesCloud: { status: "ok", data: null },

@@ -39,6 +39,8 @@ import type { ComingUpDeliveryRow } from "@/lib/db/store";
 import type {
   ArchiveCandidate,
   BeachHourlyRow,
+  CamObservationRow,
+  CamReadRow,
   HistoryRecordRow,
   HistoryRecordsResult,
   SunEventObservationRow,
@@ -85,6 +87,8 @@ interface Snapshot {
   beachHourly?: BeachHourlyRow[];
   sunEventPredictions?: SunEventPredictionRow[];
   sunEventObservations?: SunEventObservationRow[];
+  camObservations?: CamObservationRow[];
+  camReads?: CamReadRow[];
   historyBudget?: { day: string; builds: number }[];
   historyClaims?: HistoryClaimRow[];
   liveActivities?: LiveActivityRow[];
@@ -117,6 +121,8 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
   const beachHourly = new Map<string, BeachHourlyRow>(); // key: `${slug}|${hour_utc}`
   const sunPredictions = new Map<string, SunEventPredictionRow>(); // key: `${slug}|${kind}|${event_iso}|${as_of_hour_utc}`
   const sunObservations = new Map<string, SunEventObservationRow>(); // key: `${slug}|${kind}|${event_date_local}|${cam_id}`
+  const camObservations = new Map<string, CamObservationRow>(); // key: `${slug}|${captured_at_utc}`
+  const camReads = new Map<string, CamReadRow>(); // key: `${slug}|${captured_at_utc}|${cam_id}`
   const historyBudget = new Map<string, number>(); // key: day
   const historyClaims = new Map<string, HistoryClaimRow>(); // key: `history:<slug>:<hour_utc>`
   const liveActivities = new Map<string, LiveActivityRow>(); // key: activityId
@@ -135,6 +141,8 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       for (const h of raw.beachHourly ?? []) beachHourly.set(`${h.slug}|${h.hour_utc}`, h);
       for (const r of raw.sunEventPredictions ?? []) sunPredictions.set(sunPredKey(r), r);
       for (const r of raw.sunEventObservations ?? []) sunObservations.set(sunObsKey(r), r);
+      for (const o of raw.camObservations ?? []) camObservations.set(`${o.slug}|${o.captured_at_utc}`, o);
+      for (const c of raw.camReads ?? []) camReads.set(`${c.slug}|${c.captured_at_utc}|${c.cam_id}`, c);
       for (const b of raw.historyBudget ?? []) historyBudget.set(b.day, b.builds);
       for (const c of raw.historyClaims ?? []) historyClaims.set(c.key, c);
       for (const a of raw.liveActivities ?? []) liveActivities.set(a.activityId, a);
@@ -154,6 +162,8 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       beachHourly: [...beachHourly.values()],
       sunEventPredictions: [...sunPredictions.values()],
       sunEventObservations: [...sunObservations.values()],
+      camObservations: [...camObservations.values()],
+      camReads: [...camReads.values()],
       historyBudget: [...historyBudget.entries()].map(([day, builds]) => ({ day, builds })),
       historyClaims: [...historyClaims.values()],
       liveActivities: [...liveActivities.values()],
@@ -536,6 +546,65 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       }
       if (written) await save();
       return { written };
+    },
+
+    // Cam archive — INSERT OR IGNORE semantics, mirroring d1Store.
+    async latestCamObservationUtc(slug: string) {
+      await load();
+      let max: string | null = null;
+      for (const o of camObservations.values()) {
+        if (o.slug === slug && (max === null || o.captured_at_utc > max)) max = o.captured_at_utc;
+      }
+      return max;
+    },
+
+    async camObservationUtcsSince(slug: string, sinceUtc: string) {
+      await load();
+      return [...camObservations.values()]
+        .filter((o) => o.slug === slug && o.captured_at_utc >= sinceUtc)
+        .map((o) => o.captured_at_utc);
+    },
+
+    async insertCamObservations(rows: CamObservationRow[]) {
+      await load();
+      let written = 0;
+      for (const r of rows) {
+        const key = `${r.slug}|${r.captured_at_utc}`;
+        if (camObservations.has(key)) continue;
+        camObservations.set(key, { ...r });
+        written += 1;
+      }
+      if (written) await save();
+      return { written };
+    },
+
+    async insertCamReads(rows: CamReadRow[]) {
+      await load();
+      let written = 0;
+      for (const r of rows) {
+        const key = `${r.slug}|${r.captured_at_utc}|${r.cam_id}`;
+        if (camReads.has(key)) continue;
+        camReads.set(key, { ...r });
+        written += 1;
+      }
+      if (written) await save();
+      return { written };
+    },
+
+    async camObservationsSince(slug: string, sinceUtc: string) {
+      await load();
+      return [...camObservations.values()]
+        .filter((o) => o.slug === slug && o.captured_at_utc >= sinceUtc)
+        .sort((a, b) => (a.captured_at_utc < b.captured_at_utc ? -1 : a.captured_at_utc > b.captured_at_utc ? 1 : 0))
+        .map((o) => ({ ...o }));
+    },
+
+    async camReadsAt(slug: string, capturedAtUtc: string) {
+      await load();
+      return [...camReads.values()]
+        .filter((c) => c.slug === slug && c.captured_at_utc === capturedAtUtc)
+        .sort((a, b) => (a.cam_id < b.cam_id ? -1 : a.cam_id > b.cam_id ? 1 : 0))
+        .map((c) => ({ ...c }));
     },
 
     async sunEventPredictionsFor(slug: string, eventIso: string) {

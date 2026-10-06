@@ -96,7 +96,7 @@ function conditions(opts: { snapshotSunsetIso: string; hourlyTimeIso: string }):
       sun: { status: "ok", data: { sunrise: SUNRISE_ISO, sunset: opts.snapshotSunsetIso } },
       hourly: {
         status: "ok",
-        data: [{ time: opts.hourlyTimeIso, cloudCoverLowPct: 10, cloudCoverMidPct: 25, cloudCoverHighPct: 0 }],
+        data: [{ time: opts.hourlyTimeIso, cloudCoverLowPct: 10, cloudCoverMidPct: 35, cloudCoverHighPct: 10 }],
       },
       airQuality: { status: "ok", data: null },
       goesCloud: { status: "ok", data: null },
