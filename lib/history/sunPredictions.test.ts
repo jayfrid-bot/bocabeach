@@ -4,7 +4,8 @@ import { scorableResponse } from "@/lib/alerts/fixtures";
 import { computeSunTimes } from "@/lib/sources/sun";
 import { sunEventRowsFromConditions, nextSunEventsBoth } from "@/lib/history/sunPredictions";
 import { SUN_QUALITY_VERSION, sunEventQuality, sunModelPath } from "@/lib/sunQuality";
-import { resolveSunHorizonDetailed, resolveSunHorizon } from "@/lib/sunAlert";
+import { resolveSunHorizonDetailed, resolveSunHorizon, predictNextSunEvent } from "@/lib/sunAlert";
+import { sunCardTiming } from "@/lib/sunCardEvent";
 import type { ConditionsResponse } from "@/lib/types";
 
 const boca = getLocation("boca-raton")!;
@@ -134,6 +135,78 @@ describe("nextSunEventsBoth", () => {
     expect(ev.map((e) => e.event).sort()).toEqual(["sunrise", "sunset"]);
     expect(ev.find((e) => e.event === "sunrise")!.timeIso).toBe(tm.sunrise!.toISOString());
     expect(ev.find((e) => e.event === "sunset")!.timeIso).toBe(tm.sunset!.toISOString());
+  });
+
+  it("keeps tonight's sunset while its golden window is still open (post-sunset), not tomorrow's", () => {
+    const t = computeSunTimes(boca.lat, boca.lon, 2026, 10, 6);
+    const tm = computeSunTimes(boca.lat, boca.lon, 2026, 10, 7);
+    const sunsetMs = t.sunset!.getTime();
+    const windowEndMs = t.goldenEveEnd!.getTime();
+    expect(windowEndMs).toBeGreaterThan(sunsetMs); // the window really straddles the event
+    const nowMs = sunsetMs + 10 * 60_000; // 10 min after sunset, golden hour still on
+    const res = bocaOct6(new Date(nowMs).toISOString());
+    const ev = nextSunEventsBoth(res, boca, nowMs);
+    expect(ev.find((e) => e.event === "sunset")!.timeIso).toBe(t.sunset!.toISOString());
+    expect(ev.find((e) => e.event === "sunrise")!.timeIso).toBe(tm.sunrise!.toISOString());
+    // ...and the plain "next event" (the push alert's) is tomorrow's sunrise: still in the pair.
+    expect(predictNextSunEvent(res, nowMs)!.eventIso).toBe(tm.sunrise!.toISOString());
+
+    // Once the window has closed, the sunset rolls to tomorrow's.
+    const after = nextSunEventsBoth(bocaOct6(new Date(windowEndMs + 60_000).toISOString()), boca, windowEndMs + 60_000);
+    expect(after.find((e) => e.event === "sunset")!.timeIso).toBe(tm.sunset!.toISOString());
+  });
+
+  it("keeps this morning's sunrise through its post-sunrise golden window", () => {
+    const t = computeSunTimes(boca.lat, boca.lon, 2026, 10, 6);
+    const nowMs = t.sunrise!.getTime() + 10 * 60_000;
+    const res = bocaOct6(new Date(nowMs).toISOString());
+    // fixture pins sunrise to 11:15Z; use the real window times around it
+    res.snapshot.sun.data = {
+      ...res.snapshot.sun.data!,
+      sunrise: t.sunrise!.toISOString(),
+      goldenAmStartIso: t.goldenAmStart!.toISOString(),
+      goldenAmEndIso: t.goldenAmEnd!.toISOString(),
+      goldenAmPeakIso: t.goldenAmPeak!.toISOString(),
+    };
+    const ev = nextSunEventsBoth(res, boca, nowMs);
+    expect(ev.find((e) => e.event === "sunrise")!.timeIso).toBe(t.sunrise!.toISOString());
+  });
+
+  it("matches the event the card shows, for the card's side, at every minute-ish of two days; the alert's event is always in the pair", () => {
+    const base = bocaOct6();
+    const t = computeSunTimes(boca.lat, boca.lon, 2026, 10, 6);
+    const sun = {
+      ...base.snapshot.sun.data!,
+      sunrise: t.sunrise!.toISOString(),
+      goldenAmStartIso: t.goldenAmStart!.toISOString(),
+      goldenAmEndIso: t.goldenAmEnd!.toISOString(),
+      goldenAmPeakIso: t.goldenAmPeak!.toISOString(),
+      goldenEveStartIso: t.goldenEveStart!.toISOString(),
+      goldenEveEndIso: t.goldenEveEnd!.toISOString(),
+      tomorrowGoldenAmStartIso: computeSunTimes(boca.lat, boca.lon, 2026, 10, 7).goldenAmStart!.toISOString(),
+      tomorrowGoldenAmEndIso: computeSunTimes(boca.lat, boca.lon, 2026, 10, 7).goldenAmEnd!.toISOString(),
+    };
+    const res = { ...base, snapshot: { ...base.snapshot, sun: { ...base.snapshot.sun, data: sun } } } as ConditionsResponse;
+    const today = {
+      sunrise: sun.sunrise,
+      sunset: sun.sunset,
+      goldenAm: { goldenStartIso: sun.goldenAmStartIso, goldenEndIso: sun.goldenAmEndIso, peakAnchorIso: sun.goldenAmPeakIso },
+      goldenEve: { goldenStartIso: sun.goldenEveStartIso, goldenEndIso: sun.goldenEveEndIso, peakAnchorIso: sun.goldenEvePeakIso },
+    };
+    const tomorrow = {
+      sunriseIso: sun.tomorrowSunrise,
+      goldenAm: { goldenStartIso: sun.tomorrowGoldenAmStartIso, goldenEndIso: sun.tomorrowGoldenAmEndIso, peakAnchorIso: sun.tomorrowGoldenAmPeakIso },
+    };
+    const start = Date.parse("2026-10-06T04:00:00Z");
+    for (let ms = start; ms < start + 24 * 3_600_000; ms += 7 * 60_000) {
+      const pair = nextSunEventsBoth(res, boca, ms);
+      const card = sunCardTiming({ nowD: new Date(ms), today, tomorrow }).scored!;
+      const mine = pair.find((e) => e.event === card.event)!;
+      expect(mine.timeIso, new Date(ms).toISOString()).toBe(card.timeIso);
+      const alert = predictNextSunEvent({ ...res, snapshot: { ...res.snapshot, generatedAt: new Date(ms).toISOString() } }, ms);
+      if (alert) expect(pair.map((e) => e.timeIso), new Date(ms).toISOString()).toContain(alert.eventIso);
+      expect(pair.map((e) => e.event).sort()).toEqual(["sunrise", "sunset"]);
+    }
   });
 
   it("returns nothing when the snapshot has no sun data", () => {

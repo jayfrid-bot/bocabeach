@@ -372,3 +372,34 @@ describe("cam observations in the same pass (migrations 0006/0014)", () => {
     err.mockRestore();
   });
 });
+
+describe("sun-event predictions write (best-effort, retried once)", () => {
+  it("a transient failure is retried inline and the rows still land; beach_hourly is untouched", async () => {
+    await onlyCandidate("boca-raton");
+    const store = await getStore();
+    const real = store.upsertSunEventPredictions.bind(store);
+    const spy = vi.spyOn(store, "upsertSunEventPredictions").mockRejectedValueOnce(new Error("D1 hiccup")).mockImplementation(real);
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const json = (await (await post()).json()) as { archived: number; skipped: number };
+    expect(json.archived).toBe(1);
+    expect(json.skipped).toBe(0);
+    expect(spy).toHaveBeenCalledTimes(2);
+    const rows = spy.mock.calls[1][0];
+    expect(rows.length).toBeGreaterThan(0);
+    const stored = await store.sunEventPredictionsFor("boca-raton", rows[0].event_iso);
+    expect(stored.map((r) => r.as_of_hour_utc)).toContain(hourUtcOf(Date.now()));
+    err.mockRestore();
+  });
+
+  it("a persistent failure logs and is skipped — the beach is still archived and counted once", async () => {
+    await onlyCandidate("boca-raton");
+    const store = await getStore();
+    const spy = vi.spyOn(store, "upsertSunEventPredictions").mockRejectedValue(new Error("D1 down"));
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const json = (await (await post()).json()) as { archived: number; skipped: number };
+    expect(json.archived).toBe(1);
+    expect(json.skipped).toBe(0);
+    expect(spy).toHaveBeenCalledTimes(2); // original + exactly one retry, never more
+    err.mockRestore();
+  });
+});

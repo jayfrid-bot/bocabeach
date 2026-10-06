@@ -10,62 +10,94 @@ import {
   DEFAULT_SEASONAL_PRIOR,
   SUN_QUALITY_VERSION,
   sunModelPath,
-  type SunEventKind,
+  type GoldenWindowIso,
+  type SunEventTime,
 } from "@/lib/sunQuality";
 import { computeSunTimes } from "@/lib/sources/sun";
 import { SCORING_ENGINE_VERSION } from "@/lib/score";
+import { cardSunEventForKind, type CardToday } from "@/lib/sunCardEvent";
 import { currentBuildSha } from "@/lib/history/archive";
 import type { SunEventPredictionRow } from "@/lib/history/types";
-
-interface PickedEvent {
-  event: SunEventKind;
-  timeIso: string;
-  peakAnchorIso?: string;
-}
 
 const numOrNull = (v: number | undefined | null): number | null =>
   typeof v === "number" && Number.isFinite(v) ? v : null;
 
 /**
- * The next sunrise and the next sunset strictly after `nowMs` (so one event
- * of each kind, up to two entries). Today's time when it hasn't happened yet,
- * else tomorrow's — sunrise from the snapshot's own tomorrow fields, sunset
- * computed with the same solver the snapshot's sun data came from.
+ * The sunrise and the sunset the sun-color CARD would show at `nowMs` — one of
+ * each kind (up to two entries). Selection is the card's own rule
+ * (lib/sunCardEvent.ts, shared with components/SunQualityCard.tsx): an event
+ * stays current until its elevation-derived golden window CLOSES, so for the
+ * stretch after sunset (or sunrise) that is still golden hour, the archive
+ * holds tonight's sunset (this morning's sunrise), not tomorrow's.
+ *
+ * The push alert's own pick (`predictNextSunEvent`, which advances at the event
+ * itself) is always one of the pair: it is the first event strictly after
+ * `nowMs`, and an event stays current until at least its own time.
+ *
+ * Tomorrow's sunrise comes from the snapshot's own tomorrow fields; tomorrow's
+ * sunset is computed with the same solver the snapshot's sun data came from.
  */
 export function nextSunEventsBoth(
   res: ConditionsResponse,
   loc: Pick<Location, "lat" | "lon">,
   nowMs: number,
-): PickedEvent[] {
+): SunEventTime[] {
   const sun = res.snapshot.sun?.data;
   if (!sun) return [];
-  const out: PickedEvent[] = [];
+  const nowD = new Date(nowMs);
 
-  const sunriseMs = sun.sunrise ? Date.parse(sun.sunrise) : NaN;
-  if (Number.isFinite(sunriseMs) && nowMs < sunriseMs) {
-    out.push({ event: "sunrise", timeIso: sun.sunrise!, peakAnchorIso: sun.goldenAmPeakIso });
-  } else if (sun.tomorrowSunrise) {
-    out.push({ event: "sunrise", timeIso: sun.tomorrowSunrise, peakAnchorIso: sun.tomorrowGoldenAmPeakIso });
-  }
+  const today: CardToday = {
+    sunrise: sun.sunrise,
+    sunset: sun.sunset,
+    goldenAm: {
+      goldenStartIso: sun.goldenAmStartIso,
+      goldenEndIso: sun.goldenAmEndIso,
+      peakAnchorIso: sun.goldenAmPeakIso,
+    },
+    goldenEve: {
+      goldenStartIso: sun.goldenEveStartIso,
+      goldenEndIso: sun.goldenEveEndIso,
+      peakAnchorIso: sun.goldenEvePeakIso,
+    },
+  };
 
-  const sunsetMs = sun.sunset ? Date.parse(sun.sunset) : NaN;
-  if (Number.isFinite(sunsetMs) && nowMs < sunsetMs) {
-    out.push({ event: "sunset", timeIso: sun.sunset!, peakAnchorIso: sun.goldenEvePeakIso });
-  } else {
-    // sun.date is the beach-local calendar day the snapshot's sun times fall on.
-    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(sun.date ?? "");
-    if (m) {
-      const tmr = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 1));
-      const t = computeSunTimes(loc.lat, loc.lon, tmr.getUTCFullYear(), tmr.getUTCMonth() + 1, tmr.getUTCDate());
-      if (t.sunset) {
-        out.push({
-          event: "sunset",
-          timeIso: t.sunset.toISOString(),
+  const out: SunEventTime[] = [];
+
+  const sunrise = cardSunEventForKind({
+    kind: "sunrise",
+    nowD,
+    today,
+    tomorrow: {
+      eventIso: sun.tomorrowSunrise,
+      golden: {
+        goldenStartIso: sun.tomorrowGoldenAmStartIso,
+        goldenEndIso: sun.tomorrowGoldenAmEndIso,
+        peakAnchorIso: sun.tomorrowGoldenAmPeakIso,
+      },
+    },
+  });
+  if (sunrise) out.push(sunrise);
+
+  // sun.date is the beach-local calendar day the snapshot's sun times fall on.
+  let tomorrowSunset: { eventIso?: string; golden?: GoldenWindowIso } | undefined;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(sun.date ?? "");
+  if (m) {
+    const tmr = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 1));
+    const t = computeSunTimes(loc.lat, loc.lon, tmr.getUTCFullYear(), tmr.getUTCMonth() + 1, tmr.getUTCDate());
+    if (t.sunset) {
+      tomorrowSunset = {
+        eventIso: t.sunset.toISOString(),
+        golden: {
+          goldenStartIso: t.goldenEveStart?.toISOString(),
+          goldenEndIso: t.goldenEveEnd?.toISOString(),
           peakAnchorIso: t.goldenEvePeak?.toISOString(),
-        });
-      }
+        },
+      };
     }
   }
+  const sunset = cardSunEventForKind({ kind: "sunset", nowD, today, tomorrow: tomorrowSunset });
+  if (sunset) out.push(sunset);
+
   return out;
 }
 

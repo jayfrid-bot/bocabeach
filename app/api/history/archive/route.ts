@@ -269,7 +269,18 @@ export async function POST(req: Request): Promise<Response> {
       // never fail the beach_hourly row that already landed above.
       try {
         const sunRows = sunEventRowsFromConditions(res, loc, nowMs, { hourUtc: claimedHourUtc });
-        if (sunRows.length) await store.upsertSunEventPredictions(sunRows);
+        if (sunRows.length) {
+          // The beach_hourly row just landed, which takes this beach out of the
+          // candidate list for the hour — so nothing later would retry a
+          // transient D1 failure here. Retry the (idempotent) upsert once
+          // inline; a second failure falls to the catch below and is skipped.
+          try {
+            await store.upsertSunEventPredictions(sunRows);
+          } catch (first) {
+            console.error("history: sun-event predictions write failed, retrying once", slug, first);
+            await store.upsertSunEventPredictions(sunRows);
+          }
+        }
       } catch (e) {
         console.error("history: sun-event predictions failed", slug, e);
       }

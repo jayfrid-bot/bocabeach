@@ -8,10 +8,9 @@ import {
   goldenTrack,
   type GoldenHourTiming,
   type GoldenTarget,
-  type GoldenWindowInput,
 } from "@/lib/goldenHourTiming";
+import { sunCardTiming } from "@/lib/sunCardEvent";
 import {
-  nextSunEvent,
   sunQualityBandMeta,
   type CloudMix,
   type GoldenWindowIso,
@@ -189,27 +188,6 @@ function fmtRange(startIso: string, endIso: string, tz: string): string {
   const [aTime, aMer] = a.split(" ");
   const [, bMer] = b.split(" ");
   return aMer && aMer === bMer ? `${aTime}–${b}` : `${a}–${b}`;
-}
-
-/** The card's ISO windows in the shape lib/goldenHourTiming.ts wants. Undefined
- *  when the snapshot didn't carry that elevation window. */
-function toWindow(w: GoldenWindowIso | undefined): GoldenWindowInput | undefined {
-  if (!w?.goldenStartIso || !w.goldenEndIso) return undefined;
-  return { start: w.goldenStartIso, end: w.goldenEndIso, peakAnchorIso: w.peakAnchorIso };
-}
-
-/** The sun event a timing target is built around, in lib/sunQuality.ts's shape,
- *  so the color score and the flip back describe the window the front shows. */
-function targetEvent(target: GoldenTarget | null): SunEventTime | null {
-  if (!target?.eventIso) return null;
-  return {
-    event: target.kind === "am" ? "sunrise" : "sunset",
-    timeIso: target.eventIso,
-    goldenStartIso: target.start.toISOString(),
-    goldenEndIso: target.end.toISOString(),
-    goldenFromElevation: true,
-    peakAnchorIso: target.peakAnchorIso,
-  };
 }
 
 /**
@@ -449,45 +427,17 @@ export function SunQualityCard({
 
   const fmt = (d: Date) => fmtTime(d.toISOString(), tz);
 
-  // Real elevation windows when the snapshot carries them; otherwise fall back
-  // to whatever window `nextSunEvent` can build (an older snapshot's ±60-min
-  // approximation), so the card still counts down rather than going blank.
-  const next = nextSunEvent(nowD, today, tomorrow);
-  const realWindows = { am: toWindow(today.goldenAm), eve: toWindow(today.goldenEve) };
-  const hasReal = !!realWindows.am || !!realWindows.eve;
-  const fallback: GoldenWindowInput | undefined = next
-    ? { start: next.goldenStartIso, end: next.goldenEndIso, peakAnchorIso: next.peakAnchorIso }
-    : undefined;
-  const sunsetMs = today.sunset ? Date.parse(today.sunset) : Number.NaN;
-  const fallbackIsTomorrow =
-    !!next && next.event === "sunrise" && Number.isFinite(sunsetMs) && nowD.getTime() >= sunsetMs;
-
-  const timingArgs = {
-    windows: hasReal
-      ? realWindows
-      : fallbackIsTomorrow
-        ? {}
-        : next?.event === "sunrise"
-          ? { am: fallback }
-          : { eve: fallback },
-    sunrise: today.sunrise,
-    sunset: today.sunset,
-    tomorrowAmWindow: hasReal
-      ? toWindow(tomorrow?.goldenAm)
-      : fallbackIsTomorrow
-        ? fallback
-        : undefined,
-    tomorrowSunrise: tomorrow?.sunriseIso ?? (fallbackIsTomorrow ? next?.timeIso : undefined),
-    formatTime: fmt,
-  };
-
+  // The card's timing + scored event — lib/sunCardEvent.ts, shared with the
+  // history archiver so what is archived is exactly what is shown. Real
+  // elevation windows when the snapshot carries them; otherwise the window
+  // `nextSunEvent` can build (an older snapshot's approximation), so the card
+  // still counts down rather than going blank.
+  //
   // Pinned timing drives everything the server must reproduce (the scored event,
   // the color score, the flip back); the live one only refreshes the countdown
   // and the marker after mount.
-  const pinned = goldenHourTiming({ ...timingArgs, now: nowD });
+  const { timingArgs, pinned, scored } = sunCardTiming({ nowD, today, tomorrow, formatTime: fmt });
   const live = clientNowMs == null ? pinned : goldenHourTiming({ ...timingArgs, now: clientNowMs });
-
-  const scored = targetEvent(pinned.target) ?? next;
 
   if (!scored) {
     return (
