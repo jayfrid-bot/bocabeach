@@ -459,8 +459,9 @@ export type ForecastState = "dry" | "rain";
  * The state the nowcast forecasts `horizonMin` minutes ahead, from its current
  * state and `changeInMin` (minutes until it flips; null = no flip in the next
  * 2 hours). "Dry, rain in 25 min" is a rain call at +1 h and +2 h. "Raining,
- * easing in 25 min" is a dry call at +1 h and +2 h. A flip at or after the
- * horizon has not happened yet at the horizon. null = cannot tell (no
+ * easing in 25 min" is a dry call at +1 h and +2 h. `changeInMin` is the start
+ * of the first changed 15-minute bucket (lib/sources/nowcast.ts), so a change
+ * at exactly the horizon already applies at the horizon (`<=`). null = cannot tell (no
  * nowcast, or a row that never recorded changeInMin).
  */
 export function forecastStateAt(
@@ -469,7 +470,7 @@ export function forecastStateAt(
   horizonMin: number,
 ): ForecastState | null {
   if (!nowcast || changeInMin === undefined) return null;
-  const flipped = changeInMin !== null && changeInMin < horizonMin;
+  const flipped = changeInMin !== null && changeInMin <= horizonMin;
   if (nowcast === "dry") return flipped ? "rain" : "dry";
   return flipped ? "dry" : "rain";
 }

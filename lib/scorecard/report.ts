@@ -481,7 +481,7 @@ function rainSection(s: Section<RainResult>): string {
   const out = [
     'The app says "dry" or "raining" from a weather model, with a note on when that changes. ' +
       'We turn that into a forecast for one hour ahead and two hours ahead. "Dry, rain in 25 min" is a rain forecast for both. ' +
-      '"Raining, easing in 25 min" is a dry forecast for both. A change at or after the hour has not happened by then. ' +
+      '"Raining, easing in 25 min" is a dry forecast for both. A change at or before the hour has happened by then. ' +
       "Then we check each forecast against the radar reading one and two hours later. " +
       "Radar rain means a rate above 0 mm/hr, or a fresh frame that saw rain at or near the beach in the last 20 minutes. " +
       "A radar frame older than 25 minutes is not used.",

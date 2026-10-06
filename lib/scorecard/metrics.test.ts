@@ -433,8 +433,10 @@ describe("forecastStateAt", () => {
     expect(forecastStateAt("dry", 25, 120)).toBe("rain"); // ... and at +2 h
     expect(forecastStateAt("dry", 90, 60)).toBe("dry"); // not yet at +1 h
     expect(forecastStateAt("dry", 90, 120)).toBe("rain");
-    expect(forecastStateAt("dry", 60, 60)).toBe("dry"); // a flip AT the horizon has not happened yet
-    expect(forecastStateAt("dry", 120, 120)).toBe("dry");
+    // changeInMin is the START of the first changed 15-minute bucket: a change at exactly the horizon applies.
+    expect(forecastStateAt("dry", 60, 60)).toBe("rain");
+    expect(forecastStateAt("dry", 120, 120)).toBe("rain");
+    expect(forecastStateAt("dry", 61, 60)).toBe("dry"); // one minute later does not
   });
   it("raining now: dry forecast once the rain is due to stop before the horizon", () => {
     expect(forecastStateAt("raining", null, 60)).toBe("rain");
@@ -443,6 +445,9 @@ describe("forecastStateAt", () => {
     expect(forecastStateAt("raining", 25, 120)).toBe("dry");
     expect(forecastStateAt("raining", 90, 60)).toBe("rain");
     expect(forecastStateAt("raining", 90, 120)).toBe("dry");
+    expect(forecastStateAt("raining", 60, 60)).toBe("dry"); // easing at exactly +1 h applies at +1 h
+    expect(forecastStateAt("raining", 120, 120)).toBe("dry");
+    expect(forecastStateAt("raining", 61, 60)).toBe("rain");
   });
   it("cannot tell without a nowcast, or for a row that never recorded changeInMin", () => {
     expect(forecastStateAt(null, null, 60)).toBeNull();

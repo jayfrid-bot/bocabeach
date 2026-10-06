@@ -114,7 +114,9 @@ checks that call against the MRMS radar reading one and two hours later.
   The forecast state at a horizon follows from both:
   - "Dry, rain in 25 min" is a rain forecast at +1 h and at +2 h.
   - "Raining, easing in 25 min" is a dry forecast at +1 h and at +2 h.
-  - A change at or after the horizon has not happened by then.
+  - A change at or before the horizon has happened by then. `changeInMin` is
+    the start of the first changed 15-minute bucket, so a change at exactly
+    60 minutes applies at +1 h, and at exactly 120 minutes at +2 h.
   - A row with no `changeInMin` is a call but is not scored.
 - `beach_hourly.rain_now` is not truth. The archiver builds it from the
   nowcast itself plus the weather code. The `rain` block in `extra_json` holds
