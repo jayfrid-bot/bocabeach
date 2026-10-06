@@ -10,6 +10,8 @@ import { getLocation } from "@/config/locations";
 const ctl = vi.hoisted(() => ({
   conditionsCalls: [] as string[],
   fail: new Set<string>(),
+  /** Beaches whose build "hits the subrequest budget" (the gate refused a fetch). */
+  exhaust: new Set<string>(),
 }));
 
 // The route builds DIRECTLY (getConditionsForLocation), never through the
@@ -18,6 +20,10 @@ vi.mock("@/lib/conditions", () => ({
   getConditionsForLocation: async (loc: { slug: string }) => {
     ctl.conditionsCalls.push(loc.slug);
     if (ctl.fail.has(loc.slug)) throw new Error("simulated build failure");
+    if (ctl.exhaust.has(loc.slug)) {
+      const b = currentBudget();
+      if (b) b.exhaustedDuringBuild = true;
+    }
     // The route keys `beach_hourly` by the snapshot's OWN generatedAt (see
     // lib/history/archive.ts rowFromConditions) — so for the idempotency
     // test to collide with the current UTC hour (the one
@@ -29,6 +35,7 @@ vi.mock("@/lib/conditions", () => ({
   },
 }));
 
+import { currentBudget } from "@/lib/alerts/budget";
 import { POST } from "@/app/api/history/archive/route";
 import { getStore } from "@/lib/db/store";
 import { resetMemoryStore } from "@/lib/db/memoryStore";
@@ -60,6 +67,7 @@ beforeEach(() => {
   resetMemoryStore();
   ctl.conditionsCalls = [];
   ctl.fail = new Set();
+  ctl.exhaust = new Set();
   process.env.CRON_SECRET = SECRET;
   delete process.env.HISTORY_MAX_BUILDS_PER_DAY;
   delete process.env.HISTORY_ENABLED;
@@ -202,6 +210,25 @@ describe("budget guard", () => {
     const store = await getStore();
     const used = await store.getHistoryBudget(new Date().toISOString().slice(0, 10));
     expect(used).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("a build cut short by the subrequest budget is not archived", () => {
+  it("skips the beach, keeps its claim, and leaves no row", async () => {
+    const target = await topCandidateSlug();
+    ctl.exhaust = new Set([target]);
+    const res1 = await post();
+    const json1 = (await res1.json()) as { archived: number; claimed: number; skipped: number };
+    expect(json1.claimed).toBe(1);
+    expect(json1.archived).toBe(0);
+    expect(json1.skipped).toBeGreaterThanOrEqual(1);
+    const store = await getStore();
+    const rows = await store.hourlyHistory(target, "2000-01-01", "2100-01-01");
+    expect(rows).toHaveLength(0);
+    // A later tick in the same hour builds a different beach, not this one.
+    ctl.exhaust = new Set();
+    await post();
+    expect(ctl.conditionsCalls.filter((s) => s === target)).toHaveLength(1);
   });
 });
 

@@ -92,6 +92,7 @@
 
 import { timingSafeEqual } from "node:crypto";
 import { getConditionsForLocation } from "@/lib/conditions";
+import { SubrequestBudget, runWithBudget } from "@/lib/alerts/budget";
 import { getLocation } from "@/config/locations";
 import { getStore } from "@/lib/db/store";
 import { hourUtcOf, rowFromConditions } from "@/lib/history/archive";
@@ -105,6 +106,9 @@ export const runtime = "nodejs";
 // caller-supplied ?batch= above 1 is clamped, never rejected.
 const DEFAULT_BATCH = 1;
 const MAX_BATCH = 1;
+
+/** Outbound fetches one direct build may make (Workers Free: 50 per request). */
+const ARCHIVE_BUILD_SUBREQUESTS = 44;
 
 // How many fairly-ordered candidates the scan phase will try to claim before
 // giving up for this tick (Codex round-3 finding #2). Comfortably above the
@@ -226,9 +230,21 @@ export async function POST(req: Request): Promise<Response> {
 
     // One reservation, one real build (see the file header): never the
     // cached getConditions, whose expired entry would cost a second unit.
+    // The build runs under its own subrequest budget: a cold build is ~25
+    // outbound calls, but a broad upstream outage can retry every source at
+    // once and cross Workers' 50-per-request ceiling, which kills the
+    // request with no warning. 44 leaves room for the cam-feed fetch below.
+    // A build the gate had to cut short is incomplete in a way the row
+    // can't record, so it is not archived; the claim ages out and a later
+    // tick retries.
+    const buildBudget = new SubrequestBudget(ARCHIVE_BUILD_SUBREQUESTS);
     let res;
     try {
-      res = await getConditionsForLocation(loc);
+      res = await runWithBudget(buildBudget, () => getConditionsForLocation(loc));
+      if (buildBudget.exhaustedDuringBuild) {
+        console.error("history: build hit the subrequest budget, not archived", slug);
+        res = null;
+      }
     } catch (e) {
       console.error("history: conditions build failed", slug, e);
       res = null;
