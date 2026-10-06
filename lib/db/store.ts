@@ -389,8 +389,9 @@ export interface DeviceStore {
    * completed. Call BEFORE `reserveHistoryBuild` and before fetching, so two
    * overlapping cron calls never both build the same beach/hour. A winner
    * that goes on to write a row must call `completeHistoryClaim`; a winner
-   * that finds its own snapshot too stale to use must call
-   * `releaseHistoryClaim` instead of leaving the claim to expire naturally.
+   * that must give the hour up at once (rather than let the claim expire)
+   * calls `releaseHistoryClaim`. (Since the archiver builds directly, the
+   * stale-cache release that motivated it no longer happens.)
    */
   claimHistoryBuild(slug: string, hourUtc: string, now: number): Promise<boolean>;
   /** Mark a claimed (slug, hour_utc) build as done — the claim can never be

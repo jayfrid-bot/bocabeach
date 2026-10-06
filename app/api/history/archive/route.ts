@@ -56,17 +56,16 @@
 //       each build to its own day, not the run's start day.
 // The hour_utc claimed in (a) is computed FRESH per candidate, right before
 // claiming — not once at the top of the request — and is what the archived
-// row is keyed by (via `rowFromConditions(res, loc, nowMs, { hourUtc })`),
-// never whatever hour the (up to ~120s stale, cached) getConditions snapshot
-// happens to think it is. Without this, a request early in hour 15:00 could
-// claim `history:<slug>:15:00` but get back a cached snapshot generated at
-// 14:5x — the row would land in hour 14 (or dedupe against it), and 15:00
-// would go unfilled forever even though it was claimed (Codex round-2
-// finding #1). If the snapshot is too old for the claimed hour even so (more
-// than STALE_SNAPSHOT_MS before the claimed hour started — the cache hasn't
-// turned over yet), the write is skipped (counted as `stale`) and the claim
-// is released outright via `releaseHistoryClaim`, so the very next tick can
-// retry rather than waiting out the full abandonment window.
+// row is keyed by (via `rowFromConditions(res, loc, nowMs, { hourUtc })`).
+// The build itself is DIRECT (`getConditionsForLocation`), never the ~120-s
+// `getConditions` cache: that cache serves its expired entry and revalidates
+// in the background, so an archiver reading it paid one budget unit for a
+// stale snapshot it had to throw away, then another for the retry — one
+// beach-hour cost two units, the 600/day budget ran out around 2 PM ET, and
+// every beach lost its afternoon hours (2026-09-23 to 10-06: 600 reserved,
+// ~330 rows a day). With a direct build, one reservation is exactly one
+// pipeline run, the snapshot is always current for its claimed hour, and
+// the day needs ~400 units.
 //
 // A build that fails after winning both reservations does NOT give the
 // budget reservation back (conservative, and simpler than tracking in-flight
@@ -92,7 +91,8 @@
 // `{ disabled: true }` without touching the store or fetching anything.
 
 import { timingSafeEqual } from "node:crypto";
-import { getConditions } from "@/lib/conditions";
+import { getConditionsForLocation } from "@/lib/conditions";
+import { SubrequestBudget, runWithBudget } from "@/lib/alerts/budget";
 import { getLocation } from "@/config/locations";
 import { getStore } from "@/lib/db/store";
 import { hourUtcOf, rowFromConditions } from "@/lib/history/archive";
@@ -107,13 +107,8 @@ export const runtime = "nodejs";
 const DEFAULT_BATCH = 1;
 const MAX_BATCH = 1;
 
-// A claimed hour's snapshot must have been generated no more than this long
-// before the claimed hour started, or it's stale relative to what it was
-// claimed for (Codex round-2 finding #1) — same duration as the claim
-// abandonment window, coincidentally, but a distinct concept (one is about a
-// cached upstream snapshot's own age, the other about how long a claim may
-// sit unfinished).
-const STALE_SNAPSHOT_MS = 10 * 60 * 1000;
+/** Outbound fetches one direct build may make (Workers Free: 50 per request). */
+const ARCHIVE_BUILD_SUBREQUESTS = 44;
 
 // How many fairly-ordered candidates the scan phase will try to claim before
 // giving up for this tick (Codex round-3 finding #2). Comfortably above the
@@ -168,7 +163,6 @@ export async function POST(req: Request): Promise<Response> {
   let deduped = 0;
   let skipped = 0;
   let claimed = 0;
-  let stale = 0;
   let budgetExhausted = false;
   // The UTC day of the LAST successful budget reservation this run, and
   // whether a second (earlier) day was also touched — a run straddling UTC
@@ -234,29 +228,28 @@ export async function POST(req: Request): Promise<Response> {
     if (day !== lastReservedDay) touchedEarlierDay = true;
     lastReservedDay = day;
 
+    // One reservation, one real build (see the file header): never the
+    // cached getConditions, whose expired entry would cost a second unit.
+    // The build runs under its own subrequest budget: a cold build is ~25
+    // outbound calls, but a broad upstream outage can retry every source at
+    // once and cross Workers' 50-per-request ceiling, which kills the
+    // request with no warning. 44 leaves room for the cam-feed fetch below.
+    // A build the gate had to cut short is incomplete in a way the row
+    // can't record, so it is not archived; the claim ages out and a later
+    // tick retries.
+    const buildBudget = new SubrequestBudget(ARCHIVE_BUILD_SUBREQUESTS);
     let res;
     try {
-      res = await getConditions(slug);
+      res = await runWithBudget(buildBudget, () => getConditionsForLocation(loc));
+      if (buildBudget.exhaustedDuringBuild) {
+        console.error("history: build hit the subrequest budget, not archived", slug);
+        res = null;
+      }
     } catch (e) {
-      console.error("history: getConditions failed", slug, e);
+      console.error("history: conditions build failed", slug, e);
       res = null;
     }
     if (!res) {
-      skipped += 1;
-      continue;
-    }
-
-    // The claimed hour's own build must be current: getConditions is cached
-    // ~120s, so the snapshot in hand can still predate the hour this run
-    // just claimed. If it's older than the claimed hour's own start by more
-    // than STALE_SNAPSHOT_MS, this claim is unusable — release it (not just
-    // abandon it) so the very next tick, once the cache has turned over,
-    // retries immediately (finding #1).
-    const generatedMs = Date.parse(res.snapshot.generatedAt);
-    const claimedHourStartMs = Date.parse(claimedHourUtc);
-    if (Number.isFinite(generatedMs) && generatedMs < claimedHourStartMs - STALE_SNAPSHOT_MS) {
-      await store.releaseHistoryClaim(slug, claimedHourUtc);
-      stale += 1;
       skipped += 1;
       continue;
     }
@@ -323,7 +316,6 @@ export async function POST(req: Request): Promise<Response> {
     deduped,
     skipped,
     claimed,
-    stale,
     remaining,
     budget,
     ...(budgetExhausted ? { note: "daily build budget reached" } : {}),
