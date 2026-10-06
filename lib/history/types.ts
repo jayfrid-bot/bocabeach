@@ -2,6 +2,8 @@
 // snake_case, mirroring the D1 columns exactly — see lib/db/d1Store.ts /
 // lib/db/memoryStore.ts for the two backends that read/write these.
 
+import type { FlagColor } from "@/lib/types";
+
 export interface BeachHourlyRow {
   slug: string;
   hour_utc: string;
@@ -233,6 +235,32 @@ export interface BeachHourlyExtra {
   /** Sky events on the "Coming up" card with their visibility rating
    *  (lib/skyEvents.ts, lib/skyVisibilityQuality.ts). */
   sky?: { av: string; events: { t: string; at: string; r: string | null; s: number | null }[] };
+  /**
+   * Rain loop (scorecard): the model nowcast next to the radar reading it is
+   * later judged against. `beach_hourly.rain_now` is derived from the nowcast,
+   * so it is NOT truth; `radarMmHr`/`radarDry` are.
+   */
+  rain?: {
+    av: string;
+    /** Open-Meteo minutely_15 nowcast state. */
+    nowcast: "dry" | "raining" | null;
+    /** Minutes until that state flips (absent = no change in the next 2 h). */
+    changeInMin: number | null;
+    /** MRMS radar rain rate at the beach, mm/hr (null = no radar reading). */
+    radarMmHr: number | null;
+    /** 1 = fresh radar frame saw no rain now or in the last 20 min; 0 = it saw
+     *  rain at/near the beach or within 20 min; null = no usable frame. */
+    radarDry: 0 | 1 | null;
+    /** Age of the radar frame, minutes. */
+    radarAgeMin: number | null;
+  };
+  /** Lifeguard flags as posted (CityOfficialData.flags) and the feed status. */
+  flags?: { av: string; colors: FlagColor[]; status: string | null };
+  /** Best-day outlook for days 1..6 ahead (multiDayWindows[1..6]); day 0 is `window`. */
+  outlook?: {
+    av: string;
+    days: { date: string; peak: number | null; start: string | null; end: string | null; score: number | null }[];
+  };
 }
 
 export interface CamObservationRow {
