@@ -53,7 +53,7 @@ describe("predictNextSunEvent", () => {
     expect(pred).not.toBeNull();
     expect(pred?.kind).toBe("sunset");
     expect(pred?.eventIso).toBe(FIXTURE_SUNSET);
-    expect(pred?.score).toBe(79);
+    expect(pred?.score).toBe(78);
     expect(pred?.band).toBe("vivid");
     // No high cloud (0%) → peak color is the event itself (see peakColorTime,
     // which normalizes to a full ISO instant with milliseconds).

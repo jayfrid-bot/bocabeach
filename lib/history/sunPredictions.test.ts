@@ -89,7 +89,7 @@ describe("sunEventRowsFromConditions — 2026-10-06 Boca sunrise fixture", () =>
     expect(sunrise.model_path).toBe("factor");
     expect(sunrise.seasonal_prior).toBe(55);
     expect(sunrise.algo_version).toBe(SUN_QUALITY_VERSION);
-    expect(SUN_QUALITY_VERSION).toBe("2026-10-06.1");
+    expect(SUN_QUALITY_VERSION).toBe("2026-10-06.2");
     expect(sunrise.engine_version).toBeTruthy();
     expect(JSON.parse(sunrise.breakdown_json!)).toHaveProperty("horizonPath");
     expect(sunrise.note).toBeTruthy();
@@ -101,11 +101,17 @@ describe("sunEventRowsFromConditions — 2026-10-06 Boca sunrise fixture", () =>
       humidityPct: 87,
       aod: 0.14,
       pm2_5: 13.6,
-      horizon: { cloudPct: 40, fresh: true },
     });
     expect(sunrise.score).toBe(direct.score);
     expect(sunrise.band).toBe(direct.band);
     expect(sunrise.score).not.toBeNull();
+  });
+
+  it("rates the 2026-10-06 sunrise Amazing — the satellite's overhead cloud is recorded, not scored", () => {
+    // Ground truth: Elbo Room cam frames, docs/benchmarks/2026-10-06-sun-model.
+    expect(sunrise.band).toBe("epic");
+    expect(sunrise.score!).toBeGreaterThanOrEqual(90);
+    expect(sunrise.horizon_source).toBe("overhead");
   });
 
   it("leaves the truth columns empty and records the peak-color time", () => {

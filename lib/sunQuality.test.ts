@@ -301,15 +301,29 @@ describe("sunEventQuality — factor model", () => {
     expect(stale.breakdown!.horizonPath).toMatch(/unverified/i);
   });
 
-  it("CANVAS: peaks near the high-weighted ~50% amount and HIGH cloud counts more than mid", () => {
-    // high-weighted amount 0.5*mid+0.7*high: tune each to sit at ~50.
+  it("CANVAS: a plateau from a moderate to a near-full deck; HIGH cloud counts more than mid below it", () => {
     const balanced = sunEventQuality({ cloud: { lowPct: 0, midPct: 40, highPct: 43 }, aod: 0.1 });
     const tooClear = sunEventQuality({ cloud: { lowPct: 0, midPct: 10, highPct: 5 }, aod: 0.1 });
     expect(balanced.score!).toBeGreaterThan(tooClear.score!);
-    // 50% as all-high scores higher than 50% as all-mid (high weighted above mid).
-    const allHigh = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 71 }, aod: 0.1 });
-    const allMid = sunEventQuality({ cloud: { lowPct: 0, midPct: 71, highPct: 0 }, aod: 0.1 });
-    expect(allHigh.score!).toBeGreaterThan(allMid.score!);
+    // A big, lit deck over a clear horizon scores as well as a moderate one
+    // (2026-10-06: low 0 / mid 67 / high 48 was a top sunrise).
+    const bigDeck = sunEventQuality({ cloud: { lowPct: 0, midPct: 67, highPct: 48 }, aod: 0.1 });
+    expect(bigDeck.score!).toBe(balanced.score!);
+    // Below the plateau, the same cover as high cloud beats it as mid cloud.
+    const thinHigh = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 30 }, aod: 0.1 });
+    const thinMid = sunEventQuality({ cloud: { lowPct: 0, midPct: 30, highPct: 0 }, aod: 0.1 });
+    expect(thinHigh.score!).toBeGreaterThan(thinMid.score!);
+  });
+
+  it("CANVAS: a near-solid MID deck is a gray lid, a full HIGH veil is not", () => {
+    const solidMid = sunEventQuality({ cloud: { lowPct: 0, midPct: 100, highPct: 0 }, aod: 0.1 });
+    const fullHigh = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 72 }, aod: 0.1 });
+    expect(fullHigh.score!).toBeGreaterThan(solidMid.score! + 20);
+  });
+
+  it("a cloudless sky is clean but plain — the clear path alone earns nothing", () => {
+    const clear = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 0 }, aod: 0.1, humidityPct: 76 });
+    expect(clear.band).toBe("plain");
   });
 
   it("LOW cloud imposes a near-linear canvas + clear-path penalty", () => {
@@ -342,15 +356,20 @@ describe("sunEventQuality — factor model", () => {
     expect(smoky.score!).toBeGreaterThanOrEqual(Math.round(base.score! * 0.65) - 1);
   });
 
-  it("HUMIDITY modifier: mild penalty above 60% RH, capped at −15%; ≤60% costs nothing", () => {
+  it("HUMIDITY: no penalty when AOD measures the haze; without AOD only near-saturated air costs, capped at −8%", () => {
+    // Coastal dawn humidity (85–95%) must not dock every sunrise.
     const dry = sunEventQuality({ cloud: split, aod: 0.1, humidityPct: 40 });
-    const at60 = sunEventQuality({ cloud: split, aod: 0.1, humidityPct: 60 });
-    const muggy = sunEventQuality({ cloud: split, aod: 0.1, humidityPct: 100 });
-    expect(dry.score).toBe(at60.score); // no penalty at/below 60
-    expect(muggy.score!).toBeLessThan(dry.score!);
-    // Floor: −15% at saturation.
-    expect(muggy.score!).toBeGreaterThanOrEqual(Math.round(dry.score! * 0.85) - 1);
-    expect(muggy.breakdown!.humidity).toMatch(/muggy/i);
+    const dawn = sunEventQuality({ cloud: split, aod: 0.1, humidityPct: 90 });
+    expect(dawn.score).toBe(dry.score);
+    expect(dawn.breakdown!.humidity).toBeUndefined();
+    // No AOD: 92% and below is free; saturation costs at most 8%.
+    const pmDry = sunEventQuality({ cloud: split, pm2_5: 8, humidityPct: 80 });
+    const pm92 = sunEventQuality({ cloud: split, pm2_5: 8, humidityPct: 92 });
+    const pmFog = sunEventQuality({ cloud: split, pm2_5: 8, humidityPct: 100 });
+    expect(pm92.score).toBe(pmDry.score);
+    expect(pmFog.score!).toBeLessThan(pmDry.score!);
+    expect(pmFog.score!).toBeGreaterThanOrEqual(Math.round(pmDry.score! * 0.92) - 1);
+    expect(pmFog.breakdown!.humidity).toMatch(/muggy/i);
   });
 
   it("still honest-null with no cloud reading, even when air/satellite inputs are present", () => {

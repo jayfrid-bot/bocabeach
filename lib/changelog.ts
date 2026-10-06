@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-06",
+    title: "Sharper sunrise and sunset ratings",
+    details:
+      "The sunrise and sunset color rating had been underrating big, colorful skies. It counted the very clouds that light up as clouds in the way, and it docked every humid Florida dawn. It now rewards a big cloud deck over a clear horizon, and we check it against what the beach cams actually saw. Expect more Great and Amazing calls on the mornings that earn them, and fewer on clear, plain skies.",
+    tag: "improved",
+  },
+  {
     date: "2026-10-01",
     title: "No more \"best time\" on a bad day",
     details:

@@ -30,7 +30,7 @@
  * tell which formula produced which score. BUMP IT whenever a curve, weight,
  * threshold, or band cutoff in this module changes.
  */
-export const SUN_QUALITY_VERSION = "2026-10-06.1";
+export const SUN_QUALITY_VERSION = "2026-10-06.2";
 
 export type SunEventKind = "sunrise" | "sunset";
 
@@ -172,12 +172,13 @@ const LEVEL_BASED_CURVE: readonly (readonly [number, number])[] = [
   [0, 40],
   [10, 52],
   [20, 68],
-  [30, 90],
-  [45, 97],
-  [60, 90],
-  [75, 60],
-  [85, 35],
-  [100, 15],
+  [30, 88],
+  [45, 96],
+  [60, 97],
+  [75, 95],
+  [85, 82],
+  [92, 58],
+  [100, 25],
 ];
 
 /**
@@ -232,10 +233,17 @@ function humidityBonus(humidityPct: number | undefined): number {
 // --- richer FACTOR MODEL (engaged when the complete level split plus at least
 // one atmospheric/satellite signal is available) ----------------------------
 //
-// Composite = 0.40·clearPath + 0.40·canvas + 0.20·seasonalPrior, then scaled by
+// Composite = 0.85·canvas·(clearPath/100) + 0.15·seasonalPrior, then scaled by
 // multiplicative aerosol × humidity modifiers. Every constant below is a tuned
 // HEURISTIC unless flagged otherwise — the low-cloud clear-path blocker is the
 // well-supported physics (Corfidi/NOAA); the exact slopes are judgement calls.
+
+/** The high-weighted cloud amount (0.5·mid + 0.7·high) over which the canvas
+ *  scores full marks. Was a single 50 peak; a near-full mid/high deck over a
+ *  clear horizon is the classic vivid sunrise (it is all lit from below), so
+ *  the top is a plateau, falling off only once the deck is thick enough to
+ *  read as overcast. HEURISTIC, calibrated on docs/benchmarks/2026-10-06-sun-model. */
+const CANVAS_PLATEAU: readonly [number, number] = [35, 80];
 
 /**
  * CANVAS: how good the cloud "screen" overhead is at catching color. Peaks when
@@ -246,7 +254,16 @@ function humidityBonus(humidityPct: number | undefined): number {
  * slopes. Spec formula, clamped 0-100.
  */
 function canvasScore(lowPct: number, midPct: number, highPct: number): number {
-  return clamp(100 - Math.abs(0.5 * midPct + 0.7 * highPct - 50) * 2.2 - lowPct * 0.9, 0, 100);
+  const amount = 0.5 * midPct + 0.7 * highPct;
+  const offPlateau = amount < CANVAS_PLATEAU[0] ? CANVAS_PLATEAU[0] - amount : amount > CANVAS_PLATEAU[1] ? amount - CANVAS_PLATEAU[1] : 0;
+  return clamp((100 - offPlateau * 2.2 - lowPct * 0.9) * solidMidDeckFactor(midPct), 0, 100);
+}
+
+/** A near-solid MID deck (altostratus, > 85%) is usually a gray lid that
+ *  blocks the low sun; a full HIGH veil (thin cirrostratus) still lights up,
+ *  so only mid cover is penalized: 1.0 at 85% down to 0.6 at 100%. HEURISTIC. */
+function solidMidDeckFactor(midPct: number): number {
+  return midPct <= 85 ? 1 : clamp(1 - ((midPct - 85) / 15) * 0.4, 0.6, 1);
 }
 
 /**
@@ -287,11 +304,15 @@ function aerosolModifier(aod: number | undefined, pm2_5: number | undefined): nu
   return m;
 }
 
-/** HUMIDITY modifier (multiplicative): mild penalty above 60% RH, capped at
- *  −15% (reached near saturation). HEURISTIC slope. */
-function humidityModifier(humidityPct: number | undefined): number {
-  if (humidityPct == null || humidityPct <= 60) return 1;
-  return clamp(1 - (humidityPct - 60) * 0.00375, 0.85, 1); // 60%→1.0, 100%→0.85
+/** HUMIDITY modifier (multiplicative). Humidity was a stand-in for haze, and
+ *  a coastal dawn sits at 85–95% RH almost every day, so a penalty from 60%
+ *  docked nearly every Florida sunrise ~10%. When an aerosol reading (AOD)
+ *  is present it measures the haze directly, so humidity adds nothing.
+ *  Without one, only near-saturated air (fog/mist risk, > 92%) costs a
+ *  little, capped at −8%. HEURISTIC. */
+function humidityModifier(humidityPct: number | undefined, hasAerosol: boolean): number {
+  if (hasAerosol || humidityPct == null || humidityPct <= 92) return 1;
+  return clamp(1 - (humidityPct - 92) * 0.01, 0.92, 1);
 }
 
 /** Neutral, near-flat seasonal color prior (26°N has little seasonal swing). */
@@ -319,9 +340,12 @@ function factorModelQuality(
   const { score: clearPath, verified } = clearPathScore(lowPct, input.horizon);
   const prior = clamp(input.seasonalPrior ?? DEFAULT_SEASONAL_PRIOR, 0, 100);
 
-  const base = 0.4 * clearPath + 0.4 * canvas + 0.2 * prior;
+  // Color needs a canvas AND a beam that reaches it: the clear path scales
+  // the canvas rather than adding to it, so a cloudless sky (perfect path,
+  // nothing to paint) stays "Fair" instead of collecting free points.
+  const base = 0.85 * canvas * (clearPath / 100) + 0.15 * prior;
   const aeroMod = aerosolModifier(input.aod, input.pm2_5);
-  const humidMod = humidityModifier(input.humidityPct);
+  const humidMod = humidityModifier(input.humidityPct, input.aod != null);
   const score = Math.round(clamp(base * aeroMod * humidMod, 0, 100));
   const band = bandFor(score);
 
@@ -473,7 +497,7 @@ export function sunEventQuality(input: SunEventQualityInput): SunEventQuality {
 
   if (hasLevelSplit) {
     midHigh = combineMidHigh(cloud!.midPct ?? 0, cloud!.highPct ?? 0);
-    base = lerpCurve(midHigh, LEVEL_BASED_CURVE) * lowCloudFactor(lowPct);
+    base = lerpCurve(midHigh, LEVEL_BASED_CURVE) * lowCloudFactor(lowPct) * solidMidDeckFactor(cloud!.midPct ?? 0);
   } else {
     const total = clamp(cloud!.totalPct ?? 0, 0, 100);
     base = lerpCurve(total, TOTAL_ONLY_CURVE);
