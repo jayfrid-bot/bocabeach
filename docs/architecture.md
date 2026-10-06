@@ -149,7 +149,9 @@ flowchart LR
   HIST -->|getConditions per beach<br/>daylight-only for auto beaches| PIPE
   HIST -->|"beach_hourly (score as shown + inputs, plus extra_json:<br/>surf, sand, rip, storm, feels-like, water trend, vs-average,<br/>safety levels, best window, sky ratings — lib/history/extra.ts),<br/>history_budget (free-tier guard, 600 builds/UTC-day;<br/>HISTORY_ENABLED=off pauses it)"| D1[(D1 isitbeachday-plus)]
   HIST -->|"sun_event_predictions (migrations/0013): next sunrise + next sunset,<br/>one row per beach per archive hour, score + every input,<br/>one multi-row upsert — lib/history/sunPredictions.ts,<br/>same assembleSunEventQuality as the card and the alert;<br/>never fails the beach_hourly row"| D1
-  BACKFILL[scripts/backfill_cam_history.mjs] -->|cam_observations| D1
+  SDATA -->|"history[] + latest/morning per-cam reads, read through the same<br/>lib/sources/camFeed.ts URL resolver the live sources use"| HIST
+  HIST -->|"cam_observations (every history[] read not yet stored: crowd, seaweed, water,<br/>clarity, underwater uw) + cam_reads (per-cam detail), migrations 0006/0014,<br/>INSERT OR IGNORE, vision-cam beaches only (config/vision-cams.json),<br/>lib/history/camObservations.ts; a feed failure never fails the beach_hourly row"| D1
+  BACKFILL["scripts/backfill_cam_history.mjs (one-shot; shares<br/>lib/history/camObservationRow.mjs with the archiver)"] -->|cam_observations| D1
   UWFRAME -->|one headless-Chrome launch/tick,<br/>reused across every cam + the flag read| UWKV[(UW_FRAME KV<br/>frame:&lt;id&gt;, meta:&lt;id&gt;,<br/>flags:deerfield-beach, flags:fort-lauderdale)]
 ```
 

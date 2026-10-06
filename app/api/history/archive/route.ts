@@ -97,6 +97,7 @@ import { getLocation } from "@/config/locations";
 import { getStore } from "@/lib/db/store";
 import { hourUtcOf, rowFromConditions } from "@/lib/history/archive";
 import { sunEventRowsFromConditions } from "@/lib/history/sunPredictions";
+import { archiveCamObservations, hasVisionCamFeed } from "@/lib/history/camObservations";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -271,6 +272,17 @@ export async function POST(req: Request): Promise<Response> {
         if (sunRows.length) await store.upsertSunEventPredictions(sunRows);
       } catch (e) {
         console.error("history: sun-event predictions failed", slug, e);
+      }
+      // Cam reads (cam_observations + cam_reads, migrations 0006/0014): keep the
+      // cam archive current from the beach's published vision feed. Same rule —
+      // a feed that is down or malformed logs and is skipped, never failing the
+      // beach_hourly row.
+      if (hasVisionCamFeed(slug)) {
+        try {
+          await archiveCamObservations(store, slug);
+        } catch (e) {
+          console.error("history: cam observations failed", slug, e);
+        }
       }
       await store.completeHistoryClaim(slug, claimedHourUtc, Date.now());
       if (written) archived += 1;

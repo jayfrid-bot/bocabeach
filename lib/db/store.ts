@@ -19,6 +19,8 @@ import type { NativeSub } from "@/lib/push/nativeStore";
 import type {
   ArchiveCandidate,
   BeachHourlyRow,
+  CamObservationRow,
+  CamReadRow,
   HistoryRecordsResult,
   SunEventPredictionRow,
 } from "@/lib/history/types";
@@ -308,6 +310,20 @@ export interface DeviceStore {
    * columns are never touched. Kept permanently. Returns rows changed.
    */
   upsertSunEventPredictions(rows: SunEventPredictionRow[]): Promise<{ written: number }>;
+  // --- Cam archive (migrations/0006 cam_observations + 0014 cam_reads) ------
+  /** Newest `captured_at_utc` stored for a beach, or null when none. */
+  latestCamObservationUtc(slug: string): Promise<string | null>;
+  /** Stored `captured_at_utc` values for a beach at or after `sinceUtc`. */
+  camObservationUtcsSince(slug: string, sinceUtc: string): Promise<string[]>;
+  /** INSERT OR IGNORE on (slug, captured_at_utc) — re-archiving the same feed
+   *  entry is a no-op. Returns rows actually inserted. */
+  insertCamObservations(rows: CamObservationRow[]): Promise<{ written: number }>;
+  /** INSERT OR IGNORE on (slug, captured_at_utc, cam_id). */
+  insertCamReads(rows: CamReadRow[]): Promise<{ written: number }>;
+  /** A beach's stored cam observations at or after `sinceUtc`, oldest first. */
+  camObservationsSince(slug: string, sinceUtc: string): Promise<CamObservationRow[]>;
+  /** Every stored per-cam read for one beach + capture instant. */
+  camReadsAt(slug: string, capturedAtUtc: string): Promise<CamReadRow[]>;
   /** Every prediction logged for one beach's one event, oldest `as_of_hour_utc`
    *  first — how the forecast for that event evolved as it approached. */
   sunEventPredictionsFor(slug: string, eventIso: string): Promise<SunEventPredictionRow[]>;

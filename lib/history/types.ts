@@ -193,6 +193,29 @@ export interface CamObservationRow {
   uw_pct: number | null;
   source: "feed" | "live";
   raw_json: string | null;
+  /** Busiest-cam crowd word (migration 0014). */
+  crowd_level: string | null;
+  /** Underwater read's level word (migration 0014). */
+  uw_level: string | null;
+}
+
+/** One cam's own read within a capture (migrations/0014 `cam_reads`). */
+export interface CamReadRow {
+  slug: string;
+  captured_at_utc: string;
+  cam_id: string;
+  cam_name: string | null;
+  seaweed_level: string | null;
+  cov_pct: number | null;
+  seaweed_note: string | null;
+  crowd_level: string | null;
+  crowd_pct: number | null;
+  people: number | null;
+  crowd_note: string | null;
+  water_word: string | null;
+  water_pct: number | null;
+  water_note: string | null;
+  raw_json: string | null;
 }
 
 /** A served beach with just enough to decide whether/when to archive it. */

@@ -2,9 +2,10 @@
 // (no network); the store is the real in-memory backend vitest always gets
 // (lib/db/store.ts `getStore`).
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { scorableResponse } from "@/lib/alerts/fixtures";
-import { hourUtcOf } from "@/lib/history/archive";
+import { hourUtcOf, rowFromConditions } from "@/lib/history/archive";
+import { getLocation } from "@/config/locations";
 
 const ctl = vi.hoisted(() => ({
   conditionsCalls: [] as string[],
@@ -47,7 +48,19 @@ function post(query = ""): Promise<Response> {
   );
 }
 
+// The route now also reads each vision-cam beach's published feed; no test may
+// touch the real network, so every test starts with a feed that is down.
+const feedCtl = vi.hoisted(() => ({ doc: null as unknown, mode: "down" as "down" | "doc" }));
+
 beforeEach(() => {
+  feedCtl.mode = "down";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => {
+      if (feedCtl.mode === "down") throw new Error("cam feed down (test)");
+      return new Response(JSON.stringify(feedCtl.doc), { status: 200 });
+    }),
+  );
   resetMemoryStore();
   ctl.conditionsCalls = [];
   ctl.fail = new Set();
@@ -55,6 +68,10 @@ beforeEach(() => {
   process.env.CRON_SECRET = SECRET;
   delete process.env.HISTORY_MAX_BUILDS_PER_DAY;
   delete process.env.HISTORY_ENABLED;
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 describe("auth", () => {
@@ -296,5 +313,62 @@ describe("overlapping cron calls (claim race)", () => {
     for (const [slug, n] of counts) {
       expect(n, `${slug} was fetched ${n} times`).toBe(1);
     }
+  });
+});
+
+// Make `slug` the ONLY candidate left this hour by giving every other beach a
+// row for the current UTC hour already.
+async function onlyCandidate(slug: string): Promise<void> {
+  const store = await getStore();
+  const nowMs = Date.now();
+  for (const c of await store.listArchiveCandidates(nowMs)) {
+    if (c.slug === slug) continue;
+    const loc = getLocation(c.slug)!;
+    await store.upsertBeachHourly(rowFromConditions(scorableResponse(), loc, nowMs, { hourUtc: hourUtcOf(nowMs) }));
+  }
+}
+
+describe("cam observations in the same pass (migrations 0006/0014)", () => {
+  const feed = {
+    latest: { capturedAtLocal: "2026-10-06T08:00-04:00", cams: [{ id: "a", name: "A", level: "low" }] },
+    history: [
+      { t: "2026-10-06T07:00-04:00", level: "light", crowdPct: 10, seaweed: "low", cov: 5 },
+      { t: "2026-10-06T08:00-04:00", level: "light", crowdPct: 12, seaweed: "low", cov: 6 },
+    ],
+  };
+
+  it("archives a vision beach's feed history and per-cam reads alongside its beach_hourly row", async () => {
+    await onlyCandidate("boca-raton");
+    feedCtl.mode = "doc";
+    feedCtl.doc = feed;
+    const json = (await (await post()).json()) as { archived: number };
+    expect(json.archived).toBe(1);
+    const store = await getStore();
+    const obs = await store.camObservationsSince("boca-raton", "2026-01-01T00:00:00.000Z");
+    expect(obs.map((o) => o.captured_at_utc)).toEqual(["2026-10-06T11:00:00.000Z", "2026-10-06T12:00:00.000Z"]);
+    expect(await store.camReadsAt("boca-raton", "2026-10-06T12:00:00.000Z")).toHaveLength(1);
+  });
+
+  it("a cam feed that is down never breaks the beach_hourly write", async () => {
+    await onlyCandidate("boca-raton");
+    feedCtl.mode = "down";
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const json = (await (await post()).json()) as { archived: number; skipped: number };
+    expect(json.archived).toBe(1);
+    expect(json.skipped).toBe(0);
+    expect(err).toHaveBeenCalled();
+    const store = await getStore();
+    expect(await store.latestCamObservationUtc("boca-raton")).toBeNull();
+    err.mockRestore();
+  });
+
+  it("a malformed feed body is skipped too", async () => {
+    await onlyCandidate("boca-raton");
+    feedCtl.mode = "doc";
+    feedCtl.doc = "not an object";
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const json = (await (await post()).json()) as { archived: number };
+    expect(json.archived).toBe(1);
+    err.mockRestore();
   });
 });

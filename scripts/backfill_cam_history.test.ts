@@ -55,6 +55,8 @@ describe("rowFromHistoryEntry", () => {
       water_word: "murky",
       uw_pct: null,
       source: "feed",
+      crowd_level: null,
+      uw_level: null,
     });
     expect(JSON.parse(row!.raw_json)).toMatchObject({ seaweed: "moderate" });
   });
