@@ -31,6 +31,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: lib/changelog.dates.test.ts checks every changelog
+          # date against the commit that added it, which a shallow clone
+          # (one commit) can't answer.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
