@@ -10,25 +10,21 @@ import { getLocation } from "@/config/locations";
 const ctl = vi.hoisted(() => ({
   conditionsCalls: [] as string[],
   fail: new Set<string>(),
-  staleFor: new Set<string>(),
 }));
 
+// The route builds DIRECTLY (getConditionsForLocation), never through the
+// ~120-s getConditions cache — see the route's file header.
 vi.mock("@/lib/conditions", () => ({
-  getConditions: async (slug: string) => {
-    ctl.conditionsCalls.push(slug);
-    if (ctl.fail.has(slug)) return null;
+  getConditionsForLocation: async (loc: { slug: string }) => {
+    ctl.conditionsCalls.push(loc.slug);
+    if (ctl.fail.has(loc.slug)) throw new Error("simulated build failure");
     // The route keys `beach_hourly` by the snapshot's OWN generatedAt (see
-    // lib/history/archive.ts rowFromConditions), never the request clock — so
-    // for the idempotency test to actually collide with the current UTC hour
-    // (the one `listArchiveCandidates` checks against), the fixture must
-    // report a real "now" timestamp instead of its fixed fixture date.
+    // lib/history/archive.ts rowFromConditions) — so for the idempotency
+    // test to collide with the current UTC hour (the one
+    // `listArchiveCandidates` checks against), the fixture must report a
+    // real "now" timestamp instead of its fixed fixture date.
     const res = scorableResponse();
-    res.snapshot.generatedAt = ctl.staleFor.has(slug)
-      ? // 15 min before the START of the current claimed hour — always more
-        // than the route's 10-minute STALE_SNAPSHOT_MS threshold, no matter
-        // what minute of the hour this test happens to run at.
-        new Date(Date.parse(hourUtcOf(Date.now())) - 15 * 60 * 1000).toISOString()
-      : new Date().toISOString();
+    res.snapshot.generatedAt = new Date().toISOString();
     return res;
   },
 }));
@@ -64,7 +60,6 @@ beforeEach(() => {
   resetMemoryStore();
   ctl.conditionsCalls = [];
   ctl.fail = new Set();
-  ctl.staleFor = new Set();
   process.env.CRON_SECRET = SECRET;
   delete process.env.HISTORY_MAX_BUILDS_PER_DAY;
   delete process.env.HISTORY_ENABLED;
@@ -207,26 +202,6 @@ describe("budget guard", () => {
     const store = await getStore();
     const used = await store.getHistoryBudget(new Date().toISOString().slice(0, 10));
     expect(used).toBeLessThanOrEqual(2);
-  });
-});
-
-describe("stale snapshot vs claimed hour (Codex round-2 finding #1)", () => {
-  it("skips the write, counts it stale, and releases the claim so the very next tick can retry", async () => {
-    const target = await topCandidateSlug();
-    ctl.staleFor = new Set([target]);
-    const res1 = await post();
-    const json1 = (await res1.json()) as { archived: number; stale: number; skipped: number };
-    expect(json1.archived).toBe(0);
-    expect(json1.stale).toBe(1);
-    expect(json1.skipped).toBeGreaterThanOrEqual(1);
-
-    // Released, not merely abandoned — a call with no wait at all can
-    // reclaim it, and once the snapshot is fresh, archives it.
-    ctl.staleFor = new Set();
-    const res2 = await post();
-    const json2 = (await res2.json()) as { archived: number };
-    expect(json2.archived).toBeGreaterThan(0);
-    expect(ctl.conditionsCalls.filter((s) => s === target)).toHaveLength(2);
   });
 });
 
