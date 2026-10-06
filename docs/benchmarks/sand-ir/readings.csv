@@ -13,4 +13,7 @@ date,local_time,beach,spot,measured_low_f,measured_high_f,measured_mid_f,soil_f,
 2026-09-04,13:00,Boca Raton,dry sand,140,140,140,93,849,satellite,,,,133,pre-archive,model re-run with observed 849 W/m2
 2026-09-04,15:10,Boca Raton,dry sand,130,130,130,93,257,forecast,,98,goes-mask,94,pre-archive,phantom forecast rain + cirrus mask (fixed)
 2026-09-08,11:40,Boca Raton,dry sand,117,122,120,94,463,carried,5,80,goes-beam,126,pre-archive,model 120 after CARRY_DARKENING fix
-2026-10-06,12:57,Spanish River Beach (Boca),unknown,120,125,122.5,96,645,carried,4,0,goes-beam,133,2026-09-08.1,owner: full sun for hours, no cloud; app range was 120 surf to 133 dunes
+2026-10-06,12:57,Spanish River Beach (Boca),first reading (spot not noted),120,125,122.5,96,645,carried,4,0,goes-beam,133,2026-09-08.1,owner: full sun for hours; superseded by the three spot readings below
+2026-10-06,13:10,Spanish River Beach (Boca),surf,117,117,117,96,645,carried,4,0,goes-beam,120,2026-09-08.1,model surf end 120 (+3)
+2026-10-06,13:10,Spanish River Beach (Boca),mid-beach dry soft sand,125,125,125,96,645,carried,4,0,goes-beam,,2026-09-08.1,between the model ends
+2026-10-06,13:10,Spanish River Beach (Boca),dunes,127,129,128,96,645,carried,4,0,goes-beam,133,2026-09-08.1,model dunes end 133 (+5); measured surf-to-dunes spread 11F matches SURF_BOOST_FRACTION
