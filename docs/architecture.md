@@ -678,7 +678,7 @@ Gated like `/api/hazards`: native app only, a rate-limited deviceId (300/hr
 by IP, 60/hr by device), the install token once one is on file, then
 `entitled(device, now)` — a free device gets 403 `not-entitled`, never a
 peek at the data. The route itself never calls `getConditions`; it runs
-exactly FOUR D1 statements, all reads:
+four archive reads (auth and device hydration add their own D1 calls):
 `DeviceStore.hourlyHistory` (`WHERE slug = ? AND row_kind = 'snapshot' AND
 local_date BETWEEN ? AND ?`, capped at 31 days, for the on-screen 7/14/30-day
 strip) plus `DeviceStore.historyRecords`'s own two statements — one UNION
