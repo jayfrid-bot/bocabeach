@@ -401,13 +401,15 @@ the same pick.
 **The sunrise/sunset color alert is opt-in, standalone-only, and off by
 default**, same as coming-up. `lib/sunAlert.ts`'s `assembleSunEventQuality`
 is the ONE function both `components/SunQualityCard.tsx` and the alert
-(`predictNextSunEvent`) call for the nearest hourly cloud/humidity reading,
-current air quality, and a fresh-and-imminent satellite horizon reading —
-off the SAME conditions build the digest/Excellent check already fetched
+(`predictNextSunEvent`) call for the nearest hourly cloud/humidity reading
+and current air quality — off the SAME conditions build the digest/Excellent check already fetched
 for that beach (no extra outbound call). `predictNextSunEvent` is scored
 against the conditions snapshot's OWN `generatedAt`, not the push run's
-wall clock — that's what makes the GOES-freshness read agree with what the
-card would show for that exact snapshot. `lib/alerts/sunColor.ts`'s
+wall clock, so it agrees with what the card would show for that exact
+snapshot. The GOES reading is resolved and archived but, since sun model
+version 2026-10-06.2, not scored: near sunrise/sunset the clear-sky mask only
+has cloud overhead, which is the color canvas, not a horizon blocker
+(docs/benchmarks/2026-10-06-sun-model). `lib/alerts/sunColor.ts`'s
 `sunColorDecision` sends only when the predicted score clears the device's
 own threshold (Great-or-better, score &ge; 70, or Amazing-only, score &ge;
 90 — `lib/sunQuality.ts`'s own band cutoffs) AND the REAL wall clock falls

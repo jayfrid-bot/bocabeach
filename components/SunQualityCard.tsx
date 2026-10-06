@@ -151,20 +151,19 @@ function buildSunQualityNerdInfo(args: {
       </div>
     ),
     explainer:
-      "How colorful will this sunrise or sunset be — rich color, or clear but plain? The best ones aren't the clearest ones — they need a mid/high cloud DECK to act as a canvas the low sun's red and orange light can paint onto, AND a clear enough horizon for that low beam to reach it. Golden hour here is the 40 minutes around the event: 20 minutes before to 20 minutes after sunrise or sunset. Roughly 30-60% mid/high cloud is the color sweet spot; a perfectly clear sky is clean but plain; and a heavy LOW cloud deck sitting on the horizon blocks the beam before it reaches whatever's above.",
+      "How colorful will this sunrise or sunset be — rich color, or clear but plain? The best ones aren't the clearest ones — they need a mid/high cloud DECK to act as a canvas the low sun's red and orange light can paint onto, AND a clear enough horizon for that low beam to reach it. Golden hour here runs while the sun is between 6° above and 4° below the horizon (about 20 minutes either side when that can't be computed). Anything from a moderate to a near-full mid/high deck can light up, as long as the horizon is clear; a perfectly clear sky is clean but plain; a solid gray mid-level lid usually stays gray; and a heavy LOW cloud deck sitting on the horizon blocks the beam before it reaches whatever's above. We're starting to check the model against what the beach cams see.",
     formula:
-      "score = 0.40·clearPath + 0.40·canvas + 0.20·seasonalPrior, × aerosol × humidity modifiers. clearPath = 100 − beam-path cloud% (satellite, when a fresh sample is near the event) else 100 − low-cloud est. canvas = 100 − |0.5·mid + 0.7·high − 50|·2.2 − 0.9·low (high cloud weighted above mid). Modifiers: clean air (AOD<0.15) small bonus, haze/PM2.5 penalties (−25%/−35% caps), humidity >60% penalty (−15% cap). Peak color lags to the sun's −2°→−4° window when there's a high-cloud deck. Every constant is a tuned heuristic except the low-cloud clear-path blocker (Corfidi/NOAA). Without the atmospheric/satellite inputs, a simpler cloud-canvas curve is used instead. Golden hour is a fixed ±20-min window around sunrise/sunset; blue hour comes from a solar-elevation solve (sun at −6°) out to the golden window's edge.",
+      "score = 0.85·canvas·(clearPath ÷ 100) + 0.15·seasonalPrior, × aerosol × humidity modifiers — the clear path scales the canvas, so a cloudless sky earns little. clearPath = 100 for low cloud ≤20%, then falls to 0 at 90% (forecast low cloud). canvas = 100 − 2.2·(distance of 0.5·mid + 0.7·high outside 35–80), × a solid-mid-deck factor (1.0 at ≤80% mid down to 0.35 at 100%). Modifiers: clean air (AOD<0.15) small bonus, haze/PM2.5 penalties (−25%/−35% caps); humidity only when there's no aerosol reading, and only above 92% (−8% cap). Calibrated on Jul–Oct 2026 Boca history so ~20% of events score Great or better and ~10% Amazing. Peak color lags to the sun's −2°→−4° window when there's a high-cloud deck. Every constant is a tuned heuristic except the low-cloud clear-path blocker (Corfidi/NOAA). Without the low/mid/high split, a flatter total-cloud curve is used instead. Golden hour is the sun between +6° and −4° (a ±20-min window only as a fallback); blue hour comes from a solar-elevation solve (sun at −6°) out to the golden window's edge.",
     computation,
     sources: [
       "Open-Meteo hourly forecast — cloud cover by level (low/mid/high) + humidity",
       "Open-Meteo air quality — aerosol optical depth (CAMS) + PM2.5",
-      "NOAA GOES-19 ABI — beam-path cloud (horizon clearness), when fresh",
       "Sun/golden-hour times — computed locally (NOAA solar-position algorithm)",
     ],
     notes: knownTotalOnly
       ? "Cloud-by-level wasn't available for this hour, so this falls back to total cloud cover on a flatter, more conservative curve — the real color potential could be higher or lower."
       : b && b.horizonPath.startsWith("~")
-        ? "The horizon path here is estimated from low cloud, not confirmed by satellite (no fresh beam-path sample near the event) — treat clear-path as a best guess."
+        ? "The horizon path is estimated from the forecast's low cloud. The satellite can't tell a low deck on the horizon from the high deck that lights up, so it isn't used here."
         : "Needs BOTH a moderate mid/high deck AND a low deck that stays out of the way. Peak-color timing and the modifiers are research-informed heuristics, not guarantees.",
   };
 }

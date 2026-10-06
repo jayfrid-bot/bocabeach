@@ -12,6 +12,7 @@
 
 import type { ConditionsResponse } from "@/lib/types";
 import {
+  lowCloudClearPath,
   nearestHourlyPoint,
   nextSunEvent,
   peakColorTime,
@@ -145,22 +146,25 @@ export function assembleSunEventQuality(
     inputs.nowMs,
   );
 
+  // The satellite reading is recorded (horizon / horizonSource, archived to
+  // sun_event_predictions) but NOT scored. The GOES clear-sky mask cannot
+  // tell cloud heights apart, and near sunrise/sunset (sun < 5°) there is no
+  // beam-path reading at all, so the only number available was cloud
+  // OVERHEAD — the very deck that lights up. Scoring it as "cloud blocking
+  // the horizon" capped every satellite-fresh event at ~62: never "Great"
+  // (2026-10-06 Boca sunrise, docs/benchmarks/2026-10-06-sun-model). The
+  // horizon gap comes from the forecast's low cloud instead.
   const result = sunEventQuality({
     cloud: point?.cloud,
     humidityPct: point?.humidityPct,
     aod: inputs.airQuality?.aod,
     pm2_5: inputs.airQuality?.pm2_5,
-    horizon,
   });
 
-  // Same rough clear-path estimate the card uses purely for the peak-color
-  // "reasonably clear" gate — mirrors the factor model's clearPath: fresh
-  // beam, else a low-cloud estimate.
-  const clearPathEstimate = horizon?.fresh
-    ? Math.max(0, 100 - horizon.cloudPct)
-    : point?.cloud.lowPct != null
-      ? Math.max(0, 100 - point.cloud.lowPct * 1.1)
-      : undefined;
+  // Same rough clear-path estimate the factor model uses, purely for the
+  // peak-color "reasonably clear" gate.
+  const clearPathEstimate =
+    point?.cloud.lowPct != null ? lowCloudClearPath(point.cloud.lowPct) : undefined;
   const peak = peakColorTime({
     event: event.event,
     eventIso: event.timeIso,
