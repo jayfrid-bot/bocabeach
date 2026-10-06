@@ -807,6 +807,15 @@ describe("windowMetrics", () => {
     expect(r.skipped.incompleteDay).toBe(1);
   });
 
+  it("leaves out a day whose rows were scored by two engine versions (a deploy day)", () => {
+    const mixed = dayRows({ date: "2026-10-06", scores: flat(60), window: { start: 9, end: 14, score: 60 } }).map((r) =>
+      r.local_hour >= 13 ? { ...r, engine_version: "2026-10-06.1" } : { ...r, engine_version: "2026-09-28.2" },
+    );
+    const r = windowMetrics([...mixed, closer("2026-10-07")], { min: 1 });
+    expect(r.skipped.versionMixed).toBe(1);
+    expect(r.ready).toBe(false);
+  });
+
   it("only daylight hours count; night scores are ignored", () => {
     // Night hours 0..6 and 19..23 score 100 and would dominate if counted.
     const scores = { ...flat(50), 0: 100, 1: 100, 2: 100, 3: 100, 22: 100, 23: 100 };

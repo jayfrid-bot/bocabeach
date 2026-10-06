@@ -137,6 +137,7 @@ function toHourly(r: Row): HourlyRow {
     local_hour: Number(r.local_hour),
     score: typeof r.score === "number" ? r.score : null,
     has_extra: Number(r.has_extra) === 1,
+    engine_version: typeof r.engine_version === "string" ? r.engine_version : null,
     window: jsonOf(r.win) as HourlyRow["window"],
     rain: jsonOf(r.rain) as HourlyRow["rain"],
     flags: jsonOf(r.flags) as HourlyRow["flags"],

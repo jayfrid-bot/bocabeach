@@ -14,7 +14,7 @@ export const SUN_PRED_COLS =
  * extra_json. `win` not `window`: WINDOW is an SQL keyword.
  */
 export function hourlyQuery(fromIso: string, toIso: string): string {
-  return `SELECT slug, hour_utc, local_date, local_hour, score,
+  return `SELECT slug, hour_utc, local_date, local_hour, score, engine_version,
   CASE WHEN extra_json IS NULL THEN 0 ELSE 1 END AS has_extra,
   json_extract(extra_json, '$.window') AS win,
   json_extract(extra_json, '$.rain') AS rain,

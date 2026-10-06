@@ -438,6 +438,8 @@ export interface HourlyRow {
   score: number | null;
   /** Whether extra_json was non-null. */
   has_extra: boolean;
+  /** lib/score.ts SCORING_ENGINE_VERSION the row was scored with. */
+  engine_version?: string | null;
   window?: WindowBlock | null;
   rain?: RainBlock | null;
   flags?: FlagsBlock | null;
@@ -637,7 +639,7 @@ export function rainMetrics(
 // 3. Best window and the multi-day outlook
 // ============================================================================
 
-export type WindowRow = Pick<HourlyRow, "slug" | "local_date" | "local_hour" | "hour_utc" | "score" | "window"> & {
+export type WindowRow = Pick<HourlyRow, "slug" | "local_date" | "local_hour" | "hour_utc" | "score" | "window" | "engine_version"> & {
   outlook?: OutlookBlock | null;
 };
 
@@ -666,6 +668,10 @@ export interface WindowResult {
      *  (the normal pattern while the archive loses afternoons). */
     censoredDay: number;
     noEarlyWindow: number;
+    /** Days whose rows were scored by more than one scoring-engine version
+     *  (a deploy day): a morning forecast and the afternoon it is graded
+     *  against would come from different curves, so the day is left out. */
+    versionMixed: number;
   };
   /** Mean length of the predicted windows, hours. */
   meanWindowHours: number | null;
@@ -775,7 +781,7 @@ export function windowMetrics(
     lastDate.set(slug, last);
   }
 
-  const skipped = { incompleteDay: 0, censoredDay: 0, noEarlyWindow: 0 };
+  const skipped = { incompleteDay: 0, censoredDay: 0, noEarlyWindow: 0, versionMixed: 0 };
   /** Realized daylight scores per finished, well-covered (slug, date). */
   const complete = new Map<string, { slug: string; date: string; day: Day }>();
   for (const [slug, m] of days) {
@@ -786,6 +792,10 @@ export function windowMetrics(
       }
       if (!day.daylight || !dayCoverageOk(day.scores.keys(), day.daylight)) {
         skipped.censoredDay++;
+        continue;
+      }
+      if (new Set(day.rows.map((r) => r.engine_version ?? "unknown")).size > 1) {
+        skipped.versionMixed++;
         continue;
       }
       complete.set(`${slug}|${date}`, { slug, date, day });
