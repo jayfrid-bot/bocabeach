@@ -124,10 +124,10 @@ describe("nerdInfo registry quotes the REAL score.ts constants", () => {
     expect(info.formula).toContain("55");
   });
 
-  it("comfort/dew point: 8% weight, ≤60°F baseline quoted", () => {
+  it("comfort/dew point: 8% weight, ≤65°F baseline quoted", () => {
     const info = buildNerdInfo("dewPoint", ctx);
     expect(info.weightPct).toBe(8);
-    expect(info.formula).toContain("60");
+    expect(info.formula).toContain("65");
     // RH 88 > 85 → the extra Comfort penalty branch fires
     expect(info.computation.join(" ")).toContain(">85");
   });

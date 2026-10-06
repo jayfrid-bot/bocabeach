@@ -16,7 +16,7 @@
 import type { ReactNode } from "react";
 import type { ConditionsSnapshot } from "@/lib/types";
 import type { Derived, MetricSource } from "@/lib/score";
-import { currentHourOf, satelliteBeamCloudPct, satelliteCloudPct } from "@/lib/score";
+import { currentHourOf, satelliteBeamCloudPct, satelliteCloudPct, COMFORT_FREE_DEW_F, COMFORT_PER_DEG_F } from "@/lib/score";
 import { afternoonBoostFactor, hoursFromSolarNoon } from "@/lib/sandTemp";
 import { computeStormActivity } from "@/lib/stormActivity";
 import { clarityDisplayWord } from "@/lib/sources/clarity";
@@ -389,7 +389,7 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
     const computation =
       dew != null
         ? (() => {
-            const base = clamp(100 - Math.max(0, dew - 60) * 5, 0, 100);
+            const base = clamp(100 - Math.max(0, dew - COMFORT_FREE_DEW_F) * COMFORT_PER_DEG_F, 0, 100);
             const s = rh != null && rh > 85 ? clamp(base - (rh - 85) * 1.5, 0, 100) : base;
             const lines = [`${dew}°F dew pt → base ${r0(base)}/100`];
             if (rh != null && rh > 85) lines.push(`RH ${rh}% >85 → ${r0(s)}/100`);
@@ -401,8 +401,8 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
       title: "Comfort",
       weightPct: SCORE_WEIGHTS_PCT.comfort,
       explainer:
-        "Dew point, not raw humidity, is what actually tells you how oppressive the air feels — the higher it climbs, the less your sweat can evaporate to cool you. Below 60°F is crisp and comfortable (a perfect Comfort score); by the upper 70s the air feels like a wet blanket and Comfort bottoms out. Extremely humid air piles on a further penalty on top of that.",
-      formula: "comfortScore = 100 − max(0, dewPointF − 60) × 5  (≤60°F=100; 68→60, 72→40, ≥80→0), then −(RH−85)×1.5 if RH>85",
+        "Dew point, not raw humidity, is what actually tells you how oppressive the air feels — the higher it climbs, the less your sweat can evaporate to cool you. The curve is tuned for the shore, where the water and a sea breeze take the edge off: up to 65°F is crisp (a perfect Comfort score), 70°F is a little sticky, and by 80°F the air is a wet blanket and Comfort is down a third. Extremely humid air piles on a further penalty on top of that.",
+      formula: "comfortScore = 100 − max(0, dewPointF − 65) × 2.5  (≤65°F=100; 70→88, 75→75, 80→63), then −(RH−85)×1.5 if RH>85",
       computation,
       sources: src(
         `Median of ${snap.weather.source} · ${snap.metno.source} · ${snap.hourly.source} · ${snap.gfs.source}`,

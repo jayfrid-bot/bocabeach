@@ -124,12 +124,15 @@ function reasonsFor(d: Derived, result: ScoreResult): {
   // Comfort — dew point.
   if (d.dewPointF != null) {
     const dp = d.dewPointF;
+    // Wording follows the dew point itself, not only the sub-score band: the
+    // shore-tuned curve scores 70–75°F as "helping" (88–75), which is sticky
+    // air the sea breeze is making bearable, not dry air.
     push(
       "comfort",
-      "Air feels dry and comfortable",
-      dp >= 75
+      dp <= 65 ? "Air feels dry and comfortable" : `Air is a little sticky (${dp}°F dew pt), but the sea breeze helps`,
+      dp >= 80
         ? `Air is oppressive and muggy (${dp}°F dew pt)`
-        : `Air is sticky (${dp}°F dew pt)`,
+        : `Air is muggy (${dp}°F dew pt)`,
     );
   }
 

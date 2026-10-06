@@ -935,10 +935,12 @@ describe("scoring (Beach Day only — no surf)", () => {
         (s) => s.key === "comfort",
       )!.score;
     expect(comfort({ dewPointF: 58 })).toBe(100); // dry & comfortable
-    expect(comfort({ dewPointF: 68 })).toBe(60); // sticky
-    expect(comfort({ dewPointF: 75 })).toBe(25); // oppressive
-    // 65°F dew pt = 75, then -(95-85)*1.5 = -15 for very high humidity
-    expect(comfort({ dewPointF: 65, humidityPct: 95 })).toBe(60);
+    expect(comfort({ dewPointF: 65 })).toBe(100); // still free at the shore
+    expect(comfort({ dewPointF: 70 })).toBe(88); // a little sticky (87.5 rounded)
+    expect(comfort({ dewPointF: 75 })).toBe(75); // muggy
+    expect(comfort({ dewPointF: 80 })).toBe(63); // wet blanket (62.5 rounded)
+    // 65°F dew pt = 100 at the shore, minus the RH add-on: 100 − (95−85)×1.5
+    expect(comfort({ dewPointF: 65, humidityPct: 95 })).toBe(85);
     expect(comfort({})).toBeNull(); // no dew point -> excluded from the average
   });
 

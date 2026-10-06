@@ -518,7 +518,7 @@ function windowSection(s: Section<WindowResult>): string {
     "",
     `- Complete days: ${r.completeDays}.`,
     `- Of those, with a window named by 10 AM: ${r.daysScored}. ${r.ready ? "Enough to score." : `Status: ${r.collecting}.`}`,
-    `- Left out: ${r.skipped.censoredDay} censored days (missing hours), ${r.skipped.incompleteDay} still in progress, ${r.skipped.noEarlyWindow} with no early window.`,
+    `- Left out: ${r.skipped.censoredDay} censored days (missing hours), ${r.skipped.versionMixed} scored by two model versions (a deploy day), ${r.skipped.incompleteDay} still in progress, ${r.skipped.noEarlyWindow} with no early window. Outlook forecasts skipped across a model change: ${r.skipped.outlookVersionMismatch}.`,
   ];
   if (r.ready) {
     out.push(

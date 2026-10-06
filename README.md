@@ -24,16 +24,19 @@ A single composite **Beach Day** score (0–100), weighted for beachgoers:
 
 | Sub-score | Weight |
 |-----------|:------:|
-| Air temperature | 18% |
-| Sky / precipitation | 18% |
-| Wind (calmness) | 14% |
-| Water temperature | 11% |
-| Comfort (mugginess) | 9% |
-| Sea state (swim calmness) | 8% |
+| Air temperature | 16% |
+| Sky / precipitation | 16% |
+| Sea state (swim calmness) | 14% |
+| Wind (sea breeze) | 13% |
+| Water temperature | 9% |
+| Comfort (mugginess) | 8% |
+| Sand temperature (barefoot) | 8% |
 | Seaweed (sargassum) | 7% |
-| Water quality | 6% |
 | Crowds | 5% |
 | UV index | 4% |
+
+Water quality is not a weight: an advisory caps the whole score (see `lib/score.ts`,
+`DEFAULT_SCORING`, which is the source of truth for this table).
 
 **Seaweed** and **Crowds** are scored from 0–100 numbers the vision model reads off the
 cams (seaweed = % of shore covered; crowds = how full the beach looks), interpolated through
@@ -41,8 +44,9 @@ calibrated anchors; both fall back to the categorical bins when no number is ava
 seaweed's moderate/high **caps** stay keyed to the category for a stable headline.
 
 **Comfort** is driven by the **dew point** — the real "how heavy does the air feel" signal
-(sweat can't evaporate as it climbs): ≤60°F is comfortable, 65–69°F gets sticky, ≥70°F is
-oppressive. Relative humidity is shown alongside it (and adds a small extra penalty above
+(sweat can't evaporate as it climbs), tuned for the shore where the water and sea breeze
+take the edge off: ≤65°F is comfortable, 70°F is a little sticky, 80°F is a wet blanket
+(comfort down about a third). Relative humidity is shown alongside it (and adds a small extra penalty above
 85%), but the score leans on dew point because humidity alone is ambiguous.
 
 Official lifeguard **flags and hazards act as safety overrides**. We separate a true
