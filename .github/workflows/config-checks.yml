@@ -4,8 +4,13 @@ name: Config checks
 # of silent data bug at commit time rather than on the beach. First guard: every
 # beach must have an NDBC station that actually reports wave height, so wave
 # height can never silently fall back to the (nearshore-biased) forecast model
-# — the 2026-09-18 Boca bug (see lib/sources/ndbcStations.ts). vitest does not
-# otherwise run in CI, so this is its own fast job.
+# — the 2026-09-18 Boca bug (see lib/sources/ndbcStations.ts).
+#
+# Second step: the full unit suite (~15 s). It used to run only on laptops,
+# so 26 tests whose fixtures had expired against the real clock sat red for
+# four days unnoticed (2026-10-02 to 2026-10-06). Expect it to go red each
+# January until config/meteorShowers.ts carries the coming year — that check
+# is a deliberate yearly reminder.
 #
 # The live NDBC audit in ndbcStations.test.ts is OFF here on purpose (it needs
 # network + station uptime); run it by hand with NDBC_LIVE_CHECK=1 to re-verify
@@ -26,6 +31,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: lib/changelog.dates.test.ts checks every changelog
+          # date against the commit that added it, which a shallow clone
+          # (one commit) can't answer.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -37,3 +47,6 @@ jobs:
 
       - name: Buoy coverage — every beach must have a wave-reporting buoy
         run: npx vitest run lib/sources/ndbcStations.test.ts
+
+      - name: Unit tests — the full vitest suite
+        run: npx vitest run

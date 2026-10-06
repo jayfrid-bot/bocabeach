@@ -3,7 +3,7 @@
 // surfaces. No network — feed/conditions/rain and the Live Activity sender
 // are all injected, same pattern as lib/alerts/run.test.ts.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createMemoryStore } from "@/lib/db/memoryStore";
 import type { DeviceStore } from "@/lib/db/store";
 import type { LightningFeed } from "@/lib/sources/lightning";
@@ -147,6 +147,12 @@ async function registerLiveActivity(over: { activityId?: string; pushToken?: str
 }
 
 beforeEach(() => {
+  // The fixture lives on its own date (NOW); the store stamps a device's plan
+  // from the wall clock when it is written, so the wall clock must agree or a
+  // fixture grant like NOW + 30 days reads as expired once real time passes
+  // it (these tests started failing on 2026-10-02). Only Date is faked.
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
   store = createMemoryStore({ file: null });
   sent = [];
   laSent = [];
@@ -155,6 +161,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   delete process.env.PUSH_SAFETY_ALERTS;
 });
 
