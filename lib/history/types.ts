@@ -124,9 +124,31 @@ export interface SunEventObservationRow {
   colorfulness: number;
   peak_frame_iso: string;
   series_json: string;
+  /** 'YYYY-MM-DD.N' — see isNewerSunScore. */
   score_version: string;
+  /** When the script scored the event (ISO UTC). */
+  scored_at: string;
   credit: string;
+  /** When this key was first received; never rewritten by a re-score. */
   created_at: string;
+}
+
+/**
+ * Is an incoming observation's (score_version, scored_at) strictly newer than
+ * the stored one? score_version compares by its date part, then its counter as
+ * a number (so '.10' beats '.9'), then scored_at. An exact duplicate is NOT
+ * newer, so it is a no-op. d1Store.ts's upsert encodes the same rule in SQL.
+ */
+export function isNewerSunScore(
+  incoming: Pick<SunEventObservationRow, "score_version" | "scored_at">,
+  stored: Pick<SunEventObservationRow, "score_version" | "scored_at">,
+): boolean {
+  const parts = (v: string): [string, number] => [v.slice(0, 10), Number(v.slice(11))];
+  const [ad, an] = parts(incoming.score_version);
+  const [bd, bn] = parts(stored.score_version);
+  if (ad !== bd) return ad > bd;
+  if (an !== bn) return an > bn;
+  return incoming.scored_at > stored.scored_at;
 }
 
 /** The `observed_source` text a sun-cam observation writes onto prediction rows. */

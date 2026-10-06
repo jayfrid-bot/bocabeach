@@ -331,17 +331,25 @@ export interface DeviceStore {
   /**
    * Sun-event observations (migrations/0015, scripts/sun_cam_check.py): upsert
    * one cam's scored observation of one event (keyed slug + event_kind +
-   * event_date_local + cam_id; a re-post replaces the row), THEN fill
-   * observed_score / observed_source / observed_at on the matching
-   * sun_event_predictions rows (same slug + event_kind, event_iso within
-   * +-15 min). When several cams have reported the same event, the BEST one
-   * is written: solar view before antisolar, then the smaller distance_mi, then
-   * cam_id. So an antisolar observation never overwrites a solar one, whatever
-   * order they arrive in. A prediction row whose observed_source was set by
-   * something other than a sun cam (a manual label) is left alone. Returns how
-   * many prediction rows were updated.
+   * event_date_local + cam_id), THEN fill observed_score / observed_source /
+   * observed_at on the matching sun_event_predictions rows (same slug +
+   * event_kind, event_iso within +-15 min).
+   *
+   * The upsert replaces a stored row only when the incoming (score_version,
+   * scored_at) is strictly newer (isNewerSunScore), so an exact duplicate or a
+   * stale replay is a no-op (`stored: false`) and a late retry can never
+   * overwrite a newer re-score. created_at keeps the first-received time.
+   *
+   * When several cams have reported the same event, the BEST one is written
+   * onto the predictions: solar view before antisolar, then the smaller
+   * distance_mi, then cam_id. So an antisolar observation never overwrites a
+   * solar one, whatever order they arrive in. A prediction row whose
+   * observed_source was set by something other than a sun cam (a manual label)
+   * is left alone, and a row that already holds the best observation is not
+   * rewritten. Returns whether the row was stored and how many prediction rows
+   * changed.
    */
-  recordSunEventObservation(row: SunEventObservationRow): Promise<{ predictionsUpdated: number }>;
+  recordSunEventObservation(row: SunEventObservationRow): Promise<{ stored: boolean; predictionsUpdated: number }>;
   /** Every observation of one beach's one event, best first (solar before
    *  antisolar, then nearest cam). */
   sunEventObservationsFor(

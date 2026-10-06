@@ -154,8 +154,8 @@ flowchart LR
   HIST -->|"cam_observations (every history[] read not yet stored: crowd, seaweed, water,<br/>clarity, underwater uw) + cam_reads (per-cam detail), migrations 0006/0014,<br/>INSERT OR IGNORE, vision-cam beaches only (config/vision-cams.json),<br/>lib/history/camObservations.ts; a feed failure never fails the beach_hourly row"| D1
   BACKFILL["scripts/backfill_cam_history.mjs (one-shot; shares<br/>lib/history/camObservationRow.mjs with the archiver)"] -->|cam_observations| D1
   SUNCAM -->|"yt-dlp -J → HLS playlist (~4 h DVR); one frame every 2.5 min,<br/>event −35 … +25 min, per config/sun-cams.json cam"| YTLIVE[["YouTube livestream DVR<br/>Elbo Room + 3 Deerfield cams, all facing east"]]
-  SUNCAM -->|"POST /api/sun-observations — Bearer INGEST_TOKEN<br/>peak-frame score + series, per beach / event / cam"| SUNOBS["/api/sun-observations<br/>constant-time auth, strict body validation<br/>(lib/sunObservations.ts)"]
-  SUNOBS -->|"sun_event_observations (migrations/0015)<br/>upsert, one row per slug + event + local day + cam, credit stored"| D1
+  SUNCAM -->|"POST /api/sun-observations — Bearer INGEST_TOKEN<br/>robust-peak score + series + scored_at, per beach / event / cam;<br/>incomplete captures are never sent"| SUNOBS["/api/sun-observations<br/>constant-time auth, bounded 32 KB read, strict validation<br/>that recomputes coverage + robust peak (lib/sunObservations.ts)"]
+  SUNOBS -->|"sun_event_observations (migrations/0015)<br/>upsert only when (score_version, scored_at) is newer —<br/>duplicates and stale replays are no-ops; credit stored"| D1
   SUNOBS -->|"observed_score / observed_source / observed_at on the<br/>sun_event_predictions rows (event within 15 min; best cam:<br/>solar view first, then nearest; never a hand label)"| D1
   UWFRAME -->|one headless-Chrome launch/tick,<br/>reused across every cam + the flag read| UWKV[(UW_FRAME KV<br/>frame:&lt;id&gt;, meta:&lt;id&gt;,<br/>flags:deerfield-beach, flags:fort-lauderdale)]
 ```
@@ -198,7 +198,9 @@ cannot run in a Worker or Action). It reads the 24/7 east-facing livestreams in
 `config/sun-cams.json`. YouTube keeps ~4 hours of DVR for each, so a run up to
 3.5 hours after an event rebuilds it: one frame every 2.5 minutes from 35
 minutes before to 25 minutes after the event, each scored 0-100 on how much of
-the sky is lit warm (the peak frame is the event's score). The result goes to
+the sky is lit warm. The event's score is a robust peak (a frame counts for at
+most twice its best neighbor, so one glitch frame cannot win), and a capture
+without enough frames before, around, and after the event is never uploaded. The result goes to
 `POST /api/sun-observations` with the courier's `INGEST_TOKEN`, lands in
 `sun_event_observations` (migrations/0015), and the best observation (solar view
 first, then nearest cam) is copied onto the matching `sun_event_predictions`

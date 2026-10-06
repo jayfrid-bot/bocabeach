@@ -21,15 +21,47 @@ async function truth() {
 }
 
 describe("recordSunEventObservation (memory store)", () => {
-  it("stores the row, reads it back, and replaces it on a re-post of the same key", async () => {
+  it("stores the row and reads it back", async () => {
     const store = await getStore();
-    await store.recordSunEventObservation(observationRow({ observed_score: 70 }));
-    await store.recordSunEventObservation(observationRow({ observed_score: 91, score_version: "v2" }));
-    const rows = await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06");
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ observed_score: 91, score_version: "v2" });
+    const row = observationRow({ observed_score: 70 });
+    expect(await store.recordSunEventObservation(row)).toEqual({ stored: true, predictionsUpdated: 0 });
+    expect(await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06")).toEqual([row]);
     expect(await store.sunEventObservationsFor("boca-raton", "sunset", "2026-10-06")).toEqual([]);
     expect(await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-07")).toEqual([]);
+  });
+
+  it("replaces only on a newer (score_version, scored_at); a duplicate or stale replay is a no-op", async () => {
+    const store = await getStore();
+    await store.upsertSunEventPredictions([predictionRow()]);
+    const first = observationRow({ observed_score: 70, scored_at: "2026-10-06T14:00:00.000Z", created_at: "2026-10-06T14:00:01.000Z" });
+    expect((await store.recordSunEventObservation(first)).stored).toBe(true);
+
+    // exact duplicate: nothing changes, nothing propagates
+    expect(await store.recordSunEventObservation({ ...first, created_at: "2026-10-06T15:00:00.000Z" })).toEqual({ stored: false, predictionsUpdated: 0 });
+    // same version, OLDER scored_at; and an older version with a LATER scored_at
+    expect((await store.recordSunEventObservation({ ...first, observed_score: 5, scored_at: "2026-10-06T13:00:00.000Z" })).stored).toBe(false);
+    expect((await store.recordSunEventObservation({ ...first, observed_score: 6, score_version: "2026-10-05.9", scored_at: "2026-10-06T16:00:00.000Z" })).stored).toBe(false);
+    expect((await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06"))[0]).toEqual(first);
+
+    // a real re-score: same version, later scored_at -> replaces everything but created_at
+    const r = await store.recordSunEventObservation({ ...first, observed_score: 91, scored_at: "2026-10-06T14:30:00.000Z", created_at: "2026-10-06T14:30:01.000Z" });
+    expect(r).toEqual({ stored: true, predictionsUpdated: 1 });
+    expect((await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06"))[0]).toMatchObject({
+      observed_score: 91,
+      scored_at: "2026-10-06T14:30:00.000Z",
+      created_at: "2026-10-06T14:00:01.000Z", // the first-received time survives
+    });
+    expect(await truth()).toEqual([{ score: 91, source: "sun-cam:deerfield-beach-cam:solar", at: "2026-10-06T14:30:00.000Z" }]);
+  });
+
+  it("score_version orders by date, then the counter as a number", async () => {
+    const store = await getStore();
+    const at = (v: string, scored: string) => observationRow({ score_version: v, scored_at: scored, observed_score: 50 });
+    await store.recordSunEventObservation(at("2026-10-06.9", "2026-10-06T14:00:00.000Z"));
+    expect((await store.recordSunEventObservation(at("2026-10-06.10", "2026-10-06T13:00:00.000Z"))).stored).toBe(true);
+    expect((await store.recordSunEventObservation(at("2026-10-06.9", "2026-10-06T15:00:00.000Z"))).stored).toBe(false);
+    expect((await store.recordSunEventObservation(at("2026-10-07.1", "2026-10-06T12:00:00.000Z"))).stored).toBe(true);
+    expect((await store.recordSunEventObservation(at("2026-10-06.99", "2026-10-06T18:00:00.000Z"))).stored).toBe(false);
   });
 
   it("returns the best observation first: solar before antisolar, then nearest, then cam_id", async () => {
@@ -88,7 +120,7 @@ describe("recordSunEventObservation (memory store)", () => {
     const s2 = await getStore();
     await s2.upsertSunEventPredictions([predictionRow()]);
     await s2.recordSunEventObservation(observationRow({ observed_score: 60 }));
-    await s2.recordSunEventObservation(observationRow({ observed_score: 92 })); // a re-score
+    await s2.recordSunEventObservation(observationRow({ observed_score: 92, scored_at: "2026-10-06T14:06:00.000Z" })); // a re-score
     expect((await truth())[0].score).toBe(92);
   });
 

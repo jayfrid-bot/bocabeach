@@ -76,12 +76,24 @@ describe("auth", () => {
 });
 
 describe("body validation", () => {
-  it("400s on non-JSON, an empty body, a JSON array, and an oversize body", async () => {
+  it("400s on non-JSON, an empty body, and a JSON array; 413s an oversize body", async () => {
     expect((await post("{nope")).status).toBe(400);
     expect((await post("")).status).toBe(400);
     expect((await post([1, 2])).status).toBe(400);
     const big = await post(sunObservationBody({}, { padding: "x".repeat(40_000) }));
-    expect(big.status).toBe(400);
+    expect(big.status).toBe(413);
+    expect((await json(big)).error).toBe("too-large");
+  });
+
+  it("400s a body that is not valid UTF-8", async () => {
+    const res = await POST(
+      new Request("http://localhost/api/sun-observations", {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}` },
+        body: new Uint8Array([0x7b, 0xff, 0xfe, 0x7d]),
+      }),
+    );
+    expect(res.status).toBe(400);
   });
 
   it("400s with the reason and stores nothing when a field is wrong", async () => {
@@ -94,10 +106,85 @@ describe("body validation", () => {
     expect(await store.sunEventObservationsFor("fort-lauderdale", "sunrise", "2026-10-06")).toEqual([]);
   });
 
-  it("400s an unknown field, a future event, and a score that is not the series' peak", async () => {
+  it("400s an unknown field, a future event, a score that is not the series' robust peak, and a series with no post-event frames", async () => {
     expect((await post(sunObservationBody({}, { extra: true }))).status).toBe(400);
     expect((await post(sunObservationBody({ kind: "sunset" }))).status).toBe(400); // sunset is 23:01Z, "now" is 14:00Z
     expect((await post(sunObservationBody({}, { observed_score: 40 }))).status).toBe(400);
+    const short = (sunObservationBody().series as { t: string }[]).filter((f) => Date.parse(f.t) <= Date.parse(ELBO_SUNRISE_ISO));
+    const res = await post(sunObservationBody({}, { series: short }));
+    expect(res.status).toBe(400);
+    expect(String((await json(res)).detail)).toMatch(/does not cover/);
+  });
+});
+
+describe("the body read is bounded (no Content-Length needed)", () => {
+  /** A request whose body is an endless stream of 8 KB chunks and which declares no length. */
+  function endlessRequest(headers: Record<string, string>) {
+    const seen = { pulled: 0, cancelled: false };
+    const chunk = new Uint8Array(8 * 1024).fill(0x20);
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        seen.pulled += 1;
+        if (seen.pulled > 5000) controller.close(); // a runaway read would reach this
+        else controller.enqueue(chunk);
+      },
+      cancel() {
+        seen.cancelled = true;
+      },
+    });
+    const req = new Request("http://localhost/api/sun-observations", {
+      method: "POST",
+      headers,
+      body: stream,
+      // Node's fetch needs this for a streaming request body
+      duplex: "half",
+    } as RequestInit);
+    return { req, seen };
+  }
+
+  it("aborts the read once 32 KB is exceeded, with no Content-Length, and answers 413", async () => {
+    const { req, seen } = endlessRequest({ authorization: `Bearer ${TOKEN}` });
+    expect(req.headers.get("content-length")).toBeNull();
+    const res = await POST(req);
+    expect(res.status).toBe(413);
+    expect(seen.cancelled).toBe(true);
+    // 32 KB is 4 chunks of 8 KB; a little read-ahead is fine, thousands of chunks is not
+    expect(seen.pulled).toBeLessThan(20);
+  });
+
+  it("refuses a lying Content-Length without reading anything", async () => {
+    const { req, seen } = endlessRequest({ authorization: `Bearer ${TOKEN}`, "content-length": "999999" });
+    const res = await POST(req);
+    expect(res.status).toBe(413);
+    expect(seen.pulled).toBeLessThan(5);
+  });
+
+  it("still checks auth first: an unauthenticated endless body is 401 and is not consumed", async () => {
+    const { req, seen } = endlessRequest({});
+    const res = await POST(req);
+    expect(res.status).toBe(401);
+    expect(seen.pulled).toBeLessThan(5);
+  });
+
+  it("accepts a normal body that arrives in several small chunks", async () => {
+    const bytes = new TextEncoder().encode(JSON.stringify(sunObservationBody()));
+    let offset = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (offset >= bytes.length) return controller.close();
+        controller.enqueue(bytes.slice(offset, offset + 300));
+        offset += 300;
+      },
+    });
+    const res = await POST(
+      new Request("http://localhost/api/sun-observations", {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}` },
+        body: stream,
+        duplex: "half",
+      } as RequestInit),
+    );
+    expect(res.status).toBe(200);
   });
 });
 
@@ -110,6 +197,7 @@ describe("storing an observation", () => {
       slug: "fort-lauderdale",
       event_kind: "sunrise",
       cam_id: "ftl-elbo-beach-cam",
+      stored: true,
       predictionsUpdated: 0,
     });
     const store = await getStore();
@@ -120,20 +208,72 @@ describe("storing an observation", () => {
       distance_mi: 0,
       observed_score: 94.3,
       score_version: "2026-10-06.1",
+      scored_at: NOW_AFTER_OCT6_SUNRISE,
       credit: "Live stream courtesy Elbo Room (ElboRoom.com)",
       event_iso: ELBO_SUNRISE_ISO,
       created_at: NOW_AFTER_OCT6_SUNRISE,
     });
-    expect(JSON.parse(row.series_json)).toHaveLength(4);
+    expect(JSON.parse(row.series_json)).toHaveLength(25);
+  });
+});
+
+describe("re-posts: only a newer (score_version, scored_at) replaces; replays are no-ops", () => {
+  const send = (opts: Parameters<typeof sunObservationBody>[0]) => post(sunObservationBody(opts));
+  async function stored() {
+    const store = await getStore();
+    return (await store.sunEventObservationsFor("fort-lauderdale", "sunrise", "2026-10-06"))[0];
+  }
+  async function predicted() {
+    const store = await getStore();
+    return (await store.sunEventPredictionsFor("fort-lauderdale", ELBO_SUNRISE_ISO))[0];
+  }
+  beforeEach(async () => {
+    const store = await getStore();
+    await store.upsertSunEventPredictions([predictionRow({ slug: "fort-lauderdale", event_iso: ELBO_SUNRISE_ISO })]);
   });
 
-  it("a re-post of the same event and cam replaces the row (a re-score)", async () => {
-    await post(sunObservationBody({ peak: 80 }, { score_version: "2026-10-06.1" }));
-    await post(sunObservationBody({ peak: 94.3 }, { score_version: "2026-10-07.2" }));
-    const store = await getStore();
-    const rows = await store.sunEventObservationsFor("fort-lauderdale", "sunrise", "2026-10-06");
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ observed_score: 94.3, score_version: "2026-10-07.2" });
+  it("an exact duplicate is a no-op: stored false, nothing written, predictions not rewritten", async () => {
+    expect(await json(await send({ peak: 80, scoredAt: "2026-10-06T13:00:00.000Z" }))).toMatchObject({ stored: true, predictionsUpdated: 1 });
+    const before = await stored();
+    vi.setSystemTime(new Date("2026-10-06T14:30:00.000Z"));
+    const again = await json(await send({ peak: 80, scoredAt: "2026-10-06T13:00:00.000Z" }));
+    expect(again).toMatchObject({ ok: true, stored: false, predictionsUpdated: 0 });
+    expect(await stored()).toEqual(before);
+  });
+
+  it("a newer re-score (same version, later scored_at) replaces the row, keeps created_at, and updates the prediction", async () => {
+    await send({ peak: 80, scoredAt: "2026-10-06T13:00:00.000Z" });
+    const first = await stored();
+    vi.setSystemTime(new Date("2026-10-06T14:30:00.000Z"));
+    const res = await json(await send({ peak: 94.3, scoredAt: "2026-10-06T14:20:00.000Z" }));
+    expect(res).toMatchObject({ stored: true, predictionsUpdated: 1 });
+    const row = await stored();
+    expect(row).toMatchObject({ observed_score: 94.3, scored_at: "2026-10-06T14:20:00.000Z" });
+    expect(row.created_at).toBe(first.created_at);
+    expect(await predicted()).toMatchObject({ observed_score: 94.3, observed_at: "2026-10-06T14:20:00.000Z" });
+  });
+
+  it("a stale replay of an older score never overwrites a newer re-score or the predictions", async () => {
+    await send({ peak: 94.3, version: "2026-10-07.1", scoredAt: "2026-10-06T14:00:00.000Z" });
+    // the older run's upload arrives late: older version, but a LATER scored_at than the stored one
+    vi.setSystemTime(new Date("2026-10-06T15:00:00.000Z"));
+    const stale = await json(await send({ peak: 60, version: "2026-10-06.1", scoredAt: "2026-10-06T14:50:00.000Z" }));
+    expect(stale).toMatchObject({ ok: true, stored: false, predictionsUpdated: 0 });
+    expect(await stored()).toMatchObject({ observed_score: 94.3, score_version: "2026-10-07.1" });
+    expect(await predicted()).toMatchObject({ observed_score: 94.3 });
+    // same version, older scored_at: also ignored
+    const older = await json(await send({ peak: 70, version: "2026-10-07.1", scoredAt: "2026-10-06T13:00:00.000Z" }));
+    expect(older).toMatchObject({ stored: false, predictionsUpdated: 0 });
+    expect((await stored()).observed_score).toBe(94.3);
+  });
+
+  it("a newer score_version wins even with an earlier scored_at; the counter compares as a number", async () => {
+    await send({ peak: 70, version: "2026-10-06.9", scoredAt: "2026-10-06T13:30:00.000Z" });
+    const res = await json(await send({ peak: 90, version: "2026-10-06.10", scoredAt: "2026-10-06T13:00:00.000Z" }));
+    expect(res).toMatchObject({ stored: true, predictionsUpdated: 1 });
+    expect(await stored()).toMatchObject({ observed_score: 90, score_version: "2026-10-06.10" });
+    // and .9 can no longer come back
+    expect(await json(await send({ peak: 70, version: "2026-10-06.9", scoredAt: "2026-10-06T13:59:00.000Z" }))).toMatchObject({ stored: false });
   });
 });
 

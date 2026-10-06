@@ -27,8 +27,8 @@ Each run, for every cam in config/sun-cams.json and every beach it observes:
   2. pick the events that ended 25 min to 3.5 h ago and are not in the state
      file yet;
   3. grab frames every 2.5 min from event-35 min to event+25 min (25 frames);
-  4. score each frame (see "SCORING" below), take the PEAK frame as the event
-     score, keep the whole series;
+  4. score each frame (see "SCORING" below), drop unusable frames, check
+     COVERAGE, and take the ROBUST PEAK as the event score; keep the series;
   5. save the frames under ~/Projects/bocabeach-sunframes/<local-date>/<event>/<cam>/
      (peak at full quality, the rest at low JPEG quality; that folder is backed
      up hourly) and POST the result to /api/sun-observations.
@@ -57,9 +57,32 @@ SCORING (deterministic; bump SUN_CAM_SCORE_VERSION whenever any of this changes)
                                               mostly glare says little)
   score = 100 * C * (0.55 W + 0.20 K + 0.25 P)
   Calibration anchors: the 2026-10-06 Elbo Room sunrise peak (~07:05 local,
-  a mid/high deck lit pink and red across the top) scores ~95; plain blue sky
+  a mid/high deck lit pink and red across the top) scores ~94; plain blue sky
   and white-sun daytime frames score below ~15.
-  Event score = max over the window's frames (the PEAK frame).
+  Per-frame scores are rounded to 1 decimal before the event score is taken.
+
+  USABLE frames: a frame whose valid_frac is below 0.10 (nearly all dark or blown
+  out) is an artifact and is dropped from the series.
+
+  COVERAGE: the usable frames must put at least 3 frames in EACH of three buckets,
+  by minutes from the event: pre [-35, -12), around [-12, +8], post (+8, +25].
+  (Peak color usually lands 5-15 min before a sunrise / after a sunset, so the
+  series has to span both sides of the event.) If coverage fails the event is
+  INCOMPLETE: nothing is uploaded, and it is retried each run while the DVR still
+  holds it. Once the DVR window has closed it is recorded in the state file as
+  status "incomplete" and never uploaded.
+
+  EVENT SCORE = ROBUST PEAK, not the single best frame. A frame counts for at
+  most 2x the best score among the OTHER frames within 5 minutes of it, and a
+  frame with no neighbor that close does not count; the event score is the best
+  such value, and its frame is the peak frame. A sharp but real peak (94 beside a
+  59) is untouched. An isolated spike (95 beside 10 and 12, a glitch or a flare)
+  is cut to 24. The server recomputes the coverage and this statistic from the
+  series and rejects an upload whose numbers differ.
+
+  RE-SCORES: each upload carries score_version (YYYY-MM-DD.N) and scored_at. The
+  server keeps the newer (score_version, scored_at), so a late retry of an old
+  upload cannot overwrite a newer re-score.
 
 REQUIREMENTS: Python 3.9+, Pillow (`pip install pillow`), and yt-dlp + ffmpeg on
 PATH (yt-dlp needs node as its JS runtime; this script adds the same PATH
@@ -125,7 +148,8 @@ os.environ["PATH"] = os.pathsep.join(
     [str(Path.home() / ".hermes/node/bin"), "/opt/homebrew/bin", "/usr/local/bin", os.environ.get("PATH", "")]
 )
 
-SUN_CAM_SCORE_VERSION = "2026-10-06.1"
+# YYYY-MM-DD.N: the server orders re-scores by this (date, then N as a number), then by scored_at.
+SUN_CAM_SCORE_VERSION = "2026-10-06.2"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = REPO_ROOT / "config" / "sun-cams.json"
@@ -146,7 +170,20 @@ STEP_SECONDS = 150  # 2.5 min
 MIN_AGE_MIN = 25  # the window must have closed
 MAX_AGE_MIN = 210  # 3.5 h: YouTube's DVR holds ~4 h, and the window opens 35 min before the event
 DVR_HOURS = 4.0  # YouTube's live DVR depth
-MIN_FRAME_COVERAGE = 0.6  # share of the planned frames that must be recovered
+RUN_INTERVAL_MIN = 30  # the launchd cadence (scripts/com.isitbeachday.suncam.plist)
+
+# --- Coverage: minutes relative to the event (lib/sunObservations.ts mirrors these) ---
+# The usable frames must fill each of three buckets, or the capture is "incomplete" and is
+# never uploaded: pre [-35, -12), around [-12, +8], post (+8, +25]. Peak color is usually
+# 5-15 min BEFORE a sunrise / AFTER a sunset, so the series has to span both sides.
+PRE_END_MIN = -12.0
+AROUND_END_MIN = 8.0
+MIN_FRAMES_PER_BUCKET = 3
+MIN_USABLE_VALID_FRAC = 0.10  # a frame with less usable sky than this is an artifact (dark/blown out) and is dropped
+
+# --- Robust peak (lib/sunObservations.ts robustPeak mirrors this exactly) ---
+PEAK_NEIGHBOR_SECONDS = 301  # one 2.5-min sample either side, and the 5-min saved backfill frames
+PEAK_NEIGHBOR_FACTOR = 2
 HLS_PREFERRED_HEIGHT = 720
 
 # --- Scoring constants (see the SCORING block in the docstring) -----------
@@ -651,33 +688,97 @@ def frame_name(t: datetime) -> str:
     return t.astimezone(timezone.utc).strftime("%H%M%SZ.jpg")
 
 
-def build_result(frames: List[Dict[str, Any]], planned: int) -> Optional[Dict[str, Any]]:
-    """Collapse scored frames to the event result. `frames` holds dicts with
-    t (datetime) plus the per-frame metrics. None when too few frames."""
-    if not frames or len(frames) < max(1, math.ceil(planned * MIN_FRAME_COVERAGE)):
-        return None
-    peak = max(frames, key=lambda f: f["score"])
+def _ms(iso: str) -> int:
+    return int(round(parse_iso(iso).timestamp() * 1000))
+
+
+def coverage_counts(times: List[datetime], event_t: datetime) -> Dict[str, int]:
+    """How many frames fall in each coverage bucket, by minutes from the event."""
+    out = {"pre": 0, "around": 0, "post": 0}
+    for t in times:
+        m = (t - event_t).total_seconds() / 60.0
+        if m < -WINDOW_BEFORE_MIN or m > WINDOW_AFTER_MIN:
+            continue
+        if m < PRE_END_MIN:
+            out["pre"] += 1
+        elif m <= AROUND_END_MIN:
+            out["around"] += 1
+        else:
+            out["post"] += 1
+    return out
+
+
+def robust_peak(series: List[Dict[str, Any]]) -> Optional[Tuple[int, float]]:
+    """(index, value) of the robust peak of a time-ordered series, or None.
+
+    A single frame can spike on a glitch or a lens flare, while real color builds
+    and fades over minutes. So a frame counts for at most PEAK_NEIGHBOR_FACTOR (2x)
+    the best score among the OTHER frames within PEAK_NEIGHBOR_SECONDS of it, and a
+    frame with no neighbor that close does not count. The event score is the best
+    such value (ties: the earliest frame). A sharp but real peak (94 beside a 59) is
+    untouched; an isolated spike (95 beside 10 and 12) is cut to 24. The server
+    recomputes this from the series and rejects any other number."""
+    ms = [_ms(f["t"]) for f in series]
+    best: Optional[Tuple[int, float]] = None
+    for i, f in enumerate(series):
+        neighbor: Optional[float] = None
+        for j, g in enumerate(series):
+            if j != i and abs(ms[j] - ms[i]) <= PEAK_NEIGHBOR_SECONDS * 1000:
+                neighbor = g["score"] if neighbor is None else max(neighbor, g["score"])
+        if neighbor is None:
+            continue
+        value = min(f["score"], PEAK_NEIGHBOR_FACTOR * neighbor)
+        if best is None or value > best[1]:
+            best = (i, value)
+    return best
+
+
+def build_result(frames: List[Dict[str, Any]], event_t: datetime) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+    """Collapse scored frames to the event result relative to `event_t`.
+    Returns (result, info); result is None when the capture is incomplete, and
+    info['reason'] says why. `frames` holds dicts with t (datetime) plus the
+    per-frame metrics; only usable frames inside the window (with 1 min of slack)
+    reach the series."""
+    in_window = [
+        f for f in frames
+        if -(WINDOW_BEFORE_MIN + 1) <= (f["t"] - event_t).total_seconds() / 60.0 <= WINDOW_AFTER_MIN + 1
+    ]
+    usable = [f for f in in_window if f["valid_frac"] >= MIN_USABLE_VALID_FRAC]
+    cov = coverage_counts([f["t"] for f in usable], event_t)
+    info: Dict[str, Any] = {"recovered": len(frames), "usable": len(usable), "coverage": cov}
+    if min(cov.values()) < MIN_FRAMES_PER_BUCKET:
+        info["reason"] = (
+            f"coverage {cov['pre']} pre / {cov['around']} around / {cov['post']} post usable frames "
+            f"(need {MIN_FRAMES_PER_BUCKET} in each; {len(frames) - len(usable)} of {len(frames)} recovered frames were unusable or outside the window)"
+        )
+        return None, info
+    series = [
+        {
+            "t": iso_z(f["t"]),
+            "score": round(f["score"], 1),
+            "warm_frac": round(f["warm_frac"], 4),
+            "colorfulness": round(f["colorfulness"], 1),
+            "warm_sat": round(f["warm_sat"], 3),
+        }
+        for f in usable
+    ]
+    peak = robust_peak(series)
+    if peak is None:
+        info["reason"] = "no frame has a neighbor within 5 minutes to confirm a peak"
+        return None, info
+    idx, value = peak
     return {
-        "observed_score": round(peak["score"], 1),
-        "warm_frac": round(peak["warm_frac"], 4),
-        "colorfulness": round(peak["colorfulness"], 1),
-        "peak_frame_iso": iso_z(peak["t"]),
-        "series": [
-            {
-                "t": iso_z(f["t"]),
-                "score": round(f["score"], 1),
-                "warm_frac": round(f["warm_frac"], 4),
-                "colorfulness": round(f["colorfulness"], 1),
-                "warm_sat": round(f["warm_sat"], 3),
-            }
-            for f in frames
-        ],
-        "frames": len(frames),
-        "planned": planned,
-    }
+        "observed_score": round(value, 1),
+        "warm_frac": series[idx]["warm_frac"],
+        "colorfulness": series[idx]["colorfulness"],
+        "peak_frame_iso": series[idx]["t"],
+        "peak_frame_score": series[idx]["score"],
+        "series": series,
+        "usable_frames": len(usable),
+    }, info
 
 
-def save_frames(out_dir: Path, scored: List[Dict[str, Any]], peak_t: datetime) -> None:
+def save_frames(out_dir: Path, scored: List[Dict[str, Any]], peak_t: Optional[datetime]) -> None:
     """Peak frame at full quality, the rest at low JPEG quality."""
     from PIL import Image
 
@@ -686,13 +787,13 @@ def save_frames(out_dir: Path, scored: List[Dict[str, Any]], peak_t: datetime) -
         src = f.get("path")
         if not src or not Path(src).exists():
             continue
-        if f["t"] == peak_t:
+        if peak_t is not None and f["t"] == peak_t:
             shutil.copyfile(src, out_dir / ("peak-" + frame_name(f["t"])))
         with Image.open(src) as im:
             im.convert("RGB").save(out_dir / frame_name(f["t"]), "JPEG", quality=40, optimize=True)
 
 
-def payload_for(cam: Dict[str, Any], beach: Dict[str, Any], kind: str, local_date: str, event_iso: str, view: str, result: Dict[str, Any]) -> Dict[str, Any]:
+def payload_for(cam: Dict[str, Any], beach: Dict[str, Any], kind: str, local_date: str, event_iso: str, view: str, result: Dict[str, Any], scored_at: Optional[datetime] = None) -> Dict[str, Any]:
     return {
         "slug": beach["slug"],
         "event_kind": kind,
@@ -707,6 +808,9 @@ def payload_for(cam: Dict[str, Any], beach: Dict[str, Any], kind: str, local_dat
         "peak_frame_iso": result["peak_frame_iso"],
         "series": result["series"],
         "score_version": SUN_CAM_SCORE_VERSION,
+        # When this run scored the event. With score_version it orders re-scores: the
+        # server keeps the newer pair, so a stale replay cannot overwrite a re-score.
+        "scored_at": iso_z(scored_at or datetime.now(timezone.utc)),
         "credit": cam["credit"],
     }
 
@@ -735,15 +839,31 @@ def read_token() -> Optional[str]:
     return tok or None
 
 
-def print_series(label: str, frames: List[Dict[str, Any]], peak_t: Optional[datetime], in_window: Optional[set] = None) -> None:
+def print_series(label: str, frames: List[Dict[str, Any]], peak_t: Optional[datetime], event_t: Optional[datetime] = None) -> None:
     print(f"\n{label}")
     print(f"  {'frame (UTC)':<22}{'warm':>7}{'color':>8}{'wsat':>7}{'valid':>7}{'score':>8}")
     for f in frames:
         mark = " <- PEAK" if peak_t is not None and f["t"] == peak_t else ""
-        out = "" if in_window is None or f["t"] in in_window else "  (outside window)"
+        notes = []
+        if event_t is not None:
+            m = (f["t"] - event_t).total_seconds() / 60.0
+            if m < -WINDOW_BEFORE_MIN or m > WINDOW_AFTER_MIN:
+                notes.append("outside window")
+        if f["valid_frac"] < MIN_USABLE_VALID_FRAC:
+            notes.append("unusable")
+        out = f"  ({', '.join(notes)})" if notes else ""
         print(
             f"  {iso_z(f['t']):<22}{f['warm_frac']:>7.3f}{f['colorfulness']:>8.1f}{f['warm_sat']:>7.2f}{f['valid_frac']:>7.2f}{f['score']:>8.1f}{mark}{out}"
         )
+
+
+def print_peak(result: Dict[str, Any], info: Dict[str, Any]) -> None:
+    cov = info["coverage"]
+    print(
+        f"\nROBUST PEAK: {result['peak_frame_iso']}  observed_score={result['observed_score']}  "
+        f"(that frame alone scored {result['peak_frame_score']})  warm_frac={result['warm_frac']}  colorfulness={result['colorfulness']}"
+    )
+    print(f"coverage: {cov['pre']} pre / {cov['around']} around / {cov['post']} post usable frames ({info['usable']} usable of {info['recovered']} recovered)")
 
 
 # ---------------------------------------------------------------------------
@@ -763,25 +883,23 @@ def run_from_dir(args: argparse.Namespace, cfg: Dict[str, Any]) -> int:
     if cam is None or kind not in ("sunrise", "sunset") or not date_s or not re.match(r"^\d{4}-\d{2}-\d{2}$", date_s):
         log(f"--from-dir: could not work out cam/event/date from {d} (got cam={cam_id!r}, event={kind!r}, date={date_s!r}); pass --cam/--event/--date")
         return 2
-    beach = next((b for b in cam["beaches"] if b["slug"] == args.slug), None) if args.slug else cam["beaches"][0]
-    if beach is None:
+    beaches = [b for b in cam["beaches"] if args.slug is None or b["slug"] == args.slug]
+    if not beaches:
         log(f"--from-dir: cam {cam_id} does not observe {args.slug}")
         return 2
     local_date = date.fromisoformat(date_s)
-    st = sun_times(beach["lat"], beach["lon"], local_date)
-    event_t = st[kind]
-    if event_t is None:
+    sts = {b["slug"]: sun_times(b["lat"], b["lon"], local_date) for b in beaches}
+    if any(st[kind] is None for st in sts.values()):
         log("no sunrise/sunset on that date")
         return 2
-    view = view_for(cam["facing_azimuth_deg"], st[f"{kind}_az"])
-    event_iso = iso_z(event_t)
+    first = beaches[0]
+    first_event = sts[first["slug"]][kind]
+    view = view_for(cam["facing_azimuth_deg"], sts[first["slug"]][f"{kind}_az"])
 
     files = sorted(p for p in d.iterdir() if p.is_file() and FRAME_RE.match(p.name) and not p.name.lower().startswith("peak-"))
     if not files:
         log(f"--from-dir: no HHMMZ.jpg / HHMMSSZ.jpg frames in {d}")
         return 2
-    win_lo = event_t - timedelta(minutes=WINDOW_BEFORE_MIN)
-    win_hi = event_t + timedelta(minutes=WINDOW_AFTER_MIN)
     frames: List[Dict[str, Any]] = []
     for p in files:
         m = FRAME_RE.match(p.name)
@@ -789,28 +907,36 @@ def run_from_dir(args: argparse.Namespace, cfg: Dict[str, Any]) -> int:
         hh, mm, ss = int(m.group(1)), int(m.group(2)), int(m.group(3) or 0)
         t = datetime(local_date.year, local_date.month, local_date.day, hh, mm, ss, tzinfo=timezone.utc)
         # Frames are named in UTC; pick the day that lands within 12 h of the event.
-        while t - event_t > timedelta(hours=12):
+        while t - first_event > timedelta(hours=12):
             t -= timedelta(days=1)
-        while event_t - t > timedelta(hours=12):
+        while first_event - t > timedelta(hours=12):
             t += timedelta(days=1)
         m_ = score_file(p, cam["sky_regions"])
         m_["t"] = t
         m_["path"] = str(p)
         frames.append(m_)
     frames.sort(key=lambda f: f["t"])
-    in_win = [f for f in frames if win_lo <= f["t"] <= win_hi]
-    basis = in_win or frames
-    peak = max(basis, key=lambda f: f["score"])
-    in_window_set = {f["t"] for f in in_win}
-    print(f"cam {cam_id} | {beach['slug']} {kind} {local_date} | event {event_iso} | view {view} | score version {SUN_CAM_SCORE_VERSION}")
-    print_series(f"Per-frame scores ({len(frames)} frames, {len(in_win)} inside the event window {iso_z(win_lo)} .. {iso_z(win_hi)})", frames, peak["t"], in_window_set)
-    result = build_result(basis, len(basis))
-    assert result is not None
-    print(
-        f"\nPEAK: {result['peak_frame_iso']}  observed_score={result['observed_score']}  "
-        f"warm_frac={result['warm_frac']}  colorfulness={result['colorfulness']}"
-    )
-    payloads = [payload_for(cam, b, kind, local_date.isoformat(), iso_z(sun_times(b["lat"], b["lon"], local_date)[kind]), view, result) for b in cam["beaches"] if args.slug is None or b["slug"] == args.slug]
+
+    results: Dict[str, Tuple[Optional[Dict[str, Any]], Dict[str, Any]]] = {
+        b["slug"]: build_result(frames, sts[b["slug"]][kind]) for b in beaches
+    }
+    first_result, first_info = results[first["slug"]]
+    peak_t = parse_iso(first_result["peak_frame_iso"]) if first_result else None
+    print(f"cam {cam_id} | {first['slug']} {kind} {local_date} | event {iso_z(first_event)} | view {view} | score version {SUN_CAM_SCORE_VERSION}")
+    win = f"{iso_z(first_event - timedelta(minutes=WINDOW_BEFORE_MIN))} .. {iso_z(first_event + timedelta(minutes=WINDOW_AFTER_MIN))}"
+    print_series(f"Per-frame scores ({len(frames)} frames; event window {win})", frames, peak_t, first_event)
+    incomplete = [slug for slug, (r, _i) in results.items() if r is None]
+    if incomplete:
+        for slug in incomplete:
+            log(f"{slug}: INCOMPLETE, not uploaded: {results[slug][1]['reason']}")
+        return 3
+    assert first_result is not None
+    print_peak(first_result, first_info)
+    scored_at = datetime.now(timezone.utc)
+    payloads = [
+        payload_for(cam, b, kind, local_date.isoformat(), iso_z(sts[b["slug"]][kind]), view, results[b["slug"]][0] or {}, scored_at)
+        for b in beaches
+    ]
     if args.json:
         print(json.dumps(payloads[0], indent=2))
     if args.dry_run:
@@ -861,6 +987,31 @@ def due_events(cam: Dict[str, Any], now: datetime, tz: Any, force: bool) -> List
     return list(out.values())
 
 
+def mark_expired(cfg: Dict[str, Any], state: Dict[str, Any], now: datetime, tz: Any, only: Optional[set]) -> int:
+    """Events whose DVR window has closed with no state entry (the Mac was off, or
+    every attempt came up incomplete and the last one was missed) are marked
+    'incomplete' so they are not forgotten silently. Nothing is uploaded."""
+    marked = 0
+    today = now.astimezone(tz).date()
+    for cam in cfg["cams"]:
+        if only and cam["id"] not in only:
+            continue
+        for offset in (-2, -1, 0):
+            d = today + timedelta(days=offset)
+            for b in cam["beaches"]:
+                st = sun_times(b["lat"], b["lon"], d)
+                for kind in ("sunrise", "sunset"):
+                    ev = st[kind]
+                    if ev is None:
+                        continue
+                    age_min = (now - ev).total_seconds() / 60.0
+                    key = state_key(b["slug"], kind, d.isoformat(), cam["id"])
+                    if MAX_AGE_MIN < age_min <= 48 * 60 and key not in state["done"]:
+                        state["done"][key] = {"status": "incomplete", "reason": "the DVR window closed before a complete capture", "at": iso_z(now)}
+                        marked += 1
+    return marked
+
+
 def run_normal(args: argparse.Namespace, cfg: Dict[str, Any]) -> int:
     now = parse_iso(args.now) if args.now else datetime.now(timezone.utc)
     tz = ZoneInfo(cfg.get("timezone", "America/New_York")) if ZoneInfo else timezone(timedelta(hours=-5))
@@ -872,6 +1023,11 @@ def run_normal(args: argparse.Namespace, cfg: Dict[str, Any]) -> int:
     only = set(args.cams.split(",")) if args.cams else None
     failures = 0
     handled = 0
+    if not args.dry_run and not args.force:
+        expired = mark_expired(cfg, state, now, tz, only)
+        if expired:
+            log(f"{expired} event(s) marked incomplete: their DVR window closed with no complete capture")
+            save_state(state, now)
     for cam in cfg["cams"]:
         if only and cam["id"] not in only:
             continue
@@ -904,19 +1060,29 @@ def run_normal(args: argparse.Namespace, cfg: Dict[str, Any]) -> int:
                     shutil.copyfile(path, keep)
                     m["path"] = str(keep)
                     scored.append(m)
-                result = build_result(scored, len(targets))
-                if result is None:
-                    log(f"{cam['id']} {kind} {local_date}: only {len(scored)}/{len(targets)} frames recovered (need {math.ceil(len(targets) * MIN_FRAME_COVERAGE)}); will retry while the DVR still has it")
-                    continue
-                peak_t = parse_iso(result["peak_frame_iso"])
+                cam_result, cam_info = build_result(scored, ev["cam_event_t"])
+                peak_t = parse_iso(cam_result["peak_frame_iso"]) if cam_result else None
                 if args.dry_run:
-                    print_series(f"{cam['id']} {kind} {local_date} (view {ev['view']})", scored, peak_t)
-                    print(f"  PEAK {result['peak_frame_iso']} score={result['observed_score']} warm_frac={result['warm_frac']} colorfulness={result['colorfulness']}")
+                    print_series(f"{cam['id']} {kind} {local_date} (view {ev['view']})", scored, peak_t, ev["cam_event_t"])
+                    if cam_result:
+                        print_peak(cam_result, cam_info)
                 else:
                     save_frames(FRAMES_ROOT / local_date / kind / cam["id"], scored, peak_t)
-            # Upload one observation per observed beach.
+            log(f"{cam['id']} {kind} {local_date}: {len(scored)}/{len(targets)} frames recovered, {cam_info['usable']} usable, coverage {cam_info['coverage']['pre']}/{cam_info['coverage']['around']}/{cam_info['coverage']['post']} (pre/around/post)")
+            # One observation per observed beach. Each beach is judged against ITS OWN event time.
             for item in pending:
                 b = item["beach"]
+                key = state_key(b["slug"], kind, local_date, cam["id"])
+                result, info = build_result(scored, item["event_t"])
+                if result is None:
+                    age_min = (now - item["event_t"]).total_seconds() / 60.0
+                    final = age_min + RUN_INTERVAL_MIN > MAX_AGE_MIN  # the next run would be past the window
+                    log(f"{b['slug']} {kind} {local_date} {cam['id']}: INCOMPLETE, not uploaded: {info['reason']}; "
+                        + ("giving up, the DVR window is closing" if final else "will retry while the DVR still has it"))
+                    if final and not args.dry_run and not args.force:
+                        state["done"][key] = {"status": "incomplete", "reason": info["reason"], "coverage": info["coverage"], "at": iso_z(now), "score_version": SUN_CAM_SCORE_VERSION}
+                        save_state(state, now)
+                    continue
                 payload = payload_for(cam, b, kind, local_date, iso_z(item["event_t"]), ev["view"], result)
                 if args.json:
                     print(json.dumps(payload, indent=2))
@@ -926,7 +1092,8 @@ def run_normal(args: argparse.Namespace, cfg: Dict[str, Any]) -> int:
                 ok, msg = post_observation(payload, token or "")
                 if ok:
                     handled += 1
-                    state["done"][state_key(b["slug"], kind, local_date, cam["id"])] = {
+                    state["done"][key] = {
+                        "status": "uploaded",
                         "uploaded_at": iso_z(datetime.now(timezone.utc)),
                         "score": result["observed_score"],
                         "score_version": SUN_CAM_SCORE_VERSION,

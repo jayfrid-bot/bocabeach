@@ -21,8 +21,9 @@ For each cam in `config/sun-cams.json` and each beach that cam observes, it:
    state file yet.
 3. Grabs a frame every 2.5 minutes from 35 minutes before the event to 25
    minutes after it (25 frames).
-4. Scores each frame (see "Scoring"). The PEAK frame is the event score. The
-   whole series is kept.
+4. Scores each frame (see "Scoring"), drops unusable frames, and checks coverage.
+   The event score is the ROBUST PEAK of the series, not the single best frame.
+   The whole series is kept.
 5. Saves the frames to `~/Projects/bocabeach-sunframes/<local-date>/<event>/<cam>/`
    (peak at full quality, the rest at low JPEG quality) and posts the result to
    `/api/sun-observations`.
@@ -110,6 +111,47 @@ C = min(1, valid_frac / 0.30)
 score = 100 * C * (0.55 W + 0.20 K + 0.25 P)
 ```
 
+Per-frame scores are rounded to 1 decimal before the event score is taken.
+
+### Usable frames and coverage
+
+A frame with `valid_frac < 0.10` (nearly all dark or blown out) is an artifact. It
+is dropped from the series. The usable frames must also cover the event: at least 3
+frames in EACH of three buckets, by minutes from the event.
+
+| Bucket | Range |
+| --- | --- |
+| pre | [-35, -12) |
+| around | [-12, +8] |
+| post | (+8, +25] |
+
+Peak color usually lands 5 to 15 minutes before a sunrise or after a sunset, so
+the series has to span both sides. A capture that fails this is **incomplete**:
+
+- nothing is uploaded;
+- it is retried on each run while the DVR still holds the window;
+- once the window is closing (the next 30-minute run would be past 3.5 hours), or
+  closed, the script records it in the state file as `status: "incomplete"` and
+  never uploads it. An event that aged out while the Mac was off is marked the same
+  way.
+
+### The event score: the robust peak
+
+One frame can spike on a glitch or a lens flare. Real color builds and fades over
+minutes. So a frame counts for at most **2x the best score among the other frames
+within 5 minutes of it**, and a frame with no neighbor that close does not count.
+The event score is the best such value. Its frame is the peak frame, and that
+frame's `warm_frac` and `colorfulness` are the top-level fields.
+
+- A sharp, real peak (94 beside a 59) is untouched.
+- An isolated spike (95 beside 10 and 12) is cut to 24.
+- It does not depend on the sampling rate: the live 2.5-minute frames and the saved
+  5-minute frames both count as neighbors.
+
+The server recomputes the coverage and this statistic from the series (see "The
+upload"). The Python (`robust_peak`) and TypeScript (`robustPeak`) versions are
+checked against each other with two fixtures made by the script.
+
 Calibration anchors: the 2026-10-06 Elbo Room sunrise peak (about 07:05 local, a
 mid and high cloud deck lit pink and red) scores 94. Plain blue sky and white
 midday frames score under 10 (0 to 2 at midday).
@@ -129,22 +171,35 @@ The route (`app/api/sun-observations/route.ts`, `lib/sunObservations.ts`):
 
 - answers 503 if the secret is unset and 401 if the token is wrong. It checks
   this before it reads the body;
-- reads at most 32 KB, and rejects unknown fields;
+- reads the body as a stream and stops at 32 KB, with or without a
+  `Content-Length` (413 if it is over; auth is still checked first), and rejects
+  unknown fields;
 - checks the cam and beach pair against `config/sun-cams.json`, and the credit and
   distance against the registry;
 - checks the event time against the beach's own computed sunrise or sunset (5
   minutes), and the local date against the beach's time zone;
-- checks that the score is the best score of the series, and that the peak frame
-  is in the series.
+- recomputes the temporal coverage from the series and rejects an upload with fewer
+  than 3 frames in any bucket;
+- recomputes the robust peak from the series, and requires `peak_frame_iso` to be
+  that frame, `observed_score` to equal it (to rounding), and the top-level
+  `warm_frac` and `colorfulness` to match that frame's own values;
+- requires `score_version` to look like `YYYY-MM-DD.N`, and `scored_at` to be after
+  the last frame and not in the future.
 
 It stores one row per (slug, event_kind, event_date_local, cam_id) in
-`sun_event_observations` (migrations/0015). A second post for the same key replaces
-the row, so a re-score works.
+`sun_event_observations` (migrations/0015).
+
+**Re-scores.** Each upload carries `score_version` (`YYYY-MM-DD.N`) and `scored_at`
+(when the script scored it). A post for an existing key replaces the row only when
+the incoming pair is strictly newer: `score_version` compares by date, then `N` as a
+number (so `.10` beats `.9`), then `scored_at`. An exact duplicate or a stale replay
+changes nothing and the route answers `stored: false`. `created_at` is the first
+time the key was received and is never rewritten.
 
 ### Filling the predictions
 
 After the upsert, the route sets `observed_score`, `observed_source`, and
-`observed_at` on the `sun_event_predictions` rows with the same slug and event kind
+`observed_at` (the best observation's `scored_at`) on the `sun_event_predictions` rows with the same slug and event kind
 and an `event_iso` within 15 minutes of the event.
 
 - When several cams reported the same event, the best one is written: solar before
@@ -153,6 +208,9 @@ and an `event_iso` within 15 minutes of the event.
   observation never replaces a solar one.
 - `observed_source` reads `sun-cam:<cam_id>:<view>`.
 - A row labeled by hand (any other `observed_source`) is left alone.
+- A row that already holds the best observation is not touched. So a duplicate or
+  stale replay changes no prediction row, and a retry still fills a row that an
+  earlier crash left empty.
 
 Compare the model with the truth:
 
@@ -202,7 +260,7 @@ Logs: `~/Library/Logs/sun-cam-check.log`. State:
 ```
 python3 scripts/sun_cam_check.py --dry-run          # score and print, upload nothing
 python3 scripts/sun_cam_check.py --force            # ignore the state file and the age window
-python3 scripts/sun_cam_check.py --from-dir DIR     # score saved frames (DIR = .../<date>/<event>/<cam>/)
+python3 scripts/sun_cam_check.py --from-dir DIR     # score saved frames (DIR = .../<date>/<event>/<cam>/); exit 3, no upload, if they do not cover the event
 python3 -m unittest discover -s scripts -p "*_test.py"
 ```
 
@@ -217,7 +275,8 @@ python3 scripts/sun_cam_check.py \
 
 - Sunset (antisolar) scoring is untested on a real event.
 - Camera auto-exposure changes how a frame looks. The score is per frame, and the
-  peak is taken across 25 frames.
-- A cam that is down, re-aimed, or restarted skips the event or lowers its coverage.
+  the robust peak is taken across 25 frames.
+- A cam that is down, re-aimed, or restarted gives an incomplete capture, which is
+  never uploaded (see "Usable frames and coverage").
 - The score version must be bumped when the formula changes. Old rows keep their
   own version so they can be re-scored from the saved frames.

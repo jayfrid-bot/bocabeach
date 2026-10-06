@@ -2,7 +2,7 @@
 
 import { getLocation } from "@/config/locations";
 import { computeSunTimes } from "@/lib/sources/sun";
-import { SUN_CAMS, expectedView } from "@/lib/sunObservations";
+import { SUN_CAMS, expectedView, robustPeak } from "@/lib/sunObservations";
 import type { SunEventObservationRow, SunEventPredictionRow } from "@/lib/history/types";
 
 /** The sunrise the Elbo Room frames of 2026-10-06 recorded (the first labelled example). */
@@ -28,6 +28,29 @@ export interface BodyOpts {
   date?: string;
   /** the peak frame's score (the series' best) */
   peak?: number;
+  /** minutes from the event of the peak frame (default -5: peak color is usually just BEFORE a sunrise) */
+  peakAtMin?: number;
+  version?: string;
+  scoredAt?: string;
+}
+
+const round = (v: number, places: number) => Math.round(v * 10 ** places) / 10 ** places;
+
+/** The 25-frame series the script samples (event-35 min .. event+25 min every 2.5 min),
+ *  shaped like a real peak: it climbs to `peak` at `peakAtMin` and falls away, so every
+ *  frame beside the peak is within a factor of 2 of it. */
+export function sunSeries(eventMs: number, peak: number, peakAtMin = -5) {
+  return Array.from({ length: 25 }, (_, k) => {
+    const offset = -35 + 2.5 * k;
+    const shape = Math.max(0.15, 1 - Math.abs(offset - peakAtMin) / 20);
+    return {
+      t: new Date(eventMs + offset * 60_000).toISOString(),
+      score: round(peak * shape, 1),
+      warm_frac: round(0.3177 * shape, 4),
+      colorfulness: round(30 + 37.7 * shape, 1),
+      warm_sat: round(0.2 + 0.3 * shape, 3),
+    };
+  });
 }
 
 /** A valid upload body (exactly what scripts/sun_cam_check.py sends). `over`
@@ -42,14 +65,10 @@ export function sunObservationBody(opts: BodyOpts = {}, over: Record<string, unk
   const beach = cam?.beaches.find((b) => b.slug === slug);
   if (!cam || !beach) throw new Error(`cam ${camId} does not observe ${slug}`);
   const iso = eventIso(slug, kind, date);
-  const eventMs = Date.parse(iso);
-  const at = (minutes: number) => new Date(eventMs + minutes * 60_000).toISOString();
-  const series = [
-    { t: at(-10), score: Math.min(30, peak), warm_frac: 0.08, colorfulness: 37.8, warm_sat: 0.41 },
-    { t: at(-5), score: peak, warm_frac: 0.3177, colorfulness: 67.7, warm_sat: 0.5 },
-    { t: at(0), score: Math.min(55, peak), warm_frac: 0.17, colorfulness: 52.1, warm_sat: 0.39 },
-    { t: at(5), score: Math.min(22, peak), warm_frac: 0.05, colorfulness: 38, warm_sat: 0.37 },
-  ];
+  const series = sunSeries(Date.parse(iso), peak, opts.peakAtMin);
+  const rp = robustPeak(series);
+  if (!rp) throw new Error("fixture series has no peak");
+  const peakFrame = series[rp.index];
   return {
     slug,
     event_kind: kind,
@@ -58,12 +77,13 @@ export function sunObservationBody(opts: BodyOpts = {}, over: Record<string, unk
     cam_id: camId,
     view: expectedView(kind, cam.facing_azimuth_deg),
     distance_mi: beach.distance_mi,
-    observed_score: peak,
-    warm_frac: 0.3177,
-    colorfulness: 67.7,
-    peak_frame_iso: at(-5),
+    observed_score: round(rp.value, 1),
+    warm_frac: peakFrame.warm_frac,
+    colorfulness: peakFrame.colorfulness,
+    peak_frame_iso: peakFrame.t,
     series,
-    score_version: "2026-10-06.1",
+    score_version: opts.version ?? "2026-10-06.1",
+    scored_at: opts.scoredAt ?? NOW_AFTER_OCT6_SUNRISE,
     credit: cam.credit,
     ...over,
   };
@@ -85,6 +105,7 @@ export function observationRow(over: Partial<SunEventObservationRow> = {}): SunE
     peak_frame_iso: "2026-10-06T11:10:09.925Z",
     series_json: "[]",
     score_version: "2026-10-06.1",
+    scored_at: "2026-10-06T14:05:00.000Z",
     credit: "Live stream courtesy City of Deerfield Beach",
     created_at: "2026-10-06T14:05:00.000Z",
     ...over,

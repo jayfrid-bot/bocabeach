@@ -164,17 +164,203 @@ class WindowTests(unittest.TestCase):
         self.assertIn(("2026-10-06", "sunrise"), kinds(209))
         self.assertNotIn(("2026-10-06", "sunrise"), kinds(212))  # the DVR no longer holds the start
 
-    def test_build_result_needs_enough_frames_and_picks_the_peak(self):
-        t0 = datetime(2026, 10, 6, 11, 0, tzinfo=timezone.utc)
-        frames = [
-            {"t": t0 + timedelta(minutes=i), "score": s, "warm_frac": 0.1, "colorfulness": 40.0, "warm_sat": 0.4}
-            for i, s in enumerate([10.0, 55.5, 30.0])
-        ]
-        self.assertIsNone(sc.build_result(frames, 10))  # 3 of 10 is under the 60% floor
-        r = sc.build_result(frames, 4)
-        self.assertEqual(r["observed_score"], 55.5)
-        self.assertEqual(r["peak_frame_iso"], "2026-10-06T11:01:00.000Z")
-        self.assertEqual(len(r["series"]), 3)
+
+EVENT = datetime(2026, 10, 6, 11, 15, tzinfo=timezone.utc)
+
+
+def frame(minutes, score, valid=0.9):
+    return {"t": EVENT + timedelta(minutes=minutes), "score": score, "warm_frac": 0.1, "colorfulness": 40.0, "warm_sat": 0.4, "valid_frac": valid}
+
+
+def grid(scores_by_minute=None, start=-35.0, end=25.0, step=2.5, base=20.0):
+    """A full 2.5-minute capture; `scores_by_minute` overrides single frames."""
+    out, m = [], start
+    while m <= end + 1e-9:
+        out.append(frame(m, (scores_by_minute or {}).get(m, base)))
+        m += step
+    return out
+
+
+class RobustPeakTests(unittest.TestCase):
+    def series(self, pairs):
+        return [{"t": sc.iso_z(EVENT + timedelta(minutes=m)), "score": v} for m, v in pairs]
+
+    def test_a_sharp_real_peak_beside_a_lower_frame_is_untouched(self):
+        self.assertEqual(sc.robust_peak(self.series([(-7.5, 28.3), (-5, 94.4), (-2.5, 59.3)])), (1, 94.4))
+
+    def test_an_isolated_spike_is_cut_to_twice_its_best_neighbor(self):
+        idx, value = sc.robust_peak(self.series([(-5, 10.0), (-2.5, 95.0), (0, 12.0)]))
+        self.assertEqual((idx, value), (1, 24.0))
+
+    def test_frames_five_minutes_apart_corroborate_each_other(self):
+        self.assertEqual(sc.robust_peak(self.series([(-15, 28.3), (-10, 94.4), (-5, 59.3)]))[1], 94.4)
+
+    def test_a_frame_with_no_close_neighbor_does_not_count(self):
+        self.assertEqual(sc.robust_peak(self.series([(-20, 99.0), (-10, 40.0), (-7.5, 38.0)])), (1, 40.0))
+        self.assertIsNone(sc.robust_peak(self.series([(-20, 99.0), (0, 40.0)])))
+        self.assertIsNone(sc.robust_peak([]))
+
+    def test_ties_go_to_the_earliest_frame(self):
+        self.assertEqual(sc.robust_peak(self.series([(-5, 50.0), (-2.5, 50.0)]))[0], 0)
+
+
+class CoverageAndResultTests(unittest.TestCase):
+    def test_a_full_capture_is_complete_and_scores_its_robust_peak(self):
+        frames = grid({-5.0: 90.0, -7.5: 70.0, -2.5: 55.0})
+        result, info = sc.build_result(frames, EVENT)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["observed_score"], 90.0)
+        self.assertEqual(result["peak_frame_iso"], "2026-10-06T11:10:00.000Z")
+        self.assertEqual(len(result["series"]), 25)
+        self.assertEqual(info["coverage"], {"pre": 10, "around": 8, "post": 7})
+        self.assertEqual(result["warm_frac"], 0.1)
+
+    def test_the_series_is_the_scale_the_server_recomputes_from(self):
+        # rounding happens BEFORE the peak, so server and client see the same numbers
+        frames = grid({-5.0: 90.04, -7.5: 70.06})
+        result, _ = sc.build_result(frames, EVENT)
+        self.assertEqual(result["observed_score"], 90.0)
+        idx, value = sc.robust_peak(result["series"])
+        self.assertEqual(value, 90.0)
+        self.assertEqual(result["series"][idx]["t"], result["peak_frame_iso"])
+
+    def test_each_bucket_needs_three_usable_frames(self):
+        def without(lo, hi):
+            return [f for f in grid() if not (lo <= (f["t"] - EVENT).total_seconds() / 60 <= hi)]
+
+        for lo, hi, name in [(-12.4, -12.4, None), (-35, -15, "pre"), (-10, 7.5, "around"), (10, 25, "post")]:
+            if name is None:
+                continue
+            result, info = sc.build_result(without(lo, hi), EVENT)
+            self.assertIsNone(result, name)
+            self.assertIn("coverage", info["reason"])
+        # exactly three in the post bucket is enough
+        keep = [f for f in grid() if (f["t"] - EVENT).total_seconds() / 60 <= 8 or (f["t"] - EVENT).total_seconds() / 60 in (10.0, 12.5, 15.0)]
+        result, info = sc.build_result(keep, EVENT)
+        self.assertIsNotNone(result)
+        self.assertEqual(info["coverage"]["post"], 3)
+        two = [f for f in keep if (f["t"] - EVENT).total_seconds() / 60 != 15.0]
+        self.assertIsNone(sc.build_result(two, EVENT)[0])
+
+    def test_unusable_frames_are_dropped_and_do_not_count_toward_coverage(self):
+        frames = grid()
+        for f in frames:
+            if (f["t"] - EVENT).total_seconds() / 60 > 8:
+                f["valid_frac"] = 0.02  # a blown-out or black afterglow
+        result, info = sc.build_result(frames, EVENT)
+        self.assertIsNone(result)
+        self.assertEqual(info["coverage"]["post"], 0)
+        self.assertEqual(info["usable"], 18)
+
+    def test_an_artifact_spike_cannot_become_the_event_score(self):
+        frames = grid(base=12.0)
+        frames[12]["score"] = 95.0  # one glitched frame among 12s
+        result, _ = sc.build_result(frames, EVENT)
+        self.assertEqual(result["observed_score"], 24.0)
+
+    def test_frames_outside_the_window_stay_out_of_the_series(self):
+        frames = grid() + [frame(40, 99.0), frame(-60, 99.0)]
+        result, _ = sc.build_result(frames, EVENT)
+        self.assertEqual(len(result["series"]), 25)
+        self.assertEqual(result["observed_score"], 20.0)
+
+    def test_payload_carries_version_and_scored_at(self):
+        result, _ = sc.build_result(grid({-5.0: 90.0}), EVENT)
+        cam = next(c for c in sc.load_config()["cams"] if c["id"] == "ftl-elbo-beach-cam")
+        when = datetime(2026, 10, 6, 14, 0, tzinfo=timezone.utc)
+        payload = sc.payload_for(cam, cam["beaches"][0], "sunrise", "2026-10-06", sc.iso_z(EVENT), "solar", result, when)
+        self.assertEqual(payload["scored_at"], "2026-10-06T14:00:00.000Z")
+        self.assertRegex(payload["score_version"], r"^\d{4}-\d{2}-\d{2}\.\d+$")
+        self.assertEqual(payload["credit"], cam["credit"])
+
+
+class IncompleteHandlingTests(unittest.TestCase):
+    """run_normal against a fake DVR that only holds half the window."""
+
+    def setUp(self):
+        import tempfile
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.saved = (sc.STATE_FILE, sc.FRAMES_ROOT, sc.TOKEN_FILE, sc.DvrSession, sc.score_file, sc.post_observation, sc.save_frames)
+        sc.STATE_FILE = Path(self.tmp.name) / "state.json"
+        sc.FRAMES_ROOT = Path(self.tmp.name) / "frames"
+        sc.TOKEN_FILE = Path(self.tmp.name) / "token"
+        sc.TOKEN_FILE.write_text("t")
+        self.posts = []
+        outer = self
+
+        class FakeDvr:
+            def __init__(self, cam):
+                pass
+
+            def open(self):
+                return True
+
+            def frame(self, t, workdir):
+                if outer.holds(t):
+                    p = Path(workdir) / "f.jpg"
+                    p.write_bytes(b"x")
+                    return p
+                return None
+
+        sc.DvrSession = FakeDvr
+        sc.score_file = lambda path, regions: {"valid_frac": 0.9, "warm_frac": 0.1, "colorfulness": 40.0, "warm_sat": 0.4, "score": 30.0}
+        sc.post_observation = lambda payload, token: (self.posts.append(payload) or True, "ok")
+        sc.save_frames = lambda *a, **k: None
+        self.cfg = sc.load_config()
+        self.cfg["cams"] = [c for c in self.cfg["cams"] if c["id"] == "ftl-elbo-beach-cam"]
+        self.rise = sc.sun_times(26.1195, -80.1035, date(2026, 10, 6))["sunrise"]
+        self.holds = lambda t: (t - self.rise).total_seconds() / 60 <= 0  # nothing after the event
+
+    def tearDown(self):
+        (sc.STATE_FILE, sc.FRAMES_ROOT, sc.TOKEN_FILE, sc.DvrSession, sc.score_file, sc.post_observation, sc.save_frames) = self.saved
+
+    def run_at(self, minutes_after, **flags):
+        import argparse
+
+        args = argparse.Namespace(now=sc.iso_z(self.rise + timedelta(minutes=minutes_after)), dry_run=False, force=False, cams=None, json=False, verbose=False)
+        for k, v in flags.items():
+            setattr(args, k, v)
+        return sc.run_normal(args, self.cfg)
+
+    def state(self):
+        return sc.load_state()["done"]
+
+    def test_incomplete_is_not_uploaded_and_not_marked_done_while_the_dvr_still_has_it(self):
+        self.run_at(60)
+        self.assertEqual(self.posts, [])
+        self.assertNotIn("fort-lauderdale|sunrise|2026-10-06|ftl-elbo-beach-cam", self.state())
+
+    def test_when_the_dvr_window_is_closing_it_is_marked_incomplete_and_still_not_uploaded(self):
+        self.run_at(185)
+        self.assertEqual(self.posts, [])
+        entry = self.state()["fort-lauderdale|sunrise|2026-10-06|ftl-elbo-beach-cam"]
+        self.assertEqual(entry["status"], "incomplete")
+        self.assertIn("coverage", entry["reason"])
+        # later runs leave it alone
+        self.run_at(200)
+        self.assertEqual(self.posts, [])
+
+    def test_an_event_that_aged_out_unseen_is_marked_incomplete_without_a_capture(self):
+        self.run_at(300)
+        self.assertEqual(self.posts, [])
+        self.assertEqual(self.state()["fort-lauderdale|sunrise|2026-10-06|ftl-elbo-beach-cam"]["status"], "incomplete")
+
+    def test_dry_run_and_force_never_write_state(self):
+        self.run_at(185, dry_run=True)
+        self.run_at(185, force=True)
+        self.assertEqual(self.state(), {})
+
+    def test_a_complete_capture_uploads_once_and_is_marked_uploaded(self):
+        self.holds = lambda t: True
+        self.run_at(60)
+        self.assertEqual(len(self.posts), 1)
+        self.assertEqual(self.posts[0]["slug"], "fort-lauderdale")
+        self.assertRegex(self.posts[0]["scored_at"], r"Z$")
+        self.assertEqual(self.state()["fort-lauderdale|sunrise|2026-10-06|ftl-elbo-beach-cam"]["status"], "uploaded")
+        self.run_at(90)
+        self.assertEqual(len(self.posts), 1)  # already done
 
 
 if __name__ == "__main__":

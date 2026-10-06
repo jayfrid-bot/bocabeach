@@ -10,7 +10,14 @@
 -- event. `view` is 'solar' when the cam looks at the sun (a sunrise on the
 -- east-facing cams) and 'antisolar' when it looks away (a sunset), so the two
 -- are never averaged together. `distance_mi` is how far the cam is from the
--- beach's pin. Re-posting the same key replaces the row (a re-score).
+-- beach's pin.
+--
+-- Re-posting the same key replaces the row ONLY when the incoming
+-- (score_version, scored_at) is newer than the stored pair: score_version is
+-- 'YYYY-MM-DD.N' and compares by date, then N as a number; scored_at is when the
+-- script scored the event. An exact duplicate or a stale replay changes nothing,
+-- so a late retry can never overwrite a newer re-score. created_at is when the
+-- key was FIRST received and is never rewritten.
 --
 -- Every row carries the credit string for the cam's owner; Elbo Room allowed
 -- the use on the condition that it is credited. Kept permanently.
@@ -22,14 +29,15 @@ CREATE TABLE sun_event_observations (
   event_iso TEXT NOT NULL,             -- ISO instant of the event itself (same value sun_event_predictions.event_iso holds)
   view TEXT NOT NULL CHECK (view IN ('solar', 'antisolar')),
   distance_mi REAL NOT NULL,           -- cam to the beach's pin, miles
-  observed_score REAL NOT NULL,        -- 0-100, the PEAK frame's score
+  observed_score REAL NOT NULL,        -- 0-100, the ROBUST peak of the series (see scripts/sun_cam_check.py robust_peak; the server recomputes it)
   warm_frac REAL NOT NULL,             -- peak frame: warm share of the valid sky pixels, 0-1
   colorfulness REAL NOT NULL,          -- peak frame: Hasler-Suesstrunk colorfulness
-  peak_frame_iso TEXT NOT NULL,        -- which frame was the peak
-  series_json TEXT NOT NULL,           -- [{t, score, warm_frac, colorfulness, warm_sat}], event-35 min .. event+25 min
-  score_version TEXT NOT NULL,         -- SUN_CAM_SCORE_VERSION in scripts/sun_cam_check.py
+  peak_frame_iso TEXT NOT NULL,        -- which frame carries the robust peak
+  series_json TEXT NOT NULL,           -- [{t, score, warm_frac, colorfulness, warm_sat}] usable frames, event-35 min .. event+25 min
+  score_version TEXT NOT NULL,         -- SUN_CAM_SCORE_VERSION in scripts/sun_cam_check.py, 'YYYY-MM-DD.N'
+  scored_at TEXT NOT NULL,             -- when the script scored it (ISO UTC); with score_version, orders re-scores
   credit TEXT NOT NULL,                -- e.g. 'Live stream courtesy Elbo Room (ElboRoom.com)'
-  created_at TEXT NOT NULL,            -- when this row was written
+  created_at TEXT NOT NULL,            -- when this key was first received
   PRIMARY KEY (slug, event_kind, event_date_local, cam_id)
 );
 CREATE INDEX sun_event_observations_event ON sun_event_observations(slug, event_iso);

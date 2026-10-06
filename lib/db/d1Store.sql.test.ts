@@ -898,14 +898,56 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
         .filter((r) => r.event_kind === "sunrise")
         .map((r) => [r.observed_score, r.observed_source, r.observed_at]);
 
-    it("round-trips every column and replaces the row on a re-post of the same key", async () => {
+    it("round-trips every column", async () => {
       const row = observationRow({ series_json: '[{"t":"x","score":1}]' });
-      await store.recordSunEventObservation(row);
+      expect(await store.recordSunEventObservation(row)).toEqual({ stored: true, predictionsUpdated: 0 });
       expect(await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06")).toEqual([row]);
-      await store.recordSunEventObservation({ ...row, observed_score: 97.5, score_version: "v2", created_at: "2026-10-06T15:00:00.000Z" });
-      const rows = await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06");
-      expect(rows).toHaveLength(1);
-      expect(rows[0]).toMatchObject({ observed_score: 97.5, score_version: "v2", created_at: "2026-10-06T15:00:00.000Z" });
+    });
+
+    it("replaces only on a newer (score_version, scored_at); a duplicate or stale replay writes nothing", async () => {
+      await store.upsertSunEventPredictions([predictionRow()]);
+      const first = observationRow({ observed_score: 70, scored_at: "2026-10-06T14:00:00.000Z", created_at: "2026-10-06T14:00:01.000Z" });
+      expect((await store.recordSunEventObservation(first)).stored).toBe(true);
+
+      // exact duplicate (even with a later created_at): meta.changes = 0, nothing propagates
+      expect(await store.recordSunEventObservation({ ...first, created_at: "2026-10-06T15:00:00.000Z" })).toEqual({ stored: false, predictionsUpdated: 0 });
+      // same version, older scored_at; older version, later scored_at; same pair, different content
+      expect((await store.recordSunEventObservation({ ...first, observed_score: 5, scored_at: "2026-10-06T13:00:00.000Z" })).stored).toBe(false);
+      expect((await store.recordSunEventObservation({ ...first, observed_score: 6, score_version: "2026-10-05.9", scored_at: "2026-10-06T16:00:00.000Z" })).stored).toBe(false);
+      expect((await store.recordSunEventObservation({ ...first, observed_score: 7 })).stored).toBe(false);
+      expect((await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06"))[0]).toEqual(first);
+      expect(await truth()).toEqual([[70, "sun-cam:deerfield-beach-cam:solar", "2026-10-06T14:00:00.000Z"]]);
+
+      // a real re-score replaces everything but created_at, and propagates once
+      const r = await store.recordSunEventObservation({ ...first, observed_score: 91, series_json: "[1]", scored_at: "2026-10-06T14:30:00.000Z", created_at: "2026-10-06T14:30:01.000Z" });
+      expect(r).toEqual({ stored: true, predictionsUpdated: 1 });
+      expect((await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06"))[0]).toMatchObject({
+        observed_score: 91,
+        series_json: "[1]",
+        scored_at: "2026-10-06T14:30:00.000Z",
+        created_at: "2026-10-06T14:00:01.000Z",
+      });
+      expect(await truth()).toEqual([[91, "sun-cam:deerfield-beach-cam:solar", "2026-10-06T14:30:00.000Z"]]);
+    });
+
+    it("score_version orders by date, then the counter as a NUMBER ('.10' beats '.9')", async () => {
+      const row = (v: string, scored: string) => observationRow({ score_version: v, scored_at: scored, observed_score: 50 });
+      await store.recordSunEventObservation(row("2026-10-06.9", "2026-10-06T14:00:00.000Z"));
+      expect((await store.recordSunEventObservation(row("2026-10-06.10", "2026-10-06T13:00:00.000Z"))).stored).toBe(true);
+      expect((await store.recordSunEventObservation(row("2026-10-06.9", "2026-10-06T15:00:00.000Z"))).stored).toBe(false);
+      expect((await store.recordSunEventObservation(row("2026-10-07.1", "2026-10-06T12:00:00.000Z"))).stored).toBe(true);
+      expect((await store.recordSunEventObservation(row("2026-10-06.99", "2026-10-06T18:00:00.000Z"))).stored).toBe(false);
+      expect((await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06"))[0].score_version).toBe("2026-10-07.1");
+    });
+
+    it("a stale replay leaves the prediction rows alone, but heals rows an earlier crash never filled", async () => {
+      await store.recordSunEventObservation(observationRow({ observed_score: 80 })); // stored with no prediction row yet
+      await store.upsertSunEventPredictions([predictionRow()]);
+      expect(await truth()).toEqual([[null, null, null]]);
+      // the same payload is retried: the observation is a duplicate (not stored) but the idempotent write-back fills the row
+      expect(await store.recordSunEventObservation(observationRow({ observed_score: 80 }))).toEqual({ stored: false, predictionsUpdated: 1 });
+      expect(await truth()).toEqual([[80, "sun-cam:deerfield-beach-cam:solar", "2026-10-06T14:05:00.000Z"]]);
+      expect((await store.recordSunEventObservation(observationRow({ observed_score: 80 }))).predictionsUpdated).toBe(0);
     });
 
     it("orders solar before antisolar, then nearest, then cam_id", async () => {
@@ -963,7 +1005,7 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       expect((await truth())[0][1]).toBe("sun-cam:surf:solar");
       await store.recordSunEventObservation(observationRow({ cam_id: "beach", distance_mi: 0.1, observed_score: 70 }));
       expect((await truth())[0]).toEqual([70, "sun-cam:beach:solar", "2026-10-06T14:05:00.000Z"]);
-      await store.recordSunEventObservation(observationRow({ cam_id: "beach", distance_mi: 0.1, observed_score: 75, created_at: "2026-10-06T16:00:00.000Z" }));
+      await store.recordSunEventObservation(observationRow({ cam_id: "beach", distance_mi: 0.1, observed_score: 75, scored_at: "2026-10-06T16:00:00.000Z" }));
       expect((await truth())[0]).toEqual([75, "sun-cam:beach:solar", "2026-10-06T16:00:00.000Z"]);
     });
 
@@ -985,8 +1027,8 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       const insert = (kind: string, view: string) =>
         raw
           .prepare(
-            "INSERT INTO sun_event_observations (slug, event_kind, event_date_local, cam_id, event_iso, view, distance_mi, observed_score, warm_frac, colorfulness, peak_frame_iso, series_json, score_version, credit, created_at) " +
-              "VALUES ('s', ?1, '2026-10-06', 'c', 'x', ?2, 0, 1, 0, 0, 'x', '[]', 'v', 'c', 'x')",
+            "INSERT INTO sun_event_observations (slug, event_kind, event_date_local, cam_id, event_iso, view, distance_mi, observed_score, warm_frac, colorfulness, peak_frame_iso, series_json, score_version, scored_at, credit, created_at) " +
+              "VALUES ('s', ?1, '2026-10-06', 'c', 'x', ?2, 0, 1, 0, 0, 'x', '[]', '2026-10-06.1', 'x', 'c', 'x')",
           )
           .bind(kind, view)
           .run();

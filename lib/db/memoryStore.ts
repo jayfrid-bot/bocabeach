@@ -46,7 +46,7 @@ import type {
   SunEventObservationRow,
   SunEventPredictionRow,
 } from "@/lib/history/types";
-import { sunCamObservedSource } from "@/lib/history/types";
+import { isNewerSunScore, sunCamObservedSource } from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
 import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
 import type {
@@ -621,26 +621,38 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
     // human labelled alone.
     async recordSunEventObservation(row: SunEventObservationRow) {
       await load();
-      sunObservations.set(sunObsKey(row), { ...row });
+      const key = sunObsKey(row);
+      const existing = sunObservations.get(key);
+      let stored = false;
+      if (!existing) {
+        sunObservations.set(key, { ...row });
+        stored = true;
+      } else if (isNewerSunScore(row, existing)) {
+        // a re-score: everything replaced except when the key was first received
+        sunObservations.set(key, { ...row, created_at: existing.created_at });
+        stored = true;
+      }
       const best = [...sunObservations.values()]
         .filter((o) => o.slug === row.slug && o.event_kind === row.event_kind && o.event_date_local === row.event_date_local)
         .sort(compareSunObservations)[0];
       const eventMs = Date.parse(row.event_iso);
+      const source = sunCamObservedSource(best.cam_id, best.view);
       let predictionsUpdated = 0;
-      for (const [key, pred] of sunPredictions) {
+      for (const [pkey, pred] of sunPredictions) {
         if (pred.slug !== row.slug || pred.event_kind !== row.event_kind) continue;
         if (!(Math.abs(Date.parse(pred.event_iso) - eventMs) <= SUN_OBS_MATCH_WINDOW_MS)) continue;
         if (pred.observed_source !== null && !pred.observed_source.startsWith("sun-cam:")) continue;
-        sunPredictions.set(key, {
+        if (pred.observed_score === best.observed_score && pred.observed_source === source && pred.observed_at === best.scored_at) continue;
+        sunPredictions.set(pkey, {
           ...pred,
           observed_score: best.observed_score,
-          observed_source: sunCamObservedSource(best.cam_id, best.view),
-          observed_at: best.created_at,
+          observed_source: source,
+          observed_at: best.scored_at,
         });
         predictionsUpdated += 1;
       }
-      await save();
-      return { predictionsUpdated };
+      if (stored || predictionsUpdated) await save();
+      return { stored, predictionsUpdated };
     },
 
     async sunEventObservationsFor(slug: string, eventKind: "sunrise" | "sunset", eventDateLocal: string) {

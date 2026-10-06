@@ -14,8 +14,10 @@
 // The body is validated strictly (lib/sunObservations.ts): every field's type
 // and range, no unknown fields, the cam/beach/credit against
 // config/sun-cams.json, the event time against the beach's own solar times, and
-// the score against the series it came from. A re-post of the same
-// (slug, event, local day, cam) replaces the row (a re-score).
+// the robust peak and the temporal coverage RECOMPUTED from the series. A
+// re-post of the same (slug, event, local day, cam) replaces the row only when
+// its (score_version, scored_at) is newer; a duplicate or stale replay is a
+// no-op (`stored: false`). The body is read as a bounded stream (32 KB).
 
 import { getStore } from "@/lib/db/store";
 import { secretEqual } from "@/lib/db/api";
@@ -30,21 +32,48 @@ function json(body: Record<string, unknown>, status: number): Response {
   return Response.json(body, { status, headers: NO_STORE });
 }
 
-/** Read and parse a JSON body under the size cap; null on any failure. */
-async function readJson(req: Request): Promise<unknown | null> {
+type BodyRead = { ok: true; value: unknown } | { ok: false; reason: "too-large" | "bad-json" };
+
+/**
+ * Read and parse a JSON body, never holding more than the cap. The body is read
+ * as a stream and cancelled the moment the running total passes the cap, so a
+ * chunked upload with no Content-Length (or a lying one) cannot make the worker
+ * buffer an unbounded body. A Content-Length over the cap is refused up front.
+ */
+async function readJson(req: Request): Promise<BodyRead> {
   const declared = Number(req.headers.get("content-length") ?? "0");
-  if (Number.isFinite(declared) && declared > SUN_OBSERVATION_MAX_BODY_BYTES) return null;
-  let text: string;
+  if (Number.isFinite(declared) && declared > SUN_OBSERVATION_MAX_BODY_BYTES) return { ok: false, reason: "too-large" };
+  if (!req.body) return { ok: false, reason: "bad-json" };
+
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
   try {
-    text = await req.text();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > SUN_OBSERVATION_MAX_BODY_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        return { ok: false, reason: "too-large" };
+      }
+      chunks.push(value);
+    }
   } catch {
-    return null;
+    return { ok: false, reason: "bad-json" };
   }
-  if (!text || new TextEncoder().encode(text).length > SUN_OBSERVATION_MAX_BODY_BYTES) return null;
+  if (total === 0) return { ok: false, reason: "bad-json" };
+
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    bytes.set(c, offset);
+    offset += c.byteLength;
+  }
   try {
-    return JSON.parse(text) as unknown;
+    return { ok: true, value: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown };
   } catch {
-    return null;
+    return { ok: false, reason: "bad-json" };
   }
 }
 
@@ -56,13 +85,20 @@ export async function POST(req: Request): Promise<Response> {
   const presented = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
   if (!presented || !secretEqual(presented, token)) return json({ ok: false, error: "unauthorized" }, 401);
 
-  const body = await readJson(req);
-  if (body === null) return json({ ok: false, error: "bad-request", detail: "body must be JSON of at most 32 KB" }, 400);
+  const read = await readJson(req);
+  if (!read.ok) {
+    return read.reason === "too-large"
+      ? json({ ok: false, error: "too-large", detail: "body must be at most 32 KB" }, 413)
+      : json({ ok: false, error: "bad-request", detail: "body must be JSON" }, 400);
+  }
 
-  const parsed = parseSunObservation(body, Date.now());
+  const parsed = parseSunObservation(read.value, Date.now());
   if (!parsed.ok) return json({ ok: false, error: "bad-request", detail: parsed.error }, 400);
 
   const store = await getStore();
-  const { predictionsUpdated } = await store.recordSunEventObservation(parsed.row);
-  return json({ ok: true, slug: parsed.row.slug, event_kind: parsed.row.event_kind, cam_id: parsed.row.cam_id, predictionsUpdated }, 200);
+  const { stored, predictionsUpdated } = await store.recordSunEventObservation(parsed.row);
+  return json(
+    { ok: true, slug: parsed.row.slug, event_kind: parsed.row.event_kind, cam_id: parsed.row.cam_id, stored, predictionsUpdated },
+    200,
+  );
 }
