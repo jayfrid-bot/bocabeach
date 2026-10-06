@@ -672,6 +672,9 @@ export interface WindowResult {
      *  (a deploy day): a morning forecast and the afternoon it is graded
      *  against would come from different curves, so the day is left out. */
     versionMixed: number;
+    /** Outlook forecast→target pairs skipped because the forecast and the
+     *  target day were scored by different engine versions. */
+    outlookVersionMismatch: number;
   };
   /** Mean length of the predicted windows, hours. */
   meanWindowHours: number | null;
@@ -781,7 +784,7 @@ export function windowMetrics(
     lastDate.set(slug, last);
   }
 
-  const skipped = { incompleteDay: 0, censoredDay: 0, noEarlyWindow: 0, versionMixed: 0 };
+  const skipped = { incompleteDay: 0, censoredDay: 0, noEarlyWindow: 0, versionMixed: 0, outlookVersionMismatch: 0 };
   /** Realized daylight scores per finished, well-covered (slug, date). */
   const complete = new Map<string, { slug: string; date: string; day: Day }>();
   for (const [slug, m] of days) {
@@ -865,7 +868,7 @@ export function windowMetrics(
         // against a day scored under another (a deploy between the two).
         const targetVersion = target.day.rows[0]?.engine_version ?? "unknown";
         if ((row.engine_version ?? "unknown") !== targetVersion) {
-          skipped.versionMixed++;
+          skipped.outlookVersionMismatch++;
           continue;
         }
         const realizedPeak = Math.max(...[...target.day.scores.values()].map((v) => v.score));

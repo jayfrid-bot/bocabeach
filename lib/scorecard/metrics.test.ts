@@ -829,7 +829,8 @@ describe("windowMetrics", () => {
     }));
     const r = windowMetrics([...forecastDay, ...targetDay, closer("2026-10-08")], { min: 1 });
     expect(r.outlook).toEqual([]);
-    expect(r.skipped.versionMixed).toBe(1);
+    expect(r.skipped.outlookVersionMismatch).toBe(1);
+    expect(r.skipped.versionMixed).toBe(0);
   });
 
   it("only daylight hours count; night scores are ignored", () => {
