@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd job for scripts/sun_cam_check.py — see that script's header (and
+  docs/SUN_CAM_CHECK.md) for what it does and the token-file setup.
+
+  NOT INSTALLED by the change that added it. To install (replace __HOME__ first):
+    sed "s#__HOME__#$HOME#g" scripts/com.isitbeachday.suncam.plist \
+      > "$HOME/Library/LaunchAgents/com.isitbeachday.suncam.plist"
+    launchctl bootstrap gui/$(id -u) \
+      "$HOME/Library/LaunchAgents/com.isitbeachday.suncam.plist"
+
+  Needs Pillow in the python3 named below (pip install pillow). If your python3
+  is not at /opt/homebrew/bin/python3, edit that line before installing.
+
+  To uninstall:
+    launchctl bootout gui/$(id -u)/com.isitbeachday.suncam
+    rm "$HOME/Library/LaunchAgents/com.isitbeachday.suncam.plist"
+
+  To check status / force a run:
+    launchctl print gui/$(id -u)/com.isitbeachday.suncam
+    launchctl kickstart -k gui/$(id -u)/com.isitbeachday.suncam
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.isitbeachday.suncam</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>__HOME__/Projects/bocabeach/scripts/sun_cam_check.py</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__HOME__/Projects/bocabeach</string>
+
+  <!-- Every 30 minutes. The job looks back up to 3.5 hours, so a run missed
+       while the Mac sleeps still finds the event on the next wake (YouTube
+       keeps ~4 hours of DVR). -->
+  <key>StartInterval</key>
+  <integer>1800</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/sun-cam-check.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/sun-cam-check.log</string>
+</dict>
+</plist>

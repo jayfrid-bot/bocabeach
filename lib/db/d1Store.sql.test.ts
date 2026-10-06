@@ -31,6 +31,7 @@ import {
   COMING_UP_30D_MS,
 } from "@/lib/db/comingUpClaims";
 import { ABANDONED_CLAIM_MS } from "@/lib/db/sendClaims";
+import { observationRow, predictionRow } from "@/lib/sunObservations.fixtures";
 
 let DatabaseSyncCtor: (new (path: string) => {
   exec(sql: string): void;
@@ -885,6 +886,156 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       await store.upsertSunEventPredictions([sunRow()]);
       const hist = await store.sunEventPredictionsFor("boca-raton", "2026-10-06T11:15:00.000Z");
       expect(hist.map((r) => r.score)).toEqual([40, 58]);
+    });
+  });
+
+  // --- sun-event observations (migrations/0015) — the real SQL ---------------
+  describe("sun_event_observations — upsert and the write-back onto sun_event_predictions", () => {
+    const EVENT = "2026-10-06T11:15:09.672Z";
+    const at = (min: number) => new Date(Date.parse(EVENT) + min * 60_000).toISOString();
+    const truth = async (iso = EVENT, s: DeviceStore = store) =>
+      (await s.sunEventPredictionsFor("boca-raton", iso))
+        .filter((r) => r.event_kind === "sunrise")
+        .map((r) => [r.observed_score, r.observed_source, r.observed_at]);
+
+    it("round-trips every column", async () => {
+      const row = observationRow({ series_json: '[{"t":"x","score":1}]' });
+      expect(await store.recordSunEventObservation(row)).toEqual({ stored: true, predictionsUpdated: 0 });
+      expect(await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06")).toEqual([row]);
+    });
+
+    it("replaces only on a newer (score_version, scored_at); a duplicate or stale replay writes nothing", async () => {
+      await store.upsertSunEventPredictions([predictionRow()]);
+      const first = observationRow({ observed_score: 70, scored_at: "2026-10-06T14:00:00.000Z", created_at: "2026-10-06T14:00:01.000Z" });
+      expect((await store.recordSunEventObservation(first)).stored).toBe(true);
+
+      // exact duplicate (even with a later created_at): meta.changes = 0, nothing propagates
+      expect(await store.recordSunEventObservation({ ...first, created_at: "2026-10-06T15:00:00.000Z" })).toEqual({ stored: false, predictionsUpdated: 0 });
+      // same version, older scored_at; older version, later scored_at; same pair, different content
+      expect((await store.recordSunEventObservation({ ...first, observed_score: 5, scored_at: "2026-10-06T13:00:00.000Z" })).stored).toBe(false);
+      expect((await store.recordSunEventObservation({ ...first, observed_score: 6, score_version: "2026-10-05.9", scored_at: "2026-10-06T16:00:00.000Z" })).stored).toBe(false);
+      expect((await store.recordSunEventObservation({ ...first, observed_score: 7 })).stored).toBe(false);
+      expect((await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06"))[0]).toEqual(first);
+      expect(await truth()).toEqual([[70, "sun-cam:deerfield-beach-cam:solar", "2026-10-06T14:00:00.000Z"]]);
+
+      // a real re-score replaces everything but created_at, and propagates once
+      const r = await store.recordSunEventObservation({ ...first, observed_score: 91, series_json: "[1]", scored_at: "2026-10-06T14:30:00.000Z", created_at: "2026-10-06T14:30:01.000Z" });
+      expect(r).toEqual({ stored: true, predictionsUpdated: 1 });
+      expect((await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06"))[0]).toMatchObject({
+        observed_score: 91,
+        series_json: "[1]",
+        scored_at: "2026-10-06T14:30:00.000Z",
+        created_at: "2026-10-06T14:00:01.000Z",
+      });
+      expect(await truth()).toEqual([[91, "sun-cam:deerfield-beach-cam:solar", "2026-10-06T14:30:00.000Z"]]);
+    });
+
+    it("score_version orders by date, then the counter as a NUMBER ('.10' beats '.9')", async () => {
+      const row = (v: string, scored: string) => observationRow({ score_version: v, scored_at: scored, observed_score: 50 });
+      await store.recordSunEventObservation(row("2026-10-06.9", "2026-10-06T14:00:00.000Z"));
+      expect((await store.recordSunEventObservation(row("2026-10-06.10", "2026-10-06T13:00:00.000Z"))).stored).toBe(true);
+      expect((await store.recordSunEventObservation(row("2026-10-06.9", "2026-10-06T15:00:00.000Z"))).stored).toBe(false);
+      expect((await store.recordSunEventObservation(row("2026-10-07.1", "2026-10-06T12:00:00.000Z"))).stored).toBe(true);
+      expect((await store.recordSunEventObservation(row("2026-10-06.99", "2026-10-06T18:00:00.000Z"))).stored).toBe(false);
+      expect((await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06"))[0].score_version).toBe("2026-10-07.1");
+    });
+
+    it("a stale replay leaves the prediction rows alone, but heals rows an earlier crash never filled", async () => {
+      await store.recordSunEventObservation(observationRow({ observed_score: 80 })); // stored with no prediction row yet
+      await store.upsertSunEventPredictions([predictionRow()]);
+      expect(await truth()).toEqual([[null, null, null]]);
+      // the same payload is retried: the observation is a duplicate (not stored) but the idempotent write-back fills the row
+      expect(await store.recordSunEventObservation(observationRow({ observed_score: 80 }))).toEqual({ stored: false, predictionsUpdated: 1 });
+      expect(await truth()).toEqual([[80, "sun-cam:deerfield-beach-cam:solar", "2026-10-06T14:05:00.000Z"]]);
+      expect((await store.recordSunEventObservation(observationRow({ observed_score: 80 }))).predictionsUpdated).toBe(0);
+    });
+
+    it("orders solar before antisolar, then nearest, then cam_id", async () => {
+      await store.recordSunEventObservation(observationRow({ cam_id: "z-cam", view: "antisolar", distance_mi: 0 }));
+      await store.recordSunEventObservation(observationRow({ cam_id: "b-cam", view: "solar", distance_mi: 2.9 }));
+      await store.recordSunEventObservation(observationRow({ cam_id: "a-cam", view: "solar", distance_mi: 2.9 }));
+      await store.recordSunEventObservation(observationRow({ cam_id: "c-cam", view: "solar", distance_mi: 0.5 }));
+      const order = (await store.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06")).map((r) => r.cam_id);
+      expect(order).toEqual(["c-cam", "a-cam", "b-cam", "z-cam"]);
+    });
+
+    it("fills the matching prediction rows (event_iso within 15 min, inclusive) and no others", async () => {
+      await store.upsertSunEventPredictions([
+        predictionRow({ event_iso: at(-15), as_of_hour_utc: "2026-10-06T08:00:00.000Z", snapshot_generated_at: "2026-10-06T08:05:00.000Z" }),
+        predictionRow({ event_iso: EVENT, as_of_hour_utc: "2026-10-06T09:00:00.000Z", snapshot_generated_at: "2026-10-06T09:05:00.000Z" }),
+        predictionRow({ event_iso: at(15), as_of_hour_utc: "2026-10-06T10:00:00.000Z", snapshot_generated_at: "2026-10-06T10:05:00.000Z" }),
+        predictionRow({ event_iso: at(-16), as_of_hour_utc: "2026-10-06T07:00:00.000Z", snapshot_generated_at: "2026-10-06T07:05:00.000Z" }),
+        predictionRow({ event_iso: at(16), as_of_hour_utc: "2026-10-06T06:00:00.000Z", snapshot_generated_at: "2026-10-06T06:05:00.000Z" }),
+        predictionRow({ slug: "fort-lauderdale", event_iso: EVENT }),
+        predictionRow({ event_kind: "sunset", event_iso: EVENT, as_of_hour_utc: "2026-10-06T05:00:00.000Z" }),
+      ]);
+      const r = await store.recordSunEventObservation(observationRow({ cam_id: "deerfield-beach-cam" }));
+      expect(r.predictionsUpdated).toBe(3);
+      for (const m of [-15, 0, 15]) {
+        expect((await truth(at(m)))[0]).toEqual([90, "sun-cam:deerfield-beach-cam:solar", "2026-10-06T14:05:00.000Z"]);
+      }
+      expect((await truth(at(-16)))[0]).toEqual([null, null, null]);
+      expect((await truth(at(16)))[0]).toEqual([null, null, null]);
+      // another beach and the other kind are untouched
+      expect((await store.sunEventPredictionsFor("fort-lauderdale", EVENT))[0].observed_score).toBeNull();
+      const sunset = (await store.sunEventPredictionsFor("boca-raton", EVENT)).find((p) => p.event_kind === "sunset");
+      expect(sunset?.observed_score).toBeNull();
+      // the model's own columns are left as they were
+      expect((await store.sunEventPredictionsFor("boca-raton", EVENT)).find((p) => p.event_kind === "sunrise")).toMatchObject({ score: 58, band: "good" });
+    });
+
+    it("never overwrites a solar observation with an antisolar one, in either arrival order", async () => {
+      await store.upsertSunEventPredictions([predictionRow()]);
+      await store.recordSunEventObservation(observationRow({ cam_id: "solar-cam", view: "solar", distance_mi: 2.9, observed_score: 85 }));
+      await store.recordSunEventObservation(observationRow({ cam_id: "anti-cam", view: "antisolar", distance_mi: 0, observed_score: 30 }));
+      expect(await truth()).toEqual([[85, "sun-cam:solar-cam:solar", "2026-10-06T14:05:00.000Z"]]);
+
+      const other = freshStore() as DeviceStore;
+      await other.upsertSunEventPredictions([predictionRow()]);
+      await other.recordSunEventObservation(observationRow({ cam_id: "anti-cam", view: "antisolar", distance_mi: 0, observed_score: 30 }));
+      expect((await truth(EVENT, other))[0][1]).toBe("sun-cam:anti-cam:antisolar");
+      await other.recordSunEventObservation(observationRow({ cam_id: "solar-cam", view: "solar", distance_mi: 2.9, observed_score: 85 }));
+      expect((await truth(EVENT, other))[0]).toEqual([85, "sun-cam:solar-cam:solar", "2026-10-06T14:05:00.000Z"]);
+    });
+
+    it("among solar cams the nearest wins; a tie goes to the lower cam_id; a re-score refreshes the label", async () => {
+      await store.upsertSunEventPredictions([predictionRow()]);
+      await store.recordSunEventObservation(observationRow({ cam_id: "pier", distance_mi: 2.9, observed_score: 50 }));
+      await store.recordSunEventObservation(observationRow({ cam_id: "surf", distance_mi: 0.1, observed_score: 60 }));
+      expect((await truth())[0][1]).toBe("sun-cam:surf:solar");
+      await store.recordSunEventObservation(observationRow({ cam_id: "beach", distance_mi: 0.1, observed_score: 70 }));
+      expect((await truth())[0]).toEqual([70, "sun-cam:beach:solar", "2026-10-06T14:05:00.000Z"]);
+      await store.recordSunEventObservation(observationRow({ cam_id: "beach", distance_mi: 0.1, observed_score: 75, scored_at: "2026-10-06T16:00:00.000Z" }));
+      expect((await truth())[0]).toEqual([75, "sun-cam:beach:solar", "2026-10-06T16:00:00.000Z"]);
+    });
+
+    it("leaves a hand-labelled prediction row alone", async () => {
+      // upsertSunEventPredictions never writes observed_*, so label the row by hand, as an owner would
+      const raw = freshRawDb() as D1Like;
+      const s = d1Store(raw);
+      await s.upsertSunEventPredictions([predictionRow()]);
+      await raw
+        .prepare("UPDATE sun_event_predictions SET observed_score = 88, observed_source = 'manual', observed_at = '2026-10-06T13:00:00.000Z'")
+        .run();
+      expect((await s.recordSunEventObservation(observationRow())).predictionsUpdated).toBe(0);
+      expect(await truth(EVENT, s)).toEqual([[88, "manual", "2026-10-06T13:00:00.000Z"]]);
+      expect(await s.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06")).toHaveLength(1);
+    });
+
+    it("the table refuses a bad kind or view (CHECK constraints) and a duplicate key is an upsert, not a second row", async () => {
+      const raw = freshRawDb() as D1Like;
+      const insert = (kind: string, view: string) =>
+        raw
+          .prepare(
+            "INSERT INTO sun_event_observations (slug, event_kind, event_date_local, cam_id, event_iso, view, distance_mi, observed_score, warm_frac, colorfulness, peak_frame_iso, series_json, score_version, scored_at, credit, created_at) " +
+              "VALUES ('s', ?1, '2026-10-06', 'c', 'x', ?2, 0, 1, 0, 0, 'x', '[]', '2026-10-06.1', 'x', 'c', 'x')",
+          )
+          .bind(kind, view)
+          .run();
+      await expect(insert("noon", "solar")).rejects.toThrow();
+      await expect(insert("sunrise", "sideways")).rejects.toThrow();
+      await insert("sunrise", "solar");
+      await expect(insert("sunrise", "solar")).rejects.toThrow(); // plain INSERT collides on the primary key
     });
   });
 
