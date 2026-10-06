@@ -41,7 +41,15 @@ import {
   COMING_UP_MAX_PER_30D,
   COMING_UP_RETENTION_MS,
 } from "@/lib/db/comingUpClaims";
-import type { ArchiveCandidate, BeachHourlyRow, HistoryRecordRow, HistoryRecordsResult } from "@/lib/history/types";
+import type {
+  ArchiveCandidate,
+  BeachHourlyRow,
+  CamObservationRow,
+  CamReadRow,
+  HistoryRecordRow,
+  HistoryRecordsResult,
+  SunEventPredictionRow,
+} from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
 import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
 import type {
@@ -124,6 +132,83 @@ ON CONFLICT(slug, hour_utc) DO UPDATE SET
     .join(", ")}
 WHERE excluded.snapshot_generated_at > beach_hourly.snapshot_generated_at
 `;
+
+// Sun-event prediction log (migrations/0013). Columns in table order minus the
+// reserved observed_* truth columns, which an upsert never writes or clears.
+const SUN_PRED_COLS = [
+  "slug", "event_kind", "event_iso", "as_of_hour_utc", "snapshot_generated_at", "archived_at",
+  "lead_minutes", "score", "band", "model_path", "note", "breakdown_json", "low_cloud_pct",
+  "mid_cloud_pct", "high_cloud_pct", "total_cloud_pct", "humidity_pct", "aod", "pm2_5",
+  "horizon_cloud_pct", "horizon_source", "horizon_fresh", "seasonal_prior", "point_time",
+  "peak_color_iso", "peak_offset_minutes", "algo_version", "engine_version", "build_sha",
+] as const satisfies readonly (keyof SunEventPredictionRow)[];
+
+const SUN_PRED_KEY_COLS = ["slug", "event_kind", "event_iso", "as_of_hour_utc"];
+
+/** ONE statement for any number of rows (a pass writes 0-2): a multi-row
+ *  INSERT, so a beach's whole sunrise+sunset pair costs a single D1 write. */
+function upsertSunPredictionsSql(rowCount: number): string {
+  const n = SUN_PRED_COLS.length;
+  const tuples = Array.from(
+    { length: rowCount },
+    (_, r) => `(${SUN_PRED_COLS.map((_c, i) => `?${r * n + i + 1}`).join(", ")})`,
+  ).join(", ");
+  return (
+    `INSERT INTO sun_event_predictions (${SUN_PRED_COLS.join(", ")}) VALUES ${tuples} ` +
+    `ON CONFLICT(${SUN_PRED_KEY_COLS.join(", ")}) DO UPDATE SET ` +
+    SUN_PRED_COLS.filter((c) => !SUN_PRED_KEY_COLS.includes(c))
+      .map((c) => `${c} = excluded.${c}`)
+      .join(", ") +
+    " WHERE excluded.snapshot_generated_at > sun_event_predictions.snapshot_generated_at"
+  );
+}
+
+// Cam archive (migrations/0006 + 0014). INSERT OR IGNORE: the feed re-publishes
+// the same rolling history every cycle, so a repeat is a no-op, never an error.
+const CAM_OBS_COLS = [
+  "slug", "captured_at_utc", "crowd_pct", "people", "seaweed_level", "cov_pct", "clarity_pct",
+  "water_word", "uw_pct", "source", "raw_json", "crowd_level", "uw_level",
+] as const satisfies readonly (keyof CamObservationRow)[];
+
+const CAM_READ_COLS = [
+  "slug", "captured_at_utc", "cam_id", "cam_name", "seaweed_level", "cov_pct", "seaweed_note",
+  "crowd_level", "crowd_pct", "people", "crowd_note", "water_word", "water_pct", "water_note", "raw_json",
+] as const satisfies readonly (keyof CamReadRow)[];
+
+/** D1 allows 100 bound parameters per statement — rows per multi-row INSERT. */
+const camRowsPerStatement = (cols: number) => Math.max(1, Math.floor(100 / cols));
+
+function insertOrIgnoreSql(table: string, cols: readonly string[], rowCount: number): string {
+  const n = cols.length;
+  const tuples = Array.from(
+    { length: rowCount },
+    (_, r) => `(${cols.map((_c, i) => `?${r * n + i + 1}`).join(", ")})`,
+  ).join(", ");
+  return `INSERT OR IGNORE INTO ${table} (${cols.join(", ")}) VALUES ${tuples}`;
+}
+
+/** Chunk `rows` into multi-row INSERT OR IGNOREs and run them as ONE D1 batch;
+ *  returns total rows actually inserted. */
+async function insertOrIgnoreRows<R extends object>(
+  db: D1Like,
+  table: string,
+  cols: readonly (keyof R & string)[],
+  rows: R[],
+): Promise<{ written: number }> {
+  if (!rows.length) return { written: 0 };
+  const per = camRowsPerStatement(cols.length);
+  const stmts: D1Stmt[] = [];
+  for (let i = 0; i < rows.length; i += per) {
+    const chunk = rows.slice(i, i + per);
+    stmts.push(
+      db
+        .prepare(insertOrIgnoreSql(table, cols, chunk.length))
+        .bind(...chunk.flatMap((row) => cols.map((c) => (row[c] as unknown) ?? null))),
+    );
+  }
+  const results = await runBatch(db, stmts);
+  return { written: results.reduce((n, r) => n + Number(r?.meta?.changes ?? 0), 0) };
+}
 
 /** Lifetime records — one UNION ALL of four parenthesized single-row
  *  subqueries (see `historyRecords` below for the tie-break/window
@@ -954,6 +1039,69 @@ export function d1Store(db: D1Like): DeviceStore {
         .run();
       const changes = (result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0;
       return { written: changes > 0 };
+    },
+
+    async upsertSunEventPredictions(rows: SunEventPredictionRow[]) {
+      if (!rows.length) return { written: 0 };
+      const result = await db
+        .prepare(upsertSunPredictionsSql(rows.length))
+        .bind(...rows.flatMap((row) => SUN_PRED_COLS.map((c) => row[c] ?? null)))
+        .run();
+      return { written: Number((result as { meta?: { changes?: number } } | undefined)?.meta?.changes ?? 0) };
+    },
+
+    async latestCamObservationUtc(slug: string) {
+      const row = await db
+        .prepare("SELECT MAX(captured_at_utc) AS m FROM cam_observations WHERE slug = ?")
+        .bind(slug)
+        .first<{ m: string | null }>();
+      return row?.m ?? null;
+    },
+
+    async camObservationUtcsSince(slug: string, sinceUtc: string) {
+      const r = await db
+        .prepare("SELECT captured_at_utc FROM cam_observations WHERE slug = ? AND captured_at_utc >= ?")
+        .bind(slug, sinceUtc)
+        .all<{ captured_at_utc: string }>();
+      return (r.results ?? []).map((x) => x.captured_at_utc);
+    },
+
+    async insertCamObservations(rows: CamObservationRow[]) {
+      return insertOrIgnoreRows(db, "cam_observations", CAM_OBS_COLS, rows);
+    },
+
+    async insertCamReads(rows: CamReadRow[]) {
+      return insertOrIgnoreRows(db, "cam_reads", CAM_READ_COLS, rows);
+    },
+
+    async camObservationsSince(slug: string, sinceUtc: string) {
+      const r = await db
+        .prepare(
+          `SELECT ${CAM_OBS_COLS.join(", ")} FROM cam_observations WHERE slug = ? AND captured_at_utc >= ? ORDER BY captured_at_utc`,
+        )
+        .bind(slug, sinceUtc)
+        .all<CamObservationRow>();
+      return r.results ?? [];
+    },
+
+    async camReadsAt(slug: string, capturedAtUtc: string) {
+      const r = await db
+        .prepare(
+          `SELECT ${CAM_READ_COLS.join(", ")} FROM cam_reads WHERE slug = ? AND captured_at_utc = ? ORDER BY cam_id`,
+        )
+        .bind(slug, capturedAtUtc)
+        .all<CamReadRow>();
+      return r.results ?? [];
+    },
+
+    async sunEventPredictionsFor(slug: string, eventIso: string) {
+      const result = await db
+        .prepare(
+          "SELECT * FROM sun_event_predictions WHERE slug = ? AND event_iso = ? ORDER BY as_of_hour_utc",
+        )
+        .bind(slug, eventIso)
+        .all<SunEventPredictionRow>();
+      return result.results ?? [];
     },
 
     // Codex round-3 finding #1: candidates used to come back in fixed config

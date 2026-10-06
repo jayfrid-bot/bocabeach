@@ -7,6 +7,7 @@ import type { ConditionsResponse, Location } from "@/lib/types";
 import { deriveMetrics, SCORING_CONFIG_VERSION, SCORING_ENGINE_VERSION } from "@/lib/score";
 import { computeSunTimes } from "@/lib/sources/sun";
 import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
+import { extraJsonFor } from "@/lib/history/extra";
 
 /** The UTC hour a given instant falls in, as the ISO string that keys
  *  `beach_hourly.hour_utc` — always :00:00.000Z, floored down. */
@@ -194,7 +195,9 @@ export function rowFromConditions(
       subs.map((s) => ({ key: s.key, label: s.label, score: s.score, weight: s.weight, display: s.display })),
     ),
     missing_json: JSON.stringify(missing),
-    extra_json: null,
+    // Other proprietary readouts (lib/history/extra.ts); a failure inside any
+    // block is logged and skipped there — this row always lands.
+    extra_json: extraJsonFor(res, d, anchorMs),
   };
 }
 

@@ -47,13 +47,34 @@ export function resolveSunHorizon(
   eventIso: string,
   nowMs: number,
 ): HorizonPath | undefined {
-  if (!goes || goes.status !== "ok") return undefined;
+  return resolveSunHorizonDetailed(goes, eventIso, nowMs).horizon;
+}
+
+/** Which satellite field fed the horizon reading: the sunward `beam` path, or
+ *  the `overhead` cloudPct fallback (beamCloudPct is null below ~5° sun
+ *  elevation — the usual case at sunrise). */
+export type HorizonSource = "beam" | "overhead";
+
+/**
+ * `resolveSunHorizon` plus WHICH field supplied the number — recording only
+ * (the history archiver stores it); the horizon value is exactly what
+ * `resolveSunHorizon` always returned.
+ */
+export function resolveSunHorizonDetailed(
+  goes: GoesCloudInput,
+  eventIso: string,
+  nowMs: number,
+): { horizon: HorizonPath | undefined; source: HorizonSource | null } {
+  if (!goes || goes.status !== "ok") return { horizon: undefined, source: null };
   const pct = goes.beamCloudPct ?? goes.cloudPct;
-  if (pct == null) return undefined;
+  if (pct == null) return { horizon: undefined, source: null };
   const dt = Math.abs(Date.parse(eventIso) - nowMs);
-  if (!Number.isFinite(dt)) return undefined;
+  if (!Number.isFinite(dt)) return { horizon: undefined, source: null };
   const fresh = dt <= BEAM_IMMINENT_MINUTES * 60_000;
-  return { cloudPct: pct, fresh };
+  return {
+    horizon: { cloudPct: pct, fresh },
+    source: goes.beamCloudPct != null ? "beam" : "overhead",
+  };
 }
 
 /** The slice of an hourly forecast point this module reads — structurally
@@ -91,6 +112,9 @@ export interface SunEventAssembly {
    *  tolerance (see `nearestHourlyPoint`). */
   point: HourlyCloudPoint | undefined;
   horizon: HorizonPath | undefined;
+  /** Which satellite field fed `horizon` (null when there is no horizon).
+   *  Recording only — the history archiver stores it. */
+  horizonSource: HorizonSource | null;
   /** Score/band/note/breakdown — see `lib/sunQuality.ts`'s `sunEventQuality`. */
   result: SunEventQuality;
   peak: PeakColorTime | null;
@@ -115,7 +139,11 @@ export function assembleSunEventQuality(
   },
 ): SunEventAssembly {
   const point = nearestHourlyPoint(event.timeIso, inputs.hourly);
-  const horizon = resolveSunHorizon(inputs.goesCloud, event.timeIso, inputs.nowMs);
+  const { horizon, source: horizonSource } = resolveSunHorizonDetailed(
+    inputs.goesCloud,
+    event.timeIso,
+    inputs.nowMs,
+  );
 
   const result = sunEventQuality({
     cloud: point?.cloud,
@@ -141,7 +169,7 @@ export function assembleSunEventQuality(
     clearPathScore: clearPathEstimate,
   });
 
-  return { point, horizon, result, peak };
+  return { point, horizon, horizonSource, result, peak };
 }
 
 export interface SunEventPrediction {

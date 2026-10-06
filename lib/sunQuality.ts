@@ -23,6 +23,15 @@
 // makes) so this stays a small, dependency-free, pure unit under test.
 // ---------------------------------------------------------------------------
 
+/**
+ * Algorithm version of the sunrise/sunset color model (this file + the
+ * assembly in lib/sunAlert.ts). Archived with every prediction row
+ * (migrations/0013_sun_event_predictions.sql) so a later recalibration can
+ * tell which formula produced which score. BUMP IT whenever a curve, weight,
+ * threshold, or band cutoff in this module changes.
+ */
+export const SUN_QUALITY_VERSION = "2026-10-06.1";
+
 export type SunEventKind = "sunrise" | "sunset";
 
 export type SunQualityBand = "dud" | "plain" | "good" | "vivid" | "epic";
@@ -286,7 +295,7 @@ function humidityModifier(humidityPct: number | undefined): number {
 }
 
 /** Neutral, near-flat seasonal color prior (26°N has little seasonal swing). */
-const DEFAULT_SEASONAL_PRIOR = 55; // HEURISTIC
+export const DEFAULT_SEASONAL_PRIOR = 55; // HEURISTIC
 
 function airClarityWord(aod: number): string {
   if (aod < 0.1) return "excellent";
@@ -476,6 +485,28 @@ export function sunEventQuality(input: SunEventQualityInput): SunEventQuality {
   const note = buildNote({ hasLevelSplit, midHigh, lowPct, band, bonus });
 
   return { score, band, note };
+}
+
+/** Which branch of `sunEventQuality` produced (or would produce) a result:
+ *  the richer factor model, the level-split curve, the total-cloud-only
+ *  curve, or `null` for the honest "no forecast cloud reading" state. */
+export type SunModelPath = "factor" | "level-curve" | "total-only" | null;
+
+/**
+ * Pure mirror of the branch choice at the top of `sunEventQuality`, exposed
+ * so the history archiver can record WHICH path scored a prediction without
+ * re-deriving it. Recording only — `sunEventQuality` keeps its own gating;
+ * a unit test pins the two together.
+ */
+export function sunModelPath(input: SunEventQualityInput): SunModelPath {
+  const cloud = input.cloud;
+  const hasLevelSplit =
+    !!cloud && cloud.lowPct != null && cloud.midPct != null && cloud.highPct != null;
+  const hasTotalOnly = !hasLevelSplit && !!cloud && cloud.totalPct != null;
+  if (!hasLevelSplit && !hasTotalOnly) return null;
+  const hasRichSignal = input.aod != null || input.pm2_5 != null || input.horizon != null;
+  if (hasLevelSplit && hasRichSignal) return "factor";
+  return hasLevelSplit ? "level-curve" : "total-only";
 }
 
 // --- event selection ----------------------------------------------------------

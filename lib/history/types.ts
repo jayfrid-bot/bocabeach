@@ -58,6 +58,129 @@ export interface BeachHourlyRow {
   extra_json: string | null;
 }
 
+/**
+ * One row of `sun_event_predictions` (migrations/0013): the sunrise/sunset
+ * color model's output for ONE upcoming sun event, as of one archive hour,
+ * with every input it used. See lib/history/sunPredictions.ts.
+ */
+export interface SunEventPredictionRow {
+  slug: string;
+  event_kind: "sunrise" | "sunset";
+  event_iso: string;
+  as_of_hour_utc: string;
+  snapshot_generated_at: string;
+  archived_at: string;
+  lead_minutes: number;
+
+  score: number | null;
+  band: string | null;
+  model_path: "factor" | "level-curve" | "total-only" | null;
+  note: string | null;
+  breakdown_json: string | null;
+
+  low_cloud_pct: number | null;
+  mid_cloud_pct: number | null;
+  high_cloud_pct: number | null;
+  total_cloud_pct: number | null;
+  humidity_pct: number | null;
+  aod: number | null;
+  pm2_5: number | null;
+  horizon_cloud_pct: number | null;
+  horizon_source: "beam" | "overhead" | null;
+  horizon_fresh: 0 | 1 | null;
+  seasonal_prior: number | null;
+  point_time: string | null;
+  peak_color_iso: string | null;
+  peak_offset_minutes: number | null;
+
+  algo_version: string;
+  engine_version: string;
+  build_sha: string | null;
+
+  observed_score: number | null;
+  observed_source: string | null;
+  observed_at: string | null;
+}
+
+/**
+ * Shape of `beach_hourly.extra_json` (schema version `v`): the app's other
+ * proprietary computed readouts as of the archived hour — compact numbers and
+ * enums only, no prose. Every block is optional: a model that had no input,
+ * or threw while archiving, is simply absent (never fabricated). Each block
+ * carries its own algorithm version `av` where the module has one; modules
+ * without a version constant are tagged with the dated string below, which
+ * must be bumped by hand when that model's formula changes.
+ */
+export interface BeachHourlyExtra {
+  v: 1;
+  /** Estimated surf (lib/surfHeight.ts, Komar-Gaughan). */
+  surf?: {
+    av: string;
+    /** Total raw Hs, ft. */
+    hs: number | null;
+    /** Raw height that actually fed the estimate (can be the swell part), ft. */
+    rawFt: number | null;
+    /** Its paired dominant period, s. */
+    periodS: number | null;
+    /** Estimated breaking surf, ft. */
+    surfFt: number | null;
+    src: "buoy" | "model" | null;
+  };
+  /** Sand temperature model (lib/sandTemp.ts) and the inputs it ran on. */
+  sand?: {
+    av: string;
+    tempF: number | null;
+    surfF: number | null;
+    soilF: number | null;
+    solarWm2: number | null;
+    windMph: number | null;
+    rainIn: number | null;
+    cloudPct: number | null;
+    beamCloud: 0 | 1;
+    carried: 0 | 1;
+    hfn: number | null;
+  };
+  /** Rip current resolved for this hour (lib/ripRisk). */
+  rip?: {
+    av: string;
+    level: string;
+    source: string;
+    /** NOAA model probability %, when a fresh model hour exists. */
+    modelPct: number | null;
+    /** The SRF period's own word, when one is current. */
+    srf: string | null;
+    watch: 0 | 1;
+    alert: 0 | 1;
+  };
+  /** Storm activity meter (lib/stormActivity.ts). */
+  storm?: {
+    av: string;
+    score: number;
+    band: string;
+    strikes: number | null;
+    proximity: number | null;
+    rain: number | null;
+    radar: 0 | 1;
+  };
+  /** Feels-like beach temperature (lib/feelsLikeBeach.ts). */
+  feels?: { av: string; tempF: number; band: string };
+  /** Water-feel trend (lib/waterTrend.ts). */
+  water?: { av: string; status: string; d48: number; d7d: number | null };
+  /** Crowd and seaweed vs the beach's own average (lib/vsAverage.ts). */
+  vsAvg?: {
+    av: string;
+    crowd?: { pct: number | null; pts: number | null; days: number };
+    seaweed?: { pct: number | null; pts: number | null; days: number };
+  };
+  /** Swim-safety and surf-condition levels (lib/safetyLine.ts). */
+  safety?: { av: string; swim: string; surf: string };
+  /** Best beach window today (multiDayWindows[0].best). */
+  window?: { av: string; startIso: string; endIso: string; score: number } | null;
+  /** Sky events on the "Coming up" card with their visibility rating
+   *  (lib/skyEvents.ts, lib/skyVisibilityQuality.ts). */
+  sky?: { av: string; events: { t: string; at: string; r: string | null; s: number | null }[] };
+}
+
 export interface CamObservationRow {
   slug: string;
   captured_at_utc: string;
@@ -69,6 +192,29 @@ export interface CamObservationRow {
   water_word: string | null;
   uw_pct: number | null;
   source: "feed" | "live";
+  raw_json: string | null;
+  /** Busiest-cam crowd word (migration 0014). */
+  crowd_level: string | null;
+  /** Underwater read's level word (migration 0014). */
+  uw_level: string | null;
+}
+
+/** One cam's own read within a capture (migrations/0014 `cam_reads`). */
+export interface CamReadRow {
+  slug: string;
+  captured_at_utc: string;
+  cam_id: string;
+  cam_name: string | null;
+  seaweed_level: string | null;
+  cov_pct: number | null;
+  seaweed_note: string | null;
+  crowd_level: string | null;
+  crowd_pct: number | null;
+  people: number | null;
+  crowd_note: string | null;
+  water_word: string | null;
+  water_pct: number | null;
+  water_note: string | null;
   raw_json: string | null;
 }
 

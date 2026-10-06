@@ -96,6 +96,8 @@ import { getConditions } from "@/lib/conditions";
 import { getLocation } from "@/config/locations";
 import { getStore } from "@/lib/db/store";
 import { hourUtcOf, rowFromConditions } from "@/lib/history/archive";
+import { sunEventRowsFromConditions } from "@/lib/history/sunPredictions";
+import { archiveCamObservations, hasVisionCamFeed } from "@/lib/history/camObservations";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -262,6 +264,37 @@ export async function POST(req: Request): Promise<Response> {
     try {
       const row = rowFromConditions(res, loc, nowMs, { hourUtc: claimedHourUtc });
       const { written } = await store.upsertBeachHourly(row);
+      // Sun-event prediction log (migrations/0013): the next sunrise + sunset,
+      // same pass. Best-effort — a failure here logs and is skipped; it must
+      // never fail the beach_hourly row that already landed above.
+      try {
+        const sunRows = sunEventRowsFromConditions(res, loc, nowMs, { hourUtc: claimedHourUtc });
+        if (sunRows.length) {
+          // The beach_hourly row just landed, which takes this beach out of the
+          // candidate list for the hour — so nothing later would retry a
+          // transient D1 failure here. Retry the (idempotent) upsert once
+          // inline; a second failure falls to the catch below and is skipped.
+          try {
+            await store.upsertSunEventPredictions(sunRows);
+          } catch (first) {
+            console.error("history: sun-event predictions write failed, retrying once", slug, first);
+            await store.upsertSunEventPredictions(sunRows);
+          }
+        }
+      } catch (e) {
+        console.error("history: sun-event predictions failed", slug, e);
+      }
+      // Cam reads (cam_observations + cam_reads, migrations 0006/0014): keep the
+      // cam archive current from the beach's published vision feed. Same rule —
+      // a feed that is down or malformed logs and is skipped, never failing the
+      // beach_hourly row.
+      if (hasVisionCamFeed(slug)) {
+        try {
+          await archiveCamObservations(store, slug);
+        } catch (e) {
+          console.error("history: cam observations failed", slug, e);
+        }
+      }
       await store.completeHistoryClaim(slug, claimedHourUtc, Date.now());
       if (written) archived += 1;
       else deduped += 1;

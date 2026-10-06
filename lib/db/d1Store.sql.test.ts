@@ -24,7 +24,7 @@ import {
   type D1Stmt,
 } from "@/lib/db/d1Store";
 import type { DeviceStore } from "@/lib/db/store";
-import type { BeachHourlyRow } from "@/lib/history/types";
+import type { BeachHourlyRow, CamObservationRow, CamReadRow, SunEventPredictionRow } from "@/lib/history/types";
 import {
   ABANDONED_CLAIM_MS as COMING_UP_ABANDONED_CLAIM_MS,
   COMING_UP_24H_MS,
@@ -805,6 +805,188 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       const result = await store.historyRecords("nowhere-beach");
       expect(result).toEqual({ records: [], archiveStartedAt: null, dayCount: 0, surfSince: null });
     });
+  });
+
+  // --- sun-event prediction log (migrations/0013) — real multi-row upsert ---
+  describe("sun_event_predictions — real multi-row UPSERT", () => {
+  function sunRow(over: Partial<SunEventPredictionRow> = {}): SunEventPredictionRow {
+    return {
+      slug: "boca-raton",
+      event_kind: "sunrise",
+      event_iso: "2026-10-06T11:15:00.000Z",
+      as_of_hour_utc: "2026-10-06T11:00:00.000Z",
+      snapshot_generated_at: "2026-10-06T11:05:00.000Z",
+      archived_at: "2026-10-06T11:05:01.000Z",
+      lead_minutes: 10,
+      score: 58,
+      band: "good",
+      model_path: "factor",
+      note: "test note",
+      breakdown_json: '{"horizonPath":"x","cloudCanvas":"y"}',
+      low_cloud_pct: 0,
+      mid_cloud_pct: 67,
+      high_cloud_pct: 48,
+      total_cloud_pct: 67,
+      humidity_pct: 87,
+      aod: 0.14,
+      pm2_5: 13.6,
+      horizon_cloud_pct: 40,
+      horizon_source: "overhead",
+      horizon_fresh: 1,
+      seasonal_prior: 55,
+      point_time: "2026-10-06T11:00:00.000Z",
+      peak_color_iso: "2026-10-06T11:15:00.000Z",
+      peak_offset_minutes: 0,
+      algo_version: "2026-10-06.1",
+      engine_version: "test-1",
+      build_sha: "abc123",
+      observed_score: null,
+      observed_source: null,
+      observed_at: null,
+      ...over,
+    };
+  }
+
+    it("writes a sunrise+sunset pair as ONE statement and round-trips every column", async () => {
+      const rows = [
+        sunRow(),
+        sunRow({ event_kind: "sunset", event_iso: "2026-10-06T23:10:00.000Z", model_path: null, score: null, band: null, breakdown_json: null, horizon_source: null, horizon_fresh: null, horizon_cloud_pct: null, point_time: null }),
+      ];
+      expect(await store.upsertSunEventPredictions(rows)).toEqual({ written: 2 });
+      const back = await store.sunEventPredictionsFor("boca-raton", "2026-10-06T11:15:00.000Z");
+      expect(back).toHaveLength(1);
+      const { observed_score, observed_source, observed_at, ...rest } = rows[0];
+      expect(back[0]).toMatchObject(rest);
+      expect([observed_score, observed_source, observed_at]).toEqual([null, null, null]);
+      const set = await store.sunEventPredictionsFor("boca-raton", "2026-10-06T23:10:00.000Z");
+      expect(set[0].score).toBeNull();
+      expect(set[0].model_path).toBeNull();
+    });
+
+    it("an older or equal snapshot never regresses a row; a newer one replaces it but leaves observed_* alone", async () => {
+      const raw = freshRawDb() as D1Like;
+      const s = d1Store(raw);
+      await s.upsertSunEventPredictions([sunRow()]);
+      await raw
+        .prepare("UPDATE sun_event_predictions SET observed_score = 88, observed_source = 'manual', observed_at = 'x'")
+        .run();
+      expect((await s.upsertSunEventPredictions([sunRow({ score: 1 })])).written).toBe(0);
+      expect(
+        (await s.upsertSunEventPredictions([sunRow({ snapshot_generated_at: "2026-10-06T11:30:00.000Z", score: 61 })])).written,
+      ).toBe(1);
+      const [r] = await s.sunEventPredictionsFor("boca-raton", "2026-10-06T11:15:00.000Z");
+      expect(r.score).toBe(61);
+      expect(r.observed_score).toBe(88);
+      expect(r.observed_source).toBe("manual");
+    });
+
+    it("different as_of hours of one event are separate rows, oldest first", async () => {
+      await store.upsertSunEventPredictions([sunRow({ as_of_hour_utc: "2026-10-06T10:00:00.000Z", snapshot_generated_at: "2026-10-06T10:05:00.000Z", score: 40 })]);
+      await store.upsertSunEventPredictions([sunRow()]);
+      const hist = await store.sunEventPredictionsFor("boca-raton", "2026-10-06T11:15:00.000Z");
+      expect(hist.map((r) => r.score)).toEqual([40, 58]);
+    });
+  });
+
+  // --- cam archive (migrations/0006 + 0014) — real INSERT OR IGNORE ---------
+  describe("cam_observations / cam_reads — real multi-row INSERT OR IGNORE", () => {
+    function obs(i: number, over: Partial<CamObservationRow> = {}): CamObservationRow {
+      return {
+        slug: "boca-raton",
+        captured_at_utc: new Date(Date.UTC(2026, 9, 6, 11, i)).toISOString(),
+        crowd_pct: 10 + i,
+        people: i,
+        seaweed_level: "low",
+        cov_pct: 5,
+        clarity_pct: 70,
+        water_word: "clear",
+        uw_pct: null,
+        source: "feed",
+        raw_json: `{"i":${i}}`,
+        crowd_level: "light",
+        uw_level: null,
+        ...over,
+      };
+    }
+    const read = (cam: string, over: Partial<CamReadRow> = {}): CamReadRow => ({
+      slug: "boca-raton",
+      captured_at_utc: "2026-10-06T12:00:00.000Z",
+      cam_id: cam,
+      cam_name: `Cam ${cam}`,
+      seaweed_level: "low",
+      cov_pct: 4,
+      seaweed_note: "n",
+      crowd_level: "light",
+      crowd_pct: 9,
+      people: 3,
+      crowd_note: "c",
+      water_word: "clear",
+      water_pct: 80,
+      water_note: "w",
+      raw_json: "{}",
+      ...over,
+    });
+
+    it("inserts more rows than fit in one statement (100-param cap) and round-trips them", async () => {
+      const rows = Array.from({ length: 20 }, (_, i) => obs(i, i === 3 ? { uw_pct: 55, uw_level: "hazy" } : {}));
+      expect(await store.insertCamObservations(rows)).toEqual({ written: 20 });
+      const back = await store.camObservationsSince("boca-raton", "2026-10-06T00:00:00.000Z");
+      expect(back).toHaveLength(20);
+      expect(back[3]).toMatchObject({ uw_pct: 55, uw_level: "hazy", crowd_level: "light", raw_json: '{"i":3}' });
+      expect(await store.latestCamObservationUtc("boca-raton")).toBe(rows[19].captured_at_utc);
+      expect(await store.latestCamObservationUtc("nowhere")).toBeNull();
+    });
+
+    it("is idempotent: re-inserting the same reads writes nothing and never overwrites", async () => {
+      await store.insertCamObservations([obs(0), obs(1)]);
+      const again = await store.insertCamObservations([obs(0, { crowd_pct: 99 }), obs(1), obs(2)]);
+      expect(again).toEqual({ written: 1 });
+      const back = await store.camObservationsSince("boca-raton", "2026-10-06T00:00:00.000Z");
+      expect(back[0].crowd_pct).toBe(10); // the first write stands
+    });
+
+    it("camObservationUtcsSince is bounded below and per beach", async () => {
+      await store.insertCamObservations([obs(0), obs(5), obs(0, { slug: "deerfield-beach" })]);
+      const got = await store.camObservationUtcsSince("boca-raton", obs(3).captured_at_utc);
+      expect(got).toEqual([obs(5).captured_at_utc]);
+    });
+
+    it("stores per-cam reads and ignores repeats", async () => {
+      const rows = ["a", "b", "c", "d", "e", "f", "g", "h"].map((c) => read(c)); // > 6 per statement
+      expect(await store.insertCamReads(rows)).toEqual({ written: 8 });
+      expect(await store.insertCamReads(rows)).toEqual({ written: 0 });
+      const back = await store.camReadsAt("boca-raton", "2026-10-06T12:00:00.000Z");
+      expect(back.map((r) => r.cam_id)).toEqual(["a", "b", "c", "d", "e", "f", "g", "h"]);
+      expect(back[0]).toMatchObject({ water_pct: 80, seaweed_note: "n" });
+    });
+
+    it("an empty batch is a no-op", async () => {
+      expect(await store.insertCamObservations([])).toEqual({ written: 0 });
+      expect(await store.insertCamReads([])).toEqual({ written: 0 });
+    });
+  });
+
+  it("migration 0014 back-fills crowd_level / uw_level / uw_pct on pre-existing rows from raw_json", () => {
+    const dir = path.join(process.cwd(), "migrations");
+    const files = readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
+    const db = new DatabaseSyncCtor!(":memory:");
+    for (const f of files.filter((f) => f < "0014")) db.exec(readFileSync(path.join(dir, f), "utf8"));
+    const ins = db.prepare(
+      "INSERT INTO cam_observations (slug, captured_at_utc, source, raw_json) VALUES (?, ?, 'feed', ?)",
+    );
+    ins.run("boca-raton", "2026-09-22T11:00:00.000Z", JSON.stringify({ level: "heavy", uw: 40, uwLevel: "hazy" }));
+    ins.run("boca-raton", "2026-09-22T12:00:00.000Z", JSON.stringify({ level: "light" }));
+    ins.run("boca-raton", "2026-09-22T13:00:00.000Z", "not json{");
+    ins.run("boca-raton", "2026-09-22T14:00:00.000Z", null as unknown as string);
+    db.exec(readFileSync(path.join(dir, files.find((f) => f.startsWith("0014"))!), "utf8"));
+    const rows = db
+      .prepare("SELECT captured_at_utc, crowd_level, uw_level, uw_pct FROM cam_observations ORDER BY captured_at_utc")
+      .all();
+    expect(rows[0]).toMatchObject({ crowd_level: "heavy", uw_level: "hazy", uw_pct: 40 });
+    expect(rows[1]).toMatchObject({ crowd_level: "light", uw_level: null, uw_pct: null });
+    expect(rows[2]).toMatchObject({ crowd_level: null }); // invalid JSON left alone, no error
+    expect(rows[3]).toMatchObject({ crowd_level: null });
+    db.close();
   });
 
   // --- presence fix purge (housekeeping in app/api/push/run/route.ts) -------

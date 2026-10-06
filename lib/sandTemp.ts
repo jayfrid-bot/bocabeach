@@ -493,7 +493,7 @@ function clearSkyRatio(hoursFromNoonThen: number, hoursFromNoonNow: number): num
   return Math.max(0.5, Math.min(1.1, c(hoursFromNoonNow) / then));
 }
 
-function currentSandInput(
+export function currentSandInput(
   hours: SandHour[],
   nowMs: number = Date.now(),
   override?: SandNowOverride,
