@@ -345,10 +345,10 @@ export function PaywallBody({
     <div>
       <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">
         Everything you have today stays free. Plus is the beach tuned to you, and
-        watched for you when you&apos;re not looking.
+        watched for you.
       </p>
 
-      <ul className="mt-4 space-y-3">
+      <ul className="mt-4 space-y-2.5">
         {BENEFITS.map((b) => (
           <li key={b.title} className="flex items-start gap-3">
             <span aria-hidden className="mt-0.5 shrink-0 text-lg leading-none">
