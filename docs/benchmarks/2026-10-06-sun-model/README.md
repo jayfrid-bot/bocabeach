@@ -16,10 +16,12 @@ The forecast inputs at the 07:00 hour were: low cloud 0%, mid 67%, high 48%, RH 
 
 ## Changes
 
-- The satellite reading is recorded (`sun_event_predictions`), not scored. The clear path comes from the forecast low cloud.
-- The canvas is a plateau over a high-weighted amount of 35–80. A solid mid deck (over 85% mid) is a gray lid, scaled 1.0 → 0.6. A full high veil is not penalized.
-- The clear path now scales the canvas instead of adding to it: `0.85·canvas·clearPath/100 + 0.15·prior`. A cloudless sky reads "Fair", not "Good".
+- The satellite reading is recorded (`sun_event_predictions`), not scored.
+- The clear path comes from the forecast low cloud: free up to 20% (scattered cumulus), then 0 at 90%. Low cloud is counted only here, not again in the canvas.
+- The canvas is a plateau over a high-weighted amount of 35–80. A solid mid deck (over 80% mid) is a gray lid, scaled 1.0 → 0.35. A full high veil is not penalized.
+- The clear path scales the canvas instead of adding to it: `0.85·canvas·clearPath/100 + 0.15·prior`. A cloudless sky reads "Fair", not "Good".
 - Humidity counts only without an AOD reading, and then only above 92% RH (−8% cap).
+- The factor model runs whenever the low/mid/high split exists, with or without an aerosol reading. AirNow-backed snapshots carry AQI but no AOD; they used to fall to a separate curve. That curve is gone. Only a total-cloud-only fallback remains.
 
 ## Calibration
 
@@ -33,9 +35,12 @@ npx vite-node scripts/sun_calibrate.ts
 |---|---|---|---|---|---|---|
 | 2026-10-06.1, no satellite | 46 | 62 | 73 | 92 | 13% | 1% |
 | 2026-10-06.1, overhead cloud as horizon (live behaviour) | 43 | 50 | 52 | 62 | 0% | 0% |
-| 2026-10-06.2 | 28 | 66 | 84 | 98 | 18% | 8% |
+| 2026-10-06.2, with AOD | 29 | 76 | 90 | 98 | 21% | 11% |
+| 2026-10-06.2, no AOD (AirNow) | 29 | 75 | 93 | 93 | 22% | 14% |
 
 The target was the owner's framing: "Great" ≈ the top 20% of events, "Amazing" ≈ the top 10%.
+
+This shows the model produces those band frequencies on forecast inputs. It does not yet show that the bands pick the best-looking 20% and 10% of real skies: one morning has visual ground truth so far.
 
 The live version 2026-10-06.1 could not rate any satellite-fresh event above 62. So whenever the GOES feed was fresh, the "Great or better" sun alert could not fire.
 

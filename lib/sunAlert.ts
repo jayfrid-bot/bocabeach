@@ -12,6 +12,7 @@
 
 import type { ConditionsResponse } from "@/lib/types";
 import {
+  lowCloudClearPath,
   nearestHourlyPoint,
   nextSunEvent,
   peakColorTime,
@@ -163,7 +164,7 @@ export function assembleSunEventQuality(
   // Same rough clear-path estimate the factor model uses, purely for the
   // peak-color "reasonably clear" gate.
   const clearPathEstimate =
-    point?.cloud.lowPct != null ? Math.max(0, 100 - point.cloud.lowPct * 1.1) : undefined;
+    point?.cloud.lowPct != null ? lowCloudClearPath(point.cloud.lowPct) : undefined;
   const peak = peakColorTime({
     event: event.event,
     eventIso: event.timeIso,

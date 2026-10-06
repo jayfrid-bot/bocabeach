@@ -5,10 +5,9 @@
 // aq.json (air-quality hourly AOD + PM2.5, UTC) and sun.json (daily
 // sunrise/sunset, UTC). Default: docs/benchmarks/2026-10-06-sun-model.
 //
-// The satellite horizon input is not in the history, so two old-model
-// variants are shown: with no satellite reading, and with the overhead-cloud
-// fallback approximated by total cloud (what the live app did near sunrise
-// and sunset before 2026-10-06).
+// Two variants: with the CAMS aerosol reading (Open-Meteo air quality) and
+// without one (an AirNow-backed snapshot carries AQI but no AOD). The
+// satellite horizon is not scored since version 2026-10-06.2.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -77,9 +76,9 @@ function report(label: string, score: (r: Row) => number | null) {
   );
 }
 
-report("current model, no satellite", (r) => sunEventQuality(r.input).score);
-report("current model, overhead cloud as horizon", (r) =>
-  sunEventQuality({ ...r.input, horizon: { cloudPct: r.total, fresh: true } }).score,
+report("current model, with aerosol reading", (r) => sunEventQuality(r.input).score);
+report("current model, no aerosol reading (AirNow)", (r) =>
+  sunEventQuality({ ...r.input, aod: undefined, pm2_5: undefined }).score,
 );
 
 const oct6 = rows.find((r) => r.date === "2026-10-06" && r.kind === "sunrise") ??

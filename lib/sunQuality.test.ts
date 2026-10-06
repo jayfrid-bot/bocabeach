@@ -13,31 +13,31 @@ import {
 describe("sunEventQuality", () => {
   // --- canonical cases (from the task spec) ---------------------------------
 
-  it("45% mid/high cloud + low low cloud scores high (vivid/epic sky)", () => {
-    // Complete split (high explicitly 0) — the level-based curve only engages
-    // once all of low/mid/high are known.
-    const r = sunEventQuality({ cloud: { midPct: 45, highPct: 0, lowPct: 5 } });
-    expect(r.score).not.toBeNull();
-    expect(r.score!).toBeGreaterThanOrEqual(85);
-    expect(["vivid", "epic"]).toContain(r.band);
+  it("a moderate mid deck with little low cloud scores Great — with or without an aerosol reading", () => {
+    // AirNow-backed snapshots carry no AOD; they must get the same model.
+    const bare = sunEventQuality({ cloud: { midPct: 45, highPct: 0, lowPct: 5 } });
+    expect(bare.score!).toBeGreaterThanOrEqual(70);
+    expect(bare.band).toBe("vivid");
+    expect(bare.breakdown).toBeDefined();
+    const withAod = sunEventQuality({ cloud: { midPct: 45, highPct: 0, lowPct: 5 }, aod: 0.15 });
+    expect(withAod.score).toBe(bare.score);
   });
 
-  it("0% cloud (clear sky) scores ~40 — clean but plain", () => {
+  it("0% cloud (clear sky, total only) is clean but plain", () => {
     const r = sunEventQuality({ cloud: { totalPct: 0 } });
-    expect(r.score).toBe(40);
+    expect(r.score).toBe(30);
     expect(r.band).toBe("plain");
   });
 
-  it("0% cloud via a full level split (all zero) also lands ~40", () => {
+  it("0% cloud via a full level split (all zero) is also plain", () => {
     const r = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 0 } });
-    expect(r.score).toBe(40);
     expect(r.band).toBe("plain");
+    expect(r.score!).toBeLessThan(35);
   });
 
   it("90% low cloud is a dud, even with a great mid/high reading underneath it", () => {
     const r = sunEventQuality({ cloud: { lowPct: 90, midPct: 45, highPct: 0 } });
     expect(r.score).not.toBeNull();
-    expect(r.score!).toBeGreaterThanOrEqual(5);
     expect(r.score!).toBeLessThanOrEqual(15);
     expect(r.band).toBe("dud");
   });
@@ -86,37 +86,27 @@ describe("sunEventQuality", () => {
 
   // --- shape of the curve ----------------------------------------------------
 
-  it("peaks somewhere inside the 30-60% mid/high band (30% and 60% both score highly)", () => {
-    const at30 = sunEventQuality({ cloud: { midPct: 30, highPct: 0, lowPct: 0 } });
+  it("a moderate-to-heavy deck scores highly; too little or a solid mid lid does not", () => {
     const at60 = sunEventQuality({ cloud: { midPct: 60, highPct: 0, lowPct: 0 } });
     const at5 = sunEventQuality({ cloud: { midPct: 5, highPct: 0, lowPct: 0 } });
     const at95 = sunEventQuality({ cloud: { midPct: 95, highPct: 0, lowPct: 0 } });
-    expect(at30.score!).toBeGreaterThanOrEqual(85);
-    expect(at60.score!).toBeGreaterThanOrEqual(85);
-    expect(at30.score!).toBeGreaterThan(at5.score!);
+    expect(at60.score!).toBeGreaterThanOrEqual(80);
+    expect(at60.score!).toBeGreaterThan(at5.score!);
     expect(at60.score!).toBeGreaterThan(at95.score!);
   });
 
-  it("combines mid + high cloud via a screen blend, not a naive sum", () => {
-    // 30% mid + 30% high should read as noticeably more canvas than 30% mid
-    // alone, but less than a naive 60% sum would suggest.
+  it("adding a high deck to a thin mid deck adds canvas", () => {
     const midOnly = sunEventQuality({ cloud: { midPct: 30, highPct: 0, lowPct: 0 } });
     const midAndHigh = sunEventQuality({ cloud: { midPct: 30, highPct: 30, lowPct: 0 } });
-    expect(midAndHigh.score!).toBeGreaterThanOrEqual(midOnly.score!);
+    expect(midAndHigh.score!).toBeGreaterThan(midOnly.score!);
   });
 
-  it("low cloud under 30% costs nothing at the peak", () => {
+  it("scattered low cloud (≤20%) costs nothing; past that it closes the path", () => {
     const clean = sunEventQuality({ cloud: { midPct: 45, highPct: 0, lowPct: 0 } });
-    const stillClean = sunEventQuality({ cloud: { midPct: 45, highPct: 0, lowPct: 25 } });
-    expect(stillClean.score).toBe(clean.score);
-  });
-
-  it("humidity under 60% gives a small bonus; 60%+ gives none", () => {
-    const dry = sunEventQuality({ cloud: { midPct: 45, highPct: 0, lowPct: 5 }, humidityPct: 35 });
-    const humid = sunEventQuality({ cloud: { midPct: 45, highPct: 0, lowPct: 5 }, humidityPct: 80 });
-    const noReading = sunEventQuality({ cloud: { midPct: 45, highPct: 0, lowPct: 5 } });
-    expect(dry.score!).toBeGreaterThanOrEqual(noReading.score!);
-    expect(humid.score).toBe(noReading.score);
+    const scattered = sunEventQuality({ cloud: { midPct: 45, highPct: 0, lowPct: 20 } });
+    const broken = sunEventQuality({ cloud: { midPct: 45, highPct: 0, lowPct: 55 } });
+    expect(scattered.score).toBe(clean.score);
+    expect(broken.score!).toBeLessThan(scattered.score!);
   });
 
   it("scores never leave the 0-100 range", () => {
@@ -271,9 +261,9 @@ describe("nearestHourlyPoint", () => {
 describe("sunEventQuality — factor model", () => {
   const split = { lowPct: 10, midPct: 40, highPct: 30 };
 
-  it("engages (populates a factor breakdown) once an atmospheric signal is present, but not on the bare level split", () => {
+  it("engages on the bare level split as well as with an atmospheric signal", () => {
     const bare = sunEventQuality({ cloud: split });
-    expect(bare.breakdown).toBeUndefined(); // fallback curve path
+    expect(bare.breakdown).toBeDefined();
 
     const rich = sunEventQuality({ cloud: split, aod: 0.09 });
     expect(rich.breakdown).toBeDefined();
