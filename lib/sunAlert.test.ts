@@ -11,9 +11,10 @@ import type { ConditionsResponse } from "@/lib/types";
 // before FIXTURE_SUNSET (7:35 PM ET), so the next event is today's sunset.
 const NOW_MS = Date.parse("2026-09-02T18:00:00Z");
 
-/** A vivid-but-not-epic cloud mix at the exact sunset hour: lowPct=10 (under
- *  the 30% "costs nothing" bar), mid/high combined 25% — lands in the
- *  level-based curve's 70-89 ("vivid"/"Great") range, short of 90 ("epic"). */
+/** A vivid-but-not-epic cloud mix at the exact sunset hour: low 10% (under
+ *  the 20% "costs nothing" bar), mid 35% + high 10% — a deck a little under
+ *  the canvas plateau, landing in the factor model's 70-89 ("vivid"/"Great")
+ *  range, short of 90 ("epic"). */
 function withVividHourly(over: Partial<ConditionsResponse["snapshot"]> = {}): ConditionsResponse {
   const base = scorableResponse();
   return {
@@ -55,8 +56,8 @@ describe("predictNextSunEvent", () => {
     expect(pred?.eventIso).toBe(FIXTURE_SUNSET);
     expect(pred?.band).toBe("vivid");
     expect(pred?.score!).toBeGreaterThanOrEqual(70);
-    // No high cloud (0%) → peak color is the event itself (see peakColorTime,
-    // which normalizes to a full ISO instant with milliseconds).
+    // High cloud under 15% → no lag: peak color is the event itself (see
+    // peakColorTime, which normalizes to a full ISO instant with milliseconds).
     expect(pred?.peakIso).toBe(new Date(FIXTURE_SUNSET).toISOString());
   });
 

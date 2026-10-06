@@ -97,7 +97,7 @@ const DEV = "33333333-4444-5555-8666-777777777777";
 const FCM_TOKEN = "s".repeat(80);
 
 /** A vivid-scoring (Great, score ~73) cloud mix at the exact sunset hour —
- *  lowPct=10 (under the "costs nothing" bar), mid/high combined 25%. Score
+ *  low 10% (under the 20% "costs nothing" bar), mid 35% + high 10%. Score
  *  is well below the Excellent threshold (90) so score-excellent — left on
  *  its default — stays a harmless "candidate", never an actual send. */
 function conditions(): ConditionsResponse {
