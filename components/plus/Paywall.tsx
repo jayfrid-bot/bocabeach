@@ -72,17 +72,37 @@ const BENEFITS: { icon: string; title: string; body: string }[] = [
   {
     icon: "🎯",
     title: "Your score, not the average one",
-    body: "The day is scored for what you actually come to the beach to do.",
+    body: "Scored for what you come to the beach to do.",
   },
   {
     icon: "🛟",
-    title: "Alerts from where you stand",
-    body: "Lightning, flags, rip current and rain, measured from your spot on the sand.",
+    title: "Alerts while you're at the beach",
+    body: "Lightning and rain from your spot, plus flags, rip current and gusts.",
+  },
+  {
+    icon: "📱",
+    title: "Beach Session on your Lock Screen",
+    body: "Your live score, conditions and lightning warnings, without unlocking.",
+  },
+  {
+    icon: "🌅",
+    title: "Sunrise and sunset alerts",
+    body: "A heads-up when the sky is forecast to be colorful.",
+  },
+  {
+    icon: "🚀",
+    title: "Coming-up alerts",
+    body: "King tides, supermoons, meteor showers and rocket launches.",
+  },
+  {
+    icon: "📅",
+    title: "Look back",
+    body: "Up to 30 days at your beach, with records and the best day ever.",
   },
   {
     icon: "⭐",
-    title: "Best times re-ranked for you",
-    body: "Today's window and the week ahead, sorted by your number.",
+    title: "Your day, planned",
+    body: "Best times, the week ahead and a morning summary, in your number.",
   },
 ];
 
@@ -324,11 +344,11 @@ export function PaywallBody({
   return (
     <div>
       <p className="text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-        Everything you have today stays free. Plus adds the two things the beach
-        does not tell you: your number, and what is happening where you are.
+        Everything you have today stays free. Plus is the beach tuned to you, and
+        watched for you.
       </p>
 
-      <ul className="mt-4 space-y-3">
+      <ul className="mt-4 space-y-2.5">
         {BENEFITS.map((b) => (
           <li key={b.title} className="flex items-start gap-3">
             <span aria-hidden className="mt-0.5 shrink-0 text-lg leading-none">

@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-06",
+    title: "The Plus screen now shows everything Plus does",
+    details:
+      "The subscribe screen and the website's Plus card list all seven things Plus adds: your own score, alerts while you're at the beach, the Lock Screen Beach Session, sunrise and sunset alerts, coming-up sky and sea alerts, Look back, and your day planned in your number.",
+    tag: "improved",
+  },
+  {
+    date: "2026-10-06",
     title: "Humidity counts less against a beach day",
     details:
       "The comfort part of the score was written for inland air. At the shore, the water and the sea breeze take the edge off humidity, so a 65°F dew point no longer costs anything and a 70°F one costs a little instead of half. Expect summer scores a couple of points higher, and a few more Excellent days.",

@@ -10,9 +10,12 @@ import { GET_APP_PATH } from "@/lib/appStore";
 
 const INCLUDED = [
   "Your own Beach Day score, tuned to how you use the beach — swimming, kids, sun, snorkeling, dog walks, surf.",
-  "Safety alerts computed from right where you're standing: lightning, rain, flags, rip current.",
-  "Best beach times and the 7-day outlook re-ranked for you.",
-  "A morning summary in your own number.",
+  "Safety alerts while you're at the beach: lightning and rain from your spot, plus flags, rip current and gusts.",
+  "Your Beach Session on the Lock Screen: live score, conditions and lightning warnings while you're on the sand.",
+  "Sunrise and sunset alerts when the sky is forecast to be colorful, 30 minutes to 3 hours ahead.",
+  "Coming-up alerts: king tides, supermoons, meteor showers and rocket launches you can watch from the beach.",
+  "Look back: up to 30 days at your beach, with records — and the best day ever, anywhere.",
+  "Best beach times, the 7-day outlook and a morning summary, all in your own number.",
 ];
 
 export function PlusInAppCard() {
