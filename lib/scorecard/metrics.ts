@@ -861,6 +861,13 @@ export function windowMetrics(
         if (lead < 1 || lead > 6 || !finite(o.peak)) continue;
         const target = complete.get(`${slug}|${o.date}`);
         if (!target) continue;
+        // A forecast made under one scoring-engine version is not graded
+        // against a day scored under another (a deploy between the two).
+        const targetVersion = target.day.rows[0]?.engine_version ?? "unknown";
+        if ((row.engine_version ?? "unknown") !== targetVersion) {
+          skipped.versionMixed++;
+          continue;
+        }
         const realizedPeak = Math.max(...[...target.day.scores.values()].map((v) => v.score));
         const a = errsByLead.get(lead) ?? [];
         a.push(o.peak - realizedPeak);

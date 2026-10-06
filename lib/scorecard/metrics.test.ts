@@ -816,6 +816,22 @@ describe("windowMetrics", () => {
     expect(r.ready).toBe(false);
   });
 
+  it("does not grade an outlook made under one engine version against a day scored under another", () => {
+    const forecastDay = dayRows({
+      date: "2026-10-05",
+      scores: flat(60),
+      window: { start: 9, end: 14, score: 60 },
+      outlook: [{ date: "2026-10-07", peak: 80 }],
+    }).map((r) => ({ ...r, engine_version: "2026-09-28.2" }));
+    const targetDay = dayRows({ date: "2026-10-07", scores: flat(70), window: null }).map((r) => ({
+      ...r,
+      engine_version: "2026-10-06.1",
+    }));
+    const r = windowMetrics([...forecastDay, ...targetDay, closer("2026-10-08")], { min: 1 });
+    expect(r.outlook).toEqual([]);
+    expect(r.skipped.versionMixed).toBe(1);
+  });
+
   it("only daylight hours count; night scores are ignored", () => {
     // Night hours 0..6 and 19..23 score 100 and would dominate if counted.
     const scores = { ...flat(50), 0: 100, 1: 100, 2: 100, 3: 100, 22: 100, 23: 100 };
