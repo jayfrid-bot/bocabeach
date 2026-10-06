@@ -35,6 +35,21 @@ const BENIGN_CONSOLE = [
   /plugin is not implemented on web/i,
 ];
 
+/**
+ * Every Node-side API call in this file asks for its own connection. Playwright
+ * pools keep-alive sockets per process: `page.request`, the `request` fixture
+ * and even a brand-new request context all reuse the same idle sockets. Under
+ * `next start` in CI the page load can block the server's event loop for
+ * seconds. A POST sent on a pooled socket during that block is lost: when the
+ * loop frees up, Node runs the socket's overdue 5 s keep-alive timer before it
+ * reads the waiting request, closes the "idle" socket, and the client gets
+ * `read ECONNRESET` (CI run 36400589836: the POST hung ~8 s, then reset, on
+ * both attempts). A new connection has no keep-alive timer until its response
+ * is sent, so a busy server only delays the answer. `Connection: close` on
+ * every call keeps the pool empty, so no call can land on a stale socket.
+ */
+const FRESH_CONNECTION = { Connection: "close" };
+
 async function openDashboard(page: Page): Promise<string[]> {
   const errors: string[] = [];
   page.on("console", (msg: ConsoleMessage) => {
@@ -62,13 +77,13 @@ async function openDashboard(page: Page): Promise<string[]> {
   if (!warmed) {
     warmed = true;
     await Promise.all([
-      page.request.get("/api/devices?deviceId=warm-up").catch(() => {}),
-      page.request.post("/api/devices/trial", { data: {} }).catch(() => {}),
-      page.request.post("/api/devices/unlock", { data: {} }).catch(() => {}),
-      page.request.post("/api/presence", { data: {} }).catch(() => {}),
+      page.request.get("/api/devices?deviceId=warm-up", { headers: FRESH_CONNECTION }).catch(() => {}),
+      page.request.post("/api/devices/trial", { data: {}, headers: FRESH_CONNECTION }).catch(() => {}),
+      page.request.post("/api/devices/unlock", { data: {}, headers: FRESH_CONNECTION }).catch(() => {}),
+      page.request.post("/api/presence", { data: {}, headers: FRESH_CONNECTION }).catch(() => {}),
       // The Plus history route (components/plus/HistorySection.tsx) fetches on
       // the app shell too — warm it for the same lazy-compile reason.
-      page.request.post("/api/history/boca-raton", { data: {} }).catch(() => {}),
+      page.request.post("/api/history/boca-raton", { data: {}, headers: FRESH_CONNECTION }).catch(() => {}),
     ]);
   }
   await page.goto("/", { waitUntil: "domcontentloaded" });
@@ -153,18 +168,20 @@ test.describe("Beach Day Plus", () => {
     expect(errors, `console errors: ${errors.join("\n")}`).toEqual([]);
   });
 
-  // Uses the test's own `request` context, not `page.request`: after the page
-  // has been idle, its kept-alive socket can be closed by the server at the
-  // exact moment a POST reuses it (ECONNRESET under `next start` in CI).
+  // Both POSTs take a fresh connection (see FRESH_CONNECTION): on a pooled
+  // keep-alive socket, a server still busy with the page load could time the
+  // socket out before reading the request and reset it.
   test("a browser cannot start the trial or redeem a code, whatever it claims", async ({ page, request }) => {
     await openDashboard(page);
     const trial = await request.post("/api/devices/trial", {
       data: { deviceId: "11111111-2222-4333-8444-555555555555", platform: "ios" },
+      headers: FRESH_CONNECTION,
     });
     expect(trial.status()).toBe(403);
     expect((await trial.json()).error).toBe("app-only");
     const unlock = await request.post("/api/devices/unlock", {
       data: { deviceId: "11111111-2222-4333-8444-555555555555", code: "anything" },
+      headers: FRESH_CONNECTION,
     });
     expect(unlock.status()).toBe(403);
     expect((await unlock.json()).error).toBe("app-only");
