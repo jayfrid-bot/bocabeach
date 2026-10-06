@@ -325,6 +325,16 @@ export interface HistoryRecordRow {
   value: number;
 }
 
+/** The single highest hourly Beach Day score in the WHOLE archive, across
+ *  every beach — straight off `DeviceStore.historyBestEver`'s one bounded
+ *  statement. Ties go to the earliest `hour_utc`. */
+export interface HistoryBestEverRow {
+  slug: string;
+  local_date: string;
+  local_hour: number;
+  score: number;
+}
+
 export interface HistoryRecordsResult {
   /** 0-4 rows — a kind is simply absent when this beach has no row with a
    *  non-null value for that column yet (e.g. a beach with no cams has no

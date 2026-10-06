@@ -21,6 +21,7 @@ import type {
   BeachHourlyRow,
   CamObservationRow,
   CamReadRow,
+  HistoryBestEverRow,
   HistoryRecordsResult,
   SunEventObservationRow,
   SunEventPredictionRow,
@@ -436,6 +437,14 @@ export interface DeviceStore {
    * dayCount: 0 }`.
    */
   historyRecords(slug: string): Promise<HistoryRecordsResult>;
+  /**
+   * The single highest hourly Beach Day score in the whole `beach_hourly`
+   * archive, across EVERY beach (`row_kind = 'snapshot'`, `score IS NOT
+   * NULL`) — the "Best day ever" record. One bounded statement (ORDER BY
+   * score DESC, hour_utc ASC LIMIT 1), so ties go to the earliest hour.
+   * `null` when nothing has been archived with a score yet.
+   */
+  historyBestEver(): Promise<HistoryBestEverRow | null>;
 
   // --- Install token identity (migrations/0008_device_tokens.sql, Codex ----
   // combined-review #1) --------------------------------------------------

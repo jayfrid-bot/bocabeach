@@ -6,10 +6,12 @@
 // (lib/history/summary.ts `summarizeHistory`, bounded by `days`) plus a
 // handful of LIFETIME records (`summary.ts` `recordsFromRows`, fed by
 // `DeviceStore.historyRecords`, never bounded by `days`, so switching the
-// 7/14/30 chip can never make a record vanish or regress). Three D1
-// statements total: the window SELECT (`hourlyHistory`), the UNION ALL of
-// four single-row subqueries, and one small meta aggregate — both of the
-// latter inside `historyRecords`.
+// 7/14/30 chip can never make a record vanish or regress), plus one
+// cross-beach record, `bestEver` (the highest hourly score in the whole
+// archive, `DeviceStore.historyBestEver`). Four D1 statements total, all
+// reads: the window SELECT (`hourlyHistory`), the UNION ALL of four
+// single-row subqueries and one small meta aggregate (both inside
+// `historyRecords`), and the one bounded best-ever SELECT.
 //
 // Gate: the same shape live-activity/register and hazards use, combined —
 // app-only (Plus is sold and delivered only inside the phone app), a valid
@@ -32,7 +34,12 @@ import { requireInstallToken } from "@/lib/db/installTokenAuth";
 import { isNativeRequest } from "@/lib/nativeRequest";
 import { checkRateLimit, clientIp } from "@/lib/plus/rateLimit";
 import { localHourParts } from "@/lib/history/archive";
-import { recordsFromRows, shiftLocalDate, summarizeHistory } from "@/lib/history/summary";
+import {
+  recordsFromRows,
+  shiftLocalDate,
+  summarizeHistory,
+  type HistoryBestEver,
+} from "@/lib/history/summary";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -97,15 +104,32 @@ export async function POST(
     const { date: todayLocal } = localHourParts(loc.timezone, now);
     const sinceLocalDate = shiftLocalDate(todayLocal, -(Math.min(days, MAX_DAYS) - 1));
 
-    // Two independent reads: the window (bounded, for the day strip) and the
-    // lifetime records (unbounded — a reading from before this window, or
-    // before the archive was even this old, must still be nameable).
-    const [rows, recordsResult] = await Promise.all([
+    // Three independent reads: the window (bounded, for the day strip), this
+    // beach's lifetime records (unbounded — a reading from before this
+    // window, or before the archive was even this old, must still be
+    // nameable), and the best score ever recorded at ANY beach.
+    const [rows, recordsResult, bestEverRow] = await Promise.all([
       store.hourlyHistory(slug, sinceLocalDate, todayLocal),
       store.historyRecords(slug),
+      store.historyBestEver(),
     ]);
     const daySummaries = summarizeHistory(rows);
     const records = recordsFromRows(recordsResult.records);
+
+    // A record at a beach we no longer serve can't be named, so it is left
+    // out rather than shown with a made-up name.
+    const bestEverLoc = bestEverRow ? getLocation(bestEverRow.slug) : undefined;
+    const bestEver: HistoryBestEver | null =
+      bestEverRow && bestEverLoc
+        ? {
+            slug: bestEverRow.slug,
+            name: bestEverLoc.name,
+            date: bestEverRow.local_date,
+            score: bestEverRow.score,
+            localHour: bestEverRow.local_hour,
+            isThisBeach: bestEverRow.slug === slug,
+          }
+        : null;
 
     return Response.json(
       {
@@ -113,6 +137,7 @@ export async function POST(
         since: sinceLocalDate,
         days: daySummaries,
         records,
+        bestEver,
         archiveStartedAt: recordsResult.archiveStartedAt,
         dayCount: recordsResult.dayCount,
         surfSince: recordsResult.surfSince,

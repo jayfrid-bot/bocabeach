@@ -6,13 +6,14 @@
 import { describe, it, expect, vi } from "vitest";
 import { recordTiles, resolveHistoryViewState, retryHistoryFetch } from "@/components/plus/HistorySection";
 import type { HistoryResult } from "@/lib/plus/api";
-import type { HistoryRecords } from "@/lib/history/summary";
+import type { HistoryBestEver, HistoryRecords } from "@/lib/history/summary";
 
 const OK_RESULT: HistoryResult & { ok: true } = {
   ok: true,
   since: "2026-09-22",
   days: [],
   records: null,
+  bestEver: null,
   archiveStartedAt: null,
   dayCount: 0,
   surfSince: null,
@@ -25,6 +26,7 @@ const FAILED_RESULT: HistoryResult = {
   since: null,
   days: [],
   records: null,
+  bestEver: null,
   archiveStartedAt: null,
   dayCount: 0,
   surfSince: null,
@@ -93,6 +95,76 @@ const FULL_RECORDS: HistoryRecords = {
   biggestSurf: { date: "2026-09-21", surfFt: 3.4, localHour: 13 },
   quietestDay: { date: "2026-09-28", crowdPct: 15, localHour: 15 },
 };
+
+const BEST_EVER: HistoryBestEver = {
+  slug: "gulf-shores",
+  name: "Gulf Shores",
+  date: "2026-09-29",
+  score: 98,
+  localHour: 13,
+  isThisBeach: false,
+};
+
+// The cross-beach "Best day ever" tile: first in the list, names the beach,
+// and says "This beach!" instead when the record belongs to the beach shown.
+describe("recordTiles — Best day ever", () => {
+  it("leads the list, with this beach's own Best day right after it", () => {
+    const tiles = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14", BEST_EVER);
+    expect(tiles.map((t) => t.key)).toEqual(["best-ever", "best", "sand", "surf", "quiet"]);
+  });
+
+  it("shows the score, the beach name, and the local date and hour", () => {
+    const [first] = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14", BEST_EVER);
+    expect(first).toMatchObject({
+      icon: "\u{1f947}",
+      label: "Best day ever",
+      value: "98",
+      sub: "Gulf Shores \u00b7 Sept 29, 1 PM",
+    });
+  });
+
+  it("says 'This beach!' instead of the name when the record is at this beach", () => {
+    const [first] = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14", { ...BEST_EVER, isThisBeach: true });
+    expect(first.sub).toBe("This beach! Sept 29, 1 PM");
+    expect(first.sub).not.toContain("Gulf Shores");
+  });
+
+  it("formats midnight and noon hours as 12 AM and 12 PM", () => {
+    const [mid] = recordTiles(FULL_RECORDS, null, null, { ...BEST_EVER, localHour: 0 });
+    const [noon] = recordTiles(FULL_RECORDS, null, null, { ...BEST_EVER, localHour: 12 });
+    expect(mid.sub).toBe("Gulf Shores \u00b7 Sept 29, 12 AM");
+    expect(noon.sub).toBe("Gulf Shores \u00b7 Sept 29, 12 PM");
+  });
+
+  it("is absent when no best-ever record exists — the other four tiles are unchanged", () => {
+    const withNull = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14", null);
+    const withDefault = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14");
+    expect(withNull.map((t) => t.key)).toEqual(["best", "sand", "surf", "quiet"]);
+    expect(withDefault).toEqual(withNull);
+  });
+
+  it("still shows alone for a beach with no records of its own yet", () => {
+    const tiles = recordTiles(
+      { bestDay: null, hottestSand: null, biggestSurf: null, quietestDay: null },
+      null,
+      null,
+      BEST_EVER,
+    );
+    expect(tiles.map((t) => t.key)).toEqual(["best-ever"]);
+  });
+
+  it("keeps the sub line short enough to wrap inside MetricCard's 3-line clamp on a phone", () => {
+    // A 2-column tile at 390px has ~138px of text width, about 22 characters
+    // of 12px type a line, so 3 lines hold ~66. The longest beach name today
+    // is 18 characters; this pads it to 21 and still keeps well under that.
+    const [first] = recordTiles(FULL_RECORDS, null, null, {
+      ...BEST_EVER,
+      name: "Fort Lauderdale Beach",
+      localHour: 12,
+    });
+    expect(first.sub.length).toBeLessThanOrEqual(45);
+  });
+});
 
 // Codex round-2 #2/#3: the "Biggest surf" tile's coverage caption and the
 // "Quietest time" rename+caption.

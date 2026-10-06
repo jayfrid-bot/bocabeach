@@ -46,6 +46,7 @@ import type {
   BeachHourlyRow,
   CamObservationRow,
   CamReadRow,
+  HistoryBestEverRow,
   HistoryRecordRow,
   HistoryRecordsResult,
   SunEventObservationRow,
@@ -1336,6 +1337,23 @@ export function d1Store(db: D1Like): DeviceStore {
         dayCount: summaryRow?.day_count ?? 0,
         surfSince: summaryRow?.surf_since ?? null,
       };
+    },
+
+    // "Best day ever" — ONE bounded statement over the whole archive, every
+    // beach. Same ORDER BY/tie-break rule as the per-beach `best` arm above:
+    // highest score, earliest hour_utc wins. No index serves a cross-beach
+    // score sort, so this scans `beach_hourly` (about 40 beaches x <= 24
+    // rows a day); fine at today's size, and the reason it is exactly one
+    // LIMIT 1 statement rather than anything chattier.
+    async historyBestEver() {
+      const row = await db
+        .prepare(
+          "SELECT slug, local_date, local_hour, score FROM beach_hourly " +
+            "WHERE row_kind = 'snapshot' AND score IS NOT NULL " +
+            "ORDER BY score DESC, hour_utc ASC LIMIT 1",
+        )
+        .first<HistoryBestEverRow>();
+      return row ?? null;
     },
 
     // --- Beach Session Live Activity (migrations/0007_live_activities.sql) -

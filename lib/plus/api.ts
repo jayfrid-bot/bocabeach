@@ -6,7 +6,7 @@
 
 import type { AlertPrefs, DeviceRecord, SunColorMinBand } from "@/lib/db/types";
 import type { ScoreProfile } from "@/lib/profile/types";
-import type { DaySummary, HistoryRecords } from "@/lib/history/summary";
+import type { DaySummary, HistoryBestEver, HistoryRecords } from "@/lib/history/summary";
 import { readInstallToken, writeInstallToken } from "@/lib/plus/storage";
 
 export interface PlusResult {
@@ -117,6 +117,9 @@ export interface HistoryResult {
   since: string | null;
   days: DaySummary[];
   records: HistoryRecords | null;
+  /** The highest Beach Day score ever recorded at ANY beach (not just this
+   *  one), or null when none is on file — the "Best day ever" tile. */
+  bestEver: HistoryBestEver | null;
   archiveStartedAt: string | null;
   dayCount: number;
   /** MIN(local_date) among rows with a non-null surf_ft — normally later
@@ -129,9 +132,9 @@ export interface HistoryResult {
 
 function emptyHistoryResult(): Pick<
   HistoryResult,
-  "since" | "days" | "records" | "archiveStartedAt" | "dayCount" | "surfSince"
+  "since" | "days" | "records" | "bestEver" | "archiveStartedAt" | "dayCount" | "surfSince"
 > {
-  return { since: null, days: [], records: null, archiveStartedAt: null, dayCount: 0, surfSince: null };
+  return { since: null, days: [], records: null, bestEver: null, archiveStartedAt: null, dayCount: 0, surfSince: null };
 }
 
 /** Plus "Last N days" (docs/HISTORY_AND_IMAGERY_PLAN.md Part A). Same
@@ -170,6 +173,7 @@ async function fetchHistory(deviceId: string, slug: string, days: 7 | 14 | 30): 
     since?: unknown;
     days?: unknown;
     records?: unknown;
+    bestEver?: unknown;
     archiveStartedAt?: unknown;
     dayCount?: unknown;
     surfSince?: unknown;
@@ -181,6 +185,7 @@ async function fetchHistory(deviceId: string, slug: string, days: 7 | 14 | 30): 
       since: typeof obj.since === "string" ? obj.since : null,
       days: Array.isArray(obj.days) ? (obj.days as DaySummary[]) : [],
       records: (obj.records as HistoryRecords | undefined) ?? null,
+      bestEver: (obj.bestEver as HistoryBestEver | null | undefined) ?? null,
       archiveStartedAt: typeof obj.archiveStartedAt === "string" ? obj.archiveStartedAt : null,
       dayCount: typeof obj.dayCount === "number" ? obj.dayCount : 0,
       surfSince: typeof obj.surfSince === "string" ? obj.surfSince : null,

@@ -28,6 +28,7 @@ import {
   weekdayLongOf,
   weekdayOf,
   type DaySummary,
+  type HistoryBestEver,
 } from "@/lib/history/summary";
 import { bootstrapInstallToken } from "@/lib/plus/client";
 import { MetricCard } from "@/components/MetricCard";
@@ -250,8 +251,24 @@ export function recordTiles(
   r: NonNullable<HistoryResult["records"]>,
   archiveStartedAt: string | null,
   surfSince: string | null,
+  bestEver: HistoryBestEver | null = null,
 ): RecordTile[] {
   const tiles: RecordTile[] = [];
+  if (bestEver) {
+    // The one record that spans every beach, so it leads the list. The sub
+    // line names the beach — or, when it is THIS beach, says so instead of
+    // repeating a name the reader is already looking at. The phone's tile
+    // is ~170px wide: MetricCard wraps (never truncates) `sub`, and the
+    // longest beach name plus date still fits its 3-line clamp.
+    const when = `${shortMonthDay(bestEver.date)}, ${hour12Label(bestEver.localHour)}`;
+    tiles.push({
+      key: "best-ever",
+      icon: "\u{1f947}",
+      label: "Best day ever",
+      value: String(bestEver.score),
+      sub: bestEver.isThisBeach ? `This beach! ${when}` : `${bestEver.name} \u00b7 ${when}`,
+    });
+  }
   if (r.bestDay) {
     tiles.push({
       key: "best",
@@ -479,7 +496,7 @@ export function HistorySection({
   const newestFirst = view?.kind === "data" ? [...view.data.days].reverse() : [];
   const tiles =
     view?.kind === "data" && view.data.records
-      ? recordTiles(view.data.records, view.data.archiveStartedAt, view.data.surfSince)
+      ? recordTiles(view.data.records, view.data.archiveStartedAt, view.data.surfSince, view.data.bestEver)
       : [];
 
   return (
@@ -570,7 +587,7 @@ export function HistorySection({
           {tiles.length > 0 ? (
             <div className="mt-4">
               <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
-                Records since {view.data.archiveStartedAt ? shortMonthDay(view.data.archiveStartedAt) : ""}
+                {view.data.archiveStartedAt ? `Records since ${shortMonthDay(view.data.archiveStartedAt)}` : "Records"}
               </h3>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {tiles.map((t) => (
