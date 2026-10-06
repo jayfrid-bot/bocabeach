@@ -75,14 +75,23 @@ SCORING (deterministic; bump SUN_CAM_SCORE_VERSION whenever any of this changes)
   EVENT SCORE = ROBUST PEAK, not the single best frame. A frame counts for at
   most 2x the best score among the OTHER frames within 5 minutes of it, and a
   frame with no neighbor that close does not count; the event score is the best
-  such value, and its frame is the peak frame. A sharp but real peak (94 beside a
-  59) is untouched. An isolated spike (95 beside 10 and 12, a glitch or a flare)
-  is cut to 24. The server recomputes the coverage and this statistic from the
-  series and rejects an upload whose numbers differ.
+  such value. A sharp but real peak (94 beside a 59) is untouched. An isolated
+  spike (95 beside 10 and 12, a glitch or a flare) is cut to 24. Two guards:
+    * the HIGHEST raw frame must itself have a neighbor within 5 minutes. If it
+      does not (frames beside it are missing, or it sits at the window edge) the
+      script cannot tell a real peak from a glitch, so the capture is INCOMPLETE
+      (retried while the DVR holds it, never uploaded);
+    * a frame the 2x cap cut is an artifact, so the reported peak frame (and the
+      warm_frac / colorfulness taken from it) is the best UNCAPPED corroborated
+      frame. The score is then up to 2x that frame's own score.
+  The series holds only frames within [-36, +26] min of the event (the window
+  plus 1 min of slack). The server recomputes the coverage and this statistic
+  from the series and rejects an upload whose numbers differ.
 
-  RE-SCORES: each upload carries score_version (YYYY-MM-DD.N) and scored_at. The
-  server keeps the newer (score_version, scored_at), so a late retry of an old
-  upload cannot overwrite a newer re-score.
+  RE-SCORES: each upload carries score_version (YYYY-MM-DD.N, a real calendar date
+  no more than a day ahead) and scored_at. The server keeps the newer
+  (score_version, scored_at), so a late retry of an old upload cannot overwrite a
+  newer re-score.
 
 REQUIREMENTS: Python 3.9+, Pillow (`pip install pillow`), and yt-dlp + ffmpeg on
 PATH (yt-dlp needs node as its JS runtime; this script adds the same PATH
@@ -708,29 +717,64 @@ def coverage_counts(times: List[datetime], event_t: datetime) -> Dict[str, int]:
     return out
 
 
+def _best_neighbors(series: List[Dict[str, Any]]) -> List[Optional[float]]:
+    """For each frame, the best score among the OTHER frames within
+    PEAK_NEIGHBOR_SECONDS; None when none is that close."""
+    ms = [_ms(f["t"]) for f in series]
+    out: List[Optional[float]] = []
+    for i in range(len(series)):
+        best: Optional[float] = None
+        for j in range(len(series)):
+            if j != i and abs(ms[j] - ms[i]) <= PEAK_NEIGHBOR_SECONDS * 1000:
+                best = series[j]["score"] if best is None else max(best, series[j]["score"])
+        out.append(best)
+    return out
+
+
 def robust_peak(series: List[Dict[str, Any]]) -> Optional[Tuple[int, float]]:
     """(index, value) of the robust peak of a time-ordered series, or None.
 
     A single frame can spike on a glitch or a lens flare, while real color builds
     and fades over minutes. So a frame counts for at most PEAK_NEIGHBOR_FACTOR (2x)
     the best score among the OTHER frames within PEAK_NEIGHBOR_SECONDS of it, and a
-    frame with no neighbor that close does not count. The event score is the best
-    such value (ties: the earliest frame). A sharp but real peak (94 beside a 59) is
-    untouched; an isolated spike (95 beside 10 and 12) is cut to 24. The server
-    recomputes this from the series and rejects any other number."""
-    ms = [_ms(f["t"]) for f in series]
-    best: Optional[Tuple[int, float]] = None
+    frame with no neighbor that close does not count. `value`, the event score, is
+    the best such value. A sharp but real peak (94 beside a 59) is untouched; an
+    isolated spike (95 beside 10 and 12) is cut to 24.
+
+    `index` is the frame to REPORT: the best UNCAPPED corroborated frame (its score
+    is at most 2x its best neighbor; earliest on a tie). A frame the cap cut is an
+    artifact, so it never lends its warm_frac / colorfulness. When a spike was
+    capped the score is therefore up to 2x the reported frame's own score.
+
+    The server recomputes all of this from the series and rejects any other number."""
+    nb = _best_neighbors(series)
+    value: Optional[float] = None
+    index = -1
     for i, f in enumerate(series):
-        neighbor: Optional[float] = None
-        for j, g in enumerate(series):
-            if j != i and abs(ms[j] - ms[i]) <= PEAK_NEIGHBOR_SECONDS * 1000:
-                neighbor = g["score"] if neighbor is None else max(neighbor, g["score"])
-        if neighbor is None:
+        n = nb[i]
+        if n is None:
             continue
-        value = min(f["score"], PEAK_NEIGHBOR_FACTOR * neighbor)
-        if best is None or value > best[1]:
-            best = (i, value)
-    return best
+        v = min(f["score"], PEAK_NEIGHBOR_FACTOR * n)
+        if value is None or v > value:
+            value = v
+        if f["score"] <= PEAK_NEIGHBOR_FACTOR * n and (index == -1 or f["score"] > series[index]["score"]):
+            index = i
+    if value is None or index == -1:
+        return None
+    return index, value
+
+
+def top_frame_corroborated(series: List[Dict[str, Any]]) -> bool:
+    """Is the highest RAW frame backed by a neighbor within PEAK_NEIGHBOR_SECONDS
+    (any frame tied for the top will do)? If not, the best frame stands alone,
+    because the frames beside it were dropped (403s) or it sits at the window edge.
+    Then robust_peak would discard it and the event would be scored by whatever is
+    left, so the capture must be treated as incomplete instead."""
+    if not series:
+        return False
+    nb = _best_neighbors(series)
+    top = max(f["score"] for f in series)
+    return any(f["score"] == top and nb[i] is not None for i, f in enumerate(series))
 
 
 def build_result(frames: List[Dict[str, Any]], event_t: datetime) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
@@ -762,6 +806,9 @@ def build_result(frames: List[Dict[str, Any]], event_t: datetime) -> Tuple[Optio
         }
         for f in usable
     ]
+    if not top_frame_corroborated(series):
+        info["reason"] = "the highest frame has no neighbor within 5 minutes (frames beside it are missing, or it is at the window edge)"
+        return None, info
     peak = robust_peak(series)
     if peak is None:
         info["reason"] = "no frame has a neighbor within 5 minutes to confirm a peak"
@@ -860,7 +907,7 @@ def print_series(label: str, frames: List[Dict[str, Any]], peak_t: Optional[date
 def print_peak(result: Dict[str, Any], info: Dict[str, Any]) -> None:
     cov = info["coverage"]
     print(
-        f"\nROBUST PEAK: {result['peak_frame_iso']}  observed_score={result['observed_score']}  "
+        f"\nROBUST PEAK: observed_score={result['observed_score']}  reported frame {result['peak_frame_iso']} "
         f"(that frame alone scored {result['peak_frame_score']})  warm_frac={result['warm_frac']}  colorfulness={result['colorfulness']}"
     )
     print(f"coverage: {cov['pre']} pre / {cov['around']} around / {cov['post']} post usable frames ({info['usable']} usable of {info['recovered']} recovered)")

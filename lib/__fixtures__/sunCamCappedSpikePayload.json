@@ -7,9 +7,9 @@
   "view": "solar",
   "distance_mi": 0.0,
   "observed_score": 28.4,
-  "warm_frac": 0.062,
-  "colorfulness": 39.2,
-  "peak_frame_iso": "2026-10-06T11:10:11.868Z",
+  "warm_frac": 0.058,
+  "colorfulness": 38.8,
+  "peak_frame_iso": "2026-10-06T11:00:11.868Z",
   "series": [
     {
       "t": "2026-10-06T10:40:11.868Z",
@@ -98,8 +98,8 @@
     {
       "t": "2026-10-06T11:10:11.868Z",
       "score": 95.0,
-      "warm_frac": 0.062,
-      "colorfulness": 39.2,
+      "warm_frac": 0.9,
+      "colorfulness": 99.0,
       "warm_sat": 0.4
     },
     {

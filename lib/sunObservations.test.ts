@@ -13,6 +13,8 @@ import {
   localDateOf,
   parseSunObservation,
   robustPeak,
+  scoreVersionProblem,
+  topFrameCorroborated,
 } from "@/lib/sunObservations";
 import { ELBO_SUNRISE_ISO, NOW_AFTER_OCT6_SUNRISE, eventIso, sunObservationBody, sunSeries } from "@/lib/sunObservations.fixtures";
 
@@ -132,6 +134,18 @@ describe("parseSunObservation — rejects", () => {
     }
   });
 
+  it("a score_version whose date is not real or is in the future (it would outrank every real version forever)", () => {
+    for (const v of ["9999-99-99.999", "9999-12-31.1", "2026-13-01.1", "2026-02-30.1", "2026-00-10.1", "2026-10-00.1", "2026-10-08.1", "2030-01-01.1"]) {
+      expect(bad(sunObservationBody({}, { score_version: v }))).toMatch(/score_version/);
+    }
+    // up to a day ahead is allowed (a clock a few hours off)
+    expect(parseSunObservation(sunObservationBody({ version: "2026-10-07.1" }), NOW).ok).toBe(true);
+    expect(parseSunObservation(sunObservationBody({ version: "2024-02-29.1" }), NOW).ok).toBe(true); // a real leap day
+    expect(scoreVersionProblem("2026-10-08.1", NOW)).toMatch(/future/);
+    expect(scoreVersionProblem("2025-02-29.1", NOW)).toMatch(/real calendar date/);
+    expect(scoreVersionProblem("2026-10-06.12", NOW)).toBeNull();
+  });
+
   it("a scored_at that is missing, malformed, in the future, before the event, or before the last frame", () => {
     expect(bad(sunObservationBody({}, { scored_at: undefined }))).toMatch(/scored_at/);
     expect(bad(sunObservationBody({}, { scored_at: "yesterday" }))).toMatch(/scored_at/);
@@ -205,7 +219,7 @@ describe("parseSunObservation — the series decides the peak, not the client", 
 
   it("an isolated spike is cut to twice its best neighbor: the client cannot claim the spike", () => {
     const series = sunSeries(EVENT_MS, 40).map((f) => ({ ...f, score: 12 }));
-    series[10] = { ...series[10], score: 95 }; // a glitch frame among 12s
+    series[10] = { ...series[10], score: 95, warm_frac: 0.9, colorfulness: 99 }; // a glitch frame among 12s
     const honest = honestBody(series);
     expect(honest.observed_score).toBe(24); // min(95, 2 * 12)
     expect(parseSunObservation(honest, NOW).ok).toBe(true);
@@ -213,10 +227,85 @@ describe("parseSunObservation — the series decides the peak, not the client", 
     expect(bad({ ...honest, observed_score: 95 })).toMatch(/robust peak/);
   });
 
+  it("a capped frame never lends its metadata: warm_frac / colorfulness / peak frame come from the best uncapped corroborated frame", () => {
+    const series = sunSeries(EVENT_MS, 40).map((f, i) => ({ ...f, score: 12 + (i % 3) * 0.5, warm_frac: 0.05, colorfulness: 35 }));
+    const spike = { ...series[10], score: 95, warm_frac: 0.9, colorfulness: 99 };
+    series[10] = spike;
+    const honest = honestBody(series);
+    expect(honest.peak_frame_iso).not.toBe(spike.t);
+    expect(honest.warm_frac).toBe(0.05);
+    expect(honest.colorfulness).toBe(35);
+    expect(parseSunObservation(honest, NOW).ok).toBe(true);
+    // reporting the spike frame (or its numbers) as the peak is refused, even with the capped score
+    expect(bad({ ...honest, peak_frame_iso: spike.t })).toMatch(/robust peak frame/);
+    expect(bad({ ...honest, warm_frac: 0.9 })).toMatch(/warm_frac does not match/);
+    expect(bad({ ...honest, colorfulness: 99 })).toMatch(/colorfulness does not match/);
+  });
+
   it("rejects a series with no frame that has a close neighbor", () => {
     // frames 10 min apart: none confirms another
     const sparse = [-30, -20, -10, 0, 10, 20].map((m) => frame(m, 50));
     expect(bad(honestBody(sparse))).toMatch(/does not cover|no frame with a neighbor/);
+  });
+});
+
+describe("parseSunObservation — an uncorroborated top frame means an incomplete capture", () => {
+  it("rejects a real 94 at +25 whose neighbors (+17.5, +20, +22.5) were lost to 403s, even though bucket coverage passes (Codex's repro)", () => {
+    const dropped = new Set([17.5, 20, 22.5]);
+    const flat = sunSeries(EVENT_MS, 94, 25).map((f) => ({ ...f, score: 20 }));
+    flat[flat.length - 1] = { ...flat[flat.length - 1], score: 94 }; // the +25 frame is the real peak
+    const series = flat.filter((f) => !dropped.has((Date.parse(f.t) - EVENT_MS) / 60_000));
+    const cov = coverageCounts(series.map((f) => Date.parse(f.t)), EVENT_MS);
+    expect(cov).toEqual({ pre: 10, around: 8, post: 4 }); // coverage alone is satisfied
+    expect(Math.max(...series.map((f) => f.score))).toBe(94);
+    // the old rule discarded the 94 and uploaded the event as ~20
+    expect(robustPeak(series)?.value).toBe(20);
+    expect(topFrameCorroborated(series)).toBe(false);
+    expect(bad(honestBody(series))).toMatch(/highest frame has no neighbor within 5 minutes/);
+  });
+
+  it("accepts the same edge peak when one neighbor survives within 5 minutes", () => {
+    // +22.5 lost but +20 kept: the 94 at +25 is exactly 5 minutes from a neighbor
+    const series = sunSeries(EVENT_MS, 94, 25).filter((f) => (Date.parse(f.t) - EVENT_MS) / 60_000 !== 22.5);
+    expect(topFrameCorroborated(series)).toBe(true);
+    const r = parseSunObservation(honestBody(series), NOW);
+    expect(r.ok).toBe(true);
+    expect(r.ok && r.row.observed_score).toBe(94);
+  });
+
+  it("a top frame with corroborating-but-low neighbors is fine (capped, not incomplete)", () => {
+    const series = sunSeries(EVENT_MS, 40).map((f) => ({ ...f, score: 12 }));
+    series[10] = { ...series[10], score: 95 };
+    expect(topFrameCorroborated(series)).toBe(true);
+  });
+
+  it("any frame tied for the top that has a neighbor will do", () => {
+    const series = [frame(-30, 80), frame(-10, 50), frame(-7.5, 50), frame(10, 80)];
+    expect(topFrameCorroborated(series)).toBe(false); // both 80s stand alone
+    expect(topFrameCorroborated([...series, frame(12.5, 5)])).toBe(true); // the second 80 now has a neighbor
+    expect(topFrameCorroborated([])).toBe(false);
+  });
+});
+
+describe("parseSunObservation — only the real window can reach the peak", () => {
+  const shifted = (minutes: number, score = 20): Frame => frame(minutes, score);
+
+  it("rejects high frames at +50 min even when the in-window frames are low (they used to become the peak)", () => {
+    const series = [...sunSeries(EVENT_MS, 25), shifted(50, 99), shifted(52.5, 98)];
+    const body = honestBody(series);
+    expect(robustPeak(series)?.value).toBe(99); // what the old +-60 min rule would have stored as the event score
+    expect(bad(body)).toMatch(/outside the event window/);
+  });
+
+  it("rejects frames before the window too", () => {
+    expect(bad(honestBody([shifted(-50), ...sunSeries(EVENT_MS, 40)]))).toMatch(/outside the event window/);
+  });
+
+  it("accepts the window edges with the script's 1 minute of slack, and nothing beyond", () => {
+    const edges = (lo: number, hi: number) => [shifted(lo), ...sunSeries(EVENT_MS, 40), shifted(hi)];
+    expect(parseSunObservation(honestBody(edges(-36, 26)), NOW).ok).toBe(true);
+    expect(bad(honestBody(edges(-36.1, 26)))).toMatch(/outside the event window/);
+    expect(bad(honestBody(edges(-36, 26.1)))).toMatch(/outside the event window/);
   });
 });
 
@@ -259,8 +348,10 @@ describe("robustPeak", () => {
     expect(r).toEqual({ index: 1, value: 94.4 });
   });
 
-  it("an isolated spike is cut to 2x its best neighbor", () => {
-    expect(robustPeak([frame(-5, 10), frame(-2.5, 95), frame(0, 12)])?.value).toBe(24);
+  it("an isolated spike is cut to 2x its best neighbor, and the reported frame is the best uncapped one, not the spike", () => {
+    const r = robustPeak([frame(-5, 10), frame(-2.5, 95), frame(0, 12)]);
+    expect(r?.value).toBe(24);
+    expect(r?.index).toBe(2); // the 12, not the capped 95
   });
 
   it("frames five minutes apart still corroborate each other (the saved 5-minute backfill frames)", () => {
@@ -301,14 +392,20 @@ describe("the real uploader payload (cross-language contract)", () => {
   });
 
   it("accepts a python-built capture whose glitch frame was cut by the robust peak (python and TypeScript agree)", async () => {
-    // One 95 among ~12s: the script's robust_peak cuts it to twice its best neighbor; robustPeak must land on the same number and frame.
+    // One 95 among ~12s: the script's robust_peak cuts it to twice its best neighbor and reports a CLEAN frame's
+    // metadata; robustPeak must land on the same number, frame, warm_frac and colorfulness.
     const payload = (await import("@/lib/__fixtures__/sunCamCappedSpikePayload.json")).default as Record<string, unknown>;
     const r = parseSunObservation(payload, Date.parse("2026-10-06T15:00:00Z"));
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const series = JSON.parse(r.row.series_json) as { t: string; score: number }[];
-    expect(Math.max(...series.map((f) => f.score))).toBe(95); // the raw spike is in the series...
+    const series = JSON.parse(r.row.series_json) as { t: string; score: number; warm_frac: number }[];
+    const spike = series.find((f) => f.score === 95)!;
+    expect(spike.warm_frac).toBe(0.9); // the raw spike is in the series...
     expect(r.row.observed_score).toBeLessThan(35); // ...but is not the event score
-    expect(r.row.observed_score).toBe(robustPeak(series)?.value);
+    expect(r.row.peak_frame_iso).not.toBe(spike.t); // ...and does not lend its metadata
+    expect(r.row.warm_frac).not.toBe(0.9);
+    const peak = robustPeak(series)!;
+    expect(r.row.observed_score).toBe(peak.value);
+    expect(r.row.peak_frame_iso).toBe(series[peak.index].t);
   });
 });

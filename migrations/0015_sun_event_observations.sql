@@ -32,9 +32,9 @@ CREATE TABLE sun_event_observations (
   observed_score REAL NOT NULL,        -- 0-100, the ROBUST peak of the series (see scripts/sun_cam_check.py robust_peak; the server recomputes it)
   warm_frac REAL NOT NULL,             -- peak frame: warm share of the valid sky pixels, 0-1
   colorfulness REAL NOT NULL,          -- peak frame: Hasler-Suesstrunk colorfulness
-  peak_frame_iso TEXT NOT NULL,        -- which frame carries the robust peak
+  peak_frame_iso TEXT NOT NULL,        -- the reported frame: the best UNCAPPED corroborated one (a capped glitch frame never lends its metadata)
   series_json TEXT NOT NULL,           -- [{t, score, warm_frac, colorfulness, warm_sat}] usable frames, event-35 min .. event+25 min
-  score_version TEXT NOT NULL,         -- SUN_CAM_SCORE_VERSION in scripts/sun_cam_check.py, 'YYYY-MM-DD.N'
+  score_version TEXT NOT NULL,         -- SUN_CAM_SCORE_VERSION in scripts/sun_cam_check.py, 'YYYY-MM-DD.N' (a real date, at most a day ahead: the route enforces it)
   scored_at TEXT NOT NULL,             -- when the script scored it (ISO UTC); with score_version, orders re-scores
   credit TEXT NOT NULL,                -- e.g. 'Live stream courtesy Elbo Room (ElboRoom.com)'
   created_at TEXT NOT NULL,            -- when this key was first received

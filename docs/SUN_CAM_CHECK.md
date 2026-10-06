@@ -140,13 +140,30 @@ the series has to span both sides. A capture that fails this is **incomplete**:
 One frame can spike on a glitch or a lens flare. Real color builds and fades over
 minutes. So a frame counts for at most **2x the best score among the other frames
 within 5 minutes of it**, and a frame with no neighbor that close does not count.
-The event score is the best such value. Its frame is the peak frame, and that
-frame's `warm_frac` and `colorfulness` are the top-level fields.
+The event score is the best such value.
 
 - A sharp, real peak (94 beside a 59) is untouched.
 - An isolated spike (95 beside 10 and 12) is cut to 24.
 - It does not depend on the sampling rate: the live 2.5-minute frames and the saved
   5-minute frames both count as neighbors.
+
+Two guards keep this from losing a real peak or crediting a glitch:
+
+- **The highest raw frame must have a neighbor within 5 minutes.** If it does not,
+  the frames beside it were lost to 403s, or it sits at the window edge. The script
+  cannot tell a real peak from a glitch, and the old rule would have thrown the peak
+  away and stored the event as whatever was left (a real 94 at +25 with +17.5, +20
+  and +22.5 missing scored 20). So the capture is **incomplete**: it is retried while
+  the DVR holds it, then marked `incomplete`. A top frame whose neighbors are
+  present but lower is fine; it is capped, not incomplete.
+- **A capped frame never lends its metadata.** The reported peak frame, and the
+  top-level `warm_frac` and `colorfulness`, come from the best uncapped corroborated
+  frame (a frame whose score is at most 2x its best neighbor). When a spike was
+  capped, the score is up to 2x that frame's own score.
+
+Only frames from -36 to +26 minutes (the window plus 1 minute of slack) reach the
+series. The server rejects anything outside, so a late burst of frames cannot
+become the peak.
 
 The server recomputes the coverage and this statistic from the series (see "The
 upload"). The Python (`robust_peak`) and TypeScript (`robustPeak`) versions are
@@ -183,8 +200,11 @@ The route (`app/api/sun-observations/route.ts`, `lib/sunObservations.ts`):
 - recomputes the robust peak from the series, and requires `peak_frame_iso` to be
   that frame, `observed_score` to equal it (to rounding), and the top-level
   `warm_frac` and `colorfulness` to match that frame's own values;
-- requires `score_version` to look like `YYYY-MM-DD.N`, and `scored_at` to be after
-  the last frame and not in the future.
+- rejects any series frame outside -36 to +26 minutes from the event;
+- rejects a series whose highest frame has no neighbor within 5 minutes;
+- requires `score_version` to look like `YYYY-MM-DD.N` with a real calendar date no
+  more than a day ahead (so `9999-99-99.999` cannot outrank every real version), and
+  `scored_at` to be after the last frame and not in the future.
 
 It stores one row per (slug, event_kind, event_date_local, cam_id) in
 `sun_event_observations` (migrations/0015).

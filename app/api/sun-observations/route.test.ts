@@ -12,6 +12,7 @@ import {
   eventIso,
   predictionRow,
   sunObservationBody,
+  sunSeries,
 } from "@/lib/sunObservations.fixtures";
 
 const TOKEN = "test-ingest-token";
@@ -114,6 +115,43 @@ describe("body validation", () => {
     const res = await post(sunObservationBody({}, { series: short }));
     expect(res.status).toBe(400);
     expect(String((await json(res)).detail)).toMatch(/does not cover/);
+  });
+});
+
+describe("captures that must never become ground truth", () => {
+  const EVENT_MS = Date.parse(ELBO_SUNRISE_ISO);
+  const detail = async (res: Response) => String((await json(res)).detail);
+
+  it("400s a real edge peak whose neighbors were lost (Codex's repro): it would otherwise be stored as ~20", async () => {
+    const lost = new Set([17.5, 20, 22.5]);
+    const flat = sunSeries(EVENT_MS, 94, 25).map((f) => ({ ...f, score: 20 }));
+    flat[flat.length - 1] = { ...flat[flat.length - 1], score: 94 };
+    const series = flat.filter((f) => !lost.has((Date.parse(f.t) - EVENT_MS) / 60_000));
+    const res = await post(sunObservationBody({}, { series, observed_score: 20, peak_frame_iso: series[0].t, warm_frac: series[0].warm_frac, colorfulness: series[0].colorfulness }));
+    expect(res.status).toBe(400);
+    expect(await detail(res)).toMatch(/highest frame has no neighbor/);
+  });
+
+  it("400s frames far outside the window (two high frames at +50 min over low in-window ones)", async () => {
+    const high = (minutes: number, score: number) => ({
+      t: new Date(EVENT_MS + minutes * 60_000).toISOString(),
+      score,
+      warm_frac: 0.4,
+      colorfulness: 70,
+      warm_sat: 0.5,
+    });
+    const res = await post(sunObservationBody({ peak: 25 }, { series: [...sunSeries(EVENT_MS, 25), high(50, 99), high(52.5, 98)], observed_score: 99 }));
+    expect(res.status).toBe(400);
+    expect(await detail(res)).toMatch(/outside the event window/);
+  });
+
+  it("400s a score_version that is not a real, current date", async () => {
+    for (const v of ["9999-99-99.999", "9999-12-31.1", "2026-02-30.1", "2026-10-08.1"]) {
+      const res = await post(sunObservationBody({}, { score_version: v }));
+      expect(res.status).toBe(400);
+      expect(await detail(res)).toMatch(/score_version/);
+    }
+    expect((await post(sunObservationBody({ version: "2026-10-07.1" }))).status).toBe(200);
   });
 });
 

@@ -188,9 +188,9 @@ class RobustPeakTests(unittest.TestCase):
     def test_a_sharp_real_peak_beside_a_lower_frame_is_untouched(self):
         self.assertEqual(sc.robust_peak(self.series([(-7.5, 28.3), (-5, 94.4), (-2.5, 59.3)])), (1, 94.4))
 
-    def test_an_isolated_spike_is_cut_to_twice_its_best_neighbor(self):
+    def test_an_isolated_spike_is_cut_to_twice_its_best_neighbor_and_is_not_the_reported_frame(self):
         idx, value = sc.robust_peak(self.series([(-5, 10.0), (-2.5, 95.0), (0, 12.0)]))
-        self.assertEqual((idx, value), (1, 24.0))
+        self.assertEqual((idx, value), (2, 24.0))  # the 12, not the capped 95
 
     def test_frames_five_minutes_apart_corroborate_each_other(self):
         self.assertEqual(sc.robust_peak(self.series([(-15, 28.3), (-10, 94.4), (-5, 59.3)]))[1], 94.4)
@@ -202,6 +202,16 @@ class RobustPeakTests(unittest.TestCase):
 
     def test_ties_go_to_the_earliest_frame(self):
         self.assertEqual(sc.robust_peak(self.series([(-5, 50.0), (-2.5, 50.0)]))[0], 0)
+
+
+class VersionTests(unittest.TestCase):
+    def test_the_score_version_is_a_real_date_no_more_than_a_day_ahead(self):
+        import re
+
+        m = re.match(r"^(\d{4})-(\d{2})-(\d{2})\.(\d{1,3})$", sc.SUN_CAM_SCORE_VERSION)
+        self.assertIsNotNone(m, sc.SUN_CAM_SCORE_VERSION)
+        d = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))  # raises on a bogus date
+        self.assertLessEqual(d, datetime.now(timezone.utc).date() + timedelta(days=1))
 
 
 class CoverageAndResultTests(unittest.TestCase):
@@ -257,6 +267,38 @@ class CoverageAndResultTests(unittest.TestCase):
         frames[12]["score"] = 95.0  # one glitched frame among 12s
         result, _ = sc.build_result(frames, EVENT)
         self.assertEqual(result["observed_score"], 24.0)
+
+    def test_a_real_edge_peak_whose_neighbors_were_lost_is_incomplete_not_scored_as_20(self):
+        # Codex's repro: a real 94 at +25 with +17.5 / +20 / +22.5 lost to 403s. Bucket coverage
+        # still passes (10/8/4), but the 94 has no neighbor within 5 min, so the old rule threw it away.
+        lost = {17.5, 20.0, 22.5}
+        frames = [f for f in grid({25.0: 94.0}, base=20.0) if (f["t"] - EVENT).total_seconds() / 60 not in lost]
+        self.assertEqual(sc.coverage_counts([f["t"] for f in frames], EVENT), {"pre": 10, "around": 8, "post": 4})
+        result, info = sc.build_result(frames, EVENT)
+        self.assertIsNone(result)
+        self.assertIn("highest frame has no neighbor", info["reason"])
+        self.assertFalse(sc.top_frame_corroborated([{"t": sc.iso_z(f["t"]), "score": f["score"]} for f in frames]))
+
+    def test_the_same_edge_peak_is_fine_when_a_neighbor_survives_within_five_minutes(self):
+        frames = [f for f in grid({25.0: 94.0}, base=20.0) if (f["t"] - EVENT).total_seconds() / 60 != 22.5]
+        result, _ = sc.build_result(frames, EVENT)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["observed_score"], 40.0)  # 94 is capped at 2x its neighbor (20), a glitch-safe score
+        # ...and a real peak with a high neighbor keeps its value
+        frames = [f for f in grid({25.0: 94.0, 20.0: 80.0}, base=20.0) if (f["t"] - EVENT).total_seconds() / 60 != 22.5]
+        result, _ = sc.build_result(frames, EVENT)
+        self.assertEqual(result["observed_score"], 94.0)
+
+    def test_a_capped_frame_never_lends_its_metadata(self):
+        frames = grid(base=12.0)
+        for i, f in enumerate(frames):
+            f["warm_frac"], f["colorfulness"] = 0.05, 35.0
+        frames[12].update(score=95.0, warm_frac=0.9, colorfulness=99.0)  # the glitch frame, with telltale numbers
+        result, _ = sc.build_result(frames, EVENT)
+        self.assertEqual(result["observed_score"], 24.0)
+        self.assertNotEqual(result["peak_frame_iso"], sc.iso_z(frames[12]["t"]))
+        self.assertEqual((result["warm_frac"], result["colorfulness"]), (0.05, 35.0))
+        self.assertEqual(result["peak_frame_score"], 12.0)
 
     def test_frames_outside_the_window_stay_out_of_the_series(self):
         frames = grid() + [frame(40, 99.0), frame(-60, 99.0)]

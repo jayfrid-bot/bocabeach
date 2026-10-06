@@ -25,8 +25,6 @@ const SERIES_KEYS = new Set(["t", "score", "warm_frac", "colorfulness", "warm_sa
 
 /** The event instant must sit within this of the beach's own computed time. */
 const EVENT_TOLERANCE_MS = 5 * 60_000;
-/** Series and peak frames must fall within this of the event (the script samples -35..+25 min). */
-const FRAME_WINDOW_MS = 60 * 60_000;
 /** Rounding slack when the client's numbers are checked against the series (scores carry 1 decimal, warm_frac 4). */
 const SCORE_TOLERANCE = 0.06;
 const FRACTION_TOLERANCE = 0.0001;
@@ -38,6 +36,14 @@ const FRACTION_TOLERANCE = 0.0001;
 // with no neighbor that close does not count at all. The event score is the best
 // such value. A sharp but real peak (94 beside a 59) is untouched; an isolated
 // spike (95 beside 10 and 12) is cut to 24.
+//
+// Two guards keep that from quietly throwing a real peak away or crediting a glitch:
+//  - the HIGHEST raw frame must itself have a neighbor. If it does not (a gap from
+//    dropped frames, or the window edge) the capture cannot tell a real peak from a
+//    glitch, so it is incomplete and rejected (topFrameCorroborated);
+//  - a frame the factor cap cut is an artifact, so the reported frame (and its
+//    warm_frac / colorfulness) is the best UNCAPPED corroborated frame instead. The
+//    score is then up to PEAK_NEIGHBOR_FACTOR times that frame's own score.
 export const PEAK_NEIGHBOR_SECONDS = 301;
 export const PEAK_NEIGHBOR_FACTOR = 2;
 
@@ -51,14 +57,35 @@ export const WINDOW_END_MIN = 25;
 export const PRE_END_MIN = -12; // pre: [-35, -12)
 export const AROUND_END_MIN = 8; // around: [-12, +8]; post: (+8, +25]
 export const MIN_FRAMES_PER_BUCKET = 3;
+/** Frames outside [-35, +25] min are not part of the capture. The script keeps this much slack
+ *  (a beach's event differs from the cam's by seconds), and so does the server: anything beyond is
+ *  rejected, so it can never reach the peak. */
+export const WINDOW_SLACK_MIN = 1;
 const MAX_FUTURE_MS = 60_000;
 const MAX_AGE_MS = 730 * 24 * 3600_000;
 
 const ISO_Z_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SLUG_RE = /^[a-z0-9-]{1,64}$/;
-/** YYYY-MM-DD.N — compared by date, then N as a number (see isNewerSunScore). */
-const VERSION_RE = /^\d{4}-\d{2}-\d{2}\.\d{1,3}$/;
+/** YYYY-MM-DD.N — compared by date, then N as a number (see isNewerSunScore). The date must be
+ *  a real calendar day no more than a day ahead, or a bogus '9999-99-99.9' would outrank every real version. */
+const VERSION_RE = /^(\d{4})-(\d{2})-(\d{2})\.\d{1,3}$/;
+const VERSION_MAX_AHEAD_MS = 24 * 3600_000;
+
+/** Why a score_version is unacceptable, or null when it is fine. */
+export function scoreVersionProblem(version: unknown, nowMs: number): string | null {
+  if (typeof version !== "string") return "score_version is invalid";
+  const m = VERSION_RE.exec(version);
+  if (!m) return "score_version is invalid";
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const ms = Date.UTC(y, mo - 1, d);
+  const back = new Date(ms);
+  if (back.getUTCFullYear() !== y || back.getUTCMonth() !== mo - 1 || back.getUTCDate() !== d) {
+    return "score_version is not a real calendar date";
+  }
+  if (ms > nowMs + VERSION_MAX_AHEAD_MS) return "score_version is dated in the future";
+  return null;
+}
 
 export interface SunCamBeach {
   slug: string;
@@ -126,25 +153,49 @@ export interface SeriesFrame {
   warm_sat: number;
 }
 
+/** For each frame, the best score among the OTHER frames within PEAK_NEIGHBOR_SECONDS; null when none is that close. */
+function bestNeighbors(frames: readonly { t: string; score: number }[]): (number | null)[] {
+  const ms = frames.map((f) => Date.parse(f.t));
+  return frames.map((_, i) => {
+    let best = -Infinity;
+    for (let j = 0; j < frames.length; j++) {
+      if (j !== i && Math.abs(ms[j] - ms[i]) <= PEAK_NEIGHBOR_SECONDS * 1000) best = Math.max(best, frames[j].score);
+    }
+    return best === -Infinity ? null : best;
+  });
+}
+
 /**
- * The robust peak of a time-ordered series: the best over frames of
- * min(score, PEAK_NEIGHBOR_FACTOR * best score of the other frames within
- * PEAK_NEIGHBOR_SECONDS). Ties go to the earliest frame. Null when no frame has
- * a neighbor that close.
+ * The robust peak of a time-ordered series. `value` is the best over corroborated
+ * frames of min(score, PEAK_NEIGHBOR_FACTOR * best neighbor score). `index` is the frame
+ * to report: the best UNCAPPED corroborated frame (score <= factor * its best neighbor),
+ * earliest on a tie, so a capped glitch frame never lends its warm_frac / colorfulness.
+ * Null when no frame has a neighbor that close.
  */
 export function robustPeak(frames: readonly { t: string; score: number }[]): { index: number; value: number } | null {
-  const ms = frames.map((f) => Date.parse(f.t));
-  let best: { index: number; value: number } | null = null;
+  const nb = bestNeighbors(frames);
+  let value = -Infinity;
+  let index = -1;
   for (let i = 0; i < frames.length; i++) {
-    let neighbor = -Infinity;
-    for (let j = 0; j < frames.length; j++) {
-      if (j !== i && Math.abs(ms[j] - ms[i]) <= PEAK_NEIGHBOR_SECONDS * 1000) neighbor = Math.max(neighbor, frames[j].score);
-    }
-    if (neighbor === -Infinity) continue;
-    const value = Math.min(frames[i].score, PEAK_NEIGHBOR_FACTOR * neighbor);
-    if (best === null || value > best.value) best = { index: i, value };
+    const n = nb[i];
+    if (n === null) continue;
+    value = Math.max(value, Math.min(frames[i].score, PEAK_NEIGHBOR_FACTOR * n));
+    if (frames[i].score <= PEAK_NEIGHBOR_FACTOR * n && (index === -1 || frames[i].score > frames[index].score)) index = i;
   }
-  return best;
+  return index === -1 ? null : { index, value };
+}
+
+/**
+ * Is the highest RAW frame backed by a neighbor within PEAK_NEIGHBOR_SECONDS? (Any frame
+ * tied for the top will do.) False means the best frame stands alone — dropped frames beside
+ * it, or the window edge — so the capture is incomplete: robustPeak would discard it and the
+ * event would be scored by whatever is left.
+ */
+export function topFrameCorroborated(frames: readonly { t: string; score: number }[]): boolean {
+  if (frames.length === 0) return false;
+  const nb = bestNeighbors(frames);
+  const top = Math.max(...frames.map((f) => f.score));
+  return frames.some((f, i) => f.score === top && nb[i] !== null);
 }
 
 /** How many frames fall in each coverage bucket, by minutes from the event. */
@@ -177,7 +228,9 @@ export function parseSunObservation(body: unknown, nowMs: number): SunObservatio
   if (typeof dateLocal !== "string" || !DATE_RE.test(dateLocal)) return fail("event_date_local must be YYYY-MM-DD");
   if (typeof camId !== "string") return fail("cam_id is required");
   if (view !== "solar" && view !== "antisolar") return fail("view must be solar or antisolar");
-  if (typeof version !== "string" || !VERSION_RE.test(version)) return fail("score_version is invalid");
+  const versionProblem = scoreVersionProblem(version, nowMs);
+  if (versionProblem) return fail(versionProblem);
+  if (typeof version !== "string") return fail("score_version is invalid");
 
   // Cam and beach must be a pair the registry knows, and the credit must be the registry's.
   const cam = SUN_CAMS.find((c) => c.id === camId);
@@ -236,7 +289,10 @@ export function parseSunObservation(body: unknown, nowMs: number): SunObservatio
     const fc = numIn(raw.colorfulness, 0, 255);
     const fp = numIn(raw.warm_sat, 0, 1);
     if (tMs === null || fs === null || fw === null || fc === null || fp === null) return fail("a series entry is malformed");
-    if (Math.abs(tMs - eventMs) > FRAME_WINDOW_MS) return fail("a series frame is outside the event window");
+    const offsetMin = (tMs - eventMs) / 60_000;
+    if (offsetMin < WINDOW_START_MIN - WINDOW_SLACK_MIN || offsetMin > WINDOW_END_MIN + WINDOW_SLACK_MIN) {
+      return fail(`a series frame is outside the event window (${WINDOW_START_MIN - WINDOW_SLACK_MIN}..+${WINDOW_END_MIN + WINDOW_SLACK_MIN} min)`);
+    }
     if (tMs <= prevMs) return fail("series frames must be in strictly increasing time order");
     prevMs = tMs;
     frames.push({ t: new Date(tMs).toISOString(), score: fs, warm_frac: fw, colorfulness: fc, warm_sat: fp });
@@ -249,6 +305,12 @@ export function parseSunObservation(body: unknown, nowMs: number): SunObservatio
     return fail(
       `series does not cover the event: ${cov.pre} pre, ${cov.around} around, ${cov.post} post frames (need ${MIN_FRAMES_PER_BUCKET} in each)`,
     );
+  }
+
+  // The highest frame must be corroborated, or a real peak could be discarded and the event
+  // scored by what is left (a gap beside it, or the window edge).
+  if (!topFrameCorroborated(frames)) {
+    return fail("the highest frame has no neighbor within 5 minutes (a gap or the window edge): the capture is incomplete");
   }
 
   // The robust peak, recomputed from the series. The declared peak must BE that frame, and the
