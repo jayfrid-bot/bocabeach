@@ -60,8 +60,9 @@ export interface BeachHourlyRow {
 
 /**
  * One row of `sun_event_predictions` (migrations/0013): the sunrise/sunset
- * color model's output for ONE upcoming sun event, as of one archive hour,
- * with every input it used. See lib/history/sunPredictions.ts.
+ * color model's output for ONE sun event — the one the card shows, which
+ * stays current through its golden window, so `lead_minutes` is negative
+ * just after the event — as of one archive hour, with every input it used. See lib/history/sunPredictions.ts.
  */
 export interface SunEventPredictionRow {
   slug: string;
@@ -74,7 +75,7 @@ export interface SunEventPredictionRow {
 
   score: number | null;
   band: string | null;
-  model_path: "factor" | "level-curve" | "total-only" | null;
+  model_path: "factor" | "total-only" | null;
   note: string | null;
   breakdown_json: string | null;
 

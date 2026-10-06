@@ -1,6 +1,7 @@
 -- Sun-event prediction log. One row per (beach, sun event, archive hour): the
--- hourly archiver (app/api/history/archive/route.ts) scores the NEXT sunrise
--- AND the NEXT sunset with the very same lib/sunAlert.ts
+-- hourly archiver (app/api/history/archive/route.ts) scores one sunrise AND
+-- one sunset — the ones the card shows, each current through its golden
+-- window (lead_minutes is negative just after the event) — with the same lib/sunAlert.ts
 -- `assembleSunEventQuality` the sun-color card and push alert use, and keeps
 -- the score plus EVERY input it was computed from. Rows for one event at
 -- successive `as_of_hour_utc` values show how its forecast evolved as it got
@@ -22,7 +23,7 @@ CREATE TABLE sun_event_predictions (
 
   score INTEGER,                       -- 0-100, NULL when no forecast cloud reading
   band TEXT,                           -- dud | plain | good | vivid | epic
-  model_path TEXT,                     -- 'factor' | 'level-curve' | 'total-only' | NULL
+  model_path TEXT,                     -- 'factor' | 'total-only' | NULL
   note TEXT,
   breakdown_json TEXT,                 -- factor-model breakdown (factor path only)
 
