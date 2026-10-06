@@ -806,6 +806,73 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       const result = await store.historyRecords("nowhere-beach");
       expect(result).toEqual({ records: [], archiveStartedAt: null, dayCount: 0, surfSince: null });
     });
+
+    // "Best day ever" — the ONE statement that spans every beach.
+    describe("historyBestEver — one real statement across every beach", () => {
+      it("returns null on an empty archive", async () => {
+        expect(await store.historyBestEver()).toBeNull();
+      });
+
+      it("picks the highest score across ALL beaches, with its beach, local date and local hour", async () => {
+        await store.upsertBeachHourly(
+          hourlyRow({ hour_utc: "2026-09-26T18:00:00.000Z", local_date: "2026-09-26", local_hour: 14, score: 88 }),
+        );
+        await store.upsertBeachHourly(
+          hourlyRow({
+            slug: "gulf-shores",
+            hour_utc: "2026-09-29T18:00:00.000Z",
+            local_date: "2026-09-29",
+            local_hour: 13,
+            timezone: "America/Chicago",
+            score: 98,
+          }),
+        );
+        await store.upsertBeachHourly(
+          hourlyRow({ slug: "deerfield-beach", hour_utc: "2026-09-27T16:00:00.000Z", local_date: "2026-09-27", local_hour: 12, score: 91 }),
+        );
+        expect(await store.historyBestEver()).toEqual({
+          slug: "gulf-shores",
+          local_date: "2026-09-29",
+          local_hour: 13,
+          score: 98,
+        });
+      });
+
+      it("ties break to the earliest hour_utc, whichever beach it is", async () => {
+        await store.upsertBeachHourly(
+          hourlyRow({ slug: "gulf-shores", hour_utc: "2026-09-29T18:00:00.000Z", local_date: "2026-09-29", local_hour: 13, score: 95 }),
+        );
+        await store.upsertBeachHourly(
+          hourlyRow({ slug: "boca-raton", hour_utc: "2026-09-25T15:00:00.000Z", local_date: "2026-09-25", local_hour: 11, score: 95 }),
+        );
+        const best = await store.historyBestEver();
+        expect(best).toMatchObject({ slug: "boca-raton", local_date: "2026-09-25", local_hour: 11, score: 95 });
+      });
+
+      it("ignores rows with a null score and any non-snapshot row", async () => {
+        await store.upsertBeachHourly(
+          hourlyRow({ hour_utc: "2026-09-22T14:00:00.000Z", local_date: "2026-09-22", score: 70 }),
+        );
+        await store.upsertBeachHourly(
+          hourlyRow({ hour_utc: "2026-09-22T15:00:00.000Z", local_date: "2026-09-22", row_kind: "snapshot", score: null }),
+        );
+        // A cam-backfill row carrying a (hypothetical) 100 must never win.
+        await store.upsertBeachHourly(
+          hourlyRow({ hour_utc: "2026-09-22T16:00:00.000Z", local_date: "2026-09-22", row_kind: "cam-backfill", score: 100 }),
+        );
+        expect(await store.historyBestEver()).toMatchObject({ local_date: "2026-09-22", score: 70 });
+      });
+
+      it("is not bounded by any window — the oldest row can be the record", async () => {
+        await store.upsertBeachHourly(
+          hourlyRow({ hour_utc: "2026-08-19T14:00:00.000Z", local_date: "2026-08-19", score: 99 }),
+        );
+        await store.upsertBeachHourly(
+          hourlyRow({ hour_utc: "2026-09-28T14:00:00.000Z", local_date: "2026-09-28", score: 70 }),
+        );
+        expect(await store.historyBestEver()).toMatchObject({ local_date: "2026-08-19", score: 99 });
+      });
+    });
   });
 
   // --- sun-event prediction log (migrations/0013) — real multi-row upsert ---

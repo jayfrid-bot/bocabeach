@@ -341,7 +341,7 @@ flowchart TD
     HAZ2["/api/hazards<br/>POST — native-only, rate-limited<br/>'where you stand' lightning + rain"]
     LAREG["/api/live-activity/register<br/>POST — native-only, rate-limited<br/>start/rotate a Beach Session token"]
     LAEND["/api/live-activity/end<br/>POST — native-only, rate-limited<br/>Off / dismiss"]
-    HIST2["/api/history/[slug]<br/>POST — native-only, rate-limited<br/>'Last N days': day summaries + records"]
+    HIST2["/api/history/[slug]<br/>POST — native-only, rate-limited<br/>'Last N days': day summaries + records + best day ever"]
   end
 
   APPSTORE[(App Store<br/>monthly · yearly, 3-day trial)] -->|"purchase via RevenueCat SDK<br/>appUserID = deviceId"| BUY
@@ -360,7 +360,7 @@ flowchart TD
   STORE -->|production| D1[(D1: isitbeachday-plus<br/>devices · presence · alert_log · send_claims<br/>scan_log · scan_tap · scan_claim · install_attrib<br/>live_activities · app_opens)]
   LAREG -->|"entitled + armed at slug (listArmed gate)<br/>one active session/device, token rotation"| STORE
   LAEND -->|markLiveActivityEnded 'user'| STORE
-  HIST2 -->|"hourlyHistory: read-only beach_hourly<br/>(same D1, written by the archiver — diagram 2)"| STORE
+  HIST2 -->|"hourlyHistory + historyRecords + historyBestEver (all beaches): read-only beach_hourly<br/>(same D1, written by the archiver — diagram 2)"| STORE
   STICKER -->|"count scan (bot-filtered), fail-soft"| D1
   GETAPP -->|"count store tap, fail-soft"| D1
   DEV -->|"after the upsert: credit a fresh native install<br/>to a recent scan on the same network (probable)"| ATTRIB[lib/db/scanFunnel.ts<br/>attributeInstall]
@@ -678,7 +678,7 @@ Gated like `/api/hazards`: native app only, a rate-limited deviceId (300/hr
 by IP, 60/hr by device), the install token once one is on file, then
 `entitled(device, now)` — a free device gets 403 `not-entitled`, never a
 peek at the data. The route itself never calls `getConditions`; it runs
-exactly THREE D1 statements, two of them in parallel with the third:
+exactly FOUR D1 statements, all reads:
 `DeviceStore.hourlyHistory` (`WHERE slug = ? AND row_kind = 'snapshot' AND
 local_date BETWEEN ? AND ?`, capped at 31 days, for the on-screen 7/14/30-day
 strip) plus `DeviceStore.historyRecords`'s own two statements — one UNION
@@ -695,6 +695,7 @@ record reads the `surf_ft` column only (the breaking-surf estimate), never
 `surf_ft` postdates the archive itself (migration 0010), `surfSince` is
 normally later than `archiveStartedAt`; the "Biggest surf" tile captions
 that gap ("since Sept 28") instead of implying full-archive coverage.
+The fourth statement is `DeviceStore.historyBestEver`: the highest score at ANY beach (`ORDER BY score DESC, hour_utc ASC LIMIT 1`), returned as `bestEver` with the beach named via `getLocation` — the first "Best day ever" tile.
 
 **Live Activity register: rotation + one-active-per-device.** The native
 plugin sends a monotonic `rotation` counter with each token; `registerLiveActivity`

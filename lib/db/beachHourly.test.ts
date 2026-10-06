@@ -465,6 +465,54 @@ describe("historyRecords — lifetime, never bounded by a days window", () => {
   });
 });
 
+describe("historyBestEver — the highest score across every beach", () => {
+  it("returns null on an empty archive", async () => {
+    const store = await getStore();
+    expect(await store.historyBestEver()).toBeNull();
+  });
+
+  it("picks the highest score across ALL beaches, with its beach, local date and local hour", async () => {
+    const store = await getStore();
+    await store.upsertBeachHourly(
+      row({ hour_utc: hourUtcOf(Date.parse("2026-09-26T18:00:00Z")), local_date: "2026-09-26", local_hour: 14, score: 88 }),
+    );
+    await store.upsertBeachHourly(
+      row({ slug: "gulf-shores", hour_utc: hourUtcOf(Date.parse("2026-09-29T18:00:00Z")), local_date: "2026-09-29", local_hour: 13, score: 98 }),
+    );
+    expect(await store.historyBestEver()).toEqual({
+      slug: "gulf-shores",
+      local_date: "2026-09-29",
+      local_hour: 13,
+      score: 98,
+    });
+  });
+
+  it("ties break to the EARLIEST hour_utc, whichever beach it is", async () => {
+    const store = await getStore();
+    await store.upsertBeachHourly(
+      row({ slug: "gulf-shores", hour_utc: hourUtcOf(Date.parse("2026-09-29T18:00:00Z")), local_date: "2026-09-29", local_hour: 13, score: 95 }),
+    );
+    await store.upsertBeachHourly(
+      row({ slug: "boca-raton", hour_utc: hourUtcOf(Date.parse("2026-09-25T15:00:00Z")), local_date: "2026-09-25", local_hour: 11, score: 95 }),
+    );
+    expect(await store.historyBestEver()).toMatchObject({ slug: "boca-raton", local_date: "2026-09-25", local_hour: 11 });
+  });
+
+  it("ignores null-score rows and cam-backfill rows", async () => {
+    const store = await getStore();
+    await store.upsertBeachHourly(
+      row({ hour_utc: hourUtcOf(Date.parse("2026-09-22T14:00:00Z")), local_date: "2026-09-22", score: 70 }),
+    );
+    await store.upsertBeachHourly(
+      row({ hour_utc: hourUtcOf(Date.parse("2026-09-22T15:00:00Z")), local_date: "2026-09-22", score: null }),
+    );
+    await store.upsertBeachHourly(
+      row({ hour_utc: hourUtcOf(Date.parse("2026-09-22T16:00:00Z")), local_date: "2026-09-22", row_kind: "cam-backfill", score: 100 }),
+    );
+    expect(await store.historyBestEver()).toMatchObject({ local_date: "2026-09-22", score: 70 });
+  });
+});
+
 describe("memory store persistence round-trip", () => {
   it("beach_hourly, history_budget and history_claims survive a save/load cycle", async () => {
     const { createMemoryStore } = await import("@/lib/db/memoryStore");

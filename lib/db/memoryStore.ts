@@ -41,6 +41,7 @@ import type {
   BeachHourlyRow,
   CamObservationRow,
   CamReadRow,
+  HistoryBestEverRow,
   HistoryRecordRow,
   HistoryRecordsResult,
   SunEventObservationRow,
@@ -810,6 +811,27 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       }
 
       return { records, archiveStartedAt, dayCount: dates.size, surfSince };
+    },
+
+    // "Best day ever" — mirrors d1Store's one statement: across every beach,
+    // snapshot rows with a score, highest score wins, ties to the earliest
+    // hour_utc (same rule as `ORDER BY score DESC, hour_utc ASC LIMIT 1`).
+    async historyBestEver(): Promise<HistoryBestEverRow | null> {
+      await load();
+      let winner: BeachHourlyRow | null = null;
+      for (const r of beachHourly.values()) {
+        if (r.row_kind !== "snapshot" || typeof r.score !== "number" || !Number.isFinite(r.score)) continue;
+        if (
+          !winner ||
+          r.score > (winner.score as number) ||
+          (r.score === winner.score && r.hour_utc < winner.hour_utc)
+        ) {
+          winner = r;
+        }
+      }
+      return winner
+        ? { slug: winner.slug, local_date: winner.local_date, local_hour: winner.local_hour, score: winner.score as number }
+        : null;
     },
 
     // --- Beach Session Live Activity (migrations/0007_live_activities.sql) -

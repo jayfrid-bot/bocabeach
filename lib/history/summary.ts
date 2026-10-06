@@ -142,6 +142,18 @@ export interface HistoryRecords {
   quietestDay: { date: string; crowdPct: number; localHour: number } | null;
 }
 
+/** The API's shape for the cross-beach "Best day ever" record
+ *  (`DeviceStore.historyBestEver`) — the one record that is NOT about the
+ *  beach the request is for. `isThisBeach` lets the UI say "This beach!". */
+export interface HistoryBestEver {
+  slug: string;
+  name: string;
+  date: string;
+  score: number;
+  localHour: number;
+  isThisBeach: boolean;
+}
+
 function round(v: number): number {
   return Math.round(v);
 }

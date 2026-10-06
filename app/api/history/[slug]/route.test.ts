@@ -201,6 +201,7 @@ describe("POST /api/history/[slug]", () => {
         biggestSurf: null,
         quietestDay: null,
       });
+      expect(body.bestEver).toBeNull();
       expect(body.archiveStartedAt).toBeNull();
       expect(body.dayCount).toBe(0);
       expect(body.surfSince).toBeNull();
@@ -260,6 +261,87 @@ describe("POST /api/history/[slug]", () => {
       const body = await res.json();
       expect(body.days).toEqual([]);
       expect(body.records.bestDay).toBeNull();
+    });
+
+    describe("bestEver — the highest score at ANY beach", () => {
+      it("names the other beach, with its local date and hour, when the record is elsewhere", async () => {
+        const store = await getStore();
+        await store.upsertBeachHourly(
+          row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-28", local_hour: 10, score: 80 }),
+        );
+        await store.upsertBeachHourly(
+          row({ slug: "gulf-shores", hour_utc: hourUtcOf(Date.now() - DAY), local_date: "2026-09-27", local_hour: 13, score: 98 }),
+        );
+        const { POST } = await import("@/app/api/history/[slug]/route");
+        const res = await POST(post(SLUG, { deviceId: DEV }), params(SLUG));
+        const body = await res.json();
+        expect(body.bestEver).toEqual({
+          slug: "gulf-shores",
+          name: "Gulf Shores",
+          date: "2026-09-27",
+          score: 98,
+          localHour: 13,
+          isThisBeach: false,
+        });
+        // This beach's own record is unchanged by the cross-beach one.
+        expect(body.records.bestDay).toEqual({ date: "2026-09-28", score: 80, localHour: 10 });
+      });
+
+      it("sets isThisBeach when the all-beach record is at the requested beach", async () => {
+        const store = await getStore();
+        await store.upsertBeachHourly(
+          row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-28", local_hour: 10, score: 99 }),
+        );
+        await store.upsertBeachHourly(
+          row({ slug: "gulf-shores", hour_utc: hourUtcOf(Date.now() - DAY), local_date: "2026-09-27", local_hour: 13, score: 90 }),
+        );
+        const { POST } = await import("@/app/api/history/[slug]/route");
+        const res = await POST(post(SLUG, { deviceId: DEV }), params(SLUG));
+        const body = await res.json();
+        expect(body.bestEver).toEqual({
+          slug: SLUG,
+          name: "Boca Raton",
+          date: "2026-09-28",
+          score: 99,
+          localHour: 10,
+          isThisBeach: true,
+        });
+      });
+
+      it("is present even when the requested beach has no rows of its own", async () => {
+        const store = await getStore();
+        await store.upsertBeachHourly(
+          row({ slug: "deerfield-beach", hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-28", local_hour: 11, score: 91 }),
+        );
+        const { POST } = await import("@/app/api/history/[slug]/route");
+        const res = await POST(post(SLUG, { deviceId: DEV }), params(SLUG));
+        const body = await res.json();
+        expect(body.days).toEqual([]);
+        expect(body.bestEver).toMatchObject({ slug: "deerfield-beach", name: "Deerfield Beach", score: 91, isThisBeach: false });
+      });
+
+      it("is lifetime — a record from outside the requested window still counts", async () => {
+        const store = await getStore();
+        await store.upsertBeachHourly(
+          row({ slug: "gulf-shores", hour_utc: hourUtcOf(Date.now() - 40 * DAY), local_date: "2026-08-19", local_hour: 12, score: 99 }),
+        );
+        const { POST } = await import("@/app/api/history/[slug]/route");
+        const res = await POST(post(SLUG, { deviceId: DEV, days: 7 }), params(SLUG));
+        const body = await res.json();
+        expect(body.bestEver).toMatchObject({ slug: "gulf-shores", date: "2026-08-19", score: 99 });
+      });
+
+      it("is null, not a nameless record, when the winning beach is no longer one we serve", async () => {
+        const store = await getStore();
+        await store.upsertBeachHourly(
+          row({ slug: "retired-beach", hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-28", score: 99 }),
+        );
+        const { POST } = await import("@/app/api/history/[slug]/route");
+        const res = await POST(post(SLUG, { deviceId: DEV }), params(SLUG));
+        const body = await res.json();
+        expect(res.status).toBe(200);
+        expect(body.bestEver).toBeNull();
+      });
     });
 
     it("sets Cache-Control: private, no-store", async () => {
