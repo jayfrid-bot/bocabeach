@@ -22,6 +22,9 @@ export const CHANGELOG: ChangelogEntry[] = [
     details:
       "The comfort part of the score was written for inland air. At the shore, the water and the sea breeze take the edge off humidity, so a 65°F dew point no longer costs anything and a 70°F one costs a little instead of half. Expect summer scores a couple of points higher, and a few more Excellent days.",
     tag: "improved",
+  },
+  {
+    date: "2026-10-06",
     title: "Best day ever, across every beach",
     details:
       "Plus members: the records under \"Look back\" now start with the best Beach Day score ever recorded at any beach in the app. It shows the score, which beach earned it, and the day and hour. If it was your beach, it says so.",
