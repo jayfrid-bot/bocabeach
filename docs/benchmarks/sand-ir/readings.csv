@@ -1,0 +1,16 @@
+date,local_time,beach,spot,measured_low_f,measured_high_f,measured_mid_f,soil_f,solar_wm2,solar_source,wind_mph,cloud_pct,cloud_source,model_f,model_version,notes
+2026-06-11,14:00,Boca Raton,dunes,130,140,135,98,980,forecast,11,16,forecast,,pre-archive,first calibration session
+2026-06-15,13:00,Boca Raton,dunes,129,135,132,109,820,forecast,10,41,forecast,,pre-archive,hot-soil afternoon
+2026-06-23,09:54,Boca Raton,surf,113,113,113,91,380,forecast,2,63,forecast,,pre-archive,low morning sun; surf side
+2026-06-23,09:54,Boca Raton,dunes,124,124,124,91,380,forecast,2,63,forecast,,pre-archive,low morning sun; dunes
+2026-07-06,16:30,Boca Raton,dry sand,96,96,96,94,320,forecast,2,100,forecast,,pre-archive,solid overcast; two readings an hour apart
+2026-07-14,13:00,Boca Raton,dry sand,135,142,138.5,105,965,forecast,11,0,forecast,137,pre-archive,
+2026-07-14,14:20,Boca Raton,dry sand,130,145,137.5,107,1006,forecast,10,1,forecast,139,pre-archive,
+2026-07-15,16:15,Boca Raton,dry sand,110,115,112.5,104,821,forecast,7,11,forecast,135,pre-archive,beam-path cloud west of beach (fixed by beamCloudPct)
+2026-07-15,17:30,Boca Raton,dry sand,100,100,100,100,701,forecast,7,24,forecast,133,pre-archive,beam-path cloud west of beach
+2026-07-16,15:38,Boca Raton,dry sand,113,113,113,104,930,forecast,10,99.3,goes-beam,108,pre-archive,first live satellite test
+2026-09-02,14:00,Boca Raton,dry sand,121,135,129,94,402,forecast,8,90,forecast,108,pre-archive,GOES stale 202 min; observer: overhead clear
+2026-09-04,13:00,Boca Raton,dry sand,140,140,140,93,849,satellite,,,,133,pre-archive,model re-run with observed 849 W/m2
+2026-09-04,15:10,Boca Raton,dry sand,130,130,130,93,257,forecast,,98,goes-mask,94,pre-archive,phantom forecast rain + cirrus mask (fixed)
+2026-09-08,11:40,Boca Raton,dry sand,117,122,120,94,463,carried,5,80,goes-beam,126,pre-archive,model 120 after CARRY_DARKENING fix
+2026-10-06,12:57,Spanish River Beach (Boca),unknown,120,125,122.5,96,645,carried,4,0,goes-beam,133,2026-09-08.1,owner: full sun for hours, no cloud; app range was 120 surf to 133 dunes
