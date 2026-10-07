@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-07",
+    title: "iPhone alerts are flowing again",
+    details:
+      "iPhone safety alerts and morning summaries had stopped going out after a server move. The sender is fixed and tested against a real phone. No app update needed.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-10-07",
     title: "Alerts now show while the app is open",
     details:
       "A safety alert that arrived while you had the app open used to be swallowed by iPhone. It now shows as a banner with sound, same as when the app is closed. Needs the app update.",

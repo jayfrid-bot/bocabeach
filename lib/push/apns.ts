@@ -8,10 +8,14 @@
 //   APNS_PRODUCTION   "false" to use the sandbox gateway (Xcode dev builds);
 //                     anything else / unset → production (TestFlight + App Store)
 //
-// Pure JWT building is split out (testable); the HTTP/2 send needs Apple + a
-// real device token, so it's exercised only against the live service.
+// Pure JWT building is split out (testable); the send needs Apple + a real
+// device token, so it's exercised only against the live service.
+//
+// Transport is plain `fetch`, NOT node:http2. The app runs on Cloudflare
+// Workers, where node:http2 is a stub that throws "not implemented" — every
+// iOS alert failed silently that way from the Cloudflare move until
+// 2026-10-07. The Workers runtime speaks HTTP/2 to Apple on its own.
 
-import http2 from "node:http2";
 import { createSign } from "node:crypto";
 import { readPemEnv } from "@/lib/push/pemEnv";
 
@@ -132,106 +136,70 @@ const SANDBOX_HOST = "https://api.sandbox.push.apple.com";
  *  `apns_environment` at a time — Codex review #5). Pulled out so neither
  *  caller duplicates the request-building logic. */
 function buildSession(host: string, jwt: string, cfg: ApnsConfig): ApnsSession {
-  const client = http2.connect(host);
-  // Swallow session-level errors; per-request handlers resolve their results.
-  client.on("error", () => {});
+  const post = async (deviceToken: string, headers: Record<string, string>, body: string): Promise<ApnsResult> => {
+    try {
+      const res = await fetch(`${host}/3/device/${deviceToken}`, {
+        method: "POST",
+        headers: { authorization: `bearer ${jwt}`, "content-type": "application/json", ...headers },
+        body,
+      });
+      if (res.status === 200) return { ok: true, status: 200 };
+      const data = await res.text();
+      let reason = data;
+      try {
+        reason = (JSON.parse(data) as { reason?: string }).reason ?? data;
+      } catch {
+        /* keep raw */
+      }
+      return { ok: false, status: res.status, reason };
+    } catch (e) {
+      return { ok: false, reason: String(e) };
+    }
+  };
 
   const send = (deviceToken: string, payload: ApnsPayload): Promise<ApnsResult> =>
-    new Promise<ApnsResult>((resolve) => {
-      const body = JSON.stringify({
-        aps: { alert: { title: payload.title, body: payload.body }, sound: "default" },
-        url: payload.url,
-      });
-      const req = client.request({
-        ":method": "POST",
-        ":path": `/3/device/${deviceToken}`,
-        authorization: `bearer ${jwt}`,
+    post(
+      deviceToken,
+      {
         "apns-topic": cfg.bundleId,
         "apns-push-type": "alert",
-        "content-type": "application/json",
         ...(payload.expiration ? { "apns-expiration": String(Math.floor(payload.expiration)) } : {}),
         ...(payload.tag ? { "apns-collapse-id": payload.tag.slice(0, 64) } : {}),
-      });
-      let status = 0;
-      let data = "";
-      req.on("response", (h) => {
-        status = Number(h[":status"]) || 0;
-      });
-      req.setEncoding("utf8");
-      req.on("data", (d) => (data += d));
-      req.on("end", () => {
-        if (status === 200) return resolve({ ok: true, status });
-        let reason = data;
-        try {
-          reason = (JSON.parse(data) as { reason?: string }).reason ?? data;
-        } catch {
-          /* keep raw */
-        }
-        resolve({ ok: false, status, reason });
-      });
-      req.on("error", (e) => resolve({ ok: false, reason: String(e) }));
-      req.end(body);
-    });
+      },
+      JSON.stringify({
+        aps: { alert: { title: payload.title, body: payload.body }, sound: "default" },
+        url: payload.url,
+      }),
+    );
 
-  // Same JWT/HTTP2 connection as `send` above (never forked); only the
-  // headers/topic/payload differ, per ActivityKit's push contract.
-  const sendLiveActivityUpdate = (deviceToken: string, update: LiveActivityUpdate): Promise<ApnsResult> =>
-    new Promise<ApnsResult>((resolve) => {
-      const aps: Record<string, unknown> = {
-        timestamp: Math.floor(update.timestampMs / 1000),
-        event: update.event,
-        "content-state": update.contentState,
-      };
-      if (update.staleDateMs != null) aps["stale-date"] = Math.floor(update.staleDateMs / 1000);
-      if (update.dismissalDateMs != null) aps["dismissal-date"] = Math.floor(update.dismissalDateMs / 1000);
-      if (update.relevanceScore != null) aps["relevance-score"] = update.relevanceScore;
-      const body = JSON.stringify({ aps });
-      const req = client.request({
-        ":method": "POST",
-        ":path": `/3/device/${deviceToken}`,
-        authorization: `bearer ${jwt}`,
+  // Same JWT and host as `send` above; only the headers/topic/payload differ,
+  // per ActivityKit's push contract.
+  const sendLiveActivityUpdate = (deviceToken: string, update: LiveActivityUpdate): Promise<ApnsResult> => {
+    const aps: Record<string, unknown> = {
+      timestamp: Math.floor(update.timestampMs / 1000),
+      event: update.event,
+      "content-state": update.contentState,
+    };
+    if (update.staleDateMs != null) aps["stale-date"] = Math.floor(update.staleDateMs / 1000);
+    if (update.dismissalDateMs != null) aps["dismissal-date"] = Math.floor(update.dismissalDateMs / 1000);
+    if (update.relevanceScore != null) aps["relevance-score"] = update.relevanceScore;
+    return post(
+      deviceToken,
+      {
         "apns-topic": `${cfg.bundleId}.push-type.liveactivity`,
         "apns-push-type": "liveactivity",
         "apns-priority": String(update.priority),
-        "content-type": "application/json",
-      });
-      let status = 0;
-      let data = "";
-      req.on("response", (h) => {
-        status = Number(h[":status"]) || 0;
-      });
-      req.setEncoding("utf8");
-      req.on("data", (d) => (data += d));
-      req.on("end", () => {
-        if (status === 200) return resolve({ ok: true, status });
-        let reason = data;
-        try {
-          reason = (JSON.parse(data) as { reason?: string }).reason ?? data;
-        } catch {
-          /* keep raw */
-        }
-        resolve({ ok: false, status, reason });
-      });
-      req.on("error", (e) => resolve({ ok: false, reason: String(e) }));
-      req.end(body);
-    });
-
-  return {
-    send,
-    sendLiveActivityUpdate,
-    close: () => {
-      try {
-        client.close();
-      } catch {
-        /* already closed */
-      }
-    },
+      },
+      JSON.stringify({ aps }),
+    );
   };
+
+  // Nothing to tear down with fetch; kept so callers' lifecycles don't change.
+  return { send, sendLiveActivityUpdate, close: () => {} };
 }
 
 /**
- * Open one HTTP/2 session to APNs and reuse it for every send in this run (one
- * JWT, one connection). Call `close()` when done. Ordinary alert pushes
+ * Open one APNs session (one JWT) and reuse it for every send in this run. Call `close()` when done. Ordinary alert pushes
  * always use the server's own `cfg.production` environment — unaffected by
  * `openLiveActivitySessions` below, which is the ONLY thing that ever talks
  * to the sandbox host.
@@ -258,8 +226,7 @@ export interface LiveActivitySessions {
 }
 
 /**
- * One JWT, up to TWO HTTP/2 connections — production and sandbox — opened
- * lazily so a run with no sandbox rows never pays for that connection.
+ * One JWT, up to TWO sessions — production and sandbox — opened lazily.
  * `lib/alerts/run.ts` opens exactly one of these per run (never one per
  * activity) and closes it when the run finishes, same lifecycle as
  * `openApnsSession`.

@@ -717,8 +717,9 @@ sessions are armed at once; anything left over rolls to the next tick.
 Every push (update or end) carries `v`/`seq` (a per-activity monotonic
 counter, `last_seq`) so the phone can tell a stale/reordered push from the
 current one, and an end push also sets `ended: true`. `lib/push/apns.ts`
-keeps a separate HTTP/2 client per APNs environment and routes each row by
-its own `apns_environment`, never by this server's own `APNS_PRODUCTION`.
+sends over plain `fetch` (node:http2 is a throwing stub on Workers), one
+session per APNs environment, and routes each row by its own
+`apns_environment`, never by this server's own `APNS_PRODUCTION`.
 
 **Beach-local scheduling:** the morning digest, "just turned Excellent", and
 every hazard's freshness window are all judged in the **beach's own

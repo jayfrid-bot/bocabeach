@@ -2,11 +2,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { generateKeyPairSync, createVerify } from "node:crypto";
 import { buildApnsJwt, isDeadToken, openApnsSession, openLiveActivitySessions } from "@/lib/push/apns";
 
-// --- A fake node:http2 for openApnsSession's `send` / `sendLiveActivityUpdate` ---
-// Captures every `client.request(headers)` + the body passed to `.end(body)`,
-// and answers with a scripted status (200 by default) synchronously off the
-// `response`/`data`/`end` handlers openApnsSession registers — no real
-// network, no real device token.
+// --- A fake fetch for openApnsSession's `send` / `sendLiveActivityUpdate` ---
+// Captures every request as the old node:http2 shape (":method"/":path"
+// pseudo-headers plus the real ones) and answers with a scripted status.
 interface FakeRequest {
   headers: Record<string, string | number>;
   body: string;
@@ -14,41 +12,17 @@ interface FakeRequest {
 let capturedRequests: FakeRequest[] = [];
 let scriptedStatus = 200;
 let scriptedBody = "";
-
-function fakeClient() {
-  return {
-    on: () => {},
-    close: () => {},
-    request(headers: Record<string, string | number>) {
-      const listeners: Record<string, Array<(...args: unknown[]) => void>> = {};
-      const req = {
-        on(event: string, cb: (...args: unknown[]) => void) {
-          (listeners[event] ??= []).push(cb);
-          return req;
-        },
-        setEncoding() {
-          /* no-op */
-        },
-        end(body: string) {
-          capturedRequests.push({ headers, body });
-          for (const cb of listeners.response ?? []) cb({ ":status": scriptedStatus });
-          for (const cb of listeners.data ?? []) cb(scriptedBody);
-          for (const cb of listeners.end ?? []) cb();
-        },
-      };
-      return req;
-    },
-  };
-}
-
+/** Distinct APNs hosts fetched so far (the fetch transport has no connection). */
 let connectedHosts: string[] = [];
 
-vi.mock("node:http2", () => {
-  const connect = (host: string) => {
-    connectedHosts.push(host);
-    return fakeClient();
-  };
-  return { connect, default: { connect } };
+vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+  const u = new URL(url);
+  if (!connectedHosts.includes(u.origin)) connectedHosts.push(u.origin);
+  capturedRequests.push({
+    headers: { ":method": init.method ?? "GET", ":path": u.pathname, ...(init.headers as Record<string, string>) },
+    body: String(init.body),
+  });
+  return new Response(scriptedBody, { status: scriptedStatus });
 });
 
 function testCfg() {
