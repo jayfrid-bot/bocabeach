@@ -49,6 +49,14 @@ describe("POST /api/push/test", () => {
     expect(pushable?.sent ?? {}).toEqual({});
   });
 
+  it("kind lightning sends the real lightning alert copy, under the test collapse tag", async () => {
+    const res = await post({ deviceId: DEV, kind: "lightning" });
+    expect(res.status).toBe(200);
+    expect(sent).toHaveLength(1);
+    expect(sent[0].title).not.toBe("Test alert");
+    expect(sent[0].title).toBe("⚠️ Boca Raton"); // the real at-beach alarm title
+  });
+
   it("404 for a device with no push token, 400 for a bad id", async () => {
     expect((await post({ deviceId: "99999999-2222-4333-8444-555555555555" })).status).toBe(404);
     expect((await post({ deviceId: "nope" })).status).toBe(400);

@@ -3,13 +3,17 @@
 // without waiting for weather. Owner tooling, not a user feature.
 //
 // Auth: `Authorization: Bearer <INGEST_TOKEN>` (same secret as
-// /api/sun-observations, compared in constant time). Body: { deviceId }.
+// /api/sun-observations, compared in constant time). Body: { deviceId, kind? }.
+// kind "lightning" sends the REAL lightning alert copy (lib/alerts/catalog.ts
+// buildAlert) for a 3 mi strike at Boca Raton, so the owner sees the exact
+// banner a storm would produce; anything else sends the plain test text.
 // iOS only (APNs). Writes nothing: no alert_log row, no dedupe state, so a
 // test can never suppress a real alert later.
 
 import { getApns, openApnsSession } from "@/lib/push/apns";
 import { getStore } from "@/lib/db/store";
 import { isDeviceId, readBody, secretEqual } from "@/lib/db/api";
+import { buildAlert } from "@/lib/alerts/catalog";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -42,11 +46,21 @@ export async function POST(req: Request): Promise<Response> {
   let session: ReturnType<typeof openApnsSession> | null = null;
   try {
     session = openApnsSession(apns, nowSec);
+    const msg =
+      body?.kind === "lightning"
+        ? buildAlert(
+            { key: "lightning", nearestMi: 3, escalated: false },
+            { beach: "Boca Raton", slug: "boca-raton" },
+          )
+        : {
+            title: "Test alert",
+            body: "If you can read this with the app open, alerts now show in the foreground.",
+          };
     const r = await session.send(target.token, {
-      title: "Test alert",
-      body: "If you can read this with the app open, alerts now show in the foreground.",
+      title: msg.title,
+      body: msg.body,
       url: "https://app.isitbeachday.com/",
-      tag: "test",
+      tag: "test", // never the real collapse id, so a test can't replace a live alert
       expiration: nowSec + 10 * 60,
     });
     return json({ ok: r.ok, status: r.status ?? null, reason: (r as { reason?: string }).reason ?? null });
