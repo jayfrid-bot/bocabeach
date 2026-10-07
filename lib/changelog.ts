@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-07",
+    title: "Alerts now show while the app is open",
+    details:
+      "A safety alert that arrived while you had the app open used to be swallowed by iPhone. It now shows as a banner with sound, same as when the app is closed. Needs the app update.",
+    tag: "fixed",
+  },
+  {
     date: "2026-10-06",
     title: "The Plus screen now shows everything Plus does",
     details:

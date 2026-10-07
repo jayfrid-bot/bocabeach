@@ -5,6 +5,15 @@ import type { CapacitorConfig } from "@capacitor/cli";
 // tiny offline fallback page (mobile/www) shown if the remote can't load.
 const config: CapacitorConfig = {
   appId: "com.isitbeachday.app",
+  plugins: {
+    PushNotifications: {
+      // Without this, iOS drops a push that arrives while the app is OPEN —
+      // the exact moment a beachgoer has it open on the sand. Owner lost the
+      // 2026-10-07 "rain starting soon" alert this way (APNs accepted it,
+      // nothing showed). Show the banner, badge and sound in the foreground too.
+      presentationOptions: ["badge", "sound", "alert"],
+    },
+  },
   appName: "Is It Beach Day",
   webDir: "mobile/www",
   server: {
