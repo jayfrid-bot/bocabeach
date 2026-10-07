@@ -12,7 +12,7 @@
 // real device token, so it's exercised only against the live service.
 
 import http2 from "node:http2";
-import { createPrivateKey, createSign } from "node:crypto";
+import { createSign } from "node:crypto";
 import { readPemEnv } from "@/lib/push/pemEnv";
 
 export interface ApnsConfig {
@@ -54,7 +54,11 @@ export function buildApnsJwt(
   const signature = createSign("SHA256")
     .update(signingInput)
     // JOSE wants the raw r||s pair, not DER — `ieee-p1363` gives that.
-    .sign({ key: createPrivateKey(cfg.privateKey), dsaEncoding: "ieee-p1363" });
+    // The PEM string goes straight to sign(): on Cloudflare's Node runtime,
+    // sign() rejected a KeyObject here ("options.key must be of type string
+    // … Received an instance of PrivateKeyObject", 2026-10-07) — which the
+    // push run swallowed as "bad .p8, skip iOS this run".
+    .sign({ key: cfg.privateKey, dsaEncoding: "ieee-p1363" });
   return `${signingInput}.${b64url(signature)}`;
 }
 

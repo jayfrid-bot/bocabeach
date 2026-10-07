@@ -309,8 +309,11 @@ export async function POST(req: Request): Promise<Response> {
   if (apns && hasIos) {
     try {
       apnsSession = openApnsSession(apns, nowSec);
-    } catch {
-      apnsSession = null; // bad .p8 → skip iOS this run
+    } catch (e) {
+      // A JWT/.p8 failure here used to be silent — every iOS alert skipped
+      // with nothing in the logs (2026-10-07). Say so loudly.
+      console.error("push: APNs session failed, skipping every iOS device this run", e);
+      apnsSession = null;
     }
   }
   let fcmAccessToken: string | null = null;
