@@ -37,8 +37,11 @@ export async function POST(req: Request): Promise<Response> {
   if (!apns) return json({ ok: false, error: "apns-not-configured" }, 503);
 
   const nowSec = Math.floor(Date.now() / 1000);
-  const session = openApnsSession(apns, nowSec);
+  // Owner-only route: the failure text comes back in the response so a
+  // broken APNs setup is diagnosable without a log tail.
+  let session: ReturnType<typeof openApnsSession> | null = null;
   try {
+    session = openApnsSession(apns, nowSec);
     const r = await session.send(target.token, {
       title: "Test alert",
       body: "If you can read this with the app open, alerts now show in the foreground.",
@@ -46,8 +49,10 @@ export async function POST(req: Request): Promise<Response> {
       tag: "test",
       expiration: nowSec + 10 * 60,
     });
-    return json({ ok: r.ok, status: r.status ?? null });
+    return json({ ok: r.ok, status: r.status ?? null, reason: (r as { reason?: string }).reason ?? null });
+  } catch (e) {
+    return json({ ok: false, error: "send-failed", detail: e instanceof Error ? `${e.name}: ${e.message}` : String(e) }, 500);
   } finally {
-    session.close();
+    session?.close();
   }
 }
