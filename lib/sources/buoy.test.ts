@@ -33,6 +33,44 @@ describe("parseNdbcRealtime", () => {
   it("returns null when there are no data rows", () => {
     expect(parseNdbcRealtime("#header only\n#units")).toBeNull();
   });
+
+  // NDBC 41122 reports WVHT/DPD only on the hour and prints "MM" on the
+  // half-hour rows (2026-10-08): the top row alone made the buoy's waves
+  // vanish every other tick, and the app fell back to an offshore model.
+  const HALF_HOUR_MM = `#YY  MM DD hh mm WDIR WSPD GST  WVHT   DPD   APD MWD   PRES  ATMP  WTMP  DEWP  VIS PTDY  TIDE
+#yr  mo dy hr mn degT m/s  m/s     m   sec   sec degT   hPa  degC  degC  degC  nmi  hPa   ft
+2026 10 08 12 30  MM   MM   MM    MM    MM    MM  MM     MM  29.2  29.7    MM   MM   MM    MM
+2026 10 08 12 00  MM   MM   MM   0.3     2   2.1 140     MM  28.9  29.6    MM   MM   MM    MM
+2026 10 08 11 30  MM   MM   MM   0.9     7   2.1 140     MM  28.9  29.6    MM   MM   MM    MM`;
+
+  it("takes the waves (and THEIR period) from the newest older row within 90 min when the top row has none", () => {
+    const d = parseNdbcRealtime(HALF_HOUR_MM)!;
+    expect(d.observedAt).toBe("2026-10-08T12:30:00.000Z"); // the row everything else came from
+    expect(d.waveHeightFt).toBe(1); // 0.3 m from the 12:00 row, not 0.9 m from 11:30
+    expect(d.dominantPeriodS).toBe(2); // the 12:00 row's own period
+    expect(d.wavesObservedAt).toBe("2026-10-08T12:00:00.000Z");
+    expect(d.airTempF).toBe(85); // 29.2 C — still the top row
+  });
+
+  it("leaves the period undefined when the older wave row has no DPD", () => {
+    const d = parseNdbcRealtime(HALF_HOUR_MM.replace("0.3     2   2.1", "0.3    MM   2.1"))!;
+    expect(d.waveHeightFt).toBe(1);
+    expect(d.dominantPeriodS).toBeUndefined();
+  });
+
+  it("does not reach past 90 minutes for a wave reading", () => {
+    const old = HALF_HOUR_MM.replace("2026 10 08 12 00", "2026 10 08 10 55").replace("2026 10 08 11 30", "2026 10 08 10 30");
+    const d = parseNdbcRealtime(old)!;
+    expect(d.waveHeightFt).toBeUndefined();
+    expect(d.wavesObservedAt).toBeUndefined();
+  });
+
+  it("keeps the top row's waves when it has them (no wavesObservedAt)", () => {
+    const d = parseNdbcRealtime(HALF_HOUR_MM.replace("2026 10 08 12 30  MM   MM   MM    MM    MM", "2026 10 08 12 30  MM   MM   MM   0.6     5"))!;
+    expect(d.waveHeightFt).toBe(2);
+    expect(d.dominantPeriodS).toBe(5);
+    expect(d.wavesObservedAt).toBeUndefined();
+  });
 });
 
 describe("parseNdbcWaterHistory — timestamp validation", () => {

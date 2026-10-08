@@ -1,3 +1,4 @@
+
 # Backend architecture — Is It Beach Day
 
 This map shows every backend part and how it connects: the request path a
@@ -820,3 +821,13 @@ self-heals entitlement: `refresh()` re-asks RevenueCat (`syncPurchase`, at
 most every 6 h) when a store grant is within 48 h of expiry or lapsed within
 7 days, and a purchase whose sync failed is queued as a `purchaseSync` pending
 write retried on foreground.
+
+### Wave height source order (2026-10-08)
+
+`lib/score.ts` `deriveMetrics` picks the wave reading in this order, for every beach:
+
+1. NDBC buoy `WVHT` (`lib/sources/buoy.ts`; the newest row that HAS a wave reading, up to 90 min back — 41122 prints "MM" on its half-hour rows).
+2. The NWPS nearshore series for that beach (`rip_nwps.json`, point ≤ 3 km from the shore; used as surf height without breaker amplification).
+3. Open-Meteo marine (`lib/sources/marine.ts`; its grid cell for a coastal beach is often well offshore — Boca's is ~12 mi out — so it reads high and is last).
+
+The NWPS coverage map (`config/nwpsRip.ts`) is regenerated from the current beach list on every `rip-nwps.yml` run, so new beaches join the feed automatically when an NWS rip grid covers them.

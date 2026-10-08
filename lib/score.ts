@@ -17,12 +17,12 @@ import type {
   WaveMode,
 } from "@/lib/types";
 import { clamp, degToCardinal, dewPointFromTempRH, plateau, round } from "@/lib/util";
-import { estimateSurfFromSources } from "@/lib/surfHeight";
+import { estimateSurfFromSources, type SurfSourceResult } from "@/lib/surfHeight";
 import { assessLightning, assessRain, type HazardAssessment } from "@/lib/hazards/assess";
 import { resolveRipNow, ripCapFor, type RipNow } from "@/lib/ripRisk";
 import { isAlertInEffectAt } from "@/lib/ripRisk/resolve";
 import { isRipAlertEvent } from "@/lib/ripRisk/types";
-import { modelNowFromSeries } from "@/lib/sources/ripNwps";
+import { modelNowFromSeries, type RipNwpsBeachSeries } from "@/lib/sources/ripNwps";
 import { currentSandTempF, estimateSandTempF, hoursFromSolarNoon } from "@/lib/sandTemp";
 import { seaState } from "@/lib/format";
 import { scoreBand, SCORE_BANDS } from "@/lib/scoreBands";
@@ -37,7 +37,11 @@ import { scoreBand, SCORE_BANDS } from "@/lib/scoreBands";
  */
 export type MetricSource =
   | { kind: "buoy"; stationId?: string }
-  | { kind: "model" };
+  /** `model` names WHICH model: "nwps" is the NWS nearshore wave model whose
+   *  point sits at the beach; "open-meteo" is the marine model, whose grid
+   *  cell for a coastal beach is routinely well offshore (Boca's is ~12 mi
+   *  out in the Gulf Stream, 2026-10-08). Absent = unknown model. */
+  | { kind: "model"; model?: "nwps" | "open-meteo" };
 
 export interface Derived {
   airTempF?: number;
@@ -376,6 +380,42 @@ export function satelliteBeamCloudPct(s: ConditionsSnapshot): number | undefined
   return g.data.beamCloudPct;
 }
 
+/** The NWPS nearshore model's wave reading for the hour containing `tMs`,
+ *  or null when the series has no finite height for that hour. */
+function nwpsWaveAt(
+  series: RipNwpsBeachSeries | null,
+  tMs: number,
+): { hsFt: number; periodS?: number } | null {
+  if (!series) return null;
+  const hourMs = Math.floor(tMs / 3_600_000) * 3_600_000;
+  const row = series.hours.find((h) => Date.parse(h.t) === hourMs);
+  if (!row || row.hsFt == null || !Number.isFinite(row.hsFt) || row.hsFt < 0) return null;
+  const periodS = row.periodS != null && Number.isFinite(row.periodS) ? row.periodS : undefined;
+  return { hsFt: row.hsFt, periodS };
+}
+
+/** NWPS is a NEARSHORE point, so its Hs is already shoaled toward the beach —
+ *  the Komar-Gaughan deep-water breaker amplification (lib/surfHeight.ts) is
+ *  not applied on top of it. Surf = Hs, period kept for the reading line. */
+function nwpsSurf(w: { hsFt: number; periodS?: number }): SurfSourceResult {
+  const hsFt = round(w.hsFt, 1);
+  return { surfFt: hsFt, rawHeightFt: hsFt, rawPeriodS: w.periodS };
+}
+
+/** `metricSource` for waves, which has TWO model rungs (see the preference
+ *  comment at the call site). */
+function waveSourceOf(
+  buoyValue: number | undefined,
+  buoyStationId: string | null | undefined,
+  nwps: boolean,
+  modelValue: number | undefined,
+): MetricSource | undefined {
+  if (buoyValue != null) return { kind: "buoy", stationId: buoyStationId ?? undefined };
+  if (nwps) return { kind: "model", model: "nwps" };
+  if (modelValue != null) return { kind: "model", model: "open-meteo" };
+  return undefined;
+}
+
 /** Mirror of a `buoyValue ?? modelValue` preference as a {@link MetricSource}. */
 function metricSource(
   buoyValue: number | undefined,
@@ -521,15 +561,23 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
   // total reading (buoy WVHT or the model's `wave_height`), never the swell
   // component the estimate may have fallen back to. `undefined` when neither
   // source reported a total height at all.
-  const waveTotalHsFt = b?.waveHeightFt ?? m?.waveHeightFt;
+  // Preference: buoy observation → NWPS nearshore model → Open-Meteo marine
+  // model. NWPS sits between the two (2026-10-08) because its point is AT the
+  // beach (Boca: 26.36, -80.07) while Open-Meteo's marine cell for a coastal
+  // beach is well offshore (Boca: ~12 mi out in the Gulf Stream), where an
+  // 8 s, 3.3 ft swell exists that never reaches a flat, green-flag shore.
+  const nwpsNow = nwpsWaveAt(rn, nowMs);
+  const waveTotalHsFt = b?.waveHeightFt ?? nwpsNow?.hsFt ?? m?.waveHeightFt;
   const surfSource = b?.waveHeightFt != null
     ? estimateSurfFromSources({ totalHeightFt: b.waveHeightFt, totalPeriodS: b?.dominantPeriodS })
-    : estimateSurfFromSources({
-        totalHeightFt: m?.waveHeightFt,
-        totalPeriodS: m?.wavePeriodS,
-        swellHeightFt: m?.swellHeightFt,
-        swellPeriodS: m?.swellPeriodS,
-      });
+    : nwpsNow
+      ? nwpsSurf(nwpsNow)
+      : estimateSurfFromSources({
+          totalHeightFt: m?.waveHeightFt,
+          totalPeriodS: m?.wavePeriodS,
+          swellHeightFt: m?.swellHeightFt,
+          swellPeriodS: m?.swellPeriodS,
+        });
   return {
     // Shared metrics are the MEDIAN of NWS (real station obs), MET Norway, and
     // Open-Meteo, so no single provider or model can skew the dashboard.
@@ -547,9 +595,10 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
     // "waves" factor full (not 0.5 estimated) completeness credit, dropped
     // it from `estimatedFactors`, and archived `wave_source` as null instead
     // of "model" (lib/history/archive.ts).
-    waveHeightSource: metricSource(
+    waveHeightSource: waveSourceOf(
       b?.waveHeightFt,
       b?.sources?.waveHeightFt,
+      nwpsNow != null,
       b?.waveHeightFt != null ? undefined : surfSource.surfFt,
     ),
     windSpeedMph:
@@ -1579,7 +1628,15 @@ function scoreAllHoursFull(
   // reading — total with total, swell with swell, never cross-paired).
   const waveByTime = new Map<
     string,
-    { waveHeightFt?: number; wavePeriodS?: number; swellHeightFt?: number; swellPeriodS?: number }
+    {
+      waveHeightFt?: number;
+      wavePeriodS?: number;
+      swellHeightFt?: number;
+      swellPeriodS?: number;
+      /** Set when this hour came from the NWPS nearshore series (used as-is,
+       *  no breaker amplification — see `nwpsSurf`). */
+      nwps?: boolean;
+    }
   >();
   for (const w of s.marine.data?.hourlyWaves ?? []) {
     // A usable hour has a total height OR a complete swell height+period
@@ -1597,6 +1654,19 @@ function scoreAllHoursFull(
         swellPeriodS: w.swellPeriodS,
       });
     }
+  }
+  // The NWPS nearshore series wins every hour it covers — same preference as
+  // the current reading above (2026-10-08). Hours past its horizon keep the
+  // marine model's hour.
+  for (const h of s.ripNwps?.data?.hours ?? []) {
+    if (h.hsFt == null || !Number.isFinite(h.hsFt) || h.hsFt < 0) continue;
+    const t = Date.parse(h.t);
+    if (!Number.isFinite(t)) continue;
+    waveByTime.set(new Date(t).toISOString(), {
+      waveHeightFt: h.hsFt,
+      wavePeriodS: h.periodS != null && Number.isFinite(h.periodS) ? h.periodS : undefined,
+      nwps: true,
+    });
   }
 
   // Crowds vary through the day: map each LOCAL hour to its typical fullness.
@@ -1668,12 +1738,14 @@ function scoreAllHoursFull(
       const isCurrentHour = hStart <= nowMs && nowMs < hStart + HOUR_MS;
       const hourlyWave = waveByTime.get(h.time);
       const hourlySurf = hourlyWave
-        ? estimateSurfFromSources({
-            totalHeightFt: hourlyWave.waveHeightFt,
-            totalPeriodS: hourlyWave.wavePeriodS,
-            swellHeightFt: hourlyWave.swellHeightFt,
-            swellPeriodS: hourlyWave.swellPeriodS,
-          })
+        ? hourlyWave.nwps && hourlyWave.waveHeightFt != null
+          ? nwpsSurf({ hsFt: hourlyWave.waveHeightFt, periodS: hourlyWave.wavePeriodS })
+          : estimateSurfFromSources({
+              totalHeightFt: hourlyWave.waveHeightFt,
+              totalPeriodS: hourlyWave.wavePeriodS,
+              swellHeightFt: hourlyWave.swellHeightFt,
+              swellPeriodS: hourlyWave.swellPeriodS,
+            })
         : undefined;
       const d: Derived = {
         airTempF: h.airTempF,
@@ -1692,7 +1764,9 @@ function scoreAllHoursFull(
         // `base.waveHeightSource` may say "buoy" for today's current reading
         // — otherwise every future hour would misreport itself as observed.
         waterTempSource: base.waterTempSource,
-        waveHeightSource: hourlyWave ? { kind: "model" } : base.waveHeightSource,
+        waveHeightSource: hourlyWave
+          ? { kind: "model", model: hourlyWave.nwps ? "nwps" : "open-meteo" }
+          : base.waveHeightSource,
         precipProbability: h.precipProbability,
         shortForecast: h.shortForecast,
         uvIndex: h.uvIndex,

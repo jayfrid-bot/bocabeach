@@ -99,6 +99,9 @@ export interface BuoyData {
   waveHeightFt?: number;
   dominantPeriodS?: number;
   observedAt?: string; // ISO
+  /** Set only when the wave fields came from an OLDER row than `observedAt`
+   *  (lib/sources/buoy.ts WAVE_LOOKBACK_MS). */
+  wavesObservedAt?: string; // ISO
   /**
    * Trailing water-temperature observations (newest first, ≤1/hour, ≤7.5 days),
    * feeding the water-"feel"-trend read (lib/waterTrend.ts). Absent when the

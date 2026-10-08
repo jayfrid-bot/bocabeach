@@ -63,6 +63,17 @@ jobs:
             "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/rip-data/rip_nwps.json" \
             || echo "no previous published feed yet — continuing without --prev"
 
+      # Re-map coverage from the CURRENT beach list every run (~35 s, read-only
+      # upstream), so a beach added later — by hand or through the resolve/admin
+      # flow into config/locations.generated.json — is in the feed at the next
+      # tick without anyone remembering to regenerate config/nwpsRip.ts. The
+      # fresh map overwrites the checkout's copy only; nothing is committed. If
+      # the mapping fails (NOMADS/api.weather.gov hiccup) the committed map stands.
+      - name: Refresh the coverage map from the current beach list
+        run: |
+          node scripts/nwps_rip_map.mjs --out config/nwpsRip.ts \
+            || { echo "coverage map refresh failed — using the committed config/nwpsRip.ts"; git checkout -- config/nwpsRip.ts; }
+
       - name: Build rip_nwps.json
         run: |
           node scripts/rip_nwps.mjs \

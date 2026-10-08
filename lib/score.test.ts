@@ -150,6 +150,48 @@ describe("deriveMetrics", () => {
     expect(d.waveHeightFt).toBe(2);
   });
 
+  // 2026-10-08: the NWPS nearshore model (point at the beach) outranks the
+  // Open-Meteo marine model (grid cell ~12 mi offshore at Boca) whenever the
+  // buoy has no wave reading — and is used as surf height WITHOUT breaker
+  // amplification, since a nearshore Hs is already shoaled.
+  describe("wave source order: buoy → NWPS nearshore → Open-Meteo", () => {
+    const NOW = Date.parse("2026-10-08T13:20:00.000Z");
+    const nwps: RipNwpsBeachSeries = {
+      office: "mfl",
+      run: "2026-10-08T00:00:00.000Z",
+      point: { lon: -80.066, lat: 26.3616 },
+      hours: [
+        { t: "2026-10-08T13:00:00.000Z", prob: 3, hsFt: 1.94, periodS: 8.1, dirDeg: -61 },
+        { t: "2026-10-08T14:00:00.000Z", prob: 3, hsFt: 2.1, periodS: 8.1, dirDeg: -61 },
+      ],
+    };
+    const offshore = { waveHeightFt: 3.3, wavePeriodS: 8.2, swellHeightFt: 3.3, swellPeriodS: 6.9, uvIndex: 7 };
+    const withNwps = (over: Parameters<typeof snapshot>[0]) => ({
+      ...snapshot(over),
+      ripNwps: wrap<RipNwpsBeachSeries>(nwps),
+    });
+
+    it("uses NWPS, unamplified, ahead of the offshore model when the buoy has no waves", () => {
+      const d = deriveMetrics(withNwps({ buoy: { waterTempF: 85 }, marine: offshore }), NOW);
+      expect(d.waveHeightFt).toBe(1.9);
+      expect(d.waveTotalHsFt).toBe(1.94);
+      expect(d.wavePeriodS).toBe(8.1);
+      expect(d.waveHeightSource).toEqual({ kind: "model", model: "nwps" });
+    });
+
+    it("a buoy wave reading still wins over NWPS", () => {
+      const d = deriveMetrics(withNwps({ buoy: { waveHeightFt: 1, dominantPeriodS: 2 }, marine: offshore }), NOW);
+      expect(d.waveHeightFt).toBe(1);
+      expect(d.waveHeightSource?.kind).toBe("buoy");
+    });
+
+    it("falls through to the offshore model (amplified) when NWPS has no row for this hour", () => {
+      const d = deriveMetrics(withNwps({ buoy: { waterTempF: 85 }, marine: offshore }), Date.parse("2026-10-08T16:20:00.000Z"));
+      expect(d.waveHeightFt).toBeCloseTo(4.7, 1);
+      expect(d.waveHeightSource).toEqual({ kind: "model", model: "open-meteo" });
+    });
+  });
+
   // Codex review round-2 #1: waveTotalHsFt must always be the TRUE raw total
   // Hs, even in the one case where waveSwellHeightFt legitimately becomes the
   // SWELL component instead (total period missing, swell surf estimate beats
@@ -168,7 +210,7 @@ describe("deriveMetrics", () => {
     expect(d.waveHeightFt).toBeCloseTo(2.7, 1);
     // ...but the TRUE total Hs must still read 1.5, untouched.
     expect(d.waveTotalHsFt).toBe(1.5);
-    expect(d.waveHeightSource).toEqual({ kind: "model" });
+    expect(d.waveHeightSource).toEqual({ kind: "model", model: "open-meteo" });
   });
 
   // Codex review round-2 #2: a source with a swell reading but no total
@@ -190,7 +232,7 @@ describe("deriveMetrics", () => {
     // wrongly gave "waves" full completeness credit instead of the correct
     // 0.5 model credit, dropped it from `estimatedFactors`, and archived
     // `wave_source` as null instead of "model".
-    expect(d.waveHeightSource).toEqual({ kind: "model" });
+    expect(d.waveHeightSource).toEqual({ kind: "model", model: "open-meteo" });
   });
 
   // End-to-end: the provenance fix above must actually change what

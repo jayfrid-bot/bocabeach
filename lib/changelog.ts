@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-08",
+    title: "Surf height no longer jumps to an offshore number",
+    details:
+      "On a flat, green-flag morning Boca Raton could show 4–5 ft surf. The buoy only reports waves on the hour, and in between the app fell back to a wave model whose point sits 12 miles out at sea. The buoy's last wave reading now holds for up to 90 minutes, and when a buoy has no waves at all the app uses the NWS nearshore model at the beach before any offshore model. Applies to every beach.",
+    tag: "fixed",
+  },
+  {
     date: "2026-10-07",
     title: "iPhone alerts are flowing again",
     details:

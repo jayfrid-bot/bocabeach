@@ -180,7 +180,8 @@ export interface BeachHourlyExtra {
     periodS: number | null;
     /** Estimated breaking surf, ft. */
     surfFt: number | null;
-    src: "buoy" | "model" | null;
+    /** "buoy", "nwps" (nearshore model), "open-meteo" (offshore marine model), or "model" for rows archived before 2026-10-08. */
+    src: "buoy" | "nwps" | "open-meteo" | "model" | null;
   };
   /** Sand temperature model (lib/sandTemp.ts) and the inputs it ran on. */
   sand?: {

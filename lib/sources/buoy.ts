@@ -14,6 +14,12 @@ const ATTRIBUTION = "NOAA National Data Buoy Center (ndbc.noaa.gov)";
 const MISSING = "MM";
 // Beyond this, the latest buoy row is too old to call a live "ok" reading.
 const STALE_AFTER_MS = 120 * 60_000;
+/** Wave fields may come from an older row than the newest one, up to this far
+ *  back. NDBC 41122 reports WVHT/DPD only on the hour and prints "MM" on its
+ *  half-hour rows, so reading the top row alone made the buoy's waves vanish
+ *  every other tick — and the app fell back to an offshore model's 4-5 ft on a
+ *  flat, green-flag morning (2026-10-08). */
+export const WAVE_LOOKBACK_MS = 90 * 60_000;
 
 /**
  * Build a UTC ISO timestamp from NDBC integer date components, or `undefined`
@@ -58,6 +64,12 @@ export function utcIsoFromNdbc(
  * #YY MM DD hh mm WDIR WSPD GST WVHT DPD APD MWD PRES ATMP WTMP DEWP VIS PTDY TIDE
  *  0  1  2  3  4   5    6    7    8   9  10  11  12   13   14   15  16   17   18
  */
+/** Epoch ms of one split NDBC row, or undefined when its date is garbled. */
+function rowMs(c: string[]): number | undefined {
+  const iso = utcIsoFromNdbc(Number(c[0]), Number(c[1]), Number(c[2]), Number(c[3]), Number(c[4]));
+  return iso ? Date.parse(iso) : undefined;
+}
+
 export function parseNdbcRealtime(text: string): BuoyData | null {
   const rows = text
     .split("\n")
@@ -79,10 +91,30 @@ export function parseNdbcRealtime(text: string): BuoyData | null {
   const windDir = num(5);
   const windMs = num(6);
   const gustMs = num(7);
-  const waveM = num(8);
-  const dpd = num(9);
+  let waveM = num(8);
+  let dpd = num(9);
   const atmpC = num(13);
   const wtmpC = num(14);
+
+  // Waves: when the newest row has no WVHT, take the newest OLDER row that
+  // does (with ITS period — never a period from a different row), as long as
+  // it is within WAVE_LOOKBACK_MS of the newest row's own timestamp.
+  if (waveM === undefined) {
+    const topMs = rowMs(c);
+    for (const row of rows.slice(1)) {
+      const rc = row.split(/\s+/);
+      if (rc.length < 15) continue;
+      const ms = rowMs(rc);
+      if (topMs === undefined || ms === undefined || topMs - ms > WAVE_LOOKBACK_MS) break;
+      const wv = rc[8] === MISSING ? NaN : Number(rc[8]);
+      if (!Number.isFinite(wv)) continue;
+      waveM = wv;
+      const p = rc[9] === MISSING ? NaN : Number(rc[9]);
+      dpd = Number.isFinite(p) ? p : undefined;
+      out.wavesObservedAt = utcIsoFromNdbc(...([0, 1, 2, 3, 4].map((i) => Number(rc[i])) as [number, number, number, number, number]));
+      break;
+    }
+  }
 
   if (windDir !== undefined) out.windDirDeg = windDir;
   if (windMs !== undefined) out.windSpeedMph = round(msToMph(windMs));

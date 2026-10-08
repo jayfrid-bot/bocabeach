@@ -214,10 +214,15 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
     const ft = d.waveHeightFt; // the ESTIMATED SURF height — what's scored
     const hsFt = d.waveSwellHeightFt; // the raw buoy/model Hs it was estimated from
     const periodS = d.wavePeriodS;
+    const nwps = d.waveHeightSource?.kind === "model" && d.waveHeightSource.model === "nwps";
     const feed = feedLabel(
       d.waveHeightSource,
-      "the Open-Meteo marine model at this beach's coordinates",
-      `the nearest wave-reporting buoy is ~${NEAREST_WAVE_BUOY_MI} mi north`,
+      nwps
+        ? "the NWS nearshore wave model (NWPS) at this beach"
+        : "the Open-Meteo marine model (its grid cell sits offshore, so it can read high)",
+      nwps
+        ? `no buoy wave reading right now; this model's point is at the shore`
+        : `no buoy or nearshore-model wave reading right now`,
     );
     const swellLine =
       hsFt != null

@@ -35,7 +35,7 @@ export const EXTRA_SCHEMA_VERSION = 1 as const;
  * constants change, so archived rows stay attributable to the right version.
  */
 export const MODEL_VERSIONS = {
-  surf: "2026-09-28.1", // lib/surfHeight.ts (Komar-Gaughan, MAX_AMPLIFICATION 2.5)
+  surf: "2026-10-08.1", // buoy → NWPS nearshore (no amplification) → Open-Meteo (Komar-Gaughan, MAX_AMPLIFICATION 2.5)
   sand: "2026-09-08.1", // lib/sandTemp.ts (carry-forward darkening calibration)
   rip: "2026-09-24.1", // lib/ripRisk/resolve.ts (temporal resolve)
   storm: "2026-09-04.1", // lib/stormActivity.ts (radar-preferred rain term)
@@ -74,6 +74,9 @@ export function buildExtra(res: ConditionsResponse, d: Derived, anchorMs: number
   const hours = snap.hourly?.data ?? [];
   const out: BeachHourlyExtra = { v: EXTRA_SCHEMA_VERSION };
 
+  // "buoy" | "nwps" | "open-meteo" | "model" (a model we can't name) | null
+  const surfSrc = (ws: Derived["waveHeightSource"]): "buoy" | "nwps" | "open-meteo" | "model" | null =>
+    ws == null ? null : ws.kind === "buoy" ? "buoy" : (ws.model ?? "model");
   const surf = guard("surf", slug, () => {
     if (d.waveHeightFt == null && d.waveTotalHsFt == null) return undefined;
     return {
@@ -82,7 +85,7 @@ export function buildExtra(res: ConditionsResponse, d: Derived, anchorMs: number
       rawFt: round1(num(d.waveSwellHeightFt)),
       periodS: round1(num(d.wavePeriodS)),
       surfFt: round1(num(d.waveHeightFt)),
-      src: d.waveHeightSource?.kind ?? null,
+      src: surfSrc(d.waveHeightSource),
     };
   });
   if (surf) out.surf = surf;
