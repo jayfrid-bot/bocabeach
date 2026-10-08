@@ -5,7 +5,8 @@ import {
   parseNdbcRealtime,
   parseNdbcWaterHistory,
 } from "@/lib/sources/buoy";
-import type { Location } from "@/lib/types";
+import type { BuoyData, Location } from "@/lib/types";
+type StationRead = Parameters<typeof mergeBuoyStations>[0] & object;
 
 const SAMPLE = `#YY  MM DD hh mm WDIR WSPD GST  WVHT   DPD   APD MWD   PRES  ATMP  WTMP  DEWP  VIS PTDY  TIDE
 #yr  mo dy hr mn degT m/s  m/s     m   sec   sec degT   hPa  degC  degC  degC  nmi  hPa   ft
@@ -160,6 +161,69 @@ describe("fetchBuoy — station eligibility ignores water-temp history", () => {
 // LKWF1 row win the whole station and silently discarded FWYF1's water temp —
 // the value that feeds the 9%-weighted waterTemp sub-score.
 // ---------------------------------------------------------------------------
+describe("mergeBuoyStations — waves are one reading, never cross-paired across stations", () => {
+  const read = (id: string, data: BuoyData): StationRead => ({ id, data, at: "2026-10-08T12:00:00.000Z" });
+
+  it("a primary with a wave height but no period does NOT borrow the fallback's period", () => {
+    const m = mergeBuoyStations(
+      read("41122", { waveHeightFt: 1, observedAt: "2026-10-08T12:30:00.000Z" }),
+      read("41009", { waveHeightFt: 4, dominantPeriodS: 9, observedAt: "2026-10-08T12:00:00.000Z" }),
+    )!;
+    expect(m.data.waveHeightFt).toBe(1);
+    expect(m.data.dominantPeriodS).toBeUndefined();
+    expect(m.data.sources?.waveHeightFt).toBe("41122");
+    expect(m.data.sources?.dominantPeriodS).toBeNull();
+    expect(m.filledByFallback).toEqual([]);
+  });
+
+  it("when only the fallback has waves, height, period AND wavesObservedAt all come from it", () => {
+    const m = mergeBuoyStations(
+      read("LKWF1", { windSpeedMph: 5, observedAt: "2026-10-08T12:30:00.000Z" }),
+      read("41122", { waveHeightFt: 1, dominantPeriodS: 2, observedAt: "2026-10-08T12:30:00.000Z", wavesObservedAt: "2026-10-08T12:00:00.000Z" }),
+    )!;
+    expect(m.data.waveHeightFt).toBe(1);
+    expect(m.data.dominantPeriodS).toBe(2);
+    expect(m.data.wavesObservedAt).toBe("2026-10-08T12:00:00.000Z");
+    expect(m.data.sources?.dominantPeriodS).toBe("41122");
+    expect(m.filledByFallback).toEqual(["waveHeightFt", "dominantPeriodS"]);
+  });
+});
+
+describe("fetchBuoy — a scanned-back wave reading has its own freshness clock", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const loc = { ndbcBuoyId: "41122" } as unknown as Location;
+  const header = "#YY MM DD hh mm WDIR WSPD GST WVHT DPD APD MWD PRES ATMP WTMP\n";
+
+  it("drops waves older than 120 min even when the top row itself is fresh enough", async () => {
+    const top = new Date(Date.now() - 100 * 60_000); // row is "ok" (< 120 min)
+    const waveRow = new Date(Date.now() - 180 * 60_000); // 80 min further back: inside the 90-min scan, past 120 min overall
+    const text =
+      header +
+      `${ndbcStamp(top)} MM MM MM MM MM MM MM MM 29.0 29.5\n` +
+      `${ndbcStamp(waveRow)} MM MM MM 0.3 2 2.1 140 MM 28.9 29.6\n`;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(text, { status: 200, headers: { date: new Date().toUTCString() } })));
+    const res = await fetchBuoy(loc);
+    expect(res.status).toBe("ok");
+    expect(res.data?.waterTempF).toBe(85); // the top row still stands
+    expect(res.data?.waveHeightFt).toBeUndefined(); // the 3-hour-old wave is gone → NWPS takes over in score.ts
+    expect(res.data?.dominantPeriodS).toBeUndefined();
+    expect(res.data?.sources?.waveHeightFt).toBeNull();
+  });
+
+  it("keeps a scanned-back wave reading that is still inside 120 min", async () => {
+    const top = new Date(Date.now() - 20 * 60_000);
+    const waveRow = new Date(Date.now() - 50 * 60_000);
+    const text =
+      header +
+      `${ndbcStamp(top)} MM MM MM MM MM MM MM MM 29.0 29.5\n` +
+      `${ndbcStamp(waveRow)} MM MM MM 0.3 2 2.1 140 MM 28.9 29.6\n`;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(text, { status: 200, headers: { date: new Date().toUTCString() } })));
+    const res = await fetchBuoy(loc);
+    expect(res.data?.waveHeightFt).toBe(1);
+    expect(res.data?.wavesObservedAt).toBe(waveRow.toISOString().replace(/:\d\d\.\d{3}Z$/, ":00.000Z"));
+  });
+});
+
 describe("fetchBuoy — per-field merge across primary + fallback", () => {
   afterEach(() => vi.unstubAllGlobals());
 

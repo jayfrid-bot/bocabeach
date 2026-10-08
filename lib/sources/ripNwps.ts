@@ -15,7 +15,6 @@
  * even attempted — which every caller already treats as "model unavailable,
  * fall back to the SRF word" (see lib/ripRisk/resolve.ts's priority order).
  */
-import { NWPS_RIP_COVERAGE } from "@/config/nwpsRip";
 import { fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
 import { MODEL_STALE_MS, levelForModelProb } from "@/lib/ripRisk/resolve";
 import type { RipModelHourInput } from "@/lib/ripRisk/timeline";
@@ -144,16 +143,11 @@ async function loadFeed(): Promise<{ fetchedAt: string; feed: RipNwpsFeed } | nu
  */
 export async function fetchRipNwps(slug: string): Promise<RipNwpsResult> {
   const fetchedAt = nowIso();
-  if (!NWPS_RIP_COVERAGE[slug]) {
-    return {
-      source: ATTRIBUTION,
-      attribution: ATTRIBUTION,
-      fetchedAt,
-      status: "best-effort",
-      data: null,
-      note: "no NOAA rip model coverage for this beach",
-    };
-  }
+  // Coverage is whatever the published feed carries — NOT the committed
+  // config/nwpsRip.ts map. The rip-nwps workflow re-maps the CURRENT beach
+  // list every run (2026-10-08), so a beach added after the last commit of
+  // that map shows up in the feed first; gating on the committed map here
+  // would hide it (Codex 2026-10-08 #2).
   const loaded = await loadFeed();
   if (!loaded) {
     return {
@@ -173,7 +167,7 @@ export async function fetchRipNwps(slug: string): Promise<RipNwpsResult> {
       fetchedAt: loaded.fetchedAt,
       status: "best-effort",
       data: null,
-      note: "no rip model data published yet for this beach",
+      note: "no NOAA rip model point published for this beach",
     };
   }
   const entry = sanitizeBeachEntry(rawEntry);

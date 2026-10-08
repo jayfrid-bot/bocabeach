@@ -185,6 +185,25 @@ describe("deriveMetrics", () => {
       expect(d.waveHeightSource?.kind).toBe("buoy");
     });
 
+    // Codex 2026-10-08 #4: the headline (deriveMetrics, buoy) and the hour
+    // containing "now" (hourly scorer) must agree — NWPS hours begin with the
+    // NEXT hour. Checked behaviorally: with the buoy reporting waves, adding
+    // the NWPS series must not change the current hour's score but must
+    // change the next hour's (NWPS 2.1 ft vs the offshore model's 4.7 ft).
+    it("the hour containing now keeps the buoy reading; NWPS hours start with the next hour", () => {
+      const hourly: HourlyMetrics[] = [];
+      for (let t = Date.parse("2026-10-08T10:00:00.000Z"); t <= Date.parse("2026-10-08T20:00:00.000Z"); t += 3_600_000) {
+        hourly.push({ time: new Date(t).toISOString(), airTempF: 82, cloudCoverPct: 10, precipProbability: 0, windSpeedMph: 8, windDirDeg: 90, uvIndex: 5 });
+      }
+      const buoy = { waveHeightFt: 1, dominantPeriodS: 2, waterTempF: 85 };
+      const marine = { ...offshore, hourlyWaves: hourly.map((h) => ({ time: h.time, waveHeightFt: 3.3, wavePeriodS: 8.2, swellHeightFt: 3.3, swellPeriodS: 6.9, waveDirDeg: 20 })) };
+      const without = computeHourlyScores(snapshot({ buoy, marine, hourly, sun: null }), NOW);
+      const withNwpsHours = computeHourlyScores(withNwps({ buoy, marine, hourly, sun: null }), NOW);
+      const at = (hs: typeof without, iso: string) => hs.find((h) => h.time === iso)?.score;
+      expect(at(withNwpsHours, "2026-10-08T13:00:00.000Z")).toBe(at(without, "2026-10-08T13:00:00.000Z"));
+      expect(at(withNwpsHours, "2026-10-08T14:00:00.000Z")).toBeGreaterThan(at(without, "2026-10-08T14:00:00.000Z")!);
+    });
+
     it("falls through to the offshore model (amplified) when NWPS has no row for this hour", () => {
       const d = deriveMetrics(withNwps({ buoy: { waterTempF: 85 }, marine: offshore }), Date.parse("2026-10-08T16:20:00.000Z"));
       expect(d.waveHeightFt).toBeCloseTo(4.7, 1);

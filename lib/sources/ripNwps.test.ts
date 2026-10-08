@@ -65,14 +65,18 @@ describe("fetchRipNwps", () => {
     vi.unstubAllGlobals();
   });
 
-  it("no coverage for an unmapped beach — never fetches", async () => {
-    const fetchMock = vi.fn();
+  // Coverage is whatever the PUBLISHED feed carries (2026-10-08): the
+  // committed config/nwpsRip.ts is no longer a gate, so a beach the workflow
+  // mapped after that file was last committed is not hidden.
+  it("a beach absent from the published feed gets null — the committed map is not consulted", async () => {
+    const feed = { generatedAt: new Date().toISOString(), beaches: { "boca-raton": SERIES } };
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(feed));
     vi.stubGlobal("fetch", fetchMock);
     const { fetchRipNwps } = await import("@/lib/sources/ripNwps");
     const r = await fetchRipNwps("nowhere-beach");
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(r.data).toBeNull();
-    expect(r.note).toMatch(/no NOAA rip model coverage/i);
+    expect(r.note).toMatch(/no NOAA rip model point published/i);
   });
 
   it("returns the beach's series for a mapped, fresh beach", async () => {

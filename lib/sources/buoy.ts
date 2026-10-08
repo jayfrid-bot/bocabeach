@@ -99,19 +99,23 @@ export function parseNdbcRealtime(text: string): BuoyData | null {
   // Waves: when the newest row has no WVHT, take the newest OLDER row that
   // does (with ITS period — never a period from a different row), as long as
   // it is within WAVE_LOOKBACK_MS of the newest row's own timestamp.
-  if (waveM === undefined) {
-    const topMs = rowMs(c);
+  // Rows are newest-first, so a VALID timestamp past the lookback ends the
+  // scan; a garbled row (no timestamp, or one newer than the top row — impossible)
+  // carries no ordering evidence and is skipped, not treated as the end.
+  const topMs = rowMs(c);
+  if (waveM === undefined && topMs !== undefined) {
     for (const row of rows.slice(1)) {
       const rc = row.split(/\s+/);
       if (rc.length < 15) continue;
       const ms = rowMs(rc);
-      if (topMs === undefined || ms === undefined || topMs - ms > WAVE_LOOKBACK_MS) break;
+      if (ms === undefined || ms > topMs) continue;
+      if (topMs - ms > WAVE_LOOKBACK_MS) break;
       const wv = rc[8] === MISSING ? NaN : Number(rc[8]);
       if (!Number.isFinite(wv)) continue;
       waveM = wv;
       const p = rc[9] === MISSING ? NaN : Number(rc[9]);
       dpd = Number.isFinite(p) ? p : undefined;
-      out.wavesObservedAt = utcIsoFromNdbc(...([0, 1, 2, 3, 4].map((i) => Number(rc[i])) as [number, number, number, number, number]));
+      out.wavesObservedAt = new Date(ms).toISOString();
       break;
     }
   }
@@ -269,7 +273,29 @@ export function mergeBuoyStations(primary: StationRead | null, fallback: Station
   let primaryUsed = false;
   let fallbackUsed = false;
 
+  // Waves are ONE reading — height, period and the row they came from must
+  // stay together (a primary's height with a fallback's period would be the
+  // cross-pairing lib/surfHeight.ts forbids). The station that supplies
+  // `waveHeightFt` supplies `dominantPeriodS` and `wavesObservedAt` too.
+  const waveStation: StationRead | null =
+    primary?.data.waveHeightFt !== undefined ? primary : fallback?.data.waveHeightFt !== undefined ? fallback : null;
+
   for (const key of MERGED_FIELDS) {
+    if (key === "waveHeightFt" || key === "dominantPeriodS") {
+      const v = waveStation?.data[key];
+      if (v !== undefined) {
+        data[key] = v;
+        sources[key] = waveStation!.id;
+        if (waveStation === primary) primaryUsed = true;
+        else {
+          fallbackUsed = true;
+          filledByFallback.push(key);
+        }
+      } else {
+        sources[key] = null;
+      }
+      continue;
+    }
     const fromPrimary = primary?.data[key];
     const fromFallback = fallback?.data[key];
     if (fromPrimary !== undefined) {
@@ -295,6 +321,7 @@ export function mergeBuoyStations(primary: StationRead | null, fallback: Station
   // let the per-field `sources` map carry the nuance.
   const observedAt = (primaryUsed ? primary?.data.observedAt : undefined) ?? fallback?.data.observedAt;
   if (observedAt) data.observedAt = observedAt;
+  if (waveStation?.data.wavesObservedAt) data.wavesObservedAt = waveStation.data.wavesObservedAt;
 
   // Water-temp history: prefer the primary's when it has one (it's the nearer
   // water, and the trend read wants a single consistent series — splicing two
@@ -351,6 +378,21 @@ export async function fetchBuoy(loc: Location): Promise<Wrapped<BuoyData>> {
     // old: NDBC keeps serving the last row even when a buoy stops reporting.
     const obsMs = data.observedAt ? new Date(data.observedAt).getTime() : NaN;
     const aged = Number.isFinite(obsMs) && Date.now() - obsMs > STALE_AFTER_MS;
+    // The wave tuple has its OWN clock when it came from an older row
+    // (WAVE_LOOKBACK_MS): a top row just inside STALE_AFTER_MS could carry a
+    // wave reading up to 90 min older still. Past the same limit, drop the
+    // waves so the nearshore model takes over (lib/score.ts) instead of a
+    // 3-hour-old buoy number outranking it.
+    const waveMs = data.wavesObservedAt ? new Date(data.wavesObservedAt).getTime() : NaN;
+    if (Number.isFinite(waveMs) && Date.now() - waveMs > STALE_AFTER_MS) {
+      delete data.waveHeightFt;
+      delete data.dominantPeriodS;
+      delete data.wavesObservedAt;
+      if (data.sources) {
+        data.sources.waveHeightFt = null;
+        data.sources.dominantPeriodS = null;
+      }
+    }
     // "stale" is reserved for the cases it always meant: the primary is dead
     // (we're reading a substitute station) or the observation itself is old.
     // A live primary that merely lacks a sensor the fallback has is NOT stale —

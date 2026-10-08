@@ -1736,7 +1736,12 @@ function scoreAllHoursFull(
       // hour and bestBeachWindow could pick an uncapped future hour today) — but
       // NOT to future days; see the isToday gates below.
       const isCurrentHour = hStart <= nowMs && nowMs < hStart + HOUR_MS;
-      const hourlyWave = waveByTime.get(h.time);
+      // The hour containing "now" keeps the dashboard's own reading when that
+      // reading is a buoy observation — otherwise the headline could say 1 ft
+      // (buoy) while this same hour scores 1.9 ft (model) (Codex 2026-10-08
+      // #4). Model hours start with the next hour.
+      const hourlyWave =
+        isCurrentHour && base.waveHeightSource?.kind === "buoy" ? undefined : waveByTime.get(h.time);
       const hourlySurf = hourlyWave
         ? hourlyWave.nwps && hourlyWave.waveHeightFt != null
           ? nwpsSurf({ hsFt: hourlyWave.waveHeightFt, periodS: hourlyWave.wavePeriodS })
