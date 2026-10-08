@@ -99,8 +99,11 @@ export interface BuoyData {
   waveHeightFt?: number;
   dominantPeriodS?: number;
   observedAt?: string; // ISO
-  /** Set only when the wave fields came from an OLDER row than `observedAt`
-   *  (lib/sources/buoy.ts WAVE_LOOKBACK_MS). */
+  /** The wave reading's own clock. From the parser: set only when the waves
+   *  came from an OLDER row than `observedAt` (WAVE_LOOKBACK_MS). After the
+   *  station merge: always set when waves are present — the supplying
+   *  station's wave row, or its top row — so wave freshness is judged on the
+   *  wave reading, never on another station's timestamp. */
   wavesObservedAt?: string; // ISO
   /**
    * Trailing water-temperature observations (newest first, ≤1/hour, ≤7.5 days),

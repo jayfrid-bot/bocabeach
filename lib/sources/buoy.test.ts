@@ -210,6 +210,22 @@ describe("fetchBuoy — a scanned-back wave reading has its own freshness clock"
     expect(res.data?.sources?.waveHeightFt).toBeNull();
   });
 
+  it("a fresh wind-only primary does not lend its clock to a fallback's 3-hour-old wave row", async () => {
+    const fresh = new Date(Date.now() - 10 * 60_000);
+    const stalled = new Date(Date.now() - 180 * 60_000);
+    const primaryText = header + `${ndbcStamp(fresh)} 120 5.0 7.0 MM MM MM MM 1015.0 27.0 MM\n`;
+    const fallbackText = header + `${ndbcStamp(stalled)} MM MM MM 0.3 2 2.1 140 MM 28.9 29.6\n`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => new Response(url.includes("LKWF1") ? primaryText : fallbackText, { status: 200, headers: { date: new Date().toUTCString() } })),
+    );
+    const res = await fetchBuoy({ ndbcBuoyId: "LKWF1", ndbcBuoyFallbackId: "41122" } as unknown as Location);
+    expect(res.status).toBe("ok");
+    expect(res.data?.windSpeedMph).toBe(11); // the live primary's wind stands
+    expect(res.data?.waveHeightFt).toBeUndefined(); // the fallback's stalled wave is dropped
+    expect(res.data?.sources?.waveHeightFt).toBeNull();
+  });
+
   it("keeps a scanned-back wave reading that is still inside 120 min", async () => {
     const top = new Date(Date.now() - 20 * 60_000);
     const waveRow = new Date(Date.now() - 50 * 60_000);

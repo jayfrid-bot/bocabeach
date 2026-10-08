@@ -321,7 +321,12 @@ export function mergeBuoyStations(primary: StationRead | null, fallback: Station
   // let the per-field `sources` map carry the nuance.
   const observedAt = (primaryUsed ? primary?.data.observedAt : undefined) ?? fallback?.data.observedAt;
   if (observedAt) data.observedAt = observedAt;
-  if (waveStation?.data.wavesObservedAt) data.wavesObservedAt = waveStation.data.wavesObservedAt;
+  // The wave tuple ALWAYS carries its own clock through the merge: the row it
+  // came from (scan-back) or that station's top row. Without this, a fresh
+  // wind-only primary would lend its timestamp to a fallback's stalled wave
+  // reading and the 120-min wave check below would never fire (Codex #1, r2).
+  const waveAt = waveStation?.data.wavesObservedAt ?? waveStation?.data.observedAt;
+  if (waveStation && waveAt) data.wavesObservedAt = waveAt;
 
   // Water-temp history: prefer the primary's when it has one (it's the nearer
   // water, and the trend read wants a single consistent series — splicing two
