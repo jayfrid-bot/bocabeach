@@ -50,6 +50,12 @@ function blendIdeals(presets: ProfilePreset[]): ScoringIdeals {
     airPlateau: avg((i) => i.airPlateau),
     waterPlateau: avg((i) => i.waterPlateau),
     windPlateau: avg((i) => i.windPlateau),
+    // The most wind-tolerant profile sets the high-side slide: someone who
+    // picked surfing alongside a beach walk still wants surf's long slide.
+    ...(() => {
+      const slides = presets.map((p) => p.ideals.windFalloffHigh).filter((n): n is number => n != null);
+      return slides.length ? { windFalloffHigh: Math.max(...slides) } : {};
+    })(),
     // Waves can't be averaged. Someone who picked surfing wants waves even if
     // their other profile is a beach walk, so the stronger appetite wins:
     // surf beats some beats calm.

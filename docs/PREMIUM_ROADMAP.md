@@ -43,7 +43,7 @@ Persistence: profile and flags live on the phone (localStorage, proven by the pu
 
 ### Today's engine, in one paragraph
 
-Ten factors, fixed weights summing to 100: air temp 16, sky 16, sea state 14, wind 13, water temp 9, comfort 8, sand temp 8, seaweed 7, crowds 5, UV 4. Each factor has an "ideal" curve (air 78–88 °F, water 77–90 °F, wind 5–13 mph, calmer waves = better). Safety caps clamp the result. Pure functions, already run in the browser; best-time windows and the 7-day outlook flow from the same function; the score wheel redraws from whatever weights it is given. Personalization is a *parameter*, not a rewrite.
+Ten factors, fixed weights summing to 100: air temp 16, sky 16, sea state 14, wind 13, water temp 9, comfort 8, sand temp 8, seaweed 7, crowds 5, UV 4. Each factor has an "ideal" curve (air 78–88 °F, water 77–90 °F, wind 5–12 mph, calmer waves = better). Safety caps clamp the result. Pure functions, already run in the browser; best-time windows and the 7-day outlook flow from the same function; the score wheel redraws from whatever weights it is given. Personalization is a *parameter*, not a rewrite.
 
 ### Two dials
 

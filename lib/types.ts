@@ -1054,6 +1054,10 @@ export interface ScoringIdeals {
   waterPlateau: [number, number];
   /** [low, high] mph wind that scores 100. */
   windPlateau: [number, number];
+  /** How many mph ABOVE the band it takes to reach 0 (lib/score.ts
+   *  WIND_HIGH_FALLOFF_MPH when omitted). Surf keeps a long slide — wind
+   *  that pins a towel can still hold a wave face up. */
+  windFalloffHigh?: number;
   waveMode: WaveMode;
 }
 

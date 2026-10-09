@@ -50,7 +50,10 @@ const IDEALS: Record<PresetId, ScoringIdeals> = {
   walk: { airPlateau: [65, 82], waterPlateau: [77, 90], windPlateau: [5, 15], waveMode: "calm" },
   // Surfers want waves and light wind — dead calm air is fine, it holds the
   // face of the wave up. Hence a wind band that starts at 0, not 5.
-  surf: { airPlateau: [70, 90], waterPlateau: [74, 88], windPlateau: [0, 10], waveMode: "surf" },
+  // …and the OLD 12 mph slide above the band (2026-10-09): the steep default
+  // (0 at 14 mph for this band) would strip surf's 18%-weighted wind factor on
+  // a 12 mph day regardless of direction. Offshore wind grooms the wave.
+  surf: { airPlateau: [70, 90], waterPlateau: [74, 88], windPlateau: [0, 10], windFalloffHigh: 12, waveMode: "surf" },
 };
 
 /** Copy words. `label` goes inside a sentence; `chip` labels a button. */

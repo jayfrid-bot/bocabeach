@@ -112,7 +112,10 @@ describe("nerdInfo registry quotes the REAL score.ts constants", () => {
     const info = buildNerdInfo("wind", ctx);
     expect(info.weightPct).toBe(13);
     expect(info.formula).toContain("5–12");
-    expect(info.formula).toContain("3 mph above");
+    expect(info.formula).toContain("4 mph above");
+    // 15 mph → 25/100 on the real curve (the old "Right now" line still ran plateau(…,13,12) → ~83)
+    const windy = buildNerdInfo("wind", { ...ctx, d: { ...ctx.d, windSpeedMph: 15 } });
+    expect(windy.computation.join(" ")).toContain("25/100");
     // 9 mph is inside 5–12 → 100/100
     expect(info.computation.join(" ")).toContain("100/100");
   });

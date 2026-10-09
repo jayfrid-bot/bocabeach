@@ -16,7 +16,7 @@
 import type { ReactNode } from "react";
 import type { ConditionsSnapshot } from "@/lib/types";
 import type { Derived, MetricSource } from "@/lib/score";
-import { currentHourOf, satelliteBeamCloudPct, satelliteCloudPct, COMFORT_FREE_DEW_F, COMFORT_PER_DEG_F } from "@/lib/score";
+import { currentHourOf, satelliteBeamCloudPct, satelliteCloudPct, COMFORT_FREE_DEW_F, COMFORT_PER_DEG_F, windScore } from "@/lib/score";
 import { afternoonBoostFactor, hoursFromSolarNoon } from "@/lib/sandTemp";
 import { computeStormActivity } from "@/lib/stormActivity";
 import { clarityDisplayWord } from "@/lib/sources/clarity";
@@ -186,7 +186,7 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
     const computation =
       mph != null
         ? (() => {
-            const s = r0(plateau(mph, 5, 13, 12));
+            const s = r0(windScore(mph));
             return [
               `${mph} mph${dir != null ? ` from ${degToCardinal(dir)}` : ""} → windScore ${s}/100`,
               pts(s, SCORE_WEIGHTS_PCT.wind),
@@ -197,15 +197,15 @@ const nerdBuilders: Record<NerdKey, (ctx: NerdContext) => NerdInfo> = {
       title: "Wind",
       weightPct: SCORE_WEIGHTS_PCT.wind,
       explainer:
-        "Wind can make or break a beach day, so it's one of the heavier factors. A light sea breeze — roughly 5–12 mph — is the sweet spot: enough to take the edge off the heat and keep the bugs down, without kicking up sand or chop. Dead-calm air feels hot and buggy, so the score eases off gently below the band. Above it the drop is steep: 13 mph is still decent, 14 is marginal, and at 15 mph and up the wind is blowing sand and pinning towels, so this factor is zero. The speed shown is a consensus median across four forecast models, so no single provider can skew it.",
-      formula: "windScore = 100 for 5–12 mph; −100 over the next 12 mph below the band, −100 over the next 3 mph above it",
+        "Wind can make or break a beach day, so it's one of the heavier factors. A light sea breeze — roughly 5–12 mph — is the sweet spot: enough to take the edge off the heat and keep the bugs down, without kicking up sand or chop. Dead-calm air feels hot and buggy, so the score eases off gently below the band. Above it the drop is steep: 13 mph is 75, 14 is 50, 15 is 25, and at 16 mph and up the wind is blowing sand and pinning towels, so this factor is zero. The speed shown is a consensus median across four forecast models, so no single provider can skew it.",
+      formula: "windScore = 100 for 5–12 mph; −100 over the next 12 mph below the band, −100 over the next 4 mph above it",
       computation,
       sources: src(
         `Median of ${snap.weather.source} · ${snap.metno.source} · ${snap.hourly.source} · ${snap.gfs.source}`,
         `Fallback: ${snap.buoy.source}`,
       ),
       notes:
-        "A light sea breeze is the sweet spot, not dead calm — glassy air (≈58) is buggy and hot; 15 mph and up (0) blows sand. Wind speed is the multi-source " +
+        "A light sea breeze is the sweet spot, not dead calm — glassy air (≈58) is buggy and hot; 16 mph and up (0) blows sand. Wind speed is the multi-source " +
         CONSENSUS_NOTE + "; direction is NWS/MET/buoy.",
     };
   },

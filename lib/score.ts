@@ -757,18 +757,21 @@ export function bestBeachWindow(hours: HourlyScore[], nowMs?: number): BestWindo
 // Wind: a light sea breeze is the sweet spot, not dead calm. Under ~5 mph is
 // stagnant/buggy/hot; 5-12 mph is ideal; above 12 mph turns choppy and starts
 // blowing sand. Plateau across [5, 12]; eases off over 12 mph below, drops over 3 mph above
-// (so dead calm ≈ 58; 13 mph ≈ 67, 14 ≈ 33, 15 mph and up = 0).
+// (so dead calm ≈ 58; 13 mph = 75, 14 = 50, 15 = 25, 16 mph and up = 0).
 /** Below the band the score eases off over 12 mph (dead calm ≈ 58: hot and
- *  buggy, not dangerous). ABOVE the band it drops over 3 mph (2026-10-09):
+ *  buggy, not dangerous). ABOVE the band it drops over 4 mph (2026-10-09):
  *  the owner at Boca in a 15–16 mph onshore wind — sand blowing, towels
  *  pinned, chop — with the wind factor still at 75. The old 12 mph slide
  *  (zero only at a 25 mph gale) never knocked off the points a real beach
- *  day loses. Presets keep their own band; the falloffs are shared. */
+ *  day loses. 4 mph, not 3 (Codex): the hourly curve runs on one rounded
+ *  forecast, and a 33-point step per mph would split best windows and flip
+ *  Good/Decent on ordinary 1 mph wobbles. Presets own their band and may
+ *  override the high-side slide (`ideals.windFalloffHigh`; surf keeps 12). */
 export const WIND_LOW_FALLOFF_MPH = 12;
-export const WIND_HIGH_FALLOFF_MPH = 3;
-const windScore = (mph: number, low = 5, high = 12) =>
+export const WIND_HIGH_FALLOFF_MPH = 4;
+export const windScore = (mph: number, low = 5, high = 12, highFalloff = WIND_HIGH_FALLOFF_MPH) =>
   mph > high
-    ? clamp(100 * (1 - (mph - high) / WIND_HIGH_FALLOFF_MPH), 0, 100)
+    ? clamp(100 * (1 - (mph - high) / highFalloff), 0, 100)
     : plateau(mph, low, high, WIND_LOW_FALLOFF_MPH);
 const waveCalm = (ft: number) => clamp(100 - Math.max(0, ft - 1) * 25, 0, 100);
 const uvScore = (uv: number) => clamp(100 - Math.max(0, uv - 8) * 12, 0, 100);
@@ -1162,7 +1165,9 @@ export function scoreBeachDay(d: Derived, opts: ScoringOptions = DEFAULT_SCORING
     sub(
       "wind",
       "Wind (sea breeze)",
-      d.windSpeedMph != null ? windScore(d.windSpeedMph, windPlateau[0], windPlateau[1]) : null,
+      d.windSpeedMph != null
+        ? windScore(d.windSpeedMph, windPlateau[0], windPlateau[1], opts.ideals.windFalloffHigh)
+        : null,
       w.wind,
       d.windSpeedMph != null
         ? `${d.windSpeedMph} mph${d.windDirDeg != null ? " " + degToCardinal(d.windDirDeg) : ""}`

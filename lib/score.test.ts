@@ -14,6 +14,7 @@ import {
   satelliteBeamCloudPct,
   satelliteCloudPct,
   scoreBeachDay,
+  DEFAULT_SCORING,
 } from "@/lib/score";
 import { scoreBand } from "@/lib/scoreBands";
 import type { RipNow } from "@/lib/ripRisk";
@@ -1457,13 +1458,26 @@ describe("scoring (Beach Day only — no surf), part 2", () => {
     expect(windSub(3)!).toBeLessThan(100);
     expect(windSub(0)!).toBeLessThan(windSub(3)!);
 
-    // Above the band the drop is steep (2026-10-09): 13 mph is still
-    // decent, 14 marginal, 15 mph and up loses every wind point.
-    expect(windSub(13)).toBeCloseTo(66.7, 0);
-    expect(windSub(14)).toBeCloseTo(33.3, 0);
-    expect(windSub(15)).toBe(0);
+    // Above the band the drop is steep (2026-10-09): 25 points per mph,
+    // 16 mph and up loses every wind point.
+    expect(windSub(13)).toBe(75);
+    expect(windSub(14)).toBe(50);
+    expect(windSub(15)).toBe(25);
     expect(windSub(16)).toBe(0);
     expect(windSub(25)).toBe(0);
+  });
+
+  it("the surf preset keeps its long 12 mph slide above its 0–10 band", () => {
+    const surfOpts = {
+      ...DEFAULT_SCORING,
+      ideals: { ...DEFAULT_SCORING.ideals, windPlateau: [0, 10] as [number, number], windFalloffHigh: 12 },
+    };
+    const windSub = (mph: number) =>
+      scoreBeachDay(deriveMetrics(snapshot({ weather: { windSpeedMph: mph } })), surfOpts)
+        .subScores.find((s) => s.key === "wind")!.score;
+    expect(windSub(10)).toBe(100);
+    expect(windSub(13)).toBe(75); // unchanged from before 2026-10-09
+    expect(windSub(22)).toBe(0);
   });
 
   it("rewards full sun and penalizes overcast/partly cloudy skies", () => {
