@@ -88,18 +88,19 @@ function inputsAt(ms: number): Inputs {
 interface Knobs {
   maxBoost: number; // MAX_SUN_BOOST_F
   sunPower: number; // exponent on sunFrac (0.5 = sqrt)
-  windDiv: number; // boost *= max(0.6, 1 - wind/windDiv)
+  windDiv: number; // boost *= max(windFloor, 1 - wind/windDiv)
+  windFloor: number; // floor of the wind factor (live model: 0.6)
   soilSlope: number; // boost *= max(0.4, 1 - (soil-90)/soilSlope)
   /** Accumulated-sunshine factor: boost *= min(1, accumWh/accumRef)^accumPower. 0 = off. */
   accumRef: number;
   accumPower: number;
 }
-const LIVE: Knobs = { maxBoost: 55, sunPower: 0.5, windDiv: 60, soilSlope: 55, accumRef: 0, accumPower: 1 };
+const LIVE: Knobs = { maxBoost: 55, sunPower: 0.5, windDiv: 60, windFloor: 0.6, soilSlope: 55, accumRef: 0, accumPower: 1 };
 
 function boostF(inp: Inputs, k: Knobs, solar: number): number {
   const sunFrac = Math.min(1, Math.max(0, solar / 1000));
   let boost = Math.pow(sunFrac, k.sunPower) * k.maxBoost;
-  boost *= Math.max(0.6, 1 - Math.max(0, inp.windMph) / k.windDiv);
+  boost *= Math.max(k.windFloor, 1 - Math.max(0, inp.windMph) / k.windDiv);
   boost *= Math.max(0.4, Math.min(1, 1 - (inp.soilF - 90) / k.soilSlope));
   boost *= afternoonBoostFactor(inp.hfn);
   if (k.accumRef > 0) boost *= Math.pow(Math.min(1, inp.accumWh / k.accumRef), k.accumPower);
@@ -165,6 +166,10 @@ const candidates: [string, Knobs][] = [
   ["steeper sun response (power 0.75)", { ...LIVE, sunPower: 0.75 }],
   ["linear sun response (power 1)", { ...LIVE, sunPower: 1 }],
   ["weaker wind effect (÷90)", { ...LIVE, windDiv: 90 }],
+  ["stronger wind effect (÷40, floor 0.4)", { ...LIVE, windDiv: 40, windFloor: 0.4 }],
+  ["stronger wind effect (÷30, floor 0.3)", { ...LIVE, windDiv: 30, windFloor: 0.3 }],
+  ["stronger wind effect (÷25, floor 0.2)", { ...LIVE, windDiv: 25, windFloor: 0.2 }],
+  ["stronger wind effect (÷20, floor 0.2)", { ...LIVE, windDiv: 20, windFloor: 0.2 }],
   ["max boost 50", { ...LIVE, maxBoost: 50 }],
 ];
 for (const [name, k] of candidates) {
@@ -177,10 +182,11 @@ for (const [name, k] of candidates) {
 let best: { k: Knobs; mae: number } | null = null;
 for (const maxBoost of [45, 50, 55, 60])
   for (const sunPower of [0.5, 0.75, 1])
-    for (const windDiv of [45, 60, 90])
+    for (const windDiv of [20, 25, 30, 40, 60, 90])
+      for (const windFloor of [0.2, 0.4, 0.6])
       for (const soilSlope of [40, 55, 80])
         for (const accumRef of [0, 3000, 4000, 5000]) {
-          const k = { ...LIVE, maxBoost, sunPower, windDiv, soilSlope, accumRef };
+          const k = { ...LIVE, maxBoost, sunPower, windDiv, windFloor, soilSlope, accumRef };
           const e = evaluate(k);
           if (!best || e.mae < best.mae) best = { k, mae: e.mae };
         }

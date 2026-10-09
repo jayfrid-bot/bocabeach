@@ -17,3 +17,4 @@ date,local_time,beach,spot,measured_low_f,measured_high_f,measured_mid_f,soil_f,
 2026-10-06,13:10,Spanish River Beach (Boca),surf,117,117,117,96,645,carried,4,0,goes-beam,120,2026-09-08.1,model surf end 120 (+3)
 2026-10-06,13:10,Spanish River Beach (Boca),mid-beach dry soft sand,125,125,125,96,645,carried,4,0,goes-beam,,2026-09-08.1,between the model ends
 2026-10-06,13:10,Spanish River Beach (Boca),dunes,127,129,128,96,645,carried,4,0,goes-beam,133,2026-09-08.1,model dunes end 133 (+5); measured surf-to-dunes spread 11F matches SURF_BOOST_FRACTION
+2026-10-09,13:15,Spanish River Beach (Boca),mid-beach dry soft sand,108,111,109.5,98,829,goes-hourly,13,17.5,goes-beam,,2026-09-08.1,model surf end 120 / dunes end 132 (mid ~126) → miss about -16F; onshore wind 13 (consensus) to 16 mph (NWS/buoy); RH 79%; same soil+sun as 10/06 (wind 4) which read 125 — wind is the difference
