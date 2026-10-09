@@ -10,6 +10,8 @@ import { getStore, hashInstallToken } from "@/lib/db/store";
 import { resetMemoryStore } from "@/lib/db/memoryStore";
 import { hourUtcOf } from "@/lib/history/archive";
 import type { BeachHourlyRow } from "@/lib/history/types";
+import { SCORING_ENGINE_VERSION } from "@/lib/score";
+import { LATEST_SCORING_VERSION } from "@/lib/scoringVersions";
 
 const APP_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) IsItBeachDayApp/ios";
 const WEB_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 Safari/605.1.15";
@@ -222,7 +224,7 @@ describe("POST /api/history/[slug]", () => {
       const body = await res.json();
       expect(body.ok).toBe(true);
       expect(body.days.map((d: { date: string }) => d.date)).toEqual(["2026-09-21", "2026-09-22"]);
-      expect(body.records.bestDay).toEqual({ date: "2026-09-22", score: 88, localHour: 14 });
+      expect(body.records.bestDay).toEqual({ date: "2026-09-22", score: 88, localHour: 14, engineVersion: "test-1" });
       expect(body.records.biggestSurf).toEqual({ date: "2026-09-22", surfFt: 3.2, localHour: 14 });
       expect(body.archiveStartedAt).toBe("2026-09-21");
       expect(body.dayCount).toBe(2);
@@ -263,6 +265,78 @@ describe("POST /api/history/[slug]", () => {
       expect(body.records.bestDay).toBeNull();
     });
 
+    describe("scoring-formula versions", () => {
+      const CURRENT = SCORING_ENGINE_VERSION;
+      const OLD = "2026-10-06.1";
+
+      it("returns the versions block with the current version and no boundary on one formula", async () => {
+        const store = await getStore();
+        await store.upsertBeachHourly(
+          row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-22", engine_version: CURRENT }),
+        );
+        const { POST } = await import("@/app/api/history/[slug]/route");
+        const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
+        expect(body.versions).toEqual({ current: CURRENT, inRange: [CURRENT], mixed: false, boundaries: [] });
+        expect(body.days[0]).toMatchObject({ engineVersions: [CURRENT], mixedVersions: false });
+        expect(body.recordsSince).toBe(LATEST_SCORING_VERSION.since);
+        expect(body.recordsFromEarlierFormula).toBe(false);
+        expect(body.records.bestDay.engineVersion).toBe(CURRENT);
+      });
+
+      it("names a boundary when the shown days cross a formula change", async () => {
+        const store = await getStore();
+        await store.upsertBeachHourly(
+          row({ hour_utc: hourUtcOf(Date.now() - DAY), local_date: "2026-09-21", engine_version: OLD }),
+        );
+        await store.upsertBeachHourly(
+          row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-22", engine_version: CURRENT }),
+        );
+        const { POST } = await import("@/app/api/history/[slug]/route");
+        const body = await (await POST(post(SLUG, { deviceId: DEV, days: 14 }), params(SLUG))).json();
+        expect(body.versions.mixed).toBe(true);
+        expect(body.versions.inRange).toEqual([OLD, CURRENT]);
+        expect(body.versions.boundaries.map((b: { version: string }) => b.version)).toEqual([CURRENT]);
+        expect(body.versions.boundaries[0].date).toBe(LATEST_SCORING_VERSION.since);
+        expect(body.versions.boundaries[0].note).toBe(LATEST_SCORING_VERSION.note);
+      });
+
+      it("records count only the current formula: an older, higher score does not win", async () => {
+        const store = await getStore();
+        await store.upsertBeachHourly(
+          row({ hour_utc: hourUtcOf(Date.now() - 20 * DAY), local_date: "2026-09-02", score: 99, engine_version: OLD }),
+        );
+        await store.upsertBeachHourly(
+          row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-22", score: 80, engine_version: CURRENT }),
+        );
+        const { POST } = await import("@/app/api/history/[slug]/route");
+        const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
+        expect(body.records.bestDay).toMatchObject({ score: 80, engineVersion: CURRENT });
+        expect(body.bestEver).toMatchObject({ score: 80, engineVersion: CURRENT });
+        expect(body.recordsFromEarlierFormula).toBe(false);
+      });
+
+      it("falls back to the latest formula that has rows, and flags it, right after a bump", async () => {
+        const store = await getStore();
+        // Nothing carries the current version yet.
+        await store.upsertBeachHourly(
+          row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-22", score: 77, engine_version: OLD }),
+        );
+        const { POST } = await import("@/app/api/history/[slug]/route");
+        const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
+        expect(body.records.bestDay).toMatchObject({ score: 77, engineVersion: OLD });
+        expect(body.bestEver).toMatchObject({ score: 77, engineVersion: OLD });
+        expect(body.recordsFromEarlierFormula).toBe(true);
+        expect(body.recordsSince).toBe(LATEST_SCORING_VERSION.since);
+      });
+
+      it("an empty archive says the records are not from an earlier formula", async () => {
+        const { POST } = await import("@/app/api/history/[slug]/route");
+        const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
+        expect(body.versions).toEqual({ current: CURRENT, inRange: [], mixed: false, boundaries: [] });
+        expect(body.recordsFromEarlierFormula).toBe(false);
+      });
+    });
+
     describe("bestEver — the highest score at ANY beach", () => {
       it("names the other beach, with its local date and hour, when the record is elsewhere", async () => {
         const store = await getStore();
@@ -282,9 +356,10 @@ describe("POST /api/history/[slug]", () => {
           score: 98,
           localHour: 13,
           isThisBeach: false,
+          engineVersion: "test-1",
         });
         // This beach's own record is unchanged by the cross-beach one.
-        expect(body.records.bestDay).toEqual({ date: "2026-09-28", score: 80, localHour: 10 });
+        expect(body.records.bestDay).toEqual({ date: "2026-09-28", score: 80, localHour: 10, engineVersion: "test-1" });
       });
 
       it("sets isThisBeach when the all-beach record is at the requested beach", async () => {
@@ -305,6 +380,7 @@ describe("POST /api/history/[slug]", () => {
           score: 99,
           localHour: 10,
           isThisBeach: true,
+          engineVersion: "test-1",
         });
       });
 

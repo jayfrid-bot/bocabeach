@@ -15,6 +15,7 @@
 // row shape into the API's friendlier shape — still pure, still no I/O.
 
 import type { BeachHourlyRow, HistoryRecordRow } from "@/lib/history/types";
+import { compareEngineVersions, findScoringVersion, SCORING_VERSIONS } from "@/lib/scoringVersions";
 
 /** A day needs at least this many SCORED hours to count as a full day —
  *  fewer and `partial: true` warns the UI the number is thin (e.g. the
@@ -127,12 +128,41 @@ export interface DaySummary {
    *  has TWO hours that both read as local_hour 1, and only hour_utc tells
    *  them apart (see lib/history/archive.ts). */
   hourly: { localHour: number; hourUtc: string; score: number }[];
+  /** Distinct engine (scoring formula) versions among this day's rows, oldest
+   *  first. Usually one; two when a formula change landed during the day. */
+  engineVersions: string[];
+  /** More than one formula scored this day's rows. */
+  mixedVersions: boolean;
+}
+
+/** One formula change inside the shown range. */
+export interface HistoryVersionBoundary {
+  /** First day the newer formula scored rows (YYYY-MM-DD). */
+  date: string;
+  version: string;
+  /** One plain sentence on what changed (lib/scoringVersions.ts). */
+  note: string;
+}
+
+/** Which formulas scored the days in a response, so the UI can say when a
+ *  drop in score is a formula change and not weather. */
+export interface HistoryVersions {
+  /** SCORING_ENGINE_VERSION of the running build. */
+  current: string;
+  /** Distinct versions among the returned days, oldest first. */
+  inRange: string[];
+  /** The returned range mixes more than one version. */
+  mixed: boolean;
+  /** Formula changes that fall inside the range, oldest first. */
+  boundaries: HistoryVersionBoundary[];
 }
 
 /** The API's friendly shape for one lifetime record — `recordsFromRows`
  *  below maps `DeviceStore.historyRecords`'s raw kind-tagged rows into this. */
 export interface HistoryRecords {
-  bestDay: { date: string; score: number; localHour: number } | null;
+  /** Ranked within ONE formula version (`engineVersion`) — scores from
+   *  different formulas are not comparable. */
+  bestDay: { date: string; score: number; localHour: number; engineVersion: string } | null;
   hottestSand: { date: string; sandTempF: number; localHour: number } | null;
   biggestSurf: { date: string; surfFt: number; localHour: number } | null;
   /** The single least-crowded midday (10 AM-6 PM local) reading on file —
@@ -152,6 +182,8 @@ export interface HistoryBestEver {
   score: number;
   localHour: number;
   isThisBeach: boolean;
+  /** The formula that scored it — same one-version rule as `bestDay`. */
+  engineVersion: string;
 }
 
 function round(v: number): number {
@@ -214,6 +246,8 @@ function summarizeDay(date: string, rowsForDate: BeachHourlyRow[]): DaySummary {
   const capsSet = new Set<string>();
   for (const r of sorted) for (const c of parseCaps(r.caps_json)) capsSet.add(c);
 
+  const engineVersions = [...new Set(sorted.map((r) => r.engine_version))].sort(compareEngineVersions);
+
   return {
     date,
     weekday: weekdayOf(date),
@@ -230,6 +264,8 @@ function summarizeDay(date: string, rowsForDate: BeachHourlyRow[]): DaySummary {
     caps: [...capsSet].sort(),
     partial: scored.length < MIN_SCORED_HOURS_FOR_FULL_DAY,
     hourly: scored.map((r) => ({ localHour: r.local_hour, hourUtc: r.hour_utc, score: r.score })),
+    engineVersions,
+    mixedVersions: engineVersions.length > 1,
   };
 }
 
@@ -264,9 +300,47 @@ export function recordsFromRows(rows: HistoryRecordRow[]): HistoryRecords {
   const surf = byKind.get("biggest_surf");
   const quiet = byKind.get("quietest");
   return {
-    bestDay: best ? { date: best.local_date, score: best.value, localHour: best.local_hour } : null,
+    bestDay: best
+      ? { date: best.local_date, score: best.value, localHour: best.local_hour, engineVersion: best.engine_version }
+      : null,
     hottestSand: sand ? { date: sand.local_date, sandTempF: sand.value, localHour: sand.local_hour } : null,
     biggestSurf: surf ? { date: surf.local_date, surfFt: surf.value, localHour: surf.local_hour } : null,
     quietestDay: quiet ? { date: quiet.local_date, crowdPct: quiet.value, localHour: quiet.local_hour } : null,
   };
+}
+
+/**
+ * Which formulas scored `days`, and where the formula changed inside them.
+ * A change counts as "inside" only when the days really hold a version older
+ * than it AND a version at or after it — so a range that starts after a
+ * change, or ends before one, names nothing. Pure; `current` is passed in
+ * (the route passes SCORING_ENGINE_VERSION) so tests need no real version.
+ */
+export function summarizeVersions(days: DaySummary[], current: string): HistoryVersions {
+  const inRange = [...new Set(days.flatMap((d) => d.engineVersions))].sort(compareEngineVersions);
+  const boundaries: HistoryVersionBoundary[] = [];
+  SCORING_VERSIONS.forEach((entry, i) => {
+    if (i === 0) return; // the first version has no change before it
+    const hasOlder = inRange.some((v) => compareEngineVersions(v, entry.version) < 0);
+    const hasSame = inRange.some((v) => compareEngineVersions(v, entry.version) >= 0);
+    if (hasOlder && hasSame) boundaries.push({ date: entry.since, version: entry.version, note: entry.note });
+  });
+  return { current, inRange, mixed: inRange.length > 1, boundaries };
+}
+
+/**
+ * What the record tiles need to label themselves: the day the CURRENT formula
+ * started (`recordsSince`, null when the version is not listed) and whether a
+ * score record had to come from an earlier formula because no row carries the
+ * current one yet (`recordsFromEarlierFormula`, right after a version bump).
+ */
+export function recordsFormulaInfo(
+  records: HistoryRecords,
+  bestEver: HistoryBestEver | null,
+  current: string,
+): { recordsSince: string | null; recordsFromEarlierFormula: boolean } {
+  const earlier =
+    (records.bestDay !== null && records.bestDay.engineVersion !== current) ||
+    (bestEver !== null && bestEver.engineVersion !== current);
+  return { recordsSince: findScoringVersion(current)?.since ?? null, recordsFromEarlierFormula: earlier };
 }

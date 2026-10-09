@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import {
   daysBetweenLocalDates,
+  recordsFormulaInfo,
   recordsFromRows,
   shiftLocalDate,
   shortMonthDay,
   summarizeHistory,
+  summarizeVersions,
   weekdayLongOf,
   weekdayOf,
 } from "@/lib/history/summary";
@@ -57,7 +59,7 @@ function row(over: Partial<BeachHourlyRow> = {}): BeachHourlyRow {
 }
 
 function recordRow(over: Partial<HistoryRecordRow> & { kind: HistoryRecordRow["kind"] }): HistoryRecordRow {
-  return { local_date: "2026-09-22", local_hour: 10, value: 0, ...over };
+  return { local_date: "2026-09-22", local_hour: 10, value: 0, engine_version: "test-1", ...over };
 }
 
 describe("weekdayOf / weekdayLongOf", () => {
@@ -300,7 +302,7 @@ describe("recordsFromRows", () => {
       recordRow({ kind: "biggest_surf", local_date: "2026-09-27", local_hour: 12, value: 3.2 }),
       recordRow({ kind: "quietest", local_date: "2026-09-28", local_hour: 10, value: 15 }),
     ]);
-    expect(out.bestDay).toEqual({ date: "2026-09-26", score: 88, localHour: 14 });
+    expect(out.bestDay).toEqual({ date: "2026-09-26", score: 88, localHour: 14, engineVersion: "test-1" });
     expect(out.hottestSand).toEqual({ date: "2026-09-26", sandTempF: 137, localHour: 14 });
     expect(out.biggestSurf).toEqual({ date: "2026-09-27", surfFt: 3.2, localHour: 12 });
     expect(out.quietestDay).toEqual({ date: "2026-09-28", crowdPct: 15, localHour: 10 });
@@ -317,5 +319,137 @@ describe("recordsFromRows", () => {
   it("an empty row list maps to every field null", () => {
     const out = recordsFromRows([]);
     expect(out).toEqual({ bestDay: null, hottestSand: null, biggestSurf: null, quietestDay: null });
+  });
+});
+
+// --- Scoring-formula versions ---------------------------------------------
+// A drop in the chart can be a formula change, not weather. Each day says
+// which formula scored it, and the response names the changes in range.
+describe("summarizeHistory — engine versions per day", () => {
+  it("a day with one formula lists it once and is not mixed", () => {
+    const [d] = summarizeHistory([
+      row({ hour_utc: "2026-10-07T14:00:00.000Z", local_date: "2026-10-07", engine_version: "2026-10-06.1" }),
+      row({ hour_utc: "2026-10-07T15:00:00.000Z", local_date: "2026-10-07", engine_version: "2026-10-06.1" }),
+    ]);
+    expect(d.engineVersions).toEqual(["2026-10-06.1"]);
+    expect(d.mixedVersions).toBe(false);
+  });
+
+  it("a day a change landed on lists both versions, oldest first, and is mixed", () => {
+    const [d] = summarizeHistory([
+      row({ hour_utc: "2026-10-09T18:00:00.000Z", local_date: "2026-10-09", local_hour: 14, engine_version: "2026-10-09.1" }),
+      row({ hour_utc: "2026-10-09T14:00:00.000Z", local_date: "2026-10-09", local_hour: 10, engine_version: "2026-10-06.1" }),
+      row({ hour_utc: "2026-10-09T19:00:00.000Z", local_date: "2026-10-09", local_hour: 15, engine_version: "2026-10-09.1" }),
+    ]);
+    expect(d.engineVersions).toEqual(["2026-10-06.1", "2026-10-09.1"]);
+    expect(d.mixedVersions).toBe(true);
+  });
+
+  it("each day keeps its own versions", () => {
+    const days = summarizeHistory([
+      row({ hour_utc: "2026-10-08T14:00:00.000Z", local_date: "2026-10-08", engine_version: "2026-10-06.1" }),
+      row({ hour_utc: "2026-10-10T14:00:00.000Z", local_date: "2026-10-10", engine_version: "2026-10-09.1" }),
+    ]);
+    expect(days.map((d) => d.engineVersions)).toEqual([["2026-10-06.1"], ["2026-10-09.1"]]);
+    expect(days.every((d) => !d.mixedVersions)).toBe(true);
+  });
+});
+
+describe("summarizeVersions — boundaries inside the range", () => {
+  const CUR = "2026-10-09.1";
+  const day = (date: string, versions: string[]) =>
+    summarizeHistory(
+      versions.map((v, i) =>
+        row({ hour_utc: `${date}T1${i}:00:00.000Z`, local_date: date, local_hour: 10 + i, engine_version: v }),
+      ),
+    )[0];
+
+  it("a range on one formula has no boundary and is not mixed", () => {
+    const v = summarizeVersions([day("2026-10-09", [CUR]), day("2026-10-10", [CUR])], CUR);
+    expect(v).toEqual({ current: CUR, inRange: [CUR], mixed: false, boundaries: [] });
+  });
+
+  it("names a change that falls inside the range, with its date and note", () => {
+    const v = summarizeVersions([day("2026-10-07", ["2026-10-06.1"]), day("2026-10-10", [CUR])], CUR);
+    expect(v.mixed).toBe(true);
+    expect(v.inRange).toEqual(["2026-10-06.1", CUR]);
+    expect(v.boundaries).toHaveLength(1);
+    expect(v.boundaries[0]).toMatchObject({ date: "2026-10-09", version: CUR });
+    expect(v.boundaries[0].note).toMatch(/wind/i);
+  });
+
+  it("a day that straddles a change counts as crossing it", () => {
+    const v = summarizeVersions([day("2026-10-09", ["2026-10-06.1", CUR])], CUR);
+    expect(v.boundaries.map((b) => b.date)).toEqual(["2026-10-09"]);
+  });
+
+  it("lists every change in range, oldest first", () => {
+    const v = summarizeVersions(
+      [day("2026-10-01", ["2026-09-28.2"]), day("2026-10-07", ["2026-10-06.1"]), day("2026-10-10", [CUR])],
+      CUR,
+    );
+    expect(v.boundaries.map((b) => b.version)).toEqual(["2026-10-06.1", CUR]);
+  });
+
+  it("a range that starts after a change does not name it", () => {
+    const v = summarizeVersions([day("2026-10-06", ["2026-10-06.1"]), day("2026-10-08", ["2026-10-06.1"])], CUR);
+    expect(v.boundaries).toEqual([]);
+    expect(v.mixed).toBe(false);
+    expect(v.inRange).toEqual(["2026-10-06.1"]);
+  });
+
+  it("empty days give an empty block", () => {
+    expect(summarizeVersions([], CUR)).toEqual({ current: CUR, inRange: [], mixed: false, boundaries: [] });
+  });
+
+  it("an unlisted version in range does not throw and still orders by string", () => {
+    const v = summarizeVersions([day("2026-10-01", ["2026-01-01.1"]), day("2026-10-10", [CUR])], CUR);
+    expect(v.inRange).toEqual(["2026-01-01.1", CUR]);
+    expect(v.boundaries.length).toBeGreaterThan(0);
+  });
+});
+
+describe("recordsFromRows — engine version", () => {
+  it("carries the best row's version into bestDay", () => {
+    const out = recordsFromRows([recordRow({ kind: "best", value: 90, engine_version: "2026-10-09.1" })]);
+    expect(out.bestDay?.engineVersion).toBe("2026-10-09.1");
+  });
+});
+
+describe("recordsFormulaInfo", () => {
+  const CUR = "2026-10-09.1";
+  const bestEver = (engineVersion: string) => ({
+    slug: "boca-raton",
+    name: "Boca Raton",
+    date: "2026-10-09",
+    score: 95,
+    localHour: 11,
+    isThisBeach: true,
+    engineVersion,
+  });
+  const records = (engineVersion: string | null) =>
+    recordsFromRows(engineVersion ? [recordRow({ kind: "best", value: 90, engine_version: engineVersion })] : []);
+
+  it("reports the day the current formula began", () => {
+    expect(recordsFormulaInfo(records(CUR), bestEver(CUR), CUR)).toEqual({
+      recordsSince: "2026-10-09",
+      recordsFromEarlierFormula: false,
+    });
+  });
+
+  it("flags an earlier formula when the best day comes from one", () => {
+    expect(recordsFormulaInfo(records("2026-10-06.1"), bestEver(CUR), CUR).recordsFromEarlierFormula).toBe(true);
+  });
+
+  it("flags an earlier formula when only best-ever comes from one", () => {
+    expect(recordsFormulaInfo(records(CUR), bestEver("2026-10-06.1"), CUR).recordsFromEarlierFormula).toBe(true);
+  });
+
+  it("no records at all is not 'earlier'", () => {
+    expect(recordsFormulaInfo(records(null), null, CUR).recordsFromEarlierFormula).toBe(false);
+  });
+
+  it("recordsSince is null for a version the list does not know", () => {
+    expect(recordsFormulaInfo(records(null), null, "unlisted").recordsSince).toBeNull();
   });
 });

@@ -4,9 +4,16 @@
 // pattern elsewhere in this codebase).
 
 import { describe, it, expect, vi } from "vitest";
-import { recordTiles, resolveHistoryViewState, retryHistoryFetch } from "@/components/plus/HistorySection";
+import {
+  dayFormulaState,
+  formulaChangeNotice,
+  recordFormulaNote,
+  recordTiles,
+  resolveHistoryViewState,
+  retryHistoryFetch,
+} from "@/components/plus/HistorySection";
 import type { HistoryResult } from "@/lib/plus/api";
-import type { HistoryBestEver, HistoryRecords } from "@/lib/history/summary";
+import type { DaySummary, HistoryBestEver, HistoryRecords, HistoryVersions } from "@/lib/history/summary";
 
 const OK_RESULT: HistoryResult & { ok: true } = {
   ok: true,
@@ -14,6 +21,9 @@ const OK_RESULT: HistoryResult & { ok: true } = {
   days: [],
   records: null,
   bestEver: null,
+  versions: null,
+  recordsSince: null,
+  recordsFromEarlierFormula: false,
   archiveStartedAt: null,
   dayCount: 0,
   surfSince: null,
@@ -27,6 +37,9 @@ const FAILED_RESULT: HistoryResult = {
   days: [],
   records: null,
   bestEver: null,
+  versions: null,
+  recordsSince: null,
+  recordsFromEarlierFormula: false,
   archiveStartedAt: null,
   dayCount: 0,
   surfSince: null,
@@ -89,8 +102,10 @@ describe("resolveHistoryViewState", () => {
   });
 });
 
+const CURRENT = "2026-10-09.1";
+
 const FULL_RECORDS: HistoryRecords = {
-  bestDay: { date: "2026-09-26", score: 93, localHour: 8 },
+  bestDay: { date: "2026-09-26", score: 93, localHour: 8, engineVersion: CURRENT },
   hottestSand: { date: "2026-09-26", sandTempF: 141, localHour: 14 },
   biggestSurf: { date: "2026-09-21", surfFt: 3.4, localHour: 13 },
   quietestDay: { date: "2026-09-28", crowdPct: 15, localHour: 15 },
@@ -103,6 +118,7 @@ const BEST_EVER: HistoryBestEver = {
   score: 98,
   localHour: 13,
   isThisBeach: false,
+  engineVersion: CURRENT,
 };
 
 // The cross-beach "Best day ever" tile: first in the list, names the beach,
@@ -261,5 +277,150 @@ describe("retryHistoryFetch", () => {
     const bootstrap = vi.fn().mockResolvedValue({ token: null });
     const result = await retryHistoryFetch("no-token-error", { bootstrap, mutate: vi.fn() });
     expect(result).toEqual({ token: null });
+  });
+});
+
+// --- Scoring-formula notices ------------------------------------------------
+const EARLIER = "2026-10-06.1";
+const SINGLE: HistoryVersions = {
+  current: CURRENT,
+  inRange: [EARLIER, CURRENT],
+  mixed: true,
+  boundaries: [{ date: "2026-10-09", version: CURRENT, note: "Strong wind costs more." }],
+};
+
+describe("formulaChangeNotice", () => {
+  it("names the one change in range", () => {
+    expect(formulaChangeNotice(SINGLE)).toBe(
+      "Scoring changed on Oct 9 \u2014 days before that were scored by an earlier formula.",
+    );
+  });
+
+  it("names the most recent change and says 'and earlier' when there are more", () => {
+    const many: HistoryVersions = {
+      ...SINGLE,
+      inRange: ["2026-09-22.1", EARLIER, CURRENT],
+      boundaries: [
+        { date: "2026-09-28", version: "2026-09-28.1", note: "a" },
+        { date: "2026-10-06", version: EARLIER, note: "b" },
+        { date: "2026-10-09", version: CURRENT, note: "c" },
+      ],
+    };
+    expect(formulaChangeNotice(many)).toBe(
+      "Scoring changed on Oct 9 and earlier \u2014 days before that were scored by earlier formulas.",
+    );
+  });
+
+  it("two changes on the same date count as one date", () => {
+    const sameDay: HistoryVersions = {
+      ...SINGLE,
+      boundaries: [
+        { date: "2026-09-28", version: "2026-09-28.1", note: "a" },
+        { date: "2026-09-28", version: "2026-09-28.2", note: "b" },
+      ],
+    };
+    expect(formulaChangeNotice(sameDay)).toBe(
+      "Scoring changed on Sept 28 \u2014 days before that were scored by an earlier formula.",
+    );
+  });
+
+  it("is null when the range holds no change, or there is no versions block", () => {
+    expect(formulaChangeNotice({ current: CURRENT, inRange: [CURRENT], mixed: false, boundaries: [] })).toBeNull();
+    expect(formulaChangeNotice({ current: CURRENT, inRange: [], mixed: false, boundaries: [] })).toBeNull();
+    expect(formulaChangeNotice(null)).toBeNull();
+  });
+
+  it("says the change date when every shown day predates the current formula", () => {
+    const allOld: HistoryVersions = { current: CURRENT, inRange: [EARLIER], mixed: false, boundaries: [] };
+    expect(formulaChangeNotice(allOld)).toBe(
+      "Scoring changed on Oct 9 \u2014 these days were scored by an earlier formula.",
+    );
+  });
+
+  it("never uses the word AI", () => {
+    expect(formulaChangeNotice(SINGLE)).not.toMatch(/\bAI\b/);
+  });
+});
+
+function day(engineVersions: string[]): DaySummary {
+  return {
+    date: "2026-10-09",
+    weekday: "Fri",
+    hours: 8,
+    best: { score: 80, localHour: 12 },
+    worst: { score: 60, localHour: 8 },
+    avg: 70,
+    airHighF: 85,
+    waterF: 84,
+    sandMaxF: 120,
+    surfMaxFt: 2,
+    crowdPeakPct: null,
+    seaweedMaxPct: null,
+    caps: [],
+    partial: false,
+    hourly: [],
+    engineVersions,
+    mixedVersions: engineVersions.length > 1,
+  };
+}
+
+describe("dayFormulaState", () => {
+  it("is 'current' when every row used the current formula", () => {
+    expect(dayFormulaState(day([CURRENT]), CURRENT)).toBe("current");
+  });
+  it("is 'earlier' when no row did", () => {
+    expect(dayFormulaState(day([EARLIER]), CURRENT)).toBe("earlier");
+    expect(dayFormulaState(day([EARLIER, "2026-09-28.2"]), CURRENT)).toBe("earlier");
+  });
+  it("is 'mixed' on a day a change landed", () => {
+    expect(dayFormulaState(day([EARLIER, CURRENT]), CURRENT)).toBe("mixed");
+  });
+  it("marks nothing when the server sent no current version or no versions", () => {
+    expect(dayFormulaState(day([EARLIER]), null)).toBe("current");
+    expect(dayFormulaState(day([]), CURRENT)).toBe("current");
+    expect(dayFormulaState({ ...day([]), engineVersions: undefined as unknown as string[] }, CURRENT)).toBe("current");
+  });
+});
+
+describe("recordFormulaNote / score tiles", () => {
+  const FORMULA = { current: CURRENT, recordsSince: "2026-10-09" };
+
+  it("says when the current formula's count started", () => {
+    expect(recordFormulaNote(CURRENT, FORMULA)).toBe("since Oct 9 (current\u00a0formula)");
+  });
+  it("says 'earlier formula' when the record comes from one", () => {
+    expect(recordFormulaNote(EARLIER, FORMULA)).toBe("earlier formula");
+  });
+  it("says nothing without a formula or a start date", () => {
+    expect(recordFormulaNote(CURRENT, undefined)).toBeUndefined();
+    expect(recordFormulaNote(CURRENT, { current: CURRENT, recordsSince: null })).toBeUndefined();
+  });
+
+  it("puts the note on Best day ever and Best day only", () => {
+    const tiles = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14", BEST_EVER, FORMULA);
+    const byKey = Object.fromEntries(tiles.map((t) => [t.key, t]));
+    expect(byKey["best-ever"].note).toBe("since Oct 9 (current\u00a0formula)");
+    expect(byKey.best.note).toBe("since Oct 9 (current\u00a0formula)");
+    expect(byKey.sand.note).toBeUndefined();
+    expect(byKey.quiet.note).toBeUndefined();
+  });
+
+  it("labels each score tile by its own record's formula", () => {
+    const tiles = recordTiles(
+      { ...FULL_RECORDS, bestDay: { ...FULL_RECORDS.bestDay!, engineVersion: EARLIER } },
+      "2026-09-14",
+      "2026-09-14",
+      BEST_EVER,
+      FORMULA,
+    );
+    const byKey = Object.fromEntries(tiles.map((t) => [t.key, t]));
+    expect(byKey.best.note).toBe("earlier formula");
+    expect(byKey["best-ever"].note).toBe("since Oct 9 (current\u00a0formula)");
+  });
+
+  it("leaves the tiles bare when no formula is passed (older server)", () => {
+    const tiles = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14", BEST_EVER);
+    expect(tiles.find((t) => t.key === "best")?.note).toBeUndefined();
+    expect(tiles.find((t) => t.key === "best-ever")?.note).toBeUndefined();
   });
 });

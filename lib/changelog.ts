@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-09",
+    title: "History now says when the scoring formula changed",
+    details:
+      "We sometimes tune how the score is worked out. A day scored by an older formula could look worse or better than today for that reason alone. Last N days now marks those days and tells you the date the scoring changed. Best day and Best day ever now count only days scored by the current formula, and say when that count began.",
+    tag: "improved",
+  },
+  {
+    date: "2026-10-09",
     title: "Strong wind now costs the score what it should",
     details:
       "A 15–16 mph onshore wind — sand blowing, towels pinned — used to keep most of its wind points. For the standard profile the sweet spot is now 5–12 mph, and each mph above it costs a quarter of the wind points: 16 mph and up gets none. Walkers and dog walkers tolerate a bit more; surfers are unchanged. Dead-calm air still eases off gently.",

@@ -106,6 +106,20 @@ const compareSunObservations = (a: SunEventObservationRow, b: SunEventObservatio
   a.distance_mi - b.distance_mi ||
   (a.cam_id < b.cam_id ? -1 : a.cam_id > b.cam_id ? 1 : 0);
 const SUN_OBS_MATCH_WINDOW_MS = 15 * 60_000;
+/** The engine version a score-ranked history record competes within: `wanted`
+ *  when any scored row has it, else the version of the latest scored row (the
+ *  fallback right after a version bump), else `wanted` (no scored rows). Mirrors
+ *  the COALESCE in d1Store's HISTORY_RECORDS_UNION. */
+function scoreRankingVersion(rows: BeachHourlyRow[], wanted: string): string {
+  let latest: BeachHourlyRow | null = null;
+  for (const r of rows) {
+    if (typeof r.score !== "number" || !Number.isFinite(r.score)) continue;
+    if (r.engine_version === wanted) return wanted;
+    if (!latest || r.hour_utc > latest.hour_utc) latest = r;
+  }
+  return latest ? latest.engine_version : wanted;
+}
+
 const alertKey = (deviceId: string, key: string) => `${deviceId}${key}`;
 const comingUpKey = (deviceId: string, eventKey: string) => `${deviceId}|${eventKey}`;
 
@@ -765,15 +779,19 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
     // single row that wins (max for best/hottest_sand/biggest_surf, min for
     // quietest), ties broken by the earliest hour_utc, same rule the SQL's
     // own `ORDER BY value [ASC|DESC], hour_utc ASC LIMIT 1` encodes.
-    async historyRecords(slug: string): Promise<HistoryRecordsResult> {
+    async historyRecords(slug: string, engineVersion: string): Promise<HistoryRecordsResult> {
       await load();
       const rowsForSlug = [...beachHourly.values()].filter((r) => r.slug === slug && r.row_kind === "snapshot");
+      // The 'best' score is a formula output, so it ranks within ONE version:
+      // `engineVersion` if any scored row has it, else the version of the
+      // latest scored row (right after a bump). Measurements ignore this.
+      const bestVersion = scoreRankingVersion(rowsForSlug, engineVersion);
 
       function pick(
         key: keyof BeachHourlyRow,
         direction: "max" | "min",
         extraFilter?: (r: BeachHourlyRow) => boolean,
-      ): { local_date: string; local_hour: number; value: number } | null {
+      ): { local_date: string; local_hour: number; value: number; engine_version: string } | null {
         let winner: BeachHourlyRow | null = null;
         for (const r of rowsForSlug) {
           const v = r[key];
@@ -788,11 +806,18 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
           const tie = v === wv;
           if (better || (tie && r.hour_utc < winner.hour_utc)) winner = r;
         }
-        return winner ? { local_date: winner.local_date, local_hour: winner.local_hour, value: winner[key] as number } : null;
+        return winner
+          ? {
+              local_date: winner.local_date,
+              local_hour: winner.local_hour,
+              value: winner[key] as number,
+              engine_version: winner.engine_version,
+            }
+          : null;
       }
 
       const records: HistoryRecordRow[] = [];
-      const best = pick("score", "max");
+      const best = pick("score", "max", (r) => r.engine_version === bestVersion);
       if (best) records.push({ kind: "best", ...best });
       const sand = pick("sand_temp_f", "max");
       if (sand) records.push({ kind: "hottest_sand", ...sand });
@@ -814,23 +839,35 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
     },
 
     // "Best day ever" — mirrors d1Store's one statement: across every beach,
-    // snapshot rows with a score, highest score wins, ties to the earliest
-    // hour_utc (same rule as `ORDER BY score DESC, hour_utc ASC LIMIT 1`).
-    async historyBestEver(): Promise<HistoryBestEverRow | null> {
+    // snapshot rows with a score AND the ranking version (`engineVersion`, or
+    // the latest scored row's version when none has it yet), highest score
+    // wins, ties to the earliest hour_utc (same rule as `ORDER BY score DESC,
+    // hour_utc ASC LIMIT 1`).
+    async historyBestEver(engineVersion: string): Promise<HistoryBestEverRow | null> {
       await load();
+      const scored = [...beachHourly.values()].filter(
+        (r) => r.row_kind === "snapshot" && typeof r.score === "number" && Number.isFinite(r.score),
+      );
+      const version = scoreRankingVersion(scored, engineVersion);
       let winner: BeachHourlyRow | null = null;
-      for (const r of beachHourly.values()) {
-        if (r.row_kind !== "snapshot" || typeof r.score !== "number" || !Number.isFinite(r.score)) continue;
+      for (const r of scored) {
+        if (r.engine_version !== version) continue;
         if (
           !winner ||
-          r.score > (winner.score as number) ||
+          (r.score as number) > (winner.score as number) ||
           (r.score === winner.score && r.hour_utc < winner.hour_utc)
         ) {
           winner = r;
         }
       }
       return winner
-        ? { slug: winner.slug, local_date: winner.local_date, local_hour: winner.local_hour, score: winner.score as number }
+        ? {
+            slug: winner.slug,
+            local_date: winner.local_date,
+            local_hour: winner.local_hour,
+            score: winner.score as number,
+            engine_version: winner.engine_version,
+          }
         : null;
     },
 

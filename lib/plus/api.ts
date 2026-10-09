@@ -6,7 +6,7 @@
 
 import type { AlertPrefs, DeviceRecord, SunColorMinBand } from "@/lib/db/types";
 import type { ScoreProfile } from "@/lib/profile/types";
-import type { DaySummary, HistoryBestEver, HistoryRecords } from "@/lib/history/summary";
+import type { DaySummary, HistoryBestEver, HistoryRecords, HistoryVersions } from "@/lib/history/summary";
 import { readInstallToken, writeInstallToken } from "@/lib/plus/storage";
 
 export interface PlusResult {
@@ -120,6 +120,15 @@ export interface HistoryResult {
   /** The highest Beach Day score ever recorded at ANY beach (not just this
    *  one), or null when none is on file — the "Best day ever" tile. */
   bestEver: HistoryBestEver | null;
+  /** Which scoring formulas scored the returned days and where the formula
+   *  changed inside them; null from a server that predates this field. */
+  versions: HistoryVersions | null;
+  /** First day of the CURRENT scoring formula — "Best day" and "Best day
+   *  ever" count from here. Null when unknown. */
+  recordsSince: string | null;
+  /** The score records had to come from an earlier formula because no row
+   *  carries the current one yet (right after a version bump). */
+  recordsFromEarlierFormula: boolean;
   archiveStartedAt: string | null;
   dayCount: number;
   /** MIN(local_date) among rows with a non-null surf_ft — normally later
@@ -132,9 +141,29 @@ export interface HistoryResult {
 
 function emptyHistoryResult(): Pick<
   HistoryResult,
-  "since" | "days" | "records" | "bestEver" | "archiveStartedAt" | "dayCount" | "surfSince"
+  | "since"
+  | "days"
+  | "records"
+  | "bestEver"
+  | "versions"
+  | "recordsSince"
+  | "recordsFromEarlierFormula"
+  | "archiveStartedAt"
+  | "dayCount"
+  | "surfSince"
 > {
-  return { since: null, days: [], records: null, bestEver: null, archiveStartedAt: null, dayCount: 0, surfSince: null };
+  return {
+    since: null,
+    days: [],
+    records: null,
+    bestEver: null,
+    versions: null,
+    recordsSince: null,
+    recordsFromEarlierFormula: false,
+    archiveStartedAt: null,
+    dayCount: 0,
+    surfSince: null,
+  };
 }
 
 /** Plus "Last N days" (docs/HISTORY_AND_IMAGERY_PLAN.md Part A). Same
@@ -174,6 +203,9 @@ async function fetchHistory(deviceId: string, slug: string, days: 7 | 14 | 30): 
     days?: unknown;
     records?: unknown;
     bestEver?: unknown;
+    versions?: unknown;
+    recordsSince?: unknown;
+    recordsFromEarlierFormula?: unknown;
     archiveStartedAt?: unknown;
     dayCount?: unknown;
     surfSince?: unknown;
@@ -186,6 +218,9 @@ async function fetchHistory(deviceId: string, slug: string, days: 7 | 14 | 30): 
       days: Array.isArray(obj.days) ? (obj.days as DaySummary[]) : [],
       records: (obj.records as HistoryRecords | undefined) ?? null,
       bestEver: (obj.bestEver as HistoryBestEver | null | undefined) ?? null,
+      versions: (obj.versions as HistoryVersions | null | undefined) ?? null,
+      recordsSince: typeof obj.recordsSince === "string" ? obj.recordsSince : null,
+      recordsFromEarlierFormula: obj.recordsFromEarlierFormula === true,
       archiveStartedAt: typeof obj.archiveStartedAt === "string" ? obj.archiveStartedAt : null,
       dayCount: typeof obj.dayCount === "number" ? obj.dayCount : 0,
       surfSince: typeof obj.surfSince === "string" ? obj.surfSince : null,

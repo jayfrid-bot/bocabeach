@@ -324,16 +324,24 @@ export interface HistoryRecordRow {
   local_date: string;
   local_hour: number;
   value: number;
+  /** SCORING_ENGINE_VERSION the winning row was scored with. Only the 'best'
+   *  kind is ranked by a formula output, so only it is limited to one
+   *  version; the other kinds are measurements and rank across all versions. */
+  engine_version: string;
 }
 
-/** The single highest hourly Beach Day score in the WHOLE archive, across
- *  every beach — straight off `DeviceStore.historyBestEver`'s one bounded
- *  statement. Ties go to the earliest `hour_utc`. */
+/** The single highest hourly Beach Day score in the archive, across every
+ *  beach, among rows of ONE formula version — straight off
+ *  `DeviceStore.historyBestEver`'s one bounded statement. Ties go to the
+ *  earliest `hour_utc`. */
 export interface HistoryBestEverRow {
   slug: string;
   local_date: string;
   local_hour: number;
   score: number;
+  /** The formula that scored this row. It is the current version unless no
+   *  row has that version yet (then the latest version that has rows). */
+  engine_version: string;
 }
 
 export interface HistoryRecordsResult {

@@ -8,7 +8,11 @@
 // `DeviceStore.historyRecords`, never bounded by `days`, so switching the
 // 7/14/30 chip can never make a record vanish or regress), plus one
 // cross-beach record, `bestEver` (the highest hourly score in the whole
-// archive, `DeviceStore.historyBestEver`). Four D1 statements total, all
+// archive, `DeviceStore.historyBestEver`). Score-ranked records (best day,
+// best ever) compete within ONE scoring formula, the current
+// SCORING_ENGINE_VERSION; the response also names which formulas scored the
+// shown days (`versions`, lib/scoringVersions.ts) so the UI can tell a
+// formula change from a weather change. Four D1 statements total, all
 // reads: the window SELECT (`hourlyHistory`), the UNION ALL of four
 // single-row subqueries and one small meta aggregate (both inside
 // `historyRecords`), and the one bounded best-ever SELECT.
@@ -34,10 +38,13 @@ import { requireInstallToken } from "@/lib/db/installTokenAuth";
 import { isNativeRequest } from "@/lib/nativeRequest";
 import { checkRateLimit, clientIp } from "@/lib/plus/rateLimit";
 import { localHourParts } from "@/lib/history/archive";
+import { SCORING_ENGINE_VERSION } from "@/lib/score";
 import {
+  recordsFormulaInfo,
   recordsFromRows,
   shiftLocalDate,
   summarizeHistory,
+  summarizeVersions,
   type HistoryBestEver,
 } from "@/lib/history/summary";
 
@@ -110,8 +117,8 @@ export async function POST(
     // nameable), and the best score ever recorded at ANY beach.
     const [rows, recordsResult, bestEverRow] = await Promise.all([
       store.hourlyHistory(slug, sinceLocalDate, todayLocal),
-      store.historyRecords(slug),
-      store.historyBestEver(),
+      store.historyRecords(slug, SCORING_ENGINE_VERSION),
+      store.historyBestEver(SCORING_ENGINE_VERSION),
     ]);
     const daySummaries = summarizeHistory(rows);
     const records = recordsFromRows(recordsResult.records);
@@ -128,8 +135,12 @@ export async function POST(
             score: bestEverRow.score,
             localHour: bestEverRow.local_hour,
             isThisBeach: bestEverRow.slug === slug,
+            engineVersion: bestEverRow.engine_version,
           }
         : null;
+
+    const versions = summarizeVersions(daySummaries, SCORING_ENGINE_VERSION);
+    const { recordsSince, recordsFromEarlierFormula } = recordsFormulaInfo(records, bestEver, SCORING_ENGINE_VERSION);
 
     return Response.json(
       {
@@ -138,6 +149,9 @@ export async function POST(
         days: daySummaries,
         records,
         bestEver,
+        versions,
+        recordsSince,
+        recordsFromEarlierFormula,
         archiveStartedAt: recordsResult.archiveStartedAt,
         dayCount: recordsResult.dayCount,
         surfSince: recordsResult.surfSince,

@@ -435,16 +435,26 @@ export interface DeviceStore {
    * both read off `archiveStartedAt`, never a hardcoded date. A beach with
    * no snapshot rows at all returns `{ records: [], archiveStartedAt: null,
    * dayCount: 0 }`.
+   *
+   * The 'best' score record is ranked among rows with `engineVersion` ONLY
+   * (a score is a formula output, so scores from different formulas are not
+   * comparable). If no row has that version yet, it falls back to the
+   * version of this beach's latest scored row. Each record row carries its
+   * own `engine_version`. The other kinds are measurements and rank across
+   * every version.
    */
-  historyRecords(slug: string): Promise<HistoryRecordsResult>;
+  historyRecords(slug: string, engineVersion: string): Promise<HistoryRecordsResult>;
   /**
    * The single highest hourly Beach Day score in the whole `beach_hourly`
    * archive, across EVERY beach (`row_kind = 'snapshot'`, `score IS NOT
    * NULL`) — the "Best day ever" record. One bounded statement (ORDER BY
    * score DESC, hour_utc ASC LIMIT 1), so ties go to the earliest hour.
+   * Only rows with `engineVersion` compete (same rule as the 'best' record
+   * above); with none yet, it falls back to the version of the archive's
+   * latest scored row. The result carries its `engine_version`.
    * `null` when nothing has been archived with a score yet.
    */
-  historyBestEver(): Promise<HistoryBestEverRow | null>;
+  historyBestEver(engineVersion: string): Promise<HistoryBestEverRow | null>;
 
   // --- Install token identity (migrations/0008_device_tokens.sql, Codex ----
   // combined-review #1) --------------------------------------------------
