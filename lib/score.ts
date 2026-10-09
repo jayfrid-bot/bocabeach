@@ -756,7 +756,7 @@ export function bestBeachWindow(hours: HourlyScore[], nowMs?: number): BestWindo
 // --- individual curves -----------------------------------------------------
 // Wind: a light sea breeze is the sweet spot, not dead calm. Under ~5 mph is
 // stagnant/buggy/hot; 5-12 mph is ideal; above 12 mph turns choppy and starts
-// blowing sand. Plateau across [5, 12]; eases off over 12 mph below, drops over 3 mph above
+// blowing sand. Plateau across [5, 12]; eases off over 12 mph below, drops over 4 mph above
 // (so dead calm ≈ 58; 13 mph = 75, 14 = 50, 15 = 25, 16 mph and up = 0).
 /** Below the band the score eases off over 12 mph (dead calm ≈ 58: hot and
  *  buggy, not dangerous). ABOVE the band it drops over 4 mph (2026-10-09):

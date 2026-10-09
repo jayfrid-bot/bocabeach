@@ -57,6 +57,14 @@ describe("resolveScoring", () => {
     expect(r.capPolicy).toBe("surf");
   });
 
+  // 2026-10-09: the high-side wind slide is per preset (surf keeps 12 mph;
+  // the rest use lib/score.ts's default by leaving it undefined).
+  it("wind slide: surf resolves to 12, swim omits it, surf+swim keeps surf's 12", () => {
+    expect(resolveScoring(profile({ profiles: ["surf"] })).ideals.windFalloffHigh).toBe(12);
+    expect(resolveScoring(profile({ profiles: ["swim"] })).ideals.windFalloffHigh).toBeUndefined();
+    expect(resolveScoring(profile({ profiles: ["swim", "surf"] })).ideals.windFalloffHigh).toBe(12);
+  });
+
   it("cap policy: surf wins over water, water over shore", () => {
     expect(resolveScoring(profile({ profiles: ["walk", "surf"] })).capPolicy).toBe("surf");
     expect(resolveScoring(profile({ profiles: ["walk", "kids"] })).capPolicy).toBe("water");

@@ -137,7 +137,7 @@ const FACTOR_EXPLAIN: Record<string, string> = {
   sky:
     "Sunshine and dryness blended: cloud cover drives the sunny feel, rain chance and any active weather pull it down. Full sun with no rain in sight ≈ 100; storms clamp it hard.",
   wind:
-    "Wind speed (median across sources). A 5–13 mph sea breeze is the sweet spot — dead calm turns muggy and buggy, while 20+ mph chop blows sand and whitecaps the water.",
+    "Wind speed (median across sources). A 5–12 mph sea breeze is the sweet spot — dead calm turns muggy and buggy, and the points fall fast above the band: 16 mph and up blows sand and whitecaps the water. Personal profiles shift the band.",
   waterTemp:
     "Ocean temperature from the nearest NOAA buoy (marine model as fallback). Mid-80s water is dream swimming; below ~70°F gets bracing fast.",
   waves:

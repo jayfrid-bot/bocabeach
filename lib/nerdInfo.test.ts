@@ -108,7 +108,7 @@ describe("nerdInfo registry quotes the REAL score.ts constants", () => {
     expect(info.formula).toContain("88");
   });
 
-  it("wind: 13% weight, plateau 5–12 mph sweet spot, 3 mph high-side falloff", () => {
+  it("wind: 13% weight, plateau 5–12 mph sweet spot, 4 mph high-side falloff", () => {
     const info = buildNerdInfo("wind", ctx);
     expect(info.weightPct).toBe(13);
     expect(info.formula).toContain("5–12");

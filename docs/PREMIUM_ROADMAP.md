@@ -74,7 +74,7 @@ Pick one profile or two; two blends the vectors.
 
 | Profile | Air ideal °F | Water ideal °F | Waves | Wind mph |
 |---|---|---|---|---|
-| Everyone / Swim | 78–88 | 77–90 | calm best | 5–13 |
+| Everyone / Swim | 78–88 | 77–90 | calm best | 5–12 |
 | Kids | 78–88 | 79–90 | calm best, steeper penalty | 5–12 |
 | Sun | 84–94 | — | — | 3–10 |
 | Snorkel | 76–90 | 78–90 | calm best, steep | 3–10 |
