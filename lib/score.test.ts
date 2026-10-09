@@ -1443,22 +1443,26 @@ describe("applyLiveRipCap (round 3 item 1: tightens AND loosens, rating tracks t
 });
 
 describe("scoring (Beach Day only — no surf), part 2", () => {
-  it("scores wind as a band: 5-13 mph ideal, calm and gusty both demerit", () => {
+  it("scores wind as a band: 5-12 mph ideal, calm eases off, strong wind drops fast", () => {
     const windSub = (mph: number) =>
       scoreBeachDay(deriveMetrics(snapshot({ weather: { windSpeedMph: mph } })))
         .subScores.find((s) => s.key === "wind")!.score;
 
-    // The 5-13 mph sea-breeze band is full marks.
+    // The 5-12 mph sea-breeze band is full marks.
     expect(windSub(5)).toBe(100);
     expect(windSub(8)).toBe(100);
-    expect(windSub(13)).toBe(100);
+    expect(windSub(12)).toBe(100);
 
     // Too little wind (stagnant) demerits; dead calm is clearly off-peak.
     expect(windSub(3)!).toBeLessThan(100);
     expect(windSub(0)!).toBeLessThan(windSub(3)!);
 
-    // Too much wind (choppy/sandblasting) demerits; a gale bottoms out.
-    expect(windSub(20)!).toBeLessThan(100);
+    // Above the band the drop is steep (2026-10-09): 13 mph is still
+    // decent, 14 marginal, 15 mph and up loses every wind point.
+    expect(windSub(13)).toBeCloseTo(66.7, 0);
+    expect(windSub(14)).toBeCloseTo(33.3, 0);
+    expect(windSub(15)).toBe(0);
+    expect(windSub(16)).toBe(0);
     expect(windSub(25)).toBe(0);
   });
 

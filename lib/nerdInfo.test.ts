@@ -108,12 +108,12 @@ describe("nerdInfo registry quotes the REAL score.ts constants", () => {
     expect(info.formula).toContain("88");
   });
 
-  it("wind: 13% weight, plateau 5–13 mph sweet spot", () => {
+  it("wind: 13% weight, plateau 5–12 mph sweet spot, 3 mph high-side falloff", () => {
     const info = buildNerdInfo("wind", ctx);
     expect(info.weightPct).toBe(13);
-    expect(info.formula).toContain("5");
-    expect(info.formula).toContain("13");
-    // 9 mph is inside 5–13 → 100/100
+    expect(info.formula).toContain("5–12");
+    expect(info.formula).toContain("3 mph above");
+    // 9 mph is inside 5–12 → 100/100
     expect(info.computation.join(" ")).toContain("100/100");
   });
 

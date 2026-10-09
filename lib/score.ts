@@ -755,10 +755,21 @@ export function bestBeachWindow(hours: HourlyScore[], nowMs?: number): BestWindo
 
 // --- individual curves -----------------------------------------------------
 // Wind: a light sea breeze is the sweet spot, not dead calm. Under ~5 mph is
-// stagnant/buggy/hot; 5-13 mph is ideal; above ~13 mph turns choppy and starts
-// blowing sand. Plateau across [5, 13], tapering to 0 over 12 mph on each side
-// (so dead calm ≈ 58, a 25 mph gale ≈ 0).
-const windScore = (mph: number, low = 5, high = 13) => plateau(mph, low, high, 12);
+// stagnant/buggy/hot; 5-12 mph is ideal; above 12 mph turns choppy and starts
+// blowing sand. Plateau across [5, 12]; eases off over 12 mph below, drops over 3 mph above
+// (so dead calm ≈ 58; 13 mph ≈ 67, 14 ≈ 33, 15 mph and up = 0).
+/** Below the band the score eases off over 12 mph (dead calm ≈ 58: hot and
+ *  buggy, not dangerous). ABOVE the band it drops over 3 mph (2026-10-09):
+ *  the owner at Boca in a 15–16 mph onshore wind — sand blowing, towels
+ *  pinned, chop — with the wind factor still at 75. The old 12 mph slide
+ *  (zero only at a 25 mph gale) never knocked off the points a real beach
+ *  day loses. Presets keep their own band; the falloffs are shared. */
+export const WIND_LOW_FALLOFF_MPH = 12;
+export const WIND_HIGH_FALLOFF_MPH = 3;
+const windScore = (mph: number, low = 5, high = 12) =>
+  mph > high
+    ? clamp(100 * (1 - (mph - high) / WIND_HIGH_FALLOFF_MPH), 0, 100)
+    : plateau(mph, low, high, WIND_LOW_FALLOFF_MPH);
 const waveCalm = (ft: number) => clamp(100 - Math.max(0, ft - 1) * 25, 0, 100);
 const uvScore = (uv: number) => clamp(100 - Math.max(0, uv - 8) * 12, 0, 100);
 
@@ -807,7 +818,7 @@ function waveScore(ft: number, mode: WaveMode): number {
 // score at 70 (were 85); a coastal-flood advisory / Beach Hazards Statement
 // keeps its 85 cap under its own name. Red-flag days read "Decent", not
 // "Yes — good beach day".
-export const SCORING_ENGINE_VERSION = "2026-10-06.1";
+export const SCORING_ENGINE_VERSION = "2026-10-09.1";
 
 /** Comfort curve (see comfortScore): dew point up to this is a perfect 100… */
 export const COMFORT_FREE_DEW_F = 65;
@@ -844,7 +855,7 @@ export const DEFAULT_SCORING: ScoringOptions = {
   ideals: {
     airPlateau: [78, 88],
     waterPlateau: [77, 90],
-    windPlateau: [5, 13],
+    windPlateau: [5, 12],
     waveMode: "calm",
   },
   capPolicy: "water",

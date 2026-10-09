@@ -41,8 +41,8 @@ function p(
 /** The ideal bands per profile (roadmap "Ideals per profile"). A profile with no
  *  opinion about the water keeps the default band — its water weight is tiny. */
 const IDEALS: Record<PresetId, ScoringIdeals> = {
-  everyone: { airPlateau: [78, 88], waterPlateau: [77, 90], windPlateau: [5, 13], waveMode: "calm" },
-  swim: { airPlateau: [78, 88], waterPlateau: [77, 90], windPlateau: [5, 13], waveMode: "calm" },
+  everyone: { airPlateau: [78, 88], waterPlateau: [77, 90], windPlateau: [5, 12], waveMode: "calm" },
+  swim: { airPlateau: [78, 88], waterPlateau: [77, 90], windPlateau: [5, 12], waveMode: "calm" },
   kids: { airPlateau: [78, 88], waterPlateau: [79, 90], windPlateau: [5, 12], waveMode: "calm" },
   sun: { airPlateau: [84, 94], waterPlateau: [77, 90], windPlateau: [3, 10], waveMode: "calm" },
   snorkel: { airPlateau: [76, 90], waterPlateau: [78, 90], windPlateau: [3, 10], waveMode: "calm" },

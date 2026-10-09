@@ -115,7 +115,7 @@ function reasonsFor(d: Derived, result: ScoreResult): {
       `A perfect ${w} mph sea breeze`,
       w < 3
         ? "Dead-still air — buggy and hot"
-        : w >= 18
+        : w >= 15
           ? `Strong ${w} mph wind — choppy and blowing sand`
           : `Brisk ${w} mph wind`,
     );

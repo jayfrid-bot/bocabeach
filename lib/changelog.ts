@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-09",
+    title: "Strong wind now costs the score what it should",
+    details:
+      "A 15–16 mph onshore wind — sand blowing, towels pinned — used to keep most of its wind points. The sweet spot is now 5–12 mph; 13 mph is still decent, 14 is marginal, and 15 mph and up gets no wind points at all. Dead-calm air still eases off gently.",
+    tag: "improved",
+  },
+  {
     date: "2026-10-08",
     title: "Surf height no longer jumps to an offshore number",
     details:
