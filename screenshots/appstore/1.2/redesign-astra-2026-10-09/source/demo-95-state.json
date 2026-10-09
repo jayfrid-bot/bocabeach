@@ -1,0 +1,139 @@
+{
+  "type": "illustrative marketing sample, not a live observation",
+  "scoringEngine": "2026-10-09.1",
+  "derived": {
+    "airTempF": 84,
+    "waterTempF": 82,
+    "windSpeedMph": 8,
+    "windDirDeg": 90,
+    "cloudCoverPct": 10,
+    "precipProbability": 0,
+    "shortForecast": "Sunny",
+    "weatherCode": 0,
+    "dewPointF": 69,
+    "humidityPct": 61,
+    "waveHeightFt": 1.4,
+    "sargassumLevel": "low",
+    "sargassumCoveragePct": 6,
+    "crowdPct": 25,
+    "uvIndex": 5,
+    "sandTempF": 101,
+    "flags": [
+      "green"
+    ],
+    "waterAdvisory": false,
+    "waterRating": "good",
+    "noSwimAdvisory": false,
+    "ripCurrentRisk": "low",
+    "ripNow": {
+      "level": "low",
+      "source": "forecast",
+      "alert": null,
+      "upcomingAlert": null,
+      "period": {
+        "level": "low",
+        "periodLabel": "Sample day"
+      },
+      "model": null,
+      "watch": false
+    },
+    "severeAlert": false,
+    "surfAdvisory": false,
+    "highSurfAdvisory": false,
+    "nowcastRaining": false,
+    "lightningWithin5mi": false
+  },
+  "score": {
+    "score": 95,
+    "rawScore": 95,
+    "rating": "Excellent",
+    "subScores": [
+      {
+        "key": "airTemp",
+        "label": "Air temperature",
+        "score": 100,
+        "weight": 0.16,
+        "display": "84°F"
+      },
+      {
+        "key": "sky",
+        "label": "Sky (sun & rain)",
+        "score": 94,
+        "weight": 0.16,
+        "display": "Sunny · 10% cloud"
+      },
+      {
+        "key": "wind",
+        "label": "Wind (sea breeze)",
+        "score": 100,
+        "weight": 0.13,
+        "display": "8 mph E"
+      },
+      {
+        "key": "comfort",
+        "label": "Comfort (mugginess)",
+        "score": 90,
+        "weight": 0.08,
+        "display": "69°F dew pt · 61% RH"
+      },
+      {
+        "key": "waterTemp",
+        "label": "Water temperature",
+        "score": 100,
+        "weight": 0.09,
+        "display": "82°F"
+      },
+      {
+        "key": "waves",
+        "label": "Sea state (swim calmness)",
+        "score": 90,
+        "weight": 0.14,
+        "display": "1.4 ft · gentle"
+      },
+      {
+        "key": "sargassum",
+        "label": "Seaweed (sargassum)",
+        "score": 91,
+        "weight": 0.07,
+        "display": "Low · ~6% covered"
+      },
+      {
+        "key": "crowds",
+        "label": "Crowds",
+        "score": 90,
+        "weight": 0.05,
+        "display": "~25% full"
+      },
+      {
+        "key": "uv",
+        "label": "UV index",
+        "score": 100,
+        "weight": 0.04,
+        "display": "5"
+      },
+      {
+        "key": "sandTemp",
+        "label": "Sand temperature (barefoot)",
+        "score": 91,
+        "weight": 0.08,
+        "display": "~101°F est."
+      }
+    ],
+    "caps": [],
+    "scoreExceptRipCap": 95,
+    "dataAvailable": true,
+    "completeness": 1,
+    "dataCoverage": "full",
+    "missingFactors": [],
+    "estimatedFactors": []
+  },
+  "safety": {
+    "level": "safe",
+    "reasons": []
+  },
+  "productionComponents": [
+    "components/ScoreWheel.tsx",
+    "components/plus/SafetyLine.tsx"
+  ],
+  "renderMethod": "Production React ScoreWheel SVG; vector card shell matching app typography and colors"
+}

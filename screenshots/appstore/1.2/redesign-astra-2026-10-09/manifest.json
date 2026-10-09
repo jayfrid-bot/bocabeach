@@ -1,0 +1,327 @@
+{
+  "created": "2026-10-09",
+  "updated": "2026-10-09",
+  "revision": 4,
+  "dimensions": [
+    1290,
+    2796
+  ],
+  "sourceCommit": "e3b7295c82e4e17301b9a7a975fa705595b5aee9",
+  "designReference": {
+    "file": "reference-round3/dropbox-reference.png",
+    "source": "/Users/yitzfrid/Dropbox (Personal)/ChatGPT Image Oct 9, 2026, 03_29_12 PM.png",
+    "sha256": "8103ae28135b61777f485a50b4c1f78f7ac08a5868bb0440ad4473ba9588a123",
+    "bytes": 2828973,
+    "visuallyInspected": true
+  },
+  "sources": [
+    {
+      "source": "source/demo-95.tsx",
+      "asset": "assets/01-app-95-demo.png",
+      "sha256": "747a64717b0db994a08dc383190a272cf64c11156fe869cd98a2574c6cfe91e2",
+      "type": "owner-requested illustrative sample rendered from production ScoreWheel",
+      "svg": "01-know.svg",
+      "sourceAssetEmbedded": true,
+      "preservedOriginalCapture": "assets/01-app.png",
+      "originalCaptureUnchanged": true
+    },
+    {
+      "source": "/Users/yitzfrid/Projects/bocabeach/screenshots/appstore/captures-1.2/la-01-lockscreen-v2.png",
+      "asset": "assets/02-app.png",
+      "sha256": "0aac55e7b6a5abfff4b529ae7c543db46a2de559c0c673f95a97fbff45792808",
+      "type": "original app capture",
+      "svg": "02-lock-screen.svg",
+      "sourceAssetEmbedded": true,
+      "preservedOriginalCapture": "assets/02-app.png",
+      "originalCaptureUnchanged": true
+    },
+    {
+      "source": "/Users/yitzfrid/Projects/bocabeach/screenshots/appstore/captures-1.2/12-reveal-deerfield-beach-v3-sun.png",
+      "asset": "assets/03-app.png",
+      "sha256": "0446c6e617955a3f7f691e97794988b6f90b8d1b98b23b57b29c2dc8ec441431",
+      "type": "original app capture",
+      "svg": "03-own-score.svg",
+      "sourceAssetEmbedded": true,
+      "preservedOriginalCapture": "assets/03-app.png",
+      "originalCaptureUnchanged": true
+    },
+    {
+      "source": "/Users/yitzfrid/Projects/bocabeach/screenshots/appstore/captures-1.2/02-rip-boca-raton-v2.png",
+      "asset": "assets/04-app.png",
+      "sha256": "047838e348218ce2372f641bbbbb4734127d572f8ed5531f6663eede66a788a8",
+      "type": "original app capture",
+      "svg": "04-rip-currents.svg",
+      "sourceAssetEmbedded": true,
+      "preservedOriginalCapture": "assets/04-app.png",
+      "originalCaptureUnchanged": true
+    },
+    {
+      "source": "/Users/yitzfrid/Projects/bocabeach/screenshots/appstore/captures-1.2/03-lightning-fort-lauderdale.png",
+      "asset": "assets/05-app.png",
+      "sha256": "9c9b40121ef8b53c22b7b0c7caaf889af93eb06c6c210d308c0f3aaef9d135a2",
+      "type": "original app capture",
+      "svg": "05-lightning.svg",
+      "sourceAssetEmbedded": true,
+      "preservedOriginalCapture": "assets/05-app.png",
+      "originalCaptureUnchanged": true
+    },
+    {
+      "source": "/Users/yitzfrid/Projects/bocabeach/screenshots/appstore/captures-1.2/05-cams-day-boca-raton.png",
+      "asset": "assets/06-app.png",
+      "sha256": "c91ba69f05325f6fab5a0e8b675aba8a6e9f936d1c13ffdf84cad202e0cc9251",
+      "type": "original app capture",
+      "svg": "06-cams.svg",
+      "sourceAssetEmbedded": true,
+      "preservedOriginalCapture": "assets/06-app.png",
+      "originalCaptureUnchanged": true
+    },
+    {
+      "source": "/Users/yitzfrid/Projects/bocabeach/screenshots/appstore/captures-1.2/07-plan-v4-fort-lauderdale.png",
+      "asset": "assets/07-app.png",
+      "sha256": "843f9faac729a4008c4f2cd1c015cc1ac16c1b7a1d83e4da5c058d40cfebf5c0",
+      "type": "original app capture",
+      "svg": "07-plan.svg",
+      "sourceAssetEmbedded": true,
+      "preservedOriginalCapture": "assets/07-app.png",
+      "originalCaptureUnchanged": true
+    },
+    {
+      "source": "/Users/yitzfrid/Projects/bocabeach/screenshots/appstore/captures-1.2/08-sun-gulf-shores-v2.png",
+      "asset": "assets/08-app.png",
+      "sha256": "0402a5e555f91ea2c61f7e7bde889a19ed50e57daca7d8daf3a87ad4657c17cf",
+      "type": "original app capture",
+      "svg": "08-sunset.svg",
+      "sourceAssetEmbedded": true,
+      "preservedOriginalCapture": "assets/08-app.png",
+      "originalCaptureUnchanged": true
+    }
+  ],
+  "exports": [
+    {
+      "file": "exports/01-know.jpg",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "f293665ad6d18d307c17544488de1c10f977b2980bc7e34ffd2f933ed9bc4269",
+      "bytes": 1075651
+    },
+    {
+      "file": "exports/01-know.png",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "2898a9ec16d05818f8fae474e0dda6015408df909b77d3ff8d1a4757f45a00d2",
+      "bytes": 3252040
+    },
+    {
+      "file": "exports/02-lock-screen.jpg",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "170bfdbc1ebdaaf96be198a236531172b371027b68daeebc1f61987fe4cdce73",
+      "bytes": 941421
+    },
+    {
+      "file": "exports/02-lock-screen.png",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "e8851f348604e5b132f2482c7ce32916c5c9e4ae31f68339718fb2c97990a581",
+      "bytes": 3349952
+    },
+    {
+      "file": "exports/03-own-score.jpg",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "19789845dcde65fbb1c85b369db66f65fb38801ca839cde22ea9e867c6d89362",
+      "bytes": 1085973
+    },
+    {
+      "file": "exports/03-own-score.png",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "8891c875622081c2cc236e8f63d08dbb2a950952156a5a82f484eed2521d0a42",
+      "bytes": 4171992
+    },
+    {
+      "file": "exports/04-rip-currents.jpg",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "ff1930529551e0b675d2d871f742b8ec640f6035a7399cf48ede7025be4edf7d",
+      "bytes": 870153
+    },
+    {
+      "file": "exports/04-rip-currents.png",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "70b8be84bf4be6c55b45f8db2a17876a7359148011c328d4c7c6e6f7e6fce56f",
+      "bytes": 2669463
+    },
+    {
+      "file": "exports/05-lightning.jpg",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "63b8c10012bbbaf0cc98d0ad7cb0122a2a2e4a81a382b95e7ce3ad539c5d227f",
+      "bytes": 859309
+    },
+    {
+      "file": "exports/05-lightning.png",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "a6808f0ce2da5edc6cac93b2f655e179aa2204e4cb7ae1e4f6e0dd0a8b8758b8",
+      "bytes": 3061715
+    },
+    {
+      "file": "exports/06-cams.jpg",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "3936030d78cc9b0ebec88a8f6e0b3108098b124f22fd4675e080b9061583f4ee",
+      "bytes": 1349325
+    },
+    {
+      "file": "exports/06-cams.png",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "1bbcaac9fe683f1729fa9aa918ef28071240437ab1ee3d4281b1a030ff33a566",
+      "bytes": 5370436
+    },
+    {
+      "file": "exports/07-plan.jpg",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "0627523eb61f01e610bed0f87d8dad412e50857fe36c5d3d920515380c6dd1ff",
+      "bytes": 1036260
+    },
+    {
+      "file": "exports/07-plan.png",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "6196f2d49e65d2311372e6e8fd530d3a19a3295a4b59a37dc301cb87bbc0c8b7",
+      "bytes": 2972863
+    },
+    {
+      "file": "exports/08-sunset.jpg",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "12e5f3108e8964cd4d8a93994e1add9e269ee780430f3465371996e5e3e29cfe",
+      "bytes": 893143
+    },
+    {
+      "file": "exports/08-sunset.png",
+      "width": 1290,
+      "height": 2796,
+      "channels": 3,
+      "space": "srgb",
+      "hasAlpha": false,
+      "hasIcc": true,
+      "sha256": "38d710b6c1e7c0bb4c8bae22abc76a99c487434a331b515d33b7d36470d940ac",
+      "bytes": 3432313
+    }
+  ],
+  "originals": [
+    {
+      "file": "screenshots/appstore/1.2/final/01-know.jpg",
+      "gitObject": "2d9b42c19c665104b3db0c5dec3bab84fa05e8ad",
+      "unchanged": true
+    },
+    {
+      "file": "screenshots/appstore/1.2/final/02-lock-screen.jpg",
+      "gitObject": "b7a2dd4db27b5028dcb6b12cadd5c740b285bc04",
+      "unchanged": true
+    },
+    {
+      "file": "screenshots/appstore/1.2/final/03-own-score.jpg",
+      "gitObject": "e1f84cb18a6e1c427c03d20dbc57cc3d49d522be",
+      "unchanged": true
+    },
+    {
+      "file": "screenshots/appstore/1.2/final/04-rip-currents.jpg",
+      "gitObject": "d6052512188a096e6a68a5411b58aaa63dc9ca8e",
+      "unchanged": true
+    },
+    {
+      "file": "screenshots/appstore/1.2/final/05-lightning.jpg",
+      "gitObject": "314944a76b707ade9bd999d1cfa262c2f7156f40",
+      "unchanged": true
+    },
+    {
+      "file": "screenshots/appstore/1.2/final/06-cams.jpg",
+      "gitObject": "65aeedee09434685dff52ac984966e1dc83946ce",
+      "unchanged": true
+    },
+    {
+      "file": "screenshots/appstore/1.2/final/07-plan.jpg",
+      "gitObject": "b0983478b5d25b140585b2d29e005a8759f500cf",
+      "unchanged": true
+    },
+    {
+      "file": "screenshots/appstore/1.2/final/08-sunset.jpg",
+      "gitObject": "5372feaae3ed642e3920c4dffb15510bc6834c77",
+      "unchanged": true
+    }
+  ],
+  "demo": {
+    "file": "source/demo-95-state.json",
+    "sha256": "394a54bba0cf273da92bc88e4c846629f79e518e9a2c3c85166dd38adede4284",
+    "score": 95,
+    "allFactorsAtLeast": 90,
+    "swimSafety": "safe",
+    "liveObservation": false
+  }
+}
