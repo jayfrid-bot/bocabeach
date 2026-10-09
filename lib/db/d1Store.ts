@@ -285,7 +285,8 @@ SELECT * FROM (
       (SELECT engine_version FROM beach_hourly
         WHERE slug = ?1 AND row_kind = 'snapshot' AND score IS NOT NULL AND engine_version = ?2 LIMIT 1),
       (SELECT engine_version FROM beach_hourly
-        WHERE slug = ?1 AND row_kind = 'snapshot' AND score IS NOT NULL ORDER BY hour_utc DESC LIMIT 1)
+        WHERE slug = ?1 AND row_kind = 'snapshot' AND score IS NOT NULL
+        ORDER BY hour_utc DESC, snapshot_generated_at DESC, archived_at DESC, slug ASC LIMIT 1)
     )
   ORDER BY score DESC, hour_utc ASC LIMIT 1
 )
@@ -1353,7 +1354,10 @@ export function d1Store(db: D1Like): DeviceStore {
     // beach. Same ORDER BY/tie-break rule as the per-beach `best` arm above:
     // highest score, earliest hour_utc wins. Same one-formula rule too: only
     // rows with `engineVersion` compete, or — when none has it yet — rows of
-    // the version that scored the archive's latest row. No index serves a
+    // the version that scored the archive's latest row. "Latest" is a total
+    // order (hour_utc, then snapshot_generated_at, archived_at, slug): every
+    // beach archived in one hourly run shares hour_utc, so hour_utc alone
+    // could pick either version when a run straddles a bump. No index serves a
     // cross-beach score sort, so this scans `beach_hourly` (about 40 beaches
     // x <= 24 rows a day); fine at today's size, and the reason it is
     // exactly one LIMIT 1 statement rather than anything chattier.
@@ -1363,7 +1367,7 @@ export function d1Store(db: D1Like): DeviceStore {
           "SELECT slug, local_date, local_hour, score, engine_version FROM beach_hourly " +
             "WHERE row_kind = 'snapshot' AND score IS NOT NULL AND engine_version = COALESCE(" +
             "(SELECT engine_version FROM beach_hourly WHERE row_kind = 'snapshot' AND score IS NOT NULL AND engine_version = ?1 LIMIT 1), " +
-            "(SELECT engine_version FROM beach_hourly WHERE row_kind = 'snapshot' AND score IS NOT NULL ORDER BY hour_utc DESC LIMIT 1)) " +
+            "(SELECT engine_version FROM beach_hourly WHERE row_kind = 'snapshot' AND score IS NOT NULL ORDER BY hour_utc DESC, snapshot_generated_at DESC, archived_at DESC, slug ASC LIMIT 1)) " +
             "ORDER BY score DESC, hour_utc ASC LIMIT 1",
         )
         .bind(engineVersion)

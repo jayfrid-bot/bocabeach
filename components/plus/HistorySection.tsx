@@ -71,17 +71,17 @@ function statsLine(d: DaySummary): string {
 }
 
 /** Which scoring formula a day was scored by, next to the current one:
- *  "current" (all rows), "earlier" (none), or "mixed" (a change landed that
- *  day). With no `current` (an older server) or no version list, every day
- *  reads "current" — nothing to compare, so nothing is marked. */
+ *  "current" (all rows), "earlier" (one older formula), or "mixed" (more than
+ *  one formula scored its rows, so a change landed that day). With no
+ *  `current` (an older server) or no version list, every day reads
+ *  "current" — nothing to compare, so nothing is marked. */
 export type DayFormulaState = "current" | "earlier" | "mixed";
 
 export function dayFormulaState(day: DaySummary, current: string | null): DayFormulaState {
   const versions = day.engineVersions ?? [];
   if (!current || versions.length === 0) return "current";
-  const hasCurrent = versions.includes(current);
-  if (hasCurrent && versions.length === 1) return "current";
-  return hasCurrent ? "mixed" : "earlier";
+  if (versions.length > 1) return "mixed";
+  return versions[0] === current ? "current" : "earlier";
 }
 
 /** The one quiet line under the strip when the shown days cross a formula
@@ -118,14 +118,27 @@ export function recordFormulaNote(
   return formula.recordsSince ? `since ${shortMonthDay(formula.recordsSince)} (current\u00a0formula)` : undefined;
 }
 
+/** The accessible-name phrase for a day's formula state, or null for a day
+ *  the current formula scored. A change day that includes the current formula
+ *  is "partly" earlier; one with only older formulas used more than one. */
+export function formulaAriaPhrase(day: DaySummary, state: DayFormulaState, current: string | null): string | null {
+  if (state === "earlier") return "scored by an earlier formula";
+  if (state === "mixed") {
+    return current && day.engineVersions.includes(current)
+      ? "partly scored by an earlier formula"
+      : "scored using more than one formula";
+  }
+  return null;
+}
+
 /** Full weekday + date + best score, for the day cell's accessible name —
  *  the visible cell only has room for the 3-letter weekday. */
-function dayCellAriaLabel(day: DaySummary, formula: DayFormulaState = "current"): string {
+function dayCellAriaLabel(day: DaySummary, formula: DayFormulaState = "current", current: string | null = null): string {
   const bits = [`${weekdayLongOf(day.date)} ${shortMonthDay(day.date)}`];
   bits.push(day.best ? `best ${day.best.score} at ${hour12Label(day.best.localHour)}` : "no score available");
   if (day.partial) bits.push("partial day");
-  if (formula === "earlier") bits.push("scored by an earlier formula");
-  if (formula === "mixed") bits.push("partly scored by an earlier formula");
+  const phrase = formulaAriaPhrase(day, formula, current);
+  if (phrase) bits.push(phrase);
   return bits.join(", ");
 }
 
@@ -177,11 +190,13 @@ function DaysChip({
 function DayCell({
   day,
   formula,
+  current,
   isOpen,
   onToggle,
 }: {
   day: DaySummary;
   formula: DayFormulaState;
+  current: string | null;
   isOpen: boolean;
   onToggle: () => void;
 }) {
@@ -193,7 +208,7 @@ function DayCell({
       disabled={!expandable}
       aria-expanded={expandable ? isOpen : undefined}
       aria-controls={expandable ? panelId : undefined}
-      aria-label={dayCellAriaLabel(day, formula)}
+      aria-label={dayCellAriaLabel(day, formula, current)}
       onClick={() => expandable && onToggle()}
       className={`min-h-[64px] w-16 shrink-0 rounded-xl bg-white/80 p-1.5 text-center ring-1 ring-slate-900/10 transition dark:bg-slate-900/70 dark:ring-white/10 sm:w-20 sm:rounded-2xl sm:p-2 ${
         expandable
@@ -658,6 +673,7 @@ export function HistorySection({
                       key={d.date}
                       day={d}
                       formula={dayFormulaState(d, currentVersion)}
+                      current={currentVersion}
                       isOpen={openDate === d.date}
                       onToggle={() => setOpenDate((cur) => (cur === d.date ? null : d.date))}
                     />

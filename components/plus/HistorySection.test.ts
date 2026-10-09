@@ -6,6 +6,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   dayFormulaState,
+  formulaAriaPhrase,
   formulaChangeNotice,
   recordFormulaNote,
   recordTiles,
@@ -370,10 +371,12 @@ describe("dayFormulaState", () => {
   });
   it("is 'earlier' when no row did", () => {
     expect(dayFormulaState(day([EARLIER]), CURRENT)).toBe("earlier");
-    expect(dayFormulaState(day([EARLIER, "2026-09-28.2"]), CURRENT)).toBe("earlier");
   });
   it("is 'mixed' on a day a change landed", () => {
     expect(dayFormulaState(day([EARLIER, CURRENT]), CURRENT)).toBe("mixed");
+  });
+  it("is 'mixed' on a day two EARLIER formulas shared, even with no current-version row", () => {
+    expect(dayFormulaState(day(["2026-09-28.1", "2026-09-28.2"]), CURRENT)).toBe("mixed");
   });
   it("marks nothing when the server sent no current version or no versions", () => {
     expect(dayFormulaState(day([EARLIER]), null)).toBe("current");
@@ -422,5 +425,22 @@ describe("recordFormulaNote / score tiles", () => {
     const tiles = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14", BEST_EVER);
     expect(tiles.find((t) => t.key === "best")?.note).toBeUndefined();
     expect(tiles.find((t) => t.key === "best-ever")?.note).toBeUndefined();
+  });
+});
+
+describe("formulaAriaPhrase", () => {
+  it("is null for a current-formula day", () => {
+    expect(formulaAriaPhrase(day([CURRENT]), "current", CURRENT)).toBeNull();
+  });
+  it("says 'scored by an earlier formula' for an earlier day", () => {
+    expect(formulaAriaPhrase(day([EARLIER]), "earlier", CURRENT)).toBe("scored by an earlier formula");
+  });
+  it("says 'partly scored by an earlier formula' on a change day that includes the current formula", () => {
+    expect(formulaAriaPhrase(day([EARLIER, CURRENT]), "mixed", CURRENT)).toBe("partly scored by an earlier formula");
+  });
+  it("says 'scored using more than one formula' on a change day of two older formulas", () => {
+    expect(formulaAriaPhrase(day(["2026-09-28.1", "2026-09-28.2"]), "mixed", CURRENT)).toBe(
+      "scored using more than one formula",
+    );
   });
 });

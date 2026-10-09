@@ -109,13 +109,23 @@ const SUN_OBS_MATCH_WINDOW_MS = 15 * 60_000;
 /** The engine version a score-ranked history record competes within: `wanted`
  *  when any scored row has it, else the version of the latest scored row (the
  *  fallback right after a version bump), else `wanted` (no scored rows). Mirrors
- *  the COALESCE in d1Store's HISTORY_RECORDS_UNION. */
+ *  the COALESCE in d1Store's HISTORY_RECORDS_UNION. "Latest" is a total order,
+ *  the same as the SQL's: hour_utc DESC, snapshot_generated_at DESC,
+ *  archived_at DESC, slug ASC. Beaches archived in one hourly run share
+ *  hour_utc, so the tie-breaks keep the pick independent of Map order. */
+function isMoreRecent(a: BeachHourlyRow, b: BeachHourlyRow): boolean {
+  if (a.hour_utc !== b.hour_utc) return a.hour_utc > b.hour_utc;
+  if (a.snapshot_generated_at !== b.snapshot_generated_at) return a.snapshot_generated_at > b.snapshot_generated_at;
+  if (a.archived_at !== b.archived_at) return a.archived_at > b.archived_at;
+  return a.slug < b.slug;
+}
+
 function scoreRankingVersion(rows: BeachHourlyRow[], wanted: string): string {
   let latest: BeachHourlyRow | null = null;
   for (const r of rows) {
     if (typeof r.score !== "number" || !Number.isFinite(r.score)) continue;
     if (r.engine_version === wanted) return wanted;
-    if (!latest || r.hour_utc > latest.hour_utc) latest = r;
+    if (!latest || isMoreRecent(r, latest)) latest = r;
   }
   return latest ? latest.engine_version : wanted;
 }

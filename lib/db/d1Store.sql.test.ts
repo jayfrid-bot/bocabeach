@@ -842,6 +842,26 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
         expect(best).toMatchObject({ value: 82, engine_version: NEW });
       });
 
+      it("the fallback is deterministic when two beaches share the latest hour_utc under two versions", async () => {
+        const same = { hour_utc: "2026-10-10T16:00:00.000Z", local_date: "2026-10-10" };
+        await store.upsertBeachHourly(
+          hourlyRow({ ...same, slug: "gulf-shores", score: 70, engine_version: OLD, snapshot_generated_at: "2026-10-10T16:05:00.000Z", archived_at: "2026-10-10T16:05:01.000Z" }),
+        );
+        await store.upsertBeachHourly(
+          hourlyRow({ ...same, slug: "boca-raton", score: 60, engine_version: NEW, snapshot_generated_at: "2026-10-10T16:06:00.000Z", archived_at: "2026-10-10T16:06:01.000Z" }),
+        );
+        // The later snapshot clock wins the tie on hour_utc.
+        expect(await store.historyBestEver("2026-12-01.1")).toMatchObject({ score: 60, engine_version: NEW });
+      });
+
+      it("with equal clocks too, the tie breaks on slug ascending, whatever the insert order", async () => {
+        const same = { hour_utc: "2026-10-10T16:00:00.000Z", local_date: "2026-10-10", snapshot_generated_at: "2026-10-10T16:05:00.000Z", archived_at: "2026-10-10T16:05:01.000Z" };
+        await store.upsertBeachHourly(hourlyRow({ ...same, slug: "gulf-shores", score: 50, engine_version: NEW }));
+        await store.upsertBeachHourly(hourlyRow({ ...same, slug: "boca-raton", score: 50, engine_version: OLD }));
+        // "boca-raton" sorts first, so its version (OLD) is the fallback.
+        expect(await store.historyBestEver("2026-12-01.1")).toMatchObject({ engine_version: OLD });
+      });
+
       it("the fallback ignores a row with a null score and other beaches' rows", async () => {
         await seed();
         await store.upsertBeachHourly(

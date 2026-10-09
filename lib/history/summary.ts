@@ -240,6 +240,7 @@ function summarizeDay(date: string, rowsForDate: BeachHourlyRow[]): DaySummary {
     if (!worst || r.score < worst.score) worst = { score: r.score, localHour: r.local_hour };
   }
 
+  // On a day a formula change landed, best/worst/avg still combine both formulas' hours.
   const avgScore = scored.length ? scored.reduce((sum, r) => sum + r.score, 0) / scored.length : null;
   const waterAvg = avgOf(sorted, "water_temp_f");
 

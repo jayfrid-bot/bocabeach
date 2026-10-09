@@ -515,6 +515,33 @@ describe("historyRecords / historyBestEver — score records stay within one for
     expect(await store.historyBestEver("2026-12-01.1")).toMatchObject({ score: 82, engine_version: NEW });
   });
 
+  it("the fallback is deterministic when two beaches share the latest hour_utc under two versions", async () => {
+    const store = await getStore();
+    const hour = hourUtcOf(Date.parse("2026-10-10T16:00:00Z"));
+    // Same hour_utc, different versions. The later snapshot clock wins.
+    await store.upsertBeachHourly(
+      row({ slug: "gulf-shores", hour_utc: hour, local_date: "2026-10-10", score: 70, engine_version: OLD, snapshot_generated_at: "2026-10-10T16:05:00.000Z", archived_at: "2026-10-10T16:05:01.000Z" }),
+    );
+    await store.upsertBeachHourly(
+      row({ slug: "boca-raton", hour_utc: hour, local_date: "2026-10-10", score: 60, engine_version: NEW, snapshot_generated_at: "2026-10-10T16:06:00.000Z", archived_at: "2026-10-10T16:06:01.000Z" }),
+    );
+    expect(await store.historyBestEver("2026-12-01.1")).toMatchObject({ score: 60, engine_version: NEW });
+  });
+
+  it("with equal clocks too, the tie breaks on slug ascending, whatever the insert order", async () => {
+    const hour = hourUtcOf(Date.parse("2026-10-10T16:00:00Z"));
+    const same = { hour_utc: hour, local_date: "2026-10-10", snapshot_generated_at: "2026-10-10T16:05:00.000Z", archived_at: "2026-10-10T16:05:01.000Z" };
+    for (const order of [["boca-raton", "gulf-shores"], ["gulf-shores", "boca-raton"]]) {
+      resetMemoryStore();
+      const store = await getStore();
+      for (const slug of order) {
+        await store.upsertBeachHourly(row({ ...same, slug, score: 50, engine_version: slug === "boca-raton" ? OLD : NEW }));
+      }
+      // "boca-raton" sorts first, so its version (OLD) is the fallback.
+      expect(await store.historyBestEver("2026-12-01.1")).toMatchObject({ engine_version: OLD });
+    }
+  });
+
   it("a null-score row never sets the fallback version", async () => {
     const store = await seed();
     await store.upsertBeachHourly(
