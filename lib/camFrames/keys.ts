@@ -1,10 +1,12 @@
 // R2 object keys for the webcam archive (docs/CAM_ARCHIVE_PLAN.md R2/R6/R9).
 //
-//   <slug>/<cam_id>/<local_date>/<HHmm>Z-<sha8>.jpg
+//   <slug>/<cam_id>/<local_date>/<HHmm>Z-<sha8>-<claim8>.jpg
 //
 // local_date is the beach-local date of the frame's display time. HHmm is the
 // UTC time of the same instant, so the key is unambiguous across DST. sha8 is
-// the first 8 hex characters of the JPEG's SHA-256.
+// the first 8 hex characters of the JPEG's SHA-256. claim8 is the first 8 hex
+// characters of the ingest's random claim id, so two claimants holding identical
+// bytes never share a key and a stale claimant can never delete the winner's object.
 //
 // The validator is the only gate for a key that arrives from outside (the
 // signed-URL route). It is strict on purpose: no path tricks, no uppercase,
@@ -15,7 +17,7 @@ const ID_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_ID_LEN = 64;
 
 const KEY_RE =
-  /^([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(\d{4}-\d{2}-\d{2})\/([01]\d|2[0-3])([0-5]\d)Z-([0-9a-f]{8})\.jpg$/;
+  /^([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(\d{4}-\d{2}-\d{2})\/([01]\d|2[0-3])([0-5]\d)Z-([0-9a-f]{8})-([0-9a-f]{8})\.jpg$/;
 
 export interface ParsedFrameKey {
   slug: string;
@@ -25,6 +27,7 @@ export interface ParsedFrameKey {
   utcHour: number;
   utcMinute: number;
   sha8: string;
+  claim8: string;
 }
 
 export function isValidId(v: unknown): v is string {
@@ -46,6 +49,13 @@ export function sha8(sha256Hex: string): string {
   return sha256Hex.slice(0, 8);
 }
 
+/** First 8 characters of a claim id (a UUID), which must be lowercase hex. */
+export function claim8(claimId: string): string {
+  const c = claimId.slice(0, 8);
+  if (!/^[0-9a-f]{8}$/.test(c)) throw new Error("bad claim id");
+  return c;
+}
+
 /**
  * Build the R2 key. `displayAtUtc` is the ISO display time (UTC); `localDate`
  * is its beach-local date. Throws on any malformed input, so a bug cannot
@@ -57,8 +67,10 @@ export function buildFrameKey(args: {
   localDate: string;
   displayAtUtc: string;
   sha256Hex: string;
+  /** The ingest's claim id (UUID); its first 8 characters go in the key. */
+  claimId: string;
 }): string {
-  const { slug, camId, localDate, displayAtUtc, sha256Hex } = args;
+  const { slug, camId, localDate, displayAtUtc, sha256Hex, claimId } = args;
   if (!isValidId(slug) || !isValidId(camId)) throw new Error("bad slug or cam id");
   if (!isCalendarDate(localDate)) throw new Error("bad local date");
   const ms = Date.parse(displayAtUtc);
@@ -67,7 +79,7 @@ export function buildFrameKey(args: {
   const d = new Date(ms);
   const hh = String(d.getUTCHours()).padStart(2, "0");
   const mm = String(d.getUTCMinutes()).padStart(2, "0");
-  return `${slug}/${camId}/${localDate}/${hh}${mm}Z-${sha8(sha256Hex)}.jpg`;
+  return `${slug}/${camId}/${localDate}/${hh}${mm}Z-${sha8(sha256Hex)}-${claim8(claimId)}.jpg`;
 }
 
 /** Parse a key, or null when it is not exactly the shape above. */
@@ -75,10 +87,10 @@ export function parseFrameKey(key: unknown): ParsedFrameKey | null {
   if (typeof key !== "string" || key.length > 200) return null;
   const m = KEY_RE.exec(key);
   if (!m) return null;
-  const [, slug, camId, localDate, hh, mm, hash] = m;
+  const [, slug, camId, localDate, hh, mm, hash, claim] = m;
   if (slug.length > MAX_ID_LEN || camId.length > MAX_ID_LEN) return null;
   if (!isCalendarDate(localDate)) return null;
-  return { slug, camId, localDate, utcHour: Number(hh), utcMinute: Number(mm), sha8: hash };
+  return { slug, camId, localDate, utcHour: Number(hh), utcMinute: Number(mm), sha8: hash, claim8: claim };
 }
 
 /** True when `key` has exactly the archive key shape. */

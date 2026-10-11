@@ -16,11 +16,27 @@
 //   5. Body read incrementally, aborted past 600 KB.             413 / 400
 //   6. JPEG magic FF D8 FF and at least 10 KB.                   400
 //   7. sha-256, three clocks (clock.ts), R2 key (keys.ts).
-//   8. Atomic slot claim: INSERT ... ON CONFLICT DO NOTHING.     {stored:false, reason:"slot-taken"}
-//   9. Newest READY frame has the same sha: delete pending.      {stored:false, reason:"unchanged"}
-//  10. R2 put. On failure delete the pending row.                502
-//  11. Mark ready. On failure try to delete the R2 object.       500
-//  12.                                                           {stored:true, key, slotUtc, displayAtUtc}
+//   8. Atomic slot claim with a random claim id: INSERT ... ON CONFLICT DO
+//      NOTHING, else take over a pending claim older than 10 min.   {stored:false, reason:"slot-taken"}
+//   9. Newest READY frame has the same sha: delete our pending.      {stored:false, reason:"unchanged"}
+//      (advisory only: see newestReadySha in lib/camFrames/store.ts)
+//  10. R2 put (the key carries the claim id). On failure delete our
+//      pending row.                                                  502
+//  11. Mark ready, matching our claim id. If that errors or changes
+//      nothing, RE-READ the row (see "uncertain finalize" below).
+//  12.                                                               {stored:true, key, slotUtc, displayAtUtc}
+//
+// UNCERTAIN FINALIZE. D1 can commit the `ready` update and still lose the
+// response. Deleting the R2 object then would leave a ready row pointing at
+// nothing, the one state readers cannot tolerate. So after a finalize error we
+// read the row back:
+//   ready with OUR claim     -> it did commit: success, keep the object;
+//   readable, but not ours,
+//     or ours and still pending -> our object is unreferenced: delete it;
+//   unreadable (D1 still down)   -> change nothing, delete nothing. An orphan
+//                                   object is safer than a broken ready row;
+//                                   the 367-day lifecycle rule removes it, and
+//                                   the stuck pending row is taken over or purged.
 //
 // Subrequests per stored frame: claim, sha lookup, R2 put, mark ready = 4.
 // `attribution` is read from the cam config here and stored on the row, so a
@@ -41,7 +57,15 @@ import {
 import { buildFrameKey } from "@/lib/camFrames/keys";
 import { lookupCam } from "@/lib/camFrames/manifest";
 import { getCamFramesBucket } from "@/lib/camFrames/r2";
-import { claimSlot, deletePending, markReady, newestReadySha, type CamFrameRow } from "@/lib/camFrames/store";
+import {
+  claimSlot,
+  deletePending,
+  markReady,
+  newestReadySha,
+  readSlot,
+  type CamFrameRow,
+  type SlotRowState,
+} from "@/lib/camFrames/store";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -94,12 +118,14 @@ export async function POST(req: Request): Promise<Response> {
     frameAtRaw: url.searchParams.get("frameAt"),
     timezone: cam.timezone,
   });
+  const claimId = crypto.randomUUID();
   const key = buildFrameKey({
     slug,
     camId,
     localDate: clocks.localDate,
     displayAtUtc: clocks.displayAtUtc,
     sha256Hex: sha,
+    claimId,
   });
   const row: CamFrameRow = {
     slug,
@@ -118,6 +144,8 @@ export async function POST(req: Request): Promise<Response> {
     sha256: sha,
     source_kind: cam.sourceKind,
     attribution: cam.attribution,
+    claim_id: claimId,
+    claimed_at_utc: clocks.receivedAtUtc,
   };
 
   // 8. atomic claim
@@ -127,8 +155,10 @@ export async function POST(req: Request): Promise<Response> {
     return err("store-unavailable", 503);
   }
 
-  // From here we own a pending row: every exit below must settle it.
-  const release = () => deletePending(db, slug, camId, clocks.slotUtc, key).catch(() => undefined);
+  // From here we own a pending row: every exit below must settle it. Both
+  // release and finalize match our claim id, so a claimant that was taken over
+  // changes nothing.
+  const release = () => deletePending(db, slug, camId, clocks.slotUtc, claimId).catch(() => undefined);
 
   // 9. unchanged since the newest stored frame?
   try {
@@ -153,12 +183,31 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   // 11. finalize
+  let finalized = false;
   try {
-    if (!(await markReady(db, slug, camId, clocks.slotUtc, key))) throw new Error("claim lost");
+    finalized = await markReady(db, slug, camId, clocks.slotUtc, claimId);
   } catch {
-    await bucket.delete(key).catch(() => undefined);
-    await release();
-    return err("finalize-failed", 500);
+    finalized = false; // the update may or may not have committed: find out below
+  }
+  if (!finalized) {
+    let seen: SlotRowState | null;
+    try {
+      seen = await readSlot(db, slug, camId, clocks.slotUtc);
+    } catch {
+      // D1 is still unreachable. Do NOT touch R2: if the ready update did
+      // commit, deleting the object would break a live row.
+      return err("finalize-uncertain", 500);
+    }
+    if (seen && seen.claim_id === claimId && seen.state === "ready") {
+      // The update committed and only its response was lost.
+    } else {
+      // Our object is not referenced by any ready row. The key holds our claim id,
+      // so deleting it cannot hurt anyone else's frame.
+      await bucket.delete(key).catch(() => undefined);
+      if (seen && seen.claim_id === claimId) await release();
+      if (seen && seen.claim_id !== claimId) return Response.json({ stored: false, reason: "slot-taken" });
+      return err("finalize-failed", 500);
+    }
   }
 
   return Response.json({ stored: true, key, slotUtc: clocks.slotUtc, displayAtUtc: clocks.displayAtUtc });

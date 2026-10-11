@@ -8,12 +8,17 @@
 // Default is a READ-ONLY dry run: list what exists and change nothing. Deleting
 // needs `--yes`. `--dry-run` always wins over `--yes`.
 //
-// R2 has no "list" in wrangler, so the object list is the `r2_key` column of
-// the cam's D1 rows (every state, pending included). An orphan object with no
-// row (an R2 put that succeeded and whose cleanup also failed) is not found
-// here; the bucket's 367-day lifecycle rule removes it. R2 objects go FIRST and
-// D1 rows only after every object delete succeeded, so a failed run can simply
-// be repeated: no row is dropped while its object may still exist.
+// wrangler has no `r2 object list`, so the objects under `<slug>/<camId>/` are
+// listed through R2's S3-compatible API (lib/camFrames/r2s3.ts) when the
+// credentials are in the environment (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID,
+// R2_SECRET_ACCESS_KEY; see scripts/cam_archive_remove.ts). The delete set is
+// that listing plus the `r2_key` of every D1 row. Without credentials the set is
+// the D1 rows' keys only, and the script says so loudly: an orphan object with
+// no row (an R2 put that succeeded and whose cleanup also failed) would remain
+// until the bucket's 367-day lifecycle rule removes it.
+// R2 objects go FIRST and D1 rows only after every object delete succeeded, so a
+// failed run can simply be repeated: no row is dropped while its object may
+// still exist.
 //
 // Set `archive: false` on the cam in config/locations.ts and deploy BEFORE
 // erasing, or the next capture tick stores a new frame.
@@ -104,6 +109,8 @@ export function planRemoval(slug: string, camId: string, rows: FrameListRow[]): 
 export interface RemovalIo {
   /** Run a SQL statement against production D1 and return its rows. */
   d1: (sql: string) => Promise<Record<string, unknown>[]>;
+  /** Every R2 object key under a prefix (S3 API). Absent when no R2 credentials are set. */
+  r2List?: (prefix: string) => Promise<string[]>;
   /** Delete one R2 object. Resolves when it is gone (or never existed). */
   r2Delete: (key: string) => Promise<void>;
   log: (line: string) => void;
@@ -112,6 +119,8 @@ export interface RemovalIo {
 export interface RemovalOutcome {
   dryRun: boolean;
   plan: RemovalPlan;
+  /** Objects found under the prefix that no D1 row points at (null when R2 was not listed). */
+  orphans: number | null;
   deletedObjects: number;
   deletedRows: number;
   /** Rows still present after a real run (should be 0). */
@@ -124,6 +133,26 @@ export async function runRemoval(args: RemoveArgs, io: RemovalIo, concurrency: n
   const rows = (await io.d1(selectFramesSql(slug, camId))) as unknown as FrameListRow[];
   const plan = planRemoval(slug, camId, rows);
 
+  // The real contents of the prefix, when we can list it.
+  const prefix = camPrefix(slug, camId);
+  let orphans: number | null = null;
+  let toDelete = plan.keys;
+  if (io.r2List) {
+    const listed = await io.r2List(prefix);
+    for (const k of listed) {
+      if (!k.startsWith(prefix) || k.includes("..")) throw new Error(`refusing: listed key ${JSON.stringify(k)} is not under ${prefix}`);
+    }
+    const known = new Set(plan.keys);
+    orphans = listed.filter((k) => !known.has(k)).length;
+    toDelete = [...new Set([...plan.keys, ...listed])];
+    io.log(`R2 holds ${listed.length} object(s) under ${prefix}; ${orphans} have no D1 row`);
+  } else {
+    io.log(
+      "WARNING: R2 credentials are not set (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY), so only the objects " +
+        "named by D1 rows can be deleted. Orphan objects with no row may remain until the 367-day lifecycle rule removes them.",
+    );
+  }
+
   const cfg = lookupCam(slug, camId);
   if (cfg.status === "unknown") io.log(`note: ${slug}/${camId} is not in config/locations.ts (stored frames can still be erased)`);
   if (cfg.status === "ok" && !dryRun) {
@@ -132,33 +161,33 @@ export async function runRemoval(args: RemoveArgs, io: RemovalIo, concurrency: n
   const mb = (plan.bytes / 1_048_576).toFixed(1);
   io.log(
     `${slug}/${camId}: ${plan.rows} rows (${plan.pending} pending), ${mb} MB, ` +
-      `${plan.firstDate ?? "-"} to ${plan.lastDate ?? "-"}`,
+      `${plan.firstDate ?? "-"} to ${plan.lastDate ?? "-"}; ${toDelete.length} object(s) to delete`,
   );
 
   if (dryRun) {
     io.log("dry run: nothing deleted. Re-run with --yes to delete the objects, then the rows.");
-    for (const k of plan.keys.slice(0, 5)) io.log(`  would delete ${R2_BUCKET}/${k}`);
-    if (plan.keys.length > 5) io.log(`  ... and ${plan.keys.length - 5} more`);
-    return { dryRun: true, plan, deletedObjects: 0, deletedRows: 0, remainingRows: null };
+    for (const k of toDelete.slice(0, 5)) io.log(`  would delete ${R2_BUCKET}/${k}`);
+    if (toDelete.length > 5) io.log(`  ... and ${toDelete.length - 5} more`);
+    return { dryRun: true, plan, orphans, deletedObjects: 0, deletedRows: 0, remainingRows: null };
   }
 
   let next = 0;
   let deletedObjects = 0;
   const failures: string[] = [];
-  const workers = Array.from({ length: Math.max(1, Math.min(concurrency, plan.keys.length)) }, async () => {
+  const workers = Array.from({ length: Math.max(1, Math.min(concurrency, toDelete.length)) }, async () => {
     for (;;) {
       const i = next++;
-      if (i >= plan.keys.length) return;
+      if (i >= toDelete.length) return;
       try {
-        await io.r2Delete(plan.keys[i]);
+        await io.r2Delete(toDelete[i]);
         deletedObjects += 1;
       } catch (e) {
-        failures.push(`${plan.keys[i]}: ${(e as Error).message}`);
+        failures.push(`${toDelete[i]}: ${(e as Error).message}`);
       }
     }
   });
   await Promise.all(workers);
-  io.log(`deleted ${deletedObjects}/${plan.keys.length} objects`);
+  io.log(`deleted ${deletedObjects}/${toDelete.length} objects`);
   if (failures.length > 0) {
     for (const f of failures.slice(0, 10)) io.log(`  failed: ${f}`);
     throw new Error(`${failures.length} object deletes failed; D1 rows kept so you can re-run`);
@@ -171,6 +200,7 @@ export async function runRemoval(args: RemoveArgs, io: RemovalIo, concurrency: n
   return {
     dryRun: false,
     plan,
+    orphans,
     deletedObjects,
     deletedRows: plan.rows,
     remainingRows: Number.isFinite(remainingRows) ? remainingRows : null,

@@ -14,6 +14,8 @@ import os
 import re
 import sys
 import tempfile
+import threading
+import time
 import unittest
 import urllib.error
 from pathlib import Path
@@ -76,10 +78,28 @@ def env(**kw):
 
 
 class WithManifest(unittest.TestCase):
+    """Points the script at the real manifest and replaces the pre-check GET.
+
+    self.filled_by_slug[slug] = {slot ISO: {cam ids}} is what the pre-check
+    answers for that beach ({} by default = nothing filled); None makes it fail.
+    self.filled_calls records every beach asked about."""
+
     def setUp(self):
-        p = mock.patch.object(cs, "ARCHIVE_CAMS_PATH", str(MANIFEST_PATH))
-        p.start()
-        self.addCleanup(p.stop)
+        self.filled_by_slug = {}
+        self.filled_calls = []
+
+        def fake_filled(slug):
+            self.filled_calls.append(slug)
+            return self.filled_by_slug.get(slug, {})
+
+        for p in (mock.patch.object(cs, "ARCHIVE_CAMS_PATH", str(MANIFEST_PATH)),
+                  mock.patch.object(cs, "fetch_filled_slots", fake_filled)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def fill(self, slug, cam_ids, frame_at=None):
+        """Mark cams as already filled for the slot `frame_at` (default: this hour) falls in."""
+        self.filled_by_slug.setdefault(slug, {}).setdefault(cs._slot_utc_of(frame_at), set()).update(cam_ids)
 
 
 class ArchiveSetTests(WithManifest):
@@ -304,7 +324,7 @@ class CaptureBeachTests(WithManifest):
     COURIER_CAM = {"id": "ftl-elbo-beach-cam", "name": "Elbo",
                    "source": {"kind": "direct", "url": "https://u/frame", "meta": "https://u/meta"}}
 
-    def run_capture(self, slug, cams, *, assess=None, frame_at_info=None, meta=None, token="tok", attempted=None):
+    def run_capture(self, slug, cams, *, assess=None, frame_at_info=None, meta=None, token="tok", attempted=None, archive=None):
         order = []
 
         def fake_fetch(cam, info=None, feed_cache=None):
@@ -333,23 +353,69 @@ class CaptureBeachTests(WithManifest):
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             for p in patches:
                 st.enter_context(p)
-            result = cs.capture_beach(slug, cams, now, {"called": False}, {}, attempted)
+            result = cs.capture_beach(slug, cams, now, {"called": False}, {}, attempted, archive)
         return result, order
 
-    def test_order_is_fetch_then_archive_then_assess(self):
-        result, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info="2026-10-11T14:05:09Z")
-        self.assertEqual(order, ["fetch", ("archive", "boca-raton", "boca-south", "2026-10-11T14:05:09Z"), "assess"])
+    def test_order_is_fetch_then_assess_then_the_upload(self):
+        # The read never waits for the upload: the still is queued and uploaded
+        # after the beach's reads.
+        result, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(5))
+        self.assertEqual(order[:2], ["fetch", "assess"])
+        self.assertEqual(order[2][:3], ("archive", "boca-raton", "boca-south"))
+        self.assertEqual(len(order), 3)
         self.assertEqual(len(result["cams"]), 1)
 
+    def test_every_read_finishes_before_any_upload_starts(self):
+        cams = [dict(self.FEED_CAM, id=i) for i in ("boca-south", "boca-south-surf", "boca-inlet-surf")]
+        _, order = self.run_capture("boca-raton", cams, frame_at_info=iso_ago(5))
+        kinds = ["archive" if isinstance(o, tuple) else o for o in order]
+        self.assertEqual(kinds, ["fetch", "assess"] * 3 + ["archive"] * 3)
+
+    def test_a_slow_upload_does_not_delay_the_read(self):
+        started = {}
+
+        def slow_archive(s, c, img, frame_at=None):
+            started["t"] = time.monotonic()
+            threading.Event().wait(0.4)  # not time.sleep: other tests patch that
+            return "stored"
+
+        reads = []
+        with env(INGEST_TOKEN="tok"), mock.patch.object(cs, "fetch_still", lambda cam, info=None, feed_cache=None: jpeg()), \
+                mock.patch.object(cs, "archive_frame", slow_archive), \
+                mock.patch.object(cs, "assess", lambda img: reads.append(time.monotonic()) or {"level": "none", "provider": "t"}), \
+                mock.patch.object(cs.time, "sleep", lambda s: None), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            cs.capture_beach("boca-raton", [self.FEED_CAM], dt.datetime.now(ZONE), {"called": False}, {})
+        self.assertEqual(len(reads), 1)
+        self.assertLessEqual(reads[0], started["t"])  # the read ran before the upload began
+
+    def test_cams_whose_hour_is_already_filled_are_read_but_not_uploaded(self):
+        run = cs.ArchiveRun()
+        run.filled = {"boca-raton": {cs._slot_utc_of(None): {"boca-south"}}}
+        with env(INGEST_TOKEN="tok"):
+            result, order = self.run_capture("boca-raton", [self.FEED_CAM], archive=run)
+        self.assertEqual(order, ["fetch", "assess"])
+        self.assertEqual(len(result["cams"]), 1)
+
+    def test_a_filled_slot_is_judged_by_the_frames_own_hour(self):
+        # The cam's CURRENT hour is filled, but this frame is from the hour before: still uploaded.
+        run = cs.ArchiveRun()
+        old = iso_ago(70)
+        run.filled = {"boca-raton": {cs._slot_utc_of(None): {"boca-south"}}}
+        _, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=old, archive=run)
+        if cs._slot_utc_of(old) != cs._slot_utc_of(None):
+            self.assertEqual(sum(1 for o in order if isinstance(o, tuple)), 1)
+
     def test_feed_timestamp_is_what_gets_archived(self):
-        _, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info="2026-10-11T14:05:09Z")
-        self.assertEqual(order[1][3], "2026-10-11T14:05:09Z")
+        stamp = iso_ago(5)
+        _, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=stamp)
+        self.assertEqual(order[2][3], stamp)
 
     def test_courier_cam_archives_with_its_meta_grabbed_time(self):
         grabbed = iso_ago(20)
         result, order = self.run_capture(
             "fort-lauderdale", [self.COURIER_CAM], meta={"ok": True, "grabbedAtUtc": grabbed})
-        self.assertEqual(order, ["fetch", ("archive", "fort-lauderdale", "ftl-elbo-beach-cam", grabbed), "assess"])
+        self.assertEqual(order, ["fetch", "assess", ("archive", "fort-lauderdale", "ftl-elbo-beach-cam", grabbed)])
         self.assertEqual(result["cams"][0]["frameAt"], grabbed)
 
     def test_the_frame_is_archived_even_when_the_vision_read_fails(self):
@@ -440,7 +506,7 @@ class CaptureUwTests(WithManifest):
         self.assertEqual(frame[:3], b"\xff\xd8\xff")
 
 
-class ArchivePassTests(WithManifest):
+class ArchivePassBase(WithManifest):
     def run_pass(self, attempted, token="tok", meta_by_url=None, fail_ids=()):
         fetched, archived = [], []
         meta_by_url = meta_by_url or {}
@@ -469,6 +535,8 @@ class ArchivePassTests(WithManifest):
             out = cs.archive_pass(attempted)
         return out, fetched, archived
 
+
+class ArchivePassTests(ArchivePassBase):
     def test_with_nothing_attempted_it_covers_all_eleven_cams(self):
         out, fetched, archived = self.run_pass(set())
         self.assertEqual(set(fetched), EXPECTED_IDS)
@@ -541,7 +609,7 @@ class ArchivePassTests(WithManifest):
                 mock.patch.object(cs, "fetch_prev", lambda slug: {}), \
                 mock.patch.object(cs, "OUT_DIR", d), mock.patch.object(cs, "OUT", str(Path(d) / "legacy.json")), \
                 mock.patch.object(cs, "capture_beach", side_effect=AssertionError("no providers: no vision")), \
-                mock.patch.object(cs, "archive_pass", lambda attempted, cams=None: calls.append(set(attempted)) or {"attempted": 11, "results": {}}), \
+                mock.patch.object(cs, "archive_pass", lambda attempted, cams=None, run=None: calls.append(set(attempted)) or {"attempted": 11, "results": {}}), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(cs.main(), 0)
         self.assertEqual(calls, [set()])
@@ -549,7 +617,7 @@ class ArchivePassTests(WithManifest):
     def test_main_runs_the_archive_pass_even_with_an_empty_registry(self):
         calls = []
         with mock.patch.object(cs, "load_registry", lambda: {}), \
-                mock.patch.object(cs, "archive_pass", lambda attempted, cams=None: calls.append(1) or {"attempted": 0, "results": {}}), \
+                mock.patch.object(cs, "archive_pass", lambda attempted, cams=None, run=None: calls.append(1) or {"attempted": 0, "results": {}}), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(cs.main(), 0)
         self.assertEqual(calls, [1])
@@ -559,6 +627,254 @@ class ArchivePassTests(WithManifest):
                 mock.patch.object(cs, "archive_pass", side_effect=RuntimeError("boom")), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(cs.main(), 0)
+
+
+class FetchFilledSlotsTests(unittest.TestCase):
+    def call(self, answer=None, token="tok-unit", exc=None):
+        urlopen = mock.Mock(side_effect=exc) if exc else mock.Mock(return_value=FakeResponse(answer))
+        with env(INGEST_TOKEN=token), mock.patch.object(cs.urllib.request, "urlopen", urlopen), \
+                contextlib.redirect_stderr(io.StringIO()):
+            return cs.fetch_filled_slots("boca-raton"), urlopen
+
+    def test_sends_an_authenticated_get_and_parses_the_slots(self):
+        got, urlopen = self.call({"ok": True, "slots": {"2026-10-11T14:00:00.000Z": ["boca-south", "boca-inlet"], "2026-10-11T13:00:00.000Z": []}})
+        self.assertEqual(got, {"2026-10-11T14:00:00.000Z": {"boca-south", "boca-inlet"}, "2026-10-11T13:00:00.000Z": set()})
+        (req,), kwargs = urlopen.call_args
+        self.assertEqual(req.get_method(), "GET")
+        self.assertEqual(req.full_url, "https://app.isitbeachday.com/api/cam-frames/slots?slug=boca-raton")
+        self.assertEqual(req.get_header("Authorization"), "Bearer tok-unit")
+        self.assertEqual(kwargs["timeout"], cs.ARCHIVE_PRECHECK_TIMEOUT_S)
+
+    def test_fails_open_with_none_on_every_kind_of_error(self):
+        for exc in (urllib.error.HTTPError("u", 401, "no", {}, io.BytesIO(b"{}")), urllib.error.URLError("x"), TimeoutError(), OSError("x")):
+            got, _ = self.call(exc=exc)
+            self.assertIsNone(got, exc)
+        for bad in (b"<html>", {"ok": True}, {"slots": []}, {"slots": {"a": 5}}):
+            got, _ = self.call(bad)
+            self.assertIsNone(got, bad)
+
+    def test_no_token_makes_no_request(self):
+        got, urlopen = self.call({"slots": {}}, token=None)
+        self.assertIsNone(got)
+        urlopen.assert_not_called()
+
+    def test_slot_arithmetic_matches_the_servers_rules(self):
+        now = dt.datetime.now(dt.timezone.utc)
+        self.assertEqual(cs._slot_utc_of(None), now.strftime("%Y-%m-%dT%H:00:00.000Z"))
+        t = now - dt.timedelta(minutes=90)
+        self.assertEqual(cs._slot_utc_of(t.strftime("%Y-%m-%dT%H:%M:%SZ")), t.strftime("%Y-%m-%dT%H:00:00.000Z"))
+        # Older than 3 h, in the future, or unreadable: the server files it under "now", so do we.
+        for odd in ((now - dt.timedelta(hours=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    (now + dt.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ"), "garbage"):
+            self.assertEqual(cs._slot_utc_of(odd), cs._slot_utc_of(None))
+
+
+class ArchiveRunTests(WithManifest):
+    def test_precheck_asks_once_per_beach_and_never_twice(self):
+        run = cs.ArchiveRun()
+        with env(INGEST_TOKEN="tok"):
+            run.precheck({"boca-raton", "deerfield-beach", "fort-lauderdale"})
+            run.precheck({"boca-raton", "deerfield-beach", "fort-lauderdale"})
+        self.assertEqual(sorted(self.filled_calls), ["boca-raton", "deerfield-beach", "fort-lauderdale"])
+
+    def test_the_manifest_needs_at_most_three_precheck_requests(self):
+        slugs = {c["slug"] for c in cs.load_archive_cams()}
+        self.assertEqual(len(slugs), 3)
+
+    def test_no_token_means_no_precheck(self):
+        with env(INGEST_TOKEN=None):
+            cs.ArchiveRun().precheck({"boca-raton"})
+        self.assertEqual(self.filled_calls, [])
+
+    def test_a_failed_precheck_fails_open(self):
+        self.filled_by_slug["boca-raton"] = None
+        run = cs.ArchiveRun()
+        with env(INGEST_TOKEN="tok"):
+            run.precheck({"boca-raton"})
+        self.assertFalse(run.is_filled("boca-raton", "boca-south"))
+        with env(INGEST_TOKEN="tok"), contextlib.redirect_stdout(io.StringIO()):
+            self.assertTrue(run.enqueue("boca-raton", "boca-south", jpeg(), None))
+
+    def test_filled_cams_are_not_queued_and_others_are(self):
+        self.fill("boca-raton", ["boca-south"])
+        run = cs.ArchiveRun()
+        with env(INGEST_TOKEN="tok"):
+            run.precheck({"boca-raton"})
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertFalse(run.enqueue("boca-raton", "boca-south", jpeg(), None))
+                self.assertTrue(run.enqueue("boca-raton", "boca-inlet", jpeg(), None))
+        self.assertEqual([(q[0], q[1]) for q in run.queue], [("boca-raton", "boca-inlet")])
+
+    def test_unlisted_cams_and_a_missing_token_queue_nothing(self):
+        run = cs.ArchiveRun()
+        with env(INGEST_TOKEN="tok"):
+            self.assertFalse(run.enqueue("boca-raton", "stray-cam", jpeg(), None))
+        with env(INGEST_TOKEN=None):
+            self.assertFalse(run.enqueue("boca-raton", "boca-south", jpeg(), None))
+
+    def test_flush_uploads_concurrently_on_a_pool_of_four(self):
+        gate = threading.Barrier(4, timeout=3)  # releases only if 4 uploads are in flight together
+        seen = []
+
+        def fake_archive(s, c, img, frame_at=None):
+            gate.wait()
+            seen.append(c)
+            return "stored"
+
+        run = cs.ArchiveRun()
+        run.queue = [("boca-raton", f"cam-{i}", jpeg(), None) for i in range(4)]
+        with mock.patch.object(cs, "archive_frame", fake_archive):
+            out = run.flush()
+        self.assertEqual(len(out), 4)
+        self.assertEqual(sorted(seen), [f"cam-{i}" for i in range(4)])
+        self.assertEqual(cs.ARCHIVE_WORKERS, 4)
+
+    def test_flush_with_nothing_queued_does_nothing(self):
+        self.assertEqual(cs.ArchiveRun().flush(), {})
+
+    def test_work_past_the_deadline_is_dropped_and_logged_once(self):
+        release = threading.Event()
+
+        def stuck_archive(s, c, img, frame_at=None):
+            release.wait(2)
+            return "stored"
+
+        run = cs.ArchiveRun(deadline_s=0.2)
+        run.queue = [("boca-raton", f"cam-{i}", jpeg(), None) for i in range(6)]  # 4 run, 2 wait for a worker
+        err = io.StringIO()
+        started = time.monotonic()
+        with mock.patch.object(cs, "archive_frame", stuck_archive), contextlib.redirect_stderr(err):
+            out = run.flush()
+            elapsed = time.monotonic() - started
+            run.queue = [("boca-raton", "cam-late", jpeg(), None)]
+            run.flush()  # the budget is already spent: dropped without starting
+        release.set()
+        self.assertLess(elapsed, 1.0)
+        self.assertEqual(out, {})
+        self.assertEqual(run.dropped, 7)
+        self.assertEqual(err.getvalue().count("budget for this tick ran out"), 1, "logged once")
+
+    def test_the_budget_is_shared_across_flushes(self):
+        run = cs.ArchiveRun(deadline_s=0.5)
+
+        def slowish(s, c, img, frame_at=None):
+            threading.Event().wait(0.3)
+            return "stored"
+
+        with mock.patch.object(cs, "archive_frame", slowish), contextlib.redirect_stderr(io.StringIO()):
+            run.queue = [("boca-raton", "a", jpeg(), None)]
+            self.assertEqual(run.flush(), {"boca-raton/a": "stored"})
+            run.queue = [("boca-raton", "b", jpeg(), None)]
+            second = run.flush()  # only ~0.2 s left of the 0.5 s budget
+        self.assertEqual(second, {})
+        self.assertEqual(run.dropped, 1)
+        self.assertLess(run.remaining(), 0.25)
+
+    def test_default_deadline_is_ninety_seconds(self):
+        self.assertEqual(cs.ARCHIVE_DEADLINE_S, 90.0)
+        self.assertEqual(cs.ArchiveRun().remaining(), 90.0)
+
+
+class CourierMetaTests(unittest.TestCase):
+    def frame_at(self, meta):
+        with mock.patch.object(cs, "_get", lambda url, timeout=25: json.dumps(meta).encode()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            return cs._courier_frame_at("https://u/meta")
+
+    def test_requires_ok_to_be_exactly_true(self):
+        fresh = iso_ago(20)
+        self.assertEqual(self.frame_at({"ok": True, "grabbedAtUtc": fresh}), fresh)
+        for ok in (False, None, "true", 1, "yes"):
+            self.assertIsNone(self.frame_at({"ok": ok, "grabbedAtUtc": fresh}), ok)
+        self.assertIsNone(self.frame_at({"grabbedAtUtc": fresh}), "a missing ok is not ok")
+
+    def test_rejects_a_frame_older_than_170_minutes(self):
+        self.assertIsNotNone(self.frame_at({"ok": True, "grabbedAtUtc": iso_ago(169)}))
+        self.assertIsNone(self.frame_at({"ok": True, "grabbedAtUtc": iso_ago(171)}))
+
+    def test_rejects_missing_or_unreadable_times(self):
+        for bad in (None, "", "nonsense", 12345):
+            self.assertIsNone(self.frame_at({"ok": True, "grabbedAtUtc": bad}), bad)
+
+    def test_an_unreachable_meta_is_none(self):
+        def boom(url, timeout=25):
+            raise OSError("down")
+        with mock.patch.object(cs, "_get", boom), contextlib.redirect_stderr(io.StringIO()):
+            self.assertIsNone(cs._courier_frame_at("https://u/meta"))
+
+
+class ArchivePassPrecheckTests(ArchivePassBase):
+    """The pre-check, the courier meta rules and the time budget, as seen from archive_pass."""
+
+    def test_a_filled_current_slot_skips_the_fetch_and_the_upload_for_archive_only_cams(self):
+        self.fill("boca-raton", ["boca-inlet", "boca-inlet-north"])
+        out, fetched, archived = self.run_pass(set())
+        self.assertNotIn("boca-inlet", fetched)
+        self.assertNotIn("boca-inlet-north", fetched)
+        self.assertIn("boca-inlet-jetty", fetched)
+        self.assertEqual(len(fetched), 9)
+        self.assertEqual(out["results"]["boca-raton/boca-inlet"], "filled")
+
+    def test_a_courier_cam_whose_own_hour_is_filled_is_not_downloaded(self):
+        grabbed = iso_ago(40)
+        meta_url = "https://uw-frame.entwined-app.workers.dev/meta?cam=deerfield-pier-cam"
+        self.fill("deerfield-beach", ["deerfield-pier-cam"], grabbed)
+        if cs._slot_utc_of(grabbed) == cs._slot_utc_of(None):
+            self.skipTest("pre-fetch check already covers this")
+        _, fetched, _ = self.run_pass(set(), meta_by_url={meta_url: {"ok": True, "grabbedAtUtc": grabbed}})
+        self.assertNotIn("deerfield-pier-cam", fetched)
+
+    def test_a_filled_hour_for_the_frame_just_fetched_skips_only_the_upload(self):
+        # Feed cams learn their frame time from the fetch; the frame is from a
+        # slot that is filled, so it is fetched but not uploaded.
+        stamp = "2026-10-11T14:05:09Z"
+        with mock.patch.object(cs, "_slot_utc_of", lambda fa=None: "SLOT-FILLED" if fa == stamp else "SLOT-NOW"):
+            self.filled_by_slug["boca-raton"] = {"SLOT-FILLED": {"boca-inlet"}}
+            out, fetched, archived = self.run_pass(set())
+        self.assertIn("boca-inlet", fetched)
+        self.assertNotIn("boca-inlet", {c for c, _ in archived})
+        self.assertEqual(out["results"]["boca-raton/boca-inlet"], "filled")
+
+    def test_a_failed_precheck_behaves_as_before_everything_is_fetched_and_uploaded(self):
+        for slug in ("boca-raton", "deerfield-beach", "fort-lauderdale"):
+            self.filled_by_slug[slug] = None
+        out, fetched, archived = self.run_pass(set())
+        self.assertEqual(len(fetched), 11)
+        self.assertEqual(len(archived), 11)
+
+    def test_the_whole_pass_asks_the_app_at_most_three_times(self):
+        self.run_pass(set())
+        self.assertEqual(sorted(self.filled_calls), ["boca-raton", "deerfield-beach", "fort-lauderdale"])
+
+    def test_a_stale_courier_frame_is_not_downloaded(self):
+        meta_url = "https://uw-frame.entwined-app.workers.dev/meta?cam=ftl-elbo-beach-cam"
+        _, fetched, _ = self.run_pass(set(), meta_by_url={meta_url: {"ok": True, "grabbedAtUtc": iso_ago(200)}})
+        self.assertNotIn("ftl-elbo-beach-cam", fetched)
+
+    def test_a_courier_meta_without_ok_true_is_not_downloaded(self):
+        meta_url = "https://uw-frame.entwined-app.workers.dev/meta?cam=ftl-elbo-beach-cam"
+        _, fetched, _ = self.run_pass(set(), meta_by_url={meta_url: {"grabbedAtUtc": iso_ago(5)}})
+        self.assertNotIn("ftl-elbo-beach-cam", fetched)
+
+    def test_the_pass_stays_inside_the_archive_budget(self):
+        release = threading.Event()
+        run = cs.ArchiveRun(deadline_s=0.3)
+
+        def hang(cam, info=None, feed_cache=None):
+            release.wait(2)
+            return jpeg()
+
+        started = time.monotonic()
+        with env(INGEST_TOKEN="tok"), mock.patch.object(cs, "fetch_still", hang), \
+                mock.patch.object(cs, "archive_frame", lambda *a, **k: "stored"), \
+                mock.patch.object(cs, "_get", lambda url, timeout=25: json.dumps({"ok": True, "grabbedAtUtc": iso_ago(5)}).encode()), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            out = cs.archive_pass(set(), run=run)
+        elapsed = time.monotonic() - started
+        release.set()
+        self.assertLess(elapsed, 1.5)
+        self.assertEqual(out["results"], {})
+        self.assertGreater(run.dropped, 0)
 
 
 ZONE = __import__("zoneinfo").ZoneInfo("America/New_York")

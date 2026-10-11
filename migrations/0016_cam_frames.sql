@@ -24,20 +24,28 @@
 --              Slot claim is atomic (R4): ingest does
 --                INSERT ... ON CONFLICT DO NOTHING  (state = 'pending')
 --              and only the caller that inserted a row goes on to write R2.
+--              Every claim carries a random claim_id. If a crashed ingest left
+--              a pending row, a later caller may TAKE IT OVER, atomically
+--              (UPDATE ... WHERE state = 'pending' AND claimed_at_utc is older
+--              than 10 minutes), which replaces claim_id. Finalizing (pending
+--              -> ready) and rolling back (delete pending) both match claim_id,
+--              so a stale claimant can never touch the winner's row. The first
+--              8 characters of claim_id are in the R2 key, so two claimants
+--              never share an object key and a stale one can never delete the
+--              winner's object.
 --              Ready means the R2 object exists; readers filter on it. A
---              pending row older than 1 h is a crashed ingest; the daily
---              purge deletes it.
+--              pending row older than 1 h is dropped by the daily purge.
 --
 --              attribution is copied from the cam config at ingest, so a later
 --              config edit never rewrites the credit on a stored frame (R6).
 --
---              R2 key: <slug>/<cam_id>/<local_date>/<HHmm>Z-<sha8>.jpg, with
---              HHmm the UTC time of display_at_utc.
+--              R2 key: <slug>/<cam_id>/<local_date>/<HHmm>Z-<sha8>-<claim8>.jpg,
+--              with HHmm the UTC time of display_at_utc.
 CREATE TABLE cam_frames (
   slug TEXT NOT NULL,
   cam_id TEXT NOT NULL,
   slot_utc TEXT NOT NULL,              -- ISO, top of the UTC hour of display_at_utc, e.g. 2026-10-11T14:00:00.000Z
-  received_at_utc TEXT NOT NULL,       -- ISO, server clock at ingest
+  received_at_utc TEXT NOT NULL,       -- ISO, server clock at ingest (reset when a stale claim is taken over)
   frame_at_utc TEXT,                   -- ISO, source capture time, or NULL when unknown or out of range
   display_at_utc TEXT NOT NULL,        -- ISO, frame_at_utc ?? received_at_utc
   local_date TEXT NOT NULL,            -- YYYY-MM-DD in the beach's own timezone, at display_at_utc
@@ -51,8 +59,12 @@ CREATE TABLE cam_frames (
   source_kind TEXT NOT NULL,           -- 'feed' | 'direct', from the cam config
   attribution TEXT,                    -- credit line, copied from the cam config at ingest
   state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'ready')),
+  claim_id TEXT NOT NULL,              -- random UUID per claim; finalize and rollback must match it
+  claimed_at_utc TEXT NOT NULL,        -- ISO, when this claim was made; a pending claim older than 10 min can be taken over
 
   PRIMARY KEY (slug, cam_id, slot_utc)
 );
 CREATE INDEX cam_frames_slug_date ON cam_frames(slug, local_date);
 CREATE INDEX cam_frames_received ON cam_frames(received_at_utc);
+-- the ingest pre-check (GET /api/cam-frames/slots) reads one beach's current and previous slot
+CREATE INDEX cam_frames_slug_slot ON cam_frames(slug, slot_utc);

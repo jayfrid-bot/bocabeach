@@ -5,7 +5,10 @@
 //
 // Slot claim is atomic (docs/CAM_ARCHIVE_PLAN.md R4): one INSERT ... ON CONFLICT
 // DO NOTHING, and the caller learns from `meta.changes` whether it won. There
-// is never a SELECT-then-INSERT.
+// is never a SELECT-then-INSERT. Every claim carries a random `claim_id`. A
+// pending row whose claim is older than 10 minutes (a crashed ingest) can be
+// TAKEN OVER by one atomic UPDATE; finalize and rollback both match `claim_id`,
+// so a stale claimant changes nothing once someone else holds the slot.
 //
 // Deletes use `DELETE ... WHERE rowid IN (SELECT rowid ... LIMIT n)`: D1 is
 // built without SQLite's DELETE ... LIMIT, and the subselect form is the
@@ -32,27 +35,35 @@ export interface CamFrameRow {
   sha256: string;
   source_kind: string;
   attribution: string | null;
+  /** Random UUID of the ingest that holds this slot. */
+  claim_id: string;
+  /** ISO time of that claim; a pending claim older than STALE_CLAIM_MS can be taken over. */
+  claimed_at_utc: string;
 }
 
 /** Rows deleted per statement in a purge pass. */
 export const PURGE_BATCH = 5000;
-/** A pending row older than this is a crashed ingest. */
+/** A pending claim older than this is a crashed ingest and may be taken over. */
+export const STALE_CLAIM_MS = 10 * 60_000;
+/** A pending row older than this is dropped by the daily purge. */
 export const PENDING_MAX_AGE_MS = 3_600_000;
 /** Retention for D1 rows, measured from received_at_utc. */
 export const RETENTION_DAYS = 365;
 
 /**
  * Try to claim (slug, cam_id, slot_utc) with a `pending` row. Resolves true
- * only for the caller whose INSERT actually inserted. Throws on a D1 error.
+ * only for the caller that now holds the slot: either its INSERT inserted, or
+ * it atomically took over a pending claim older than STALE_CLAIM_MS (measured
+ * against this row's own `claimed_at_utc`). Throws on a D1 error.
  */
 export async function claimSlot(db: D1Like, row: CamFrameRow): Promise<boolean> {
-  const res = await db
+  const inserted = await db
     .prepare(
       `INSERT INTO cam_frames (
          slug, cam_id, slot_utc, received_at_utc, frame_at_utc, display_at_utc,
          local_date, local_hour, local_minute, utc_offset_minutes, timezone,
-         r2_key, bytes, sha256, source_kind, attribution, state
-       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 'pending')
+         r2_key, bytes, sha256, source_kind, attribution, claim_id, claimed_at_utc, state
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, 'pending')
        ON CONFLICT (slug, cam_id, slot_utc) DO NOTHING`,
     )
     .bind(
@@ -72,12 +83,57 @@ export async function claimSlot(db: D1Like, row: CamFrameRow): Promise<boolean> 
       row.sha256,
       row.source_kind,
       row.attribution,
+      row.claim_id,
+      row.claimed_at_utc,
     )
     .run();
-  return (res.meta?.changes ?? 0) === 1;
+  if ((inserted.meta?.changes ?? 0) === 1) return true;
+
+  // The slot has a row. Take it over only if it is a pending claim gone stale.
+  const staleBefore = new Date(Date.parse(row.claimed_at_utc) - STALE_CLAIM_MS).toISOString();
+  const took = await db
+    .prepare(
+      `UPDATE cam_frames SET
+         claim_id = ?4, claimed_at_utc = ?5, received_at_utc = ?6, frame_at_utc = ?7,
+         display_at_utc = ?8, local_date = ?9, local_hour = ?10, local_minute = ?11,
+         utc_offset_minutes = ?12, timezone = ?13, r2_key = ?14, bytes = ?15,
+         sha256 = ?16, source_kind = ?17, attribution = ?18
+       WHERE slug = ?1 AND cam_id = ?2 AND slot_utc = ?3
+         AND state = 'pending' AND claimed_at_utc < ?19`,
+    )
+    .bind(
+      row.slug,
+      row.cam_id,
+      row.slot_utc,
+      row.claim_id,
+      row.claimed_at_utc,
+      row.received_at_utc,
+      row.frame_at_utc,
+      row.display_at_utc,
+      row.local_date,
+      row.local_hour,
+      row.local_minute,
+      row.utc_offset_minutes,
+      row.timezone,
+      row.r2_key,
+      row.bytes,
+      row.sha256,
+      row.source_kind,
+      row.attribution,
+      staleBefore,
+    )
+    .run();
+  return (took.meta?.changes ?? 0) === 1;
 }
 
-/** SHA-256 (hex) of this cam's newest READY frame, or null when it has none. */
+/**
+ * SHA-256 (hex) of this cam's newest READY frame, or null when it has none.
+ *
+ * ADVISORY. The "unchanged" check built on this is best-effort, not a lock:
+ * two ingests for DIFFERENT slots of one cam that overlap in time can each see
+ * the other's frame as not-yet-ready and both store the same image. That costs
+ * one duplicate frame at worst, so it is deliberately not serialized.
+ */
 export async function newestReadySha(db: D1Like, slug: string, camId: string): Promise<string | null> {
   const row = await db
     .prepare(
@@ -90,42 +146,83 @@ export async function newestReadySha(db: D1Like, slug: string, camId: string): P
   return row?.sha256 ?? null;
 }
 
-/** Flip our pending row to ready. True when exactly our row changed. */
+/** Flip OUR pending row (matched by claim_id) to ready. True when exactly it changed. */
 export async function markReady(
   db: D1Like,
   slug: string,
   camId: string,
   slotUtc: string,
-  r2Key: string,
+  claimId: string,
 ): Promise<boolean> {
   const res = await db
     .prepare(
       `UPDATE cam_frames SET state = 'ready'
-        WHERE slug = ?1 AND cam_id = ?2 AND slot_utc = ?3 AND r2_key = ?4 AND state = 'pending'`,
+        WHERE slug = ?1 AND cam_id = ?2 AND slot_utc = ?3 AND claim_id = ?4 AND state = 'pending'`,
     )
-    .bind(slug, camId, slotUtc, r2Key)
+    .bind(slug, camId, slotUtc, claimId)
     .run();
   return (res.meta?.changes ?? 0) === 1;
 }
 
 /**
- * Delete our own pending row. Matches on the r2 key too and on state, so it
- * can never remove a ready frame or another caller's claim.
+ * Delete OUR pending row (matched by claim_id). It can never remove a ready
+ * frame, nor a row another claimant now holds.
  */
 export async function deletePending(
   db: D1Like,
   slug: string,
   camId: string,
   slotUtc: string,
-  r2Key: string,
+  claimId: string,
 ): Promise<void> {
   await db
     .prepare(
       `DELETE FROM cam_frames
-        WHERE slug = ?1 AND cam_id = ?2 AND slot_utc = ?3 AND r2_key = ?4 AND state = 'pending'`,
+        WHERE slug = ?1 AND cam_id = ?2 AND slot_utc = ?3 AND claim_id = ?4 AND state = 'pending'`,
     )
-    .bind(slug, camId, slotUtc, r2Key)
+    .bind(slug, camId, slotUtc, claimId)
     .run();
+}
+
+export interface SlotRowState {
+  state: CamFrameState;
+  claim_id: string;
+}
+
+/** The row now at a slot (its state and claim), or null when there is none. Throws on a D1 error. */
+export async function readSlot(db: D1Like, slug: string, camId: string, slotUtc: string): Promise<SlotRowState | null> {
+  return db
+    .prepare(`SELECT state, claim_id FROM cam_frames WHERE slug = ?1 AND cam_id = ?2 AND slot_utc = ?3`)
+    .bind(slug, camId, slotUtc)
+    .first<SlotRowState>();
+}
+
+/**
+ * Cam ids of one beach whose slot is ready, or pending with a claim made
+ * after `freshAfterIso`, for each of `slotUtcs`. Feeds the capture script's
+ * cheap pre-check (GET /api/cam-frames/slots).
+ */
+export async function filledSlots(
+  db: D1Like,
+  slug: string,
+  slotUtcs: string[],
+  freshAfterIso: string,
+): Promise<Record<string, string[]>> {
+  const out: Record<string, string[]> = {};
+  for (const s of slotUtcs) out[s] = [];
+  if (slotUtcs.length === 0) return out;
+  const marks = slotUtcs.map((_, i) => `?${i + 3}`).join(", ");
+  const res = await db
+    .prepare(
+      `SELECT cam_id, slot_utc FROM cam_frames
+        WHERE slug = ?1 AND slot_utc IN (${marks})
+          AND (state = 'ready' OR (state = 'pending' AND claimed_at_utc >= ?2))
+        ORDER BY cam_id`,
+    )
+    .bind(slug, freshAfterIso, ...slotUtcs)
+    .all<{ cam_id: string; slot_utc: string }>();
+  for (const r of res.results ?? []) out[r.slot_utc]?.push(r.cam_id);
+  return out;
 }
 
 /** Delete up to `limit` pending rows received before `beforeIso`. Returns the count. */

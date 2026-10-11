@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HAS_SQLITE, makeCamDb, type CamDb } from "@/lib/camFrames/testDb";
-import { frameRow } from "@/lib/camFrames/testFixtures";
+import { CLAIM_A, frameRow } from "@/lib/camFrames/testFixtures";
 import { claimSlot, markReady } from "@/lib/camFrames/store";
 
 const ctl = vi.hoisted(() => ({ db: null as unknown }));
@@ -23,11 +23,11 @@ function post(headers: Record<string, string> = { "x-cron-secret": SECRET }): Pr
 async function add(cam: string, receivedAtMs: number, ready: boolean): Promise<void> {
   const row = frameRow({
     cam_id: cam,
-    r2_key: `boca-raton/${cam}/2026-10-11/1420Z-01234567.jpg`,
+    r2_key: `boca-raton/${cam}/2026-10-11/1420Z-01234567-cccccccc.jpg`,
     received_at_utc: new Date(receivedAtMs).toISOString(),
   });
   await claimSlot(h.db, row);
-  if (ready) await markReady(h.db, row.slug, row.cam_id, row.slot_utc, row.r2_key);
+  if (ready) await markReady(h.db, row.slug, row.cam_id, row.slot_utc, CLAIM_A);
 }
 
 beforeEach(() => {

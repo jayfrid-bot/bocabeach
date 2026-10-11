@@ -52,6 +52,10 @@ export function fakeBucket(): FakeBucket {
   return bucket;
 }
 
+/** Two distinct claim ids (UUID shape; the first 8 characters go in R2 keys). */
+export const CLAIM_A = "cccccccc-0000-4000-8000-000000000001";
+export const CLAIM_B = "dddddddd-0000-4000-8000-000000000002";
+
 /** A complete row for store tests; override any field. */
 export function frameRow(over: Partial<CamFrameRow> = {}): CamFrameRow {
   return {
@@ -66,11 +70,13 @@ export function frameRow(over: Partial<CamFrameRow> = {}): CamFrameRow {
     local_minute: 20,
     utc_offset_minutes: -240,
     timezone: "America/New_York",
-    r2_key: "boca-raton/boca-south/2026-10-11/1420Z-01234567.jpg",
+    r2_key: "boca-raton/boca-south/2026-10-11/1420Z-01234567-cccccccc.jpg",
     bytes: 20_000,
     sha256: "0123456789abcdef".repeat(4),
     source_kind: "feed",
     attribution: "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+    claim_id: CLAIM_A,
+    claimed_at_utc: over.received_at_utc ?? "2026-10-11T14:20:00.000Z",
     ...over,
   };
 }

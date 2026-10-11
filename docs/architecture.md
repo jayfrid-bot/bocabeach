@@ -155,12 +155,12 @@ flowchart LR
   HIST -->|"cam_observations (every history[] read not yet stored: crowd, seaweed, water,<br/>clarity, underwater uw) + cam_reads (per-cam detail), migrations 0006/0014,<br/>INSERT OR IGNORE, vision-cam beaches only (config/vision-cams.json),<br/>lib/history/camObservations.ts; a feed failure never fails the beach_hourly row"| D1
   BACKFILL["scripts/backfill_cam_history.mjs (one-shot; shares<br/>lib/history/camObservationRow.mjs with the archiver)"] -->|cam_observations| D1
   SARG -->|reads| ACAMS["config/archive-cams.json<br/>the 11 archived cams, generated from config/locations.ts<br/>by scripts/gen_archive_cams.ts (a cam with archive false is left out)"]
-  SARG -->|"every tick, vision on or off: POST /api/cam-frames?slug&amp;cam&amp;frameAt<br/>Bearer INGEST_TOKEN, raw JPEG, best-effort, 15 s timeout<br/>(scripts/cam_seaweed.py archive_frame: the stills the vision loop fetched,<br/>plus archive_pass for the rest; frameAt = latest.json timestamp or the uw-frame meta time)"| CAMINGEST["/api/cam-frames (POST)<br/>constant-time auth; cam must be in the manifest (404 unknown, 403 archive:false);<br/>Content-Length and streamed 600 KB cap; JPEG magic, at least 10 KB; sha-256;<br/>atomic slot claim = one shot per cam per UTC hour of display time"]
-  CAMINGEST -->|"INSERT ... ON CONFLICT DO NOTHING (state pending) → R2 put → ready;<br/>unchanged sha vs the newest ready frame is dropped;<br/>cam_frames, migrations/0016"| D1
-  CAMINGEST -->|"PUT slug/cam/local_date/HHmmZ-sha8.jpg"| CAMR2[("R2 bucket isitbeachday-cam-frames<br/>binding CAM_FRAMES<br/>lifecycle rule deletes after 367 days")]
+  SARG -->|"every tick, vision on or off: GET /api/cam-frames/slots?slug (one per beach, fails open)<br/>then POST /api/cam-frames?slug&amp;cam&amp;frameAt for cams not yet filled<br/>Bearer INGEST_TOKEN, raw JPEG, best-effort, 15 s timeout, 90 s budget per tick<br/>(scripts/cam_seaweed.py: the stills the vision loop fetched are uploaded after its reads,<br/>archive_pass fetches the rest; frameAt = latest.json timestamp or the uw-frame meta time)"| CAMINGEST["/api/cam-frames (POST) and /api/cam-frames/slots (GET)<br/>constant-time auth; cam must be in the manifest (404 unknown, 403 archive:false);<br/>Content-Length and streamed 600 KB cap; JPEG magic, at least 10 KB; sha-256;<br/>atomic slot claim with a random claim id = one shot per cam per UTC hour of display time"]
+  CAMINGEST -->|"INSERT ... ON CONFLICT DO NOTHING (state pending, claim_id), else take over a pending claim older than 10 min;<br/>R2 put; then ready WHERE claim_id matches (an uncertain finalize is re-read, never rolled back blind);<br/>an unchanged sha vs the newest ready frame is dropped (advisory);<br/>cam_frames, migrations/0016"| D1
+  CAMINGEST -->|"PUT slug/cam/local_date/HHmmZ-sha8-claim8.jpg"| CAMR2[("R2 bucket isitbeachday-cam-frames<br/>binding CAM_FRAMES<br/>lifecycle rule deletes after 367 days")]
   HISTCRON -->|"once a day, on the 08:17 UTC tick, before the archive call; POST x-cron-secret"| CAMPURGE["/api/cam-frames/purge<br/>at most 10 D1 statements: pending rows older than 1 h,<br/>then rows older than 365 days by received_at_utc<br/>(DELETE of 5,000 rows per statement)"]
   CAMPURGE -->|"deletes cam_frames rows; R2 objects expire on their own two days later"| D1
-  REMOVE["scripts/cam_archive_remove.ts (by hand; dry run unless --yes)<br/>wrangler r2 object delete + D1 DELETE for one cam"] -->|"erase one cam on a request"| CAMR2
+  REMOVE["scripts/cam_archive_remove.ts (by hand; dry run unless --yes)<br/>lists the cam prefix through the R2 S3 API when R2 keys are set,<br/>wrangler r2 object delete + D1 DELETE for one cam"] -->|"erase one cam on a request"| CAMR2
   REMOVE --> D1
   SUNCAM -->|"yt-dlp -J → HLS playlist (~4 h DVR); one frame every 2.5 min,<br/>event −35 … +25 min, per config/sun-cams.json cam"| YTLIVE[["YouTube livestream DVR<br/>Elbo Room + 3 Deerfield cams, all facing east"]]
   SUNCAM -->|"POST /api/sun-observations — Bearer INGEST_TOKEN<br/>robust-peak score + series + scored_at, per beach / event / cam;<br/>incomplete captures are never sent"| SUNOBS["/api/sun-observations<br/>constant-time auth, bounded 32 KB read, strict validation<br/>that recomputes coverage + robust peak (lib/sunObservations.ts)"]
@@ -269,14 +269,19 @@ copied onto every beach's file, not read once per beach.
 
 **The webcam archive keeps one shot per cam per hour.** `scripts/cam_seaweed.py`
 POSTs each cam's still to `/api/cam-frames` on every `sargassum.yml` tick, with
-`INGEST_TOKEN`. It sends the stills the vision loop already fetched, and
+`INGEST_TOKEN`, after a cheap `GET /api/cam-frames/slots` check (one per beach)
+that lets it skip cams whose hour is already stored. It sends the stills the vision loop already fetched, and
 `archive_pass()` fetches the rest (the cams the vision reader never reads, plus
 any courier cam it skipped), so archiving runs even with no vision provider.
 The cam list is `config/archive-cams.json`, generated from
 `config/locations.ts`: every cam with a proxied still whose `archive` flag is
 not `false`. The route claims the (beach, cam, UTC hour) slot with one atomic
 insert, writes the JPEG to the R2 bucket `isitbeachday-cam-frames` (binding
-`CAM_FRAMES`), then marks the row ready in `cam_frames` (migration 0016). Each
+`CAM_FRAMES`), then marks the row ready in `cam_frames` (migration 0016). Every claim has a
+random `claim_id` (its first 8 characters are in the R2 key); a pending claim
+older than 10 minutes can be taken over, and finalize and rollback only act on
+their own claim. If the ready update errors, the route re-reads the row before
+touching R2, and leaves the object alone when D1 is unreachable. Each
 row keeps three clocks: `received_at_utc` (server time, drives retention),
 `frame_at_utc` (the source's own time, when believable) and `display_at_utc`
 (what the user sees). The every-minute tick of `workers/history-cron` that

@@ -178,7 +178,8 @@ frameAt for courier cams; reject > 5 min in the future or > 3 h old →
 null), `display_at_utc` (= frame_at when present, else received_at).
 `local_date/local_hour` come from `display_at_utc` via the same
 `localHourParts` helper `beach_hourly` uses. Client-sent times never drive
-the throttle or retention.
+retention; the hourly slot is keyed from display time (R4), bounded by the
+5-min-future / 3-h-old frame-time rule.
 
 **R4. Atomic slot claim (no SELECT-then-INSERT).** Table key:
 `PRIMARY KEY (slug, cam_id, slot_utc)` where `slot_utc` = `display_at_utc`

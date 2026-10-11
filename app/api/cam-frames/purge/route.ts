@@ -1,7 +1,9 @@
 // POST /api/cam-frames/purge — the daily cleanup for the webcam archive index
-// (docs/CAM_ARCHIVE_PLAN.md R5). workers/history-cron calls it once a day (the
-// "17 8 * * *" cron) with the shared CRON_SECRET, the same header the other
-// cron routes check (app/api/push/run, app/api/history/archive).
+// (docs/CAM_ARCHIVE_PLAN.md R5). workers/history-cron calls it once a day, on
+// its every-minute tick that lands on 08:17 UTC (there is no second cron
+// expression), just before that tick's archive call. It sends the shared
+// CRON_SECRET in the same header the other cron routes check
+// (app/api/push/run, app/api/history/archive).
 //
 // It deletes, from D1 only:
 //   - `pending` rows older than 1 hour (an ingest that crashed after its claim);

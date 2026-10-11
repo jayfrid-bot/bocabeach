@@ -78,13 +78,19 @@ config/archive-cams.json (generated from config/locations.ts; lib/camFrames/
 manifest.test.ts keeps the two equal) has its still POSTed to the app's
 /api/cam-frames route with `Authorization: Bearer $INGEST_TOKEN`. The server
 keeps one shot per cam per hour. Two paths feed it, and neither can break the
-vision read: capture_beach() archives the still it already fetched for vision
-(fetch_still -> archive_frame -> assess), and archive_pass() fetches the stills
-the vision loop did NOT fetch this tick (boca-inlet, boca-inlet-north,
-boca-inlet-jetty, any courier cam it skipped as stale, and Spinner when the
-hourly underwater read did not run). archive_pass() runs on every tick whether
-or not a vision provider is configured. Archiving is best-effort: with
-INGEST_TOKEN unset it does nothing, and any error is logged and swallowed.
+vision read: capture_beach() queues the still it already fetched for vision
+(fetch_still -> queue, then assess) and uploads the queue on a small thread pool
+AFTER the beach's reads, so an upload never delays a read; and archive_pass()
+fetches the stills the vision loop did NOT fetch this tick (boca-inlet,
+boca-inlet-north, boca-inlet-jetty, any courier cam it skipped as stale, and
+Spinner when the hourly underwater read did not run). archive_pass() runs on
+every tick whether or not a vision provider is configured. A cheap pre-check
+(GET /api/cam-frames/slots, one per beach, fails open) tells the script which
+cams' hour slot is already filled, so it skips those uploads, and for
+archive-only cams the download too. All archive work in a tick shares one
+90-second budget (ARCHIVE_DEADLINE_S); unfinished work is dropped and logged
+once. Archiving is best-effort: with INGEST_TOKEN unset it does nothing, and
+any error is logged and swallowed.
 The source's own frame time rides along as `frameAt`: latest.json `timestamp`
 for feed cams, the uw-frame /meta grabbedAtUtc for courier cams.
 
@@ -241,6 +247,10 @@ ARCHIVE_FRAME_MAX_AGE_MIN = float(os.environ.get("ARCHIVE_FRAME_MAX_AGE_MIN", "1
 ARCHIVE_MIN_BYTES = 10 * 1024
 ARCHIVE_MAX_BYTES = 600 * 1024
 ARCHIVE_WORKERS = int(os.environ.get("ARCHIVE_WORKERS", "4"))
+# Wall-time budget for ALL archive work in one tick (pre-check, every upload
+# flush, archive_pass). Unfinished work at the deadline is dropped.
+ARCHIVE_DEADLINE_S = float(os.environ.get("ARCHIVE_DEADLINE_S", "90"))
+ARCHIVE_PRECHECK_TIMEOUT_S = 8
 # The underwater "Spinner" cam follows its own fetch path (fetch_uw_frame).
 UW_ARCHIVE_SLUG = "deerfield-beach"
 UW_ARCHIVE_CAM_ID = "deerfield-spinner-uw"
@@ -695,75 +705,228 @@ def archive_frame(slug: str, cam_id: str, img: bytes, frame_at: str | None = Non
         return "error"
 
 
-def _archive_if_listed(slug: str, cam_id: str, img: bytes, frame_at: str | None) -> str:
-    """archive_frame() for a cam that is in the manifest; "unlisted" otherwise
-    (a vision cam the archive does not keep, or a cam set to archive:false)."""
-    if not os.environ.get("INGEST_TOKEN", "").strip():
-        return "no-token"
-    if (slug, cam_id) not in archive_keys():
-        return "unlisted"
-    return archive_frame(slug, cam_id, img, frame_at)
+def _slot_utc_of(frame_at: str | None) -> str:
+    """The UTC-hour slot a frame lands in, as the server keys it
+    ('2026-10-11T14:00:00.000Z'): the hour of its own time when that time is
+    believable (not >5 min ahead, not >3 h old: the server's own rule), else
+    the hour of "now"."""
+    now = dt.datetime.now(dt.timezone.utc)
+    when = now
+    if frame_at:
+        try:
+            t = dt.datetime.fromisoformat(frame_at.replace("Z", "+00:00"))
+            if t.tzinfo is None:
+                t = t.replace(tzinfo=dt.timezone.utc)
+            if -5 <= (now - t).total_seconds() / 60 <= 180:
+                when = t
+        except ValueError:
+            pass
+    return when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:00:00.000Z")
+
+
+def fetch_filled_slots(slug: str) -> dict | None:
+    """GET <ARCHIVE_URL>/slots?slug=.. : {slot ISO: {cam ids}} for the current
+    and previous hour slot (cams that are ready or freshly pending), or None on
+    ANY failure so the caller fails open and behaves as if nothing were filled."""
+    token = os.environ.get("INGEST_TOKEN", "").strip()
+    if not token:
+        return None
+    try:
+        req = urllib.request.Request(
+            f"{ARCHIVE_URL.rstrip('/')}/slots?{urllib.parse.urlencode({'slug': slug})}",
+            headers={"Authorization": f"Bearer {token}", "User-Agent": HTTP_UA},
+        )
+        with urllib.request.urlopen(req, timeout=ARCHIVE_PRECHECK_TIMEOUT_S) as resp:
+            doc = json.loads(resp.read(200_000).decode("utf-8", "replace"))
+        slots = doc["slots"]
+        return {str(k): {str(c) for c in v} for k, v in slots.items()}
+    except Exception as e:  # noqa: BLE001 — a failed pre-check just means "upload as before"
+        print(f"  warn archive pre-check [{slug}]: {e}", file=sys.stderr)
+        return None
+
+
+class ArchiveRun:
+    """One tick's archive work: the cheap pre-check, the upload queue, and the
+    overall time budget.
+
+    * Pre-check (precheck): one GET per beach, at most 3 a tick, says which cams'
+      current/previous hour slot is already filled. Filled cams are not uploaded,
+      and cams only archive_pass reads are not even fetched. Fails open.
+    * Queue (enqueue/flush): capture_beach hands over the JPEG it already
+      fetched and moves on to the vision read; flush() uploads the queue on a
+      small thread pool (ARCHIVE_WORKERS) after the beach's reads, so a slow
+      upload never delays a read.
+    * Budget: ARCHIVE_DEADLINE_S (90 s) of wall time across ALL archive work in
+      the tick (pre-check + every flush + archive_pass). Work still unfinished
+      at the deadline is dropped, and that is logged once.
+    """
+
+    def __init__(self, deadline_s: float | None = None):
+        self.deadline_s = ARCHIVE_DEADLINE_S if deadline_s is None else deadline_s
+        self.spent = 0.0
+        self.filled: dict[str, dict[str, set]] = {}
+        self.prechecked: set[str] = set()
+        self.queue: list[tuple[str, str, bytes, str | None]] = []
+        self.dropped = 0
+        self._logged_drop = False
+        self._keys: set | None = None
+
+    def remaining(self) -> float:
+        return max(0.0, self.deadline_s - self.spent)
+
+    def listed(self, slug: str, cam_id: str) -> bool:
+        """Is the cam in the archive manifest (so archive:false cams are not)?"""
+        if self._keys is None:
+            self._keys = archive_keys()
+        return (slug, cam_id) in self._keys
+
+    def is_filled(self, slug: str, cam_id: str, frame_at: str | None = None) -> bool:
+        """True when the cam's slot (for `frame_at`, else the current hour) is known to be filled."""
+        return cam_id in self.filled.get(slug, {}).get(_slot_utc_of(frame_at), set())
+
+    def run_bounded(self, tasks: list) -> dict:
+        """Run [(label, zero-arg callable)] on a thread pool within the remaining
+        budget. Returns {label: result} for the tasks that finished; the rest
+        are dropped (cancelled if not started) and counted."""
+        if not tasks:
+            return {}
+        remaining = self.remaining()
+        if remaining <= 0:
+            self._drop(len(tasks))
+            return {}
+        started = time.monotonic()
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, ARCHIVE_WORKERS))
+        futures = {pool.submit(fn): label for label, fn in tasks}
+        done, not_done = concurrent.futures.wait(futures, timeout=remaining)
+        for f in not_done:
+            f.cancel()
+        pool.shutdown(wait=False, cancel_futures=True)
+        self.spent += time.monotonic() - started
+        if not_done:
+            self._drop(len(not_done))
+        results = {}
+        for f in done:
+            try:
+                results[futures[f]] = f.result()
+            except Exception as e:  # noqa: BLE001
+                print(f"  warn archive [{futures[f]}]: {e}", file=sys.stderr)
+                results[futures[f]] = "error"
+        return results
+
+    def _drop(self, n: int) -> None:
+        self.dropped += n
+        if not self._logged_drop:
+            self._logged_drop = True
+            print(f"  warn archive: {self.deadline_s:.0f} s budget for this tick ran out; "
+                  f"dropping unfinished archive work ({n} item(s) so far)", file=sys.stderr)
+
+    def precheck(self, slugs) -> None:
+        """Ask the app which cams are already filled, once per beach (idempotent)."""
+        todo = sorted(set(slugs) - self.prechecked)
+        if not todo or not os.environ.get("INGEST_TOKEN", "").strip():
+            return
+        self.prechecked.update(todo)
+        got = self.run_bounded([(slug, (lambda sl=slug: fetch_filled_slots(sl))) for slug in todo])
+        for slug, slots in got.items():
+            if slots is not None:
+                self.filled[slug] = slots
+
+    def enqueue(self, slug: str, cam_id: str, img: bytes, frame_at: str | None) -> bool:
+        """Queue a fetched still for upload. False (nothing queued) when archiving
+        is off, the cam is not in the manifest, or its slot is already filled."""
+        if not os.environ.get("INGEST_TOKEN", "").strip() or not self.listed(slug, cam_id):
+            return False
+        if self.is_filled(slug, cam_id, frame_at):
+            print(f"  archive [{slug}] {cam_id}: skipped (slot already filled)")
+            return False
+        self.queue.append((slug, cam_id, img, frame_at))
+        return True
+
+    def flush(self) -> dict:
+        """Upload everything queued, concurrently, within the budget."""
+        items, self.queue = self.queue, []
+        return self.run_bounded([
+            (f"{s}/{c}", (lambda s=s, c=c, i=i, f=f: archive_frame(s, c, i, f)))
+            for s, c, i, f in items
+        ])
 
 
 def _courier_frame_at(meta_url: str) -> str | None:
-    """The courier's own capture time for a "direct" cam, from its /meta URL
-    ({ok, grabbedAtUtc}), or None when the meta is missing, not ok, or
-    unparsable. The archive pass will not archive a courier frame whose age it
-    cannot establish."""
+    """The courier's own capture time for a "direct" cam, from its /meta URL,
+    or None unless the meta says `ok` is true, carries a parseable
+    grabbedAtUtc, and that frame is no older than ARCHIVE_FRAME_MAX_AGE_MIN.
+    The age check happens HERE, before the JPEG is downloaded: a courier frame
+    whose age cannot be established, or is too old, is not worth fetching."""
     try:
         meta = json.loads(_get(meta_url, timeout=15).decode("utf-8", "replace"))
     except Exception as e:  # noqa: BLE001
         print(f"  warn archive meta {meta_url}: {e}", file=sys.stderr)
         return None
-    if not isinstance(meta, dict) or meta.get("ok") is False:
+    if not isinstance(meta, dict) or meta.get("ok") is not True:
         return None
     grabbed = meta.get("grabbedAtUtc")
-    if isinstance(grabbed, str) and _frame_age_min(grabbed) is not None:
-        return grabbed
-    return None
+    if not isinstance(grabbed, str):
+        return None
+    age = _frame_age_min(grabbed)
+    if age is None or age > ARCHIVE_FRAME_MAX_AGE_MIN:
+        return None
+    return grabbed
 
 
-def archive_pass(attempted: set, cams: list[dict] | None = None) -> dict:
+def archive_pass(attempted: set, cams: list[dict] | None = None, run: "ArchiveRun | None" = None) -> dict:
     """Fetch + archive every manifest cam the vision loop did NOT already fetch
     this tick (`attempted` is a set of (slug, cam id) the vision/underwater paths
     went after, whether or not the fetch worked, so a broken cam is not hit
     twice). Runs on EVERY tick, whether or not a vision provider is configured.
     Does nothing when INGEST_TOKEN is unset (no point fetching stills nobody
-    will keep). Cams are handled on a small thread pool (ARCHIVE_WORKERS) so a
-    slow cam cannot stretch the tick; one cam failing never affects another.
+    will keep).
+
+    Before fetching a cam it asks the pre-check (see ArchiveRun) whether the
+    cam's slot is already filled and skips the fetch if so; for courier cams it
+    reads /meta first and skips the download of a frame that is stale, or whose
+    own hour is already filled. Cams run on a small thread pool inside the tick's
+    archive budget; one cam failing never affects another.
 
     Returns {"attempted": n, "results": {"slug/cam": status, ...}}."""
     if not os.environ.get("INGEST_TOKEN", "").strip():
         return {"attempted": 0, "results": {}, "skipped": "INGEST_TOKEN unset"}
+    run = run or ArchiveRun()
     manifest = load_archive_cams() if cams is None else cams
+    run.precheck({c["slug"] for c in manifest})
     todo = [c for c in manifest if (c["slug"], c["id"]) not in attempted]
     feed_cache: dict = {}
 
-    def one(cam: dict) -> tuple[str, str]:
-        label = f"{cam['slug']}/{cam['id']}"
+    def one(cam: dict) -> str:
+        slug, cam_id = cam["slug"], cam["id"]
         try:
+            if run.is_filled(slug, cam_id):
+                print(f"  archive [{slug}] {cam_id}: skipped (slot already filled)")
+                return "filled"
             src = cam.get("source") or {}
             frame_at = None
             if src.get("kind") == "direct" and src.get("meta"):
                 frame_at = _courier_frame_at(src["meta"])
                 if frame_at is None:
-                    print(f"  archive [{cam['slug']}] {cam['id']}: skipped (no usable meta)")
-                    return label, "skipped"
+                    print(f"  archive [{slug}] {cam_id}: skipped (no usable meta)")
+                    return "skipped"
+                if run.is_filled(slug, cam_id, frame_at):
+                    print(f"  archive [{slug}] {cam_id}: skipped (slot already filled)")
+                    return "filled"
             info: dict = {}
             img = fetch_still(cam, info, feed_cache)
-            return label, archive_frame(cam["slug"], cam["id"], img, frame_at or info.get("frameAt"))
+            frame_at = frame_at or info.get("frameAt")
+            if run.is_filled(slug, cam_id, frame_at):
+                print(f"  archive [{slug}] {cam_id}: skipped (slot already filled)")
+                return "filled"
+            return archive_frame(slug, cam_id, img, frame_at)
         except Exception as e:  # noqa: BLE001
-            print(f"  warn archive [{cam.get('slug')}] {cam.get('id')}: {e}", file=sys.stderr)
-            return label, "error"
+            print(f"  warn archive [{slug}] {cam_id}: {e}", file=sys.stderr)
+            return "error"
 
-    results: dict[str, str] = {}
-    if todo:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, ARCHIVE_WORKERS)) as pool:
-            for label, status in pool.map(one, todo):
-                results[label] = status
+    results = run.run_bounded([(f"{c['slug']}/{c['id']}", (lambda c=c: one(c))) for c in todo])
     for c in todo:
         attempted.add((c["slug"], c["id"]))
-    return {"attempted": len(todo), "results": results}
+    return {"attempted": len(todo), "results": results, "dropped": run.dropped}
 
 
 def _post(url: str, body: bytes, headers: dict | None = None, timeout: int = 40) -> bytes:
@@ -941,25 +1104,30 @@ def assess_uw(img: bytes) -> dict:
     return assess(img, UW_PROMPT, _parse_uw)
 
 
-def capture_uw(now_local: dt.datetime, attempted: set | None = None) -> dict | None:
+def capture_uw(now_local: dt.datetime, attempted: set | None = None,
+               archive: "ArchiveRun | None" = None) -> dict | None:
     """Grab + read one underwater frame; fail-soft to None so the cam flow is safe.
 
     Returns {level, pct, note, capturedAtLocal, provider, model} or None on ANY
     failure (unreachable stream, IP block, no providers, bad frame, timeout).
 
     The frame is also handed to the webcam archive (Spinner follows this fetch
-    path, not capture_beach's) BEFORE the vision read, so it is kept even when
-    the read fails. `attempted` (optional) is told Spinner was fetched, so
-    archive_pass() does not fetch it a second time this tick."""
+    path, not capture_beach's): queued BEFORE the vision read so it is kept even
+    when the read fails, and uploaded after the read, so the upload never delays
+    it. `attempted` (optional) is told Spinner was fetched, so archive_pass()
+    does not fetch it a second time this tick."""
+    run = archive if archive is not None else ArchiveRun()
     try:
         if attempted is not None:
             attempted.add((UW_ARCHIVE_SLUG, UW_ARCHIVE_CAM_ID))
         frame, frame_at = fetch_uw_frame_timed()
-        _archive_if_listed(UW_ARCHIVE_SLUG, UW_ARCHIVE_CAM_ID, frame, frame_at)
+        run.enqueue(UW_ARCHIVE_SLUG, UW_ARCHIVE_CAM_ID, frame, frame_at)
         r = assess_uw(frame)
     except Exception as e:  # noqa: BLE001 — underwater is best-effort calibration only
         print(f"  warn underwater cam: {e}", file=sys.stderr)
         return None
+    finally:
+        run.flush()
     print(f"  underwater: clarity={r['level']}({r.get('pct')}%) via {r.get('provider')}")
     return {
         "level": r["level"],
@@ -1036,7 +1204,7 @@ def fetch_prev(slug: str) -> dict:
 
 def capture_beach(
     slug: str, cams: list[dict], now_local: dt.datetime, gap_state: dict, prev: dict,
-    attempted: set | None = None,
+    attempted: set | None = None, archive: "ArchiveRun | None" = None,
 ) -> dict | None:
     """Read every cam configured for one beach. `gap_state` is a single
     {"called": bool} shared across ALL beaches in this run, so CAM_GAP_S spaces
@@ -1045,11 +1213,15 @@ def capture_beach(
     this beach's previously published document (see fetch_prev()) — read for
     the freshness/dedupe check on "direct" cams that carry a "meta" URL.
 
-    Webcam archive: each still fetched here is handed to archive_frame() before
-    the vision read (fetch_still -> archive_frame -> assess), so it is archived
-    even when the read fails and never fetched twice. `attempted` (optional) is
-    a set that collects (slug, cam id) of every cam this function goes after;
-    archive_pass() uses it to fetch only the rest."""
+    Webcam archive: each still fetched here is also queued for the archive
+    (fetch_still -> queue -> assess), so it is archived even when the read fails
+    and never fetched twice. The vision read does NOT wait for the upload: the
+    queue is uploaded concurrently (thread pool) after this beach's reads, within
+    the tick's archive budget (see ArchiveRun). `attempted` (optional) is a set
+    that collects (slug, cam id) of every cam this function goes after;
+    archive_pass() uses it to fetch only the rest. `archive` (optional) is the
+    tick's shared ArchiveRun; without one this call uses its own."""
+    run = archive if archive is not None else ArchiveRun()
     readings = []
     for cam in cams:
         src = cam.get("source") or {}
@@ -1079,7 +1251,7 @@ def capture_beach(
                 attempted.add((slug, cam["id"]))
             info: dict = {}
             img = fetch_still(cam, info)
-            _archive_if_listed(slug, cam["id"], img, frame_at or info.get("frameAt"))
+            run.enqueue(slug, cam["id"], img, frame_at or info.get("frameAt"))
             r = assess(img)
             reading = {"id": cam["id"], "name": cam["name"], **r}
             if frame_at:
@@ -1090,6 +1262,7 @@ def capture_beach(
                   f"people={r.get('people')} via {r.get('provider')}")
         except Exception as e:  # noqa: BLE001
             print(f"  warn [{slug}] {cam['id']}: {e}", file=sys.stderr)
+    run.flush()  # the beach's reads are done: upload its stills now
     if not readings:
         return None
     return {"capturedAtLocal": now_local.isoformat(timespec="minutes"),
@@ -1180,11 +1353,11 @@ def build_beach_output(
     }
 
 
-def _run_archive_pass(attempted: set) -> None:
+def _run_archive_pass(attempted: set, run: "ArchiveRun | None" = None) -> None:
     """archive_pass() that can never fail the cycle (a red cycle counts toward
     the workflow loop's consecutive-failure bail-out)."""
     try:
-        out = archive_pass(attempted)
+        out = archive_pass(attempted, run=run)
         if out.get("skipped"):
             print(f"archive: skipped ({out['skipped']})")
         else:
@@ -1198,10 +1371,17 @@ def main() -> int:
     # (slug, cam id) of every cam the vision/underwater paths go after this tick;
     # archive_pass() archives the manifest cams NOT in here.
     attempted: set[tuple[str, str]] = set()
+    # The tick's shared archive state: pre-check answers, upload queue, time budget.
+    archive_run = ArchiveRun()
     if not registry:
         print("no beaches in vision-cams registry — nothing to do", file=sys.stderr)
-        _run_archive_pass(attempted)  # the archive does not depend on the vision registry
+        _run_archive_pass(attempted, archive_run)  # the archive does not depend on the vision registry
         return 0
+    try:
+        # One GET per beach (<= 3 a tick): which cams' hour slot is already filled.
+        archive_run.precheck({c["slug"] for c in load_archive_cams()})
+    except Exception as e:  # noqa: BLE001 — fails open: archive as if nothing were filled
+        print(f"  warn archive pre-check: {e}", file=sys.stderr)
 
     providers = _enabled_providers()
     if providers:
@@ -1225,7 +1405,7 @@ def main() -> int:
         if providers:
             current_by_slug[slug] = capture_beach(
                 slug, entry.get("cams", []), now_by_slug[slug], gap_state, prevs[slug],
-                attempted)
+                attempted, archive_run)
         else:
             current_by_slug[slug] = None
 
@@ -1262,13 +1442,13 @@ def main() -> int:
             except ValueError:
                 uw_age_min = None  # unparseable -> treat as due
         if uw_age_min is None or uw_age_min >= 50:
-            uw_reading = capture_uw(now_local_for_uw, attempted)
+            uw_reading = capture_uw(now_local_for_uw, attempted, archive_run)
             if uw_reading:
                 uw = uw_reading
 
     # WEBCAM ARCHIVE — every manifest cam the loops above did not fetch. Runs on
     # every tick, whether or not any vision provider is configured.
-    _run_archive_pass(attempted)
+    _run_archive_pass(attempted, archive_run)
 
     os.makedirs(OUT_DIR, exist_ok=True)
     wrote_any = False

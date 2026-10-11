@@ -3,7 +3,7 @@ import { createHmac } from "node:crypto";
 import { DEFAULT_TTL_SEC, MAX_EXP_AHEAD_SEC, sign, verify } from "@/lib/camFrames/sign";
 
 const KEY = "unit-test-signing-key-not-a-secret";
-const K = "boca-raton/boca-south/2026-10-11/1405Z-01234567.jpg";
+const K = "boca-raton/boca-south/2026-10-11/1405Z-01234567-cccccccc.jpg";
 const NOW = 1_760_192_400;
 
 afterEach(() => {
@@ -61,7 +61,7 @@ describe("verify", () => {
 
   it("rejects a changed key, expiry or signature", async () => {
     const s = await sign(K, 900, { nowSec: NOW, key: KEY });
-    const other = "boca-raton/boca-south/2026-10-11/1405Z-89abcdef.jpg";
+    const other = "boca-raton/boca-south/2026-10-11/1405Z-89abcdef-cccccccc.jpg";
     expect(await verify(other, s.exp, s.sig, NOW, { key: KEY })).toBe(false);
     expect(await verify(K, s.exp + 1, s.sig, NOW, { key: KEY })).toBe(false);
     const flipped = (s.sig[0] === "A" ? "B" : "A") + s.sig.slice(1);
@@ -88,7 +88,7 @@ describe("verify", () => {
 
   it("rejects a malformed k, never reaching the HMAC", async () => {
     const sig = createHmac("sha256", KEY).update(`x|${NOW + 60}`).digest("base64url");
-    for (const k of ["x", "", "../a/b/2026-10-11/1405Z-01234567.jpg", undefined, 7]) {
+    for (const k of ["x", "", "../a/b/2026-10-11/1405Z-01234567-cccccccc.jpg", undefined, 7]) {
       expect(await verify(k, NOW + 60, sig, NOW, { key: KEY })).toBe(false);
     }
   });

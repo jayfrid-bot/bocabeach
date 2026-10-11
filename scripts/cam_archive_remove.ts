@@ -9,6 +9,15 @@
 // --yes it deletes each R2 object with `wrangler r2 object delete --remote`,
 // then the D1 rows with `wrangler d1 execute --remote`. All the logic, and its
 // tests, live in lib/camFrames/removal.ts.
+//
+// To also find and delete orphan R2 objects (objects under <slug>/<camId>/ that
+// no D1 row points at), put an R2 API token in the environment before running.
+// The values are read from the environment only, never printed or stored:
+//   R2_ACCOUNT_ID         the Cloudflare account id (the r2.cloudflarestorage.com host)
+//   R2_ACCESS_KEY_ID      } an R2 API token with read access to the bucket
+//   R2_SECRET_ACCESS_KEY  }
+// Without all three the script falls back to the keys D1 knows about and prints
+// a warning that orphans may remain.
 
 import { execFile } from "node:child_process";
 import { dirname, resolve } from "node:path";
@@ -16,6 +25,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { errorLineOf, parseWranglerJson } from "@/lib/scorecard/wrangler";
 import { D1_DATABASE, parseRemoveArgs, R2_BUCKET, runRemoval, type RemovalIo } from "@/lib/camFrames/removal";
+import { listR2Prefix } from "@/lib/camFrames/r2s3";
 
 const run = promisify(execFile);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -35,7 +45,15 @@ async function wrangler(args: string[], timeout: number): Promise<string> {
   }
 }
 
+const accountId = process.env.R2_ACCOUNT_ID?.trim();
+const accessKeyId = process.env.R2_ACCESS_KEY_ID?.trim();
+const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY?.trim();
+
 const io: RemovalIo = {
+  r2List:
+    accountId && accessKeyId && secretAccessKey
+      ? (prefix) => listR2Prefix({ accountId, bucket: R2_BUCKET, accessKeyId, secretAccessKey }, prefix)
+      : undefined,
   async d1(sql) {
     const stdout = await wrangler(["d1", "execute", D1_DATABASE, "--remote", "--json", "--command", sql], 240_000);
     const parsed = parseWranglerJson(stdout) as { results?: Record<string, unknown>[]; success?: boolean; error?: unknown }[];

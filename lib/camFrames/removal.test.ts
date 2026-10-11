@@ -10,8 +10,8 @@ import {
   type RemovalIo,
 } from "@/lib/camFrames/removal";
 
-const KEY_A = "boca-raton/boca-inlet-jetty/2026-10-10/1405Z-aaaaaaaa.jpg";
-const KEY_B = "boca-raton/boca-inlet-jetty/2026-10-11/1505Z-bbbbbbbb.jpg";
+const KEY_A = "boca-raton/boca-inlet-jetty/2026-10-10/1405Z-aaaaaaaa-cccccccc.jpg";
+const KEY_B = "boca-raton/boca-inlet-jetty/2026-10-11/1505Z-bbbbbbbb-cccccccc.jpg";
 
 function rows() {
   return [
@@ -81,7 +81,7 @@ describe("planRemoval", () => {
   });
 
   it("refuses a key that is not under this cam's prefix", () => {
-    const bad = [{ r2_key: "boca-raton/boca-south/2026-10-10/1405Z-aaaaaaaa.jpg", bytes: 1, state: "ready", local_date: "2026-10-10" }];
+    const bad = [{ r2_key: "boca-raton/boca-south/2026-10-10/1405Z-aaaaaaaa-cccccccc.jpg", bytes: 1, state: "ready", local_date: "2026-10-10" }];
     expect(() => planRemoval("boca-raton", "boca-inlet-jetty", bad)).toThrow(/refusing/);
   });
 
@@ -141,10 +141,80 @@ describe("runRemoval", () => {
 
   it("stops before deleting anything if a row key is outside the cam's prefix", async () => {
     const { io, deleted, sql } = makeIo({
-      listing: [{ r2_key: "boca-raton/boca-south/2026-10-10/1405Z-aaaaaaaa.jpg", bytes: 1, state: "ready", local_date: "2026-10-10" }],
+      listing: [{ r2_key: "boca-raton/boca-south/2026-10-10/1405Z-aaaaaaaa-cccccccc.jpg", bytes: 1, state: "ready", local_date: "2026-10-10" }],
     });
     await expect(runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io)).rejects.toThrow(/refusing/);
     expect(deleted).toEqual([]);
     expect(sql).toHaveLength(1);
+  });
+
+  describe("with R2 credentials (orphan objects under the prefix)", () => {
+    const ORPHAN = "boca-raton/boca-inlet-jetty/2026-10-09/1305Z-99999999-88888888.jpg";
+
+    it("deletes the orphans too, then the rows", async () => {
+      const { io, deleted, sql } = makeIo();
+      io.r2List = async () => [KEY_A, KEY_B, ORPHAN];
+      const out = await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io, 2);
+      expect(deleted.sort()).toEqual([KEY_A, KEY_B, ORPHAN].sort());
+      expect(out.orphans).toBe(1);
+      expect(sql.some((q) => q.startsWith("DELETE"))).toBe(true);
+    });
+
+    it("still deletes a D1-listed key that the listing missed", async () => {
+      const { io, deleted } = makeIo();
+      io.r2List = async () => [KEY_A];
+      await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io);
+      expect(deleted.sort()).toEqual([KEY_A, KEY_B]);
+    });
+
+    it("lists with the cam's own prefix", async () => {
+      const { io } = makeIo();
+      const seen: string[] = [];
+      io.r2List = async (prefix) => {
+        seen.push(prefix);
+        return [];
+      };
+      await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: true }, io);
+      expect(seen).toEqual(["boca-raton/boca-inlet-jetty/"]);
+    });
+
+    it("a dry run reports orphans and deletes nothing", async () => {
+      const { io, deleted, sql, logs } = makeIo();
+      io.r2List = async () => [KEY_A, KEY_B, ORPHAN];
+      const out = await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: true }, io);
+      expect(out.orphans).toBe(1);
+      expect(deleted).toEqual([]);
+      expect(sql).toHaveLength(1);
+      expect(logs.join("\n")).toMatch(/1 have no D1 row/);
+      expect(logs.join("\n")).not.toMatch(/WARNING: R2 credentials/);
+    });
+
+    it("refuses a listed key outside the prefix before deleting anything", async () => {
+      const { io, deleted } = makeIo();
+      io.r2List = async () => [KEY_A, "boca-raton/boca-south/2026-10-10/1405Z-aaaaaaaa-cccccccc.jpg"];
+      await expect(runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io)).rejects.toThrow(/refusing/);
+      expect(deleted).toEqual([]);
+    });
+
+    it("keeps the D1 rows when the listing itself fails", async () => {
+      const { io, deleted, sql } = makeIo();
+      io.r2List = async () => {
+        throw new Error("R2 list failed: HTTP 403");
+      };
+      await expect(runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io)).rejects.toThrow(/HTTP 403/);
+      expect(deleted).toEqual([]);
+      expect(sql.some((q) => q.startsWith("DELETE"))).toBe(false);
+    });
+  });
+
+  describe("without R2 credentials", () => {
+    it("falls back to the D1 keys and warns clearly that orphans may remain", async () => {
+      const { io, logs, deleted } = makeIo();
+      expect(io.r2List).toBeUndefined();
+      const out = await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io);
+      expect(deleted.sort()).toEqual([KEY_A, KEY_B]);
+      expect(out.orphans).toBeNull();
+      expect(logs.join("\n")).toMatch(/WARNING: R2 credentials are not set.*Orphan objects/s);
+    });
   });
 });

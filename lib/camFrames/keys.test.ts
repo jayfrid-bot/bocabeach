@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildFrameKey,
   camPrefix,
+  claim8,
   isCalendarDate,
   isValidFrameKey,
   isValidId,
@@ -10,17 +11,19 @@ import {
 } from "@/lib/camFrames/keys";
 
 const SHA = "0123456789abcdef".repeat(4);
+const CLAIM = "cccccccc-1111-4222-8333-444444444444";
 
 describe("buildFrameKey", () => {
-  it("builds <slug>/<cam>/<local_date>/<HHmm>Z-<sha8>.jpg from the UTC display time", () => {
+  it("builds <slug>/<cam>/<local_date>/<HHmm>Z-<sha8>-<claim8>.jpg from the UTC display time", () => {
     const key = buildFrameKey({
       slug: "boca-raton",
       camId: "boca-south",
       localDate: "2026-10-11",
       displayAtUtc: "2026-10-11T14:05:09.000Z",
       sha256Hex: SHA,
+      claimId: CLAIM,
     });
-    expect(key).toBe("boca-raton/boca-south/2026-10-11/1405Z-01234567.jpg");
+    expect(key).toBe("boca-raton/boca-south/2026-10-11/1405Z-01234567-cccccccc.jpg");
   });
 
   it("uses the UTC clock even when the local date is the day before", () => {
@@ -31,8 +34,9 @@ describe("buildFrameKey", () => {
       localDate: "2026-10-10",
       displayAtUtc: "2026-10-11T01:30:00.000Z",
       sha256Hex: SHA,
+      claimId: CLAIM,
     });
-    expect(key).toBe("boca-raton/boca-south/2026-10-10/0130Z-01234567.jpg");
+    expect(key).toBe("boca-raton/boca-south/2026-10-10/0130Z-01234567-cccccccc.jpg");
   });
 
   it("round-trips through the validator", () => {
@@ -42,6 +46,7 @@ describe("buildFrameKey", () => {
       localDate: "2026-02-28",
       displayAtUtc: "2026-02-28T23:59:00.000Z",
       sha256Hex: SHA,
+      claimId: CLAIM,
     });
     expect(parseFrameKey(key)).toEqual({
       slug: "a1",
@@ -50,22 +55,25 @@ describe("buildFrameKey", () => {
       utcHour: 23,
       utcMinute: 59,
       sha8: "01234567",
+      claim8: "cccccccc",
     });
   });
 
   it("throws on malformed input instead of writing a key the validator would refuse", () => {
-    const ok = { slug: "a", camId: "b", localDate: "2026-10-11", displayAtUtc: "2026-10-11T00:00:00Z", sha256Hex: SHA };
+    const ok = { slug: "a", camId: "b", localDate: "2026-10-11", displayAtUtc: "2026-10-11T00:00:00Z", sha256Hex: SHA, claimId: CLAIM };
     expect(() => buildFrameKey({ ...ok, slug: "A" })).toThrow();
     expect(() => buildFrameKey({ ...ok, slug: "a/b" })).toThrow();
     expect(() => buildFrameKey({ ...ok, camId: "../x" })).toThrow();
     expect(() => buildFrameKey({ ...ok, localDate: "2026-02-30" })).toThrow();
     expect(() => buildFrameKey({ ...ok, displayAtUtc: "nope" })).toThrow();
     expect(() => buildFrameKey({ ...ok, sha256Hex: "abc" })).toThrow();
+    expect(() => buildFrameKey({ ...ok, claimId: "ZZZZZZZZ-0000" })).toThrow();
+    expect(() => buildFrameKey({ ...ok, claimId: "abc" })).toThrow();
   });
 });
 
 describe("parseFrameKey / isValidFrameKey", () => {
-  const good = "boca-raton/boca-south/2026-10-11/1405Z-01234567.jpg";
+  const good = "boca-raton/boca-south/2026-10-11/1405Z-01234567-cccccccc.jpg";
 
   it("accepts the exact shape", () => {
     expect(isValidFrameKey(good)).toBe(true);
@@ -75,27 +83,30 @@ describe("parseFrameKey / isValidFrameKey", () => {
     ["empty", ""],
     ["not a string", 42],
     ["null", null],
-    ["extra segment", "x/boca-raton/boca-south/2026-10-11/1405Z-01234567.jpg"],
-    ["missing segment", "boca-south/2026-10-11/1405Z-01234567.jpg"],
-    ["dot-dot", "boca-raton/../2026-10-11/1405Z-01234567.jpg"],
-    ["leading slash", "/boca-raton/boca-south/2026-10-11/1405Z-01234567.jpg"],
-    ["uppercase slug", "Boca-raton/boca-south/2026-10-11/1405Z-01234567.jpg"],
+    ["extra segment", "x/boca-raton/boca-south/2026-10-11/1405Z-01234567-cccccccc.jpg"],
+    ["missing segment", "boca-south/2026-10-11/1405Z-01234567-cccccccc.jpg"],
+    ["dot-dot", "boca-raton/../2026-10-11/1405Z-01234567-cccccccc.jpg"],
+    ["leading slash", "/boca-raton/boca-south/2026-10-11/1405Z-01234567-cccccccc.jpg"],
+    ["uppercase slug", "Boca-raton/boca-south/2026-10-11/1405Z-01234567-cccccccc.jpg"],
     ["uppercase hex", "boca-raton/boca-south/2026-10-11/1405Z-0123456A.jpg"],
+    ["no claim part", "boca-raton/boca-south/2026-10-11/1405Z-01234567.jpg"],
+    ["short claim part", "boca-raton/boca-south/2026-10-11/1405Z-01234567-ccccccc.jpg"],
+    ["uppercase claim part", "boca-raton/boca-south/2026-10-11/1405Z-01234567-CCCCCCCC.jpg"],
     ["short hash", "boca-raton/boca-south/2026-10-11/1405Z-0123456.jpg"],
     ["long hash", "boca-raton/boca-south/2026-10-11/1405Z-012345678.jpg"],
     ["wrong extension", "boca-raton/boca-south/2026-10-11/1405Z-01234567.png"],
     ["no Z", "boca-raton/boca-south/2026-10-11/1405-01234567.jpg"],
-    ["hour 24", "boca-raton/boca-south/2026-10-11/2405Z-01234567.jpg"],
-    ["minute 60", "boca-raton/boca-south/2026-10-11/1460Z-01234567.jpg"],
-    ["impossible date", "boca-raton/boca-south/2026-02-30/1405Z-01234567.jpg"],
-    ["month 13", "boca-raton/boca-south/2026-13-01/1405Z-01234567.jpg"],
+    ["hour 24", "boca-raton/boca-south/2026-10-11/2405Z-01234567-cccccccc.jpg"],
+    ["minute 60", "boca-raton/boca-south/2026-10-11/1460Z-01234567-cccccccc.jpg"],
+    ["impossible date", "boca-raton/boca-south/2026-02-30/1405Z-01234567-cccccccc.jpg"],
+    ["month 13", "boca-raton/boca-south/2026-13-01/1405Z-01234567-cccccccc.jpg"],
     ["trailing newline", `${good}\n`],
     ["query string", `${good}?x=1`],
-    ["backslash", "boca-raton\\boca-south/2026-10-11/1405Z-01234567.jpg"],
-    ["double hyphen id", "boca--raton/boca-south/2026-10-11/1405Z-01234567.jpg"],
-    ["encoded slash", "boca-raton%2Fboca-south/2026-10-11/1405Z-01234567.jpg"],
-    ["too long", `${"a".repeat(300)}/b/2026-10-11/1405Z-01234567.jpg`],
-    ["id over 64 chars", `${"a".repeat(65)}/b/2026-10-11/1405Z-01234567.jpg`],
+    ["backslash", "boca-raton\\boca-south/2026-10-11/1405Z-01234567-cccccccc.jpg"],
+    ["double hyphen id", "boca--raton/boca-south/2026-10-11/1405Z-01234567-cccccccc.jpg"],
+    ["encoded slash", "boca-raton%2Fboca-south/2026-10-11/1405Z-01234567-cccccccc.jpg"],
+    ["too long", `${"a".repeat(300)}/b/2026-10-11/1405Z-01234567-cccccccc.jpg`],
+    ["id over 64 chars", `${"a".repeat(65)}/b/2026-10-11/1405Z-01234567-cccccccc.jpg`],
   ])("rejects %s", (_name, key) => {
     expect(isValidFrameKey(key)).toBe(false);
   });
@@ -122,6 +133,11 @@ describe("helpers", () => {
     expect(isCalendarDate("2026-04-31")).toBe(false);
     expect(isCalendarDate("2026-1-1")).toBe(false);
     expect(isCalendarDate("1999-01-01")).toBe(false);
+  });
+
+  it("claim8 takes the first 8 hex characters of a UUID", () => {
+    expect(claim8(CLAIM)).toBe("cccccccc");
+    expect(() => claim8("not-a-uuid")).toThrow();
   });
 
   it("sha8 and camPrefix", () => {

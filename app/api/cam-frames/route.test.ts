@@ -2,9 +2,10 @@
 // applied; R2 is an in-memory fake. Time is frozen so slots are exact.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { D1Like, D1Stmt } from "@/lib/db/d1Store";
+import type { D1Like, D1RunResult, D1Stmt } from "@/lib/db/d1Store";
 import { HAS_SQLITE, makeCamDb, type CamDb } from "@/lib/camFrames/testDb";
-import { fakeBucket, fakeJpeg, type FakeBucket } from "@/lib/camFrames/testFixtures";
+import { CLAIM_A, fakeBucket, fakeJpeg, frameRow, type FakeBucket } from "@/lib/camFrames/testFixtures";
+import { claimSlot } from "@/lib/camFrames/store";
 import { parseFrameKey } from "@/lib/camFrames/keys";
 import { MAX_FRAME_BYTES } from "@/lib/camFrames/ingest";
 
@@ -44,6 +45,35 @@ function req(
     headers,
     body: body as BodyInit | null,
   });
+}
+
+/** Wrap D1 so a test can intercept every run(): the hook decides what happens (run it, skip it, throw after it). */
+function interceptRun(
+  real: D1Like,
+  hook: (sql: string, doRun: () => Promise<D1RunResult>) => Promise<D1RunResult>,
+  afterHook?: (sql: string) => void,
+): D1Like {
+  return {
+    prepare(sql: string): D1Stmt {
+      const st = real.prepare(sql);
+      const w: D1Stmt = {
+        bind(...v: unknown[]) {
+          st.bind(...v);
+          return w;
+        },
+        first: async <T,>() => {
+          afterHook?.(sql);
+          return st.first<T>();
+        },
+        all: async <T,>() => {
+          afterHook?.(sql);
+          return st.all<T>();
+        },
+        run: () => hook(sql, () => st.run()),
+      };
+      return w;
+    },
+  };
 }
 
 async function json(res: Response): Promise<Record<string, unknown>> {
@@ -386,6 +416,142 @@ describe.skipIf(!HAS_SQLITE)("POST /api/cam-frames", () => {
       const res = await POST(req(fakeJpeg()));
       expect(res.status).toBe(503);
       expect(bucket.objects.size).toBe(0);
+    });
+  });
+
+  describe("uncertain finalize (D1 may commit and still fail the response)", () => {
+    const isReadyUpdate = (sql: string) => /SET state = 'ready'/.test(sql);
+
+    it("commit-then-throw: the row is ready, so the frame is stored and the R2 object is KEPT", async () => {
+      ctl.db = interceptRun(h.db, async (sql, doRun) => {
+        if (!isReadyUpdate(sql)) return doRun();
+        await doRun(); // D1 committed ...
+        throw new Error("response lost (test)"); // ... and the answer never arrived
+      });
+      const res = await POST(req(fakeJpeg()));
+      expect(res.status).toBe(200);
+      const out = await json(res);
+      expect(out.stored).toBe(true);
+      expect(bucket.deleted).toEqual([]);
+      expect(bucket.objects.has(out.key as string)).toBe(true);
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0]).toMatchObject({ state: "ready", r2_key: out.key });
+    });
+
+    it("an update that did not commit and then threw: our object and pending row are removed, 500", async () => {
+      ctl.db = interceptRun(h.db, async (sql, doRun) => {
+        if (isReadyUpdate(sql)) throw new Error("d1 down before commit (test)");
+        return doRun();
+      });
+      const res = await POST(req(fakeJpeg()));
+      expect(res.status).toBe(500);
+      expect(bucket.objects.size).toBe(0);
+      expect(rows()).toHaveLength(0);
+    });
+
+    it("D1 still unreachable after the failed finalize: R2 is NOT touched, 500 (an orphan beats a broken ready row)", async () => {
+      let down = false;
+      ctl.db = interceptRun(
+        h.db,
+        async (sql, doRun) => {
+          if (isReadyUpdate(sql)) {
+            down = true;
+            await doRun(); // may even have committed
+            throw new Error("response lost (test)");
+          }
+          if (down) throw new Error("d1 unreachable (test)");
+          return doRun();
+        },
+        () => {
+          if (down) throw new Error("d1 unreachable (test)");
+        },
+      );
+      const res = await POST(req(fakeJpeg()));
+      expect(res.status).toBe(500);
+      expect(bucket.deleted).toEqual([]);
+      expect(bucket.objects.size).toBe(1);
+    });
+
+    it("the claim was taken over before finalize: our object is deleted, the winner's row is untouched, slot-taken", async () => {
+      const winner = "ffffffff-0000-4000-8000-000000000009";
+      ctl.db = interceptRun(h.db, async (sql, doRun) => {
+        if (isReadyUpdate(sql)) {
+          // another ingest took the slot over while we were writing R2
+          await h.db.prepare("UPDATE cam_frames SET claim_id = ?1").bind(winner).run();
+          await new Promise((r) => setTimeout(r, 0));
+        }
+        return doRun();
+      });
+      const res = await POST(req(fakeJpeg()));
+      expect(await json(res)).toEqual({ stored: false, reason: "slot-taken" });
+      expect(bucket.objects.size).toBe(0);
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0]).toMatchObject({ claim_id: winner, state: "pending" });
+    });
+  });
+
+  describe("claim ids and takeover of a crashed ingest", () => {
+    const SLOT = "2026-10-11T14:00:00.000Z";
+    const crashedRow = (claimedAtIso: string) =>
+      frameRow({
+        slot_utc: SLOT,
+        claim_id: CLAIM_A,
+        claimed_at_utc: claimedAtIso,
+        received_at_utc: claimedAtIso,
+        sha256: "a".repeat(64),
+        r2_key: "boca-raton/boca-south/2026-10-11/1405Z-aaaaaaaa-cccccccc.jpg",
+      });
+
+    it("puts the first 8 characters of the row's claim id in the R2 key", async () => {
+      const out = await json(await POST(req(fakeJpeg())));
+      const claimId = rows()[0].claim_id as string;
+      expect(claimId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-/);
+      expect(parseFrameKey(out.key as string)?.claim8).toBe(claimId.slice(0, 8));
+      expect(rows()[0].claimed_at_utc).toBe("2026-10-11T14:20:00.000Z");
+    });
+
+    it("two ingests of IDENTICAL bytes in different slots never share an R2 key", async () => {
+      const same = fakeJpeg(20_000, 4);
+      const a = await json(await POST(req(same, { slug: "boca-raton", cam: "boca-south", frameAt: "2026-10-11T13:30:00Z" })));
+      h.db.prepare("UPDATE cam_frames SET state = 'pending'").run(); // so 'unchanged' does not apply
+      const b = await json(await POST(req(same)));
+      expect(a.stored).toBe(true);
+      expect(b.stored).toBe(true);
+      expect(a.key).not.toBe(b.key);
+      expect((a.key as string).split("-").slice(0, 2)).toEqual((b.key as string).split("-").slice(0, 2));
+    });
+
+    it("answers slot-taken for a pending claim made 2 minutes ago", async () => {
+      await claimSlot(h.db, crashedRow("2026-10-11T14:18:00.000Z"));
+      const out = await json(await POST(req(fakeJpeg())));
+      expect(out).toEqual({ stored: false, reason: "slot-taken" });
+      expect(rows()[0].claim_id).toBe(CLAIM_A);
+    });
+
+    it("takes over a pending claim 15 minutes old and stores the frame under a new claim and key", async () => {
+      const crashed = crashedRow("2026-10-11T14:05:00.000Z");
+      await claimSlot(h.db, crashed);
+      bucket.objects.set(crashed.r2_key, { bytes: fakeJpeg(15_000, 99) }); // the crashed ingest's orphan object
+      const res = await POST(req(fakeJpeg(20_000, 5)));
+      const out = await json(res);
+      expect(out.stored).toBe(true);
+      expect(out.key).not.toBe(crashed.r2_key);
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0]).toMatchObject({ state: "ready", r2_key: out.key, bytes: 20_000 });
+      expect(rows()[0].claim_id).not.toBe(CLAIM_A);
+      // The winner never deletes the stale claimant's object; the 367-day lifecycle rule does.
+      expect(bucket.objects.has(crashed.r2_key)).toBe(true);
+    });
+
+    it("a stale claimant that finishes late cannot disturb the winner's ready row", async () => {
+      await claimSlot(h.db, crashedRow("2026-10-11T14:05:00.000Z"));
+      const out = await json(await POST(req(fakeJpeg(20_000, 5))));
+      expect(out.stored).toBe(true);
+      const { markReady, deletePending } = await import("@/lib/camFrames/store");
+      expect(await markReady(h.db, "boca-raton", "boca-south", SLOT, CLAIM_A)).toBe(false);
+      await deletePending(h.db, "boca-raton", "boca-south", SLOT, CLAIM_A);
+      expect(rows()).toHaveLength(1);
+      expect(rows()[0]).toMatchObject({ state: "ready", r2_key: out.key });
     });
   });
 });
