@@ -294,9 +294,12 @@ taken now would land in:
 `{ ok, slug, now, currentSlotUtc, golden: [{kind, startUtc, endUtc}], slots: { [slotUtc]: [camIds] } }`.
 `slots` has the current and previous 3 UTC-hour slots plus every 10-minute slot
 of any window overlapping that range (so a courier frame up to 3 hours old is
-still judged correctly). `golden` is returned so `cam_seaweed.py` can place a
-frame of any age with the same rule (`_slot_utc_of`); it reads "now" at the
-time of each question, so a tick that crosses a 10-minute boundary asks about
+still judged correctly). `golden` lists ALL the beach's windows for the
+previous, current and next local dates (up to six, a few hundred bytes), not
+only those near now, so a window that opens a minute after the GET, or a source
+time a few minutes ahead of it, is still classified correctly. `cam_seaweed.py`
+places a frame of any age with the same rule (`_slot_utc_of`); it reads "now" at
+the time of each question, so a tick that crosses a 10-minute boundary asks about
 the right slot. Still one request per beach, at most 3 a tick, fails open.
 
 **Run window.** The `sargassum.yml` loop no longer uses a fixed 05:55-20:05 ET
@@ -306,16 +309,41 @@ sunset +30 min over the archived beaches (NOAA solver in
 `scripts/sun_cam_check.py`, no new dependency; beach lat/lon now ride in
 `config/archive-cams.json`). June: about 09:56 to 00:46 UTC (5:56 AM to 8:46 PM
 EDT). December: about 11:34 to 23:03 UTC. On `unknown` the workflow falls back to
-a fixed 05:55-20:50 ET window. Cron is now `*/10 10-23,0 * * *` so a fallback
-loop can start as late as 00:50 UTC. The handoff and loop mechanics are
-unchanged. The 10 UTC start covers the earliest window opening (09:56 UTC in
-June: the first :00 tick is 10:00 anyway).
+a fixed 05:55-20:50 ET window. Cron is now `7 10-23,0 * * *`: once an hour, as a
+RECOVERY only, because the handoff is the primary scheduler and every cron fire
+cancels the healthy loop (`cancel-in-progress` is unchanged). The extra hour 0
+lets a recovery loop start after the longest summer sunset-plus-30. The handoff
+and loop mechanics are unchanged. The 10:07 UTC start is before every window
+opening that matters (09:56 UTC in June: the first :00 tick after it is 10:00,
+and a running loop is already awake from the handoff chain).
 
-**Stale feed frames (vision loop).** Separate fix, same release: a feed frame
-older than `VISION_MAX_FRAME_AGE_MIN = 60` (by its `latest.json` timestamp) is
-not scored. `capture_beach` logs `skipped (frame is N min old)`, does not call
-`assess()` and publishes no entry for that cam, exactly like a stale courier cam.
-The frame is still offered to the archive, which has its own 170-minute rule.
+**Stale feed frames (vision loop).** Separate fix, same release. A FEED cam's
+frame is judged by its `latest.json` timestamp in three states: scored when
+-5 min <= age <= `VISION_MAX_FRAME_AGE_MIN` (60); skipped and logged when older,
+or more than 5 minutes in the future; and, when the timestamp is missing or
+unparsable, NOT scored (we cannot tell a live frame from a night one), with one
+`WARN ... no frame timestamp` line per cam per tick. A cam with a source known to
+lack timestamps can set `"visionTrustNoTimestamp": true` in
+`config/vision-cams.json` (none do: all three Boca feed views, s4, s11 and s16,
+carry a timestamp, checked on 2026-10-11). "Not scored" means `assess()` is not
+called and no entry is published for that cam, exactly like a stale courier cam.
+The frame is still offered to the archive, which keeps its own rules (170-minute
+age cap).
+
+**Vision quota.** A long June day is about 280-300 vision calls (3 feed cams x
+85-89 ticks, about 20 courier reads, about 15 underwater reads), above the first
+Gemini model's ~250/day. The default chain is gemini-2.5-flash, gemini-2.5-flash-lite,
+Groq, OpenRouter; GitHub Models is not in it. Each tick logs one
+`vision calls this tick: ...` line (attempts per provider/model, ok and failed).
+
+**Rollout order.** (1) Apply migration `0017` to D1. (2) Verify the column
+(`SELECT slot_kind FROM cam_frames LIMIT 1`). (3) Deploy the app. There is no
+runtime fallback for a missing `slot_kind` column: code before the migration
+would fail every ingest and day fetch, so the order is not optional. (4) The
+reader picks up the new `cam_seaweed.py` and workflow from `main` on its next
+loop (the workflow's own `push` trigger also restarts it). (5) Smoke one golden
+ingest (a frame posted inside a window answers `stored` with a 10-minute
+`slotUtc`) and one day fetch (`golden` windows and frame `kind` present).
 
 **Day view.** `POST /api/history/[slug]/day` returns
 `golden: { sunrise: {startUtc,endUtc}|null, sunset: ... }` for the date (no D1

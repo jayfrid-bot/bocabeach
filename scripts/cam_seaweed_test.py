@@ -330,10 +330,13 @@ class CaptureBeachTests(WithManifest):
     COURIER_CAM = {"id": "ftl-elbo-beach-cam", "name": "Elbo",
                    "source": {"kind": "direct", "url": "https://u/frame", "meta": "https://u/meta"}}
 
-    def run_capture(self, slug, cams, *, assess=None, frame_at_info=None, meta=None, token="tok", attempted=None, archive=None, gap_state=None, prev=None):
+    def run_capture(self, slug, cams, *, assess=None, frame_at_info="fresh", meta=None, token="tok", attempted=None, archive=None, gap_state=None, prev=None):
         order = []
         self.out = io.StringIO()
+        self.err = io.StringIO()
         self.sleeps = []
+        if frame_at_info == "fresh":  # the default: a live feed frame. Pass None for "no timestamp".
+            frame_at_info = iso_ago(2)
 
         def fake_fetch(cam, info=None, feed_cache=None):
             order.append("fetch")
@@ -358,7 +361,7 @@ class CaptureBeachTests(WithManifest):
             mock.patch.object(cs.time, "sleep", lambda s: self.sleeps.append(s)),
         ]
         with env(INGEST_TOKEN=token), contextlib.ExitStack() as st, \
-                contextlib.redirect_stdout(self.out), contextlib.redirect_stderr(io.StringIO()):
+                contextlib.redirect_stdout(self.out), contextlib.redirect_stderr(self.err):
             for p in patches:
                 st.enter_context(p)
             result = cs.capture_beach(slug, cams, now, gap_state if gap_state is not None else {"called": False}, prev or {}, attempted, archive)
@@ -388,7 +391,7 @@ class CaptureBeachTests(WithManifest):
             return "stored"
 
         reads = []
-        with env(INGEST_TOKEN="tok"), mock.patch.object(cs, "fetch_still", lambda cam, info=None, feed_cache=None: jpeg()), \
+        with env(INGEST_TOKEN="tok"), mock.patch.object(cs, "fetch_still", lambda cam, info=None, feed_cache=None: (info.update(frameAt=iso_ago(2)), jpeg())[1]), \
                 mock.patch.object(cs, "archive_frame", slow_archive), \
                 mock.patch.object(cs, "assess", lambda img: reads.append(time.monotonic()) or {"level": "none", "provider": "t"}), \
                 mock.patch.object(cs.time, "sleep", lambda s: None), \
@@ -727,15 +730,85 @@ class StaleFeedFrameTests(WithManifest):
         _, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(61))
         self.assertNotIn("assess", order)
 
-    def test_a_feed_frame_with_no_timestamp_is_read_as_before(self):
-        result, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=None)
-        self.assertIn("assess", order)
-        self.assertEqual(len(result["cams"]), 1)
+    # --- the three states -------------------------------------------------
 
-    def test_an_unparsable_timestamp_is_read_as_before(self):
+    def test_scored_only_inside_minus_five_to_sixty_minutes(self):
+        for age in (59, 30, 1, -3, -4):
+            _, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(age))
+            self.assertIn("assess", order, f"age {age} min")
+
+    def test_older_than_sixty_minutes_is_skipped_and_logged(self):
+        for age in (61, 120, 431):
+            result, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(age))
+            self.assertNotIn("assess", order, f"age {age} min")
+            self.assertIsNone(result)
+            self.assertRegex(self.out.getvalue(), rf"boca-south: skipped \(frame is {age} min old\)")
+
+    def test_more_than_five_minutes_in_the_future_is_skipped_and_logged(self):
+        for ahead in (6, 30, 600):
+            result, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(-ahead))
+            self.assertNotIn("assess", order, f"{ahead} min ahead")
+            self.assertIsNone(result)
+            self.assertRegex(self.out.getvalue(), rf"skipped \(frame is {ahead} min in the future\)")
+
+    def test_a_missing_timestamp_is_not_scored_and_says_so_loudly(self):
+        result, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=None)
+        self.assertNotIn("assess", order)
+        self.assertIsNone(result, "no fresh reading, same shape as a skipped cam")
+        err = self.err.getvalue()
+        self.assertEqual(err.count("no frame timestamp"), 1, "one line per cam per tick")
+        self.assertIn("WARN [boca-raton] boca-south: no frame timestamp", err)
+        self.assertIn("not scored", err)
+
+    def test_one_diagnostic_line_per_cam_without_a_timestamp(self):
+        cams = [dict(self.FEED_CAM, id="a"), dict(self.FEED_CAM, id="b")]
+        self.run_capture("boca-raton", cams, frame_at_info=None)
+        lines = [l for l in self.err.getvalue().splitlines() if "no frame timestamp" in l]
+        self.assertEqual(len(lines), 2)
+
+    def test_an_unparsable_timestamp_is_treated_as_missing(self):
         result, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info="not-a-time")
+        self.assertNotIn("assess", order)
+        self.assertIsNone(result)
+        self.assertIn("no frame timestamp", self.err.getvalue())
+
+    def test_visionTrustNoTimestamp_lets_a_known_untimed_source_be_scored(self):
+        trusted = dict(self.FEED_CAM, visionTrustNoTimestamp=True)
+        result, order = self.run_capture("boca-raton", [trusted], frame_at_info=None)
         self.assertIn("assess", order)
         self.assertEqual(len(result["cams"]), 1)
+        self.assertNotIn("no frame timestamp", self.err.getvalue())
+
+    def test_the_trust_flag_does_not_excuse_a_stale_or_future_frame(self):
+        trusted = dict(self.FEED_CAM, visionTrustNoTimestamp=True)
+        for age in (431, -30):
+            _, order = self.run_capture("boca-raton", [trusted], frame_at_info=iso_ago(age))
+            self.assertNotIn("assess", order, f"age {age}")
+
+    def test_only_true_counts_as_the_trust_flag(self):
+        for bogus in ("true", 1, "yes", False, None):
+            _, order = self.run_capture("boca-raton", [dict(self.FEED_CAM, visionTrustNoTimestamp=bogus)], frame_at_info=None)
+            self.assertNotIn("assess", order, repr(bogus))
+
+    def test_no_current_feed_cam_needs_the_trust_flag(self):
+        registry = json.loads((ROOT / "config" / "vision-cams.json").read_text(encoding="utf-8"))
+        for slug, entry in registry.items():
+            for cam in entry["cams"]:
+                self.assertNotIn("visionTrustNoTimestamp", cam, f"{slug}/{cam['id']}")
+
+    def test_the_verdict_function_directly(self):
+        self.assertEqual(cs.vision_frame_verdict(iso_ago(10)), (True, None))
+        self.assertEqual(cs.vision_frame_verdict(iso_ago(-5.0 + 1)), (True, None))
+        self.assertFalse(cs.vision_frame_verdict(None)[0])
+        self.assertTrue(cs.vision_frame_verdict(None, True)[0])
+        self.assertFalse(cs.vision_frame_verdict("junk", False)[0])
+        self.assertTrue(cs.vision_frame_verdict("junk", True)[0])
+
+    def test_the_archive_still_gets_a_frame_the_vision_loop_will_not_score(self):
+        # The archive keeps its own rules (170-minute rule, in archive_frame).
+        for at in (None, iso_ago(431), iso_ago(-30)):
+            _, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=at)
+            self.assertEqual(len([o for o in order if isinstance(o, tuple)]), 1)
 
     def test_the_stale_frame_is_still_offered_to_the_archive_and_marked_attempted(self):
         attempted = set()
@@ -1024,6 +1097,19 @@ def utc(iso):
     return dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
 
 
+def frozen_now(iso):
+    """Freeze the script's clock (cs.dt.datetime.now) at `iso`."""
+    real = dt.datetime
+
+    class Frozen(real):
+        @classmethod
+        def now(cls, tz=None):
+            t = utc(iso)
+            return t if tz is None else t.astimezone(tz)
+
+    return mock.patch.object(cs.dt, "datetime", Frozen)
+
+
 class FetchGoldenReplyTests(unittest.TestCase):
     """fetch_filled_slots against the real function (WithManifest would replace it)."""
 
@@ -1044,6 +1130,33 @@ class FetchGoldenReplyTests(unittest.TestCase):
         self.assertEqual(got["slots"]["2026-10-11T11:20:00.000Z"], {"boca-south"})
         self.assertEqual(got["golden"], [(utc("2026-10-11T10:57:34.565Z"), utc("2026-10-11T11:57:34.565Z"))], "malformed windows are dropped")
 
+    def test_a_window_that_opens_after_the_precheck_still_classifies_the_frame_as_golden_and_posts_it(self):
+        # GET at 10:56:00Z; the sunrise window opens at 10:57:34Z. The reply lists every window of the
+        # surrounding dates, so a frame judged at 10:58 lands in the 10:50 golden slot, not the 10:00 hour slot.
+        reply = {
+            "ok": True,
+            "currentSlotUtc": "2026-10-11T10:00:00.000Z",
+            "golden": [
+                {"kind": "sunset", "startUtc": "2026-10-10T22:16:00.000Z", "endUtc": "2026-10-10T23:16:00.000Z"},
+                {"kind": "sunrise", "startUtc": "2026-10-11T10:57:34.565Z", "endUtc": "2026-10-11T11:57:34.565Z"},
+                {"kind": "sunset", "startUtc": "2026-10-11T22:16:18.394Z", "endUtc": "2026-10-11T23:16:18.394Z"},
+            ],
+            # The cam's HOUR slot is filled (an earlier shot); nothing golden exists yet.
+            "slots": {"2026-10-11T10:00:00.000Z": ["boca-south"], "2026-10-11T09:00:00.000Z": []},
+        }
+        run = cs.ArchiveRun()
+        with mock.patch.object(cs, "ARCHIVE_CAMS_PATH", str(MANIFEST_PATH)), env(INGEST_TOKEN="tok"), \
+                mock.patch.object(cs.urllib.request, "urlopen", mock.Mock(return_value=FakeResponse(reply))):
+            with frozen_now("2026-10-11T10:56:00Z"):
+                run.precheck({"boca-raton"})
+                self.assertTrue(run.is_filled("boca-raton", "boca-south"), "at 10:56 the hour slot is the one that counts, and it is filled")
+            with frozen_now("2026-10-11T10:58:00Z"), contextlib.redirect_stdout(io.StringIO()):
+                self.assertFalse(run.is_filled("boca-raton", "boca-south"), "the window has opened: the slot is 10:50, which is empty")
+                self.assertEqual(cs._slot_utc_of(None, run.filled["boca-raton"]["golden"]), "2026-10-11T10:50:00.000Z")
+                self.assertTrue(run.enqueue("boca-raton", "boca-south", jpeg(), None), "so the frame is queued to be posted")
+                # A source time a few minutes ahead of the GET is judged by the same windows.
+                self.assertEqual(cs._slot_utc_of("2026-10-11T10:59:00Z", run.filled["boca-raton"]["golden"]), "2026-10-11T10:50:00.000Z")
+
     def test_an_older_server_without_the_new_fields_still_works(self):
         with env(INGEST_TOKEN="tok"), mock.patch.object(cs.urllib.request, "urlopen", mock.Mock(return_value=FakeResponse({"slots": {"s": ["a"]}}))):
             got = cs.fetch_filled_slots("boca-raton")
@@ -1058,15 +1171,7 @@ class GoldenSlotTests(WithManifest):
 
     def at(self, iso):
         """Freeze the script's clock at `iso` (it reads dt.datetime.now in _slot_utc_of)."""
-        real = dt.datetime
-
-        class Frozen(real):
-            @classmethod
-            def now(cls, tz=None):
-                t = utc(iso)
-                return t if tz is None else t.astimezone(tz)
-
-        return mock.patch.object(cs.dt, "datetime", Frozen)
+        return frozen_now(iso)
 
     def test_inside_a_window_the_slot_is_ten_minutes_wide(self):
         with self.at("2026-10-11T11:30:00Z"):
@@ -1276,6 +1381,87 @@ class RunWindowTests(WithManifest):
                              cwd=ROOT, capture_output=True, text=True, timeout=30, env={**os.environ, "ARCHIVE_CAMS": "/nonexistent.json"})
         self.assertEqual(out.returncode, 0)
         self.assertEqual(out.stdout.strip(), "unknown")
+
+
+class VisionCallLogTests(unittest.TestCase):
+    """One line a tick: how many vision calls went to which provider/model."""
+
+    def setUp(self):
+        with cs._VISION_CALLS_LOCK:
+            cs._VISION_CALLS.clear()
+        self.addCleanup(lambda: cs._VISION_CALLS.clear())
+
+    def read_with(self, gemini=None, openai=None, order=("gemini", "groq")):
+        gem = gemini or (lambda img, prompt, model: {"seaweed": "none"})
+        oai = openai or (lambda cfg, img, prompt: {"seaweed": "none"})
+        with mock.patch.object(cs, "API_KEY", "k"), mock.patch.object(cs, "GEMINI_MODELS", ["g-1", "g-2"]), \
+                mock.patch.object(cs, "PROVIDER_ORDER", list(order)), \
+                mock.patch.dict(cs.OPENAI_PROVIDERS["groq"], {"key": "k", "model": "q-1"}), \
+                mock.patch.object(cs, "_gemini_out", gem), mock.patch.object(cs, "_openai_out", oai), \
+                mock.patch.object(cs, "_parse_out", lambda raw: {"level": "none"}):
+            return cs.assess(b"x", parse=lambda raw: {"level": "none"})
+
+    def test_none_before_any_call(self):
+        self.assertEqual(cs.vision_call_summary(), "vision calls this tick: none")
+
+    def test_a_successful_read_is_counted_against_its_model(self):
+        self.read_with()
+        self.read_with()
+        self.assertEqual(cs.vision_call_summary(), "vision calls this tick: 2 total; gemini/g-1 ok=2 failed=0")
+
+    def test_fallbacks_show_the_failed_attempts_and_who_took_over(self):
+        def gem(img, prompt, model):
+            raise RuntimeError("429 quota")
+
+        self.read_with(gemini=gem)
+        line = cs.vision_call_summary()
+        self.assertIn("3 total", line)
+        self.assertIn("gemini/g-1 ok=0 failed=1", line)
+        self.assertIn("gemini/g-2 ok=0 failed=1", line)
+        self.assertIn("groq/q-1 ok=1 failed=0", line)
+
+    def test_a_reply_that_will_not_parse_counts_as_failed(self):
+        def bad_parse(raw):
+            raise ValueError("not json")
+
+        with mock.patch.object(cs, "API_KEY", "k"), mock.patch.object(cs, "_gemini_out", lambda i, p, m: {}):
+            with self.assertRaises(ValueError):
+                cs.assess_with("gemini", b"x", parse=bad_parse, model="g-1")
+        self.assertIn("gemini/g-1 ok=0 failed=1", cs.vision_call_summary())
+
+    def test_main_prints_the_line_once_a_tick(self):
+        registry = {"boca-raton": {"timezone": "America/New_York", "cams": []}}
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(cs, "load_registry", lambda: registry), \
+                mock.patch.object(cs, "_enabled_providers", lambda: [("gemini", "g-1")]), \
+                mock.patch.object(cs, "fetch_prev", lambda slug: {}), \
+                mock.patch.object(cs, "capture_beach", lambda *a, **k: None), \
+                mock.patch.object(cs, "load_archive_cams", lambda: []), \
+                mock.patch.object(cs, "OUT_DIR", d), mock.patch.object(cs, "OUT", str(Path(d) / "legacy.json")), \
+                mock.patch.object(cs, "archive_pass", lambda attempted, cams=None, run=None: {"attempted": 0, "results": {}}), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(cs.main(), 0)
+        self.assertEqual(out.getvalue().count("vision calls this tick:"), 1)
+        self.assertIn("vision calls this tick: none", out.getvalue())
+
+    def test_no_line_when_no_provider_is_configured(self):
+        registry = {"boca-raton": {"timezone": "America/New_York", "cams": []}}
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(cs, "load_registry", lambda: registry), \
+                mock.patch.object(cs, "_enabled_providers", lambda: []), \
+                mock.patch.object(cs, "fetch_prev", lambda slug: {}), \
+                mock.patch.object(cs, "load_archive_cams", lambda: []), \
+                mock.patch.object(cs, "OUT_DIR", d), mock.patch.object(cs, "OUT", str(Path(d) / "legacy.json")), \
+                mock.patch.object(cs, "archive_pass", lambda attempted, cams=None, run=None: {"attempted": 0, "results": {}}), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            cs.main()
+        self.assertNotIn("vision calls this tick", out.getvalue())
+
+    def test_the_default_provider_order_excludes_github_models(self):
+        # The workflow comment about quota depends on this: gemini (2 models), groq, openrouter.
+        self.assertEqual(cs.PROVIDER_ORDER, ["gemini", "groq", "openrouter"])
 
 
 ZONE = __import__("zoneinfo").ZoneInfo("America/New_York")

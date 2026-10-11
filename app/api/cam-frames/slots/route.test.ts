@@ -72,7 +72,7 @@ describe.skipIf(!HAS_SQLITE)("slots", () => {
       slug: "boca-raton",
       now: "2026-10-11T16:20:00.000Z",
       currentSlotUtc: SLOT_NOW,
-      golden: [],
+      golden: expect.any(Array), // all windows of the previous, current and next local dates: see below
       slots: { [SLOT_NOW]: [], [SLOT_PREV]: [], "2026-10-11T14:00:00.000Z": [], "2026-10-11T13:00:00.000Z": [] },
     });
   });
@@ -118,9 +118,7 @@ describe.skipIf(!HAS_SQLITE)("slots", () => {
       vi.setSystemTime(IN_WINDOW);
       const out = (await (await get()).json()) as Out;
       expect(out.currentSlotUtc).toBe("2026-10-11T11:20:00.000Z");
-      expect(out.golden).toEqual([
-        { kind: "sunrise", startUtc: "2026-10-11T10:57:34.565Z", endUtc: "2026-10-11T11:57:34.565Z" },
-      ]);
+      expect(out.golden).toContainEqual({ kind: "sunrise", startUtc: "2026-10-11T10:57:34.565Z", endUtc: "2026-10-11T11:57:34.565Z" });
       // The 10-minute slots of the window, from the one holding its start up to now, plus the four hour slots.
       for (const s of ["10:50", "11:00", "11:10", "11:20"]) expect(out.slots).toHaveProperty([`2026-10-11T${s}:00.000Z`]);
       expect(out.slots).not.toHaveProperty(["2026-10-11T11:30:00.000Z"]); // still in the future
@@ -136,23 +134,44 @@ describe.skipIf(!HAS_SQLITE)("slots", () => {
       expect(out.slots["2026-10-11T11:10:00.000Z"]).toEqual(["boca-inlet"]);
     });
 
-    it("outside every window the current slot is the hour slot and nothing golden is listed", async () => {
+    it("outside every window the current slot is the hour slot and no golden SLOT is listed", async () => {
       const out = (await (await get()).json()) as Out;
       expect(out.currentSlotUtc).toBe(SLOT_NOW);
-      expect(out.golden).toEqual([]);
       expect(Object.keys(out.slots)).toHaveLength(4);
+    });
+
+    it("returns ALL windows of the previous, current and next local dates, however far from now", async () => {
+      // 12:20 PM EDT on Oct 11: no window is near, but the day before, the day itself and the day after all report.
+      const out = (await (await get()).json()) as Out;
+      expect(out.golden.map((w) => [w.kind, w.startUtc.slice(0, 10)])).toEqual([
+        ["sunrise", "2026-10-10"],
+        ["sunset", "2026-10-10"],
+        ["sunrise", "2026-10-11"],
+        ["sunset", "2026-10-11"],
+        ["sunrise", "2026-10-12"],
+        ["sunset", "2026-10-12"],
+      ]);
+      expect(JSON.stringify(out.golden).length).toBeLessThan(900);
+    });
+
+    it("a window that opens one minute after the request is already in the reply", async () => {
+      // 6:56 AM EDT; the sunrise window opens at 10:57:34Z (6:57:34 AM).
+      vi.setSystemTime(Date.parse("2026-10-11T10:56:00.000Z"));
+      const out = (await (await get()).json()) as Out;
+      expect(out.currentSlotUtc).toBe("2026-10-11T10:00:00.000Z"); // an hour slot right now
+      expect(out.golden).toContainEqual({ kind: "sunrise", startUtc: "2026-10-11T10:57:34.565Z", endUtc: "2026-10-11T11:57:34.565Z" });
     });
 
     it("lists a window that ended earlier in the 3-hour range, but not one wholly before it", async () => {
       // 8:30 AM EDT: the sunrise window ended at 11:57Z (a half hour back).
       vi.setSystemTime(Date.parse("2026-10-11T12:30:00.000Z"));
       const out = (await (await get()).json()) as Out;
-      expect(out.golden).toHaveLength(1);
       expect(out.slots).toHaveProperty(["2026-10-11T11:50:00.000Z"]);
       expect(out.slots).not.toHaveProperty(["2026-10-11T12:10:00.000Z"]); // no 10-minute slot after the window
-      // 4 hours after the window: it is out of the range.
+      // 4 hours after the window: it is out of the slot range (the window itself is still in `golden`).
       vi.setSystemTime(Date.parse("2026-10-11T16:30:00.000Z"));
-      expect(((await (await get()).json()) as Out).golden).toEqual([]);
+      const later = (await (await get()).json()) as Out;
+      expect(Object.keys(later.slots).filter((k) => !k.endsWith(":00:00.000Z"))).toEqual([]);
     });
   });
 

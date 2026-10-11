@@ -3,7 +3,7 @@
 // Answers which cams of that beach already have a frame in each slot a frame
 // could land in right now:
 //
-//   { ok: true, slug, now, currentSlotUtc, golden: [{ kind, startUtc, endUtc }],
+//   { ok: true, slug, now, currentSlotUtc, golden: [{ kind, startUtc, endUtc }, ...],
 //     slots: { "<slot ISO>": ["cam-id", ...], ... } }
 //
 // `currentSlotUtc` is the slot a frame taken NOW would land in under the slot
@@ -12,8 +12,10 @@
 // and previous three UTC-hour slots (the ingest route accepts a source frame
 // time up to 3 h old, so a courier frame can land three hours back), and every
 // 10-minute slot of any golden window that overlaps that range. `golden` lists
-// those windows, so the script can place a courier frame's own time with the
-// same rule without a second request.
+// ALL the beach's windows for the previous, current and next local dates (up to
+// six, a few hundred bytes), not just those near now: a window that opens a
+// minute AFTER this request, or a source frame time a few minutes ahead of it,
+// is then still classified correctly by the script without a second request.
 //
 // A cam is listed when its slot is `ready`, or `pending` with a claim made in
 // the last 10 minutes (an ingest probably still running). The script then
@@ -31,7 +33,7 @@ import { secretEqual } from "@/lib/db/api";
 import { getD1 } from "@/lib/db/d1Store";
 import { bearerToken } from "@/lib/camFrames/ingest";
 import { isValidId } from "@/lib/camFrames/keys";
-import { chooseSlot, goldenSlotsIn, goldenWindowsOverlapping, windowIso } from "@/lib/camFrames/golden";
+import { chooseSlot, goldenSlotsIn, goldenWindowsAround, windowIso } from "@/lib/camFrames/golden";
 import { archiveCams } from "@/lib/camFrames/manifest";
 import { filledSlots, STALE_CLAIM_MS } from "@/lib/camFrames/store";
 import { hourUtcOf } from "@/lib/history/archive";
@@ -59,11 +61,12 @@ export async function GET(req: Request): Promise<Response> {
 
   const nowMs = Date.now();
   const rangeStartMs = Math.floor((nowMs - 3 * 3_600_000) / 3_600_000) * 3_600_000;
-  const windows = goldenWindowsOverlapping(loc, rangeStartMs, nowMs);
+  const windows = goldenWindowsAround(loc, nowMs);
+  const inRange = windows.filter((w) => w.endMs > rangeStartMs && w.startMs <= nowMs);
   const current = chooseSlot(loc, nowMs);
   const wanted = new Set<string>([
     ...[0, 1, 2, 3].map((h) => hourUtcOf(nowMs - h * 3_600_000)),
-    ...windows.flatMap((w) => goldenSlotsIn(w, rangeStartMs, nowMs)),
+    ...inRange.flatMap((w) => goldenSlotsIn(w, rangeStartMs, nowMs)),
     current.slotUtc,
   ]);
   try {

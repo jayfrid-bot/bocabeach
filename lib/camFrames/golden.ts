@@ -97,6 +97,16 @@ function windowsNear(loc: GoldenLoc, ms: number): GoldenHit[] {
   return out.sort((a, b) => a.startMs - b.startMs);
 }
 
+/**
+ * Every golden window of the beach-local dates before, of and after `ms`, sorted
+ * by start (up to six). The pre-check hands these to the capture script so it can
+ * place a frame correctly even when a window opens a minute after the request
+ * (or a source time is a few minutes ahead of it). Tiny: a few hundred bytes.
+ */
+export function goldenWindowsAround(loc: GoldenLoc, ms: number): GoldenHit[] {
+  return windowsNear(loc, ms);
+}
+
 /** The golden window containing the instant `ms`, or null. */
 export function goldenWindowAt(loc: GoldenLoc, ms: number): GoldenHit | null {
   return windowsNear(loc, ms).find((w) => ms >= w.startMs && ms < w.endMs) ?? null;

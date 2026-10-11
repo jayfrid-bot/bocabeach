@@ -97,11 +97,18 @@ any error is logged and swallowed.
 The source's own frame time rides along as `frameAt`: latest.json `timestamp`
 for feed cams, the uw-frame /meta grabbedAtUtc for courier cams.
 
-STALE FEED FRAMES: that same latest.json timestamp also gates the vision read. A
-feed frame older than VISION_MAX_FRAME_AGE_MIN (60) is archived-or-not by the
-archive's own rule but is NOT scored: capture_beach() logs "skipped (frame is N
-min old)", never calls assess(), and publishes no reading for that cam, just as
-for a courier cam skipped as stale.
+STALE FEED FRAMES: that same latest.json timestamp also gates the vision read,
+in three states (see vision_frame_verdict): scored when -5 min <= age <= 60 min;
+skipped and logged ("skipped (frame is N min old)" / "... N min in the future")
+outside that; and NOT scored when the timestamp is missing or unparsable, with one
+WARN line per cam per tick, unless the cam entry sets "visionTrustNoTimestamp":
+true in config/vision-cams.json. A skipped cam never reaches assess() and
+publishes no reading, just as a courier cam skipped as stale. The archive keeps
+its own, separate age rule.
+
+VISION CALL LOG: each tick ends with one line, "vision calls this tick: ...",
+counting every provider/model attempt (ok and failed) so quota exhaustion shows
+in the run log.
 
 Data shape (cam_seaweed.<slug>.json — identical shape on every beach's file):
   top-level `uw`: {level, pct, note, capturedAtLocal} — latest underwater read,
@@ -241,13 +248,20 @@ CAM_REGISTRY_PATH = os.environ.get("CAM_REGISTRY", "config/vision-cams.json")
 # so without the dedupe check we'd re-score the identical frame a dozen times.
 DIRECT_FRAME_MAX_AGE_MIN = float(os.environ.get("DIRECT_FRAME_MAX_AGE_MIN", "150"))
 
-# A FEED cam (video-monitoring.com latest.json) whose frame is older than this is
-# not read by the vision loop: assess() is not called and no reading is published
-# for it, exactly like a courier cam skipped as stale. Observed 2026-10-11 6 AM:
-# boca-inlet-surf served a 431-470-min-old night frame, and the loop scored it
+# FRESHNESS of a FEED cam's frame (video-monitoring.com latest.json) for the VISION
+# read is three-state, judged by the feed's own timestamp:
+#   -5 min <= age <= VISION_MAX_FRAME_AGE_MIN   scored;
+#   older than that, or more than 5 min in the future   skipped + logged;
+#   timestamp missing or unparsable   NOT scored by default (we cannot tell a live
+#     frame from a night one), logged as a conspicuous one-liner per cam per tick.
+#     A source known never to carry a timestamp can opt in with
+#     "visionTrustNoTimestamp": true on its cam entry in config/vision-cams.json.
+# "Not scored" means assess() is not called and no reading is published for the
+# cam, exactly like a courier cam skipped as stale. Observed 2026-10-11 6 AM:
+# boca-inlet-surf served a 431-470-min-old night frame and the loop scored it
 # ("seaweed none, crowd empty") as if it were live. The frame is still offered to
-# the archive, which has its own age rule (ARCHIVE_FRAME_MAX_AGE_MIN). A feed
-# frame with no timestamp is read as before.
+# the archive, which keeps its own age rule (ARCHIVE_FRAME_MAX_AGE_MIN).
+VISION_MAX_FUTURE_MIN = 5
 VISION_MAX_FRAME_AGE_MIN = float(os.environ.get("VISION_MAX_FRAME_AGE_MIN", "60"))
 
 # --- webcam archive (see the module docstring and docs/CAM_ARCHIVE_PLAN.md) ---
@@ -660,6 +674,23 @@ def _frame_age_min(frame_at: str) -> float | None:
     if t.tzinfo is None:
         t = t.replace(tzinfo=dt.timezone.utc)
     return (dt.datetime.now(dt.timezone.utc) - t).total_seconds() / 60
+
+
+def vision_frame_verdict(frame_at: str | None, trust_no_timestamp: bool = False) -> tuple[bool, str | None]:
+    """(score_it, reason_if_not) for a FEED cam's frame, by its latest.json time.
+    PURE. See the VISION_MAX_FRAME_AGE_MIN note: -5 min <= age <= 60 min is scored;
+    older, or further ahead than 5 min, is not; a missing or unparsable time is not,
+    unless the cam opts in with visionTrustNoTimestamp."""
+    age = _frame_age_min(frame_at) if frame_at else None
+    if age is None:
+        if trust_no_timestamp:
+            return True, None
+        return False, "no frame timestamp \u2014 not scored"
+    if age < -VISION_MAX_FUTURE_MIN:
+        return False, f"frame is {-age:.0f} min in the future"
+    if age > VISION_MAX_FRAME_AGE_MIN:
+        return False, f"frame is {age:.0f} min old"
+    return True, None
 
 
 def archive_frame(slug: str, cam_id: str, img: bytes, frame_at: str | None = None) -> str:
@@ -1130,6 +1161,30 @@ def _provider_configured(name: str) -> bool:
     return bool(cfg and cfg["key"])
 
 
+# Vision calls made this process, {(provider, model): [ok, failed]}. Every attempt
+# counts (a failed one usually still spent quota). Printed once a tick by
+# vision_call_summary() so exhaustion of a free tier is visible in the run log.
+_VISION_CALLS: dict[tuple[str, str], list[int]] = {}
+_VISION_CALLS_LOCK = threading.Lock()
+
+
+def _count_vision_call(name: str, model: str | None, ok: bool) -> None:
+    with _VISION_CALLS_LOCK:
+        _VISION_CALLS.setdefault((name, model or "?"), [0, 0])[0 if ok else 1] += 1
+
+
+def vision_call_summary() -> str:
+    """One line: 'vision calls this tick: gemini/gemini-2.5-flash ok=3 failed=0; ...',
+    or '... none' when no vision call was made."""
+    with _VISION_CALLS_LOCK:
+        items = sorted(_VISION_CALLS.items())
+    if not items:
+        return "vision calls this tick: none"
+    parts = [f"{n}/{m} ok={ok} failed={bad}" for (n, m), (ok, bad) in items]
+    total = sum(ok + bad for _, (ok, bad) in items)
+    return f"vision calls this tick: {total} total; " + "; ".join(parts)
+
+
 def assess_with(name: str, img: bytes, prompt: str = PROMPT, parse=_parse_out,
                 model: str | None = None) -> dict:
     """Read one image with exactly ONE named provider (for per-provider eval).
@@ -1140,13 +1195,20 @@ def assess_with(name: str, img: bytes, prompt: str = PROMPT, parse=_parse_out,
         if not API_KEY:
             raise RuntimeError("gemini not configured")
         model = model or MODEL
-        raw = _gemini_out(img, prompt, model)
+        call = lambda: _gemini_out(img, prompt, model)  # noqa: E731
     else:
         cfg = OPENAI_PROVIDERS.get(name)
         if not cfg or not cfg["key"]:
             raise RuntimeError(f"{name} not configured")
-        raw, model = _openai_out(cfg, img, prompt), cfg["model"]
-    result = parse(raw)
+        model = cfg["model"]
+        call = lambda: _openai_out(cfg, img, prompt)  # noqa: E731
+    try:
+        raw = call()
+        result = parse(raw)
+    except Exception:
+        _count_vision_call(name, model, False)
+        raise
+    _count_vision_call(name, model, True)
     result["provider"] = name
     result["model"] = model
     return result
@@ -1315,14 +1377,22 @@ def capture_beach(
             info: dict = {}
             img = fetch_still(cam, info)
             run.enqueue(slug, cam["id"], img, frame_at or info.get("frameAt"))
-            # A stale FEED frame is not read: no assess() call, no reading (the
-            # cam is simply absent from this tick's `cams`, like a skipped
-            # courier cam). Courier cams were judged above, by their meta.
+            # A FEED frame is scored only when its own timestamp says it is live
+            # (see vision_frame_verdict). Otherwise: no assess() call and no
+            # reading (the cam is simply absent from this tick's `cams`, like a
+            # skipped courier cam). Courier cams were judged above, by their meta.
             is_feed = (cam.get("source") or {}).get("kind", "feed") == "feed"
-            feed_age = _frame_age_min(info["frameAt"]) if is_feed and info.get("frameAt") and not frame_at else None
-            if feed_age is not None and feed_age > VISION_MAX_FRAME_AGE_MIN:
-                print(f"  [{slug}] {cam['id']}: skipped (frame is {feed_age:.0f} min old)")
-                continue
+            if is_feed and not frame_at:
+                ok, why = vision_frame_verdict(
+                    info.get("frameAt"), cam.get("visionTrustNoTimestamp") is True)
+                if not ok:
+                    if why.startswith("no frame timestamp"):
+                        print(f"  WARN [{slug}] {cam['id']}: {why} (set visionTrustNoTimestamp "
+                              "on the cam in config/vision-cams.json only if this source never has one)",
+                              file=sys.stderr)
+                    else:
+                        print(f"  [{slug}] {cam['id']}: skipped ({why})")
+                    continue
             # The gap spaces vision API calls, so it sits here, after the fetch
             # and the freshness check: a skipped or failed cam spends no quota.
             if gap_state["called"]:
@@ -1536,6 +1606,8 @@ def _run_archive_pass(attempted: set, run: "ArchiveRun | None" = None) -> None:
 
 
 def main() -> int:
+    with _VISION_CALLS_LOCK:
+        _VISION_CALLS.clear()
     registry = load_registry()
     # (slug, cam id) of every cam the vision/underwater paths go after this tick;
     # archive_pass() archives the manifest cams NOT in here.
@@ -1618,6 +1690,9 @@ def main() -> int:
     # WEBCAM ARCHIVE — every manifest cam the loops above did not fetch. Runs on
     # every tick, whether or not any vision provider is configured.
     _run_archive_pass(attempted, archive_run)
+
+    if providers:
+        print(vision_call_summary())
 
     os.makedirs(OUT_DIR, exist_ok=True)
     wrote_any = False
