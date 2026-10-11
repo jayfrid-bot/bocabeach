@@ -194,3 +194,39 @@ describe("plusErrorMessage", () => {
     );
   });
 });
+
+describe("fetchHistoryDay", () => {
+  const DAY = { ok: true, date: "2026-10-10", timezone: "America/New_York", hours: [], cams: [], summary: {}, versions: {} };
+
+  it("posts the device and date to the beach's day route and unwraps the day", async () => {
+    const calls = mockFetch(() => json(DAY));
+    const res = await plusApi.fetchHistoryDay("boca-raton", DEVICE.id, "2026-10-10");
+    expect(res.ok).toBe(true);
+    expect(res.ok && res.day.date).toBe("2026-10-10");
+    expect(calls[0].url).toBe("/api/history/boca-raton/day");
+    expect(calls[0].init?.method).toBe("POST");
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ deviceId: DEVICE.id, date: "2026-10-10" });
+    expect(calls[0].init?.cache).toBe("no-store");
+  });
+
+  it("returns the server's error slug and status, never throwing", async () => {
+    mockFetch(() => json({ ok: false, error: "not-entitled" }, 403));
+    expect(await plusApi.fetchHistoryDay("boca-raton", DEVICE.id, "2026-10-10")).toEqual({
+      ok: false,
+      day: null,
+      error: "not-entitled",
+      status: 403,
+    });
+  });
+
+  it("treats a 200 that is not a day as a failure, and survives a dead network or a non-JSON body", async () => {
+    mockFetch(() => json({ ok: true }));
+    expect((await plusApi.fetchHistoryDay("boca-raton", DEVICE.id, "2026-10-10")).ok).toBe(false);
+    mockFetch(() => {
+      throw new Error("Failed to fetch");
+    });
+    expect(await plusApi.fetchHistoryDay("boca-raton", DEVICE.id, "2026-10-10")).toMatchObject({ error: "network", status: 0 });
+    mockFetch(() => new Response("<html>502</html>", { status: 502 }));
+    expect(await plusApi.fetchHistoryDay("boca-raton", DEVICE.id, "2026-10-10")).toMatchObject({ error: "server", status: 502 });
+  });
+});

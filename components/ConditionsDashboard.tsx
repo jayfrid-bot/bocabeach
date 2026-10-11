@@ -775,22 +775,6 @@ export function ConditionsDashboard({
         </section>
       ) : null}
 
-      {/* Plus "Last N days" — a look back at recent archived conditions.
-          Gated like BeachModeCard: only on real beach pages (not the admin
-          preview), and the component itself renders nothing off the native
-          app shell (the API route is app-only). */}
-      {plusOn ? (
-        <section className="mb-6">
-          <HistorySection
-            slug={slug}
-            native={native}
-            entitled={plusEntitled}
-            deviceId={plus.deviceId}
-            onDoor={() => setSheet(plus.previewSeen ? "paywall" : "onboarding")}
-          />
-        </section>
-      ) : null}
-
       <h2 className="mb-3 mt-2 text-balance text-lg font-semibold text-slate-900 dark:text-white">
         Explore the details
       </h2>
@@ -1233,6 +1217,23 @@ export function ConditionsDashboard({
       {cams.length > 0 ? (
         <section className="mb-8">
           <CamGrid cams={cams} tz={tz} dataAt={snap.generatedAt} />
+        </section>
+      ) : null}
+
+      {/* Plus "Last N days" — a look back at recent archived conditions.
+          Gated like BeachModeCard: only on real beach pages (not the admin
+          preview), and the component itself renders nothing off the native
+          app shell (the API route is app-only). */}
+      {plusOn ? (
+        <section className="mb-6">
+          <HistorySection
+            slug={slug}
+            native={native}
+            entitled={plusEntitled}
+            deviceId={plus.deviceId}
+            timezone={tz}
+            onDoor={() => setSheet(plus.previewSeen ? "paywall" : "onboarding")}
+          />
         </section>
       ) : null}
 

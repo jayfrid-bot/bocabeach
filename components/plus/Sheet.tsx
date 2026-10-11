@@ -17,6 +17,7 @@ export function Sheet({
   onClose,
   children,
   footer,
+  tall = false,
 }: {
   open: boolean;
   title: string;
@@ -24,6 +25,9 @@ export function Sheet({
   children: ReactNode;
   /** Pinned under the scrolling body — the primary action lives here. */
   footer?: ReactNode;
+  /** Full height on a phone (below the status bar), with the bottom padding
+   *  kept clear of the home indicator. From `sm` up it is the usual card. */
+  tall?: boolean;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const openerRef = useRef<Element | null>(null);
@@ -92,7 +96,11 @@ export function Sheet({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="relative flex max-h-[92vh] w-full max-w-md flex-col rounded-t-3xl bg-white shadow-2xl ring-1 ring-slate-900/10 dark:bg-slate-900 dark:ring-white/10 sm:rounded-3xl"
+        className={`relative flex w-full max-w-md flex-col rounded-t-3xl bg-white shadow-2xl ring-1 ring-slate-900/10 dark:bg-slate-900 dark:ring-white/10 sm:rounded-3xl ${
+          tall
+            ? "h-[calc(100dvh_-_env(safe-area-inset-top,0px)_-_8px)] sm:h-auto sm:max-h-[92vh]"
+            : "max-h-[92vh]"
+        }`}
       >
         <div className="flex items-start justify-between gap-3 px-5 pb-2 pt-5">
           <h2
@@ -112,7 +120,13 @@ export function Sheet({
             </span>
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">{children}</div>
+        <div
+          className={`min-h-0 flex-1 overflow-y-auto px-5 ${
+            tall ? "pb-[max(1.25rem,env(safe-area-inset-bottom))]" : "pb-5"
+          }`}
+        >
+          {children}
+        </div>
         {footer ? (
           <div className="border-t border-slate-900/10 px-5 py-4 dark:border-white/10">{footer}</div>
         ) : null}

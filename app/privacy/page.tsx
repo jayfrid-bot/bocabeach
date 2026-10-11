@@ -142,9 +142,15 @@ export default function PrivacyPage() {
           run them. We fetch their public frames to compute aggregate,
           non-identifying conditions: how much seaweed is visible, how busy the
           beach looks, how clear the water is. There&apos;s no facial recognition
-          and no attempt to identify anyone in a frame, and we don&apos;t publish
-          or redistribute the images beyond what the camera operators already
-          make public.
+          and no attempt to identify anyone in a frame.
+        </p>
+        <p>
+          We also keep one still per camera per hour so Beach Day Plus members
+          can look back at a past day. Each still keeps the camera
+          operator&apos;s credit. These archived images may include people in
+          public areas. We do not use them to identify or track anyone, we do
+          not sell them or give them to anyone else, and we delete them after
+          one year.
         </p>
       </Section>
 

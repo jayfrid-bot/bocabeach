@@ -160,6 +160,10 @@ flowchart LR
   CAMINGEST -->|"PUT slug/cam/local_date/HHmmZ-sha8-claim8.jpg"| CAMR2[("R2 bucket isitbeachday-cam-frames<br/>binding CAM_FRAMES<br/>lifecycle rule deletes after 367 days")]
   HISTCRON -->|"once a day, on the 08:17 UTC tick, before the archive call; POST x-cron-secret"| CAMPURGE["/api/cam-frames/purge<br/>at most 10 D1 statements: pending rows older than 1 h,<br/>then rows older than 365 days by received_at_utc<br/>(DELETE of 5,000 rows per statement)"]
   CAMPURGE -->|"deletes cam_frames rows; R2 objects expire on their own two days later"| D1
+  DAYUI["Plus day sheet<br/>components/plus/DayViewSheet.tsx<br/>behind DAY_VIEW_ENABLED (lib/plus/flags.ts)"] -->|"POST deviceId + date"| DAYAPI["/api/history/[slug]/day<br/>app only; rate limit, install token, entitled (free device = 403)<br/>3 D1 reads: archive bounds, that local day's beach_hourly rows, ready cam_frames rows;<br/>only cams still archived; credit read from each row;<br/>signs every shot link for 15 min with CAM_FRAME_URL_KEY"]
+  DAYAPI -->|"SELECT only, no R2"| D1
+  DAYUI -->|"img src = signed link"| IMGAPI["/api/cam-frames/img (GET)<br/>constant-time verify of k, exp, sig; cam still archived (else 403);<br/>streams the R2 object, private cache for the seconds the link has left;<br/>404 object gone, 503 no binding"]
+  IMGAPI -->|"get"| CAMR2
   REMOVE["scripts/cam_archive_remove.ts (by hand; dry run unless --yes)<br/>lists the cam prefix through the R2 S3 API when R2 keys are set,<br/>wrangler r2 object delete + D1 DELETE for one cam"] -->|"erase one cam on a request"| CAMR2
   REMOVE --> D1
   SUNCAM -->|"yt-dlp -J → HLS playlist (~4 h DVR); one frame every 2.5 min,<br/>event −35 … +25 min, per config/sun-cams.json cam"| YTLIVE[["YouTube livestream DVR<br/>Elbo Room + 3 Deerfield cams, all facing east"]]
@@ -291,8 +295,16 @@ second cron expression: the Workers Free plan allows 5 per account. The purge
 drops rows older than 365 days, and the bucket's 367-day lifecycle rule removes
 the objects. Setting `archive: false` on
 a cam stops ingest at once; `scripts/cam_archive_remove.ts` erases what is
-already stored. Nothing reads the archive yet: the day API and the signed image
-route come in a later stage (`docs/CAM_ARCHIVE_PLAN.md`).
+already stored. Plus reads the archive through two routes. `POST
+/api/history/[slug]/day` is gated like `/api/history/[slug]` (app only, rate
+limit, install token, then `entitled`). It runs three D1 reads (archive bounds,
+the day's `beach_hourly` rows, the day's ready `cam_frames` rows), lists only
+cams the manifest still archives, takes each credit line from the stored row,
+and signs a 15-minute link per shot. `GET /api/cam-frames/img` checks that
+signature in constant time, checks the cam is still archived, and streams the
+object from R2 with a private cache header. A bad or expired signature is 403,
+a missing object 404, a missing binding 503. The picker and sheet sit behind
+the `DAY_VIEW_ENABLED` constant (`docs/CAM_ARCHIVE_PLAN.md`).
 
 **NOAA's rip current model is preprocessed, not fetched live.** NOAA's NWPS
 probabilistic rip current model (Dusek & Seim 2013) publishes one ~2.5MB text

@@ -115,7 +115,7 @@ const DEVICE_COLS =
 
 /** `beach_hourly` columns, in the exact order both the INSERT and the
  *  positional binds below use — see migrations/0006_history.sql. */
-const HOURLY_COLS = [
+export const HOURLY_COLS = [
   "slug", "hour_utc", "snapshot_generated_at", "archived_at", "local_date", "local_hour",
   "utc_offset_minutes", "timezone", "score", "raw_score", "rating", "available_weight",
   "observed_weight", "coverage_tier", "air_temp_f", "water_temp_f", "sand_temp_f", "wave_ft",

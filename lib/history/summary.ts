@@ -225,7 +225,7 @@ function parseCaps(json: string | null): string[] {
   }
 }
 
-function summarizeDay(date: string, rowsForDate: BeachHourlyRow[]): DaySummary {
+export function summarizeDay(date: string, rowsForDate: BeachHourlyRow[]): DaySummary {
   // Stable ascending order by local_hour — defensive against the store ever
   // handing back rows out of hour_utc order; on a genuine tie (identical
   // score at two hours), iterating in ascending-hour order below makes the

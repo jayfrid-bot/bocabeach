@@ -4,7 +4,7 @@
 // *.test.ts files import this. `makeCamDb()` returns null on a Node build
 // without node:sqlite; the tests then skip.
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { D1Like, D1RunResult, D1Stmt } from "@/lib/db/d1Store";
 
@@ -39,10 +39,18 @@ export interface CamDb {
   close(): void;
 }
 
-export function makeCamDb(): CamDb | null {
+/**
+ * `allMigrations: true` applies every migration in order (the day route reads
+ * beach_hourly as well as cam_frames); the default applies only 0016.
+ */
+export function makeCamDb(opts?: { allMigrations?: boolean }): CamDb | null {
   if (!Ctor) return null;
   const raw = new Ctor(":memory:");
-  raw.exec(readFileSync(path.join(process.cwd(), "migrations", "0016_cam_frames.sql"), "utf8"));
+  const dir = path.join(process.cwd(), "migrations");
+  const files = opts?.allMigrations
+    ? readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()
+    : ["0016_cam_frames.sql"];
+  for (const f of files) raw.exec(readFileSync(path.join(dir, f), "utf8"));
   const db: D1Like = {
     prepare(sql: string): D1Stmt {
       const stmt = raw.prepare(sql);

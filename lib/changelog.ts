@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-11",
+    title: "Go back to any day, with the beach cams",
+    details:
+      "Plus can now pick any past day and see that day's scores and readings. You can also scroll through a camera shot for every hour of daylight. History now sits at the bottom of the page. Camera shots are kept for a year and started on Oct 11.",
+    tag: "new",
+  },
+  {
     date: "2026-10-09",
     title: "History now says when the scoring formula changed",
     details:

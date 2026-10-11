@@ -7,6 +7,7 @@
 import type { AlertPrefs, DeviceRecord, SunColorMinBand } from "@/lib/db/types";
 import type { ScoreProfile } from "@/lib/profile/types";
 import type { DaySummary, HistoryBestEver, HistoryRecords, HistoryVersions } from "@/lib/history/summary";
+import type { DayViewPayload } from "@/lib/history/dayView";
 import { readInstallToken, writeInstallToken } from "@/lib/plus/storage";
 
 export interface PlusResult {
@@ -232,6 +233,44 @@ async function fetchHistory(deviceId: string, slug: string, days: 7 | 14 | 30): 
   return { ok: false, ...emptyHistoryResult(), error, status: res.status };
 }
 
+/** The answer to POST /api/history/[slug]/day. Never throws; a failure carries
+ *  the server's error slug ("not-entitled", "bad-request", "network", ...). */
+export type HistoryDayResult =
+  | { ok: true; day: DayViewPayload; error: null; status: number }
+  | { ok: false; day: null; error: string; status: number };
+
+/** Plus "go back to any day": one local day's hours, readings and camera shots.
+ *  Same shape and token handling as `fetchHistory` above: the caller owns the
+ *  re-bootstrap-on-401 retry. The signed image links in the answer last 15
+ *  minutes, so callers refetch rather than cache it. */
+async function fetchHistoryDay(slug: string, deviceId: string, date: string): Promise<HistoryDayResult> {
+  let res: Response;
+  try {
+    res = await fetch(
+      `/api/history/${encodeURIComponent(slug)}/day`,
+      withInstallToken({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, date }),
+        cache: "no-store",
+      }),
+    );
+  } catch {
+    return { ok: false, day: null, error: "network", status: 0 };
+  }
+  let body: unknown = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+  const obj = (body ?? {}) as Partial<DayViewPayload> & { ok?: unknown; error?: unknown };
+  if (res.ok && obj.ok === true && typeof obj.date === "string" && Array.isArray(obj.hours) && Array.isArray(obj.cams)) {
+    return { ok: true, day: obj as DayViewPayload, error: null, status: res.status };
+  }
+  return { ok: false, day: null, error: typeof obj.error === "string" ? obj.error : "server", status: res.status };
+}
+
 export const plusApi = {
   /** Read this device's row. 404 `not-found` for a device the server never saw. */
   getDevice(deviceId: string): Promise<PlusResult> {
@@ -264,6 +303,8 @@ export const plusApi = {
   },
   /** Plus "Last 7 days" — day summaries + records for one beach. */
   fetchHistory,
+  /** Plus "go back to any day" — one day's hours, readings and camera shots. */
+  fetchHistoryDay,
 };
 
 /** Plain English for every error slug the Plus routes can answer with. */

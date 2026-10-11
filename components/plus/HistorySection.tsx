@@ -36,10 +36,16 @@ import {
   type HistoryBestEver,
   type HistoryVersions,
 } from "@/lib/history/summary";
-import { findScoringVersion } from "@/lib/scoringVersions";
+import { formulaChangeNotice } from "@/lib/plus/formulaNotice";
 import { bootstrapInstallToken } from "@/lib/plus/client";
 import { MetricCard } from "@/components/MetricCard";
 import { LevelBarChart, type LevelBar } from "@/components/LevelBarChart";
+import { DayViewSheet } from "@/components/plus/DayViewSheet";
+import { DAY_VIEW_ENABLED } from "@/lib/plus/flags";
+import { isPickable, stepDate, todayInZone } from "@/lib/plus/dayView";
+
+// Kept importable from here: the section's tests and callers know it by this path.
+export { formulaChangeNotice };
 
 type DaysWindow = 7 | 14 | 30;
 
@@ -82,26 +88,6 @@ export function dayFormulaState(day: DaySummary, current: string | null): DayFor
   if (!current || versions.length === 0) return "current";
   if (versions.length > 1) return "mixed";
   return versions[0] === current ? "current" : "earlier";
-}
-
-/** The one quiet line under the strip when the shown days cross a formula
- *  change: names the most recent change, and "and earlier" when there are
- *  more. Also covers a range scored wholly by older formulas (right after a
- *  change, before any new row exists). Null when nothing needs saying. */
-export function formulaChangeNotice(versions: HistoryVersions | null): string | null {
-  if (!versions) return null;
-  const dates = [...new Set(versions.boundaries.map((b) => b.date))].sort();
-  if (dates.length > 1) {
-    return `Scoring changed on ${shortMonthDay(dates[dates.length - 1])} and earlier \u2014 days before that were scored by earlier formulas.`;
-  }
-  if (dates.length === 1) {
-    return `Scoring changed on ${shortMonthDay(dates[0])} \u2014 days before that were scored by an earlier formula.`;
-  }
-  const since = findScoringVersion(versions.current)?.since;
-  if (since && versions.inRange.length > 0 && !versions.inRange.includes(versions.current)) {
-    return `Scoring changed on ${shortMonthDay(since)} \u2014 these days were scored by an earlier formula.`;
-  }
-  return null;
 }
 
 /** The small line under a score-record tile: when its count started, or that
@@ -193,12 +179,15 @@ function DayCell({
   current,
   isOpen,
   onToggle,
+  opensSheet = false,
 }: {
   day: DaySummary;
   formula: DayFormulaState;
   current: string | null;
   isOpen: boolean;
   onToggle: () => void;
+  /** The day view is on: a tap opens the day sheet (a dialog) instead of an inline panel. */
+  opensSheet?: boolean;
 }) {
   const expandable = day.hourly.length > 0;
   const panelId = `history-day-${day.date}`;
@@ -206,8 +195,9 @@ function DayCell({
     <button
       type="button"
       disabled={!expandable}
-      aria-expanded={expandable ? isOpen : undefined}
-      aria-controls={expandable ? panelId : undefined}
+      aria-expanded={expandable && !opensSheet ? isOpen : undefined}
+      aria-controls={expandable && !opensSheet ? panelId : undefined}
+      aria-haspopup={expandable && opensSheet ? "dialog" : undefined}
       aria-label={dayCellAriaLabel(day, formula, current)}
       onClick={() => expandable && onToggle()}
       className={`min-h-[64px] w-16 shrink-0 rounded-xl bg-white/80 p-1.5 text-center ring-1 ring-slate-900/10 transition dark:bg-slate-900/70 dark:ring-white/10 sm:w-20 sm:rounded-2xl sm:p-2 ${
@@ -508,9 +498,12 @@ export function HistorySection({
   native,
   entitled,
   deviceId,
+  timezone,
   onDoor,
 }: {
   slug: string;
+  /** The beach's IANA timezone: "today" for the day picker is the beach's today. */
+  timezone: string;
   /** Server-detected native shell — same signal NotifyButton/BeachModeCard
    *  gate on. The API route itself is app-only, so there is nothing useful
    *  to show in a plain browser. */
@@ -523,6 +516,14 @@ export function HistorySection({
 }) {
   const [days, setDays] = useState<DaysWindow>(7);
   const [openDate, setOpenDate] = useState<string | null>(null);
+  // The day view: the day last picked, and whether its sheet is open.
+  const [dayDate, setDayDate] = useState<string | null>(null);
+  const [daySheetOpen, setDaySheetOpen] = useState(false);
+  const openDay = useCallback((date: string) => {
+    setDayDate(date);
+    setDaySheetOpen(true);
+  }, []);
+  const closeDay = useCallback(() => setDaySheetOpen(false), []);
 
   // Don't fetch until this device actually has an install token (Codex
   // review): bootstrapping is deduped/cached at module scope
@@ -624,6 +625,20 @@ export function HistorySection({
         ) : null}
       </div>
 
+      {DAY_VIEW_ENABLED && !entitled ? (
+        <button
+          type="button"
+          onClick={onDoor}
+          className="mt-3 flex min-h-[44px] w-full items-center gap-3 rounded-2xl bg-white/80 px-4 py-2 text-left ring-1 ring-slate-900/10 transition hover:ring-ocean-400 dark:bg-slate-900/70 dark:ring-white/10"
+        >
+          <span className="text-sm font-medium text-slate-900 dark:text-white">Pick a day</span>
+          <span className="min-w-0 flex-1 truncate text-sm text-slate-500 dark:text-slate-400">with Plus</span>
+          <span aria-hidden className="shrink-0 text-slate-400">
+            {"\u{1f4c5}"}
+          </span>
+        </button>
+      ) : null}
+
       {!entitled ? (
         <button
           type="button"
@@ -655,6 +670,14 @@ export function HistorySection({
         </div>
       ) : view?.kind === "data" ? (
         <>
+          {DAY_VIEW_ENABLED && view.data.archiveStartedAt ? (
+            <DayPicker
+              value={dayDate}
+              min={view.data.archiveStartedAt}
+              max={todayInZone(timezone, Date.now())}
+              onPick={openDay}
+            />
+          ) : null}
           {view.data.days.length === 0 ? (
             <p className="mt-3 text-sm text-slate-600 dark:text-slate-400">
               No history for this beach yet — it&apos;s still collecting. Check back tomorrow.
@@ -674,15 +697,18 @@ export function HistorySection({
                       day={d}
                       formula={dayFormulaState(d, currentVersion)}
                       current={currentVersion}
-                      isOpen={openDate === d.date}
-                      onToggle={() => setOpenDate((cur) => (cur === d.date ? null : d.date))}
+                      isOpen={DAY_VIEW_ENABLED ? daySheetOpen && dayDate === d.date : openDate === d.date}
+                      onToggle={() =>
+                        DAY_VIEW_ENABLED ? openDay(d.date) : setOpenDate((cur) => (cur === d.date ? null : d.date))
+                      }
+                      opensSheet={DAY_VIEW_ENABLED}
                     />
                   ))}
                 </div>
                 {formulaNotice ? (
                   <p className="text-xs text-slate-500 dark:text-slate-400">{formulaNotice}</p>
                 ) : null}
-                {openDate
+                {!DAY_VIEW_ENABLED && openDate
                   ? (() => {
                       const day = view.data.days.find((d) => d.date === openDate);
                       return day ? <DayDetail day={day} formula={dayFormulaState(day, currentVersion)} /> : null;
@@ -706,6 +732,67 @@ export function HistorySection({
           ) : null}
         </>
       ) : null}
+
+      {DAY_VIEW_ENABLED && entitled && daySheetOpen && dayDate && view?.kind === "data" ? (
+        <DayViewSheet
+          slug={slug}
+          deviceId={deviceId}
+          date={dayDate}
+          min={view.data.archiveStartedAt}
+          max={todayInZone(timezone, Date.now())}
+          onStep={setDayDate}
+          onClose={closeDay}
+        />
+      ) : null}
     </section>
+  );
+}
+
+/**
+ * "Pick a day": its own row under the section header. A native date field
+ * bounded by the first archived day and the beach's today, plus arrows that
+ * step one day. Every pick opens the day sheet. With no day picked yet the
+ * arrows start from today.
+ */
+function DayPicker({
+  value,
+  min,
+  max,
+  onPick,
+}: {
+  value: string | null;
+  min: string;
+  max: string;
+  onPick: (date: string) => void;
+}) {
+  const from = value ?? max;
+  const earlier = stepDate(from, -1, min, max);
+  const later = value ? stepDate(value, 1, min, max) : null;
+  const BTN =
+    "inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-900/5 text-lg text-slate-700 transition hover:bg-slate-900/10 disabled:cursor-not-allowed disabled:opacity-40 dark:bg-white/10 dark:text-slate-200 dark:hover:bg-white/20";
+  return (
+    <div className="mt-3 flex items-center gap-2">
+      <label htmlFor="history-pick-day" className="shrink-0 text-sm font-medium text-slate-900 dark:text-white">
+        Pick a day
+      </label>
+      <input
+        id="history-pick-day"
+        type="date"
+        min={min}
+        max={max}
+        value={value ?? ""}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (isPickable(v, min, max)) onPick(v);
+        }}
+        className="h-11 min-w-0 flex-1 rounded-xl bg-white/80 px-3 text-sm text-slate-900 ring-1 ring-slate-900/10 dark:bg-slate-900/70 dark:text-white dark:ring-white/10 dark:[color-scheme:dark]"
+      />
+      <button type="button" className={BTN} aria-label="Previous day" disabled={!earlier} onClick={() => earlier && onPick(earlier)}>
+        <span aria-hidden>{"\u2039"}</span>
+      </button>
+      <button type="button" className={BTN} aria-label="Next day" disabled={!later} onClick={() => later && onPick(later)}>
+        <span aria-hidden>{"\u203a"}</span>
+      </button>
+    </div>
   );
 }
