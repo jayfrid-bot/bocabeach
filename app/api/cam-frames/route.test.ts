@@ -330,6 +330,89 @@ describe.skipIf(!HAS_SQLITE)("POST /api/cam-frames", () => {
     });
   });
 
+  describe("golden-hour slots", () => {
+    // Boca, 2026-10-11: sunrise 11:17:34Z (7:17 AM EDT), window 10:57:34Z-11:57:34Z.
+    //                   sunset  22:56:18Z (6:56 PM EDT), window 22:16:18Z-23:16:18Z.
+    const at = (iso: string) => vi.setSystemTime(Date.parse(iso));
+
+    it("a sunrise-window frame lands in a 10-minute slot marked golden", async () => {
+      at("2026-10-11T11:24:30Z");
+      const out = await json(await POST(req(fakeJpeg(20_000, 1))));
+      expect(out.stored).toBe(true);
+      expect(out.slotUtc).toBe("2026-10-11T11:20:00.000Z");
+      expect(rows()[0]).toMatchObject({ slot_utc: "2026-10-11T11:20:00.000Z", slot_kind: "golden", local_hour: 7, local_minute: 24 });
+    });
+
+    it("two frames ten minutes apart in the window are both stored", async () => {
+      at("2026-10-11T11:24:30Z");
+      expect((await json(await POST(req(fakeJpeg(20_000, 1))))).stored).toBe(true);
+      at("2026-10-11T11:34:30Z");
+      const second = await json(await POST(req(fakeJpeg(20_000, 2))));
+      expect(second.stored).toBe(true);
+      expect(second.slotUtc).toBe("2026-10-11T11:30:00.000Z");
+      expect(rows().map((r) => r.slot_utc)).toEqual(["2026-10-11T11:20:00.000Z", "2026-10-11T11:30:00.000Z"]);
+    });
+
+    it("two different frames inside one 10-minute slot store one", async () => {
+      at("2026-10-11T11:21:00Z");
+      expect((await json(await POST(req(fakeJpeg(20_000, 1))))).stored).toBe(true);
+      at("2026-10-11T11:29:30Z");
+      expect(await json(await POST(req(fakeJpeg(20_000, 2))))).toEqual({ stored: false, reason: "slot-taken" });
+      expect(rows()).toHaveLength(1);
+    });
+
+    it("a sunset-window frame is golden too", async () => {
+      at("2026-10-11T22:41:00Z");
+      const out = await json(await POST(req(fakeJpeg())));
+      expect(out.slotUtc).toBe("2026-10-11T22:40:00.000Z");
+      expect(rows()[0].slot_kind).toBe("golden");
+    });
+
+    it("outside the windows the slot is the hour, as before: one shot per hour, kind 'hour'", async () => {
+      at("2026-10-11T12:10:00Z"); // 8:10 AM, just after the sunrise window
+      expect((await json(await POST(req(fakeJpeg(20_000, 1))))).slotUtc).toBe("2026-10-11T12:00:00.000Z");
+      at("2026-10-11T12:40:00Z");
+      expect(await json(await POST(req(fakeJpeg(20_000, 2))))).toEqual({ stored: false, reason: "slot-taken" });
+      expect(rows().map((r) => r.slot_kind)).toEqual(["hour"]);
+    });
+
+    it("the window edges: just before the start is an hour slot, the start itself is golden, the end is an hour slot", async () => {
+      at("2026-10-11T10:57:00Z"); // 34 s before the window opens
+      expect((await json(await POST(req(fakeJpeg(20_000, 1))))).slotUtc).toBe("2026-10-11T10:00:00.000Z");
+      at("2026-10-11T10:58:00Z");
+      expect((await json(await POST(req(fakeJpeg(20_000, 2))))).slotUtc).toBe("2026-10-11T10:50:00.000Z");
+      at("2026-10-11T11:57:00Z"); // 34 s before the window closes
+      expect((await json(await POST(req(fakeJpeg(20_000, 3))))).slotUtc).toBe("2026-10-11T11:50:00.000Z");
+      at("2026-10-11T11:58:00Z");
+      expect((await json(await POST(req(fakeJpeg(20_000, 4))))).slotUtc).toBe("2026-10-11T11:00:00.000Z");
+      expect(rows().map((r) => r.slot_kind)).toEqual(["hour", "golden", "hour", "golden"]); // by slot: 10:00, 10:50, 11:00, 11:50
+    });
+
+    it("the :00 key is shared: an hour-slot frame after the window cannot add a second row for an hour that already has its :00 golden shot", async () => {
+      at("2026-10-11T11:02:00Z");
+      expect((await json(await POST(req(fakeJpeg(20_000, 1))))).slotUtc).toBe("2026-10-11T11:00:00.000Z");
+      at("2026-10-11T11:58:30Z"); // after the window: hour slot 11:00, the same key
+      expect(await json(await POST(req(fakeJpeg(20_000, 2))))).toEqual({ stored: false, reason: "slot-taken" });
+      expect(rows()).toHaveLength(1);
+    });
+
+    it("a source frameAt inside the window decides the slot, not the server clock", async () => {
+      at("2026-10-11T11:40:00Z");
+      const out = await json(await POST(req(fakeJpeg(), { slug: "boca-raton", cam: "boca-south", frameAt: "2026-10-11T11:31:20Z" })));
+      expect(out.slotUtc).toBe("2026-10-11T11:30:00.000Z");
+      // A courier frame from before the window, posted during it, is an hour-slot shot.
+      const early = await json(await POST(req(fakeJpeg(20_000, 5), { slug: "boca-raton", cam: "boca-inlet", frameAt: "2026-10-11T10:30:00Z" })));
+      expect(early.slotUtc).toBe("2026-10-11T10:00:00.000Z");
+      expect(rows().map((r) => r.slot_kind)).toEqual(["hour", "golden"]);
+    });
+
+    it("another beach in another timezone follows its own sun (Fort Lauderdale shares the clock, Deerfield its own coordinates)", async () => {
+      at("2026-10-11T11:24:30Z");
+      const a = await json(await POST(req(fakeJpeg(20_000, 1), { slug: "fort-lauderdale", cam: "ftl-elbo-beach-cam" })));
+      expect(a.slotUtc).toBe("2026-10-11T11:20:00.000Z");
+    });
+  });
+
   describe("concurrency", () => {
     it("two simultaneous posts for one slot store exactly one frame", async () => {
       const [a, b] = await Promise.all([POST(req(fakeJpeg(20_000, 1))), POST(req(fakeJpeg(20_000, 2)))]);

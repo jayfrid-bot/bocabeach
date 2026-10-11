@@ -106,3 +106,31 @@ describe("frameClocks", () => {
     expect(second.localMinute).toBe(30);
   });
 });
+
+describe("frameClocks: golden-hour slots", () => {
+  const GEO = { lat: 26.3587, lon: -80.0686 };
+  // Boca, 2026-10-11: sunrise window 10:57:34Z-11:57:34Z.
+  const MORNING = Date.parse("2026-10-11T11:26:00.000Z");
+
+  it("with a location, a display time inside a window floors to 10 minutes and says golden", () => {
+    const c = frameClocks({ nowMs: MORNING, frameAtRaw: null, timezone: TZ, geo: GEO });
+    expect(c.slotUtc).toBe("2026-10-11T11:20:00.000Z");
+    expect(c.slotKind).toBe("golden");
+    expect(c.localMinute).toBe(26);
+  });
+
+  it("the slot follows frame_at, not received_at", () => {
+    const c = frameClocks({ nowMs: MORNING, frameAtRaw: "2026-10-11T11:12:40Z", timezone: TZ, geo: GEO });
+    expect(c.displayAtUtc).toBe("2026-10-11T11:12:40.000Z");
+    expect(c.slotUtc).toBe("2026-10-11T11:10:00.000Z");
+    // frame_at before the window while the server clock is inside it: an hour slot.
+    const early = frameClocks({ nowMs: MORNING, frameAtRaw: "2026-10-11T10:40:00Z", timezone: TZ, geo: GEO });
+    expect(early.slotUtc).toBe("2026-10-11T10:00:00.000Z");
+    expect(early.slotKind).toBe("hour");
+  });
+
+  it("outside a window, or with no location, the slot is the UTC hour and the kind is 'hour'", () => {
+    expect(frameClocks({ nowMs: NOW, frameAtRaw: null, timezone: TZ, geo: GEO })).toMatchObject({ slotUtc: "2026-10-11T14:00:00.000Z", slotKind: "hour" });
+    expect(frameClocks({ nowMs: MORNING, frameAtRaw: null, timezone: TZ })).toMatchObject({ slotUtc: "2026-10-11T11:00:00.000Z", slotKind: "hour" });
+  });
+});

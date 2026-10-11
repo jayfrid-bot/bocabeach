@@ -1,0 +1,14 @@
+-- Golden-hour slots for the webcam archive (docs/CAM_ARCHIVE_PLAN.md,
+-- "Golden-hour slots (2026-10-11)"). 0016 is applied: this only adds a column.
+--
+-- slot_kind  'hour'    the slot_utc is the top of a UTC hour (the original rule).
+--            'golden'  the shot's display time fell inside a golden-hour window
+--                      of the beach (sunrise -20/+40 min, sunset -40/+20 min;
+--                      lib/camFrames/golden.ts), and slot_utc is the display time
+--                      floored to 10 minutes, e.g. 2026-10-11T11:10:00.000Z.
+--
+-- The primary key (slug, cam_id, slot_utc) is unchanged. A golden slot at :10
+-- cannot clash with an hour slot. Only the :00 key is shared, and inside a
+-- golden window the :00 golden slot IS the hour's slot: one row either way.
+-- Rows written before this migration are 'hour' by the default, which is true.
+ALTER TABLE cam_frames ADD COLUMN slot_kind TEXT NOT NULL DEFAULT 'hour' CHECK (slot_kind IN ('hour', 'golden'));

@@ -155,12 +155,12 @@ flowchart LR
   HIST -->|"cam_observations (every history[] read not yet stored: crowd, seaweed, water,<br/>clarity, underwater uw) + cam_reads (per-cam detail), migrations 0006/0014,<br/>INSERT OR IGNORE, vision-cam beaches only (config/vision-cams.json),<br/>lib/history/camObservations.ts; a feed failure never fails the beach_hourly row"| D1
   BACKFILL["scripts/backfill_cam_history.mjs (one-shot; shares<br/>lib/history/camObservationRow.mjs with the archiver)"] -->|cam_observations| D1
   SARG -->|reads| ACAMS["config/archive-cams.json<br/>the 11 archived cams, generated from config/locations.ts<br/>by scripts/gen_archive_cams.ts (a cam with archive false is left out)"]
-  SARG -->|"every tick, vision on or off: GET /api/cam-frames/slots?slug (one per beach, fails open)<br/>then POST /api/cam-frames?slug&amp;cam&amp;frameAt for cams not yet filled<br/>Bearer INGEST_TOKEN, raw JPEG, best-effort, 15 s timeout, 90 s budget per tick<br/>(scripts/cam_seaweed.py: the stills the vision loop fetched are uploaded after its reads,<br/>archive_pass fetches the rest; frameAt = latest.json timestamp or the uw-frame meta time)"| CAMINGEST["/api/cam-frames (POST) and /api/cam-frames/slots (GET)<br/>constant-time auth; cam must be in the manifest (404 unknown, 403 archive:false);<br/>Content-Length and streamed 600 KB cap; JPEG magic, at least 10 KB; sha-256;<br/>atomic slot claim with a random claim id = one shot per cam per UTC hour of display time"]
-  CAMINGEST -->|"INSERT ... ON CONFLICT DO NOTHING (state pending, claim_id), else take over a pending claim older than 10 min;<br/>R2 put; then ready WHERE claim_id matches (an uncertain finalize is re-read, never rolled back blind);<br/>an unchanged sha vs the newest ready frame is dropped (advisory);<br/>cam_frames, migrations/0016"| D1
+  SARG -->|"every tick, vision on or off: GET /api/cam-frames/slots?slug (one per beach, fails open)<br/>then POST /api/cam-frames?slug&amp;cam&amp;frameAt for cams not yet filled<br/>Bearer INGEST_TOKEN, raw JPEG, best-effort, 15 s timeout, 90 s budget per tick<br/>(scripts/cam_seaweed.py: the stills the vision loop fetched are uploaded after its reads,<br/>archive_pass fetches the rest; frameAt = latest.json timestamp or the uw-frame meta time)"| CAMINGEST["/api/cam-frames (POST) and /api/cam-frames/slots (GET)<br/>constant-time auth; cam must be in the manifest (404 unknown, 403 archive:false);<br/>Content-Length and streamed 600 KB cap; JPEG magic, at least 10 KB; sha-256;<br/>atomic slot claim with a random claim id = one shot per cam per slot of display time<br/>(slot = UTC hour; inside the beach golden-hour windows, sunrise -20/+40 min and sunset -40/+20 min, a 10-minute slot: lib/camFrames/golden.ts)"]
+  CAMINGEST -->|"INSERT ... ON CONFLICT DO NOTHING (state pending, claim_id), else take over a pending claim older than 10 min;<br/>R2 put; then ready WHERE claim_id matches (an uncertain finalize is re-read, never rolled back blind);<br/>an unchanged sha vs the newest ready frame is dropped (advisory);<br/>cam_frames, migrations/0016 and 0017 (slot_kind)"| D1
   CAMINGEST -->|"PUT slug/cam/local_date/HHmmZ-sha8-claim8.jpg"| CAMR2[("R2 bucket isitbeachday-cam-frames<br/>binding CAM_FRAMES<br/>lifecycle rule deletes after 367 days")]
   HISTCRON -->|"once a day, on the 08:17 UTC tick, before the archive call; POST x-cron-secret"| CAMPURGE["/api/cam-frames/purge<br/>at most 10 D1 statements: pending rows older than 1 h,<br/>then rows older than 365 days by received_at_utc<br/>(DELETE of 5,000 rows per statement)"]
   CAMPURGE -->|"deletes cam_frames rows; R2 objects expire on their own two days later"| D1
-  DAYUI["Plus day sheet<br/>components/plus/DayViewSheet.tsx<br/>behind DAY_VIEW_ENABLED (lib/plus/flags.ts)"] -->|"POST deviceId + date"| DAYAPI["/api/history/[slug]/day<br/>app only; rate limit, install token, entitled (free device = 403)<br/>3 D1 reads: archive bounds, that local day's beach_hourly rows, ready cam_frames rows;<br/>only cams still archived; credit read from each row;<br/>signs every shot link for 15 min with CAM_FRAME_URL_KEY"]
+  DAYUI["Plus day sheet<br/>components/plus/DayViewSheet.tsx<br/>behind DAY_VIEW_ENABLED (lib/plus/flags.ts)"] -->|"POST deviceId + date"| DAYAPI["/api/history/[slug]/day<br/>app only; rate limit, install token, entitled (free device = 403)<br/>3 D1 reads: archive bounds, that local day's beach_hourly rows, ready cam_frames rows;<br/>returns that date's golden-hour windows (computed, no read) and each shot kind;<br/>only cams still archived; credit read from each row;<br/>signs every shot link for 15 min with CAM_FRAME_URL_KEY"]
   DAYAPI -->|"SELECT only, no R2"| D1
   DAYUI -->|"img src = signed link"| IMGAPI["/api/cam-frames/img (GET)<br/>constant-time verify of k, exp, sig; cam still archived (else 403);<br/>streams the R2 object, private cache for the seconds the link has left;<br/>404 object gone, 503 no binding"]
   IMGAPI -->|"get"| CAMR2
@@ -271,7 +271,7 @@ if its own per-beach file isn't there yet. The underwater "Spinner the Sea
 Cam" read stays a single per-run calibration signal — the same `uw` value is
 copied onto every beach's file, not read once per beach.
 
-**The webcam archive keeps one shot per cam per hour.** `scripts/cam_seaweed.py`
+**The webcam archive keeps one shot per cam per slot: one per hour, about one per 10 minutes in golden hour.** `scripts/cam_seaweed.py`
 POSTs each cam's still to `/api/cam-frames` on every `sargassum.yml` tick, with
 `INGEST_TOKEN`, after a cheap `GET /api/cam-frames/slots` check (one per beach)
 that lets it skip cams whose hour is already stored. It sends the stills the vision loop already fetched, and
@@ -279,7 +279,14 @@ that lets it skip cams whose hour is already stored. It sends the stills the vis
 any courier cam it skipped), so archiving runs even with no vision provider.
 The cam list is `config/archive-cams.json`, generated from
 `config/locations.ts`: every cam with a proxied still whose `archive` flag is
-not `false`. The route claims the (beach, cam, UTC hour) slot with one atomic
+not `false`. The slot is the UTC hour of the frame's display time, except inside the
+beach's golden-hour windows (sunrise -20/+40 min, sunset -40/+20 min, from the
+Sun panel's NOAA solver in `lib/camFrames/golden.ts`), where it is that time
+floored to 10 minutes and the row's `slot_kind` is `golden` (migration 0017).
+`GET /api/cam-frames/slots` applies the same rule and returns the windows, so the
+script's pre-check asks about the slot a frame would really land in. The
+workflow loop reads from the earliest sunrise -30 min to the latest sunset +30
+min (`cam_seaweed.py --window-state`). The route claims the (beach, cam, slot) with one atomic
 insert, writes the JPEG to the R2 bucket `isitbeachday-cam-frames` (binding
 `CAM_FRAMES`), then marks the row ready in `cam_frames` (migration 0016). Every claim has a
 random `claim_id` (its first 8 characters are in the R2 key); a pending claim
@@ -304,7 +311,9 @@ and signs a 15-minute link per shot. `GET /api/cam-frames/img` checks that
 signature in constant time, checks the cam is still archived, and streams the
 object from R2 with a private cache header. A bad or expired signature is 403,
 a missing object 404, a missing binding 503. The picker and sheet sit behind
-the `DAY_VIEW_ENABLED` constant (`docs/CAM_ARCHIVE_PLAN.md`).
+the `DAY_VIEW_ENABLED` constant (`docs/CAM_ARCHIVE_PLAN.md`). The day
+payload also carries that date's `golden` windows and each shot's `kind`, which
+drive the sheet's Sunrise and Sunset buttons.
 
 **NOAA's rip current model is preprocessed, not fetched live.** NOAA's NWPS
 probabilistic rip current model (Dusek & Seim 2013) publishes one ~2.5MB text

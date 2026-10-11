@@ -87,7 +87,7 @@ function hour(over: Partial<BeachHourlyRow> = {}): void {
 async function shot(
   cam: string,
   slot: string,
-  opts: { localHour: number; minute?: number; date?: string; ready?: boolean; attribution?: string | null; slug?: string } = {
+  opts: { localHour: number; minute?: number; date?: string; ready?: boolean; attribution?: string | null; slug?: string; kind?: "hour" | "golden" } = {
     localHour: 10,
   },
 ): Promise<string> {
@@ -99,6 +99,7 @@ async function shot(
     slug: opts.slug ?? SLUG,
     cam_id: cam,
     slot_utc: slot,
+    slot_kind: opts.kind ?? "hour",
     display_at_utc: `${slot.slice(0, 14)}${String(minute).padStart(2, "0")}:00.000Z`,
     local_date: date,
     local_hour: opts.localHour,
@@ -362,6 +363,25 @@ describe.skipIf(!HAS_SQLITE)("camera shots", () => {
     expect(south.frames[0]).toMatchObject({ hourUtc: "2026-10-10T14:00:00.000Z", displayAtLocal: "10:42 AM" });
     expect(body.cams.find((c: { id: string }) => c.id === "boca-inlet").frames).toEqual([]);
     expect(body.framesStart).toBe("2026-10-10");
+  });
+
+  it("returns that date's golden-hour windows and marks each frame hour or golden", async () => {
+    // 2026-10-10 at Boca: sunrise about 11:17Z (window 10:57Z-11:57Z), sunset about 22:57Z.
+    await shot("boca-south", "2026-10-10T11:20:00.000Z", { localHour: 7, minute: 24, kind: "golden" });
+    await shot("boca-south", "2026-10-10T11:30:00.000Z", { localHour: 7, minute: 33, kind: "golden" });
+    await shot("boca-south", "2026-10-10T14:00:00.000Z", { localHour: 10 });
+    const body = await day();
+    expect(body.golden.sunrise.startUtc.slice(0, 13)).toBe("2026-10-10T10");
+    expect(body.golden.sunrise.endUtc.slice(0, 13)).toBe("2026-10-10T11");
+    expect(Date.parse(body.golden.sunrise.endUtc) - Date.parse(body.golden.sunrise.startUtc)).toBe(60 * 60_000);
+    expect(body.golden.sunset.startUtc.slice(0, 10)).toBe("2026-10-10");
+    expect(Date.parse(body.golden.sunset.endUtc) - Date.parse(body.golden.sunset.startUtc)).toBe(60 * 60_000);
+    const south = body.cams.find((c: { id: string }) => c.id === "boca-south");
+    expect(south.frames.map((f: { hourUtc: string; kind: string; displayAtLocal: string }) => [f.hourUtc, f.kind, f.displayAtLocal])).toEqual([
+      ["2026-10-10T11:20:00.000Z", "golden", "7:24 AM"],
+      ["2026-10-10T11:30:00.000Z", "golden", "7:33 AM"],
+      ["2026-10-10T14:00:00.000Z", "hour", "10:42 AM"],
+    ]);
   });
 
   it("hides pending shots, shots of other days and other beaches", async () => {

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HAS_SQLITE, makeCamDb, type CamDb } from "@/lib/camFrames/testDb";
 import { CLAIM_A, CLAIM_B, frameRow } from "@/lib/camFrames/testFixtures";
@@ -28,13 +30,14 @@ function count(where = "1=1"): number {
 }
 
 describe.skipIf(!HAS_SQLITE)("cam_frames against real SQLite", () => {
-  describe("migration 0016", () => {
+  describe("migrations 0016 and 0017", () => {
     it("has the columns, primary key and indexes the plan names", () => {
       const cols = h.all("PRAGMA table_info(cam_frames)").map((c) => c.name);
       expect(cols).toEqual([
         "slug", "cam_id", "slot_utc", "received_at_utc", "frame_at_utc", "display_at_utc",
         "local_date", "local_hour", "local_minute", "utc_offset_minutes", "timezone",
         "r2_key", "bytes", "sha256", "source_kind", "attribution", "state", "claim_id", "claimed_at_utc",
+        "slot_kind",
       ]);
       const pk = h.all("PRAGMA table_info(cam_frames)").filter((c) => Number(c.pk) > 0).sort((a, b) => Number(a.pk) - Number(b.pk)).map((c) => c.name);
       expect(pk).toEqual(["slug", "cam_id", "slot_utc"]);
@@ -42,6 +45,42 @@ describe.skipIf(!HAS_SQLITE)("cam_frames against real SQLite", () => {
       expect(idx).toContain("cam_frames_slug_date");
       expect(idx).toContain("cam_frames_received");
       expect(idx).toContain("cam_frames_slug_slot");
+    });
+
+    it("0017 adds slot_kind: a row written under 0016 reads 'hour' afterwards", async () => {
+      const old = makeCamDb({ files: ["0016_cam_frames.sql"] }) as CamDb;
+      try {
+        await old.db
+          .prepare(
+            "INSERT INTO cam_frames (slug, cam_id, slot_utc, received_at_utc, display_at_utc, local_date, local_hour, local_minute, utc_offset_minutes, timezone, r2_key, bytes, sha256, source_kind, claim_id, claimed_at_utc, state) " +
+              "VALUES ('a', 'b', 's', 'r', 'd', 'x', 1, 1, 0, 'tz', 'k', 1, 'h', 'feed', 'c', 'now', 'ready')",
+          )
+          .run();
+        old.exec(readFileSync(path.join(process.cwd(), "migrations", "0017_cam_frames_golden.sql"), "utf8"));
+        expect(old.all("SELECT slot_kind FROM cam_frames")).toEqual([{ slot_kind: "hour" }]);
+      } finally {
+        old.close();
+      }
+    });
+
+    it("slot_kind defaults to 'hour', accepts 'golden', refuses anything else", async () => {
+      const insert = (kind: string | null) =>
+        h.db
+          .prepare(
+            "INSERT INTO cam_frames (slug, cam_id, slot_utc, received_at_utc, display_at_utc, local_date, local_hour, local_minute, utc_offset_minutes, timezone, r2_key, bytes, sha256, source_kind, claim_id, claimed_at_utc, state" +
+              (kind ? ", slot_kind" : "") +
+              ") VALUES ('a', 'b', ?1, 'r', 'd', 'x', 1, 1, 0, 'tz', 'k', 1, 'h', 'feed', 'c', 'now', 'ready'" +
+              (kind ? ", ?2" : "") +
+              ")",
+          )
+          .bind(...(kind ? [`s-${kind}`, kind] : ["s-none"]));
+      await insert(null).run();
+      await insert("golden").run();
+      await expect(insert("bogus").run()).rejects.toThrow(/CHECK/i);
+      expect(h.all("SELECT slot_utc, slot_kind FROM cam_frames ORDER BY slot_utc")).toEqual([
+        { slot_utc: "s-golden", slot_kind: "golden" },
+        { slot_utc: "s-none", slot_kind: "hour" },
+      ]);
     });
 
     it("refuses a state other than pending or ready", async () => {

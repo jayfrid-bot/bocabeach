@@ -77,7 +77,7 @@ WEBCAM ARCHIVE (docs/CAM_ARCHIVE_PLAN.md R1/R3): every tick, each cam in
 config/archive-cams.json (generated from config/locations.ts; lib/camFrames/
 manifest.test.ts keeps the two equal) has its still POSTed to the app's
 /api/cam-frames route with `Authorization: Bearer $INGEST_TOKEN`. The server
-keeps one shot per cam per hour. Two paths feed it, and neither can break the
+keeps one shot per cam per hour (about one per 10 minutes inside golden hour). Two paths feed it, and neither can break the
 vision read: capture_beach() queues the still it already fetched for vision
 (fetch_still -> queue, then assess) and uploads the queue on a small thread pool
 AFTER the beach's reads, so an upload never delays a read; and archive_pass()
@@ -86,13 +86,22 @@ boca-inlet-north, boca-inlet-jetty, any courier cam it skipped as stale, and
 Spinner when the hourly underwater read did not run). archive_pass() runs on
 every tick whether or not a vision provider is configured. A cheap pre-check
 (GET /api/cam-frames/slots, one per beach, fails open) tells the script which
-cams' hour slot is already filled, so it skips those uploads, and for
-archive-only cams the download too. All archive work in a tick shares one
-90-second budget (ARCHIVE_DEADLINE_S); unfinished work is dropped and logged
+cams' slot is already filled, so it skips those uploads, and for
+archive-only cams the download too. A slot is a UTC hour, except inside a beach's
+golden-hour window (sunrise -20/+40 min, sunset -40/+20 min), where it is 10
+minutes wide: the server decides (lib/camFrames/golden.ts) and the pre-check
+reply carries the windows so this script can place a frame of any age.
+All archive work in a tick shares one 90-second budget (ARCHIVE_DEADLINE_S); unfinished work is dropped and logged
 once. Archiving is best-effort: with INGEST_TOKEN unset it does nothing, and
 any error is logged and swallowed.
 The source's own frame time rides along as `frameAt`: latest.json `timestamp`
 for feed cams, the uw-frame /meta grabbedAtUtc for courier cams.
+
+STALE FEED FRAMES: that same latest.json timestamp also gates the vision read. A
+feed frame older than VISION_MAX_FRAME_AGE_MIN (60) is archived-or-not by the
+archive's own rule but is NOT scored: capture_beach() logs "skipped (frame is N
+min old)", never calls assess(), and publishes no reading for that cam, just as
+for a courier cam skipped as stale.
 
 Data shape (cam_seaweed.<slug>.json — identical shape on every beach's file):
   top-level `uw`: {level, pct, note, capturedAtLocal} — latest underwater read,
@@ -231,6 +240,15 @@ CAM_REGISTRY_PATH = os.environ.get("CAM_REGISTRY", "config/vision-cams.json")
 # courier refreshes on a multi-hour cadence while this job runs every ~10 min,
 # so without the dedupe check we'd re-score the identical frame a dozen times.
 DIRECT_FRAME_MAX_AGE_MIN = float(os.environ.get("DIRECT_FRAME_MAX_AGE_MIN", "150"))
+
+# A FEED cam (video-monitoring.com latest.json) whose frame is older than this is
+# not read by the vision loop: assess() is not called and no reading is published
+# for it, exactly like a courier cam skipped as stale. Observed 2026-10-11 6 AM:
+# boca-inlet-surf served a 431-470-min-old night frame, and the loop scored it
+# ("seaweed none, crowd empty") as if it were live. The frame is still offered to
+# the archive, which has its own age rule (ARCHIVE_FRAME_MAX_AGE_MIN). A feed
+# frame with no timestamp is read as before.
+VISION_MAX_FRAME_AGE_MIN = float(os.environ.get("VISION_MAX_FRAME_AGE_MIN", "60"))
 
 # --- webcam archive (see the module docstring and docs/CAM_ARCHIVE_PLAN.md) ---
 # Where stills are POSTed; the token is read at call time (archive_frame) so a
@@ -705,11 +723,19 @@ def archive_frame(slug: str, cam_id: str, img: bytes, frame_at: str | None = Non
         return "error"
 
 
-def _slot_utc_of(frame_at: str | None) -> str:
-    """The UTC-hour slot a frame lands in, as the server keys it
-    ('2026-10-11T14:00:00.000Z'): the hour of its own time when that time is
-    believable (not >5 min ahead, not >3 h old: the server's own rule), else
-    the hour of "now"."""
+GOLDEN_SLOT_S = 600
+HOUR_SLOT_S = 3600
+
+
+def _slot_utc_of(frame_at: str | None, golden: "list[tuple[dt.datetime, dt.datetime]] | None" = None) -> str:
+    """The slot a frame lands in, as the server keys it ('2026-10-11T14:00:00.000Z').
+
+    The frame's own time when that time is believable (not >5 min ahead, not >3 h
+    old: the server's own rule), else "now". Inside a golden-hour window of the
+    beach the slot is that time floored to 10 minutes; anywhere else it is
+    floored to the UTC hour. `golden` is the list of [start, end) windows the
+    pre-check returned for the beach (lib/camFrames/golden.ts decides them; this
+    script only reads them). Without windows every slot is a UTC hour."""
     now = dt.datetime.now(dt.timezone.utc)
     when = now
     if frame_at:
@@ -721,13 +747,38 @@ def _slot_utc_of(frame_at: str | None) -> str:
                 when = t
         except ValueError:
             pass
-    return when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:00:00.000Z")
+    when = when.astimezone(dt.timezone.utc)
+    size = GOLDEN_SLOT_S if any(a <= when < b for a, b in (golden or ())) else HOUR_SLOT_S
+    floored = int(when.timestamp() // size) * size
+    return dt.datetime.fromtimestamp(floored, dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:00.000Z")
+
+
+def _parse_golden(raw: object) -> "list[tuple[dt.datetime, dt.datetime]]":
+    """[{startUtc, endUtc}] from the pre-check reply as datetime pairs. A malformed
+    entry is dropped (that window then simply counts as an hour)."""
+    out: list[tuple[dt.datetime, dt.datetime]] = []
+    for w in raw if isinstance(raw, list) else []:
+        try:
+            a = dt.datetime.fromisoformat(str(w["startUtc"]).replace("Z", "+00:00"))
+            b = dt.datetime.fromisoformat(str(w["endUtc"]).replace("Z", "+00:00"))
+            out.append((a, b))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
 
 
 def fetch_filled_slots(slug: str) -> dict | None:
-    """GET <ARCHIVE_URL>/slots?slug=.. : {slot ISO: {cam ids}} for the current
-    and previous hour slot (cams that are ready or freshly pending), or None on
-    ANY failure so the caller fails open and behaves as if nothing were filled."""
+    """GET <ARCHIVE_URL>/slots?slug=.. . Returns
+        {"slots": {slot ISO: {cam ids}}, "current": slot ISO | None, "golden": [(start, end), ...]}
+    or None on ANY failure, so the caller fails open and behaves as if nothing
+    were filled.
+
+    `slots` covers the current and previous three UTC-hour slots plus every
+    10-minute slot of any golden-hour window in that range (cams that are ready or
+    freshly pending). `current` is the slot a frame taken at the moment of the
+    reply would land in. `golden` is the beach's golden-hour windows (UTC) in that
+    range, which is all this script needs to place a frame of any age with the
+    server's slot rule (see _slot_utc_of). One request per beach, as before."""
     token = os.environ.get("INGEST_TOKEN", "").strip()
     if not token:
         return None
@@ -739,7 +790,12 @@ def fetch_filled_slots(slug: str) -> dict | None:
         with urllib.request.urlopen(req, timeout=ARCHIVE_PRECHECK_TIMEOUT_S) as resp:
             doc = json.loads(resp.read(200_000).decode("utf-8", "replace"))
         slots = doc["slots"]
-        return {str(k): {str(c) for c in v} for k, v in slots.items()}
+        current = doc.get("currentSlotUtc")
+        return {
+            "slots": {str(k): {str(c) for c in v} for k, v in slots.items()},
+            "current": current if isinstance(current, str) else None,
+            "golden": _parse_golden(doc.get("golden")),
+        }
     except Exception as e:  # noqa: BLE001 — a failed pre-check just means "upload as before"
         print(f"  warn archive pre-check [{slug}]: {e}", file=sys.stderr)
         return None
@@ -750,7 +806,7 @@ class ArchiveRun:
     overall time budget.
 
     * Pre-check (precheck): one GET per beach, at most 3 a tick, says which cams'
-      current/previous hour slot is already filled. Filled cams are not uploaded,
+      slots are already filled (hour slots, and 10-minute slots in golden-hour windows). Filled cams are not uploaded,
       and cams only archive_pass reads are not even fetched. Fails open.
     * Queue (enqueue/flush): capture_beach hands over the JPEG it already
       fetched and moves on to the vision read; flush() uploads the queue on a
@@ -764,7 +820,7 @@ class ArchiveRun:
     def __init__(self, deadline_s: float | None = None):
         self.deadline_s = ARCHIVE_DEADLINE_S if deadline_s is None else deadline_s
         self.spent = 0.0
-        self.filled: dict[str, dict[str, set]] = {}
+        self.filled: dict[str, dict] = {}  # slug -> fetch_filled_slots() reply
         self.prechecked: set[str] = set()
         self.queue: list[tuple[str, str, bytes, str | None]] = []
         self.dropped = 0
@@ -781,8 +837,18 @@ class ArchiveRun:
         return (slug, cam_id) in self._keys
 
     def is_filled(self, slug: str, cam_id: str, frame_at: str | None = None) -> bool:
-        """True when the cam's slot (for `frame_at`, else the current hour) is known to be filled."""
-        return cam_id in self.filled.get(slug, {}).get(_slot_utc_of(frame_at), set())
+        """True when the slot the cam's frame would land in is known to be filled.
+
+        That slot is the one for `frame_at` (else for "now") under the server's
+        rule: 10 minutes wide inside a golden-hour window of the beach, a UTC hour
+        elsewhere. The windows come from the pre-check reply, so no extra request
+        is made. "Now" is read at the time of THIS call, not of the pre-check, so a
+        tick that crosses a 10-minute boundary asks about the right slot. With no
+        pre-check answer (it failed, or INGEST_TOKEN is unset) nothing is filled."""
+        info = self.filled.get(slug)
+        if not info:
+            return False
+        return cam_id in info["slots"].get(_slot_utc_of(frame_at, info.get("golden")), set())
 
     def run_bounded(self, tasks: list) -> dict:
         """Run [(label, zero-arg callable)] on a thread pool within the remaining
@@ -1243,15 +1309,25 @@ def capture_beach(
                 continue
             frame_at = decision["frameAt"]
 
-        if gap_state["called"]:
-            time.sleep(CAM_GAP_S)  # space calls to respect the per-minute limit
-        gap_state["called"] = True
         try:
             if attempted is not None:
                 attempted.add((slug, cam["id"]))
             info: dict = {}
             img = fetch_still(cam, info)
             run.enqueue(slug, cam["id"], img, frame_at or info.get("frameAt"))
+            # A stale FEED frame is not read: no assess() call, no reading (the
+            # cam is simply absent from this tick's `cams`, like a skipped
+            # courier cam). Courier cams were judged above, by their meta.
+            is_feed = (cam.get("source") or {}).get("kind", "feed") == "feed"
+            feed_age = _frame_age_min(info["frameAt"]) if is_feed and info.get("frameAt") and not frame_at else None
+            if feed_age is not None and feed_age > VISION_MAX_FRAME_AGE_MIN:
+                print(f"  [{slug}] {cam['id']}: skipped (frame is {feed_age:.0f} min old)")
+                continue
+            # The gap spaces vision API calls, so it sits here, after the fetch
+            # and the freshness check: a skipped or failed cam spends no quota.
+            if gap_state["called"]:
+                time.sleep(CAM_GAP_S)  # space calls to respect the per-minute limit
+            gap_state["called"] = True
             r = assess(img)
             reading = {"id": cam["id"], "name": cam["name"], **r}
             if frame_at:
@@ -1351,6 +1427,99 @@ def build_beach_output(
         # & by-day charts; uw/uwLevel present only on ticks that read underwater.
         "history": history,
     }
+
+
+# --- run window (which ticks the workflow loop spends) -----------------------
+# The workflow loop (.github/workflows/sargassum.yml) used to decide "is it
+# daylight" with a fixed local clock window (05:55-20:05 America/New_York). A
+# June sunset is about 8:15 PM EDT, so the reader stopped before the last golden
+# light. The loop now asks THIS script: `python scripts/cam_seaweed.py
+# --window-state` prints one word:
+#   day      from the earliest sunrise - 30 min to the latest sunset + 30 min,
+#            across the beaches in the archive manifest (each beach on its own
+#            local date): the loop reads;
+#   dusk     the 20 minutes after `day` ends: a loop that STARTS then still owes
+#            the one carry-forward read for the night;
+#   night    any other time: the loop idles;
+#   unknown  the window could not be computed (no manifest, no coordinates): the
+#            workflow falls back to its fixed clock window.
+# Sunrise and sunset are the NOAA solver already in scripts/sun_cam_check.py (a
+# port of lib/sources/sun.ts, so these times equal the app's own).
+RUN_WINDOW_BEFORE_MIN = 30
+RUN_WINDOW_AFTER_MIN = 30
+RUN_DUSK_GRACE_MIN = 20
+
+
+def _sun_times_for(lat: float, lon: float, day: "dt.date") -> dict:
+    """sun_cam_check.sun_times(), imported on demand (it sits next to this file)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import sun_cam_check  # noqa: PLC0415 — lazy: only the run-window check needs it
+    return sun_cam_check.sun_times(lat, lon, day)
+
+
+def run_window(cams: list[dict], now: dt.datetime) -> "tuple[dt.datetime, dt.datetime] | None":
+    """(start, end) of today's reading window as UTC datetimes: the earliest
+    sunrise minus RUN_WINDOW_BEFORE_MIN to the latest sunset plus
+    RUN_WINDOW_AFTER_MIN over the beaches of `cams` (manifest entries with slug,
+    timezone, lat, lon), each on its own local date. A beach with no sunrise or
+    sunset that day (polar), or without coordinates or a usable timezone, adds
+    nothing. None when no beach gives a window."""
+    now_utc = now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)
+    starts: list[dt.datetime] = []
+    ends: list[dt.datetime] = []
+    seen: set[str] = set()
+    for c in cams:
+        slug = c.get("slug")
+        if slug in seen:
+            continue
+        seen.add(slug)
+        try:
+            lat, lon = float(c["lat"]), float(c["lon"])
+            local_day = now_utc.astimezone(ZoneInfo(c.get("timezone") or DEFAULT_TZ_NAME)).date()
+            t = _sun_times_for(lat, lon, local_day)
+        except Exception as e:  # noqa: BLE001 — one odd beach must not blank the window
+            print(f"  warn run window [{slug}]: {e}", file=sys.stderr)
+            continue
+        if t.get("sunrise") and t.get("sunset"):
+            starts.append(t["sunrise"] - dt.timedelta(minutes=RUN_WINDOW_BEFORE_MIN))
+            ends.append(t["sunset"] + dt.timedelta(minutes=RUN_WINDOW_AFTER_MIN))
+    if not starts or not ends:
+        return None
+    return min(starts), max(ends)
+
+
+def window_state(now: "dt.datetime | None" = None, cams: "list[dict] | None" = None) -> str:
+    """'day', 'dusk', 'night' or 'unknown' (see the run-window note above)."""
+    now = now or dt.datetime.now(dt.timezone.utc)
+    window = run_window(load_archive_cams() if cams is None else cams, now)
+    if window is None:
+        return "unknown"
+    start, end = window
+    if start <= now < end:
+        return "day"
+    if end <= now < end + dt.timedelta(minutes=RUN_DUSK_GRACE_MIN):
+        return "dusk"
+    return "night"
+
+
+def window_state_main() -> int:
+    """`--window-state`: print the state on stdout (the workflow reads it) and the
+    window itself on stderr (for the log). Always exits 0; the caller treats
+    anything but day/dusk/night as "unknown"."""
+    try:
+        now = dt.datetime.now(dt.timezone.utc)
+        cams = load_archive_cams()
+        window = run_window(cams, now)
+        state = window_state(now, cams)
+        if window:
+            print(f"run window {window[0].strftime('%H:%MZ')}-{window[1].strftime('%H:%MZ')} -> {state}", file=sys.stderr)
+        print(state)
+    except Exception as e:  # noqa: BLE001
+        print(f"  warn run window: {e}", file=sys.stderr)
+        print("unknown")
+    return 0
 
 
 def _run_archive_pass(attempted: set, run: "ArchiveRun | None" = None) -> None:
@@ -1499,4 +1668,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if "--window-state" in sys.argv[1:]:
+        raise SystemExit(window_state_main())
     raise SystemExit(main())

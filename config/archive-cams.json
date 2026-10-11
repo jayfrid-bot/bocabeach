@@ -8,6 +8,8 @@
       "name": "Boca Raton South Beach Cam",
       "attribution": "Live still courtesy Palm Beach County ERM / video-monitoring.com",
       "timezone": "America/New_York",
+      "lat": 26.3587,
+      "lon": -80.0686,
       "source": {
         "kind": "feed",
         "base": "https://video-monitoring.com/beachcams/boca",
@@ -20,6 +22,8 @@
       "name": "Boca Raton Inlet — North Beach",
       "attribution": "Live still courtesy Palm Beach County ERM / video-monitoring.com",
       "timezone": "America/New_York",
+      "lat": 26.3587,
+      "lon": -80.0686,
       "source": {
         "kind": "feed",
         "base": "https://video-monitoring.com/beachcams/bocainlet",
@@ -32,6 +36,8 @@
       "name": "Boca Raton South Beach — Shoreline & Surf",
       "attribution": "Live still courtesy Palm Beach County ERM / video-monitoring.com",
       "timezone": "America/New_York",
+      "lat": 26.3587,
+      "lon": -80.0686,
       "source": {
         "kind": "feed",
         "base": "https://video-monitoring.com/beachcams/boca",
@@ -44,6 +50,8 @@
       "name": "Boca Raton Inlet Cam",
       "attribution": "Live still courtesy Palm Beach County ERM / video-monitoring.com",
       "timezone": "America/New_York",
+      "lat": 26.3587,
+      "lon": -80.0686,
       "source": {
         "kind": "feed",
         "base": "https://video-monitoring.com/beachcams/bocainlet",
@@ -56,6 +64,8 @@
       "name": "Boca Raton Inlet — Surf & Shoreline",
       "attribution": "Live still courtesy Palm Beach County ERM / video-monitoring.com",
       "timezone": "America/New_York",
+      "lat": 26.3587,
+      "lon": -80.0686,
       "source": {
         "kind": "feed",
         "base": "https://video-monitoring.com/beachcams/bocainlet",
@@ -68,6 +78,8 @@
       "name": "Boca Raton Inlet — Jetty",
       "attribution": "Live still courtesy Palm Beach County ERM / video-monitoring.com",
       "timezone": "America/New_York",
+      "lat": 26.3587,
+      "lon": -80.0686,
       "source": {
         "kind": "feed",
         "base": "https://video-monitoring.com/beachcams/bocainlet",
@@ -80,6 +92,8 @@
       "name": "Deerfield Beach Cam",
       "attribution": "Live stream courtesy City of Deerfield Beach",
       "timezone": "America/New_York",
+      "lat": 26.3165,
+      "lon": -80.0742,
       "source": {
         "kind": "direct",
         "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=deerfield-beach-cam",
@@ -92,6 +106,8 @@
       "name": "Deerfield Beach — Surf Cam",
       "attribution": "Live stream courtesy City of Deerfield Beach",
       "timezone": "America/New_York",
+      "lat": 26.3165,
+      "lon": -80.0742,
       "source": {
         "kind": "direct",
         "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=deerfield-surf-cam",
@@ -104,6 +120,8 @@
       "name": "Deerfield Beach — Fishing Pier Cam",
       "attribution": "Live stream courtesy City of Deerfield Beach",
       "timezone": "America/New_York",
+      "lat": 26.3165,
+      "lon": -80.0742,
       "source": {
         "kind": "direct",
         "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=deerfield-pier-cam",
@@ -116,6 +134,8 @@
       "name": "Spinner the Sea Cam (underwater)",
       "attribution": "Live stream courtesy City of Deerfield Beach",
       "timezone": "America/New_York",
+      "lat": 26.3165,
+      "lon": -80.0742,
       "source": {
         "kind": "direct",
         "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=deerfield-spinner-uw",
@@ -128,6 +148,8 @@
       "name": "Fort Lauderdale Beach Cam",
       "attribution": "Live stream courtesy Elbo Room (ElboRoom.com)",
       "timezone": "America/New_York",
+      "lat": 26.1195,
+      "lon": -80.1035,
       "source": {
         "kind": "direct",
         "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=ftl-elbo-beach-cam",

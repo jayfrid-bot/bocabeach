@@ -11,9 +11,10 @@ vi.mock("@/lib/db/d1Store", () => ({ getD1: async () => ctl.db }));
 import { GET } from "@/app/api/cam-frames/slots/route";
 
 const TOKEN = "test-ingest-token";
-const NOW = Date.parse("2026-10-11T14:20:00.000Z");
-const SLOT_NOW = "2026-10-11T14:00:00.000Z";
-const SLOT_PREV = "2026-10-11T13:00:00.000Z";
+// 12:20 PM EDT: far from both golden windows (sunrise 10:57-11:57Z, sunset 22:16-23:16Z).
+const NOW = Date.parse("2026-10-11T16:20:00.000Z");
+const SLOT_NOW = "2026-10-11T16:00:00.000Z";
+const SLOT_PREV = "2026-10-11T15:00:00.000Z";
 
 let h: CamDb;
 
@@ -69,39 +70,90 @@ describe.skipIf(!HAS_SQLITE)("slots", () => {
     expect(await res.json()).toEqual({
       ok: true,
       slug: "boca-raton",
-      now: "2026-10-11T14:20:00.000Z",
-      slots: { [SLOT_NOW]: [], [SLOT_PREV]: [], "2026-10-11T12:00:00.000Z": [], "2026-10-11T11:00:00.000Z": [] },
+      now: "2026-10-11T16:20:00.000Z",
+      currentSlotUtc: SLOT_NOW,
+      golden: [],
+      slots: { [SLOT_NOW]: [], [SLOT_PREV]: [], "2026-10-11T14:00:00.000Z": [], "2026-10-11T13:00:00.000Z": [] },
     });
   });
 
   it("lists cams whose slot is ready or freshly pending (at most 10 minutes), per slot", async () => {
-    await put("boca-south", SLOT_NOW, "2026-10-11T14:01:00.000Z", true);
-    await put("boca-inlet", SLOT_NOW, "2026-10-11T14:15:00.000Z", false); // fresh pending
-    await put("boca-inlet-north", SLOT_NOW, "2026-10-11T14:05:00.000Z", false); // pending, 15 min old: not filled
-    await put("boca-south-surf", SLOT_PREV, "2026-10-11T13:30:00.000Z", true);
-    await put("boca-inlet-surf", "2026-10-11T12:00:00.000Z", "2026-10-11T12:30:00.000Z", true); // two hours back
-    await put("deerfield-beach-cam", SLOT_NOW, "2026-10-11T14:01:00.000Z", true, "deerfield-beach");
+    await put("boca-south", SLOT_NOW, "2026-10-11T16:01:00.000Z", true);
+    await put("boca-inlet", SLOT_NOW, "2026-10-11T16:15:00.000Z", false); // fresh pending
+    await put("boca-inlet-north", SLOT_NOW, "2026-10-11T16:05:00.000Z", false); // pending, 15 min old: not filled
+    await put("boca-south-surf", SLOT_PREV, "2026-10-11T15:30:00.000Z", true);
+    await put("boca-inlet-surf", "2026-10-11T14:00:00.000Z", "2026-10-11T14:30:00.000Z", true); // two hours back
+    await put("deerfield-beach-cam", SLOT_NOW, "2026-10-11T16:01:00.000Z", true, "deerfield-beach");
     const out = (await (await get()).json()) as { slots: Record<string, string[]> };
     expect(out.slots).toEqual({
       [SLOT_NOW]: ["boca-inlet", "boca-south"],
       [SLOT_PREV]: ["boca-south-surf"],
-      "2026-10-11T12:00:00.000Z": ["boca-inlet-surf"], // two hours back: now inside the window
-      "2026-10-11T11:00:00.000Z": [],
+      "2026-10-11T14:00:00.000Z": ["boca-inlet-surf"], // two hours back: now inside the window
+      "2026-10-11T13:00:00.000Z": [],
     });
   });
 
   it("follows the clock into the next hour", async () => {
-    await put("boca-south", SLOT_NOW, "2026-10-11T14:01:00.000Z", true);
-    vi.setSystemTime(Date.parse("2026-10-11T15:02:00.000Z"));
-    const out = (await (await get()).json()) as { slots: Record<string, string[]> };
-    expect(Object.keys(out.slots)).toEqual([
+    await put("boca-south", SLOT_NOW, "2026-10-11T16:01:00.000Z", true);
+    vi.setSystemTime(Date.parse("2026-10-11T17:02:00.000Z"));
+    const out = (await (await get()).json()) as { slots: Record<string, string[]>; currentSlotUtc: string };
+    expect([...Object.keys(out.slots)].sort()).toEqual([
+      "2026-10-11T14:00:00.000Z",
       "2026-10-11T15:00:00.000Z",
       SLOT_NOW,
-      "2026-10-11T13:00:00.000Z",
-      "2026-10-11T12:00:00.000Z",
+      "2026-10-11T17:00:00.000Z",
     ]);
+    expect(out.currentSlotUtc).toBe("2026-10-11T17:00:00.000Z");
     expect(out.slots[SLOT_NOW]).toEqual(["boca-south"]);
-    expect(out.slots["2026-10-11T15:00:00.000Z"]).toEqual([]);
+    expect(out.slots["2026-10-11T17:00:00.000Z"]).toEqual([]);
+  });
+
+  describe("golden-hour windows", () => {
+    // Boca, 2026-10-11: sunrise window 10:57:34Z-11:57:34Z (sunrise 11:17:34Z, 7:17 AM EDT).
+    const IN_WINDOW = Date.parse("2026-10-11T11:24:30.000Z"); // 7:24 AM EDT
+
+    type Out = { currentSlotUtc: string; golden: { kind: string; startUtc: string; endUtc: string }[]; slots: Record<string, string[]> };
+
+    it("inside a window the current slot is the 10-minute slot, and the window's slots are listed", async () => {
+      vi.setSystemTime(IN_WINDOW);
+      const out = (await (await get()).json()) as Out;
+      expect(out.currentSlotUtc).toBe("2026-10-11T11:20:00.000Z");
+      expect(out.golden).toEqual([
+        { kind: "sunrise", startUtc: "2026-10-11T10:57:34.565Z", endUtc: "2026-10-11T11:57:34.565Z" },
+      ]);
+      // The 10-minute slots of the window, from the one holding its start up to now, plus the four hour slots.
+      for (const s of ["10:50", "11:00", "11:10", "11:20"]) expect(out.slots).toHaveProperty([`2026-10-11T${s}:00.000Z`]);
+      expect(out.slots).not.toHaveProperty(["2026-10-11T11:30:00.000Z"]); // still in the future
+      for (const s of ["11:00", "10:00", "09:00", "08:00"]) expect(out.slots).toHaveProperty([`2026-10-11T${s}:00.000Z`]);
+    });
+
+    it("says whether the slot a frame taken now would land in is filled", async () => {
+      vi.setSystemTime(IN_WINDOW);
+      await put("boca-south", "2026-10-11T11:20:00.000Z", "2026-10-11T11:21:00.000Z", true);
+      await put("boca-inlet", "2026-10-11T11:10:00.000Z", "2026-10-11T11:12:00.000Z", true); // the slot before: not the current one
+      const out = (await (await get()).json()) as Out;
+      expect(out.slots[out.currentSlotUtc]).toEqual(["boca-south"]);
+      expect(out.slots["2026-10-11T11:10:00.000Z"]).toEqual(["boca-inlet"]);
+    });
+
+    it("outside every window the current slot is the hour slot and nothing golden is listed", async () => {
+      const out = (await (await get()).json()) as Out;
+      expect(out.currentSlotUtc).toBe(SLOT_NOW);
+      expect(out.golden).toEqual([]);
+      expect(Object.keys(out.slots)).toHaveLength(4);
+    });
+
+    it("lists a window that ended earlier in the 3-hour range, but not one wholly before it", async () => {
+      // 8:30 AM EDT: the sunrise window ended at 11:57Z (a half hour back).
+      vi.setSystemTime(Date.parse("2026-10-11T12:30:00.000Z"));
+      const out = (await (await get()).json()) as Out;
+      expect(out.golden).toHaveLength(1);
+      expect(out.slots).toHaveProperty(["2026-10-11T11:50:00.000Z"]);
+      expect(out.slots).not.toHaveProperty(["2026-10-11T12:10:00.000Z"]); // no 10-minute slot after the window
+      // 4 hours after the window: it is out of the range.
+      vi.setSystemTime(Date.parse("2026-10-11T16:30:00.000Z"));
+      expect(((await (await get()).json()) as Out).golden).toEqual([]);
+    });
   });
 
   it("503s without leaking detail when D1 throws", async () => {

@@ -5,13 +5,16 @@
 //                it and it is believable. Otherwise null.
 //   display_at   frame_at ?? received_at. The user sees this time.
 //
-// slot = display_at floored to the UTC hour (the beach_hourly hour_utc shape).
+// slot = display_at floored to the UTC hour (the beach_hourly hour_utc shape),
+// EXCEPT inside a golden-hour window of the beach (lib/camFrames/golden.ts):
+// there it is display_at floored to 10 minutes, and slot_kind is 'golden'.
 // Local date, hour and offset come from `localHourParts`, the helper
 // beach_hourly uses, so history and cams always agree on "which hour".
 // A client-sent time never drives the throttle or retention: only the server
 // clock does, and frame_at is only ever shown, never trusted for either.
 
-import { hourUtcOf, localHourParts } from "@/lib/history/archive";
+import { localHourParts } from "@/lib/history/archive";
+import { chooseSlot, type GoldenLoc, type SlotKind } from "@/lib/camFrames/golden";
 
 /** A frame stamped further ahead than this is a bad clock: drop its time. */
 export const MAX_FRAME_FUTURE_MS = 5 * 60_000;
@@ -40,8 +43,10 @@ export interface FrameClocks {
   receivedAtUtc: string;
   frameAtUtc: string | null;
   displayAtUtc: string;
-  /** display time floored to the UTC hour. */
+  /** display time floored to the UTC hour, or to 10 minutes inside a golden-hour window. */
   slotUtc: string;
+  /** 'golden' when the slot is a 10-minute golden-hour slot, else 'hour'. */
+  slotKind: SlotKind;
   localDate: string;
   localHour: number;
   localMinute: number;
@@ -52,14 +57,23 @@ export interface FrameClocks {
 /**
  * All clocks for one ingest. `nowMs` is the server clock. `frameAtRaw` is the
  * client-sent `frameAt` query value, if any. `timezone` is the beach's IANA zone.
+ * `geo` (the beach's lat/lon) switches on the golden-hour slot rule; without it
+ * every slot is a UTC-hour slot.
  */
-export function frameClocks(args: { nowMs: number; frameAtRaw: unknown; timezone: string }): FrameClocks {
-  const { nowMs, frameAtRaw, timezone } = args;
+export function frameClocks(args: {
+  nowMs: number;
+  frameAtRaw: unknown;
+  timezone: string;
+  geo?: { lat: number; lon: number } | null;
+}): FrameClocks {
+  const { nowMs, frameAtRaw, timezone, geo } = args;
   const receivedAtUtc = new Date(nowMs).toISOString();
   const frameAtUtc = validateFrameAt(frameAtRaw, nowMs);
   const displayAtUtc = frameAtUtc ?? receivedAtUtc;
   const displayMs = Date.parse(displayAtUtc);
   const { date, hour, offsetMinutes } = localHourParts(timezone, displayMs);
+  const loc: GoldenLoc | null = geo ? { lat: geo.lat, lon: geo.lon, timezone } : null;
+  const slot = chooseSlot(loc, displayMs);
   // Local minute: shift the instant by the zone offset, then read the UTC minute.
   // Exact for every zone, whole-hour offset or not.
   const localMinute = ((Math.floor(displayMs / 60_000) + offsetMinutes) % 60 + 60) % 60;
@@ -67,7 +81,8 @@ export function frameClocks(args: { nowMs: number; frameAtRaw: unknown; timezone
     receivedAtUtc,
     frameAtUtc,
     displayAtUtc,
-    slotUtc: hourUtcOf(displayMs),
+    slotUtc: slot.slotUtc,
+    slotKind: slot.kind,
     localDate: date,
     localHour: hour,
     localMinute,

@@ -5,7 +5,22 @@
 // can never skip or repeat a day.
 
 import { shiftLocalDate, shortMonthDay, weekdayLongOf } from "@/lib/history/summary";
-import type { DayHour, DayViewPayload } from "@/lib/history/dayView";
+import type { DayFrame, DayGolden, DayHour, DayViewPayload } from "@/lib/history/dayView";
+import type { GoldenKind } from "@/lib/camFrames/golden";
+
+const HOUR_MS = 3_600_000;
+const GOLDEN_SLOT_MS = 600_000;
+
+/**
+ * The UTC hour a slot is in, as the ISO string that keys the hour rows
+ * (`DayHour.hourUtc`). A normal slot is its own hour. A 10-minute golden slot
+ * ("...T11:20:00.000Z") belongs to "...T11:00:00.000Z". An unreadable slot comes
+ * back unchanged.
+ */
+export function hourOfSlot(slotUtc: string): string {
+  const at = Date.parse(slotUtc);
+  return Number.isFinite(at) ? new Date(Math.floor(at / HOUR_MS) * HOUR_MS).toISOString() : slotUtc;
+}
 
 /** 0-23 -> "2 PM". */
 export function hour12Label(hour: number): string {
@@ -52,7 +67,8 @@ export function repeatedLocalHours(day: Pick<DayViewPayload, "hours" | "cams">):
     seen.set(localHour, set);
   };
   for (const h of day.hours) add(h.localHour, h.hourUtc);
-  for (const c of day.cams) for (const f of c.frames) add(localHourOfLabel(f.displayAtLocal), f.hourUtc);
+  // A golden shot's slot is 10 minutes wide: count its HOUR, or two shots in one local hour would look like a repeat.
+  for (const c of day.cams) for (const f of c.frames) add(localHourOfLabel(f.displayAtLocal), hourOfSlot(f.hourUtc));
   return new Set([...seen].filter(([, set]) => set.size > 1).map(([h]) => h));
 }
 
@@ -68,17 +84,96 @@ export function hourLabelFor(
   return z ? `${base} ${z}` : base;
 }
 
-/** The slider's spoken value for a shot: "10 AM", or "1 AM EST" in a repeated hour. */
+/**
+ * The slider's spoken value for a shot: "10 AM", or "1 AM EST" in a repeated
+ * hour. A golden-hour shot says its exact minute and which event it is:
+ * "7:24 AM, sunrise shot". Pass `golden` (the day's windows) to name the event.
+ */
 export function sliderTextFor(
-  frame: { hourUtc: string; displayAtLocal: string },
+  frame: { hourUtc: string; displayAtLocal: string; kind?: "hour" | "golden" },
   repeated: Set<number>,
   tz: string,
+  golden?: DayGolden | null,
 ): string {
-  const base = sliderLabel(frame.displayAtLocal);
+  const isGolden = frame.kind === "golden";
+  let base = isGolden ? frame.displayAtLocal : sliderLabel(frame.displayAtLocal);
   const lh = localHourOfLabel(frame.displayAtLocal);
-  if (lh === null || !repeated.has(lh)) return base;
-  const z = zoneAbbr(tz, frame.hourUtc);
-  return z ? `${base} ${z}` : base;
+  if (lh !== null && repeated.has(lh)) {
+    const z = zoneAbbr(tz, frame.hourUtc);
+    if (z) base = `${base} ${z}`;
+  }
+  if (!isGolden) return base;
+  const event = golden ? goldenKindOf(frame, golden) : null;
+  return `${base}, ${event ?? "golden hour"} shot`;
+}
+
+type Windowed = { startUtc: string; endUtc: string };
+
+/** Does the 10-minute slot starting at `slotUtc` overlap the window? */
+function slotOverlaps(slotUtc: string, w: Windowed): boolean {
+  const at = Date.parse(slotUtc);
+  const start = Date.parse(w.startUtc);
+  const end = Date.parse(w.endUtc);
+  return Number.isFinite(at) && Number.isFinite(start) && Number.isFinite(end) && at + GOLDEN_SLOT_MS > start && at < end;
+}
+
+/**
+ * Which golden window a shot belongs to: "sunrise", "sunset", or null for a
+ * normal shot. A golden slot may start up to 9 minutes before its window
+ * opens (the slot floors to 10 minutes), so the test is overlap, not containment.
+ */
+export function goldenKindOf(
+  frame: Pick<DayFrame, "hourUtc"> & { kind?: DayFrame["kind"] },
+  golden: DayGolden | null | undefined,
+): GoldenKind | null {
+  if (frame.kind !== "golden" || !golden) return null;
+  if (golden.sunrise && slotOverlaps(frame.hourUtc, golden.sunrise)) return "sunrise";
+  if (golden.sunset && slotOverlaps(frame.hourUtc, golden.sunset)) return "sunset";
+  return null;
+}
+
+/**
+ * The frame a "Sunrise" or "Sunset" button jumps to: the index of the FIRST
+ * golden shot of that window in `frames` (earliest slot, whatever the array
+ * order), or -1 when the camera has none. The button is shown only for >= 0.
+ */
+export function goldenJumpIndex(
+  frames: Pick<DayFrame, "hourUtc" | "kind">[],
+  golden: DayGolden | null | undefined,
+  which: GoldenKind,
+): number {
+  const w = golden?.[which];
+  if (!w) return -1;
+  let best = -1;
+  let bestAt = Infinity;
+  frames.forEach((f, i) => {
+    if (f.kind !== "golden" || !slotOverlaps(f.hourUtc, w)) return;
+    const at = Date.parse(f.hourUtc);
+    if (at < bestAt) {
+      best = i;
+      bestAt = at;
+    }
+  });
+  return best;
+}
+
+export interface GoldenJump {
+  kind: GoldenKind;
+  label: "Sunrise" | "Sunset";
+  index: number;
+}
+
+/** The jump buttons to show for one camera, in time order: only those with a shot. */
+export function goldenJumps(
+  frames: Pick<DayFrame, "hourUtc" | "kind">[],
+  golden: DayGolden | null | undefined,
+): GoldenJump[] {
+  const out: GoldenJump[] = [];
+  const rise = goldenJumpIndex(frames, golden, "sunrise");
+  if (rise >= 0) out.push({ kind: "sunrise", label: "Sunrise", index: rise });
+  const set = goldenJumpIndex(frames, golden, "sunset");
+  if (set >= 0) out.push({ kind: "sunset", label: "Sunset", index: set });
+  return out;
 }
 
 /** "Friday, Oct 10" for a YYYY-MM-DD calendar day. */

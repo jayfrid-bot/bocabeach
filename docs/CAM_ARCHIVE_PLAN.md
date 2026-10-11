@@ -253,3 +253,85 @@ for a day, measure p50/p95 sizes; (4) all 11 cams; (5) day API + image
 route, security-test free device + disabled cam; (6) UI behind the flag;
 (7) History to the bottom (independent — can ship any time); (8) paywall
 copy only after (6) is verified on the phone.
+
+# Golden-hour slots (2026-10-11)
+
+Owner request: save the webcams more often around sunrise and sunset, and let
+the day view jump to them. Where this section disagrees with R2 (cadence) and
+R4 (slot key), this section wins.
+
+**Windows.** Per beach and beach-local date, from the beach's lat/lon with the
+Sun panel's solver (`computeSunTimes`, `lib/sources/sun.ts`):
+sunrise window = sunrise -20 min to +40 min; sunset window = sunset -40 min to
++20 min. Half-open `[start, end)`. Code and tests: `lib/camFrames/golden.ts`.
+A day where the sun does not rise or set (polar) has no window and archives
+hourly.
+
+**Slot rule (`lib/camFrames/clock.ts`, `chooseSlot`).** If `display_at_utc` is
+inside a window, `slot_utc` = display time floored to **10 minutes** and
+`slot_kind = 'golden'`. Otherwise `slot_utc` = floored to the UTC hour and
+`slot_kind = 'hour'`, as before. Migration `0017_cam_frames_golden.sql` adds
+`slot_kind TEXT NOT NULL DEFAULT 'hour'` (old rows are correctly `hour`). The
+primary key `(slug, cam_id, slot_utc)` does not change; claim, takeover,
+dedupe and rollback are untouched.
+
+*Hour vs golden, the rule chosen.* There is no separate hourly slot inside a
+window: the `:00` golden slot IS that hour's slot (07:00 is both). The two kinds
+share only the `:00` key, and a key holds one row, so a stored hour is never
+doubled. Outside windows an hour still holds exactly one shot per cam; inside a
+window it holds up to six. Two edge effects, both harmless: a window opens
+mid-slot (opens 06:57:34, so the 06:50 slot holds the first golden shot); and
+a frame just after a window closes (say 07:58) maps to the hour key `07:00`,
+which a golden shot already holds, so it answers `slot-taken`. The simpler
+alternative (keep a separate always-filled hourly slot) would need a second key
+space and a schema change.
+
+**Ingest.** `POST /api/cam-frames` passes the beach's lat/lon to `frameClocks`
+and stores `slot_kind`. The 3-hour and 5-minute frame-time rules are unchanged.
+
+**Pre-check.** `GET /api/cam-frames/slots?slug` now answers for the slot a frame
+taken now would land in:
+`{ ok, slug, now, currentSlotUtc, golden: [{kind, startUtc, endUtc}], slots: { [slotUtc]: [camIds] } }`.
+`slots` has the current and previous 3 UTC-hour slots plus every 10-minute slot
+of any window overlapping that range (so a courier frame up to 3 hours old is
+still judged correctly). `golden` is returned so `cam_seaweed.py` can place a
+frame of any age with the same rule (`_slot_utc_of`); it reads "now" at the
+time of each question, so a tick that crosses a 10-minute boundary asks about
+the right slot. Still one request per beach, at most 3 a tick, fails open.
+
+**Run window.** The `sargassum.yml` loop no longer uses a fixed 05:55-20:05 ET
+clock. It asks `python scripts/cam_seaweed.py --window-state` (`day` / `dusk` /
+`night` / `unknown`): `day` runs from the earliest sunrise -30 min to the latest
+sunset +30 min over the archived beaches (NOAA solver in
+`scripts/sun_cam_check.py`, no new dependency; beach lat/lon now ride in
+`config/archive-cams.json`). June: about 09:56 to 00:46 UTC (5:56 AM to 8:46 PM
+EDT). December: about 11:34 to 23:03 UTC. On `unknown` the workflow falls back to
+a fixed 05:55-20:50 ET window. Cron is now `*/10 10-23,0 * * *` so a fallback
+loop can start as late as 00:50 UTC. The handoff and loop mechanics are
+unchanged. The 10 UTC start covers the earliest window opening (09:56 UTC in
+June: the first :00 tick is 10:00 anyway).
+
+**Stale feed frames (vision loop).** Separate fix, same release: a feed frame
+older than `VISION_MAX_FRAME_AGE_MIN = 60` (by its `latest.json` timestamp) is
+not scored. `capture_beach` logs `skipped (frame is N min old)`, does not call
+`assess()` and publishes no entry for that cam, exactly like a stale courier cam.
+The frame is still offered to the archive, which has its own 170-minute rule.
+
+**Day view.** `POST /api/history/[slug]/day` returns
+`golden: { sunrise: {startUtc,endUtc}|null, sunset: ... }` for the date (no D1
+read) and a `kind` on each frame. `DayViewSheet` shows "Sunrise" and "Sunset"
+buttons above the slider for windows in which the selected cam has a shot; they
+jump to the first golden shot of that window. Golden shots get a small sun dot on
+the slider track and say "7:24 AM, sunrise shot" in `aria-valuetext`. The hour
+strip, readings and DST labels key on `hourOfSlot(slot)` (the UTC hour of a
+10-minute slot). Pure helpers and tests: `lib/plus/dayView.ts`.
+
+**Storage.** Each window holds 6 slots, so two windows add up to 12 shots per
+cam per day (about 10 net, since 2 of them replace hourly shots). Gross: 12 x 11
+cams x 365 days is about 48,000 shots a year, about +5.8 GB at the plan's 120 KB
+a shot, on top of the roughly 7 GB a year of hourly shots (about 13 GB in all).
+The owner brief said about +10 GB a year; that would need frames near 200 KB, so
+re-check after a week of real sizes (R12 step 3 measures p50/p95). Either way
+the archive now passes R2's 10 GB free tier in its first year: expect a small
+storage bill (R2 is about $0.015 per GB-month). Retention and purge are
+unchanged (365 days of rows, 367-day lifecycle).

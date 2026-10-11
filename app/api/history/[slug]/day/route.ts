@@ -19,7 +19,12 @@
 // Frames: only state = 'ready' rows of this beach and local date; only cams the
 // manifest still archives (`archive: false` hides a cam at once, R6); the
 // credit line comes from each ROW, never today's config. A cam with no shot
-// that day is listed with `frames: []`. Response is private, no-store.
+// that day is listed with `frames: []`. Each frame carries `kind` ("golden" for
+// a 10-minute sunrise or sunset shot, else "hour"), and the payload carries
+// `golden: { sunrise, sunset }`, that date's two windows as { startUtc, endUtc }
+// (null when the sun does not rise or set), computed from the beach's
+// coordinates with lib/camFrames/golden.ts, no D1 read. Response is private,
+// no-store.
 
 import { getLocation } from "@/config/locations";
 import { badRequest, fail, isDeviceId, readBody } from "@/lib/db/api";
@@ -34,6 +39,7 @@ import { shapeCams, shapeHours, type DayFrameRow, type DayViewPayload } from "@/
 import { summarizeDay, summarizeVersions } from "@/lib/history/summary";
 import type { BeachHourlyRow } from "@/lib/history/types";
 import { isCalendarDate, parseFrameKey } from "@/lib/camFrames/keys";
+import { goldenWindowsForDate, windowIso } from "@/lib/camFrames/golden";
 import { archiveCams } from "@/lib/camFrames/manifest";
 import { sign } from "@/lib/camFrames/sign";
 import { SCORING_ENGINE_VERSION } from "@/lib/score";
@@ -112,7 +118,7 @@ export async function POST(
         .all<BeachHourlyRow>(),
       db
         .prepare(
-          "SELECT cam_id, slot_utc, local_hour, local_minute, r2_key, attribution FROM cam_frames " +
+          "SELECT cam_id, slot_utc, slot_kind, local_hour, local_minute, r2_key, attribution FROM cam_frames " +
             "WHERE slug = ?1 AND local_date = ?2 AND state = 'ready' ORDER BY cam_id, slot_utc",
         )
         .bind(slug, date)
@@ -148,6 +154,7 @@ export async function POST(
     }
 
     const summary = summarizeDay(date, rows);
+    const goldenDay = goldenWindowsForDate(loc, date);
     const payload: DayViewPayload = {
       date,
       timezone: loc.timezone,
@@ -155,6 +162,7 @@ export async function POST(
       summary,
       versions: summarizeVersions([summary], SCORING_ENGINE_VERSION),
       cams: shapeCams(manifest, frameRows, (k) => urls.get(k) ?? null),
+      golden: { sunrise: windowIso(goldenDay.sunrise), sunset: windowIso(goldenDay.sunset) },
       archiveStart,
       framesStart,
     };

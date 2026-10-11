@@ -24,6 +24,9 @@ export interface ArchiveCam {
   attribution: string | null;
   /** The beach's IANA timezone (local date and hour come from it). */
   timezone: string;
+  /** The beach's coordinates (sunrise and sunset, so the golden-hour slot rule, come from them). */
+  lat: number;
+  lon: number;
   /** "feed": a video-monitoring.com latest.json feed. "direct": a still URL (courier-fed cams). */
   sourceKind: ArchiveSourceKind;
 }
@@ -48,6 +51,8 @@ function toArchiveCam(loc: Location, cam: CamConfig, kind: ArchiveSourceKind): A
     name: cam.name,
     attribution: cam.attribution ?? null,
     timezone: loc.timezone,
+    lat: loc.lat,
+    lon: loc.lon,
     sourceKind: kind,
   };
 }
@@ -88,6 +93,9 @@ export interface ArchiveManifestCamJson {
   name: string;
   attribution: string | null;
   timezone: string;
+  /** The beach's coordinates: cam_seaweed.py computes the loop's sunrise-to-sunset run window from them. */
+  lat: number;
+  lon: number;
   source:
     | { kind: "feed"; base: string; view: string }
     | { kind: "direct"; url: string; meta: string | null };
@@ -122,6 +130,8 @@ export function buildArchiveManifestJson(): ArchiveManifestJson {
         name: cam.name,
         attribution: cam.attribution ?? null,
         timezone: loc.timezone,
+        lat: loc.lat,
+        lon: loc.lon,
         source,
       });
     }

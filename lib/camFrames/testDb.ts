@@ -1,5 +1,5 @@
 // Test helper: a real SQLite database (Node's built-in node:sqlite) that has
-// migrations/0016_cam_frames.sql applied, wrapped in the D1Like surface the
+// migrations/0016_cam_frames.sql and 0017_cam_frames_golden.sql applied, wrapped in the D1Like surface the
 // webcam archive code uses. The actual SQL runs, not a JS model of it. Only
 // *.test.ts files import this. `makeCamDb()` returns null on a Node build
 // without node:sqlite; the tests then skip.
@@ -36,20 +36,25 @@ export interface CamDb {
   db: D1Like;
   /** Run a query straight on SQLite (test assertions). */
   all(sql: string, ...params: unknown[]): Record<string, unknown>[];
+  /** Run raw SQL (a migration applied by hand, in a migration test). */
+  exec(sql: string): void;
   close(): void;
 }
 
 /**
  * `allMigrations: true` applies every migration in order (the day route reads
- * beach_hourly as well as cam_frames); the default applies only 0016.
+ * beach_hourly as well as cam_frames); `files` applies exactly those migrations (a
+ * migration test); the default applies only the two cam_frames migrations.
  */
-export function makeCamDb(opts?: { allMigrations?: boolean }): CamDb | null {
+export function makeCamDb(opts?: { allMigrations?: boolean; files?: string[] }): CamDb | null {
   if (!Ctor) return null;
   const raw = new Ctor(":memory:");
   const dir = path.join(process.cwd(), "migrations");
-  const files = opts?.allMigrations
+  const files = opts?.files
+    ? opts.files
+    : opts?.allMigrations
     ? readdirSync(dir).filter((f) => f.endsWith(".sql")).sort()
-    : ["0016_cam_frames.sql"];
+    : ["0016_cam_frames.sql", "0017_cam_frames_golden.sql"];
   for (const f of files) raw.exec(readFileSync(path.join(dir, f), "utf8"));
   const db: D1Like = {
     prepare(sql: string): D1Stmt {
@@ -78,6 +83,7 @@ export function makeCamDb(opts?: { allMigrations?: boolean }): CamDb | null {
   return {
     db,
     all: (sql, ...params) => raw.prepare(sql).all(...params),
+    exec: (sql) => raw.exec(sql),
     close: () => raw.close(),
   };
 }

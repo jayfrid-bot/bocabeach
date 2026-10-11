@@ -82,15 +82,21 @@ class WithManifest(unittest.TestCase):
 
     self.filled_by_slug[slug] = {slot ISO: {cam ids}} is what the pre-check
     answers for that beach ({} by default = nothing filled); None makes it fail.
+    self.golden_by_slug[slug] = [(start, end), ...] are the golden-hour windows
+    it reports for the beach (none by default).
     self.filled_calls records every beach asked about."""
 
     def setUp(self):
         self.filled_by_slug = {}
+        self.golden_by_slug = {}
         self.filled_calls = []
 
         def fake_filled(slug):
             self.filled_calls.append(slug)
-            return self.filled_by_slug.get(slug, {})
+            slots = self.filled_by_slug.get(slug, {})
+            if slots is None:
+                return None
+            return {"slots": slots, "current": None, "golden": self.golden_by_slug.get(slug, [])}
 
         for p in (mock.patch.object(cs, "ARCHIVE_CAMS_PATH", str(MANIFEST_PATH)),
                   mock.patch.object(cs, "fetch_filled_slots", fake_filled)):
@@ -324,8 +330,10 @@ class CaptureBeachTests(WithManifest):
     COURIER_CAM = {"id": "ftl-elbo-beach-cam", "name": "Elbo",
                    "source": {"kind": "direct", "url": "https://u/frame", "meta": "https://u/meta"}}
 
-    def run_capture(self, slug, cams, *, assess=None, frame_at_info=None, meta=None, token="tok", attempted=None, archive=None):
+    def run_capture(self, slug, cams, *, assess=None, frame_at_info=None, meta=None, token="tok", attempted=None, archive=None, gap_state=None, prev=None):
         order = []
+        self.out = io.StringIO()
+        self.sleeps = []
 
         def fake_fetch(cam, info=None, feed_cache=None):
             order.append("fetch")
@@ -347,13 +355,13 @@ class CaptureBeachTests(WithManifest):
             mock.patch.object(cs, "archive_frame", fake_archive),
             mock.patch.object(cs, "assess", assess or fake_assess),
             mock.patch.object(cs, "_get", lambda url, timeout=25: json.dumps(meta or {}).encode()),
-            mock.patch.object(cs.time, "sleep", lambda s: None),
+            mock.patch.object(cs.time, "sleep", lambda s: self.sleeps.append(s)),
         ]
         with env(INGEST_TOKEN=token), contextlib.ExitStack() as st, \
-                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                contextlib.redirect_stdout(self.out), contextlib.redirect_stderr(io.StringIO()):
             for p in patches:
                 st.enter_context(p)
-            result = cs.capture_beach(slug, cams, now, {"called": False}, {}, attempted, archive)
+            result = cs.capture_beach(slug, cams, now, gap_state if gap_state is not None else {"called": False}, prev or {}, attempted, archive)
         return result, order
 
     def test_order_is_fetch_then_assess_then_the_upload(self):
@@ -391,7 +399,7 @@ class CaptureBeachTests(WithManifest):
 
     def test_cams_whose_hour_is_already_filled_are_read_but_not_uploaded(self):
         run = cs.ArchiveRun()
-        run.filled = {"boca-raton": {cs._slot_utc_of(None): {"boca-south"}}}
+        run.filled = {"boca-raton": {"slots": {cs._slot_utc_of(None): {"boca-south"}}, "golden": []}}
         with env(INGEST_TOKEN="tok"):
             result, order = self.run_capture("boca-raton", [self.FEED_CAM], archive=run)
         self.assertEqual(order, ["fetch", "assess"])
@@ -401,7 +409,7 @@ class CaptureBeachTests(WithManifest):
         # The cam's CURRENT hour is filled, but this frame is from the hour before: still uploaded.
         run = cs.ArchiveRun()
         old = iso_ago(70)
-        run.filled = {"boca-raton": {cs._slot_utc_of(None): {"boca-south"}}}
+        run.filled = {"boca-raton": {"slots": {cs._slot_utc_of(None): {"boca-south"}}, "golden": []}}
         _, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=old, archive=run)
         if cs._slot_utc_of(old) != cs._slot_utc_of(None):
             self.assertEqual(sum(1 for o in order if isinstance(o, tuple)), 1)
@@ -629,6 +637,137 @@ class ArchivePassTests(ArchivePassBase):
             self.assertEqual(cs.main(), 0)
 
 
+class StaleFeedFrameTests(WithManifest):
+    """capture_beach: a feed frame older than VISION_MAX_FRAME_AGE_MIN is not read.
+
+    Observed 2026-10-11 6 AM: boca-inlet-surf served a 431-470 minute old night
+    frame and the loop scored it ("seaweed none, crowd empty")."""
+
+    # The same harness as CaptureBeachTests (not a subclass: its tests would run twice).
+    FEED_CAM = CaptureBeachTests.FEED_CAM
+    COURIER_CAM = CaptureBeachTests.COURIER_CAM
+    run_capture = CaptureBeachTests.run_capture
+
+    def two_cams(self):
+        return [dict(self.FEED_CAM, id="boca-south"), dict(self.FEED_CAM, id="boca-inlet-surf", name="Inlet surf")]
+
+    def test_the_limit_is_sixty_minutes(self):
+        self.assertEqual(cs.VISION_MAX_FRAME_AGE_MIN, 60)
+
+    def test_a_431_minute_old_night_frame_is_not_read(self):
+        result, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(431))
+        self.assertNotIn("assess", order)
+        self.assertIsNone(result, "no reading at all for the beach this tick")
+        self.assertRegex(self.out.getvalue(), r"\[boca-raton\] boca-south: skipped \(frame is 43\d min old\)")
+
+    def test_assess_is_never_called_for_a_stale_frame(self):
+        calls = []
+        self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(300), assess=lambda img: calls.append(1) or {})
+        self.assertEqual(calls, [])
+
+    def test_a_fresh_frame_next_to_a_stale_one_is_read_and_the_stale_cam_is_absent(self):
+        # Only the fresh cam appears; fetch order is per cam, so give each its own age.
+        ages = {"boca-south": iso_ago(5), "boca-inlet-surf": iso_ago(431)}
+        seen = []
+
+        def fake_fetch(cam, info=None, feed_cache=None):
+            seen.append(cam["id"])
+            info["frameAt"] = ages[cam["id"]]
+            return jpeg()
+
+        with env(INGEST_TOKEN="tok"), mock.patch.object(cs, "fetch_still", fake_fetch), \
+                mock.patch.object(cs, "archive_frame", lambda *a, **k: "stored"), \
+                mock.patch.object(cs, "assess", lambda img: {"level": "none", "coveragePct": 0, "crowd": "empty", "crowdPct": 0, "people": 0, "provider": "t"}), \
+                mock.patch.object(cs.time, "sleep", lambda s: None), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            result = cs.capture_beach("boca-raton", self.two_cams(), dt.datetime.now(ZONE), {"called": False}, {})
+        self.assertEqual(seen, ["boca-south", "boca-inlet-surf"])
+        self.assertEqual([c["id"] for c in result["cams"]], ["boca-south"])
+
+    def test_the_published_output_for_a_skipped_feed_cam_matches_a_skipped_courier_cam(self):
+        # A skipped cam leaves NO entry in the tick's cams and NO key in history[].frames.
+        feed_cams = [self.FEED_CAM]
+        stale_result, _ = self.run_capture("boca-raton", feed_cams, frame_at_info=iso_ago(431))
+        courier_stale = {"ok": True, "grabbedAtUtc": iso_ago(cs.DIRECT_FRAME_MAX_AGE_MIN + 30)}
+        courier_result, _ = self.run_capture("fort-lauderdale", [self.COURIER_CAM], meta=courier_stale)
+        self.assertIsNone(stale_result)
+        self.assertEqual(stale_result, courier_result)
+        # With a fresh sibling the document has only the sibling, and no frames entry for the stale cam.
+        ages = {"boca-south": iso_ago(5), "boca-inlet-surf": iso_ago(431)}
+
+        def fake_fetch(cam, info=None, feed_cache=None):
+            info["frameAt"] = ages[cam["id"]]
+            return jpeg()
+
+        now = dt.datetime.now(ZONE)
+        with env(INGEST_TOKEN="tok"), mock.patch.object(cs, "fetch_still", fake_fetch), \
+                mock.patch.object(cs, "archive_frame", lambda *a, **k: "stored"), \
+                mock.patch.object(cs, "assess", lambda img: {"level": "low", "coveragePct": 3, "crowd": "quiet", "crowdPct": 5, "people": 2, "provider": "t"}), \
+                mock.patch.object(cs.time, "sleep", lambda s: None), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            current = cs.capture_beach("boca-raton", self.two_cams(), now, {"called": False}, {})
+        doc = cs.build_beach_output("boca-raton", "America/New_York", now, [("gemini", "m")], {}, current, None, None)
+        self.assertEqual([c["id"] for c in doc["latest"]["cams"]], ["boca-south"])
+        self.assertNotIn("frames", doc["history"][0])
+        self.assertNotIn("boca-inlet-surf", json.dumps(doc))
+
+    def test_when_every_cam_is_stale_the_previous_reading_is_carried_forward_unchanged(self):
+        now = dt.datetime.now(ZONE)
+        prev_latest = {"capturedAtLocal": "2026-10-11T05:50-04:00", "hour": 5, "cams": [{"id": "boca-south", "level": "low"}]}
+        prev = {"dateLocal": now.date().isoformat(), "latest": prev_latest, "morning": None, "history": [], "generatedAt": "2026-10-11T09:50:00Z"}
+        current, _ = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(431))
+        doc = cs.build_beach_output("boca-raton", "America/New_York", now, [("gemini", "m")], prev, current, None, None)
+        self.assertEqual(doc["latest"], prev_latest)
+        self.assertEqual(doc["generatedAt"], "2026-10-11T09:50:00Z", "not bumped: nothing fresh was read")
+        self.assertEqual(doc["history"], [])
+
+    def test_just_inside_and_just_outside_the_limit(self):
+        _, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(59))
+        self.assertIn("assess", order)
+        _, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(61))
+        self.assertNotIn("assess", order)
+
+    def test_a_feed_frame_with_no_timestamp_is_read_as_before(self):
+        result, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=None)
+        self.assertIn("assess", order)
+        self.assertEqual(len(result["cams"]), 1)
+
+    def test_an_unparsable_timestamp_is_read_as_before(self):
+        result, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info="not-a-time")
+        self.assertIn("assess", order)
+        self.assertEqual(len(result["cams"]), 1)
+
+    def test_the_stale_frame_is_still_offered_to_the_archive_and_marked_attempted(self):
+        attempted = set()
+        _, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(431), attempted=attempted)
+        self.assertEqual(attempted, {("boca-raton", "boca-south")}, "archive_pass does not fetch it a second time")
+        self.assertEqual([o for o in order if isinstance(o, tuple)], [("archive", "boca-raton", "boca-south", mock.ANY)])
+
+    def test_a_stale_cam_spends_no_vision_quota_gap(self):
+        gap = {"called": False}
+        self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(431), gap_state=gap)
+        self.assertEqual(self.sleeps, [])
+        self.assertFalse(gap["called"], "the next cam does not wait for a call that never happened")
+
+    def test_the_gap_still_separates_two_real_reads(self):
+        cams = [dict(self.FEED_CAM, id="a"), dict(self.FEED_CAM, id="b")]
+        self.run_capture("boca-raton", cams, frame_at_info=iso_ago(5))
+        self.assertEqual(self.sleeps, [cs.CAM_GAP_S])
+
+    def test_a_courier_cam_keeps_its_own_freshness_rule(self):
+        # 100 minutes is past the 60-minute feed limit but inside the courier's 150: still read.
+        grabbed = iso_ago(100)
+        result, order = self.run_capture(
+            "fort-lauderdale", [self.COURIER_CAM], meta={"ok": True, "grabbedAtUtc": grabbed}, frame_at_info=iso_ago(500))
+        self.assertIn("assess", order)
+        self.assertEqual(result["cams"][0]["frameAt"], grabbed)
+
+    def test_a_direct_cam_without_a_meta_url_is_never_skipped_for_age(self):
+        still = {"id": "x", "name": "X", "source": {"kind": "direct", "url": "https://u/frame"}}
+        _, order = self.run_capture("boca-raton", [still], frame_at_info=iso_ago(500))
+        self.assertIn("assess", order)
+
+
 class FetchFilledSlotsTests(unittest.TestCase):
     def call(self, answer=None, token="tok-unit", exc=None):
         urlopen = mock.Mock(side_effect=exc) if exc else mock.Mock(return_value=FakeResponse(answer))
@@ -638,7 +777,11 @@ class FetchFilledSlotsTests(unittest.TestCase):
 
     def test_sends_an_authenticated_get_and_parses_the_slots(self):
         got, urlopen = self.call({"ok": True, "slots": {"2026-10-11T14:00:00.000Z": ["boca-south", "boca-inlet"], "2026-10-11T13:00:00.000Z": []}})
-        self.assertEqual(got, {"2026-10-11T14:00:00.000Z": {"boca-south", "boca-inlet"}, "2026-10-11T13:00:00.000Z": set()})
+        self.assertEqual(got, {
+            "slots": {"2026-10-11T14:00:00.000Z": {"boca-south", "boca-inlet"}, "2026-10-11T13:00:00.000Z": set()},
+            "current": None,
+            "golden": [],
+        })
         (req,), kwargs = urlopen.call_args
         self.assertEqual(req.get_method(), "GET")
         self.assertEqual(req.full_url, "https://app.isitbeachday.com/api/cam-frames/slots?slug=boca-raton")
@@ -828,7 +971,7 @@ class ArchivePassPrecheckTests(ArchivePassBase):
         # Feed cams learn their frame time from the fetch; the frame is from a
         # slot that is filled, so it is fetched but not uploaded.
         stamp = "2026-10-11T14:05:09Z"
-        with mock.patch.object(cs, "_slot_utc_of", lambda fa=None: "SLOT-FILLED" if fa == stamp else "SLOT-NOW"):
+        with mock.patch.object(cs, "_slot_utc_of", lambda fa=None, golden=None: "SLOT-FILLED" if fa == stamp else "SLOT-NOW"):
             self.filled_by_slug["boca-raton"] = {"SLOT-FILLED": {"boca-inlet"}}
             out, fetched, archived = self.run_pass(set())
         self.assertIn("boca-inlet", fetched)
@@ -875,6 +1018,264 @@ class ArchivePassPrecheckTests(ArchivePassBase):
         self.assertLess(elapsed, 1.5)
         self.assertEqual(out["results"], {})
         self.assertGreater(run.dropped, 0)
+
+
+def utc(iso):
+    return dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+
+
+class FetchGoldenReplyTests(unittest.TestCase):
+    """fetch_filled_slots against the real function (WithManifest would replace it)."""
+
+    def test_fetch_filled_slots_reads_the_windows_and_the_current_slot(self):
+        reply = {
+            "ok": True,
+            "currentSlotUtc": "2026-10-11T11:20:00.000Z",
+            "golden": [
+                {"kind": "sunrise", "startUtc": "2026-10-11T10:57:34.565Z", "endUtc": "2026-10-11T11:57:34.565Z"},
+                {"kind": "sunset", "startUtc": "nonsense", "endUtc": "2026-10-11T23:16:18.394Z"},
+                "junk",
+            ],
+            "slots": {"2026-10-11T11:20:00.000Z": ["boca-south"], "2026-10-11T11:10:00.000Z": []},
+        }
+        with env(INGEST_TOKEN="tok"), mock.patch.object(cs.urllib.request, "urlopen", mock.Mock(return_value=FakeResponse(reply))):
+            got = cs.fetch_filled_slots("boca-raton")
+        self.assertEqual(got["current"], "2026-10-11T11:20:00.000Z")
+        self.assertEqual(got["slots"]["2026-10-11T11:20:00.000Z"], {"boca-south"})
+        self.assertEqual(got["golden"], [(utc("2026-10-11T10:57:34.565Z"), utc("2026-10-11T11:57:34.565Z"))], "malformed windows are dropped")
+
+    def test_an_older_server_without_the_new_fields_still_works(self):
+        with env(INGEST_TOKEN="tok"), mock.patch.object(cs.urllib.request, "urlopen", mock.Mock(return_value=FakeResponse({"slots": {"s": ["a"]}}))):
+            got = cs.fetch_filled_slots("boca-raton")
+        self.assertEqual(got, {"slots": {"s": {"a"}}, "current": None, "golden": []})
+
+
+class GoldenSlotTests(WithManifest):
+    """Slot-rule-aware pre-check: the server decides, the script reads the windows."""
+
+    # A sunrise window like Boca's on 2026-10-11 (10:57:34Z-11:57:34Z).
+    WINDOW = [(utc("2026-10-11T10:57:34Z"), utc("2026-10-11T11:57:34Z"))]
+
+    def at(self, iso):
+        """Freeze the script's clock at `iso` (it reads dt.datetime.now in _slot_utc_of)."""
+        real = dt.datetime
+
+        class Frozen(real):
+            @classmethod
+            def now(cls, tz=None):
+                t = utc(iso)
+                return t if tz is None else t.astimezone(tz)
+
+        return mock.patch.object(cs.dt, "datetime", Frozen)
+
+    def test_inside_a_window_the_slot_is_ten_minutes_wide(self):
+        with self.at("2026-10-11T11:30:00Z"):
+            self.assertEqual(cs._slot_utc_of("2026-10-11T11:24:30Z", self.WINDOW), "2026-10-11T11:20:00.000Z")
+            self.assertEqual(cs._slot_utc_of("2026-10-11T11:20:00Z", self.WINDOW), "2026-10-11T11:20:00.000Z")
+            self.assertEqual(cs._slot_utc_of(None, self.WINDOW), "2026-10-11T11:30:00.000Z")
+
+    def test_outside_a_window_or_with_none_it_is_the_hour(self):
+        with self.at("2026-10-11T14:20:00Z"):
+            self.assertEqual(cs._slot_utc_of("2026-10-11T14:05:00Z", self.WINDOW), "2026-10-11T14:00:00.000Z")
+            self.assertEqual(cs._slot_utc_of(None, self.WINDOW), "2026-10-11T14:00:00.000Z")
+        with self.at("2026-10-11T11:30:00Z"):
+            self.assertEqual(cs._slot_utc_of("2026-10-11T11:24:30Z"), "2026-10-11T11:00:00.000Z")
+            self.assertEqual(cs._slot_utc_of("2026-10-11T11:24:30Z", []), "2026-10-11T11:00:00.000Z")
+
+    def test_the_window_is_half_open_like_the_servers(self):
+        with self.at("2026-10-11T12:00:00Z"):
+            self.assertEqual(cs._slot_utc_of("2026-10-11T10:57:00Z", self.WINDOW), "2026-10-11T10:00:00.000Z")
+            self.assertEqual(cs._slot_utc_of("2026-10-11T10:58:00Z", self.WINDOW), "2026-10-11T10:50:00.000Z")
+            self.assertEqual(cs._slot_utc_of("2026-10-11T11:57:00Z", self.WINDOW), "2026-10-11T11:50:00.000Z")
+            self.assertEqual(cs._slot_utc_of("2026-10-11T11:58:00Z", self.WINDOW), "2026-10-11T11:00:00.000Z")
+
+    def test_a_frame_time_the_server_would_drop_is_placed_by_the_clock_now(self):
+        with self.at("2026-10-11T11:30:00Z"):
+            # 5 hours old: the server files it under "now", which is inside the window.
+            self.assertEqual(cs._slot_utc_of("2026-10-11T06:25:00Z", self.WINDOW), "2026-10-11T11:30:00.000Z")
+
+    def run_for(self, run, cam_id, frame_at=None):
+        return run.is_filled("boca-raton", cam_id, frame_at)
+
+    def precheck_run(self, slots):
+        self.filled_by_slug["boca-raton"] = slots
+        self.golden_by_slug["boca-raton"] = self.WINDOW
+        run = cs.ArchiveRun()
+        with env(INGEST_TOKEN="tok"):
+            run.precheck({"boca-raton"})
+        return run
+
+    def test_inside_a_window_only_the_ten_minute_slot_counts(self):
+        # The :00 HOUR slot is filled (earlier, outside the window) but the current 10-minute slot is not.
+        run = self.precheck_run({"2026-10-11T11:00:00.000Z": {"boca-south"}, "2026-10-11T11:20:00.000Z": {"boca-inlet"}})
+        with self.at("2026-10-11T11:24:00Z"):
+            self.assertFalse(self.run_for(run, "boca-south"), "the slot a frame taken now lands in is 11:20, and it is empty")
+            self.assertTrue(self.run_for(run, "boca-inlet"))
+            self.assertTrue(self.run_for(run, "boca-inlet", "2026-10-11T11:21:00Z"))
+        with self.at("2026-10-11T11:36:00Z"):
+            self.assertTrue(self.run_for(run, "boca-inlet", "2026-10-11T11:27:00Z"))
+            self.assertFalse(self.run_for(run, "boca-inlet", "2026-10-11T11:31:00Z"), "the next 10 minutes are a new slot")
+
+    def test_the_slot_is_read_at_the_time_of_the_question_not_of_the_precheck(self):
+        run = self.precheck_run({"2026-10-11T11:20:00.000Z": {"boca-inlet"}})
+        with self.at("2026-10-11T11:29:50Z"):
+            self.assertTrue(self.run_for(run, "boca-inlet"))
+        with self.at("2026-10-11T11:30:10Z"):  # ten seconds later, a new slot
+            self.assertFalse(self.run_for(run, "boca-inlet"))
+
+    def test_outside_a_window_the_hour_slot_counts_as_before(self):
+        self.golden_by_slug["boca-raton"] = []
+        self.filled_by_slug["boca-raton"] = {"2026-10-11T14:00:00.000Z": {"boca-south"}}
+        run = cs.ArchiveRun()
+        with env(INGEST_TOKEN="tok"):
+            run.precheck({"boca-raton"})
+        with self.at("2026-10-11T14:40:00Z"):
+            self.assertTrue(self.run_for(run, "boca-south"))
+            self.assertFalse(self.run_for(run, "boca-inlet"))
+
+    def test_a_courier_frame_from_before_the_window_is_judged_as_an_hour_shot(self):
+        run = self.precheck_run({"2026-10-11T10:00:00.000Z": {"boca-south"}})
+        with self.at("2026-10-11T11:24:00Z"):
+            self.assertTrue(self.run_for(run, "boca-south", "2026-10-11T10:30:00Z"))
+
+    def test_a_failed_precheck_still_fails_open(self):
+        self.filled_by_slug["boca-raton"] = None
+        run = cs.ArchiveRun()
+        with env(INGEST_TOKEN="tok"):
+            run.precheck({"boca-raton"})
+        with self.at("2026-10-11T11:24:00Z"):
+            self.assertFalse(self.run_for(run, "boca-south"))
+
+    def test_a_golden_tick_still_asks_the_app_at_most_three_times(self):
+        for slug in ("boca-raton", "deerfield-beach", "fort-lauderdale"):
+            self.golden_by_slug[slug] = self.WINDOW
+        run = cs.ArchiveRun()
+        with env(INGEST_TOKEN="tok"):
+            run.precheck({c["slug"] for c in cs.load_archive_cams()})
+            run.precheck({c["slug"] for c in cs.load_archive_cams()})
+        self.assertEqual(sorted(self.filled_calls), ["boca-raton", "deerfield-beach", "fort-lauderdale"])
+
+    def test_archive_pass_inside_a_window_skips_only_cams_whose_ten_minute_slot_is_filled(self):
+        now = dt.datetime.now(dt.timezone.utc)
+        self.golden_by_slug["boca-raton"] = [(now - dt.timedelta(minutes=25), now + dt.timedelta(minutes=25))]
+        slot = cs._slot_utc_of(None, self.golden_by_slug["boca-raton"])
+        hour_slot = cs._slot_utc_of(None)
+        filled = {slot: {"boca-inlet"}}
+        filled.setdefault(hour_slot, set()).add("boca-inlet-north")  # the same key in the first ten minutes of an hour
+        self.filled_by_slug["boca-raton"] = filled
+        fetched = []
+
+        def fake_fetch(cam, info=None, feed_cache=None):
+            fetched.append(cam["id"])
+            return jpeg()
+
+        with env(INGEST_TOKEN="tok"), mock.patch.object(cs, "fetch_still", fake_fetch), \
+                mock.patch.object(cs, "archive_frame", lambda *a, **k: "stored"), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            cs.archive_pass(set())
+        self.assertNotIn("boca-inlet", fetched)
+        if slot != hour_slot:
+            self.assertIn("boca-inlet-north", fetched, "an hour-slot fill does not satisfy a golden slot")
+
+
+class RunWindowTests(WithManifest):
+    """The loop's reading window: earliest sunrise - 30 min to latest sunset + 30 min."""
+
+    def cams(self):
+        return cs.load_archive_cams()
+
+    def test_every_manifest_cam_carries_coordinates(self):
+        for c in self.cams():
+            self.assertIsInstance(c["lat"], float, c["id"])
+            self.assertIsInstance(c["lon"], float, c["id"])
+        self.assertEqual(len({c["slug"] for c in self.cams()}), 3)
+
+    def test_summer_the_window_runs_past_eight_forty_pm_eastern(self):
+        start, end = cs.run_window(self.cams(), utc("2026-06-21T16:00:00Z"))
+        # Sunset is about 8:16 PM EDT (00:16Z): the window ends half an hour later.
+        self.assertTrue(utc("2026-06-22T00:38:00Z") <= end <= utc("2026-06-22T00:58:00Z"), end)
+        # Sunrise is about 6:26 AM EDT (10:26Z): the window opens half an hour before.
+        self.assertTrue(utc("2026-06-21T09:50:00Z") <= start <= utc("2026-06-21T10:10:00Z"), start)
+
+    def test_winter_the_window_is_shorter(self):
+        start, end = cs.run_window(self.cams(), utc("2026-12-21T16:00:00Z"))
+        self.assertTrue(utc("2026-12-21T11:25:00Z") <= start <= utc("2026-12-21T11:45:00Z"), start)  # sunrise ~7:04 AM EST
+        self.assertTrue(utc("2026-12-21T22:55:00Z") <= end <= utc("2026-12-21T23:15:00Z"), end)      # sunset ~5:33 PM EST
+
+    def test_a_loop_started_by_the_ten_utc_cron_misses_no_grid_tick_of_the_morning(self):
+        # The cron's first fire is 10:00Z. The window opens ~09:56Z in June (the :00 tick lands
+        # at 10:00Z anyway) and ~11:34Z in December. Never earlier than 09:50Z at these beaches.
+        for day in ("2026-06-21", "2026-12-21", "2026-03-20", "2026-09-22"):
+            start, _ = cs.run_window(self.cams(), utc(f"{day}T16:00:00Z"))
+            self.assertGreaterEqual(start, utc(f"{day}T09:50:00Z"), day)
+
+    def test_it_follows_the_beachs_local_date_not_the_utc_date(self):
+        # 2026-06-22T00:30Z is 8:30 PM EDT on June 21: still June 21's window, and still 'day'.
+        self.assertEqual(cs.window_state(utc("2026-06-22T00:30:00Z"), self.cams()), "day")
+        # 04:00Z is midnight EDT: June 22's window, which has not opened.
+        self.assertEqual(cs.window_state(utc("2026-06-22T04:00:00Z"), self.cams()), "night")
+
+    def test_states_around_the_edges(self):
+        start, end = cs.run_window(self.cams(), utc("2026-10-11T16:00:00Z"))
+        one = dt.timedelta(minutes=1)
+        self.assertEqual(cs.window_state(start - one, self.cams()), "night")
+        self.assertEqual(cs.window_state(start, self.cams()), "day")
+        self.assertEqual(cs.window_state(end - one, self.cams()), "day")
+        self.assertEqual(cs.window_state(end, self.cams()), "dusk")
+        self.assertEqual(cs.window_state(end + dt.timedelta(minutes=19), self.cams()), "dusk")
+        self.assertEqual(cs.window_state(end + dt.timedelta(minutes=20), self.cams()), "night")
+
+    def test_the_old_fixed_window_closed_before_a_june_sunset_ended(self):
+        # 8:25 PM EDT in June (00:25Z): the fixed 20:05 rule said night. Sunset is 8:16 PM; golden light runs to ~8:36.
+        self.assertEqual(cs.window_state(utc("2026-06-22T00:25:00Z"), self.cams()), "day")
+
+    def test_the_window_spans_every_beach_the_earliest_start_and_the_latest_end(self):
+        east = {"slug": "e", "timezone": "America/New_York", "lat": 26.0, "lon": -80.0}
+        west = {"slug": "w", "timezone": "America/Los_Angeles", "lat": 34.0, "lon": -118.4}
+        now = utc("2026-10-11T16:00:00Z")
+        s_e, e_e = cs.run_window([east], now)
+        s_w, e_w = cs.run_window([west], now)
+        s_both, e_both = cs.run_window([east, west], now)
+        self.assertEqual(s_both, min(s_e, s_w))
+        self.assertEqual(e_both, max(e_e, e_w))
+        self.assertEqual(e_both, e_w)  # the west coast sets last
+
+    def test_two_cams_of_one_beach_count_once(self):
+        two = [dict(self.cams()[0]), dict(self.cams()[0], id="other")]
+        self.assertEqual(cs.run_window(two, utc("2026-10-11T16:00:00Z")), cs.run_window(two[:1], utc("2026-10-11T16:00:00Z")))
+
+    def test_polar_and_incomplete_beaches_add_nothing(self):
+        polar = {"slug": "p", "timezone": "Arctic/Longyearbyen", "lat": 78.2, "lon": 15.6}
+        no_geo = {"slug": "g", "timezone": "America/New_York"}
+        bad_tz = {"slug": "t", "timezone": "Nowhere/Land", "lat": 26.0, "lon": -80.0}
+        boca = self.cams()[0]
+        now = utc("2026-06-21T12:00:00Z")
+        self.assertEqual(cs.run_window([polar, no_geo, bad_tz, boca], now), cs.run_window([boca], now))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertIsNone(cs.run_window([polar], now))
+            self.assertIsNone(cs.run_window([no_geo], now))
+            self.assertIsNone(cs.run_window([], now))
+            self.assertEqual(cs.window_state(now, []), "unknown")
+
+    def test_unknown_when_the_manifest_is_missing(self):
+        with mock.patch.object(cs, "ARCHIVE_CAMS_PATH", "/nonexistent/archive-cams.json"), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(cs.window_state(utc("2026-06-21T16:00:00Z")), "unknown")
+
+    def test_the_cli_prints_exactly_one_word(self):
+        import subprocess
+        out = subprocess.run([sys.executable, str(ROOT / "scripts" / "cam_seaweed.py"), "--window-state"],
+                             cwd=ROOT, capture_output=True, text=True, timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn(out.stdout.strip(), {"day", "dusk", "night"})
+        self.assertEqual(len(out.stdout.strip().split()), 1)
+        self.assertIn("run window", out.stderr)
+
+    def test_the_cli_says_unknown_rather_than_failing(self):
+        import subprocess
+        out = subprocess.run([sys.executable, str(ROOT / "scripts" / "cam_seaweed.py"), "--window-state"],
+                             cwd=ROOT, capture_output=True, text=True, timeout=30, env={**os.environ, "ARCHIVE_CAMS": "/nonexistent.json"})
+        self.assertEqual(out.returncode, 0)
+        self.assertEqual(out.stdout.strip(), "unknown")
 
 
 ZONE = __import__("zoneinfo").ZoneInfo("America/New_York")

@@ -22,6 +22,8 @@ export interface CamFrameRow {
   slug: string;
   cam_id: string;
   slot_utc: string;
+  /** 'golden' for a 10-minute golden-hour slot, 'hour' for a UTC-hour slot (migration 0017). */
+  slot_kind: "hour" | "golden";
   received_at_utc: string;
   frame_at_utc: string | null;
   display_at_utc: string;
@@ -62,8 +64,8 @@ export async function claimSlot(db: D1Like, row: CamFrameRow): Promise<boolean> 
       `INSERT INTO cam_frames (
          slug, cam_id, slot_utc, received_at_utc, frame_at_utc, display_at_utc,
          local_date, local_hour, local_minute, utc_offset_minutes, timezone,
-         r2_key, bytes, sha256, source_kind, attribution, claim_id, claimed_at_utc, state
-       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, 'pending')
+         r2_key, bytes, sha256, source_kind, attribution, claim_id, claimed_at_utc, slot_kind, state
+       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, 'pending')
        ON CONFLICT (slug, cam_id, slot_utc) DO NOTHING`,
     )
     .bind(
@@ -85,6 +87,7 @@ export async function claimSlot(db: D1Like, row: CamFrameRow): Promise<boolean> 
       row.attribution,
       row.claim_id,
       row.claimed_at_utc,
+      row.slot_kind,
     )
     .run();
   if ((inserted.meta?.changes ?? 0) === 1) return true;
@@ -97,7 +100,7 @@ export async function claimSlot(db: D1Like, row: CamFrameRow): Promise<boolean> 
          claim_id = ?4, claimed_at_utc = ?5, received_at_utc = ?6, frame_at_utc = ?7,
          display_at_utc = ?8, local_date = ?9, local_hour = ?10, local_minute = ?11,
          utc_offset_minutes = ?12, timezone = ?13, r2_key = ?14, bytes = ?15,
-         sha256 = ?16, source_kind = ?17, attribution = ?18
+         sha256 = ?16, source_kind = ?17, attribution = ?18, slot_kind = ?20
        WHERE slug = ?1 AND cam_id = ?2 AND slot_utc = ?3
          AND state = 'pending' AND claimed_at_utc < ?19`,
     )
@@ -121,6 +124,7 @@ export async function claimSlot(db: D1Like, row: CamFrameRow): Promise<boolean> 
       row.source_kind,
       row.attribution,
       staleBefore,
+      row.slot_kind,
     )
     .run();
   return (took.meta?.changes ?? 0) === 1;

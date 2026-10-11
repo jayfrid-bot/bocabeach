@@ -10,9 +10,11 @@
  *   3. the hour-by-hour score strip (same colors as the hourly chart);
  *   4. the readings for the selected hour.
  *
- * One value drives it all: the selected hour (`hourUtc`). The slider, the hour
- * strip and the full-screen arrows all move it, and every camera shows the shot
- * closest to it. A camera with no shot in that hour says which shot it is
+ * One value drives it all: the selected slot (`hourUtc`: a UTC-hour slot, or a
+ * 10-minute golden-hour slot while a sunrise or sunset shot is selected; the hour
+ * strip and the readings use `hourOfSlot` of it). The slider, the hour strip,
+ * the Sunrise and Sunset buttons and the full-screen arrows all move it, and
+ * every camera shows the shot closest to it. A camera with no shot in that hour says which shot it is
  * showing ("Closest shot: 1:42 PM"). Only the shot on screen loads, plus its
  * next and previous neighbours.
  *
@@ -36,7 +38,10 @@ import {
   defaultHourUtc,
   emptyCamText,
   hour12Compact,
+  goldenJumps,
+  goldenKindOf,
   hourLabelFor,
+  hourOfSlot,
   nearestFrameIndex,
   readingTiles,
   repeatedLocalHours,
@@ -181,7 +186,9 @@ function DayBody({
   const cam = day.cams.find((c) => c.id === camId) ?? null;
 
   const formulaNotice = formulaChangeNotice(day.versions);
-  const selectedHour = day.hours.find((h) => h.hourUtc === hourUtc) ?? null;
+  // A golden-hour shot's slot is 10 minutes wide; its HOUR is what the strip and readings key on.
+  const hourKey = hourUtc ? hourOfSlot(hourUtc) : null;
+  const selectedHour = day.hours.find((h) => h.hourUtc === hourKey) ?? null;
   // On the DST fall-back day one local hour happens twice: say which zone.
   const repeated = useMemo(() => repeatedLocalHours(day), [day]);
 
@@ -196,6 +203,7 @@ function DayBody({
         <CamViewer
           cams={day.cams}
           cam={cam}
+          golden={day.golden}
           framesStart={day.framesStart}
           hourUtc={hourUtc}
           refreshing={refreshing}
@@ -214,7 +222,7 @@ function DayBody({
         {day.hours.length === 0 ? (
           <p className="text-sm text-slate-600 dark:text-slate-400">We have no scores saved for this day.</p>
         ) : (
-          <HourStrip hours={day.hours} selected={hourUtc} repeated={repeated} timezone={day.timezone} onPick={selectHour} />
+          <HourStrip hours={day.hours} selected={hourKey} repeated={repeated} timezone={day.timezone} onPick={selectHour} />
         )}
       </section>
 
@@ -298,6 +306,7 @@ function HourStrip({
 function CamViewer({
   cams,
   cam,
+  golden,
   framesStart,
   hourUtc,
   refreshing,
@@ -309,6 +318,7 @@ function CamViewer({
 }: {
   cams: DayCam[];
   cam: DayCam | null;
+  golden: DayViewPayload["golden"];
   framesStart: string | null;
   hourUtc: string | null;
   refreshing: boolean;
@@ -368,7 +378,10 @@ function CamViewer({
   const gapText = closestShotText(frame, hourUtc);
   const loaded = !!frame && loadedSrc === frame.url;
   const failed = !!frame && failedSrc === frame.url && !refreshing;
-  const sliderText = frame ? sliderTextFor(frame, repeated, timezone) : "";
+  const sliderText = frame ? sliderTextFor(frame, repeated, timezone, golden) : "";
+  // "Sunrise" and "Sunset" jump to the first golden shot of that window. Only the ones this camera has.
+  const jumps = useMemo(() => goldenJumps(frames, golden), [frames, golden]);
+  const nowEvent = frame ? goldenKindOf(frame, golden) : null;
 
   return (
     <section aria-labelledby="day-cams-heading">
@@ -442,19 +455,57 @@ function CamViewer({
             {gapText ?? frame.displayAtLocal}
           </p>
 
+          {jumps.length > 0 ? (
+            <div className="mt-2 flex gap-2" role="group" aria-label="Jump to sunrise or sunset">
+              {jumps.map((j) => (
+                <button
+                  key={j.kind}
+                  type="button"
+                  aria-pressed={nowEvent === j.kind}
+                  onClick={() => go(j.index)}
+                  className={`inline-flex min-h-[44px] items-center gap-2 rounded-full px-4 text-sm font-medium ring-1 transition ${
+                    nowEvent === j.kind
+                      ? "bg-amber-400/25 text-amber-900 ring-amber-500/50 dark:text-amber-200"
+                      : "bg-slate-900/5 text-slate-700 ring-slate-900/10 hover:bg-slate-900/10 dark:bg-white/5 dark:text-slate-200 dark:ring-white/10 dark:hover:bg-white/10"
+                  }`}
+                >
+                  <span aria-hidden className={`h-2.5 w-2.5 rounded-full ${j.kind === "sunrise" ? "bg-amber-400" : "bg-orange-500"}`} />
+                  {j.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
           {frames.length > 1 ? (
             <div className="mt-1">
-              <input
-                type="range"
-                min={0}
-                max={frames.length - 1}
-                step={1}
-                value={idx}
-                onChange={(e) => go(Number(e.target.value))}
-                aria-label={`Time of ${cam?.name ?? "camera"} shot`}
-                aria-valuetext={sliderText}
-                className="h-11 w-full cursor-pointer accent-ocean-600"
-              />
+              <div className="relative">
+                <input
+                  type="range"
+                  min={0}
+                  max={frames.length - 1}
+                  step={1}
+                  value={idx}
+                  onChange={(e) => go(Number(e.target.value))}
+                  aria-label={`Time of ${cam?.name ?? "camera"} shot`}
+                  aria-valuetext={sliderText}
+                  className="h-11 w-full cursor-pointer accent-ocean-600"
+                />
+                {/* A small sun dot on the track for each golden-hour shot. Decoration only: the
+                    spoken value ("7:24 AM, sunrise shot") is the slider's aria-valuetext. */}
+                <div aria-hidden className="pointer-events-none absolute inset-x-0 top-[7px] h-2">
+                  {frames.map((fr, i) =>
+                    fr.kind === "golden" ? (
+                      <span
+                        key={fr.hourUtc}
+                        className={`absolute h-2 w-2 -translate-x-1/2 rounded-full ring-1 ring-white/80 dark:ring-slate-900/80 ${
+                          goldenKindOf(fr, golden) === "sunset" ? "bg-orange-500" : "bg-amber-400"
+                        }`}
+                        style={{ left: `calc(8px + (100% - 16px) * ${i / (frames.length - 1)})` }}
+                      />
+                    ) : null,
+                  )}
+                </div>
+              </div>
               <div className="flex justify-between text-[11px] tabular-nums text-slate-500 dark:text-slate-400" aria-hidden>
                 <span>{sliderLabel(frames[0].displayAtLocal)}</span>
                 <span>{sliderLabel(frames[frames.length - 1].displayAtLocal)}</span>

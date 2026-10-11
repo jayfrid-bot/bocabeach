@@ -8,7 +8,11 @@ import {
   dayTitle,
   emptyCamText,
   hour12Label,
+  goldenJumpIndex,
+  goldenJumps,
+  goldenKindOf,
   hourLabelFor,
+  hourOfSlot,
   localHourOfLabel,
   repeatedLocalHours,
   sliderTextFor,
@@ -258,5 +262,98 @@ describe("DST fall-back labels", () => {
     expect(localHourOfLabel("12:05 PM")).toBe(12);
     expect(localHourOfLabel("1:30 PM")).toBe(13);
     expect(localHourOfLabel("noon")).toBeNull();
+  });
+});
+
+describe("golden-hour shots", () => {
+  const TZ = "America/New_York";
+  // Boca, 2026-10-10: sunrise window about 10:58Z-11:58Z, sunset window about 22:17Z-23:17Z.
+  const golden = {
+    sunrise: { startUtc: "2026-10-10T10:57:34.000Z", endUtc: "2026-10-10T11:57:34.000Z" },
+    sunset: { startUtc: "2026-10-10T22:17:00.000Z", endUtc: "2026-10-10T23:17:00.000Z" },
+  };
+  const hourShot = (hourUtc: string, displayAtLocal = "10:42 AM") => ({ hourUtc, displayAtLocal, kind: "hour" as const });
+  const goldShot = (hourUtc: string, displayAtLocal: string) => ({ hourUtc, displayAtLocal, kind: "golden" as const });
+  const day = [
+    goldShot("2026-10-10T10:50:00.000Z", "6:58 AM"), // slot starts before the window opens
+    goldShot("2026-10-10T11:20:00.000Z", "7:24 AM"),
+    goldShot("2026-10-10T11:50:00.000Z", "7:52 AM"),
+    hourShot("2026-10-10T14:00:00.000Z"),
+    hourShot("2026-10-10T20:00:00.000Z", "4:10 PM"),
+    goldShot("2026-10-10T22:30:00.000Z", "6:31 PM"),
+    goldShot("2026-10-10T23:10:00.000Z", "7:12 PM"),
+  ];
+
+  it("hourOfSlot floors a slot to its UTC hour and leaves an hour slot alone", () => {
+    expect(hourOfSlot("2026-10-10T11:20:00.000Z")).toBe("2026-10-10T11:00:00.000Z");
+    expect(hourOfSlot("2026-10-10T11:00:00.000Z")).toBe("2026-10-10T11:00:00.000Z");
+    expect(hourOfSlot("2026-10-10T11:59:59.999Z")).toBe("2026-10-10T11:00:00.000Z");
+    expect(hourOfSlot("garbage")).toBe("garbage");
+  });
+
+  it("names which window a golden shot belongs to; a normal shot belongs to none", () => {
+    expect(goldenKindOf(day[0], golden)).toBe("sunrise");
+    expect(goldenKindOf(day[2], golden)).toBe("sunrise");
+    expect(goldenKindOf(day[5], golden)).toBe("sunset");
+    expect(goldenKindOf(day[6], golden)).toBe("sunset");
+    expect(goldenKindOf(day[3], golden)).toBeNull();
+    expect(goldenKindOf(day[0], null)).toBeNull();
+    // A golden-kind row with a slot outside both windows (a moved window) names no event.
+    expect(goldenKindOf(goldShot("2026-10-10T16:00:00.000Z", "12:00 PM"), golden)).toBeNull();
+  });
+
+  it("jumps to the FIRST shot of the window, even when the frames arrive in a different order", () => {
+    expect(goldenJumpIndex(day, golden, "sunrise")).toBe(0);
+    expect(goldenJumpIndex(day, golden, "sunset")).toBe(5);
+    const shuffled = [day[2], day[1], day[0], day[6], day[5]];
+    expect(shuffled[goldenJumpIndex(shuffled, golden, "sunrise")].hourUtc).toBe("2026-10-10T10:50:00.000Z");
+    expect(shuffled[goldenJumpIndex(shuffled, golden, "sunset")].hourUtc).toBe("2026-10-10T22:30:00.000Z");
+  });
+
+  it("finds no jump when the camera has no shot in that window, or the day has no such window", () => {
+    const morningOnly = day.slice(0, 5);
+    expect(goldenJumpIndex(morningOnly, golden, "sunset")).toBe(-1);
+    expect(goldenJumpIndex([], golden, "sunrise")).toBe(-1);
+    expect(goldenJumpIndex(day, { sunrise: null, sunset: null }, "sunrise")).toBe(-1);
+    expect(goldenJumpIndex(day, null, "sunset")).toBe(-1);
+    // An hour-kind shot inside the window does not count (it is not a golden shot).
+    expect(goldenJumpIndex([hourShot("2026-10-10T11:00:00.000Z")], golden, "sunrise")).toBe(-1);
+  });
+
+  it("offers only the buttons that have a shot, sunrise first", () => {
+    expect(goldenJumps(day, golden)).toEqual([
+      { kind: "sunrise", label: "Sunrise", index: 0 },
+      { kind: "sunset", label: "Sunset", index: 5 },
+    ]);
+    expect(goldenJumps(day.slice(3, 6), golden)).toEqual([{ kind: "sunset", label: "Sunset", index: 2 }]);
+    expect(goldenJumps(day.slice(3, 5), golden)).toEqual([]);
+  });
+
+  it("speaks a golden shot with its minute and event; a normal shot stays as before", () => {
+    const rep = new Set<number>();
+    expect(sliderTextFor(day[1], rep, TZ, golden)).toBe("7:24 AM, sunrise shot");
+    expect(sliderTextFor(day[5], rep, TZ, golden)).toBe("6:31 PM, sunset shot");
+    expect(sliderTextFor(day[1], rep, TZ)).toBe("7:24 AM, golden hour shot");
+    expect(sliderTextFor(day[3], rep, TZ, golden)).toBe("10 AM");
+  });
+
+  it("two golden shots in one local hour are not a repeated hour", () => {
+    const dayPayload = {
+      hours: [],
+      cams: [{ frames: [day[1], day[2], { ...day[0], hourUtc: "2026-10-10T11:30:00.000Z", displayAtLocal: "7:31 AM" }] }],
+    } as unknown as Parameters<typeof repeatedLocalHours>[0];
+    expect([...repeatedLocalHours(dayPayload)]).toEqual([]);
+  });
+
+  it("a golden shot selected on the slider is not a 'closest shot' gap", () => {
+    expect(closestShotText(day[1], day[1].hourUtc)).toBeNull();
+    expect(closestShotText(day[1], "2026-10-10T11:00:00.000Z")).toBe("Closest shot: 7:24 AM");
+  });
+
+  it("the nearest shot to an hour still works across golden slots", () => {
+    const frames = [day[0], day[1], day[2], day[3]];
+    expect(nearestFrameIndex(frames, "2026-10-10T11:00:00.000Z")).toBe(0); // slot 10:50 is 10 min away, slot 11:20 is 20
+    expect(nearestFrameIndex(frames, "2026-10-10T11:30:00.000Z")).toBe(1); // 11:20 (10 min) beats 11:50 (20 min)
+    expect(nearestFrameIndex(frames, "2026-10-10T13:00:00.000Z")).toBe(3); // the 2 PM shot, not a golden one
   });
 });

@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-11",
+    title: "Sunrise and sunset, every few minutes, in the cam archive",
+    details:
+      "Plus look-back now saves a camera shot about every 10 minutes around sunrise and sunset, with Sunrise and Sunset buttons to jump to them. The seaweed and crowd readings also no longer score a camera picture that is hours old.",
+    tag: "improved",
+  },
+  {
+    date: "2026-10-11",
     title: "Go back to any day, with the beach cams",
     details:
       "Plus can now pick any past day and see that day's scores and readings. You can also scroll through a camera shot for every hour of daylight. History now sits at the bottom of the page. Camera shots are kept for a year and started on Oct 11.",

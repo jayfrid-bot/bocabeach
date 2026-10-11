@@ -62,6 +62,7 @@ export function frameRow(over: Partial<CamFrameRow> = {}): CamFrameRow {
     slug: "boca-raton",
     cam_id: "boca-south",
     slot_utc: "2026-10-11T14:00:00.000Z",
+    slot_kind: "hour",
     received_at_utc: "2026-10-11T14:20:00.000Z",
     frame_at_utc: null,
     display_at_utc: "2026-10-11T14:20:00.000Z",

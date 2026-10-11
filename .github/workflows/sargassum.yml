@@ -31,14 +31,25 @@ name: Cam Vision Feed
 # the next :00/:10/:20... wall-clock boundary after each cycle (not a fixed
 # "sleep 600"), so a slow cycle (retries/backoff) can never compound into
 # faster-than-10-min reads.
+#
+# RUN WINDOW (2026-10-11): "daylight" is no longer a fixed clock window. The loop
+# asks `python scripts/cam_seaweed.py --window-state` (see "run window" there):
+# reading runs from the earliest sunrise - 30 min to the latest sunset + 30 min
+# across the archived beaches, so the webcam archive covers the golden hour after
+# a ~8:15 PM June sunset. That is ~14.8 h (89 ticks) at the longest, still within
+# the quota math above, and shorter every other day of the year.
 
 on:
   schedule:
-    # Every 10 minutes through daylight (~6 AM-8 PM ET). GitHub throttles this
-    # to only a handful of real fires/day (see header) — the in-job loop below
-    # is what actually delivers the ~10-min cadence, and the handoff job
-    # starts each next loop; the cron is only the fallback if that chain breaks.
-    - cron: "*/10 10-23 * * *" # every 10 min, ~6 AM-7:50 PM ET (EDT)
+    # Every 10 minutes from 10:00 to 00:50 UTC (6:00 AM-8:50 PM EDT; the extra
+    # hour 0 lets a fallback loop start as late as the longest summer sunset,
+    # about 8:15 PM EDT, plus 30 min). GitHub throttles this to only a handful
+    # of real fires/day (see header) — the in-job loop below is what actually
+    # delivers the ~10-min cadence, and the handoff job starts each next loop;
+    # the cron is only the fallback if that chain breaks. A loop started by a
+    # 10:00 UTC fire is awake before the earliest reading window opens (about
+    # 09:56 UTC in June, 11:35 UTC in December) and idles until it does.
+    - cron: "*/10 10-23,0 * * *"
   push:
     branches: [main]
     paths:
@@ -125,14 +136,30 @@ jobs:
             echo $(( 600 - rem ))
           }
 
-          # True while local (America/New_York) time is inside the daylight
-          # window the underwater read + main cams care about, with a 5-min
-          # margin on each side (script's own window is hours 6-20 local).
-          in_daylight() {
-            local hm hm10
+          # Where we are in today's reading window, from the script itself:
+          #   day   = earliest sunrise - 30 min to latest sunset + 30 min across
+          #           the archived beaches (summer sunset ~8:15 PM EDT, so this
+          #           runs to ~8:45 PM; winter ~6:00 PM EST);
+          #   dusk  = the 20 min after that, for a loop that STARTS then;
+          #   night = otherwise.
+          # If the script cannot say (it prints "unknown" or fails), fall back
+          # to a fixed America/New_York clock window that is wide enough for
+          # the longest June day: day 05:55-20:50, dusk 20:51-21:10.
+          window_state() {
+            local state hm hm10
+            state=$(python scripts/cam_seaweed.py --window-state 2>/dev/null | tail -n 1)
+            case "$state" in
+              day|dusk|night) echo "$state"; return 0 ;;
+            esac
             hm=$(TZ="America/New_York" date +%H%M)
             hm10=$((10#$hm)) # force base-10: a leading zero would read as octal
-            [ "$hm10" -ge 555 ] && [ "$hm10" -le 2005 ]
+            if [ "$hm10" -ge 555 ] && [ "$hm10" -le 2050 ]; then echo day
+            elif [ "$hm10" -ge 2051 ] && [ "$hm10" -le 2110 ]; then echo dusk
+            else echo night; fi
+          }
+
+          in_daylight() {
+            [ "$(window_state)" = "day" ]
           }
 
           publish() {
@@ -156,14 +183,11 @@ jobs:
             cd - >/dev/null
           }
 
-          # True in the first ~20 min after the daylight window closes — a
+          # True in the first ~20 min after the reading window closes — a
           # loop that STARTS then (the previous one's shift ended right at
           # dusk) still owes the one dusk read below.
           just_after_dusk() {
-            local hm hm10
-            hm=$(TZ="America/New_York" date +%H%M)
-            hm10=$((10#$hm))
-            [ "$hm10" -ge 2006 ] && [ "$hm10" -le 2025 ]
+            [ "$(window_state)" = "dusk" ]
           }
 
           consecutive_fail=0
@@ -204,7 +228,7 @@ jobs:
               # 4-5 h late on Sep 26-28 2026. One read right at dusk still
               # publishes the night carry-forward; no other reads until morning.
               if [ "$did_day" -eq 1 ] || { [ "$first" -eq 1 ] && just_after_dusk; }; then
-                echo "outside daylight window (05:55-20:05 America/New_York) — one final read for the night carry-forward, then idling until morning"
+                echo "outside the reading window (sunrise-30 min to sunset+30 min) — one final read for the night carry-forward, then idling until morning"
                 run_cycle
                 if [ "$consecutive_fail" -ge 5 ]; then
                   echo "5 consecutive cycle failures (last one the dusk read) — bailing so this shows as a red run"

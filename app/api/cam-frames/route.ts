@@ -3,10 +3,12 @@
 // The capture script (scripts/cam_seaweed.py, GitHub Actions) posts one raw JPEG
 // per cam per tick: `?slug=<beach>&cam=<cam id>[&frameAt=<ISO>]`, body = the
 // image bytes, `Authorization: Bearer $INGEST_TOKEN`. The server keeps ONE
-// frame per cam per UTC-hour SLOT of the frame's display time (see
-// lib/camFrames/clock.ts) — the same hour key beach_hourly uses — so a cam that
-// repeats one image for hours, or a script that posts every ten minutes, stores
-// a single shot per hour.
+// frame per cam per SLOT of the frame's display time (see lib/camFrames/clock.ts).
+// A slot is a UTC hour — the same key beach_hourly uses — so a cam that repeats
+// one image for hours, or a script that posts every ten minutes, stores a single
+// shot per hour. Inside a golden-hour window of the beach (sunrise -20/+40 min,
+// sunset -40/+20 min; lib/camFrames/golden.ts) a slot is 10 minutes wide
+// instead, and the row's slot_kind is 'golden'.
 //
 // Order of work (each step can end the request):
 //   1. Bearer INGEST_TOKEN, constant-time compare.              401 / 503
@@ -117,6 +119,7 @@ export async function POST(req: Request): Promise<Response> {
     nowMs: Date.now(),
     frameAtRaw: url.searchParams.get("frameAt"),
     timezone: cam.timezone,
+    geo: { lat: loc.lat, lon: loc.lon },
   });
   const claimId = crypto.randomUUID();
   const key = buildFrameKey({
@@ -131,6 +134,7 @@ export async function POST(req: Request): Promise<Response> {
     slug,
     cam_id: camId,
     slot_utc: clocks.slotUtc,
+    slot_kind: clocks.slotKind,
     received_at_utc: clocks.receivedAtUtc,
     frame_at_utc: clocks.frameAtUtc,
     display_at_utc: clocks.displayAtUtc,

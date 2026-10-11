@@ -7,6 +7,7 @@
 
 import type { BeachHourlyRow } from "@/lib/history/types";
 import type { DaySummary, HistoryVersions } from "@/lib/history/summary";
+import type { GoldenWindowIso, SlotKind } from "@/lib/camFrames/golden";
 
 /** What the day view shows for one hour. A value the archive never kept is null. */
 export interface DayReadings {
@@ -41,8 +42,14 @@ export interface DayHour {
 }
 
 export interface DayFrame {
-  /** The frame's slot: its display time floored to the UTC hour (same key shape as `DayHour.hourUtc`). */
+  /**
+   * The frame's slot: its display time floored to the UTC hour (same key shape
+   * as `DayHour.hourUtc`), or to 10 minutes when `kind` is "golden". Use
+   * `hourOfSlot` (lib/plus/dayView.ts) to get the hour a golden slot is in.
+   */
   hourUtc: string;
+  /** "golden" for a shot taken inside the sunrise or sunset window (a 10-minute slot), else "hour". */
+  kind: SlotKind;
   /** Beach-local clock time of the shot, e.g. "10:42 AM". */
   displayAtLocal: string;
   /** Credit line stored on this frame's own row. */
@@ -66,16 +73,24 @@ export interface DayViewPayload {
   summary: DaySummary;
   versions: HistoryVersions;
   cams: DayCam[];
+  /** The day's sunrise and sunset golden-hour windows (UTC), null when the sun does not rise or set. */
+  golden: DayGolden;
   /** First beach-local date the hourly archive has a row for (picker minimum). */
   archiveStart: string | null;
   /** First beach-local date that has a saved camera shot, for the empty-state line. */
   framesStart: string | null;
 }
 
+export interface DayGolden {
+  sunrise: GoldenWindowIso | null;
+  sunset: GoldenWindowIso | null;
+}
+
 /** The slice of a `cam_frames` row the day view reads. */
 export interface DayFrameRow {
   cam_id: string;
   slot_utc: string;
+  slot_kind: SlotKind;
   local_hour: number;
   local_minute: number;
   r2_key: string;
@@ -177,6 +192,7 @@ export function shapeCams(
       if (!url) continue;
       frames.push({
         hourUtc: r.slot_utc,
+        kind: r.slot_kind === "golden" ? "golden" : "hour",
         displayAtLocal: clockLabel(r.local_hour, r.local_minute),
         attribution: r.attribution ?? null,
         url,
