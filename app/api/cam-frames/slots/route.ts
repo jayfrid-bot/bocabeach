@@ -42,7 +42,9 @@ export async function GET(req: Request): Promise<Response> {
   if (!db) return err("cam archive storage unavailable", 503);
 
   const nowMs = Date.now();
-  const slotUtcs = [hourUtcOf(nowMs), hourUtcOf(nowMs - 3_600_000)];
+  // Current slot plus the previous three: the ingest route accepts a source
+  // frame time up to 3 h old, so a courier frame can still land three slots back.
+  const slotUtcs = [0, 1, 2, 3].map((h) => hourUtcOf(nowMs - h * 3_600_000));
   try {
     const slots = await filledSlots(db, slug, slotUtcs, new Date(nowMs - STALE_CLAIM_MS).toISOString());
     return Response.json(

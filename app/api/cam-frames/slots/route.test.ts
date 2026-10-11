@@ -62,7 +62,7 @@ describe.skipIf(!HAS_SQLITE)("slots", () => {
     expect((await get()).status).toBe(503);
   });
 
-  it("returns empty lists for the current and previous slot when nothing is stored", async () => {
+  it("returns empty lists for the current and previous three slots when nothing is stored", async () => {
     const res = await get();
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
@@ -70,7 +70,7 @@ describe.skipIf(!HAS_SQLITE)("slots", () => {
       ok: true,
       slug: "boca-raton",
       now: "2026-10-11T14:20:00.000Z",
-      slots: { [SLOT_NOW]: [], [SLOT_PREV]: [] },
+      slots: { [SLOT_NOW]: [], [SLOT_PREV]: [], "2026-10-11T12:00:00.000Z": [], "2026-10-11T11:00:00.000Z": [] },
     });
   });
 
@@ -85,6 +85,8 @@ describe.skipIf(!HAS_SQLITE)("slots", () => {
     expect(out.slots).toEqual({
       [SLOT_NOW]: ["boca-inlet", "boca-south"],
       [SLOT_PREV]: ["boca-south-surf"],
+      "2026-10-11T12:00:00.000Z": ["boca-inlet-surf"], // two hours back: now inside the window
+      "2026-10-11T11:00:00.000Z": [],
     });
   });
 
@@ -92,7 +94,12 @@ describe.skipIf(!HAS_SQLITE)("slots", () => {
     await put("boca-south", SLOT_NOW, "2026-10-11T14:01:00.000Z", true);
     vi.setSystemTime(Date.parse("2026-10-11T15:02:00.000Z"));
     const out = (await (await get()).json()) as { slots: Record<string, string[]> };
-    expect(Object.keys(out.slots)).toEqual(["2026-10-11T15:00:00.000Z", SLOT_NOW]);
+    expect(Object.keys(out.slots)).toEqual([
+      "2026-10-11T15:00:00.000Z",
+      SLOT_NOW,
+      "2026-10-11T13:00:00.000Z",
+      "2026-10-11T12:00:00.000Z",
+    ]);
     expect(out.slots[SLOT_NOW]).toEqual(["boca-south"]);
     expect(out.slots["2026-10-11T15:00:00.000Z"]).toEqual([]);
   });

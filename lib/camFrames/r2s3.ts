@@ -145,7 +145,10 @@ export async function listR2Prefix(cfg: R2S3Config, prefix: string): Promise<str
     if (!res.ok) throw new Error(`R2 list failed: HTTP ${res.status}`);
     const parsed = parseListObjectsV2(await res.text());
     keys.push(...parsed.keys);
-    if (!parsed.truncated || !parsed.nextToken) return keys;
+    if (!parsed.truncated) return keys;
+    // Truncated but no token: the listing is incomplete — fail rather than
+    // let a takedown report success with objects left behind.
+    if (!parsed.nextToken) throw new Error("R2 list: truncated page without a continuation token");
     token = parsed.nextToken;
   }
   throw new Error("R2 list: too many pages");

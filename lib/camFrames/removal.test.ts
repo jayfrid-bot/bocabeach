@@ -43,10 +43,11 @@ function makeIo(over: Partial<RemovalIo> & { listing?: Record<string, unknown>[]
 
 describe("parseRemoveArgs", () => {
   it("defaults to a dry run", () => {
-    expect(parseRemoveArgs(["boca-raton", "boca-inlet-jetty"])).toEqual({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: true });
+    expect(parseRemoveArgs(["boca-raton", "boca-inlet-jetty"])).toEqual({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: true, knownKeysOnly: false });
   });
   it("deletes only with --yes", () => {
-    expect(parseRemoveArgs(["boca-raton", "x", "--yes"])).toMatchObject({ dryRun: false });
+    expect(parseRemoveArgs(["boca-raton", "x", "--yes"])).toMatchObject({ dryRun: false, knownKeysOnly: false });
+    expect(parseRemoveArgs(["boca-raton", "x", "--yes", "--d1-known-keys-only"])).toMatchObject({ dryRun: false, knownKeysOnly: true });
   });
   it("--dry-run wins over --yes", () => {
     expect(parseRemoveArgs(["boca-raton", "x", "--yes", "--dry-run"])).toMatchObject({ dryRun: true });
@@ -109,7 +110,7 @@ describe("runRemoval", () => {
 
   it("with --yes deletes every object, then the rows, then checks none are left", async () => {
     const { io, sql, deleted } = makeIo();
-    const out = await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io, 2);
+    const out = await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false, knownKeysOnly: true }, io, 2);
     expect(deleted.sort()).toEqual([KEY_A, KEY_B]);
     expect(out).toMatchObject({ dryRun: false, deletedObjects: 2, deletedRows: 2, remainingRows: 0 });
     expect(sql[1]).toBe(deleteFramesSql("boca-raton", "boca-inlet-jetty"));
@@ -122,19 +123,19 @@ describe("runRemoval", () => {
         if (k === KEY_B) throw new Error("r2 unavailable (test)");
       },
     });
-    await expect(runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io)).rejects.toThrow(/object deletes failed/);
+    await expect(runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false, knownKeysOnly: true }, io)).rejects.toThrow(/object deletes failed/);
     expect(sql.some((q) => q.startsWith("DELETE"))).toBe(false);
   });
 
   it("warns when the cam is still archived in config", async () => {
     const { io, logs } = makeIo();
-    await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io);
+    await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false, knownKeysOnly: true }, io);
     expect(logs.join("\n")).toMatch(/archive: false/);
   });
 
   it("handles a cam with no stored frames", async () => {
     const { io, deleted } = makeIo({ listing: [] });
-    const out = await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io);
+    const out = await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false, knownKeysOnly: true }, io);
     expect(deleted).toEqual([]);
     expect(out.plan.rows).toBe(0);
   });
@@ -143,9 +144,17 @@ describe("runRemoval", () => {
     const { io, deleted, sql } = makeIo({
       listing: [{ r2_key: "boca-raton/boca-south/2026-10-10/1405Z-aaaaaaaa-cccccccc.jpg", bytes: 1, state: "ready", local_date: "2026-10-10" }],
     });
-    await expect(runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io)).rejects.toThrow(/refusing/);
+    await expect(runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false, knownKeysOnly: true }, io)).rejects.toThrow(/refusing/);
     expect(deleted).toEqual([]);
     expect(sql).toHaveLength(1);
+  });
+
+  it("refuses a real deletion without R2 listing credentials unless --d1-known-keys-only", async () => {
+    const { io, deleted } = makeIo();
+    await expect(runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io)).rejects.toThrow(
+      /refusing to delete without R2 listing credentials/,
+    );
+    expect(deleted).toEqual([]);
   });
 
   describe("with R2 credentials (orphan objects under the prefix)", () => {
@@ -154,7 +163,7 @@ describe("runRemoval", () => {
     it("deletes the orphans too, then the rows", async () => {
       const { io, deleted, sql } = makeIo();
       io.r2List = async () => [KEY_A, KEY_B, ORPHAN];
-      const out = await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io, 2);
+      const out = await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false, knownKeysOnly: true }, io, 2);
       expect(deleted.sort()).toEqual([KEY_A, KEY_B, ORPHAN].sort());
       expect(out.orphans).toBe(1);
       expect(sql.some((q) => q.startsWith("DELETE"))).toBe(true);
@@ -163,7 +172,7 @@ describe("runRemoval", () => {
     it("still deletes a D1-listed key that the listing missed", async () => {
       const { io, deleted } = makeIo();
       io.r2List = async () => [KEY_A];
-      await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io);
+      await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false, knownKeysOnly: true }, io);
       expect(deleted.sort()).toEqual([KEY_A, KEY_B]);
     });
 
@@ -192,7 +201,7 @@ describe("runRemoval", () => {
     it("refuses a listed key outside the prefix before deleting anything", async () => {
       const { io, deleted } = makeIo();
       io.r2List = async () => [KEY_A, "boca-raton/boca-south/2026-10-10/1405Z-aaaaaaaa-cccccccc.jpg"];
-      await expect(runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io)).rejects.toThrow(/refusing/);
+      await expect(runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false, knownKeysOnly: true }, io)).rejects.toThrow(/refusing/);
       expect(deleted).toEqual([]);
     });
 
@@ -201,7 +210,7 @@ describe("runRemoval", () => {
       io.r2List = async () => {
         throw new Error("R2 list failed: HTTP 403");
       };
-      await expect(runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io)).rejects.toThrow(/HTTP 403/);
+      await expect(runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false, knownKeysOnly: true }, io)).rejects.toThrow(/HTTP 403/);
       expect(deleted).toEqual([]);
       expect(sql.some((q) => q.startsWith("DELETE"))).toBe(false);
     });
@@ -211,7 +220,7 @@ describe("runRemoval", () => {
     it("falls back to the D1 keys and warns clearly that orphans may remain", async () => {
       const { io, logs, deleted } = makeIo();
       expect(io.r2List).toBeUndefined();
-      const out = await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false }, io);
+      const out = await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false, knownKeysOnly: true }, io);
       expect(deleted.sort()).toEqual([KEY_A, KEY_B]);
       expect(out.orphans).toBeNull();
       expect(logs.join("\n")).toMatch(/WARNING: R2 credentials are not set.*Orphan objects/s);

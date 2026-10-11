@@ -34,18 +34,26 @@ export interface RemoveArgs {
   camId: string;
   /** True unless `--yes` was given (and `--dry-run` forces it back to true). */
   dryRun: boolean;
+  /** `--d1-known-keys-only`: allow a real deletion without R2 listing
+   *  credentials, accepting that orphan objects may remain. */
+  knownKeysOnly?: boolean;
 }
 
 export function parseRemoveArgs(argv: string[]): RemoveArgs | { error: string } {
   const flags = new Set(argv.filter((a) => a.startsWith("--")));
   const pos = argv.filter((a) => !a.startsWith("--"));
   for (const f of flags) {
-    if (f !== "--dry-run" && f !== "--yes") return { error: `unknown flag ${f}` };
+    if (f !== "--dry-run" && f !== "--yes" && f !== "--d1-known-keys-only") return { error: `unknown flag ${f}` };
   }
-  if (pos.length !== 2) return { error: "usage: cam_archive_remove <slug> <camId> [--dry-run] [--yes]" };
+  if (pos.length !== 2) return { error: "usage: cam_archive_remove <slug> <camId> [--dry-run] [--yes] [--d1-known-keys-only]" };
   const [slug, camId] = pos;
   if (!isValidId(slug) || !isValidId(camId)) return { error: "slug and camId must be lowercase letters, digits and hyphens" };
-  return { slug, camId, dryRun: flags.has("--dry-run") || !flags.has("--yes") };
+  return {
+    slug,
+    camId,
+    dryRun: flags.has("--dry-run") || !flags.has("--yes"),
+    knownKeysOnly: flags.has("--d1-known-keys-only"),
+  };
 }
 
 /** A SQL string literal. Callers pass only values that passed isValidId. */
@@ -169,6 +177,13 @@ export async function runRemoval(args: RemoveArgs, io: RemovalIo, concurrency: n
     for (const k of toDelete.slice(0, 5)) io.log(`  would delete ${R2_BUCKET}/${k}`);
     if (toDelete.length > 5) io.log(`  ... and ${toDelete.length - 5} more`);
     return { dryRun: true, plan, orphans, deletedObjects: 0, deletedRows: 0, remainingRows: null };
+  }
+  // A takedown must not report success while orphan objects may remain.
+  if (!io.r2List && !args.knownKeysOnly) {
+    throw new Error(
+      "refusing to delete without R2 listing credentials (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY). " +
+        "Set them, or pass --d1-known-keys-only to delete only D1-named objects and accept that orphans may remain.",
+    );
   }
 
   let next = 0;
