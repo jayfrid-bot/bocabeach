@@ -97,6 +97,7 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }} # optional free fallback
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # GitHub Models fallback (no signup)
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # for the publish push below
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }} # webcam archive POSTs (scripts/cam_seaweed.py archive_frame)
           # One file per beach (cam_seaweed.<slug>.json) lands here, driven by
           # config/vision-cams.json — see scripts/cam_seaweed.py. CAM_SEAWEED_OUT
           # (the legacy single-file copy for boca-raton, kept for one release)

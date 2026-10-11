@@ -21,6 +21,13 @@
  *
  * GET / runs one pass on demand so the pipeline can be proved with curl — it
  * needs the same `x-cron-secret` header, so the public URL is not a free trigger.
+ *
+ * DAILY PURGE (webcam archive, docs/CAM_ARCHIVE_PLAN.md R5): there is NO second
+ * cron expression (the account is on the Workers Free plan, 5 cron triggers
+ * per account, all spoken for). Instead the every-minute tick whose scheduled
+ * time is 08:17 UTC first POSTs /api/cam-frames/purge, then runs the normal
+ * archive pass. A purge failure is logged and never stops the archive call.
+ * GET /?task=purge runs the purge on demand, behind the same secret.
  */
 
 export interface Env {
@@ -38,6 +45,17 @@ export interface Env {
 
 /** app.isitbeachday.com is the Worker's own hostname (not the marketing site). */
 const RUN_URL = "https://app.isitbeachday.com/api/history/archive";
+/** Daily cleanup of the webcam archive index (D1 rows past 365 days, stale pending rows). */
+const PURGE_URL = "https://app.isitbeachday.com/api/cam-frames/purge";
+/** The purge rides the every-minute tick that lands on this UTC time. */
+const PURGE_HOUR_UTC = 8;
+const PURGE_MINUTE_UTC = 17;
+
+/** True when this tick's scheduled time is 08:17 UTC. */
+function isPurgeTick(scheduledTime: number): boolean {
+  const t = new Date(scheduledTime);
+  return t.getUTCHours() === PURGE_HOUR_UTC && t.getUTCMinutes() === PURGE_MINUTE_UTC;
+}
 
 interface RunResult {
   ok: boolean;
@@ -64,8 +82,29 @@ async function runOnce(env: Env): Promise<RunResult> {
   }
 }
 
+/** One purge call. Never throws — a failed run is logged and tomorrow's retries. */
+async function runPurge(env: Env): Promise<RunResult> {
+  if (!env.CRON_SECRET) {
+    return { ok: false, status: 0, body: "CRON_SECRET not set on history-cron" };
+  }
+  try {
+    const res = await fetch(PURGE_URL, {
+      method: "POST",
+      headers: { "x-cron-secret": env.CRON_SECRET },
+    });
+    const body = (await res.text()).slice(0, 2000);
+    return { ok: res.ok, status: res.status, body };
+  } catch (e) {
+    return { ok: false, status: 0, body: `fetch failed: ${(e as Error).message}` };
+  }
+}
+
 export default {
-  async scheduled(_ctrl: ScheduledController, env: Env): Promise<void> {
+  async scheduled(ctrl: ScheduledController, env: Env): Promise<void> {
+    if (isPurgeTick(ctrl.scheduledTime)) {
+      // runPurge never throws; the archive pass below runs whatever it returns.
+      console.log("history-cron cam-frames purge:", JSON.stringify(await runPurge(env)));
+    }
     const passes = Math.min(10, Math.max(1, Number(env.PASSES_PER_TICK) || 1));
     for (let i = 1; i <= passes; i++) {
       const r = await runOnce(env);
@@ -88,7 +127,8 @@ export default {
     if (!env.CRON_SECRET || req.headers.get("x-cron-secret") !== env.CRON_SECRET) {
       return new Response("unauthorized", { status: 401 });
     }
-    const r = await runOnce(env);
+    const task = new URL(req.url).searchParams.get("task");
+    const r = task === "purge" ? await runPurge(env) : await runOnce(env);
     return Response.json(r, { status: r.ok ? 200 : 502 });
   },
 };

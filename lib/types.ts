@@ -1201,6 +1201,15 @@ export interface CamConfig {
    */
   snapshotMetaUrl?: string;
   attribution?: string;
+  /**
+   * Whether the hourly webcam archive (lib/camFrames/, docs/CAM_ARCHIVE_PLAN.md)
+   * may keep stills from this cam. Default true: a cam with a proxied still
+   * (`id` plus `snapshotFeed` or `snapshotUrl`) is archived unless this is
+   * `false`. Set `false` to stop on a cam owner's request. It blocks ingest at
+   * once (403) and, with the day API and image route, listing and delivery.
+   * Run scripts/cam_archive_remove.ts to erase what is already stored.
+   */
+  archive?: boolean;
   /** Cam's own coordinates for per-spot weather; falls back to the town's lat/lon. */
   lat?: number;
   lon?: number;

@@ -147,13 +147,21 @@ flowchart LR
   PUSHCRON -->|POST x-cron-secret| RUN["/api/push/run?mode=all"]
   RUN -->|"at-beach hazards read the SAME<br/>assessment the score caps use"| HAZ2[lib/hazards/assess.ts<br/>lightning from the device fix,<br/>rain from the beach radar or the fix's cell forecast]
   PLUSCRON -->|POST x-cron-secret, every 5 min| RUN
-  HISTCRON["workers/history-cron<br/>Cloudflare Cron every minute"] -->|POST x-cron-secret| HIST["/api/history/archive<br/>ONE build per call (Workers Free = 50 subrequests/request;<br/>a cold build is ~25); scans candidates least-recently-archived first,<br/>claims (slug, hour_utc) with a 10-min abandonment window,<br/>reserves budget BEFORE building; one unit = one DIRECT build<br/>(getConditionsForLocation, never the 120-s cache)"]
-  HIST -->|one direct build per beach-hour (getConditionsForLocation,<br/>44-subrequest budget)<br/>daylight-only for auto beaches| PIPE
+  HISTCRON["workers/history-cron<br/>Cloudflare Cron every minute;<br/>the 08:17 UTC tick also runs the cam purge"] -->|POST x-cron-secret| HIST["/api/history/archive<br/>ONE build per call (Workers Free = 50 subrequests/request;<br/>a cold build is ~25); scans candidates least-recently-archived first,<br/>claims (slug, hour_utc) with a 10-min abandonment window,<br/>reserves budget BEFORE building; one unit = one DIRECT build<br/>(getConditionsForLocation, never the 120-s cache)"]
+  HIST -->|"one direct build per beach-hour (getConditionsForLocation,<br/>44-subrequest budget)<br/>daylight-only for auto beaches"| PIPE
   HIST -->|"beach_hourly (score as shown + inputs, plus extra_json:<br/>surf, sand, rip, storm, feels-like, water trend, vs-average,<br/>safety levels, best window, sky ratings, plus the scorecard inputs:<br/>rain nowcast + radar truth, lifeguard flags, days 1-6 outlook — lib/history/extra.ts),<br/>history_budget (free-tier guard, 600 builds/UTC-day;<br/>HISTORY_ENABLED=off pauses it)"| D1[(D1 isitbeachday-plus)]
   HIST -->|"sun_event_predictions (migrations/0013): the sunrise + sunset the card shows<br/>(event kept until its golden window closes — lib/sunCardEvent.ts, shared with the card),<br/>one row per beach per archive hour, score + every input, one multi-row upsert,<br/>same assembleSunEventQuality as the card and the alert; retried once inline,<br/>never fails the beach_hourly row; observed_* filled later by SUNOBS"| D1
   SDATA -->|"history[] + latest/morning per-cam reads, read through the same<br/>lib/sources/camFeed.ts URL resolver the live sources use"| HIST
   HIST -->|"cam_observations (every history[] read not yet stored: crowd, seaweed, water,<br/>clarity, underwater uw) + cam_reads (per-cam detail), migrations 0006/0014,<br/>INSERT OR IGNORE, vision-cam beaches only (config/vision-cams.json),<br/>lib/history/camObservations.ts; a feed failure never fails the beach_hourly row"| D1
   BACKFILL["scripts/backfill_cam_history.mjs (one-shot; shares<br/>lib/history/camObservationRow.mjs with the archiver)"] -->|cam_observations| D1
+  SARG -->|reads| ACAMS["config/archive-cams.json<br/>the 11 archived cams, generated from config/locations.ts<br/>by scripts/gen_archive_cams.ts (a cam with archive false is left out)"]
+  SARG -->|"every tick, vision on or off: POST /api/cam-frames?slug&amp;cam&amp;frameAt<br/>Bearer INGEST_TOKEN, raw JPEG, best-effort, 15 s timeout<br/>(scripts/cam_seaweed.py archive_frame: the stills the vision loop fetched,<br/>plus archive_pass for the rest; frameAt = latest.json timestamp or the uw-frame meta time)"| CAMINGEST["/api/cam-frames (POST)<br/>constant-time auth; cam must be in the manifest (404 unknown, 403 archive:false);<br/>Content-Length and streamed 600 KB cap; JPEG magic, at least 10 KB; sha-256;<br/>atomic slot claim = one shot per cam per UTC hour of display time"]
+  CAMINGEST -->|"INSERT ... ON CONFLICT DO NOTHING (state pending) → R2 put → ready;<br/>unchanged sha vs the newest ready frame is dropped;<br/>cam_frames, migrations/0016"| D1
+  CAMINGEST -->|"PUT slug/cam/local_date/HHmmZ-sha8.jpg"| CAMR2[("R2 bucket isitbeachday-cam-frames<br/>binding CAM_FRAMES<br/>lifecycle rule deletes after 367 days")]
+  HISTCRON -->|"once a day, on the 08:17 UTC tick, before the archive call; POST x-cron-secret"| CAMPURGE["/api/cam-frames/purge<br/>at most 10 D1 statements: pending rows older than 1 h,<br/>then rows older than 365 days by received_at_utc<br/>(DELETE of 5,000 rows per statement)"]
+  CAMPURGE -->|"deletes cam_frames rows; R2 objects expire on their own two days later"| D1
+  REMOVE["scripts/cam_archive_remove.ts (by hand; dry run unless --yes)<br/>wrangler r2 object delete + D1 DELETE for one cam"] -->|"erase one cam on a request"| CAMR2
+  REMOVE --> D1
   SUNCAM -->|"yt-dlp -J → HLS playlist (~4 h DVR); one frame every 2.5 min,<br/>event −35 … +25 min, per config/sun-cams.json cam"| YTLIVE[["YouTube livestream DVR<br/>Elbo Room + 3 Deerfield cams, all facing east"]]
   SUNCAM -->|"POST /api/sun-observations — Bearer INGEST_TOKEN<br/>robust-peak score + series + scored_at, per beach / event / cam;<br/>incomplete captures are never sent"| SUNOBS["/api/sun-observations<br/>constant-time auth, bounded 32 KB read, strict validation<br/>that recomputes coverage + robust peak (lib/sunObservations.ts)"]
   OWNER["owner's Mac"] -->|"POST /api/push/test — Bearer INGEST_TOKEN, {deviceId}:<br/>one real APNs alert to one device, writes no alert state"| PUSHTEST["/api/push/test"]
@@ -258,6 +266,28 @@ both use it, and Boca Raton alone falls back to the pre-split single-file
 if its own per-beach file isn't there yet. The underwater "Spinner the Sea
 Cam" read stays a single per-run calibration signal — the same `uw` value is
 copied onto every beach's file, not read once per beach.
+
+**The webcam archive keeps one shot per cam per hour.** `scripts/cam_seaweed.py`
+POSTs each cam's still to `/api/cam-frames` on every `sargassum.yml` tick, with
+`INGEST_TOKEN`. It sends the stills the vision loop already fetched, and
+`archive_pass()` fetches the rest (the cams the vision reader never reads, plus
+any courier cam it skipped), so archiving runs even with no vision provider.
+The cam list is `config/archive-cams.json`, generated from
+`config/locations.ts`: every cam with a proxied still whose `archive` flag is
+not `false`. The route claims the (beach, cam, UTC hour) slot with one atomic
+insert, writes the JPEG to the R2 bucket `isitbeachday-cam-frames` (binding
+`CAM_FRAMES`), then marks the row ready in `cam_frames` (migration 0016). Each
+row keeps three clocks: `received_at_utc` (server time, drives retention),
+`frame_at_utc` (the source's own time, when believable) and `display_at_utc`
+(what the user sees). The every-minute tick of `workers/history-cron` that
+lands on 08:17 UTC also calls `/api/cam-frames/purge` first, then runs its
+normal archive call. A purge failure never stops the archive call. There is no
+second cron expression: the Workers Free plan allows 5 per account. The purge
+drops rows older than 365 days, and the bucket's 367-day lifecycle rule removes
+the objects. Setting `archive: false` on
+a cam stops ingest at once; `scripts/cam_archive_remove.ts` erases what is
+already stored. Nothing reads the archive yet: the day API and the signed image
+route come in a later stage (`docs/CAM_ARCHIVE_PLAN.md`).
 
 **NOAA's rip current model is preprocessed, not fetched live.** NOAA's NWPS
 probabilistic rip current model (Dusek & Seim 2013) publishes one ~2.5MB text

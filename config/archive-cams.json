@@ -1,0 +1,138 @@
+{
+  "$comment": "GENERATED from config/locations.ts by scripts/gen_archive_cams.ts - do not edit by hand. scripts/cam_seaweed.py reads this to know which cams to archive; lib/camFrames/manifest.test.ts fails if it drifts from locations.ts. A cam with archive:false in locations.ts is left out.",
+  "version": 1,
+  "cams": [
+    {
+      "slug": "boca-raton",
+      "id": "boca-south",
+      "name": "Boca Raton South Beach Cam",
+      "attribution": "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+      "timezone": "America/New_York",
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/boca",
+        "view": "s4"
+      }
+    },
+    {
+      "slug": "boca-raton",
+      "id": "boca-inlet-north",
+      "name": "Boca Raton Inlet — North Beach",
+      "attribution": "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+      "timezone": "America/New_York",
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/bocainlet",
+        "view": "s8"
+      }
+    },
+    {
+      "slug": "boca-raton",
+      "id": "boca-south-surf",
+      "name": "Boca Raton South Beach — Shoreline & Surf",
+      "attribution": "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+      "timezone": "America/New_York",
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/boca",
+        "view": "s11"
+      }
+    },
+    {
+      "slug": "boca-raton",
+      "id": "boca-inlet",
+      "name": "Boca Raton Inlet Cam",
+      "attribution": "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+      "timezone": "America/New_York",
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/bocainlet",
+        "view": "s4"
+      }
+    },
+    {
+      "slug": "boca-raton",
+      "id": "boca-inlet-surf",
+      "name": "Boca Raton Inlet — Surf & Shoreline",
+      "attribution": "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+      "timezone": "America/New_York",
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/bocainlet",
+        "view": "s16"
+      }
+    },
+    {
+      "slug": "boca-raton",
+      "id": "boca-inlet-jetty",
+      "name": "Boca Raton Inlet — Jetty",
+      "attribution": "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+      "timezone": "America/New_York",
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/bocainlet",
+        "view": "s12"
+      }
+    },
+    {
+      "slug": "deerfield-beach",
+      "id": "deerfield-beach-cam",
+      "name": "Deerfield Beach Cam",
+      "attribution": "Live stream courtesy City of Deerfield Beach",
+      "timezone": "America/New_York",
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=deerfield-beach-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=deerfield-beach-cam"
+      }
+    },
+    {
+      "slug": "deerfield-beach",
+      "id": "deerfield-surf-cam",
+      "name": "Deerfield Beach — Surf Cam",
+      "attribution": "Live stream courtesy City of Deerfield Beach",
+      "timezone": "America/New_York",
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=deerfield-surf-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=deerfield-surf-cam"
+      }
+    },
+    {
+      "slug": "deerfield-beach",
+      "id": "deerfield-pier-cam",
+      "name": "Deerfield Beach — Fishing Pier Cam",
+      "attribution": "Live stream courtesy City of Deerfield Beach",
+      "timezone": "America/New_York",
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=deerfield-pier-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=deerfield-pier-cam"
+      }
+    },
+    {
+      "slug": "deerfield-beach",
+      "id": "deerfield-spinner-uw",
+      "name": "Spinner the Sea Cam (underwater)",
+      "attribution": "Live stream courtesy City of Deerfield Beach",
+      "timezone": "America/New_York",
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=deerfield-spinner-uw",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=deerfield-spinner-uw"
+      }
+    },
+    {
+      "slug": "fort-lauderdale",
+      "id": "ftl-elbo-beach-cam",
+      "name": "Fort Lauderdale Beach Cam",
+      "attribution": "Live stream courtesy Elbo Room (ElboRoom.com)",
+      "timezone": "America/New_York",
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=ftl-elbo-beach-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=ftl-elbo-beach-cam"
+      }
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+// Test helper: a real SQLite database (Node's built-in node:sqlite) that has
+// migrations/0016_cam_frames.sql applied, wrapped in the D1Like surface the
+// webcam archive code uses. The actual SQL runs, not a JS model of it. Only
+// *.test.ts files import this. `makeCamDb()` returns null on a Node build
+// without node:sqlite; the tests then skip.
+
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import type { D1Like, D1RunResult, D1Stmt } from "@/lib/db/d1Store";
+
+interface SqliteStmt {
+  run(...params: unknown[]): { changes: number | bigint };
+  get(...params: unknown[]): Record<string, unknown> | undefined;
+  all(...params: unknown[]): Record<string, unknown>[];
+}
+interface SqliteDb {
+  exec(sql: string): void;
+  prepare(sql: string): SqliteStmt;
+  close(): void;
+}
+
+let Ctor: (new (path: string) => SqliteDb) | null = null;
+try {
+  // process.getBuiltinModule, not `import`: Vite does not resolve node:sqlite.
+  const sqlite = (process as unknown as { getBuiltinModule?: (id: string) => unknown }).getBuiltinModule?.(
+    "node:sqlite",
+  ) as { DatabaseSync: new (path: string) => SqliteDb } | undefined;
+  Ctor = sqlite?.DatabaseSync ?? null;
+} catch {
+  Ctor = null;
+}
+
+export const HAS_SQLITE = Ctor !== null;
+
+export interface CamDb {
+  db: D1Like;
+  /** Run a query straight on SQLite (test assertions). */
+  all(sql: string, ...params: unknown[]): Record<string, unknown>[];
+  close(): void;
+}
+
+export function makeCamDb(): CamDb | null {
+  if (!Ctor) return null;
+  const raw = new Ctor(":memory:");
+  raw.exec(readFileSync(path.join(process.cwd(), "migrations", "0016_cam_frames.sql"), "utf8"));
+  const db: D1Like = {
+    prepare(sql: string): D1Stmt {
+      const stmt = raw.prepare(sql);
+      let bound: unknown[] = [];
+      const self: D1Stmt = {
+        bind(...values: unknown[]) {
+          bound = values;
+          return self;
+        },
+        async first<T>() {
+          const row = stmt.get(...bound);
+          return (row === undefined ? null : row) as T | null;
+        },
+        async run(): Promise<D1RunResult> {
+          const r = stmt.run(...bound);
+          return { success: true, meta: { changes: Number(r.changes) } };
+        },
+        async all<T>() {
+          return { results: stmt.all(...bound) as T[] };
+        },
+      };
+      return self;
+    },
+  };
+  return {
+    db,
+    all: (sql, ...params) => raw.prepare(sql).all(...params),
+    close: () => raw.close(),
+  };
+}

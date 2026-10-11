@@ -16,6 +16,12 @@
     // → 1102 under load). Reuses the same namespace; OpenNext prefixes its keys.
     { "binding": "NEXT_INC_CACHE_KV", "id": "4dab9a763f5c416ab8c97ff19f47cf40" }
   ],
+  // Webcam archive: one still per cam per beach-local hour (lib/camFrames/,
+  // docs/CAM_ARCHIVE_PLAN.md). Lifecycle rule deletes objects after 367 days
+  // (set with `wrangler r2 bucket lifecycle add`, not here); D1 rows go at 365.
+  "r2_buckets": [
+    { "binding": "CAM_FRAMES", "bucket_name": "isitbeachday-cam-frames" }
+  ],
   // Beach Day Plus store: devices, presence, alert dedup (see migrations/).
   // Apply schema changes with `wrangler d1 migrations apply isitbeachday-plus --remote`.
   "d1_databases": [

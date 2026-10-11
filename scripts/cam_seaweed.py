@@ -73,6 +73,21 @@ Frame source (fetch_uw_frame) is a COURIER CHAIN, tried in order:
   (c) direct yt-dlp -g -> ffmpeg — works locally/residential but YouTube blocks
       it from GitHub datacenter IPs; kept as a last resort.
 
+WEBCAM ARCHIVE (docs/CAM_ARCHIVE_PLAN.md R1/R3): every tick, each cam in
+config/archive-cams.json (generated from config/locations.ts; lib/camFrames/
+manifest.test.ts keeps the two equal) has its still POSTed to the app's
+/api/cam-frames route with `Authorization: Bearer $INGEST_TOKEN`. The server
+keeps one shot per cam per hour. Two paths feed it, and neither can break the
+vision read: capture_beach() archives the still it already fetched for vision
+(fetch_still -> archive_frame -> assess), and archive_pass() fetches the stills
+the vision loop did NOT fetch this tick (boca-inlet, boca-inlet-north,
+boca-inlet-jetty, any courier cam it skipped as stale, and Spinner when the
+hourly underwater read did not run). archive_pass() runs on every tick whether
+or not a vision provider is configured. Archiving is best-effort: with
+INGEST_TOKEN unset it does nothing, and any error is logged and swallowed.
+The source's own frame time rides along as `frameAt`: latest.json `timestamp`
+for feed cams, the uw-frame /meta grabbedAtUtc for courier cams.
+
 Data shape (cam_seaweed.<slug>.json — identical shape on every beach's file):
   top-level `uw`: {level, pct, note, capturedAtLocal} — latest underwater read,
     carried forward on ticks that skip the underwater read (like morning/latest).
@@ -83,6 +98,7 @@ Data shape (cam_seaweed.<slug>.json — identical shape on every beach's file):
     that actually ran an underwater read (absent otherwise).
 """
 import base64
+import concurrent.futures
 import datetime as dt
 import json
 import os
@@ -91,8 +107,10 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from zoneinfo import ZoneInfo
 
@@ -207,6 +225,25 @@ CAM_REGISTRY_PATH = os.environ.get("CAM_REGISTRY", "config/vision-cams.json")
 # courier refreshes on a multi-hour cadence while this job runs every ~10 min,
 # so without the dedupe check we'd re-score the identical frame a dozen times.
 DIRECT_FRAME_MAX_AGE_MIN = float(os.environ.get("DIRECT_FRAME_MAX_AGE_MIN", "150"))
+
+# --- webcam archive (see the module docstring and docs/CAM_ARCHIVE_PLAN.md) ---
+# Where stills are POSTed; the token is read at call time (archive_frame) so a
+# missing INGEST_TOKEN simply turns archiving off.
+ARCHIVE_URL = os.environ.get("ARCHIVE_URL", "https://app.isitbeachday.com/api/cam-frames")
+ARCHIVE_TIMEOUT_S = 15
+# Generated from config/locations.ts (scripts/gen_archive_cams.ts); the cams to archive.
+ARCHIVE_CAMS_PATH = os.environ.get("ARCHIVE_CAMS", "config/archive-cams.json")
+# A frame whose own timestamp is older than this is not archived: the server
+# would drop a source time older than 3 h and file the image under "now".
+ARCHIVE_FRAME_MAX_AGE_MIN = float(os.environ.get("ARCHIVE_FRAME_MAX_AGE_MIN", "170"))
+# Same bounds the server enforces (app/api/cam-frames/route.ts); checking here
+# saves a pointless upload.
+ARCHIVE_MIN_BYTES = 10 * 1024
+ARCHIVE_MAX_BYTES = 600 * 1024
+ARCHIVE_WORKERS = int(os.environ.get("ARCHIVE_WORKERS", "4"))
+# The underwater "Spinner" cam follows its own fetch path (fetch_uw_frame).
+UW_ARCHIVE_SLUG = "deerfield-beach"
+UW_ARCHIVE_CAM_ID = "deerfield-spinner-uw"
 
 
 def load_registry() -> dict:
@@ -397,19 +434,56 @@ def prev_frame_at_for_cam(prev: dict, cam_id: str) -> str | None:
     return None
 
 
-def fetch_still(cam: dict) -> bytes:
+def _iso_utc_from_unix(ts: object) -> str | None:
+    """'2026-10-11T14:05:09Z' from a unix timestamp (seconds; milliseconds are
+    tolerated), or None when it is missing or not a believable number."""
+    if isinstance(ts, bool) or not isinstance(ts, (int, float)) or ts <= 0:
+        return None
+    if ts > 1e11:  # milliseconds
+        ts = ts / 1000.0
+    try:
+        return (dt.datetime.fromtimestamp(ts, dt.timezone.utc)
+                .strftime("%Y-%m-%dT%H:%M:%SZ"))
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+# Guards the optional shared latest.json cache in fetch_still(): archive_pass
+# fetches stills on several threads, and several cams share one feed.
+_FEED_LOCK = threading.Lock()
+
+
+def fetch_still(cam: dict, info: dict | None = None, feed_cache: dict | None = None) -> bytes:
     """Grab one still frame for a registry cam, per its source.kind:
       feed   — video-monitoring.com "latest.json" rotating-frame feed
                ({base, view}, the pre-existing behaviour).
       direct — a fixed JPG still URL, fetched as-is ({url}).
       hls    — a live HLS/m3u8 stream, one frame via ffmpeg ({url}).
+
+    `info`, when given, receives what the fetch learned about the frame:
+    info["frameAt"] = the feed's own capture time for this view (latest.json
+    `timestamp`, as 'YYYY-MM-DDTHH:MM:SSZ') for feed cams. It was always in the
+    feed and used to be thrown away; the webcam archive needs it. Direct cams
+    learn their frame time from their /meta URL instead (see capture_beach and
+    archive_pass). `feed_cache`, when given, is a {base: parsed latest.json}
+    dict that lets several cams on one feed share a single download.
     """
     src = cam.get("source") or {}
     kind = src.get("kind", "feed")
     if kind == "feed":
         base, view = src["base"], src["view"]
-        feed = json.loads(_get(f"{base}/latest.json").decode("utf-8", "replace"))
-        return _get(f"{base}/{feed[view]['mr']}")
+        if feed_cache is not None:
+            with _FEED_LOCK:
+                feed = feed_cache.get(base)
+                if feed is None:
+                    feed = json.loads(_get(f"{base}/latest.json").decode("utf-8", "replace"))
+                    feed_cache[base] = feed
+        else:
+            feed = json.loads(_get(f"{base}/latest.json").decode("utf-8", "replace"))
+        entry = feed[view]
+        if info is not None:
+            info["frameAt"] = _iso_utc_from_unix(entry.get("timestamp"))
+        return _get(f"{base}/{entry['mr']}")
     if kind == "direct":
         return _get(src["url"])
     if kind == "hls":
@@ -425,7 +499,18 @@ def _age_min_utc(grabbed_at: str) -> float:
 
 
 def fetch_uw_frame() -> bytes:
+    """Grab a single JPEG frame from the Deerfield underwater YouTube livestream
+    (bytes only; see fetch_uw_frame_timed for the frame's own capture time)."""
+    return fetch_uw_frame_timed()[0]
+
+
+def fetch_uw_frame_timed() -> tuple[bytes, str | None]:
     """Grab a single JPEG frame from the Deerfield underwater YouTube livestream.
+
+    Returns (jpeg bytes, frame time). The frame time is the courier's own
+    grabbedAtUtc ('YYYY-MM-DDTHH:MM:SSZ') for the Worker and legacy couriers, and
+    None for the direct yt-dlp grab (a live grab, so "now" is the server's
+    receive time). The webcam archive sends it as `frameAt`.
 
     COURIER CHAIN, tried in order (each fail-soft, all timeouts tight):
       (a) Cloudflare uw-frame Worker (Browser Rendering) — the cloud-side, NO-Mac
@@ -450,7 +535,7 @@ def fetch_uw_frame() -> bytes:
                 frame = _get(f"{UW_FRAME_URL}/frame", timeout=25)
                 if frame[:2] == b"\xff\xd8":  # JPEG magic — a real image
                     print(f"  uw: CF worker frame ({age_min:.0f} min old)")
-                    return frame
+                    return frame, grabbed_at
             else:
                 print(f"  uw: CF worker frame stale ({age_min:.0f} min) — "
                       "trying legacy courier", file=sys.stderr)
@@ -477,7 +562,7 @@ def fetch_uw_frame() -> bytes:
                 f"latest.jpg?cb={int(grabbed.timestamp())}", timeout=25)
             if frame[:2] == b"\xff\xd8":  # JPEG magic — a real image, not an error page
                 print(f"  uw: legacy courier frame ({age_min:.0f} min old)")
-                return frame
+                return frame, meta["grabbedAtUtc"]
         else:
             print(f"  uw: legacy courier frame stale ({age_min:.0f} min) — trying yt-dlp",
                   file=sys.stderr)
@@ -506,7 +591,179 @@ def fetch_uw_frame() -> bytes:
     if manifest is None:
         raise RuntimeError("all yt-dlp clients failed -> " + " | ".join(errors))
 
-    return _ffmpeg_frame_from_url(manifest)
+    return _ffmpeg_frame_from_url(manifest), None
+
+
+# --- webcam archive --------------------------------------------------------
+# Everything below is best-effort: it never raises into the vision read, and
+# with INGEST_TOKEN unset it does nothing at all.
+
+def load_archive_cams() -> list[dict]:
+    """The cams to archive, from ARCHIVE_CAMS_PATH (config/archive-cams.json,
+    generated from config/locations.ts). Each entry is
+    {slug, id, name, attribution, timezone, source: {kind, base/view | url/meta}},
+    where `source` has the same shape as a vision-registry cam's, so
+    fetch_still() reads either. [] (and a warning) if the file is missing or
+    unparsable — then nothing is archived, and the vision read is unaffected."""
+    try:
+        with open(ARCHIVE_CAMS_PATH, encoding="utf-8") as fh:
+            doc = json.load(fh)
+        cams = doc.get("cams") if isinstance(doc, dict) else None
+        if not isinstance(cams, list):
+            raise ValueError("no 'cams' list")
+        return [c for c in cams if isinstance(c, dict) and c.get("slug") and c.get("id")]
+    except Exception as e:  # noqa: BLE001
+        print(f"warn: couldn't load {ARCHIVE_CAMS_PATH}: {e}", file=sys.stderr)
+        return []
+
+
+def archive_keys() -> set[tuple[str, str]]:
+    """{(slug, cam id)} for every cam in the archive manifest."""
+    return {(c["slug"], c["id"]) for c in load_archive_cams()}
+
+
+def _frame_age_min(frame_at: str) -> float | None:
+    """Minutes since an ISO-8601 UTC time like '2026-10-11T14:05:09Z', or None
+    if it does not parse."""
+    try:
+        t = dt.datetime.fromisoformat(frame_at.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=dt.timezone.utc)
+    return (dt.datetime.now(dt.timezone.utc) - t).total_seconds() / 60
+
+
+def archive_frame(slug: str, cam_id: str, img: bytes, frame_at: str | None = None) -> str:
+    """POST one cam still to the webcam archive. BEST-EFFORT: never raises.
+
+    Sends the raw JPEG to ARCHIVE_URL?slug=..&cam=..[&frameAt=..] with
+    `Authorization: Bearer $INGEST_TOKEN` and a 15 s timeout. Returns a short
+    status for the log and for tests:
+      "no-token"        INGEST_TOKEN unset — skipped silently, nothing printed
+      "skipped"         not a JPEG, outside 10-600 KB, or its own timestamp is
+                        older than ARCHIVE_FRAME_MAX_AGE_MIN (the server would
+                        file such a frame under "now"); nothing was sent
+      "stored" / "slot-taken" / "unchanged"   the server's answer
+      "http-<code>"     the server refused (401 bad token, 403/404 cam not in
+                        the archive, 413, 5xx ...)
+      "error"           network error, timeout, or an unreadable reply
+    `frame_at` is the source's own capture time ('YYYY-MM-DDTHH:MM:SSZ'), or
+    None when unknown (the server then uses its receive time).
+    """
+    token = os.environ.get("INGEST_TOKEN", "").strip()
+    if not token:
+        return "no-token"
+    try:
+        if not isinstance(img, (bytes, bytearray)) or bytes(img[:3]) != b"\xff\xd8\xff":
+            print(f"  archive [{slug}] {cam_id}: skipped (not a JPEG)", file=sys.stderr)
+            return "skipped"
+        if not ARCHIVE_MIN_BYTES <= len(img) <= ARCHIVE_MAX_BYTES:
+            print(f"  archive [{slug}] {cam_id}: skipped ({len(img)} bytes is outside "
+                  f"{ARCHIVE_MIN_BYTES}-{ARCHIVE_MAX_BYTES})", file=sys.stderr)
+            return "skipped"
+        if frame_at:
+            age = _frame_age_min(frame_at)
+            if age is not None and age > ARCHIVE_FRAME_MAX_AGE_MIN:
+                print(f"  archive [{slug}] {cam_id}: skipped (frame is {age:.0f} min old)")
+                return "skipped"
+        query = {"slug": slug, "cam": cam_id}
+        if frame_at:
+            query["frameAt"] = frame_at
+        sep = "&" if "?" in ARCHIVE_URL else "?"
+        req = urllib.request.Request(
+            f"{ARCHIVE_URL}{sep}{urllib.parse.urlencode(query)}",
+            data=bytes(img),
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "image/jpeg",
+                "User-Agent": HTTP_UA,
+            },
+        )
+        with urllib.request.urlopen(req, timeout=ARCHIVE_TIMEOUT_S) as resp:
+            body = resp.read(4000)
+        out = json.loads(body.decode("utf-8", "replace"))
+        status = "stored" if out.get("stored") else str(out.get("reason") or "not-stored")
+        print(f"  archive [{slug}] {cam_id}: {status}")
+        return status
+    except urllib.error.HTTPError as e:
+        print(f"  warn archive [{slug}] {cam_id}: HTTP {e.code}", file=sys.stderr)
+        return f"http-{e.code}"
+    except Exception as e:  # noqa: BLE001 — archiving must never break the read
+        print(f"  warn archive [{slug}] {cam_id}: {e}", file=sys.stderr)
+        return "error"
+
+
+def _archive_if_listed(slug: str, cam_id: str, img: bytes, frame_at: str | None) -> str:
+    """archive_frame() for a cam that is in the manifest; "unlisted" otherwise
+    (a vision cam the archive does not keep, or a cam set to archive:false)."""
+    if not os.environ.get("INGEST_TOKEN", "").strip():
+        return "no-token"
+    if (slug, cam_id) not in archive_keys():
+        return "unlisted"
+    return archive_frame(slug, cam_id, img, frame_at)
+
+
+def _courier_frame_at(meta_url: str) -> str | None:
+    """The courier's own capture time for a "direct" cam, from its /meta URL
+    ({ok, grabbedAtUtc}), or None when the meta is missing, not ok, or
+    unparsable. The archive pass will not archive a courier frame whose age it
+    cannot establish."""
+    try:
+        meta = json.loads(_get(meta_url, timeout=15).decode("utf-8", "replace"))
+    except Exception as e:  # noqa: BLE001
+        print(f"  warn archive meta {meta_url}: {e}", file=sys.stderr)
+        return None
+    if not isinstance(meta, dict) or meta.get("ok") is False:
+        return None
+    grabbed = meta.get("grabbedAtUtc")
+    if isinstance(grabbed, str) and _frame_age_min(grabbed) is not None:
+        return grabbed
+    return None
+
+
+def archive_pass(attempted: set, cams: list[dict] | None = None) -> dict:
+    """Fetch + archive every manifest cam the vision loop did NOT already fetch
+    this tick (`attempted` is a set of (slug, cam id) the vision/underwater paths
+    went after, whether or not the fetch worked, so a broken cam is not hit
+    twice). Runs on EVERY tick, whether or not a vision provider is configured.
+    Does nothing when INGEST_TOKEN is unset (no point fetching stills nobody
+    will keep). Cams are handled on a small thread pool (ARCHIVE_WORKERS) so a
+    slow cam cannot stretch the tick; one cam failing never affects another.
+
+    Returns {"attempted": n, "results": {"slug/cam": status, ...}}."""
+    if not os.environ.get("INGEST_TOKEN", "").strip():
+        return {"attempted": 0, "results": {}, "skipped": "INGEST_TOKEN unset"}
+    manifest = load_archive_cams() if cams is None else cams
+    todo = [c for c in manifest if (c["slug"], c["id"]) not in attempted]
+    feed_cache: dict = {}
+
+    def one(cam: dict) -> tuple[str, str]:
+        label = f"{cam['slug']}/{cam['id']}"
+        try:
+            src = cam.get("source") or {}
+            frame_at = None
+            if src.get("kind") == "direct" and src.get("meta"):
+                frame_at = _courier_frame_at(src["meta"])
+                if frame_at is None:
+                    print(f"  archive [{cam['slug']}] {cam['id']}: skipped (no usable meta)")
+                    return label, "skipped"
+            info: dict = {}
+            img = fetch_still(cam, info, feed_cache)
+            return label, archive_frame(cam["slug"], cam["id"], img, frame_at or info.get("frameAt"))
+        except Exception as e:  # noqa: BLE001
+            print(f"  warn archive [{cam.get('slug')}] {cam.get('id')}: {e}", file=sys.stderr)
+            return label, "error"
+
+    results: dict[str, str] = {}
+    if todo:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, ARCHIVE_WORKERS)) as pool:
+            for label, status in pool.map(one, todo):
+                results[label] = status
+    for c in todo:
+        attempted.add((c["slug"], c["id"]))
+    return {"attempted": len(todo), "results": results}
 
 
 def _post(url: str, body: bytes, headers: dict | None = None, timeout: int = 40) -> bytes:
@@ -684,13 +941,22 @@ def assess_uw(img: bytes) -> dict:
     return assess(img, UW_PROMPT, _parse_uw)
 
 
-def capture_uw(now_local: dt.datetime) -> dict | None:
+def capture_uw(now_local: dt.datetime, attempted: set | None = None) -> dict | None:
     """Grab + read one underwater frame; fail-soft to None so the cam flow is safe.
 
     Returns {level, pct, note, capturedAtLocal, provider, model} or None on ANY
-    failure (unreachable stream, IP block, no providers, bad frame, timeout)."""
+    failure (unreachable stream, IP block, no providers, bad frame, timeout).
+
+    The frame is also handed to the webcam archive (Spinner follows this fetch
+    path, not capture_beach's) BEFORE the vision read, so it is kept even when
+    the read fails. `attempted` (optional) is told Spinner was fetched, so
+    archive_pass() does not fetch it a second time this tick."""
     try:
-        r = assess_uw(fetch_uw_frame())
+        if attempted is not None:
+            attempted.add((UW_ARCHIVE_SLUG, UW_ARCHIVE_CAM_ID))
+        frame, frame_at = fetch_uw_frame_timed()
+        _archive_if_listed(UW_ARCHIVE_SLUG, UW_ARCHIVE_CAM_ID, frame, frame_at)
+        r = assess_uw(frame)
     except Exception as e:  # noqa: BLE001 — underwater is best-effort calibration only
         print(f"  warn underwater cam: {e}", file=sys.stderr)
         return None
@@ -770,13 +1036,20 @@ def fetch_prev(slug: str) -> dict:
 
 def capture_beach(
     slug: str, cams: list[dict], now_local: dt.datetime, gap_state: dict, prev: dict,
+    attempted: set | None = None,
 ) -> dict | None:
     """Read every cam configured for one beach. `gap_state` is a single
     {"called": bool} shared across ALL beaches in this run, so CAM_GAP_S spaces
     EVERY call in the whole run (not just within one beach) — quota math is
     per-run, not per-beach (see the module docstring / DECISIONS #2). `prev` is
     this beach's previously published document (see fetch_prev()) — read for
-    the freshness/dedupe check on "direct" cams that carry a "meta" URL."""
+    the freshness/dedupe check on "direct" cams that carry a "meta" URL.
+
+    Webcam archive: each still fetched here is handed to archive_frame() before
+    the vision read (fetch_still -> archive_frame -> assess), so it is archived
+    even when the read fails and never fetched twice. `attempted` (optional) is
+    a set that collects (slug, cam id) of every cam this function goes after;
+    archive_pass() uses it to fetch only the rest."""
     readings = []
     for cam in cams:
         src = cam.get("source") or {}
@@ -802,7 +1075,12 @@ def capture_beach(
             time.sleep(CAM_GAP_S)  # space calls to respect the per-minute limit
         gap_state["called"] = True
         try:
-            r = assess(fetch_still(cam))
+            if attempted is not None:
+                attempted.add((slug, cam["id"]))
+            info: dict = {}
+            img = fetch_still(cam, info)
+            _archive_if_listed(slug, cam["id"], img, frame_at or info.get("frameAt"))
+            r = assess(img)
             reading = {"id": cam["id"], "name": cam["name"], **r}
             if frame_at:
                 reading["frameAt"] = frame_at
@@ -902,10 +1180,27 @@ def build_beach_output(
     }
 
 
+def _run_archive_pass(attempted: set) -> None:
+    """archive_pass() that can never fail the cycle (a red cycle counts toward
+    the workflow loop's consecutive-failure bail-out)."""
+    try:
+        out = archive_pass(attempted)
+        if out.get("skipped"):
+            print(f"archive: skipped ({out['skipped']})")
+        else:
+            print(f"archive: pass over {out['attempted']} cam(s) the vision loop did not fetch")
+    except Exception as e:  # noqa: BLE001
+        print(f"  warn archive pass: {e}", file=sys.stderr)
+
+
 def main() -> int:
     registry = load_registry()
+    # (slug, cam id) of every cam the vision/underwater paths go after this tick;
+    # archive_pass() archives the manifest cams NOT in here.
+    attempted: set[tuple[str, str]] = set()
     if not registry:
         print("no beaches in vision-cams registry — nothing to do", file=sys.stderr)
+        _run_archive_pass(attempted)  # the archive does not depend on the vision registry
         return 0
 
     providers = _enabled_providers()
@@ -929,7 +1224,8 @@ def main() -> int:
     for slug, entry in registry.items():
         if providers:
             current_by_slug[slug] = capture_beach(
-                slug, entry.get("cams", []), now_by_slug[slug], gap_state, prevs[slug])
+                slug, entry.get("cams", []), now_by_slug[slug], gap_state, prevs[slug],
+                attempted)
         else:
             current_by_slug[slug] = None
 
@@ -966,9 +1262,13 @@ def main() -> int:
             except ValueError:
                 uw_age_min = None  # unparseable -> treat as due
         if uw_age_min is None or uw_age_min >= 50:
-            uw_reading = capture_uw(now_local_for_uw)
+            uw_reading = capture_uw(now_local_for_uw, attempted)
             if uw_reading:
                 uw = uw_reading
+
+    # WEBCAM ARCHIVE — every manifest cam the loops above did not fetch. Runs on
+    # every tick, whether or not any vision provider is configured.
+    _run_archive_pass(attempted)
 
     os.makedirs(OUT_DIR, exist_ok=True)
     wrote_any = False
