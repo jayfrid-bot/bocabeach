@@ -603,6 +603,20 @@ export function ConditionsDashboard({
                 onSettings={() => setSheet("settings")}
               />
             ) : null}
+            {/* App Review (2026-10-11, Guideline 2.1(b)) could not find the
+                subscriptions behind "Personalize my score". A plain "Plus"
+                button in the top bar opens the paywall straight away — app
+                only, and only for people who do not already have Plus. */}
+            {!preview && native && plusOn && !plusEntitled ? (
+              <button
+                type="button"
+                onClick={() => setSheet("paywall")}
+                aria-label="Beach Day Plus — see plans"
+                className="inline-flex h-9 items-center gap-1 rounded-full bg-sky-600 px-3 text-sm font-semibold text-white shadow-sm transition hover:bg-sky-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 dark:bg-sky-500 dark:hover:bg-sky-400 dark:focus-visible:ring-offset-slate-900"
+              >
+                Plus
+              </button>
+            ) : null}
             <ThemeToggle iconOnly />
           </div>
         </div>

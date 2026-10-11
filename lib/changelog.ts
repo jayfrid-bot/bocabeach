@@ -18,6 +18,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-11",
+    title: "A Plus button at the top of the app",
+    details: "If you don't have Beach Day Plus yet, a Plus button now sits next to Share and Alerts. One tap shows the plans.",
+    tag: "improved",
+  },
+  {
+    date: "2026-10-11",
     title: "Sunrise and sunset, every few minutes, in the cam archive",
     details:
       "Plus look-back now saves a camera shot about every 10 minutes around sunrise and sunset, with Sunrise and Sunset buttons to jump to them. The seaweed and crowd readings also no longer score a camera picture that is hours old.",
