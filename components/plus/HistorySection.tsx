@@ -625,20 +625,6 @@ export function HistorySection({
         ) : null}
       </div>
 
-      {DAY_VIEW_ENABLED && !entitled ? (
-        <button
-          type="button"
-          onClick={onDoor}
-          className="mt-3 flex min-h-[44px] w-full items-center gap-3 rounded-2xl bg-white/80 px-4 py-2 text-left ring-1 ring-slate-900/10 transition hover:ring-ocean-400 dark:bg-slate-900/70 dark:ring-white/10"
-        >
-          <span className="text-sm font-medium text-slate-900 dark:text-white">Pick a day</span>
-          <span className="min-w-0 flex-1 truncate text-sm text-slate-500 dark:text-slate-400">with Plus</span>
-          <span aria-hidden className="shrink-0 text-slate-400">
-            {"\u{1f4c5}"}
-          </span>
-        </button>
-      ) : null}
-
       {!entitled ? (
         <button
           type="button"
@@ -649,7 +635,9 @@ export function HistorySection({
             {"\u{1f4c5}"}
           </span>
           <span className="min-w-0 flex-1 text-sm text-slate-600 dark:text-slate-400">
-            Plus shows the last 30 days at this beach.
+            {DAY_VIEW_ENABLED
+              ? "Plus shows the last 30 days at this beach, and lets you pick any day to see it with the beach cams."
+              : "Plus shows the last 30 days at this beach."}
           </span>
           <span aria-hidden className="shrink-0 text-slate-400">
             {"›"}

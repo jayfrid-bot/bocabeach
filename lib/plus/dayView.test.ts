@@ -8,6 +8,11 @@ import {
   dayTitle,
   emptyCamText,
   hour12Label,
+  hourLabelFor,
+  localHourOfLabel,
+  repeatedLocalHours,
+  sliderTextFor,
+  zoneAbbr,
   isPickable,
   nearestFrameIndex,
   readingText,
@@ -200,5 +205,58 @@ describe("defaults", () => {
   it("words the best score", () => {
     expect(bestLine(payload({}))).toBe("Best score 92 at 1 PM");
     expect(bestLine(payload({ summary: { best: null } as DayViewPayload["summary"] }))).toBe("No score for this day");
+  });
+});
+
+describe("DST fall-back labels", () => {
+  const TZ = "America/New_York";
+  const hr = (hourUtc: string, localHour: number) => ({ hourUtc, localHour });
+  const edt = "2026-11-01T05:00:00.000Z"; // 1 AM EDT
+  const est = "2026-11-01T06:00:00.000Z"; // 1 AM EST, an hour later on the clock
+
+  it("names the zone from the beach timezone and the instant", () => {
+    expect(zoneAbbr(TZ, edt)).toBe("EDT");
+    expect(zoneAbbr(TZ, est)).toBe("EST");
+    expect(zoneAbbr(TZ, "2026-07-01T12:00:00.000Z")).toBe("EDT");
+    expect(zoneAbbr(TZ, "garbage")).toBe("");
+  });
+
+  it("finds only the local hours that really repeat", () => {
+    const day = {
+      hours: [hr("2026-11-01T04:00:00.000Z", 0), hr(edt, 1), hr(est, 1), hr("2026-11-01T07:00:00.000Z", 2)],
+      cams: [],
+    } as unknown as Parameters<typeof repeatedLocalHours>[0];
+    expect([...repeatedLocalHours(day)]).toEqual([1]);
+  });
+
+  it("also finds a repeat that only the camera shots show", () => {
+    const frame = (hourUtc: string, displayAtLocal: string) => ({ hourUtc, displayAtLocal });
+    const day = {
+      hours: [],
+      cams: [{ frames: [frame(edt, "1:10 AM"), frame(est, "1:30 AM"), frame("2026-11-01T07:00:00.000Z", "2:05 AM")] }],
+    } as unknown as Parameters<typeof repeatedLocalHours>[0];
+    expect([...repeatedLocalHours(day)]).toEqual([1]);
+  });
+
+  it("adds the zone to a repeated hour's label and nowhere else", () => {
+    const rep = new Set([1]);
+    expect(hourLabelFor(hr(edt, 1), rep, TZ)).toBe("1 AM EDT");
+    expect(hourLabelFor(hr(est, 1), rep, TZ)).toBe("1 AM EST");
+    expect(hourLabelFor(hr("2026-11-01T07:00:00.000Z", 2), rep, TZ)).toBe("2 AM");
+    expect(hourLabelFor(hr(edt, 1), new Set(), TZ)).toBe("1 AM");
+  });
+
+  it("does the same for the slider's spoken value", () => {
+    const rep = new Set([1]);
+    expect(sliderTextFor({ hourUtc: edt, displayAtLocal: "1:10 AM" }, rep, TZ)).toBe("1 AM EDT");
+    expect(sliderTextFor({ hourUtc: est, displayAtLocal: "1:30 AM" }, rep, TZ)).toBe("1 AM EST");
+    expect(sliderTextFor({ hourUtc: "2026-11-01T15:00:00.000Z", displayAtLocal: "10:42 AM" }, rep, TZ)).toBe("10 AM");
+  });
+
+  it("reads the hour from a clock label", () => {
+    expect(localHourOfLabel("12:05 AM")).toBe(0);
+    expect(localHourOfLabel("12:05 PM")).toBe(12);
+    expect(localHourOfLabel("1:30 PM")).toBe(13);
+    expect(localHourOfLabel("noon")).toBeNull();
   });
 });

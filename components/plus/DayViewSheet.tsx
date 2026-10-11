@@ -16,12 +16,13 @@
  * showing ("Closest shot: 1:42 PM"). Only the shot on screen loads, plus its
  * next and previous neighbours.
  *
- * Picture links last 15 minutes. When a picture will not load, the day is
- * fetched once more for fresh links (at most once a minute), then the picture
- * says it is unavailable. Pure logic is in lib/plus/dayView.ts.
+ * Picture links last 15 minutes. A picture that will not load says so and offers
+ * "Try this shot again": that refetches the day for fresh links (at most once
+ * every 30 seconds) and loads the picture again. Nothing retries by itself. Pure logic is in lib/plus/dayView.ts.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { Sheet } from "@/components/plus/Sheet";
 import { scoreColor } from "@/lib/format";
 import { plusApi, plusErrorMessage, type HistoryDayResult } from "@/lib/plus/api";
@@ -35,16 +36,19 @@ import {
   defaultHourUtc,
   emptyCamText,
   hour12Compact,
-  hour12Label,
+  hourLabelFor,
   nearestFrameIndex,
   readingTiles,
+  repeatedLocalHours,
   sliderLabel,
+  sliderTextFor,
   stepDate,
+  zoneAbbr,
 } from "@/lib/plus/dayView";
 import type { DayCam, DayFrame, DayViewPayload } from "@/lib/history/dayView";
 
-/** A refetch for fresh picture links is allowed at most this often. */
-const REFETCH_GAP_MS = 60_000;
+/** "Try this shot again" refetches the day (fresh picture links) at most this often. */
+const REFETCH_GAP_MS = 30_000;
 
 /** Fetch one day; on a 401 re-mint the install token ONCE and retry (same shape as HistorySection). */
 async function fetchDayWithRetry(slug: string, deviceId: string, date: string): Promise<HistoryDayResult> {
@@ -150,7 +154,7 @@ export function DayViewSheet({
           </button>
         </div>
       ) : (
-        <DayBody day={state.day} refreshing={refreshing} onLinksExpired={refresh} />
+        <DayBody day={state.day} refreshing={refreshing} onRefetchDay={refresh} />
       )}
     </Sheet>
   );
@@ -159,11 +163,11 @@ export function DayViewSheet({
 function DayBody({
   day,
   refreshing,
-  onLinksExpired,
+  onRefetchDay,
 }: {
   day: DayViewPayload;
   refreshing: boolean;
-  onLinksExpired: () => void;
+  onRefetchDay: () => void;
 }) {
   // The selected hour is remembered with its date, so a new day starts fresh
   // (its best hour) while a refetch of the same day keeps your place.
@@ -178,6 +182,8 @@ function DayBody({
 
   const formulaNotice = formulaChangeNotice(day.versions);
   const selectedHour = day.hours.find((h) => h.hourUtc === hourUtc) ?? null;
+  // On the DST fall-back day one local hour happens twice: say which zone.
+  const repeated = useMemo(() => repeatedLocalHours(day), [day]);
 
   return (
     <div className="mt-3 space-y-5">
@@ -193,9 +199,11 @@ function DayBody({
           framesStart={day.framesStart}
           hourUtc={hourUtc}
           refreshing={refreshing}
+          repeated={repeated}
+          timezone={day.timezone}
           onPickCam={setCamPref}
           onPickHour={selectHour}
-          onLinksExpired={onLinksExpired}
+          onRefetchDay={onRefetchDay}
         />
       ) : null}
 
@@ -206,13 +214,13 @@ function DayBody({
         {day.hours.length === 0 ? (
           <p className="text-sm text-slate-600 dark:text-slate-400">We have no scores saved for this day.</p>
         ) : (
-          <HourStrip hours={day.hours} selected={hourUtc} onPick={selectHour} />
+          <HourStrip hours={day.hours} selected={hourUtc} repeated={repeated} timezone={day.timezone} onPick={selectHour} />
         )}
       </section>
 
       <section aria-labelledby="day-readings-heading">
         <h3 id="day-readings-heading" className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
-          {selectedHour ? `Readings at ${hour12Label(selectedHour.localHour)}` : "Readings"}
+          {selectedHour ? `Readings at ${hourLabelFor(selectedHour, repeated, day.timezone)}` : "Readings"}
         </h3>
         {!selectedHour && day.hours.length > 0 ? (
           <p className="mb-2 text-xs text-slate-500 dark:text-slate-400">We have no readings saved for that hour.</p>
@@ -233,10 +241,14 @@ function DayBody({
 function HourStrip({
   hours,
   selected,
+  repeated,
+  timezone,
   onPick,
 }: {
   hours: DayViewPayload["hours"];
   selected: string | null;
+  repeated: Set<number>;
+  timezone: string;
   onPick: (hourUtc: string) => void;
 }) {
   const box = useRef<HTMLDivElement | null>(null);
@@ -257,7 +269,7 @@ function HourStrip({
             key={h.hourUtc}
             type="button"
             aria-pressed={on}
-            aria-label={`${hour12Label(h.localHour)}, ${h.score == null ? "no score" : `score ${h.score}`}`}
+            aria-label={`${hourLabelFor(h, repeated, timezone)}, ${h.score == null ? "no score" : `score ${h.score}`}`}
             onClick={() => onPick(h.hourUtc)}
             className={`flex min-h-[60px] min-w-[44px] shrink-0 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ocean-500 ${
               on ? "bg-ocean-500/15 ring-2 ring-ocean-500 dark:ring-ocean-400" : "hover:bg-slate-900/5 dark:hover:bg-white/10"
@@ -274,6 +286,7 @@ function HourStrip({
             </span>
             <span aria-hidden className="text-[10px] tabular-nums text-slate-600 dark:text-slate-300">
               {hour12Compact(h.localHour)}
+              {repeated.has(h.localHour) ? ` ${zoneAbbr(timezone, h.hourUtc)}` : ""}
             </span>
           </button>
         );
@@ -288,18 +301,22 @@ function CamViewer({
   framesStart,
   hourUtc,
   refreshing,
+  repeated,
+  timezone,
   onPickCam,
   onPickHour,
-  onLinksExpired,
+  onRefetchDay,
 }: {
   cams: DayCam[];
   cam: DayCam | null;
   framesStart: string | null;
   hourUtc: string | null;
   refreshing: boolean;
+  repeated: Set<number>;
+  timezone: string;
   onPickCam: (id: string) => void;
   onPickHour: (hourUtc: string) => void;
-  onLinksExpired: () => void;
+  onRefetchDay: () => void;
 }) {
   const frames = useMemo(() => cam?.frames ?? [], [cam]);
   const idx = nearestFrameIndex(frames, hourUtc);
@@ -310,7 +327,9 @@ function CamViewer({
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null);
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const [full, setFull] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
   const lastRefetch = useRef(0);
+  const openerRef = useRef<HTMLButtonElement | null>(null);
 
   // Warm the neighbours only: never the whole day.
   const prevUrl = prevFrame?.url ?? null;
@@ -323,14 +342,20 @@ function CamViewer({
     }
   }, [prevUrl, nextUrl]);
 
+  // A failed picture stays failed until the person taps "Try this shot again".
+  // Nothing here retries on its own, so a picture that keeps failing cannot loop.
   const onImgError = useCallback(() => {
-    if (!frame) return;
-    setFailedSrc(frame.url);
-    if (Date.now() - lastRefetch.current > REFETCH_GAP_MS) {
+    if (frame) setFailedSrc(frame.url);
+  }, [frame]);
+
+  const onRetry = useCallback(() => {
+    if (Date.now() - lastRefetch.current >= REFETCH_GAP_MS) {
       lastRefetch.current = Date.now();
-      onLinksExpired();
+      onRefetchDay(); // fresh links; the new address remounts the picture by itself
     }
-  }, [frame, onLinksExpired]);
+    setFailedSrc(null);
+    setRetryKey((k) => k + 1); // and load again right now
+  }, [onRefetchDay]);
 
   const go = useCallback(
     (to: number) => {
@@ -343,6 +368,7 @@ function CamViewer({
   const gapText = closestShotText(frame, hourUtc);
   const loaded = !!frame && loadedSrc === frame.url;
   const failed = !!frame && failedSrc === frame.url && !refreshing;
+  const sliderText = frame ? sliderTextFor(frame, repeated, timezone) : "";
 
   return (
     <section aria-labelledby="day-cams-heading">
@@ -377,30 +403,40 @@ function CamViewer({
         </div>
       ) : (
         <>
-          <button
-            type="button"
-            onClick={() => setFull(true)}
-            aria-label={`${cam?.name ?? "Camera"}, ${frame.displayAtLocal}. Open full screen.`}
-            className="relative block aspect-video w-full overflow-hidden rounded-2xl bg-slate-200 ring-1 ring-slate-900/10 dark:bg-slate-800 dark:ring-white/10"
-          >
+          <div className="relative aspect-video w-full overflow-hidden rounded-2xl bg-slate-200 ring-1 ring-slate-900/10 dark:bg-slate-800 dark:ring-white/10">
             {!loaded && !failed ? <span aria-hidden className="absolute inset-0 animate-pulse bg-slate-300/60 dark:bg-slate-700/60" /> : null}
             {failed ? (
-              <span className="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-slate-600 dark:text-slate-300">
-                This shot isn&apos;t available right now.
-              </span>
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 px-6 text-center">
+                <p className="text-sm text-slate-600 dark:text-slate-300">This shot isn&apos;t available right now.</p>
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  className="inline-flex min-h-[44px] items-center rounded-full bg-slate-900/10 px-4 text-sm font-medium text-slate-800 transition hover:bg-slate-900/20 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20"
+                >
+                  Try this shot again
+                </button>
+              </div>
             ) : (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                key={frame.url}
-                src={frame.url}
-                alt=""
-                decoding="async"
-                onLoad={() => setLoadedSrc(frame.url)}
-                onError={onImgError}
-                className={`absolute inset-0 h-full w-full object-cover transition-opacity ${loaded ? "opacity-100" : "opacity-0"}`}
-              />
+              <button
+                ref={openerRef}
+                type="button"
+                onClick={() => setFull(true)}
+                aria-label={`${cam?.name ?? "Camera"}, ${frame.displayAtLocal}. Open full screen.`}
+                className="absolute inset-0 block h-full w-full"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  key={`${frame.url}#${retryKey}`}
+                  src={frame.url}
+                  alt=""
+                  decoding="async"
+                  onLoad={() => setLoadedSrc(frame.url)}
+                  onError={onImgError}
+                  className={`h-full w-full object-cover transition-opacity ${loaded ? "opacity-100" : "opacity-0"}`}
+                />
+              </button>
             )}
-          </button>
+          </div>
 
           <p className="mt-2 text-sm font-medium tabular-nums text-slate-800 dark:text-slate-100" aria-live="polite">
             {gapText ?? frame.displayAtLocal}
@@ -416,7 +452,7 @@ function CamViewer({
                 value={idx}
                 onChange={(e) => go(Number(e.target.value))}
                 aria-label={`Time of ${cam?.name ?? "camera"} shot`}
-                aria-valuetext={sliderLabel(frame.displayAtLocal)}
+                aria-valuetext={sliderText}
                 className="h-11 w-full cursor-pointer accent-ocean-600"
               />
               <div className="flex justify-between text-[11px] tabular-nums text-slate-500 dark:text-slate-400" aria-hidden>
@@ -439,7 +475,11 @@ function CamViewer({
               hasNext={idx < frames.length - 1}
               onPrev={() => go(idx - 1)}
               onNext={() => go(idx + 1)}
+              failed={failed}
+              retryKey={retryKey}
+              openerRef={openerRef}
               onImgError={onImgError}
+              onRetry={onRetry}
               onClose={() => setFull(false)}
             />
           ) : null}
@@ -455,9 +495,13 @@ function FullScreenFrame({
   gapText,
   hasPrev,
   hasNext,
+  failed,
+  retryKey,
+  openerRef,
   onPrev,
   onNext,
   onImgError,
+  onRetry,
   onClose,
 }: {
   camName: string;
@@ -465,19 +509,31 @@ function FullScreenFrame({
   gapText: string | null;
   hasPrev: boolean;
   hasNext: boolean;
+  failed: boolean;
+  retryKey: number;
+  /** The tapped picture button: focus goes back to it on close. */
+  openerRef: RefObject<HTMLButtonElement | null>;
   onPrev: () => void;
   onNext: () => void;
   onImgError: () => void;
+  onRetry: () => void;
   onClose: () => void;
 }) {
   const root = useRef<HTMLDivElement | null>(null);
   const handlers = useRef({ onPrev, onNext, onClose, hasPrev, hasNext });
-  handlers.current = { onPrev, onNext, onClose, hasPrev, hasNext };
-
-  // Own the keyboard while open. Capture phase on window, so Escape closes this
-  // viewer only (not the sheet under it) and Tab cannot leave it.
   useEffect(() => {
-    const opener = document.activeElement;
+    handlers.current = { onPrev, onNext, onClose, hasPrev, hasNext };
+  });
+
+  // While open this is the only live dialog: the sheet under it is made inert
+  // and hidden from screen readers (this viewer sits in a portal on <body>, so
+  // it is not inside that sheet). Keyboard: capture phase on window, so Escape
+  // closes this viewer only (not the sheet) and Tab cannot leave it.
+  useEffect(() => {
+    const opener = openerRef.current;
+    const sheetRoot = opener?.closest('[role="dialog"]')?.parentElement ?? null;
+    sheetRoot?.setAttribute("inert", "");
+    sheetRoot?.setAttribute("aria-hidden", "true");
     root.current?.querySelector<HTMLElement>("button")?.focus();
     const onKey = (e: KeyboardEvent) => {
       const h = handlers.current;
@@ -512,13 +568,18 @@ function FullScreenFrame({
     window.addEventListener("keydown", onKey, true);
     return () => {
       window.removeEventListener("keydown", onKey, true);
-      if (opener instanceof HTMLElement) opener.focus();
+      sheetRoot?.removeAttribute("inert");
+      sheetRoot?.removeAttribute("aria-hidden");
+      // Back to the picture that was tapped (or, if it is gone, the sheet's first control).
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- the ref is read at close on purpose: it must be the button as it is NOW
+      const back = openerRef.current ?? sheetRoot?.querySelector<HTMLElement>("button");
+      back?.focus();
     };
-  }, []);
+  }, [openerRef]);
 
   const NAV =
     "flex h-12 w-12 items-center justify-center rounded-full bg-white/15 text-2xl text-white transition hover:bg-white/25 disabled:opacity-30";
-  return (
+  return createPortal(
     <div
       ref={root}
       role="dialog"
@@ -528,30 +589,45 @@ function FullScreenFrame({
     >
       <div className="flex items-center justify-between gap-3 px-4 py-2 text-white">
         <p className="min-w-0 flex-1 truncate text-sm font-medium">
-          {camName} {"·"} {gapText ?? frame.displayAtLocal}
+          {camName} {"\u00b7"} {gapText ?? frame.displayAtLocal}
         </p>
         <button type="button" onClick={onClose} aria-label="Close full screen" className={NAV}>
-          <span aria-hidden>{"✕"}</span>
+          <span aria-hidden>{"\u2715"}</span>
         </button>
       </div>
-      <div className="flex min-h-0 flex-1 items-center justify-center px-2">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={frame.url}
-          alt={`${camName}, ${frame.displayAtLocal}`}
-          onError={onImgError}
-          className="max-h-full max-w-full object-contain"
-        />
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-2">
+        {failed ? (
+          <>
+            <p className="text-sm text-white/80">This shot isn&apos;t available right now.</p>
+            <button
+              type="button"
+              onClick={onRetry}
+              className="inline-flex min-h-[44px] items-center rounded-full bg-white/15 px-4 text-sm font-medium text-white transition hover:bg-white/25"
+            >
+              Try this shot again
+            </button>
+          </>
+        ) : (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            key={`${frame.url}#${retryKey}`}
+            src={frame.url}
+            alt={`${camName}, ${frame.displayAtLocal}`}
+            onError={onImgError}
+            className="max-h-full max-w-full object-contain"
+          />
+        )}
       </div>
       <div className="flex items-center justify-between gap-3 px-4 py-3 text-white">
         <button type="button" onClick={onPrev} disabled={!hasPrev} aria-label="Earlier shot" className={NAV}>
-          <span aria-hidden>{"‹"}</span>
+          <span aria-hidden>{"\u2039"}</span>
         </button>
         <p className="min-w-0 flex-1 text-center text-[11px] leading-snug text-white/70">{frame.attribution ?? ""}</p>
         <button type="button" onClick={onNext} disabled={!hasNext} aria-label="Later shot" className={NAV}>
-          <span aria-hidden>{"›"}</span>
+          <span aria-hidden>{"\u203a"}</span>
         </button>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

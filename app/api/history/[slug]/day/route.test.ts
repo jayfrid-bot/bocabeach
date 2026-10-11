@@ -424,6 +424,26 @@ describe.skipIf(!HAS_SQLITE)("camera shots", () => {
     expect((await res.json()).error).toBe("not-configured");
   });
 
+  it("never signs a ready row whose key points at another beach, cam or date", async () => {
+    const good = await shot("boca-south", "2026-10-10T14:00:00.000Z", { localHour: 10 });
+    await shot("boca-inlet", "2026-10-10T14:00:00.000Z", { localHour: 10 });
+    await shot("boca-south-surf", "2026-10-10T15:00:00.000Z", { localHour: 11 });
+    await shot("boca-inlet-surf", "2026-10-10T16:00:00.000Z", { localHour: 12 });
+    const other = "deerfield-beach/deerfield-beach-cam/2026-10-10/1442Z-01234567-cccccccc.jpg";
+    const otherCam = "boca-raton/boca-south/2026-10-10/1442Z-89abcdef-cccccccc.jpg";
+    const otherDate = "boca-raton/boca-inlet-surf/2026-10-09/1642Z-01234567-cccccccc.jpg";
+    h.all("UPDATE cam_frames SET r2_key = ? WHERE cam_id = 'boca-inlet'", other);
+    h.all("UPDATE cam_frames SET r2_key = ? WHERE cam_id = 'boca-south-surf'", otherCam);
+    h.all("UPDATE cam_frames SET r2_key = ? WHERE cam_id = 'boca-inlet-surf'", otherDate);
+    const body = await day();
+    const byId = (id: string) => body.cams.find((c: { id: string }) => c.id === id);
+    expect(byId("boca-south").frames).toHaveLength(1);
+    expect(decodeURIComponent(byId("boca-south").frames[0].url)).toContain(good);
+    for (const id of ["boca-inlet", "boca-south-surf", "boca-inlet-surf"]) expect(byId(id).frames).toEqual([]);
+    const text = JSON.stringify(body);
+    for (const k of [other, otherCam, otherDate]) expect(text).not.toContain(encodeURIComponent(k));
+  });
+
   it("skips a stored row whose key is malformed instead of failing the day", async () => {
     await shot("boca-south", "2026-10-10T14:00:00.000Z", { localHour: 10 });
     h.all("UPDATE cam_frames SET r2_key = '../bad' WHERE cam_id = 'boca-south'");

@@ -33,7 +33,7 @@ import { localHourParts } from "@/lib/history/archive";
 import { shapeCams, shapeHours, type DayFrameRow, type DayViewPayload } from "@/lib/history/dayView";
 import { summarizeDay, summarizeVersions } from "@/lib/history/summary";
 import type { BeachHourlyRow } from "@/lib/history/types";
-import { isCalendarDate, isValidFrameKey } from "@/lib/camFrames/keys";
+import { isCalendarDate, parseFrameKey } from "@/lib/camFrames/keys";
 import { archiveCams } from "@/lib/camFrames/manifest";
 import { sign } from "@/lib/camFrames/sign";
 import { SCORING_ENGINE_VERSION } from "@/lib/score";
@@ -126,9 +126,16 @@ export async function POST(
     const manifest = archiveCams().filter((c) => c.slug === slug);
     const urls = new Map<string, string>();
     const archived = new Set(manifest.map((c) => c.camId));
+    // A row is signed only when its key names THIS beach, THIS cam and THIS
+    // date. A poisoned or mis-written row can then never hand out a link to
+    // another beach's, cam's or day's picture.
+    const keyMatchesRow = (r: DayFrameRow): boolean => {
+      const parsed = parseFrameKey(r.r2_key);
+      return !!parsed && parsed.slug === slug && parsed.camId === r.cam_id && parsed.localDate === date;
+    };
     try {
       for (const r of frameRows) {
-        if (!archived.has(r.cam_id) || urls.has(r.r2_key) || !isValidFrameKey(r.r2_key)) continue;
+        if (!archived.has(r.cam_id) || urls.has(r.r2_key) || !keyMatchesRow(r)) continue;
         const { exp, sig } = await sign(r.r2_key);
         urls.set(
           r.r2_key,

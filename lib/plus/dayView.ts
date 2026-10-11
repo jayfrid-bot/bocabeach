@@ -19,6 +19,68 @@ export function hour12Compact(hour: number): string {
   return `${h}${hour < 12 ? "a" : "p"}`;
 }
 
+/** "EDT" / "EST" for the instant `hourUtc` in IANA zone `tz`. Falls back to "UTC+/-h" when Intl has no short name. */
+export function zoneAbbr(tz: string, hourUtc: string): string {
+  const at = Date.parse(hourUtc);
+  if (!Number.isFinite(at)) return "";
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "short" }).formatToParts(new Date(at));
+    return parts.find((p) => p.type === "timeZoneName")?.value ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** 0-23 hour of a clock label like "1:10 AM", or null. */
+export function localHourOfLabel(displayAtLocal: string): number | null {
+  const m = /^(\d{1,2}):\d{2}\s?(AM|PM)$/i.exec(displayAtLocal.trim());
+  if (!m) return null;
+  return (Number(m[1]) % 12) + (m[2].toUpperCase() === "PM" ? 12 : 0);
+}
+
+/**
+ * Local hours that occur twice in this day (the DST fall-back "1 AM"): two
+ * different UTC hours share one local hour. Looks at the hour rows and at every
+ * camera's shots, since either can be the only one that has both.
+ */
+export function repeatedLocalHours(day: Pick<DayViewPayload, "hours" | "cams">): Set<number> {
+  const seen = new Map<number, Set<string>>();
+  const add = (localHour: number | null, hourUtc: string) => {
+    if (localHour === null) return;
+    const set = seen.get(localHour) ?? new Set<string>();
+    set.add(hourUtc);
+    seen.set(localHour, set);
+  };
+  for (const h of day.hours) add(h.localHour, h.hourUtc);
+  for (const c of day.cams) for (const f of c.frames) add(localHourOfLabel(f.displayAtLocal), f.hourUtc);
+  return new Set([...seen].filter(([, set]) => set.size > 1).map(([h]) => h));
+}
+
+/** "1 AM", or "1 AM EDT" when that local hour repeats today. */
+export function hourLabelFor(
+  hour: { localHour: number; hourUtc: string },
+  repeated: Set<number>,
+  tz: string,
+): string {
+  const base = hour12Label(hour.localHour);
+  if (!repeated.has(hour.localHour)) return base;
+  const z = zoneAbbr(tz, hour.hourUtc);
+  return z ? `${base} ${z}` : base;
+}
+
+/** The slider's spoken value for a shot: "10 AM", or "1 AM EST" in a repeated hour. */
+export function sliderTextFor(
+  frame: { hourUtc: string; displayAtLocal: string },
+  repeated: Set<number>,
+  tz: string,
+): string {
+  const base = sliderLabel(frame.displayAtLocal);
+  const lh = localHourOfLabel(frame.displayAtLocal);
+  if (lh === null || !repeated.has(lh)) return base;
+  const z = zoneAbbr(tz, frame.hourUtc);
+  return z ? `${base} ${z}` : base;
+}
+
 /** "Friday, Oct 10" for a YYYY-MM-DD calendar day. */
 export function dayTitle(date: string): string {
   return `${weekdayLongOf(date)}, ${shortMonthDay(date)}`;
