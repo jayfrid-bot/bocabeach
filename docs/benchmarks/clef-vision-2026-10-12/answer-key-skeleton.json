@@ -1,0 +1,434 @@
+[
+ {
+  "frameId": "boca-inlet-jetty/2026-10-11/1513Z",
+  "cam": "boca-inlet-jetty",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-11",
+  "localTimeET": "11:13",
+  "slotKind": "hour",
+  "stratum": "midday"
+ },
+ {
+  "frameId": "boca-inlet-jetty/2026-10-11/2025Z",
+  "cam": "boca-inlet-jetty",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-11",
+  "localTimeET": "16:25",
+  "slotKind": "hour",
+  "stratum": "late"
+ },
+ {
+  "frameId": "boca-inlet-jetty/2026-10-11/2244Z",
+  "cam": "boca-inlet-jetty",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-11",
+  "localTimeET": "18:44",
+  "slotKind": "golden",
+  "stratum": "golden"
+ },
+ {
+  "frameId": "boca-inlet-jetty/2026-10-12/1325Z",
+  "cam": "boca-inlet-jetty",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-12",
+  "localTimeET": "09:25",
+  "slotKind": "hour",
+  "stratum": "morning"
+ },
+ {
+  "frameId": "boca-inlet-north/2026-10-11/1803Z",
+  "cam": "boca-inlet-north",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-11",
+  "localTimeET": "14:03",
+  "slotKind": "hour",
+  "stratum": "midday"
+ },
+ {
+  "frameId": "boca-inlet-north/2026-10-11/2212Z",
+  "cam": "boca-inlet-north",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-11",
+  "localTimeET": "18:12",
+  "slotKind": "hour",
+  "stratum": "late"
+ },
+ {
+  "frameId": "boca-inlet-north/2026-10-12/1130Z",
+  "cam": "boca-inlet-north",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-12",
+  "localTimeET": "07:30",
+  "slotKind": "golden",
+  "stratum": "golden"
+ },
+ {
+  "frameId": "boca-inlet-north/2026-10-12/1225Z",
+  "cam": "boca-inlet-north",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-12",
+  "localTimeET": "08:25",
+  "slotKind": "hour",
+  "stratum": "morning"
+ },
+ {
+  "frameId": "boca-inlet-surf/2026-10-11/1416Z",
+  "cam": "boca-inlet-surf",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-11",
+  "localTimeET": "10:16",
+  "slotKind": "hour",
+  "stratum": "morning"
+ },
+ {
+  "frameId": "boca-inlet-surf/2026-10-11/2315Z",
+  "cam": "boca-inlet-surf",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-11",
+  "localTimeET": "19:15",
+  "slotKind": "golden",
+  "stratum": "golden"
+ },
+ {
+  "frameId": "boca-inlet-surf/2026-10-12/1042Z",
+  "cam": "boca-inlet-surf",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-12",
+  "localTimeET": "06:42",
+  "slotKind": "hour",
+  "stratum": "night"
+ },
+ {
+  "frameId": "boca-inlet-surf/2026-10-12/1617Z",
+  "cam": "boca-inlet-surf",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-12",
+  "localTimeET": "12:17",
+  "slotKind": "hour",
+  "stratum": "midday"
+ },
+ {
+  "frameId": "boca-inlet/2026-10-11/1214Z",
+  "cam": "boca-inlet",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-11",
+  "localTimeET": "08:14",
+  "slotKind": "hour",
+  "stratum": "morning"
+ },
+ {
+  "frameId": "boca-inlet/2026-10-11/1501Z",
+  "cam": "boca-inlet",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-11",
+  "localTimeET": "11:01",
+  "slotKind": "hour",
+  "stratum": "midday"
+ },
+ {
+  "frameId": "boca-inlet/2026-10-11/2018Z",
+  "cam": "boca-inlet",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-11",
+  "localTimeET": "16:18",
+  "slotKind": "hour",
+  "stratum": "late"
+ },
+ {
+  "frameId": "boca-inlet/2026-10-12/1127Z",
+  "cam": "boca-inlet",
+  "family": "Boca inlet feed",
+  "localDate": "2026-10-12",
+  "localTimeET": "07:27",
+  "slotKind": "golden",
+  "stratum": "golden"
+ },
+ {
+  "frameId": "boca-south-surf/2026-10-11/1302Z",
+  "cam": "boca-south-surf",
+  "family": "Boca feed",
+  "localDate": "2026-10-11",
+  "localTimeET": "09:02",
+  "slotKind": "hour",
+  "stratum": "morning"
+ },
+ {
+  "frameId": "boca-south-surf/2026-10-11/2008Z",
+  "cam": "boca-south-surf",
+  "family": "Boca feed",
+  "localDate": "2026-10-11",
+  "localTimeET": "16:08",
+  "slotKind": "hour",
+  "stratum": "late"
+ },
+ {
+  "frameId": "boca-south-surf/2026-10-12/1109Z",
+  "cam": "boca-south-surf",
+  "family": "Boca feed",
+  "localDate": "2026-10-12",
+  "localTimeET": "07:09",
+  "slotKind": "golden",
+  "stratum": "golden"
+ },
+ {
+  "frameId": "boca-south-surf/2026-10-12/1505Z",
+  "cam": "boca-south-surf",
+  "family": "Boca feed",
+  "localDate": "2026-10-12",
+  "localTimeET": "11:05",
+  "slotKind": "hour",
+  "stratum": "midday"
+ },
+ {
+  "frameId": "boca-south-surf/2026-10-12/1612Z",
+  "cam": "boca-south-surf",
+  "family": "Boca feed",
+  "localDate": "2026-10-12",
+  "localTimeET": "12:12",
+  "slotKind": "hour",
+  "stratum": "midday"
+ },
+ {
+  "frameId": "boca-south/2026-10-11/1002Z",
+  "cam": "boca-south",
+  "family": "Boca feed",
+  "localDate": "2026-10-11",
+  "localTimeET": "06:02",
+  "slotKind": "hour",
+  "stratum": "night"
+ },
+ {
+  "frameId": "boca-south/2026-10-11/1800Z",
+  "cam": "boca-south",
+  "family": "Boca feed",
+  "localDate": "2026-10-11",
+  "localTimeET": "14:00",
+  "slotKind": "hour",
+  "stratum": "midday"
+ },
+ {
+  "frameId": "boca-south/2026-10-11/1907Z",
+  "cam": "boca-south",
+  "family": "Boca feed",
+  "localDate": "2026-10-11",
+  "localTimeET": "15:07",
+  "slotKind": "hour",
+  "stratum": "midday"
+ },
+ {
+  "frameId": "boca-south/2026-10-12/1104Z",
+  "cam": "boca-south",
+  "family": "Boca feed",
+  "localDate": "2026-10-12",
+  "localTimeET": "07:04",
+  "slotKind": "golden",
+  "stratum": "golden"
+ },
+ {
+  "frameId": "boca-south/2026-10-12/1304Z",
+  "cam": "boca-south",
+  "family": "Boca feed",
+  "localDate": "2026-10-12",
+  "localTimeET": "09:04",
+  "slotKind": "hour",
+  "stratum": "morning"
+ },
+ {
+  "frameId": "deerfield-beach-cam/2026-10-11/1007Z",
+  "cam": "deerfield-beach-cam",
+  "family": "Deerfield YouTube courier",
+  "localDate": "2026-10-11",
+  "localTimeET": "06:07",
+  "slotKind": "hour",
+  "stratum": "night"
+ },
+ {
+  "frameId": "deerfield-beach-cam/2026-10-11/1107Z",
+  "cam": "deerfield-beach-cam",
+  "family": "Deerfield YouTube courier",
+  "localDate": "2026-10-11",
+  "localTimeET": "07:07",
+  "slotKind": "hour",
+  "stratum": "morning"
+ },
+ {
+  "frameId": "deerfield-beach-cam/2026-10-11/1807Z",
+  "cam": "deerfield-beach-cam",
+  "family": "Deerfield YouTube courier",
+  "localDate": "2026-10-11",
+  "localTimeET": "14:07",
+  "slotKind": "hour",
+  "stratum": "midday"
+ },
+ {
+  "frameId": "deerfield-beach-cam/2026-10-12/1107Z",
+  "cam": "deerfield-beach-cam",
+  "family": "Deerfield YouTube courier",
+  "localDate": "2026-10-12",
+  "localTimeET": "07:07",
+  "slotKind": "golden",
+  "stratum": "golden"
+ },
+ {
+  "frameId": "deerfield-beach-cam/2026-10-12/1607Z",
+  "cam": "deerfield-beach-cam",
+  "family": "Deerfield YouTube courier",
+  "localDate": "2026-10-12",
+  "localTimeET": "12:07",
+  "slotKind": "hour",
+  "stratum": "midday"
+ },
+ {
+  "frameId": "deerfield-pier-cam/2026-10-11/1907Z",
+  "cam": "deerfield-pier-cam",
+  "family": "Deerfield YouTube courier",
+  "localDate": "2026-10-11",
+  "localTimeET": "15:07",
+  "slotKind": "hour",
+  "stratum": "midday"
+ },
+ {
+  "frameId": "deerfield-pier-cam/2026-10-11/2207Z",
+  "cam": "deerfield-pier-cam",
+  "family": "Deerfield YouTube courier",
+  "localDate": "2026-10-11",
+  "localTimeET": "18:07",
+  "slotKind": "hour",
+  "stratum": "late"
+ },
+ {
+  "frameId": "deerfield-pier-cam/2026-10-12/1107Z",
+  "cam": "deerfield-pier-cam",
+  "family": "Deerfield YouTube courier",
+  "localDate": "2026-10-12",
+  "localTimeET": "07:07",
+  "slotKind": "golden",
+  "stratum": "golden"
+ },
+ {
+  "frameId": "deerfield-pier-cam/2026-10-12/1307Z",
+  "cam": "deerfield-pier-cam",
+  "family": "Deerfield YouTube courier",
+  "localDate": "2026-10-12",
+  "localTimeET": "09:07",
+  "slotKind": "hour",
+  "stratum": "morning"
+ },
+ {
+  "frameId": "deerfield-spinner-uw/2026-10-11/1007Z",
+  "cam": "deerfield-spinner-uw",
+  "family": "Spinner underwater",
+  "localDate": "2026-10-11",
+  "localTimeET": "06:07",
+  "slotKind": "hour",
+  "stratum": "night"
+ },
+ {
+  "frameId": "deerfield-spinner-uw/2026-10-11/1907Z",
+  "cam": "deerfield-spinner-uw",
+  "family": "Spinner underwater",
+  "localDate": "2026-10-11",
+  "localTimeET": "15:07",
+  "slotKind": "hour",
+  "stratum": "midday"
+ },
+ {
+  "frameId": "deerfield-spinner-uw/2026-10-11/2307Z",
+  "cam": "deerfield-spinner-uw",
+  "family": "Spinner underwater",
+  "localDate": "2026-10-11",
+  "localTimeET": "19:07",
+  "slotKind": "golden",
+  "stratum": "golden"
+ },
+ {
+  "frameId": "deerfield-spinner-uw/2026-10-12/1207Z",
+  "cam": "deerfield-spinner-uw",
+  "family": "Spinner underwater",
+  "localDate": "2026-10-12",
+  "localTimeET": "08:07",
+  "slotKind": "hour",
+  "stratum": "morning"
+ },
+ {
+  "frameId": "deerfield-surf-cam/2026-10-11/1107Z",
+  "cam": "deerfield-surf-cam",
+  "family": "Deerfield YouTube courier",
+  "localDate": "2026-10-11",
+  "localTimeET": "07:07",
+  "slotKind": "hour",
+  "stratum": "morning"
+ },
+ {
+  "frameId": "deerfield-surf-cam/2026-10-11/1307Z",
+  "cam": "deerfield-surf-cam",
+  "family": "Deerfield YouTube courier",
+  "localDate": "2026-10-11",
+  "localTimeET": "09:07",
+  "slotKind": "hour",
+  "stratum": "morning"
+ },
+ {
+  "frameId": "deerfield-surf-cam/2026-10-11/1407Z",
+  "cam": "deerfield-surf-cam",
+  "family": "Deerfield YouTube courier",
+  "localDate": "2026-10-11",
+  "localTimeET": "10:07",
+  "slotKind": "hour",
+  "stratum": "morning"
+ },
+ {
+  "frameId": "deerfield-surf-cam/2026-10-12/1207Z",
+  "cam": "deerfield-surf-cam",
+  "family": "Deerfield YouTube courier",
+  "localDate": "2026-10-12",
+  "localTimeET": "08:07",
+  "slotKind": "hour",
+  "stratum": "morning"
+ },
+ {
+  "frameId": "ftl-elbo-beach-cam/2026-10-11/1107Z",
+  "cam": "ftl-elbo-beach-cam",
+  "family": "Elbo Room courier",
+  "localDate": "2026-10-11",
+  "localTimeET": "07:07",
+  "slotKind": "hour",
+  "stratum": "morning"
+ },
+ {
+  "frameId": "ftl-elbo-beach-cam/2026-10-11/1707Z",
+  "cam": "ftl-elbo-beach-cam",
+  "family": "Elbo Room courier",
+  "localDate": "2026-10-11",
+  "localTimeET": "13:07",
+  "slotKind": "hour",
+  "stratum": "midday"
+ },
+ {
+  "frameId": "ftl-elbo-beach-cam/2026-10-12/1007Z",
+  "cam": "ftl-elbo-beach-cam",
+  "family": "Elbo Room courier",
+  "localDate": "2026-10-12",
+  "localTimeET": "06:07",
+  "slotKind": "hour",
+  "stratum": "night"
+ },
+ {
+  "frameId": "ftl-elbo-beach-cam/2026-10-12/1107Z",
+  "cam": "ftl-elbo-beach-cam",
+  "family": "Elbo Room courier",
+  "localDate": "2026-10-12",
+  "localTimeET": "07:07",
+  "slotKind": "golden",
+  "stratum": "golden"
+ },
+ {
+  "frameId": "ftl-elbo-beach-cam/2026-10-12/1607Z",
+  "cam": "ftl-elbo-beach-cam",
+  "family": "Elbo Room courier",
+  "localDate": "2026-10-12",
+  "localTimeET": "12:07",
+  "slotKind": "hour",
+  "stratum": "midday"
+ }
+]

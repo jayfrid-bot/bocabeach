@@ -1,0 +1,2313 @@
+{
+ "note": "Hand-labelled by Claude (Sonnet 5.5) by looking at each 768px q60 JPEG, BEFORE any Clef output was run or read. Same rubric as scripts/cam_seaweed.py PROMPT / UW_PROMPT. unreadable=true means the frame is dark, blank or in silhouette; field scoring skips those frames. A dash/null field means not judged. confidence is per field group: low, med or high. Counts of 'people' are estimates (+/-30% on crowds above 20). One label pass, no second reviewer. Frames with set='core' are the 48 stratified frames labelled first. Frames with set='ext' (45) were labelled afterwards, also before reading any per-frame model output: every other frame that has a matched production cam_reads row (28) plus every remaining Spinner frame (17). They exist to give the production-reader check and the Spinner check enough frames.",
+ "rubric": {
+  "seaweed": [
+   "none",
+   "low",
+   "moderate",
+   "high"
+  ],
+  "crowd": [
+   "empty",
+   "quiet",
+   "moderate",
+   "busy",
+   "packed"
+  ],
+  "water": [
+   "clear",
+   "slightly_murky",
+   "murky",
+   "churned",
+   "unknown"
+  ],
+  "uw": [
+   "clear",
+   "slightly_hazy",
+   "hazy",
+   "murky"
+  ]
+ },
+ "frames": [
+  {
+   "frameId": "boca-inlet-jetty/2026-10-11/1513Z",
+   "cam": "boca-inlet-jetty",
+   "family": "Boca inlet feed",
+   "stratum": "midday",
+   "localDate": "2026-10-11",
+   "localTimeET": "11:13",
+   "unreadable": false,
+   "seaweed": {
+    "level": "low",
+    "pct": 3,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 12,
+    "people": 9,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 68,
+    "confidence": "low"
+   },
+   "reason": "Sunny. Dark thin line at the tide mark, maybe a wrack line. About 9 small figures on jetty and beach. Ocean side blue-green; inlet side dark.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet-jetty/2026-10-11/2025Z",
+   "cam": "boca-inlet-jetty",
+   "family": "Boca inlet feed",
+   "stratum": "late",
+   "localDate": "2026-10-11",
+   "localTimeET": "16:25",
+   "unreadable": false,
+   "seaweed": {
+    "level": "low",
+    "pct": 3,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 5,
+    "people": 4,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 72,
+    "confidence": "low"
+   },
+   "reason": "Clean sand, thin dark line at tide mark. 2 on beach, 1-2 on jetty, 1 boat. Deep blue water, depth cannot be judged.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet-jetty/2026-10-11/2244Z",
+   "cam": "boca-inlet-jetty",
+   "family": "Boca inlet feed",
+   "stratum": "golden",
+   "localDate": "2026-10-11",
+   "localTimeET": "18:44",
+   "unreadable": false,
+   "seaweed": {
+    "level": "low",
+    "pct": 3,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 25,
+    "people": 14,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Dusk. Group of about 9 at right, 4-5 on jetty. Water is grey-pink from sky, clarity unclear.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet-jetty/2026-10-12/1325Z",
+   "cam": "boca-inlet-jetty",
+   "family": "Boca inlet feed",
+   "stratum": "morning",
+   "localDate": "2026-10-12",
+   "localTimeET": "09:25",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 2,
+    "people": 0,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 78,
+    "confidence": "med"
+   },
+   "reason": "Sun glare on the right. Nobody clear. Inlet water is teal and the rocks show through.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet-north/2026-10-11/1803Z",
+   "cam": "boca-inlet-north",
+   "family": "Boca inlet feed",
+   "stratum": "midday",
+   "localDate": "2026-10-11",
+   "localTimeET": "14:03",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "high"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 30,
+    "people": 20,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 68,
+    "confidence": "low"
+   },
+   "reason": "Wide sunny beach. Roughly 20 people scattered, a group of 6-8 at left. Clean sand. Water deep teal with whitecaps.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet-north/2026-10-11/2212Z",
+   "cam": "boca-inlet-north",
+   "family": "Boca inlet feed",
+   "stratum": "late",
+   "localDate": "2026-10-11",
+   "localTimeET": "18:12",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "high"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 10,
+    "people": 8,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 65,
+    "confidence": "low"
+   },
+   "reason": "Dusk, sand clean. About 8 people. Blue-grey water, hard to judge clarity.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet-north/2026-10-12/1130Z",
+   "cam": "boca-inlet-north",
+   "family": "Boca inlet feed",
+   "stratum": "golden",
+   "localDate": "2026-10-12",
+   "localTimeET": "07:30",
+   "unreadable": false,
+   "seaweed": {
+    "level": "low",
+    "pct": 4,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 3,
+    "people": 3,
+    "confidence": "high"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 68,
+    "confidence": "low"
+   },
+   "reason": "Sunrise light. Two walkers at the water edge. Dark thin line at the tide mark looks like wrack. Soft pale blue water.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet-north/2026-10-12/1225Z",
+   "cam": "boca-inlet-north",
+   "family": "Boca inlet feed",
+   "stratum": "morning",
+   "localDate": "2026-10-12",
+   "localTimeET": "08:25",
+   "unreadable": false,
+   "seaweed": {
+    "level": "low",
+    "pct": 3,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "high"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 70,
+    "confidence": "med"
+   },
+   "reason": "Empty beach. Faint dark line at the waterline. Blue water, clear enough.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet-surf/2026-10-11/1416Z",
+   "cam": "boca-inlet-surf",
+   "family": "Boca inlet feed",
+   "stratum": "morning",
+   "localDate": "2026-10-11",
+   "localTimeET": "10:16",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 5,
+    "people": 5,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Strong sun glare on the water. About 5 people. Sand looks clean. Glare and whitewater hide the water colour.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet-surf/2026-10-11/2315Z",
+   "cam": "boca-inlet-surf",
+   "family": "Boca inlet feed",
+   "stratum": "golden",
+   "localDate": "2026-10-11",
+   "localTimeET": "19:15",
+   "unreadable": false,
+   "seaweed": {
+    "level": "low",
+    "pct": 5,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Dusk, dim but the beach is readable. Nobody. Dark bands on the sand near the water may be wet sand or wrack. Water too dim to judge.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet-surf/2026-10-12/1042Z",
+   "cam": "boca-inlet-surf",
+   "family": "Boca inlet feed",
+   "stratum": "night",
+   "localDate": "2026-10-12",
+   "localTimeET": "06:42",
+   "unreadable": true,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "high"
+   },
+   "reason": "Pre-dawn. Almost black foreground. Sky glow only. Cannot read the sand or water.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet-surf/2026-10-12/1617Z",
+   "cam": "boca-inlet-surf",
+   "family": "Boca inlet feed",
+   "stratum": "midday",
+   "localDate": "2026-10-12",
+   "localTimeET": "12:17",
+   "unreadable": false,
+   "seaweed": {
+    "level": "low",
+    "pct": 6,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 30,
+    "people": 25,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 75,
+    "confidence": "med"
+   },
+   "reason": "Midday, busy shoreline. About 10 in the water, 4 walkers at left, group under umbrella, woman in front. Dark debris band on the sand near the waterline. Teal clear water.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet/2026-10-11/1214Z",
+   "cam": "boca-inlet",
+   "family": "Boca inlet feed",
+   "stratum": "morning",
+   "localDate": "2026-10-11",
+   "localTimeET": "08:14",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 60,
+    "confidence": "low"
+   },
+   "reason": "Inlet channel, sun flare on the right. No sand shown, no people. Slate-blue water, depth colour only.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet/2026-10-11/1501Z",
+   "cam": "boca-inlet",
+   "family": "Boca inlet feed",
+   "stratum": "midday",
+   "localDate": "2026-10-11",
+   "localTimeET": "11:01",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 3,
+    "people": 3,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 68,
+    "confidence": "low"
+   },
+   "reason": "Inlet and jetty, bit of surf at right. 2-3 tiny figures on the jetty. Teal-blue water.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet/2026-10-11/2018Z",
+   "cam": "boca-inlet",
+   "family": "Boca inlet feed",
+   "stratum": "late",
+   "localDate": "2026-10-11",
+   "localTimeET": "16:18",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 3,
+    "people": 3,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 65,
+    "confidence": "low"
+   },
+   "reason": "Inlet with a boat. 2-3 people on the jetty. Deep blue water, clarity hard to read.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet/2026-10-12/1127Z",
+   "cam": "boca-inlet",
+   "family": "Boca inlet feed",
+   "stratum": "golden",
+   "localDate": "2026-10-12",
+   "localTimeET": "07:27",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Sunrise backlight. Nobody visible. Water is dark slate with a sky sheen, so clarity is unclear.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-south-surf/2026-10-11/1302Z",
+   "cam": "boca-south-surf",
+   "family": "Boca feed",
+   "stratum": "morning",
+   "localDate": "2026-10-11",
+   "localTimeET": "09:02",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 15,
+    "people": 12,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 72,
+    "confidence": "med"
+   },
+   "reason": "Morning, pavilion at left. About 12 people, 7 near the pavilion, small groups on the sand. Clean sand. Blue-teal water.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-south-surf/2026-10-11/2008Z",
+   "cam": "boca-south-surf",
+   "family": "Boca feed",
+   "stratum": "late",
+   "localDate": "2026-10-11",
+   "localTimeET": "16:08",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "busy",
+    "pct": 55,
+    "people": 60,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 70,
+    "confidence": "med"
+   },
+   "reason": "Packed shoreline. About 25 in the water and 30+ on the sand under umbrellas. Clean sand. Deep blue water.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-south-surf/2026-10-12/1109Z",
+   "cam": "boca-south-surf",
+   "family": "Boca feed",
+   "stratum": "golden",
+   "localDate": "2026-10-12",
+   "localTimeET": "07:09",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 12,
+    "people": 11,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Sunrise, pale grey water that mirrors the sky. About 11 people, 7 at the pavilion. Clean smooth sand. Clarity cannot be judged.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-south-surf/2026-10-12/1505Z",
+   "cam": "boca-south-surf",
+   "family": "Boca feed",
+   "stratum": "midday",
+   "localDate": "2026-10-12",
+   "localTimeET": "11:05",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 45,
+    "people": 45,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 75,
+    "confidence": "med"
+   },
+   "reason": "Late morning crowd. About 10 in the water, about 35 on the sand around umbrellas. Clean sand. Blue-green clear water.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-south-surf/2026-10-12/1612Z",
+   "cam": "boca-south-surf",
+   "family": "Boca feed",
+   "stratum": "midday",
+   "localDate": "2026-10-12",
+   "localTimeET": "12:12",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 40,
+    "people": 40,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 78,
+    "confidence": "med"
+   },
+   "reason": "Midday. About 16 in the water and 25 on the sand. Clean sand. Teal water, clear.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-south/2026-10-11/1002Z",
+   "cam": "boca-south",
+   "family": "Boca feed",
+   "stratum": "night",
+   "localDate": "2026-10-11",
+   "localTimeET": "06:02",
+   "unreadable": true,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "high"
+   },
+   "reason": "Black frame, a few red lights only. Unreadable.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-south/2026-10-11/1800Z",
+   "cam": "boca-south",
+   "family": "Boca feed",
+   "stratum": "midday",
+   "localDate": "2026-10-11",
+   "localTimeET": "14:00",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 40,
+    "people": 40,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 70,
+    "confidence": "low"
+   },
+   "reason": "Wide view. About 10 under the pavilion, 25 on the sand with 12 umbrellas, a few in the water. Clean sand. Deep blue water.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-south/2026-10-11/1907Z",
+   "cam": "boca-south",
+   "family": "Boca feed",
+   "stratum": "midday",
+   "localDate": "2026-10-11",
+   "localTimeET": "15:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 30,
+    "people": 30,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 70,
+    "confidence": "low"
+   },
+   "reason": "Wide view, similar to the earlier one but fewer people. About 30. Clean sand. Deep blue water.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-south/2026-10-12/1104Z",
+   "cam": "boca-south",
+   "family": "Boca feed",
+   "stratum": "golden",
+   "localDate": "2026-10-12",
+   "localTimeET": "07:04",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 8,
+    "people": 9,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Sunrise glow. About 9 people: 4-5 at the pavilion, 3 at the shore. Water mirrors the sky so clarity is unclear. Sand looks clean.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-south/2026-10-12/1304Z",
+   "cam": "boca-south",
+   "family": "Boca feed",
+   "stratum": "morning",
+   "localDate": "2026-10-12",
+   "localTimeET": "09:04",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 5,
+    "people": 4,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 72,
+    "confidence": "med"
+   },
+   "reason": "Calm morning. 3 umbrellas with a few people, one at the pavilion. Clean sand. Blue water, fairly clear.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-beach-cam/2026-10-11/1007Z",
+   "cam": "deerfield-beach-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "night",
+   "localDate": "2026-10-11",
+   "localTimeET": "06:07",
+   "unreadable": true,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 2,
+    "people": 1,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "high"
+   },
+   "reason": "Night, black and white night mode. Pier lights only. One person at the pier rail. Cannot read sand or water.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-beach-cam/2026-10-11/1107Z",
+   "cam": "deerfield-beach-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "morning",
+   "localDate": "2026-10-11",
+   "localTimeET": "07:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Sunrise at the pier. Nobody seen. Dark wet sand in front. Choppy water takes its colour from the sky.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-beach-cam/2026-10-11/1807Z",
+   "cam": "deerfield-beach-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "midday",
+   "localDate": "2026-10-11",
+   "localTimeET": "14:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "busy",
+    "pct": 70,
+    "people": 120,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 65,
+    "confidence": "low"
+   },
+   "reason": "Beach full of blue umbrellas and loungers to the horizon. About 100-150 people, hard to count. Clean sand. Teal water with surf.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-beach-cam/2026-10-12/1107Z",
+   "cam": "deerfield-beach-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "golden",
+   "localDate": "2026-10-12",
+   "localTimeET": "07:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 2,
+    "people": 1,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Sunrise at the pier. One person on the pier. Water is grey-blue with a sky sheen. Sand foreground dark.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-beach-cam/2026-10-12/1607Z",
+   "cam": "deerfield-beach-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "midday",
+   "localDate": "2026-10-12",
+   "localTimeET": "12:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 45,
+    "people": 55,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 65,
+    "confidence": "low"
+   },
+   "reason": "Midday. About 25 umbrellas, roughly 40 people on the sand and 10-15 in the water. Clean sand. Green-teal water with sun glitter.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-pier-cam/2026-10-11/1907Z",
+   "cam": "deerfield-pier-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "midday",
+   "localDate": "2026-10-11",
+   "localTimeET": "15:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 25,
+    "people": 16,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 75,
+    "confidence": "med"
+   },
+   "reason": "Pier view only. About 16 people on the pier. No sand in view. Turquoise water at right where the pilings show.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-pier-cam/2026-10-11/2207Z",
+   "cam": "deerfield-pier-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "late",
+   "localDate": "2026-10-11",
+   "localTimeET": "18:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 25,
+    "people": 17,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 62,
+    "confidence": "low"
+   },
+   "reason": "Pier view, evening light. About 17 people fishing. No sand in view. Deep blue water, clarity unclear.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-pier-cam/2026-10-12/1107Z",
+   "cam": "deerfield-pier-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "golden",
+   "localDate": "2026-10-12",
+   "localTimeET": "07:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 30,
+    "people": 22,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Sunrise on the pier. About 22 people fishing. No sand. Water carries the orange sky.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-pier-cam/2026-10-12/1307Z",
+   "cam": "deerfield-pier-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "morning",
+   "localDate": "2026-10-12",
+   "localTimeET": "09:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 25,
+    "people": 18,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Morning, sun glitter covers the water at right. About 18 people on the pier. No sand in view.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-11/1007Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "night",
+   "localDate": "2026-10-11",
+   "localTimeET": "06:07",
+   "unreadable": true,
+   "uw": {
+    "level": null,
+    "pct": null,
+    "confidence": "high"
+   },
+   "reason": "Black frame. Nothing visible.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-11/1907Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "midday",
+   "localDate": "2026-10-11",
+   "localTimeET": "15:07",
+   "unreadable": false,
+   "uw": {
+    "level": "slightly_hazy",
+    "pct": 45,
+    "confidence": "low"
+   },
+   "reason": "UW: green water, 3 fish crisp at 2-4 m, fin at right, many small particles, nothing in the distance. Only near objects readable.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-11/2307Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "golden",
+   "localDate": "2026-10-11",
+   "localTimeET": "19:07",
+   "unreadable": true,
+   "uw": {
+    "level": null,
+    "pct": null,
+    "confidence": "med"
+   },
+   "reason": "UW: dim, flat blue, no objects at all. Nothing to judge visibility against.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-12/1207Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "morning",
+   "localDate": "2026-10-12",
+   "localTimeET": "08:07",
+   "unreadable": false,
+   "uw": {
+    "level": "hazy",
+    "pct": 40,
+    "confidence": "med"
+   },
+   "reason": "UW: teal water, pilings only faintly visible at distance, sun rays, particles, something pale at right edge.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-surf-cam/2026-10-11/1107Z",
+   "cam": "deerfield-surf-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "morning",
+   "localDate": "2026-10-11",
+   "localTimeET": "07:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "high"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Sunrise, dark wet sand in front. Nobody. Water is choppy and takes the sky colour.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-surf-cam/2026-10-11/1307Z",
+   "cam": "deerfield-surf-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "morning",
+   "localDate": "2026-10-11",
+   "localTimeET": "09:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 3,
+    "people": 3,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 65,
+    "confidence": "low"
+   },
+   "reason": "Morning, 2-3 people on the sand. Clean sand with rake marks. Steel-blue water with surf, cloud cover.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-surf-cam/2026-10-11/1407Z",
+   "cam": "deerfield-surf-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "morning",
+   "localDate": "2026-10-11",
+   "localTimeET": "10:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 8,
+    "people": 8,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 62,
+    "confidence": "low"
+   },
+   "reason": "Morning, a tent and two umbrellas with about 8 people. Clean sand. Steel-blue water.",
+   "set": "core"
+  },
+  {
+   "frameId": "deerfield-surf-cam/2026-10-12/1207Z",
+   "cam": "deerfield-surf-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "morning",
+   "localDate": "2026-10-12",
+   "localTimeET": "08:07",
+   "unreadable": true,
+   "seaweed": {
+    "level": null,
+    "pct": null,
+    "confidence": null
+   },
+   "crowd": {
+    "level": null,
+    "pct": null,
+    "people": null,
+    "confidence": null
+   },
+   "water": {
+    "word": null,
+    "pct": null,
+    "confidence": null
+   },
+   "reason": "Black frame at 8 AM. Camera shows nothing.",
+   "set": "core"
+  },
+  {
+   "frameId": "ftl-elbo-beach-cam/2026-10-11/1107Z",
+   "cam": "ftl-elbo-beach-cam",
+   "family": "Elbo Room courier",
+   "stratum": "morning",
+   "localDate": "2026-10-11",
+   "localTimeET": "07:07",
+   "unreadable": true,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "med"
+   },
+   "reason": "Sunrise silhouette. Sand and foreground are black shapes. Only the sky and far sea are readable.",
+   "set": "core"
+  },
+  {
+   "frameId": "ftl-elbo-beach-cam/2026-10-11/1707Z",
+   "cam": "ftl-elbo-beach-cam",
+   "family": "Elbo Room courier",
+   "stratum": "midday",
+   "localDate": "2026-10-11",
+   "localTimeET": "13:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "high"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 12,
+    "people": 12,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 78,
+    "confidence": "med"
+   },
+   "reason": "Bright midday. About 12 people, mostly under the trees and on the promenade. Wide clean sand. Teal-green clear water.",
+   "set": "core"
+  },
+  {
+   "frameId": "ftl-elbo-beach-cam/2026-10-12/1007Z",
+   "cam": "ftl-elbo-beach-cam",
+   "family": "Elbo Room courier",
+   "stratum": "night",
+   "localDate": "2026-10-12",
+   "localTimeET": "06:07",
+   "unreadable": true,
+   "seaweed": {
+    "level": null,
+    "pct": null,
+    "confidence": null
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "high"
+   },
+   "reason": "Night. Only street lights and ship lights. Cannot read sand or water.",
+   "set": "core"
+  },
+  {
+   "frameId": "ftl-elbo-beach-cam/2026-10-12/1107Z",
+   "cam": "ftl-elbo-beach-cam",
+   "family": "Elbo Room courier",
+   "stratum": "golden",
+   "localDate": "2026-10-12",
+   "localTimeET": "07:07",
+   "unreadable": true,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "med"
+   },
+   "reason": "Sunrise silhouette like the Oct 11 one. Sand and foreground are dark.",
+   "set": "core"
+  },
+  {
+   "frameId": "ftl-elbo-beach-cam/2026-10-12/1607Z",
+   "cam": "ftl-elbo-beach-cam",
+   "family": "Elbo Room courier",
+   "stratum": "midday",
+   "localDate": "2026-10-12",
+   "localTimeET": "12:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "high"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 7,
+    "people": 7,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 80,
+    "confidence": "med"
+   },
+   "reason": "Midday. About 7 people and a cyclist on a wide clean beach. Turquoise to green clear water.",
+   "set": "core"
+  },
+  {
+   "frameId": "boca-inlet-surf/2026-10-11/1618Z",
+   "cam": "boca-inlet-surf",
+   "family": "Boca inlet feed",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "12:18",
+   "unreadable": false,
+   "seaweed": {
+    "level": "low",
+    "pct": 6,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 12,
+    "people": 12,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 72,
+    "confidence": "med"
+   },
+   "reason": "Midday. About 12 people along the beach. Dark debris patch on the sand near the water. Teal-blue water with whitecaps.",
+   "set": "ext"
+  },
+  {
+   "frameId": "boca-inlet-surf/2026-10-11/2001Z",
+   "cam": "boca-inlet-surf",
+   "family": "Boca inlet feed",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "16:01",
+   "unreadable": false,
+   "seaweed": {
+    "level": "low",
+    "pct": 5,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 6,
+    "people": 6,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 65,
+    "confidence": "low"
+   },
+   "reason": "Afternoon. About 6 people. Dark patch on the sand near the water edge. Deep navy water, clarity hard to read.",
+   "set": "ext"
+  },
+  {
+   "frameId": "boca-inlet-surf/2026-10-12/1110Z",
+   "cam": "boca-inlet-surf",
+   "family": "Boca inlet feed",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "07:10",
+   "unreadable": false,
+   "seaweed": {
+    "level": "low",
+    "pct": 4,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 4,
+    "people": 4,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Dawn. 3-4 people. Small dark smudge on the sand. Pale grey-blue water, clarity unclear.",
+   "set": "ext"
+  },
+  {
+   "frameId": "boca-inlet-surf/2026-10-12/1205Z",
+   "cam": "boca-inlet-surf",
+   "family": "Boca inlet feed",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "08:05",
+   "unreadable": false,
+   "seaweed": {
+    "level": "low",
+    "pct": 3,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 1,
+    "people": 1,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 68,
+    "confidence": "low"
+   },
+   "reason": "Sun glare on the left. One tiny figure far left. Small dark smudge on the sand. Calm blue-grey water.",
+   "set": "ext"
+  },
+  {
+   "frameId": "boca-inlet-surf/2026-10-12/1300Z",
+   "cam": "boca-inlet-surf",
+   "family": "Boca inlet feed",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "09:00",
+   "unreadable": false,
+   "seaweed": {
+    "level": "low",
+    "pct": 3,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 1,
+    "people": 1,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 68,
+    "confidence": "low"
+   },
+   "reason": "Bright morning, glitter on the water. One tiny figure far left. Small dark smudge on the sand.",
+   "set": "ext"
+  },
+  {
+   "frameId": "boca-south-surf/2026-10-11/1004Z",
+   "cam": "boca-south-surf",
+   "family": "Boca feed",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "06:04",
+   "unreadable": true,
+   "seaweed": {
+    "level": null,
+    "pct": null,
+    "confidence": null
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "high"
+   },
+   "reason": "Black frame. Nothing visible.",
+   "set": "ext"
+  },
+  {
+   "frameId": "boca-south-surf/2026-10-12/1048Z",
+   "cam": "boca-south-surf",
+   "family": "Boca feed",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "06:48",
+   "unreadable": true,
+   "seaweed": {
+    "level": null,
+    "pct": null,
+    "confidence": null
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "high"
+   },
+   "reason": "Pre-dawn. Pavilion in silhouette, sand black. Almost nothing readable.",
+   "set": "ext"
+  },
+  {
+   "frameId": "boca-south-surf/2026-10-12/1212Z",
+   "cam": "boca-south-surf",
+   "family": "Boca feed",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "08:12",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 5,
+    "people": 5,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 68,
+    "confidence": "low"
+   },
+   "reason": "Early morning. 2 at the pavilion, 3 on the sand. Clean sand. Blue-grey water with morning haze.",
+   "set": "ext"
+  },
+  {
+   "frameId": "boca-south-surf/2026-10-12/1308Z",
+   "cam": "boca-south-surf",
+   "family": "Boca feed",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "09:08",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 3,
+    "people": 3,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 70,
+    "confidence": "low"
+   },
+   "reason": "Morning. About 3 people. Clean sand. Blue water, calm.",
+   "set": "ext"
+  },
+  {
+   "frameId": "boca-south/2026-10-12/1043Z",
+   "cam": "boca-south",
+   "family": "Boca feed",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "06:43",
+   "unreadable": true,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "high"
+   },
+   "reason": "Dark dawn. Pavilion in silhouette, red lights. Sand black.",
+   "set": "ext"
+  },
+  {
+   "frameId": "boca-south/2026-10-12/1207Z",
+   "cam": "boca-south",
+   "family": "Boca feed",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "08:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 4,
+    "people": 4,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 68,
+    "confidence": "low"
+   },
+   "reason": "Early morning. One in the water, 2-3 on the sand, one at the pavilion. Clean sand. Blue-grey water.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-beach-cam/2026-10-11/1207Z",
+   "cam": "deerfield-beach-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "08:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 7,
+    "people": 7,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Low sun behind the pier. About 7 walkers on the pier, nobody on the sand. Glitter hides the water colour.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-beach-cam/2026-10-11/1307Z",
+   "cam": "deerfield-beach-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "09:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 6,
+    "people": 6,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "slightly_murky",
+    "pct": 58,
+    "confidence": "low"
+   },
+   "reason": "Choppy sea with a red flag. About 6 people on the pier, none on the sand. Wave foam looks green-grey.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-beach-cam/2026-10-11/2007Z",
+   "cam": "deerfield-beach-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "16:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 45,
+    "people": 50,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 65,
+    "confidence": "low"
+   },
+   "reason": "Late afternoon. About 25 blue umbrellas, roughly 50 people. Clean sand. Teal water with whitecaps.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-beach-cam/2026-10-11/2107Z",
+   "cam": "deerfield-beach-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "17:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 30,
+    "people": 28,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 70,
+    "confidence": "med"
+   },
+   "reason": "Evening sun. About 14 on the sand, 8 in the water, 5 on the pier. Deep blue water.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-beach-cam/2026-10-11/2207Z",
+   "cam": "deerfield-beach-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "18:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "med"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 35,
+    "people": 34,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 65,
+    "confidence": "low"
+   },
+   "reason": "Sunset glow. About 20 on the sand, 6 in the water, 8 on the pier. Deep blue water.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-beach-cam/2026-10-12/1007Z",
+   "cam": "deerfield-beach-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "06:07",
+   "unreadable": true,
+   "seaweed": {
+    "level": null,
+    "pct": null,
+    "confidence": null
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 2,
+    "people": 1,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "high"
+   },
+   "reason": "Night mode, black and white. Pier lights only.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-beach-cam/2026-10-12/1207Z",
+   "cam": "deerfield-beach-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "08:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 3,
+    "people": 3,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Sun low behind the pier, strong glitter. 2-3 people on the pier. Water colour hidden by glare.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-pier-cam/2026-10-11/1007Z",
+   "cam": "deerfield-pier-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "06:07",
+   "unreadable": true,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "high"
+   },
+   "reason": "Night. Wet pier under yellow floodlights. Nobody. The sea is black, so sand and water cannot be read.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-pier-cam/2026-10-11/1107Z",
+   "cam": "deerfield-pier-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "07:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 30,
+    "people": 25,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Sunrise fishing crowd. About 25 people along the rails. Dark choppy water under an orange sky.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-pier-cam/2026-10-11/1207Z",
+   "cam": "deerfield-pier-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "08:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 32,
+    "people": 28,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Morning, sun and lens flare. About 28 people fishing. Water full of glitter.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-pier-cam/2026-10-11/1407Z",
+   "cam": "deerfield-pier-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "10:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 25,
+    "people": 18,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "clear",
+    "pct": 70,
+    "confidence": "low"
+   },
+   "reason": "Morning. About 18 people on the pier. Teal-green water at the right edge, sun glitter.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-pier-cam/2026-10-12/1007Z",
+   "cam": "deerfield-pier-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "06:07",
+   "unreadable": true,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "high"
+   },
+   "reason": "Night. Pier under yellow floodlights. Nobody. The sea is black.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-pier-cam/2026-10-12/1207Z",
+   "cam": "deerfield-pier-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "08:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "moderate",
+    "pct": 28,
+    "people": 22,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Sunrise, sun at the top right. About 22 people fishing. Water full of glitter.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-11/1107Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "07:07",
+   "unreadable": false,
+   "uw": {
+    "level": "hazy",
+    "pct": 35,
+    "confidence": "low"
+   },
+   "reason": "UW: big fish very close, the rest blurred teal. No distant detail at all.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-11/1207Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "08:07",
+   "unreadable": false,
+   "uw": {
+    "level": "hazy",
+    "pct": 35,
+    "confidence": "low"
+   },
+   "reason": "UW: green, faint ghost shapes at a few metres, pole at right. Little distance detail.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-11/1307Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "09:07",
+   "unreadable": false,
+   "uw": {
+    "level": "slightly_hazy",
+    "pct": 50,
+    "confidence": "low"
+   },
+   "reason": "UW: near fish crisp, a few more soft but visible at a few metres.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-11/1407Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "10:07",
+   "unreadable": false,
+   "uw": {
+    "level": "slightly_hazy",
+    "pct": 48,
+    "confidence": "low"
+   },
+   "reason": "UW: several fish visible soft at mid distance, one clearer. Green tint.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-11/1507Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "11:07",
+   "unreadable": false,
+   "uw": {
+    "level": "hazy",
+    "pct": 30,
+    "confidence": "med"
+   },
+   "reason": "UW: dark teal, big fish close, nothing visible beyond a metre or two.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-11/1607Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "12:07",
+   "unreadable": false,
+   "uw": {
+    "level": "hazy",
+    "pct": 38,
+    "confidence": "low"
+   },
+   "reason": "UW: two fish close, faint shapes in the distance.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-11/1707Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "13:07",
+   "unreadable": false,
+   "uw": {
+    "level": "slightly_hazy",
+    "pct": 50,
+    "confidence": "low"
+   },
+   "reason": "UW: one fish crisp at a few metres, bright green, no detail further out.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-11/1807Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "14:07",
+   "unreadable": false,
+   "uw": {
+    "level": "hazy",
+    "pct": 35,
+    "confidence": "low"
+   },
+   "reason": "UW: bright green, a fish passes very close, nothing visible beyond that.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-11/2007Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "16:07",
+   "unreadable": false,
+   "uw": {
+    "level": "clear",
+    "pct": 72,
+    "confidence": "med"
+   },
+   "reason": "UW: a school of 30+ fish visible out to 5 m or more, fairly crisp. Best visibility of the set.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-11/2107Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "17:07",
+   "unreadable": false,
+   "uw": {
+    "level": "slightly_hazy",
+    "pct": 50,
+    "confidence": "low"
+   },
+   "reason": "UW: big fish close, others soft but visible at mid distance.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-11/2207Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "18:07",
+   "unreadable": false,
+   "uw": {
+    "level": "slightly_hazy",
+    "pct": 55,
+    "confidence": "med"
+   },
+   "reason": "UW: blue-teal, about 8 fish visible soft at 3-5 m.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-12/1007Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "06:07",
+   "unreadable": true,
+   "uw": {
+    "level": null,
+    "pct": null,
+    "confidence": "high"
+   },
+   "reason": "UW: black frame. Nothing visible.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-12/1107Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "07:07",
+   "unreadable": false,
+   "uw": {
+    "level": "hazy",
+    "pct": 35,
+    "confidence": "low"
+   },
+   "reason": "UW: flat blue, fish only faintly visible at 3-4 m, soft sand floor. Low light.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-12/1307Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "09:07",
+   "unreadable": false,
+   "uw": {
+    "level": "clear",
+    "pct": 80,
+    "confidence": "high"
+   },
+   "reason": "UW: turquoise, piling and coral crisp, sand floor visible far into the distance.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-12/1407Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "10:07",
+   "unreadable": false,
+   "uw": {
+    "level": "slightly_hazy",
+    "pct": 55,
+    "confidence": "med"
+   },
+   "reason": "UW: fish crisp near, the pier structure behind is soft but visible.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-12/1507Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "11:07",
+   "unreadable": false,
+   "uw": {
+    "level": "slightly_hazy",
+    "pct": 55,
+    "confidence": "med"
+   },
+   "reason": "UW: coral on the piling crisp, fish visible at 3-5 m, blue-green haze beyond.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-spinner-uw/2026-10-12/1607Z",
+   "cam": "deerfield-spinner-uw",
+   "family": "Spinner underwater",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "12:07",
+   "unreadable": false,
+   "uw": {
+    "level": "slightly_hazy",
+    "pct": 52,
+    "confidence": "med"
+   },
+   "reason": "UW: arch of the pier visible but soft in the distance, sand floor faint.",
+   "set": "ext"
+  },
+  {
+   "frameId": "deerfield-surf-cam/2026-10-11/1007Z",
+   "cam": "deerfield-surf-cam",
+   "family": "Deerfield YouTube courier",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "06:07",
+   "unreadable": true,
+   "seaweed": {
+    "level": null,
+    "pct": null,
+    "confidence": null
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "high"
+   },
+   "reason": "Night, black and white. Only the pier lights and their reflection. Sand and water cannot be read.",
+   "set": "ext"
+  },
+  {
+   "frameId": "ftl-elbo-beach-cam/2026-10-11/1007Z",
+   "cam": "ftl-elbo-beach-cam",
+   "family": "Elbo Room courier",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "06:07",
+   "unreadable": true,
+   "seaweed": {
+    "level": null,
+    "pct": null,
+    "confidence": null
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "low"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "high"
+   },
+   "reason": "Night. Street lights and ship lights only. Cannot read sand or water.",
+   "set": "ext"
+  },
+  {
+   "frameId": "ftl-elbo-beach-cam/2026-10-11/1207Z",
+   "cam": "ftl-elbo-beach-cam",
+   "family": "Elbo Room courier",
+   "stratum": "extension",
+   "localDate": "2026-10-11",
+   "localTimeET": "08:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "empty",
+    "pct": 0,
+    "people": 0,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Sun low behind clouds, foreground in silhouette. Nobody seen. Sea glitters, colour hidden. Sand too dark to judge for seaweed.",
+   "set": "ext"
+  },
+  {
+   "frameId": "ftl-elbo-beach-cam/2026-10-12/1207Z",
+   "cam": "ftl-elbo-beach-cam",
+   "family": "Elbo Room courier",
+   "stratum": "extension",
+   "localDate": "2026-10-12",
+   "localTimeET": "08:07",
+   "unreadable": false,
+   "seaweed": {
+    "level": "none",
+    "pct": 0,
+    "confidence": "low"
+   },
+   "crowd": {
+    "level": "quiet",
+    "pct": 3,
+    "people": 3,
+    "confidence": "med"
+   },
+   "water": {
+    "word": "unknown",
+    "pct": null,
+    "confidence": "low"
+   },
+   "reason": "Sun glare over the sea. About 3 people on the promenade and sand. Dark wet sand, no obvious seaweed. Water colour hidden.",
+   "set": "ext"
+  }
+ ]
+}

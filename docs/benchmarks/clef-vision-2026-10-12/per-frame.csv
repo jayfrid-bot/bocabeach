@@ -1,0 +1,94 @@
+frameId,set,family,unreadable_key,key_sw,key_cov,key_crowd,key_people,key_water,key_waterPct,key_uw,key_uwPct,clef_sw,clef_cov,clef_crowd,clef_crowdPct,clef_people,clef_water,clef_waterPct,clef_unreadableP,clef_uw,clef_uwPct,clef-flash_sw,clef-flash_cov,clef-flash_crowd,clef-flash_crowdPct,clef-flash_people,clef-flash_water,clef-flash_waterPct,clef-flash_unreadableP,clef-flash_uw,clef-flash_uwPct,prod_provider,prod_sw,prod_cov,prod_crowd,prod_people,prod_water,prod_waterPct
+boca-inlet-jetty/2026-10-11/1513Z,core,Boca inlet feed,0,low,3,quiet,9,clear,68,,,none,2,quiet,27,8,clear,76,0.05,,,none,0,quiet,26,7,clear,78,0.02,,,,,,,,,
+boca-inlet-jetty/2026-10-11/2025Z,core,Boca inlet feed,0,low,3,quiet,4,clear,72,,,none,2,quiet,19,2,clear,75,0.05,,,none,1,quiet,19,3,clear,77,0.04,,,,,,,,,
+boca-inlet-jetty/2026-10-11/2244Z,core,Boca inlet feed,0,low,3,moderate,14,unknown,,,,none,2,quiet,27,11,clear,70,0.15,,,low,1,quiet,30,9,clear,73,0.11,,,,,,,,,
+boca-inlet-jetty/2026-10-12/1325Z,core,Boca inlet feed,0,none,0,empty,0,clear,78,,,none,2,empty,11,1,clear,79,0.03,,,none,1,empty,6,1,clear,80,0.02,,,,,,,,,
+boca-inlet-north/2026-10-11/1803Z,core,Boca inlet feed,0,none,0,moderate,20,clear,68,,,none,1,quiet,29,16,clear,72,0.02,,,none,1,quiet,29,14,clear,75,0.02,,,,,,,,,
+boca-inlet-north/2026-10-11/2212Z,core,Boca inlet feed,0,none,0,quiet,8,clear,65,,,low,3,quiet,24,7,slightly_murky,68,0.22,,,none,1,quiet,25,7,clear,71,0.18,,,,,,,,,
+boca-inlet-north/2026-10-12/1130Z,core,Boca inlet feed,0,low,4,quiet,3,clear,68,,,none,2,quiet,21,2,clear,70,0.04,,,none,1,quiet,19,2,clear,75,0.08,,,,,,,,,
+boca-inlet-north/2026-10-12/1225Z,core,Boca inlet feed,0,low,3,empty,0,clear,70,,,none,2,empty,10,1,clear,74,0.03,,,low,2,empty,1,0,clear,79,0.02,,,,,,,,,
+boca-inlet-surf/2026-10-11/1416Z,core,Boca inlet feed,0,none,0,quiet,5,unknown,,,,none,2,quiet,24,3,clear,73,0.05,,,none,1,quiet,23,4,clear,76,0.02,,,groq,none,0,quiet,3,slightly_murky,65
+boca-inlet-surf/2026-10-11/2315Z,core,Boca inlet feed,0,low,5,empty,0,unknown,,,,low,3,empty,4,1,unknown,68,0.58,,,low,2,empty,2,1,clear,74,0.30,,,groq,low,5,quiet,6,slightly_murky,65
+boca-inlet-surf/2026-10-12/1042Z,core,Boca inlet feed,1,none,0,empty,0,unknown,,,,low,3,empty,5,1,unknown,64,0.77,,,none,1,empty,2,0,unknown,69,0.40,,,gemini,none,0,empty,0,clear,70
+boca-inlet-surf/2026-10-12/1617Z,core,Boca inlet feed,0,low,6,moderate,25,clear,75,,,low,5,quiet,31,21,clear,76,0.02,,,low,2,moderate,39,17,clear,80,0.01,,,gemini,moderate,25,moderate,35,clear,78
+boca-inlet/2026-10-11/1214Z,core,Boca inlet feed,0,none,0,empty,0,clear,60,,,none,2,empty,8,1,unknown,72,0.41,,,low,1,empty,4,1,clear,75,0.09,,,,,,,,,
+boca-inlet/2026-10-11/1501Z,core,Boca inlet feed,0,none,0,quiet,3,clear,68,,,none,2,quiet,17,2,clear,75,0.03,,,none,1,quiet,19,3,clear,76,0.02,,,,,,,,,
+boca-inlet/2026-10-11/2018Z,core,Boca inlet feed,0,none,0,quiet,3,clear,65,,,none,1,empty,12,1,clear,75,0.21,,,none,1,quiet,13,2,clear,76,0.03,,,,,,,,,
+boca-inlet/2026-10-12/1127Z,core,Boca inlet feed,0,none,0,empty,0,unknown,,,,low,3,empty,11,1,unknown,70,0.33,,,low,1,empty,5,1,clear,72,0.16,,,,,,,,,
+boca-south-surf/2026-10-11/1302Z,core,Boca feed,0,none,0,quiet,12,clear,72,,,none,2,quiet,27,9,clear,73,0.03,,,none,1,quiet,27,8,clear,76,0.02,,,groq,none,0,quiet,8,slightly_murky,65
+boca-south-surf/2026-10-11/2008Z,core,Boca feed,0,none,0,busy,60,clear,70,,,none,1,moderate,48,34,clear,74,0.03,,,none,0,moderate,54,35,clear,78,0.02,,,,,,,,,
+boca-south-surf/2026-10-12/1109Z,core,Boca feed,0,none,0,quiet,11,unknown,,,,none,1,quiet,26,8,unknown,67,0.20,,,none,1,quiet,24,8,unknown,73,0.17,,,gemini,none,0,quiet,15,clear,70
+boca-south-surf/2026-10-12/1505Z,core,Boca feed,0,none,0,moderate,45,clear,75,,,none,2,moderate,41,25,clear,75,0.02,,,none,1,moderate,50,24,clear,79,0.02,,,groq,none,0,moderate,35,clear,75
+boca-south-surf/2026-10-12/1612Z,core,Boca feed,0,none,0,moderate,40,clear,78,,,none,1,moderate,39,27,clear,75,0.04,,,none,1,moderate,51,26,clear,80,0.02,,,,,,,,,
+boca-south/2026-10-11/1002Z,core,Boca feed,1,none,0,empty,0,unknown,,,,none,3,empty,4,1,unknown,41,0.97,,,none,2,empty,2,0,unknown,42,0.95,,,gemini,none,0,moderate,45,clear,72
+boca-south/2026-10-11/1800Z,core,Boca feed,0,none,0,moderate,40,clear,70,,,none,2,moderate,37,28,clear,75,0.03,,,none,1,moderate,47,25,clear,79,0.01,,,groq,none,0,moderate,40,clear,80
+boca-south/2026-10-11/1907Z,core,Boca feed,0,none,0,moderate,30,clear,70,,,none,1,quiet,32,16,clear,73,0.03,,,none,1,moderate,46,19,clear,79,0.01,,,groq,none,0,moderate,45,clear,75
+boca-south/2026-10-12/1104Z,core,Boca feed,0,none,0,quiet,9,unknown,,,,none,2,quiet,24,6,unknown,68,0.11,,,none,1,quiet,24,7,clear,75,0.10,,,gemini,low,5,moderate,25,clear,72
+boca-south/2026-10-12/1304Z,core,Boca feed,0,none,0,quiet,4,clear,72,,,none,3,quiet,17,2,clear,73,0.03,,,none,0,quiet,22,4,clear,80,0.01,,,groq,none,0,quiet,2,clear,80
+deerfield-beach-cam/2026-10-11/1007Z,core,Deerfield YouTube courier,1,none,0,quiet,1,unknown,,,,none,3,empty,15,3,unknown,50,0.89,,,low,2,quiet,22,4,unknown,56,0.35,,,gemini,none,0,quiet,1,null,
+deerfield-beach-cam/2026-10-11/1107Z,core,Deerfield YouTube courier,0,none,0,empty,0,unknown,,,,none,2,empty,9,1,unknown,66,0.07,,,none,1,empty,4,1,clear,72,0.02,,,gemini,none,0,quiet,5,clear,75
+deerfield-beach-cam/2026-10-11/1807Z,core,Deerfield YouTube courier,0,none,0,busy,120,clear,65,,,none,2,moderate,53,59,clear,70,0.03,,,none,1,busy,66,88,clear,75,0.01,,,groq,none,0,moderate,60,slightly_murky,65
+deerfield-beach-cam/2026-10-12/1107Z,core,Deerfield YouTube courier,0,none,0,quiet,1,unknown,,,,none,2,quiet,18,2,clear,69,0.04,,,none,1,quiet,19,6,clear,78,0.02,,,gemini,none,0,quiet,15,clear,70
+deerfield-beach-cam/2026-10-12/1607Z,core,Deerfield YouTube courier,0,none,0,moderate,55,clear,65,,,none,1,moderate,48,41,clear,72,0.03,,,none,0,busy,61,64,clear,81,0.01,,,,,,,,,
+deerfield-pier-cam/2026-10-11/1907Z,core,Deerfield YouTube courier,0,none,0,moderate,16,clear,75,,,none,1,moderate,37,12,clear,77,0.04,,,low,1,moderate,43,12,clear,78,0.01,,,,,,,,,
+deerfield-pier-cam/2026-10-11/2207Z,core,Deerfield YouTube courier,0,none,0,moderate,17,clear,62,,,none,1,moderate,36,15,clear,70,0.05,,,low,1,moderate,48,13,clear,76,0.02,,,,,,,,,
+deerfield-pier-cam/2026-10-12/1107Z,core,Deerfield YouTube courier,0,none,0,moderate,22,unknown,,,,none,1,busy,58,32,unknown,67,0.18,,,low,1,busy,63,23,clear,75,0.04,,,gemini,none,0,busy,28,null,
+deerfield-pier-cam/2026-10-12/1307Z,core,Deerfield YouTube courier,0,none,0,moderate,18,unknown,,,,none,2,moderate,46,19,unknown,71,0.05,,,none,1,moderate,52,17,clear,77,0.01,,,groq,none,0,moderate,18,slightly_murky,65
+deerfield-spinner-uw/2026-10-11/1007Z,core,Spinner underwater,1,,,,,,,,,,,,,,,,0.95,murky,17,,,,,,,,0.92,murky,13,,,,,,,
+deerfield-spinner-uw/2026-10-11/1907Z,core,Spinner underwater,0,,,,,,,slightly_hazy,45,,,,,,,,0.02,slightly_hazy,57,,,,,,,,0.02,slightly_hazy,57,,,,,,,
+deerfield-spinner-uw/2026-10-11/2307Z,core,Spinner underwater,1,,,,,,,,,,,,,,,,0.05,murky,44,,,,,,,,0.23,slightly_hazy,51,,,,,,,
+deerfield-spinner-uw/2026-10-12/1207Z,core,Spinner underwater,0,,,,,,,hazy,40,,,,,,,,0.03,hazy,47,,,,,,,,0.07,slightly_hazy,49,,,,,,,
+deerfield-surf-cam/2026-10-11/1107Z,core,Deerfield YouTube courier,0,none,0,empty,0,unknown,,,,none,2,empty,7,1,unknown,68,0.10,,,none,1,empty,2,0,clear,71,0.05,,,gemini,none,0,empty,0,slightly_murky,55
+deerfield-surf-cam/2026-10-11/1307Z,core,Deerfield YouTube courier,0,none,0,quiet,3,clear,65,,,none,2,quiet,20,2,clear,72,0.02,,,none,1,quiet,16,2,clear,77,0.01,,,,,,,,,
+deerfield-surf-cam/2026-10-11/1407Z,core,Deerfield YouTube courier,0,none,0,quiet,8,clear,62,,,none,2,quiet,24,3,clear,71,0.03,,,none,1,quiet,24,4,clear,74,0.01,,,,,,,,,
+deerfield-surf-cam/2026-10-12/1207Z,core,Deerfield YouTube courier,1,,,,,,,,,none,4,empty,6,1,unknown,54,0.97,,,none,4,empty,2,0,unknown,46,0.96,,,gemini,none,0,empty,0,null,
+ftl-elbo-beach-cam/2026-10-11/1107Z,core,Elbo Room courier,1,none,0,empty,0,unknown,,,,none,3,empty,10,1,unknown,61,0.53,,,none,1,empty,6,1,unknown,71,0.24,,,gemini,none,0,empty,0,clear,75
+ftl-elbo-beach-cam/2026-10-11/1707Z,core,Elbo Room courier,0,none,0,quiet,12,clear,78,,,none,1,quiet,26,8,clear,78,0.02,,,none,1,quiet,25,7,clear,79,0.01,,,,,,,,,
+ftl-elbo-beach-cam/2026-10-12/1007Z,core,Elbo Room courier,1,,,empty,0,unknown,,,,none,3,empty,8,1,unknown,52,0.87,,,none,1,empty,5,1,unknown,59,0.60,,,gemini,none,0,empty,0,null,
+ftl-elbo-beach-cam/2026-10-12/1107Z,core,Elbo Room courier,1,none,0,empty,0,unknown,,,,none,2,empty,10,1,unknown,67,0.60,,,none,1,empty,6,1,unknown,74,0.15,,,gemini,none,0,quiet,1,clear,75
+ftl-elbo-beach-cam/2026-10-12/1607Z,core,Elbo Room courier,0,none,0,quiet,7,clear,80,,,none,1,quiet,21,3,clear,78,0.02,,,none,0,quiet,22,5,clear,80,0.01,,,,,,,,,
+boca-inlet-surf/2026-10-11/1618Z,ext,Boca inlet feed,0,low,6,quiet,12,clear,72,,,none,3,quiet,26,7,clear,73,0.03,,,low,2,quiet,29,11,clear,72,0.02,,,groq,low,5,quiet,8,slightly_murky,65
+boca-inlet-surf/2026-10-11/2001Z,ext,Boca inlet feed,0,low,5,quiet,6,clear,65,,,low,4,quiet,24,5,clear,72,0.04,,,low,1,quiet,23,6,clear,77,0.03,,,groq,none,0,quiet,5,slightly_murky,65
+boca-inlet-surf/2026-10-12/1110Z,ext,Boca inlet feed,0,low,4,quiet,4,unknown,,,,low,4,quiet,24,6,unknown,68,0.48,,,none,1,quiet,21,4,clear,71,0.21,,,gemini,none,0,empty,0,clear,70
+boca-inlet-surf/2026-10-12/1205Z,ext,Boca inlet feed,0,low,3,empty,1,clear,68,,,none,3,empty,5,1,clear,73,0.27,,,none,1,empty,2,0,clear,78,0.11,,,gemini,low,5,empty,0,clear,75
+boca-inlet-surf/2026-10-12/1300Z,ext,Boca inlet feed,0,low,3,quiet,1,clear,68,,,none,2,empty,9,1,clear,73,0.11,,,none,0,empty,4,1,clear,79,0.04,,,groq,none,0,empty,0,clear,80
+boca-south-surf/2026-10-11/1004Z,ext,Boca feed,1,,,empty,0,unknown,,,,none,3,empty,6,1,unknown,42,0.97,,,none,2,empty,2,0,unknown,38,0.94,,,gemini,none,0,moderate,35,clear,80
+boca-south-surf/2026-10-12/1048Z,ext,Boca feed,1,,,empty,0,unknown,,,,low,4,empty,5,1,unknown,48,0.94,,,none,1,empty,2,1,unknown,53,0.92,,,gemini,none,0,empty,0,null,
+boca-south-surf/2026-10-12/1212Z,ext,Boca feed,0,none,0,quiet,5,clear,68,,,none,2,quiet,25,7,clear,72,0.06,,,none,1,quiet,22,5,clear,79,0.05,,,gemini,none,0,quiet,7,clear,82
+boca-south-surf/2026-10-12/1308Z,ext,Boca feed,0,none,0,quiet,3,clear,70,,,none,2,quiet,21,3,clear,72,0.04,,,none,1,quiet,18,3,clear,78,0.02,,,groq,none,0,quiet,4,clear,75
+boca-south/2026-10-12/1043Z,ext,Boca feed,1,none,0,empty,0,unknown,,,,none,3,empty,5,1,unknown,55,0.88,,,none,1,empty,2,0,unknown,63,0.62,,,gemini,none,0,empty,0,null,
+boca-south/2026-10-12/1207Z,ext,Boca feed,0,none,0,quiet,4,clear,68,,,none,3,quiet,21,3,clear,73,0.04,,,none,1,quiet,18,3,clear,78,0.03,,,groq,none,0,quiet,3,clear,80
+deerfield-beach-cam/2026-10-11/1207Z,ext,Deerfield YouTube courier,0,none,0,quiet,7,unknown,,,,none,2,quiet,32,10,unknown,68,0.05,,,none,1,quiet,30,10,clear,72,0.02,,,groq,none,0,quiet,12,slightly_murky,65
+deerfield-beach-cam/2026-10-11/1307Z,ext,Deerfield YouTube courier,0,none,0,quiet,6,slightly_murky,58,,,none,2,quiet,21,2,slightly_murky,68,0.03,,,none,1,quiet,14,3,clear,74,0.01,,,gemini,none,0,quiet,5,clear,75
+deerfield-beach-cam/2026-10-11/2007Z,ext,Deerfield YouTube courier,0,none,0,moderate,50,clear,65,,,none,2,quiet,36,23,clear,72,0.02,,,none,0,busy,60,50,clear,78,0.01,,,gemini,low,5,busy,120,clear,78
+deerfield-beach-cam/2026-10-11/2107Z,ext,Deerfield YouTube courier,0,none,0,moderate,28,clear,70,,,none,1,quiet,30,16,clear,72,0.02,,,none,1,moderate,36,14,clear,78,0.01,,,groq,none,0,quiet,12,clear,85
+deerfield-beach-cam/2026-10-11/2207Z,ext,Deerfield YouTube courier,0,none,0,moderate,34,clear,65,,,none,2,quiet,34,23,clear,70,0.03,,,none,1,moderate,42,18,clear,73,0.01,,,groq,none,0,moderate,25,slightly_murky,65
+deerfield-beach-cam/2026-10-12/1007Z,ext,Deerfield YouTube courier,1,,,quiet,1,unknown,,,,none,3,empty,5,1,unknown,41,0.93,,,low,1,empty,8,1,unknown,53,0.45,,,gemini,none,0,quiet,2,null,
+deerfield-beach-cam/2026-10-12/1207Z,ext,Deerfield YouTube courier,0,none,0,quiet,3,unknown,,,,low,3,quiet,23,3,unknown,70,0.04,,,none,1,quiet,18,4,clear,78,0.02,,,groq,none,0,quiet,5,slightly_murky,65
+deerfield-pier-cam/2026-10-11/1007Z,ext,Deerfield YouTube courier,1,none,0,empty,0,unknown,,,,none,2,empty,5,1,unknown,46,0.90,,,none,1,empty,2,0,unknown,54,0.52,,,gemini,none,0,empty,0,null,
+deerfield-pier-cam/2026-10-11/1107Z,ext,Deerfield YouTube courier,0,none,0,moderate,25,unknown,,,,none,1,moderate,36,17,unknown,65,0.10,,,low,1,moderate,54,18,clear,74,0.04,,,gemini,none,0,moderate,15,slightly_murky,55
+deerfield-pier-cam/2026-10-11/1207Z,ext,Deerfield YouTube courier,0,none,0,moderate,28,unknown,,,,none,1,moderate,50,21,unknown,70,0.18,,,none,1,busy,56,20,clear,77,0.02,,,groq,none,0,moderate,25,slightly_murky,65
+deerfield-pier-cam/2026-10-11/1407Z,ext,Deerfield YouTube courier,0,none,0,moderate,18,clear,70,,,none,2,moderate,35,13,clear,72,0.05,,,none,1,moderate,48,14,clear,78,0.01,,,gemini,none,0,moderate,12,clear,70
+deerfield-pier-cam/2026-10-12/1007Z,ext,Deerfield YouTube courier,1,none,0,empty,0,unknown,,,,none,2,empty,5,1,unknown,48,0.91,,,none,1,empty,2,0,unknown,54,0.63,,,gemini,none,0,empty,0,null,
+deerfield-pier-cam/2026-10-12/1207Z,ext,Deerfield YouTube courier,0,none,0,moderate,22,unknown,,,,none,2,moderate,37,20,unknown,69,0.34,,,low,1,busy,55,21,clear,77,0.06,,,groq,none,0,moderate,25,slightly_murky,65
+deerfield-spinner-uw/2026-10-11/1107Z,ext,Spinner underwater,0,,,,,,,hazy,35,,,,,,,,0.02,slightly_hazy,54,,,,,,,,0.03,slightly_hazy,55,,,,,,,
+deerfield-spinner-uw/2026-10-11/1207Z,ext,Spinner underwater,0,,,,,,,hazy,35,,,,,,,,0.05,murky,39,,,,,,,,0.05,slightly_hazy,47,,,,,,,
+deerfield-spinner-uw/2026-10-11/1307Z,ext,Spinner underwater,0,,,,,,,slightly_hazy,50,,,,,,,,0.01,slightly_hazy,52,,,,,,,,0.02,slightly_hazy,53,,,,,,,
+deerfield-spinner-uw/2026-10-11/1407Z,ext,Spinner underwater,0,,,,,,,slightly_hazy,48,,,,,,,,0.01,slightly_hazy,50,,,,,,,,0.05,slightly_hazy,47,,,,,,,
+deerfield-spinner-uw/2026-10-11/1507Z,ext,Spinner underwater,0,,,,,,,hazy,30,,,,,,,,0.02,slightly_hazy,51,,,,,,,,0.03,slightly_hazy,48,,,,,,,
+deerfield-spinner-uw/2026-10-11/1607Z,ext,Spinner underwater,0,,,,,,,hazy,38,,,,,,,,0.01,slightly_hazy,55,,,,,,,,0.02,slightly_hazy,56,,,,,,,
+deerfield-spinner-uw/2026-10-11/1707Z,ext,Spinner underwater,0,,,,,,,slightly_hazy,50,,,,,,,,0.02,hazy,51,,,,,,,,0.02,slightly_hazy,54,,,,,,,
+deerfield-spinner-uw/2026-10-11/1807Z,ext,Spinner underwater,0,,,,,,,hazy,35,,,,,,,,0.02,hazy,48,,,,,,,,0.01,slightly_hazy,52,,,,,,,
+deerfield-spinner-uw/2026-10-11/2007Z,ext,Spinner underwater,0,,,,,,,clear,72,,,,,,,,0.01,slightly_hazy,58,,,,,,,,0.03,slightly_hazy,58,,,,,,,
+deerfield-spinner-uw/2026-10-11/2107Z,ext,Spinner underwater,0,,,,,,,slightly_hazy,50,,,,,,,,0.02,slightly_hazy,58,,,,,,,,0.02,slightly_hazy,57,,,,,,,
+deerfield-spinner-uw/2026-10-11/2207Z,ext,Spinner underwater,0,,,,,,,slightly_hazy,55,,,,,,,,0.02,slightly_hazy,55,,,,,,,,0.04,slightly_hazy,56,,,,,,,
+deerfield-spinner-uw/2026-10-12/1007Z,ext,Spinner underwater,1,,,,,,,,,,,,,,,,0.96,murky,19,,,,,,,,0.91,murky,16,,,,,,,
+deerfield-spinner-uw/2026-10-12/1107Z,ext,Spinner underwater,0,,,,,,,hazy,35,,,,,,,,0.02,murky,45,,,,,,,,0.07,slightly_hazy,47,,,,,,,
+deerfield-spinner-uw/2026-10-12/1307Z,ext,Spinner underwater,0,,,,,,,clear,80,,,,,,,,0.02,slightly_hazy,68,,,,,,,,0.01,slightly_hazy,65,,,,,,,
+deerfield-spinner-uw/2026-10-12/1407Z,ext,Spinner underwater,0,,,,,,,slightly_hazy,55,,,,,,,,0.02,slightly_hazy,57,,,,,,,,0.04,slightly_hazy,55,,,,,,,
+deerfield-spinner-uw/2026-10-12/1507Z,ext,Spinner underwater,0,,,,,,,slightly_hazy,55,,,,,,,,0.02,slightly_hazy,56,,,,,,,,0.05,slightly_hazy,58,,,,,,,
+deerfield-spinner-uw/2026-10-12/1607Z,ext,Spinner underwater,0,,,,,,,slightly_hazy,52,,,,,,,,0.02,slightly_hazy,51,,,,,,,,0.06,slightly_hazy,51,,,,,,,
+deerfield-surf-cam/2026-10-11/1007Z,ext,Deerfield YouTube courier,1,,,empty,0,unknown,,,,none,3,empty,4,1,unknown,40,0.91,,,low,3,empty,3,0,unknown,52,0.38,,,gemini,none,0,empty,0,null,
+ftl-elbo-beach-cam/2026-10-11/1007Z,ext,Elbo Room courier,1,,,empty,0,unknown,,,,none,3,empty,6,1,unknown,56,0.89,,,none,1,empty,4,1,unknown,62,0.56,,,gemini,none,0,empty,0,null,
+ftl-elbo-beach-cam/2026-10-11/1207Z,ext,Elbo Room courier,0,none,0,empty,0,unknown,,,,none,2,empty,13,1,unknown,65,0.49,,,none,1,quiet,14,2,clear,73,0.13,,,groq,none,0,empty,0,null,
+ftl-elbo-beach-cam/2026-10-12/1207Z,ext,Elbo Room courier,0,none,0,quiet,3,unknown,,,,low,5,quiet,19,2,unknown,70,0.26,,,none,1,quiet,18,3,clear,77,0.05,,,groq,none,0,quiet,3,slightly_murky,65
