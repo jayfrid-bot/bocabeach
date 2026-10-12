@@ -866,7 +866,7 @@ window has passed. `/api/admin/scans` reads the whole chain in two queries.
 | City of Fort Lauderdale Fire Rescue "Beach Conditions" page | Lifeguard flags, sea pests, ocean report (`workers/uw-frame`, Browser Rendering) |
 | Apple Push Notification service (APNs) | iOS push delivery |
 | Firebase Cloud Messaging (FCM) | Android push delivery |
-| PostHog (US cloud) | Product analytics for the website and both app shells (page paths, time on page, taps). Browser-side only via `components/PostHogInit.tsx`; anonymous, no identify, localStorage not cookies, no recordings. Off until `POSTHOG_KEY` in `lib/analytics/posthog.ts` is set |
+| PostHog (US cloud) | Product analytics for the website and both app shells (page paths, time on page, taps). Browser-side only via `components/PostHogInit.tsx`; anonymous, no identify, localStorage not cookies, no recordings. Key in `lib/analytics/posthog.ts`; project "Is It Beach Day" in its own free PostHog org (Endeared uses the "btc" org) |
 
 **Alert evaluation after the 2026-09 location audit (LOC-01, LOC-08, LOC-09).**
 `evaluateAtBeach` judges every snapshot hazard independently (severe warnings,

@@ -4,7 +4,7 @@ import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { analyticsEnabled } from "@/lib/analytics/posthog";
 
-const EFFECTIVE_DATE = "October 1, 2026";
+const EFFECTIVE_DATE = "October 12, 2026";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",

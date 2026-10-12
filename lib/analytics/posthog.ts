@@ -17,7 +17,7 @@
  */
 
 /** PostHog project API key ("phc_…"). Empty = analytics off. */
-export const POSTHOG_KEY = "";
+export const POSTHOG_KEY = "phc_CRw5GPZQW6YQkVz5aqEH7ULwjqbfkyeifvB8VoiW7FKd";
 
 /** PostHog US cloud ingestion host. */
 export const POSTHOG_HOST = "https://us.i.posthog.com";

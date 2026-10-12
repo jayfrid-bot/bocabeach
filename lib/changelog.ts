@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-12",
+    title: "Updated privacy page: anonymous usage stats",
+    details:
+      "We now count which pages people open, how long they stay, and which buttons they tap, so we can tell what's useful. It's anonymous: no name, no home beach, no settings, no screen recording. The privacy page has the details.",
+    tag: "improved",
+  },
+  {
+    date: "2026-10-12",
     title: "Sand temperature is more accurate in the fall",
     details:
       "Our own thermometer readings showed the sand estimate running 10–15°F hot in October. It now allows for the lower autumn sun, so fall readings match the thermometer much better.",
