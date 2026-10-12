@@ -23,7 +23,7 @@ import { resolveRipNow, ripCapFor, type RipNow } from "@/lib/ripRisk";
 import { isAlertInEffectAt } from "@/lib/ripRisk/resolve";
 import { isRipAlertEvent } from "@/lib/ripRisk/types";
 import { modelNowFromSeries, type RipNwpsBeachSeries } from "@/lib/sources/ripNwps";
-import { currentSandTempF, estimateSandTempF, hoursFromSolarNoon } from "@/lib/sandTemp";
+import { currentSandTempF, estimateSandTempF, hoursFromSolarNoon, noonSunElevationDeg } from "@/lib/sandTemp";
 import { seaState } from "@/lib/format";
 import { scoreBand, SCORE_BANDS } from "@/lib/scoreBands";
 
@@ -646,6 +646,7 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
             radarDryNow,
           },
           s.location.lon, // afternoon-decay term (hours from solar noon)
+          s.location.lat, // seasonal sun-angle term
         )
       : undefined,
     humidityPct,
@@ -821,7 +822,7 @@ function waveScore(ft: number, mode: WaveMode): number {
 // score at 70 (were 85); a coastal-flood advisory / Beach Hazards Statement
 // keeps its 85 cap under its own name. Red-flag days read "Decent", not
 // "Yes — good beach day".
-export const SCORING_ENGINE_VERSION = "2026-10-09.1";
+export const SCORING_ENGINE_VERSION = "2026-10-12.1";
 
 /** Comfort curve (see comfortScore): dew point up to this is a perfect 100… */
 export const COMFORT_FREE_DEW_F = 65;
@@ -1731,6 +1732,8 @@ function scoreAllHoursFull(
         cloudCoverPct: h.cloudCoverPct,
         // Per-hour afternoon decay (each forecast hour tapers by its own phase).
         hoursFromSolarNoon: hoursFromSolarNoon(s.location.lon, new Date(h.time)),
+        // Seasonal sun angle for that hour's date.
+        noonSunElevationDeg: noonSunElevationDeg(s.location.lat, new Date(h.time)),
       }),
     );
   });

@@ -5,8 +5,14 @@ import {
   currentSandTempF,
   estimateSandRangeF,
   estimateSandTempF,
+  currentSandInput,
   hoursFromSolarNoon,
+  noonSunElevationDeg,
   sandVerdict,
+  seasonalSunFactor,
+  SEASON_REF_NOON_ELEV_DEG,
+  SEASON_SUN_POWER,
+  solarDeclinationDeg,
 } from "@/lib/sandTemp";
 
 describe("estimateSandTempF", () => {
@@ -288,5 +294,103 @@ describe("afternoon decay (2026-07-16 field session)", () => {
       expect(noonWithFactor).toBe(noon); // factor 1.0 at h=-0.4
       expect(noon).toBeGreaterThan(130);
     });
+  });
+});
+
+describe("seasonal sun-angle term (2026-10-12)", () => {
+  const BOCA_LAT = 26.3587;
+  const BOCA_LON = -80.0686;
+
+  it("pins the shipped constants", () => {
+    expect(SEASON_REF_NOON_ELEV_DEG).toBe(87);
+    expect(SEASON_SUN_POWER).toBe(2);
+  });
+
+  it("June 21 noon at Boca stands at about 87 degrees and leaves the boost alone", () => {
+    const elev = noonSunElevationDeg(BOCA_LAT, new Date("2026-06-21T16:00:00Z"));
+    expect(elev).toBeGreaterThan(86.5);
+    expect(elev).toBeLessThan(87.5);
+    expect(seasonalSunFactor(elev)).toBeGreaterThan(0.99);
+  });
+
+  it("Oct 12 noon at Boca is about 55 degrees and the factor is about 0.68 (Oct 6, at 57 degrees, is 0.71)", () => {
+    const elev = noonSunElevationDeg(BOCA_LAT, new Date("2026-10-12T16:00:00Z"));
+    expect(elev).toBeGreaterThan(54);
+    expect(elev).toBeLessThan(56.5);
+    expect(Math.abs(seasonalSunFactor(elev) - 0.68)).toBeLessThanOrEqual(0.02);
+    // Early October is the ~0.70 the backtest quotes.
+    const oct6 = noonSunElevationDeg(BOCA_LAT, new Date("2026-10-06T16:00:00Z"));
+    expect(Math.abs(seasonalSunFactor(oct6) - 0.70)).toBeLessThanOrEqual(0.02);
+  });
+
+  it("never exceeds 1, even for a higher sun than the reference, and never drops below 0", () => {
+    for (const e of [87, 89, 90, 95, 60, 30, 5, 0, -10]) {
+      const f = seasonalSunFactor(e);
+      expect(f).toBeLessThanOrEqual(1);
+      expect(f).toBeGreaterThanOrEqual(0);
+    }
+    expect(seasonalSunFactor(90)).toBe(1);
+  });
+
+  it("declination is near +23.4 at the June solstice and near -23.4 at the December solstice", () => {
+    expect(solarDeclinationDeg(new Date("2026-06-21T12:00:00Z"))).toBeGreaterThan(23);
+    expect(solarDeclinationDeg(new Date("2026-12-21T12:00:00Z"))).toBeLessThan(-23);
+  });
+
+  it("a bare estimate without the field is unchanged", () => {
+    const base = { soilTempF: 80, solarWm2: 1000, windSpeedMph: 0 };
+    expect(estimateSandTempF(base)).toBe(135);
+    expect(estimateSandTempF({ ...base, noonSunElevationDeg: undefined })).toBe(135);
+    // A June-noon sun changes nothing either.
+    expect(estimateSandTempF({ ...base, noonSunElevationDeg: 87 })).toBe(135);
+  });
+
+  it("a lower noon sun cools the dunes and the surf end alike, without touching the soil basis", () => {
+    const base = { soilTempF: 80, solarWm2: 1000, windSpeedMph: 0 };
+    expect(estimateSandTempF({ ...base, noonSunElevationDeg: 55 })).toBeLessThan(135);
+    const june = estimateSandRangeF(base)!;
+    const oct = estimateSandRangeF({ ...base, noonSunElevationDeg: 55 })!;
+    expect(oct.dunesF).toBeLessThan(june.dunesF);
+    expect(oct.surfF).toBeLessThan(june.surfF);
+    // No sun, no boost, so the season has nothing to scale.
+    expect(estimateSandTempF({ soilTempF: 80, solarWm2: 0, noonSunElevationDeg: 55 })).toBe(80);
+  });
+
+  it("currentSandInput sets the field from the latitude, and omits it without one", () => {
+    const now = Date.parse("2026-10-12T18:50:00Z");
+    const hours = [{ time: "2026-10-12T18:00:00Z", soilTempF: 92, solarWm2: 739, windSpeedMph: 9 }];
+    const withLat = currentSandInput(hours, now, undefined, BOCA_LON, BOCA_LAT)!;
+    expect(withLat.noonSunElevationDeg).toBeCloseTo(noonSunElevationDeg(BOCA_LAT, new Date(now)), 6);
+    const noLat = currentSandInput(hours, now, undefined, BOCA_LON)!;
+    expect(noLat.noonSunElevationDeg).toBeUndefined();
+    // Card and score paths agree: both read the same input.
+    expect(currentSandTempF(hours, now, undefined, BOCA_LON, BOCA_LAT)).toBe(estimateSandTempF(withLat));
+    expect(currentSandRangeF(hours, now, undefined, BOCA_LON, BOCA_LAT)!.dunesF).toBe(
+      estimateSandTempF(withLat),
+    );
+  });
+
+  it("regression: 2026-10-12 14:50 (soil 92, 739 W/m2, 9 mph, +1.7 h) reads 117 dunes, was 129 (IR measured 113)", () => {
+    const now = Date.parse("2026-10-12T18:50:00Z"); // 14:50 EDT
+    const hours = [{ time: "2026-10-12T18:00:00Z", soilTempF: 92, solarWm2: 739, windSpeedMph: 9 }];
+    const hfn = hoursFromSolarNoon(BOCA_LON, new Date(now));
+    expect(hfn).toBeGreaterThan(1.5);
+    expect(hfn).toBeLessThan(1.9);
+    // Before the season term (no latitude passed): the old production number.
+    expect(currentSandTempF(hours, now, undefined, BOCA_LON)).toBe(129);
+    // With it: about 0.67 of the boost remains.
+    const dunes = currentSandTempF(hours, now, undefined, BOCA_LON, BOCA_LAT)!;
+    expect(dunes).toBe(117);
+    expect(dunes).toBeGreaterThan(113 - 6); // still inside a few degrees of the IR reading
+    const range = currentSandRangeF(hours, now, undefined, BOCA_LON, BOCA_LAT)!;
+    expect(range.surfF).toBeLessThan(range.dunesF);
+  });
+
+  it("June readings are unchanged by the season term (calibration days)", () => {
+    const now = Date.parse("2026-06-15T17:00:00Z"); // 1 PM EDT
+    const hours = [{ time: "2026-06-15T17:00:00Z", soilTempF: 108, solarWm2: 893, windSpeedMph: 11 }];
+    expect(currentSandTempF(hours, now, undefined, BOCA_LON, BOCA_LAT)).toBe(
+      currentSandTempF(hours, now, undefined, BOCA_LON),
+    );
   });
 });

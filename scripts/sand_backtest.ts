@@ -14,24 +14,24 @@
 // function from the live input pipeline (carry rules, GOES freshness).
 
 import { readFileSync } from "node:fs";
-import { hoursFromSolarNoon, afternoonBoostFactor } from "@/lib/sandTemp";
+import {
+  hoursFromSolarNoon,
+  afternoonBoostFactor,
+  solarDeclinationDeg,
+  noonSunElevationDeg,
+  SEASON_REF_NOON_ELEV_DEG,
+  SEASON_SUN_POWER,
+} from "@/lib/sandTemp";
 
 const DIR = "docs/benchmarks/sand-ir";
 const LON = -80.0686;
 const LAT = 26.3587;
 
-/** Solar declination (deg) for a UTC instant — Cooper's formula, ±0.5°, plenty
- *  for a seasonal term. */
-function declinationDeg(ms: number): number {
-  const d = new Date(ms);
-  const start = Date.UTC(d.getUTCFullYear(), 0, 0);
-  const doy = Math.floor((ms - start) / 86_400_000);
-  return 23.44 * Math.sin(((2 * Math.PI) / 365) * (284 + doy));
-}
+const declinationDeg = (ms: number) => solarDeclinationDeg(new Date(ms));
 const rad = (x: number) => (x * Math.PI) / 180;
 /** Sun elevation (deg) at solar noon for this date at the beach. */
 function noonElevationDeg(ms: number): number {
-  return 90 - Math.abs(LAT - declinationDeg(ms));
+  return noonSunElevationDeg(LAT, new Date(ms));
 }
 /** Sun elevation (deg) at this instant, from hours-from-solar-noon. */
 function elevationDeg(ms: number, hfn: number): number {
@@ -126,10 +126,16 @@ interface Knobs {
   /** Instantaneous sun-angle factor: boost *= min(1, sin(elev)/sin(ELEV_REF))^elevPower. 0 = off. */
   elevPower: number;
 }
-/** June noon at Boca (lat 26.4, dec +23.4) ≈ 87° — the season the model was tuned on. */
-const SEASON_REF_DEG = 87;
+/** June noon at Boca (lat 26.4, dec +23.4) ≈ 87° — the season the model was tuned on.
+ *  Shared with lib/sandTemp.ts so the bench and production cannot drift apart. */
+const SEASON_REF_DEG = SEASON_REF_NOON_ELEV_DEG;
 const ELEV_REF_DEG = 80;
-const LIVE: Knobs = { maxBoost: 55, sunPower: 0.5, windDiv: 60, windFloor: 0.6, soilSlope: 55, accumRef: 0, accumPower: 1, seasonPower: 0, elevPower: 0 };
+/** What production runs: since 2026-10-12 this includes the seasonal sun-angle
+ *  term (SEASON_SUN_POWER). The "season" candidates below set the power
+ *  absolutely; every OTHER candidate is relative to this shipped model. */
+const LIVE: Knobs = { maxBoost: 55, sunPower: 0.5, windDiv: 60, windFloor: 0.6, soilSlope: 55, accumRef: 0, accumPower: 1, seasonPower: SEASON_SUN_POWER, elevPower: 0 };
+/** The model before the seasonal term shipped (the 2026-10-12 sun-angle report's "live"). */
+const PRE_SEASON: Knobs = { ...LIVE, seasonPower: 0 };
 
 function boostF(inp: Inputs, k: Knobs, solar: number): number {
   const sunFrac = Math.min(1, Math.max(0, solar / 1000));
@@ -177,7 +183,7 @@ function evaluate(k: Knobs, useObserved = true) {
 
 const f1 = (n: number) => (n >= 0 ? "+" : "") + n.toFixed(1);
 
-console.log("## Every reading, live model, satellite-observed sunshine\n");
+console.log("## Every reading, live (shipped) model, satellite-observed sunshine\n");
 console.log("| date | time | spot | measured | soil | sun W/m² | accum Wh | wind | h from noon | noon sun ° | model | error |");
 console.log("|---|---|---|---|---|---|---|---|---|---|---|---|");
 const live = evaluate(LIVE);
@@ -186,7 +192,7 @@ rows.forEach(({ r, inp }, i) => {
     `| ${r.date} | ${r.local} | ${r.spot} | ${r.measured} | ${inp.soilF.toFixed(0)} | ${inp.solarObs} | ${inp.accumWh.toFixed(0)} | ${inp.windMph.toFixed(0)} | ${f1(inp.hfn)} | ${inp.noonElev.toFixed(0)} | ${(r.measured + live.errs[i]).toFixed(0)} | ${f1(live.errs[i])} |`,
   );
 });
-console.log(`\nLive model: MAE ${live.mae.toFixed(1)}  bias ${f1(live.bias)}  by month → ${live.monthBias}`);
+console.log(`\nLive model (with shipped season term): MAE ${live.mae.toFixed(1)}  bias ${f1(live.bias)}  by month → ${live.monthBias}`);
 const liveFc = evaluate(LIVE, false);
 console.log(`Live model fed FORECAST sunshine instead: MAE ${liveFc.mae.toFixed(1)}  bias ${f1(liveFc.bias)}  by month → ${liveFc.monthBias}\n`);
 
@@ -194,27 +200,28 @@ console.log("## Candidates (all readings, observed sunshine)\n");
 console.log("| candidate | MAE | bias | by month |");
 console.log("|---|---|---|---|");
 const candidates: [string, Knobs][] = [
-  ["live", LIVE],
-  ["accumulated sunshine, ref 3000 Wh", { ...LIVE, accumRef: 3000 }],
-  ["accumulated sunshine, ref 4000 Wh", { ...LIVE, accumRef: 4000 }],
-  ["accumulated sunshine, ref 5000 Wh", { ...LIVE, accumRef: 5000 }],
-  ["accumulated sunshine, ref 4000 Wh, sqrt", { ...LIVE, accumRef: 4000, accumPower: 0.5 }],
-  ["steeper sun response (power 0.75)", { ...LIVE, sunPower: 0.75 }],
-  ["linear sun response (power 1)", { ...LIVE, sunPower: 1 }],
-  ["weaker wind effect (÷90)", { ...LIVE, windDiv: 90 }],
-  ["stronger wind effect (÷40, floor 0.4)", { ...LIVE, windDiv: 40, windFloor: 0.4 }],
-  ["stronger wind effect (÷30, floor 0.3)", { ...LIVE, windDiv: 30, windFloor: 0.3 }],
-  ["stronger wind effect (÷25, floor 0.2)", { ...LIVE, windDiv: 25, windFloor: 0.2 }],
-  ["stronger wind effect (÷20, floor 0.2)", { ...LIVE, windDiv: 20, windFloor: 0.2 }],
-  ["max boost 50", { ...LIVE, maxBoost: 50 }],
+  ["live (shipped: season sun angle, power 2)", LIVE],
+  ["pre-ship (no season term)", PRE_SEASON],
+  ["accumulated sunshine, ref 3000 Wh +shipped season", { ...LIVE, accumRef: 3000 }],
+  ["accumulated sunshine, ref 4000 Wh +shipped season", { ...LIVE, accumRef: 4000 }],
+  ["accumulated sunshine, ref 5000 Wh +shipped season", { ...LIVE, accumRef: 5000 }],
+  ["accumulated sunshine, ref 4000 Wh, sqrt +shipped season", { ...LIVE, accumRef: 4000, accumPower: 0.5 }],
+  ["steeper sun response (power 0.75) +shipped season", { ...LIVE, sunPower: 0.75 }],
+  ["linear sun response (power 1) +shipped season", { ...LIVE, sunPower: 1 }],
+  ["weaker wind effect (÷90) +shipped season", { ...LIVE, windDiv: 90 }],
+  ["stronger wind effect (÷40, floor 0.4) +shipped season", { ...LIVE, windDiv: 40, windFloor: 0.4 }],
+  ["stronger wind effect (÷30, floor 0.3) +shipped season", { ...LIVE, windDiv: 30, windFloor: 0.3 }],
+  ["stronger wind effect (÷25, floor 0.2) +shipped season", { ...LIVE, windDiv: 25, windFloor: 0.2 }],
+  ["stronger wind effect (÷20, floor 0.2) +shipped season", { ...LIVE, windDiv: 20, windFloor: 0.2 }],
+  ["max boost 50 +shipped season", { ...LIVE, maxBoost: 50 }],
   ["season sun angle (noon elev), power 1", { ...LIVE, seasonPower: 1 }],
   ["season sun angle, power 2", { ...LIVE, seasonPower: 2 }],
   ["season sun angle, power 3", { ...LIVE, seasonPower: 3 }],
   ["season sun angle, power 4", { ...LIVE, seasonPower: 4 }],
   ["season sun angle, power 6", { ...LIVE, seasonPower: 6 }],
-  ["instant sun angle, power 1", { ...LIVE, elevPower: 1 }],
-  ["instant sun angle, power 2", { ...LIVE, elevPower: 2 }],
-  ["instant sun angle, power 3", { ...LIVE, elevPower: 3 }],
+  ["instant sun angle, power 1 (no season term)", { ...PRE_SEASON, elevPower: 1 }],
+  ["instant sun angle, power 2 (no season term)", { ...PRE_SEASON, elevPower: 2 }],
+  ["instant sun angle, power 3 (no season term)", { ...PRE_SEASON, elevPower: 3 }],
 ];
 for (const [name, k] of candidates) {
   const e = evaluate(k);

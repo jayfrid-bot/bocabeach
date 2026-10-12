@@ -36,7 +36,7 @@ export const EXTRA_SCHEMA_VERSION = 1 as const;
  */
 export const MODEL_VERSIONS = {
   surf: "2026-10-08.1", // buoy → NWPS nearshore (no amplification) → Open-Meteo (Komar-Gaughan, MAX_AMPLIFICATION 2.5)
-  sand: "2026-09-08.1", // lib/sandTemp.ts (carry-forward darkening calibration)
+  sand: "2026-10-12.1", // lib/sandTemp.ts (seasonal sun-angle term: boost x (sin noon elev / sin 87deg)^2; was 2026-09-08.1 carry-forward darkening)
   rip: "2026-09-24.1", // lib/ripRisk/resolve.ts (temporal resolve)
   storm: "2026-09-04.1", // lib/stormActivity.ts (radar-preferred rain term)
   feels: "2026-10-06.1", // lib/feelsLikeBeach.ts (first-guess calibration)
@@ -102,6 +102,7 @@ export function buildExtra(res: ConditionsResponse, d: Derived, anchorMs: number
         radarDryNow: d.radarDryNow,
       },
       snap.location.lon,
+      snap.location.lat,
     );
     if (!input) return undefined;
     const range = estimateSandRangeF(input);

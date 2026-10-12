@@ -12,3 +12,5 @@ Add a row for every new field reading, with the spot. Retune the model only when
 ## Bench
 
 `scripts/sand_backtest.ts` re-scores every reading with the live model and a set of candidate changes (`npx vite-node -c vitest.config.ts scripts/sand_backtest.ts`). `hourly-forecast.json` and `satellite.json` are the Open-Meteo archives it reads (Boca, 2026-06-01 to 2026-10-12; refetch and extend the end date when new readings are added). Results and verdicts are dated files in this folder, newest: `backtest-2026-10-12-sun-angle.md`.
+
+Shipped 2026-10-12 (model version `2026-10-12.1`): the seasonal sun-angle term, `boost × min(1, sin(noon elevation) / sin 87°)²`. The bench's "live" row now includes it, so the older backtest file's "live" numbers are the pre-ship model ("no season term" in the bench).

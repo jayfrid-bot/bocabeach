@@ -1093,6 +1093,7 @@ export function ConditionsDashboard({
                 sunsetIso={snap.sun.data?.sunset}
                 tz={tz}
                 lon={snap.location.lon}
+                lat={snap.location.lat}
                 nowCloudCoverPct={nowCloudPct}
               />
             }

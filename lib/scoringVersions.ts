@@ -52,6 +52,11 @@ export const SCORING_VERSIONS: readonly ScoringVersion[] = [
     since: "2026-10-09",
     note: "Strong wind costs more: the standard band is 5–12 mph, and 16 mph or more scores zero for wind.",
   },
+  {
+    version: "2026-10-12.1",
+    since: "2026-10-12",
+    note: "Sand temperature now accounts for the lower autumn and winter sun, so fall sand reads cooler.",
+  },
 ];
 
 /** Position of `version` in SCORING_VERSIONS, or -1 when it is not listed. */

@@ -5,6 +5,7 @@ import type { HourlyMetrics } from "@/lib/types";
 import {
   estimateSandRangeF,
   hoursFromSolarNoon,
+  noonSunElevationDeg,
   sandVerdict,
   SAND_SCALE_MIN_F,
   SAND_SCALE_MAX_F,
@@ -32,6 +33,7 @@ export function SandTempPanel({
   sunsetIso,
   tz,
   lon,
+  lat,
   nowCloudCoverPct,
 }: {
   hours: HourlyMetrics[];
@@ -40,6 +42,8 @@ export function SandTempPanel({
   tz: string;
   /** Beach longitude — drives the per-hour afternoon-decay term (solar noon). */
   lon?: number;
+  /** Beach latitude — drives the seasonal sun-angle term (lower sun in fall/winter). */
+  lat?: number;
   /** Consensus cloud cover for the CURRENT hour (the Sky card's number) — applied
    *  to the bucket containing now so the curve's now-point matches the card. */
   nowCloudCoverPct?: number;
@@ -70,6 +74,7 @@ export function SandTempPanel({
         recentRainIn: rainBefore(i),
         cloudCoverPct: isNowBucket ? (nowCloudCoverPct ?? h.cloudCoverPct) : h.cloudCoverPct,
         hoursFromSolarNoon: lon != null ? hoursFromSolarNoon(lon, new Date(h.time)) : undefined,
+        noonSunElevationDeg: lat != null ? noonSunElevationDeg(lat, new Date(h.time)) : undefined,
       });
       return {
         t: new Date(h.time).getTime(),

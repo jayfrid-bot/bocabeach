@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-12",
+    title: "Sand temperature is more accurate in the fall",
+    details:
+      "Our own thermometer readings showed the sand estimate running 10–15°F hot in October. It now allows for the lower autumn sun, so fall readings match the thermometer much better.",
+    tag: "improved",
+  },
+  {
     date: "2026-10-11",
     title: "A Plus button at the top of the app",
     details: "If you don't have Beach Day Plus yet, a Plus button now sits next to Share and Alerts. One tap shows the plans.",

@@ -287,6 +287,44 @@ const AFTERNOON_FLOOR = 0.03;
 const DEG = Math.PI / 180;
 
 /**
+ * Seasonal sun-angle term (2026-10-12). The boost was tuned on June readings,
+ * when the noon sun at Boca stands at ~87 degrees. In autumn and winter the same
+ * W/m² arrives through a lower sun, and the owner's IR readings showed the
+ * model running 10-15°F hot in October. The boost is scaled by
+ * min(1, sin(noon elevation) / sin(87°)) ^ SEASON_SUN_POWER.
+ * Evidence: docs/benchmarks/sand-ir/backtest-2026-10-12-sun-angle.md. Over all
+ * 20 readings: October bias +8.7 -> -0.5°F, June unchanged by construction,
+ * overall MAE 7.6 -> 6.4. It does NOT explain the day-to-day spread at the same
+ * sun angle (10/06 read cold, 10/09 and 10/12 read hot); that is something else.
+ */
+export const SEASON_REF_NOON_ELEV_DEG = 87;
+export const SEASON_SUN_POWER = 2;
+
+/** Solar declination (degrees) for a date — Cooper's formula, +/-0.5°, plenty
+ *  for a seasonal term. Same formula as scripts/sand_backtest.ts. */
+export function solarDeclinationDeg(date: Date): number {
+  const ms = date.getTime();
+  const start = Date.UTC(date.getUTCFullYear(), 0, 0);
+  const doy = Math.floor((ms - start) / 86_400_000);
+  return 23.44 * Math.sin(((2 * Math.PI) / 365) * (284 + doy));
+}
+
+/** Sun elevation (degrees) at solar noon on this date at this latitude. */
+export function noonSunElevationDeg(latDeg: number, date: Date): number {
+  return 90 - Math.abs(latDeg - solarDeclinationDeg(date));
+}
+
+/**
+ * The seasonal multiplier on the dry-sand boost: 1 at or above the June-noon
+ * reference elevation, falling with the sine of a lower noon sun. Never above 1,
+ * never below 0.
+ */
+export function seasonalSunFactor(noonElevDeg: number): number {
+  const ratio = Math.sin(noonElevDeg * DEG) / Math.sin(SEASON_REF_NOON_ELEV_DEG * DEG);
+  return Math.pow(Math.min(1, Math.max(0, ratio)), SEASON_SUN_POWER);
+}
+
+/**
  * Hours after LOCAL SOLAR NOON for an instant (negative = morning), from the
  * sun's hour angle via NOAA's low-precision solar-position algorithm. No
  * timezone needed — works at any longitude/date (latitude doesn't affect the
@@ -343,6 +381,13 @@ export interface SandTempInput {
    * skip the decay (full boost) — kept optional so bare unit tests still work.
    */
   hoursFromSolarNoon?: number;
+  /**
+   * Sun elevation at solar noon on this date at the beach (degrees). When set,
+   * the boost scales down for a lower seasonal sun (see seasonalSunFactor).
+   * Omit for no seasonal term (factor 1) — kept optional so bare unit tests
+   * and callers without a latitude behave as before.
+   */
+  noonSunElevationDeg?: number;
 }
 
 /** The sun/wind/rain boost (°F) dry sand carries above the modeled ground. */
@@ -357,6 +402,12 @@ function sandBoostF(input: SandTempInput): number | undefined {
   // (soil 91°F, 380 W/m², 2 mph → 124°F dunes measured; linear scaling predicted
   // only ~111°F), while still landing the high-sun afternoons (6/11, 6/15).
   let boost = Math.sqrt(sunFrac) * MAX_SUN_BOOST_F;
+
+  // Seasonal sun angle: the same W/m² heats the sand less under a lower
+  // autumn/winter sun (see SEASON_SUN_POWER). Unset -> no change.
+  if (input.noonSunElevationDeg != null) {
+    boost *= seasonalSunFactor(input.noonSunElevationDeg);
+  }
 
   // A breeze takes some edge off the surface, but radiative heating dominates:
   // the 140°F dune reading was taken in an 11 mph sea breeze.
@@ -493,11 +544,17 @@ function clearSkyRatio(hoursFromNoonThen: number, hoursFromNoonNow: number): num
   return Math.max(0.5, Math.min(1.1, c(hoursFromNoonNow) / then));
 }
 
+/**
+ * `lon` drives the afternoon decay; `lat` drives the seasonal sun-angle term.
+ * Every real beach path must pass both. A caller with no latitude gets no
+ * seasonal term (factor 1).
+ */
 export function currentSandInput(
   hours: SandHour[],
   nowMs: number = Date.now(),
   override?: SandNowOverride,
   lon?: number,
+  lat?: number,
 ): SandTempInput | undefined {
   if (!hours.length) return undefined;
   // Prefer the bucket that actually contains now under half-open [start, start+1h)
@@ -583,6 +640,8 @@ export function currentSandInput(
         ? override?.cloudIsBeamPath
         : undefined,
     hoursFromSolarNoon: hfn,
+    // Seasonal sun angle needs the latitude; without one the factor stays 1.
+    noonSunElevationDeg: lat != null ? noonSunElevationDeg(lat, new Date(nowMs)) : undefined,
     solarCarried: carry || undefined,
   };
 }
@@ -593,8 +652,9 @@ export function currentSandTempF(
   nowMs: number = Date.now(),
   override?: SandNowOverride,
   lon?: number,
+  lat?: number,
 ): number | undefined {
-  const input = currentSandInput(hours, nowMs, override, lon);
+  const input = currentSandInput(hours, nowMs, override, lon, lat);
   return input ? estimateSandTempF(input) : undefined;
 }
 
@@ -607,7 +667,8 @@ export function currentSandRangeF(
   nowMs: number = Date.now(),
   override?: SandNowOverride,
   lon?: number,
+  lat?: number,
 ): { surfF: number; dunesF: number } | undefined {
-  const input = currentSandInput(hours, nowMs, override, lon);
+  const input = currentSandInput(hours, nowMs, override, lon, lat);
   return input ? estimateSandRangeF(input) : undefined;
 }

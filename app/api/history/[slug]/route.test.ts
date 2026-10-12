@@ -267,7 +267,7 @@ describe("POST /api/history/[slug]", () => {
 
     describe("scoring-formula versions", () => {
       const CURRENT = SCORING_ENGINE_VERSION;
-      const OLD = "2026-10-06.1";
+      const OLD = "2026-10-09.1"; // the version just before LATEST_SCORING_VERSION
 
       it("returns the versions block with the current version and no boundary on one formula", async () => {
         const store = await getStore();
