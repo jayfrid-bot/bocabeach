@@ -6,12 +6,15 @@ the repo root:
 No network, no ffmpeg, no vision providers: every outside call is patched.
 """
 
+import base64
 import contextlib
 import datetime as dt
 import io
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -576,7 +579,8 @@ class ArchivePassTests(ArchivePassBase):
 
     def test_it_needs_no_vision_provider(self):
         # No provider is configured and assess() blows up if anything reaches it.
-        with mock.patch.object(cs, "API_KEY", ""), \
+        # (clef is configured by INGEST_TOKEN alone, so drop that too.)
+        with env(INGEST_TOKEN=None), mock.patch.object(cs, "API_KEY", ""), \
                 mock.patch.dict(cs.OPENAI_PROVIDERS["groq"], {"key": ""}), \
                 mock.patch.dict(cs.OPENAI_PROVIDERS["openrouter"], {"key": ""}), \
                 mock.patch.dict(cs.OPENAI_PROVIDERS["github"], {"key": ""}), \
@@ -1460,8 +1464,293 @@ class VisionCallLogTests(unittest.TestCase):
         self.assertNotIn("vision calls this tick", out.getvalue())
 
     def test_the_default_provider_order_excludes_github_models(self):
-        # The workflow comment about quota depends on this: gemini (2 models), groq, openrouter.
-        self.assertEqual(cs.PROVIDER_ORDER, ["gemini", "groq", "openrouter"])
+        # The workflow comment about quota depends on this: gemini (2 models), clef, groq, openrouter.
+        self.assertEqual(cs.PROVIDER_ORDER, ["gemini", "clef", "groq", "openrouter"])
+
+
+CLEF_REPLY = {
+    "ok": True, "kind": "surface", "level": "low", "coveragePct": 4, "note": "",
+    "crowd": "quiet", "crowdPct": 22, "people": 9, "crowdNote": "",
+    "water": "clear", "waterPct": 71, "waterNote": "",
+    "unreadable": False, "unreadableP": 0.03,
+    "provider": "clef", "model": "@cf/cloudflare/clef", "usage": {"inputTokens": 1795}, "latencyMs": 640,
+}
+CLEF_UW_REPLY = {
+    "ok": True, "kind": "underwater", "level": "slightly_hazy", "pct": 62, "note": "",
+    "unreadable": False, "unreadableP": 0.1,
+    "provider": "clef", "model": "@cf/cloudflare/clef", "usage": {"inputTokens": 867}, "latencyMs": 400,
+}
+
+
+def http_error(code, body=b'{"ok":false,"error":"x"}'):
+    return urllib.error.HTTPError("https://app.isitbeachday.com/api/vision/clef", code, "err", {}, io.BytesIO(body))
+
+
+class ClefProviderTests(unittest.TestCase):
+    """Clef 27B as a fallback reader: Gemini (flash, flash-lite) -> clef -> Groq -> OpenRouter."""
+
+    def setUp(self):
+        with cs._VISION_CALLS_LOCK:
+            cs._VISION_CALLS.clear()
+        self.addCleanup(lambda: cs._VISION_CALLS.clear())
+        self.sent = []  # (url, headers, body dict, timeout) of every Clef POST
+
+    def urlopen(self, outcome):
+        """A urlopen stand-in. `outcome` is a payload dict/bytes, an exception, or a list of those."""
+        queue = list(outcome) if isinstance(outcome, list) else None
+
+        def fake(req, timeout=None):
+            self.sent.append((req.full_url, dict(req.header_items()), json.loads(req.data), timeout))
+            o = queue.pop(0) if queue is not None else outcome
+            if isinstance(o, BaseException):
+                raise o
+            return FakeResponse(o)
+
+        return mock.patch.object(cs.urllib.request, "urlopen", fake)
+
+    def small(self):
+        return mock.patch.object(cs, "shrink_for_clef", lambda img: b"\xff\xd8\xff-small-jpeg")
+
+    # -- order and configuration ------------------------------------------------
+
+    def test_default_order_puts_clef_right_behind_both_gemini_models(self):
+        self.assertEqual(cs.PROVIDER_ORDER, ["gemini", "clef", "groq", "openrouter"])
+        with env(INGEST_TOKEN="tok"), mock.patch.object(cs, "API_KEY", "k"), \
+                mock.patch.object(cs, "GEMINI_MODELS", ["g-flash", "g-lite"]), \
+                mock.patch.dict(cs.OPENAI_PROVIDERS["groq"], {"key": "k", "model": "q-1"}), \
+                mock.patch.dict(cs.OPENAI_PROVIDERS["openrouter"], {"key": "k", "model": "o-1"}):
+            self.assertEqual(cs._enabled_providers(), [
+                ("gemini", "g-flash"), ("gemini", "g-lite"),
+                ("clef", "@cf/cloudflare/clef"), ("groq", "q-1"), ("openrouter", "o-1"),
+            ])
+
+    def test_clef_is_configured_only_when_ingest_token_is_set(self):
+        with env(INGEST_TOKEN=None):
+            self.assertFalse(cs._provider_configured("clef"))
+            with mock.patch.object(cs, "API_KEY", "k"), mock.patch.object(cs, "GEMINI_MODELS", ["g"]):
+                self.assertNotIn("clef", [n for n, _ in cs._enabled_providers()])
+        with env(INGEST_TOKEN="   "):
+            self.assertFalse(cs._provider_configured("clef"))
+        with env(INGEST_TOKEN="tok"):
+            self.assertTrue(cs._provider_configured("clef"))
+            with mock.patch.object(cs, "API_KEY", ""), \
+                    mock.patch.dict(cs.OPENAI_PROVIDERS["groq"], {"key": ""}), \
+                    mock.patch.dict(cs.OPENAI_PROVIDERS["openrouter"], {"key": ""}):
+                self.assertEqual(cs._enabled_providers(), [("clef", "@cf/cloudflare/clef")])
+
+    def test_assess_with_clef_refuses_without_a_token(self):
+        with env(INGEST_TOKEN=None):
+            with self.assertRaises(RuntimeError):
+                cs.assess_with("clef", b"x")
+
+    # -- the request ---------------------------------------------------------------
+
+    def test_the_request_is_a_bearer_post_of_kind_and_base64_image(self):
+        with env(INGEST_TOKEN="tok-123", CLEF_URL=None), self.small(), self.urlopen(CLEF_REPLY):
+            r = cs.assess_with("clef", b"x")
+        url, headers, body, timeout = self.sent[0]
+        self.assertEqual(url, "https://app.isitbeachday.com/api/vision/clef")
+        self.assertEqual(headers["Authorization"], "Bearer tok-123")
+        self.assertEqual(headers["Content-type"], "application/json")
+        self.assertEqual(timeout, 30)
+        self.assertEqual(set(body), {"kind", "image"})
+        self.assertEqual(body["kind"], "surface")
+        self.assertEqual(base64.b64decode(body["image"]), b"\xff\xd8\xff-small-jpeg")
+        self.assertEqual(r["provider"], "clef")
+        self.assertEqual(r["model"], "@cf/cloudflare/clef")
+
+    def test_the_url_can_be_overridden(self):
+        with env(INGEST_TOKEN="t"), mock.patch.object(cs, "CLEF_URL", "http://localhost:8787/api/vision/clef"), \
+                self.small(), self.urlopen(CLEF_REPLY):
+            cs.assess_with("clef", b"x")
+        self.assertEqual(self.sent[0][0], "http://localhost:8787/api/vision/clef")
+
+    def test_a_surface_read_has_exactly_the_shape_other_providers_return(self):
+        with env(INGEST_TOKEN="t"), self.small(), self.urlopen(CLEF_REPLY):
+            r = cs.assess_with("clef", b"x")
+        other = cs._parse_out({"seaweed": "low", "seaweed_pct": 4, "crowd": "quiet", "crowd_pct": 22,
+                               "people": 9, "water": "clear", "water_pct": 71})
+        self.assertEqual(set(r), set(other) | {"provider", "model"})
+        self.assertEqual(r, {**other, "provider": "clef", "model": "@cf/cloudflare/clef"})
+
+    def test_the_underwater_read_sends_kind_underwater_and_parses_like_the_others(self):
+        with env(INGEST_TOKEN="t"), self.small(), self.urlopen(CLEF_UW_REPLY):
+            r = cs.assess_uw(b"x")
+        self.assertEqual(self.sent[0][2]["kind"], "underwater")
+        self.assertEqual(r, {"level": "slightly_hazy", "pct": 62, "note": "", "provider": "clef", "model": "@cf/cloudflare/clef"})
+
+    def test_kind_follows_the_parser_when_not_given(self):
+        with env(INGEST_TOKEN="t"), self.small(), self.urlopen(CLEF_UW_REPLY):
+            cs.assess_with("clef", b"x", cs.UW_PROMPT, cs._parse_uw)
+        self.assertEqual(self.sent[0][2]["kind"], "underwater")
+
+    def test_a_frame_clef_calls_unreadable_gets_no_water_grade_or_visibility(self):
+        dark = {**CLEF_REPLY, "unreadable": True, "unreadableP": 0.97, "water": "clear", "waterPct": 70}
+        with env(INGEST_TOKEN="t"), self.small(), self.urlopen(dark):
+            r = cs.assess_with("clef", b"x")
+        self.assertIsNone(r["water"])
+        self.assertIsNone(r["waterPct"])
+        self.assertEqual(r["level"], "low")
+        dark_uw = {**CLEF_UW_REPLY, "unreadable": True, "unreadableP": 0.95}
+        with env(INGEST_TOKEN="t"), self.small(), self.urlopen(dark_uw):
+            r = cs.assess_with("clef", b"x", cs.UW_PROMPT, cs._parse_uw)
+        self.assertEqual(r["level"], "slightly_hazy")
+        self.assertIsNone(r["pct"])
+
+    def test_water_unknown_from_clef_stays_none(self):
+        with env(INGEST_TOKEN="t"), self.small(), self.urlopen({**CLEF_REPLY, "water": None}):
+            r = cs.assess_with("clef", b"x")
+        self.assertIsNone(r["water"])
+        self.assertEqual(r["waterPct"], 71)
+
+    # -- failures fall through -----------------------------------------------------
+
+    def chain(self, clef_outcome, groq=None):
+        """gemini fails, then clef answers `clef_outcome`, then groq answers."""
+        groq_calls = []
+
+        def groq_out(cfg, img, prompt):
+            groq_calls.append(1)
+            if groq is not None:
+                raise groq
+            return {"seaweed": "none", "crowd": "empty", "water": "clear"}
+
+        def gem(img, prompt, model):
+            raise RuntimeError("429 quota")
+
+        with env(INGEST_TOKEN="t"), mock.patch.object(cs, "API_KEY", "k"), \
+                mock.patch.object(cs, "GEMINI_MODELS", ["g-1", "g-2"]), \
+                mock.patch.object(cs, "PROVIDER_ORDER", ["gemini", "clef", "groq", "openrouter"]), \
+                mock.patch.dict(cs.OPENAI_PROVIDERS["groq"], {"key": "k", "model": "q-1"}), \
+                mock.patch.dict(cs.OPENAI_PROVIDERS["openrouter"], {"key": ""}), \
+                mock.patch.object(cs, "_gemini_out", gem), mock.patch.object(cs, "_openai_out", groq_out), \
+                self.small(), self.urlopen(clef_outcome):
+            return cs.assess(b"x"), groq_calls
+
+    def test_clef_answers_when_gemini_is_out_and_groq_is_never_called(self):
+        r, groq_calls = self.chain(CLEF_REPLY)
+        self.assertEqual((r["provider"], r["model"]), ("clef", "@cf/cloudflare/clef"))
+        self.assertEqual(groq_calls, [])
+        self.assertEqual(len(self.sent), 1)
+
+    def test_every_route_failure_falls_through_to_groq_without_retrying(self):
+        for outcome in (
+            http_error(401, b'{"ok":false,"error":"unauthorized"}'),
+            http_error(429, b'{"ok":false,"error":"daily-cap","reason":"daily-cap"}'),
+            http_error(502, b'{"ok":false,"error":"model-error"}'),
+            http_error(503, b'{"ok":false,"error":"workers ai unavailable"}'),
+            urllib.error.URLError("connection refused"),
+            TimeoutError("timed out"),
+            b"<html>gateway</html>",
+            {"ok": False, "error": "weird"},
+            {**CLEF_REPLY, "level": "extreme"},
+        ):
+            with self.subTest(outcome=repr(outcome)[:60]):
+                self.sent.clear()
+                with cs._VISION_CALLS_LOCK:
+                    cs._VISION_CALLS.clear()
+                r, groq_calls = self.chain(outcome)
+                self.assertEqual(r["provider"], "groq")
+                self.assertEqual(groq_calls, [1])
+                self.assertEqual(len(self.sent), 1, "one attempt: no retry, no backoff")
+                self.assertIn("clef/@cf/cloudflare/clef ok=0 failed=1", cs.vision_call_summary())
+
+    def test_when_clef_and_everything_else_fail_the_error_names_clef(self):
+        with self.assertRaises(RuntimeError) as cm:
+            self.chain(http_error(429, b'{"reason":"daily-cap"}'), groq=RuntimeError("down"))
+        self.assertIn("clef/@cf/cloudflare/clef: HTTP 429", str(cm.exception))
+
+    def test_the_tick_log_line_shows_clef(self):
+        self.chain(CLEF_REPLY)
+        line = cs.vision_call_summary()
+        self.assertIn("clef/@cf/cloudflare/clef ok=1 failed=0", line)
+        self.assertIn("gemini/g-1 ok=0 failed=1", line)
+        self.assertIn("gemini/g-2 ok=0 failed=1", line)
+
+    # -- the shrink --------------------------------------------------------------------
+
+    @staticmethod
+    def big_jpeg(w=1920, h=1080, quality=92):
+        from PIL import Image  # skipped below when Pillow is missing
+        im = Image.effect_noise((w, h), 60).convert("RGB")
+        out = io.BytesIO()
+        im.save(out, format="JPEG", quality=quality)
+        return out.getvalue()
+
+    def size_of(self, jpeg_bytes):
+        from PIL import Image
+        return Image.open(io.BytesIO(jpeg_bytes)).size
+
+    @unittest.skipUnless(cs._pillow_image() is not None, "Pillow not installed")
+    def test_pillow_shrinks_to_768_long_side_as_a_jpeg(self):
+        src = self.big_jpeg()
+        out = cs.shrink_for_clef(src)
+        self.assertEqual(out[:3], b"\xff\xd8\xff")
+        self.assertEqual(self.size_of(out), (768, 432))
+        self.assertLess(len(out), len(src))
+        self.assertEqual(self.size_of(cs.shrink_for_clef(self.big_jpeg(1080, 1920))), (432, 768))
+
+    @unittest.skipUnless(cs._pillow_image() is not None, "Pillow not installed")
+    def test_pillow_never_enlarges_a_small_frame(self):
+        self.assertEqual(self.size_of(cs.shrink_for_clef(self.big_jpeg(400, 300))), (400, 300))
+
+    @unittest.skipUnless(cs._pillow_image() is not None, "Pillow not installed")
+    def test_pillow_uses_quality_60_then_512_px_quality_50_over_120_kb(self):
+        saved = []
+        real = cs._shrink_pillow
+
+        def spy(Image, img, max_side, quality):
+            out = real(Image, img, max_side, quality)
+            saved.append((max_side, quality, len(out)))
+            return out
+
+        self.assertEqual(cs.CLEF_SMALL_MAX_BYTES, 120 * 1024)
+        # Lower the limit instead of building a 120 KB-plus noise frame.
+        with mock.patch.object(cs, "_shrink_pillow", spy), mock.patch.object(cs, "CLEF_SMALL_MAX_BYTES", 100):
+            out = cs.shrink_for_clef(self.big_jpeg())
+        self.assertEqual([(a, b) for a, b, _ in saved], [(768, 60), (512, 50)])
+        self.assertEqual(len(out), saved[1][2], "the 512 px copy is the one sent")
+        self.assertEqual(self.size_of(out), (512, 288))
+        saved.clear()
+        with mock.patch.object(cs, "_shrink_pillow", spy):
+            cs.shrink_for_clef(self.big_jpeg())
+        self.assertEqual([(a, b) for a, b, _ in saved], [(768, 60)])
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and cs._pillow_image() is not None, "needs ffmpeg and Pillow")
+    def test_without_pillow_ffmpeg_does_the_same_shrink(self):
+        with mock.patch.object(cs, "_pillow_image", lambda: None):
+            out = cs.shrink_for_clef(self.big_jpeg())
+            tall = cs.shrink_for_clef(self.big_jpeg(1080, 1920))
+            small = cs.shrink_for_clef(self.big_jpeg(400, 300))
+        self.assertEqual(out[:3], b"\xff\xd8\xff")
+        self.assertEqual(self.size_of(out), (768, 432))
+        self.assertEqual(self.size_of(tall), (432, 768))
+        self.assertEqual(self.size_of(small), (400, 300))
+
+    def test_ffmpeg_command_when_pillow_is_missing(self):
+        seen = {}
+
+        def fake_run(cmd, **kw):
+            seen["cmd"], seen["input"], seen["timeout"] = cmd, kw.get("input"), kw.get("timeout")
+            return subprocess.CompletedProcess(cmd, 0, stdout=b"\xff\xd8\xff-shrunk", stderr=b"")
+
+        with mock.patch.object(cs, "_pillow_image", lambda: None), mock.patch.object(cs.subprocess, "run", fake_run):
+            out = cs.shrink_for_clef(b"original-bytes")
+        self.assertEqual(out, b"\xff\xd8\xff-shrunk")
+        cmd = seen["cmd"]
+        self.assertEqual(cmd[0], "ffmpeg")
+        self.assertEqual(seen["input"], b"original-bytes")
+        self.assertIn("768", cmd[cmd.index("-vf") + 1])
+        self.assertEqual(cmd[cmd.index("-q:v") + 1], "6")
+
+    def test_a_failed_shrink_fails_the_provider_not_the_run(self):
+        with mock.patch.object(cs, "_pillow_image", lambda: None), \
+                mock.patch.object(cs.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 1, stdout=b"", stderr=b"bad")):
+            with env(INGEST_TOKEN="t"), self.urlopen(CLEF_REPLY):
+                with self.assertRaises(RuntimeError):
+                    cs.assess_with("clef", b"not a jpeg")
+        self.assertEqual(self.sent, [], "nothing is posted when the image cannot be shrunk")
+        self.assertIn("clef/@cf/cloudflare/clef ok=0 failed=1", cs.vision_call_summary())
 
 
 class SameFeedFrameTests(WithManifest):

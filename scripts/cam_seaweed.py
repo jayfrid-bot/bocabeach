@@ -41,9 +41,11 @@ force-pushed branch never drops a beach it once had.
 Reliability: each image is tried against each configured provider in order until
 one answers, so one provider being rate-limited/down doesn't blank the feed. A
 provider is "configured" only if its key is present (see OPENAI_PROVIDERS below):
-  gemini · groq · openrouter · github (GitHub Models)
-All are free tiers; set GEMINI_API_KEY and/or any of GROQ_API_KEY,
-OPENROUTER_API_KEY, GITHUB_MODELS_TOKEN (GITHUB_TOKEN with `models: read` in CI).
+  gemini · clef · groq · openrouter · github (GitHub Models)
+All are free tiers except clef (Cloudflare Workers AI, Clef 27B, a few cents a
+month, behind our own /api/vision/clef route, see "CLEF" below); set GEMINI_API_KEY
+and/or any of GROQ_API_KEY, OPENROUTER_API_KEY, GITHUB_MODELS_TOKEN (GITHUB_TOKEN
+with `models: read` in CI). clef needs only INGEST_TOKEN, which the archive already uses.
 With none configured it preserves existing readings and exits 0.
 
 The City runs a tractor that clears beach seaweed every morning ~7-9 AM, so an
@@ -151,6 +153,7 @@ import base64
 import concurrent.futures
 import datetime as dt
 import hashlib
+import io
 import json
 import os
 import random
@@ -210,11 +213,15 @@ HTTP_UA = os.environ.get(
 #   groq        GROQ_API_KEY         ~14,400/day   (Llama 4 Scout; no credit card)
 #   openrouter  OPENROUTER_API_KEY   ~20 req/min   (many :free vision models)
 #   github      GITHUB_MODELS_TOKEN  ~50 req/day   (uses the Action's own token)
+#   clef        INGEST_TOKEN         Cloudflare Workers AI Clef 27B via our own
+#                                    POST /api/vision/clef (no new key; capped at
+#                                    600 calls/UTC day server-side). Sits right
+#                                    behind Gemini (both models), ahead of Groq.
 # Override the order with VISION_PROVIDERS="groq,gemini,openrouter,github".
 PROVIDER_ORDER = [
     p.strip()
     # GitHub Models is being retired (410 brownouts from 2026-09) and is off by default.
-    for p in os.environ.get("VISION_PROVIDERS", "gemini,groq,openrouter").split(",")
+    for p in os.environ.get("VISION_PROVIDERS", "gemini,clef,groq,openrouter").split(",")
     if p.strip()
 ]
 OPENAI_PROVIDERS = {
@@ -249,6 +256,22 @@ OPENAI_PROVIDERS = {
                 or os.environ.get("GITHUB_TOKEN", "").strip()),
     },
 }
+
+# --- CLEF (Cloudflare Workers AI) fallback reader --------------------------------
+# Clef 27B runs INSIDE our own Worker: this script POSTs one shrunk JPEG to
+# /api/vision/clef (Bearer INGEST_TOKEN, the same secret the archive uses) and
+# gets back a reading in the shape the other providers produce. The question set
+# and the answer mapping are the offline backtest's (docs/benchmarks/
+# clef-vision-2026-10-12/REPORT.md), so the shrink below matches it too: 768 px
+# long side, JPEG quality 60, and 512 px / quality 50 if that is still over
+# 120 KB. 429 (daily cap), 401, 502 and 503 from the route all mean "this
+# provider failed": the chain moves on to Groq. Only `clef` 27B, never clef-flash.
+CLEF_URL = os.environ.get("CLEF_URL", "https://app.isitbeachday.com/api/vision/clef")
+CLEF_MODEL = "@cf/cloudflare/clef"
+CLEF_TIMEOUT_S = 30
+CLEF_SHRINK = (768, 60)  # (long side px, JPEG quality)
+CLEF_SHRINK_FALLBACK = (512, 50)
+CLEF_SMALL_MAX_BYTES = 120 * 1024
 
 # Base URL each beach's PREVIOUS published file is read from (for carry-forward
 # and the earliest-morning-of-the-day logic): "<base>/cam_seaweed.<slug>.json".
@@ -1189,6 +1212,119 @@ def _openai_out(cfg: dict, img: bytes, prompt: str = PROMPT) -> dict:
     return _extract_json(resp["choices"][0]["message"]["content"])
 
 
+def _clef_configured() -> bool:
+    """clef is available whenever the archive token is: the route shares INGEST_TOKEN."""
+    return bool(os.environ.get("INGEST_TOKEN", "").strip())
+
+
+def _pillow_image():
+    """PIL.Image, or None when Pillow is not installed (the workflow installs it)."""
+    try:
+        from PIL import Image  # noqa: PLC0415 — optional dependency
+    except ImportError:
+        return None
+    return Image
+
+
+def _shrink_pillow(Image, img: bytes, max_side: int, quality: int) -> bytes:
+    im = Image.open(io.BytesIO(img))
+    im = im.convert("RGB")
+    # thumbnail() keeps the aspect ratio, makes the LONG side max_side, never enlarges.
+    im.thumbnail((max_side, max_side), Image.LANCZOS)
+    out = io.BytesIO()
+    im.save(out, format="JPEG", quality=quality)
+    return out.getvalue()
+
+
+def _shrink_ffmpeg(img: bytes, max_side: int, quality: int) -> bytes:
+    # ffmpeg's mjpeg quality is a 2 (best) to 31 (worst) scale, not libjpeg's 0-100.
+    # 60 -> 6 and 50 -> 8 give file sizes within ~10% of Pillow's quality 60 / 50
+    # (measured on three JPEGs 2026-10-12); the match is close, not exact.
+    qscale = max(2, min(31, round((100 - quality) / 6.5)))
+    scale = f"scale=w='if(gt(iw,ih),min({max_side},iw),-2)':h='if(gt(iw,ih),-2,min({max_side},ih))'"
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", "pipe:0", "-frames:v", "1", "-vf", scale,
+         "-pix_fmt", "yuvj420p", "-q:v", str(qscale), "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1"],
+        input=img, capture_output=True, timeout=30,
+    )
+    if proc.returncode != 0 or not proc.stdout:
+        raise RuntimeError(f"ffmpeg shrink failed: {proc.stderr.decode('utf-8', 'replace')[:120]}")
+    return proc.stdout
+
+
+def shrink_for_clef(img: bytes) -> bytes:
+    """The backtest's image: 768 px long side, JPEG q60; 512 px / q50 if still over 120 KB.
+
+    Pillow when importable, otherwise ffmpeg (preinstalled on ubuntu-latest)."""
+    Image = _pillow_image()
+
+    def one(max_side: int, quality: int) -> bytes:
+        if Image is not None:
+            return _shrink_pillow(Image, img, max_side, quality)
+        return _shrink_ffmpeg(img, max_side, quality)
+
+    small = one(*CLEF_SHRINK)
+    if len(small) > CLEF_SMALL_MAX_BYTES:
+        small = one(*CLEF_SHRINK_FALLBACK)
+    return small
+
+
+def _clef_raw(reply: object, kind: str) -> dict:
+    """Turn the route's reading into the raw-model dict that _parse_out/_parse_uw take.
+
+    Going through the SAME parsers as every other provider keeps the reading's
+    shape, clamping and note limits identical. A frame Clef calls unreadable
+    (too dark, blurred, blocked) gets no water grade / no visibility percent,
+    like the underwater prompt's "return uw_pct null" rule."""
+    if not isinstance(reply, dict) or reply.get("ok") is not True:
+        raise ValueError(f"clef reply not ok: {str(reply)[:100]}")
+    dark = reply.get("unreadable") is True
+    if kind == "underwater":
+        return {
+            "uw_clarity": reply.get("level"),
+            "uw_pct": None if dark else reply.get("pct"),
+            "uw_note": reply.get("note", ""),
+        }
+    return {
+        "seaweed": reply.get("level"),
+        "seaweed_pct": reply.get("coveragePct"),
+        "seaweed_note": reply.get("note", ""),
+        "crowd": reply.get("crowd"),
+        "crowd_pct": reply.get("crowdPct"),
+        "people": reply.get("people"),
+        "crowd_note": reply.get("crowdNote", ""),
+        "water": "unknown" if dark else (reply.get("water") or "unknown"),
+        "water_pct": None if dark else reply.get("waterPct"),
+        "water_note": reply.get("waterNote", ""),
+    }
+
+
+def _clef_out(img: bytes, kind: str = "surface") -> dict:
+    """One Clef read through our /api/vision/clef route. ONE attempt, no retry:
+    a 429 means the daily cap is spent, and a 5xx should hand the frame to the
+    next provider at once rather than stall the tick."""
+    token = os.environ.get("INGEST_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("clef not configured")
+    body = json.dumps({"kind": kind, "image": base64.b64encode(shrink_for_clef(img)).decode()}).encode()
+    req = urllib.request.Request(
+        CLEF_URL, data=body,
+        headers={"Content-Type": "application/json", "User-Agent": HTTP_UA, "Authorization": f"Bearer {token}"},
+    )
+    try:
+        raw = urllib.request.urlopen(req, timeout=CLEF_TIMEOUT_S).read()
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", "replace")[:160]
+        raise RuntimeError(f"HTTP {e.code}: {detail}") from None
+    except OSError as e:  # URLError, timeouts, resets
+        raise RuntimeError(f"network error: {e}") from None
+    try:
+        reply = json.loads(raw)
+    except ValueError:
+        raise RuntimeError("reply was not JSON") from None
+    return _clef_raw(reply, kind)
+
+
 def _enabled_providers() -> list[tuple[str, str]]:
     """[(name, model)] for each configured provider, in fallback order."""
     out = []
@@ -1197,6 +1333,9 @@ def _enabled_providers() -> list[tuple[str, str]]:
             if API_KEY:
                 for m in GEMINI_MODELS:
                     out.append((name, m))
+        elif name == "clef":
+            if _clef_configured():
+                out.append((name, CLEF_MODEL))
         elif name in OPENAI_PROVIDERS and OPENAI_PROVIDERS[name]["key"]:
             out.append((name, OPENAI_PROVIDERS[name]["model"]))
     return out
@@ -1205,6 +1344,8 @@ def _enabled_providers() -> list[tuple[str, str]]:
 def _provider_configured(name: str) -> bool:
     if name == "gemini":
         return bool(API_KEY)
+    if name == "clef":
+        return _clef_configured()
     cfg = OPENAI_PROVIDERS.get(name)
     return bool(cfg and cfg["key"])
 
@@ -1234,16 +1375,24 @@ def vision_call_summary() -> str:
 
 
 def assess_with(name: str, img: bytes, prompt: str = PROMPT, parse=_parse_out,
-                model: str | None = None) -> dict:
+                model: str | None = None, kind: str | None = None) -> dict:
     """Read one image with exactly ONE named provider (for per-provider eval).
 
     `prompt`/`parse` let the same provider plumbing serve both the beach read
-    (default) and the underwater read (UW_PROMPT + _parse_uw)."""
+    (default) and the underwater read (UW_PROMPT + _parse_uw). `kind` ("surface"
+    or "underwater") only matters to clef, which takes questions, not a prompt;
+    it defaults from `parse`."""
     if name == "gemini":
         if not API_KEY:
             raise RuntimeError("gemini not configured")
         model = model or MODEL
         call = lambda: _gemini_out(img, prompt, model)  # noqa: E731
+    elif name == "clef":
+        if not _clef_configured():
+            raise RuntimeError("clef not configured")
+        model = CLEF_MODEL
+        clef_kind = kind or ("underwater" if parse is _parse_uw else "surface")
+        call = lambda: _clef_out(img, clef_kind)  # noqa: E731
     else:
         cfg = OPENAI_PROVIDERS.get(name)
         if not cfg or not cfg["key"]:
@@ -1262,12 +1411,12 @@ def assess_with(name: str, img: bytes, prompt: str = PROMPT, parse=_parse_out,
     return result
 
 
-def assess(img: bytes, prompt: str = PROMPT, parse=_parse_out) -> dict:
+def assess(img: bytes, prompt: str = PROMPT, parse=_parse_out, kind: str | None = None) -> dict:
     """Read one image, falling through the provider chain until one succeeds."""
     errors = []
     for name, model in _enabled_providers():
         try:
-            return assess_with(name, img, prompt, parse, model)
+            return assess_with(name, img, prompt, parse, model, kind)
         except Exception as e:  # noqa: BLE001 — try the next provider
             errors.append(f"{name}/{model}: {str(e)[:160]}")
     if not errors:
@@ -1277,7 +1426,7 @@ def assess(img: bytes, prompt: str = PROMPT, parse=_parse_out) -> dict:
 
 def assess_uw(img: bytes) -> dict:
     """Read the underwater frame through the SAME provider chain, own prompt/parser."""
-    return assess(img, UW_PROMPT, _parse_uw)
+    return assess(img, UW_PROMPT, _parse_uw, kind="underwater")
 
 
 def capture_uw(now_local: dt.datetime, attempted: set | None = None,

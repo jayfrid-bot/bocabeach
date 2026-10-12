@@ -32,6 +32,11 @@
       "migrations_dir": "migrations"
     }
   ],
+  // Workers AI: Cloudflare's Clef 27B (@cf/cloudflare/clef) is the cam reader's
+  // fallback vision model, called by POST /api/vision/clef (lib/vision/,
+  // docs/benchmarks/clef-vision-2026-10-12/). The route counts calls per UTC
+  // day in PUSH_KV and stops at 600 (lib/vision/dailyCap.ts). No new secret.
+  "ai": { "binding": "AI" },
   // Hazard alerts are LIVE. They were paused while they fired off a person's HOME
   // beach (lightning 5 mi from a beach you're nowhere near is noise); they now fire
   // only from a live presence fix — see lib/alerts/*. Set this to "off" to stop

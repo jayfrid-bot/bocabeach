@@ -32,6 +32,9 @@ name: Cam Vision Feed
 # first Gemini model's ~250/day free cap, so the chain carries the rest. The
 # default provider order (VISION_PROVIDERS in scripts/cam_seaweed.py) is
 # gemini-2.5-flash, then gemini-2.5-flash-lite (a separate daily bucket), then
+# Clef 27B on Cloudflare Workers AI (our own POST /api/vision/clef route, the
+# same INGEST_TOKEN as the archive, capped at 600 calls a UTC day on the server;
+# the image is shrunk to 768 px / q60 with Pillow first), then
 # Groq (large free allowance), then OpenRouter (rate-limited free model). GitHub
 # Models is NOT in the default order (it is being retired); the GITHUB_TOKEN env
 # and `models: read` below only matter if VISION_PROVIDERS adds "github". Each
@@ -163,14 +166,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install yt-dlp (underwater sea-cam frame grab)
+      - name: Install yt-dlp (underwater sea-cam frame grab) and Pillow (Clef image shrink)
         if: ${{ steps.guard.outputs.skip != 'true' }}
         # yt-dlp resolves the Deerfield underwater YouTube livestream to an HLS
         # URL that ffmpeg (preinstalled on ubuntu-latest, as is node — the JS
         # runtime yt-dlp needs) frame-grabs. `|| true` keeps the job resilient:
         # the script fail-softs if yt-dlp is missing, so a failed install must
-        # never fail the workflow — we just accrue no underwater readings.
-        run: pip install --quiet yt-dlp || true
+        # never fail the workflow — we just accrue no underwater readings. Pillow
+        # shrinks the frame for the Clef fallback reader; without it the script
+        # shrinks with ffmpeg instead, so a failed install costs nothing but a
+        # slightly different JPEG encoder.
+        run: pip install --quiet yt-dlp pillow || true
 
       - name: Read + publish cam vision on a ~10-minute loop through daylight
         if: ${{ steps.guard.outputs.skip != 'true' }}

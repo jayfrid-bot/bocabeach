@@ -160,6 +160,9 @@ flowchart LR
   CAMINGEST -->|"PUT slug/cam/local_date/HHmmZ-sha8-claim8.jpg"| CAMR2[("R2 bucket isitbeachday-cam-frames<br/>binding CAM_FRAMES<br/>lifecycle rule deletes after 367 days")]
   HISTCRON -->|"once a day, on the 08:17 UTC tick, before the archive call; POST x-cron-secret"| CAMPURGE["/api/cam-frames/purge<br/>at most 10 D1 statements: pending rows older than 1 h,<br/>then rows older than 365 days by received_at_utc<br/>(DELETE of 5,000 rows per statement)"]
   CAMPURGE -->|"deletes cam_frames rows; R2 objects expire on their own two days later"| D1
+  SARG -->|"fallback vision read, only after both Gemini models fail (order: Gemini, Clef, Groq, OpenRouter):<br/>POST /api/vision/clef, Bearer INGEST_TOKEN, JSON {kind surface or underwater, base64 JPEG shrunk to 768 px / q60}<br/>(scripts/cam_seaweed.py; 30 s timeout, one attempt; 401, 429, 502, 503 = provider failed, the chain moves on to Groq)"| CLEFAPI["/api/vision/clef (POST)<br/>constant-time auth; 400 KB streamed cap; AI binding present else 503;<br/>the backtest's questions and answer mapping (lib/vision/clef.ts);<br/>502 on a model error or a missing field, never an invented value;<br/>reply = the assess() reading shape + provider, model, usage, latencyMs"]
+  CLEFAPI -->|"env.AI.run(@cf/cloudflare/clef), Clef 27B only"| WAI[["Workers AI<br/>binding AI (wrangler.jsonc)<br/>Clef 27B @cf/cloudflare/clef"]]
+  CLEFAPI -->|"per-UTC-day call counter, 600 a day then 429 daily-cap;<br/>fails closed if the counter cannot be read (lib/vision/dailyCap.ts)"| CLEFKV[(PUSH_KV<br/>clef-daily:YYYY-MM-DD, expires after 2 days)]
   DAYUI["Plus day sheet<br/>components/plus/DayViewSheet.tsx<br/>behind DAY_VIEW_ENABLED (lib/plus/flags.ts)"] -->|"POST deviceId + date"| DAYAPI["/api/history/[slug]/day<br/>app only; rate limit, install token, entitled (free device = 403)<br/>3 D1 reads: archive bounds, that local day's beach_hourly rows, ready cam_frames rows;<br/>returns that date's golden-hour windows (computed, no read) and each shot kind;<br/>only cams still archived; credit read from each row;<br/>signs every shot link for 15 min with CAM_FRAME_URL_KEY"]
   DAYAPI -->|"SELECT only, no R2"| D1
   DAYUI -->|"img src = signed link"| IMGAPI["/api/cam-frames/img (GET)<br/>constant-time verify of k, exp, sig; cam still archived (else 403);<br/>streams the R2 object, private cache for the seconds the link has left;<br/>404 object gone, 503 no binding"]
@@ -854,7 +857,7 @@ window has passed. `/api/admin/scans` reads the whole chain in two queries.
 | MET Norway | Secondary forecast model (consensus) |
 | EPA AirNow / CAMS | Air quality |
 | NOAA S3 (GOES, GLM, MRMS) | Cloud cover, lightning strikes, radar rain nowcast |
-| Gemini / Groq / OpenRouter / GitHub Models | Beach-cam vision reads (seaweed, busyness, water clarity) |
+| Gemini / Cloudflare Workers AI (Clef 27B, via `/api/vision/clef`) / Groq / OpenRouter / GitHub Models | Beach-cam vision reads (seaweed, busyness, water clarity), tried in that order |
 | iNaturalist | Portuguese man-o'-war sighting reports |
 | FL Healthy Beaches | Water-quality advisories |
 | video-monitoring.com | Public beach cam still frames |
