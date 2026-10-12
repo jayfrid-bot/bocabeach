@@ -18,6 +18,28 @@ import { hoursFromSolarNoon, afternoonBoostFactor } from "@/lib/sandTemp";
 
 const DIR = "docs/benchmarks/sand-ir";
 const LON = -80.0686;
+const LAT = 26.3587;
+
+/** Solar declination (deg) for a UTC instant — Cooper's formula, ±0.5°, plenty
+ *  for a seasonal term. */
+function declinationDeg(ms: number): number {
+  const d = new Date(ms);
+  const start = Date.UTC(d.getUTCFullYear(), 0, 0);
+  const doy = Math.floor((ms - start) / 86_400_000);
+  return 23.44 * Math.sin(((2 * Math.PI) / 365) * (284 + doy));
+}
+const rad = (x: number) => (x * Math.PI) / 180;
+/** Sun elevation (deg) at solar noon for this date at the beach. */
+function noonElevationDeg(ms: number): number {
+  return 90 - Math.abs(LAT - declinationDeg(ms));
+}
+/** Sun elevation (deg) at this instant, from hours-from-solar-noon. */
+function elevationDeg(ms: number, hfn: number): number {
+  const dec = rad(declinationDeg(ms));
+  const lat = rad(LAT);
+  const h = rad(hfn * 15);
+  return (Math.asin(Math.sin(lat) * Math.sin(dec) + Math.cos(lat) * Math.cos(dec) * Math.cos(h)) * 180) / Math.PI;
+}
 const read = (f: string) => JSON.parse(readFileSync(`${DIR}/${f}`, "utf8")).hourly;
 const fc = read("hourly-forecast.json");
 const sat = read("satellite.json");
@@ -61,6 +83,10 @@ interface Inputs {
   /** Satellite-observed sunshine accumulated since the start of the day, Wh/m². */
   accumWh: number;
   hfn: number;
+  /** Sun elevation at solar noon on this date (seasonal), degrees. */
+  noonElev: number;
+  /** Sun elevation at the reading's instant, degrees. */
+  elev: number;
 }
 
 function inputsAt(ms: number): Inputs {
@@ -80,7 +106,8 @@ function inputsAt(ms: number): Inputs {
     const frac = Math.min(1, Math.max(0, (ms - start) / 3_600_000));
     accumWh += (sat.shortwave_radiation[j] ?? 0) * frac;
   }
-  return { soilF, windMph, solarObs, solarForecast, cloudPct, rainIn, accumWh, hfn: hoursFromSolarNoon(LON, new Date(ms)) };
+  const hfn = hoursFromSolarNoon(LON, new Date(ms));
+  return { soilF, windMph, solarObs, solarForecast, cloudPct, rainIn, accumWh, hfn, noonElev: noonElevationDeg(ms), elev: elevationDeg(ms, hfn) };
 }
 
 /** The live model's transfer function (lib/sandTemp.ts sandBoostF), with the
@@ -94,8 +121,15 @@ interface Knobs {
   /** Accumulated-sunshine factor: boost *= min(1, accumWh/accumRef)^accumPower. 0 = off. */
   accumRef: number;
   accumPower: number;
+  /** Seasonal sun-angle factor: boost *= min(1, sin(noonElev)/sin(SEASON_REF))^seasonPower. 0 = off. */
+  seasonPower: number;
+  /** Instantaneous sun-angle factor: boost *= min(1, sin(elev)/sin(ELEV_REF))^elevPower. 0 = off. */
+  elevPower: number;
 }
-const LIVE: Knobs = { maxBoost: 55, sunPower: 0.5, windDiv: 60, windFloor: 0.6, soilSlope: 55, accumRef: 0, accumPower: 1 };
+/** June noon at Boca (lat 26.4, dec +23.4) ≈ 87° — the season the model was tuned on. */
+const SEASON_REF_DEG = 87;
+const ELEV_REF_DEG = 80;
+const LIVE: Knobs = { maxBoost: 55, sunPower: 0.5, windDiv: 60, windFloor: 0.6, soilSlope: 55, accumRef: 0, accumPower: 1, seasonPower: 0, elevPower: 0 };
 
 function boostF(inp: Inputs, k: Knobs, solar: number): number {
   const sunFrac = Math.min(1, Math.max(0, solar / 1000));
@@ -104,6 +138,8 @@ function boostF(inp: Inputs, k: Knobs, solar: number): number {
   boost *= Math.max(0.4, Math.min(1, 1 - (inp.soilF - 90) / k.soilSlope));
   boost *= afternoonBoostFactor(inp.hfn);
   if (k.accumRef > 0) boost *= Math.pow(Math.min(1, inp.accumWh / k.accumRef), k.accumPower);
+  if (k.seasonPower > 0) boost *= Math.pow(Math.min(1, Math.sin(rad(inp.noonElev)) / Math.sin(rad(SEASON_REF_DEG))), k.seasonPower);
+  if (k.elevPower > 0) boost *= Math.pow(Math.min(1, Math.max(0, Math.sin(rad(inp.elev))) / Math.sin(rad(ELEV_REF_DEG))), k.elevPower);
   if (inp.rainIn >= 0.05) boost *= 0.3;
   return boost;
 }
@@ -142,12 +178,12 @@ function evaluate(k: Knobs, useObserved = true) {
 const f1 = (n: number) => (n >= 0 ? "+" : "") + n.toFixed(1);
 
 console.log("## Every reading, live model, satellite-observed sunshine\n");
-console.log("| date | time | spot | measured | soil | sun W/m² | accum Wh | wind | h from noon | model | error |");
-console.log("|---|---|---|---|---|---|---|---|---|---|---|");
+console.log("| date | time | spot | measured | soil | sun W/m² | accum Wh | wind | h from noon | noon sun ° | model | error |");
+console.log("|---|---|---|---|---|---|---|---|---|---|---|---|");
 const live = evaluate(LIVE);
 rows.forEach(({ r, inp }, i) => {
   console.log(
-    `| ${r.date} | ${r.local} | ${r.spot} | ${r.measured} | ${inp.soilF.toFixed(0)} | ${inp.solarObs} | ${inp.accumWh.toFixed(0)} | ${inp.windMph.toFixed(0)} | ${f1(inp.hfn)} | ${(r.measured + live.errs[i]).toFixed(0)} | ${f1(live.errs[i])} |`,
+    `| ${r.date} | ${r.local} | ${r.spot} | ${r.measured} | ${inp.soilF.toFixed(0)} | ${inp.solarObs} | ${inp.accumWh.toFixed(0)} | ${inp.windMph.toFixed(0)} | ${f1(inp.hfn)} | ${inp.noonElev.toFixed(0)} | ${(r.measured + live.errs[i]).toFixed(0)} | ${f1(live.errs[i])} |`,
   );
 });
 console.log(`\nLive model: MAE ${live.mae.toFixed(1)}  bias ${f1(live.bias)}  by month → ${live.monthBias}`);
@@ -171,6 +207,14 @@ const candidates: [string, Knobs][] = [
   ["stronger wind effect (÷25, floor 0.2)", { ...LIVE, windDiv: 25, windFloor: 0.2 }],
   ["stronger wind effect (÷20, floor 0.2)", { ...LIVE, windDiv: 20, windFloor: 0.2 }],
   ["max boost 50", { ...LIVE, maxBoost: 50 }],
+  ["season sun angle (noon elev), power 1", { ...LIVE, seasonPower: 1 }],
+  ["season sun angle, power 2", { ...LIVE, seasonPower: 2 }],
+  ["season sun angle, power 3", { ...LIVE, seasonPower: 3 }],
+  ["season sun angle, power 4", { ...LIVE, seasonPower: 4 }],
+  ["season sun angle, power 6", { ...LIVE, seasonPower: 6 }],
+  ["instant sun angle, power 1", { ...LIVE, elevPower: 1 }],
+  ["instant sun angle, power 2", { ...LIVE, elevPower: 2 }],
+  ["instant sun angle, power 3", { ...LIVE, elevPower: 3 }],
 ];
 for (const [name, k] of candidates) {
   const e = evaluate(k);
@@ -185,8 +229,9 @@ for (const maxBoost of [45, 50, 55, 60])
     for (const windDiv of [20, 25, 30, 40, 60, 90])
       for (const windFloor of [0.2, 0.4, 0.6])
       for (const soilSlope of [40, 55, 80])
-        for (const accumRef of [0, 3000, 4000, 5000]) {
-          const k = { ...LIVE, maxBoost, sunPower, windDiv, windFloor, soilSlope, accumRef };
+        for (const accumRef of [0, 3000, 4000, 5000])
+        for (const seasonPower of [0, 1, 2, 3, 4, 6]) {
+          const k = { ...LIVE, maxBoost, sunPower, windDiv, windFloor, soilSlope, accumRef, seasonPower };
           const e = evaluate(k);
           if (!best || e.mae < best.mae) best = { k, mae: e.mae };
         }
