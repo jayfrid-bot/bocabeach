@@ -196,7 +196,7 @@ jobs:
           # Rollout canary: Clef stays OUT of the default provider order until the
           # route is deployed and smoke-tested (node scripts/clef_route_smoke.mjs
           # <archived r2_key>). Then uncomment this line to put it behind Gemini.
-          # CLEF_FALLBACK: "1"
+          CLEF_FALLBACK: "1"
           # One file per beach (cam_seaweed.<slug>.json) lands here, driven by
           # config/vision-cams.json — see scripts/cam_seaweed.py. CAM_SEAWEED_OUT
           # (the legacy single-file copy for boca-raton, kept for one release)
