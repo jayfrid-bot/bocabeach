@@ -250,6 +250,11 @@ describe("strict validation runs before the mapping", () => {
     const c = beach();
     for (const k of Object.keys(c.people.probabilities)) c.people.probabilities[k] = 0.9;
     expect(validateClefAnswers(c, "surface")).toMatch(/sum above 1/);
+    const d = beach();
+    const keys = Object.keys(d.people.probabilities);
+    for (const k of keys) d.people.probabilities[k] = 0;
+    d.people.probabilities[keys[0]] = 0.01; // truncated: would normalize to a confident endpoint
+    expect(validateClefAnswers(d, "surface")).toMatch(/well below 1/);
   });
 
   it("rejects a score index outside the question's band range", () => {

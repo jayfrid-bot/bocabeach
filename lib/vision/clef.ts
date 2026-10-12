@@ -357,7 +357,11 @@ export function unwrapClefResult(raw: unknown): { answers: Record<string, unknow
 // 502, never a plausible-looking number. This check rejects what the backtest's
 // 229 real replies never contain.
 
-/** Largest sum of a question's probabilities we accept (real replies sum to ~1). */
+/** The band a question's probabilities must sum into. Real replies sum to 1
+ *  within float error (0.9999999999999998–1.0000000000000002 across all 229
+ *  backtest replies); a sum far below 1 is a truncated distribution that the
+ *  mapper would otherwise normalize into a confident endpoint (Codex). */
+const MIN_PROB_SUM = 0.95;
 const MAX_PROB_SUM = 1.05;
 
 const isProb = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
@@ -374,6 +378,7 @@ function checkProbabilities(probs: unknown, allowedKeys: readonly string[]): str
   }
   if (count === 0 || sum <= 0) return "probabilities empty or all zero";
   if (sum > MAX_PROB_SUM) return "probabilities sum above 1";
+  if (sum < MIN_PROB_SUM) return "probabilities sum well below 1";
   return null;
 }
 
