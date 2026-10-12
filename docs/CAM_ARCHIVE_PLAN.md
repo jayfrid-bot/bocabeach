@@ -396,8 +396,13 @@ The script grabs only while `scripts/golden_now.py` says a sunrise or sunset gol
 window is open at Deerfield Beach or Fort Lauderdale. The hourly :07 job is
 unchanged. Install both plists (header of `scripts/cam_courier_local.sh`).
 
-**Clef is the second fallback reader (2026-10-12).** The vision chain is now Gemini
-(flash, then flash-lite), then Cloudflare Clef 27B, then Groq, then OpenRouter. Clef
-runs in our own Worker (`POST /api/vision/clef`, same `INGEST_TOKEN`, Workers AI
-binding `AI`) with the backtest's questions and mapping, capped at 600 calls a UTC
-day; evidence and limits: `docs/benchmarks/clef-vision-2026-10-12/REPORT.md`.
+**Clef is the second fallback reader (2026-10-12).** With `CLEF_FALLBACK=1` the vision
+chain is Gemini (flash, then flash-lite), then Cloudflare Clef 27B, then Groq, then
+OpenRouter; without it the chain is unchanged (deploy the route first, run
+`node scripts/clef_route_smoke.mjs <r2_key>`, then flip the flag in `sargassum.yml`).
+Clef runs in our own Worker (`POST /api/vision/clef`, same `INGEST_TOKEN`, Workers AI
+binding `AI`) with the backtest's questions and mapping after a strict reply check. A
+frame Clef calls unreadable is no reading: the chain stops, the cam is skipped that tick
+and no `frameSha` is recorded. Calls are capped at 600 a UTC day by one atomic D1
+statement (`vision_daily_calls`, migration 0018); the route fails closed (503) if the
+counter cannot be used. Evidence and limits: `docs/benchmarks/clef-vision-2026-10-12/REPORT.md`.

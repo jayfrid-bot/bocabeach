@@ -1,53 +1,47 @@
 // Per-UTC-day call counter for POST /api/vision/clef: a budget guard so a loop
 // bug (a retry storm, a runaway workflow) cannot run up a Workers AI bill.
 //
-// Lives on the PUSH_KV binding, the same namespace lib/plus/rateLimit.ts uses
-// (see lib/push/nativeStore.ts for why the binding is reached with a static
-// top-level import + the async form of getCloudflareContext). One key per UTC
-// day, `clef-daily:YYYY-MM-DD`, that expires on its own two days later.
+// The counter is a row in D1 (`vision_daily_calls`, migrations/0018) taken with
+// ONE atomic statement:
+//
+//   INSERT ... VALUES (day, model, 1)
+//   ON CONFLICT (day, model) DO UPDATE SET count = count + 1 WHERE count < cap
+//   RETURNING count
+//
+// A row comes back when a slot was taken; no row means the cap is spent. Two
+// concurrent calls cannot both take the last slot. (A KV get-then-put counter
+// could, which is why this is not KV.)
+//
+// FAIL CLOSED. No DB binding, or any error from it -> "cap-unavailable" and the
+// route answers 503 without calling the model. A guard that cannot count must
+// not wave calls through. There is deliberately no in-memory fallback: tests
+// use a real SQLite database with the migration applied.
 //
 // Every attempt that reaches the model counts, ok or not, because a failed call
-// can still be billed. The count is read-then-write, not atomic; the capture
-// script calls the route one frame at a time, so a one-or-two-call overshoot is
-// the worst case and the cap is a bill guard, not a quota.
-//
-// No KV binding at all (plain `next dev`, tests) -> an in-memory counter. A KV
-// binding that exists but throws -> FAIL CLOSED ("cap-unavailable"): a guard
-// that cannot count must not wave calls through.
+// can still be billed.
 
-import { getCloudflareContext } from "@opennextjs/cloudflare";
+import type { D1Like } from "@/lib/db/d1Store";
+import { CLEF_MODEL } from "@/lib/vision/clef";
 
-/** Most Clef calls one UTC day may make. About 2x the expected load (300 reads/day if Clef were primary). */
+/**
+ * Most Clef calls one UTC day may make. Estimated worst-case fallback load is
+ * about 420 calls a day (the longest summer day, when Gemini's two daily
+ * buckets run out); 600 leaves 43% headroom over that and still stops a runaway.
+ */
 export const CLEF_DAILY_CAP = 600;
-
-interface KVLike {
-  get(key: string): Promise<string | null>;
-  put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
-}
-
-async function getKv(): Promise<KVLike | null> {
-  try {
-    const ctx = await getCloudflareContext({ async: true });
-    const env = ctx?.env as Record<string, unknown> | undefined;
-    const kv = env?.PUSH_KV as KVLike | undefined;
-    return kv && typeof kv.put === "function" && typeof kv.get === "function" ? kv : null;
-  } catch {
-    return null;
-  }
-}
-
-const memCounts = new Map<string, number>();
-
-export function resetMemoryClefCap(): void {
-  memCounts.clear();
-}
 
 export type ClefCapResult =
   | { allowed: true; count: number }
   | { allowed: false; reason: "daily-cap"; retryAfterSec: number }
   | { allowed: false; reason: "cap-unavailable" };
 
-const dayKey = (nowMs: number) => `clef-daily:${new Date(nowMs).toISOString().slice(0, 10)}`;
+export const TAKE_SLOT_SQL =
+  "INSERT INTO vision_daily_calls (day, model, count) VALUES (?, ?, 1) " +
+  "ON CONFLICT (day, model) DO UPDATE SET count = vision_daily_calls.count + 1 " +
+  "WHERE vision_daily_calls.count < ? " +
+  "RETURNING count";
+
+const dayKey = (nowMs: number) => new Date(nowMs).toISOString().slice(0, 10);
 
 /** Seconds until the next 00:00 UTC. */
 export function secondsToUtcMidnight(nowMs: number): number {
@@ -57,23 +51,19 @@ export function secondsToUtcMidnight(nowMs: number): number {
 }
 
 /** Take one call from today's allowance. Denied calls are not counted. */
-export async function takeClefDailySlot(nowMs: number = Date.now(), cap: number = CLEF_DAILY_CAP): Promise<ClefCapResult> {
-  const key = dayKey(nowMs);
-  const denied = (): ClefCapResult => ({ allowed: false, reason: "daily-cap", retryAfterSec: secondsToUtcMidnight(nowMs) });
-  const kv = await getKv();
-  if (!kv) {
-    const n = memCounts.get(key) ?? 0;
-    if (n >= cap) return denied();
-    memCounts.set(key, n + 1);
-    return { allowed: true, count: n + 1 };
-  }
+export async function takeClefDailySlot(
+  db: D1Like | null,
+  nowMs: number = Date.now(),
+  cap: number = CLEF_DAILY_CAP,
+  model: string = CLEF_MODEL,
+): Promise<ClefCapResult> {
+  if (!db) return { allowed: false, reason: "cap-unavailable" };
   try {
-    const raw = await kv.get(key);
-    const n = raw == null ? 0 : Number(raw);
-    if (!Number.isFinite(n) || n < 0) return { allowed: false, reason: "cap-unavailable" }; // a corrupt counter: do not guess
-    if (n >= cap) return denied();
-    await kv.put(key, String(n + 1), { expirationTtl: 2 * 24 * 3600 });
-    return { allowed: true, count: n + 1 };
+    const row = await db.prepare(TAKE_SLOT_SQL).bind(dayKey(nowMs), model, cap).first<{ count: number }>();
+    if (!row) return { allowed: false, reason: "daily-cap", retryAfterSec: secondsToUtcMidnight(nowMs) };
+    const count = Number(row.count);
+    if (!Number.isFinite(count) || count < 1) return { allowed: false, reason: "cap-unavailable" };
+    return { allowed: true, count };
   } catch {
     return { allowed: false, reason: "cap-unavailable" };
   }

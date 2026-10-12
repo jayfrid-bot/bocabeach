@@ -216,12 +216,26 @@ HTTP_UA = os.environ.get(
 #   clef        INGEST_TOKEN         Cloudflare Workers AI Clef 27B via our own
 #                                    POST /api/vision/clef (no new key; capped at
 #                                    600 calls/UTC day server-side). Sits right
-#                                    behind Gemini (both models), ahead of Groq.
-# Override the order with VISION_PROVIDERS="groq,gemini,openrouter,github".
+#                                    behind Gemini (both models), ahead of Groq,
+#                                    but only when CLEF_FALLBACK=1 (rollout canary).
+# Override the order with VISION_PROVIDERS="groq,gemini,openrouter,github"; set
+# CLEF_FALLBACK=1 to put clef behind Gemini in the default order.
+def default_provider_order() -> str:
+    """The default chain. Clef sits behind both Gemini models ONLY when CLEF_FALLBACK=1.
+
+    Rollout canary: the /api/vision/clef route is deployed and smoke-tested first
+    (scripts/clef_route_smoke.mjs) with the reader still on gemini,groq,openrouter;
+    the workflow then sets CLEF_FALLBACK=1 to turn Clef on. An explicit
+    VISION_PROVIDERS always wins over this."""
+    if os.environ.get("CLEF_FALLBACK", "").strip() == "1":
+        return "gemini,clef,groq,openrouter"
+    return "gemini,groq,openrouter"
+
+
 PROVIDER_ORDER = [
     p.strip()
     # GitHub Models is being retired (410 brownouts from 2026-09) and is off by default.
-    for p in os.environ.get("VISION_PROVIDERS", "gemini,clef,groq,openrouter").split(",")
+    for p in os.environ.get("VISION_PROVIDERS", default_provider_order()).split(",")
     if p.strip()
 ]
 OPENAI_PROVIDERS = {
@@ -1212,6 +1226,15 @@ def _openai_out(cfg: dict, img: bytes, prompt: str = PROMPT) -> dict:
     return _extract_json(resp["choices"][0]["message"]["content"])
 
 
+class UnreadableFrame(Exception):
+    """Clef says the frame is too dark, blurred or blocked to read (unreadable >= 0.5).
+
+    This is a RESULT, not a provider failure: the frame is "no reading". assess()
+    stops the provider chain on it (another model would only invent a grade for
+    the same dark image) and the caller skips that cam this tick WITHOUT
+    recording a frame sha, so the next readable frame is read."""
+
+
 def _clef_configured() -> bool:
     """clef is available whenever the archive token is: the route shares INGEST_TOKEN."""
     return bool(os.environ.get("INGEST_TOKEN", "").strip())
@@ -1274,15 +1297,15 @@ def _clef_raw(reply: object, kind: str) -> dict:
 
     Going through the SAME parsers as every other provider keeps the reading's
     shape, clamping and note limits identical. A frame Clef calls unreadable
-    (too dark, blurred, blocked) gets no water grade / no visibility percent,
-    like the underwater prompt's "return uw_pct null" rule."""
+    (too dark, blurred, blocked) is NO reading: raises UnreadableFrame."""
     if not isinstance(reply, dict) or reply.get("ok") is not True:
         raise ValueError(f"clef reply not ok: {str(reply)[:100]}")
-    dark = reply.get("unreadable") is True
+    if reply.get("unreadable") is True:
+        raise UnreadableFrame(f"unreadable per clef (p={reply.get('unreadableP')})")
     if kind == "underwater":
         return {
             "uw_clarity": reply.get("level"),
-            "uw_pct": None if dark else reply.get("pct"),
+            "uw_pct": reply.get("pct"),
             "uw_note": reply.get("note", ""),
         }
     return {
@@ -1293,8 +1316,8 @@ def _clef_raw(reply: object, kind: str) -> dict:
         "crowd_pct": reply.get("crowdPct"),
         "people": reply.get("people"),
         "crowd_note": reply.get("crowdNote", ""),
-        "water": "unknown" if dark else (reply.get("water") or "unknown"),
-        "water_pct": None if dark else reply.get("waterPct"),
+        "water": reply.get("water") or "unknown",
+        "water_pct": reply.get("waterPct"),
         "water_note": reply.get("waterNote", ""),
     }
 
@@ -1402,6 +1425,9 @@ def assess_with(name: str, img: bytes, prompt: str = PROMPT, parse=_parse_out,
     try:
         raw = call()
         result = parse(raw)
+    except UnreadableFrame:
+        _count_vision_call(name, model, True)  # the provider answered (and may have been billed)
+        raise
     except Exception:
         _count_vision_call(name, model, False)
         raise
@@ -1412,11 +1438,15 @@ def assess_with(name: str, img: bytes, prompt: str = PROMPT, parse=_parse_out,
 
 
 def assess(img: bytes, prompt: str = PROMPT, parse=_parse_out, kind: str | None = None) -> dict:
-    """Read one image, falling through the provider chain until one succeeds."""
+    """Read one image, falling through the provider chain until one succeeds.
+
+    Raises UnreadableFrame (chain stopped) when a provider calls the frame unreadable."""
     errors = []
     for name, model in _enabled_providers():
         try:
             return assess_with(name, img, prompt, parse, model, kind)
+        except UnreadableFrame:
+            raise  # no reading, and no other provider gets to grade the same dark frame
         except Exception as e:  # noqa: BLE001 — try the next provider
             errors.append(f"{name}/{model}: {str(e)[:160]}")
     if not errors:
@@ -1448,6 +1478,9 @@ def capture_uw(now_local: dt.datetime, attempted: set | None = None,
         frame, frame_at = fetch_uw_frame_timed()
         run.enqueue(UW_ARCHIVE_SLUG, UW_ARCHIVE_CAM_ID, frame, frame_at)
         r = assess_uw(frame)
+    except UnreadableFrame:
+        print("  underwater: skipped (unreadable per clef)")
+        return None
     except Exception as e:  # noqa: BLE001 — underwater is best-effort calibration only
         print(f"  warn underwater cam: {e}", file=sys.stderr)
         return None
@@ -1664,6 +1697,10 @@ def capture_beach(
             print(f"  [{slug}] {cam['id']}: seaweed={r['level']}({r.get('coveragePct')}%) "
                   f"crowd={r.get('crowd')}({r.get('crowdPct')}%) "
                   f"people={r.get('people')} via {r.get('provider')}")
+        except UnreadableFrame:
+            # No reading, and no frameSha recorded (that happens only with a reading
+            # above), so a later readable frame from this cam is still scored.
+            print(f"  [{slug}] {cam['id']}: skipped (unreadable per clef)")
         except Exception as e:  # noqa: BLE001
             print(f"  warn [{slug}] {cam['id']}: {e}", file=sys.stderr)
     run.flush()  # the beach's reads are done: upload its stills now

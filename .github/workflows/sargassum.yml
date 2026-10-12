@@ -32,9 +32,10 @@ name: Cam Vision Feed
 # first Gemini model's ~250/day free cap, so the chain carries the rest. The
 # default provider order (VISION_PROVIDERS in scripts/cam_seaweed.py) is
 # gemini-2.5-flash, then gemini-2.5-flash-lite (a separate daily bucket), then
-# Clef 27B on Cloudflare Workers AI (our own POST /api/vision/clef route, the
-# same INGEST_TOKEN as the archive, capped at 600 calls a UTC day on the server;
-# the image is shrunk to 768 px / q60 with Pillow first), then
+# [only when CLEF_FALLBACK=1 is set below: Clef 27B on Cloudflare Workers AI (our
+# own POST /api/vision/clef route, the same INGEST_TOKEN as the archive, capped
+# at 600 calls a UTC day on the server; the image is shrunk to 768 px / q60 with
+# Pillow first)], then
 # Groq (large free allowance), then OpenRouter (rate-limited free model). GitHub
 # Models is NOT in the default order (it is being retired); the GITHUB_TOKEN env
 # and `models: read` below only matter if VISION_PROVIDERS adds "github". Each
@@ -192,6 +193,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # only used if VISION_PROVIDERS adds "github" (off by default)
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # for the publish push below
           INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }} # webcam archive POSTs (scripts/cam_seaweed.py archive_frame)
+          # Rollout canary: Clef stays OUT of the default provider order until the
+          # route is deployed and smoke-tested (node scripts/clef_route_smoke.mjs
+          # <archived r2_key>). Then uncomment this line to put it behind Gemini.
+          # CLEF_FALLBACK: "1"
           # One file per beach (cam_seaweed.<slug>.json) lands here, driven by
           # config/vision-cams.json — see scripts/cam_seaweed.py. CAM_SEAWEED_OUT
           # (the legacy single-file copy for boca-raton, kept for one release)

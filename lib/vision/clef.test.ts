@@ -14,6 +14,7 @@ import {
   underwaterReading,
   unwrapClefResult,
   uwQuestions,
+  validateClefAnswers,
 } from "@/lib/vision/clef";
 
 const BENCH = path.join(process.cwd(), "docs", "benchmarks", "clef-vision-2026-10-12");
@@ -173,5 +174,118 @@ describe("unwrapClefResult", () => {
     expect(unwrapClefResult(null)).toEqual({ answers: null, inputTokens: null });
     expect(unwrapClefResult("x")).toEqual({ answers: null, inputTokens: null });
     expect(unwrapClefResult({ answers: "no" })).toEqual({ answers: null, inputTokens: null });
+  });
+});
+
+describe("strict validation runs before the mapping", () => {
+  const beach = () => structuredClone(records.find((r) => r.cam !== UW_CAM)!.answers) as Record<string, any>;
+  const uw = () => structuredClone(records.find((r) => r.cam === UW_CAM)!.answers) as Record<string, any>;
+
+  it("accepts all 229 cached valid replies unchanged", () => {
+    for (const r of records) {
+      expect(validateClefAnswers(r.answers, r.cam === UW_CAM ? "underwater" : "surface"), r.frameId).toBeNull();
+    }
+  });
+
+  it("rejects no answers and a missing question", () => {
+    expect(validateClefAnswers(null, "surface")).toMatch(/no answers/);
+    const a = beach();
+    delete a.people;
+    expect(validateClefAnswers(a, "surface")).toMatch(/people: missing/);
+    const b = uw();
+    delete b.unreadable;
+    expect(validateClefAnswers(b, "underwater")).toMatch(/unreadable: missing/);
+  });
+
+  it("rejects a non-finite or out-of-range noul", () => {
+    for (const bad of [Number.NaN, Infinity, -0.1, 1.2, "0.5", null]) {
+      const a = beach();
+      a.unreadable.noul = bad;
+      expect(validateClefAnswers(a, "surface"), String(bad)).toMatch(/noul/);
+    }
+    const u = uw();
+    u.unreadable.noul = 2;
+    expect(validateClefAnswers(u, "underwater")).toMatch(/noul/);
+  });
+
+  it("rejects non-finite or out-of-[0,1] probabilities", () => {
+    for (const bad of [Number.NaN, Infinity, -0.01, 1.01, "0.3"]) {
+      const a = beach();
+      a.crowd.probabilities.empty = bad;
+      expect(validateClefAnswers(a, "surface"), String(bad)).toMatch(/crowd: probability for empty/);
+      const b = beach();
+      b.people.probabilities["2"] = bad;
+      expect(validateClefAnswers(b, "surface"), String(bad)).toMatch(/people: probability for 2/);
+    }
+  });
+
+  it("rejects probability keys outside the question's bands or options", () => {
+    const a = beach();
+    a.people.probabilities["7"] = 0.2; // people has bands 0..6
+    expect(validateClefAnswers(a, "surface")).toMatch(/people: probability key "7"/);
+    const b = beach();
+    b.seaweed_pct.probabilities["5"] = 0.2; // seaweed_pct has bands 0..4
+    expect(validateClefAnswers(b, "surface")).toMatch(/seaweed_pct: probability key/);
+    const c = beach();
+    c.crowd.probabilities.chaos = 0.2;
+    expect(validateClefAnswers(c, "surface")).toMatch(/crowd: probability key "chaos"/);
+    const d = beach();
+    d.water_pct.probabilities["-1"] = 0.2;
+    expect(validateClefAnswers(d, "surface")).toMatch(/water_pct: probability key/);
+    const e = beach();
+    e.water_pct.probabilities["1.5"] = 0.2;
+    expect(validateClefAnswers(e, "surface")).toMatch(/water_pct: probability key/);
+    const f = uw();
+    f.uw_pct.probabilities["5"] = 0.2; // uw_pct has bands 0..4
+    expect(validateClefAnswers(f, "underwater")).toMatch(/uw_pct: probability key/);
+  });
+
+  it("rejects empty, all-zero, or over-1 probability sets", () => {
+    const a = beach();
+    a.people.probabilities = {};
+    expect(validateClefAnswers(a, "surface")).toMatch(/empty or all zero/);
+    const b = beach();
+    for (const k of Object.keys(b.people.probabilities)) b.people.probabilities[k] = 0;
+    expect(validateClefAnswers(b, "surface")).toMatch(/empty or all zero/);
+    const c = beach();
+    for (const k of Object.keys(c.people.probabilities)) c.people.probabilities[k] = 0.9;
+    expect(validateClefAnswers(c, "surface")).toMatch(/sum above 1/);
+  });
+
+  it("rejects a score index outside the question's band range", () => {
+    for (const bad of [-0.5, 6.01, Number.NaN, Infinity]) {
+      const a = beach();
+      a.people.score = bad; // people has bands 0..6
+      expect(validateClefAnswers(a, "surface"), String(bad)).toMatch(/people: score outside 0\.\.6/);
+    }
+    const b = beach();
+    b.crowd_pct.score = 4.5; // crowd_pct has bands 0..4
+    expect(validateClefAnswers(b, "surface")).toMatch(/crowd_pct: score outside 0\.\.4/);
+  });
+
+  it("rejects probabilities that are not an object", () => {
+    const a = beach();
+    a.people.probabilities = [0.5, 0.5];
+    expect(validateClefAnswers(a, "surface")).toMatch(/not an object/);
+    const b = beach();
+    b.seaweed.probabilities = "none";
+    expect(validateClefAnswers(b, "surface")).toMatch(/not an object/);
+  });
+
+  it("rejects a choice outside the options, or a score with neither probabilities nor score", () => {
+    const a = beach();
+    a.water.choice = "foggy";
+    expect(validateClefAnswers(a, "surface")).toMatch(/water: choice outside/);
+    const b = beach();
+    delete b.people.probabilities;
+    delete b.people.score;
+    expect(validateClefAnswers(b, "surface")).toMatch(/people: no probabilities and no score/);
+  });
+
+  it("treats a REST reply with success:false as no answers", () => {
+    expect(unwrapClefResult({ success: false, result: { answers: { a: 1 } } })).toEqual({ answers: null, inputTokens: null });
+    expect(unwrapClefResult({ success: false, answers: { a: 1 } })).toEqual({ answers: null, inputTokens: null });
+    expect(unwrapClefResult({ success: true, result: { answers: { a: 1 }, usage: { input_tokens: 3 } } }).inputTokens).toBe(3);
+    expect(unwrapClefResult({ answers: { a: 1 }, usage: { input_tokens: Number.NaN } }).inputTokens).toBeNull();
   });
 });

@@ -336,14 +336,84 @@ export interface ClefEnv {
 
 /**
  * Pull `{answers, inputTokens}` out of what `env.AI.run` returned. The REST API
- * wrapped it as `{result: {answers, usage}}`; the binding returns the inner
- * object. Both are accepted.
+ * wrapped it as `{success, result: {answers, usage}}`; the binding returns the
+ * inner object. Both are accepted. `success: false` yields no answers.
  */
 export function unwrapClefResult(raw: unknown): { answers: Record<string, unknown> | null; inputTokens: number | null } {
   const top = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  if (top.success === false) return { answers: null, inputTokens: null };
   const inner = top.answers === undefined && top.result && typeof top.result === "object" ? (top.result as Record<string, unknown>) : top;
   const answers = inner.answers && typeof inner.answers === "object" ? (inner.answers as Record<string, unknown>) : null;
   const usage = inner.usage && typeof inner.usage === "object" ? (inner.usage as Record<string, unknown>) : null;
   const t = usage?.input_tokens;
-  return { answers, inputTokens: typeof t === "number" ? t : null };
+  return { answers, inputTokens: typeof t === "number" && Number.isFinite(t) ? t : null };
+}
+
+// -- Strict validation (runs BEFORE the mapping) ---------------------------------
+//
+// deriveClef (a verbatim port, so the backtest stays the evidence) is lenient:
+// it skips probability keys it cannot read and clamps indices. That is fine for
+// a recorded run and wrong for production, where a malformed reply must become a
+// 502, never a plausible-looking number. This check rejects what the backtest's
+// 229 real replies never contain.
+
+/** Largest sum of a question's probabilities we accept (real replies sum to ~1). */
+const MAX_PROB_SUM = 1.05;
+
+const isProb = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n) && n >= 0 && n <= 1;
+
+function checkProbabilities(probs: unknown, allowedKeys: readonly string[]): string | null {
+  if (!probs || typeof probs !== "object" || Array.isArray(probs)) return "probabilities not an object";
+  let sum = 0;
+  let count = 0;
+  for (const [k, v] of Object.entries(probs as Record<string, unknown>)) {
+    if (!allowedKeys.includes(k)) return `probability key ${JSON.stringify(k).slice(0, 20)} outside the question's options`;
+    if (!isProb(v)) return `probability for ${k} not a number in [0,1]`;
+    sum += v;
+    count += 1;
+  }
+  if (count === 0 || sum <= 0) return "probabilities empty or all zero";
+  if (sum > MAX_PROB_SUM) return "probabilities sum above 1";
+  return null;
+}
+
+function checkQuestion(name: string, q: Question, a: unknown): string | null {
+  if (!a || typeof a !== "object" || Array.isArray(a)) return `${name}: missing`;
+  const o = a as Record<string, unknown>;
+  if (q.type === "noul") {
+    return isProb(o.noul) ? null : `${name}: noul not a number in [0,1]`;
+  }
+  if (q.type === "choice") {
+    const options = Object.keys(q.criteria as Record<string, unknown>);
+    if (typeof o.choice !== "string" || !options.includes(o.choice)) return `${name}: choice outside the options`;
+    if (o.probabilities !== undefined) {
+      const bad = checkProbabilities(o.probabilities, options);
+      if (bad) return `${name}: ${bad}`;
+    }
+    return null;
+  }
+  // score: indices 0 .. bands-1
+  const bands = (q.criteria as readonly string[]).length;
+  const indices = Array.from({ length: bands }, (_, i) => String(i));
+  if (o.probabilities !== undefined) {
+    const bad = checkProbabilities(o.probabilities, indices);
+    if (bad) return `${name}: ${bad}`;
+  } else if (typeof o.score !== "number") {
+    return `${name}: no probabilities and no score`;
+  }
+  if (o.score !== undefined && !(typeof o.score === "number" && Number.isFinite(o.score) && o.score >= 0 && o.score <= bands - 1)) {
+    return `${name}: score outside 0..${bands - 1}`;
+  }
+  return null;
+}
+
+/** Why a reply must not be mapped, or null when every answer is well formed. */
+export function validateClefAnswers(answers: Record<string, unknown> | null, kind: ClefKind): string | null {
+  if (!answers) return "no answers";
+  const questions = kind === "underwater" ? uwQuestions() : beachQuestions();
+  for (const [name, q] of Object.entries(questions)) {
+    const bad = checkQuestion(name, q, answers[name]);
+    if (bad) return bad;
+  }
+  return null;
 }

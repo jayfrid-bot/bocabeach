@@ -379,6 +379,51 @@ class CaptureBeachTests(WithManifest):
         self.assertEqual(len(order), 3)
         self.assertEqual(len(result["cams"]), 1)
 
+    def test_a_frame_clef_calls_unreadable_is_skipped_and_records_no_frame_sha(self):
+        def assess(img):
+            raise cs.UnreadableFrame("unreadable per clef (p=0.97)")
+
+        dark_cam = dict(self.FEED_CAM, id="boca-south")
+        ok_cam = dict(self.FEED_CAM, id="boca-south-surf")
+        calls = []
+
+        def mixed(img):
+            calls.append(1)
+            if len(calls) == 1:
+                return assess(img)
+            return {"level": "none", "coveragePct": 0, "crowd": "quiet", "crowdPct": 5, "people": 2, "provider": "t"}
+
+        result, order = self.run_capture("boca-raton", [dark_cam, ok_cam], frame_at_info=iso_ago(5), assess=mixed)
+        self.assertIn("boca-south: skipped (unreadable per clef)", self.out.getvalue())
+        self.assertNotIn("warn", self.err.getvalue())
+        ids = [c["id"] for c in result["cams"]]
+        self.assertEqual(ids, ["boca-south-surf"], "the dark cam has no reading")
+        shas = {c["id"]: c.get("frameSha") for c in result["cams"]}
+        self.assertTrue(shas["boca-south-surf"])
+        self.assertNotIn("boca-south", shas)
+        # Both stills are still archived: the archive keeps its own rules.
+        self.assertEqual(sum(1 for o in order if isinstance(o, tuple)), 2)
+
+    def test_when_every_cam_is_unreadable_the_beach_gets_no_new_capture(self):
+        def assess(img):
+            raise cs.UnreadableFrame("dark")
+
+        result, _ = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(5), assess=assess)
+        self.assertIsNone(result)
+        self.assertIn("skipped (unreadable per clef)", self.out.getvalue())
+
+    def test_a_later_readable_frame_of_the_skipped_cam_is_read(self):
+        # The dark frame recorded no sha, so the same cam's next frame is not "already scored".
+        prev = {"frameShas": {"boca-south": "oldsha"}}
+
+        def dark(img):
+            raise cs.UnreadableFrame("dark")
+
+        self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(5), assess=dark, prev=prev)
+        result, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(5), prev=prev)
+        self.assertIn("assess", order)
+        self.assertEqual([c["id"] for c in result["cams"]], ["boca-south"])
+
     def test_every_read_finishes_before_any_upload_starts(self):
         cams = [dict(self.FEED_CAM, id=i) for i in ("boca-south", "boca-south-surf", "boca-inlet-surf")]
         _, order = self.run_capture("boca-raton", cams, frame_at_info=iso_ago(5))
@@ -501,6 +546,22 @@ class CaptureUwTests(WithManifest):
         self.assertEqual(archived, [("deerfield-beach", "deerfield-spinner-uw", grabbed)])
         self.assertEqual(attempted, {("deerfield-beach", "deerfield-spinner-uw")})
         self.assertEqual(out["level"], "clear")
+
+    def test_an_unreadable_spinner_frame_gives_no_reading_and_is_still_archived(self):
+        archived = []
+        out = io.StringIO()
+
+        def dark(img, *a, **k):
+            raise cs.UnreadableFrame("dark")
+
+        with env(INGEST_TOKEN="tok"), \
+                mock.patch.object(cs, "fetch_uw_frame_timed", lambda: (jpeg(), iso_ago(10))), \
+                mock.patch.object(cs, "archive_frame", lambda s, c, img, frame_at=None: archived.append(c) or "stored"), \
+                mock.patch.object(cs, "assess_uw", dark), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            self.assertIsNone(cs.capture_uw(dt.datetime.now(ZONE), set()))
+        self.assertIn("skipped (unreadable per clef)", out.getvalue())
+        self.assertEqual(archived, ["deerfield-spinner-uw"])
 
     def test_spinner_is_archived_even_when_the_read_fails(self):
         out, archived, _, _ = self.run_uw(assess_raises=True)
@@ -1464,8 +1525,9 @@ class VisionCallLogTests(unittest.TestCase):
         self.assertNotIn("vision calls this tick", out.getvalue())
 
     def test_the_default_provider_order_excludes_github_models(self):
-        # The workflow comment about quota depends on this: gemini (2 models), clef, groq, openrouter.
-        self.assertEqual(cs.PROVIDER_ORDER, ["gemini", "clef", "groq", "openrouter"])
+        # The workflow comment about quota depends on this: gemini (2 models), groq, openrouter.
+        # Clef is added only by CLEF_FALLBACK=1 (see ClefProviderTests).
+        self.assertEqual(provider_order_in_fresh_process(), ["gemini", "groq", "openrouter"])
 
 
 CLEF_REPLY = {
@@ -1480,6 +1542,16 @@ CLEF_UW_REPLY = {
     "unreadable": False, "unreadableP": 0.1,
     "provider": "clef", "model": "@cf/cloudflare/clef", "usage": {"inputTokens": 867}, "latencyMs": 400,
 }
+
+
+def provider_order_in_fresh_process(**overrides):
+    """PROVIDER_ORDER as a fresh import of cam_seaweed computes it. Unset env vars are dropped first."""
+    e = {k: v for k, v in os.environ.items() if k not in ("VISION_PROVIDERS", "CLEF_FALLBACK")}
+    e.update(overrides)
+    out = subprocess.run([sys.executable, "-c", "import json, cam_seaweed as c; print(json.dumps(c.PROVIDER_ORDER))"],
+                         cwd=Path(__file__).resolve().parent, capture_output=True, text=True, timeout=60, env=e)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout.strip().splitlines()[-1])
 
 
 def http_error(code, body=b'{"ok":false,"error":"x"}'):
@@ -1508,14 +1580,36 @@ class ClefProviderTests(unittest.TestCase):
 
         return mock.patch.object(cs.urllib.request, "urlopen", fake)
 
+    def clef_only(self):
+        """The chain with Clef the only provider (the default order leaves it out until CLEF_FALLBACK=1)."""
+        return mock.patch.object(cs, "PROVIDER_ORDER", ["clef"])
+
     def small(self):
         return mock.patch.object(cs, "shrink_for_clef", lambda img: b"\xff\xd8\xff-small-jpeg")
 
     # -- order and configuration ------------------------------------------------
 
-    def test_default_order_puts_clef_right_behind_both_gemini_models(self):
-        self.assertEqual(cs.PROVIDER_ORDER, ["gemini", "clef", "groq", "openrouter"])
-        with env(INGEST_TOKEN="tok"), mock.patch.object(cs, "API_KEY", "k"), \
+    def test_clef_is_off_in_the_default_order_until_clef_fallback_is_1(self):
+        self.assertEqual(provider_order_in_fresh_process(), ["gemini", "groq", "openrouter"])
+        for off in ("0", "", "true", "yes"):
+            self.assertEqual(provider_order_in_fresh_process(CLEF_FALLBACK=off), ["gemini", "groq", "openrouter"], off)
+
+    def test_clef_fallback_1_puts_clef_right_behind_gemini(self):
+        self.assertEqual(provider_order_in_fresh_process(CLEF_FALLBACK="1"), ["gemini", "clef", "groq", "openrouter"])
+
+    def test_an_explicit_vision_providers_wins_over_the_flag(self):
+        self.assertEqual(provider_order_in_fresh_process(CLEF_FALLBACK="1", VISION_PROVIDERS="groq,gemini"), ["groq", "gemini"])
+        self.assertEqual(provider_order_in_fresh_process(VISION_PROVIDERS="gemini,clef"), ["gemini", "clef"])
+
+    def test_default_provider_order_function(self):
+        with env(CLEF_FALLBACK=None):
+            self.assertEqual(cs.default_provider_order(), "gemini,groq,openrouter")
+        with env(CLEF_FALLBACK=" 1 "):
+            self.assertEqual(cs.default_provider_order(), "gemini,clef,groq,openrouter")
+
+    def test_enabled_providers_order_with_the_flag_on(self):
+        with env(INGEST_TOKEN="tok"), mock.patch.object(cs, "PROVIDER_ORDER", ["gemini", "clef", "groq", "openrouter"]), \
+                mock.patch.object(cs, "API_KEY", "k"), \
                 mock.patch.object(cs, "GEMINI_MODELS", ["g-flash", "g-lite"]), \
                 mock.patch.dict(cs.OPENAI_PROVIDERS["groq"], {"key": "k", "model": "q-1"}), \
                 mock.patch.dict(cs.OPENAI_PROVIDERS["openrouter"], {"key": "k", "model": "o-1"}):
@@ -1527,13 +1621,15 @@ class ClefProviderTests(unittest.TestCase):
     def test_clef_is_configured_only_when_ingest_token_is_set(self):
         with env(INGEST_TOKEN=None):
             self.assertFalse(cs._provider_configured("clef"))
-            with mock.patch.object(cs, "API_KEY", "k"), mock.patch.object(cs, "GEMINI_MODELS", ["g"]):
+            with mock.patch.object(cs, "PROVIDER_ORDER", ["gemini", "clef", "groq", "openrouter"]), \
+                    mock.patch.object(cs, "API_KEY", "k"), mock.patch.object(cs, "GEMINI_MODELS", ["g"]):
                 self.assertNotIn("clef", [n for n, _ in cs._enabled_providers()])
         with env(INGEST_TOKEN="   "):
             self.assertFalse(cs._provider_configured("clef"))
         with env(INGEST_TOKEN="tok"):
             self.assertTrue(cs._provider_configured("clef"))
-            with mock.patch.object(cs, "API_KEY", ""), \
+            with mock.patch.object(cs, "PROVIDER_ORDER", ["gemini", "clef", "groq", "openrouter"]), \
+                    mock.patch.object(cs, "API_KEY", ""), \
                     mock.patch.dict(cs.OPENAI_PROVIDERS["groq"], {"key": ""}), \
                     mock.patch.dict(cs.OPENAI_PROVIDERS["openrouter"], {"key": ""}):
                 self.assertEqual(cs._enabled_providers(), [("clef", "@cf/cloudflare/clef")])
@@ -1574,7 +1670,7 @@ class ClefProviderTests(unittest.TestCase):
         self.assertEqual(r, {**other, "provider": "clef", "model": "@cf/cloudflare/clef"})
 
     def test_the_underwater_read_sends_kind_underwater_and_parses_like_the_others(self):
-        with env(INGEST_TOKEN="t"), self.small(), self.urlopen(CLEF_UW_REPLY):
+        with env(INGEST_TOKEN="t"), self.clef_only(), self.small(), self.urlopen(CLEF_UW_REPLY):
             r = cs.assess_uw(b"x")
         self.assertEqual(self.sent[0][2]["kind"], "underwater")
         self.assertEqual(r, {"level": "slightly_hazy", "pct": 62, "note": "", "provider": "clef", "model": "@cf/cloudflare/clef"})
@@ -1584,18 +1680,42 @@ class ClefProviderTests(unittest.TestCase):
             cs.assess_with("clef", b"x", cs.UW_PROMPT, cs._parse_uw)
         self.assertEqual(self.sent[0][2]["kind"], "underwater")
 
-    def test_a_frame_clef_calls_unreadable_gets_no_water_grade_or_visibility(self):
+    def test_an_unreadable_surface_frame_is_no_reading_and_stops_the_chain(self):
         dark = {**CLEF_REPLY, "unreadable": True, "unreadableP": 0.97, "water": "clear", "waterPct": 70}
         with env(INGEST_TOKEN="t"), self.small(), self.urlopen(dark):
-            r = cs.assess_with("clef", b"x")
-        self.assertIsNone(r["water"])
-        self.assertIsNone(r["waterPct"])
-        self.assertEqual(r["level"], "low")
+            with self.assertRaises(cs.UnreadableFrame):
+                cs.assess_with("clef", b"x")
+        # The provider answered (and may be billed), so it counts as an ok call.
+        self.assertIn("clef/@cf/cloudflare/clef ok=1 failed=0", cs.vision_call_summary())
+
+    def test_an_unreadable_underwater_frame_is_no_reading_too(self):
         dark_uw = {**CLEF_UW_REPLY, "unreadable": True, "unreadableP": 0.95}
         with env(INGEST_TOKEN="t"), self.small(), self.urlopen(dark_uw):
-            r = cs.assess_with("clef", b"x", cs.UW_PROMPT, cs._parse_uw)
-        self.assertEqual(r["level"], "slightly_hazy")
-        self.assertIsNone(r["pct"])
+            with self.assertRaises(cs.UnreadableFrame):
+                cs.assess_with("clef", b"x", cs.UW_PROMPT, cs._parse_uw)
+        with env(INGEST_TOKEN="t"), self.clef_only(), self.small(), self.urlopen(dark_uw):
+            with self.assertRaises(cs.UnreadableFrame):
+                cs.assess_uw(b"x")
+        self.assertEqual(self.sent[-1][2]["kind"], "underwater")
+
+    def test_assess_does_not_fall_through_to_groq_on_an_unreadable_frame(self):
+        dark = {**CLEF_REPLY, "unreadable": True, "unreadableP": 0.6}
+        groq_calls = []
+        with env(INGEST_TOKEN="t"), mock.patch.object(cs, "API_KEY", "k"), \
+                mock.patch.object(cs, "GEMINI_MODELS", ["g-1"]), \
+                mock.patch.object(cs, "PROVIDER_ORDER", ["gemini", "clef", "groq"]), \
+                mock.patch.dict(cs.OPENAI_PROVIDERS["groq"], {"key": "k", "model": "q-1"}), \
+                mock.patch.object(cs, "_gemini_out", lambda i, p, m: (_ for _ in ()).throw(RuntimeError("429 quota"))), \
+                mock.patch.object(cs, "_openai_out", lambda cfg, i, p: groq_calls.append(1) or {"seaweed": "none"}), \
+                self.small(), self.urlopen(dark):
+            with self.assertRaises(cs.UnreadableFrame):
+                cs.assess(b"x")
+        self.assertEqual(groq_calls, [], "another model must not grade the same dark frame")
+
+    def test_an_unreadable_frame_is_not_a_plain_provider_error(self):
+        # A generic `except Exception` that treats it as "try the next provider" would be the bug.
+        self.assertTrue(issubclass(cs.UnreadableFrame, Exception))
+        self.assertFalse(issubclass(cs.UnreadableFrame, (RuntimeError, ValueError)))
 
     def test_water_unknown_from_clef_stays_none(self):
         with env(INGEST_TOKEN="t"), self.small(), self.urlopen({**CLEF_REPLY, "water": None}):

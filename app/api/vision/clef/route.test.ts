@@ -6,12 +6,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const ctl = vi.hoisted(() => ({ env: {} as Record<string, unknown> }));
+const ctl = vi.hoisted(() => ({ env: {} as Record<string, unknown>, db: null as unknown }));
 vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext: async () => ({ env: ctl.env }) }));
+vi.mock("@/lib/db/d1Store", () => ({ getD1: async () => ctl.db }));
 
 import { POST } from "@/app/api/vision/clef/route";
-import { resetMemoryClefCap } from "@/lib/vision/dailyCap";
+import { HAS_SQLITE, makeCamDb, type CamDb } from "@/lib/camFrames/testDb";
+import type { D1Like } from "@/lib/db/d1Store";
 import { CLEF_MODEL } from "@/lib/vision/clef";
+import { resetFirstSuccessLog } from "@/lib/vision/firstSuccessLog";
 
 const TOKEN = "test-ingest-token";
 const CACHE = path.join(process.cwd(), "docs", "benchmarks", "clef-vision-2026-10-12", "cache");
@@ -43,11 +46,17 @@ function req(body: unknown, headers: Record<string, string> = { authorization: `
 
 const good = { kind: "surface", image: IMAGE };
 
+let h: CamDb | null = null;
+const callsToday = () => (h?.all("SELECT count FROM vision_daily_calls")[0]?.count ?? 0) as number;
+
 beforeEach(() => {
-  resetMemoryClefCap();
+  h = HAS_SQLITE ? makeCamDb({ files: ["0018_vision_daily_cap.sql"] }) : null;
+  ctl.db = h?.db ?? null;
+  resetFirstSuccessLog();
   process.env.INGEST_TOKEN = TOKEN;
   ctl.env = { AI: fakeAi({ answers: BEACH.answers, usage: { input_tokens: BEACH.tokens } }) };
   vi.spyOn(console, "error").mockImplementation(() => undefined);
+  vi.spyOn(console, "log").mockImplementation(() => undefined);
 });
 
 describe("auth and bindings", () => {
@@ -173,6 +182,27 @@ describe("failures never invent a value", () => {
     expect(res.status).toBe(502);
     expect(((await res.json()) as { error: string }).error).toBe("unparseable-answer");
   });
+  it("502 on malformed probabilities, an out-of-range noul, an out-of-band key, or success:false", async () => {
+    const mutate = (f: (a: Record<string, any>) => void) => {
+      const a = structuredClone(BEACH.answers) as Record<string, any>;
+      f(a);
+      return a;
+    };
+    const bad: unknown[] = [
+      { answers: mutate((a) => { a.unreadable.noul = 1.5; }) },
+      { answers: mutate((a) => { a.unreadable.noul = Number.NaN; }) },
+      { answers: mutate((a) => { a.crowd.probabilities.empty = 3; }) },
+      { answers: mutate((a) => { a.people.probabilities["9"] = 0.1; }) },
+      { answers: mutate((a) => { a.people.score = 99; }) },
+      { success: false, result: { answers: BEACH.answers } },
+    ];
+    for (const result of bad) {
+      ctl.env = { AI: fakeAi(result) };
+      const res = await POST(req(good));
+      expect(res.status, JSON.stringify(result).slice(0, 60)).toBe(502);
+      expect(((await res.json()) as { error: string }).error).toBe("unparseable-answer");
+    }
+  });
   it("502 when the result has no answers at all", async () => {
     ctl.env = { AI: fakeAi({}) };
     expect((await POST(req(good))).status).toBe(502);
@@ -185,41 +215,72 @@ describe("failures never invent a value", () => {
   });
 });
 
-describe("daily budget guard", () => {
+describe.skipIf(!HAS_SQLITE)("daily budget guard (real SQLite)", () => {
   it("429 {reason:'daily-cap'} once 600 calls are used, with Retry-After, and the model is not called", async () => {
-    const kv = {
-      store: new Map<string, string>([[`clef-daily:${new Date().toISOString().slice(0, 10)}`, "600"]]),
-      get: async function (k: string) { return this.store.get(k) ?? null; },
-      put: async function (k: string, v: string) { this.store.set(k, v); },
-    };
+    h!.exec(`INSERT INTO vision_daily_calls (day, model, count) VALUES ('${new Date().toISOString().slice(0, 10)}', '${CLEF_MODEL}', 600)`);
     const ai = fakeAi({ answers: BEACH.answers });
-    ctl.env = { AI: ai, PUSH_KV: kv };
+    ctl.env = { AI: ai };
     const res = await POST(req(good));
     expect(res.status).toBe(429);
     expect(await res.json()).toMatchObject({ ok: false, reason: "daily-cap" });
     expect(Number(res.headers.get("retry-after"))).toBeGreaterThan(0);
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(ai.run).not.toHaveBeenCalled();
+    expect(callsToday()).toBe(600);
   });
-  it("503 when the counter cannot be read (fail closed), model not called", async () => {
-    const ai = fakeAi({ answers: BEACH.answers });
-    ctl.env = { AI: ai, PUSH_KV: { get: async () => { throw new Error("down"); }, put: async () => undefined } };
-    const res = await POST(req(good));
-    expect(res.status).toBe(503);
-    expect(ai.run).not.toHaveBeenCalled();
+  it("counts each call that reaches the model", async () => {
+    await POST(req(good));
+    await POST(req(good));
+    expect(callsToday()).toBe(2);
   });
   it("a rejected (malformed) request does not use the allowance", async () => {
-    const kv = { n: 0, get: async () => null, put: async function () { (this as { n: number }).n += 1; } };
-    ctl.env = { AI: fakeAi({ answers: BEACH.answers }), PUSH_KV: kv };
     await POST(req({ kind: "nope", image: IMAGE }));
-    expect(kv.n).toBe(0);
+    expect(callsToday()).toBe(0);
     await POST(req(good));
-    expect(kv.n).toBe(1);
+    expect(callsToday()).toBe(1);
   });
   it("a failed model call still counts (it can still be billed)", async () => {
-    const kv = { n: 0, get: async () => null, put: async function () { (this as { n: number }).n += 1; } };
-    ctl.env = { AI: fakeAi(new Error("boom")), PUSH_KV: kv };
+    ctl.env = { AI: fakeAi(new Error("boom")) };
     await POST(req(good));
-    expect(kv.n).toBe(1);
+    expect(callsToday()).toBe(1);
+  });
+  it("503 when the DB throws (fail closed), model not called", async () => {
+    const ai = fakeAi({ answers: BEACH.answers });
+    ctl.env = { AI: ai };
+    ctl.db = { prepare: () => { throw new Error("down"); } } as D1Like;
+    const res = await POST(req(good));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ reason: "cap-unavailable" });
+    expect(ai.run).not.toHaveBeenCalled();
+  });
+});
+
+describe("daily budget guard fails closed without a DB", () => {
+  it("503 and the model is not called when the DB binding is missing (production must not run unguarded)", async () => {
+    const ai = fakeAi({ answers: BEACH.answers });
+    ctl.env = { AI: ai };
+    ctl.db = null;
+    const res = await POST(req(good));
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({ ok: false, reason: "cap-unavailable" });
+    expect(ai.run).not.toHaveBeenCalled();
+  });
+});
+
+describe("first-success log", () => {
+  it("writes one JSON line per UTC day with only model, kind, latency and tokens", async () => {
+    if (!HAS_SQLITE) return;
+    const log = vi.mocked(console.log);
+    log.mockClear();
+    await POST(req(good));
+    await POST(req(good));
+    const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("clef-first-success"));
+    expect(lines).toHaveLength(1); // two reads, one line
+    for (const l of lines) {
+      const j = JSON.parse(l) as Record<string, unknown>;
+      expect(Object.keys(j).sort()).toEqual(["day", "event", "inputTokens", "kind", "latencyMs", "model"]);
+      expect(l).not.toContain(IMAGE);
+      expect(l).not.toContain(TOKEN);
+    }
   });
 });

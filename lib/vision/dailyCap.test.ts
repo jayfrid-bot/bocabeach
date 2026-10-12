@@ -1,106 +1,112 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+// The daily cap runs against a REAL SQLite database with migration 0018
+// applied, so the atomic statement itself is what is tested.
 
-const ctl = vi.hoisted(() => ({ env: undefined as Record<string, unknown> | undefined, throwCtx: false }));
-vi.mock("@opennextjs/cloudflare", () => ({
-  getCloudflareContext: async () => {
-    if (ctl.throwCtx) throw new Error("no context");
-    return { env: ctl.env };
-  },
-}));
-
-import { CLEF_DAILY_CAP, resetMemoryClefCap, secondsToUtcMidnight, takeClefDailySlot } from "@/lib/vision/dailyCap";
-
-function fakeKv() {
-  const store = new Map<string, { value: string; ttl?: number }>();
-  return {
-    store,
-    get: vi.fn(async (k: string) => store.get(k)?.value ?? null),
-    put: vi.fn(async (k: string, value: string, opts?: { expirationTtl?: number }) => {
-      store.set(k, { value, ttl: opts?.expirationTtl });
-    }),
-  };
-}
+import { beforeEach, describe, expect, it } from "vitest";
+import { HAS_SQLITE, makeCamDb, type CamDb } from "@/lib/camFrames/testDb";
+import type { D1Like } from "@/lib/db/d1Store";
+import { CLEF_DAILY_CAP, secondsToUtcMidnight, takeClefDailySlot } from "@/lib/vision/dailyCap";
 
 const NOON = Date.parse("2026-10-12T12:00:00.000Z");
+const MODEL = "@cf/cloudflare/clef";
 
+let h: CamDb;
 beforeEach(() => {
-  resetMemoryClefCap();
-  ctl.env = undefined;
-  ctl.throwCtx = false;
+  if (HAS_SQLITE) h = makeCamDb({ files: ["0018_vision_daily_cap.sql"] })!;
 });
-afterEach(() => vi.restoreAllMocks());
+
+const count = (day = "2026-10-12") =>
+  (h.all("SELECT count FROM vision_daily_calls WHERE day = ? AND model = ?", day, MODEL)[0]?.count ?? null) as number | null;
 
 describe("takeClefDailySlot", () => {
   it("caps at 600 a day", () => {
     expect(CLEF_DAILY_CAP).toBe(600);
   });
 
-  it("counts in KV under a per-UTC-day key that expires on its own", async () => {
-    const kv = fakeKv();
-    ctl.env = { PUSH_KV: kv };
-    expect(await takeClefDailySlot(NOON)).toEqual({ allowed: true, count: 1 });
-    expect(await takeClefDailySlot(NOON)).toEqual({ allowed: true, count: 2 });
-    expect([...kv.store.keys()]).toEqual(["clef-daily:2026-10-12"]);
-    expect(kv.store.get("clef-daily:2026-10-12")).toEqual({ value: "2", ttl: 172800 });
+  describe.skipIf(!HAS_SQLITE)("on real SQLite", () => {
+    it("counts calls one by one under the UTC day and model", async () => {
+      expect(await takeClefDailySlot(h.db, NOON)).toEqual({ allowed: true, count: 1 });
+      expect(await takeClefDailySlot(h.db, NOON)).toEqual({ allowed: true, count: 2 });
+      expect(count()).toBe(2);
+      expect(h.all("SELECT day, model FROM vision_daily_calls")).toEqual([{ day: "2026-10-12", model: MODEL }]);
+    });
+
+    it("allows the 600th call and denies the 601st without counting it", async () => {
+      h.exec(`INSERT INTO vision_daily_calls (day, model, count) VALUES ('2026-10-12', '${MODEL}', 599)`);
+      expect(await takeClefDailySlot(h.db, NOON)).toEqual({ allowed: true, count: 600 });
+      expect(await takeClefDailySlot(h.db, NOON)).toEqual({ allowed: false, reason: "daily-cap", retryAfterSec: 12 * 3600 });
+      expect(await takeClefDailySlot(h.db, NOON)).toMatchObject({ allowed: false, reason: "daily-cap" });
+      expect(count()).toBe(600);
+    });
+
+    it("starts a fresh count at 00:00 UTC", async () => {
+      h.exec(`INSERT INTO vision_daily_calls (day, model, count) VALUES ('2026-10-12', '${MODEL}', 600)`);
+      expect(await takeClefDailySlot(h.db, Date.parse("2026-10-13T00:00:01.000Z"))).toEqual({ allowed: true, count: 1 });
+      expect(count("2026-10-12")).toBe(600);
+      expect(count("2026-10-13")).toBe(1);
+    });
+
+    it("keeps a separate count per model", async () => {
+      await takeClefDailySlot(h.db, NOON, 1, "model-a");
+      expect(await takeClefDailySlot(h.db, NOON, 1, "model-b")).toEqual({ allowed: true, count: 1 });
+      expect(await takeClefDailySlot(h.db, NOON, 1, "model-a")).toMatchObject({ allowed: false, reason: "daily-cap" });
+    });
+
+    it("never hands out more than the cap under concurrent claims", async () => {
+      // 50 claims race for 10 slots. Each call is one atomic statement, so exactly 10 win.
+      const results = await Promise.all(Array.from({ length: 50 }, () => takeClefDailySlot(h.db, NOON, 10)));
+      const won = results.filter((r) => r.allowed);
+      expect(won).toHaveLength(10);
+      expect(results.filter((r) => !r.allowed && r.reason === "daily-cap")).toHaveLength(40);
+      expect(won.map((r) => (r.allowed ? r.count : 0)).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+      expect(count()).toBe(10);
+    });
+
+    it("the statement is a single INSERT ... ON CONFLICT ... WHERE count < ? RETURNING", async () => {
+      const seen: string[] = [];
+      const spy: D1Like = {
+        prepare(sql: string) {
+          seen.push(sql);
+          return h.db.prepare(sql);
+        },
+      };
+      await takeClefDailySlot(spy, NOON);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatch(/^INSERT INTO vision_daily_calls .*ON CONFLICT \(day, model\) DO UPDATE SET count = .*count \+ 1 WHERE .*count < \? RETURNING count$/);
+    });
   });
 
-  it("denies the call after the cap and does not count denied calls", async () => {
-    const kv = fakeKv();
-    kv.store.set("clef-daily:2026-10-12", { value: "600" });
-    ctl.env = { PUSH_KV: kv };
-    const r = await takeClefDailySlot(NOON);
-    expect(r).toMatchObject({ allowed: false, reason: "daily-cap" });
-    expect(kv.put).not.toHaveBeenCalled();
-    expect(kv.store.get("clef-daily:2026-10-12")?.value).toBe("600");
+  describe("fails closed", () => {
+    it("with no DB binding (there is no in-memory fallback)", async () => {
+      expect(await takeClefDailySlot(null, NOON)).toEqual({ allowed: false, reason: "cap-unavailable" });
+    });
+
+    it("when the DB throws", async () => {
+      const broken: D1Like = {
+        prepare() {
+          throw new Error("D1 down");
+        },
+      };
+      expect(await takeClefDailySlot(broken, NOON)).toEqual({ allowed: false, reason: "cap-unavailable" });
+    });
+
+    it("when the table is missing (migration not applied)", async () => {
+      if (!HAS_SQLITE) return;
+      const bare = makeCamDb({ files: [] })!;
+      expect(await takeClefDailySlot(bare.db, NOON)).toEqual({ allowed: false, reason: "cap-unavailable" });
+    });
+
+    it("when the reply is not a sane count", async () => {
+      const odd: D1Like = {
+        prepare() {
+          const s = { bind: () => s, first: async () => ({ count: "banana" }), run: async () => ({}), all: async () => ({}) };
+          return s as never;
+        },
+      };
+      expect(await takeClefDailySlot(odd, NOON)).toEqual({ allowed: false, reason: "cap-unavailable" });
+    });
   });
 
-  it("allows the 600th call and denies the 601st", async () => {
-    const kv = fakeKv();
-    kv.store.set("clef-daily:2026-10-12", { value: "599" });
-    ctl.env = { PUSH_KV: kv };
-    expect(await takeClefDailySlot(NOON)).toEqual({ allowed: true, count: 600 });
-    expect(await takeClefDailySlot(NOON)).toMatchObject({ allowed: false, reason: "daily-cap" });
-  });
-
-  it("starts a fresh count at 00:00 UTC", async () => {
-    const kv = fakeKv();
-    kv.store.set("clef-daily:2026-10-12", { value: "600" });
-    ctl.env = { PUSH_KV: kv };
-    const nextDay = Date.parse("2026-10-13T00:00:01.000Z");
-    expect(await takeClefDailySlot(nextDay)).toEqual({ allowed: true, count: 1 });
-  });
-
-  it("reports the seconds to the next UTC midnight", async () => {
+  it("reports the seconds to the next UTC midnight", () => {
     expect(secondsToUtcMidnight(NOON)).toBe(12 * 3600);
-    const kv = fakeKv();
-    kv.store.set("clef-daily:2026-10-12", { value: "600" });
-    ctl.env = { PUSH_KV: kv };
-    expect(await takeClefDailySlot(NOON)).toEqual({ allowed: false, reason: "daily-cap", retryAfterSec: 12 * 3600 });
-  });
-
-  it("FAILS CLOSED when KV exists but throws", async () => {
-    ctl.env = { PUSH_KV: { get: async () => { throw new Error("kv down"); }, put: async () => undefined } };
-    expect(await takeClefDailySlot(NOON)).toEqual({ allowed: false, reason: "cap-unavailable" });
-    ctl.env = { PUSH_KV: { get: async () => null, put: async () => { throw new Error("kv down"); } } };
-    expect(await takeClefDailySlot(NOON)).toEqual({ allowed: false, reason: "cap-unavailable" });
-  });
-
-  it("FAILS CLOSED on a corrupt counter", async () => {
-    const kv = fakeKv();
-    kv.store.set("clef-daily:2026-10-12", { value: "banana" });
-    ctl.env = { PUSH_KV: kv };
-    expect(await takeClefDailySlot(NOON)).toEqual({ allowed: false, reason: "cap-unavailable" });
-  });
-
-  it("uses an in-memory counter when there is no KV binding (dev, tests)", async () => {
-    expect(await takeClefDailySlot(NOON, 2)).toEqual({ allowed: true, count: 1 });
-    expect(await takeClefDailySlot(NOON, 2)).toEqual({ allowed: true, count: 2 });
-    expect(await takeClefDailySlot(NOON, 2)).toMatchObject({ allowed: false, reason: "daily-cap" });
-  });
-
-  it("uses the in-memory counter when there is no Cloudflare context at all", async () => {
-    ctl.throwCtx = true;
-    expect(await takeClefDailySlot(NOON, 1)).toEqual({ allowed: true, count: 1 });
-    expect(await takeClefDailySlot(NOON, 1)).toMatchObject({ allowed: false });
   });
 });
