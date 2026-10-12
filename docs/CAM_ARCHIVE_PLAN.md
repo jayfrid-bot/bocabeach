@@ -382,7 +382,12 @@ run that finds another live run end without reading or handing off.
 scored. Each scored feed reading now carries `frameSha`; the beach document keeps
 `frameShas` (last successfully scored frame per cam) and a feed frame with the same
 sha is skipped ("same frame already scored"). A failed read records nothing, so it
-is retried. The archive still receives the frame.
+is retried. The archive still receives the frame. When only some cams have a
+fresh reading in a tick, each other cam contributes its last good reading marked
+`carried: true` (original frame time kept, dropped after 60 minutes for feed cams,
+150 for courier cams), so the headline, the history entry and the morning are
+built from every cam; carried readings are never stored as new per-cam
+observations. The courier cams had the same gap and get the same treatment.
 
 **Courier every 10 minutes in golden windows.** A second launchd job
 (`scripts/com.isitbeachday.camcourier.golden.plist`) runs

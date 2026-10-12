@@ -140,24 +140,16 @@ CAMS=(
   "ftl-elbo-beach-cam:1j1lgppb0PY"
 )
 
-# One run at a time. The hourly :07 job and the 10-minute golden job can meet
-# (a slow run takes several minutes), and two grabs of the same cam at once
-# would only double yt-dlp load. mkdir is atomic; a lock whose owner is gone
-# (crash, reboot) is taken over.
+# One run at a time (scripts/courier_lock.sh says how the lock stays safe). The
+# hourly :07 job and the 10-minute golden job can meet.
 LOCK_DIR="${COURIER_LOCK_DIR:-${TMPDIR:-/tmp}/isitbeachday-courier.lock}"
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-  owner="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
-  if [[ -n "$owner" ]] && kill -0 "$owner" 2>/dev/null; then
-    log "another courier run (pid $owner) is still going — skipping this one"
-    exit 0
-  fi
-  rm -rf "$LOCK_DIR"
-  mkdir "$LOCK_DIR" 2>/dev/null || { log "could not take the run lock — skipping"; exit 0; }
-fi
-echo "$$" > "$LOCK_DIR/pid"
+# shellcheck source=scripts/courier_lock.sh
+source "$SCRIPT_DIR/courier_lock.sh"
+courier_lock_acquire || exit 0
+trap courier_lock_release EXIT # from here on every exit path gives the lock back (if still ours)
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP" "$LOCK_DIR"' EXIT
+trap 'rm -rf "$TMP"; courier_lock_release' EXIT
 
 # Runs "$@" in the background and force-kills it if it's still running
 # after $1 seconds; otherwise returns its real exit status. This is the

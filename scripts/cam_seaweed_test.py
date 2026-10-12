@@ -1533,7 +1533,9 @@ class SameFeedFrameTests(WithManifest):
         prev = self.doc(now, {}, result)
         result2, calls, now2 = self.capture(cams, {"boca-south": a1, "boca-inlet-surf": b2}, prev=prev)
         self.assertEqual(calls, [b2])
-        self.assertEqual([c["id"] for c in result2["cams"]], ["boca-inlet-surf"])
+        # The unchanged cam is carried (see CarriedReadingTests), only the changed one is fresh.
+        self.assertEqual([(c["id"], c.get("carried", False)) for c in result2["cams"]],
+                         [("boca-south", True), ("boca-inlet-surf", False)])
         doc2 = self.doc(now2, prev, result2)
         # The skipped cam keeps its recorded frame; the read one moves on.
         self.assertEqual(doc2["frameShas"], {"boca-south": cs.frame_sha(a1), "boca-inlet-surf": cs.frame_sha(b2)})
@@ -1620,6 +1622,219 @@ class SameFeedFrameTests(WithManifest):
         self.assertIsNone(cs.prev_scored_sha_for_cam({"frameShas": "nope"}, "x"))
         self.assertIsNone(cs.prev_scored_sha_for_cam({"frameShas": {"x": 5}}, "x"))
         self.assertEqual(cs.prev_scored_sha_for_cam({"frameShas": {"x": "abc"}}, "x"), "abc")
+
+
+class CarriedReadingTests(WithManifest):
+    """A tick where only SOME cams changed still rolls up over ALL of them.
+
+    Codex review of 9764baa: with unchanged frames skipped and absent, a clean
+    changed cam erased an unchanged high-seaweed cam from the headline, the
+    partial roll-up went into history[], and a partial first capture could become
+    the day's morning. Unchanged (or failed) cams now contribute their last good
+    reading, marked carried, while it is still fresh enough to be scored."""
+
+    def cam(self, cid, kind="feed"):
+        if kind == "feed":
+            return {"id": cid, "name": cid, "source": {"kind": "feed", "base": "http://x", "view": "s4"}}
+        return {"id": cid, "name": cid, "source": {"kind": "direct", "url": "https://u/" + cid, "meta": "https://u/m/" + cid}}
+
+    # What each fake image "looks like" to the vision model.
+    LOOKS = {
+        b"A1": {"level": "high", "coveragePct": 60, "crowd": "quiet", "crowdPct": 5, "people": 2, "water": "murky", "waterPct": 20},
+        b"B1": {"level": "none", "coveragePct": 0, "crowd": "busy", "crowdPct": 80, "people": 90, "water": "clear", "waterPct": 90},
+        b"B2": {"level": "none", "coveragePct": 0, "crowd": "busy", "crowdPct": 85, "people": 95, "water": "clear", "waterPct": 95},
+        b"C1": {"level": "low", "coveragePct": 10, "crowd": "light", "crowdPct": 30, "people": 20, "water": "clear", "waterPct": 70},
+    }
+
+    def tick(self, cams, images, prev, *, frame_ages=None, now=None, fail=()):
+        """One capture_beach tick; images: cam id -> bytes tag; returns (group, doc)."""
+        ages = frame_ages or {}
+
+        def fake_fetch(cam, info=None, feed_cache=None):
+            info["frameAt"] = iso_ago(ages.get(cam["id"], 2))
+            return jpeg() + images[cam["id"]]
+
+        def fake_assess(img):
+            tag = img[len(jpeg()):]
+            if tag in fail:
+                raise RuntimeError("vision down")
+            return dict(self.LOOKS[tag], provider="t")
+
+        now = now or dt.datetime.now(ZONE)
+        with env(INGEST_TOKEN=None), mock.patch.object(cs, "fetch_still", fake_fetch), \
+                mock.patch.object(cs, "archive_frame", lambda *a, **k: "stored"), \
+                mock.patch.object(cs, "assess", fake_assess), \
+                mock.patch.object(cs.time, "sleep", lambda s: None), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            group = cs.capture_beach("boca-raton", cams, now, {"called": False}, prev)
+        doc = cs.build_beach_output("boca-raton", "America/New_York", now, [("gemini", "m")], prev, group, None, None)
+        return group, doc
+
+    def first_full_tick(self):
+        cams = [self.cam("a"), self.cam("b"), self.cam("c")]
+        group, doc = self.tick(cams, {"a": b"A1", "b": b"B1", "c": b"C1"}, {})
+        self.assertFalse(group.get("partial"))
+        return cams, doc
+
+    def test_only_b_changes_so_the_roll_up_still_covers_a_b_and_c(self):
+        cams, prev = self.first_full_tick()
+        group, doc = self.tick(cams, {"a": b"A1", "b": b"B2", "c": b"C1"}, prev)
+        self.assertEqual([(c["id"], bool(c.get("carried"))) for c in group["cams"]],
+                         [("a", True), ("b", False), ("c", True)])
+        self.assertNotIn("partial", group)
+        entry = doc["history"][-1]
+        # A's high seaweed and C's cloudiness still count: the changed, clean cam does not erase them.
+        self.assertEqual(entry["seaweed"], "high")
+        self.assertEqual(entry["cov"], 60)
+        self.assertEqual(entry["level"], "busy")
+        self.assertEqual(entry["crowdPct"], 85)
+        self.assertEqual(entry["clr"], 70)  # median of 20 / 95 / 70 (95 alone, from the partial set, would be wrong)
+        self.assertEqual(cs.worst_seaweed(doc["latest"])["level"], "high")
+
+    def test_a_carried_reading_is_the_old_one_with_its_original_times(self):
+        cams, prev = self.first_full_tick()
+        old_a = next(c for c in prev["latest"]["cams"] if c["id"] == "a")
+        group, _ = self.tick(cams, {"a": b"A1", "b": b"B2", "c": b"C1"}, prev)
+        carried_a = group["cams"][0]
+        self.assertEqual({k: v for k, v in carried_a.items() if k != "carried"}, old_a)
+        self.assertEqual(carried_a["frameAt"], old_a["frameAt"])
+        self.assertEqual(carried_a["scoredAt"], old_a["scoredAt"])
+
+    def test_the_carried_flag_survives_a_second_tick_and_keeps_the_original_time(self):
+        cams, prev = self.first_full_tick()
+        _, doc2 = self.tick(cams, {"a": b"A1", "b": b"B2", "c": b"C1"}, prev)
+        group3, _ = self.tick(cams, {"a": b"A1", "b": b"B1", "c": b"C1"}, doc2)
+        a3 = group3["cams"][0]
+        self.assertTrue(a3["carried"])
+        self.assertEqual(a3["frameAt"], doc2["latest"]["cams"][0]["frameAt"])
+
+    def test_a_carried_feed_reading_older_than_sixty_minutes_drops_out(self):
+        cams, prev = self.first_full_tick()
+        # Age every old reading: A's frame was taken 59 min before the next tick, C's 61.
+        for c in prev["latest"]["cams"]:
+            c["frameAt"] = iso_ago({"a": 59, "b": 70, "c": 61}[c["id"]])
+        group, doc = self.tick(cams, {"a": b"A1", "b": b"B2", "c": b"C1"}, prev)
+        self.assertEqual([(c["id"], bool(c.get("carried"))) for c in group["cams"]], [("a", True), ("b", False)])
+        self.assertTrue(group["partial"])
+        self.assertEqual(doc["history"][-1]["seaweed"], "high")  # A (59 min) still in
+        # ...and at 61 min A is gone too.
+        for c in prev["latest"]["cams"]:
+            c["frameAt"] = iso_ago(61)
+        group, _ = self.tick(cams, {"a": b"A1", "b": b"B2", "c": b"C1"}, prev)
+        self.assertEqual([c["id"] for c in group["cams"]], ["b"])
+
+    def test_a_reading_with_no_usable_time_is_not_carried(self):
+        cams, prev = self.first_full_tick()
+        for c in prev["latest"]["cams"]:
+            c.pop("frameAt", None)
+            c.pop("scoredAt", None)
+        group, _ = self.tick(cams, {"a": b"A1", "b": b"B2", "c": b"C1"}, prev)
+        self.assertEqual([c["id"] for c in group["cams"]], ["b"])
+
+    def test_scoredAt_stands_in_when_a_feed_frame_has_no_timestamp(self):
+        old = {"id": "a", "name": "a", "level": "high", "scoredAt": iso_ago(30)}
+        got = cs.carried_readings({"latest": {"cams": [old]}}, [self.cam("a")], set(), dt.datetime.now(ZONE))
+        self.assertEqual([c["id"] for c in got], ["a"])
+        old["scoredAt"] = iso_ago(75)
+        self.assertEqual(cs.carried_readings({"latest": {"cams": [old]}}, [self.cam("a")], set(), dt.datetime.now(ZONE)), [])
+
+    def test_a_cam_whose_read_fails_this_tick_keeps_its_recent_reading(self):
+        cams, prev = self.first_full_tick()
+        group, _ = self.tick(cams, {"a": b"A1", "b": b"B2", "c": b"B1"}, prev, fail=(b"B1",))
+        self.assertEqual([(c["id"], bool(c.get("carried"))) for c in group["cams"]],
+                         [("a", True), ("b", False), ("c", True)])
+
+    def test_nothing_fresh_means_no_group_at_all_so_the_beach_carries_forward_as_before(self):
+        cams, prev = self.first_full_tick()
+        group, doc = self.tick(cams, {"a": b"A1", "b": b"B1", "c": b"C1"}, prev)
+        self.assertIsNone(group)
+        self.assertEqual(doc["latest"], prev["latest"])
+        self.assertEqual(len(doc["history"]), len(prev["history"]))
+
+    def test_carried_readings_do_not_touch_the_dedupe_or_the_courier_frame_memory(self):
+        cams, prev = self.first_full_tick()
+        _, doc = self.tick(cams, {"a": b"A1", "b": b"B2", "c": b"C1"}, prev)
+        self.assertEqual(doc["frameShas"]["a"], prev["frameShas"]["a"])
+        self.assertEqual(doc["frameShas"]["b"], cs.frame_sha(jpeg() + b"B2"))
+        # History `frames` is courier-only: feed readings (fresh or carried) never enter it.
+        self.assertNotIn("frames", doc["history"][-1])
+
+    def in_morning(self):
+        """Make the current real hour a MORNING hour (frame ages are judged on the real clock)."""
+        return mock.patch.object(cs, "MORNING", range(0, 24))
+
+    def test_a_partial_first_capture_cannot_become_the_morning_for_good(self):
+        cams = [self.cam("a"), self.cam("b"), self.cam("c")]
+        with self.in_morning():
+            # Only B reads (A and C fail): a partial capture may fill an EMPTY morning...
+            group1, doc1 = self.tick(cams, {"a": b"A1", "b": b"B1", "c": b"C1"}, {}, fail=(b"A1", b"C1"))
+            self.assertTrue(group1["partial"])
+            self.assertTrue(doc1["morning"]["partial"])
+            # ...but the next complete capture replaces it (B's frame is unchanged -> carried).
+            group2, doc2 = self.tick(cams, {"a": b"A1", "b": b"B1", "c": b"C1"}, doc1)
+        self.assertNotIn("partial", group2)
+        self.assertEqual([c["id"] for c in doc2["morning"]["cams"]], ["a", "b", "c"])
+        self.assertNotIn("partial", doc2["morning"])
+
+    def test_a_partial_capture_never_displaces_a_complete_morning(self):
+        cams = [self.cam("a"), self.cam("b"), self.cam("c")]
+        with self.in_morning():
+            _, doc1 = self.tick(cams, {"a": b"A1", "b": b"B1", "c": b"C1"}, {})
+            self.assertNotIn("partial", doc1["morning"])
+            # Even an EARLIER-hour partial capture must not replace it.
+            h = doc1["morning"]["hour"]
+            partial = {"capturedAtLocal": "2026-10-12T00:00-04:00", "hour": max(h - 1, 0), "cams": [doc1["latest"]["cams"][1]], "partial": True}
+            now = dt.datetime.now(ZONE)
+            doc = cs.build_beach_output("boca-raton", "America/New_York", now, [("gemini", "m")], doc1, partial, None, None)
+        self.assertEqual(doc["morning"], doc1["morning"])
+
+    def test_outside_the_morning_hours_nothing_sets_the_morning(self):
+        with mock.patch.object(cs, "MORNING", range(0, 0)):
+            _, doc = self.tick([self.cam("a")], {"a": b"A1"}, {})
+        self.assertIsNone(doc["morning"])
+
+    def test_the_courier_path_had_the_same_gap_and_now_carries_too(self):
+        # Three courier cams on one beach; the Mac grabbed them minutes apart, so a
+        # tick can see only ONE new frame while the others still show the last one.
+        cams = [self.cam("d1", "direct"), self.cam("d2", "direct"), self.cam("d3", "direct")]
+        grabbed = {"d1": iso_ago(100), "d2": iso_ago(100), "d3": iso_ago(100)}
+
+        def run(prev, grabbed, now=None):
+            def fake_get(url, timeout=25):
+                cid = url.rsplit("/", 1)[1]
+                return json.dumps({"ok": True, "grabbedAtUtc": grabbed[cid]}).encode()
+
+            def fake_fetch(cam, info=None, feed_cache=None):
+                return jpeg() + {"d1": b"A1", "d2": b"B1", "d3": b"C1"}[cam["id"]]
+
+            def fake_assess(img):
+                return dict(self.LOOKS[img[len(jpeg()):]], provider="t")
+
+            now = now or dt.datetime.now(ZONE)
+            with env(INGEST_TOKEN=None), mock.patch.object(cs, "_get", fake_get), \
+                    mock.patch.object(cs, "fetch_still", fake_fetch), \
+                    mock.patch.object(cs, "archive_frame", lambda *a, **k: "stored"), \
+                    mock.patch.object(cs, "assess", fake_assess), mock.patch.object(cs.time, "sleep", lambda s: None), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                group = cs.capture_beach("deerfield-beach", cams, now, {"called": False}, prev)
+            return group, cs.build_beach_output("deerfield-beach", "America/New_York", now, [("gemini", "m")], prev, group, None, None)
+
+        _, prev = run({}, grabbed)
+        # d2 alone gets a new frame (grabbed 80 min ago -> 20 min fresher than the others' 100).
+        grabbed2 = dict(grabbed, d2=iso_ago(80))
+        group, doc = run(prev, grabbed2)
+        self.assertEqual([(c["id"], bool(c.get("carried"))) for c in group["cams"]],
+                         [("d1", True), ("d2", False), ("d3", True)])
+        self.assertEqual(doc["history"][-1]["seaweed"], "high")
+        # The courier frame memory only moves for the cam that really had a new frame.
+        self.assertEqual(doc["history"][-1]["frames"], {"d2": grabbed2["d2"]})
+        # Courier readings use the courier's own 150-minute limit, not the feed's 60.
+        self.assertEqual(cs.DIRECT_FRAME_MAX_AGE_MIN, 150)
+        aged = json.loads(json.dumps(prev))
+        for c in aged["latest"]["cams"]:
+            c["frameAt"] = iso_ago(151 if c["id"] == "d3" else 149)
+        kept = cs.carried_readings(aged, cams, {"d2"}, dt.datetime.now(ZONE))
+        self.assertEqual([c["id"] for c in kept], ["d1"])
 
 
 ZONE = __import__("zoneinfo").ZoneInfo("America/New_York")

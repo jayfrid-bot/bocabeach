@@ -112,11 +112,27 @@ scored feed reading carries `frameSha` (sha256 prefix of the JPEG bytes) and the
 document keeps a small top-level `frameShas` {cam id: sha} of the last frame each
 cam scored SUCCESSFULLY (carried forward untouched for a cam skipped or failed
 this tick). A feed frame whose sha equals its cam's entry is skipped with "same
-frame already scored", no assess() call, no quota gap, and the cam is absent from
-the tick's `cams` just like a skipped courier cam (all cams skipped -> the beach
+frame already scored": no assess() call, no quota gap. A failed read never
+records its sha, so it is retried next tick. The archive still gets the frame
+(enqueue happens before this check). All cams skipped -> no new group: the beach
 carries its previous latest/morning/history forward and `generatedAt` is not
-bumped). A failed read never records its sha, so it is retried next tick. The
-archive still gets the frame (enqueue happens before this check).
+bumped.
+
+CARRIED READINGS (2026-10-12): when only SOME cams have a fresh reading in a
+tick (the rest unchanged, failed or skipped), the tick's roll-up must still cover
+every cam, or a clean changed cam erases an unchanged high-seaweed cam from the
+headline, the partial roll-up lands in history[], and a partial first capture
+becomes the day's morning. So each such cam contributes its last good reading
+from the previous `latest`, copied with `"carried": true` and its ORIGINAL
+`frameAt`/`scoredAt`, while that frame is young enough to be scored today (feed
+cams VISION_MAX_FRAME_AGE_MIN = 60, courier cams DIRECT_FRAME_MAX_AGE_MIN = 150;
+older or untimed readings drop out). Carried readings feed the aggregates but
+are never new observations: camReadRow() (lib/history/camObservationRow.mjs)
+skips them, and they never touch `frameShas` or history[].frames. A capture
+missing some configured cam entirely is marked `"partial": true`; it may fill an
+empty `morning`, never displaces a complete one, and a later complete morning
+capture replaces a partial one. The courier path had the same gap and gets the
+same treatment.
 
 VISION CALL LOG: each tick ends with one line, "vision calls this tick: ...",
 counting every provider/model attempt (ok and failed) so quota exhaustion shows
@@ -1362,6 +1378,47 @@ def fetch_prev(slug: str) -> dict:
             return {}
 
 
+def _utc_iso(t: dt.datetime) -> str:
+    """'YYYY-MM-DDTHH:MM:SSZ' for a tz-aware (or naive-UTC) datetime."""
+    t = t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
+    return t.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def carried_readings(prev: dict, cams: list[dict], fresh_ids: set, now: dt.datetime) -> list[dict]:
+    """The last good reading of every configured cam that has NO fresh reading
+    this tick, copied from the previously published `latest` and marked
+    `"carried": true`, so a tick where only some cams changed still rolls up over
+    all of them (a clean changed cam must not erase an unchanged cam's high
+    seaweed from the headline, the history entry or the day's morning).
+
+    A carried reading keeps its original `frameAt` / `scoredAt`; it is dropped
+    once its frame is too old to be scored today: older than
+    VISION_MAX_FRAME_AGE_MIN for a feed cam, DIRECT_FRAME_MAX_AGE_MIN for a
+    courier ("direct") cam, the same limits the live reads obey. A reading with
+    no usable time (written before this field existed) is dropped. Pure."""
+    latest = prev.get("latest") if isinstance(prev.get("latest"), dict) else {}
+    old = {c["id"]: c for c in (latest.get("cams") or []) if isinstance(c, dict) and c.get("id")}
+    now_utc = now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)
+    out = []
+    for cam in cams:
+        cid = cam["id"]
+        r = old.get(cid)
+        if cid in fresh_ids or not r:
+            continue
+        stamp = r.get("frameAt") or r.get("scoredAt")
+        try:
+            at = dt.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+        except (TypeError, ValueError):
+            continue
+        age_min = (now_utc - at).total_seconds() / 60
+        limit = (DIRECT_FRAME_MAX_AGE_MIN if (cam.get("source") or {}).get("kind") == "direct"
+                 else VISION_MAX_FRAME_AGE_MIN)
+        if age_min > limit or age_min < -VISION_MAX_FUTURE_MIN:
+            continue
+        out.append({**r, "carried": True})
+    return out
+
+
 def capture_beach(
     slug: str, cams: list[dict], now_local: dt.datetime, gap_state: dict, prev: dict,
     attempted: set | None = None, archive: "ArchiveRun | None" = None,
@@ -1445,8 +1502,13 @@ def capture_beach(
             gap_state["called"] = True
             r = assess(img)
             reading = {"id": cam["id"], "name": cam["name"], **r}
-            if frame_at:
-                reading["frameAt"] = frame_at
+            # When the frame was taken (courier: its meta time; feed: latest.json
+            # `timestamp`, when it has one) and when we scored it. A later tick
+            # may CARRY this reading (see carried_readings) and needs the frame's
+            # age to bound that.
+            if frame_at or info.get("frameAt"):
+                reading["frameAt"] = frame_at or info["frameAt"]
+            reading["scoredAt"] = _utc_iso(now_local)
             if sha:
                 reading["frameSha"] = sha
             readings.append(reading)
@@ -1458,8 +1520,23 @@ def capture_beach(
     run.flush()  # the beach's reads are done: upload its stills now
     if not readings:
         return None
-    return {"capturedAtLocal": now_local.isoformat(timespec="minutes"),
-            "hour": now_local.hour, "cams": readings}
+    # Every cam the beach is configured with should speak in each tick's roll-up
+    # (busiest crowd, worst seaweed, median water). A cam that was skipped
+    # (unchanged frame) or failed contributes its last good reading, marked
+    # `carried`, while that reading is still fresh enough to score today.
+    fresh_ids = {r["id"] for r in readings}
+    carried = carried_readings(prev, cams, fresh_ids, now_local)
+    by_id = {r["id"]: r for r in readings}
+    by_id.update({r["id"]: r for r in carried})
+    ordered = [by_id[c["id"]] for c in cams if c["id"] in by_id]
+    group = {"capturedAtLocal": now_local.isoformat(timespec="minutes"),
+             "hour": now_local.hour, "cams": ordered}
+    if len(ordered) < len({c["id"] for c in cams}):
+        # Some configured cam has neither a fresh nor a recent reading: the
+        # roll-up covers only part of the beach. build_beach_output will not let
+        # such a capture become (or stay) the day's `morning`.
+        group["partial"] = True
+    return group
 
 
 def build_beach_output(
@@ -1474,9 +1551,21 @@ def build_beach_output(
     prev_morning = prev.get("morning") if prev.get("dateLocal") == today else None
 
     # The earliest morning (pre-tractor) reading of the day is authoritative.
+    # A PARTIAL capture (some configured cam had neither a fresh nor a recent
+    # carried reading) may fill an empty morning but never displaces a complete
+    # one, and a later complete morning capture replaces a partial one, so a
+    # half-blind first read cannot lock in the day's authoritative reading.
     morning = prev_morning
     if current and current["hour"] in MORNING:
-        if not prev_morning or current["hour"] < prev_morning.get("hour", 99):
+        cur_partial = bool(current.get("partial"))
+        prev_partial = bool(prev_morning and prev_morning.get("partial"))
+        if not prev_morning:
+            morning = current
+        elif prev_partial and not cur_partial:
+            morning = current
+        elif cur_partial and not prev_partial:
+            pass
+        elif current["hour"] < prev_morning.get("hour", 99):
             morning = current
     latest = current or prev.get("latest")
 
@@ -1510,7 +1599,11 @@ def build_beach_output(
         # "meta" URL and were actually read this tick (see capture_beach's
         # direct_cam_decision call). The NEXT run's prev_frame_at_for_cam()
         # scans this back out of history to dedupe against the same frame.
-        frames = {c["id"]: c["frameAt"] for c in current["cams"] if c.get("frameAt")}
+        # Only COURIER readings, fresh ones: feed readings also carry a frameAt now
+        # (for the carry window) but are deduped by frameShas, and a carried
+        # reading is not a new frame.
+        frames = {c["id"]: c["frameAt"] for c in current["cams"]
+                  if c.get("frameAt") and not c.get("frameSha") and not c.get("carried")}
         if frames:
             entry["frames"] = frames
         history = history + [entry]
@@ -1529,7 +1622,7 @@ def build_beach_output(
     frame_shas = dict(prev.get("frameShas")) if isinstance(prev.get("frameShas"), dict) else {}
     if current:
         for c in current["cams"]:
-            if c.get("frameSha"):
+            if c.get("frameSha") and not c.get("carried"):
                 frame_shas[c["id"]] = c["frameSha"]
 
     now_iso = (dt.datetime.now(dt.timezone.utc).replace(microsecond=0)

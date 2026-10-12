@@ -127,6 +127,22 @@ describe("camReadRow / camReadRowsFromFeed (per-cam detail)", () => {
     expect(camReadRowsFromFeed("boca-raton", { morning: g, latest: g })).toHaveLength(2);
   });
 
+  it("never stores a carried reading as a new per-cam observation", () => {
+    const g = { capturedAtLocal: "2026-10-06T07:10-04:00", cams: [cam("a"), { ...cam("b"), carried: true }, cam("c")] };
+    expect(camReadRow("boca-raton", g, { ...cam("b"), carried: true })).toBeNull();
+    const rows = camReadRowsFromFeed("boca-raton", { latest: g });
+    expect(rows.map((r) => r.cam_id).sort()).toEqual(["a", "c"]);
+    // `carried: false` (or absent) is an ordinary fresh read.
+    expect(camReadRow("boca-raton", g, { ...cam("b"), carried: false })).not.toBeNull();
+  });
+
+  it("a carried cam still counts in the feed's roll-up history entry, which is stored once per tick", () => {
+    const feed: CamFeedDoc = { history: [entry("2026-10-06T07:10-04:00", { seaweed: "high", cov: 60 })] };
+    const rows = newObservationRows("boca-raton", feed, { latestUtc: null, recentUtcs: new Set() });
+    expect(rows).toHaveLength(1);
+    expect(rows[0].seaweed_level).toBe("high");
+  });
+
   it("skips a cam with no id/name, and a group with no capture time", () => {
     expect(camReadRow("b", { capturedAtLocal: "2026-10-06T07:00-04:00" }, { level: "low" })).toBeNull();
     expect(camReadRow("b", {}, cam("a"))).toBeNull();
