@@ -1,8 +1,21 @@
 #!/bin/bash
-# Multi-cam FRAME COURIER (runs on the owner's Mac, hourly via launchd —
-# see scripts/com.isitbeachday.camcourier.plist). No longer Deerfield-only:
-# it also carries Fort Lauderdale Beach's Elbo Room cam (see the CAMS array
-# below).
+# Multi-cam FRAME COURIER (runs on the owner's Mac via launchd: hourly at :07
+# from scripts/com.isitbeachday.camcourier.plist, plus every 10 minutes in the
+# golden-hour windows from scripts/com.isitbeachday.camcourier.golden.plist,
+# which passes --golden-only). No longer Deerfield-only: it also carries Fort
+# Lauderdale Beach's Elbo Room cam (see the CAMS array below).
+#
+# GOLDEN-HOUR MODE (--golden-only): the webcam archive keeps a shot every 10
+# minutes around sunrise (-20/+40 min) and sunset (-40/+20 min) — see
+# lib/camFrames/golden.ts — but the hourly run gives these courier cams at
+# most one frame an hour. The golden launchd job fires at :00/:10/:20/:30/:40/:50
+# through every local hour a window can touch (6-8 and 16-20 America/New_York,
+# all seasons) and this flag makes the run grab ONLY while
+# `python3 scripts/golden_now.py` says it is inside a window for the courier
+# beaches (Deerfield Beach, Fort Lauderdale); outside one it logs a line and
+# exits 0. If golden_now.py cannot tell (exit 2) the run logs an ERROR and exits
+# 1 without grabbing; the hourly job still runs. Two runs never overlap: a run
+# that finds another one in progress logs it and exits 0.
 #
 # WHY THIS EXISTS: as of 2026-09, YouTube refuses playback to Cloudflare's
 # Browser Rendering fleet entirely for these streams — every grab attempt
@@ -29,13 +42,19 @@
 #        printf '%s' '<the same value set via `wrangler secret put INGEST_TOKEN`>' \
 #          > "$HOME/.config/isitbeachday/courier.token"
 #        chmod 600 "$HOME/.config/isitbeachday/courier.token"
-#   2. Install the launchd job (renders __HOME__ in the plist, then loads it):
-#        sed "s#__HOME__#$HOME#g" scripts/com.isitbeachday.camcourier.plist \
-#          > "$HOME/Library/LaunchAgents/com.isitbeachday.camcourier.plist"
-#        launchctl bootstrap gui/$(id -u) \
-#          "$HOME/Library/LaunchAgents/com.isitbeachday.camcourier.plist"
+#   2. Install the two launchd jobs (each renders __HOME__ in its plist, then
+#      loads it): the hourly :07 job and the golden-hour every-10-minutes job.
+#        for job in com.isitbeachday.camcourier com.isitbeachday.camcourier.golden; do
+#          sed "s#__HOME__#$HOME#g" "scripts/$job.plist" \
+#            > "$HOME/Library/LaunchAgents/$job.plist"
+#          launchctl bootstrap gui/$(id -u) "$HOME/Library/LaunchAgents/$job.plist"
+#        done
+#      (To change an already-installed job, `launchctl bootout gui/$(id -u)/<label>`
+#      first, then bootstrap again.)
 #   3. (Optional) run once by hand first, outside daylight hours if needed:
 #        bash scripts/cam_courier_local.sh --force
+#      or see what the golden check says right now (0 = inside a window):
+#        python3 scripts/golden_now.py; echo $?
 #
 # Logs land at ~/Library/Logs/cam-courier.log (StandardOutPath/ErrorPath in
 # the plist).
@@ -56,10 +75,13 @@ export PATH="$HOME/.hermes/node/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 COURIER_URL="${COURIER_URL:-https://uw-frame.entwined-app.workers.dev}"
 TOKEN_FILE="${TOKEN_FILE:-$HOME/.config/isitbeachday/courier.token}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FORCE=0
+GOLDEN_ONLY=0
 for arg in "$@"; do
   case "$arg" in
     --force) FORCE=1 ;;
+    --golden-only) GOLDEN_ONLY=1 ;;
     --once) : ;; # default behavior already (single pass, no loop); accepted for explicitness
     *) echo "unknown arg: $arg" >&2; exit 1 ;;
   esac
@@ -69,6 +91,20 @@ log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1"
 }
 
+# --golden-only: grab only inside a sunrise/sunset golden window of the courier
+# beaches (computed by scripts/golden_now.py: exit 0 inside, 1 outside, 2 can't
+# tell). --force skips this check, like the daylight gate below. This runs
+# before the token check so the ~40 outside-window launches a day stay quiet.
+if [[ "$GOLDEN_ONLY" -eq 1 && "$FORCE" -ne 1 ]]; then
+  golden_status=0
+  golden_line="$(python3 "$SCRIPT_DIR/golden_now.py" 2>&1)" || golden_status=$?
+  case "$golden_status" in
+    0) log "golden-only: $golden_line" ;;
+    1) log "golden-only: $golden_line — skipping"; exit 0 ;;
+    *) log "ERROR: golden_now.py could not tell (exit $golden_status): $golden_line — skipping this run"; exit 1 ;;
+  esac
+fi
+
 if [[ ! -s "$TOKEN_FILE" ]]; then
   log "ERROR: token file missing or empty at $TOKEN_FILE — refusing to run. See this script's header for the install steps."
   exit 1
@@ -77,8 +113,9 @@ TOKEN="$(cat "$TOKEN_FILE")"
 
 # Daylight-only gate in America/New_York (06:00-20:00), unless --force. The
 # cams are dark/pointless at night; this mirrors the worker's own daylight
-# gating for the surface cams and flag read.
-if [[ "$FORCE" -ne 1 ]]; then
+# gating for the surface cams and flag read. --golden-only has already decided
+# by the sun (its windows can touch 16:47-20:37 local), so it skips this gate.
+if [[ "$FORCE" -ne 1 && "$GOLDEN_ONLY" -ne 1 ]]; then
   eastern_hour=$(TZ="America/New_York" date +%H)
   eastern_hour=$((10#$eastern_hour)) # 10# guards the octal trap on "08"/"09"
   if (( eastern_hour < 6 || eastern_hour > 20 )); then
@@ -103,8 +140,24 @@ CAMS=(
   "ftl-elbo-beach-cam:1j1lgppb0PY"
 )
 
+# One run at a time. The hourly :07 job and the 10-minute golden job can meet
+# (a slow run takes several minutes), and two grabs of the same cam at once
+# would only double yt-dlp load. mkdir is atomic; a lock whose owner is gone
+# (crash, reboot) is taken over.
+LOCK_DIR="${COURIER_LOCK_DIR:-${TMPDIR:-/tmp}/isitbeachday-courier.lock}"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  owner="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+  if [[ -n "$owner" ]] && kill -0 "$owner" 2>/dev/null; then
+    log "another courier run (pid $owner) is still going — skipping this one"
+    exit 0
+  fi
+  rm -rf "$LOCK_DIR"
+  mkdir "$LOCK_DIR" 2>/dev/null || { log "could not take the run lock — skipping"; exit 0; }
+fi
+echo "$$" > "$LOCK_DIR/pid"
+
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+trap 'rm -rf "$TMP" "$LOCK_DIR"' EXIT
 
 # Runs "$@" in the background and force-kills it if it's still running
 # after $1 seconds; otherwise returns its real exit status. This is the

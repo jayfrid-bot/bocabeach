@@ -42,6 +42,10 @@ name: Cam Vision Feed
 # "sleep 600"), so a slow cycle (retries/backoff) can never compound into
 # faster-than-10-min reads.
 #
+# SAME-FRAME SKIP (2026-10-12): the Boca feed views refresh every ~10-30 min, so
+# the 3 feed cams no longer spend a call on a still they already scored (see
+# "SAME FEED FRAME" in scripts/cam_seaweed.py); the counts above are the ceiling.
+#
 # RUN WINDOW (2026-10-11): "daylight" is no longer a fixed clock window. The loop
 # asks `python scripts/cam_seaweed.py --window-state` (see "run window" there):
 # reading runs from the earliest sunrise - 30 min to the latest sunset + 30 min
@@ -55,14 +59,13 @@ on:
     # Once an hour, at :07, from 10:07 to 00:07 UTC (6:07 AM-8:07 PM EDT). This
     # is only a RECOVERY: the handoff job below is the primary scheduler, and
     # each loop already idles through the night, so a healthy chain never needs
-    # the cron. It used to fire every 10 minutes; but `cancel-in-progress` below
-    # means EVERY fire cancels the healthy loop and starts a fresh one, and
-    # extending the hours to cover sunset would have meant a cancellation
-    # every ten minutes into the golden hour. At most one an hour is plenty to
-    # restart a chain that broke, and a restart costs at most one skipped grid
-    # slot. A loop started at 10:07 UTC is awake before the earliest reading
-    # window opens (about 09:56 UTC in June, 11:35 UTC in December) and idles
-    # until it does; hour 0 lets a recovery loop start after the longest
+    # the cron. A scheduled run must NEVER disturb a healthy loop (2026-10-11:
+    # one cancelled a good loop at 22:47Z, mid sunset window — see the
+    # `concurrency` block and the "guard" step below). At most one an hour is
+    # plenty to restart a chain that broke, and a restart costs at most one
+    # skipped grid slot. A loop started at 10:07 UTC is awake before the earliest
+    # reading window opens (about 09:56 UTC in June, 11:35 UTC in December) and
+    # idles until it does; hour 0 lets a recovery loop start after the longest
     # summer sunset-plus-30 (about 8:46 PM EDT = 00:46 UTC) for the dusk read.
     - cron: "7 10-23,0 * * *"
   push:
@@ -75,16 +78,35 @@ on:
 permissions:
   contents: write
   models: read # lets the job's GITHUB_TOKEN call GitHub Models (only if VISION_PROVIDERS adds "github")
+  actions: read # the scheduled-run guard step lists this workflow's other runs (read only)
 
+# One run at a time, and a run that is NOT a scheduled recovery replaces the
+# running loop, exactly as before:
+#  - push / workflow_dispatch (the handoff job's `gh workflow run` is a
+#    workflow_dispatch, so it is this case too): cancel-in-progress is true. The
+#    new run cancels the running loop AND any pending run, and starts at once.
+#    That is the point: two loops started by overlapping runs would each read
+#    every ~10 min, DOUBLING vision spend and blowing the quota math above.
+#  - schedule (the hourly recovery cron): cancel-in-progress is FALSE. GitHub
+#    reads that setting from the INCOMING run, and cancels the running loop the
+#    instant the new run is queued, before any step of it can run. So a guard
+#    step alone cannot protect a healthy loop; the concurrency must not cancel
+#    it. With false, a scheduled run waits PENDING behind the loop (it does not
+#    start, so it spends nothing) and then has three outcomes:
+#      * the loop ends normally: its handoff dispatches the successor
+#        (cancel-in-progress true), which cancels the pending scheduled run;
+#      * the loop dies with no handoff: the group frees and the pending
+#        scheduled run starts, which is the recovery the cron exists for;
+#      * a second scheduled run arrives first: GitHub keeps one pending run per
+#        group and cancels the older pending one, so scheduled runs never pile
+#        up, however long the loop lives.
+#    Same group name for all events, on purpose: a separate group for the cron
+#    would let a recovery loop and a dispatched loop run side by side.
+# Expression support: `concurrency.cancel-in-progress` accepts expressions, and
+# the workflow-level `concurrency` may use the github, inputs and vars contexts.
 concurrency:
   group: sargassum
-  # A new cron fire cancels any healthy running loop and starts a fresh one.
-  # That's fine, not wasteful: the fresh loop just resumes the same ~10-min
-  # cadence, so the cam-vision feed cadence is unaffected. Keeping this true is
-  # what makes the fix quota-safe — without it, two loops started by
-  # overlapping throttled fires would each read every ~10 min, DOUBLING vision
-  # spend and blowing the quota math above.
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
 
 jobs:
   build-feed:
@@ -95,15 +117,54 @@ jobs:
     # is 360 min (6h); 350 leaves headroom for the runner's own setup/teardown.
     timeout-minutes: 350
     steps:
+      # Belt and braces for the hourly recovery cron (the `concurrency` block
+      # above is the real protection; this covers a race or a later edit of it).
+      # A SCHEDULED run that finds any other run of this workflow in progress or
+      # queued ends here, successfully, without reading. It must also leave
+      # `started` unset (t0 below is gated on it): the handoff job treats an
+      # unset `started` as "no loop ran" and dispatches NOTHING. A skipped
+      # recovery that dispatched a successor would cancel the healthy loop it
+      # just stood aside for. Fails open: if the API call fails the run
+      # continues as a normal loop, and the concurrency block still holds.
+      - id: guard
+        name: Scheduled recovery - stand aside if another loop is running
+        if: ${{ github.event_name == 'schedule' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          THIS_RUN: ${{ github.run_id }}
+        run: |
+          others=""
+          for status in in_progress queued; do
+            ids=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow sargassum.yml \
+                    --status "$status" --limit 50 --json databaseId \
+                    --jq ".[].databaseId | select(. != ${THIS_RUN})") || {
+              echo "::warning::could not list '$status' runs — continuing as a normal loop"
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            }
+            others="$others $ids"
+          done
+          others=$(echo "$others" | xargs) # trim
+          if [ -n "$others" ]; then
+            echo "another sargassum run is already live (run id(s): $others) — scheduled recovery stands aside, no read, no handoff"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no other run live — this scheduled run becomes the loop"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
       - id: t0
         name: Note when this loop started (the handoff job's fast-exit guard)
+        if: ${{ steps.guard.outputs.skip != 'true' }}
         run: echo "started=$(date +%s)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
+        if: ${{ steps.guard.outputs.skip != 'true' }}
       - uses: actions/setup-python@v5
+        if: ${{ steps.guard.outputs.skip != 'true' }}
         with:
           python-version: "3.12"
 
       - name: Install yt-dlp (underwater sea-cam frame grab)
+        if: ${{ steps.guard.outputs.skip != 'true' }}
         # yt-dlp resolves the Deerfield underwater YouTube livestream to an HLS
         # URL that ffmpeg (preinstalled on ubuntu-latest, as is node — the JS
         # runtime yt-dlp needs) frame-grabs. `|| true` keeps the job resilient:
@@ -112,6 +173,7 @@ jobs:
         run: pip install --quiet yt-dlp || true
 
       - name: Read + publish cam vision on a ~10-minute loop through daylight
+        if: ${{ steps.guard.outputs.skip != 'true' }}
         # Loop pattern per lightning.yml (see that file's header for the full
         # rationale): each cycle runs the one-shot script, publishes its output
         # to the sargassum-data branch, then sleeps to the next 10-min
@@ -279,6 +341,9 @@ jobs:
   #    already replaced by a newer run; dispatching again would ping-pong.
   #  - Not after a loop that ended within 15 min (setup broke, or a logic
   #    bug): no tight respawn cycle; the cron retries that instead.
+  #  - Not after a scheduled recovery that stood aside for a live loop (the
+  #    guard step above): it never sets `started`, so this job dispatches
+  #    nothing and the healthy loop is not cancelled.
   #  - Only from main, so a branch test run never starts a chain.
   handoff:
     needs: build-feed

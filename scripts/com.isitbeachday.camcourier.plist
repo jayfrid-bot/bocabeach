@@ -4,6 +4,12 @@
   launchd job for scripts/cam_courier_local.sh — see that script's header
   for the token-file setup and what this job does.
 
+  This is the HOURLY job. Its golden-hour companion, which grabs every 10
+  minutes inside a sunrise/sunset window, is
+  scripts/com.isitbeachday.camcourier.golden.plist (same script, golden-only flag);
+  install both. launchd cannot pass different arguments per calendar entry, so
+  they have to be two jobs.
+
   NOT INSTALLED by this change. To install (replace __HOME__ first):
     sed "s#__HOME__#$HOME#g" scripts/com.isitbeachday.camcourier.plist \
       > "$HOME/Library/LaunchAgents/com.isitbeachday.camcourier.plist"

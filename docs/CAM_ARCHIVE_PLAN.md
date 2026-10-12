@@ -363,3 +363,30 @@ re-check after a week of real sizes (R12 step 3 measures p50/p95). Either way
 the archive now passes R2's 10 GB free tier in its first year: expect a small
 storage bill (R2 is about $0.015 per GB-month). Retention and purge are
 unchanged (365 days of rows, 367-day lifecycle).
+
+## Reader reliability (2026-10-12)
+
+Three fixes after the 10-11 and 10-12 run logs.
+
+**Recovery cron no longer cancels a healthy loop.** At 22:47Z on 10-11 an hourly
+scheduled run cancelled a healthy loop in the middle of the sunset window.
+`cancel-in-progress` is now `${{ github.event_name != 'schedule' }}`: a push or a
+`workflow_dispatch` (the handoff uses one) still replaces the running loop, but a
+scheduled run waits pending behind it, and a newer scheduled run replaces the older
+pending one. The loop's own handoff cancels the pending scheduled run; if the loop
+dies, the pending run starts and recovers it. A guard step also lets a scheduled
+run that finds another live run end without reading or handing off.
+
+**Unchanged feed frames are not read again.** A Boca feed view refreshes every
+10-30 minutes while the loop ticks every 10, so many ticks re-read a still already
+scored. Each scored feed reading now carries `frameSha`; the beach document keeps
+`frameShas` (last successfully scored frame per cam) and a feed frame with the same
+sha is skipped ("same frame already scored"). A failed read records nothing, so it
+is retried. The archive still receives the frame.
+
+**Courier every 10 minutes in golden windows.** A second launchd job
+(`scripts/com.isitbeachday.camcourier.golden.plist`) runs
+`cam_courier_local.sh --golden-only` every 10 minutes in local hours 6-8 and 16-20.
+The script grabs only while `scripts/golden_now.py` says a sunrise or sunset golden
+window is open at Deerfield Beach or Fort Lauderdale. The hourly :07 job is
+unchanged. Install both plists (header of `scripts/cam_courier_local.sh`).

@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  GOLDEN-HOUR companion to com.isitbeachday.camcourier.plist (the hourly :07
+  job). Same script, but launched with the golden-only flag, so it grabs the courier
+  cams (Deerfield Beach, Fort Lauderdale) every 10 minutes while a sunrise
+  (-20/+40 min) or sunset (-40/+20 min) window is open, matching the webcam
+  archive's 10-minute golden slots. See scripts/cam_courier_local.sh.
+
+  Why a second job: launchd cannot pass different arguments to different
+  StartCalendarInterval entries of one job, so the hourly :07 runs (no flag)
+  and these (golden-only flag) are two jobs sharing one script. The script takes a
+  run lock, so a golden run that meets a still-running hourly run just skips.
+
+  LAUNCHD USES LOCAL TIME (the Mac is on America/New_York). Across the whole
+  year the windows of both beaches open no earlier than 06:07 (sunrise, late
+  May) and close no later than 08:16 (sunrise, early March), and the sunset
+  windows open no earlier than 16:47 (late November) and close no later than
+  20:37 (early July). So this fires at :00/:10/:20/:30/:40/:50 of local hours
+  6-8 and 16-20. Most fires on a given day are outside the window; the script
+  asks scripts/golden_now.py and exits at once when it is.
+
+  NOT INSTALLED by this change. To install (replace __HOME__ first):
+    sed "s#__HOME__#$HOME#g" scripts/com.isitbeachday.camcourier.golden.plist \
+      > "$HOME/Library/LaunchAgents/com.isitbeachday.camcourier.golden.plist"
+    launchctl bootstrap gui/$(id -u) \
+      "$HOME/Library/LaunchAgents/com.isitbeachday.camcourier.golden.plist"
+
+  To uninstall:
+    launchctl bootout gui/$(id -u)/com.isitbeachday.camcourier.golden
+    rm "$HOME/Library/LaunchAgents/com.isitbeachday.camcourier.golden.plist"
+
+  To check status / force a run:
+    launchctl print gui/$(id -u)/com.isitbeachday.camcourier.golden
+    launchctl kickstart -k gui/$(id -u)/com.isitbeachday.camcourier.golden
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.isitbeachday.camcourier.golden</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__HOME__/Projects/bocabeach/scripts/cam_courier_local.sh</string>
+    <string>--golden-only</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__HOME__/Projects/bocabeach</string>
+
+  <!-- Every 10 minutes through local hours 6-8 and 16-20 (48 fires a day). -->
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Minute</key><integer>0</integer><key>Hour</key><integer>6</integer></dict>
+    <dict><key>Minute</key><integer>10</integer><key>Hour</key><integer>6</integer></dict>
+    <dict><key>Minute</key><integer>20</integer><key>Hour</key><integer>6</integer></dict>
+    <dict><key>Minute</key><integer>30</integer><key>Hour</key><integer>6</integer></dict>
+    <dict><key>Minute</key><integer>40</integer><key>Hour</key><integer>6</integer></dict>
+    <dict><key>Minute</key><integer>50</integer><key>Hour</key><integer>6</integer></dict>
+    <dict><key>Minute</key><integer>0</integer><key>Hour</key><integer>7</integer></dict>
+    <dict><key>Minute</key><integer>10</integer><key>Hour</key><integer>7</integer></dict>
+    <dict><key>Minute</key><integer>20</integer><key>Hour</key><integer>7</integer></dict>
+    <dict><key>Minute</key><integer>30</integer><key>Hour</key><integer>7</integer></dict>
+    <dict><key>Minute</key><integer>40</integer><key>Hour</key><integer>7</integer></dict>
+    <dict><key>Minute</key><integer>50</integer><key>Hour</key><integer>7</integer></dict>
+    <dict><key>Minute</key><integer>0</integer><key>Hour</key><integer>8</integer></dict>
+    <dict><key>Minute</key><integer>10</integer><key>Hour</key><integer>8</integer></dict>
+    <dict><key>Minute</key><integer>20</integer><key>Hour</key><integer>8</integer></dict>
+    <dict><key>Minute</key><integer>30</integer><key>Hour</key><integer>8</integer></dict>
+    <dict><key>Minute</key><integer>40</integer><key>Hour</key><integer>8</integer></dict>
+    <dict><key>Minute</key><integer>50</integer><key>Hour</key><integer>8</integer></dict>
+    <dict><key>Minute</key><integer>0</integer><key>Hour</key><integer>16</integer></dict>
+    <dict><key>Minute</key><integer>10</integer><key>Hour</key><integer>16</integer></dict>
+    <dict><key>Minute</key><integer>20</integer><key>Hour</key><integer>16</integer></dict>
+    <dict><key>Minute</key><integer>30</integer><key>Hour</key><integer>16</integer></dict>
+    <dict><key>Minute</key><integer>40</integer><key>Hour</key><integer>16</integer></dict>
+    <dict><key>Minute</key><integer>50</integer><key>Hour</key><integer>16</integer></dict>
+    <dict><key>Minute</key><integer>0</integer><key>Hour</key><integer>17</integer></dict>
+    <dict><key>Minute</key><integer>10</integer><key>Hour</key><integer>17</integer></dict>
+    <dict><key>Minute</key><integer>20</integer><key>Hour</key><integer>17</integer></dict>
+    <dict><key>Minute</key><integer>30</integer><key>Hour</key><integer>17</integer></dict>
+    <dict><key>Minute</key><integer>40</integer><key>Hour</key><integer>17</integer></dict>
+    <dict><key>Minute</key><integer>50</integer><key>Hour</key><integer>17</integer></dict>
+    <dict><key>Minute</key><integer>0</integer><key>Hour</key><integer>18</integer></dict>
+    <dict><key>Minute</key><integer>10</integer><key>Hour</key><integer>18</integer></dict>
+    <dict><key>Minute</key><integer>20</integer><key>Hour</key><integer>18</integer></dict>
+    <dict><key>Minute</key><integer>30</integer><key>Hour</key><integer>18</integer></dict>
+    <dict><key>Minute</key><integer>40</integer><key>Hour</key><integer>18</integer></dict>
+    <dict><key>Minute</key><integer>50</integer><key>Hour</key><integer>18</integer></dict>
+    <dict><key>Minute</key><integer>0</integer><key>Hour</key><integer>19</integer></dict>
+    <dict><key>Minute</key><integer>10</integer><key>Hour</key><integer>19</integer></dict>
+    <dict><key>Minute</key><integer>20</integer><key>Hour</key><integer>19</integer></dict>
+    <dict><key>Minute</key><integer>30</integer><key>Hour</key><integer>19</integer></dict>
+    <dict><key>Minute</key><integer>40</integer><key>Hour</key><integer>19</integer></dict>
+    <dict><key>Minute</key><integer>50</integer><key>Hour</key><integer>19</integer></dict>
+    <dict><key>Minute</key><integer>0</integer><key>Hour</key><integer>20</integer></dict>
+    <dict><key>Minute</key><integer>10</integer><key>Hour</key><integer>20</integer></dict>
+    <dict><key>Minute</key><integer>20</integer><key>Hour</key><integer>20</integer></dict>
+    <dict><key>Minute</key><integer>30</integer><key>Hour</key><integer>20</integer></dict>
+    <dict><key>Minute</key><integer>40</integer><key>Hour</key><integer>20</integer></dict>
+    <dict><key>Minute</key><integer>50</integer><key>Hour</key><integer>20</integer></dict>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/cam-courier.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/cam-courier.log</string>
+</dict>
+</plist>

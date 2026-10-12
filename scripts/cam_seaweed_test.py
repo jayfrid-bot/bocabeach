@@ -1464,6 +1464,164 @@ class VisionCallLogTests(unittest.TestCase):
         self.assertEqual(cs.PROVIDER_ORDER, ["gemini", "groq", "openrouter"])
 
 
+class SameFeedFrameTests(WithManifest):
+    """capture_beach: a FEED frame we already scored successfully is not read again.
+
+    Observed 2026-10-11/12: the loop ticks every 10 min but each feed view
+    refreshes only every ~10-30 min, so most ticks re-scored an identical still
+    and burned free-tier vision quota for nothing."""
+
+    FEED_CAM = CaptureBeachTests.FEED_CAM
+
+    def capture(self, cams, images, prev=None, assess=None):
+        """One tick. `images` maps cam id -> the JPEG bytes the feed serves."""
+        calls = []
+
+        def fake_fetch(cam, info=None, feed_cache=None):
+            info["frameAt"] = iso_ago(2)
+            return images[cam["id"]]
+
+        def fake_assess(img):
+            calls.append(img)
+            return {"level": "none", "coveragePct": 0, "crowd": "quiet", "crowdPct": 5, "people": 2, "provider": "t"}
+
+        self.out = io.StringIO()
+        self.sleeps = []
+        now = dt.datetime.now(ZONE)
+        with env(INGEST_TOKEN=None), mock.patch.object(cs, "fetch_still", fake_fetch), \
+                mock.patch.object(cs, "archive_frame", lambda *a, **k: "stored"), \
+                mock.patch.object(cs, "assess", assess or fake_assess), \
+                mock.patch.object(cs.time, "sleep", lambda s: self.sleeps.append(s)), \
+                contextlib.redirect_stdout(self.out), contextlib.redirect_stderr(io.StringIO()):
+            result = cs.capture_beach("boca-raton", cams, now, {"called": False}, prev or {})
+        return result, calls, now
+
+    def doc(self, now, prev, current):
+        return cs.build_beach_output("boca-raton", "America/New_York", now, [("gemini", "m")], prev, current, None, None)
+
+    def test_a_scored_frame_is_recorded_by_cam_in_the_published_document(self):
+        img = jpeg() + b"A"
+        result, calls, now = self.capture([self.FEED_CAM], {"boca-south": img})
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(result["cams"][0]["frameSha"], cs.frame_sha(img))
+        doc = self.doc(now, {}, result)
+        self.assertEqual(doc["frameShas"], {"boca-south": cs.frame_sha(img)})
+        # Feed cams add nothing to history[].frames (that stays courier-only; the file must not grow per tick).
+        self.assertNotIn("frames", doc["history"][0])
+
+    def test_the_same_frame_next_tick_is_not_read_again(self):
+        img = jpeg() + b"A"
+        result, _, now = self.capture([self.FEED_CAM], {"boca-south": img})
+        prev = self.doc(now, {}, result)
+        result2, calls, now2 = self.capture([self.FEED_CAM], {"boca-south": img}, prev=prev)
+        self.assertEqual(calls, [], "no vision call for an identical frame")
+        self.assertIsNone(result2)
+        self.assertIn("[boca-raton] boca-south: skipped (same frame already scored)", self.out.getvalue())
+
+    def test_a_new_frame_is_read_and_replaces_the_recorded_one(self):
+        img_a, img_b = jpeg() + b"A", jpeg() + b"B"
+        result, _, now = self.capture([self.FEED_CAM], {"boca-south": img_a})
+        prev = self.doc(now, {}, result)
+        result2, calls, now2 = self.capture([self.FEED_CAM], {"boca-south": img_b}, prev=prev)
+        self.assertEqual(calls, [img_b])
+        self.assertEqual(self.doc(now2, prev, result2)["frameShas"], {"boca-south": cs.frame_sha(img_b)})
+
+    def test_each_cam_is_judged_on_its_own_frame(self):
+        cams = [dict(self.FEED_CAM, id="boca-south"), dict(self.FEED_CAM, id="boca-inlet-surf", name="Inlet surf")]
+        a1, b1, b2 = jpeg() + b"a1", jpeg() + b"b1", jpeg() + b"b2"
+        result, _, now = self.capture(cams, {"boca-south": a1, "boca-inlet-surf": b1})
+        prev = self.doc(now, {}, result)
+        result2, calls, now2 = self.capture(cams, {"boca-south": a1, "boca-inlet-surf": b2}, prev=prev)
+        self.assertEqual(calls, [b2])
+        self.assertEqual([c["id"] for c in result2["cams"]], ["boca-inlet-surf"])
+        doc2 = self.doc(now2, prev, result2)
+        # The skipped cam keeps its recorded frame; the read one moves on.
+        self.assertEqual(doc2["frameShas"], {"boca-south": cs.frame_sha(a1), "boca-inlet-surf": cs.frame_sha(b2)})
+
+    def test_a_failed_read_does_not_record_the_frame_so_it_is_retried(self):
+        img = jpeg() + b"A"
+
+        def boom(_img):
+            raise RuntimeError("all vision providers failed")
+
+        result, calls, now = self.capture([self.FEED_CAM], {"boca-south": img}, assess=boom)
+        self.assertIsNone(result)
+        doc = self.doc(now, {}, result)
+        self.assertEqual(doc["frameShas"], {})
+        # Next tick: same frame, nothing recorded -> it is read again.
+        result2, calls2, _ = self.capture([self.FEED_CAM], {"boca-south": img}, prev=doc)
+        self.assertEqual(len(calls2), 1)
+        self.assertIsNotNone(result2)
+
+    def test_a_failed_read_keeps_the_older_recorded_frame(self):
+        img_a, img_b = jpeg() + b"A", jpeg() + b"B"
+        result, _, now = self.capture([self.FEED_CAM], {"boca-south": img_a})
+        prev = self.doc(now, {}, result)
+
+        def boom(_img):
+            raise RuntimeError("quota")
+
+        failed, _, now2 = self.capture([self.FEED_CAM], {"boca-south": img_b}, prev=prev, assess=boom)
+        doc = self.doc(now2, prev, failed)
+        self.assertEqual(doc["frameShas"], {"boca-south": cs.frame_sha(img_a)})
+        # B was never scored, so B is read next tick; A would be a (correct) skip.
+        _, calls, _ = self.capture([self.FEED_CAM], {"boca-south": img_b}, prev=doc)
+        self.assertEqual(calls, [img_b])
+        _, calls, _ = self.capture([self.FEED_CAM], {"boca-south": img_a}, prev=doc)
+        self.assertEqual(calls, [])
+
+    def test_when_every_cam_is_unchanged_the_previous_reading_is_carried_forward_unchanged(self):
+        # Same output contract as the all-stale case: nothing fresh, nothing bumped, no history entry.
+        img = jpeg() + b"A"
+        result, _, now = self.capture([self.FEED_CAM], {"boca-south": img})
+        prev = self.doc(now, {}, result)
+        prev["generatedAt"] = "2026-10-11T09:50:00Z"
+        result2, _, now2 = self.capture([self.FEED_CAM], {"boca-south": img}, prev=prev)
+        doc = self.doc(now2, prev, result2)
+        self.assertEqual(doc["latest"], prev["latest"])
+        self.assertEqual(doc["generatedAt"], "2026-10-11T09:50:00Z")
+        self.assertEqual(doc["history"], prev["history"])
+        self.assertEqual(doc["frameShas"], prev["frameShas"])
+
+    def test_a_stale_frame_is_still_skipped_for_age_not_for_sameness(self):
+        img = jpeg() + b"A"
+        prev = {"frameShas": {"boca-south": cs.frame_sha(img)}}
+
+        def fake_fetch(cam, info=None, feed_cache=None):
+            info["frameAt"] = iso_ago(431)
+            return img
+
+        out = io.StringIO()
+        with mock.patch.object(cs, "fetch_still", fake_fetch), mock.patch.object(cs, "archive_frame", lambda *a, **k: "stored"), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            cs.capture_beach("boca-raton", [self.FEED_CAM], dt.datetime.now(ZONE), {"called": False}, prev)
+        self.assertIn("frame is 43", out.getvalue())
+        self.assertNotIn("same frame", out.getvalue())
+
+    def test_a_skipped_frame_spends_no_quota_gap(self):
+        cams = [dict(self.FEED_CAM, id="boca-south"), dict(self.FEED_CAM, id="boca-inlet-surf", name="Inlet surf")]
+        a, b = jpeg() + b"a", jpeg() + b"b"
+        prev = {"frameShas": {"boca-south": cs.frame_sha(a)}}
+        _, calls, _ = self.capture(cams, {"boca-south": a, "boca-inlet-surf": b}, prev=prev)
+        self.assertEqual(calls, [b])
+        self.assertEqual(self.sleeps, [], "the skipped cam was first, so the one real read needs no gap")
+
+    def test_a_courier_cam_keeps_its_own_meta_based_dedupe(self):
+        # Courier cams are not fingerprinted: their meta already says "same frame".
+        courier = CaptureBeachTests.COURIER_CAM
+        meta = {"ok": True, "grabbedAtUtc": iso_ago(5)}
+        run = CaptureBeachTests.run_capture
+        result, order = run(self, "fort-lauderdale", [courier], meta=meta)
+        self.assertNotIn("frameSha", result["cams"][0])
+        self.assertEqual(result["cams"][0]["frameAt"], meta["grabbedAtUtc"])
+
+    def test_the_prev_lookup_ignores_junk(self):
+        self.assertIsNone(cs.prev_scored_sha_for_cam({}, "x"))
+        self.assertIsNone(cs.prev_scored_sha_for_cam({"frameShas": "nope"}, "x"))
+        self.assertIsNone(cs.prev_scored_sha_for_cam({"frameShas": {"x": 5}}, "x"))
+        self.assertEqual(cs.prev_scored_sha_for_cam({"frameShas": {"x": "abc"}}, "x"), "abc")
+
+
 ZONE = __import__("zoneinfo").ZoneInfo("America/New_York")
 
 if __name__ == "__main__":

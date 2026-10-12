@@ -99,7 +99,7 @@ flowchart LR
     LGT["lightning.yml — GLM Lightning Feed<br/>~1-min reads in ~5.5h loops, each loop dispatches the next<br/>(*/10 cron = fallback)"]
     GOES["goes-cloud.yml — GOES Cloud Feed<br/>15-min reads 5:55a-8:35p ET, idles overnight;<br/>~340-min loops, each dispatches the next (*/15 cron = fallback)"]
     MRMS["mrms.yml — MRMS Radar Rain Nowcast<br/>10-min reads around the clock;<br/>~340-min loops, each dispatches the next (*/10 cron = fallback)"]
-    SARG["sargassum.yml — Cam Vision Feed<br/>10-min reads 5:55a-8:05p ET, idles overnight;<br/>~340-min loops, each dispatches the next (daytime cron = fallback)"]
+    SARG["sargassum.yml — Cam Vision Feed<br/>10-min reads 5:55a-8:05p ET, idles overnight;<br/>~340-min loops, each dispatches the next (hourly cron = fallback that waits pending behind a live loop and never cancels it);<br/>feed frames already scored are skipped (frameShas)"]
     RIPNWPS["rip-nwps.yml — NOAA Rip Current Model Feed<br/>every 3h"]
     EVAL["eval.yml — Vision Eval<br/>every 2h, daylight"]
     PUSHCRON["push-cron.yml — Push notifications cron<br/>hourly at :05 (backstop)"]
@@ -114,7 +114,7 @@ flowchart LR
   end
 
   subgraph mac [Owner's Mac — launchd, not a scheduler above]
-    CAMCOURIER["scripts/cam_courier_local.sh<br/>hourly, residential IP"]
+    CAMCOURIER["scripts/cam_courier_local.sh<br/>hourly at :07, plus every 10 min inside the sunrise/sunset golden windows<br/>(--golden-only, scripts/golden_now.py), residential IP"]
     SUNCAM["scripts/sun_cam_check.py<br/>every 30 min, residential IP<br/>(YouTube blocks datacenter IPs)"]
   end
 
@@ -200,7 +200,7 @@ keys), `GET /cams` (registry + each cam's last grab), and
 **Fort Lauderdale lifeguard flags.** The City of Fort Lauderdale Fire Rescue posts a plain-text "Beach Conditions" page once a day (flags, sea-pest notes, ocean conditions, water temperature). A plain fetch gets a 403 bot-block, so `uw-frame` opens it in Browser Rendering on the same daylight-gated tick as the Deerfield read, reads `document.body.innerText`, parses it with the pure section parser `workers/uw-frame/src/lib/ftlConditions.ts`, and stores `flags:fort-lauderdale` in the same `{flags, observedAtUtc, ok}` shape `lib/sources/cityOfficial.ts`'s `mapFlagsFeed` expects, plus `pageDate`, `seaPests`, `seaPestsPresent`, `waterTempF`, `oceanConditions`. Because the City posts daily, a page more than 2 calendar days old (America/New_York) is written `ok:false`, which the app shows as "unknown" rather than a stale flag. A failed or stale read never overwrites a good stored one (the attempt lands under `flags-attempt:fort-lauderdale`). `seaPests` is captured but not yet shown in the UI.
 
 As of September 2026, frames arrive from the owner's Mac courier
-(`scripts/cam_courier_local.sh`, hourly, residential IP) via `POST /ingest`;
+(`scripts/cam_courier_local.sh`, hourly at :07, plus every 10 minutes inside the golden-hour windows via the `--golden-only` launchd job, residential IP) via `POST /ingest`;
 the Worker's own headless-Chrome grab remains as a fallback. YouTube now
 blocks video playback from Cloudflare's browser fleet, so the Mac — a normal
 home connection — grabs each frame and sends it to the Worker instead. Both

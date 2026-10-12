@@ -106,6 +106,18 @@ true in config/vision-cams.json. A skipped cam never reaches assess() and
 publishes no reading, just as a courier cam skipped as stale. The archive keeps
 its own, separate age rule.
 
+SAME FEED FRAME (2026-10-12): a feed view refreshes only every ~10-30 min, but
+the loop ticks every 10, so most ticks re-served a still already scored. Each
+scored feed reading carries `frameSha` (sha256 prefix of the JPEG bytes) and the
+document keeps a small top-level `frameShas` {cam id: sha} of the last frame each
+cam scored SUCCESSFULLY (carried forward untouched for a cam skipped or failed
+this tick). A feed frame whose sha equals its cam's entry is skipped with "same
+frame already scored", no assess() call, no quota gap, and the cam is absent from
+the tick's `cams` just like a skipped courier cam (all cams skipped -> the beach
+carries its previous latest/morning/history forward and `generatedAt` is not
+bumped). A failed read never records its sha, so it is retried next tick. The
+archive still gets the frame (enqueue happens before this check).
+
 VISION CALL LOG: each tick ends with one line, "vision calls this tick: ...",
 counting every provider/model attempt (ok and failed) so quota exhaustion shows
 in the run log.
@@ -122,6 +134,7 @@ Data shape (cam_seaweed.<slug>.json — identical shape on every beach's file):
 import base64
 import concurrent.futures
 import datetime as dt
+import hashlib
 import json
 import os
 import random
@@ -473,6 +486,25 @@ def prev_frame_at_for_cam(prev: dict, cam_id: str) -> str | None:
         frames = entry.get("frames")
         if isinstance(frames, dict) and cam_id in frames:
             return frames[cam_id]
+    return None
+
+
+def frame_sha(img: bytes) -> str:
+    """Short, stable fingerprint of a frame's bytes (first 20 hex chars of the
+    sha256 — plenty to tell two stills of one cam apart)."""
+    return hashlib.sha256(img).hexdigest()[:20]
+
+
+def prev_scored_sha_for_cam(prev: dict, cam_id: str) -> str | None:
+    """The fingerprint of the last frame of `cam_id` that a vision read SCORED
+    successfully, from the beach's previously published document (`frameShas`,
+    see build_beach_output), or None if there is none. A frame whose read failed
+    is never recorded, so it is retried on the next tick."""
+    shas = prev.get("frameShas")
+    if isinstance(shas, dict):
+        sha = shas.get(cam_id)
+        if isinstance(sha, str) and sha:
+            return sha
     return None
 
 
@@ -1393,6 +1425,19 @@ def capture_beach(
                     else:
                         print(f"  [{slug}] {cam['id']}: skipped ({why})")
                     continue
+            # SAME FRAME ALREADY SCORED (feed cams): a feed view refreshes every
+            # ~10-30 min but this loop ticks every 10, so most ticks see a frame
+            # we already read. Skip it, as a courier cam is skipped on an
+            # unchanged meta. Absent from the tick's cams, exactly like a skipped
+            # courier cam. The fingerprint is recorded only on a SUCCESSFUL read
+            # (reading["frameSha"] -> build_beach_output), so a failed read is
+            # retried next tick.
+            sha = None
+            if is_feed and not frame_at:
+                sha = frame_sha(img)
+                if sha == prev_scored_sha_for_cam(prev, cam["id"]):
+                    print(f"  [{slug}] {cam['id']}: skipped (same frame already scored)")
+                    continue
             # The gap spaces vision API calls, so it sits here, after the fetch
             # and the freshness check: a skipped or failed cam spends no quota.
             if gap_state["called"]:
@@ -1402,6 +1447,8 @@ def capture_beach(
             reading = {"id": cam["id"], "name": cam["name"], **r}
             if frame_at:
                 reading["frameAt"] = frame_at
+            if sha:
+                reading["frameSha"] = sha
             readings.append(reading)
             print(f"  [{slug}] {cam['id']}: seaweed={r['level']}({r.get('coveragePct')}%) "
                   f"crowd={r.get('crowd')}({r.get('crowdPct')}%) "
@@ -1474,6 +1521,17 @@ def build_beach_output(
         # lookback at 56 days (see lib/vsAverage.ts), so "average" stays anchored
         # to the recent season rather than drifting across all of history.
 
+    # Fingerprint of the last frame each FEED cam scored successfully (see
+    # capture_beach's "same frame already scored"). Carried forward from prev for
+    # a cam that was skipped or failed this tick; overwritten only by a reading
+    # that actually succeeded. Kept as a small top-level map, NOT in history[],
+    # so the file does not grow with every tick.
+    frame_shas = dict(prev.get("frameShas")) if isinstance(prev.get("frameShas"), dict) else {}
+    if current:
+        for c in current["cams"]:
+            if c.get("frameSha"):
+                frame_shas[c["id"]] = c["frameSha"]
+
     now_iso = (dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
                .isoformat().replace("+00:00", "Z"))
     return {
@@ -1496,6 +1554,9 @@ def build_beach_output(
         # [{t, hour, level(crowd), people, seaweed, ..., uw?, uwLevel?}] -> by-hour
         # & by-day charts; uw/uwLevel present only on ticks that read underwater.
         "history": history,
+        # {cam id: fingerprint} of the last feed frame each cam scored — the
+        # next run's "same frame already scored" check reads it back.
+        "frameShas": frame_shas,
     }
 
 
