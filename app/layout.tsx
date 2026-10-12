@@ -5,6 +5,7 @@ import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import { NativePushInit } from "@/components/NativePushInit";
 import { ReloadOnNewVersion } from "@/components/ReloadOnNewVersion";
 import { AppOpenPing } from "@/components/AppOpenPing";
+import { PostHogInit } from "@/components/PostHogInit";
 
 const SITE_URL = "https://isitbeachday.com";
 const DEFAULT_TITLE = "Is It Beach Day? — Live Beach Conditions & Score";
@@ -106,6 +107,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <NativePushInit />
         <ReloadOnNewVersion />
         <AppOpenPing />
+        <PostHogInit />
       </body>
     </html>
   );

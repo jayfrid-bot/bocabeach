@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { analyticsEnabled } from "@/lib/analytics/posthog";
 
 const EFFECTIVE_DATE = "October 1, 2026";
 
@@ -161,6 +162,16 @@ export default function PrivacyPage() {
           you across other sites, and doesn&apos;t build an advertising profile.
           We run no ads and use no ad trackers.
         </p>
+        {analyticsEnabled() && (
+          <p>
+            We also use PostHog to learn how the site and app are used: which
+            pages people open, how long they stay, and which buttons they tap.
+            It gets a random visitor id stored on your device (not a cookie),
+            your device type and rough location from your network address. It
+            never gets your name, your home beach, your settings, or anything
+            that identifies you, and we don&apos;t record your screen.
+          </p>
+        )}
         <p>
           To know how many people use the app each day, your device sends one
           note a day saying it opened: the date, whether it is the iPhone app,
