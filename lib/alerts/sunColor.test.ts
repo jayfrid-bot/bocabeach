@@ -115,12 +115,23 @@ describe("sunColorDecision", () => {
     expect(d?.title).toBe("Great sunset coming");
     expect(d?.dedupKey).toBe(sunColorEventKey("sunset", EVENT_ISO, TZ));
     expect(d?.body).toContain("Boca Raton");
-    expect(d?.body).toContain("rated Great");
+    expect(d?.body).toContain("rated Great (80 out of 100)");
   });
 
-  it("Codex review item 6c: direct push copy — 'Sunset <time> at <beach>, rated <band>. Peak color about <time>. Sunset is <lead> away.'", () => {
+  it("puts the whole-number score in the body, and an Amazing sunrise reads the same way", () => {
+    const d = sunColorDecision(
+      baseInput({
+        prediction: prediction({ kind: "sunrise", score: 91.4, band: "epic" }),
+        device: device({ sunColor: { minBand: "epic", leadMin: 60 } }),
+      }),
+    );
+    expect(d?.title).toBe("Amazing sunrise coming");
+    expect(d?.body).toContain("rated Amazing (91 out of 100)");
+  });
+
+  it("Codex review item 6c: direct push copy — 'Sunset <time> at <beach>, rated <band> (<n> out of 100). Peak color about <time>. Sunset is <lead> away.'", () => {
     const d = sunColorDecision(baseInput());
-    expect(d?.body).toBe("Sunset 7:35 PM at Boca Raton, rated Great. Peak color about 7:35 PM. Sunset is about an hour away.");
+    expect(d?.body).toBe("Sunset 7:35 PM at Boca Raton, rated Great (80 out of 100). Peak color about 7:35 PM. Sunset is about an hour away.");
     expect(d?.body).not.toMatch(/if you'?re going/i);
   });
 

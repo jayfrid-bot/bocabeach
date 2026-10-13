@@ -5,7 +5,8 @@
 // can never skip or repeat a day.
 
 import { shiftLocalDate, shortMonthDay, weekdayLongOf } from "@/lib/history/summary";
-import type { DayFrame, DayGolden, DayHour, DayViewPayload } from "@/lib/history/dayView";
+import type { DayFrame, DayGolden, DayHour, DaySun, DaySunEvent, DayViewPayload } from "@/lib/history/dayView";
+import { sunQualityBandMeta } from "@/lib/sunQuality";
 import type { GoldenKind } from "@/lib/camFrames/golden";
 
 const HOUR_MS = 3_600_000;
@@ -174,6 +175,26 @@ export function goldenJumps(
   const set = goldenJumpIndex(frames, golden, "sunset");
   if (set >= 0) out.push({ kind: "sunset", label: "Sunset", index: set });
   return out;
+}
+
+/** "78 Great": a sun event's color score with its word, or null with no score. */
+export function sunScoreText(ev: DaySunEvent | null | undefined): string | null {
+  if (!ev) return null;
+  return `${ev.score} ${sunQualityBandMeta(ev.band).label}`;
+}
+
+/** "Sunrise · 64 Good" for a jump button; the bare label when there is no score. */
+export function sunJumpLabel(label: string, ev: DaySunEvent | null | undefined): string {
+  const text = sunScoreText(ev);
+  return text ? `${label} · ${text}` : label;
+}
+
+/** "Sunrise 64 Good · Sunset 78 Great" for the day's title area, or null when neither was scored. */
+export function sunDayLine(sun: DaySun | null | undefined): string | null {
+  const rise = sunScoreText(sun?.sunrise);
+  const set = sunScoreText(sun?.sunset);
+  const parts = [rise ? `Sunrise ${rise}` : null, set ? `Sunset ${set}` : null].filter((p): p is string => !!p);
+  return parts.length ? parts.join(" · ") : null;
 }
 
 /** "Friday, Oct 10" for a YYYY-MM-DD calendar day. */

@@ -23,6 +23,9 @@ import {
   readingTiles,
   sliderLabel,
   stepDate,
+  sunDayLine,
+  sunJumpLabel,
+  sunScoreText,
   todayInZone,
 } from "@/lib/plus/dayView";
 import type { DayHour, DayViewPayload } from "@/lib/history/dayView";
@@ -355,5 +358,30 @@ describe("golden-hour shots", () => {
     expect(nearestFrameIndex(frames, "2026-10-10T11:00:00.000Z")).toBe(0); // slot 10:50 is 10 min away, slot 11:20 is 20
     expect(nearestFrameIndex(frames, "2026-10-10T11:30:00.000Z")).toBe(1); // 11:20 (10 min) beats 11:50 (20 min)
     expect(nearestFrameIndex(frames, "2026-10-10T13:00:00.000Z")).toBe(3); // the 2 PM shot, not a golden one
+  });
+});
+
+describe("sun color text", () => {
+  const rise = { score: 64, band: "good" as const, eventIso: "2026-10-10T11:17:00.000Z" };
+  const set = { score: 78, band: "vivid" as const, eventIso: "2026-10-10T22:57:00.000Z" };
+
+  it("writes the number then the word", () => {
+    expect(sunScoreText(rise)).toBe("64 Good");
+    expect(sunScoreText(set)).toBe("78 Great");
+    expect(sunScoreText(null)).toBeNull();
+  });
+
+  it("labels a jump button 'Sunrise · 64 Good', or leaves the bare label with no score", () => {
+    expect(sunJumpLabel("Sunrise", rise)).toBe("Sunrise · 64 Good");
+    expect(sunJumpLabel("Sunset", set)).toBe("Sunset · 78 Great");
+    expect(sunJumpLabel("Sunset", null)).toBe("Sunset");
+    expect(sunJumpLabel("Sunset", undefined)).toBe("Sunset");
+  });
+
+  it("builds the day line from whichever scores exist", () => {
+    expect(sunDayLine({ sunrise: rise, sunset: set })).toBe("Sunrise 64 Good · Sunset 78 Great");
+    expect(sunDayLine({ sunrise: null, sunset: set })).toBe("Sunset 78 Great");
+    expect(sunDayLine({ sunrise: null, sunset: null })).toBeNull();
+    expect(sunDayLine(undefined)).toBeNull(); // an older response with no `sun`
   });
 });

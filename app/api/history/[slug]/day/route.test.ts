@@ -83,6 +83,30 @@ function hour(over: Partial<BeachHourlyRow> = {}): void {
   );
 }
 
+
+/** Insert one sun_event_predictions row straight into SQLite (only the columns the day route reads matter). */
+function sunPred(over: Record<string, unknown> = {}): void {
+  const r: Record<string, unknown> = {
+    slug: SLUG,
+    event_kind: "sunset",
+    event_iso: "2026-10-10T22:57:00.000Z",
+    as_of_hour_utc: "2026-10-10T21:00:00.000Z",
+    snapshot_generated_at: "2026-10-10T21:05:00.000Z",
+    archived_at: "2026-10-10T21:06:00.000Z",
+    lead_minutes: 112,
+    score: 60,
+    band: "good",
+    algo_version: "test",
+    engine_version: SCORING_ENGINE_VERSION,
+    ...over,
+  };
+  const cols = Object.keys(r);
+  h.all(
+    `INSERT INTO sun_event_predictions (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`,
+    ...cols.map((c) => r[c]),
+  );
+}
+
 /** A READY (or pending) camera shot. `slot` is a UTC hour; the shot is taken at :`minute` of it. */
 async function shot(
   cam: string,
@@ -330,6 +354,71 @@ describe.skipIf(!HAS_SQLITE)("hours", () => {
     const body = await res.json();
     expect(body.hours).toEqual([]);
     expect(body.summary).toMatchObject({ date: "2026-10-09", hours: 0, best: null });
+  });
+});
+
+describe.skipIf(!HAS_SQLITE)("sun color scores", () => {
+  beforeEach(async () => {
+    await makePlus();
+    hour(); // 2026-10-10 10:00 local: the archive starts that day
+  });
+
+  async function dayBody(date = "2026-10-10") {
+    const res = await call({ deviceId: DEV, date });
+    expect(res.status).toBe(200);
+    return res.json();
+  }
+
+  it("returns the LAST forecast made at or before each event, for the requested beach-local date", async () => {
+    // Sunset: three forecasts as it got closer, then one logged after it happened.
+    sunPred({ as_of_hour_utc: "2026-10-10T18:00:00.000Z", score: 40, band: "plain" });
+    sunPred({ as_of_hour_utc: "2026-10-10T21:00:00.000Z", score: 72, band: "vivid" });
+    sunPred({ as_of_hour_utc: "2026-10-10T22:00:00.000Z", score: 78.4, band: "vivid" });
+    sunPred({ as_of_hour_utc: "2026-10-10T23:00:00.000Z", score: 5, band: "dud", lead_minutes: -3 });
+    // Sunrise.
+    sunPred({
+      event_kind: "sunrise",
+      event_iso: "2026-10-10T11:17:00.000Z",
+      as_of_hour_utc: "2026-10-10T09:00:00.000Z",
+      score: 64,
+      band: "good",
+    });
+    const body = await dayBody();
+    expect(body.sun).toEqual({
+      sunrise: { score: 64, band: "good", eventIso: "2026-10-10T11:17:00.000Z" },
+      sunset: { score: 78, band: "vivid", eventIso: "2026-10-10T22:57:00.000Z" },
+    });
+  });
+
+  it("skips a forecast with no score (no cloud reading) and falls back to the last scored one", async () => {
+    sunPred({ as_of_hour_utc: "2026-10-10T20:00:00.000Z", score: 55, band: "good" });
+    sunPred({ as_of_hour_utc: "2026-10-10T22:00:00.000Z", score: null, band: null });
+    const body = await dayBody();
+    expect(body.sun.sunset).toMatchObject({ score: 55, band: "good" });
+  });
+
+  it("uses the BEACH-LOCAL date: an 11 PM Boca sunset-time event on Oct 10 belongs to Oct 10, not to Oct 11 UTC", async () => {
+    // 2026-10-11T03:30Z is 11:30 PM EDT on Oct 10: the requested day, though it is Oct 11 in UTC.
+    sunPred({ event_kind: "sunset", event_iso: "2026-10-11T03:30:00.000Z", as_of_hour_utc: "2026-10-11T02:00:00.000Z", score: 70, band: "vivid" });
+    const oct10 = await dayBody("2026-10-10");
+    expect(oct10.sun.sunset).toMatchObject({ score: 70, eventIso: "2026-10-11T03:30:00.000Z" });
+    hour({ hour_utc: "2026-10-11T14:00:00.000Z", local_date: "2026-10-11" });
+    const oct11 = await dayBody("2026-10-11");
+    expect(oct11.sun.sunset).toBeNull();
+  });
+
+  it("is null for both when nothing was archived, and ignores other beaches and other days", async () => {
+    sunPred({ slug: "deerfield-beach", score: 90, band: "epic" });
+    sunPred({ event_iso: "2026-10-09T22:58:00.000Z", as_of_hour_utc: "2026-10-09T21:00:00.000Z", score: 88, band: "vivid" });
+    const body = await dayBody();
+    expect(body.sun).toEqual({ sunrise: null, sunset: null });
+  });
+
+  it("adds no D1 statement: the day still uses at most three", async () => {
+    sunPred();
+    ctl.statements = 0;
+    await dayBody();
+    expect(ctl.statements).toBeLessThanOrEqual(3);
   });
 });
 

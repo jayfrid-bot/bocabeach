@@ -8,6 +8,7 @@
 import type { BeachHourlyRow } from "@/lib/history/types";
 import type { DaySummary, HistoryVersions } from "@/lib/history/summary";
 import type { GoldenWindowIso, SlotKind } from "@/lib/camFrames/golden";
+import type { SunQualityBand } from "@/lib/sunQuality";
 
 /** What the day view shows for one hour. A value the archive never kept is null. */
 export interface DayReadings {
@@ -75,10 +76,66 @@ export interface DayViewPayload {
   cams: DayCam[];
   /** The day's sunrise and sunset golden-hour windows (UTC), null when the sun does not rise or set. */
   golden: DayGolden;
+  /** The day's sunrise and sunset color scores (0-100), null when none was archived. */
+  sun: DaySun;
   /** First beach-local date the hourly archive has a row for (picker minimum). */
   archiveStart: string | null;
   /** First beach-local date that has a saved camera shot, for the empty-state line. */
   framesStart: string | null;
+}
+
+/** One sun event's color score as last forecast before the event. */
+export interface DaySunEvent {
+  /** 0-100. */
+  score: number;
+  band: SunQualityBand;
+  /** The event itself (UTC instant). */
+  eventIso: string;
+}
+
+export interface DaySun {
+  sunrise: DaySunEvent | null;
+  sunset: DaySunEvent | null;
+}
+
+/** The slice of a `sun_event_predictions` row the day view reads (see `SUN_DAY_SQL`). */
+export interface DaySunRow {
+  kind: string;
+  eventIso: string;
+  score: number | null;
+  band: string | null;
+}
+
+const SUN_BANDS: readonly string[] = ["dud", "plain", "good", "vivid", "epic"];
+
+/**
+ * Picks the day's sunrise and sunset from the rows the day route read. `sunJson`
+ * is the JSON array the route's bounds statement builds; the SQL only narrows
+ * to a UTC window around the date and keeps each event's LAST forecast made
+ * before the event, so the beach-local date test happens here. Anything
+ * unreadable gives null for that event; if two events of one kind fall on the
+ * date, the later one wins.
+ */
+export function shapeSun(sunJson: string | null, date: string, localDateOf: (iso: string) => string | null): DaySun {
+  const out: DaySun = { sunrise: null, sunset: null };
+  if (!sunJson) return out;
+  let rows: unknown;
+  try {
+    rows = JSON.parse(sunJson);
+  } catch {
+    return out;
+  }
+  if (!Array.isArray(rows)) return out;
+  for (const r of rows as Partial<DaySunRow>[]) {
+    if (!r || (r.kind !== "sunrise" && r.kind !== "sunset")) continue;
+    if (typeof r.eventIso !== "string" || localDateOf(r.eventIso) !== date) continue;
+    if (typeof r.score !== "number" || !Number.isFinite(r.score)) continue;
+    if (typeof r.band !== "string" || !SUN_BANDS.includes(r.band)) continue;
+    const prev = out[r.kind];
+    if (prev && prev.eventIso >= r.eventIso) continue;
+    out[r.kind] = { score: Math.round(r.score), band: r.band as SunQualityBand, eventIso: r.eventIso };
+  }
+  return out;
 }
 
 export interface DayGolden {

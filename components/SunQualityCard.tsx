@@ -23,6 +23,11 @@ import {
 import { FlipCard, NerdBack } from "@/components/FlipCard";
 import { assembleSunEventQuality } from "@/lib/sunAlert";
 
+/** One plain sentence on what the number means, first line on the flip side.
+ *  Great starts at 70 and Amazing at 90 (lib/sunQuality.ts BAND_CUTOFFS). */
+export const SUN_SCORE_HINT =
+  "0–100. About 1 in 5 sunrises and sunsets score 70 or more (Great); 90 or more is Amazing.";
+
 // Gradient stops line up with lib/sunQuality.ts's BAND_CUTOFFS (dud <20,
 // plain <45, good <70, vivid <90, epic >=90) — same idiom as
 // StormActivityMeter/AirQualityMeter's meter gradients.
@@ -134,7 +139,7 @@ function buildSunQualityNerdInfo(args: {
     visual: (
       <div>
         <div className="text-[11px] leading-snug text-slate-500 dark:text-slate-400">
-          How colorful the next sunrise or sunset should be, judged from the cloud mix.
+          {SUN_SCORE_HINT} How colorful the next sunrise or sunset should be, judged from the cloud mix.
         </div>
         <div className="relative mt-2 h-2 rounded-full" style={{ background: GRADIENT }}>
           {result.score != null && meta ? (
@@ -292,6 +297,50 @@ function targetKindFor(timing: GoldenHourTiming, scored: SunEventTime | null): S
   return scored?.event ?? "sunset";
 }
 
+/** "Sunset color 72 out of 100, Good" / "Sunset color: no forecast yet" — the
+ *  headline's accessible name. Exported for tests. */
+export function sunScoreAriaLabel(kind: SunEventKind, result: Pick<SunEventQuality, "score" | "band">): string {
+  const name = `${eventLabel(kind)} color`;
+  if (result.score == null || result.band == null) return `${name}: no forecast yet`;
+  return `${name} ${result.score} out of 100, ${sunQualityBandMeta(result.band).label}`;
+}
+
+/**
+ * The card's headline: a bold 0-100 number (beach-score style: dark text so it
+ * stays readable on white; the band color rides on the dot) next to the band
+ * word. "No forecast yet" when there is no score. Exported for tests.
+ */
+export function SunScoreHeadline({
+  kind,
+  result,
+}: {
+  kind: SunEventKind;
+  result: Pick<SunEventQuality, "score" | "band">;
+}) {
+  const meta = result.band ? sunQualityBandMeta(result.band) : null;
+  if (!meta || result.score == null) {
+    return (
+      <div className="mt-1 flex items-center gap-2">
+        <span className="text-sm leading-tight text-slate-500 dark:text-slate-400">No forecast yet</span>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-1 flex items-baseline gap-2" role="img" aria-label={sunScoreAriaLabel(kind, result)}>
+      <span
+        aria-hidden
+        className="text-3xl font-bold leading-none tabular-nums text-slate-900 dark:text-white sm:text-4xl"
+      >
+        {result.score}
+      </span>
+      <span aria-hidden className="flex items-center gap-1.5 text-base font-semibold leading-tight text-slate-700 dark:text-slate-200">
+        <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: meta.color }} />
+        {meta.label}
+      </span>
+    </div>
+  );
+}
+
 function SunQualityFront({
   timing,
   nowMs,
@@ -313,7 +362,6 @@ function SunQualityFront({
   const during = timing.phase === "during";
   const kind = targetKindFor(timing, scored);
 
-  const meta = result.band ? sunQualityBandMeta(result.band) : null;
   const title = cardTitle(kind, during);
   // "Golden hour in 2h 14m" / "Golden hour now · 23 min left" /
   // "Next golden hour 6:26 AM · in 9h 26m" — one plain line under the rating.
@@ -338,25 +386,8 @@ function SunQualityFront({
       </div>
 
       <div className="flex flex-1 flex-col justify-center">
-        {/* The rating IS the headline — one plain word. */}
-        <div className="mt-1 flex items-center gap-2">
-          {meta ? (
-            <span
-              aria-hidden
-              className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
-              style={{ backgroundColor: meta.color }}
-            />
-          ) : null}
-          <span
-            className={
-              meta
-                ? "text-xl font-semibold leading-tight text-slate-900 dark:text-white sm:text-2xl"
-                : "text-sm leading-tight text-slate-500 dark:text-slate-400"
-            }
-          >
-            {meta ? meta.label : "No forecast yet"}
-          </span>
-        </div>
+        {/* The rating IS the headline — the 0-100 number with its plain word. */}
+        <SunScoreHeadline kind={kind} result={result} />
 
         {/* Wraps freely at every width: these lines are the point of the card. */}
         <div

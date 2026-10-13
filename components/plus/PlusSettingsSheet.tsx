@@ -780,6 +780,9 @@ function SunColorSettings({
             </Chip>
           ))}
         </div>
+        <p className="mt-1.5 text-xs leading-snug text-slate-500 dark:text-slate-400">
+          Scores run 0–100. Great is 70 or more. Amazing is 90 or more. The alert shows the number.
+        </p>
         {minBandPending ? (
           <p className="mt-1 text-xs leading-snug text-amber-600 dark:text-amber-400">Unsaved — retrying…</p>
         ) : null}

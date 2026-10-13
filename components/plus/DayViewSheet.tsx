@@ -39,6 +39,8 @@ import {
   emptyCamText,
   hour12Compact,
   goldenJumps,
+  sunDayLine,
+  sunJumpLabel,
   goldenKindOf,
   hourLabelFor,
   hourOfSlot,
@@ -186,6 +188,7 @@ function DayBody({
   const cam = day.cams.find((c) => c.id === camId) ?? null;
 
   const formulaNotice = formulaChangeNotice(day.versions);
+  const sunLine = sunDayLine(day.sun);
   // A golden-hour shot's slot is 10 minutes wide; its HOUR is what the strip and readings key on.
   const hourKey = hourUtc ? hourOfSlot(hourUtc) : null;
   const selectedHour = day.hours.find((h) => h.hourUtc === hourKey) ?? null;
@@ -194,6 +197,12 @@ function DayBody({
 
   return (
     <div className="mt-3 space-y-5">
+      {sunLine ? (
+        <p className="text-center text-sm font-medium tabular-nums text-slate-700 dark:text-slate-200">
+          <span className="sr-only">Sun color scores out of 100: </span>
+          {sunLine}
+        </p>
+      ) : null}
       {formulaNotice ? <p className="text-xs text-slate-500 dark:text-slate-400">{formulaNotice}</p> : null}
       {day.summary.partial && day.summary.hours > 0 ? (
         <p className="text-xs text-amber-700 dark:text-amber-400">Partial day: we saved only a few hours of scores.</p>
@@ -204,6 +213,7 @@ function DayBody({
           cams={day.cams}
           cam={cam}
           golden={day.golden}
+          sun={day.sun}
           framesStart={day.framesStart}
           hourUtc={hourUtc}
           refreshing={refreshing}
@@ -307,6 +317,7 @@ function CamViewer({
   cams,
   cam,
   golden,
+  sun,
   framesStart,
   hourUtc,
   refreshing,
@@ -319,6 +330,7 @@ function CamViewer({
   cams: DayCam[];
   cam: DayCam | null;
   golden: DayViewPayload["golden"];
+  sun: DayViewPayload["sun"] | undefined;
   framesStart: string | null;
   hourUtc: string | null;
   refreshing: boolean;
@@ -470,7 +482,7 @@ function CamViewer({
                   }`}
                 >
                   <span aria-hidden className={`h-2.5 w-2.5 rounded-full ${j.kind === "sunrise" ? "bg-amber-400" : "bg-orange-500"}`} />
-                  {j.label}
+                  {sunJumpLabel(j.label, sun?.[j.kind])}
                 </button>
               ))}
             </div>

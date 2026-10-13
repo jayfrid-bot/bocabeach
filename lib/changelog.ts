@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-13",
+    title: "Sunrise and sunset get a number",
+    details:
+      "The sunrise and sunset color forecast now shows a 0–100 score next to the word. You'll see it on the sun card, in sunset and sunrise alerts, in Plus look-back, and on the share card. About one in five sunrises and sunsets score 70 or more.",
+    tag: "improved",
+  },
+  {
     date: "2026-10-12",
     title: "Updated privacy page: anonymous usage stats",
     details:

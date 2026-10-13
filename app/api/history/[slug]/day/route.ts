@@ -12,9 +12,16 @@
 // never handed a signed link. The date must be a real calendar date (round-
 // trip) between the first archived day and today in the BEACH's timezone.
 //
-// Three D1 statements, all reads, no R2: (1) the archive bounds, (2) the day's
-// hourly rows, (3) the day's ready cam_frames rows. (2) and (3) run together
-// once (1) has accepted the date.
+// Three D1 statements, all reads, no R2: (1) the archive bounds plus the day's
+// sunrise and sunset color scores, (2) the day's hourly rows, (3) the day's
+// ready cam_frames rows. (2) and (3) run together once (1) has accepted the date.
+//
+// Sun color: `sun_event_predictions` has no local-date column, only event_iso.
+// So (1) asks for the events inside a UTC window wide enough for any time zone
+// (the day before to the day after), keeps each event's LAST forecast made at
+// or before the event, and returns them as one JSON array in a scalar
+// subquery. `shapeSun` then keeps the events whose beach-local date is the
+// requested date. That keeps the statement count at three.
 //
 // Frames: only state = 'ready' rows of this beach and local date; only cams the
 // manifest still archives (`archive: false` hides a cam at once, R6); the
@@ -35,8 +42,8 @@ import { requireInstallToken } from "@/lib/db/installTokenAuth";
 import { isNativeRequest } from "@/lib/nativeRequest";
 import { checkRateLimit, clientIp } from "@/lib/plus/rateLimit";
 import { localHourParts } from "@/lib/history/archive";
-import { shapeCams, shapeHours, type DayFrameRow, type DayViewPayload } from "@/lib/history/dayView";
-import { summarizeDay, summarizeVersions } from "@/lib/history/summary";
+import { shapeCams, shapeHours, shapeSun, type DayFrameRow, type DayViewPayload } from "@/lib/history/dayView";
+import { shiftLocalDate, summarizeDay, summarizeVersions } from "@/lib/history/summary";
 import type { BeachHourlyRow } from "@/lib/history/types";
 import { isCalendarDate, parseFrameKey } from "@/lib/camFrames/keys";
 import { goldenWindowsForDate, windowIso } from "@/lib/camFrames/golden";
@@ -52,6 +59,19 @@ export const runtime = "nodejs";
 const MAX_ATTEMPTS_DEVICE = 240;
 const MAX_ATTEMPTS_IP = 600;
 const WINDOW_MS = 60 * 60 * 1000;
+
+// One scalar subquery: a JSON array of { kind, eventIso, score, band } for the
+// sunrise and sunset events with event_iso in [?2, ?3), each as its LAST scored
+// forecast made at or before the event (compared to the second, so a stamp with
+// or without milliseconds sorts alike).
+const SUN_DAY_SQL =
+  "(SELECT json_group_array(json_object('kind', p.event_kind, 'eventIso', p.event_iso, 'score', p.score, 'band', p.band)) " +
+  "FROM sun_event_predictions p " +
+  "WHERE p.slug = ?1 AND p.event_iso >= ?2 AND p.event_iso < ?3 AND p.score IS NOT NULL " +
+  "AND substr(p.as_of_hour_utc, 1, 19) <= substr(p.event_iso, 1, 19) " +
+  "AND p.as_of_hour_utc = (SELECT MAX(q.as_of_hour_utc) FROM sun_event_predictions q " +
+  "WHERE q.slug = p.slug AND q.event_kind = p.event_kind AND q.event_iso = p.event_iso " +
+  "AND q.score IS NOT NULL AND substr(q.as_of_hour_utc, 1, 19) <= substr(q.event_iso, 1, 19)))";
 
 function rateLimited(retryAfterSec: number): Response {
   return Response.json(
@@ -99,10 +119,12 @@ export async function POST(
       .prepare(
         "SELECT " +
           "(SELECT MIN(local_date) FROM beach_hourly WHERE slug = ?1 AND row_kind = 'snapshot') AS hours_start, " +
-          "(SELECT MIN(local_date) FROM cam_frames WHERE slug = ?1 AND state = 'ready') AS frames_start",
+          "(SELECT MIN(local_date) FROM cam_frames WHERE slug = ?1 AND state = 'ready') AS frames_start, " +
+          SUN_DAY_SQL +
+          " AS sun_json",
       )
-      .bind(slug)
-      .first<{ hours_start: string | null; frames_start: string | null }>();
+      .bind(slug, `${shiftLocalDate(date, -1)}T00:00:00.000Z`, `${shiftLocalDate(date, 2)}T00:00:00.000Z`)
+      .first<{ hours_start: string | null; frames_start: string | null; sun_json: string | null }>();
     const archiveStart = bounds?.hours_start ?? null;
     const framesStart = bounds?.frames_start ?? null;
     const { date: todayLocal } = localHourParts(loc.timezone, now);
@@ -163,6 +185,10 @@ export async function POST(
       versions: summarizeVersions([summary], SCORING_ENGINE_VERSION),
       cams: shapeCams(manifest, frameRows, (k) => urls.get(k) ?? null),
       golden: { sunrise: windowIso(goldenDay.sunrise), sunset: windowIso(goldenDay.sunset) },
+      sun: shapeSun(bounds?.sun_json ?? null, date, (iso) => {
+        const at = Date.parse(iso);
+        return Number.isFinite(at) ? localHourParts(loc.timezone, at).date : null;
+      }),
       archiveStart,
       framesStart,
     };

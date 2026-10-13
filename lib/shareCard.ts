@@ -16,6 +16,9 @@ import { applyLiveRipCap, deriveMetrics } from "@/lib/score";
 import { ripCapFor } from "@/lib/ripRisk/resolve";
 import { swimSafety, type SwimSafetyLevel } from "@/lib/safetyLine";
 import { fmtTime } from "@/lib/format";
+import { assembleSunEventQuality, sunQualityHourlyPoints } from "@/lib/sunAlert";
+import { nextSunEventsBoth } from "@/lib/history/sunPredictions";
+import { sunQualityBandMeta } from "@/lib/sunQuality";
 import { CONDITIONS_MAX_STALE_MS } from "@/lib/conditionsFreshness";
 
 export interface ShareCardTile {
@@ -334,7 +337,7 @@ export function shareCardModel(
   }
 
   if (sunsetAhead && sun?.sunset) {
-    push("sun", "Sunset", safeTime(sun.sunset, tz));
+    push("sun", "Sunset", safeTime(sun.sunset, tz), sunsetColorNote(res, sun.sunset, asOfMs));
   } else {
     const nextRise = [sun?.sunrise, sun?.tomorrowSunrise].find(
       (iso): iso is string => !!iso && Date.parse(iso) > nowMs,
@@ -382,6 +385,34 @@ export function shareCardModel(
     pageUrl: `isitbeachday.com${path}`,
     shareUrl: `https://isitbeachday.com${path}`,
   };
+}
+
+/**
+ * "78 Good": today's sunset color score and its word, for the sun tile's note.
+ * Scored exactly as the sun card and the push alert score it (the same
+ * assembly, off the snapshot's own clock). Undefined when there is no forecast
+ * for the event hour or no usable location, so the tile then shows the time alone.
+ */
+function sunsetColorNote(res: ConditionsResponse | null | undefined, sunsetIso: string, anchorMs: number): string | undefined {
+  try {
+    const snap = res?.snapshot;
+    const loc = snap?.location;
+    if (!res || !snap || !loc) return undefined;
+    const ev = nextSunEventsBoth(res, loc, anchorMs).find(
+      (e) => e.event === "sunset" && Date.parse(e.timeIso) === Date.parse(sunsetIso),
+    );
+    if (!ev) return undefined;
+    const { result } = assembleSunEventQuality(ev, {
+      hourly: sunQualityHourlyPoints(snap.hourly?.data),
+      airQuality: snap.airQuality?.data,
+      goesCloud: snap.goesCloud?.data ? { ...snap.goesCloud.data, status: snap.goesCloud.status } : null,
+      nowMs: anchorMs,
+    });
+    if (result.score == null || result.band == null) return undefined;
+    return `${result.score} ${sunQualityBandMeta(result.band).label}`;
+  } catch {
+    return undefined;
+  }
 }
 
 /** 15 minutes normally, with up to 10 more of stale serving. Shorter, with

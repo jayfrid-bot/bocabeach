@@ -203,6 +203,7 @@ export function sunColorDecision(input: SunColorAlertInput): AlertDecision | nul
     key: "sun-color",
     kind: prediction.kind,
     bandLabel,
+    score: Math.round(prediction.score),
     eventTimeLabel: fmtTime(prediction.eventIso, tz),
     peakLabel: fmtTime(prediction.peakIso, tz),
     leadPhrase: sunColorLeadPhrase(device.sunColor.leadMin),
