@@ -277,17 +277,18 @@ function Tile({ tile, sizes }: { tile: ShareCardTile; sizes: TileSizes }) {
   );
 }
 
-/** Steps a long value ("Crystal clear", "Churned up") down so it fits its
- *  third-width tile instead of ending in an ellipsis. */
-/** A long note ("Amazing color · 100/100", 23 chars) would clip on the story
- *  card at full size (~283 px in a 266 px tile, Codex 2026-10-13); step it down
- *  so the "/100" always shows. Short notes keep the base size. */
+/** A long note ("Amazing color · 100/100", 23 chars) would clip on the STORY
+ *  card at its 25 px note size (~283 px in a 266 px tile, Codex 2026-10-13);
+ *  step it down there so the "/100" always shows. The square card's 17 px note
+ *  already fits (~192 px of 294 px), so only large bases shrink. */
 function noteSizeFor(note: string, base: number): number {
-  if (note.length <= 18) return base;
+  if (base < 20 || note.length <= 18) return base;
   if (note.length <= 21) return Math.round(base * 0.9);
   return Math.round(base * 0.82);
 }
 
+/** Steps a long value ("Crystal clear", "Churned up") down so it fits its
+ *  third-width tile instead of ending in an ellipsis. */
 function valueSizeFor(value: string, base: number): number {
   if (value.length <= 8) return base;
   if (value.length <= 11) return Math.round(base * 0.8);

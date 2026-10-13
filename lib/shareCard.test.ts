@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { sunEventQuality, sunQualityBandMeta } from "@/lib/sunQuality";
-import { SHARE_CARD_MAX_TILES, shareCacheControl, shareCardModel } from "@/lib/shareCard";
+import { SHARE_CARD_MAX_TILES, nextLocalMidnightMs, shareCacheControl, shareCardModel } from "@/lib/shareCard";
 import type {
   BusynessData,
   ClarityData,
@@ -589,5 +589,21 @@ describe("shareCardModel", () => {
     expect(m.pageUrl).toBe("isitbeachday.com/deerfield-beach");
     expect(m.shareUrl).toBe("https://isitbeachday.com/deerfield-beach");
     expect(m.shareUrl).not.toContain("ref=share");
+  });
+});
+
+describe("nextLocalMidnightMs — exact on clock-change nights", () => {
+  const NY = "America/New_York";
+  it("an ordinary night: 00:00 EDT = 04:00Z", () => {
+    expect(nextLocalMidnightMs(Date.parse("2026-10-13T22:00:00Z"), NY)).toBe(Date.parse("2026-10-14T04:00:00Z"));
+  });
+  it("spring forward (Mar 8 2026): from 00:30 EST the next midnight is Mar 9 00:00 EDT = 04:00Z", () => {
+    expect(nextLocalMidnightMs(Date.parse("2026-03-08T05:30:00Z"), NY)).toBe(Date.parse("2026-03-09T04:00:00Z"));
+  });
+  it("fall back (Nov 1 2026): from 00:30 EDT the next midnight is Nov 2 00:00 EST = 05:00Z", () => {
+    expect(nextLocalMidnightMs(Date.parse("2026-11-01T04:30:00Z"), NY)).toBe(Date.parse("2026-11-02T05:00:00Z"));
+  });
+  it("a bad zone gives undefined, never NaN", () => {
+    expect(nextLocalMidnightMs(Date.parse("2026-10-13T22:00:00Z"), "Not/AZone")).toBeUndefined();
   });
 });

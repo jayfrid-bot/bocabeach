@@ -187,32 +187,48 @@ function nextRipChange(rip: NonNullable<ReturnType<typeof deriveMetrics>["ripNow
   return times.length ? Math.min(...times) : undefined;
 }
 
-/** "2026-09-14" in the beach's timezone. */
 /** The first of the given instants that is still ahead of `nowMs`, if any. */
 function earliestFuture(nowMs: number, ...ms: (number | undefined)[]): number | undefined {
   const ahead = ms.filter((m): m is number => m != null && Number.isFinite(m) && m > nowMs);
   return ahead.length ? Math.min(...ahead) : undefined;
 }
 
-/** The next local midnight in `tz` after `nowMs` (the moment "tomorrow" becomes
- *  "today"). Uses the zone's offset at `nowMs`; a DST change that night moves
- *  it by an hour at most, which only shortens or lengthens one cache window. */
-function nextLocalMidnightMs(nowMs: number, tz: string): number | undefined {
+/** The zone's UTC offset (ms, local minus UTC) at instant `ms`, or undefined for a bad zone. */
+function tzOffsetMs(ms: number, tz: string): number | undefined {
   try {
     const parts = Object.fromEntries(
       new Intl.DateTimeFormat("en-US", {
         timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
         hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
-      }).formatToParts(new Date(nowMs)).map((p) => [p.type, p.value]),
+      }).formatToParts(new Date(ms)).map((p) => [p.type, p.value]),
     );
     const localAsUtc = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second);
-    const offsetMs = localAsUtc - Math.floor(nowMs / 1000) * 1000;
-    return Date.UTC(+parts.year, +parts.month - 1, +parts.day + 1) - offsetMs;
+    const off = localAsUtc - Math.floor(ms / 1000) * 1000;
+    return Number.isFinite(off) ? off : undefined;
   } catch {
     return undefined;
   }
 }
 
+/** The next local midnight in `tz` after `nowMs` (the moment "tomorrow" becomes
+ *  "today"), using the offset in force AT that midnight — so it is exact on the
+ *  nights the clocks change (Codex, 2026-10-13). Undefined for a bad zone. */
+export function nextLocalMidnightMs(nowMs: number, tz: string): number | undefined {
+  const today = localDateKey(nowMs, tz);
+  const offNow = tzOffsetMs(nowMs, tz);
+  if (!today || offNow == null) return undefined;
+  const [y, m, d] = today.split("-").map(Number);
+  const wallMidnight = Date.UTC(y, m - 1, d + 1); // tomorrow 00:00 as if it were UTC
+  let guess = wallMidnight - offNow;
+  for (let i = 0; i < 2; i++) {
+    const off = tzOffsetMs(guess, tz);
+    if (off == null) return undefined;
+    guess = wallMidnight - off;
+  }
+  return guess > nowMs ? guess : undefined;
+}
+
+/** "2026-09-14" in the beach's timezone. */
 function localDateKey(ms: number, tz: string): string | undefined {
   try {
     return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: tz }).format(
@@ -458,9 +474,11 @@ function sunColorNote(
  *  no stale serving, when:
  *  - the conditions behind the card are already stale (60 s, so the next
  *    view draws from fresh data instead of pinning old readings);
- *  - a known rip change (alert start or end) falls inside that 25-minute
- *    window: the image then expires at the change, never under 60 s, the
- *    same minute cadence the dashboard re-resolves on. */
+ *  - a known content change (`changesAtMs`: a rip alert starting or ending,
+ *    the sun tile's sunrise/sunset, or local midnight under a "today"/
+ *    "tomorrow" sun label) falls inside that 25-minute window: the image then
+ *    expires at the change, never under 60 s, the same minute cadence the
+ *    dashboard re-resolves on. */
 export function shareCacheControl(model: Pick<ShareCardModel, "changesAtMs" | "stale">, nowMs: number): string {
   const FULL = 900;
   const STALE_SERVE = 600;
