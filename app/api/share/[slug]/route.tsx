@@ -272,13 +272,22 @@ function Tile({ tile, sizes }: { tile: ShareCardTile; sizes: TileSizes }) {
       <div style={line({ fontSize: valueSizeFor(tile.value, sizes.value), fontWeight: 700, color: INK, marginTop: 4 })}>
         {tile.value}
       </div>
-      <div style={line({ fontSize: sizes.note, color: MUTED, marginTop: 2 })}>{tile.note ?? " "}</div>
+      <div style={line({ fontSize: noteSizeFor(tile.note ?? "", sizes.note), color: MUTED, marginTop: 2 })}>{tile.note ?? " "}</div>
     </div>
   );
 }
 
 /** Steps a long value ("Crystal clear", "Churned up") down so it fits its
  *  third-width tile instead of ending in an ellipsis. */
+/** A long note ("Amazing color · 100/100", 23 chars) would clip on the story
+ *  card at full size (~283 px in a 266 px tile, Codex 2026-10-13); step it down
+ *  so the "/100" always shows. Short notes keep the base size. */
+function noteSizeFor(note: string, base: number): number {
+  if (note.length <= 18) return base;
+  if (note.length <= 21) return Math.round(base * 0.9);
+  return Math.round(base * 0.82);
+}
+
 function valueSizeFor(value: string, base: number): number {
   if (value.length <= 8) return base;
   if (value.length <= 11) return Math.round(base * 0.8);

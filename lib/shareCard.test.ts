@@ -316,6 +316,27 @@ describe("shareCardModel", () => {
       expect(tile?.note).toMatch(/^(Poor|Fair|Good|Great|Amazing) color · \d{1,3}\/100$/);
     });
 
+    it("the card's cache ends at the sunset it advertises", () => {
+      const m = shareCardModel(
+        response({ sun: wrap({ sunset: SUNSET }) as ConditionsSnapshot["sun"], hourly: hourly() }),
+        NOW_MS,
+      );
+      expect(m.changesAtMs).toBe(Date.parse(SUNSET));
+    });
+
+    it("a 'Sunrise tomorrow' card's cache ends no later than local midnight", () => {
+      const m = shareCardModel(
+        response({
+          sun: wrap({ sunset: "2026-09-14T19:00:00.000Z", tomorrowSunrise: "2026-09-15T10:55:00.000Z" }) as ConditionsSnapshot["sun"],
+        }),
+        NOW_MS,
+      );
+      expect(m.tiles.find((t) => t.key === "sun")?.label).toBe("Sunrise tomorrow");
+      expect(m.changesAtMs).toBeDefined();
+      expect(m.changesAtMs!).toBeGreaterThan(NOW_MS);
+      expect(m.changesAtMs!).toBeLessThan(Date.parse("2026-09-15T10:55:00.000Z"));
+    });
+
     it("keeps the full 12-tile layout within the cap with the score note on", () => {
       const m = shareCardModel(
         response({ sun: wrap({ sunset: SUNSET }) as ConditionsSnapshot["sun"], hourly: hourly() }),

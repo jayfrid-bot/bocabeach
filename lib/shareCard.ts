@@ -67,9 +67,10 @@ export interface ShareCardModel {
   capped: boolean;
   /** Why the score was capped, when it was. */
   capNote?: string;
-  /** The next known moment the card's safety picture changes (a rip alert
-   *  starting or ending, an NWS rip forecast period ending), when one is
-   *  ahead. The route keeps its cached PNG no longer than this. */
+  /** The next known moment the card's content changes: a rip alert starting
+   *  or ending, an NWS rip forecast period ending, the sun tile's event
+   *  happening, or local midnight under a "today"/"tomorrow" sun label. The
+   *  route keeps its cached PNG no longer than this. */
   changesAtMs?: number;
   /** "isitbeachday.com/<slug>" — for on-card display. */
   pageUrl: string;
@@ -187,6 +188,31 @@ function nextRipChange(rip: NonNullable<ReturnType<typeof deriveMetrics>["ripNow
 }
 
 /** "2026-09-14" in the beach's timezone. */
+/** The first of the given instants that is still ahead of `nowMs`, if any. */
+function earliestFuture(nowMs: number, ...ms: (number | undefined)[]): number | undefined {
+  const ahead = ms.filter((m): m is number => m != null && Number.isFinite(m) && m > nowMs);
+  return ahead.length ? Math.min(...ahead) : undefined;
+}
+
+/** The next local midnight in `tz` after `nowMs` (the moment "tomorrow" becomes
+ *  "today"). Uses the zone's offset at `nowMs`; a DST change that night moves
+ *  it by an hour at most, which only shortens or lengthens one cache window. */
+function nextLocalMidnightMs(nowMs: number, tz: string): number | undefined {
+  try {
+    const parts = Object.fromEntries(
+      new Intl.DateTimeFormat("en-US", {
+        timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+        hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+      }).formatToParts(new Date(nowMs)).map((p) => [p.type, p.value]),
+    );
+    const localAsUtc = Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second);
+    const offsetMs = localAsUtc - Math.floor(nowMs / 1000) * 1000;
+    return Date.UTC(+parts.year, +parts.month - 1, +parts.day + 1) - offsetMs;
+  } catch {
+    return undefined;
+  }
+}
+
 function localDateKey(ms: number, tz: string): string | undefined {
   try {
     return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: tz }).format(
@@ -337,8 +363,12 @@ export function shareCardModel(
   }
 
   // The label says WHICH sunrise/sunset ("Sunset tonight", "Sunrise tomorrow"),
-  // and the small line says how colorful the sky is forecast to be.
+  // and the small line says how colorful the sky is forecast to be. Both stop
+  // being true at the event itself, and a relative day word at local midnight,
+  // so the card's cache must not outlive either (Codex, 2026-10-13).
+  let sunTileChangesAtMs: number | undefined;
   if (sunsetAhead && sun?.sunset) {
+    sunTileChangesAtMs = Date.parse(sun.sunset);
     push("sun", "Sunset tonight", safeTime(sun.sunset, tz), sunColorNote(res, "sunset", sun.sunset, asOfMs));
   } else {
     const nextRise = [sun?.sunrise, sun?.tomorrowSunrise].find(
@@ -347,6 +377,7 @@ export function shareCardModel(
     if (nextRise) {
       const riseDay = localDateKey(Date.parse(nextRise), tz);
       const label = riseDay === tomorrow ? "Sunrise tomorrow" : riseDay === today ? "Sunrise today" : "Sunrise";
+      sunTileChangesAtMs = Math.min(Date.parse(nextRise), nextLocalMidnightMs(nowMs, tz) ?? Infinity);
       push("sun", label, safeTime(nextRise, tz), sunColorNote(res, "sunrise", nextRise, asOfMs));
     }
   }
@@ -382,7 +413,7 @@ export function shareCardModel(
     tiles: tiles.slice(0, SHARE_CARD_MAX_TILES),
     safety: safetyFor(derived, snapshot),
     ...bestTimeFields(bestTimeLabel(res, nowMs, tz, today, tomorrow)),
-    changesAtMs: nextRipChange(derived?.ripNow, nowMs),
+    changesAtMs: earliestFuture(nowMs, nextRipChange(derived?.ripNow, nowMs), sunTileChangesAtMs),
     capped: caps.length > 0,
     capNote: caps[0],
     pageUrl: `isitbeachday.com${path}`,
@@ -390,15 +421,12 @@ export function shareCardModel(
   };
 }
 
-/**
- * "78 Good": today's sunset color score and its word, for the sun tile's note.
- * Scored exactly as the sun card and the push alert score it (the same
- * assembly, off the snapshot's own clock). Undefined when there is no forecast
- * for the event hour or no usable location, so the tile then shows the time alone.
- */
 /** The sky-color forecast for one sunrise/sunset, worded for the tile's small
  *  line: "Good color · 78/100". The word says what kind of rating it is (the
- *  colors of the sky), so a bare "78 Good" is never left to guess at. */
+ *  colors of the sky), so a bare "78 Good" is never left to guess at. Scored
+ *  exactly as the sun card and the push alert score it (the same assembly, off
+ *  the snapshot's own clock). Undefined when there is no forecast for the event
+ *  hour or no usable location, so the tile then shows the time alone. */
 function sunColorNote(
   res: ConditionsResponse | null | undefined,
   kind: "sunrise" | "sunset",
