@@ -336,15 +336,18 @@ export function shareCardModel(
     push("rain", "Rain", `${Math.round(todayRain)}%`, "chance today");
   }
 
+  // The label says WHICH sunrise/sunset ("Sunset tonight", "Sunrise tomorrow"),
+  // and the small line says how colorful the sky is forecast to be.
   if (sunsetAhead && sun?.sunset) {
-    push("sun", "Sunset", safeTime(sun.sunset, tz), sunsetColorNote(res, sun.sunset, asOfMs));
+    push("sun", "Sunset tonight", safeTime(sun.sunset, tz), sunColorNote(res, "sunset", sun.sunset, asOfMs));
   } else {
     const nextRise = [sun?.sunrise, sun?.tomorrowSunrise].find(
       (iso): iso is string => !!iso && Date.parse(iso) > nowMs,
     );
     if (nextRise) {
       const riseDay = localDateKey(Date.parse(nextRise), tz);
-      push("sun", "Sunrise", safeTime(nextRise, tz), riseDay === tomorrow ? "tomorrow" : riseDay === today ? "today" : undefined);
+      const label = riseDay === tomorrow ? "Sunrise tomorrow" : riseDay === today ? "Sunrise today" : "Sunrise";
+      push("sun", label, safeTime(nextRise, tz), sunColorNote(res, "sunrise", nextRise, asOfMs));
     }
   }
 
@@ -393,13 +396,21 @@ export function shareCardModel(
  * assembly, off the snapshot's own clock). Undefined when there is no forecast
  * for the event hour or no usable location, so the tile then shows the time alone.
  */
-function sunsetColorNote(res: ConditionsResponse | null | undefined, sunsetIso: string, anchorMs: number): string | undefined {
+/** The sky-color forecast for one sunrise/sunset, worded for the tile's small
+ *  line: "Good color · 78/100". The word says what kind of rating it is (the
+ *  colors of the sky), so a bare "78 Good" is never left to guess at. */
+function sunColorNote(
+  res: ConditionsResponse | null | undefined,
+  kind: "sunrise" | "sunset",
+  eventIso: string,
+  anchorMs: number,
+): string | undefined {
   try {
     const snap = res?.snapshot;
     const loc = snap?.location;
     if (!res || !snap || !loc) return undefined;
     const ev = nextSunEventsBoth(res, loc, anchorMs).find(
-      (e) => e.event === "sunset" && Date.parse(e.timeIso) === Date.parse(sunsetIso),
+      (e) => e.event === kind && Date.parse(e.timeIso) === Date.parse(eventIso),
     );
     if (!ev) return undefined;
     const { result } = assembleSunEventQuality(ev, {
@@ -409,7 +420,7 @@ function sunsetColorNote(res: ConditionsResponse | null | undefined, sunsetIso: 
       nowMs: anchorMs,
     });
     if (result.score == null || result.band == null) return undefined;
-    return `${result.score} ${sunQualityBandMeta(result.band).label}`;
+    return `${sunQualityBandMeta(result.band).label} color · ${result.score}/100`;
   } catch {
     return undefined;
   }

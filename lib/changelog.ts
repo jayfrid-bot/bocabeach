@@ -18,6 +18,12 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-13",
+    title: "Clearer sunrise and sunset on the share card",
+    details: "The share card now says which sunrise or sunset it means (\"Sunset tonight\", \"Sunrise tomorrow\") and how colorful the sky is forecast to be, for example \"Good color · 78/100\". Sunrise tiles get the color forecast too.",
+    tag: "improved",
+  },
+  {
+    date: "2026-10-13",
     title: "Sunrise and sunset get a number",
     details:
       "The sunrise and sunset color forecast now shows a 0–100 score next to the word. You'll see it on the sun card, in sunset and sunrise alerts, in Plus look-back, and on the share card. About one in five sunrises and sunsets score 70 or more.",
