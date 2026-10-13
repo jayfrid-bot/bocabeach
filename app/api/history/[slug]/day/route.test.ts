@@ -100,6 +100,10 @@ function sunPred(over: Record<string, unknown> = {}): void {
     engine_version: SCORING_ENGINE_VERSION,
     ...over,
   };
+  // A snapshot is generated a few minutes into its hour bucket unless a test says otherwise.
+  if (!("snapshot_generated_at" in over) && typeof r.as_of_hour_utc === "string") {
+    r.snapshot_generated_at = new Date(Date.parse(r.as_of_hour_utc) + 5 * 60_000).toISOString();
+  }
   const cols = Object.keys(r);
   h.all(
     `INSERT INTO sun_event_predictions (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`,
@@ -388,6 +392,14 @@ describe.skipIf(!HAS_SQLITE)("sun color scores", () => {
       sunrise: { score: 64, band: "good", eventIso: "2026-10-10T11:17:00.000Z" },
       sunset: { score: 78, band: "vivid", eventIso: "2026-10-10T22:57:00.000Z" },
     });
+  });
+
+  it("a forecast generated after the event in the SAME hour bucket is not the 'before' forecast", async () => {
+    // Sunset 22:57. The 22:00 bucket's snapshot ran at 22:59 — after the sunset — so it must not win.
+    sunPred({ as_of_hour_utc: "2026-10-10T21:00:00.000Z", score: 72, band: "vivid" });
+    sunPred({ as_of_hour_utc: "2026-10-10T22:00:00.000Z", snapshot_generated_at: "2026-10-10T22:59:00.000Z", score: 5, band: "dud" });
+    const body = await dayBody();
+    expect(body.sun?.sunset?.score).toBe(72);
   });
 
   it("skips a forecast with no score (no cloud reading) and falls back to the last scored one", async () => {

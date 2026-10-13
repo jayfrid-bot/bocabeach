@@ -68,10 +68,13 @@ const SUN_DAY_SQL =
   "(SELECT json_group_array(json_object('kind', p.event_kind, 'eventIso', p.event_iso, 'score', p.score, 'band', p.band)) " +
   "FROM sun_event_predictions p " +
   "WHERE p.slug = ?1 AND p.event_iso >= ?2 AND p.event_iso < ?3 AND p.score IS NOT NULL " +
-  "AND substr(p.as_of_hour_utc, 1, 19) <= substr(p.event_iso, 1, 19) " +
-  "AND p.as_of_hour_utc = (SELECT MAX(q.as_of_hour_utc) FROM sun_event_predictions q " +
+  // Judge "before the event" by the forecast's own clock (snapshot_generated_at),
+  // never its hour bucket: an 11:40 snapshot for an 11:17 sunrise shares the
+  // 11:00 bucket but already knows how the sunrise went (Codex, 2026-10-13).
+  "AND substr(p.snapshot_generated_at, 1, 19) <= substr(p.event_iso, 1, 19) " +
+  "AND p.snapshot_generated_at = (SELECT MAX(q.snapshot_generated_at) FROM sun_event_predictions q " +
   "WHERE q.slug = p.slug AND q.event_kind = p.event_kind AND q.event_iso = p.event_iso " +
-  "AND q.score IS NOT NULL AND substr(q.as_of_hour_utc, 1, 19) <= substr(q.event_iso, 1, 19)))";
+  "AND q.score IS NOT NULL AND substr(q.snapshot_generated_at, 1, 19) <= substr(q.event_iso, 1, 19)))";
 
 function rateLimited(retryAfterSec: number): Response {
   return Response.json(
