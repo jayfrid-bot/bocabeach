@@ -475,7 +475,7 @@ function sunColorNote(
  *  - the conditions behind the card are already stale (60 s, so the next
  *    view draws from fresh data instead of pinning old readings);
  *  - a known content change (`changesAtMs`: a rip alert starting or ending,
- *    the sun tile's sunrise/sunset, or local midnight under a "today"/
+ *    an NWS rip forecast period ending, the sun tile's sunrise/sunset, or local midnight under a "today"/
  *    "tomorrow" sun label) falls inside that 25-minute window: the image then
  *    expires at the change, never under 60 s, the same minute cadence the
  *    dashboard re-resolves on. */
