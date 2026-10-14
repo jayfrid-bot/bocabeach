@@ -2640,6 +2640,12 @@ class JumpConfirmationTests(WithManifest):
         t = (just_after_midnight - dt.timedelta(minutes=90)).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
         self.assertEqual(cs.live_pending_claims({"a": self.claim(frame_at=t)}, just_after_midnight), {})
 
+    def test_a_claim_stamped_in_the_future_is_not_alive_yet(self):
+        # two hours ahead, same local date: not evidence of anything yet
+        self.assertEqual(cs.live_pending_claims({"a": self.entry(-120)}, self.NOW), {})
+        # within the 5-minute skew allowance the live reads also get: alive
+        self.assertEqual(sorted(cs.live_pending_claims({"a": self.entry(-4)}, self.NOW)), ["a"])
+
     def test_a_claim_without_a_frame_time_uses_claimedAt_and_junk_is_dropped(self):
         e = self.entry(30)
         e["claimedAt"], e["frameAt"] = e["frameAt"], None

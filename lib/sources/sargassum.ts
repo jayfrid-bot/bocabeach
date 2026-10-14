@@ -95,13 +95,15 @@ export function hasOpenClaim(
     if (!c || c.confirmed === true) continue;
     const at = Date.parse(c.claimedAt ?? "");
     if (!Number.isFinite(at)) continue;
+    // A claim stamped in the future is not open yet (same 5-minute bound as the reader).
+    if (at - nowMs > 5 * 60_000) continue;
     if (nowLocalDate && tz) {
       try {
         if (new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(at)) !== nowLocalDate) continue;
       } catch {
         continue;
       }
-    } else if (nowMs - at > 24 * 3_600_000 || nowMs - at < -5 * 60_000) {
+    } else if (nowMs - at > 24 * 3_600_000) {
       continue;
     }
     return true;

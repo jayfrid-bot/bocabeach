@@ -389,6 +389,13 @@ describe("summarizeSeaweed", () => {
       expect(d.pendingConfirmation).toBe(true);
     });
 
+    it("a claim stamped in the future is not open yet, with or without the local date", () => {
+      const at = (feed: Record<string, unknown>) => summarizeSeaweed({ latest: clean, ...feed }, "2026-10-13", opts)!.pendingConfirmation;
+      expect(at({ pendingClaims: { elbo: claim(-120) } })).toBeUndefined(); // 4 PM, it is 2 PM
+      expect(at({ pendingClaims: { elbo: claim(-4) } })).toBe(true); // inside the 5-minute skew
+      expect(hasOpenClaim({ a: claim(-120) }, NOW.getTime())).toBe(false);
+    });
+
     it("hasOpenClaim without a timezone or date can only apply a 24-hour guard", () => {
       expect(hasOpenClaim({ a: claim(10) }, NOW.getTime())).toBe(true);
       expect(hasOpenClaim({ a: claim(420) }, NOW.getTime())).toBe(true);

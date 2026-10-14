@@ -1755,7 +1755,8 @@ def apply_low_sun_gate(reading: dict, elev_deg: float | None, threshold: float |
 def live_pending_claims(pending: object, now: dt.datetime) -> dict[str, dict]:
     """The stored moderate/high claims that are still alive at `now`: those scored
     (`claimedAt`, else `frameAt` for an entry that lacks it) on the same beach-local
-    date as `now` (the beach's own tz is `now`'s). There is deliberately no minute limit:
+    date as `now` (the beach's own tz is `now`'s) and not more than VISION_MAX_FUTURE_MIN
+    in the future. There is deliberately no upper age limit:
     a slow courier cam's next frame can come hours later. Anything malformed is dropped.
     A claim is either held (waiting for a second look) or `"confirmed": true` (already
     published; kept so the next moderate+ frame of a slow cam need not be held again).
@@ -1775,6 +1776,11 @@ def live_pending_claims(pending: object, now: dt.datetime) -> dict[str, dict]:
             except (TypeError, ValueError):
                 continue
         if at is None:
+            continue
+        # A claim stamped in the future (clock skew, a bad stamp) is not evidence
+        # of anything yet: same bound the live reads obey.
+        now_utc = now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)
+        if (at - now_utc).total_seconds() / 60 > VISION_MAX_FUTURE_MIN:
             continue
         if now.tzinfo and at.astimezone(now.tzinfo).date() != local_day:
             continue
