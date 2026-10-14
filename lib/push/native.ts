@@ -12,7 +12,9 @@ import {
   queuePendingUnregister,
   readInstallToken,
   readPendingUnregister,
+  writeInstallClaimed,
 } from "@/lib/plus/storage";
+import { clientCapHeaders } from "@/lib/plus/clientCap";
 
 /**
  * Resolve the runtime platform robustly. We load the live site inside the
@@ -208,16 +210,67 @@ async function claimedInstallToken(): Promise<string | null> {
 
 const NOT_YOUR_PHONE = "We could not confirm this is your phone. Close and reopen the app, then try again.";
 
-/** POST a push-route body with the install token header. */
+/** POST a push-route body with the install token header (when there is one). */
 function postPush(path: string, body: unknown, installToken: string | null): Promise<Response> {
   return fetch(path, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      ...clientCapHeaders(),
       ...(installToken ? { "x-install-token": installToken } : {}),
     },
     body: JSON.stringify(body),
   });
+}
+
+// --- One operation at a time per push token -----------------------------------
+//
+// Turning alerts on, turning them off, and retrying a turn-off that did not get
+// through all change the same server row. Run in any order they can undo each
+// other (a retry issued before an enable can land after it). So they go through
+// ONE queue per push token, in the order they were asked for, and a retry also
+// checks a counter of user intents: if the person has asked for anything since
+// the retry was queued, the retry stands down. The latest intent wins.
+
+const opQueues = new Map<string, Promise<void>>();
+/** Bumped by every enable and disable the person asks for. */
+let intentSeq = 0;
+/** Enables that are asked for and not finished (waiting on the permission
+ *  prompt, APNs, or the server). A retry of a turn-off stands down meanwhile. */
+let enablesInFlight = 0;
+
+function runSerial<T>(token: string, op: () => Promise<T>): Promise<T> {
+  const prev = opQueues.get(token) ?? Promise.resolve();
+  const run = prev.then(op, op);
+  const tail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  opQueues.set(token, tail);
+  void tail.then(() => {
+    if (opQueues.get(token) === tail) opQueues.delete(token);
+  });
+  return run;
+}
+
+/** Test-only: forget queued operations between tests. */
+export function resetPushOps(): void {
+  opQueues.clear();
+  intentSeq = 0;
+  enablesInFlight = 0;
+  flushInFlight = null;
+}
+
+/** Remove every `native-push:<slug>` marker whose value passes `drop`. */
+function removeMarkers(drop: (value: string) => boolean): void {
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("native-push:") && drop(localStorage.getItem(k) ?? "")) localStorage.removeItem(k);
+    }
+  } catch {
+    /* private mode */
+  }
 }
 
 /** Register this device for `slug` and persist the token server-side. */
@@ -225,6 +278,16 @@ export async function enableNative(
   slug: string,
   prefs: { morning: boolean; safety: boolean },
 ): Promise<void> {
+  intentSeq += 1;
+  enablesInFlight += 1;
+  try {
+    await enableNativeInner(slug, prefs);
+  } finally {
+    enablesInFlight -= 1;
+  }
+}
+
+async function enableNativeInner(slug: string, prefs: { morning: boolean; safety: boolean }): Promise<void> {
   const token = await registerForToken();
   // "ios" → APNs token, "android" → FCM token; the server routes by platform.
   const platform = nativePlatform();
@@ -235,27 +298,42 @@ export async function enableNative(
   // legacy path rather than rejecting the body.
   const deviceId = getDeviceId();
   const body = { slug, token, platform, prefs, ...(deviceId ? { deviceId } : {}) };
-  // The server only lets the phone that holds the device's install token
-  // change where its alerts go. Claim it first (the claim waits for any claim
-  // already running); the register call itself also carries the token and the
-  // push token as proof, so it binds one on its own if the claim could not.
-  const installToken = deviceId ? await claimedInstallToken() : null;
-  const res = await postPush("/api/push/register-native", body, installToken ?? readInstallToken());
-  if (res.status === 401) throw new Error(NOT_YOUR_PHONE);
-  if (!res.ok) throw new Error(`Couldn't save your registration (${res.status}).`);
-  try {
-    localStorage.setItem(tokenKey(slug), token);
-  } catch {
-    /* private mode */
-  }
-  // A turn-off that never reached the server is not wanted any more.
-  clearPendingUnregister(token);
+  intentSeq += 1;
+  await runSerial(token, async () => {
+    // The server only lets the phone that holds the device's install token
+    // change where its alerts go. Claim it first (the claim waits for any claim
+    // already running); the register call itself also carries the token and the
+    // push token as proof, so it binds one on its own if the claim could not.
+    const installToken = deviceId ? await claimedInstallToken() : null;
+    const res = await postPush("/api/push/register-native", body, installToken ?? readInstallToken());
+    if (res.status === 401) throw new Error(NOT_YOUR_PHONE);
+    if (!res.ok) throw new Error(`Couldn't save your registration (${res.status}).`);
+    // Record "claimed" only when the server says it bound this token.
+    try {
+      const j = (await res.clone().json()) as { installTokenBound?: unknown } | null;
+      if (j?.installTokenBound === true) writeInstallClaimed(true);
+    } catch {
+      /* no body */
+    }
+    try {
+      localStorage.setItem(tokenKey(slug), token);
+    } catch {
+      /* private mode */
+    }
+    // A turn-off that never reached the server is not wanted any more, and an
+    // older marker for a different push token would only be a stale proof.
+    clearPendingUnregister(token);
+    removeMarkers((v) => v !== token);
+  });
 }
 
 /** Send one unregister. "ok": the server dropped it. "refused": it will keep
- *  refusing (wrong token). "retry": the network or the server failed. */
+ *  refusing. "retry": the network or the server failed (including a failed
+ *  delete on the server, which it reports as an error, never as success). */
 async function sendUnregister(token: string, deviceId: string): Promise<"ok" | "refused" | "retry"> {
   try {
+    // The push token IS the authorization for turning alerts off; the install
+    // token is sent too, but the server does not need it.
     const res = await postPush(
       "/api/push/unregister-native",
       { token, ...(deviceId ? { deviceId } : {}) },
@@ -268,25 +346,37 @@ async function sendUnregister(token: string, deviceId: string): Promise<"ok" | "
   }
 }
 
-/** Retry every turn-off that did not reach the server. Safe to call often;
- *  call it on launch and whenever the alerts button is touched. */
-export async function flushPendingUnregister(): Promise<void> {
+let flushInFlight: Promise<void> | null = null;
+
+/**
+ * Retry every turn-off that did not reach the server. Safe to call often; it
+ * shares one run if one is already going. Each token goes through its own
+ * queue, and a retry stands down if the person asked for anything since it was
+ * queued or the entry is already gone (an enable cleared it).
+ */
+export function flushPendingUnregister(): Promise<void> {
+  if (flushInFlight) return flushInFlight;
   const deviceId = getDeviceId();
-  for (const token of readPendingUnregister()) {
-    const r = await sendUnregister(token, deviceId);
-    if (r === "ok") {
-      clearPendingUnregister(token);
-      // The per-beach "on" markers that held this token can go now.
-      try {
-        for (let i = localStorage.length - 1; i >= 0; i--) {
-          const k = localStorage.key(i);
-          if (k && k.startsWith("native-push:") && localStorage.getItem(k) === token) localStorage.removeItem(k);
-        }
-      } catch {
-        /* ignore */
-      }
-    }
-  }
+  const seqAtStart = intentSeq;
+  const run = Promise.all(
+    readPendingUnregister().map((token) =>
+      runSerial(token, async () => {
+        if (intentSeq !== seqAtStart || enablesInFlight > 0) return; // a newer enable/disable wins
+        if (!readPendingUnregister().includes(token)) return; // already resolved
+        if ((await sendUnregister(token, deviceId)) !== "ok") return;
+        clearPendingUnregister(token);
+        removeMarkers((v) => v === token); // the per-beach "on" markers for it
+      }),
+    ),
+  ).then(
+    () => undefined,
+    () => undefined,
+  );
+  flushInFlight = run;
+  void run.then(() => {
+    if (flushInFlight === run) flushInFlight = null;
+  });
+  return run;
 }
 
 /**
@@ -297,6 +387,7 @@ export async function flushPendingUnregister(): Promise<void> {
  * retried; it throws too.
  */
 export async function disableNative(slug: string): Promise<void> {
+  intentSeq += 1;
   let token = "";
   try {
     token = localStorage.getItem(tokenKey(slug)) ?? "";
@@ -304,12 +395,16 @@ export async function disableNative(slug: string): Promise<void> {
     /* ignore */
   }
   if (token) {
-    const result = await sendUnregister(token, getDeviceId());
-    if (result === "refused") throw new Error(NOT_YOUR_PHONE);
-    if (result === "retry") {
-      queuePendingUnregister(token);
-      throw new Error("Couldn't turn alerts off just yet. We will keep trying, and they stay on until it goes through.");
-    }
+    await runSerial(token, async () => {
+      const result = await sendUnregister(token, getDeviceId());
+      if (result === "refused") throw new Error(NOT_YOUR_PHONE);
+      if (result === "retry") {
+        queuePendingUnregister(token);
+        throw new Error(
+          "Couldn't turn alerts off just yet. We will keep trying, and they stay on until it goes through.",
+        );
+      }
+    });
   }
   try {
     localStorage.removeItem(tokenKey(slug));

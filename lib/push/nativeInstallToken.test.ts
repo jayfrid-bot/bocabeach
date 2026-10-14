@@ -18,7 +18,7 @@ vi.mock("@/lib/plus/installToken", () => ({
   },
 }));
 
-const { enableNative, disableNative, flushPendingUnregister } = await import("@/lib/push/native");
+const { enableNative, disableNative, flushPendingUnregister, resetPushOps } = await import("@/lib/push/native");
 const store = await import("@/lib/plus/storage");
 
 interface Call {
@@ -34,6 +34,7 @@ const reply = (status: number, body: unknown = { ok: status < 300 }) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
 beforeEach(() => {
+  resetPushOps();
   ctl.claimToken = "tok-1";
   ctl.claimCalls = 0;
   calls = [];
@@ -88,7 +89,23 @@ describe("enableNative", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].path).toBe("/api/push/register-native");
     expect(calls[0].headers["x-install-token"]).toBe("tok-1");
+    expect(calls[0].headers["x-client-cap"]).toBe("install-token-v1");
     expect(calls[0].body.deviceId).toBe(DEV);
+    expect(map.get("native-push:boca-raton")).toBe(PUSH);
+  });
+
+  it("records 'claimed' only when the server says it bound the token", async () => {
+    await enableNative("boca-raton", PREFS);
+    expect(store.readInstallClaimed()).toBe(false); // plain { ok: true }
+    replies = [reply(200, { ok: true, installTokenBound: true })];
+    await enableNative("boca-raton", PREFS);
+    expect(store.readInstallClaimed()).toBe(true);
+  });
+
+  it("drops stale per-beach markers that hold a different push token (they would be a stale proof)", async () => {
+    map.set("native-push:old-beach", "old-push-token");
+    await enableNative("boca-raton", PREFS);
+    expect(map.has("native-push:old-beach")).toBe(false);
     expect(map.get("native-push:boca-raton")).toBe(PUSH);
   });
 
@@ -183,6 +200,97 @@ describe("flushPendingUnregister", () => {
     replies = [new Error("offline")];
     await flushPendingUnregister();
     expect(store.readPendingUnregister()).toEqual([PUSH]);
+    expect(map.get("native-push:boca-raton")).toBe(PUSH);
+  });
+});
+
+describe("one operation at a time per push token; the latest intent wins", () => {
+  /** A fetch that waits until the test lets it answer, so ordering is visible. */
+  function gatedFetch() {
+    const order: string[] = [];
+    const gates: (() => void)[] = [];
+    vi.stubGlobal("fetch", (path: string) => {
+      order.push(`start ${path}`);
+      return new Promise<Response>((resolve) => {
+        gates.push(() => {
+          order.push(`end ${path}`);
+          resolve(reply(200));
+        });
+      });
+    });
+    return { order, release: () => gates.shift()?.() };
+  }
+  const tick = () => new Promise((r) => setTimeout(r, 5));
+
+  beforeEach(() => {
+    map.set("native-push:boca-raton", PUSH);
+    store.writeInstallToken("tok-1");
+    store.queuePendingUnregister(PUSH);
+  });
+
+  it("an enable asked for while a retry is in flight runs AFTER it, so the server ends up ON", async () => {
+    const g = gatedFetch();
+    const flush = flushPendingUnregister();
+    await tick();
+    const enable = enableNative("boca-raton", PREFS);
+    await tick();
+    // The retry's unregister is out; the enable's register has not been sent yet.
+    expect(g.order).toEqual(["start /api/push/unregister-native"]);
+    g.release();
+    await flush;
+    await tick();
+    expect(g.order.slice(0, 3)).toEqual([
+      "start /api/push/unregister-native",
+      "end /api/push/unregister-native",
+      "start /api/push/register-native",
+    ]);
+    g.release();
+    await enable;
+    // Last word is the register, and the local marker is back.
+    expect(g.order[g.order.length - 1]).toBe("end /api/push/register-native");
+    expect(map.get("native-push:boca-raton")).toBe(PUSH);
+    expect(store.readPendingUnregister()).toEqual([]);
+  });
+
+  it("a retry queued BEFORE an enable stands down if the enable got there first", async () => {
+    const g = gatedFetch();
+    // Something else holds the token's queue while both are asked for.
+    const enable = enableNative("boca-raton", PREFS);
+    const flush = flushPendingUnregister();
+    await tick();
+    g.release(); // the enable's register answers
+    await enable;
+    await flush;
+    await tick();
+    const unregisters = g.order.filter((o) => o === "start /api/push/unregister-native");
+    expect(unregisters).toHaveLength(0); // the retry never sent an unregister over the enable
+    expect(map.get("native-push:boca-raton")).toBe(PUSH);
+  });
+
+  it("an enable never loses its marker to a retry that finishes later", async () => {
+    // Retry first (completes), then enable: the marker the retry removes is put back.
+    await flushPendingUnregister();
+    expect(map.has("native-push:boca-raton")).toBe(false);
+    await enableNative("boca-raton", PREFS);
+    expect(map.get("native-push:boca-raton")).toBe(PUSH);
+  });
+
+  it("two retries at once share one run (one unregister)", async () => {
+    await Promise.all([flushPendingUnregister(), flushPendingUnregister()]);
+    expect(calls.filter((c) => c.path === "/api/push/unregister-native")).toHaveLength(1);
+  });
+
+  it("a disable then an enable, asked back to back, end ON in that order", async () => {
+    const order: string[] = [];
+    vi.stubGlobal("fetch", async (path: string) => {
+      order.push(path);
+      await tick();
+      return reply(200);
+    });
+    const d = disableNative("boca-raton");
+    const e = enableNative("boca-raton", PREFS);
+    await Promise.all([d, e]);
+    expect(order).toEqual(["/api/push/unregister-native", "/api/push/register-native"]);
     expect(map.get("native-push:boca-raton")).toBe(PUSH);
   });
 });

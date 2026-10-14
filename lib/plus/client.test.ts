@@ -93,7 +93,7 @@ describe("bootstrapInstallToken (the install-token claim; the details are in ins
     fetchCtl.status = 200;
     (globalThis as { fetch?: unknown }).fetch = async (_url: string, init: RequestInit) => {
       fetchCtl.calls.push({ token: new Headers(init.headers).get("x-install-token") });
-      return new Response(JSON.stringify({ ok: fetchCtl.status === 200, device: { id: DEV } }), { status: fetchCtl.status });
+      return new Response(JSON.stringify({ ok: fetchCtl.status === 200, installTokenBound: fetchCtl.status === 200, device: { id: DEV } }), { status: fetchCtl.status });
     };
   });
   afterEach(() => {

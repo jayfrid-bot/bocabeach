@@ -16,7 +16,13 @@
 // phone makes the token itself and this route binds it, idempotently, in one
 // conditional statement; an existing row that already has a push token but no
 // install token yet is claimed only because THIS request carries that same push
-// token as proof (lib/db/installTokenAuth.ts `authorizeMinting`).
+// token as proof (lib/db/installTokenAuth.ts `authorizeMinting`). A token that is
+// sent but cannot be bound is a 401 even with INSTALL_TOKEN_ENFORCE off; the
+// response says `installTokenBound: true` when this request's token is now bound.
+// A request with no token goes through with enforcement off and leaves the row
+// unclaimed (the server never makes a token). An unauthenticated request can
+// never replace the push token of a row that has no install token yet, so a
+// proof cannot be forged by swapping it first.
 //
 // Moving the push token onto this device (a reinstall gets a new deviceId but
 // keeps its APNs/FCM token, an old build's legacy row gets adopted) is ONE
@@ -32,7 +38,7 @@
 
 import { getLocation } from "@/config/locations";
 import { isDeviceId, storeFailure } from "@/lib/db/api";
-import { authorizeMinting } from "@/lib/db/installTokenAuth";
+import { authorizeMinting, clientHasCap } from "@/lib/db/installTokenAuth";
 import { getD1 } from "@/lib/db/d1Store";
 import { attributeInstall, clientIp, fingerprint, fpSalt } from "@/lib/db/scanFunnel";
 import { isLegacyId, legacyDeviceId, prefsFromLegacy, getStore } from "@/lib/db/store";
@@ -88,7 +94,7 @@ export async function POST(req: Request): Promise<Response> {
     // any read or write that could change where this device's alerts go. Its
     // guard rides inside the write below.
     let guard = NO_GUARD;
-    let minted: string | undefined;
+    let bound = false;
     if (hasDeviceId) {
       const auth = await authorizeMinting(
         store,
@@ -96,11 +102,12 @@ export async function POST(req: Request): Promise<Response> {
         req.headers.get("x-install-token"),
         token, // the push token itself is the proof for a row that already has one
         "/api/push/register-native",
+        clientHasCap(req),
         Date.now(),
       );
       if (!auth.ok) return Response.json({ ok: false, error: "no-token" }, { status: 401 });
       guard = auth.guard;
-      minted = auth.minted;
+      bound = auth.bound;
     }
 
     // The row this token is already attached to, if any (data only: its beach,
@@ -157,7 +164,7 @@ export async function POST(req: Request): Promise<Response> {
     } catch {
       // never let the funnel cost someone their alerts
     }
-    return Response.json(minted ? { ok: true, installToken: minted } : { ok: true });
+    return Response.json(bound ? { ok: true, installTokenBound: true } : { ok: true });
   } catch (e) {
     return storeFailure(e, "register-native: failed");
   }

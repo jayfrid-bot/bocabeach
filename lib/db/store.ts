@@ -217,7 +217,7 @@ export interface DeviceStore {
    * a real device row keeps its record and just loses the token), and `id`
    * gets `patch` (which carries the token). Nothing is half done: a failure
    * leaves every row as it was, so a phone is never left with no push target.
-   * migrations/0019 makes the token unique, so a second holder cannot appear.
+   * migrations/0020 makes the token unique, so a second holder cannot appear.
    *
    * When `guard` is active, every statement is conditional on `id`'s row
    * passing it, so a refused caller detaches nobody. A refusal throws
@@ -232,13 +232,12 @@ export interface DeviceStore {
   ): Promise<void>;
   /**
    * Stop pushing to `token`: a legacy row is deleted, a real device row keeps
-   * its record and loses the token. For a real row the change is ONE
-   * conditional statement that also checks `guard` against that row's stored
-   * hash, so a caller without the row's token changes nothing (the route then
-   * sees the row still holds the token and answers 401). A legacy row has no
-   * token on file; holding the push token is its proof.
+   * its record and loses the token. No install token is needed: holding the push
+   * token is the authorization, and the only thing it can do is turn alerts OFF
+   * for the phone that holds it. That is what lets an older app (which has no
+   * install token to send) still switch alerts off while enforcement is on.
    */
-  clearPushRegistration(token: string, guard: InstallGuard): Promise<void>;
+  clearPushRegistration(token: string): Promise<void>;
   findByPushToken(token: string): Promise<DeviceRecord | null>;
   deleteDevice(id: string): Promise<void>;
   listDevices(): Promise<DeviceRecord[]>;

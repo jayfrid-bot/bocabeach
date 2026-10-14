@@ -31,4 +31,7 @@ WHERE push_token IS NOT NULL
   );
 
 DROP INDEX IF EXISTS devices_push_token;
+-- Re-runnable: a local database that applied this file under its earlier name (0019)
+-- already has the index.
+DROP INDEX IF EXISTS devices_push_token_unique;
 CREATE UNIQUE INDEX devices_push_token_unique ON devices(push_token) WHERE push_token IS NOT NULL;

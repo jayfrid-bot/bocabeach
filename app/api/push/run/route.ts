@@ -28,7 +28,7 @@ import { getConditions } from "@/lib/conditions";
 import { getLocation } from "@/config/locations";
 import { computeSunTimes } from "@/lib/sources/sun";
 import type { Location } from "@/lib/types";
-import { listNativeSubs, removeNativeSub } from "@/lib/push/nativeStore";
+import { removeNativeSub } from "@/lib/push/nativeStore";
 import { getStore, isLegacyId, redactDeviceId, type DeviceStore, type PushableDevice } from "@/lib/db/store";
 import { coarsePrefs, parseMode } from "@/lib/db/plus";
 import { entitled, type SentState } from "@/lib/db/types";
@@ -238,15 +238,9 @@ export async function POST(req: Request): Promise<Response> {
   const nowSec = Math.floor(nowMs / 1000);
 
   const store = await getStore();
-  // Migrate any pre-Plus KV subscription that has no device row yet. Idempotent
-  // and cheap once drained; a failure here must not stop the run.
-  let imported = 0;
-  try {
-    const legacy = await listNativeSubs();
-    if (legacy.length) imported = (await store.importLegacy(legacy)).imported;
-  } catch (e) {
-    console.error("push: legacy import failed", e);
-  }
+  // (The pre-Plus KV subscriptions are NOT imported here any more. A per-run
+  // importer meant a stale KV record could bring an unregistered phone's alerts
+  // back; the one-off /api/push/import-legacy does the remaining import once.)
 
   // Opportunistic housekeeping for the send-claims table (#14): drop claims
   // old enough to never matter again. Never fatal — every run does this once,
@@ -1049,7 +1043,6 @@ export async function POST(req: Request): Promise<Response> {
   return Response.json({
     ok: true,
     mode,
-    imported,
     beaches: homeBeaches,
     subscriptions: subs.length,
     ios: subs.filter((s) => s.platform === "ios").length,

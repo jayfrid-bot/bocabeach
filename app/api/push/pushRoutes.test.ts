@@ -723,27 +723,64 @@ describe("POST /api/push/run", () => {
     });
   });
 
-  it("imports legacy KV subscriptions on the first run, once", async () => {
-    ctl.legacySubs = [legacySub()];
-    const first = (await (await run()).json()) as Record<string, number>;
-    expect(first.imported).toBe(1);
-    expect(first.subscriptions).toBe(1);
-
-    const store = await getStore();
-    expect(await store.getDevice(legacyDeviceId(FCM_TOKEN))).toBeTruthy();
-
-    const second = (await (await run()).json()) as Record<string, number>;
-    expect(second.imported).toBe(0);
-    expect(second.subscriptions).toBe(1);
-    expect(await store.listDevices()).toHaveLength(1);
-  });
-
-  it("does not re-import a token a real device already owns", async () => {
-    await seedDevice();
+  it("does NOT import legacy KV subscriptions on a run (the per-run importer is retired)", async () => {
     ctl.legacySubs = [legacySub()];
     const body = (await (await run()).json()) as Record<string, number>;
-    expect(body.imported).toBe(0);
-    expect(body.subscriptions).toBe(1);
+    expect(body.imported).toBeUndefined();
+    expect(body.subscriptions).toBe(0);
+    expect(await (await getStore()).listDevices()).toHaveLength(0);
+  });
+
+  it("a stale KV record cannot bring back alerts a phone turned off", async () => {
+    // The phone registered, turned alerts off (D1 cleared), and the KV delete
+    // lagged: the record is still listed. Runs must not resurrect it.
+    await seedDevice();
+    ctl.legacySubs = [legacySub()];
+    await unregisterPost(post("https://x/api/push/unregister-native", { token: FCM_TOKEN, deviceId: DEV }));
+    await run();
+    await run();
+    const store = await getStore();
+    expect(await store.listPushable()).toHaveLength(0);
+    expect(await store.getDevice(legacyDeviceId(FCM_TOKEN))).toBeNull();
+  });
+
+  describe("POST /api/push/import-legacy (the one-off import)", () => {
+    const importRoute = async (qs = "", secret: string | null = "test-cron-secret") => {
+      const { POST } = await import("@/app/api/push/import-legacy/route");
+      return POST(
+        new Request(`https://x/api/push/import-legacy${qs}`, {
+          method: "POST",
+          headers: secret ? { "x-cron-secret": secret } : {},
+        }),
+      );
+    };
+
+    it("needs the cron secret", async () => {
+      expect((await importRoute("", null)).status).toBe(401);
+      expect((await importRoute("", "wrong")).status).toBe(401);
+    });
+
+    it("imports the remaining KV subscriptions once, and a second run imports nothing", async () => {
+      ctl.legacySubs = [legacySub()];
+      const first = (await (await importRoute()).json()) as Record<string, number>;
+      expect(first).toMatchObject({ kvSubscriptions: 1, imported: 1, skipped: 0 });
+      expect(await (await getStore()).getDevice(legacyDeviceId(FCM_TOKEN))).toBeTruthy();
+      const second = (await (await importRoute()).json()) as Record<string, number>;
+      expect(second).toMatchObject({ imported: 0, skipped: 1 });
+    });
+
+    it("does not re-import a token a real device already owns", async () => {
+      await seedDevice();
+      ctl.legacySubs = [legacySub()];
+      expect(((await (await importRoute()).json()) as Record<string, number>).imported).toBe(0);
+    });
+
+    it("?dryRun=1 only counts", async () => {
+      ctl.legacySubs = [legacySub()];
+      const body = (await (await importRoute("?dryRun=1")).json()) as Record<string, unknown>;
+      expect(body).toMatchObject({ dryRun: true, kvSubscriptions: 1 });
+      expect(await (await getStore()).listDevices()).toHaveLength(0);
+    });
   });
 
   it("skips a device whose morning alert is switched off", async () => {

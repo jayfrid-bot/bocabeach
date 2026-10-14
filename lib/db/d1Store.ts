@@ -411,13 +411,21 @@ ON CONFLICT(id) DO UPDATE SET
   sun_color_lead_min = CASE WHEN ?31 THEN ?29 ELSE devices.sun_color_lead_min END,
   updated_at = MAX(COALESCE(devices.updated_at, 0) + 1, ?15)
 WHERE ${guardSql("devices.token_hash", "?32", "?33")}
+  AND (?34 IS NULL OR devices.token_hash IS NOT NULL OR devices.push_token IS NULL OR devices.push_token = ?34)
 `;
 
-/** DevicePatch → the 33 positional binds `UPSERT_DEVICE` expects (31 fields,
- *  then the install-token guard: ?32 = request token hash or NULL, ?33 = enforce).
+/** DevicePatch → the 34 positional binds `UPSERT_DEVICE` expects (31 fields,
+ *  then the install-token guard: ?32 = request token hash or NULL, ?33 = enforce,
+ *  then ?34 = the push-token proof rule below).
  *  The INSERT branch is open only while the guard is not enforcing; the UPDATE
  *  branch runs only when the row passes the guard (`guardSql`). */
-function upsertBinds(id: string, patch: Record<string, unknown>, now: number, guard?: InstallGuard): unknown[] {
+function upsertBinds(
+  id: string,
+  patch: Record<string, unknown>,
+  now: number,
+  guard?: InstallGuard,
+  pushProof: string | null = null,
+): unknown[] {
   const has = (k: string) => Object.prototype.hasOwnProperty.call(patch, k) && patch[k] !== undefined;
   const val = <T,>(k: string, transform: (v: unknown) => T = (v) => v as T): T | null =>
     has(k) ? transform(patch[k]) : null;
@@ -463,6 +471,10 @@ function upsertBinds(id: string, patch: Record<string, unknown>, now: number, gu
     has("sunColorMinBand") ? 1 : 0, // 30
     has("sunColorLeadMin") ? 1 : 0, // 31
     ...guardBinds(guard), // 32, 33
+    // 34: when set, a row with NO install hash may take a new push token only if
+    // its current one is NULL or already this one (transferPushToken). Without
+    // it an unauthenticated caller could swap P for Q and then "prove" Q.
+    pushProof, // 34
   ];
 }
 
@@ -770,10 +782,16 @@ export function d1Store(db: D1Like): DeviceStore {
       const checked = guardIsActive(guard);
       const [gHash, gEnf] = guardBinds(guard);
       // Every statement below is conditional on the destination row passing the
-      // guard (when there is one), so a refused caller detaches nobody.
-      const dest = checked
-        ? ` AND EXISTS (SELECT 1 FROM devices d WHERE d.id = ?2 AND ${guardSql("d.token_hash", "?3", "?4")})`
-        : "";
+      // guard (when there is one), so a refused caller detaches nobody. All of
+      // them also refuse when the destination has NO install hash and a
+      // DIFFERENT push token on file: an unauthenticated caller must not be able
+      // to swap that token and then claim the row with the new one as "proof".
+      const dest =
+        (checked
+          ? ` AND EXISTS (SELECT 1 FROM devices d WHERE d.id = ?2 AND ${guardSql("d.token_hash", "?3", "?4")})`
+          : "") +
+        " AND NOT EXISTS (SELECT 1 FROM devices p WHERE p.id = ?2 AND p.token_hash IS NULL AND " +
+        "p.push_token IS NOT NULL AND p.push_token <> ?1)";
       const binds = checked ? [token, id, gHash, gEnf] : [token, id];
       const legacyIds = "SELECT id FROM devices WHERE push_token = ?1 AND id <> ?2 AND id LIKE 'legacy:%'";
       const stmts: D1Stmt[] = [
@@ -792,29 +810,32 @@ export function d1Store(db: D1Like): DeviceStore {
           )
           .bind(...binds, now),
         // Attach to the destination (itself guarded inside UPSERT_DEVICE).
-        db.prepare(UPSERT_DEVICE).bind(...upsertBinds(id, { ...patch, pushToken: token } as Record<string, unknown>, now, guard)),
+        db
+          .prepare(UPSERT_DEVICE)
+          .bind(...upsertBinds(id, { ...patch, pushToken: token } as Record<string, unknown>, now, guard, token)),
       ];
       const results = await runBatch(db, stmts);
-      if (checked && !results[results.length - 1]?.meta?.changes) throw new InstallGuardDenied();
+      // The attach changed nothing: the guard or the proof rule refused it (and
+      // so, by the same conditions, did every detach above).
+      if (!results[results.length - 1]?.meta?.changes) throw new InstallGuardDenied();
     },
 
-    async clearPushRegistration(token, guard) {
+    async clearPushRegistration(token) {
       const now = Date.now();
-      const [gHash, gEnf] = guardBinds(guard);
       const legacyIds = "SELECT id FROM devices WHERE push_token = ?1 AND id LIKE 'legacy:%'";
       await runBatch(db, [
         db.prepare(`DELETE FROM presence WHERE device_id IN (${legacyIds})`).bind(token),
         db.prepare(`DELETE FROM alert_log WHERE device_id IN (${legacyIds})`).bind(token),
         db.prepare(`DELETE FROM coming_up_deliveries WHERE device_id IN (${legacyIds})`).bind(token),
         db.prepare("DELETE FROM devices WHERE push_token = ?1 AND id LIKE 'legacy:%'").bind(token),
-        // One conditional statement: the row found BY the push token is
-        // released only if it passes the guard.
+        // A real device row keeps its record and loses the token. Holding the
+        // push token is the whole authorization: it can only turn alerts OFF.
         db
           .prepare(
             "UPDATE devices SET push_token = NULL, updated_at = MAX(COALESCE(updated_at, 0) + 1, ?2) " +
-              `WHERE push_token = ?1 AND ${guardSql("token_hash", "?3", "?4")}`,
+              "WHERE push_token = ?1",
           )
-          .bind(token, now, gHash, gEnf),
+          .bind(token, now),
       ]);
     },
 

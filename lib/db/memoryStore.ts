@@ -210,7 +210,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
   const guardRefuses = (id: string, guard: InstallGuard | undefined): boolean =>
     guardIsActive(guard) && !(devices.has(id) && guardAllows(devices.get(id)?.token_hash, guard));
 
-  // migrations/0019: at most one row holds a push token.
+  // migrations/0020: at most one row holds a push token.
   const assertTokenFree = (id: string, token: string | null | undefined): void => {
     if (!token) return;
     for (const r of devices.values()) {
@@ -361,6 +361,13 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       // attach to `id`. Nothing can interleave, and a refusal (or a throw)
       // happens before any row is touched.
       if (guardRefuses(id, guard)) throw new InstallGuardDenied();
+      // A destination with NO install hash and a DIFFERENT push token on file
+      // refuses the move (see d1Store's transferPushToken): an unauthenticated
+      // caller must not swap that token and then "prove" the new one.
+      const destRow = devices.get(id);
+      if (destRow && !destRow.token_hash && destRow.push_token && destRow.push_token !== token) {
+        throw new InstallGuardDenied();
+      }
       const now = Date.now();
       for (const r of [...devices.values()]) {
         if (r.id === id || r.push_token !== token) continue;
@@ -372,16 +379,15 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       await save();
     },
 
-    async clearPushRegistration(token, guard) {
+    async clearPushRegistration(token) {
       await load();
       const now = Date.now();
       for (const r of [...devices.values()]) {
         if (r.push_token !== token) continue;
-        if (isLegacyId(r.id)) {
-          dropDeviceData(r.id); // possession of the push token is its proof
-        } else if (guardAllows(r.token_hash, guard)) {
-          devices.set(r.id, applyPatch(r, { pushToken: null }, now));
-        }
+        // Holding the push token is the whole authorization: it can only turn
+        // alerts OFF. A legacy row is deleted whole; a real row keeps its record.
+        if (isLegacyId(r.id)) dropDeviceData(r.id);
+        else devices.set(r.id, applyPatch(r, { pushToken: null }, now));
       }
       await save();
     },

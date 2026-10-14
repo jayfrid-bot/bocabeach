@@ -13,14 +13,17 @@
 // same statement (lib/db/installTokenAuth.ts `authorizeMinting`). A device row
 // that already has a push token but no install token yet is claimed only if the
 // request also carries that push token as `pushProof`. GET stays open (read
-// only). With INSTALL_TOKEN_ENFORCE off, a request with no token still goes
-// through as before and an older WebView is handed a server-made token once.
+// only). The response says `installTokenBound: true` when the request's token is
+// now bound to the row; the phone records "claimed" from that signal alone. A
+// token that is sent but cannot be bound is a 401 even with INSTALL_TOKEN_ENFORCE
+// off. With it off, a request with NO token still goes through as before and
+// leaves the row unclaimed: the server never makes a token.
 
 import { getLocation } from "@/config/locations";
 import { badRequest, fail, isDeviceId, okDevice, readBody, storeFailure } from "@/lib/db/api";
 import { getD1 } from "@/lib/db/d1Store";
 import { attributeInstall, clientIp, fingerprint, fpSalt } from "@/lib/db/scanFunnel";
-import { authorizeMinting } from "@/lib/db/installTokenAuth";
+import { authorizeMinting, clientHasCap } from "@/lib/db/installTokenAuth";
 import { getStore } from "@/lib/db/store";
 import {
   ALERT_KEYS,
@@ -141,6 +144,7 @@ export async function POST(req: Request): Promise<Response> {
       req.headers.get("x-install-token"),
       pushProof,
       "/api/devices",
+      clientHasCap(req),
       Date.now(),
     );
     if (!auth.ok) return fail("no-token", 401);
@@ -178,7 +182,7 @@ export async function POST(req: Request): Promise<Response> {
     } catch {
       // never let the funnel cost someone their device record
     }
-    return okDevice(device, auth.minted ? { installToken: auth.minted } : undefined);
+    return okDevice(device, auth.bound ? { installTokenBound: true } : undefined);
   } catch (e) {
     return storeFailure(e, "devices: write failed");
   }

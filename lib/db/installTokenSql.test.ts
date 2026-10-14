@@ -217,18 +217,15 @@ describe.skipIf(!Ctor)("install-token SQL (real SQLite)", () => {
       expect((await h.store.getDevice(A))!.presence).toBeNull();
     });
 
-    it("clearPushRegistration: a real row keeps its token unless the guard passes; a legacy row goes on possession", async () => {
+    it("clearPushRegistration: the push token alone turns alerts off; the record stays, a legacy row goes", async () => {
       const h = harness();
       await claimed(h, true);
-      await h.store.clearPushRegistration(PUSH, none);
-      expect(await h.store.getPushToken(A)).toBe(PUSH);
-      await h.store.clearPushRegistration(PUSH, bad);
-      expect(await h.store.getPushToken(A)).toBe(PUSH);
-      await h.store.clearPushRegistration(PUSH, good);
+      await h.store.clearPushRegistration(PUSH);
       expect(await h.store.getPushToken(A)).toBeNull();
+      expect(await h.store.getDevice(A)).toBeTruthy();
 
       await h.store.upsertDevice("legacy:abc", { platform: "android", pushToken: PUSH2 });
-      await h.store.clearPushRegistration(PUSH2, none);
+      await h.store.clearPushRegistration(PUSH2);
       expect(await h.store.getDevice("legacy:abc")).toBeNull();
     });
   });
@@ -261,6 +258,43 @@ describe.skipIf(!Ctor)("install-token SQL (real SQLite)", () => {
       ).rejects.toBeInstanceOf(InstallGuardDenied);
       expect(await h.store.getPushToken(A)).toBe(PUSH);
       expect(await h.store.getPushToken(B)).toBeNull();
+    });
+
+    it("an unauthenticated move cannot swap the push token of a row that has no install hash (P -> Q -> claim)", async () => {
+      const h = harness();
+      // A row from before install tokens: no hash, push token P.
+      await h.store.upsertDevice(A, { platform: "ios", pushToken: PUSH });
+      // Attacker, knowing only the device id, tries to put THEIR token Q on it.
+      await expect(
+        h.store.transferPushToken({ id: A, token: PUSH2, patch: { platform: "ios" } }, NO_GUARD),
+      ).rejects.toBeInstanceOf(InstallGuardDenied);
+      expect(await h.store.getPushToken(A)).toBe(PUSH);
+      // ...so Q is not a usable proof, and the claim with Q is refused.
+      expect(await h.store.claimInstallToken(A, hashOfToken(TOK_B), PUSH2, NOW)).toBe(false);
+      expect(await h.store.getInstallTokenHash(A)).toBeNull();
+      // The real phone, presenting P, still claims.
+      expect(await h.store.claimInstallToken(A, hashOfToken(TOK_A), PUSH, NOW)).toBe(true);
+    });
+
+    it("the same unauthenticated call is fine when the row's push token is NULL or already the same", async () => {
+      const h = harness();
+      await h.store.upsertDevice(A, { platform: "ios" });
+      await h.store.transferPushToken({ id: A, token: PUSH, patch: { platform: "ios" } }, NO_GUARD);
+      expect(await h.store.getPushToken(A)).toBe(PUSH);
+      await h.store.transferPushToken({ id: A, token: PUSH, patch: { platform: "ios", homeSlug: "boca-raton" } }, NO_GUARD);
+      expect((await h.store.getDevice(A))!.homeSlug).toBe("boca-raton");
+    });
+
+    it("a refused unauthenticated move detaches nobody", async () => {
+      const h = harness();
+      await h.store.upsertDevice(A, { platform: "ios", pushToken: PUSH });
+      await h.store.upsertDevice(B, { platform: "ios", pushToken: PUSH2 });
+      // A has no hash and holds PUSH; trying to put PUSH2 on A must not strip B.
+      await expect(
+        h.store.transferPushToken({ id: A, token: PUSH2, patch: { platform: "ios" } }, NO_GUARD),
+      ).rejects.toBeInstanceOf(InstallGuardDenied);
+      expect(await h.store.getPushToken(B)).toBe(PUSH2);
+      expect(await h.store.getPushToken(A)).toBe(PUSH);
     });
 
     it("if the attach fails, the detach is rolled back (the phone is never left with no target)", async () => {

@@ -25,6 +25,7 @@ interface Call {
   url: string;
   method: string;
   token: string | null;
+  cap: string | null;
   body: Record<string, unknown>;
 }
 let calls: Call[];
@@ -32,7 +33,7 @@ let replies: (Response | Error | Promise<Response>)[];
 let map: Map<string, string>;
 let storageBroken: boolean;
 
-const reply = (status: number, body: unknown = { ok: status < 300, device: { id: DEV } }) =>
+const reply = (status: number, body: unknown = { ok: status < 300, installTokenBound: status < 300, device: { id: DEV } }) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
 beforeEach(() => {
@@ -57,6 +58,7 @@ beforeEach(() => {
       url,
       method: init.method ?? "GET",
       token: headers.get("x-install-token"),
+      cap: headers.get("x-client-cap"),
       body: init.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {},
     });
     const next = replies.shift() ?? reply(200);
@@ -98,6 +100,7 @@ describe("claiming it", () => {
     expect(calls[0].token).toBe(store.readInstallToken());
     expect(calls[0].body.deviceId).toBe(DEV);
     expect(calls[0].body.pushProof).toBe("p".repeat(64));
+    expect(calls[0].cap).toBe("install-token-v1"); // lets the server tell a current client from an older one
     expect(out.token).toBe(store.readInstallToken());
     expect(store.readInstallClaimed()).toBe(true);
     // Confirmed once: no more round trips.
@@ -117,6 +120,33 @@ describe("claiming it", () => {
     expect(calls).toHaveLength(2);
     expect(calls[1].token).toBe(saved);
     expect(second.token).toBe(saved);
+  });
+
+  it("a 200 WITHOUT installTokenBound proves nothing: the phone does not record 'claimed'", async () => {
+    replies = [reply(200, { ok: true, device: { id: DEV } }), reply(200)];
+    const first = await claimInstallToken();
+    expect(first.token).toBeNull();
+    expect(store.readInstallClaimed()).toBe(false);
+    // ...so the next write claims again, and this time the server binds it.
+    expect((await claimInstallToken()).token).toBeTruthy();
+    expect(store.readInstallClaimed()).toBe(true);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("forceRefresh bypasses the saved 'claimed' flag (a token-gated route just refused us)", async () => {
+    await claimInstallToken();
+    expect(calls).toHaveLength(1);
+    await claimInstallToken({ forceRefresh: true });
+    expect(calls).toHaveLength(2);
+  });
+
+  it("a 401 also drops a stale 'claimed' flag", async () => {
+    store.writeInstallToken("t");
+    store.writeInstallClaimed(true);
+    replies = [reply(401, { ok: false, error: "no-token" })];
+    await claimInstallToken({ forceRefresh: true });
+    expect(store.readInstallClaimed()).toBe(false);
+    expect(store.readInstallToken()).toBe("t");
   });
 
   it("a server error is retried next time, not treated as a refusal", async () => {
@@ -165,6 +195,7 @@ describe("every write waits for the claim", () => {
     await write;
     expect(calls.map((c) => c.url)).toEqual(["/api/devices", "/api/presence"]);
     expect(calls[1].token).toBe(calls[0].token);
+    expect(calls[1].cap).toBe("install-token-v1");
   });
 
   it("a read does not wait", async () => {

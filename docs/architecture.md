@@ -459,7 +459,7 @@ flowchart TD
   ADMINSCANS -->|read the funnel| D1
   STORE -->|tests, next dev w/o bindings| MEM[(memory store<br/>.plus-store.json fallback)]
 
-  KVLEGACY[(PUSH_KV<br/>legacy push-token subs)] -.imported once per device.-> STORE
+  KVLEGACY[(PUSH_KV<br/>legacy push-token subs)] -."one-off, by hand:<br/>POST /api/push/import-legacy (x-cron-secret)".-> STORE
 
   HAZ2 -->|"per fix"| STRIKES
   HAZ2 -->|"per fix or beach radar"| RAIN
@@ -743,8 +743,11 @@ the phone that owns a device row.
 with `crypto.getRandomValues`, **saves them to local storage first**, and only
 then sends them as `x-install-token`. If storage will not keep the token, no
 claim is sent. The server stores only the sha256 hash and binds it with one
-conditional statement (`DeviceStore.claimInstallToken`). The claim is
-idempotent: presenting the hash that is already on file succeeds again, so a
+conditional statement (`DeviceStore.claimInstallToken`). **The server never
+makes a token.** A token that is sent but cannot be bound is a 401 (with
+enforcement on or off), and a successful bind is reported as
+`installTokenBound: true` in the response; the phone saves its "claimed" flag
+from that signal alone, never from a bare 200. The claim is idempotent: presenting the hash that is already on file succeeds again, so a
 lost response, a killed app or a retry cannot lock the phone out. A 401 never
 deletes the saved token. One claim runs at a time (single flight), and every
 write the app makes waits for it (`lib/plus/api.ts`), so a queued write cannot
@@ -775,9 +778,9 @@ Route auth, by `x-install-token`:
 
 | Route | Token | If the row has a different token, or none yet |
 |---|---|---|
-| `POST /api/push/register-native` (with `deviceId`) | required; also binds it (minting route) | 401 `no-token`, nothing written. No token yet: bound if the rules above allow |
+| `POST /api/push/register-native` (with `deviceId`) | required when enforcing; also binds it (minting route) | 401 `no-token`, nothing written. A token sent that cannot be bound is 401 even with enforcement off. No token sent and enforcement off: goes through, row stays unclaimed |
 | `POST /api/push/register-native` (no `deviceId`, old builds) | none | n/a: only writes the `legacy:<push token>` row; holding the push token is the proof. Uses the same atomic move |
-| `POST /api/push/unregister-native` | required for the row found BY the push token | 401 `no-token`, nothing changed (a legacy row goes on possession of the push token) |
+| `POST /api/push/unregister-native` | none: the **push token** is the authorization (see "Safe unregister") | n/a. Never 401. A failed legacy-KV delete is a 500, not a success |
 | `POST /api/devices` (prefs, home beach, profile, tz) | required; also binds it (minting route) | 401 `no-token`, nothing written |
 | `POST /api/devices/trial`, `/unlock` | required, always | 401 `no-token` (`unlock` checks the code first). A row with no token yet gets 401; the app claims through `/api/devices` and retries |
 | `POST`/`DELETE /api/presence` | required, always | 401 `no-token` |
@@ -785,7 +788,7 @@ Route auth, by `x-install-token`:
 | `GET /api/devices` | none (read only) | n/a |
 | `POST /api/devices/purchase` | none, on purpose: writes only what RevenueCat says about that id right now, and must work for Restore right after a reinstall | n/a |
 | `POST /api/open` | none, on purpose: writes only the `app_opens` counter, fires before a token exists | n/a |
-| `/api/revenuecat/webhook`, `/api/push/run`, `/api/push/test`, `/api/sun-observations`, `/api/admin/*` | shared secrets, not device tokens | n/a |
+| `/api/revenuecat/webhook`, `/api/push/run`, `/api/push/import-legacy`, `/api/push/test`, `/api/sun-observations`, `/api/admin/*` | shared secrets, not device tokens | n/a |
 
 *Push-token transfer (accepted risk).* Moving a push token from one row to
 another happens when a reinstall gets a new device id but keeps its APNs/FCM
@@ -804,6 +807,31 @@ that changed most recently keeps the token; a second holder cannot appear. The
 destination write is still guarded by its own install token, so a call without
 it detaches nobody. The legacy no-`deviceId` path uses the same move.
 
+*No proof laundering.* In the same transfer statement batch, a destination row
+that has **no install hash** may take a push token only if its current push
+token is NULL or already equals the one presented (`UPSERT_DEVICE` ?34 and the
+detach statements' `NOT EXISTS` clause; the memory store checks the same).
+Without it, a tokenless caller (allowed while enforcement is off) could swap
+the row's push token P for their own Q, then "prove" Q and claim the row. The
+sequence P, then Q, then claim is a test (`installTokenGate.test.ts`,
+`installTokenSql.test.ts`).
+
+*Safe unregister.* `POST /api/push/unregister-native` is authorized by the push
+token alone, with or without an install token and with enforcement on or off.
+All it can do is turn alerts OFF for the phone that holds that token, and it is
+what lets an older app (which has no install token to send) switch alerts off
+after enforcement is on; without it an old app would believe alerts were off
+while the server kept sending them. The route clears D1 first, then deletes the
+legacy KV record, and a KV failure is a 500, never a 200.
+
+*Legacy KV import is a one-off.* `/api/push/run` no longer imports KV
+subscriptions into D1 (a perpetual importer let a stale or lagging KV record
+resurrect alerts a phone had turned off; KV deletes and lists are eventually
+consistent). The remaining KV subscriptions are imported once, by hand:
+`curl -X POST -H "x-cron-secret: $CRON_SECRET" "$ORIGIN/api/push/import-legacy"`
+(`?dryRun=1` only counts). It never deletes KV records and is safe to run twice.
+Nothing calls it on a schedule.
+
 *Fail closed.* `getStore()` serves the memory store only in development and
 tests. In production (`NODE_ENV=production`) with no D1 binding it throws
 `StoreUnavailableError` and the routes answer 503 `store-unavailable`; an empty
@@ -816,19 +844,34 @@ generic error, never the backend's message.
 
 **Staged rollout: `INSTALL_TOKEN_ENFORCE`** (env var, default off).
 - *Off:* every route accepts a request with no token exactly as before this
-  change, but still verifies a token when one is sent (a wrong token is 401),
-  and the minting routes still claim. An already-open older WebView that sends
-  no token to a minting route is handed a server-made token once so it keeps
-  working until it reloads. Every request that arrives without a token logs one
-  line, `{"event":"install_token_missing","route":"/api/...","enforce":false}`
-  (route name only, no id, no token); count them in the Worker logs.
+  change, but still verifies a token when one is sent (a wrong or unbindable
+  token is 401), and the minting routes still claim. A tokenless request to a
+  minting route leaves the row unclaimed; the server never makes a token.
+  Every request that arrives without a token logs one line,
+  `{"event":"install_token_missing","route":"/api/...","enforce":false,"clientCap":false}`
+  (no id, no token). `clientCap` is true when the client sent
+  `x-client-cap: install-token-v1`, which every current app build sends; so
+  `clientCap:false` lines are older apps, and `clientCap:true` lines are current
+  apps whose storage refused a token.
 - *On:* no valid token, no write. A missing token, a wrong token, and a row
-  with no token yet are all 401 on every route in the table above.
-- *Plan:* deploy with the flag off, so updated apps start making, saving and
-  claiming tokens. Watch the `install_token_missing` count. About 48 hours
-  after deploy (long enough for open WebViews to reload on the next version
-  check), when the count has stopped, set `INSTALL_TOKEN_ENFORCE=on`.
-  Turning it back off is a one-line rollback.
+  with no token yet are all 401 on every route in the table above, except
+  unregister, which stays open to the push token (see "Safe unregister").
+- *Gate for turning it on:* the count of `install_token_missing` lines with
+  `clientCap:false` is near zero over **7 days** (not 48 hours: a dormant app
+  contributes nothing to the log until it is opened, and the version check only
+  runs on a later resume). Because unregister no longer needs the install token,
+  an old app that stays dormant can still switch its alerts off after the flip;
+  what it loses is writes (prefs, presence, registration) until it reloads.
+  Turning the flag back off is a one-line rollback.
+
+**Deploy order.**
+1. `wrangler d1 migrations apply isitbeachday-plus --remote` (applies
+   `0020_push_token_unique.sql`). It must land BEFORE the new code: until then
+   the unique-token guarantee does not exist. `npm run check:mobile` only
+   applies migrations to the local database.
+2. Deploy the code with `INSTALL_TOKEN_ENFORCE` unset.
+3. Run the one-off `/api/push/import-legacy` (above), once.
+4. Watch the missing-token log for 7 days, then set `INSTALL_TOKEN_ENFORCE=on`.
 
 **No server-side token recovery.** There is deliberately no route to recover a
 lost token. A phone that loses its saved token but keeps its device id is
@@ -844,9 +887,13 @@ section.
 **Turning alerts off.** `disableNative` keeps alerts shown as on until the
 server confirms the unregister. If the call fails (offline, 5xx), the push
 token goes into a queue (`bd:pending-unregister`), the screen says so, and the
-call is retried on the next launch and whenever the alerts button mounts
-(`flushPendingUnregister`). A 401 is not queued, because it would never
-succeed.
+call is retried by an app-wide hook (`lib/push/usePushQueueRetry.ts`, mounted
+in the root layout): on launch, when the phone comes back online, and on every
+return to the foreground. Enable, disable and the retry all go through one
+queue per push token (`lib/push/native.ts` `runSerial`) and a counter of user
+intents, so the latest thing the person asked for wins: a retry issued before
+an enable can never land after it, and a retry stands down while an enable is
+in flight. A 401 is not queued, because it would never succeed.
 
 **"Last N days" history (`/api/history/[slug]`, docs/HISTORY_AND_IMAGERY_
 PLAN.md Part A).** A Plus-only, read-only look at the `beach_hourly` archive

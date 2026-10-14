@@ -18,6 +18,7 @@
 import { getDeviceId } from "@/lib/deviceId";
 import { nativePlatform } from "@/lib/push/native";
 import * as store from "@/lib/plus/storage";
+import { clientCapHeaders } from "@/lib/plus/clientCap";
 import type { DeviceRecord } from "@/lib/db/types";
 
 /** 32 random bytes, base64url. Null when the platform has no secure random source. */
@@ -79,7 +80,10 @@ export function claimInstallToken(opts?: { forceRefresh?: boolean }): Promise<Cl
   const force = opts?.forceRefresh === true;
   const token = localInstallToken();
   if (!token) return Promise.resolve({ token: null, device: null });
-  if (store.readInstallClaimed()) return Promise.resolve({ token, device: null });
+  // The saved "claimed" flag skips the round trip, except when the caller is
+  // asking again BECAUSE a token-gated route just refused it (`forceRefresh`):
+  // then the flag is not to be trusted and the claim runs again.
+  if (!force && store.readInstallClaimed()) return Promise.resolve({ token, device: null });
   if (inFlight) return inFlight;
   if (deniedThisSession) {
     if (!force || forcedThisSession) return Promise.resolve({ token: null, device: null });
@@ -93,15 +97,20 @@ export function claimInstallToken(opts?: { forceRefresh?: boolean }): Promise<Cl
       const proof = store.readStoredPushToken();
       const res = await fetch("/api/devices", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-install-token": token },
+        headers: { "Content-Type": "application/json", "x-install-token": token, ...clientCapHeaders() },
         body: JSON.stringify({ deviceId: id, ...baseBody(), ...(proof ? { pushProof: proof } : {}) }),
       });
       if (res.status === 401) {
         deniedThisSession = true;
+        store.writeInstallClaimed(false);
         return { token: null, device: null };
       }
-      const body = (await res.json().catch(() => null)) as { ok?: unknown; device?: unknown } | null;
-      if (res.ok && body?.ok === true) {
+      const body = (await res.json().catch(() => null)) as
+        | { ok?: unknown; device?: unknown; installTokenBound?: unknown }
+        | null;
+      // "Claimed" is recorded from the server's explicit say-so alone. A 200
+      // without it (a request that went through unauthenticated) proves nothing.
+      if (res.ok && body?.ok === true && body.installTokenBound === true) {
         store.writeInstallClaimed(true);
         return { token, device: (body.device as DeviceRecord) ?? null };
       }

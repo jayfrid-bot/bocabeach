@@ -10,6 +10,7 @@ import type { DaySummary, HistoryBestEver, HistoryRecords, HistoryVersions } fro
 import type { DayViewPayload } from "@/lib/history/dayView";
 import { readInstallToken } from "@/lib/plus/storage";
 import { claimBeforeWrite } from "@/lib/plus/installToken";
+import { CLIENT_CAP_HEADER, CLIENT_CAP_VALUE } from "@/lib/plus/clientCap";
 
 export interface PlusResult {
   ok: boolean;
@@ -58,11 +59,14 @@ export interface PresenceBody {
  *  logged. With no saved token (storage refused it) the header is omitted. */
 function withInstallToken(init?: RequestInit): RequestInit | undefined {
   const token = readInstallToken();
-  // No token → leave `init` exactly as the caller passed it (including
-  // `undefined` for a bare GET) rather than manufacturing an empty object.
-  if (!token) return init;
+  const isWrite = (init?.method ?? "GET").toUpperCase() !== "GET";
+  // A bare read with no token is left exactly as the caller passed it.
+  if (!token && !isWrite) return init;
   const headers = new Headers(init?.headers);
-  headers.set("x-install-token", token);
+  // Writes say this build knows about install tokens, so a write that still
+  // arrives without one is not mistaken for an older app.
+  if (isWrite) headers.set(CLIENT_CAP_HEADER, CLIENT_CAP_VALUE);
+  if (token) headers.set("x-install-token", token);
   return { ...init, headers };
 }
 

@@ -56,10 +56,12 @@ afterEach(() => {
 });
 
 describe("POST /api/devices — enforcing", () => {
-  it("binds a token the phone made, stores only its hash, and returns nothing to keep", async () => {
+  it("binds a token the phone made, stores only its hash, says so, and returns nothing to keep", async () => {
     const res = await devicesPost(req("https://x/api/devices", { deviceId: DEV, platform: "ios" }, TOKEN));
     expect(res.status).toBe(200);
-    expect((await json(res)).installToken).toBeUndefined();
+    const body = await json(res);
+    expect(body.installTokenBound).toBe(true);
+    expect(body.installToken).toBeUndefined();
     expect(await (await getStore()).getInstallTokenHash(DEV)).toBe(hashOfToken(TOKEN));
   });
 
@@ -160,7 +162,7 @@ describe("POST /api/devices — INSTALL_TOKEN_ENFORCE off", () => {
     const res = await devicesPost(req("https://x/api/devices", { deviceId: DEV, homeSlug: "boca-raton" }));
     expect(res.status).toBe(200);
     const line = log.mock.calls.map((c) => String(c[0])).find((l) => l.includes("install_token_missing"));
-    expect(JSON.parse(line!)).toEqual({ event: "install_token_missing", route: "/api/devices", enforce: false });
+    expect(JSON.parse(line!)).toEqual({ event: "install_token_missing", route: "/api/devices", enforce: false, clientCap: false });
     expect(JSON.stringify(log.mock.calls)).not.toContain(DEV);
   });
 
@@ -170,13 +172,38 @@ describe("POST /api/devices — INSTALL_TOKEN_ENFORCE off", () => {
     expect((await devicesPost(req("https://x/api/devices", { deviceId: DEV, homeSlug: "boca-raton" }, TOKEN))).status).toBe(200);
   });
 
-  it("an older WebView with no token is handed a server-made one, once, and it works", async () => {
+  it("a token that is sent but cannot be BOUND is a 401 even now, and the response never says it is bound", async () => {
+    const store = await getStore();
+    await store.upsertDevice(DEV, { platform: "ios", pushToken: PUSH });
+    const res = await devicesPost(req("https://x/api/devices", { deviceId: DEV, platform: "ios" }, OTHER));
+    expect(res.status).toBe(401);
+    expect((await json(res)).installTokenBound).toBeUndefined();
+    expect(await store.getInstallTokenHash(DEV)).toBeNull();
+  });
+
+  it("a request with NO token goes through, leaves the row unclaimed, and gets no token and no bound signal", async () => {
     const res = await devicesPost(req("https://x/api/devices", { deviceId: DEV, platform: "ios" }));
-    const minted = (await json(res)).installToken as string;
-    expect(typeof minted).toBe("string");
-    expect((await devicesPost(req("https://x/api/devices", { deviceId: DEV, tz: "America/New_York" }, minted))).status).toBe(200);
-    const second = await devicesPost(req("https://x/api/devices", { deviceId: DEV, tz: "America/New_York" }));
-    expect((await json(second)).installToken).toBeUndefined();
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.installToken).toBeUndefined();
+    expect(body.installTokenBound).toBeUndefined();
+    expect(await (await getStore()).getInstallTokenHash(DEV)).toBeNull();
+  });
+
+  it("the missing-token log line says whether the client sent the capability header", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    await devicesPost(req("https://x/api/devices", { deviceId: DEV }));
+    const withCap = new Request("https://x/api/devices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-client-cap": "install-token-v1" },
+      body: JSON.stringify({ deviceId: DEV }),
+    });
+    await devicesPost(withCap);
+    const caps = log.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes("install_token_missing"))
+      .map((l) => JSON.parse(l).clientCap);
+    expect(caps).toEqual([false, true]);
   });
 });
 
