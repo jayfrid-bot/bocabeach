@@ -20,6 +20,7 @@
 		44046A873E4EE775CE4D68C1 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E7C0EB58B1F6BEAC35EEC911 /* SwiftUI.framework */; };
 		4516B408A13E4CF9BA2FDA0D /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62DD2A7AB06E4725ACFA1B62 /* SceneDelegate.swift */; };
 		471364486E42CDC4375BC0EF /* BeachDayWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 63EE0205062DC5341D29F0AB /* BeachDayWatch.app */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
+		47D902FEC0C7E76552F0544A /* SummaryCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB8CFEB42C98222E78FC8EAD /* SummaryCacheTests.swift */; };
 		489E3C5BE94101F8A0E3FB75 /* BeachSessionActivityLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C536892AAAF04BE9FA7461A6 /* BeachSessionActivityLiveActivity.swift */; };
 		4A0D852E92D15DD29941EBCA /* WatchSyncPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F774667AC2C847E20373A6C /* WatchSyncPayload.swift */; };
 		4C806639201D0C26BAA65B58 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 15E9E1F8E8A1D5F8C13549DD /* PrivacyInfo.xcprivacy */; };
@@ -191,6 +192,7 @@
 		A85E61E7A3F53E97537228E7 /* WidgetRefreshPolicyTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WidgetRefreshPolicyTests.swift; sourceTree = "<group>"; };
 		B90007ACEB925CAF55B40831 /* PhoneLink.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PhoneLink.swift; sourceTree = "<group>"; };
 		C536892AAAF04BE9FA7461A6 /* BeachSessionActivityLiveActivity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachSessionActivityLiveActivity.swift; sourceTree = "<group>"; };
+		CB8CFEB42C98222E78FC8EAD /* SummaryCacheTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SummaryCacheTests.swift; sourceTree = "<group>"; };
 		D8AB0C0C723AAD4FFBF3F284 /* BeachDayWatchWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachDayWatchWidget.swift; sourceTree = "<group>"; };
 		DA14EA36744C240FFED8B9A8 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		E50A3F37F33E5C66566261D1 /* BeachSessionDemo.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachSessionDemo.swift; sourceTree = "<group>"; };
@@ -252,6 +254,7 @@
 				191EC098D52082E4A82BEF88 /* SummaryPresentationTests.swift */,
 				9805E1A109DB12A0411F3552 /* BeachStoreTests.swift */,
 				0F8576139024FB6F97FB9F6D /* ConditionsClientTests.swift */,
+				CB8CFEB42C98222E78FC8EAD /* SummaryCacheTests.swift */,
 			);
 			name = BeachDayWatchTests;
 			path = BeachDayWatchTests;
@@ -636,6 +639,7 @@
 				67E356A50B0089DEE5AD10C0 /* SummaryPresentationTests.swift in Sources */,
 				B461CC5308938D116A24B6D9 /* BeachStoreTests.swift in Sources */,
 				D492EAE0082324F746D723D9 /* ConditionsClientTests.swift in Sources */,
+				47D902FEC0C7E76552F0544A /* SummaryCacheTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

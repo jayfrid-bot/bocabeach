@@ -40,7 +40,7 @@ enum DebugHooks {
         let age = d.double(forKey: "debugAgeCache")
         if age > 0, let slug = BeachSelection.activeSlug, var cached = SummaryCache.load(slug) {
             cached.dataAt = cached.dataAt.addingTimeInterval(-age * 60)
-            SummaryCache.save(cached)
+            SummaryCache.forceStore(cached) // older on purpose: the newest-wins check would refuse it
         }
     }
 

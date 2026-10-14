@@ -97,28 +97,80 @@ enum BeachSelection {
     }
 }
 
-/// The last conditions received, per beach.
+/// The last conditions received, per beach, as one JSON file per beach in the App Group
+/// container (the watch app and the widget are separate processes that share it).
+///
+/// Newest wins, and the read-compare-write is ONE critical section: `store` holds an exclusive
+/// `flock` on a lock file in the same directory while it reads the cached reading, compares
+/// the server's `dataAt`, and writes. Two processes can therefore never both read the old
+/// value and then write "newer" followed by "older". Files are written atomically (write to
+/// a temporary name, then rename), so `load` needs no lock and never sees a half-written file.
+///
+/// Without the App Group entitlement (an unsigned simulator build) the container is not
+/// available and the cache lives in this process's own Application Support folder, where the
+/// same lock still serializes its threads.
 enum SummaryCache {
-    private static func key(_ slug: String) -> String { "summary.\(slug)" }
+    /// Tests point this at a temporary directory (it is also the lock's directory).
+    nonisolated(unsafe) static var directoryOverride: URL?
+
+    static var directory: URL {
+        let fm = FileManager.default
+        let base = directoryOverride
+            ?? fm.containerURL(forSecurityApplicationGroupIdentifier: WatchSync.appGroup)?.appendingPathComponent("Library/Caches", isDirectory: true)
+            ?? fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = directoryOverride == nil ? base.appendingPathComponent("BeachSummaries", isDirectory: true) : base
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private static func fileURL(_ slug: String) -> URL { directory.appendingPathComponent("\(slug).json") }
+    private static var lockURL: URL { directory.appendingPathComponent(".lock") }
+
+    /// Runs `body` while holding the cache's process-shared exclusive lock.
+    private static func locked<T>(_ body: () -> T) -> T {
+        let fd = open(lockURL.path, O_CREAT | O_RDWR, 0o644)
+        guard fd >= 0 else { return body() } // no lock available: still correct inside one writer
+        flock(fd, LOCK_EX)
+        defer { flock(fd, LOCK_UN); close(fd) }
+        return body()
+    }
 
     static func load(_ slug: String) -> BeachSummary? {
-        guard let data = SharedStore.defaults.data(forKey: key(slug)) else { return nil }
+        guard WatchSync.cleanSlug(slug) != nil, let data = try? Data(contentsOf: fileURL(slug)) else { return nil }
         return try? JSONDecoder().decode(BeachSummary.self, from: data)
     }
 
     static func save(_ summary: BeachSummary) { _ = store(summary) }
 
-    static func remove(_ slug: String) { SharedStore.defaults.removeObject(forKey: key(slug)) }
+    static func remove(_ slug: String) {
+        guard WatchSync.cleanSlug(slug) != nil else { return }
+        locked { try? FileManager.default.removeItem(at: fileURL(slug)) }
+    }
 
     /// Writes the summary unless the cache already holds a NEWER one (by the server's
-    /// `dataAt`), and returns whichever is now cached. The ordering lives in the shared
-    /// cache itself, so an older answer finishing last cannot overwrite a newer one,
-    /// whether it came from a task in the app or from the widget's process.
+    /// `dataAt`), and returns whichever is now cached. Atomic across processes (see above).
     @discardableResult
     static func store(_ summary: BeachSummary) -> BeachSummary {
-        if let existing = load(summary.slug), existing.dataAt > summary.dataAt { return existing }
-        guard let data = try? JSONEncoder().encode(summary) else { return summary }
-        SharedStore.defaults.set(data, forKey: key(summary.slug))
-        return summary
+        guard WatchSync.cleanSlug(summary.slug) != nil else { return summary }
+        return locked {
+            if let existing = load(summary.slug), existing.dataAt > summary.dataAt { return existing }
+            write(summary)
+            return summary
+        }
     }
+
+    private static func write(_ summary: BeachSummary) {
+        guard let data = try? JSONEncoder().encode(summary) else { return }
+        try? data.write(to: fileURL(summary.slug), options: .atomic)
+    }
+
+    #if DEBUG
+    /// Simulator checks only: replace the cached reading whatever its age (`-debugAgeCache`,
+    /// `-debugWatchJSON`). Never compiled into a Release build.
+    @discardableResult
+    static func forceStore(_ summary: BeachSummary) -> BeachSummary {
+        guard WatchSync.cleanSlug(summary.slug) != nil else { return summary }
+        return locked { write(summary); return summary }
+    }
+    #endif
 }

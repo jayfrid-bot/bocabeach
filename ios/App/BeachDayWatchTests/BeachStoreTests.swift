@@ -5,17 +5,18 @@ import XCTest
 /// change on every path, nothing stranded, and no older answer overwriting a newer one.
 @MainActor
 final class BeachStoreTests: XCTestCase {
-    private let keys = [WatchSync.Key.homeSlug, WatchSync.Key.favorites, WatchSync.Key.lastViewedSlug, "selectedSlug", "syncedAt",
-                        "summary.boca-raton", "summary.naples"]
+    private let keys = [WatchSync.Key.homeSlug, WatchSync.Key.favorites, WatchSync.Key.lastViewedSlug, "selectedSlug", "syncedAt"]
     private var reloads = 0
 
     override func setUp() {
         super.setUp()
         keys.forEach { SharedStore.defaults.removeObject(forKey: $0) }
+        ["boca-raton", "naples"].forEach(SummaryCache.remove)
         reloads = 0
     }
     override func tearDown() {
         keys.forEach { SharedStore.defaults.removeObject(forKey: $0) }
+        ["boca-raton", "naples"].forEach(SummaryCache.remove)
         super.tearDown()
     }
 
@@ -118,6 +119,7 @@ final class BeachStoreTests: XCTestCase {
         let backToA = Task { await store.select("boca-raton") }  // A again: joins the A request still running
         await settle()
         XCTAssertEqual(counter.slugs.filter { $0 == "boca-raton" }.count, 1, "no second request for A")
+        XCTAssertEqual(store.phase, .loading, "back on A while its request still runs: shown as loading, not idle")
         gate.release()
         await firstA.value
         await backToA.value

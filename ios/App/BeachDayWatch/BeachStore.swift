@@ -134,6 +134,9 @@ final class BeachStore: ObservableObject {
         if reason == .selection { reloadOwed = true }
         // Join a request already running for this beach rather than starting a second one.
         if let current = inFlight[slug] {
+            // Coming back to a beach whose request is still running: show it as loading again
+            // (selecting a beach reset the phase), and let that request finish it.
+            phase = .loading
             await current.value
             return
         }
