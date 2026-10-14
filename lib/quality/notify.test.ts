@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HAS_SQLITE, makeCamDb, type CamDb } from "@/lib/camFrames/testDb";
 
 const sent: { token: string; payload: Record<string, unknown> }[] = [];
-const apnsCtl = vi.hoisted(() => ({ configured: true, status: 200, reason: "", sessionOpts: null as unknown, onSend: null as null | (() => Promise<void>) }));
+const apnsCtl = vi.hoisted(() => ({ configured: true, status: 200, reason: "", sessionOpts: null as unknown, onSend: null as null | (() => Promise<void>), perToken: {} as Record<string, "timeout" | "throw" | number> }));
 vi.mock("@/lib/push/apns", () => ({
   getApns: () => (apnsCtl.configured ? { keyId: "k", teamId: "t", bundleId: "b", privateKey: "p", production: false } : null),
   isDeadToken: (r: { status?: number; reason?: string }) => r.status === 410 || (r.status === 400 && r.reason === "BadDeviceToken"),
@@ -12,6 +12,10 @@ vi.mock("@/lib/push/apns", () => ({
       send: async (token: string, payload: Record<string, unknown>) => {
         sent.push({ token, payload });
         await apnsCtl.onSend?.();
+        const special = apnsCtl.perToken[token];
+        if (special === "throw") throw new Error("socket exploded");
+        if (special === "timeout") return { ok: false, reason: "TimeoutError: The operation was aborted" };
+        if (typeof special === "number") return { ok: false, status: special, reason: special === 410 ? "Unregistered" : "x" };
         return apnsCtl.status === 200 ? { ok: true, status: 200 } : { ok: false, status: apnsCtl.status, reason: apnsCtl.reason };
       },
       sendLiveActivityUpdate: async () => ({ ok: true, status: 200 }),
@@ -37,6 +41,7 @@ beforeEach(() => {
   apnsCtl.status = 200;
   apnsCtl.reason = "";
   apnsCtl.onSend = null;
+  apnsCtl.perToken = {};
   h = makeCamDb({ allMigrations: true }) as CamDb;
 });
 afterEach(() => {
@@ -107,7 +112,7 @@ describe.skipIf(!HAS_SQLITE)("sendOwnerPush", () => {
     apnsCtl.status = 410;
     // While the send is in flight the phone refreshes its token; the late 'dead' answer must not erase it.
     const { setSessionPushToken } = await import("@/lib/quality/ownerSessions");
-    apnsCtl.onSend = () => setSessionPushToken(h.db, id, TOKEN_B, Date.now() + 5000);
+    apnsCtl.onSend = async () => void (await setSessionPushToken(h.db, id, TOKEN_B, Date.now() + 5000));
     await sendOwnerPush(h.db, MSG);
     expect(h.all("SELECT push_token FROM owner_sessions")[0].push_token).toBe(TOKEN_B);
   });
@@ -131,6 +136,41 @@ describe.skipIf(!HAS_SQLITE)("sendOwnerPush", () => {
     apnsCtl.status = 410;
     expect(await sendOwnerPush(h.db, MSG)).toEqual({ ok: false, sent: 0, failed: 1 });
     expect(h.all("SELECT push_token FROM owner_sessions")[0].push_token).toBeNull();
+  });
+
+  it("a reply with no HTTP status (timeout, network error) is AMBIGUOUS: Apple may have accepted it", async () => {
+    await seedOwnerSession(h.db, { pushToken: TOKEN_A });
+    apnsCtl.perToken[TOKEN_A] = "timeout";
+    expect(await sendOwnerPush(h.db, MSG)).toEqual({ ok: false, sent: 0, failed: 1, ambiguous: 1 });
+    expect(h.all("SELECT push_token FROM owner_sessions")[0].push_token).toBe(TOKEN_A); // never forgotten for a timeout
+    apnsCtl.perToken[TOKEN_A] = "throw";
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await sendOwnerPush(h.db, MSG)).toEqual({ ok: false, sent: 0, failed: 1, ambiguous: 1 });
+  });
+
+  it("an answer WITH a status (a 5xx, a refusal) is definitive, not ambiguous", async () => {
+    await seedOwnerSession(h.db, { pushToken: TOKEN_A });
+    for (const status of [400, 429, 500, 503]) {
+      apnsCtl.perToken[TOKEN_A] = status;
+      expect(await sendOwnerPush(h.db, MSG)).toEqual({ ok: false, sent: 0, failed: 1 });
+    }
+  });
+
+  it("a partial success across phones counts as sent, and keeps the ambiguity of the other", async () => {
+    await seedOwnerSession(h.db, { pushToken: TOKEN_A, nowMs: Date.now() + 1 });
+    await seedOwnerSession(h.db, { pushToken: TOKEN_B });
+    apnsCtl.perToken[TOKEN_B] = "timeout";
+    expect(await sendOwnerPush(h.db, MSG)).toEqual({ ok: true, sent: 1, failed: 1, ambiguous: 1 });
+  });
+
+  it("trouble clearing a dead token never discards the sends that already went out", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await seedOwnerSession(h.db, { pushToken: TOKEN_A, nowMs: Date.now() + 1 }); // newest first: sent first
+    await seedOwnerSession(h.db, { pushToken: TOKEN_B });
+    apnsCtl.perToken[TOKEN_B] = 410;
+    // make the cleanup UPDATE throw
+    h.exec("CREATE TRIGGER no_clear BEFORE UPDATE OF push_token ON owner_sessions WHEN NEW.push_token IS NULL BEGIN SELECT RAISE(ABORT, 'nope'); END");
+    expect(await sendOwnerPush(h.db, MSG)).toEqual({ ok: true, sent: 1, failed: 1 });
   });
 
   it("keeps a token after an ordinary failure", async () => {

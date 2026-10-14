@@ -123,6 +123,24 @@ describe.skipIf(!HAS_SQLITE)("sessions", () => {
     expect(h.all("SELECT push_token FROM owner_sessions WHERE id = ?", a)[0].push_token).toBeNull();
   });
 
+  it("the revoked-session race: an old request cannot strip the replacement session's token", async () => {
+    // The old session authenticated, then waited while the phone enrolled again (which revoked it).
+    const old = await createSession(h.db, { deviceId: "phone", token: newOwnerToken(), nowMs: NOW });
+    const fresh = await createSession(h.db, { deviceId: "phone", token: newOwnerToken(), nowMs: NOW + 1000 });
+    expect(await setSessionPushToken(h.db, fresh, "tt".repeat(32), NOW + 2000)).toBe(true);
+    // ...and now the late request from the OLD session tries to set the same token.
+    expect(await setSessionPushToken(h.db, old, "tt".repeat(32), NOW + 3000)).toBe(false);
+    expect(h.all("SELECT id, push_token FROM owner_sessions WHERE revoked = 0")).toEqual([{ id: fresh, push_token: "tt".repeat(32) }]);
+    expect(h.all("SELECT push_token FROM owner_sessions WHERE id = ?", old)[0].push_token).toBeNull();
+  });
+
+  it("setting a token reports success only when the session took it", async () => {
+    const a = await createSession(h.db, { deviceId: "a", token: newOwnerToken(), nowMs: NOW });
+    expect(await setSessionPushToken(h.db, a, "aa".repeat(32), NOW)).toBe(true);
+    expect(await setSessionPushToken(h.db, 99999, "aa".repeat(32), NOW)).toBe(false); // no such session: the holder keeps it
+    expect(h.all("SELECT push_token FROM owner_sessions WHERE id = ?", a)[0].push_token).toBe("aa".repeat(32));
+  });
+
   it("a revoked session neither keeps nor receives a push token", async () => {
     const id = await createSession(h.db, { deviceId: "a", token: newOwnerToken(), nowMs: NOW });
     h.exec("UPDATE owner_sessions SET revoked = 1");

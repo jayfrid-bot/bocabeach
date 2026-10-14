@@ -11,6 +11,7 @@
 
 import type { D1Like } from "@/lib/db/d1Store";
 import { sha256Hex } from "@/lib/camFrames/ingest";
+import { runAtomic } from "@/lib/quality/store";
 
 /** An owner token is 32 random bytes as base64url: exactly 43 characters. */
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
@@ -69,16 +70,28 @@ export async function touchSession(db: D1Like, s: OwnerSession, nowMs: number): 
   await db.prepare("UPDATE owner_sessions SET last_seen = ?2 WHERE id = ?1").bind(s.id, new Date(nowMs).toISOString()).run();
 }
 
-/** Give this session the APNs token. Any OTHER active session holding the same token loses it first, in the same step. */
-export async function setSessionPushToken(db: D1Like, id: number, pushToken: string, nowMs: number): Promise<void> {
-  const stmts = [
-    db.prepare("UPDATE owner_sessions SET push_token = NULL WHERE push_token = ?1 AND id != ?2 AND revoked = 0").bind(pushToken, id),
+/**
+ * Give this session the APNs token. One batch, so it is all or nothing:
+ *  1. the OTHER active session holding the token loses it, but only while THIS session is still active
+ *     (a request that authenticated, then waited while its session was revoked and replaced, must not
+ *     strip the replacement's token);
+ *  2. this session takes it, only while active.
+ * Returns false when step 2 touched no row (the session was revoked meanwhile): nothing changed, and the
+ * caller must say so.
+ */
+export async function setSessionPushToken(db: D1Like, id: number, pushToken: string, nowMs: number): Promise<boolean> {
+  const results = await runAtomic(db, [
+    db
+      .prepare(
+        "UPDATE owner_sessions SET push_token = NULL WHERE push_token = ?1 AND id != ?2 AND revoked = 0 " +
+          "AND EXISTS (SELECT 1 FROM owner_sessions WHERE id = ?2 AND revoked = 0)",
+      )
+      .bind(pushToken, id),
     db
       .prepare("UPDATE owner_sessions SET push_token = ?1, push_updated_at = ?3 WHERE id = ?2 AND revoked = 0")
       .bind(pushToken, id, new Date(nowMs).toISOString()),
-  ];
-  if (typeof db.batch === "function") await db.batch(stmts);
-  else for (const s of stmts) await s.run();
+  ]);
+  return (results[1]?.meta?.changes ?? 0) > 0;
 }
 
 /** Forget a dead token, but only if the session still holds THAT token: a late "dead" answer must not erase a refreshed one. */

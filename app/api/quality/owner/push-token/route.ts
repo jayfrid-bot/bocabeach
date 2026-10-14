@@ -18,7 +18,9 @@ export async function POST(req: Request): Promise<Response> {
     if (body.platform !== "ios" || typeof body.token !== "string" || !APNS_RE.test(body.token)) {
       return ownerFail("bad-request", 400);
     }
-    await setSessionPushToken(db, session.id, body.token.toLowerCase(), Date.now());
+    // False when this session was revoked while the request was in flight: nothing was changed, and the
+    // phone must hear it (it will enroll again).
+    if (!(await setSessionPushToken(db, session.id, body.token.toLowerCase(), Date.now()))) return ownerFail("unauthorized", 401);
     return ownerJson({ ok: true });
   });
 }

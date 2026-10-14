@@ -25,7 +25,7 @@ describe("parseSeaweedAlert", () => {
       ok: true,
       value: {
         slug: "boca-raton",
-        dedupeKey: `seaweed:boca-raton:boca-inlet-surf:${SHA.slice(0, 16)}`,
+        dedupeKey: `seaweed:boca-raton:boca-inlet-surf:${SHA.slice(0, 16)}:2026-10-13T17:21:00.000Z`,
         frameJpeg: null,
         payload: {
           camId: "boca-inlet-surf",
@@ -48,7 +48,15 @@ describe("parseSeaweedAlert", () => {
       body({ frame: { sha256: null, archivedThisTick: false }, claimTarget: { frameSha: null, frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T17:21:00Z" } }),
       NOW,
     );
-    expect(r.ok && r.value.dedupeKey).toBe("seaweed:boca-raton:boca-inlet-surf:2026-10-13T17:20:00.000Z");
+    expect(r.ok && r.value.dedupeKey).toBe("seaweed:boca-raton:boca-inlet-surf:2026-10-13T17:20:00.000Z:2026-10-13T17:21:00.000Z");
+  });
+
+  it("the key names the exact claim: the same image scored again is a different alert, the same claim written another way is not", () => {
+    const at = (claimedAt: string) => parseSeaweedAlert(body({ claimTarget: { frameSha: SHA, frameAt: "2026-10-13T17:20:00Z", claimedAt } }), NOW);
+    const key = (r: ReturnType<typeof at>) => (r.ok ? r.value.dedupeKey : r.error);
+    expect(key(at("2026-10-13T17:21:00Z"))).not.toBe(key(at("2026-10-13T17:26:00Z")));
+    expect(key(at("2026-10-13T17:21:00Z"))).toBe(key(at("2026-10-13T13:21:00-04:00")));
+    expect(key(at("2026-10-13T17:21:00Z"))).toBe(key(at("2026-10-13T17:21:00.000Z")));
   });
 
   it("refuses an unknown beach, a bad cam id and a bad time", () => {

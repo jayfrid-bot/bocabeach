@@ -131,7 +131,8 @@ export function parseSeaweedAlert(body: Record<string, unknown>, nowMs: number):
     localDate: localHourParts(tz, claimedMs).date,
     frame: { sha256: sha, archivedThisTick: frame?.archivedThisTick === true, r2Key: null },
   };
-  // One alert per exact image; with no hash, one per cam and frame time.
-  const dedupeKey = `seaweed:${slug}:${camId}:${sha ? sha.slice(0, 16) : observedAt}`;
+  // One alert per exact CLAIM: the image (else its time) AND when it was scored. The same image scored again
+  // is a new claim and needs its own alert: an answer to the first cannot bind to the second.
+  const dedupeKey = `seaweed:${slug}:${camId}:${sha ? sha.slice(0, 16) : observedAt}:${new Date(claimedMs).toISOString()}`;
   return { ok: true, value: { slug, payload, dedupeKey, frameJpeg: decodeAlertFrame(frame?.jpegB64) } };
 }

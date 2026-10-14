@@ -2325,6 +2325,7 @@ def build_beach_output(
             continue
         if c.get("confirmedBy"):
             entry["resolvedAt"] = now_stamp  # any confirmation ends the dispute
+            entry["resolvedId"] = quality_watch.CONFIRMED_ID
         elif c.get("unconfirmed"):
             quality_watch.record_dispute_claim(entry, c)  # one more distinct held frame
         elif c.get("level") in SEAWEED_RANK and SEAWEED_RANK[c["level"]] < _MODERATE:

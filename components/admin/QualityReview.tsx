@@ -195,18 +195,27 @@ function AlertCard({ alert, focused, onDone }: { alert: AlertView; focused: bool
 export function QualityReview({ focusAlertId }: { focusAlertId: number | null }) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [notice, setNotice] = useState<string | null>(null);
-  const pushSynced = useRef(false);
+  /** "done" once the server has this phone's push token; "busy" while a sync is in flight. A failure leaves it unset, so the next load tries again. */
+  const pushSync = useRef<"idle" | "busy" | "done">("idle");
 
   const load = useCallback(async () => {
     const r = await ownerPost<ListReply>("/api/quality/owner/list");
     if (r.ok) {
       writeOwnerHint(true);
       setPhase({ kind: "ready", open: r.data.open, recent: r.data.recent });
-      // Tell the server which phone to push to (this one), once per visit, with a FRESH token from the
-      // native push plugin. Quiet when it cannot.
-      if (!pushSynced.current) {
-        pushSynced.current = true;
-        void syncOwnerPushToken(nativePushTokenForOwner);
+      // Tell the server which phone to push to (this one) with a FRESH token from the native push plugin.
+      // Quiet when it cannot; it is marked done only once the server took the token, so a transient failure
+      // is retried on the next load.
+      if (pushSync.current === "idle") {
+        pushSync.current = "busy";
+        void syncOwnerPushToken(nativePushTokenForOwner).then(
+          (ok) => {
+            pushSync.current = ok ? "done" : "idle";
+          },
+          () => {
+            pushSync.current = "idle";
+          },
+        );
       }
     } else {
       if (r.status === 401) {

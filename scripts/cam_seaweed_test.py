@@ -1509,10 +1509,13 @@ class VisionCallLogTests(unittest.TestCase):
                 mock.patch.object(cs, "_enabled_providers", lambda: [("gemini", "g-1")]), \
                 mock.patch.object(cs, "fetch_prev", lambda slug: {}), \
                 mock.patch.object(cs, "capture_beach", lambda *a, **k: None), \
+                mock.patch.object(cs, "capture_uw", lambda *a, **k: None), \
+                mock.patch.object(cs, "UW_HOURS", ()), \
                 mock.patch.object(cs, "load_archive_cams", lambda: []), \
                 mock.patch.object(cs, "OUT_DIR", d), mock.patch.object(cs, "OUT", str(Path(d) / "legacy.json")), \
                 mock.patch.object(cs, "archive_pass", lambda attempted, cams=None, run=None: {"attempted": 0, "results": {}}), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            # No underwater read (it is daylight-only and would reach the network): the test must not depend on the hour.
             self.assertEqual(cs.main(), 0)
         self.assertEqual(out.getvalue().count("vision calls this tick:"), 1)
         self.assertIn("vision calls this tick: none", out.getvalue())
@@ -3676,6 +3679,16 @@ class OwnerVerdictTests(ReaderHarness):
         group, doc2 = self.tick(doc, {"boca-south": self.NOTHING}, [r])
         self.assertTrue(self.cam(group)["unconfirmed"], "a Wrong on another claim does not clear this one")
         self.assertIn(self.CAM, doc2["disputedCams"], "but a Wrong still doubts the cam for the day")
+
+    def test_two_verdicts_at_the_same_instant_keep_their_result_over_repeated_ticks(self):
+        # Right (id 7) then Wrong (id 8) made in the same millisecond: disputed, and still disputed every tick after.
+        doc, held = self.held_first_tick()
+        right = dict(self.verdict(held, "publish", "moderate", minutes=1, oid=7), frameSha="7" * 20)
+        wrong = dict(self.verdict(held, "reject", minutes=1, oid=8), frameSha="8" * 20)
+        wrong["createdAtUtc"] = right["createdAtUtc"]
+        for _ in range(4):
+            _, doc = self.tick(doc, {"boca-south": self.NOTHING}, [right, wrong])
+            self.assertTrue(cs.quality_watch.is_active_dispute(doc["disputedCams"][self.CAM]))
 
     def test_wrong_then_right_then_wrong_on_three_frames_ends_disputed(self):
         doc, held = self.held_first_tick()

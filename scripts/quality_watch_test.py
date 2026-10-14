@@ -385,7 +385,7 @@ class DisputeStateTests(unittest.TestCase):
 
     def test_an_owner_reject_disputes_its_cam_for_today(self):
         st = qw.dispute_state(None, [ov(cam="a")], NOW)
-        self.assertEqual(st["a"], {"since": CREATED, "reason": "owner", "date": self.TODAY, "claims": []})
+        self.assertEqual(st["a"], {"since": CREATED, "sinceId": 1, "reason": "owner", "date": self.TODAY, "claims": []})
         self.assertEqual(list(qw.active_disputes(st)), ["a"])
 
     def test_a_reject_from_another_day_does_not_dispute(self):
@@ -425,6 +425,41 @@ class DisputeStateTests(unittest.TestCase):
         rwr = [right(1, t[0], SHA_A), wrong(2, t[1], SHA_B), right(3, t[2], "cccccccccccccccccccc")]
         self.assertEqual(list(qw.active_disputes(qw.dispute_state(None, wrw, NOW))), ["a"])
         self.assertEqual(qw.active_disputes(qw.dispute_state(None, rwr, NOW)), {})
+
+    def test_replaying_the_same_events_next_tick_changes_nothing_for_every_vector(self):
+        checked = 0
+        for v in VECTORS["effective"]:
+            now = qw.parse_iso(v["now"]).astimezone(ZoneInfo("America/New_York"))
+            events = qw.owner_state(v["overrides"], now)["events"]
+            first = qw.dispute_state(None, events, now)
+            second = qw.dispute_state(first, events, now)
+            third = qw.dispute_state(second, events, now)
+            self.assertEqual(second, first, v["name"])
+            self.assertEqual(third, first, v["name"])
+            if "disputedAtEnd" in v:
+                self.assertEqual(bool(qw.active_disputes(third)), v["disputedAtEnd"], v["name"])
+            checked += 1
+        self.assertEqual(checked, len(VECTORS["effective"]))
+
+    def test_same_instant_right_7_then_wrong_8_stays_disputed_across_ticks(self):
+        t = "2026-10-13T17:30:00.000Z"
+        right = ov(cam="a", action="publish", level="moderate", created=t, oid=7)
+        wrong = ov(cam="a", created=t, sha=SHA_B, oid=8)
+        state = None
+        for _ in range(4):
+            state = qw.dispute_state(state, [right, wrong], NOW)
+            self.assertEqual(list(qw.active_disputes(state)), ["a"])
+        self.assertEqual(state["a"]["sinceId"], 8)
+        # and the other order (Wrong 7, Right 8 at the same instant) stays resolved
+        state = None
+        for _ in range(4):
+            state = qw.dispute_state(state, [ov(cam="a", created=t, oid=7), ov(cam="a", action="publish", level="moderate", created=t, sha=SHA_B, oid=8)], NOW)
+            self.assertEqual(qw.active_disputes(state), {})
+
+    def test_an_entry_written_before_ids_were_kept_still_works(self):
+        old = {"a": {"since": CREATED, "reason": "owner", "date": "2026-10-13", "claims": []}}
+        right = ov(cam="a", action="publish", level="moderate", created="2026-10-13T17:36:00.000Z", sha=SHA_B, oid=2)
+        self.assertEqual(qw.active_disputes(qw.dispute_state(old, [right], NOW)), {})
 
     def test_the_order_of_the_input_does_not_matter(self):
         t = ["2026-10-13T17:20:00.000Z", "2026-10-13T17:25:00.000Z"]
@@ -470,7 +505,21 @@ class ExtendedPersistenceTests(unittest.TestCase):
 
 class OutboxTests(unittest.TestCase):
     BODY = {"slug": "boca-raton", "camId": "a", "observedAt": "2026-10-13T17:20:00Z",
+            "claimTarget": {"frameSha": "ab" * 10, "frameAt": "2026-10-13T17:20:00Z", "claimedAt": "2026-10-13T17:21:00Z"},
             "frame": {"sha256": "ab" * 32, "archivedThisTick": True, "jpegB64": "QUJD"}}
+
+    def test_the_same_image_scored_again_is_a_new_claim_with_its_own_outbox_entry(self):
+        # Codex C1/C2: C1 could not be published, then the unchanged image was rescored as C2.
+        box = []
+        self.assertTrue(qw.queue_alert(box, self.BODY, NOW))
+        c2 = dict(self.BODY, claimTarget=dict(self.BODY["claimTarget"], claimedAt="2026-10-13T17:31:00Z"))
+        self.assertTrue(qw.queue_alert(box, c2, NOW))
+        self.assertEqual(len(box), 2)
+        self.assertNotEqual(qw.alert_key(self.BODY), qw.alert_key(c2))
+
+    def test_the_key_normalizes_the_claim_time(self):
+        other = dict(self.BODY, claimTarget=dict(self.BODY["claimTarget"], claimedAt="2026-10-13T13:21:00-04:00"))
+        self.assertEqual(qw.alert_key(self.BODY), qw.alert_key(other))
 
     def test_a_failed_alert_is_queued_once_without_its_picture(self):
         box = []

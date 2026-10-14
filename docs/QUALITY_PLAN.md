@@ -184,8 +184,13 @@ slot moves through these states:
 | `sent` | APNs accepted it. The alert is marked pushed. |
 | `unknown` | An attempt that was never finished for 10 minutes (the process died, or D1 failed after APNs said yes). It is **not** sent again, because the first send may have reached the phone. The review list says so. |
 
-A send that fails gives its slot back (the row is deleted), and only the attempt
-that holds the slot can do it. Two drains that overlap cannot send the same push:
+A send gives its slot back (the row is deleted) only on a **definitive** refusal:
+Apple answered with an HTTP status (a 4xx or 5xx). A send with no answer (a
+network error, or the 5-second timeout) may have been delivered, so it stays
+`attempting` and becomes `unknown`; it is never released or re-sent. If the push
+went to several phones, one acceptance counts as sent. A failure while clearing a
+dead token never undoes a send that already went out. Only the attempt that holds
+the slot can release it. Two drains that overlap cannot send the same push:
 the one that loses the claim changes nothing. The daily purge deletes `sent` and
 `unknown` slot rows older than 30 days.
 
@@ -205,7 +210,9 @@ redirect them. The database keeps this clean:
 - A device has one active owner session. Enrolling again from the same device
   revokes the old session.
 - A push token belongs to one active session. Setting it on a session takes it
-  from any other.
+  from any other, in one batch, and only while the requesting session is still
+  active. A request whose session was revoked while it waited (the phone enrolled
+  again) changes nothing and gets a 401, so it cannot strip the new session's token.
 - The owner screens ask the native push plugin for a fresh token each visit. They
   never reuse a token an earlier beach registration saved on the phone.
 - A token that Apple calls dead is cleared only if the session still holds that
@@ -230,7 +237,12 @@ of that cam. The label keeps the key.
 
 ### What an answer does
 
-An alert names one **exact claim**: the cam, the frame (its hash for a feed cam,
+An alert names one **exact claim**, and its dedupe key is that claim: beach, cam,
+the frame (hash, else time) and the normalized `claimedAt`. A retry of the same
+claim stores nothing new. The same image scored again later is a new claim and gets
+its own alert (and its own outbox entry in the reader). Otherwise the reader's
+second POST would be answered "already stored" by the first claim's alert, and the
+current claim could never be answered. An alert names one **exact claim**: the cam, the frame (its hash for a feed cam,
 else its time), and when the reader scored it (`claimedAt`). All three are
 required. The app refuses an alert that lacks them, or whose hash is not a prefix
 of the image's SHA-256, or whose time is not the alert's own. An answer binds to
@@ -255,7 +267,11 @@ first does not touch the second.
 **Replay.** The answers in force are one merged stream of publishes and rejects,
 ordered by (created time, id), and applied in that order. Of several answers about
 one exact claim, the latest wins. So Wrong, Right, Wrong on three frames of one
-cam ends disputed, and Right, Wrong, Right ends not disputed. The app and the
+cam ends disputed, and Right, Wrong, Right ends not disputed. The feed's
+`disputedCams` keeps the id of the verdict that began (`sinceId`) or ended
+(`resolvedId`) each entry, and every comparison is on (time, id). So replaying the
+same verdicts every tick changes nothing, even for two made in the same instant. A
+test replays every shared vector more than once. The app and the
 reader apply the same rule. Both are tested against one shared vector file,
 `lib/quality/verdictVectors.json`, which has both sequences.
 

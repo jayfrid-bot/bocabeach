@@ -203,6 +203,31 @@ describe.skipIf(!HAS_SQLITE)("push-token: owner pushes go only to the phone that
     expect(h.all("SELECT push_token FROM owner_sessions WHERE id = ?", other.id)[0].push_token).toBe("ee".repeat(32));
   });
 
+  it("a request whose session is revoked while its body is read changes nothing and says 401", async () => {
+    // The replacement session (same device re-enrolled) holds the token.
+    const replacement = await seedOwnerSession(h.db, { pushToken: T, nowMs: NOW });
+    const enc = new TextEncoder().encode(JSON.stringify({ token: T, platform: "ios" }));
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        h.exec(`UPDATE owner_sessions SET revoked = 1 WHERE id != ${replacement.id}`); // the old session is revoked mid-request
+        c.enqueue(enc);
+        c.close();
+      },
+    });
+    const res = await pushToken(
+      new Request("http://localhost/api/quality/owner/push-token", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body,
+        // @ts-expect-error Node's fetch needs this for a streamed request body
+        duplex: "half",
+      }),
+    );
+    expect(res.status).toBe(401);
+    expect(await res.json()).toEqual({ ok: false, error: "unauthorized" });
+    expect(h.all("SELECT id, push_token FROM owner_sessions WHERE revoked = 0")).toEqual([{ id: replacement.id, push_token: T }]);
+  });
+
   it("a stranger cannot replace it, and the general push registration is never the owner's destination", async () => {
     await asOwner(pushToken, { token: T, platform: "ios" });
     expect((await call(pushToken, { token: "ff".repeat(32), platform: "ios" })).status).toBe(401);

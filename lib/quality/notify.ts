@@ -32,10 +32,16 @@ export interface OwnerPush {
 }
 
 export interface OwnerPushResult {
-  /** True when at least one owner phone accepted it. */
+  /** True when at least one owner phone accepted it (a partial success counts). */
   ok: boolean;
   sent: number;
   failed: number;
+  /**
+   * How many of the failures have an UNKNOWN outcome: no HTTP status came back (a network error or the
+   * 5 s timeout), so Apple may have accepted the push. Left out when 0. The drain never releases or
+   * re-sends such a push: it stays `attempting` and becomes `unknown`.
+   */
+  ambiguous?: number;
   /** Why nothing was sent, when sent is 0 and failed is 0. */
   reason?: "no-owner-token" | "apns-not-configured";
 }
@@ -44,6 +50,10 @@ export type SendOwnerPush = (db: D1Like, msg: OwnerPush) => Promise<OwnerPushRes
 
 /** Send to every enrolled owner phone with a push token. Never throws: a failure is a result. */
 export const sendOwnerPush: SendOwnerPush = async (db, msg) => {
+  let sent = 0;
+  let failed = 0;
+  let ambiguous = 0;
+  const result = (): OwnerPushResult => ({ ok: sent > 0, sent, failed, ...(ambiguous ? { ambiguous } : {}) });
   try {
     // One send per distinct token (the database keeps them unique among active sessions; this is the belt).
     const seen = new Set<string>();
@@ -53,29 +63,47 @@ export const sendOwnerPush: SendOwnerPush = async (db, msg) => {
     if (!apns) return { ok: false, sent: 0, failed: 0, reason: "apns-not-configured" };
     const nowSec = Math.floor(Date.now() / 1000);
     const session = openApnsSession(apns, nowSec, { timeoutMs: APNS_TIMEOUT_MS });
-    let sent = 0;
-    let failed = 0;
     try {
       for (const t of targets) {
-        const r = await session.send(t.push_token, {
-          title: msg.title,
-          body: msg.body,
-          url: msg.url,
-          tag: msg.tag,
-          expiration: nowSec + 6 * 3600,
-        });
-        if (r.ok) sent += 1;
-        else {
+        let r: Awaited<ReturnType<typeof session.send>>;
+        try {
+          r = await session.send(t.push_token, {
+            title: msg.title,
+            body: msg.body,
+            url: msg.url,
+            tag: msg.tag,
+            expiration: nowSec + 6 * 3600,
+          });
+        } catch (e) {
+          // The request may have left the building: the outcome is unknown.
+          console.error("quality: owner push send threw", e);
           failed += 1;
-          if (isDeadToken(r)) await clearSessionPushToken(db, t.id, t.push_token);
+          ambiguous += 1;
+          continue;
+        }
+        if (r.ok) {
+          sent += 1;
+          continue;
+        }
+        failed += 1;
+        // A reply with an HTTP status is Apple's answer. No status (network error, timeout) is not.
+        if (r.status === undefined) ambiguous += 1;
+        else if (isDeadToken(r)) {
+          // Cleanup trouble must never undo a send that already happened.
+          try {
+            await clearSessionPushToken(db, t.id, t.push_token);
+          } catch (e) {
+            console.error("quality: clearing a dead owner push token failed", e);
+          }
         }
       }
     } finally {
       session.close();
     }
-    return { ok: sent > 0, sent, failed };
+    return result();
   } catch (e) {
     console.error("quality: owner push failed", e);
-    return { ok: false, sent: 0, failed: 1 };
+    // Keep what already went out. Only when nothing was tried is this a plain failure.
+    return sent || ambiguous ? result() : { ok: false, sent: 0, failed: 1 };
   }
 };

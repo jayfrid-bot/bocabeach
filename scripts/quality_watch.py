@@ -247,9 +247,12 @@ def utc_iso(t: dt.datetime) -> str:
 
 
 def alert_key(body: dict) -> str:
-    """One alert per exact image: slug, cam, and the frame's hash (else its time). Pure."""
+    """One alert per exact CLAIM: slug, cam, the frame's hash (else its time) and the time the reader
+    scored it. The same image scored again later is a new claim, with its own alert. Pure."""
     frame = body.get("frame") or {}
-    return f"{body.get('slug')}:{body.get('camId')}:{frame.get('sha256') or body.get('observedAt')}"
+    claimed = parse_iso((body.get("claimTarget") or {}).get("claimedAt"))
+    return (f"{body.get('slug')}:{body.get('camId')}:{frame.get('sha256') or body.get('observedAt')}:"
+            f"{utc_iso(claimed) if claimed else ''}")
 
 
 def queue_alert(outbox: list, body: dict, now: dt.datetime) -> bool:
@@ -473,35 +476,47 @@ def is_active_dispute(entry) -> bool:
     return isinstance(entry, dict) and not entry.get("resolvedAt")
 
 
+# resolvedId of a dispute ended by a confirmation (not by an owner verdict): after any verdict made in the same second.
+CONFIRMED_ID = 2 ** 53
+
+
+def _stamp_key(at, ident) -> tuple:
+    """(time, id) as a sortable pair; a missing id counts as 0, a missing or bad time sorts first. Pure."""
+    t = parse_iso(at) if isinstance(at, str) else None
+    return (t or dt.datetime.min.replace(tzinfo=dt.timezone.utc), ident if isinstance(ident, int) else 0)
+
+
 def dispute_state(prev_disputed, events: list, now: dt.datetime) -> dict[str, dict]:
-    """The feed's `disputedCams` for this tick: {cam id: {since, reason, date, claims, resolvedAt?}}.
-    Starts from the previous map's entries made TODAY (beach-local date of `now`), then REPLAYS the
-    owner's verdicts (`events`, owner_state()["events"]: ONE stream of rejects and publishes ordered
-    by (created time, id)), each against the state the one before left:
-      reject  starts a dispute for its cam, unless one is already active; a reject made after an entry
-              was resolved starts a fresh one (so Wrong, Right, Wrong ends disputed);
+    """The feed's `disputedCams` for this tick: {cam id: {since, sinceId?, reason, date, claims,
+    resolvedAt?, resolvedId?}}. Starts from the previous map's entries made TODAY (beach-local date of
+    `now`), then REPLAYS the owner's verdicts (`events`, owner_state()["events"]: ONE stream of rejects
+    and publishes ordered by (created time, id)), each against the state the one before left:
+      reject  starts a dispute for its cam, unless one is already active; a reject ordered after an
+              entry was resolved starts a fresh one (so Wrong, Right, Wrong ends disputed);
       publish ends an active dispute on that cam that began at or before it (Right, Wrong, Right ends
               not disputed).
-    A resolved entry stays as a marker, so a reject already answered is not applied twice. Pure."""
+    Every comparison is on the (time, id) pair, and the id of the event that began or ended an entry is
+    kept in the entry (`sinceId`, `resolvedId`). So replaying the same events on the next tick changes
+    nothing, even for two verdicts made at the same instant. A resolved entry stays as a marker, so a
+    reject already answered is not applied twice. Pure."""
     today = now.date().isoformat()
     out: dict[str, dict] = {}
     if isinstance(prev_disputed, dict):
         for cam, e in prev_disputed.items():
             if isinstance(e, dict) and e.get("date") == today:
                 out[cam] = {**e, "claims": list(e.get("claims") or [])}
-    for o in sorted(events, key=lambda o: (parse_iso(o["createdAtUtc"]), o.get("id") or 0)):
+    for o in sorted(events, key=lambda o: _stamp_key(o["createdAtUtc"], o.get("id"))):
         e = out.get(o["camId"])
-        made = parse_iso(o["createdAtUtc"])
+        t = _stamp_key(o["createdAtUtc"], o.get("id"))
         if o["action"] == "reject":
             if o.get("localDate") not in (None, today):
                 continue
-            resolved = parse_iso(e.get("resolvedAt")) if e else None
-            if e is None or (resolved is not None and made is not None and resolved < made):
-                out[o["camId"]] = {"since": o["createdAtUtc"], "reason": "owner", "date": today, "claims": []}
-        elif is_active_dispute(e):
-            since = parse_iso(e.get("since"))
-            if since is not None and made is not None and since <= made:
-                e["resolvedAt"] = o["createdAtUtc"]
+            if e is None or (e.get("resolvedAt") and _stamp_key(e.get("resolvedAt"), e.get("resolvedId")) < t):
+                out[o["camId"]] = {"since": o["createdAtUtc"], "sinceId": o.get("id") or 0, "reason": "owner",
+                                   "date": today, "claims": []}
+        elif is_active_dispute(e) and _stamp_key(e.get("since"), e.get("sinceId")) <= t:
+            e["resolvedAt"] = o["createdAtUtc"]
+            e["resolvedId"] = o.get("id") or 0
     return out
 
 

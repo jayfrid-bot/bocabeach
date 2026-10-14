@@ -897,7 +897,7 @@ flowchart TD
   SARG --> SECOND
   PREV["fetch_prev: last published feed file per beach<br/>404 = new beach (start empty) · any other failure: retry once, then ABORT the tick:<br/>nothing written, archive still runs, exit 1 (the branch keeps its last good files)"] --> SARG
   HIST --> WATCH
-  SECOND -->|"POST /api/quality/alerts, Bearer QUALITY_INGEST_TOKEN:<br/>claim and its exact identity (cam, frame hash or time, claimedAt: all required), second opinion, other cams, frame SHA-256,<br/>the exact still (≤150 KB, base64)"| INGEST["/api/quality/alerts<br/>constant-time auth, 400 KB body cap, strict validation (lib/quality/ingest.ts):<br/>the claim identity is checked against the image and times sent; the local date is the one of claimedAt;<br/>disagreements only, at most 20 alerts per beach per hour (inside the INSERT);<br/>keeps the still in R2 (lib/quality/frameUpload.ts)"]
+  SECOND -->|"POST /api/quality/alerts, Bearer QUALITY_INGEST_TOKEN:<br/>claim and its exact identity (cam, frame hash or time, claimedAt: all required), second opinion, other cams, frame SHA-256,<br/>the exact still (≤150 KB, base64)"| INGEST["/api/quality/alerts<br/>constant-time auth, 400 KB body cap, strict validation (lib/quality/ingest.ts):<br/>the claim identity is checked against the image and times sent; the dedupe key includes claimedAt; the local date is the one of claimedAt;<br/>disagreements only, at most 20 alerts per beach per hour (inside the INSERT);<br/>keeps the still in R2 (lib/quality/frameUpload.ts)"]
   SECOND -.->|"POST failed or no token: queue in the feed's pendingAlerts,<br/>retry every tick until 2xx, drop after 24 h"| SECOND
   INGEST -->|"put quality/slug/cam/date/HHmmssZ-sha8.jpg<br/>(its own key shape; best-effort, a failure drops only the picture)"| CAMR2Q[("R2 bucket isitbeachday-cam-frames<br/>binding CAM_FRAMES")]
   INGEST --> REC["lib/quality/alerts.ts recordAlert<br/>ONE D1 batch: the alert INSERT and (lib/quality/pushPolicy.ts + pushSlots.ts)<br/>the slot INSERT, if the beach is watched (vision cams + boca-raton) and it is not 9 PM to 7 AM ET:<br/>at most 3 a day, not the same beach and signal within 3 h, alert open and under 30 min old.<br/>A retry that finds the alert without a slot takes the missing one. Sends NOTHING."]
@@ -906,7 +906,7 @@ flowchart TD
 
   subgraph drain ["Drain: its own request, its own subrequest budget"]
     CRONQ["workers/history-cron, every minute,<br/>AFTER the archive pass (even if it failed)"]
-    DRAIN["POST /api/quality/drain, x-cron-secret CRON_SECRET<br/>lib/quality/drain.ts: only OPEN alerts, at most 3 pushes, none in quiet hours,<br/>stale (30 min) dropped. CLAIMS each push (queued → attempting, attempt id) BEFORE APNs;<br/>finalizes or releases only WHERE the attempt id matches; an attempt older than 10 min → unknown, never re-sent"]
+    DRAIN["POST /api/quality/drain, x-cron-secret CRON_SECRET<br/>lib/quality/drain.ts: only OPEN alerts, at most 3 pushes, none in quiet hours,<br/>stale (30 min) dropped. CLAIMS each push (queued → attempting, attempt id) BEFORE APNs;<br/>finalizes or releases only WHERE the attempt id matches; release only on a definitive Apple refusal (an HTTP status);<br/>no answer (timeout, network) stays attempting; an attempt older than 10 min → unknown, never re-sent"]
   end
   CRONQ --> DRAIN
   DRAIN <-->|"claim, mark sent / release by attempt id, mark unknown"| QD
@@ -951,7 +951,7 @@ flowchart TD
   QD --> LABELS
   QD -->|"GET /api/quality/overrides?slug=, Bearer QUALITY_INGEST_TOKEN<br/>the verdicts in force today, each with its exact target"| OVAPI["/api/quality/overrides"]
   OVAPI -->|"once per beach per tick, fails open<br/>(quality_watch.fetch_overrides)"| SARG
-  SARG -.->|"publish: that frame's held claim publishes (confirmedBy owner)<br/>reject: that claim is removed and the cam is DISPUTED for the day<br/>(publishes and rejects replay as ONE stream by created time and id, the same in TS and Python):<br/>its later claims confirm only by an agreeing second opinion, another undisputed fresh cam,<br/>an owner Right, or 3 distinct frames over 90 min (disputedCams in the feed)"| SECOND
+  SARG -.->|"publish: that frame's held claim publishes (confirmedBy owner)<br/>reject: that claim is removed and the cam is DISPUTED for the day<br/>(publishes and rejects replay as ONE stream by (created time, id); disputedCams keeps sinceId/resolvedId so every tick replays the same):<br/>its later claims confirm only by an agreeing second opinion, another undisputed fresh cam,<br/>an owner Right, or 3 distinct frames over 90 min (disputedCams in the feed)"| SECOND
 ```
 
 **What each part keeps.** `quality_alerts` is one row per flag (`dedupe_key` is

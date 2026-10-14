@@ -148,7 +148,7 @@ describe.skipIf(!HAS_SQLITE)("recording and queueing", () => {
     const row = h.all("SELECT slug, signal, kind, status, pushed, dedupe_key, created_at FROM quality_alerts")[0];
     expect(row).toEqual({
       slug: "boca-raton", signal: "seaweed", kind: "seaweed-held-disagreed", status: "open", pushed: 0,
-      dedupe_key: `seaweed:boca-raton:boca-inlet-surf:${SHA.slice(0, 16)}`, created_at: "2026-10-13T17:30:00.000Z",
+      dedupe_key: `seaweed:boca-raton:boca-inlet-surf:${SHA.slice(0, 16)}:2026-10-13T17:21:00.000Z`, created_at: "2026-10-13T17:30:00.000Z",
     });
     const payload = JSON.parse(h.all("SELECT payload_json FROM quality_alerts")[0].payload_json as string);
     expect(payload.others.map((o: { id: string }) => o.id)).toEqual(["boca-south", "boca-south-surf"]);
@@ -163,6 +163,20 @@ describe.skipIf(!HAS_SQLITE)("recording and queueing", () => {
     expect(await again.json()).toMatchObject({ ok: true, created: false, queued: false, reason: "exists" });
     expect(slots()).toHaveLength(1);
     expect(h.all("SELECT COUNT(*) AS n FROM quality_alerts")[0].n).toBe(1);
+  });
+
+  it("the same image scored again (Codex C1/C2) is a NEW claim with its own alert, so the current claim can be answered", async () => {
+    const c1 = alertBody({ claimTarget: { frameSha: SHA.slice(0, 20), frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T17:21:00Z" } });
+    const c2 = alertBody({ claimTarget: { frameSha: SHA.slice(0, 20), frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T17:29:00Z" } });
+    const first = (await (await post(c1)).json()) as { id: number; created: boolean };
+    const retryC1 = (await (await post(c1)).json()) as { id: number; created: boolean };
+    const second = (await (await post(c2)).json()) as { id: number; created: boolean };
+    expect(first.created).toBe(true);
+    expect(retryC1).toMatchObject({ created: false, id: first.id });
+    expect(second.created).toBe(true);
+    expect(second.id).not.toBe(first.id);
+    const claimed = h.all("SELECT payload_json FROM quality_alerts ORDER BY id").map((r) => JSON.parse(r.payload_json as string).claimTarget.claimedAt);
+    expect(claimed).toEqual(["2026-10-13T17:21:00Z", "2026-10-13T17:29:00Z"]);
   });
 
   it("a second frame from the same cam inside 3 hours is stored but takes no push slot", async () => {
