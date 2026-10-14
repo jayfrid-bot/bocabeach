@@ -126,12 +126,17 @@ enum SummaryCache {
     private static func fileURL(_ slug: String) -> URL { directory.appendingPathComponent("\(slug).json") }
     private static var lockURL: URL { directory.appendingPathComponent(".lock") }
 
-    /// Runs `body` while holding the cache's process-shared exclusive lock.
-    private static func locked<T>(_ body: () -> T) -> T {
+    /// Runs `body` while holding the cache's process-shared exclusive lock, or returns nil
+    /// WITHOUT running it when the lock can't be had (fail closed: an unordered write could
+    /// leave an older reading cached). An interrupted `flock` (EINTR) is retried.
+    private static func locked<T>(_ body: () -> T) -> T? {
         let fd = open(lockURL.path, O_CREAT | O_RDWR, 0o644)
-        guard fd >= 0 else { return body() } // no lock available: still correct inside one writer
-        flock(fd, LOCK_EX)
-        defer { flock(fd, LOCK_UN); close(fd) }
+        guard fd >= 0 else { return nil }
+        defer { close(fd) }
+        var rc: Int32
+        repeat { rc = flock(fd, LOCK_EX) } while rc != 0 && errno == EINTR
+        guard rc == 0 else { return nil }
+        defer { flock(fd, LOCK_UN) }
         return body()
     }
 
@@ -144,7 +149,7 @@ enum SummaryCache {
 
     static func remove(_ slug: String) {
         guard WatchSync.cleanSlug(slug) != nil else { return }
-        locked { try? FileManager.default.removeItem(at: fileURL(slug)) }
+        _ = locked { try? FileManager.default.removeItem(at: fileURL(slug)) }
     }
 
     /// Writes the summary unless the cache already holds a NEWER one (by the server's
@@ -152,11 +157,15 @@ enum SummaryCache {
     @discardableResult
     static func store(_ summary: BeachSummary) -> BeachSummary {
         guard WatchSync.cleanSlug(summary.slug) != nil else { return summary }
-        return locked {
+        let kept = locked { () -> BeachSummary in
             if let existing = load(summary.slug), existing.dataAt > summary.dataAt { return existing }
             write(summary)
             return summary
         }
+        // No lock: nothing was written. Show the newer of what's cached and what arrived.
+        if let kept { return kept }
+        if let existing = load(summary.slug), existing.dataAt > summary.dataAt { return existing }
+        return summary
     }
 
     private static func write(_ summary: BeachSummary) {
@@ -170,7 +179,16 @@ enum SummaryCache {
     @discardableResult
     static func forceStore(_ summary: BeachSummary) -> BeachSummary {
         guard WatchSync.cleanSlug(summary.slug) != nil else { return summary }
-        return locked { write(summary); return summary }
+        return locked { write(summary); return summary } ?? summary
+    }
+
+    /// Simulator checks only (`-debugReset`): drop every cached reading.
+    static func removeAll() {
+        _ = locked {
+            let fm = FileManager.default
+            for f in (try? fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+            where f.pathExtension == "json" { try? fm.removeItem(at: f) }
+        }
     }
     #endif
 }

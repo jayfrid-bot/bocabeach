@@ -70,8 +70,9 @@ enum ConditionsClient {
             guard let data = FileManager.default.contents(atPath: "\(dir)/\(slug).json") else { throw ConditionsError.unknownBeach }
             guard let dto = WatchViewDecoder.decode(data, expectedSlug: slug) else { throw ConditionsError.badData }
             var summary = WatchViewDecoder.summary(from: dto, slug: slug, fetchedAt: clock())
-            // A fixture may be older than the cached live reading: replace it anyway (debug only).
-            if save { summary = SummaryCache.forceStore(summary) }
+            // A fixture may be older than the cached live reading: replace it anyway (debug
+            // only), whoever asked, so the watch app's later newest-wins store keeps it too.
+            summary = SummaryCache.forceStore(summary)
             WidgetFailureCounter.reset(slug)
             return summary
         }

@@ -27,6 +27,7 @@ enum DebugHooks {
         if d.bool(forKey: "debugReset") {
             let shared = SharedStore.defaults
             for key in shared.dictionaryRepresentation().keys { shared.removeObject(forKey: key) }
+            SummaryCache.removeAll() // readings live in files now, not in the defaults
         }
         if d.string(forKey: "debugHome") != nil || d.string(forKey: "debugLastViewed") != nil {
             let favs = d.string(forKey: "debugFavorites")?.split(separator: ",").map(String.init) ?? []
