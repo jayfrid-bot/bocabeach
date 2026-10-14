@@ -30,7 +30,8 @@ import type {
   SentState,
 } from "@/lib/db/types";
 import { applyPatch, defaultPrefs, newDeviceRow, parseSent, toRecord } from "@/lib/db/types";
-import { legacyDeviceId, legacyPatch } from "@/lib/db/legacy";
+import { isLegacyId, legacyDeviceId, legacyPatch } from "@/lib/db/legacy";
+import { guardAllows, guardIsActive, InstallGuardDenied, type InstallGuard } from "@/lib/db/installGuard";
 import type { DeviceStore } from "@/lib/db/store";
 import { ABANDONED_CLAIM_MS, CLAIM_RETENTION_MS } from "@/lib/db/sendClaims";
 import {
@@ -319,6 +320,17 @@ SELECT * FROM (
  *  as a SQL literal (never contains a user-supplied value or a quote). */
 const DEFAULT_PREFS_JSON = JSON.stringify(defaultPrefs());
 
+/**
+ * The SQL twin of `guardAllows` (lib/db/installGuard.ts): true when the row
+ * whose stored hash is `col` passes the guard bound at `h` (sha256 hex of the
+ * request's token, or NULL) and `e` (1 = enforce, 0 = not). Spliced into the
+ * WHERE of the write itself, so authorization and mutation are one statement.
+ */
+function guardSql(col: string, h: string, e: string): string {
+  return `((${e} = 1 AND ${col} = ${h}) OR (${e} = 0 AND (${h} IS NULL OR ${col} IS NULL OR ${col} = ${h})))`;
+}
+const guardBinds = (g: InstallGuard | undefined): [string | null, number] => [g?.hash ?? null, g?.enforce ? 1 : 0];
+
 // The three grant columns, resolved to "the caller's new value if they
 // provided one, else whatever is already on the row" — duplicated wherever
 // the derived plan/entitlement_until need to read it, because a single
@@ -370,7 +382,7 @@ const UPSERT_COLS =
 // it was.
 const UPSERT_DEVICE = `
 INSERT INTO devices (${UPSERT_COLS})
-VALUES (
+SELECT
   ?1, ?2, ?3, ?4, ?5, ?6,
   json_patch('${DEFAULT_PREFS_JSON}', ?7),
   ?8, ?9, ?10,
@@ -379,7 +391,7 @@ VALUES (
   ?11, ?12,
   ?13, ?14, ?15,
   ?28, ?29
-)
+WHERE ?33 = 0 OR EXISTS (SELECT 1 FROM devices WHERE id = ?1)
 ON CONFLICT(id) DO UPDATE SET
   platform = CASE WHEN ?17 THEN ?2 ELSE devices.platform END,
   push_token = CASE WHEN ?18 THEN ?3 ELSE devices.push_token END,
@@ -398,10 +410,14 @@ ON CONFLICT(id) DO UPDATE SET
   sun_color_min_band = CASE WHEN ?30 THEN ?28 ELSE devices.sun_color_min_band END,
   sun_color_lead_min = CASE WHEN ?31 THEN ?29 ELSE devices.sun_color_lead_min END,
   updated_at = MAX(COALESCE(devices.updated_at, 0) + 1, ?15)
+WHERE ${guardSql("devices.token_hash", "?32", "?33")}
 `;
 
-/** DevicePatch → the 31 positional binds `UPSERT_DEVICE` expects. */
-function upsertBinds(id: string, patch: Record<string, unknown>, now: number): unknown[] {
+/** DevicePatch → the 33 positional binds `UPSERT_DEVICE` expects (31 fields,
+ *  then the install-token guard: ?32 = request token hash or NULL, ?33 = enforce).
+ *  The INSERT branch is open only while the guard is not enforcing; the UPDATE
+ *  branch runs only when the row passes the guard (`guardSql`). */
+function upsertBinds(id: string, patch: Record<string, unknown>, now: number, guard?: InstallGuard): unknown[] {
   const has = (k: string) => Object.prototype.hasOwnProperty.call(patch, k) && patch[k] !== undefined;
   const val = <T,>(k: string, transform: (v: unknown) => T = (v) => v as T): T | null =>
     has(k) ? transform(patch[k]) : null;
@@ -446,6 +462,7 @@ function upsertBinds(id: string, patch: Record<string, unknown>, now: number): u
     val("sunColorLeadMin"), // 29
     has("sunColorMinBand") ? 1 : 0, // 30
     has("sunColorLeadMin") ? 1 : 0, // 31
+    ...guardBinds(guard), // 32, 33
   ];
 }
 
@@ -685,12 +702,14 @@ export function d1Store(db: D1Like): DeviceStore {
       return row ? toApi(row) : null;
     },
 
-    async upsertDevice(id, patch) {
+    async upsertDevice(id, patch, guard) {
       const now = Date.now();
-      await db
+      const res = await db
         .prepare(UPSERT_DEVICE)
-        .bind(...upsertBinds(id, patch as Record<string, unknown>, now))
+        .bind(...upsertBinds(id, patch as Record<string, unknown>, now, guard))
         .run();
+      // The guard is part of the statement: a refused write changes no row.
+      if (guardIsActive(guard) && !res.meta?.changes) throw new InstallGuardDenied();
       const row = await getRow(id);
       // The row we just wrote must exist — but fall back to the JS patcher
       // over a blank row rather than throw, so a transient read-after-write
@@ -699,34 +718,125 @@ export function d1Store(db: D1Like): DeviceStore {
       return row ? toApi(row) : toApi(applyPatch(newDeviceRow(id, now), patch, now));
     },
 
-    async claimTrial(id, until) {
+    async claimTrial(id, until, guard) {
       const now = Date.now();
+      const [gHash, gEnf] = guardBinds(guard);
       // Make sure a row exists (no-op if it already does) — a device can
-      // start its trial before it has ever called POST /api/devices.
+      // start its trial before it has ever called POST /api/devices. Not while
+      // the install-token guard is enforcing: an id with no row has no token,
+      // so there is nothing to authorize against.
       await db
         .prepare(
           "INSERT INTO devices (id, plan, entitlement_until, trial_used, preview_seen, prefs_json, created_at, updated_at) " +
-            "VALUES (?, 'free', NULL, 0, 0, NULL, ?, ?) ON CONFLICT(id) DO NOTHING",
+            "SELECT ?1, 'free', NULL, 0, 0, NULL, ?2, ?2 WHERE ?3 = 0 ON CONFLICT(id) DO NOTHING",
         )
-        .bind(id, now, now)
+        .bind(id, now, gEnf)
         .run();
       // The WHERE clause is the whole trick: two concurrent claims both reach
       // this UPDATE, but SQLite serializes writes, so only the first one's
       // WHERE still matches by the time it runs — the second sees
-      // trial_used already 1 and changes nothing.
+      // trial_used already 1 and changes nothing. The install-token guard is
+      // in the same WHERE, so authorization and the write are one statement.
       const result = await db
         .prepare(
           "UPDATE devices SET trial_until = ?1, trial_used = 1, " +
             "entitlement_until = CASE WHEN MAX(COALESCE(store_until,0), COALESCE(code_until,0), COALESCE(?1,0)) = 0 " +
             "THEN NULL ELSE MAX(COALESCE(store_until,0), COALESCE(code_until,0), COALESCE(?1,0)) END, " +
             "plan = CASE WHEN MAX(COALESCE(store_until,0), COALESCE(code_until,0), COALESCE(?1,0)) > ?2 THEN 'plus' ELSE 'free' END, " +
-            "updated_at = MAX(COALESCE(updated_at, 0) + 1, ?2) WHERE id = ?3 AND trial_used = 0",
+            "updated_at = MAX(COALESCE(updated_at, 0) + 1, ?2) WHERE id = ?3 AND trial_used = 0 AND " +
+            guardSql("token_hash", "?4", "?5"),
         )
-        .bind(until, now, id)
+        .bind(until, now, id, gHash, gEnf)
         .run();
-      if (!result.meta?.changes) return "trial-used";
+      if (!result.meta?.changes) {
+        // Nothing changed: either the trial was already used, or the guard
+        // refused. Looking now only decides WHICH answer to give; the write
+        // itself was already decided by the statement above.
+        if (guardIsActive(guard)) {
+          const cur = await db
+            .prepare("SELECT token_hash FROM devices WHERE id = ?")
+            .bind(id)
+            .first<{ token_hash: string | null }>();
+          if (!cur || !guardAllows(cur.token_hash, guard)) throw new InstallGuardDenied();
+        }
+        return "trial-used";
+      }
       const row = await getRow(id);
       return row ? toApi(row) : "trial-used";
+    },
+
+    async transferPushToken({ id, token, patch }, guard) {
+      const now = Date.now();
+      const checked = guardIsActive(guard);
+      const [gHash, gEnf] = guardBinds(guard);
+      // Every statement below is conditional on the destination row passing the
+      // guard (when there is one), so a refused caller detaches nobody.
+      const dest = checked
+        ? ` AND EXISTS (SELECT 1 FROM devices d WHERE d.id = ?2 AND ${guardSql("d.token_hash", "?3", "?4")})`
+        : "";
+      const binds = checked ? [token, id, gHash, gEnf] : [token, id];
+      const legacyIds = "SELECT id FROM devices WHERE push_token = ?1 AND id <> ?2 AND id LIKE 'legacy:%'";
+      const stmts: D1Stmt[] = [
+        // A legacy row is only a push subscription: delete it whole.
+        db.prepare(`DELETE FROM presence WHERE device_id IN (${legacyIds})${dest}`).bind(...binds),
+        db.prepare(`DELETE FROM alert_log WHERE device_id IN (${legacyIds})${dest}`).bind(...binds),
+        db.prepare(`DELETE FROM coming_up_deliveries WHERE device_id IN (${legacyIds})${dest}`).bind(...binds),
+        db
+          .prepare(`DELETE FROM devices WHERE push_token = ?1 AND id <> ?2 AND id LIKE 'legacy:%'${dest}`)
+          .bind(...binds),
+        // A real device row keeps its record and just loses the token.
+        db
+          .prepare(
+            `UPDATE devices SET push_token = NULL, updated_at = MAX(COALESCE(updated_at, 0) + 1, ?${checked ? 5 : 3}) ` +
+              `WHERE push_token = ?1 AND id <> ?2${dest}`,
+          )
+          .bind(...binds, now),
+        // Attach to the destination (itself guarded inside UPSERT_DEVICE).
+        db.prepare(UPSERT_DEVICE).bind(...upsertBinds(id, { ...patch, pushToken: token } as Record<string, unknown>, now, guard)),
+      ];
+      const results = await runBatch(db, stmts);
+      if (checked && !results[results.length - 1]?.meta?.changes) throw new InstallGuardDenied();
+    },
+
+    async clearPushRegistration(token, guard) {
+      const now = Date.now();
+      const [gHash, gEnf] = guardBinds(guard);
+      const legacyIds = "SELECT id FROM devices WHERE push_token = ?1 AND id LIKE 'legacy:%'";
+      await runBatch(db, [
+        db.prepare(`DELETE FROM presence WHERE device_id IN (${legacyIds})`).bind(token),
+        db.prepare(`DELETE FROM alert_log WHERE device_id IN (${legacyIds})`).bind(token),
+        db.prepare(`DELETE FROM coming_up_deliveries WHERE device_id IN (${legacyIds})`).bind(token),
+        db.prepare("DELETE FROM devices WHERE push_token = ?1 AND id LIKE 'legacy:%'").bind(token),
+        // One conditional statement: the row found BY the push token is
+        // released only if it passes the guard.
+        db
+          .prepare(
+            "UPDATE devices SET push_token = NULL, updated_at = MAX(COALESCE(updated_at, 0) + 1, ?2) " +
+              `WHERE push_token = ?1 AND ${guardSql("token_hash", "?3", "?4")}`,
+          )
+          .bind(token, now, gHash, gEnf),
+      ]);
+    },
+
+    async claimInstallToken(id, tokenHash, proofPushToken, now) {
+      // ONE statement. A new id is created with the hash. An existing row is
+      // updated only if it already carries this same hash (an idempotent
+      // retry) or carries none AND either has no push token or the caller
+      // proved it by presenting that push token. D1 serializes writes, so of
+      // two different tokens racing for one row exactly one wins.
+      const res = await db
+        .prepare(
+          "INSERT INTO devices (id, plan, entitlement_until, trial_used, preview_seen, prefs_json, created_at, updated_at, token_hash, token_issued_at) " +
+            "VALUES (?1, 'free', NULL, 0, 0, NULL, ?2, ?2, ?3, ?2) " +
+            "ON CONFLICT(id) DO UPDATE SET " +
+            "token_hash = ?3, " +
+            "token_issued_at = COALESCE(devices.token_issued_at, ?2), " +
+            "updated_at = CASE WHEN devices.token_hash IS NULL THEN MAX(COALESCE(devices.updated_at, 0) + 1, ?2) ELSE devices.updated_at END " +
+            "WHERE devices.token_hash = ?3 OR (devices.token_hash IS NULL AND (devices.push_token IS NULL OR devices.push_token = ?4))",
+        )
+        .bind(id, now, tokenHash, proofPushToken)
+        .run();
+      return ((res as D1RunResult | undefined)?.meta?.changes ?? 0) > 0;
     },
 
     async clearPushToken(id, expectedToken) {
@@ -876,37 +986,70 @@ export function d1Store(db: D1Like): DeviceStore {
     // as `setPresence`/`clearPresence`'s own presence write — atomic, so a
     // caller can never observe the presence table changed but the owning
     // device row's revision NOT reflecting it (or vice versa).
-    async setPresence(deviceId, p: PresenceInput) {
+    async setPresence(deviceId, p: PresenceInput, guard) {
       const now = Date.now();
-      await runBatch(db, [
+      const upsertPresence =
+        "ON CONFLICT(device_id) DO UPDATE SET slug=excluded.slug, " +
+        "lat=excluded.lat, lon=excluded.lon, accuracy_m=excluded.accuracy_m, fix_at=excluded.fix_at, " +
+        "armed_until=excluded.armed_until, source=excluded.source, updated_at=excluded.updated_at";
+      if (!guardIsActive(guard)) {
+        await runBatch(db, [
+          db
+            .prepare(
+              "INSERT INTO presence (device_id, slug, lat, lon, accuracy_m, fix_at, armed_until, source, updated_at) " +
+                `VALUES (?,?,?,?,?,?,?,?,?) ${upsertPresence}`,
+            )
+            .bind(deviceId, p.slug, p.lat ?? null, p.lon ?? null, p.accuracyM ?? null, p.fixAt ?? null, p.armedUntil, p.source, now),
+          db.prepare("UPDATE devices SET updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?").bind(now, deviceId),
+        ]);
+        return;
+      }
+      // Guarded: both statements are conditional on the owning row passing the
+      // guard, in the same batch, so a refused caller writes nothing.
+      const [gHash, gEnf] = guardBinds(guard);
+      const results = await runBatch(db, [
         db
           .prepare(
             "INSERT INTO presence (device_id, slug, lat, lon, accuracy_m, fix_at, armed_until, source, updated_at) " +
-              "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET slug=excluded.slug, " +
-              "lat=excluded.lat, lon=excluded.lon, accuracy_m=excluded.accuracy_m, fix_at=excluded.fix_at, " +
-              "armed_until=excluded.armed_until, source=excluded.source, updated_at=excluded.updated_at",
+              "SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9 " +
+              `WHERE EXISTS (SELECT 1 FROM devices WHERE id = ?1 AND ${guardSql("token_hash", "?10", "?11")}) ${upsertPresence}`,
           )
-          .bind(
-            deviceId,
-            p.slug,
-            p.lat ?? null,
-            p.lon ?? null,
-            p.accuracyM ?? null,
-            p.fixAt ?? null,
-            p.armedUntil,
-            p.source,
-            now,
-          ),
-        db.prepare("UPDATE devices SET updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?").bind(now, deviceId),
+          .bind(deviceId, p.slug, p.lat ?? null, p.lon ?? null, p.accuracyM ?? null, p.fixAt ?? null, p.armedUntil, p.source, now, gHash, gEnf),
+        db
+          .prepare(
+            "UPDATE devices SET updated_at = MAX(COALESCE(updated_at, 0) + 1, ?1) " +
+              `WHERE id = ?2 AND ${guardSql("token_hash", "?3", "?4")}`,
+          )
+          .bind(now, deviceId, gHash, gEnf),
       ]);
+      if (!results[1]?.meta?.changes) throw new InstallGuardDenied();
     },
 
-    async clearPresence(deviceId) {
+    async clearPresence(deviceId, guard) {
       const now = Date.now();
-      await runBatch(db, [
-        db.prepare("DELETE FROM presence WHERE device_id = ?").bind(deviceId),
-        db.prepare("UPDATE devices SET updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?").bind(now, deviceId),
+      if (!guardIsActive(guard)) {
+        await runBatch(db, [
+          db.prepare("DELETE FROM presence WHERE device_id = ?").bind(deviceId),
+          db.prepare("UPDATE devices SET updated_at = MAX(COALESCE(updated_at, 0) + 1, ?) WHERE id = ?").bind(now, deviceId),
+        ]);
+        return;
+      }
+      const [gHash, gEnf] = guardBinds(guard);
+      const results = await runBatch(db, [
+        db
+          .prepare(
+            "DELETE FROM presence WHERE device_id = ?1 AND " +
+              `EXISTS (SELECT 1 FROM devices WHERE id = ?1 AND ${guardSql("token_hash", "?2", "?3")})`,
+          )
+          .bind(deviceId, gHash, gEnf),
+        db
+          .prepare(
+            "UPDATE devices SET updated_at = MAX(COALESCE(updated_at, 0) + 1, ?1) " +
+              `WHERE id = ?2 AND ${guardSql("token_hash", "?3", "?4")}`,
+          )
+          .bind(now, deviceId, gHash, gEnf),
       ]);
+      if (!results[1]?.meta?.changes) throw new InstallGuardDenied();
     },
 
     async getSent(deviceId) {

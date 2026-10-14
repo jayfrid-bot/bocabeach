@@ -8,7 +8,8 @@ import type { AlertPrefs, DeviceRecord, SunColorMinBand } from "@/lib/db/types";
 import type { ScoreProfile } from "@/lib/profile/types";
 import type { DaySummary, HistoryBestEver, HistoryRecords, HistoryVersions } from "@/lib/history/summary";
 import type { DayViewPayload } from "@/lib/history/dayView";
-import { readInstallToken, writeInstallToken } from "@/lib/plus/storage";
+import { readInstallToken } from "@/lib/plus/storage";
+import { claimBeforeWrite } from "@/lib/plus/installToken";
 
 export interface PlusResult {
   ok: boolean;
@@ -49,13 +50,12 @@ export interface PresenceBody {
   source: "auto" | "manual";
 }
 
-/** Every Plus call carries the install token (Codex review #1), when this
- *  phone has one. The server requires it for any change to a device row
- *  (`/api/devices`, `/api/presence`, trial, unlock, push registration) once
- *  the device has a hash on file, and for `/api/live-activity/*`,
- *  `/api/hazards` and `/api/history`. It is never logged. A phone with no token yet (never called
- *  POST /api/devices, or lost local storage) simply omits the header, same
- *  as before this existed. */
+/** Every Plus call carries the install token (Codex review #1) when this
+ *  phone has one. The phone makes the token itself (lib/plus/installToken.ts);
+ *  the server requires it for any change to a device row (`/api/devices`,
+ *  `/api/presence`, trial, unlock, push registration) and for
+ *  `/api/live-activity/*`, `/api/hazards` and `/api/history`. It is never
+ *  logged. With no saved token (storage refused it) the header is omitted. */
 function withInstallToken(init?: RequestInit): RequestInit | undefined {
   const token = readInstallToken();
   // No token → leave `init` exactly as the caller passed it (including
@@ -67,6 +67,9 @@ function withInstallToken(init?: RequestInit): RequestInit | undefined {
 }
 
 async function request(url: string, init?: RequestInit): Promise<PlusResult> {
+  // A write waits for the install-token claim (one at a time, shared by every
+  // caller) so it can never race it and be refused. Reads do not wait.
+  if ((init?.method ?? "GET").toUpperCase() !== "GET") await claimBeforeWrite();
   let res: Response;
   try {
     res = await fetch(url, withInstallToken(init));
@@ -84,11 +87,7 @@ async function request(url: string, init?: RequestInit): Promise<PlusResult> {
     device?: unknown;
     error?: unknown;
     pushReady?: unknown;
-    installToken?: unknown;
   };
-  // POST /api/devices mints this at most once per device — capture it the
-  // moment it arrives, whichever call site triggered the mint.
-  if (typeof obj.installToken === "string" && obj.installToken) writeInstallToken(obj.installToken);
   if (res.ok && obj.ok === true) {
     return {
       ok: true,

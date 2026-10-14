@@ -33,6 +33,8 @@ export const PLUS_KEYS = {
   liveActivity: "bd:live-activity",
   liveActivityDismissed: "bd:live-activity-dismissed",
   installToken: "bd:install-token",
+  installClaimed: "bd:install-claimed",
+  pendingUnregister: "bd:pending-unregister",
 } as const;
 
 function store(): Storage | null {
@@ -406,13 +408,19 @@ export function writeLiveActivityDismissal(dismissal: LiveActivityDismissal | nu
   else writeJson(PLUS_KEYS.liveActivityDismissed, dismissal);
 }
 
-// --- Install token (Codex review #1) ----------------------------------------
+// --- Install token (Codex review #1, push-token-auth) -----------------------
 //
-// Minted once by POST /api/devices and returned exactly once in that
-// response's `installToken` field. Stored here as a plain string (not JSON —
-// same reasoning as the boolean flags above: nothing to validate as a shape,
-// just "is there a non-empty string"), and sent by lib/plus/api.ts as the
-// `x-install-token` header on every Plus API call.
+// The PHONE makes this token (lib/plus/installToken.ts: 32 random bytes) and
+// saves it here BEFORE it ever sends it, so a lost response or a killed app can
+// never leave the server holding a token the phone never kept. Stored as a plain
+// string (not JSON: nothing to validate, just "is there a non-empty string"),
+// and sent by lib/plus/api.ts as the `x-install-token` header on every Plus API
+// call. A 401 never deletes it: the server has no way to issue a replacement,
+// and the right token may simply not have reached the row yet.
+//
+// `installClaimed` records that the server has confirmed it holds this token's
+// hash, so a phone that already did the claim skips the round trip; without it
+// the next write simply claims again (the claim is idempotent).
 
 export function readInstallToken(): string | null {
   const s = store();
@@ -425,13 +433,40 @@ export function readInstallToken(): string | null {
   }
 }
 
-export function writeInstallToken(token: string): void {
+/** Save the token and read it back. False when storage refuses (private mode,
+ *  quota, disabled): the caller must then NOT send a claim, because a token the
+ *  phone cannot keep is worse than none. */
+export function writeInstallToken(token: string): boolean {
   const s = store();
-  if (!s || !token) return;
+  if (!s || !token) return false;
   try {
     s.setItem(PLUS_KEYS.installToken, token);
+    return s.getItem(PLUS_KEYS.installToken) === token;
   } catch {
-    /* quota / private mode */
+    return false;
+  }
+}
+
+export function readInstallClaimed(): boolean {
+  const s = store();
+  if (!s) return false;
+  try {
+    return s.getItem(PLUS_KEYS.installClaimed) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function writeInstallClaimed(claimed: boolean): void {
+  if (claimed) {
+    const s = store();
+    try {
+      s?.setItem(PLUS_KEYS.installClaimed, "1");
+    } catch {
+      /* the next write just claims again */
+    }
+  } else {
+    remove(PLUS_KEYS.installClaimed);
   }
 }
 
@@ -441,4 +476,47 @@ export function writeInstallToken(token: string): void {
  *  on the very next call. */
 export function clearInstallToken(): void {
   remove(PLUS_KEYS.installToken);
+  remove(PLUS_KEYS.installClaimed);
+}
+
+// --- Push registration bookkeeping (lib/push/native.ts) ----------------------
+
+/** The push token this phone last registered, from the per-beach marker
+ *  `native-push:<slug>` that lib/push/native.ts writes. It is the proof the
+ *  server wants before it lets a phone claim a device row that already has a push
+ *  token but no install token yet. Null when none is stored. */
+export function readStoredPushToken(): string | null {
+  const s = store();
+  if (!s) return null;
+  try {
+    for (let i = 0; i < s.length; i++) {
+      const k = s.key(i);
+      if (k && k.startsWith("native-push:")) {
+        const v = s.getItem(k);
+        if (v) return v;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/** Push tokens whose unregister call did not reach the server yet. The phone
+ *  keeps showing alerts as on until one succeeds; the call is retried on the
+ *  next launch and the next time alerts are touched. */
+export function readPendingUnregister(): string[] {
+  const raw = readJson(PLUS_KEYS.pendingUnregister);
+  return Array.isArray(raw) ? raw.filter((t): t is string => typeof t === "string" && !!t) : [];
+}
+
+export function queuePendingUnregister(token: string): void {
+  const cur = readPendingUnregister();
+  if (!cur.includes(token)) writeJson(PLUS_KEYS.pendingUnregister, [...cur, token]);
+}
+
+export function clearPendingUnregister(token: string): void {
+  const next = readPendingUnregister().filter((t) => t !== token);
+  if (next.length) writeJson(PLUS_KEYS.pendingUnregister, next);
+  else remove(PLUS_KEYS.pendingUnregister);
 }

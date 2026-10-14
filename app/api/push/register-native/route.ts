@@ -12,23 +12,31 @@
 //
 // Auth (the install token). A deviceId is not a secret, so a call that names a
 // deviceId may only change that device's push target with the device's
-// `x-install-token` header (401 `no-token`, nothing written, otherwise).
-// A device row with no token on file yet may register once without one; that
-// call atomically claims a token for the row BEFORE any write and returns it as
-// `installToken` (once; the app stores it). Of two concurrent claimers exactly
-// one wins; the other gets 401 and writes nothing.
+// `x-install-token` header (401 `no-token`, nothing written, otherwise). The
+// phone makes the token itself and this route binds it, idempotently, in one
+// conditional statement; an existing row that already has a push token but no
+// install token yet is claimed only because THIS request carries that same push
+// token as proof (lib/db/installTokenAuth.ts `authorizeMinting`).
+//
+// Moving the push token onto this device (a reinstall gets a new deviceId but
+// keeps its APNs/FCM token, an old build's legacy row gets adopted) is ONE
+// atomic store step (`store.transferPushToken`): every other row lets go of the
+// token and this one takes it, or nothing changes. Holding the push token is
+// what allows the move; push tokens are high-entropy and only ever known to the
+// phone, APNs/FCM and our own database (docs/architecture.md, "Push-token
+// transfer").
+//
 // A call with no deviceId (old builds) only ever writes the "legacy:<token>"
-// row, which is derived from the push token itself; holding that token is its
-// proof, so it needs no install token.
-// TODO(native-build): once no pre-deviceId build is left in the field, drop the
-// legacy no-deviceId path.
+// row, derived from the push token itself, and needs no install token.
+// TODO(native-build): drop that legacy path once no pre-deviceId build is left.
 
 import { getLocation } from "@/config/locations";
-import { isDeviceId } from "@/lib/db/api";
-import { checkInstallToken, claimInstallToken } from "@/lib/db/installTokenAuth";
+import { isDeviceId, storeFailure } from "@/lib/db/api";
+import { authorizeMinting } from "@/lib/db/installTokenAuth";
 import { getD1 } from "@/lib/db/d1Store";
 import { attributeInstall, clientIp, fingerprint, fpSalt } from "@/lib/db/scanFunnel";
 import { isLegacyId, legacyDeviceId, prefsFromLegacy, getStore } from "@/lib/db/store";
+import { NO_GUARD } from "@/lib/db/installGuard";
 import type { SentState } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
@@ -69,74 +77,72 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "invalid device token" }, { status: 400 });
   }
 
-  const hasDeviceId = isDeviceId(body.deviceId);
+  // A supplied id shaped like a legacy one is not a real device id.
+  const hasDeviceId = isDeviceId(body.deviceId) && !isLegacyId(body.deviceId as string);
   const id = hasDeviceId ? (body.deviceId as string) : legacyDeviceId(token);
-
-  // Set only when THIS call claimed a fresh install token; returned to the app
-  // (also on a 500, so the claim can never strand the phone without it).
-  let installToken: string | undefined;
 
   try {
     const store = await getStore();
 
-    // Install token gate (see the header). Runs before any read or write that
-    // could change where this device's alerts go.
+    // Install token gate (see the header). Binds the token or refuses, before
+    // any read or write that could change where this device's alerts go. Its
+    // guard rides inside the write below.
+    let guard = NO_GUARD;
+    let minted: string | undefined;
     if (hasDeviceId) {
-      const auth = await checkInstallToken(store, id, req.headers.get("x-install-token"), Date.now());
-      if (auth === "denied") return Response.json({ ok: false, error: "no-token" }, { status: 401 });
-      if (auth === "unclaimed") {
-        installToken = (await claimInstallToken(store, id, Date.now())) ?? undefined;
-        // Another request claimed this row between our check and our claim.
-        if (!installToken) return Response.json({ ok: false, error: "no-token" }, { status: 401 });
-      }
+      const auth = await authorizeMinting(
+        store,
+        id,
+        req.headers.get("x-install-token"),
+        token, // the push token itself is the proof for a row that already has one
+        "/api/push/register-native",
+        Date.now(),
+      );
+      if (!auth.ok) return Response.json({ ok: false, error: "no-token" }, { status: 401 });
+      guard = auth.guard;
+      minted = auth.minted;
     }
 
-    // The row this token is already attached to, if any.
+    // The row this token is already attached to, if any (data only: its beach,
+    // prefs and dedup state follow the token to its new home).
     const existing = await store.findByPushToken(token);
 
     let priorSlug: string | null = null;
     let priorSent: SentState = {};
-
     if (existing) {
       priorSlug = existing.homeSlug;
       priorSent = await store.getSent(existing.id);
-      if (existing.id !== id) {
-        // The token is moving to a different row. Carry the prefs across, then
-        // make sure the old row can never be pushed to as well: a legacy row has
-        // nothing else on it, so drop it; a real device row keeps its Plus state
-        // and just loses the token.
-        await store.upsertDevice(id, { prefs: existing.prefs });
-        if (isLegacyId(existing.id)) await store.deleteDevice(existing.id);
-        else await store.upsertDevice(existing.id, { pushToken: null });
-      }
     }
 
     // Preserve dedup state when the same device re-registers for the SAME beach
     // (matches the pre-D1 behavior); a beach change starts clean.
     const sent = priorSlug === loc.slug ? priorSent : {};
 
-    // The two coarse switches the native client sends only seed a BRAND-NEW
-    // row. A device that already exists keeps its per-alert prefs (set through
-    // /api/devices) — otherwise every tap on "Alerts" would expand the coarse
-    // safety switch back into all-on and undo a single opt-out.
+    // Prefs. A token that moves from another row carries that row's prefs
+    // across. Otherwise the two coarse switches the native client sends only
+    // seed a BRAND-NEW row: a device that already exists keeps its per-alert
+    // prefs (set through /api/devices), or every tap on "Alerts" would expand
+    // the coarse safety switch back into all-on and undo a single opt-out.
     const current = await store.getDevice(id);
-    const seedPrefs = current
-      ? {}
-      : {
-          prefs: prefsFromLegacy({
+    const moved = !!existing && existing.id !== id;
+    const prefs = moved
+      ? existing!.prefs
+      : current
+        ? undefined
+        : prefsFromLegacy({
             morning: body.prefs?.morning !== false,
             safety: body.prefs?.safety !== false,
-          }),
-        };
+          });
 
-    await store.upsertDevice(id, {
-      platform,
-      pushToken: token,
-      tz: loc.timezone,
-      homeSlug: loc.slug,
-      ...seedPrefs,
-      sent,
-    });
+    // One atomic step: the token leaves every other row and lands on this one.
+    await store.transferPushToken(
+      {
+        id,
+        token,
+        patch: { platform, tz: loc.timezone, homeSlug: loc.slug, ...(prefs ? { prefs } : {}), sent },
+      },
+      guard,
+    );
 
     // Turning on alerts is often the FIRST thing a fresh install writes, so
     // this is the second place a sticker scan can be redeemed (the other is
@@ -151,8 +157,8 @@ export async function POST(req: Request): Promise<Response> {
     } catch {
       // never let the funnel cost someone their alerts
     }
-    return Response.json(installToken ? { ok: true, installToken } : { ok: true });
+    return Response.json(minted ? { ok: true, installToken: minted } : { ok: true });
   } catch (e) {
-    return Response.json({ error: String(e), ...(installToken ? { installToken } : {}) }, { status: 500 });
+    return storeFailure(e, "register-native: failed");
   }
 }

@@ -136,8 +136,8 @@ const DEV = "11111111-2222-4333-8444-555555555555";
 // every later call. This file tests push behaviour, not auth (that is
 // app/api/push/installTokenGate.test.ts), so both routes share one carrier.
 const tokenJar = new Map<string, string>();
-const registerCarrier = tokenCarrier(rawRegisterPost, tokenJar);
-const unregisterCarrier = tokenCarrier(rawUnregisterPost, tokenJar);
+const registerCarrier = tokenCarrier(rawRegisterPost, tokenJar, { clientMade: true });
+const unregisterCarrier = tokenCarrier(rawUnregisterPost, tokenJar, { clientMade: true });
 const registerPost = registerCarrier.call;
 const unregisterPost = unregisterCarrier.call;
 const FCM_TOKEN = "f".repeat(80);
@@ -561,6 +561,34 @@ describe("POST /api/push/run", () => {
     expect(body.errors).toBe(1);
     // The healthy device still got its summary.
     expect(ctl.fcmSends).toEqual([FCM_TOKEN]);
+  });
+
+  it("a failing legacy device is logged by a digest, never by an id that contains its push token", async () => {
+    // A legacy id is "legacy:" + base64url(push token): reversible, and a push
+    // token is a credential. The failure log must not carry either form.
+    await seedDevice();
+    await registerPost(
+      post("https://x/api/push/register-native", {
+        slug: "cocoa-beach",
+        token: FCM_TOKEN_2,
+        platform: "android",
+      }),
+    );
+    await grantPlus(legacyDeviceId(FCM_TOKEN_2));
+    ctl.throwForToken = FCM_TOKEN_2;
+    const spies = (["log", "info", "warn", "error"] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
+    try {
+      const res = await run("?force=morning");
+      expect(((await res.json()) as Record<string, number>).errors).toBe(1);
+      const logged = JSON.stringify(spies.flatMap((s) => s.mock.calls.map((c) => c.map(String))));
+      expect(logged).toContain("device failed");
+      expect(logged).toContain("legacy:");
+      expect(logged).not.toContain(FCM_TOKEN_2);
+      expect(logged).not.toContain(legacyDeviceId(FCM_TOKEN_2));
+      expect(logged).not.toContain(Buffer.from(FCM_TOKEN_2).toString("base64url"));
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it("reports at-beach alert counts, and sends none when nobody is armed", async () => {

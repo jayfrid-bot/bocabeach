@@ -1,44 +1,58 @@
-// The install-token check shared by every route that uses one:
-// /api/live-activity/register, /end, /api/hazards and /api/history (via
-// `requireInstallToken`), and every route that changes a device row —
-// /api/devices, /api/presence, trial, unlock, push register/unregister (via
-// `checkInstallToken` / `claimInstallToken`, below). One place, so the "mark it
-// used" side effect (round-2 #2 followup) can't drift between them.
+// The install-token checks.
+//
+//  - `requireInstallToken`: strict, for the read-style routes that always
+//    needed a token (/api/live-activity/register and /end, /api/hazards,
+//    /api/history). A row with no token on file gets `token-required`; the
+//    phone claims one (lib/plus/installToken.ts) and retries.
+//  - `authorizeMinting` and `guardForWrite`, below: for every route that
+//    CHANGES a device row (/api/devices, /api/presence, trial, unlock, push
+//    register/unregister). The guard rides inside the write itself.
 //
 // `token_used_at` (migrations/0008_device_tokens.sql) is kept as cheap
 // diagnostics — nothing in this file or elsewhere gates on it.
 //
 // THREAT MODEL:
-//  - deviceId is a 128-bit random value, minted client-side, never exposed
-//    publicly (not logged to a third party, not shown in any UI) — but it is
-//    NOT a secret in the cryptographic sense: it travels in every request
-//    body/URL, so anyone who observed one (a shared screen, a proxy log)
-//    could replay it. The install token is what actually authenticates.
-//  - The install token is minted exactly once, by the first POST
-//    /api/devices to see this deviceId with no `token_hash` on file
-//    (`setInstallTokenHash`'s exactly-once guard) — first minter wins, and
-//    it is returned to the caller exactly once, never re-readable server-
-//    side (only its hash is stored). It binds every later
-//    register/end/hazards call for that deviceId to whoever received that
-//    one response.
-//  - There is deliberately no server-side recovery path for a lost token.
-//    A device that had a token minted, used it, then lost it locally
-//    (cleared storage) is refused on every route that changes its row, push
-//    registration included, and the client says so in plain words. The
-//    device id lives in the same local storage as the token, so losing one
-//    normally loses both and the app starts over as a NEW device; a
-//    reinstall gets a new deviceId, and RevenueCat restore-purchases (keyed
-//    off the store account, not deviceId) carries the Plus entitlement back
-//    without needing the old token at all.
-//  - A row with no token on file (installed before this gate, or never
-//    called POST /api/devices) is not refused: the minting routes bind a
-//    token on its next call and the others let it through unchanged. Such a
-//    row stays open to whoever claims it first until its phone opens the app.
+//  - deviceId is a 128-bit random value, minted client-side. It is NOT a
+//    secret: the app shows it as the "Support ID", it travels in every request,
+//    and anyone who sees it can replay it. The install token is what
+//    authenticates.
+//  - The PHONE makes the install token (32 random bytes), saves it, and then
+//    sends it; the server stores only its sha256 hash and binds it with one
+//    idempotent conditional statement (`DeviceStore.claimInstallToken`). First
+//    token to reach a row wins; presenting the same token again always works,
+//    so a lost response, a killed app or a retry cannot lock the phone out.
+//    There is no server-made token any more, except for one case: while
+//    INSTALL_TOKEN_ENFORCE is off, an older WebView that sends no token is
+//    handed a server-made one once (so it keeps working until it reloads).
+//  - A row that already has a push token but no install token yet can be
+//    claimed only by a request that also presents that push token. A row with
+//    neither is first-claim: whoever claims it first owns it. That is the
+//    accepted residual risk for rows that were never active; it is low value
+//    (such a row has no push target to redirect).
+//  - There is deliberately no server-side recovery for a lost token. A phone
+//    that loses its saved token but keeps its device id is refused on every
+//    route that changes its row; the app says so in plain words. The device id
+//    and the token live in the same local storage, so losing one normally
+//    loses both and the app starts over as a new device; a reinstall gets a new
+//    deviceId, and RevenueCat restore-purchases (keyed off the store account,
+//    not deviceId) carries the Plus entitlement back.
+//  - The comparison inside a write is sha256(token) = stored sha256 in SQL.
+//    Hashes of attacker-chosen input leak nothing useful through timing; the
+//    JS-side comparisons (`installTokenMatches`, `guardAllows`) are constant
+//    time anyway.
 //  - Later: App Attest is the planned upgrade for device-bound auth (ties
-//    the token to Apple's hardware attestation instead of "whoever got the
-//    first response"), tracked in docs/BUILD_PLAN.md.
+//    the token to Apple's hardware attestation instead of "whoever got there
+//    first"), tracked in docs/BUILD_PLAN.md.
 
-import { hashInstallToken, installTokenMatches, mintInstallToken, type DeviceStore } from "@/lib/db/store";
+import { installTokenMatches, mintInstallToken, type DeviceStore } from "@/lib/db/store";
+import {
+  guardFromHeader,
+  hashOfToken,
+  installTokenEnforced,
+  NO_GUARD,
+  type InstallGuard,
+} from "@/lib/db/installGuard";
+
 
 export type InstallTokenCheck = "ok" | "token-required" | "no-token";
 
@@ -88,51 +102,82 @@ async function verifyAndMark(
 // --- Gate for routes that CHANGE a device row (push-token-auth) --------------
 //
 // Every route that writes a device row or anything keyed by a device id —
-// push register/unregister, device prefs/home beach, presence, trial, unlock
-// — goes through `checkInstallToken`, because the device id is not a secret
-// (it is the "Support ID") and, before this gate, knowing it was enough to
-// redirect or silence someone else's alerts.
+// push register/unregister, device prefs/home beach, presence, trial, unlock —
+// is guarded by the install token, because the device id is not a secret (it is
+// the "Support ID"). Two kinds of route:
 //
-//  - "ok":        the row has a token on file and the header matched.
-//  - "denied":    the row has a token on file and the header is missing or
-//                 wrong. The route answers 401 `no-token` and writes nothing.
-//  - "unclaimed": the row has NO token on file (a device that predates this
-//                 gate, or one that never called POST /api/devices). Routes
-//                 that can mint (`/api/devices`, `/api/push/register-native`)
-//                 call `claimInstallToken` to bind one; the rest let the
-//                 request through exactly as before. This is the migration
-//                 path for installs that were never issued a token; it closes
-//                 itself as each device claims one.
-export type DeviceMutationAuth = "ok" | "denied" | "unclaimed";
+//  MINTING routes (`/api/devices`, `/api/push/register-native`) can bind a
+//  token to a device. The CLIENT makes the token (32 random bytes), saves it on
+//  the phone, and only then sends it; `authorizeMinting` binds its hash with
+//  one idempotent conditional statement (`store.claimInstallToken`). Because a
+//  retry with the same token succeeds again, a lost response can never lock
+//  the phone out. The rules for which rows may be claimed are on
+//  `DeviceStore.claimInstallToken`.
+//
+//  Every other mutating route (trial, unlock, presence, unregister) never
+//  binds anything. It builds an `InstallGuard` from the header and passes it to
+//  the store write, which applies it inside the same statement. There is no
+//  separate read ("is this caller allowed?") before the write.
+//
+// INSTALL_TOKEN_ENFORCE (default off) stages the rollout. Off: a request with
+// no token still goes through as it did before this gate, but a token that IS
+// sent is checked, and claims still happen. On: no valid token, no write.
 
-export async function checkInstallToken(
+/** Count a request that arrived with no install token, so the owner can see
+ *  when it is safe to turn INSTALL_TOKEN_ENFORCE on. One line, the route name
+ *  and nothing else: no device id, no token, no address. */
+export function noteMissingToken(route: string): void {
+  console.log(JSON.stringify({ event: "install_token_missing", route, enforce: installTokenEnforced() }));
+}
+
+export type MintAuth = { ok: true; guard: InstallGuard; minted?: string } | { ok: false };
+
+/**
+ * For a route that can bind a token. `proofPushToken` is the push token the
+ * caller presents as proof it is the real phone (needed to claim an existing
+ * row that has a push token but no install token yet).
+ *
+ * Returns the guard to pass to the write that follows, plus `minted` only in
+ * the staged-rollout compatibility case below.
+ */
+export async function authorizeMinting(
   store: DeviceStore,
   deviceId: string,
   headerToken: string | null,
+  proofPushToken: string | null,
+  route: string,
   now: number,
-): Promise<DeviceMutationAuth> {
-  const tokenHash = await store.getInstallTokenHash(deviceId);
-  if (!tokenHash) return "unclaimed";
-  return (await verifyAndMark(store, deviceId, tokenHash, headerToken, now)) ? "ok" : "denied";
+): Promise<MintAuth> {
+  const enforce = installTokenEnforced();
+  if (headerToken) {
+    const hash = hashOfToken(headerToken);
+    if (await store.claimInstallToken(deviceId, hash, proofPushToken, now)) {
+      return { ok: true, guard: { hash, enforce } };
+    }
+    // Refused: the row carries a different token, or it carries none but has a
+    // push token the caller did not prove. A wrong token is refused always.
+    if (enforce) return { ok: false };
+    if (await store.getInstallTokenHash(deviceId)) return { ok: false };
+    // Not enforcing yet, and an unproven claim: carry on as before the gate.
+    return { ok: true, guard: NO_GUARD };
+  }
+
+  noteMissingToken(route);
+  if (enforce) return { ok: false };
+  // Not enforcing, no token sent: an already-open older WebView that expects
+  // the server to make the token. Bind one for it if the row allows, and hand
+  // it back once; otherwise carry on as before the gate.
+  const minted = mintInstallToken();
+  const hash = hashOfToken(minted);
+  if (await store.claimInstallToken(deviceId, hash, proofPushToken, now)) {
+    return { ok: true, guard: { hash, enforce: false }, minted };
+  }
+  return { ok: true, guard: NO_GUARD };
 }
 
-/**
- * Atomically bind a fresh install token to a token-less device row and return
- * the raw token (the caller must hand it to the client in the same response;
- * only its hash is stored). Creates the row first when it does not exist yet.
- * Returns null when another request claimed the row first — the single
- * `UPDATE ... WHERE token_hash IS NULL` in `setInstallTokenHash` decides, so
- * of any number of concurrent claimers exactly one wins. The loser must treat
- * the row as claimed by someone else (re-run `checkInstallToken`, which will
- * now say "denied" unless it holds the winner's token).
- */
-export async function claimInstallToken(
-  store: DeviceStore,
-  deviceId: string,
-  now: number,
-): Promise<string | null> {
-  if (!(await store.getDevice(deviceId))) await store.upsertDevice(deviceId, {});
-  const token = mintInstallToken();
-  const won = await store.setInstallTokenHash(deviceId, hashInstallToken(token), now);
-  return won ? token : null;
+/** For a route that never binds a token: the guard its write must carry. */
+export function guardForWrite(req: Request, route: string): InstallGuard {
+  const header = req.headers.get("x-install-token");
+  if (!header) noteMissingToken(route);
+  return guardFromHeader(header);
 }

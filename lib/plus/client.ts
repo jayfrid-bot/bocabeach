@@ -376,51 +376,17 @@ function baseFields(): { platform: "ios" | "android" | "web"; tz?: string } {
   return { platform: nativePlatform(), ...(tz ? { tz } : {}) };
 }
 
-// --- Install token bootstrap ------------------------------------------------
+// --- Install token claim ----------------------------------------------------
 //
-// Module-scope, not tied to any one hook instance, so every caller that needs
-// a token around the same moment — the mount effect below, Beach Mode's
-// start(), and useHazardsAtPoint's 401 retry further down — dedupes into the
-// SAME in-flight request instead of racing separate mints.
-//
-// Two outcomes:
-//  1. Already cached → returned immediately, no network call (unless the
-//     caller passes `forceRefresh: true` — see below).
-//  2. No hash minted yet at all (a genuinely fresh device) → the ordinary
-//     POST /api/devices upsert mints one on this, its first call ever.
-//
-// There is no server-side recovery for a device that already has a hash on
-// file but has lost its own copy (see lib/db/installTokenAuth.ts's THREAT
-// MODEL comment) — POST /api/devices simply answers with no token in that
-// case (the mint is exactly-once), and this resolves `{ token: null, ... }`.
-// Never throws; every caller treats a null token as "not available right
-// now", same as offline.
-//
-// `forceRefresh` (Codex round-3 fix): a caller that just got a `no-token`
-// 401 — meaning the server does NOT recognize whatever token this phone has
-// cached, whether that's stale, wrong, or simply gone server-side — must not
-// let outcome 1 above hand that same bad token straight back out on retry.
-// `forceRefresh: true` clears the cached token first, then always makes the
-// POST /api/devices round trip (bypassing both the cache check and the
-// session latch below) so the retry is a real question to the server, not a
-// replay of what just failed. If that round trip still doesn't produce a
-// token, this latches "no token available" for the rest of the session —
-// every later bootstrap call (forced or not) short-circuits to null instead
-// of re-hitting the server on every poll. Nothing about a `no-token` answer
-// changes moment to moment, so there is nothing to gain by asking again
-// before a reload or app relaunch creates a fresh module instance.
-let installTokenInFlight: Promise<{ token: string | null; device: DeviceRecord | null }> | null = null;
-let noTokenLatchedThisSession = false;
-// Codex round-4 #4: `forceRefresh` used to bypass every latch, so a
-// PERMANENTLY lost token (server never re-mints one) POSTed /api/devices on
-// every single forced retry — every hazards poll after a `no-token` 401,
-// forever, for the rest of the session. This latches after the FIRST forced
-// refresh this session, win or lose: later forced calls stop hitting the
-// server and just read back whatever that one attempt left cached (a token
-// if it worked, null if it didn't) — same "nothing changes moment to
-// moment without a reload" reasoning `noTokenLatchedThisSession` already
-// uses for the non-forced path.
-let tokenRefreshAttemptedThisSession = false;
+// The phone makes its own install token, saves it, and the server binds its
+// hash (lib/plus/installToken.ts has the whole story). `bootstrapInstallToken`
+// is that claim under its old name: it runs one at a time, is cheap once the
+// server has confirmed, and never deletes the saved token, not even on a 401.
+// `forceRefresh` asks once more this session after a refusal; it does not clear
+// anything. Every write the app makes already waits for the claim
+// (lib/plus/api.ts), so a queued write can no longer race it.
+export { claimInstallToken as bootstrapInstallToken, resetClaimState as resetInstallTokenLatch } from "@/lib/plus/installToken";
+import { claimInstallToken as bootstrapInstallToken } from "@/lib/plus/installToken";
 
 /**
  * Whether the mount effect below should mint an install token at all. The
@@ -433,52 +399,6 @@ let tokenRefreshAttemptedThisSession = false;
  */
 export function shouldBootstrapInstallTokenOnMount(): boolean {
   return isNativePlatform();
-}
-
-export async function bootstrapInstallToken(opts?: {
-  forceRefresh?: boolean;
-}): Promise<{ token: string | null; device: DeviceRecord | null }> {
-  const forceRefresh = opts?.forceRefresh === true;
-  if (forceRefresh) {
-    if (tokenRefreshAttemptedThisSession) {
-      return { token: store.readInstallToken(), device: null };
-    }
-    tokenRefreshAttemptedThisSession = true;
-    store.clearInstallToken();
-  } else {
-    const cached = store.readInstallToken();
-    if (cached) return { token: cached, device: null };
-    if (noTokenLatchedThisSession) return { token: null, device: null };
-  }
-  if (installTokenInFlight) return installTokenInFlight;
-
-  const run = (async (): Promise<{ token: string | null; device: DeviceRecord | null }> => {
-    const id = getDeviceId();
-    if (!id) return { token: null, device: null };
-    try {
-      const res = await plusApi.saveDevice(id, baseFields());
-      const minted = store.readInstallToken();
-      if (minted) return { token: minted, device: res.ok ? res.device : null };
-      noTokenLatchedThisSession = true;
-      return { token: null, device: res.ok ? res.device : null };
-    } catch {
-      return { token: null, device: null };
-    }
-  })();
-  installTokenInFlight = run;
-  try {
-    return await run;
-  } finally {
-    installTokenInFlight = null;
-  }
-}
-
-/** Test-only: clear the module-scope "no token available this session"
- *  latch between tests, mirroring lib/db/memoryStore.ts's `resetMemoryStore`
- *  and lib/plus/rateLimit.ts's `resetMemoryRateLimit`. */
-export function resetInstallTokenLatch(): void {
-  noTokenLatchedThisSession = false;
-  tokenRefreshAttemptedThisSession = false;
 }
 
 // Module-scope, not per-hook-instance (same reasoning as the install-token

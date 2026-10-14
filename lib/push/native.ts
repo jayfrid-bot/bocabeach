@@ -7,7 +7,12 @@ import { Capacitor } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
 import type { Token, RegistrationError, ActionPerformed } from "@capacitor/push-notifications";
 import { getDeviceId } from "@/lib/deviceId";
-import { readInstallToken, writeInstallToken } from "@/lib/plus/storage";
+import {
+  clearPendingUnregister,
+  queuePendingUnregister,
+  readInstallToken,
+  readPendingUnregister,
+} from "@/lib/plus/storage";
 
 /**
  * Resolve the runtime platform robustly. We load the live site inside the
@@ -185,27 +190,27 @@ async function registerForToken(): Promise<string> {
 }
 
 /**
- * This phone's install token (the proof that changes to its push target come
- * from it), minting one with POST /api/devices when none is cached yet. Goes
- * through `bootstrapInstallToken` so it shares one in-flight request with the
- * app's own start-up mint. Imported lazily: lib/plus/client.ts imports this
- * file, so a static import would be circular. Resolves null when no token can
- * be had; the caller then sends no header, which is right for a device the
- * server has never issued one to.
+ * Make sure the server holds this phone's install token before a push change
+ * goes out. The phone makes the token and saves it first; the claim is
+ * idempotent. Imported lazily because lib/plus/installToken.ts imports this
+ * file (a static import would be circular). Resolves null when the token could
+ * not be kept or claimed; the register call below then fails with a plain
+ * message rather than send something the server will refuse.
  */
-async function installTokenForPush(forceRefresh = false): Promise<string | null> {
+async function claimedInstallToken(): Promise<string | null> {
   try {
-    const { bootstrapInstallToken } = await import("@/lib/plus/client");
-    return (await bootstrapInstallToken(forceRefresh ? { forceRefresh: true } : undefined)).token;
+    const { claimInstallToken } = await import("@/lib/plus/installToken");
+    return (await claimInstallToken()).token;
   } catch {
-    return readInstallToken();
+    return null;
   }
 }
 
-/** POST a push-route body with the install token header, and keep any token
- *  the server hands back (the first register for a device claims one). */
-async function postPush(path: string, body: unknown, installToken: string | null): Promise<Response> {
-  const res = await fetch(path, {
+const NOT_YOUR_PHONE = "We could not confirm this is your phone. Close and reopen the app, then try again.";
+
+/** POST a push-route body with the install token header. */
+function postPush(path: string, body: unknown, installToken: string | null): Promise<Response> {
+  return fetch(path, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -213,15 +218,6 @@ async function postPush(path: string, body: unknown, installToken: string | null
     },
     body: JSON.stringify(body),
   });
-  // A token can ride on a success or on a 500 (the claim landed, the write
-  // did not) — either way this phone must keep it. Never logged.
-  try {
-    const minted = ((await res.clone().json()) as { installToken?: unknown } | null)?.installToken;
-    if (typeof minted === "string" && minted) writeInstallToken(minted);
-  } catch {
-    /* no JSON body */
-  }
-  return res;
 }
 
 /** Register this device for `slug` and persist the token server-side. */
@@ -240,26 +236,66 @@ export async function enableNative(
   const deviceId = getDeviceId();
   const body = { slug, token, platform, prefs, ...(deviceId ? { deviceId } : {}) };
   // The server only lets the phone that holds the device's install token
-  // change where its alerts go. Get the token first (mints one for a fresh
-  // device); with no deviceId there is no row to protect and no token to send.
-  let res = await postPush("/api/push/register-native", body, deviceId ? await installTokenForPush() : null);
-  if (res.status === 401 && deviceId) {
-    // The server does not know the token this phone sent. Ask once for a fresh
-    // one (the bootstrap clears the stale copy first) and try again.
-    res = await postPush("/api/push/register-native", body, await installTokenForPush(true));
-  }
-  if (res.status === 401) {
-    throw new Error("We could not confirm this is your phone. Close and reopen the app, then try again.");
-  }
+  // change where its alerts go. Claim it first (the claim waits for any claim
+  // already running); the register call itself also carries the token and the
+  // push token as proof, so it binds one on its own if the claim could not.
+  const installToken = deviceId ? await claimedInstallToken() : null;
+  const res = await postPush("/api/push/register-native", body, installToken ?? readInstallToken());
+  if (res.status === 401) throw new Error(NOT_YOUR_PHONE);
   if (!res.ok) throw new Error(`Couldn't save your registration (${res.status}).`);
   try {
     localStorage.setItem(tokenKey(slug), token);
   } catch {
     /* private mode */
   }
+  // A turn-off that never reached the server is not wanted any more.
+  clearPendingUnregister(token);
 }
 
-/** Drop this device's registration for `slug` (server + local). */
+/** Send one unregister. "ok": the server dropped it. "refused": it will keep
+ *  refusing (wrong token). "retry": the network or the server failed. */
+async function sendUnregister(token: string, deviceId: string): Promise<"ok" | "refused" | "retry"> {
+  try {
+    const res = await postPush(
+      "/api/push/unregister-native",
+      { token, ...(deviceId ? { deviceId } : {}) },
+      readInstallToken(),
+    );
+    if (res.ok) return "ok";
+    return res.status === 401 ? "refused" : "retry";
+  } catch {
+    return "retry";
+  }
+}
+
+/** Retry every turn-off that did not reach the server. Safe to call often;
+ *  call it on launch and whenever the alerts button is touched. */
+export async function flushPendingUnregister(): Promise<void> {
+  const deviceId = getDeviceId();
+  for (const token of readPendingUnregister()) {
+    const r = await sendUnregister(token, deviceId);
+    if (r === "ok") {
+      clearPendingUnregister(token);
+      // The per-beach "on" markers that held this token can go now.
+      try {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith("native-push:") && localStorage.getItem(k) === token) localStorage.removeItem(k);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+/**
+ * Drop this device's registration for `slug` (server + local). Alerts stay
+ * shown as ON until the server has confirmed: if the call does not get through
+ * (offline, server trouble) it is saved and retried, and this throws a plain
+ * message so the screen can say so. A 401 will not fix itself, so it is not
+ * retried; it throws too.
+ */
 export async function disableNative(slug: string): Promise<void> {
   let token = "";
   try {
@@ -268,20 +304,11 @@ export async function disableNative(slug: string): Promise<void> {
     /* ignore */
   }
   if (token) {
-    const deviceId = getDeviceId();
-    // No mint here: turning alerts off must not create a device record. A
-    // token this phone already holds is sent; with none, the server lets the
-    // call through only for a device it never issued one to.
-    const res = await postPush(
-      "/api/push/unregister-native",
-      { token, ...(deviceId ? { deviceId } : {}) },
-      readInstallToken(),
-    ).catch(() => null);
-    if (res && res.status === 401) {
-      // The server still has this device's alerts on, and this phone cannot
-      // prove it owns them. Keep the local "on" state so the switch does not
-      // lie, and say so.
-      throw new Error("Couldn't turn alerts off. Close and reopen the app, then try again.");
+    const result = await sendUnregister(token, getDeviceId());
+    if (result === "refused") throw new Error(NOT_YOUR_PHONE);
+    if (result === "retry") {
+      queuePendingUnregister(token);
+      throw new Error("Couldn't turn alerts off just yet. We will keep trying, and they stay on until it goes through.");
     }
   }
   try {

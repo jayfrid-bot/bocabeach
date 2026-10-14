@@ -1,7 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { disableNative, enableNative, isNativePlatform, nativeStatus } from "@/lib/push/native";
+import {
+  disableNative,
+  enableNative,
+  flushPendingUnregister,
+  isNativePlatform,
+  nativeStatus,
+} from "@/lib/push/native";
 
 type State = "init" | "hidden" | "off" | "on" | "denied" | "busy" | "error";
 
@@ -119,7 +125,12 @@ export function NotifyButton({
         // (a flaky bridge round-trip), the button must still appear. nativeStatus
         // then refines it to on/denied.
         setState((s) => (s === "on" || s === "denied" ? s : "off"));
-        nativeStatus(slug)
+        // First finish any turn-off that never reached the server, so the
+        // state shown below is the real one.
+        // (Capped at 3 s: a slow network must not hold the real state back.)
+        Promise.race([flushPendingUnregister(), new Promise<void>((r) => setTimeout(r, 3000))])
+          .catch(() => {})
+          .then(() => nativeStatus(slug))
           .then((s) => alive && setState(s))
           .catch(() => alive && setState("off"));
         return;

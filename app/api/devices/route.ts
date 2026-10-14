@@ -1,27 +1,26 @@
 // /api/devices — the Plus device record.
 //
-//   POST { deviceId, platform?, tz?, homeSlug?, profile?, prefs?, previewSeen? }
+//   POST { deviceId, platform?, tz?, homeSlug?, profile?, prefs?, previewSeen?,
+//          pushProof? }
 //        Upsert. Only the fields present in the body change; `prefs` merges over
-//        what is stored, so a client can flip one toggle. The FIRST call for a
-//        device (any device with no `token_hash` on file yet) also mints an
-//        install token and returns it as `installToken` — ONCE, never again.
-//        The web layer stores it (lib/plus/storage.ts `bd:install-token`) and
-//        sends it back as `x-install-token` on every Plus API call
-//        (lib/plus/api.ts); this route and the other device-changing routes
-//        require it once a device has a hash on file (see Auth below).
+//        what is stored, so a client can flip one toggle.
 //   GET  ?deviceId=…   Read.
 //
-// Auth: the deviceId is a client-minted UUID but NOT a secret (it is the
-// "Support ID"), so a POST for a device that already has a token on file needs
-// the matching `x-install-token` header (401 `no-token` otherwise, nothing
-// written). A device with no token on file yet may POST without one; that call
-// mints and binds the token. GET stays open (read-only).
+// Auth. The deviceId is a client-minted UUID but NOT a secret (it is the
+// "Support ID"). The phone makes its own install token, saves it, and sends it
+// as `x-install-token`; this route binds it to the device (idempotently, so a
+// retry or a lost response is harmless) and every write is guarded by it in the
+// same statement (lib/db/installTokenAuth.ts `authorizeMinting`). A device row
+// that already has a push token but no install token yet is claimed only if the
+// request also carries that push token as `pushProof`. GET stays open (read
+// only). With INSTALL_TOKEN_ENFORCE off, a request with no token still goes
+// through as before and an older WebView is handed a server-made token once.
 
 import { getLocation } from "@/config/locations";
-import { badRequest, fail, isDeviceId, okDevice, readBody } from "@/lib/db/api";
+import { badRequest, fail, isDeviceId, okDevice, readBody, storeFailure } from "@/lib/db/api";
 import { getD1 } from "@/lib/db/d1Store";
 import { attributeInstall, clientIp, fingerprint, fpSalt } from "@/lib/db/scanFunnel";
-import { checkInstallToken, claimInstallToken } from "@/lib/db/installTokenAuth";
+import { authorizeMinting } from "@/lib/db/installTokenAuth";
 import { getStore } from "@/lib/db/store";
 import {
   ALERT_KEYS,
@@ -131,13 +130,20 @@ export async function POST(req: Request): Promise<Response> {
   if (!body || !isDeviceId(body.deviceId)) return badRequest();
   const patch = patchFromBody(body);
   if (!patch) return badRequest();
+  const pushProof = typeof body.pushProof === "string" && body.pushProof.length <= 4096 ? body.pushProof : null;
   try {
     const store = await getStore();
-    // Install token gate: a row that already has a token on file only accepts
-    // writes from the phone that holds it. A row with none yet falls through
-    // and claims one below.
-    const auth = await checkInstallToken(store, body.deviceId, req.headers.get("x-install-token"), Date.now());
-    if (auth === "denied") return fail("no-token", 401);
+    // Install token: bind it (idempotent) or refuse. Everything below is
+    // guarded by the result, in the write itself.
+    const auth = await authorizeMinting(
+      store,
+      body.deviceId,
+      req.headers.get("x-install-token"),
+      pushProof,
+      "/api/devices",
+      Date.now(),
+    );
+    if (!auth.ok) return fail("no-token", 401);
 
     // A personal-score profile is a Plus feature (2026-09 billing audit, item
     // 9). Onboarding saves one profile BEFORE purchase for its one-time
@@ -151,30 +157,7 @@ export async function POST(req: Request): Promise<Response> {
       if (!allowed) return fail("not-entitled", 403);
     }
 
-    // Install token identity (Codex review #1): a device row with no
-    // token_hash yet gets one minted here (and in /api/push/register-native),
-    // and the raw token is returned in `installToken` exactly once, in this
-    // response, and never stored anywhere (only its sha256 hash is). The claim
-    // happens BEFORE the write and is one atomic conditional UPDATE, so of two
-    // first calls for the same id exactly one wins and the loser writes
-    // nothing. A device that already has a hash gets nothing extra.
-    let installToken: string | undefined;
-    if (auth === "unclaimed") {
-      installToken = (await claimInstallToken(store, body.deviceId, Date.now())) ?? undefined;
-      if (!installToken) return fail("no-token", 401);
-    }
-    let device;
-    try {
-      device = await store.upsertDevice(body.deviceId, patch);
-    } catch (e) {
-      console.error("devices: upsert failed", e);
-      // The claim already landed. Hand the token back anyway, or this phone
-      // would be locked out of its own row.
-      return Response.json(
-        { ok: false, error: "store-unavailable", ...(installToken ? { installToken } : {}) },
-        { status: 500 },
-      );
-    }
+    const device = await store.upsertDevice(body.deviceId, patch, auth.guard);
 
     // A brand-new native install may be the far end of a sticker scan. The SQL
     // behind this decides on its own whether this device qualifies (minutes
@@ -195,10 +178,9 @@ export async function POST(req: Request): Promise<Response> {
     } catch {
       // never let the funnel cost someone their device record
     }
-    return okDevice(device, installToken ? { installToken } : undefined);
+    return okDevice(device, auth.minted ? { installToken: auth.minted } : undefined);
   } catch (e) {
-    console.error("devices: upsert failed", e);
-    return fail("store-unavailable", 500);
+    return storeFailure(e, "devices: write failed");
   }
 }
 
@@ -211,7 +193,6 @@ export async function GET(req: Request): Promise<Response> {
     if (!device) return fail("not-found", 404);
     return okDevice(device);
   } catch (e) {
-    console.error("devices: read failed", e);
-    return fail("store-unavailable", 500);
+    return storeFailure(e, "devices: read failed");
   }
 }

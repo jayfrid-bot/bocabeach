@@ -1,7 +1,8 @@
 // The install-token gate on the push routes: /api/push/register-native and
 // /api/push/unregister-native. A device id is not a secret (it is the "Support
 // ID"), so knowing it must not be enough to redirect or switch off that phone's
-// alerts. Handlers are called directly; the memory store stands in for D1.
+// alerts. Handlers are called directly; the memory store stands in for D1 (the
+// real SQL is covered in lib/db/installTokenSql.test.ts).
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
@@ -20,186 +21,210 @@ vi.mock("@/lib/push/nativeStore", async (importActual) => {
 
 const { POST: registerPost } = await import("@/app/api/push/register-native/route");
 const { POST: unregisterPost } = await import("@/app/api/push/unregister-native/route");
-const { getStore, hashInstallToken, legacyDeviceId } = await import("@/lib/db/store");
+const { getStore, legacyDeviceId } = await import("@/lib/db/store");
+const { hashOfToken } = await import("@/lib/db/installGuard");
 const { resetMemoryStore } = await import("@/lib/db/memoryStore");
 
 const DEV = "11111111-2222-4333-8444-555555555555";
+const DEV2 = "99999999-2222-4333-8444-555555555555";
 const OWNER_PUSH = "a".repeat(80); // the phone's own FCM token
 const ATTACKER_PUSH = "b".repeat(80); // the token an attacker wants alerts sent to
-const OWNER_TOKEN = "owner-install-token-for-tests";
+const THIRD_PUSH = "c".repeat(80);
+const TOKEN = "owner-install-token-" + "q".repeat(30); // made by the phone
+const OTHER_TOKEN = "attacker-install-token-" + "r".repeat(30);
 
 function req(path: string, body: unknown, installToken?: string): Request {
   return new Request(`https://x/api/push/${path}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(installToken ? { "x-install-token": installToken } : {}),
-    },
+    headers: { "Content-Type": "application/json", ...(installToken ? { "x-install-token": installToken } : {}) },
     body: JSON.stringify(body),
   });
 }
-
 function register(over: Record<string, unknown> = {}, installToken?: string): Request {
-  return req(
-    "register-native",
-    { slug: "boca-raton", token: OWNER_PUSH, platform: "android", deviceId: DEV, ...over },
-    installToken,
-  );
+  return req("register-native", { slug: "boca-raton", token: OWNER_PUSH, platform: "android", deviceId: DEV, ...over }, installToken);
 }
+const unregister = (body: Record<string, unknown>, installToken?: string) => req("unregister-native", body, installToken);
 
-/** A device that already registered once and holds OWNER_TOKEN. */
-async function seedClaimedDevice(): Promise<void> {
-  const store = await getStore();
-  await store.upsertDevice(DEV, { platform: "android", pushToken: OWNER_PUSH, homeSlug: "boca-raton" });
-  await store.setInstallTokenHash(DEV, hashInstallToken(OWNER_TOKEN), Date.now());
-}
-
+const OLD = { ...process.env };
 beforeEach(() => {
   resetMemoryStore();
   ctl.removed = [];
+  process.env.INSTALL_TOKEN_ENFORCE = "on";
+  vi.spyOn(console, "log").mockImplementation(() => {});
 });
-
 afterEach(() => {
+  process.env = { ...OLD };
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
-describe("POST /api/push/register-native — install token", () => {
-  it("a device with no token on file registers once without one, and is handed a token", async () => {
-    const res = await registerPost(register());
+/** A phone that already claimed TOKEN and registered OWNER_PUSH. */
+async function claimedPhone(): Promise<void> {
+  const res = await registerPost(register({}, TOKEN));
+  expect(res.status).toBe(200);
+}
+
+describe("register-native with INSTALL_TOKEN_ENFORCE on", () => {
+  it("a new device id registers with a token it made, and the server stores only the hash", async () => {
+    const res = await registerPost(register({}, TOKEN));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; installToken?: string };
-    expect(body.ok).toBe(true);
-    expect(typeof body.installToken).toBe("string");
-
+    expect(await res.json()).toEqual({ ok: true }); // nothing to hand back: the phone already has it
     const store = await getStore();
     expect(await store.getPushToken(DEV)).toBe(OWNER_PUSH);
-    // Only the hash is stored.
-    expect(await store.getInstallTokenHash(DEV)).toBe(hashInstallToken(body.installToken!));
+    expect(await store.getInstallTokenHash(DEV)).toBe(hashOfToken(TOKEN));
   });
 
-  it("then refuses a second call with no token: the push target stays put", async () => {
-    await registerPost(register());
-    const res = await registerPost(register({ token: ATTACKER_PUSH }));
-    expect(res.status).toBe(401);
-    expect(((await res.json()) as { error: string }).error).toBe("no-token");
-
-    const store = await getStore();
-    expect(await store.getPushToken(DEV)).toBe(OWNER_PUSH);
+  it("a retry with the same token succeeds again (lost response never locks the phone out)", async () => {
+    await claimedPhone();
+    const again = await registerPost(register({ token: THIRD_PUSH }, TOKEN));
+    expect(again.status).toBe(200);
+    expect(await (await getStore()).getPushToken(DEV)).toBe(THIRD_PUSH);
   });
 
-  it("refuses a wrong token", async () => {
-    await seedClaimedDevice();
-    const res = await registerPost(register({ token: ATTACKER_PUSH }, "not-the-token"));
-    expect(res.status).toBe(401);
-    expect((await getStore().then((s) => s.getPushToken(DEV)))).toBe(OWNER_PUSH);
-  });
-
-  it("refuses a missing token for a row that has one on file", async () => {
-    await seedClaimedDevice();
+  it("refuses a call with no token, and the push target stays put", async () => {
+    await claimedPhone();
     const res = await registerPost(register({ token: ATTACKER_PUSH, slug: "cocoa-beach" }));
     expect(res.status).toBe(401);
+    expect(((await res.json()) as { error: string }).error).toBe("no-token");
     const store = await getStore();
     expect(await store.getPushToken(DEV)).toBe(OWNER_PUSH);
     expect((await store.getDevice(DEV))!.homeSlug).toBe("boca-raton");
   });
 
-  it("accepts the right token, changes the target, and mints nothing new", async () => {
-    await seedClaimedDevice();
-    const res = await registerPost(register({ token: "c".repeat(80) }, OWNER_TOKEN));
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
-    const store = await getStore();
-    expect(await store.getPushToken(DEV)).toBe("c".repeat(80));
-    expect(await store.getInstallTokenHash(DEV)).toBe(hashInstallToken(OWNER_TOKEN));
-  });
-
-  it("an attacker who knows only the device id cannot turn alerts off or move them", async () => {
-    await seedClaimedDevice();
-    // Different beach, different token, no proof.
-    const res = await registerPost(
-      register({ token: ATTACKER_PUSH, slug: "cocoa-beach", prefs: { morning: false, safety: false } }),
-    );
+  it("refuses a different token: an attacker who knows the id cannot move or silence alerts", async () => {
+    await claimedPhone();
+    const res = await registerPost(register({ token: ATTACKER_PUSH, prefs: { morning: false, safety: false } }, OTHER_TOKEN));
     expect(res.status).toBe(401);
     const store = await getStore();
     expect(await store.listPushable()).toHaveLength(1);
     expect((await store.listPushable())[0].token).toBe(OWNER_PUSH);
+    expect((await store.getDevice(DEV))!.prefs.morning).toBe(true);
   });
 
-  it("first claim is atomic: of two concurrent token-less registers exactly one wins", async () => {
+  it("two phones racing to claim a new id: exactly one wins and the loser writes nothing", async () => {
     const [a, b] = await Promise.all([
-      registerPost(register({ token: OWNER_PUSH })),
-      registerPost(register({ token: ATTACKER_PUSH })),
+      registerPost(register({ token: OWNER_PUSH }, TOKEN)),
+      registerPost(register({ token: ATTACKER_PUSH }, OTHER_TOKEN)),
     ]);
-    const statuses = [a.status, b.status].sort();
-    expect(statuses).toEqual([200, 401]);
-
-    const winner = a.status === 200 ? a : b;
+    expect([a.status, b.status].sort()).toEqual([200, 401]);
     const winnerPush = a.status === 200 ? OWNER_PUSH : ATTACKER_PUSH;
-    const body = (await winner.json()) as { installToken?: string };
-    expect(typeof body.installToken).toBe("string");
-
+    const winnerToken = a.status === 200 ? TOKEN : OTHER_TOKEN;
     const store = await getStore();
-    // The loser wrote nothing: the stored target is the winner's, and the one
-    // hash on file belongs to the winner's token.
     expect(await store.getPushToken(DEV)).toBe(winnerPush);
-    expect(await store.getInstallTokenHash(DEV)).toBe(hashInstallToken(body.installToken!));
+    expect(await store.getInstallTokenHash(DEV)).toBe(hashOfToken(winnerToken));
   });
 
-  it("returns the claimed token even when the write fails after the claim", async () => {
-    const store = await getStore();
-    const real = store.upsertDevice.bind(store);
-    vi.spyOn(store, "upsertDevice").mockImplementation(async (id, patch) => {
-      if (patch.pushToken) throw new Error("simulated D1 failure");
-      return real(id, patch);
+  describe("an existing row that has no install token yet (the unmigrated ones)", () => {
+    it("with a push token: claimed only when the request presents that same push token", async () => {
+      const store = await getStore();
+      await store.upsertDevice(DEV, { platform: "android", pushToken: OWNER_PUSH, homeSlug: "boca-raton" });
+      // Someone who only learned the id registers THEIR push token: refused.
+      const stolen = await registerPost(register({ token: ATTACKER_PUSH }, OTHER_TOKEN));
+      expect(stolen.status).toBe(401);
+      expect(await store.getPushToken(DEV)).toBe(OWNER_PUSH);
+      expect(await store.getInstallTokenHash(DEV)).toBeNull();
+      // The real phone presents its own push token: claimed.
+      const real = await registerPost(register({ token: OWNER_PUSH }, TOKEN));
+      expect(real.status).toBe(200);
+      expect(await store.getInstallTokenHash(DEV)).toBe(hashOfToken(TOKEN));
     });
-    const res = await registerPost(register());
-    expect(res.status).toBe(500);
-    const body = (await res.json()) as { installToken?: string };
-    // Without this the phone would be locked out of its own row.
-    expect(typeof body.installToken).toBe("string");
-    expect(await store.getInstallTokenHash(DEV)).toBe(hashInstallToken(body.installToken!));
+
+    it("with no push token: first claim wins (documented residual risk)", async () => {
+      const store = await getStore();
+      await store.upsertDevice(DEV, { tz: "America/New_York" });
+      const res = await registerPost(register({}, TOKEN));
+      expect(res.status).toBe(200);
+      expect(await store.getInstallTokenHash(DEV)).toBe(hashOfToken(TOKEN));
+    });
   });
 
-  it("an old build with no deviceId still registers (its row is keyed by the push token)", async () => {
-    const res = await registerPost(req("register-native", { slug: "boca-raton", token: OWNER_PUSH, platform: "android" }));
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
-    const store = await getStore();
-    expect(await store.getPushToken(legacyDeviceId(OWNER_PUSH))).toBe(OWNER_PUSH);
+  describe("moving a push token between rows (reinstall: new device id, same push token)", () => {
+    it("moves it in one step: the old row keeps its record and loses the token", async () => {
+      await claimedPhone();
+      const res = await registerPost(register({ deviceId: DEV2, token: OWNER_PUSH }, OTHER_TOKEN));
+      expect(res.status).toBe(200);
+      const store = await getStore();
+      expect(await store.getPushToken(DEV2)).toBe(OWNER_PUSH);
+      expect(await store.getPushToken(DEV)).toBeNull();
+      expect(await store.getDevice(DEV)).toBeTruthy();
+      expect((await store.listPushable()).map((p) => p.device.id)).toEqual([DEV2]);
+    });
+
+    it("a refused caller detaches nobody", async () => {
+      await claimedPhone();
+      // DEV2 is claimed by someone else; a call without its token cannot pull DEV's token over.
+      const store = await getStore();
+      await store.claimInstallToken(DEV2, hashOfToken(OTHER_TOKEN), null, Date.now());
+      const res = await registerPost(register({ deviceId: DEV2, token: OWNER_PUSH }, "wrong"));
+      expect(res.status).toBe(401);
+      expect(await store.getPushToken(DEV)).toBe(OWNER_PUSH);
+    });
+
+    it("a store failure during the move leaves the old holder in place", async () => {
+      await claimedPhone();
+      const store = await getStore();
+      vi.spyOn(store, "transferPushToken").mockRejectedValue(new Error("simulated D1 failure"));
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const res = await registerPost(register({ deviceId: DEV2, token: OWNER_PUSH }, OTHER_TOKEN));
+      expect(res.status).toBe(500);
+      expect(await store.getPushToken(DEV)).toBe(OWNER_PUSH);
+    });
   });
 
-  it("a reinstall (new device id, same push token) still moves the token over", async () => {
-    await seedClaimedDevice();
-    const NEW = "99999999-2222-4333-8444-555555555555";
-    const res = await registerPost(register({ deviceId: NEW, token: OWNER_PUSH }));
-    expect(res.status).toBe(200);
-    const store = await getStore();
-    expect(await store.getPushToken(NEW)).toBe(OWNER_PUSH);
-    expect(await store.getPushToken(DEV)).toBeNull();
+  describe("old builds that send no deviceId (the legacy path)", () => {
+    it("still registers, with no install token", async () => {
+      const res = await registerPost(req("register-native", { slug: "boca-raton", token: OWNER_PUSH, platform: "android" }));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+      expect(await (await getStore()).getPushToken(legacyDeviceId(OWNER_PUSH))).toBe(OWNER_PUSH);
+    });
+
+    it("adopting a legacy row onto a real device id is the same atomic move", async () => {
+      await registerPost(req("register-native", { slug: "boca-raton", token: OWNER_PUSH, platform: "android" }));
+      const res = await registerPost(register({}, TOKEN));
+      expect(res.status).toBe(200);
+      const store = await getStore();
+      expect(await store.getDevice(legacyDeviceId(OWNER_PUSH))).toBeNull();
+      expect(await store.getPushToken(DEV)).toBe(OWNER_PUSH);
+      expect(await store.listDevices()).toHaveLength(1);
+    });
+
+    it("a legacy call that takes a real row's push token uses the atomic move too", async () => {
+      await claimedPhone();
+      await registerPost(req("register-native", { slug: "boca-raton", token: OWNER_PUSH, platform: "android" }));
+      const store = await getStore();
+      expect(await store.getPushToken(DEV)).toBeNull();
+      expect(await store.getPushToken(legacyDeviceId(OWNER_PUSH))).toBe(OWNER_PUSH);
+      expect((await store.listPushable())).toHaveLength(1);
+    });
+
+    it("a deviceId shaped like a legacy id is not treated as a real one", async () => {
+      const res = await registerPost(register({ deviceId: `legacy:${"A".repeat(20)}` }));
+      expect(res.status).toBe(200); // falls back to the legacy path, needs no token
+      expect(await (await getStore()).getDevice(`legacy:${"A".repeat(20)}`)).toBeNull();
+    });
   });
 });
 
-describe("POST /api/push/unregister-native — install token", () => {
-  it("refuses a call without the row's token and leaves the push target alone", async () => {
-    await seedClaimedDevice();
-    const res = await unregisterPost(req("unregister-native", { token: OWNER_PUSH, deviceId: DEV }));
+describe("unregister-native with INSTALL_TOKEN_ENFORCE on", () => {
+  it("refuses a call without the row's token and changes nothing", async () => {
+    await claimedPhone();
+    const res = await unregisterPost(unregister({ token: OWNER_PUSH, deviceId: DEV }));
     expect(res.status).toBe(401);
-    expect(((await res.json()) as { error: string }).error).toBe("no-token");
-    const store = await getStore();
-    expect(await store.getPushToken(DEV)).toBe(OWNER_PUSH);
-    expect(ctl.removed).toHaveLength(0); // the legacy KV copy is not touched either
+    expect(await (await getStore()).getPushToken(DEV)).toBe(OWNER_PUSH);
+    expect(ctl.removed).toHaveLength(0);
   });
 
-  it("refuses a wrong token", async () => {
-    await seedClaimedDevice();
-    const res = await unregisterPost(req("unregister-native", { token: OWNER_PUSH, deviceId: DEV }, "nope"));
-    expect(res.status).toBe(401);
+  it("refuses a wrong token, and ignores a made-up deviceId in the body", async () => {
+    await claimedPhone();
+    expect((await unregisterPost(unregister({ token: OWNER_PUSH, deviceId: DEV }, OTHER_TOKEN))).status).toBe(401);
+    expect((await unregisterPost(unregister({ token: OWNER_PUSH, deviceId: DEV2 }, OTHER_TOKEN))).status).toBe(401);
     expect(await (await getStore()).getPushToken(DEV)).toBe(OWNER_PUSH);
   });
 
-  it("accepts the right token and stops pushing, keeping the device record", async () => {
-    await seedClaimedDevice();
-    const res = await unregisterPost(req("unregister-native", { token: OWNER_PUSH, deviceId: DEV }, OWNER_TOKEN));
+  it("accepts the right token, stops pushing, keeps the device record", async () => {
+    await claimedPhone();
+    const res = await unregisterPost(unregister({ token: OWNER_PUSH }, TOKEN));
     expect(res.status).toBe(200);
     const store = await getStore();
     expect(await store.getPushToken(DEV)).toBeNull();
@@ -207,49 +232,102 @@ describe("POST /api/push/unregister-native — install token", () => {
     expect(ctl.removed).toContain(OWNER_PUSH);
   });
 
-  it("the check follows the row found by push token, not the deviceId in the body", async () => {
-    await seedClaimedDevice();
-    // Attacker names a made-up id but knows the push token: still needs the row's token.
-    const res = await unregisterPost(
-      req("unregister-native", { token: OWNER_PUSH, deviceId: "00000000-2222-4333-8444-555555555555" }),
-    );
-    expect(res.status).toBe(401);
-    expect(await (await getStore()).getPushToken(DEV)).toBe(OWNER_PUSH);
-  });
-
-  it("lets through a real row that has no token on file yet (not yet migrated)", async () => {
+  it("a real row with no install token yet is refused too (the phone claims first, then retries)", async () => {
     const store = await getStore();
-    await store.upsertDevice(DEV, { platform: "android", pushToken: OWNER_PUSH, homeSlug: "boca-raton" });
-    const res = await unregisterPost(req("unregister-native", { token: OWNER_PUSH }));
-    expect(res.status).toBe(200);
-    expect(await store.getPushToken(DEV)).toBeNull();
+    await store.upsertDevice(DEV, { platform: "android", pushToken: OWNER_PUSH });
+    const res = await unregisterPost(unregister({ token: OWNER_PUSH }, TOKEN));
+    expect(res.status).toBe(401);
+    expect(await store.getPushToken(DEV)).toBe(OWNER_PUSH);
   });
 
-  it("lets through a legacy row (no deviceId): the push token is its proof", async () => {
+  it("a legacy row goes on possession of its push token", async () => {
     await registerPost(req("register-native", { slug: "boca-raton", token: OWNER_PUSH, platform: "android" }));
-    const res = await unregisterPost(req("unregister-native", { token: OWNER_PUSH }));
+    const res = await unregisterPost(unregister({ token: OWNER_PUSH }));
     expect(res.status).toBe(200);
     expect(await (await getStore()).listDevices()).toHaveLength(0);
   });
 });
 
-describe("install token values never reach the logs", () => {
-  it("no console call carries a raw token, a hash, or a push token", async () => {
-    const spies = (["log", "info", "warn", "error", "debug"] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
+describe("INSTALL_TOKEN_ENFORCE off (the staged rollout)", () => {
+  beforeEach(() => {
+    delete process.env.INSTALL_TOKEN_ENFORCE;
+  });
 
-    const first = await registerPost(register());
-    const minted = ((await first.json()) as { installToken: string }).installToken;
-    await registerPost(register({ token: ATTACKER_PUSH })); // 401
-    await registerPost(register({ token: ATTACKER_PUSH }, "wrong-token")); // 401
-    await registerPost(register({ token: "c".repeat(80) }, minted)); // 200
-    await unregisterPost(req("unregister-native", { token: "c".repeat(80), deviceId: DEV })); // 401
-    // And a 500 after a claim.
+  it("a request with no token goes through as before, and is counted (route name only)", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    await claimedPhoneNoEnforce();
+    const res = await registerPost(register({ token: THIRD_PUSH }));
+    expect(res.status).toBe(200);
+    expect(await (await getStore()).getPushToken(DEV)).toBe(THIRD_PUSH);
+    const lines = log.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("install_token_missing"));
+    expect(lines.length).toBeGreaterThan(0);
+    expect(JSON.parse(lines[0])).toEqual({ event: "install_token_missing", route: "/api/push/register-native", enforce: false });
+    const all = JSON.stringify(log.mock.calls);
+    expect(all).not.toContain(DEV);
+    expect(all).not.toContain(OWNER_PUSH);
+  });
+
+  it("a token that IS sent is still checked: a wrong one is refused", async () => {
+    await claimedPhoneNoEnforce();
+    const res = await registerPost(register({ token: ATTACKER_PUSH }, OTHER_TOKEN));
+    expect(res.status).toBe(401);
+    expect(await (await getStore()).getPushToken(DEV)).toBe(OWNER_PUSH);
+  });
+
+  it("claims still happen: a right token is bound and works", async () => {
+    const res = await registerPost(register({}, TOKEN));
+    expect(res.status).toBe(200);
+    expect(await (await getStore()).getInstallTokenHash(DEV)).toBe(hashOfToken(TOKEN));
+  });
+
+  it("an older WebView that sends no token is handed a server-made one once, which then works", async () => {
+    const res = await registerPost(register());
+    const body = (await res.json()) as { ok: boolean; installToken?: string };
+    expect(typeof body.installToken).toBe("string");
     const store = await getStore();
-    vi.spyOn(store, "upsertDevice").mockRejectedValue(new Error("simulated D1 failure"));
-    await registerPost(register({ deviceId: "88888888-2222-4333-8444-555555555555" }));
+    expect(await store.getInstallTokenHash(DEV)).toBe(hashOfToken(body.installToken!));
+    expect((await registerPost(register({ token: THIRD_PUSH }, body.installToken))).status).toBe(200);
+    expect((await registerPost(register({ token: ATTACKER_PUSH }, "wrong"))).status).toBe(401);
+  });
+
+  it("unregister: no token passes, a wrong token does not", async () => {
+    await claimedPhoneNoEnforce();
+    expect((await unregisterPost(unregister({ token: OWNER_PUSH }, "wrong"))).status).toBe(401);
+    expect((await unregisterPost(unregister({ token: OWNER_PUSH }))).status).toBe(200);
+  });
+
+  async function claimedPhoneNoEnforce() {
+    const res = await registerPost(register({}, TOKEN));
+    expect(res.status).toBe(200);
+  }
+});
+
+describe("fail closed without a database", () => {
+  it("in production a missing D1 binding is a 503, not an empty memory store", async () => {
+    vi.stubEnv("VITEST", "");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const reg = await registerPost(register({}, TOKEN));
+    expect(reg.status).toBe(503);
+    const unreg = await unregisterPost(unregister({ token: OWNER_PUSH }, TOKEN));
+    expect(unreg.status).toBe(503);
+  });
+});
+
+describe("secrets never reach the logs or the error bodies", () => {
+  it("no console call carries an install token, its hash, or a push token", async () => {
+    const spies = (["log", "info", "warn", "error", "debug"] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
+    await registerPost(register({}, TOKEN));
+    await registerPost(register({ token: ATTACKER_PUSH }, OTHER_TOKEN)); // 401
+    await registerPost(register({ token: ATTACKER_PUSH })); // 401, no token
+    await unregisterPost(unregister({ token: OWNER_PUSH }, OTHER_TOKEN)); // 401
+    const store = await getStore();
+    vi.spyOn(store, "transferPushToken").mockRejectedValue(new Error("boom"));
+    const failed = await registerPost(register({ deviceId: DEV2 }, OTHER_TOKEN));
+    expect(await failed.text()).not.toContain("boom"); // generic message, not the backend error
 
     const logged = JSON.stringify(spies.flatMap((s) => s.mock.calls.map((c) => c.map(String))));
-    for (const secret of [minted, hashInstallToken(minted), OWNER_PUSH, ATTACKER_PUSH, "c".repeat(80), "wrong-token"]) {
+    for (const secret of [TOKEN, OTHER_TOKEN, hashOfToken(TOKEN), hashOfToken(OTHER_TOKEN), OWNER_PUSH, ATTACKER_PUSH]) {
       expect(logged).not.toContain(secret);
     }
   });

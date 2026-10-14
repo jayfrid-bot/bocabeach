@@ -13,18 +13,20 @@
 // the one everyone else still uses. Every candidate is still compared with a
 // constant-time equal.
 //
-// Once the device has an install token on file, the call must carry it in
-// `x-install-token` (401 `no-token`); it is checked after the code, so a wrong
-// code still answers `bad-code` first. A device with no token on file yet is
-// let through, as before.
+// The call must carry the device's `x-install-token` (401 `no-token`). The check
+// is part of the write itself (store.upsertDevice's guard) and runs after the
+// code, so a wrong code still answers `bad-code` first. A device the server has
+// no token for yet gets 401; the app binds one through /api/devices and retries.
+// (While INSTALL_TOKEN_ENFORCE is off, a request with no token is let through
+// as before.)
 //
 // Rate limited: a code is a short shared secret, so a guesser could otherwise
 // brute-force it. Each request is checked against two KV counters — one keyed
 // by IP, one by deviceId — capped at 5 attempts per hour; past that it answers
 // 429 with Retry-After instead of running the compare at all.
 
-import { badRequest, fail, isDeviceId, okDevice, readBody, secretEqual } from "@/lib/db/api";
-import { checkInstallToken } from "@/lib/db/installTokenAuth";
+import { badRequest, fail, isDeviceId, okDevice, readBody, secretEqual, storeFailure } from "@/lib/db/api";
+import { guardForWrite } from "@/lib/db/installTokenAuth";
 import { getStore } from "@/lib/db/store";
 import { UNLOCK_DAYS } from "@/lib/db/plus";
 import { isNativeRequest } from "@/lib/nativeRequest";
@@ -72,12 +74,11 @@ export async function POST(req: Request): Promise<Response> {
 
   try {
     const store = await getStore();
-    const auth = await checkInstallToken(store, deviceId, req.headers.get("x-install-token"), Date.now());
-    if (auth === "denied") return fail("no-token", 401);
     const until = Date.now() + UNLOCK_DAYS * 24 * 3600 * 1000;
-    return okDevice(await store.upsertDevice(deviceId, { codeUntil: until }));
+    return okDevice(
+      await store.upsertDevice(deviceId, { codeUntil: until }, guardForWrite(req, "/api/devices/unlock")),
+    );
   } catch (e) {
-    console.error("devices/unlock: failed", e);
-    return fail("store-unavailable", 500);
+    return storeFailure(e, "devices/unlock: failed");
   }
 }

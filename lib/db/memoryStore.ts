@@ -24,8 +24,9 @@ import type {
   SentState,
 } from "@/lib/db/types";
 import { applyPatch, entitled, newDeviceRow, parseSent, toRecord } from "@/lib/db/types";
-import { legacyDeviceId, legacyPatch } from "@/lib/db/legacy";
+import { isLegacyId, legacyDeviceId, legacyPatch } from "@/lib/db/legacy";
 import type { DeviceStore } from "@/lib/db/store";
+import { guardAllows, guardIsActive, InstallGuardDenied, type InstallGuard } from "@/lib/db/installGuard";
 import { ABANDONED_CLAIM_MS, CLAIM_RETENTION_MS } from "@/lib/db/sendClaims";
 import {
   ABANDONED_CLAIM_MS as COMING_UP_ABANDONED_CLAIM_MS,
@@ -203,6 +204,31 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
 
   const record = (row: DeviceRow): DeviceRecord => toRecord(row, presence.get(row.id) ?? null);
 
+  // The JS twin of d1Store's `guardSql`: an active guard needs the row to
+  // exist and pass. Always called with no `await` between it and the write it
+  // protects, so check and write are one step (Node is single-threaded).
+  const guardRefuses = (id: string, guard: InstallGuard | undefined): boolean =>
+    guardIsActive(guard) && !(devices.has(id) && guardAllows(devices.get(id)?.token_hash, guard));
+
+  // migrations/0019: at most one row holds a push token.
+  const assertTokenFree = (id: string, token: string | null | undefined): void => {
+    if (!token) return;
+    for (const r of devices.values()) {
+      if (r.id !== id && r.push_token === token) throw new Error("UNIQUE constraint failed: devices.push_token");
+    }
+  };
+
+  const dropDeviceData = (id: string): void => {
+    devices.delete(id);
+    presence.delete(id);
+    for (const k of [...alerts.keys()]) {
+      if (alerts.get(k)?.device_id === id) alerts.delete(k);
+    }
+    for (const k of [...comingUpDeliveries.keys()]) {
+      if (comingUpDeliveries.get(k)?.deviceId === id) comingUpDeliveries.delete(k);
+    }
+  };
+
   // Round-6: bumps the OWNING device row's `updated_at` for a write that
   // changes what a `DeviceRecord` carries (its `presence` field) without
   // touching any column ON `devices` itself — mirrors d1Store's own
@@ -224,13 +250,22 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       return row ? record(row) : null;
     },
 
-    async upsertDevice(id, patch) {
+    async upsertDevice(id, patch, guard) {
       await load();
       const now = Date.now();
       // No `await` between this read and the `devices.set` below — that gap
       // is exactly what let a concurrent D1 write clobber another one (#3).
       // Node is single-threaded and nothing here yields in between, so this
       // read-modify-write is already atomic with respect to any other call.
+      // The install-token guard rides in the same step. Unlike the other
+      // guarded writes, a row that does not exist yet may be created when the
+      // guard is not enforcing (d1Store: the INSERT branch is open when
+      // enforce is off).
+      if (guard && guardIsActive(guard)) {
+        const existing = devices.get(id);
+        if (existing ? !guardAllows(existing.token_hash, guard) : guard.enforce) throw new InstallGuardDenied();
+      }
+      assertTokenFree(id, patch.pushToken);
       const base = devices.get(id) ?? newDeviceRow(id, now);
       const next = applyPatch(base, patch, now);
       devices.set(id, next);
@@ -238,9 +273,13 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       return record(next);
     },
 
-    async claimTrial(id, until) {
+    async claimTrial(id, until, guard) {
       await load();
       const now = Date.now();
+      if (guard && guardIsActive(guard)) {
+        const existing = devices.get(id);
+        if (existing ? !guardAllows(existing.token_hash, guard) : guard.enforce) throw new InstallGuardDenied();
+      }
       const base = devices.get(id) ?? newDeviceRow(id, now);
       // Same no-await-in-between guarantee as upsertDevice: whichever of two
       // concurrent claims runs first sees trial_used still 0 and wins; the
@@ -312,15 +351,59 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
 
     async deleteDevice(id) {
       await load();
-      devices.delete(id);
-      presence.delete(id);
-      for (const k of [...alerts.keys()]) {
-        if (alerts.get(k)?.device_id === id) alerts.delete(k);
+      dropDeviceData(id);
+      await save();
+    },
+
+    async transferPushToken({ id, token, patch }, guard) {
+      await load();
+      // One synchronous block: check the guard, let go of every other holder,
+      // attach to `id`. Nothing can interleave, and a refusal (or a throw)
+      // happens before any row is touched.
+      if (guardRefuses(id, guard)) throw new InstallGuardDenied();
+      const now = Date.now();
+      for (const r of [...devices.values()]) {
+        if (r.id === id || r.push_token !== token) continue;
+        if (isLegacyId(r.id)) dropDeviceData(r.id);
+        else devices.set(r.id, applyPatch(r, { pushToken: null }, now));
       }
-      for (const k of [...comingUpDeliveries.keys()]) {
-        if (comingUpDeliveries.get(k)?.deviceId === id) comingUpDeliveries.delete(k);
+      const base = devices.get(id) ?? newDeviceRow(id, now);
+      devices.set(id, applyPatch(base, { ...patch, pushToken: token }, now));
+      await save();
+    },
+
+    async clearPushRegistration(token, guard) {
+      await load();
+      const now = Date.now();
+      for (const r of [...devices.values()]) {
+        if (r.push_token !== token) continue;
+        if (isLegacyId(r.id)) {
+          dropDeviceData(r.id); // possession of the push token is its proof
+        } else if (guardAllows(r.token_hash, guard)) {
+          devices.set(r.id, applyPatch(r, { pushToken: null }, now));
+        }
       }
       await save();
+    },
+
+    async claimInstallToken(id, tokenHash, proofPushToken, now) {
+      await load();
+      const row = devices.get(id);
+      if (!row) {
+        devices.set(id, { ...newDeviceRow(id, now), token_hash: tokenHash, token_issued_at: now });
+        await save();
+        return true;
+      }
+      if (row.token_hash) return row.token_hash === tokenHash;
+      if (row.push_token && row.push_token !== proofPushToken) return false;
+      devices.set(id, {
+        ...row,
+        token_hash: tokenHash,
+        token_issued_at: now,
+        updated_at: Math.max((row.updated_at ?? 0) + 1, now),
+      });
+      await save();
+      return true;
     },
 
     async listDevices() {
@@ -351,9 +434,10 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       return out;
     },
 
-    async setPresence(deviceId, p: PresenceInput) {
+    async setPresence(deviceId, p: PresenceInput, guard) {
       await load();
       const now = Date.now();
+      if (guardRefuses(deviceId, guard)) throw new InstallGuardDenied();
       presence.set(deviceId, {
         device_id: deviceId,
         slug: p.slug,
@@ -369,8 +453,9 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       await save();
     },
 
-    async clearPresence(deviceId) {
+    async clearPresence(deviceId, guard) {
       await load();
+      if (guardRefuses(deviceId, guard)) throw new InstallGuardDenied();
       presence.delete(deviceId);
       touchDevice(deviceId, Date.now());
       await save();

@@ -14,7 +14,7 @@ const DEV = "11111111-2222-4333-8444-555555555555";
 
 // Keeps the install token the first call returns and sends it on later calls,
 // as the app does (this file is about prefs, not auth).
-const carrier = tokenCarrier(rawPost);
+const carrier = tokenCarrier(rawPost, new Map(), { clientMade: true });
 const POST = carrier.call;
 
 function post(body: unknown): Request {

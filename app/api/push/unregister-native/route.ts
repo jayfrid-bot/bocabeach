@@ -5,15 +5,18 @@
 // record is still the import source for /api/push/run, so leaving it behind
 // would resurrect the subscription on the next run.
 //
-// Auth: a real device row that has an install token on file only lets go of
-// its push token when the call carries that row's `x-install-token` (401
-// `no-token`, nothing changed, otherwise). The row is the one found BY the push
-// token, so the check follows what is actually being changed. A legacy row
-// (no deviceId; it is just a push subscription keyed by the token) and a real
-// row with no token on file yet are let through: holding the push token is the
-// proof, as before.
+// Auth: a real device row only lets go of its push token when the call carries
+// that row's `x-install-token` (401 `no-token`, nothing changed, otherwise). The
+// check is part of the one statement that clears the token
+// (`store.clearPushRegistration`), and it follows the row found BY the push
+// token, so a made-up deviceId in the body buys nothing. A legacy row (no
+// deviceId; it is only a push subscription keyed by the token) goes on
+// possession of the push token, as before. While INSTALL_TOKEN_ENFORCE is off,
+// a call with no token is let through as before; a token that is sent is still
+// checked.
 
-import { checkInstallToken } from "@/lib/db/installTokenAuth";
+import { fail, storeFailure } from "@/lib/db/api";
+import { guardForWrite } from "@/lib/db/installTokenAuth";
 import { getStore, isLegacyId } from "@/lib/db/store";
 import { removeNativeSub } from "@/lib/push/nativeStore";
 
@@ -32,23 +35,14 @@ export async function POST(req: Request): Promise<Response> {
   }
   try {
     const store = await getStore();
-    const device = await store.findByPushToken(token);
-    if (device && !isLegacyId(device.id)) {
-      const auth = await checkInstallToken(store, device.id, req.headers.get("x-install-token"), Date.now());
-      if (auth === "denied") return Response.json({ ok: false, error: "no-token" }, { status: 401 });
-    }
-    if (device) {
-      // A legacy row is only ever a push subscription, so it goes entirely. A
-      // real device keeps its record (profile, Plus) and just stops being a
-      // push destination — cleared conditionally on the token still matching,
-      // same guard `prune()` uses (#5), in case a fresh registration lands
-      // between the lookup above and this write.
-      if (isLegacyId(device.id)) await store.deleteDevice(device.id);
-      else await store.clearPushToken(device.id, token);
-    }
+    await store.clearPushRegistration(token, guardForWrite(req, "/api/push/unregister-native"));
+    // The statement above decided what changed. Looking now only chooses the
+    // answer: a real row that STILL holds the token refused the caller.
+    const still = await store.findByPushToken(token);
+    if (still && !isLegacyId(still.id)) return fail("no-token", 401);
     await removeNativeSub(token).catch(() => {});
     return Response.json({ ok: true });
   } catch (e) {
-    return Response.json({ error: String(e) }, { status: 500 });
+    return storeFailure(e, "unregister-native: failed");
   }
 }

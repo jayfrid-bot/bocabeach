@@ -29,7 +29,7 @@ import { getLocation } from "@/config/locations";
 import { computeSunTimes } from "@/lib/sources/sun";
 import type { Location } from "@/lib/types";
 import { listNativeSubs, removeNativeSub } from "@/lib/push/nativeStore";
-import { getStore, isLegacyId, type DeviceStore, type PushableDevice } from "@/lib/db/store";
+import { getStore, isLegacyId, redactDeviceId, type DeviceStore, type PushableDevice } from "@/lib/db/store";
 import { coarsePrefs, parseMode } from "@/lib/db/plus";
 import { entitled, type SentState } from "@/lib/db/types";
 import { sendClaimKey } from "@/lib/db/sendClaims";
@@ -939,7 +939,7 @@ export async function POST(req: Request): Promise<Response> {
                           if (!(await store.markSent(sunColorClaimKey, nowMs))) {
                             console.warn(
                               "push: sun-color markSent lost ownership (claim reclaimed)",
-                              sunColorClaimKey,
+                              redactDeviceId(sub.device.id),
                             );
                           }
                         } else {
@@ -951,7 +951,7 @@ export async function POST(req: Request): Promise<Response> {
                           if (!(await store.releaseSend(sunColorClaimKey, nowMs))) {
                             console.warn(
                               "push: sun-color releaseSend lost ownership (claim reclaimed)",
-                              sunColorClaimKey,
+                              redactDeviceId(sub.device.id),
                             );
                           }
                           sunColorTerminal = false;
@@ -1002,7 +1002,7 @@ export async function POST(req: Request): Promise<Response> {
             // selectedDueSet" pattern as every other `retryableDueSlugs.add`.
             retryableDueSlugs.add(slug);
             errors += 1;
-            console.error("push: device failed", sub.device.id, e);
+            console.error("push: device failed", redactDeviceId(sub.device.id), e);
           }
         }
       }

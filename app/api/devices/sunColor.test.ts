@@ -15,7 +15,7 @@ const DEV = "22222222-3333-4444-8555-666666666666";
 
 // Keeps the install token the first call returns and sends it on later calls,
 // as the app does (this file is about sun-color settings, not auth).
-const carrier = tokenCarrier(rawPost);
+const carrier = tokenCarrier(rawPost, new Map(), { clientMade: true });
 const POST = carrier.call;
 
 function post(body: unknown): Request {

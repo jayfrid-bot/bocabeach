@@ -9,6 +9,7 @@
 // Kept in its own module (not store.ts) so the backends can use it without an
 // import cycle.
 
+import { createHash } from "node:crypto";
 import type { NativeSub } from "@/lib/push/nativeStore";
 import { tokenKey } from "@/lib/push/nativeStore";
 import type { AlertPrefs, DevicePatch } from "@/lib/db/types";
@@ -17,6 +18,16 @@ import { SAFETY_ALERT_KEYS } from "@/lib/db/types";
 /** Device id for a legacy KV subscription that has no client-minted deviceId. */
 export function legacyDeviceId(token: string): string {
   return `legacy:${tokenKey(token)}`;
+}
+
+/**
+ * A device id that is safe to write to a log. A legacy id contains the push
+ * token (base64url of it), and a push token is a credential, so a legacy id is
+ * shown as a short digest instead; a real id is already just a random label.
+ */
+export function redactDeviceId(id: string): string {
+  if (!isLegacyId(id)) return id;
+  return `legacy:${createHash("sha256").update(id).digest("hex").slice(0, 10)}`;
 }
 
 /** True for an id minted by `legacyDeviceId`. */

@@ -28,6 +28,7 @@ import type {
 } from "@/lib/history/types";
 import { d1Store, getD1 } from "@/lib/db/d1Store";
 import { memoryStore } from "@/lib/db/memoryStore";
+import { StoreUnavailableError, type InstallGuard } from "@/lib/db/installGuard";
 
 // --- Install token identity (migrations/0008_device_tokens.sql, Codex ------
 // combined-review #1) — server-only (node:crypto), so this file must never be
@@ -185,14 +186,14 @@ export type {
   PresenceInput,
   PushableDevice,
 } from "@/lib/db/types";
-export { isLegacyId, legacyDeviceId, legacyPatch, prefsFromLegacy } from "@/lib/db/legacy";
+export { isLegacyId, legacyDeviceId, legacyPatch, prefsFromLegacy, redactDeviceId } from "@/lib/db/legacy";
 
 export interface DeviceStore {
   getDevice(id: string): Promise<DeviceRecord | null>;
   /** Create or patch. Returns the device as it now stands. Atomic and
    *  field-specific in both backends (#3) — a field left out of `patch` is
    *  guaranteed to survive a concurrent write to some other field. */
-  upsertDevice(id: string, patch: DevicePatch): Promise<DeviceRecord>;
+  upsertDevice(id: string, patch: DevicePatch, guard?: InstallGuard): Promise<DeviceRecord>;
   /**
    * Grant the free trial, exactly once, no matter how many requests race for
    * it (#3, #4). Sets `trialUntil` and `trialUsed` together in one atomic
@@ -200,7 +201,7 @@ export interface DeviceStore {
    * calls can never both succeed, and returns the sentinel string instead of
    * a record when the trial was already spent.
    */
-  claimTrial(id: string, until: number): Promise<DeviceRecord | "trial-used">;
+  claimTrial(id: string, until: number, guard?: InstallGuard): Promise<DeviceRecord | "trial-used">;
   /**
    * Clear a device's push token, but only if it still equals `expectedToken`
    * (#5). Used when a token turned out to be dead: if the phone re-registered
@@ -209,13 +210,42 @@ export interface DeviceStore {
    * trial history all survive a dead-token cleanup.
    */
   clearPushToken(id: string, expectedToken: string): Promise<void>;
+  /**
+   * Move a push token onto `input.id` in ONE atomic step (a D1 batch; in the
+   * memory store, one synchronous block): every OTHER row that holds the token
+   * lets go of it (a legacy row, which is only a push subscription, is deleted;
+   * a real device row keeps its record and just loses the token), and `id`
+   * gets `patch` (which carries the token). Nothing is half done: a failure
+   * leaves every row as it was, so a phone is never left with no push target.
+   * migrations/0019 makes the token unique, so a second holder cannot appear.
+   *
+   * When `guard` is active, every statement is conditional on `id`'s row
+   * passing it, so a refused caller detaches nobody. A refusal throws
+   * `InstallGuardDenied` and changes nothing.
+   *
+   * Authorization to MOVE a token away from another row rests on possession
+   * of the token itself (docs/architecture.md, "Push-token transfer").
+   */
+  transferPushToken(
+    input: { id: string; token: string; patch: DevicePatch },
+    guard?: InstallGuard,
+  ): Promise<void>;
+  /**
+   * Stop pushing to `token`: a legacy row is deleted, a real device row keeps
+   * its record and loses the token. For a real row the change is ONE
+   * conditional statement that also checks `guard` against that row's stored
+   * hash, so a caller without the row's token changes nothing (the route then
+   * sees the row still holds the token and answers 401). A legacy row has no
+   * token on file; holding the push token is its proof.
+   */
+  clearPushRegistration(token: string, guard: InstallGuard): Promise<void>;
   findByPushToken(token: string): Promise<DeviceRecord | null>;
   deleteDevice(id: string): Promise<void>;
   listDevices(): Promise<DeviceRecord[]>;
   /** Entitled devices whose presence window has not expired at `nowMs`. */
   listArmed(nowMs: number): Promise<ArmedDevice[]>;
-  setPresence(deviceId: string, p: PresenceInput): Promise<void>;
-  clearPresence(deviceId: string): Promise<void>;
+  setPresence(deviceId: string, p: PresenceInput, guard?: InstallGuard): Promise<void>;
+  clearPresence(deviceId: string, guard?: InstallGuard): Promise<void>;
   getSent(deviceId: string): Promise<SentState>;
   /** Replace the WHOLE sent-state blob — a field left out of `sent` is
    *  CLEARED, not preserved (the opposite of `patchSent` below). Callers
@@ -471,6 +501,25 @@ export interface DeviceStore {
    * first); a missing row returns false rather than creating one half-built.
    */
   setInstallTokenHash(id: string, tokenHash: string, issuedAt: number): Promise<boolean>;
+  /**
+   * Bind a CLIENT-GENERATED install token (its sha256 hex) to a device row, in
+   * one conditional statement. Idempotent: presenting the hash that is already
+   * on file succeeds again, so a retry or a lost response can never lock the
+   * phone out. Returns true when the row now carries `tokenHash`, false when
+   * it carries a different one or the proof is missing. Rules:
+   *  - no row yet: created, with the hash;
+   *  - row with the same hash: true, nothing changes;
+   *  - row with NO hash: claimed, but only when the row has no push token or
+   *    `proofPushToken` equals the row's current push token (the real phone's
+   *    native layer knows it; someone who only learned the device id does not);
+   *  - row with a different hash: false.
+   */
+  claimInstallToken(
+    id: string,
+    tokenHash: string,
+    proofPushToken: string | null,
+    now: number,
+  ): Promise<boolean>;
   /** Epoch ms the current token was first successfully presented and
    *  verified, or null when it has never been used yet, or this device has
    *  no token at all. Cheap diagnostics only — nothing gates on this value.
@@ -655,13 +704,18 @@ export interface DeviceStore {
 
 /**
  * Pick a backend: D1 when the `DB` binding is wired (production, and `next dev`
- * once `initOpenNextCloudflareForDev` has run), otherwise the memory/file store.
- * Tests always get memory — no bindings, no files, no network.
+ * once `initOpenNextCloudflareForDev` has run). The memory/file store is for
+ * development and tests ONLY: in production a missing binding throws
+ * `StoreUnavailableError` (routes answer 503) instead of quietly serving an
+ * empty store, which would make every real device look unclaimed and accept
+ * writes that vanish. Tests always get memory — no bindings, no files, no
+ * network.
  */
 export async function getStore(): Promise<DeviceStore> {
   if (!process.env.VITEST) {
     const db = await getD1();
     if (db) return d1Store(db);
+    if (process.env.NODE_ENV === "production") throw new StoreUnavailableError();
   }
   return memoryStore();
 }
