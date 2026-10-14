@@ -7,7 +7,8 @@ import { Capacitor } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
 import type { Token, RegistrationError, ActionPerformed } from "@capacitor/push-notifications";
 import { getDeviceId } from "@/lib/deviceId";
-import { safeTapTarget } from "@/lib/push/tapTarget";
+import { KNOWN_BEACH_SLUGS } from "@/lib/push/beachSlugs";
+import { planTap } from "@/lib/push/tapTarget";
 
 /**
  * Resolve the runtime platform robustly. We load the live site inside the
@@ -252,7 +253,39 @@ export async function disableNative(slug: string): Promise<void> {
   }
 }
 
-// Route a tapped notification to its beach. Registered once, app-wide.
+// Route a tapped notification. The payload is outside data: only a path on this app that a push is known to open
+// (never an arbitrary address). Decided in this order, so a tap never depends on a file that may be gone:
+//   1. "/", the owner pages and every beach in the bundled slug set (config/beach-slugs.json) open AT ONCE, with
+//      nothing loaded;
+//   2. a slug that is shaped like a beach but is not in that set may be a beach the admin console added after this
+//      build: only then is the beach list loaded (a lazy chunk). If the load fails (for example the chunk was
+//      replaced by a deploy), the tap opens "/" rather than doing nothing;
+//   3. anything else is ignored.
+/** Loads `getLocation` on demand. A separate function so a test can hand in its own. */
+export type BeachLookupLoader = () => Promise<(slug: string) => boolean>;
+const loadBeachLookup: BeachLookupLoader = async () => {
+  const { getLocation } = await import("@/config/locations");
+  return (slug) => !!getLocation(slug);
+};
+
+/** Handle one tap. Resolves when the web view has been told where to go (or when there was nothing to do). */
+export async function handleNotificationTap(
+  action: ActionPerformed | undefined,
+  nav: { origin: string; assign: (path: string) => void },
+  load: BeachLookupLoader = loadBeachLookup,
+): Promise<void> {
+  const raw = (action?.notification?.data as { url?: unknown } | undefined)?.url;
+  const plan = planTap(raw, [nav.origin, "https://app.isitbeachday.com"], KNOWN_BEACH_SLUGS);
+  if (plan.kind === "open") return nav.assign(plan.path);
+  if (plan.kind === "none") return;
+  try {
+    const isBeach = await load();
+    if (isBeach(plan.slug)) nav.assign(plan.path);
+  } catch {
+    nav.assign("/");
+  }
+}
+
 let tapInit = false;
 export async function initNativeTapHandling(): Promise<void> {
   if (!isNativePlatform() || tapInit) return;
@@ -260,19 +293,7 @@ export async function initNativeTapHandling(): Promise<void> {
   try {
     const PN = getPlugin();
     void PN.addListener("pushNotificationActionPerformed", (action: ActionPerformed) => {
-      // The payload is outside data: only a path on this app that a push is known to open (never an arbitrary
-      // address). The owner push opens /admin/review?alert=<id>; the others open a beach page or "/".
-      const raw = (action?.notification?.data as { url?: unknown } | undefined)?.url;
-      void (async () => {
-        try {
-          // The beach list is loaded only on a tap, so it does not weigh on every page.
-          const { getLocation } = await import("@/config/locations");
-          const target = safeTapTarget(raw, [window.location.origin, "https://app.isitbeachday.com"], (slug) => !!getLocation(slug));
-          if (target) window.location.assign(target);
-        } catch {
-          /* a tap that cannot be routed does nothing */
-        }
-      })();
+      void handleNotificationTap(action, { origin: window.location.origin, assign: (p) => window.location.assign(p) });
     });
   } catch {
     /* no-op off-device */

@@ -918,7 +918,7 @@ flowchart TD
     ENTRY["in the iPhone app: tap the Support ID line 5 times in 3 s<br/>(lib/quality/ownerEntry.ts) → web view goes to /admin/review"]
     LINK["beach page footer link<br/>shown only after the owner screen has worked on the phone<br/>(local storage hint, no request)"]
   end
-  APNSQ -.->|"tap: lib/push/tapTarget.ts allows only /, a real /beach, /admin/review?alert=id, /admin/report"| REVIEW
+  APNSQ -.->|"tap: lib/push/tapTarget.ts allows only /, a real /beach (bundled slug set, lazy lookup for a newer beach, else /), /admin/review?alert=id, /admin/report"| REVIEW
   ENTRY -.-> REVIEW
   LINK -.-> REPORT
 

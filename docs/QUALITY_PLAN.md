@@ -368,11 +368,17 @@ no push token, so the phone gets no owner pushes until you enroll in the app.
 **Tapping an owner push.** The push carries `https://app.isitbeachday.com/admin/review?alert=<id>`.
 The app's tap handler (`lib/push/native.ts`, `lib/push/tapTarget.ts`) opens that
 path in the web view. It accepts only a path on this app that a push is known to
-open: `/` (the test push), a **real beach page** (`/<slug>`, checked against
-`config/locations.ts`, which includes the beaches the admin console added),
+open: `/` (the test push), a **real beach page** (`/<slug>`),
 `/admin/review` (with a plain numeric `alert`) and `/admin/report`. Every other
 top-level route is refused, `/get-app` (it redirects off the app), `/support`,
-`/find`, `/privacy`, `/sticker` and `/api` among them. A test walks the `app/`
+`/find`, `/privacy`, `/sticker` and `/api` among them. A tap never depends on a
+file that may be gone after a deploy. `/`, the owner pages and every beach in the
+compact set `config/beach-slugs.json` (bundled with the push handler) open at once,
+with nothing loaded. Only a slug that is not in that set (a beach the admin console
+added since this build) loads the beach list, and if that load fails the tap opens
+`/` instead of doing nothing. `config/beach-slugs.json` is generated from
+`config/locations.ts` (`npx vite-node -c vitest.config.ts scripts/gen_beach_slugs.ts`,
+run it when a beach is added); a test fails when the two differ. A test walks the `app/`
 folder so a new route cannot slip in: it fails until the route is added to
 `RESERVED_ROUTES`. A second test reads every push producer's `url` and checks it
 passes. An address on another host or scheme, a protocol-relative address, and any

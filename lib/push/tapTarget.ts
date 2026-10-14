@@ -73,3 +73,20 @@ export function safeTapTarget(raw: unknown, origins: string[] = [APP_ORIGIN], is
   }
   return null;
 }
+
+/** What to do with a tap: open a path now, look the slug up first (a beach added after this build), or nothing. */
+export type TapPlan = { kind: "open"; path: string } | { kind: "lookup"; slug: string; path: string } | { kind: "none" };
+
+/**
+ * Decide a tap WITHOUT loading anything. `/`, the owner pages and every beach in `known` (the compact slug set
+ * bundled with the push handler, config/beach-slugs.json) open at once. A slug that is not in `known` but is shaped
+ * like a beach and is not a reserved route may be a beach the admin console added since this build: the caller
+ * looks it up (`lookup`) and, if the lookup cannot run, opens `/` rather than doing nothing. Pure.
+ */
+export function planTap(raw: unknown, origins: string[], known: ReadonlySet<string>): TapPlan {
+  const sure = safeTapTarget(raw, origins, (slug) => known.has(slug));
+  if (sure) return { kind: "open", path: sure };
+  const guess = safeTapTarget(raw, origins, () => true); // would pass if every slug were a beach
+  if (guess && SLUG_PATH.test(guess)) return { kind: "lookup", slug: guess.slice(1), path: guess };
+  return { kind: "none" };
+}
