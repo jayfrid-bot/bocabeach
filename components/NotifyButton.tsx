@@ -163,10 +163,15 @@ export function NotifyButton({
   const disable = async () => {
     setMenuOpen(false);
     setState("busy");
+    setErr(null);
     try {
       await disableNative(slug);
-    } finally {
       setState("off");
+    } catch (e) {
+      // The server refused (this phone could not prove it owns the device), so
+      // alerts are still on there. Say so instead of showing "off".
+      setErr(e instanceof Error ? e.message : "Couldn't turn alerts off. Try again.");
+      setState("on");
     }
   };
 
@@ -246,6 +251,15 @@ export function NotifyButton({
               </button>
             </div>
           </>
+        ) : null}
+        {err ? (
+          <span
+            role="status"
+            aria-live="polite"
+            className="absolute right-0 top-full z-50 mt-2 w-56 rounded-lg bg-rose-600 px-3 py-2 text-xs leading-snug text-white shadow-lg dark:bg-rose-500"
+          >
+            {err}
+          </span>
         ) : null}
       </span>
     );

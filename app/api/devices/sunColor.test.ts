@@ -7,10 +7,16 @@
 // by hand.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { POST, GET } from "@/app/api/devices/route";
+import { POST as rawPost, GET } from "@/app/api/devices/route";
+import { tokenCarrier } from "@/lib/db/installTokenTestKit";
 import { resetMemoryStore } from "@/lib/db/memoryStore";
 
 const DEV = "22222222-3333-4444-8555-666666666666";
+
+// Keeps the install token the first call returns and sends it on later calls,
+// as the app does (this file is about sun-color settings, not auth).
+const carrier = tokenCarrier(rawPost);
+const POST = carrier.call;
 
 function post(body: unknown): Request {
   return new Request("https://x/api/devices", {
@@ -28,6 +34,7 @@ const json = async (r: Response) =>
   };
 
 beforeEach(() => {
+  carrier.reset();
   resetMemoryStore();
 });
 

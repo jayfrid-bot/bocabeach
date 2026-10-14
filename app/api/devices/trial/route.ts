@@ -12,6 +12,10 @@
 // and push all live there), so a request without the app's User-Agent tag gets
 // 403 { ok: false, error: "app-only" }. The website never offers the trial.
 //
+// Needs the device's `x-install-token` once one is on file (401 `no-token`):
+// anyone who learned a device id could otherwise burn that device's one trial.
+// A device with no token on file yet is let through, as before.
+//
 // Off by default: the App Store already gives every eligible account a real
 // 3-day free trial through RevenueCat (see lib/plus/billing.ts
 // trialEligibility). A server-granted trial guarded only by a User-Agent
@@ -21,6 +25,7 @@
 // see docs/BILLING_SETUP.md for when to flip it (a billing outage only).
 
 import { badRequest, fail, isDeviceId, okDevice, readBody } from "@/lib/db/api";
+import { checkInstallToken } from "@/lib/db/installTokenAuth";
 import { getStore } from "@/lib/db/store";
 import { TRIAL_DAYS } from "@/lib/db/plus";
 import { isNativeRequest } from "@/lib/nativeRequest";
@@ -36,6 +41,8 @@ export async function POST(req: Request): Promise<Response> {
   const deviceId = body.deviceId;
   try {
     const store = await getStore();
+    const auth = await checkInstallToken(store, deviceId, req.headers.get("x-install-token"), Date.now());
+    if (auth === "denied") return fail("no-token", 401);
     const until = Date.now() + TRIAL_DAYS * 24 * 3600 * 1000;
     const result = await store.claimTrial(deviceId, until);
     if (result === "trial-used") return fail("trial-used", 409);

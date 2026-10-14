@@ -4,9 +4,10 @@
 // in-memory backend because vitest sets VITEST.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { POST as devicesPost, GET as devicesGet } from "@/app/api/devices/route";
+import { POST as rawDevicesPost, GET as devicesGet } from "@/app/api/devices/route";
+import { tokenCarrier } from "@/lib/db/installTokenTestKit";
 import { POST as trialPost } from "@/app/api/devices/trial/route";
-import { POST as unlockPost } from "@/app/api/devices/unlock/route";
+import { POST as rawUnlockPost } from "@/app/api/devices/unlock/route";
 import { POST as presencePost, DELETE as presenceDelete } from "@/app/api/presence/route";
 import { getStore } from "@/lib/db/store";
 import { resetMemoryStore } from "@/lib/db/memoryStore";
@@ -14,6 +15,14 @@ import { resetMemoryRateLimit } from "@/lib/plus/rateLimit";
 import { MAX_ARM_MS } from "@/lib/db/plus";
 
 const DEV = "11111111-2222-4333-8444-555555555555";
+
+// Remembers the install token the first /api/devices call returns and sends it on
+// later calls, as the app does. Auth itself is covered by installTokenGate.test.ts.
+const tokenJar = new Map<string, string>();
+const devicesCarrier = tokenCarrier(rawDevicesPost, tokenJar);
+const unlockCarrier = tokenCarrier(rawUnlockPost, tokenJar);
+const devicesPost = devicesCarrier.call;
+const unlockPost = unlockCarrier.call;
 const HOUR = 3600 * 1000;
 
 /** The app shell's User-Agent tag (capacitor.config appendUserAgent). The trial
@@ -28,6 +37,7 @@ function post(url: string, body: unknown, ua: string = APP_UA, ip?: string): Req
 }
 
 beforeEach(() => {
+  devicesCarrier.reset(); // clears the shared jar
   resetMemoryStore();
   resetMemoryRateLimit();
 });

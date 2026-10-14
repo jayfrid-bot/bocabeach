@@ -421,12 +421,12 @@ below.
 ```mermaid
 flowchart TD
   subgraph app [App]
-    OPEN[Open / foreground] -->|deviceId, profile, prefs| DEV["/api/devices<br/>POST upsert · GET read"]
-    OPEN -->|fix: lat, lon, accuracy| PRES["/api/presence<br/>POST arm · DELETE disarm"]
-    TRIAL["/api/devices/trial<br/>3-day trial, once (fallback when billing is off)"]
-    UNLOCK["/api/devices/unlock<br/>code → 365-day plan"]
+    OPEN[Open / foreground] -->|deviceId, profile, prefs| DEV["/api/devices<br/>POST upsert (install token) · GET read"]
+    OPEN -->|fix: lat, lon, accuracy| PRES["/api/presence<br/>POST arm · DELETE disarm (install token)"]
+    TRIAL["/api/devices/trial<br/>3-day trial, once (fallback when billing is off) (install token)"]
+    UNLOCK["/api/devices/unlock<br/>code → 365-day plan (install token)"]
     BUY["/api/devices/purchase<br/>after a store purchase or Restore"]
-    REG["/api/push/register-native<br/>/api/push/unregister-native"]
+    REG["/api/push/register-native<br/>/api/push/unregister-native<br/>(install token; first call claims one)"]
     HAZ2["/api/hazards<br/>POST — native-only, rate-limited<br/>'where you stand' lightning + rain"]
     LAREG["/api/live-activity/register<br/>POST — native-only, rate-limited<br/>start/rotate a Beach Session token"]
     LAEND["/api/live-activity/end<br/>POST — native-only, rate-limited<br/>Off / dismiss"]
@@ -735,31 +735,66 @@ so they don't collide, but it means one namespace serves two unrelated jobs.
 Worth splitting if either one grows enough to matter.
 
 **Install token identity (`devices.token_hash`/`token_used_at`,
-migrations/0008_device_tokens.sql).** `POST /api/devices` mints a 32-byte
-install token the first time it sees a device row with no `token_hash` yet
-(first minter wins), returns it once as `installToken`, and stores only its
-sha256 hash. `/api/live-activity/register`, `/end`, and `/api/hazards`
-require a matching `x-install-token` header once a device has a hash on file
-(401 `no-token`), or `token-required` when it doesn't yet; every check goes
-through the shared `lib/db/installTokenAuth.ts` `requireInstallToken`, which
-also stamps `token_used_at` (once, on the first successful check for a
-token — kept for cheap diagnostics only; nothing gates on it). See that
-file's THREAT MODEL comment for the full model.
+migrations/0008_device_tokens.sql).** The device id is not a secret (the app
+shows it as the "Support ID"), so the install token is what proves a caller is
+the phone that owns a device row. The first call that claims a row mints a
+32-byte token, returns it once as `installToken`, and stores only its sha256
+hash. The claim is one atomic `UPDATE ... WHERE token_hash IS NULL`
+(`claimInstallToken` in `lib/db/installTokenAuth.ts`), so of any number of
+concurrent first calls exactly one wins; the loser gets 401 `no-token` and, on
+the routes below that write, writes nothing. Comparison is constant time
+(`installTokenMatches`).
+
+Route auth, by `x-install-token`:
+
+| Route | Token | If the row has a token on file | If it has none yet |
+|---|---|---|---|
+| `POST /api/push/register-native` (with `deviceId`) | required | 401 `no-token`, nothing written | claims a token BEFORE any write, returns `installToken` |
+| `POST /api/push/register-native` (no `deviceId`, old builds) | none | n/a: only writes the `legacy:<push token>` row; holding the push token is the proof | same |
+| `POST /api/push/unregister-native` | required for the row found BY the push token | 401 `no-token`, nothing changed | allowed (legacy rows and unmigrated rows; the push token is the proof) |
+| `POST /api/devices` (prefs, home beach, profile, tz) | required | 401 `no-token`, nothing written | claims a token before the write, returns `installToken` |
+| `POST /api/devices/trial`, `/unlock` | required | 401 `no-token` (`unlock` checks the code first) | allowed |
+| `POST`/`DELETE /api/presence` | required | 401 `no-token` | allowed |
+| `POST /api/live-activity/register`, `/end`; `POST /api/hazards`; `POST /api/history/[slug]` and `/day` | required (`requireInstallToken`) | 401 `no-token` | 401 `token-required` |
+| `GET /api/devices` | none (read only) | n/a | n/a |
+| `POST /api/devices/purchase` | none, on purpose: writes only what RevenueCat says about that id right now, and must work for Restore right after a reinstall | n/a | n/a |
+| `POST /api/open` | none, on purpose: writes only the `app_opens` counter, fires before a token exists | n/a | n/a |
+| `/api/revenuecat/webhook`, `/api/push/run`, `/api/push/test`, `/api/sun-observations`, `/api/admin/*` | shared secrets, not device tokens | n/a | n/a |
+
+Migration path. A device row with no token on file keeps working: the routes
+marked "allowed" let it through unchanged, and the two minting routes
+(`/api/devices`, `/api/push/register-native`) bind a token on its next call.
+The app now sends the token on every push registration and unregistration
+(`lib/push/native.ts`), asks `bootstrapInstallToken` for one first when it has
+none, and retries once with a fresh one on a 401. If a mint succeeds but the
+write after it fails (500), the response still carries `installToken`, so a
+claim can never strand the phone. The one native caller of these routes,
+`ios/App/App/BeachSessionActivityPlugin.swift`, only posts
+`/api/live-activity/register` and `/end`, and it already sends the token. No
+Swift or Kotlin code calls the routes whose rules changed. Rows nobody has
+claimed stay open to whoever claims them first; they close as devices open the
+app. Every check goes through the shared `lib/db/installTokenAuth.ts`, which
+also stamps `token_used_at` (once, on the first successful check for a token,
+kept for cheap diagnostics only; nothing gates on it). See that file's THREAT
+MODEL comment for the full model.
 
 **No server-side token recovery.** There is deliberately no route to
-recover a lost install token. A device that loses its token after it has
-already been used (reinstall, cleared storage) reads back `no-token` and the
-client (`lib/plus/client.ts` `ensureInstallToken`/`bootstrapInstallToken`)
-degrades to a plain "not available" state for Live Activity / Where-you-
-stand — nothing else (Plus alerts, presence, prefs) depends on this token.
-On a `no-token` 401 from `/api/hazards`, the client clears its cached token,
-retries the `POST /api/devices` bootstrap once (which answers with no token
+recover a lost token. A device that loses its token after it has already
+been used (cleared storage) reads back `no-token` on every route that
+changes its row, push registration included. The device id sits in the same
+local storage as the token, so losing one normally loses both and the app
+starts over as a new device. For Live Activity / Where-you-stand the client
+(`lib/plus/client.ts` `ensureInstallToken`/`bootstrapInstallToken`) degrades
+to a plain "not available" state; for push, `enableNative` and
+`disableNative` show a plain error instead. On a `no-token` 401 from
+`/api/hazards`, the client clears its cached token, retries the
+`POST /api/devices` bootstrap once (which answers 401 or with no token
 since the hash already exists), and latches "not available" for the rest of
-the session if nothing new arrives — it does not keep hammering the server.
+the session if nothing new arrives; it does not keep hammering the server.
 A reinstall gets a fresh deviceId, and RevenueCat restore-purchases (keyed
 off the store account, not deviceId) carries the Plus entitlement back
 without the old token. App Attest (device-bound auth) is the planned
-upgrade — see `docs/BUILD_PLAN.md`'s Later section.
+upgrade; see `docs/BUILD_PLAN.md`'s Later section.
 
 **"Last N days" history (`/api/history/[slug]`, docs/HISTORY_AND_IMAGERY_
 PLAN.md Part A).** A Plus-only, read-only look at the `beach_hourly` archive

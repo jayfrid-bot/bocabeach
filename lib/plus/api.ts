@@ -50,9 +50,10 @@ export interface PresenceBody {
 }
 
 /** Every Plus call carries the install token (Codex review #1), when this
- *  phone has one — `/api/live-activity/register`, `/end`, and `/api/hazards`
- *  require it once a device has a hash on file; every other route accepts it
- *  optionally and logs nothing. A phone with no token yet (never called
+ *  phone has one. The server requires it for any change to a device row
+ *  (`/api/devices`, `/api/presence`, trial, unlock, push registration) once
+ *  the device has a hash on file, and for `/api/live-activity/*`,
+ *  `/api/hazards` and `/api/history`. It is never logged. A phone with no token yet (never called
  *  POST /api/devices, or lost local storage) simply omits the header, same
  *  as before this existed. */
 function withInstallToken(init?: RequestInit): RequestInit | undefined {
@@ -339,6 +340,8 @@ export function plusErrorMessage(error: string | null): string {
       return "Your purchase went through, but we couldn't confirm it yet. Tap Restore in a moment, or reopen the app.";
     case "store-restore-error":
       return "We couldn't reach the App Store. Check your connection and tap Restore again.";
+    case "no-token":
+      return "We could not confirm this is your phone. Close and reopen the app, then try again.";
     case "bad-request":
       return "Something about that request was wrong. Try again.";
     default:

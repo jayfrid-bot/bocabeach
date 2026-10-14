@@ -11,11 +11,17 @@
 //          (LOC-03), and the card must not claim otherwise.
 //   DELETE { deviceId }  (or ?deviceId=…)  Disarms.
 //
+// Both verbs change where safety alerts fire, so they need the device's
+// `x-install-token` once one is on file (401 `no-token`, nothing written). A
+// device with no token on file yet is let through as before (/api/devices and
+// /api/push/register-native are where a token gets claimed).
+//
 // The stored fix is what the alerts engine uses for per-device lightning
 // distance, so it is deliberately short-lived and never returned to any client.
 
 import { getLocation } from "@/config/locations";
 import { badRequest, fail, isDeviceId, num, okDevice, readBody } from "@/lib/db/api";
+import { checkInstallToken } from "@/lib/db/installTokenAuth";
 import { getStore } from "@/lib/db/store";
 import { entitled } from "@/lib/db/types";
 import { MAX_ARM_MS } from "@/lib/db/plus";
@@ -60,6 +66,8 @@ export async function POST(req: Request): Promise<Response> {
 
   try {
     const store = await getStore();
+    const auth = await checkInstallToken(store, body.deviceId, req.headers.get("x-install-token"), now);
+    if (auth === "denied") return fail("no-token", 401);
     const device = await store.getDevice(body.deviceId);
     if (!device || !entitled(device, now)) return fail("not-entitled", 403);
 
@@ -91,6 +99,8 @@ export async function DELETE(req: Request): Promise<Response> {
 
   try {
     const store = await getStore();
+    const auth = await checkInstallToken(store, deviceId, req.headers.get("x-install-token"), Date.now());
+    if (auth === "denied") return fail("no-token", 401);
     const device = await store.getDevice(deviceId);
     if (!device) return fail("not-found", 404);
     await store.clearPresence(deviceId);

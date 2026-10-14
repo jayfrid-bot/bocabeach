@@ -101,8 +101,9 @@ vi.mock("@/lib/alerts/rain", async (importActual) => {
   return { ...actual, rainForFix: async () => null };
 });
 
-const { POST: registerPost } = await import("@/app/api/push/register-native/route");
-const { POST: unregisterPost } = await import("@/app/api/push/unregister-native/route");
+const { POST: rawRegisterPost } = await import("@/app/api/push/register-native/route");
+const { POST: rawUnregisterPost } = await import("@/app/api/push/unregister-native/route");
+const { tokenCarrier } = await import("@/lib/db/installTokenTestKit");
 const { POST: runPost } = await import("@/app/api/push/run/route");
 const { getStore, legacyDeviceId } = await import("@/lib/db/store");
 const { resetMemoryStore } = await import("@/lib/db/memoryStore");
@@ -130,6 +131,15 @@ const CONDITIONS = {
 } as unknown as ConditionsResponse;
 
 const DEV = "11111111-2222-4333-8444-555555555555";
+
+// A phone keeps the install token its first register returns and sends it on
+// every later call. This file tests push behaviour, not auth (that is
+// app/api/push/installTokenGate.test.ts), so both routes share one carrier.
+const tokenJar = new Map<string, string>();
+const registerCarrier = tokenCarrier(rawRegisterPost, tokenJar);
+const unregisterCarrier = tokenCarrier(rawUnregisterPost, tokenJar);
+const registerPost = registerCarrier.call;
+const unregisterPost = unregisterCarrier.call;
 const FCM_TOKEN = "f".repeat(80);
 const FCM_TOKEN_2 = "g".repeat(80);
 
@@ -154,6 +164,8 @@ function legacySub(over: Partial<NativeSub> = {}): NativeSub {
 }
 
 beforeEach(() => {
+  registerCarrier.reset();
+  unregisterCarrier.reset();
   resetMemoryStore();
   ctl.legacySubs = [];
   ctl.removed = [];
@@ -313,7 +325,9 @@ describe("POST /api/push/unregister-native", () => {
         deviceId: DEV,
       }),
     );
-    await unregisterPost(post("https://x/api/push/unregister-native", { token: FCM_TOKEN }));
+    // The app sends its deviceId on unregister too; the carrier uses it to pick
+    // the install token header.
+    await unregisterPost(post("https://x/api/push/unregister-native", { token: FCM_TOKEN, deviceId: DEV }));
     const store = await getStore();
     expect(await store.getDevice(DEV)).toBeTruthy();
     expect(await store.getPushToken(DEV)).toBeNull();

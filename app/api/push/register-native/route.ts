@@ -9,9 +9,23 @@
 // keeps writing to the synthetic "legacy:<token>" row, and the first call that
 // DOES carry a deviceId adopts that legacy row's beach, prefs and dedup state,
 // then deletes it. The response shape is unchanged.
+//
+// Auth (the install token). A deviceId is not a secret, so a call that names a
+// deviceId may only change that device's push target with the device's
+// `x-install-token` header (401 `no-token`, nothing written, otherwise).
+// A device row with no token on file yet may register once without one; that
+// call atomically claims a token for the row BEFORE any write and returns it as
+// `installToken` (once; the app stores it). Of two concurrent claimers exactly
+// one wins; the other gets 401 and writes nothing.
+// A call with no deviceId (old builds) only ever writes the "legacy:<token>"
+// row, which is derived from the push token itself; holding that token is its
+// proof, so it needs no install token.
+// TODO(native-build): once no pre-deviceId build is left in the field, drop the
+// legacy no-deviceId path.
 
 import { getLocation } from "@/config/locations";
 import { isDeviceId } from "@/lib/db/api";
+import { checkInstallToken, claimInstallToken } from "@/lib/db/installTokenAuth";
 import { getD1 } from "@/lib/db/d1Store";
 import { attributeInstall, clientIp, fingerprint, fpSalt } from "@/lib/db/scanFunnel";
 import { isLegacyId, legacyDeviceId, prefsFromLegacy, getStore } from "@/lib/db/store";
@@ -55,10 +69,27 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "invalid device token" }, { status: 400 });
   }
 
-  const id = isDeviceId(body.deviceId) ? body.deviceId : legacyDeviceId(token);
+  const hasDeviceId = isDeviceId(body.deviceId);
+  const id = hasDeviceId ? (body.deviceId as string) : legacyDeviceId(token);
+
+  // Set only when THIS call claimed a fresh install token; returned to the app
+  // (also on a 500, so the claim can never strand the phone without it).
+  let installToken: string | undefined;
 
   try {
     const store = await getStore();
+
+    // Install token gate (see the header). Runs before any read or write that
+    // could change where this device's alerts go.
+    if (hasDeviceId) {
+      const auth = await checkInstallToken(store, id, req.headers.get("x-install-token"), Date.now());
+      if (auth === "denied") return Response.json({ ok: false, error: "no-token" }, { status: 401 });
+      if (auth === "unclaimed") {
+        installToken = (await claimInstallToken(store, id, Date.now())) ?? undefined;
+        // Another request claimed this row between our check and our claim.
+        if (!installToken) return Response.json({ ok: false, error: "no-token" }, { status: 401 });
+      }
+    }
 
     // The row this token is already attached to, if any.
     const existing = await store.findByPushToken(token);
@@ -120,8 +151,8 @@ export async function POST(req: Request): Promise<Response> {
     } catch {
       // never let the funnel cost someone their alerts
     }
-    return Response.json({ ok: true });
+    return Response.json(installToken ? { ok: true, installToken } : { ok: true });
   } catch (e) {
-    return Response.json({ error: String(e) }, { status: 500 });
+    return Response.json({ error: String(e), ...(installToken ? { installToken } : {}) }, { status: 500 });
   }
 }
