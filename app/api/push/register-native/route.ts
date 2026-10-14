@@ -9,12 +9,40 @@
 // keeps writing to the synthetic "legacy:<token>" row, and the first call that
 // DOES carry a deviceId adopts that legacy row's beach, prefs and dedup state,
 // then deletes it. The response shape is unchanged.
+//
+// Auth (the install token). A deviceId is not a secret, so a call that names a
+// deviceId may only change that device's push target with the device's
+// `x-install-token` header (401 `no-token`, nothing written, otherwise). The
+// phone makes the token itself and this route binds it, idempotently, in one
+// conditional statement; an existing row that already has a push token but no
+// install token yet is claimed only because THIS request carries that same push
+// token as proof (lib/db/installTokenAuth.ts `authorizeMinting`). A token that is
+// sent but cannot be bound is a 401 even with INSTALL_TOKEN_ENFORCE off; the
+// response says `installTokenBound: true` when this request's token is now bound.
+// A request with no token goes through with enforcement off and leaves the row
+// unclaimed (the server never makes a token). An unauthenticated request can
+// never replace the push token of a row that has no install token yet, so a
+// proof cannot be forged by swapping it first.
+//
+// Moving the push token onto this device (a reinstall gets a new deviceId but
+// keeps its APNs/FCM token, an old build's legacy row gets adopted) is ONE
+// atomic store step (`store.transferPushToken`): every other row lets go of the
+// token and this one takes it, or nothing changes. Holding the push token is
+// what allows the move; push tokens are high-entropy and only ever known to the
+// phone, APNs/FCM and our own database (docs/architecture.md, "Push-token
+// transfer").
+//
+// A call with no deviceId (old builds) only ever writes the "legacy:<token>"
+// row, derived from the push token itself, and needs no install token.
+// TODO(native-build): drop that legacy path once no pre-deviceId build is left.
 
 import { getLocation } from "@/config/locations";
-import { isDeviceId } from "@/lib/db/api";
+import { isDeviceId, storeFailure } from "@/lib/db/api";
+import { authorizeMinting, clientHasCap } from "@/lib/db/installTokenAuth";
 import { getD1 } from "@/lib/db/d1Store";
 import { attributeInstall, clientIp, fingerprint, fpSalt } from "@/lib/db/scanFunnel";
 import { isLegacyId, legacyDeviceId, prefsFromLegacy, getStore } from "@/lib/db/store";
+import { NO_GUARD } from "@/lib/db/installGuard";
 import type { SentState } from "@/lib/db/types";
 
 export const dynamic = "force-dynamic";
@@ -55,57 +83,73 @@ export async function POST(req: Request): Promise<Response> {
     return Response.json({ error: "invalid device token" }, { status: 400 });
   }
 
-  const id = isDeviceId(body.deviceId) ? body.deviceId : legacyDeviceId(token);
+  // A supplied id shaped like a legacy one is not a real device id.
+  const hasDeviceId = isDeviceId(body.deviceId) && !isLegacyId(body.deviceId as string);
+  const id = hasDeviceId ? (body.deviceId as string) : legacyDeviceId(token);
 
   try {
     const store = await getStore();
 
-    // The row this token is already attached to, if any.
+    // Install token gate (see the header). Binds the token or refuses, before
+    // any read or write that could change where this device's alerts go. Its
+    // guard rides inside the write below.
+    let guard = NO_GUARD;
+    let bound = false;
+    if (hasDeviceId) {
+      const auth = await authorizeMinting(
+        store,
+        id,
+        req.headers.get("x-install-token"),
+        token, // the push token itself is the proof for a row that already has one
+        "/api/push/register-native",
+        clientHasCap(req),
+        Date.now(),
+      );
+      if (!auth.ok) return Response.json({ ok: false, error: "no-token" }, { status: 401 });
+      guard = auth.guard;
+      bound = auth.bound;
+    }
+
+    // The row this token is already attached to, if any (data only: its beach,
+    // prefs and dedup state follow the token to its new home).
     const existing = await store.findByPushToken(token);
 
     let priorSlug: string | null = null;
     let priorSent: SentState = {};
-
     if (existing) {
       priorSlug = existing.homeSlug;
       priorSent = await store.getSent(existing.id);
-      if (existing.id !== id) {
-        // The token is moving to a different row. Carry the prefs across, then
-        // make sure the old row can never be pushed to as well: a legacy row has
-        // nothing else on it, so drop it; a real device row keeps its Plus state
-        // and just loses the token.
-        await store.upsertDevice(id, { prefs: existing.prefs });
-        if (isLegacyId(existing.id)) await store.deleteDevice(existing.id);
-        else await store.upsertDevice(existing.id, { pushToken: null });
-      }
     }
 
     // Preserve dedup state when the same device re-registers for the SAME beach
     // (matches the pre-D1 behavior); a beach change starts clean.
     const sent = priorSlug === loc.slug ? priorSent : {};
 
-    // The two coarse switches the native client sends only seed a BRAND-NEW
-    // row. A device that already exists keeps its per-alert prefs (set through
-    // /api/devices) — otherwise every tap on "Alerts" would expand the coarse
-    // safety switch back into all-on and undo a single opt-out.
+    // Prefs. A token that moves from another row carries that row's prefs
+    // across. Otherwise the two coarse switches the native client sends only
+    // seed a BRAND-NEW row: a device that already exists keeps its per-alert
+    // prefs (set through /api/devices), or every tap on "Alerts" would expand
+    // the coarse safety switch back into all-on and undo a single opt-out.
     const current = await store.getDevice(id);
-    const seedPrefs = current
-      ? {}
-      : {
-          prefs: prefsFromLegacy({
+    const moved = !!existing && existing.id !== id;
+    const prefs = moved
+      ? existing!.prefs
+      : current
+        ? undefined
+        : prefsFromLegacy({
             morning: body.prefs?.morning !== false,
             safety: body.prefs?.safety !== false,
-          }),
-        };
+          });
 
-    await store.upsertDevice(id, {
-      platform,
-      pushToken: token,
-      tz: loc.timezone,
-      homeSlug: loc.slug,
-      ...seedPrefs,
-      sent,
-    });
+    // One atomic step: the token leaves every other row and lands on this one.
+    await store.transferPushToken(
+      {
+        id,
+        token,
+        patch: { platform, tz: loc.timezone, homeSlug: loc.slug, ...(prefs ? { prefs } : {}), sent },
+      },
+      guard,
+    );
 
     // Turning on alerts is often the FIRST thing a fresh install writes, so
     // this is the second place a sticker scan can be redeemed (the other is
@@ -120,8 +164,8 @@ export async function POST(req: Request): Promise<Response> {
     } catch {
       // never let the funnel cost someone their alerts
     }
-    return Response.json({ ok: true });
+    return Response.json(bound ? { ok: true, installTokenBound: true } : { ok: true });
   } catch (e) {
-    return Response.json({ error: String(e) }, { status: 500 });
+    return storeFailure(e, "register-native: failed");
   }
 }

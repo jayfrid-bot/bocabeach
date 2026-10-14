@@ -1,24 +1,30 @@
 // /api/devices — the Plus device record.
 //
-//   POST { deviceId, platform?, tz?, homeSlug?, profile?, prefs?, previewSeen? }
+//   POST { deviceId, platform?, tz?, homeSlug?, profile?, prefs?, previewSeen?,
+//          pushProof? }
 //        Upsert. Only the fields present in the body change; `prefs` merges over
-//        what is stored, so a client can flip one toggle. The FIRST call for a
-//        device (any device with no `token_hash` on file yet) also mints an
-//        install token and returns it as `installToken` — ONCE, never again.
-//        The web layer stores it (lib/plus/storage.ts `bd:install-token`) and
-//        sends it back as `x-install-token` on every Plus API call
-//        (lib/plus/api.ts); `/api/live-activity/register`, `/end`, and
-//        `/api/hazards` require it once a device has a hash on file.
+//        what is stored, so a client can flip one toggle.
 //   GET  ?deviceId=…   Read.
 //
-// No auth: the deviceId is a client-minted UUID, the same trust model as the
-// push token. Nothing here is secret and nothing costs money.
+// Auth. The deviceId is a client-minted UUID but NOT a secret (it is the
+// "Support ID"). The phone makes its own install token, saves it, and sends it
+// as `x-install-token`; this route binds it to the device (idempotently, so a
+// retry or a lost response is harmless) and every write is guarded by it in the
+// same statement (lib/db/installTokenAuth.ts `authorizeMinting`). A device row
+// that already has a push token but no install token yet is claimed only if the
+// request also carries that push token as `pushProof`. GET stays open (read
+// only). The response says `installTokenBound: true` when the request's token is
+// now bound to the row; the phone records "claimed" from that signal alone. A
+// token that is sent but cannot be bound is a 401 even with INSTALL_TOKEN_ENFORCE
+// off. With it off, a request with NO token still goes through as before and
+// leaves the row unclaimed: the server never makes a token.
 
 import { getLocation } from "@/config/locations";
-import { badRequest, fail, isDeviceId, okDevice, readBody } from "@/lib/db/api";
+import { badRequest, fail, isDeviceId, okDevice, readBody, storeFailure } from "@/lib/db/api";
 import { getD1 } from "@/lib/db/d1Store";
 import { attributeInstall, clientIp, fingerprint, fpSalt } from "@/lib/db/scanFunnel";
-import { getStore, hashInstallToken, mintInstallToken } from "@/lib/db/store";
+import { authorizeMinting, clientHasCap } from "@/lib/db/installTokenAuth";
+import { getStore } from "@/lib/db/store";
 import {
   ALERT_KEYS,
   entitled,
@@ -127,8 +133,22 @@ export async function POST(req: Request): Promise<Response> {
   if (!body || !isDeviceId(body.deviceId)) return badRequest();
   const patch = patchFromBody(body);
   if (!patch) return badRequest();
+  const pushProof = typeof body.pushProof === "string" && body.pushProof.length <= 4096 ? body.pushProof : null;
   try {
     const store = await getStore();
+    // Install token: bind it (idempotent) or refuse. Everything below is
+    // guarded by the result, in the write itself.
+    const auth = await authorizeMinting(
+      store,
+      body.deviceId,
+      req.headers.get("x-install-token"),
+      pushProof,
+      "/api/devices",
+      clientHasCap(req),
+      Date.now(),
+    );
+    if (!auth.ok) return fail("no-token", 401);
+
     // A personal-score profile is a Plus feature (2026-09 billing audit, item
     // 9). Onboarding saves one profile BEFORE purchase for its one-time
     // preview, so a device gets exactly one unpaid profile save; after the
@@ -140,28 +160,8 @@ export async function POST(req: Request): Promise<Response> {
       const allowed = !existing || existing.previewSeen !== true || entitled(existing, Date.now());
       if (!allowed) return fail("not-entitled", 403);
     }
-    const device = await store.upsertDevice(body.deviceId, patch);
 
-    // Install token identity (Codex review #1): a device row with no
-    // token_hash yet gets one minted here, and ONLY here — the raw token is
-    // returned in `installToken` exactly once, in this response, and never
-    // stored anywhere (only its sha256 hash is). A device that already has a
-    // hash gets nothing extra; a client that lost its stored token has no way
-    // to recover it and must be treated as a fresh device by whatever calls
-    // require one (`/api/live-activity/register`, `/end`, `/api/hazards`).
-    let installToken: string | undefined;
-    try {
-      const existingHash = await store.getInstallTokenHash(body.deviceId);
-      if (!existingHash) {
-        const token = mintInstallToken();
-        const won = await store.setInstallTokenHash(body.deviceId, hashInstallToken(token), Date.now());
-        if (won) installToken = token;
-      }
-    } catch (e) {
-      // Minting is a bonus, not the point of this request — a device that
-      // fails to get a token this call simply tries again next launch.
-      console.error("devices: install token mint failed", e);
-    }
+    const device = await store.upsertDevice(body.deviceId, patch, auth.guard);
 
     // A brand-new native install may be the far end of a sticker scan. The SQL
     // behind this decides on its own whether this device qualifies (minutes
@@ -182,10 +182,9 @@ export async function POST(req: Request): Promise<Response> {
     } catch {
       // never let the funnel cost someone their device record
     }
-    return okDevice(device, installToken ? { installToken } : undefined);
+    return okDevice(device, auth.bound ? { installTokenBound: true } : undefined);
   } catch (e) {
-    console.error("devices: upsert failed", e);
-    return fail("store-unavailable", 500);
+    return storeFailure(e, "devices: write failed");
   }
 }
 
@@ -198,7 +197,6 @@ export async function GET(req: Request): Promise<Response> {
     if (!device) return fail("not-found", 404);
     return okDevice(device);
   } catch (e) {
-    console.error("devices: read failed", e);
-    return fail("store-unavailable", 500);
+    return storeFailure(e, "devices: read failed");
   }
 }

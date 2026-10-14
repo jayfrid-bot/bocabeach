@@ -23,6 +23,7 @@ import { safetyAlertsEnabled } from "@/lib/push/notify";
 import { distanceToBeachMi } from "@/lib/location/shoreDistance";
 import { repeatWindow, sendClaimKey } from "@/lib/db/sendClaims";
 import type { DeviceStore, LiveActivityRow } from "@/lib/db/store";
+import { redactDeviceId } from "@/lib/db/legacy";
 import type { ArmedDevice, PushableDevice } from "@/lib/db/types";
 import type { ConditionsResponse } from "@/lib/types";
 import { evaluateAtBeach, RAIN_MEMORY_MS, type EvaluateAtBeachResult } from "@/lib/alerts/evaluate";
@@ -734,7 +735,7 @@ export async function runAtBeachAlerts(deps: AtBeachDeps): Promise<AtBeachCounts
         }
       } catch (e) {
         counts.errors += 1;
-        console.error("alerts: device failed", device.device.id, e);
+        console.error("alerts: device failed", redactDeviceId(device.device.id), e);
       }
     }
     } // end budget.left >= STAGE_RESERVE.atBeach
@@ -863,7 +864,7 @@ export async function runAtBeachAlerts(deps: AtBeachDeps): Promise<AtBeachCounts
         }
       } catch (e) {
         counts.errors += 1;
-        console.error("alerts: device failed", device.device.id, e);
+        console.error("alerts: device failed", redactDeviceId(device.device.id), e);
       }
     }
 

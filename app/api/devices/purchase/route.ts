@@ -8,6 +8,12 @@
 // a device with no store purchase (a trial or a code) simply keeps what it
 // has. Expiry is handled by the stored timestamp and the webhook, not here.
 //
+// Deliberately NOT behind the install token: the caller supplies nothing that
+// is written. The stored value is whatever RevenueCat says about this id right
+// now (the webhook writes the same answer), so a stranger calling it for
+// someone else's id can only re-state the truth. It also has to work for a
+// Restore Purchases right after a reinstall, before any token exists.
+//
 // App only, like the other purchase routes. 503 until REVENUECAT_SECRET_KEY is
 // set, 502 when RevenueCat can't be reached — both distinct from "not entitled".
 

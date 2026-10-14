@@ -101,8 +101,9 @@ vi.mock("@/lib/alerts/rain", async (importActual) => {
   return { ...actual, rainForFix: async () => null };
 });
 
-const { POST: registerPost } = await import("@/app/api/push/register-native/route");
-const { POST: unregisterPost } = await import("@/app/api/push/unregister-native/route");
+const { POST: rawRegisterPost } = await import("@/app/api/push/register-native/route");
+const { POST: rawUnregisterPost } = await import("@/app/api/push/unregister-native/route");
+const { tokenCarrier } = await import("@/lib/db/installTokenTestKit");
 const { POST: runPost } = await import("@/app/api/push/run/route");
 const { getStore, legacyDeviceId } = await import("@/lib/db/store");
 const { resetMemoryStore } = await import("@/lib/db/memoryStore");
@@ -130,6 +131,15 @@ const CONDITIONS = {
 } as unknown as ConditionsResponse;
 
 const DEV = "11111111-2222-4333-8444-555555555555";
+
+// A phone keeps the install token its first register returns and sends it on
+// every later call. This file tests push behaviour, not auth (that is
+// app/api/push/installTokenGate.test.ts), so both routes share one carrier.
+const tokenJar = new Map<string, string>();
+const registerCarrier = tokenCarrier(rawRegisterPost, tokenJar, { clientMade: true });
+const unregisterCarrier = tokenCarrier(rawUnregisterPost, tokenJar, { clientMade: true });
+const registerPost = registerCarrier.call;
+const unregisterPost = unregisterCarrier.call;
 const FCM_TOKEN = "f".repeat(80);
 const FCM_TOKEN_2 = "g".repeat(80);
 
@@ -154,6 +164,8 @@ function legacySub(over: Partial<NativeSub> = {}): NativeSub {
 }
 
 beforeEach(() => {
+  registerCarrier.reset();
+  unregisterCarrier.reset();
   resetMemoryStore();
   ctl.legacySubs = [];
   ctl.removed = [];
@@ -313,7 +325,9 @@ describe("POST /api/push/unregister-native", () => {
         deviceId: DEV,
       }),
     );
-    await unregisterPost(post("https://x/api/push/unregister-native", { token: FCM_TOKEN }));
+    // The app sends its deviceId on unregister too; the carrier uses it to pick
+    // the install token header.
+    await unregisterPost(post("https://x/api/push/unregister-native", { token: FCM_TOKEN, deviceId: DEV }));
     const store = await getStore();
     expect(await store.getDevice(DEV)).toBeTruthy();
     expect(await store.getPushToken(DEV)).toBeNull();
@@ -549,6 +563,34 @@ describe("POST /api/push/run", () => {
     expect(ctl.fcmSends).toEqual([FCM_TOKEN]);
   });
 
+  it("a failing legacy device is logged by a digest, never by an id that contains its push token", async () => {
+    // A legacy id is "legacy:" + base64url(push token): reversible, and a push
+    // token is a credential. The failure log must not carry either form.
+    await seedDevice();
+    await registerPost(
+      post("https://x/api/push/register-native", {
+        slug: "cocoa-beach",
+        token: FCM_TOKEN_2,
+        platform: "android",
+      }),
+    );
+    await grantPlus(legacyDeviceId(FCM_TOKEN_2));
+    ctl.throwForToken = FCM_TOKEN_2;
+    const spies = (["log", "info", "warn", "error"] as const).map((m) => vi.spyOn(console, m).mockImplementation(() => {}));
+    try {
+      const res = await run("?force=morning");
+      expect(((await res.json()) as Record<string, number>).errors).toBe(1);
+      const logged = JSON.stringify(spies.flatMap((s) => s.mock.calls.map((c) => c.map(String))));
+      expect(logged).toContain("device failed");
+      expect(logged).toContain("legacy:");
+      expect(logged).not.toContain(FCM_TOKEN_2);
+      expect(logged).not.toContain(legacyDeviceId(FCM_TOKEN_2));
+      expect(logged).not.toContain(Buffer.from(FCM_TOKEN_2).toString("base64url"));
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("reports at-beach alert counts, and sends none when nobody is armed", async () => {
     await seedDevice();
     const body = (await (await run("?mode=safety")).json()) as Record<string, unknown>;
@@ -681,27 +723,25 @@ describe("POST /api/push/run", () => {
     });
   });
 
-  it("imports legacy KV subscriptions on the first run, once", async () => {
-    ctl.legacySubs = [legacySub()];
-    const first = (await (await run()).json()) as Record<string, number>;
-    expect(first.imported).toBe(1);
-    expect(first.subscriptions).toBe(1);
-
-    const store = await getStore();
-    expect(await store.getDevice(legacyDeviceId(FCM_TOKEN))).toBeTruthy();
-
-    const second = (await (await run()).json()) as Record<string, number>;
-    expect(second.imported).toBe(0);
-    expect(second.subscriptions).toBe(1);
-    expect(await store.listDevices()).toHaveLength(1);
-  });
-
-  it("does not re-import a token a real device already owns", async () => {
-    await seedDevice();
+  it("does NOT import legacy KV subscriptions on a run (there is no importer at all)", async () => {
     ctl.legacySubs = [legacySub()];
     const body = (await (await run()).json()) as Record<string, number>;
-    expect(body.imported).toBe(0);
-    expect(body.subscriptions).toBe(1);
+    expect(body.imported).toBeUndefined();
+    expect(body.subscriptions).toBe(0);
+    expect(await (await getStore()).listDevices()).toHaveLength(0);
+  });
+
+  it("a stale KV record cannot bring back alerts a phone turned off", async () => {
+    // The phone registered, turned alerts off (D1 cleared), and the KV delete
+    // lagged: the record is still listed. Runs must not resurrect it.
+    await seedDevice();
+    ctl.legacySubs = [legacySub()];
+    await unregisterPost(post("https://x/api/push/unregister-native", { token: FCM_TOKEN, deviceId: DEV }));
+    await run();
+    await run();
+    const store = await getStore();
+    expect(await store.listPushable()).toHaveLength(0);
+    expect(await store.getDevice(legacyDeviceId(FCM_TOKEN))).toBeNull();
   });
 
   it("skips a device whose morning alert is switched off", async () => {

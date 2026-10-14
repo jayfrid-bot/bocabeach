@@ -5,6 +5,7 @@
 
 import { timingSafeEqual } from "node:crypto";
 import type { DeviceRecord } from "@/lib/db/types";
+import { InstallGuardDenied, StoreUnavailableError } from "@/lib/db/installGuard";
 
 /** Bodies are tiny (a profile at most). Anything larger is a mistake or abuse. */
 export const MAX_BODY_BYTES = 8 * 1024;
@@ -68,4 +69,17 @@ export function secretEqual(a: string, b: string): boolean {
 /** A finite number inside [min, max], else null. */
 export function num(v: unknown, min: number, max: number): number | null {
   return typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : null;
+}
+
+/**
+ * The one place a route turns a store failure into a response: a refused
+ * install-token guard is 401 `no-token`, a missing production database is 503,
+ * anything else is a generic 500 (the real error goes to the log, never to the
+ * caller).
+ */
+export function storeFailure(e: unknown, label: string): Response {
+  if (e instanceof InstallGuardDenied) return fail("no-token", 401);
+  if (e instanceof StoreUnavailableError) return fail("store-unavailable", 503);
+  console.error(label, e);
+  return fail("store-unavailable", 500);
 }

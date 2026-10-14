@@ -6,10 +6,16 @@
 // other ten.
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { POST, GET } from "@/app/api/devices/route";
+import { POST as rawPost, GET } from "@/app/api/devices/route";
+import { tokenCarrier } from "@/lib/db/installTokenTestKit";
 import { resetMemoryStore } from "@/lib/db/memoryStore";
 
 const DEV = "11111111-2222-4333-8444-555555555555";
+
+// Keeps the install token the first call returns and sends it on later calls,
+// as the app does (this file is about prefs, not auth).
+const carrier = tokenCarrier(rawPost, new Map(), { clientMade: true });
+const POST = carrier.call;
 
 function post(body: unknown): Request {
   return new Request("https://x/api/devices", {
@@ -23,6 +29,7 @@ const json = async (r: Response) =>
   (await r.json()) as { ok: boolean; device?: { prefs: Record<string, boolean> } };
 
 beforeEach(() => {
+  carrier.reset();
   resetMemoryStore();
 });
 

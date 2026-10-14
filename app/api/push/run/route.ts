@@ -28,8 +28,8 @@ import { getConditions } from "@/lib/conditions";
 import { getLocation } from "@/config/locations";
 import { computeSunTimes } from "@/lib/sources/sun";
 import type { Location } from "@/lib/types";
-import { listNativeSubs, removeNativeSub } from "@/lib/push/nativeStore";
-import { getStore, isLegacyId, type DeviceStore, type PushableDevice } from "@/lib/db/store";
+import { removeNativeSub } from "@/lib/push/nativeStore";
+import { getStore, isLegacyId, redactDeviceId, type DeviceStore, type PushableDevice } from "@/lib/db/store";
 import { coarsePrefs, parseMode } from "@/lib/db/plus";
 import { entitled, type SentState } from "@/lib/db/types";
 import { sendClaimKey } from "@/lib/db/sendClaims";
@@ -238,15 +238,10 @@ export async function POST(req: Request): Promise<Response> {
   const nowSec = Math.floor(nowMs / 1000);
 
   const store = await getStore();
-  // Migrate any pre-Plus KV subscription that has no device row yet. Idempotent
-  // and cheap once drained; a failure here must not stop the run.
-  let imported = 0;
-  try {
-    const legacy = await listNativeSubs();
-    if (legacy.length) imported = (await store.importLegacy(legacy)).imported;
-  } catch (e) {
-    console.error("push: legacy import failed", e);
-  }
+  // (The pre-Plus KV subscriptions are NOT imported here any more. A per-run
+  // importer meant a stale KV record could bring an unregistered phone's alerts
+  // back. Production KV held only 2 such records, both already in D1, so there
+  // is no importer at all now.)
 
   // Opportunistic housekeeping for the send-claims table (#14): drop claims
   // old enough to never matter again. Never fatal — every run does this once,
@@ -939,7 +934,7 @@ export async function POST(req: Request): Promise<Response> {
                           if (!(await store.markSent(sunColorClaimKey, nowMs))) {
                             console.warn(
                               "push: sun-color markSent lost ownership (claim reclaimed)",
-                              sunColorClaimKey,
+                              redactDeviceId(sub.device.id),
                             );
                           }
                         } else {
@@ -951,7 +946,7 @@ export async function POST(req: Request): Promise<Response> {
                           if (!(await store.releaseSend(sunColorClaimKey, nowMs))) {
                             console.warn(
                               "push: sun-color releaseSend lost ownership (claim reclaimed)",
-                              sunColorClaimKey,
+                              redactDeviceId(sub.device.id),
                             );
                           }
                           sunColorTerminal = false;
@@ -1002,7 +997,7 @@ export async function POST(req: Request): Promise<Response> {
             // selectedDueSet" pattern as every other `retryableDueSlugs.add`.
             retryableDueSlugs.add(slug);
             errors += 1;
-            console.error("push: device failed", sub.device.id, e);
+            console.error("push: device failed", redactDeviceId(sub.device.id), e);
           }
         }
       }
@@ -1049,7 +1044,6 @@ export async function POST(req: Request): Promise<Response> {
   return Response.json({
     ok: true,
     mode,
-    imported,
     beaches: homeBeaches,
     subscriptions: subs.length,
     ios: subs.filter((s) => s.platform === "ios").length,
