@@ -601,6 +601,13 @@ export interface CamSeaweedReading {
   /** 0-100 how full the beach looks. */
   crowdPct?: number;
   crowdNote?: string;
+  /** Set by the reader on a cam whose seaweed jump to moderate/high is held back for
+   *  a second look (its `level` is then null on the feed) — see scripts/cam_seaweed.py. */
+  unconfirmed?: boolean;
+  /** Set when the sun was too low to grade seaweed or water (`level` is null). */
+  lowSun?: boolean;
+  /** Copied from an earlier tick because this cam had no new frame. */
+  carried?: boolean;
 }
 /** Typical seaweed by local hour, learned from the rolling cam history. */
 export interface SargassumByHour {
@@ -740,9 +747,20 @@ export interface SargassumData {
   /** 0-100 % coverage at the worst cam in the most recent capture. */
   coveragePct?: number;
   note?: string;
-  /** True when the most recent capture is from the early-morning window. */
+  /** True when the shown capture is the day's pre-clean morning reading. */
   isMorning: boolean;
+  /** When the shown capture was taken (beach-local ISO) — its own time, which is
+   *  older than the newest capture when `source` is not "latest". */
   capturedAtLocal?: string;
+  /** Which feed group the reading came from: the newest capture ("latest"), or
+   *  today's last capture with a seaweed level (e.g. 5:30 PM, shown into the
+   *  evening when the dusk captures are too dark to grade), or the morning one.
+   *  Anything but "latest" is shown with its read time ("as of 5:30 PM"). */
+  source?: "latest" | "lastSeaweed" | "morning";
+  /** True while a cam in the shown capture holds a moderate/high seaweed claim
+   *  that a second look has not yet confirmed or cleared. The level above ignores
+   *  that cam, so a "no seaweed" claim (a push line, an Excellent alert) waits. */
+  pendingConfirmation?: boolean;
   cams: CamSeaweedReading[];
   /** Today's actual reads in capture order — past hours score with the read
    * in effect at that time, so later changes never rewrite earlier hours. */
@@ -796,6 +814,9 @@ export interface ClarityData {
   pct: number | null;
   note?: string;
   capturedAtLocal?: string;
+  /** Which feed group the reading came from; "lastWater" or "morning" means an
+   *  earlier capture than the newest one (the tile already prints "as of <time>"). */
+  source?: "latest" | "lastWater" | "morning";
   /** Per-cam reads for cams that saw open water. */
   perCam?: CamWaterClarity[];
   /** "unknown" when a capture exists but is night-gated, stale, or saw no open

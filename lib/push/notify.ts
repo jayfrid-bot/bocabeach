@@ -106,14 +106,19 @@ function conPhrase(s: SubScore): string {
   return PHRASES[s.key]?.con ?? s.label.toLowerCase();
 }
 
-/** Pick the standout pros (≤4) and cons (≤3) from the sub-scores, qualitatively. */
-function prosAndCons(subScores: SubScore[]): { pros: string[]; cons: string[] } {
+/** Pick the standout pros (≤4) and cons (≤3) from the sub-scores, qualitatively.
+ *  `seaweedPending`: a cam holds a moderate/high seaweed claim that a second look has
+ *  not yet confirmed, so the seaweed level the score used leaves that cam out. It may
+ *  say "none" falsely; a push must not advertise "no seaweed" until that resolves
+ *  (a real seaweed con is still fine to mention). */
+function prosAndCons(subScores: SubScore[], seaweedPending = false): { pros: string[]; cons: string[] } {
   const byKey = new Map(subScores.map((s) => [s.key, s]));
   const pros: string[] = [];
   for (const key of PRO_ORDER) {
     if (pros.length >= 4) break;
     const s = byKey.get(key);
     const phrase = PHRASES[key]?.pro;
+    if (key === "sargassum" && seaweedPending) continue;
     if (s && s.score != null && s.score >= PRO_MIN && phrase) pros.push(phrase);
   }
   const cons = subScores
@@ -247,7 +252,7 @@ export function summarizeForPush(
     ? fmtWindow(bw.startIso, bw.endIso, loc.tz)
     : findBestWindow(forecast, loc.tz);
   const skipWindow = findSkipWindow(forecast, loc.tz);
-  const { pros, cons } = prosAndCons(subScores);
+  const { pros, cons } = prosAndCons(subScores, res.snapshot?.sargassum?.data?.pendingConfirmation === true);
   return {
     slug: loc.slug,
     name: loc.name,

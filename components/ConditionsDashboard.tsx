@@ -57,6 +57,7 @@ import { SkyEventsCard } from "@/components/SkyEventsCard";
 import { SeasonalHazards } from "@/components/SeasonalHazards";
 import { seaweedVsAvgPhrase } from "@/lib/vsAveragePhrase";
 import { clarityTileCopy } from "@/lib/sources/clarity";
+import { seaweedTileSub } from "@/lib/sources/sargassum";
 // --- Beach Day Plus ---------------------------------------------------------
 import { SAFETY_ALERT_KEYS } from "@/lib/db/types";
 import { ripCapFor } from "@/lib/ripRisk";
@@ -1045,10 +1046,7 @@ export function ConditionsDashboard({
                 // The compared-to-usual phrase rides on the unclamped `extra`
                 // line: inside the clamped sub it ran to 4 lines on a 390 px
                 // phone and was cut off (CI, Deerfield, 2026-10-01).
-                sub={
-                  `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
-                  (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : "")
-                }
+                sub={seaweedTileSub(sg, tz)}
                 extra={
                   [seaweedVsAvgPhrase(sg.vsAvg), nextCamReadPhrase(sg.nextReadIso, tz, nowMs)]
                     .filter(Boolean)

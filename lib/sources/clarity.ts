@@ -12,7 +12,7 @@ import { fetchSun } from "@/lib/sources/sun";
 import { camFeedUrlCandidates } from "@/lib/sources/camFeed";
 import { expectedNextCamRead } from "@/lib/camNextRead";
 import { capCamHistory } from "@/lib/camHistory";
-import { pickCamGroup } from "@/lib/camGroup";
+import { pickCamGroup, type CamGroupSource } from "@/lib/camGroup";
 // The overnight fallback ("what did the water look like on the last readable
 // day, and when does the next read land?") is the same question busyness asks,
 // so both cards share one implementation of day selection, day naming and the
@@ -74,9 +74,12 @@ export interface ClarityFeed {
   /** When the off-Netlify job generated this snapshot (ISO) — the real freshness. */
   generatedAt?: string;
   latest?: CamGroup | null;
-  /** Today's newest capture with a published seaweed level (see lib/camGroup.ts).
-   *  At low sun `latest` publishes no water either, so this keeps the last real
-   *  water read for the minutes before the night gate. */
+  /** Today's newest capture where some cam read open water (see lib/camGroup.ts).
+   *  At low sun `latest` publishes no water, so this keeps the last real water
+   *  read for the minutes before the night gate. Independent of `lastSeaweed`. */
+  lastWater?: CamGroup | null;
+  /** Today's newest capture with a seaweed level; only counted when looking for
+   *  the clarity fields (never used as a water reading). */
   lastSeaweed?: CamGroup | null;
   morning?: CamGroup | null;
   history?: HistoryEntry[];
@@ -241,6 +244,9 @@ export function clarityDaySummary(
   };
 }
 
+/** Water readers' fallback chain (see lib/camGroup.ts). */
+const WATER_SOURCES: readonly CamGroupSource[] = ["latest", "lastWater", "morning"];
+
 /** A cam reading that saw open water (water is a valid grade, not null). */
 function hasWaterGrade(c: CamReading | null | undefined): c is CamReading & { water: WaterClarityGrade } {
   return !!c && typeof c.water === "string" && c.water in RANK;
@@ -248,7 +254,7 @@ function hasWaterGrade(c: CamReading | null | undefined): c is CamReading & { wa
 
 /** True when the feed actually carries clarity fields (vs a legacy pre-clarity feed). */
 function hasClarityFields(feed: ClarityFeed): boolean {
-  const groups = [feed?.latest, feed?.morning];
+  const groups = [feed?.latest, feed?.lastWater, feed?.lastSeaweed, feed?.morning];
   for (const g of groups) {
     for (const c of g?.cams ?? []) {
       if (c && "water" in c) return true;
@@ -287,14 +293,14 @@ export function summarizeClarity(
   const history = capCamHistory(feed?.history);
   if (!hasClarityFields(feed ? { ...feed, history } : feed)) return null;
 
-  // The newest group where some cam read open water (`latest`, else today's
-  // `lastSeaweed`, else `morning`); with none, `latest ?? morning` as before so
-  // the no-open-water note and its capture time are unchanged.
-  const group =
-    pickCamGroup(feed, (g) => (g.cams ?? []).some(hasWaterGrade))?.group ??
-    feed?.latest ??
-    feed?.morning ??
-    undefined;
+  // The newest group where some cam read open water: `latest`, else today's
+  // `lastWater` (kept apart from `lastSeaweed`, whose validity diverges), else
+  // `morning`. A fallback from another local date is never used. With none, `latest
+  // ?? morning` as before, so the no-open-water note and its capture time are unchanged.
+  const picked = pickCamGroup(feed, WATER_SOURCES, (g) => (g.cams ?? []).some(hasWaterGrade), {
+    nowLocalDate: gate?.nowLocalDate,
+  });
+  const group = picked?.group ?? feed?.latest ?? feed?.morning ?? undefined;
   const capturedAtLocal = group?.capturedAtLocal;
 
   // Learned from the last two weeks of actual read times — computed once per
@@ -378,6 +384,7 @@ export function summarizeClarity(
       pct: med,
       note: closest.waterNote,
       capturedAtLocal,
+      source: picked?.source as ClarityData["source"],
       perCam,
       nextReadIso: learnedNextRead?.iso,
     };
@@ -389,6 +396,7 @@ export function summarizeClarity(
     pct: mid.waterPct,
     note: mid.waterNote,
     capturedAtLocal,
+    source: picked?.source as ClarityData["source"],
     perCam,
     nextReadIso: learnedNextRead?.iso,
   };

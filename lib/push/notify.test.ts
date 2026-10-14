@@ -106,6 +106,7 @@ describe("summarizeForPush", () => {
         nws: { data: { alerts: over.alerts ?? [], ripCurrentRisk: over.rip ?? "low" } },
         cityOfficial: { data: { flags: over.flags ?? [], noSwimAdvisory: over.noSwim } },
         waterQuality: { data: { advisory: over.waterAdvisory ?? false } },
+        sargassum: { data: { level: "none", pendingConfirmation: over.pending } },
       },
     } as unknown as ConditionsResponse;
   }
@@ -142,6 +143,24 @@ describe("summarizeForPush", () => {
     // the freed 4th slot now surfaces the next-ranked pro (warm air).
     expect(s.pros).toEqual(["warm water", "calm surf", "quiet", "warm"]);
     expect(s.cons).toEqual(["muggy", "cloudy", "moderate seaweed"]);
+  });
+
+  it("says 'no seaweed' on a clean day, but not while a cam's seaweed claim is still being confirmed", () => {
+    const subScores = [
+      { key: "waterTemp", label: "Water temperature", score: 90, weight: 0.1 },
+      { key: "sargassum", label: "Seaweed (sargassum)", score: 100, weight: 0.07, display: "None" },
+      { key: "crowds", label: "Crowds", score: 90, weight: 0.05 },
+    ];
+    expect(summarizeForPush(res({ subScores }), loc).pros).toEqual(["warm water", "quiet", "no seaweed"]);
+    // A held cam's moderate/high claim is left out of the level, so "none" may be wrong: say nothing about it.
+    expect(summarizeForPush(res({ subScores, pending: true }), loc).pros).toEqual(["warm water", "quiet"]);
+  });
+
+  it("still names a real seaweed drawback while a claim is pending", () => {
+    const subScores = [
+      { key: "sargassum", label: "Seaweed (sargassum)", score: 30, weight: 0.07, display: "High · ~70% covered" },
+    ];
+    expect(summarizeForPush(res({ subScores, pending: true }), loc).cons).toEqual(["high seaweed"]);
   });
 
   it("flags a localized storm dip as a skip window on an otherwise-good day", () => {

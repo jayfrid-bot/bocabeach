@@ -132,10 +132,10 @@ cams VISION_MAX_FRAME_AGE_MIN = 60, courier cams DIRECT_FRAME_MAX_AGE_MIN = 150;
 older or untimed readings drop out). Carried readings feed the aggregates but
 are never new observations: camReadRow() (lib/history/camObservationRow.mjs)
 skips them, and they never touch `frameShas` or history[].frames. A capture
-missing some configured cam entirely is marked `"partial": true`; it may fill an
-empty `morning`, never displaces a complete one, and a later complete morning
-capture replaces a partial one. The courier path had the same gap and gets the
-same treatment.
+missing some configured cam entirely (or with a cam that publishes no seaweed) is
+marked `"partial": true`, informational only: the day's `morning` is chosen by how
+many cams published a seaweed level (see build_beach_output). The courier path had
+the same gap and gets the same treatment.
 
 LOW SUN (2026-10-13): when the sun at the beach is below LOW_SUN_DEG (default 10)
 at the frame's time (`frameAt`, else the scoring time), the reading publishes NO
@@ -143,18 +143,32 @@ seaweed and NO water clarity: low pink light, long shadows and dusk-dark wet san
 read as seaweed and murk (a 7:30 AM "moderate 20%", a 7:10 PM "high 60%, murky 58"
 on a clear, clean day). Vision is still called, so crowd and people counts stay. The
 reading keeps its seaweed/water keys as null and gains `"lowSun": true` and
-`"sunElevDeg"`. See solar_elevation_deg() and apply_low_sun_gate().
+`"sunElevDeg"`. The gate also runs at TICK level: when the sun at the tick's own time
+(the group's `capturedAtLocal`) is under the threshold, EVERY cam in the group,
+carried ones included, publishes neither, so an old daylight reading is never
+re-stamped as new at dusk and one gated cam cannot leave a lone "none" standing for
+the beach. See solar_elevation_deg() and apply_low_sun_gate().
 
-CONFIRM A JUMP (2026-10-13): a fresh `moderate`/`high` read from a cam whose previous
-read was below moderate (or that has no recent previous read) is held back until a
-second look agrees: the same cam claims moderate+ again on its next read, or another
-cam at the beach claims it in the same tick. A held read publishes no seaweed
-(level/coveragePct/note null) and stores `"unconfirmed": true` plus the
-`"claim"` {level, coveragePct, note} for the next tick; a confirmed one publishes
-normally and may carry `"confirmedBy"`. See confirm_seaweed_jumps(). One bad frame
-from one cam can no longer drive the beach headline. A capture where any cam lacks a
-seaweed level (low sun or held) is `partial` for the morning rules, and a capture
-with no seaweed level at all can never become the day's `morning`.
+CONFIRM A JUMP (2026-10-13): a fresh `moderate`/`high` seaweed read is held back
+until a second look agrees: (a) the SAME cam's next DIFFERENT frame (another
+frameSha, or frameAt for a courier cam) is moderate+ too, while its stored claim is
+alive, or (b) another cam at the beach has a FRESH moderate+ read in the same tick
+(two such cams confirm each other; a reading carried from an earlier tick never
+confirms anything). A held read publishes no seaweed (level/coveragePct/note null)
+and keeps `"unconfirmed": true` plus the `"claim"` {level, coveragePct, note} for the
+audit trail; a confirmed one publishes normally and may carry `"confirmedBy"`. The
+claim itself lives in the top-level `pendingClaims` map (see below), on its own
+clock: PENDING_CLAIM_MAX_MIN = 240 minutes by frame time, and only within the same
+beach-local date, because a cam read every ~3 hours (Fort Lauderdale's single
+courier cam) reaches its next frame long after a carried reading has expired. See
+confirm_seaweed_jumps() and update_pending_claims(). One bad frame from one cam can
+no longer drive the beach headline.
+
+MORNING (2026-10-13): the day's `morning` is chosen among the captures from 5 AM to
+MORNING_END_HOUR (12) local that have a published seaweed level on at least one cam:
+the one where MORE cams published a level, tie -> the earlier one. A capture with no
+seaweed level never becomes the morning. The window reaches noon so a courier beach
+whose first winter frame is gated still gets one.
 
 PER-CAM HINT: a cam entry in config/vision-cams.json may carry `"visionHint"`, a short
 plain sentence about what that camera sees (for example a dark rock shelf that is not
@@ -173,6 +187,10 @@ Data shape (cam_seaweed.<slug>.json — identical shape on every beach's file):
     `uw` field — it's one shared calibration signal, not a per-beach reading.
   lastSeaweed: the most recent capture of TODAY with a published seaweed level (same
     shape as `latest`); `latest` can be a low-sun capture with none. See build_beach_output.
+  lastWater: the same for water clarity (today's newest capture where some cam has a
+    valid water grade). Kept separately, because seaweed and water validity diverge.
+  pendingClaims: {cam id: {level, coveragePct, note, frameAt, frameSha?, claimedAt,
+    confirmed?}} — held (or just confirmed) moderate/high seaweed claims; see above.
   history[]: {t, hour, level(crowd), people, crowdPct, seaweed, cov, water, clr}
     plus SPARSE `uw` (pct) + `uwLevel` fields present ONLY on the ~hourly ticks
     that actually ran an underwater read (absent otherwise).
@@ -327,8 +345,14 @@ PREV_BASE = os.environ.get(
 # safety: its "cam_seaweed.boca-raton.json" may not exist yet on an old branch
 # commit), and the only slug main() mirrors into the legacy OUT path.
 LEGACY_SLUG = "boca-raton"
-# Local hours considered "morning, before/at the beach-cleaning tractor".
-MORNING = range(5, 10)
+# Local hours considered "morning": the day's authoritative early reading is chosen
+# among the captures from MORNING start up to (not including) MORNING_END_HOUR. It
+# used to stop at 10 (the beach-cleaning tractor works ~7-9 AM), but a surface
+# courier cam is read only every ~3 hours and the low-sun gate (LOW_SUN_DEG) blanks
+# its first winter frame, so a window ending at 10 could leave a courier beach with
+# no morning at all. See build_beach_output for how the capture is chosen.
+MORNING_END_HOUR = 12
+MORNING = range(5, MORNING_END_HOUR)
 
 # Which cams to read is NOT hard-coded — see load_registry() and the module
 # docstring. This used to be a fixed Boca-only list; it now comes from
@@ -363,6 +387,13 @@ VISION_MAX_FRAME_AGE_MIN = float(os.environ.get("VISION_MAX_FRAME_AGE_MIN", "60"
 # long-shadowed to grade seaweed or water clarity. 10 deg is about 8:10 AM / 5:40 PM
 # at Boca in mid-October (sunrise/sunset are at -0.83 deg). Crowd is unaffected.
 LOW_SUN_DEG = float(os.environ.get("LOW_SUN_DEG", "10"))
+
+# HOW LONG A HELD SEAWEED CLAIM LIVES (minutes, by its frame time). A claim waits for
+# the same cam's NEXT DIFFERENT frame to agree, and that can be far away: a surface
+# courier cam (Fort Lauderdale has no second cam to corroborate it) is read about
+# every 3 hours, longer than a reading may be carried (DIRECT_FRAME_MAX_AGE_MIN). So
+# the claim has its own, longer clock, and also expires at the beach-local midnight.
+PENDING_CLAIM_MAX_MIN = float(os.environ.get("PENDING_CLAIM_MAX_MIN", "240"))
 
 # --- webcam archive (see the module docstring and docs/CAM_ARCHIVE_PLAN.md) ---
 # Where stills are POSTed; the token is read at call time (archive_frame) so a
@@ -1549,6 +1580,11 @@ def worst_seaweed(group: dict | None) -> dict | None:
     return {"level": b["level"], "pct": b.get("coveragePct")}
 
 
+def seaweed_cam_count(group: dict | None) -> int:
+    """How many cams in a capture published a seaweed level."""
+    return sum(1 for c in (group or {}).get("cams", []) if c.get("level") in SEAWEED_RANK)
+
+
 def median_water(group: dict | None) -> dict | None:
     """The MEDIAN water clarity across a capture's cams: {level, pct}.
 
@@ -1711,57 +1747,91 @@ def apply_low_sun_gate(reading: dict, elev_deg: float | None, threshold: float |
     return out
 
 
-def _claimed_rank(r: dict) -> int:
-    """The seaweed rank a reading speaks for: its published level, else the level
-    of the unconfirmed claim it stores, else -1 (no seaweed read: low sun, none)."""
-    if r.get("level") in SEAWEED_RANK:
-        return SEAWEED_RANK[r["level"]]
-    claim = r.get("claim")
-    if r.get("unconfirmed") and isinstance(claim, dict) and claim.get("level") in SEAWEED_RANK:
-        return SEAWEED_RANK[claim["level"]]
-    return -1
+def _frame_age_of(entry: dict, now: dt.datetime) -> tuple[dt.datetime, float] | None:
+    """(frame time in UTC, its age in minutes at `now`) for a stored claim, from its
+    `frameAt`, else its `claimedAt`; None when neither parses."""
+    now_utc = now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)
+    for key in ("frameAt", "claimedAt"):
+        stamp = entry.get(key)
+        try:
+            at = dt.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+        except (TypeError, ValueError):
+            continue
+        return at, (now_utc - at).total_seconds() / 60
+    return None
 
 
-def confirm_seaweed_jumps(fresh: list[dict], carried: list[dict], prev_recent: dict[str, dict]) -> list[dict]:
+def live_pending_claims(pending: object, now: dt.datetime) -> dict[str, dict]:
+    """The stored moderate/high claims that are still alive at `now`: their frame is
+    no older than PENDING_CLAIM_MAX_MIN (and not from the future) AND was taken on
+    the same beach-local date as `now` (the beach's own tz is `now`'s). Anything
+    malformed is dropped. A claim is either held (waiting for a second look) or
+    `"confirmed": true` (already published; kept so the next moderate+ frame of a
+    slow cam need not be held again). Pure."""
+    if not isinstance(pending, dict):
+        return {}
+    local_day = now.date() if now.tzinfo else now.replace(tzinfo=dt.timezone.utc).date()
+    out = {}
+    for cid, entry in pending.items():
+        if not isinstance(entry, dict) or entry.get("level") not in SEAWEED_RANK:
+            continue
+        aged = _frame_age_of(entry, now)
+        if aged is None:
+            continue
+        at, age_min = aged
+        if age_min > PENDING_CLAIM_MAX_MIN or age_min < -VISION_MAX_FUTURE_MIN:
+            continue
+        if now.tzinfo and at.astimezone(now.tzinfo).date() != local_day:
+            continue
+        out[cid] = entry
+    return out
+
+
+def _same_frame(reading: dict, entry: dict) -> bool:
+    """True when a fresh reading is of the very frame a stored claim came from: equal
+    `frameSha` when both have one, else equal `frameAt` when both have one. With no
+    way to tell, a freshly scored reading counts as a different frame (an identical
+    frame is skipped before it is ever scored)."""
+    if reading.get("frameSha") and entry.get("frameSha"):
+        return reading["frameSha"] == entry["frameSha"]
+    if reading.get("frameAt") and entry.get("frameAt"):
+        return reading["frameAt"] == entry["frameAt"]
+    return False
+
+
+def confirm_seaweed_jumps(fresh: list[dict], pending: dict[str, dict]) -> list[dict]:
     """Hold back an unconfirmed jump to moderate/high seaweed. Returns the fresh
     readings to publish (new dicts for the changed ones; inputs are not mutated).
 
-    A fresh reading whose seaweed `level` is moderate or high is a JUMP when that
-    cam's previous recent reading (`prev_recent`, see recent_prev_readings) did not
-    claim moderate+, or there is none. A jump is CONFIRMED when:
-      (a) persistence: the previous reading claimed moderate+, either a published
-          level or the stored `claim` of an unconfirmed one -> "confirmedBy":
-          "persistence" (this also covers staying at, or rising from, a confirmed
-          moderate+);
-      (b) another cam: any OTHER cam in this tick claims moderate+, a fresh
-          reading by its raw level (two cams that both claim it confirm each
-          other), or a carried reading only when it is itself confirmed (a
-          carried unconfirmed claim confirms nothing) -> "confirmedBy": "cam:<id>".
+    A fresh reading whose seaweed `level` is moderate or high is CONFIRMED when:
+      (a) persistence: the same cam has a live stored claim of moderate+ (`pending`,
+          from live_pending_claims: held, or already confirmed) taken from a
+          DIFFERENT frame than this reading -> "confirmedBy": "persistence"; or
+      (b) another cam: any OTHER cam's FRESH reading in this same tick is itself
+          moderate+ by its raw level (two cams that both claim it confirm each
+          other) -> "confirmedBy": "cam:<id>". Readings carried from an earlier
+          tick never confirm anything (they can be an hour or more old), though
+          they still join the beach roll-up.
     Otherwise it is held: level/coveragePct/note become null (water and crowd are
     untouched) and the reading gains `"unconfirmed": true` and
-    `"claim": {level, coveragePct, note}` for the next tick to find. A low-sun
-    reading has level None, so it neither needs confirming nor confirms anything.
-    Readings below moderate pass through unchanged. Pure."""
+    `"claim": {level, coveragePct, note}` for the audit trail; update_pending_claims
+    stores the claim for a later tick. A low-sun reading has level None, so it
+    neither needs confirming nor confirms anything. Readings below moderate pass
+    through unchanged. Pure."""
     out = []
     for r in fresh:
         if r.get("level") not in SEAWEED_RANK or SEAWEED_RANK[r["level"]] < _MODERATE:
             out.append(r)
             continue
-        prev = prev_recent.get(r["id"])
         by = None
-        if prev is not None and _claimed_rank(prev) >= _MODERATE:
+        claim = pending.get(r["id"])
+        if claim is not None and not _same_frame(r, claim):
             by = "persistence"
         else:
             for o in fresh:
                 if o is not r and o.get("level") in SEAWEED_RANK and SEAWEED_RANK[o["level"]] >= _MODERATE:
                     by = f"cam:{o['id']}"
                     break
-            else:
-                for o in carried:
-                    if (o.get("level") in SEAWEED_RANK and SEAWEED_RANK[o["level"]] >= _MODERATE
-                            and not o.get("unconfirmed")):
-                        by = f"cam:{o['id']}"
-                        break
         if by:
             out.append({**r, "confirmedBy": by})
         else:
@@ -1772,6 +1842,36 @@ def confirm_seaweed_jumps(fresh: list[dict], carried: list[dict], prev_recent: d
                 "claim": {"level": r["level"], "coveragePct": r.get("coveragePct"), "note": r.get("note")},
             })
     return out
+
+
+def update_pending_claims(prev_pending: object, current: dict | None, now: dt.datetime) -> dict[str, dict]:
+    """The `pendingClaims` map to publish: {cam id: {level, coveragePct, note,
+    frameAt, frameSha?, claimedAt, confirmed?}}. Starts from the previous map's live
+    claims (live_pending_claims drops the expired and the other-day ones), then
+    applies this tick's FRESH readings (carried ones are not new evidence):
+      - a held read stores its claim;
+      - a read that published moderate/high stores it as `"confirmed": true`, so a
+        cam read every few hours keeps its confirmed state between frames;
+      - a read below moderate removes the cam's entry;
+      - a low-sun read (no seaweed level, no claim) changes nothing.
+    Pure."""
+    claims = live_pending_claims(prev_pending, now)
+    for c in (current or {}).get("cams", []):
+        if c.get("carried") or not c.get("id"):
+            continue
+        stamps = {"frameAt": c.get("frameAt"), "claimedAt": c.get("scoredAt") or _utc_iso(now)}
+        if c.get("frameSha"):
+            stamps["frameSha"] = c["frameSha"]
+        claim = c.get("claim")
+        if c.get("unconfirmed") and isinstance(claim, dict) and claim.get("level") in SEAWEED_RANK:
+            claims[c["id"]] = {**claim, **stamps}
+        elif c.get("level") in SEAWEED_RANK:
+            if SEAWEED_RANK[c["level"]] >= _MODERATE:
+                claims[c["id"]] = {"level": c["level"], "coveragePct": c.get("coveragePct"),
+                                   "note": c.get("note"), **stamps, "confirmed": True}
+            else:
+                claims.pop(c["id"], None)
+    return claims
 
 
 def prompt_for_cam(cam: dict) -> str:
@@ -1936,11 +2036,23 @@ def capture_beach(
     # `carried`, while that reading is still fresh enough to score today.
     fresh_ids = {r["id"] for r in readings}
     carried = carried_readings(prev, cams, fresh_ids, now_local)
-    # CONFIRM A JUMP: a fresh moderate/high from a cam that was below moderate
-    # needs a second look (its own next read, or another cam now) before it
-    # publishes. Held reads keep their claim for the next tick. Carried readings
-    # are never re-judged.
-    confirmed = confirm_seaweed_jumps(readings, carried, recent_prev_readings(prev, cams, now_local))
+    # TICK-LEVEL LOW SUN: the per-frame gate above judged each fresh frame by its
+    # own time. A group is also stamped with THIS tick's time, and it replaces
+    # `latest` and feeds history, so when the sun now is under the threshold no cam in
+    # it may publish seaweed or water: not a fresh read, and not a carried one (an
+    # older daylight reading of one cam would otherwise be re-stamped as new, and the
+    # other, gated cam's absence would let a lone "none" stand for the beach).
+    tick_elev = solar_elevation_deg(coords[0], coords[1], now_local) if coords else None
+    if tick_elev is not None and tick_elev < LOW_SUN_DEG:
+        readings = [r if r.get("lowSun") else apply_low_sun_gate(r, tick_elev) for r in readings]
+        carried = [c if c.get("lowSun") else apply_low_sun_gate(c, tick_elev) for c in carried]
+        print(f"  [{slug}] tick at low sun ({tick_elev:.1f} deg < {LOW_SUN_DEG:g}): "
+              "no seaweed or water published this tick")
+    # CONFIRM A JUMP: a fresh moderate/high needs a second look (this cam's next
+    # different frame, or another cam's fresh read now) before it publishes. Held
+    # reads are stored as pending claims by build_beach_output. Carried readings
+    # are never re-judged and never confirm anything.
+    confirmed = confirm_seaweed_jumps(readings, live_pending_claims(prev.get("pendingClaims"), now_local))
     for after in confirmed:
         if after.get("unconfirmed"):
             claim = after["claim"]
@@ -1958,9 +2070,8 @@ def capture_beach(
             or any(c.get("level") not in SEAWEED_RANK for c in ordered)):
         # Some configured cam has neither a fresh nor a recent reading, or one of
         # them publishes no seaweed (low sun, or a jump still being confirmed): the
-        # seaweed roll-up covers only part of the beach. build_beach_output will
-        # not let such a capture displace a complete `morning` (and a capture with
-        # no seaweed level at all can never be the morning).
+        # seaweed roll-up covers only part of the beach. Informational; the morning
+        # choice counts the cams with a seaweed level (build_beach_output).
         group["partial"] = True
     return group
 
@@ -1976,25 +2087,20 @@ def build_beach_output(
     today = now_local.date().isoformat()
     prev_morning = prev.get("morning") if prev.get("dateLocal") == today else None
 
-    # The earliest morning (pre-tractor) reading of the day is authoritative.
-    # A PARTIAL capture (some configured cam had neither a fresh nor a recent
-    # carried reading) may fill an empty morning but never displaces a complete
-    # one, and a later complete morning capture replaces a partial one, so a
-    # half-blind first read cannot lock in the day's authoritative reading.
+    # The day's `morning` is the best early capture, chosen among the captures from
+    # MORNING start to MORNING_END_HOUR that have a published seaweed level on at
+    # least one cam: the one where MORE cams published a level (a half-blind read,
+    # with cams gated by low sun or held for confirmation, cannot lock in the day),
+    # and on a tie the EARLIER one. A capture with no seaweed level at all can never
+    # be the morning.
     morning = prev_morning
-    if current and current["hour"] in MORNING and worst_seaweed(current):
-        # (A capture with no seaweed level at all, every cam at low sun or held
-        # back, says nothing about the beach and can never be the morning.)
-        cur_partial = bool(current.get("partial"))
-        prev_partial = bool(prev_morning and prev_morning.get("partial"))
+    if current and current["hour"] in MORNING and seaweed_cam_count(current):
         if not prev_morning:
             morning = current
-        elif prev_partial and not cur_partial:
-            morning = current
-        elif cur_partial and not prev_partial:
-            pass
-        elif current["hour"] < prev_morning.get("hour", 99):
-            morning = current
+        else:
+            cur_n, prev_n = seaweed_cam_count(current), seaweed_cam_count(prev_morning)
+            if cur_n > prev_n or (cur_n == prev_n and current["hour"] < prev_morning.get("hour", 99)):
+                morning = current
     latest = current or prev.get("latest")
 
     # LAST SEAWEED READING OF TODAY: `latest` moves on every capture, including the
@@ -2013,6 +2119,19 @@ def build_beach_output(
         last_seaweed = prev_last
     else:
         last_seaweed = None
+
+    # LAST WATER READING OF TODAY, kept on its own: the same rule for the water grade
+    # (some cam has a valid `water`). Seaweed and water validity diverge (a held
+    # seaweed claim still has a good water read; a seaweed-valid capture can have no
+    # open water in frame), so neither group can stand in for the other. The app's
+    # clarity reader uses this one.
+    prev_water = prev.get("lastWater") if isinstance(prev.get("lastWater"), dict) else None
+    if current and median_water(current):
+        last_water = current
+    elif prev.get("dateLocal") == today:
+        last_water = prev_water
+    else:
+        last_water = None
 
     # Rolling RAW history of cam reads -> the app derives all four views from it:
     # busyness by-hour & by-day, and seaweed by-hour & by-day. Each entry records
@@ -2087,6 +2206,12 @@ def build_beach_output(
         # Most recent capture of today with a published seaweed level (see above);
         # the app's seaweed card uses it when `latest` is gated. None until one.
         "lastSeaweed": last_seaweed,
+        # Same idea for water clarity: today's newest capture with a valid water grade.
+        "lastWater": last_water,
+        # Stored moderate/high seaweed claims by cam id (held for a second look, or
+        # confirmed), each with its frame time; they outlive a carried reading so a
+        # slow cam's next different frame can confirm (see update_pending_claims).
+        "pendingClaims": update_pending_claims(prev.get("pendingClaims"), current, now_local),
         # Latest underwater sea-cam read {level, pct, note, capturedAtLocal} —
         # ONE shared calibration signal, same value on every beach's file;
         # carried forward on ticks that skip the ~hourly underwater read. None

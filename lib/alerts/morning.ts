@@ -86,6 +86,12 @@ export function excellentDecision(input: ExcellentInput): AlertDecision | null {
   if (input.device.prefs["score-excellent"] === false) return null;
   if (input.summary.score < EXCELLENT_SCORE) return null;
   if (!isDaylight(input.res, input.nowMs)) return null;
+  // A cam is holding a moderate/high seaweed claim that a second look has not yet
+  // confirmed or cleared, and the score leaves that cam out. Do not interrupt anyone
+  // with "Excellent" on a number that may be missing seaweed. Nothing is recorded, so
+  // the next run (this alert is evaluated every run through daylight, deduped once a
+  // day only after it SENDS) decides again, once the claim resolves.
+  if (input.res.snapshot?.sargassum?.data?.pendingConfirmation) return null;
   return buildAlert(
     { key: "score-excellent", score: input.summary.score, dedupKey: `score-excellent:${input.date}` },
     { beach: input.summary.name },

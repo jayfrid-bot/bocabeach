@@ -8,11 +8,12 @@ import type {
   Wrapped,
 } from "@/lib/types";
 import { fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
+import { fmtTime } from "@/lib/format";
 import { vsAverage, type VsAverageEntry } from "@/lib/vsAverage";
 import { camFeedUrlCandidates } from "@/lib/sources/camFeed";
 import { expectedNextCamRead } from "@/lib/camNextRead";
 import { capCamHistory } from "@/lib/camHistory";
-import { pickCamGroup } from "@/lib/camGroup";
+import { pickCamGroup, type CamGroupSource } from "@/lib/camGroup";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
 
@@ -52,6 +53,17 @@ function readRank(e: HistoryEntry): number | undefined {
   if (typeof e.seaweed === "string" && e.seaweed in RANK) return RANK[e.seaweed];
   return undefined;
 }
+/** Seaweed readers' fallback chain (see lib/camGroup.ts). */
+const SEAWEED_SOURCES: readonly CamGroupSource[] = ["latest", "lastSeaweed", "morning"];
+/** The City's beach-cleaning tractor works ~7-9 AM; a `morning` capture is "pre-clean" before this hour. */
+const MORNING_PRE_CLEAN_END_HOUR = 10;
+
+/** Local hour (0-23) of a "YYYY-MM-DDTHH:mm±hh:mm" capture stamp; 0 when unreadable (treated as early). */
+function localHour(capturedAtLocal: string | undefined): number {
+  const h = Number(capturedAtLocal?.slice(11, 13));
+  return Number.isFinite(h) && capturedAtLocal?.[10] === "T" ? h : 0;
+}
+
 /** A cam reading that carries a published seaweed level (the reader nulls it at
  *  low sun and for a jump still being confirmed). */
 function hasSeaweedLevel(c: unknown): c is CamSeaweedReading {
@@ -151,6 +163,37 @@ function seaweedVsAvg(
   return { deltaPct: r.deltaPct, deltaPts: r.deltaPts, baselineDays: r.baselineDays };
 }
 
+/**
+ * "as of 5:30 PM" for a seaweed reading that is NOT the newest capture (the dusk
+ * captures are too dark to grade, so the card keeps the last real read into the
+ * evening, or the morning one): the read time, in the beach's own timezone, so a
+ * 5:30 PM read is never taken for 7:20 PM conditions. Undefined for a live
+ * (`latest`) reading, or when the capture time is unknown. Pure.
+ */
+export function seaweedAsOf(
+  sg: Pick<SargassumData, "source" | "capturedAtLocal">,
+  tz: string,
+): string | undefined {
+  if (!sg.source || sg.source === "latest" || !sg.capturedAtLocal) return undefined;
+  try {
+    return `as of ${fmtTime(sg.capturedAtLocal, tz)}`;
+  } catch {
+    return undefined; // an unparseable stamp: say nothing rather than "Invalid Date"
+  }
+}
+
+/** The Seaweed tile's supporting line: where the read came from, the coverage, and
+ *  (for a fallback read) when it was taken. Deterministic facts only. Pure. */
+export function seaweedTileSub(sg: SargassumData, tz: string): string {
+  return [
+    `📷 ${sg.isMorning ? "AM cams (pre-clean)" : "cams"}` +
+      (sg.coveragePct != null ? ` · ~${sg.coveragePct}% covered` : ""),
+    seaweedAsOf(sg, tz),
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 export interface SeaweedNextReadOptions {
   /** Instant to estimate the next cam read from. Defaults to real now — pass
    *  an explicit value in tests for determinism. */
@@ -172,9 +215,15 @@ export function summarizeSeaweed(
   // The newest group with a usable seaweed level: `latest`, else today's
   // `lastSeaweed`, else `morning` (see lib/camGroup.ts). A low-sun `latest`
   // publishes none, so the card keeps showing the last real read, labelled with
-  // that read's own time.
-  const picked = pickCamGroup(feed, (g) => (g.cams ?? []).some(hasSeaweedLevel));
-  const group = picked?.group ?? feed?.latest ?? null;
+  // that read's own time (`source` tells the UI it is not the newest capture).
+  // The producer idles overnight, so with the beach's local date known a group from
+  // another date (yesterday's `latest` included) is not today's seaweed: the card
+  // falls to the existing "unknown" state with the charts until the first dawn run.
+  const picked = pickCamGroup(feed, SEAWEED_SOURCES, (g) => (g.cams ?? []).some(hasSeaweedLevel), {
+    nowLocalDate,
+    dateGateLatest: true,
+  });
+  const group = picked?.group ?? null;
   // Learned from the last two weeks of actual read times — every camera
   // reading (fresh or the "no current reading" case below) gets this line.
   const nextReadIso = nextRead?.timezone
@@ -198,7 +247,7 @@ export function summarizeSeaweed(
   });
 
   // Today's reads, in capture order, for point-in-time scoring of past hours.
-  const today = group?.capturedAtLocal?.slice(0, 10);
+  const today = nowLocalDate ?? group?.capturedAtLocal?.slice(0, 10);
   const todayReads = today
     ? history
         .filter(
@@ -219,7 +268,12 @@ export function summarizeSeaweed(
     level: worst.level,
     coveragePct: worst.coveragePct,
     note: worst.note,
-    isMorning: picked?.source === "morning",
+    // "AM cams (pre-clean)" only means something before the City's cleaning
+    // tractor, so a morning capture from 10 AM on (a courier beach's first usable
+    // winter frame) is a plain fallback read, labelled with its time instead.
+    isMorning: picked?.source === "morning" && localHour(group?.capturedAtLocal) < MORNING_PRE_CLEAN_END_HOUR,
+    source: picked?.source as SargassumData["source"],
+    pendingConfirmation: (group?.cams ?? []).some((c) => c.unconfirmed === true) || undefined,
     capturedAtLocal: group?.capturedAtLocal,
     cams,
     todayReads: todayReads?.length ? todayReads : undefined,

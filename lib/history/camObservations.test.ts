@@ -136,6 +136,8 @@ describe("camReadRow / camReadRowsFromFeed (per-cam detail)", () => {
       "2026-10-06T23:10:00.000Z",
     ]);
     expect(camReadRowsFromFeed("boca-raton", { lastSeaweed: evening, latest: evening })).toHaveLength(1);
+    const water = { capturedAtLocal: "2026-10-06T16:00-04:00", cams: [cam("a")] };
+    expect(camReadRowsFromFeed("boca-raton", { lastWater: water, lastSeaweed: evening, latest: dusk })).toHaveLength(3);
   });
 
   it("never stores a carried reading as a new per-cam observation", () => {

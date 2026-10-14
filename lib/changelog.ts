@@ -20,7 +20,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-10-13",
     title: "Steadier seaweed readings",
     details:
-      "We had a few false seaweed alarms on a clear, clean day. The cams now skip seaweed and water calls when the sun is too low to judge, and a sudden jump has to be seen twice before it shows. The cam that confuses a dark rock shelf with seaweed now gets a hint about it.",
+      "We had a few false seaweed alarms on a clear, clean day. The cams now skip seaweed and water calls when the sun is too low to judge, and a sudden jump has to be seen twice, or by a second camera, before it shows. After dark, the card now keeps the last good daytime reading and says when it was taken. The cam that confuses a dark rock shelf with seaweed now gets a hint about it.",
     tag: "fixed",
   },
   {

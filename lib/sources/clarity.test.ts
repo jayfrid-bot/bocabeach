@@ -130,26 +130,60 @@ describe("summarizeClarity — a low-sun latest between 5:40 PM and the night ga
     capturedAtLocal: "2026-10-13T17:30:00-04:00",
     cams: [{ name: "Inlet", water: "clear", waterPct: 82, waterNote: "blue-green" }] as never,
   };
-  const at = (iso: string) => ({ now: new Date(iso), timezone: "America/New_York" });
+  const at = (iso: string) => ({ now: new Date(iso), timezone: "America/New_York", nowLocalDate: "2026-10-13" });
 
-  it("keeps the last real water read (lastSeaweed) instead of 'no open water'", () => {
-    const d = summarizeClarity({ latest: gated, lastSeaweed: evening }, at("2026-10-13T19:20:00-04:00"));
+  it("keeps the last real water read (lastWater) instead of 'no open water'", () => {
+    const d = summarizeClarity({ latest: gated, lastWater: evening }, at("2026-10-13T19:20:00-04:00"));
     expect(d!.level).toBe("clear");
     expect(d!.pct).toBe(82);
     expect(d!.capturedAtLocal).toBe("2026-10-13T17:30:00-04:00"); // honest about when it was read
+    expect(d!.source).toBe("lastWater");
+    // the tile prints the read time for it, as it does for any reading
+    expect(clarityTileCopy(d!, "America/New_York").sub).toContain("as of 5:30 PM");
   });
 
   it("then its own stale gate takes over once that read is over two hours old", () => {
-    const d = summarizeClarity({ latest: gated, lastSeaweed: evening }, at("2026-10-13T19:45:00-04:00"));
+    const d = summarizeClarity({ latest: gated, lastWater: evening }, at("2026-10-13T19:45:00-04:00"));
     expect(d!.level).toBeNull();
     expect(d!.status).toBe("unknown");
     expect(d!.note).toMatch(/couple hours old/i);
   });
 
-  it("with no lastSeaweed it is the existing 'no open water' note", () => {
-    const d = summarizeClarity({ latest: gated }, at("2026-10-13T19:20:00-04:00"));
+  it("never borrows lastSeaweed: that capture's water may be unread, and its seaweed validity is a different question", () => {
+    const seaweedOnly = {
+      capturedAtLocal: "2026-10-13T17:30:00-04:00",
+      cams: [{ name: "Inlet", level: "low", water: null, waterPct: null }] as never,
+    };
+    const d = summarizeClarity({ latest: gated, lastSeaweed: seaweedOnly, lastWater: evening }, at("2026-10-13T19:20:00-04:00"));
+    expect(d!.source).toBe("lastWater");
+    const none = summarizeClarity({ latest: gated, lastSeaweed: evening }, at("2026-10-13T19:20:00-04:00"));
+    expect(none!.level).toBeNull(); // lastSeaweed is not a water group
+    expect(none!.note).toMatch(/open water/i);
+  });
+
+  it("a held seaweed claim with a good water read is a normal live water read", () => {
+    const held = {
+      capturedAtLocal: "2026-10-13T13:20:00-04:00",
+      cams: [{ name: "Inlet", level: null, unconfirmed: true, water: "clear", waterPct: 85 }] as never,
+    };
+    const d = summarizeClarity({ latest: held }, at("2026-10-13T13:25:00-04:00"));
+    expect(d!.level).toBe("clear");
+    expect(d!.source).toBe("latest");
+  });
+
+  it("rejects a lastWater or morning group from another local date once the day has turned", () => {
+    const yesterdayWater = { ...evening, capturedAtLocal: "2026-10-12T17:30:00-04:00" };
+    const d = summarizeClarity(
+      { latest: { ...gated, capturedAtLocal: "2026-10-14T06:10:00-04:00" }, lastWater: yesterdayWater, morning: yesterdayWater },
+      { now: new Date("2026-10-14T06:20:00-04:00"), timezone: "America/New_York", nowLocalDate: "2026-10-14" },
+    );
     expect(d!.level).toBeNull();
     expect(d!.note).toMatch(/open water/i);
+  });
+
+  it("counts lastWater / lastSeaweed when deciding whether the feed has clarity fields at all", () => {
+    expect(summarizeClarity({ lastWater: evening, latest: { cams: [{ name: "x" }] as never } })).not.toBeNull();
+    expect(summarizeClarity({ lastSeaweed: evening })).not.toBeNull();
   });
 });
 

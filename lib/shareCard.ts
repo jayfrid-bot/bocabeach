@@ -11,6 +11,7 @@ import { GOOD_WINDOW_MIN_SCORE, scoreBand } from "@/lib/scoreBands";
 import { beachDayVerdict } from "@/lib/format";
 import { uvBand } from "@/lib/uv";
 import { clarityDisplayWord } from "@/lib/sources/clarity";
+import { seaweedAsOf } from "@/lib/sources/sargassum";
 import { listLocations } from "@/config/locations";
 import { applyLiveRipCap, deriveMetrics } from "@/lib/score";
 import { ripCapFor } from "@/lib/ripRisk/resolve";
@@ -353,14 +354,22 @@ export function shareCardModel(
   const weed = snapshot?.sargassum?.data;
   if (weed?.level && weed.level !== "unknown") {
     const pct = typeof weed.coveragePct === "number" ? `${Math.round(weed.coveragePct)}% covered` : undefined;
-    push("seaweed", "Seaweed", capitalize(weed.level), pct);
+    // An evening card must not pass a 5:30 PM read off as current: a fallback read
+    // carries its read time.
+    const note = [pct, seaweedAsOf(weed, tz)].filter(Boolean).join(" · ") || undefined;
+    push("seaweed", "Seaweed", capitalize(weed.level), note);
   }
 
   // Only a genuinely live read (a level, not the night/stale "unknown" gate)
   // belongs on the card — no "yesterday" stand-in on a shareable image.
   const clarityData = snapshot?.clarity?.data;
   if (clarityData?.level) {
-    push("clarity", "Water clarity", clarityDisplayWord(clarityData.level, clarityData.pct));
+    // Like seaweed, an earlier capture (kept past the low-sun dusk frames) says when.
+    const clarityAsOf = clarityData.source && clarityData.source !== "latest" && clarityData.capturedAtLocal
+      ? safeTime(clarityData.capturedAtLocal, tz)
+      : undefined;
+    push("clarity", "Water clarity", clarityDisplayWord(clarityData.level, clarityData.pct),
+      clarityAsOf ? `as of ${clarityAsOf}` : undefined);
   }
 
   // Crowd only when a cam actually read the beach TODAY — busyness.data.level

@@ -45,6 +45,8 @@ export interface CamFeedDoc {
   /** Today's newest capture with a published seaweed level: an earlier `latest`,
    *  so its rows may already exist (the primary key de-duplicates them). */
   lastSeaweed?: { capturedAtLocal?: string; cams?: unknown[] } | null;
+  /** Same idea for water clarity (today's newest capture where a cam read open water). */
+  lastWater?: { capturedAtLocal?: string; cams?: unknown[] } | null;
   history?: unknown[];
 }
 
@@ -93,12 +95,12 @@ export function newObservationRows(
     .slice(0, max);
 }
 
-/** Per-cam rows from the feed's `morning`, `lastSeaweed` and `latest` groups
+/** Per-cam rows from the feed's `morning`, `lastSeaweed`, `lastWater` and `latest` groups
  *  (de-duplicated on the primary key — they are the same capture on some ticks).
- *  `lastSeaweed` matters when the hourly archiver missed the tick it was `latest`. Pure. */
+ *  `lastSeaweed` / `lastWater` matter when the hourly archiver missed the tick they were `latest`. Pure. */
 export function camReadRowsFromFeed(slug: string, feed: CamFeedDoc): CamReadRow[] {
   const out = new Map<string, CamReadRow>();
-  for (const group of [feed.morning, feed.lastSeaweed, feed.latest]) {
+  for (const group of [feed.morning, feed.lastSeaweed, feed.lastWater, feed.latest]) {
     for (const cam of group?.cams ?? []) {
       const row = camReadRow(slug, group, cam) as CamReadRow | null;
       if (row) out.set(`${row.captured_at_utc}|${row.cam_id}`, row);

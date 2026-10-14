@@ -162,6 +162,18 @@ describe("excellentDecision", () => {
     ).toBeNull();
   });
 
+  it("waits while a cam's seaweed claim is still being confirmed, and fires on the next run once it resolves", () => {
+    const withSeaweed = (pending: boolean | undefined): ConditionsResponse => ({
+      ...res,
+      snapshot: { ...res.snapshot, sargassum: wrapped({ level: "none", isMorning: false, cams: [], pendingConfirmation: pending }) },
+    });
+    const input = { device: device(), summary: summary(95), nowMs: NOW, date: "2026-09-02" };
+    expect(excellentDecision({ ...input, res: withSeaweed(true) })).toBeNull();
+    // Nothing is recorded by the null, so the same day's alert is still available next run.
+    const later = excellentDecision({ ...input, res: withSeaweed(undefined) });
+    expect(later?.dedupKey).toBe("score-excellent:2026-09-02");
+  });
+
   it("uses a per-day key, so tomorrow can fire again", () => {
     const a = excellentDecision({ device: device(), summary: summary(95), res, nowMs: NOW, date: "2026-09-02" });
     const b = excellentDecision({ device: device(), summary: summary(95), res, nowMs: NOW, date: "2026-09-03" });

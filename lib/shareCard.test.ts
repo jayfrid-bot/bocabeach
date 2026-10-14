@@ -279,6 +279,54 @@ describe("shareCardModel", () => {
     expect(m.tiles.find((t) => t.key === "tide")).toMatchObject({ label: "Low tide", value: "6:00 PM" });
   });
 
+  describe("a read from an earlier capture carries its time", () => {
+    // The dusk captures are too dark to grade, so the snapshot can hold the 5:30 PM read
+    // while the card header shows the snapshot time (7:20 PM): the tile must say so.
+    it("seaweed from the last daylight capture says 'as of 5:30 PM' (beach-local)", () => {
+      const m = shareCardModel(
+        response({
+          sargassum: wrap({
+            level: "low", coveragePct: 8, source: "lastSeaweed", capturedAtLocal: "2026-09-14T17:30-04:00",
+          }) as ConditionsSnapshot["sargassum"],
+        }),
+        NOW_MS,
+      );
+      expect(m.tiles.find((t) => t.key === "seaweed")).toMatchObject({ value: "Low", note: "8% covered · as of 5:30 PM" });
+    });
+
+    it("a live read keeps its plain note, and a fallback with no coverage still says when", () => {
+      const live = shareCardModel(
+        response({
+          sargassum: wrap({ level: "low", coveragePct: 8, source: "latest", capturedAtLocal: "2026-09-14T19:10-04:00" }) as ConditionsSnapshot["sargassum"],
+        }),
+        NOW_MS,
+      );
+      expect(live.tiles.find((t) => t.key === "seaweed")?.note).toBe("8% covered");
+      const bare = shareCardModel(
+        response({
+          sargassum: wrap({ level: "none", source: "morning", capturedAtLocal: "2026-09-14T08:40-04:00" }) as ConditionsSnapshot["sargassum"],
+        }),
+        NOW_MS,
+      );
+      expect(bare.tiles.find((t) => t.key === "seaweed")?.note).toBe("as of 8:40 AM");
+    });
+
+    it("water clarity from an earlier capture says when too; a live one does not", () => {
+      const earlier = shareCardModel(
+        response({
+          clarity: wrap<ClarityData>({ level: "clear", pct: 82, source: "lastWater", capturedAtLocal: "2026-09-14T17:30-04:00" }),
+        }),
+        NOW_MS,
+      );
+      expect(earlier.tiles.find((t) => t.key === "clarity")?.note).toBe("as of 5:30 PM");
+      const live = shareCardModel(
+        response({ clarity: wrap<ClarityData>({ level: "clear", pct: 82, source: "latest", capturedAtLocal: "2026-09-14T19:10-04:00" }) }),
+        NOW_MS,
+      );
+      expect(live.tiles.find((t) => t.key === "clarity")?.note).toBeUndefined();
+    });
+  });
+
   describe("sun tile color score", () => {
     const SUNSET = "2026-09-14T23:30:00.000Z";
     const hourly = (over: Record<string, unknown> = {}) =>
