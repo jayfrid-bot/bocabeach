@@ -8,6 +8,7 @@
 //    -debugFavorites a,b,c    pretend the iPhone synced these favorites
 //    -debugLastViewed <slug>  pretend the iPhone synced this last-viewed beach
 //    -debugReset 1            forget the sync, the watch pick and the cache
+//    -debugWatchJSON <dir>    read <dir>/<slug>.json instead of the network
 //    -debugOffline 1          make every fetch fail (shows cache, stale and error states)
 //    -debugAgeCache <min>     age the cached reading of the home beach by this many minutes
 //    -debugScreen picker      open the beach picker
@@ -31,6 +32,10 @@ enum DebugHooks {
             let favs = d.string(forKey: "debugFavorites")?.split(separator: ",").map(String.init) ?? []
             BeachSelection.applySync(home: d.string(forKey: "debugHome"), favorites: favs,
                                      lastViewed: d.string(forKey: "debugLastViewed"))
+        }
+        // Remembered across launches (a background relaunch ignores arguments); "-" clears it.
+        if let dir = d.string(forKey: "debugWatchJSON") {
+            if dir == "-" { SharedStore.defaults.removeObject(forKey: "debug.watchJSON") } else { SharedStore.defaults.set(dir, forKey: "debug.watchJSON") }
         }
         let age = d.double(forKey: "debugAgeCache")
         if age > 0, let slug = BeachSelection.activeSlug, var cached = SummaryCache.load(slug) {

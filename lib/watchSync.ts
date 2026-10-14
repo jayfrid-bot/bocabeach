@@ -72,16 +72,25 @@ export function isWatchSyncAvailable(): boolean {
 }
 
 let lastSentKey: string | null = null;
+/** The newest send still running, and the end of the line of sends. */
+let inFlight: { key: string; promise: Promise<boolean> } | null = null;
+let tail: Promise<unknown> = Promise.resolve();
 
 /** Test hook: forget what was last sent. */
 export function resetWatchSyncState(): void {
   lastSentKey = null;
+  inFlight = null;
+  tail = Promise.resolve();
 }
 
 /**
- * Send the home beach, favorites and last-viewed beach to the watch. Returns true when the native
- * side took the payload, false when there is no plugin or it refused. An
- * unchanged payload is not sent again in the same page session.
+ * Send the home beach, favorites and last-viewed beach to the watch. Returns
+ * true when the native side took the payload, false when there is no plugin or
+ * it refused (a refused payload is not remembered, so the next call retries).
+ *
+ * Single-flight: the same payload asked for twice while one is on its way shares
+ * that one bridge call, and different payloads go one after another, so the
+ * hooks that mount together cannot double-send or arrive out of order.
  */
 export async function syncWatchBeaches(
   home: unknown,
@@ -93,14 +102,27 @@ export async function syncWatchBeaches(
   const payload = buildWatchPayload(home, favorites, lastViewed);
   const key = JSON.stringify(payload);
   if (key === lastSentKey) return true;
-  try {
-    const res = await plugin.setBeaches(payload);
-    if (res?.ok) {
-      lastSentKey = key;
-      return true;
+  if (inFlight?.key === key) return inFlight.promise;
+
+  const run = async (): Promise<boolean> => {
+    if (key === lastSentKey) return true;
+    try {
+      const res = await plugin.setBeaches(payload);
+      if (res?.ok) {
+        lastSentKey = key;
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
     }
-    return false;
-  } catch {
-    return false;
-  }
+  };
+  const promise = tail.then(run, run);
+  tail = promise;
+  const entry = { key, promise };
+  inFlight = entry;
+  void promise.finally(() => {
+    if (inFlight === entry) inFlight = null;
+  });
+  return promise;
 }

@@ -24,45 +24,56 @@ import WatchConnectivity
 
 /// Owns the WCSession on the phone. A singleton because a WCSession needs one
 /// long-lived delegate, whatever the web view does.
+///
+/// All state lives on one serial queue (`queue`). Capacitor calls plugin methods
+/// on its own queue and WatchConnectivity calls the delegate on a background
+/// thread; both hop onto `queue` before touching anything here.
 final class WatchSyncHub: NSObject, WCSessionDelegate {
     static let shared = WatchSyncHub()
 
-    private var latest: [String: Any]?
-    private var started = false
-
-    private var store: UserDefaults { UserDefaults(suiteName: WatchSync.appGroup) ?? .standard }
-
-    func start() {
-        guard !started else { return }
-        started = true
-        // Pick up what was sent before the app was killed, so a fresh
-        // activation (or a newly installed watch app) still gets it.
-        if let saved = store.dictionary(forKey: "watchSync.context") { latest = saved }
-        guard WCSession.isSupported() else { return }
-        let session = WCSession.default
-        session.delegate = self
-        session.activate()
+    enum SendResult: Equatable {
+        /// Nothing more to do: delivered, unchanged, or no watch to deliver to yet.
+        case ok
+        /// The system refused the context; the web side should try again later.
+        case failed(String)
     }
 
-    /// Returns false when the payload is unchanged (nothing to send).
-    @discardableResult
-    func send(home: String?, favorites: [String], lastViewed: String? = nil) -> Bool {
-        start()
-        var context: [String: Any] = [
-            WatchSync.Key.version: WatchSync.payloadVersion,
-            WatchSync.Key.favorites: favorites,
-        ]
-        if let home { context[WatchSync.Key.homeSlug] = home }
-        if let lastViewed { context[WatchSync.Key.lastViewedSlug] = lastViewed }
-        let unchanged = (latest as NSDictionary?)?.isEqual(to: context) ?? false
-        latest = context
-        store.set(context, forKey: "watchSync.context")
-        // Same keys the watch app reads, for anything on the phone that wants them.
-        if let home { store.set(home, forKey: WatchSync.Key.homeSlug) } else { store.removeObject(forKey: WatchSync.Key.homeSlug) }
-        store.set(favorites, forKey: WatchSync.Key.favorites)
-        if let lastViewed { store.set(lastViewed, forKey: WatchSync.Key.lastViewedSlug) } else { store.removeObject(forKey: WatchSync.Key.lastViewedSlug) }
-        flush()
-        return !unchanged
+    private let queue = DispatchQueue(label: "com.isitbeachday.watchsync")
+
+    // Only touched on `queue`.
+    private var latest: [String: Any]?
+    /// The last context handed to the system successfully.
+    private var delivered: [String: Any]?
+    private var loaded = false
+    private var activating = false
+
+    private var store: UserDefaults { UserDefaults(suiteName: WatchSync.appGroup)! }
+
+    /// Warm up the session (called when the plugin loads).
+    func start() {
+        queue.async { self.ensureActivated() }
+    }
+
+    /// Calls `completion` on `queue` once the payload has been handed to the system,
+    /// found unchanged, or found to have nowhere to go yet.
+    func send(home: String?, favorites: [String], lastViewed: String? = nil,
+              completion: @escaping (SendResult) -> Void = { _ in }) {
+        queue.async {
+            self.loadSavedIfNeeded()
+            var context: [String: Any] = [
+                WatchSync.Key.version: WatchSync.payloadVersion,
+                WatchSync.Key.favorites: favorites,
+            ]
+            if let home { context[WatchSync.Key.homeSlug] = home }
+            if let lastViewed { context[WatchSync.Key.lastViewedSlug] = lastViewed }
+            self.latest = context
+            self.store.set(context, forKey: "watchSync.context")
+            // Same keys the watch app reads, for anything on the phone that wants them.
+            if let home { self.store.set(home, forKey: WatchSync.Key.homeSlug) } else { self.store.removeObject(forKey: WatchSync.Key.homeSlug) }
+            self.store.set(favorites, forKey: WatchSync.Key.favorites)
+            if let lastViewed { self.store.set(lastViewed, forKey: WatchSync.Key.lastViewedSlug) } else { self.store.removeObject(forKey: WatchSync.Key.lastViewedSlug) }
+            completion(self.flush())
+        }
     }
 
     struct Status {
@@ -79,32 +90,80 @@ final class WatchSyncHub: NSObject, WCSessionDelegate {
                       paired: s.isPaired, watchAppInstalled: s.isWatchAppInstalled)
     }
 
-    /// Hand the newest context to the system when a watch can take it.
-    func flush() {
-        guard WCSession.isSupported(), let latest else { return }
+    // MARK: On `queue` only
+
+    private func loadSavedIfNeeded() {
+        guard !loaded else { return }
+        loaded = true
+        // What was sent before the app was killed, so a fresh activation (or a
+        // newly installed watch app) still gets it.
+        if latest == nil, let saved = store.dictionary(forKey: "watchSync.context") { latest = saved }
+    }
+
+    /// Starts activation unless it is running or done. An activation that failed
+    /// leaves `activating` false, so the next call tries again.
+    private func ensureActivated() {
+        guard WCSession.isSupported() else { return }
         let session = WCSession.default
-        guard session.activationState == .activated, session.isPaired, session.isWatchAppInstalled else { return }
-        do {
-            try session.updateApplicationContext(latest)
-        } catch {
-            // Not fatal: the next state change or call tries again.
-            NSLog("WatchSync: updateApplicationContext failed: %@", error.localizedDescription)
+        session.delegate = self
+        if session.activationState != .activated && !activating {
+            activating = true
+            session.activate()
         }
     }
 
-    // MARK: WCSessionDelegate
-
-    func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
-        if activationState == .activated { flush() }
+    /// Hands the newest context to the system when a watch can take it.
+    private func flush() -> SendResult {
+        loadSavedIfNeeded()
+        guard WCSession.isSupported(), let latest else { return .ok }
+        ensureActivated()
+        let session = WCSession.default
+        // Not activated yet, or no watch to receive it: kept, and flushed from the
+        // delegate callbacks below when that changes.
+        guard session.activationState == .activated, session.isPaired, session.isWatchAppInstalled else { return .ok }
+        if let delivered, (delivered as NSDictionary).isEqual(to: latest) { return .ok }
+        do {
+            try session.updateApplicationContext(latest)
+            delivered = latest
+            return .ok
+        } catch {
+            NSLog("WatchSync: updateApplicationContext failed: %@", error.localizedDescription)
+            return .failed(error.localizedDescription)
+        }
     }
 
-    func sessionWatchStateDidChange(_ session: WCSession) { flush() }
+    // MARK: WCSessionDelegate (background thread; hop to `queue`)
+
+    func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
+        queue.async {
+            self.activating = false
+            if let error { NSLog("WatchSync: activation failed: %@", error.localizedDescription) }
+            if activationState == .activated {
+                // A new activation can mean a different or reset counterpart: resend.
+                self.delivered = nil
+                _ = self.flush()
+            }
+            // On failure `activating` is false, so the next send() activates again.
+        }
+    }
+
+    func sessionWatchStateDidChange(_ session: WCSession) {
+        queue.async {
+            // A newly installed watch app has not seen the last context yet.
+            self.delivered = nil
+            _ = self.flush()
+        }
+    }
 
     func sessionDidBecomeInactive(_ session: WCSession) {}
 
     func sessionDidDeactivate(_ session: WCSession) {
         // A different watch was paired: activate again for the new one.
-        session.activate()
+        queue.async {
+            self.activating = false
+            self.delivered = nil
+            self.ensureActivated()
+        }
     }
 }
 
@@ -123,7 +182,9 @@ public class WatchSyncPlugin: CAPPlugin, CAPBridgedPlugin {
         WatchSyncHub.shared.start()
     }
 
+    /// `WKWebView.url` is main-thread state; Capacitor calls plugin methods on its own queue.
     private func originAllowed() -> Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
         guard let url = bridge?.webView?.url, let host = url.host, let scheme = url.scheme else { return false }
         if scheme == "https" && host == Self.allowedHost { return true }
         #if DEBUG
@@ -133,23 +194,35 @@ public class WatchSyncPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     /// `{homeSlug: string | null, favorites: string[], lastViewedSlug?: string | null}`
+    /// Resolves `{ok: false, reason}` when the system refused the payload, so the
+    /// web side does not mark it sent and tries again.
     @objc func setBeaches(_ call: CAPPluginCall) {
-        guard originAllowed() else {
-            call.resolve(["ok": false, "reason": "origin-not-allowed"])
-            return
+        DispatchQueue.main.async {
+            guard self.originAllowed() else {
+                call.resolve(["ok": false, "reason": "origin-not-allowed"])
+                return
+            }
+            let clean = WatchSync.clean(home: call.options["homeSlug"], favorites: call.options["favorites"],
+                                        lastViewed: call.options["lastViewedSlug"])
+            WatchSyncHub.shared.send(home: clean.home, favorites: clean.favorites, lastViewed: clean.lastViewed) { result in
+                switch result {
+                case .ok:
+                    call.resolve(self.statusPayload(ok: true))
+                case .failed(let reason):
+                    call.resolve(["ok": false, "reason": "send-failed", "detail": reason])
+                }
+            }
         }
-        let clean = WatchSync.clean(home: call.options["homeSlug"], favorites: call.options["favorites"],
-                                    lastViewed: call.options["lastViewedSlug"])
-        WatchSyncHub.shared.send(home: clean.home, favorites: clean.favorites, lastViewed: clean.lastViewed)
-        call.resolve(statusPayload(ok: true))
     }
 
     @objc func getStatus(_ call: CAPPluginCall) {
-        guard originAllowed() else {
-            call.resolve(["ok": false, "reason": "origin-not-allowed"])
-            return
+        DispatchQueue.main.async {
+            guard self.originAllowed() else {
+                call.resolve(["ok": false, "reason": "origin-not-allowed"])
+                return
+            }
+            call.resolve(self.statusPayload(ok: true))
         }
-        call.resolve(statusPayload(ok: true))
     }
 
     private func statusPayload(ok: Bool) -> [String: Any] {

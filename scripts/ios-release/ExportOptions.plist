@@ -9,8 +9,8 @@
 <key>provisioningProfiles</key><dict>
 <key>com.isitbeachday.app</key><string>IsItBeachDay AppStore Push</string>
 <key>com.isitbeachday.app.beachsession</key><string>IsItBeachDay BeachSession AppStore</string>
-<!-- Apple Watch app + its widget: these two profiles do not exist yet. Create them
-     with exactly these names (see README, "Apple Watch app"). -->
+<!-- Apple Watch app + its widget. This is the ONE export file: scripts/ios/build-testflight.sh
+     uses it too. A missing mapping fails the export, not the archive. -->
 <key>com.isitbeachday.app.watchkitapp</key><string>IsItBeachDay Watch AppStore</string>
 <key>com.isitbeachday.app.watchkitapp.widget</key><string>IsItBeachDay WatchWidget AppStore</string>
 </dict></dict></plist>

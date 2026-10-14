@@ -74,7 +74,9 @@ final class BeachStore: ObservableObject {
     }
 
     func refresh(force: Bool) async {
-        guard let slug = activeSlug, phase != .loading else { return }
+        // A forced refresh (a new beach was picked) may overlap an older one; stale
+        // completions are dropped below by the activeSlug checks.
+        guard let slug = activeSlug, force || phase != .loading else { return }
         phase = .loading
         do {
             let fresh = try await ConditionsClient.fetch(slug: slug)
@@ -96,7 +98,9 @@ final class BeachStore: ObservableObject {
     func select(_ slug: String?) async {
         BeachSelection.select(slug)
         loadSelection()
-        WidgetCenter.shared.reloadAllTimelines()
         await refresh(force: true)
+        // A successful refresh already reloaded the widget once, after saving.
+        // If it failed, the widget must still learn about the new beach.
+        if case .failed = phase { WidgetCenter.shared.reloadAllTimelines() }
     }
 }

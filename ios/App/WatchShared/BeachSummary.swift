@@ -25,7 +25,12 @@ enum Tone: String, Codable, Comparable {
     static func < (a: Tone, b: Tone) -> Bool { a.rank < b.rank }
 }
 
+enum LineKind: String, Codable {
+    case hazard, safety, water, best, other
+}
+
 struct SummaryLine: Codable, Equatable {
+    var kind: LineKind
     var text: String
     var tone: Tone
 }
@@ -37,23 +42,26 @@ struct BeachSummary: Codable, Equatable {
     var score: Int?
     /// The server marked the score as built from too little live data.
     var limitedData: Bool
-    /// Lightning, rain or a weather alert. Only present when there is one.
-    var hazard: SummaryLine?
-    /// Lifeguard flag and rip current status, joined.
-    var safety: SummaryLine?
+    /// Short lines in the order the server chose: hazards, flag and rip, water, best time.
+    var lines: [SummaryLine]
     var waterTempF: Int?
-    /// "Best 4-6 PM", or "No good window today".
-    var best: String?
     /// When the server built this snapshot.
     var dataAt: Date
     /// When this watch last received it.
     var fetchedAt: Date
 
     static let staleAfter: TimeInterval = 30 * 60
+    /// A reading received this recently is used instead of asking the network again.
+    static let freshFor: TimeInterval = 30 * 60
 
     var displayScore: Int? { score }
 
     var rating: String? { score.map { ScoreBands.band(for: $0).rating } }
+
+    func isFresh(now: Date = Date()) -> Bool {
+        let age = now.timeIntervalSince(fetchedAt)
+        return age >= 0 && age < Self.freshFor
+    }
 
     func isStale(now: Date = Date()) -> Bool {
         now.timeIntervalSince(dataAt) > Self.staleAfter
@@ -65,14 +73,16 @@ struct BeachSummary: Codable, Equatable {
         return "Beach Day score \(score), \(rating)"
     }
 
-    /// The single most useful line for a small space: danger first, then a
+    func firstLine(_ kind: LineKind) -> SummaryLine? { lines.first { $0.kind == kind } }
+
+    /// The single most useful line for a small space: a hazard first, then a
     /// cautionary flag or rip status, then the best time, then water.
     var headlineLine: String? {
-        if let hazard { return hazard.text }
-        if let safety, safety.tone != .calm { return safety.text }
-        if let best { return best }
-        if let waterTempF { return "Water \(waterTempF)\u{00B0}F" }
-        return safety?.text
+        if let hazard = firstLine(.hazard) { return hazard.text }
+        if let safety = firstLine(.safety), safety.tone != .calm { return safety.text }
+        if let best = firstLine(.best) { return best.text }
+        if let water = firstLine(.water) { return water.text }
+        return firstLine(.safety)?.text
     }
 
     /// "3:58 PM" in the watch's own time zone.

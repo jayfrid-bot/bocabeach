@@ -25,9 +25,12 @@ flowchart TD
 
   PAGE --> COND
   APPUI --> COND
+  WATCH["Apple Watch app + complications"] -->|"GET, no query; edge-cached 5 min"| WATCHR
+  APPUI -->|"WatchSync plugin: home beach + last viewed<br/>lib/watchSync.ts (WatchConnectivity)"| WATCH
 
   subgraph routes [HTTP routes]
     COND["/api/conditions/[slug]"]
+    WATCHR["/api/watch/[slug]<br/>(small ready-to-show view for the Apple Watch app)"]
     SHARE["/api/share/[slug]<br/>(shareable social card PNG, story/square)"]
     RESOLVE["/api/resolve<br/>(name/zip → nearest served beach)"]
     OG["/opengraph-image, /twitter-image"]
@@ -52,6 +55,8 @@ flowchart TD
   ADMINSCANS --> FUNNEL
 
   COND --> PIPE[lib/conditions.ts<br/>fetch all sources in parallel]
+  WATCHR --> PIPE
+  WATCHR -->|"lib/watchView.ts: same deriveMetrics, hazard,<br/>rip and best-window rules as the dashboard"| SCORE
   SHARE --> PIPE
   PIPE --> SOURCES[lib/sources/*<br/>one adapter per external source<br/>each returns Wrapped&lt;T&gt;, never throws]
   PIPE --> SCORE[lib/score.ts<br/>deriveMetrics + computeScore<br/>hourly + multi-day windows]

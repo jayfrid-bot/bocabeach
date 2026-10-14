@@ -1,9 +1,10 @@
 //
 //  ConditionsClient.swift
 //
-//  GET https://app.isitbeachday.com/api/conditions/<slug>. The route accepts
-//  only a bare URL (or ?fresh=1); anything else is a 400, so no query string
-//  here. The edge caches the answer for 5 minutes.
+//  GET https://app.isitbeachday.com/api/watch/<slug> (lib/watchView.ts): under
+//  2 KB, already decided by the website's own safety and score logic. The route
+//  accepts a bare URL only; any query string is a 400. The edge caches the
+//  answer for 5 minutes.
 //
 
 import Foundation
@@ -43,8 +44,17 @@ enum ConditionsClient {
         guard let slug = WatchSync.cleanSlug(rawSlug) else { throw ConditionsError.invalidSlug }
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "debugOffline") { throw ConditionsError.offline }
+        // Simulator only: read <dir>/<slug>.json instead of the network (the watch
+        // simulator shares the Mac's file system). Used while /api/watch is not deployed.
+        if let dir = SharedStore.defaults.string(forKey: "debug.watchJSON") {
+            guard let data = FileManager.default.contents(atPath: "\(dir)/\(slug).json") else { throw ConditionsError.unknownBeach }
+            guard let dto = WatchViewDecoder.decode(data) else { throw ConditionsError.badData }
+            let summary = WatchViewDecoder.summary(from: dto, slug: slug, fetchedAt: now)
+            SummaryCache.save(summary)
+            return summary
+        }
         #endif
-        let url = baseURL.appendingPathComponent("api/conditions/\(slug)")
+        let url = baseURL.appendingPathComponent("api/watch/\(slug)")
         let data: Data
         let response: URLResponse
         do {
@@ -56,11 +66,8 @@ enum ConditionsClient {
         guard let http = response as? HTTPURLResponse else { throw ConditionsError.badData }
         if http.statusCode == 404 { throw ConditionsError.unknownBeach }
         guard http.statusCode == 200 else { throw ConditionsError.server(http.statusCode) }
-        guard let decoded = try? JSONDecoder().decode(ConditionsResponse.self, from: data) else {
-            throw ConditionsError.badData
-        }
-        var summary = Summarizer.summarize(decoded, fetchedAt: now, now: now)
-        if summary.slug.isEmpty { summary.slug = slug }
+        guard let dto = WatchViewDecoder.decode(data) else { throw ConditionsError.badData }
+        let summary = WatchViewDecoder.summary(from: dto, slug: slug, fetchedAt: now)
         SummaryCache.save(summary)
         return summary
     }

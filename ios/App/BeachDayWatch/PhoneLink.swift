@@ -9,6 +9,7 @@
 
 import Foundation
 import WatchConnectivity
+import WatchKit
 import WidgetKit
 
 extension Notification.Name {
@@ -26,19 +27,27 @@ final class PhoneLink: NSObject, WCSessionDelegate {
         session.activate()
     }
 
+    /// WCSession delegate callbacks arrive on a background thread. The whole
+    /// apply (several keys, then the notification) runs on the main queue so it
+    /// cannot interleave with a selection change made on screen.
     private func apply(_ context: [String: Any]) {
         guard !context.isEmpty else { return }
         guard ((context[WatchSync.Key.version] as? Int) ?? WatchSync.payloadVersion) <= WatchSync.payloadVersion else { return }
-        let changed = BeachSelection.applySync(
-            home: context[WatchSync.Key.homeSlug],
-            favorites: context[WatchSync.Key.favorites],
-            lastViewed: context[WatchSync.Key.lastViewedSlug]
-        )
-        guard changed else { return }
         DispatchQueue.main.async {
+            let changed = BeachSelection.applySync(
+                home: context[WatchSync.Key.homeSlug],
+                favorites: context[WatchSync.Key.favorites],
+                lastViewed: context[WatchSync.Key.lastViewedSlug]
+            )
+            guard changed else { return }
             NotificationCenter.default.post(name: .beachSelectionChanged, object: nil)
+            // With the app on screen, BeachStore refetches and reloads the widget
+            // once, after the new data is saved. Otherwise (a background delivery)
+            // ask for a reload here so the complication follows the phone.
+            if WKApplication.shared().applicationState != .active {
+                WidgetCenter.shared.reloadAllTimelines()
+            }
         }
-        WidgetCenter.shared.reloadAllTimelines()
     }
 
     // MARK: WCSessionDelegate

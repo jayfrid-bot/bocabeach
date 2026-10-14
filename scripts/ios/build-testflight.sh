@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
-# Build the iOS app + Beach Session Live Activity extension and upload to TestFlight.
+# Build the iOS app (with its Beach Session Live Activity extension and its Apple
+# Watch app + watch widget) and upload to TestFlight.
 #
 # Usage:  scripts/ios/build-testflight.sh <BUILD_NUMBER>      e.g. 2026092301
 #
 # Recipe (proven 2026-09-07 for build 2026090701, extended for the extension):
-#   1. bump CURRENT_PROJECT_VERSION in the pbxproj (both targets share it)
+#   1. bump CURRENT_PROJECT_VERSION in the pbxproj (every target shares it: the app,
+#      the Live Activity extension, the watch app, the watch widget, the watch tests)
 #   2. `npx cap sync ios` (never skip — needed for the web bundle + npm plugins;
 #      our local BeachSessionActivityPlugin registers itself in code via
 #      BeachBridgeViewController.capacitorDidLoad(), not via the synced config)
 #   3. archive with AUTOMATIC signing + the App Store Connect auth key
 #      (passing PROVISIONING_PROFILE_SPECIFIER on the CLI breaks SPM package targets)
-#   4. export with MANUAL signing via scripts/ios/ExportOptions.plist, which maps
-#      BOTH bundle ids to their installed profiles
+#   4. export with MANUAL signing via scripts/ios-release/ExportOptions.plist (the one
+#      shared file), which maps ALL FOUR bundle ids to their installed profiles
 #   5. upload with altool
 # Never commit key material; the ASC key lives in ~/.appstoreconnect/private_keys.
 set -euo pipefail
@@ -39,10 +41,11 @@ xcodebuild -project ios/App/App.xcodeproj -scheme App -configuration Release \
   archive | grep -E "error:|warning: .*sign|ARCHIVE (SUCCEEDED|FAILED)" || true
 [ -d "$OUT/App.xcarchive" ] || { echo "archive missing"; exit 1; }
 ls "$OUT/App.xcarchive/Products/Applications/App.app/PlugIns" | xargs echo "   extensions in archive:"
+ls "$OUT/App.xcarchive/Products/Applications/App.app/Watch" | xargs echo "   watch app in archive:"
 
-echo "== 4. export (manual signing, both profiles)"
+echo "== 4. export (manual signing, all four profiles)"
 xcodebuild -exportArchive -archivePath "$OUT/App.xcarchive" \
-  -exportOptionsPlist "$ROOT/scripts/ios/ExportOptions.plist" -exportPath "$OUT/export" \
+  -exportOptionsPlist "$ROOT/scripts/ios-release/ExportOptions.plist" -exportPath "$OUT/export" \
   -allowProvisioningUpdates -authenticationKeyPath "$KEY_PATH" \
   -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER" \
   | grep -E "error:|EXPORT (SUCCEEDED|FAILED)" || true

@@ -92,6 +92,28 @@ describe("syncWatchBeaches", () => {
     expect(setBeaches).toHaveBeenLastCalledWith({ homeSlug: null, favorites: [], lastViewedSlug: "miami-beach" });
   });
 
+  it("is single-flight: concurrent identical calls share one bridge call, different ones go in order", async () => {
+    const order: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const setBeaches = vi.fn(async (p: { homeSlug: string | null }) => {
+      order.push(`start:${p.homeSlug}`);
+      await gate;
+      order.push(`end:${p.homeSlug}`);
+      return { ok: true };
+    });
+    installBridge({ setBeaches });
+    const a1 = syncWatchBeaches("boca-raton", [], "naples");
+    const a2 = syncWatchBeaches("boca-raton", [], "naples"); // a second mount-time hook
+    const b = syncWatchBeaches("naples", [], "naples"); // a different payload queued behind
+    await Promise.resolve();
+    expect(setBeaches).toHaveBeenCalledTimes(1);
+    release();
+    await expect(Promise.all([a1, a2, b])).resolves.toEqual([true, true, true]);
+    expect(setBeaches).toHaveBeenCalledTimes(2);
+    expect(order).toEqual(["start:boca-raton", "end:boca-raton", "start:naples", "end:naples"]);
+  });
+
   it("returns false (never throws) when the plugin refuses or rejects, and tries again next time", async () => {
     const setBeaches = vi
       .fn()
@@ -194,6 +216,27 @@ describe("Apple Watch app stays in step with the web app", () => {
     ]) {
       expect(read(f)).toContain(`<string>${group}</string>`);
     }
+  });
+
+  it("every target in the project shares one version and build number", () => {
+    const pbx = read("ios/App/App.xcodeproj/project.pbxproj");
+    const builds = new Set([...pbx.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((m) => m[1]));
+    const versions = new Set([...pbx.matchAll(/MARKETING_VERSION = ([\d.]+);/g)].map((m) => m[1]));
+    expect([...builds]).toHaveLength(1);
+    expect([...versions]).toHaveLength(1);
+    // 5 targets x Debug/Release: App, Live Activity, watch app, widget, watch tests.
+    expect([...pbx.matchAll(/CURRENT_PROJECT_VERSION = /g)]).toHaveLength(10);
+  });
+
+  it("the phone, watch and widget each carry a privacy manifest declaring the App Group UserDefaults reason", () => {
+    const pbx = read("ios/App/App.xcodeproj/project.pbxproj");
+    for (const dir of ["App", "BeachDayWatch", "BeachDayWatchWidget"]) {
+      const manifest = read(`ios/App/${dir}/PrivacyInfo.xcprivacy`);
+      expect(manifest).toContain("NSPrivacyAccessedAPICategoryUserDefaults");
+      expect(manifest).toContain("<string>1C8F.1</string>");
+      expect(pbx).toContain("PrivacyInfo.xcprivacy in Resources");
+    }
+    expect([...pbx.matchAll(/PrivacyInfo\.xcprivacy in Resources \*\/ = \{isa = PBXBuildFile/g)]).toHaveLength(3);
   });
 
   it("the bundled watch beach list has no dead or invalid slugs", () => {

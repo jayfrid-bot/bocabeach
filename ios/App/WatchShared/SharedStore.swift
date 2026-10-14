@@ -5,16 +5,18 @@
 //  Group: which beach to show (home from the iPhone, optional pick made on
 //  the watch) and the last conditions received per beach.
 //
-//  If the App Group is not enabled for these App IDs yet (it needs the
-//  developer account), `UserDefaults(suiteName:)` still works but the app and
-//  the widget would each see their own copy. The app still works; the widget
-//  then shows "Open Beach Day to choose a beach". See scripts/ios-release/README.md.
+//  The App Group `group.com.isitbeachday.app` is enabled for the iPhone app, the
+//  watch app and the widget (see scripts/ios-release/README.md).
 //
 
 import Foundation
 
 enum SharedStore {
-    static let defaults: UserDefaults = UserDefaults(suiteName: WatchSync.appGroup) ?? .standard
+    /// The App Group's defaults. Declared in PrivacyInfo.xcprivacy as
+    /// UserDefaults reason 1C8F.1. There is no `.standard` fallback: it would
+    /// need a second declared reason, and a suite name that is not this app's
+    /// own bundle id never returns nil.
+    static let defaults: UserDefaults = UserDefaults(suiteName: WatchSync.appGroup)!
 }
 
 enum BeachSelection {

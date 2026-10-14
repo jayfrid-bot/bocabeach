@@ -99,17 +99,8 @@ struct MainView: View {
 
     @ViewBuilder private func lines(_ s: BeachSummary) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            if let hazard = s.hazard {
-                InfoRow(symbol: hazardSymbol(hazard.text), text: hazard.text, tone: hazard.tone, kind: "Alert")
-            }
-            if let safety = s.safety {
-                InfoRow(symbol: "flag.fill", text: safety.text, tone: safety.tone, kind: "Beach safety")
-            }
-            if let water = s.waterTempF {
-                InfoRow(symbol: "thermometer.medium", text: "Water \(water)\u{00B0}F", tone: .calm, kind: "Water temperature")
-            }
-            if let best = s.best {
-                InfoRow(symbol: "clock", text: best, tone: .calm, kind: "Best time")
+            ForEach(Array(s.lines.enumerated()), id: \.offset) { _, line in
+                InfoRow(symbol: symbol(for: line), text: line.text, tone: line.tone, kind: spokenKind(line.kind))
             }
             if s.limitedData {
                 InfoRow(symbol: "exclamationmark.circle", text: "Limited data", tone: .calm, kind: "Data")
@@ -119,10 +110,28 @@ struct MainView: View {
         .padding(.top, 4)
     }
 
-    private func hazardSymbol(_ text: String) -> String {
-        if text.hasPrefix("Lightning") { return "bolt.fill" }
-        if text.contains("Rain") || text.contains("rain") { return "cloud.rain.fill" }
-        return "exclamationmark.triangle.fill"
+    private func symbol(for line: SummaryLine) -> String {
+        switch line.kind {
+        case .hazard:
+            let t = line.text.lowercased()
+            if t.hasPrefix("lightning") { return "bolt.fill" }
+            if t.contains("rain") || t.contains("thunderstorm") { return "cloud.rain.fill" }
+            return "exclamationmark.triangle.fill"
+        case .safety: return "flag.fill"
+        case .water: return "thermometer.medium"
+        case .best: return "clock"
+        case .other: return "info.circle"
+        }
+    }
+
+    private func spokenKind(_ kind: LineKind) -> String {
+        switch kind {
+        case .hazard: return "Alert"
+        case .safety: return "Beach safety"
+        case .water: return "Water temperature"
+        case .best: return "Best time"
+        case .other: return "Note"
+        }
     }
 
     @ViewBuilder private func footer(_ s: BeachSummary) -> some View {

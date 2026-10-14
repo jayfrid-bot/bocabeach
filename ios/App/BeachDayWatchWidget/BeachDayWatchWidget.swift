@@ -5,10 +5,10 @@
 //  the beach the watch app is showing (home from the iPhone, or the one
 //  picked on the watch).
 //
-//  Refresh: one entry per load and a reload request after 30 minutes (15 when
-//  the last load failed). watchOS decides the real timing within its budget.
-//  The watch app also asks for a reload whenever it gets fresh data or a new
-//  home beach arrives from the phone.
+//  Refresh policy: WatchShared/WidgetRefreshPolicy.swift. A reading received
+//  in the last 30 minutes is shown without a request; failures back off 30, 60,
+//  120 minutes; no beach chosen means no reload at all. The watch app reloads
+//  the widget once, after it saves new data.
 //
 
 import SwiftUI
@@ -29,37 +29,69 @@ struct BeachEntry: TimelineEntry {
 struct BeachProvider: TimelineProvider {
     static let sample = BeachSummary(
         slug: "boca-raton", name: "Boca Raton", score: 82, limitedData: false,
-        hazard: nil, safety: SummaryLine(text: "Green flag \u{00B7} Rip low", tone: .calm),
-        waterTempF: 84, best: "Best 10 AM\u{2013}1 PM", dataAt: Date(), fetchedAt: Date()
+        lines: [
+            SummaryLine(kind: .safety, text: "Green flag \u{00B7} Rip low", tone: .calm),
+            SummaryLine(kind: .water, text: "Water 84\u{00B0}F", tone: .calm),
+            SummaryLine(kind: .best, text: "Best 10 AM\u{2013}1 PM", tone: .calm),
+        ],
+        waterTempF: 84, dataAt: Date(), fetchedAt: Date()
     )
 
     func placeholder(in context: Context) -> BeachEntry {
         BeachEntry(date: Date(), content: .summary(Self.sample))
     }
 
+    /// Cache only. A snapshot backs the widget gallery and previews and must
+    /// return at once, never wait on the network.
     func getSnapshot(in context: Context, completion: @escaping (BeachEntry) -> Void) {
         if context.isPreview {
             completion(placeholder(in: context))
             return
         }
-        Task { completion(BeachEntry(date: Date(), content: await Self.load().content)) }
+        let slug = BeachSelection.activeSlug
+        let content: ComplicationContent
+        if let slug {
+            content = SummaryCache.load(slug).map(ComplicationContent.summary) ?? .unavailable
+        } else {
+            content = .needsSetup
+        }
+        completion(BeachEntry(date: Date(), content: content))
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<BeachEntry>) -> Void) {
-        Task {
-            let result = await Self.load()
-            let now = Date()
-            let next = now.addingTimeInterval(result.ok ? 30 * 60 : 15 * 60)
-            completion(Timeline(entries: [BeachEntry(date: now, content: result.content)], policy: .after(next)))
-        }
-    }
+        let now = Date()
+        let slug = BeachSelection.activeSlug
+        let cached = slug.flatMap(SummaryCache.load)
 
-    /// Fresh data when the network answers, else the last cached reading.
-    private static func load() async -> (content: ComplicationContent, ok: Bool) {
-        guard let slug = BeachSelection.activeSlug else { return (.needsSetup, true) }
-        if let fresh = try? await ConditionsClient.fetch(slug: slug) { return (.summary(fresh), true) }
-        if let cached = SummaryCache.load(slug) { return (.summary(cached), false) }
-        return (.unavailable, false)
+        switch WidgetRefreshPolicy.plan(activeSlug: slug, cached: cached, now: now) {
+        case .setup:
+            // Nothing to refresh until a beach arrives; the app reloads us then.
+            completion(Timeline(entries: [BeachEntry(date: now, content: .needsSetup)], policy: .never))
+
+        case .useCache(let summary, let reload):
+            completion(Timeline(entries: [BeachEntry(date: now, content: .summary(summary))], policy: .after(reload)))
+
+        case .fetch:
+            guard let slug else { return }
+            Task {
+                let entry: BeachEntry
+                let reload: WidgetRefreshPolicy.Reload
+                if let fresh = try? await ConditionsClient.fetch(slug: slug) {
+                    WidgetFailureCounter.reset()
+                    entry = BeachEntry(date: now, content: .summary(fresh))
+                    reload = WidgetRefreshPolicy.reloadAfterSuccess(now: Date())
+                } else {
+                    let failures = WidgetFailureCounter.recordFailure()
+                    // Show the last reading (the views mark it "as of") rather than nothing.
+                    entry = BeachEntry(date: now, content: cached.map(ComplicationContent.summary) ?? .unavailable)
+                    reload = WidgetRefreshPolicy.reloadAfterFailure(failures: failures, now: Date())
+                }
+                switch reload {
+                case .never: completion(Timeline(entries: [entry], policy: .never))
+                case .after(let date): completion(Timeline(entries: [entry], policy: .after(date)))
+                }
+            }
+        }
     }
 }
 
