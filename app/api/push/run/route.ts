@@ -240,7 +240,8 @@ export async function POST(req: Request): Promise<Response> {
   const store = await getStore();
   // (The pre-Plus KV subscriptions are NOT imported here any more. A per-run
   // importer meant a stale KV record could bring an unregistered phone's alerts
-  // back; the one-off /api/push/import-legacy does the remaining import once.)
+  // back. Production KV held only 2 such records, both already in D1, so there
+  // is no importer at all now.)
 
   // Opportunistic housekeeping for the send-claims table (#14): drop claims
   // old enough to never matter again. Never fatal — every run does this once,

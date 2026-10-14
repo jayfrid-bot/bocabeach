@@ -1,12 +1,10 @@
 // POST /api/push/unregister-native — drop a stored native device token.
 // Body: { token }.
 //
-// Deletes the device row (D1) AND the legacy KV record. Both matter: the KV
-// record is the import source for the one-off KV import
-// (/api/push/import-legacy), so a record left behind could bring the
-// subscription back. A failed KV delete is therefore an ERROR (500), never
-// reported as success: the phone keeps its turn-off queued and retries, and the
-// D1 clear above is idempotent.
+// Deletes the device row (D1) AND the legacy KV record, so no copy of the
+// subscription is left anywhere that could ever be imported again. A failed KV
+// delete is an ERROR (500), never reported as success: the phone keeps its
+// turn-off queued and retries, and the D1 clear above is idempotent.
 //
 // Auth: the PUSH TOKEN itself. Holding it is enough, with or without an install
 // token and with INSTALL_TOKEN_ENFORCE on or off. That is deliberate: the only
