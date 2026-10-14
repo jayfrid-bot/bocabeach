@@ -162,7 +162,7 @@ describe("runRemoval", () => {
 
     it("deletes the orphans too, then the rows", async () => {
       const { io, deleted, sql } = makeIo();
-      io.r2List = async () => [KEY_A, KEY_B, ORPHAN];
+      io.r2List = async (prefix) => (prefix.startsWith("quality/") ? [] : [KEY_A, KEY_B, ORPHAN]);
       const out = await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false, knownKeysOnly: true }, io, 2);
       expect(deleted.sort()).toEqual([KEY_A, KEY_B, ORPHAN].sort());
       expect(out.orphans).toBe(1);
@@ -171,7 +171,7 @@ describe("runRemoval", () => {
 
     it("still deletes a D1-listed key that the listing missed", async () => {
       const { io, deleted } = makeIo();
-      io.r2List = async () => [KEY_A];
+      io.r2List = async (prefix) => (prefix.startsWith("quality/") ? [] : [KEY_A]);
       await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false, knownKeysOnly: true }, io);
       expect(deleted.sort()).toEqual([KEY_A, KEY_B]);
     });
@@ -184,12 +184,12 @@ describe("runRemoval", () => {
         return [];
       };
       await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: true }, io);
-      expect(seen).toEqual(["boca-raton/boca-inlet-jetty/"]);
+      expect(seen).toEqual(["boca-raton/boca-inlet-jetty/", "quality/boca-raton/boca-inlet-jetty/"]);
     });
 
     it("a dry run reports orphans and deletes nothing", async () => {
       const { io, deleted, sql, logs } = makeIo();
-      io.r2List = async () => [KEY_A, KEY_B, ORPHAN];
+      io.r2List = async (prefix) => (prefix.startsWith("quality/") ? [] : [KEY_A, KEY_B, ORPHAN]);
       const out = await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: true }, io);
       expect(out.orphans).toBe(1);
       expect(deleted).toEqual([]);
@@ -198,9 +198,24 @@ describe("runRemoval", () => {
       expect(logs.join("\n")).not.toMatch(/WARNING: R2 credentials/);
     });
 
+    it("also erases the cam's quality frames (the exact images kept for alerts)", async () => {
+      const { io, deleted } = makeIo();
+      const Q = "quality/boca-raton/boca-inlet-jetty/2026-10-13/172015Z-abcdef12.jpg";
+      io.r2List = async (prefix) => (prefix.startsWith("quality/") ? [Q] : [KEY_A, KEY_B]);
+      await runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false, knownKeysOnly: true }, io);
+      expect(deleted.sort()).toEqual([KEY_A, KEY_B, Q].sort());
+    });
+
+    it("refuses a quality listing that strays outside the cam's quality prefix", async () => {
+      const { io, deleted } = makeIo();
+      io.r2List = async (prefix) => (prefix.startsWith("quality/") ? ["quality/boca-raton/boca-south/2026-10-13/172015Z-abcdef12.jpg"] : [KEY_A, KEY_B]);
+      await expect(runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false, knownKeysOnly: true }, io)).rejects.toThrow(/refusing/);
+      expect(deleted).toEqual([]);
+    });
+
     it("refuses a listed key outside the prefix before deleting anything", async () => {
       const { io, deleted } = makeIo();
-      io.r2List = async () => [KEY_A, "boca-raton/boca-south/2026-10-10/1405Z-aaaaaaaa-cccccccc.jpg"];
+      io.r2List = async (prefix) => (prefix.startsWith("quality/") ? [] : [KEY_A, "boca-raton/boca-south/2026-10-10/1405Z-aaaaaaaa-cccccccc.jpg"]);
       await expect(runRemoval({ slug: "boca-raton", camId: "boca-inlet-jetty", dryRun: false, knownKeysOnly: true }, io)).rejects.toThrow(/refusing/);
       expect(deleted).toEqual([]);
     });

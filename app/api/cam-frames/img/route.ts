@@ -17,7 +17,7 @@
 // reuse the image until the link would have expired anyway; shared caches may
 // not keep it. Nothing here uses the Cache API or edge caching.
 
-import { parseFrameKey } from "@/lib/camFrames/keys";
+import { camOfKey } from "@/lib/camFrames/keys";
 import { lookupCam } from "@/lib/camFrames/manifest";
 import { getCamFramesBucket } from "@/lib/camFrames/r2";
 import { verify } from "@/lib/camFrames/sign";
@@ -38,7 +38,9 @@ export async function GET(req: Request): Promise<Response> {
 
   if (!(await verify(k, exp, sig, nowSec))) return err("bad-signature", 403);
 
-  const parsed = parseFrameKey(k);
+  // An archive frame (slug/cam/date/...) or a quality frame (quality/slug/cam/...);
+  // either way the cam must still be archived.
+  const parsed = camOfKey(k);
   if (!parsed || !k || !exp) return err("bad-signature", 403);
 
   const cam = lookupCam(parsed.slug, parsed.camId);

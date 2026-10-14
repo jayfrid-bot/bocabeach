@@ -18,6 +18,7 @@ import { fetchGfs } from "@/lib/sources/modelEnsemble";
 import { fetchNowcast } from "@/lib/sources/nowcast";
 import { fetchNws } from "@/lib/sources/nws";
 import { fetchSargassum } from "@/lib/sources/sargassum";
+import { loadSeaweedOverrides } from "@/lib/quality/overrides";
 import { fetchRipNwps } from "@/lib/sources/ripNwps";
 import { fetchSun } from "@/lib/sources/sun";
 import { fetchTides } from "@/lib/sources/tides";
@@ -213,7 +214,7 @@ export async function getSnapshotForLocation(
     fetchLightning(loc),
     fetchGoesCloud(loc),
     fetchPrecipRadar(loc),
-    fetchSargassum(loc),
+    fetchSargassum(loc, loadSeaweedOverrides),
     fetchRipNwps(loc.slug),
     fetchBusyness(loc),
     fetchClarity(loc),

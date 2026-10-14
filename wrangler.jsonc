@@ -45,6 +45,11 @@
   "vars": {
     "PUSH_SAFETY_ALERTS": "on"
   }
+  // Data-quality loop (docs/QUALITY_PLAN.md, migrations/0019): the owner screens
+  // (/admin/review, /admin/report) and their routes open only for the device ids in
+  // the OWNER_DEVICE_IDS secret, comma-separated (`wrangler secret put OWNER_DEVICE_IDS`),
+  // and only with that device's install token. Unset = every owner screen stays closed.
+  // Owner pushes go to those devices over APNs (iPhone only).
   // NOTE: custom domains (isitbeachday.com, www, app.isitbeachday.com) are attached
   // to this Worker via the Cloudflare API/dashboard, deliberately NOT via a `routes`
   // array here — a routes array risks reconciling-away the dashboard-managed domains

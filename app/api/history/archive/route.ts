@@ -95,9 +95,12 @@ import { getConditionsForLocation } from "@/lib/conditions";
 import { SubrequestBudget, runWithBudget } from "@/lib/alerts/budget";
 import { getLocation } from "@/config/locations";
 import { getStore } from "@/lib/db/store";
+import { getD1 } from "@/lib/db/d1Store";
 import { hourUtcOf, rowFromConditions } from "@/lib/history/archive";
 import { sunEventRowsFromConditions } from "@/lib/history/sunPredictions";
 import { archiveCamObservations, hasVisionCamFeed } from "@/lib/history/camObservations";
+import { sendOwnerPush } from "@/lib/quality/notify";
+import { runHourlyWatchdog } from "@/lib/quality/watchdog";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -286,6 +289,18 @@ export async function POST(req: Request): Promise<Response> {
           await archiveCamObservations(store, slug);
         } catch (e) {
           console.error("history: cam observations failed", slug, e);
+        }
+      }
+      // Quality watchdog (docs/QUALITY_PLAN.md): compare this hour to the last for
+      // an unexplained jump in score, surf, sand or clarity, and tell the owner.
+      // Only on a row that really landed. Same rule as the steps above: a
+      // watchdog failure logs and is skipped, never failing the beach_hourly row.
+      if (written) {
+        try {
+          const db = await getD1();
+          if (db) await runHourlyWatchdog(db, row, Date.now(), sendOwnerPush);
+        } catch (e) {
+          console.error("history: quality watchdog failed", slug, e);
         }
       }
       await store.completeHistoryClaim(slug, claimedHourUtc, Date.now());

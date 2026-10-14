@@ -104,9 +104,12 @@ class WithManifest(unittest.TestCase):
         # The low-sun gate (LOW_SUN_DEG) reads the sun at the REAL clock these tests
         # score frames at; -90 turns it off so no test depends on the time of day.
         # LowSunGateTests below turn it back on with fixed instants.
+        # No test asks a real second reader or posts a real alert; SecondOpinionTests
+        # (below) put their own fakes back where they need them.
         for p in (mock.patch.object(cs, "ARCHIVE_CAMS_PATH", str(MANIFEST_PATH)),
                   mock.patch.object(cs, "LOW_SUN_DEG", -90.0),
-                  mock.patch.object(cs, "fetch_filled_slots", fake_filled)):
+                  mock.patch.object(cs, "fetch_filled_slots", fake_filled),
+                  mock.patch.object(cs, "request_second_opinion", lambda *a, **k: None)):
             p.start()
             self.addCleanup(p.stop)
 
@@ -2051,7 +2054,7 @@ class CarriedReadingTests(WithManifest):
         # These tests are about CARRYING readings. Their fixture cam A reads "high"
         # on its very first sighting, which jump confirmation (JumpConfirmationTests)
         # would hold back for a second look; pass fresh readings through untouched here.
-        p = mock.patch.object(cs, "confirm_seaweed_jumps", lambda fresh, pending: fresh)
+        p = mock.patch.object(cs, "confirm_seaweed_jumps", lambda fresh, pending, suppressed=(): fresh)
         p.start()
         self.addCleanup(p.stop)
 
@@ -3235,6 +3238,545 @@ class VisionHintTests(WithManifest):
                 mock.patch.object(cs, "_clef_out", lambda img, kind="surface": clef_calls.append(kind) or {"seaweed": "none"}):
             cs.assess_with("clef", b"x", prompt)
         self.assertEqual(clef_calls, ["surface"])  # no prompt parameter: Clef's questions are fixed server-side
+
+
+class SecondOpinionTests(WithManifest):
+    """A held jump gets a second look from a DIFFERENT provider on the SAME image.
+    Agreement confirms it at once; disagreement keeps it held and tells the app.
+    The 2026-10-13 Boca incident again: boca-inlet-surf read "moderate 35%" off a dark
+    rock shelf while the other two cams read none."""
+
+    CAMS = JumpConfirmationTests.CAMS
+    NOTHING = JumpConfirmationTests.NOTHING
+    FALSE_ROCKS = dict(JumpConfirmationTests.FALSE_ROCKS, provider="gemini", model="gemini-2.5-flash")
+
+    def setUp(self):
+        super().setUp()
+        self.asked = []
+        self.alerts = []
+        self.opinion = {"provider": "clef", "model": cs.CLEF_MODEL, "level": "none",
+                        "coveragePct": 0, "note": "dark rock, no weed"}
+        self.images = {}
+        cs._SECOND_OPINIONS["n"] = 0
+
+    def fake_opinion(self, cam, held, img):
+        self.asked.append((cam["id"], held["provider"], img))
+        return self.opinion
+
+    def tick(self, looks, *, prev=None, token=None, opinion="fake"):
+        """One tick where each cam in `looks` has a new frame and reads as given."""
+        def fake_fetch(cam, info=None, feed_cache=None):
+            info["frameAt"] = iso_ago(2)
+            img = jpeg() + f"{cam['id']}".encode()
+            self.images[cam["id"]] = img
+            return img
+
+        def fake_assess(img):
+            return dict(looks[img[len(jpeg()):].decode()])
+
+        patches = [
+            mock.patch.object(cs, "fetch_still", fake_fetch),
+            mock.patch.object(cs, "archive_frame", lambda *a, **k: "stored"),
+            mock.patch.object(cs, "assess", fake_assess),
+            mock.patch.object(cs.time, "sleep", lambda s: None),
+            mock.patch.object(cs.quality_watch, "post_alert", lambda body, **k: self.alerts.append(body) or "sent"),
+            mock.patch.object(cs, "request_second_opinion", self.fake_opinion if opinion == "fake" else opinion),
+        ]
+        out = io.StringIO()
+        with env(INGEST_TOKEN=token), contextlib.ExitStack() as st, \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            for p in patches:
+                st.enter_context(p)
+            now = dt.datetime.now(ZONE)
+            group = cs.capture_beach("boca-raton", self.CAMS, now, {"called": False}, prev or {})
+        self.log = out.getvalue()
+        return group
+
+    def all_none(self):
+        return {c["id"]: self.NOTHING for c in self.CAMS}
+
+    def inlet(self, group):
+        return next(c for c in group["cams"] if c["id"] == "boca-inlet-surf")
+
+    # --- disagreement: stays held, the app is told ----------------------------------
+
+    def test_a_disagreeing_second_opinion_keeps_the_jump_held_and_posts_one_alert(self):
+        group = self.tick({**self.all_none(), "boca-inlet-surf": self.FALSE_ROCKS})
+        held = self.inlet(group)
+        self.assertIsNone(held["level"])
+        self.assertTrue(held["unconfirmed"])
+        self.assertNotIn("confirmedBy", held)
+        self.assertEqual(self.asked, [("boca-inlet-surf", "gemini", self.images["boca-inlet-surf"])],
+                         "the second reader is shown the very image that made the claim")
+        (alert,) = self.alerts
+        self.assertEqual((alert["slug"], alert["camId"]), ("boca-raton", "boca-inlet-surf"))
+        self.assertEqual(alert["claim"], {"level": "moderate", "coveragePct": 35, "note": "brown rock shelf",
+                                          "provider": "gemini", "model": "gemini-2.5-flash"})
+        self.assertEqual(alert["secondOpinion"]["provider"], "clef")
+        self.assertEqual(alert["secondOpinion"]["level"], "none")
+        self.assertEqual({o["id"]: o["level"] for o in alert["others"]},
+                         {"boca-south-surf": "none", "boca-south": "none"})
+        self.assertEqual(alert["published"], {"level": "none", "pct": 0})
+        self.assertEqual(alert["frame"]["sha256"], cs.quality_watch.frame_sha256(self.images["boca-inlet-surf"]))
+        self.assertTrue(alert["observedAt"].endswith("Z"))
+        self.assertFalse(alert["frame"]["archivedThisTick"], "no INGEST_TOKEN: nothing was archived")
+        self.assertIn("stays HELD", self.log)
+        self.assertIn("quality alert -> sent", self.log)
+
+    def test_the_alert_says_when_the_archive_took_this_very_frame(self):
+        group = self.tick({**self.all_none(), "boca-inlet-surf": self.FALSE_ROCKS}, token="tok")
+        self.assertTrue(self.inlet(group)["unconfirmed"])
+        self.assertTrue(self.alerts[0]["frame"]["archivedThisTick"])
+
+    # --- agreement: published at once --------------------------------------------------
+
+    def test_an_agreeing_second_opinion_confirms_the_jump_immediately(self):
+        self.opinion = {"provider": "clef", "model": cs.CLEF_MODEL, "level": "moderate",
+                        "coveragePct": 40, "note": "weed line"}
+        group = self.tick({**self.all_none(), "boca-inlet-surf": self.FALSE_ROCKS})
+        pub = self.inlet(group)
+        self.assertEqual((pub["level"], pub["coveragePct"], pub["note"]), ("moderate", 35, "brown rock shelf"))
+        self.assertEqual(pub["confirmedBy"], "second-opinion:clef")
+        self.assertNotIn("unconfirmed", pub)
+        self.assertNotIn("claim", pub)
+        self.assertEqual(cs.worst_seaweed(group)["level"], "moderate")
+        self.assertEqual(self.alerts, [], "a confirmed jump needs no owner alert")
+        self.assertIn("confirmed by second-opinion:clef", self.log)
+        doc = cs.build_beach_output("boca-raton", "America/New_York", dt.datetime.now(ZONE),
+                                    [("gemini", "m")], {}, group, None, None)
+        self.assertTrue(doc["pendingClaims"]["boca-inlet-surf"]["confirmed"])
+        self.assertEqual(doc["history"][-1]["seaweed"], "moderate")
+
+    def test_high_also_counts_as_agreement(self):
+        self.opinion = dict(self.opinion, level="high")
+        group = self.tick({**self.all_none(), "boca-inlet-surf": self.FALSE_ROCKS})
+        self.assertEqual(self.inlet(group)["confirmedBy"], "second-opinion:clef")
+
+    # --- no opinion: exactly the old behaviour ------------------------------------------
+
+    def test_no_second_opinion_leaves_the_jump_held_and_posts_nothing(self):
+        group = self.tick({**self.all_none(), "boca-inlet-surf": self.FALSE_ROCKS}, opinion=lambda *a: None)
+        self.assertTrue(self.inlet(group)["unconfirmed"])
+        self.assertEqual(self.alerts, [])
+
+    def test_low_none_and_unheld_reads_never_ask_for_a_second_opinion(self):
+        self.tick({**self.all_none(), "boca-inlet-surf": dict(self.NOTHING, level="low", coveragePct=12)})
+        self.assertEqual(self.asked, [])
+
+    def test_two_cams_that_confirm_each_other_never_ask(self):
+        group = self.tick({**self.all_none(), "boca-inlet-surf": self.FALSE_ROCKS,
+                           "boca-south-surf": dict(self.FALSE_ROCKS, coveragePct=25)})
+        self.assertEqual(self.asked, [])
+        self.assertEqual(self.alerts, [])
+        self.assertEqual(self.inlet(group)["confirmedBy"], "cam:boca-south-surf")
+
+    def test_persistence_confirmation_never_asks(self):
+        claim = {"level": "moderate", "coveragePct": 35, "note": "n", "frameAt": iso_ago(30),
+                 "frameSha": "old", "claimedAt": iso_ago(30)}
+        group = self.tick({**self.all_none(), "boca-inlet-surf": self.FALSE_ROCKS},
+                          prev={"pendingClaims": {"boca-inlet-surf": claim}})
+        self.assertEqual(self.inlet(group)["confirmedBy"], "persistence")
+        self.assertEqual(self.asked, [])
+
+    # --- request_second_opinion itself ---------------------------------------------------
+
+    CAM = {"id": "boca-inlet-surf", "name": "Inlet", "visionHint": "A dark rock shelf is not seaweed.",
+           "source": {"kind": "feed", "base": "http://x", "view": "s16"}}
+
+    def ask(self, claim_provider, *, gemini=True, clef=True, assess_with=None):
+        calls = []
+
+        def fake_assess_with(name, img, prompt=cs.PROMPT, parse=cs._parse_out, model=None, kind=None):
+            calls.append({"name": name, "prompt": prompt, "model": model, "kind": kind, "img": img})
+            if assess_with:
+                return assess_with(name, model)
+            return {"provider": name, "model": model or "m", "level": "none", "coveragePct": 0, "note": "n"}
+
+        held = {"id": "boca-inlet-surf", "provider": claim_provider, "unconfirmed": True}
+        with mock.patch.object(cs, "API_KEY", "k" if gemini else ""), \
+                env(INGEST_TOKEN="tok" if clef else None), \
+                mock.patch.object(cs, "assess_with", fake_assess_with), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            out = REAL_REQUEST(self.CAM, held, b"IMG")
+        return out, calls
+
+    def test_a_claim_from_gemini_is_checked_by_clef_with_the_cams_hint(self):
+        out, calls = self.ask("gemini")
+        self.assertEqual([c["name"] for c in calls], ["clef"])
+        self.assertEqual(calls[0]["kind"], "surface")
+        self.assertEqual(calls[0]["img"], b"IMG")
+        self.assertIn("A dark rock shelf is not seaweed.", calls[0]["prompt"])
+        self.assertEqual(out["provider"], "clef")
+
+    def test_claims_from_groq_and_openrouter_are_checked_by_clef_too(self):
+        for claim in ("groq", "openrouter", None):
+            _, calls = self.ask(claim)
+            self.assertEqual([c["name"] for c in calls], ["clef"], claim)
+
+    def test_a_claim_from_clef_is_checked_by_gemini(self):
+        out, calls = self.ask("clef")
+        self.assertEqual([c["name"] for c in calls], ["gemini"])
+        self.assertEqual(calls[0]["model"], cs.GEMINI_MODELS[0])
+        self.assertEqual(out["provider"], "gemini")
+
+    def test_no_check_when_the_other_provider_is_not_configured(self):
+        self.assertEqual(self.ask("gemini", clef=False)[1], [])
+        self.assertIsNone(self.ask("gemini", clef=False)[0])
+        self.assertEqual(self.ask("clef", gemini=False)[1], [])
+        self.assertIsNone(self.ask("clef", gemini=False)[0])
+
+    def test_an_unreadable_frame_or_a_failed_call_is_no_opinion(self):
+        def unreadable(name, model):
+            raise cs.UnreadableFrame("dark")
+
+        def broken(name, model):
+            raise RuntimeError("429")
+
+        self.assertIsNone(self.ask("gemini", assess_with=unreadable)[0])
+        self.assertIsNone(self.ask("gemini", assess_with=broken)[0])
+
+    def test_gemini_tries_its_next_model_when_the_first_fails(self):
+        if len(cs.GEMINI_MODELS) < 2:
+            self.skipTest("only one Gemini model configured")
+
+        def first_fails(name, model):
+            if model == cs.GEMINI_MODELS[0]:
+                raise RuntimeError("quota")
+            return {"provider": name, "model": model, "level": "none", "coveragePct": 0, "note": None}
+
+        out, calls = self.ask("clef", assess_with=first_fails)
+        self.assertEqual([c["model"] for c in calls], list(cs.GEMINI_MODELS[:2]))
+        self.assertEqual(out["model"], cs.GEMINI_MODELS[1])
+
+    def test_a_tick_asks_at_most_the_cap(self):
+        with mock.patch.object(cs.quality_watch, "MAX_SECOND_OPINIONS_PER_RUN", 2):
+            asks = [self.ask("gemini")[0] for _ in range(4)]
+        self.assertEqual([a is not None for a in asks], [True, True, False, False])
+
+    def test_main_starts_each_tick_with_a_fresh_count(self):
+        cs._SECOND_OPINIONS["n"] = 99
+        with mock.patch.object(cs, "load_registry", lambda: {}), \
+                mock.patch.object(cs, "_run_archive_pass", lambda *a, **k: None), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            cs.main()
+        self.assertEqual(cs._SECOND_OPINIONS["n"], 0)
+
+
+# The real function, kept aside because WithManifest.setUp replaces cs.request_second_opinion with a no-op.
+REAL_REQUEST = cs.request_second_opinion
+
+
+class OwnerVerdictTests(WithManifest):
+    """The reader honors the owner's Right / Wrong taps (GET /api/quality/overrides).
+    WRONG on a cam: its claim is cleared and its further moderate+ reads do not confirm by
+    persistence or second opinion until it reads below moderate. RIGHT on a held claim:
+    confirmed, `confirmedBy: "owner"`."""
+
+    CAMS = JumpConfirmationTests.CAMS
+    NOTHING = JumpConfirmationTests.NOTHING
+    ROCKS = dict(JumpConfirmationTests.FALSE_ROCKS, provider="gemini")
+    CAM = "boca-inlet-surf"
+
+    def setUp(self):
+        super().setUp()
+        self.asked = []
+        self.alerts = []
+        self.counter = 0
+        self.tags = {}
+        cs._SECOND_OPINIONS["n"] = 0
+
+    @staticmethod
+    def verdict(cam="boca-inlet-surf", verdict="wrong", minutes_ago=-1, claim=None, hours_left=6):
+        """An override as quality_watch.parse_overrides returns it. `minutes_ago` < 0 is in the future."""
+        now = dt.datetime.now(dt.timezone.utc)
+        return {"camId": cam, "verdict": verdict,
+                "createdAt": (now - dt.timedelta(minutes=minutes_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "untilUtc": (now + dt.timedelta(hours=hours_left)).strftime("%Y-%m-%dT%H:%M:%S.000Z"), "claim": claim}
+
+    def tick(self, prev, looks, overrides=None, opinion=None):
+        """One tick: capture_beach then build_beach_output, as main() does. `looks` maps cam id ->
+        reading for the cams with a NEW frame; the others re-serve the old frame."""
+        self.counter += 1
+
+        def fake_fetch(cam, info=None, feed_cache=None):
+            info["frameAt"] = iso_ago(2)
+            if cam["id"] in looks:
+                self.tags[cam["id"]] = self.counter
+            return jpeg() + f"{cam['id']}:{self.tags[cam['id']]}".encode()
+
+        def fake_assess(img):
+            return dict(looks[img[len(jpeg()):].decode().split(":")[0]])
+
+        def fake_opinion(cam, held, img):
+            self.asked.append(cam["id"])
+            return opinion
+
+        now = dt.datetime.now(ZONE)
+        with env(INGEST_TOKEN=None), mock.patch.object(cs, "fetch_still", fake_fetch), \
+                mock.patch.object(cs, "archive_frame", lambda *a, **k: "stored"), \
+                mock.patch.object(cs, "assess", fake_assess), mock.patch.object(cs.time, "sleep", lambda s: None), \
+                mock.patch.object(cs, "request_second_opinion", fake_opinion), \
+                mock.patch.object(cs.quality_watch, "post_alert", lambda body, **k: self.alerts.append(body) or "sent"), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            group = cs.capture_beach("boca-raton", self.CAMS, now, {"called": False}, prev, overrides=overrides)
+        doc = cs.build_beach_output("boca-raton", "America/New_York", now, [("gemini", "m")], prev, group, None, None,
+                                    overrides)
+        return group, doc
+
+    def cam(self, group, cid=None):
+        return next(c for c in group["cams"] if c["id"] == (cid or self.CAM))
+
+    def all_none(self):
+        return {c["id"]: self.NOTHING for c in self.CAMS}
+
+    def held_first_tick(self):
+        """The Boca incident: the inlet cam claims moderate, it is held, a claim is stored."""
+        _, doc = self.tick({}, self.all_none())
+        group, doc = self.tick(doc, {self.CAM: self.ROCKS})
+        self.assertTrue(self.cam(group)["unconfirmed"])
+        self.assertIn(self.CAM, doc["pendingClaims"])
+        self.asked.clear()  # what the first tick asked is not what these tests are about
+        self.alerts.clear()
+        return doc
+
+    # --- WRONG -------------------------------------------------------------------------
+
+    def test_control_without_a_verdict_the_same_cam_confirms_by_persistence(self):
+        doc = self.held_first_tick()
+        group, _ = self.tick(doc, {self.CAM: self.ROCKS})
+        self.assertEqual(self.cam(group)["confirmedBy"], "persistence")
+
+    def test_wrong_the_same_days_next_moderate_claim_does_not_confirm_by_persistence(self):
+        doc = self.held_first_tick()
+        group, doc = self.tick(doc, {self.CAM: self.ROCKS}, [self.verdict()])
+        inlet = self.cam(group)
+        self.assertIsNone(inlet["level"])
+        self.assertEqual(inlet["ownerHold"], "wrong")
+        self.assertNotIn("confirmedBy", inlet)
+        self.assertNotIn("unconfirmed", inlet)
+        self.assertNotIn("claim", inlet)
+        self.assertEqual(cs.worst_seaweed(group)["level"], "none")  # the other cams' none reads stand
+        self.assertEqual(doc["history"][-1]["seaweed"], "none")
+
+    def test_wrong_clears_the_cams_pending_claim_and_stores_no_new_one(self):
+        doc = self.held_first_tick()
+        _, doc = self.tick(doc, {self.CAM: self.ROCKS}, [self.verdict()])
+        self.assertNotIn(self.CAM, doc["pendingClaims"])
+
+    def test_wrong_clears_the_claim_even_when_the_cam_has_no_new_frame_this_tick(self):
+        doc = self.held_first_tick()
+        _, doc = self.tick(doc, {"boca-south": self.NOTHING}, [self.verdict()])
+        self.assertNotIn(self.CAM, doc["pendingClaims"])
+
+    def test_wrong_the_next_claim_gets_no_second_opinion_and_no_alert(self):
+        doc = self.held_first_tick()
+        self.tick(doc, {self.CAM: self.ROCKS}, [self.verdict()],
+                  opinion={"provider": "clef", "model": "m", "level": "moderate", "coveragePct": 40, "note": None})
+        self.assertEqual(self.asked, [])
+        self.assertEqual(self.alerts, [])
+
+    def test_wrong_another_fresh_cam_can_still_confirm_the_suppressed_cam(self):
+        _, doc = self.tick({}, self.all_none())
+        group, _ = self.tick(doc, {self.CAM: self.ROCKS, "boca-south-surf": dict(self.ROCKS, coveragePct=25)},
+                             [self.verdict()])
+        self.assertEqual(self.cam(group)["confirmedBy"], "cam:boca-south-surf")
+        self.assertEqual(self.cam(group)["level"], "moderate")
+
+    def test_wrong_a_suppressed_cam_does_not_confirm_another_cam(self):
+        _, doc = self.tick({}, self.all_none())
+        group, _ = self.tick(doc, {self.CAM: self.ROCKS, "boca-south-surf": dict(self.ROCKS, coveragePct=25)},
+                             [self.verdict()])
+        other = self.cam(group, "boca-south-surf")
+        self.assertTrue(other["unconfirmed"], "the cam the owner flagged cannot vouch for another")
+        self.assertNotIn("confirmedBy", other)
+
+    def test_wrong_a_fresh_read_below_moderate_spends_the_override(self):
+        doc = self.held_first_tick()
+        v = self.verdict()
+        group, doc = self.tick(doc, {self.CAM: self.NOTHING}, [v])
+        self.assertEqual(self.cam(group)["level"], "none")
+        self.assertEqual(doc["spentOverrides"], {self.CAM: v["createdAt"]})
+        # The same verdict is fetched again, but it is spent: the cam is judged like any other.
+        group, doc = self.tick(doc, {self.CAM: self.ROCKS}, [v])
+        inlet = self.cam(group)
+        self.assertTrue(inlet["unconfirmed"])
+        self.assertNotIn("ownerHold", inlet)
+        self.assertIn(self.CAM, doc["pendingClaims"])
+        self.assertIn(self.CAM, self.asked)  # held again: it is asked for a second opinion once more
+
+    def test_wrong_a_carried_below_moderate_read_does_not_spend_it(self):
+        _, doc = self.tick({}, self.all_none())
+        v = self.verdict()
+        _, doc = self.tick(doc, {"boca-south": self.NOTHING}, [v])  # the inlet cam is carried, not read
+        self.assertNotIn("spentOverrides", doc)
+
+    def test_wrong_a_moderate_read_does_not_spend_it(self):
+        doc = self.held_first_tick()
+        v = self.verdict()
+        _, doc = self.tick(doc, {self.CAM: self.ROCKS}, [v])
+        self.assertNotIn("spentOverrides", doc)
+        group, _ = self.tick(doc, {self.CAM: dict(self.ROCKS, coveragePct=30)}, [v])
+        self.assertEqual(self.cam(group)["ownerHold"], "wrong")
+
+    def test_wrong_an_ended_override_is_ignored(self):
+        doc = self.held_first_tick()
+        group, _ = self.tick(doc, {self.CAM: self.ROCKS}, [self.verdict(hours_left=-1)])
+        self.assertEqual(self.cam(group)["confirmedBy"], "persistence")
+
+    def test_wrong_for_one_cam_does_not_touch_another(self):
+        doc = self.held_first_tick()
+        group, _ = self.tick(doc, {self.CAM: self.ROCKS}, [self.verdict(cam="boca-south")])
+        self.assertEqual(self.cam(group)["confirmedBy"], "persistence")
+
+    def test_spent_entries_from_another_day_are_dropped(self):
+        doc = self.held_first_tick()
+        doc["spentOverrides"] = {self.CAM: "2020-01-01T00:00:00.000Z"}
+        _, doc = self.tick(doc, {self.CAM: self.NOTHING})
+        self.assertNotIn("spentOverrides", doc)
+
+    # --- RIGHT -------------------------------------------------------------------------
+
+    def test_right_publishes_the_held_claim_for_that_cam_with_confirmed_by_owner(self):
+        doc = self.held_first_tick()
+        group, doc = self.tick(doc, {"boca-south": self.NOTHING}, [self.verdict(verdict="right")])
+        inlet = self.cam(group)  # carried from the held reading, now confirmed
+        self.assertEqual((inlet["level"], inlet["coveragePct"], inlet["confirmedBy"]), ("moderate", 35, "owner"))
+        self.assertNotIn("unconfirmed", inlet)
+        self.assertEqual(cs.worst_seaweed(group)["level"], "moderate")
+        self.assertEqual(doc["history"][-1]["seaweed"], "moderate")
+
+    def test_right_stores_a_confirmed_marker_for_the_claim(self):
+        doc = self.held_first_tick()
+        _, doc = self.tick(doc, {"boca-south": self.NOTHING}, [self.verdict(verdict="right")])
+        marker = doc["pendingClaims"][self.CAM]
+        self.assertEqual((marker["confirmed"], marker["confirmedBy"], marker["level"]), (True, "owner", "moderate"))
+
+    def test_right_with_no_capture_this_tick_still_publishes_it(self):
+        doc = self.held_first_tick()
+        out = cs.build_beach_output("boca-raton", "America/New_York", dt.datetime.now(ZONE), [("gemini", "m")], doc,
+                                    None, None, None, [self.verdict(verdict="right")])
+        inlet = next(c for c in out["latest"]["cams"] if c["id"] == self.CAM)
+        self.assertEqual((inlet["level"], inlet["confirmedBy"]), ("moderate", "owner"))
+        self.assertTrue(out["pendingClaims"][self.CAM]["confirmed"])
+
+    def test_right_the_cams_next_moderate_frame_is_not_held_again(self):
+        doc = self.held_first_tick()
+        group, _ = self.tick(doc, {self.CAM: dict(self.ROCKS, coveragePct=30)}, [self.verdict(verdict="right")])
+        inlet = self.cam(group)
+        self.assertEqual(inlet["level"], "moderate")
+        self.assertNotIn("unconfirmed", inlet)
+        self.assertEqual(self.asked, [])
+
+    def test_right_does_not_publish_a_claim_made_after_the_verdict(self):
+        doc = self.held_first_tick()
+        group, doc = self.tick(doc, {"boca-south": self.NOTHING}, [self.verdict(verdict="right", minutes_ago=30)])
+        self.assertTrue(self.cam(group)["unconfirmed"])
+        self.assertNotIn("confirmed", doc["pendingClaims"][self.CAM])
+
+    def test_right_does_not_touch_another_cam(self):
+        doc = self.held_first_tick()
+        group, _ = self.tick(doc, {"boca-south": self.NOTHING}, [self.verdict(cam="boca-south", verdict="right")])
+        self.assertTrue(self.cam(group)["unconfirmed"])
+
+    # --- fail open ---------------------------------------------------------------------
+
+    def test_no_overrides_reads_exactly_as_before(self):
+        doc = self.held_first_tick()
+        for none_like in (None, []):
+            group, doc2 = self.tick(doc, {self.CAM: self.ROCKS}, none_like)
+            self.assertEqual(self.cam(group)["confirmedBy"], "persistence")
+            self.assertNotIn("spentOverrides", doc2)
+
+    def test_main_fetches_each_beach_once_and_hands_the_verdicts_to_the_reader(self):
+        fetched, captured, built = [], [], []
+        registry = {"boca-raton": {"timezone": "America/New_York", "cams": []},
+                    "deerfield-beach": {"timezone": "America/New_York", "cams": []}}
+        verdicts = {"boca-raton": [self.verdict()], "deerfield-beach": []}
+
+        def fake_capture(slug, cams, now, gap, prev, attempted=None, archive=None, overrides=None):
+            captured.append((slug, overrides))
+            return None
+
+        def fake_build(slug, tz, now, providers, prev, current, uw, uw_reading, overrides=None):
+            built.append((slug, overrides))
+            return {"morning": None, "latest": None}
+
+        with mock.patch.object(cs, "load_registry", lambda: registry), \
+                mock.patch.object(cs, "_enabled_providers", lambda: [("gemini", "m")]), \
+                mock.patch.object(cs, "fetch_prev", lambda slug: {}), \
+                mock.patch.object(cs, "capture_beach", fake_capture), \
+                mock.patch.object(cs, "build_beach_output", fake_build), \
+                mock.patch.object(cs, "_run_archive_pass", lambda *a, **k: None), \
+                mock.patch.object(cs, "capture_uw", lambda *a, **k: None), \
+                mock.patch.object(cs.quality_watch, "fetch_overrides", lambda slug: fetched.append(slug) or verdicts[slug]), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            cs.main()
+        self.assertEqual(sorted(fetched), ["boca-raton", "deerfield-beach"])
+        self.assertEqual(dict(captured), verdicts)
+        self.assertEqual(dict(built), verdicts)
+
+
+class AlertFrameTests(WithManifest):
+    """The exact judged frame rides along with the alert, shrunk to at most 150 KB."""
+
+    def test_shrink_returns_the_first_size_that_fits(self):
+        sizes = {768: 200_000, 512: 140_000, 384: 90_000}
+        calls = []
+
+        def fake(img, max_side, quality):
+            calls.append(max_side)
+            return b"\xff\xd8\xff" + b"x" * sizes[max_side]
+
+        with mock.patch.object(cs, "_pillow_image", lambda: None), mock.patch.object(cs, "_shrink_ffmpeg", fake):
+            out = cs.shrink_for_alert(jpeg())
+        self.assertEqual(calls, [768, 512])
+        self.assertLessEqual(len(out), 150 * 1024)
+
+    def test_nothing_that_fits_is_none_and_an_error_is_none(self):
+        with mock.patch.object(cs, "_pillow_image", lambda: None), \
+                mock.patch.object(cs, "_shrink_ffmpeg", lambda img, m, q: b"x" * 300_000):
+            self.assertIsNone(cs.shrink_for_alert(jpeg()))
+
+        def boom(img, m, q):
+            raise RuntimeError("no ffmpeg")
+
+        with mock.patch.object(cs, "_pillow_image", lambda: None), mock.patch.object(cs, "_shrink_ffmpeg", boom), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertIsNone(cs.shrink_for_alert(jpeg()))
+
+    def test_the_alert_carries_the_shrunk_image_of_the_held_frame(self):
+        alerts = []
+        cams = JumpConfirmationTests.CAMS
+        rocks = dict(JumpConfirmationTests.FALSE_ROCKS, provider="gemini")
+        nothing = JumpConfirmationTests.NOTHING
+
+        def fake_fetch(cam, info=None, feed_cache=None):
+            info["frameAt"] = iso_ago(2)
+            return jpeg() + cam["id"].encode()
+
+        looks = {"boca-inlet-surf": rocks, "boca-south-surf": nothing, "boca-south": nothing}
+        opinion = {"provider": "clef", "model": "m", "level": "none", "coveragePct": 0, "note": None}
+        shrunk = b"\xff\xd8\xffSHRUNK"
+        seen = []
+
+        def fake_shrink(img):
+            seen.append(img)
+            return shrunk
+
+        with env(INGEST_TOKEN=None), mock.patch.object(cs, "fetch_still", fake_fetch), \
+                mock.patch.object(cs, "archive_frame", lambda *a, **k: "stored"), \
+                mock.patch.object(cs, "assess", lambda img: dict(looks[img[len(jpeg()):].decode()])), \
+                mock.patch.object(cs.time, "sleep", lambda s: None), \
+                mock.patch.object(cs, "request_second_opinion", lambda cam, held, img: opinion), \
+                mock.patch.object(cs, "shrink_for_alert", fake_shrink), \
+                mock.patch.object(cs.quality_watch, "post_alert", lambda body, **k: alerts.append(body) or "sent"), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            cs.capture_beach("boca-raton", cams, dt.datetime.now(ZONE), {"called": False}, {})
+        (alert,) = alerts
+        self.assertEqual(seen, [jpeg() + b"boca-inlet-surf"], "the very still that made the claim is shrunk")
+        self.assertEqual(base64.b64decode(alert["frame"]["jpegB64"]), shrunk)
+        # sha256 still names the ORIGINAL still, which is how the archived copy is found.
+        self.assertEqual(alert["frame"]["sha256"], cs.quality_watch.frame_sha256(jpeg() + b"boca-inlet-surf"))
 
 
 ZONE = __import__("zoneinfo").ZoneInfo("America/New_York")

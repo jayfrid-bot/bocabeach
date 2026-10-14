@@ -77,6 +77,7 @@ on:
     paths:
       - ".github/workflows/sargassum.yml"
       - "scripts/cam_seaweed.py"
+      - "scripts/quality_watch.py"
   workflow_dispatch: {}
 
 permissions:
@@ -192,7 +193,7 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }} # optional free fallback
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # only used if VISION_PROVIDERS adds "github" (off by default)
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # for the publish push below
-          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }} # webcam archive POSTs (scripts/cam_seaweed.py archive_frame)
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }} # webcam archive POSTs (scripts/cam_seaweed.py archive_frame), Clef reads, and owner quality alerts (scripts/quality_watch.py)
           # Rollout canary: Clef stays OUT of the default provider order until the
           # route is deployed and smoke-tested (node scripts/clef_route_smoke.mjs
           # <archived r2_key>). Then uncomment this line to put it behind Gemini.

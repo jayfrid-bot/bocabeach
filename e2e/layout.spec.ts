@@ -22,6 +22,10 @@ const VIEWPORTS = [
   { name: "desktop-1280", width: 1280, height: 900 },
 ] as const;
 
+// /admin/* is deliberately NOT here. Those pages (review, report, the console) are owner-only
+// tools behind the OWNER_DEVICE_IDS gate: they show nothing to a visitor, and they reuse the
+// shared ThemeToggle (36px), which this suite's 40px tap-target floor would flag. They were checked by
+// hand at 390px (no sideways scroll, 44px+ buttons); see docs/QUALITY_PLAN.md.
 const PAGES = ["/", "/find", "/deerfield-beach"] as const;
 
 const ARTIFACT_DIR = "e2e/artifacts";

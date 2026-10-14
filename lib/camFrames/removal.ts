@@ -23,7 +23,7 @@
 // Set `archive: false` on the cam in config/locations.ts and deploy BEFORE
 // erasing, or the next capture tick stores a new frame.
 
-import { camPrefix, isValidFrameKey, isValidId } from "@/lib/camFrames/keys";
+import { camPrefix, isValidFrameKey, isValidId, qualityCamPrefix } from "@/lib/camFrames/keys";
 import { lookupCam } from "@/lib/camFrames/manifest";
 
 export const R2_BUCKET = "isitbeachday-cam-frames";
@@ -154,6 +154,15 @@ export async function runRemoval(args: RemoveArgs, io: RemovalIo, concurrency: n
     orphans = listed.filter((k) => !known.has(k)).length;
     toDelete = [...new Set([...plan.keys, ...listed])];
     io.log(`R2 holds ${listed.length} object(s) under ${prefix}; ${orphans} have no D1 row`);
+    // The exact frames kept for quality alerts (docs/QUALITY_PLAN.md) live under their
+    // own prefix and have no cam_frames row. A takedown erases them too.
+    const qprefix = qualityCamPrefix(slug, camId);
+    const quality = await io.r2List(qprefix);
+    for (const k of quality) {
+      if (!k.startsWith(qprefix) || k.includes("..")) throw new Error(`refusing: listed key ${JSON.stringify(k)} is not under ${qprefix}`);
+    }
+    toDelete = [...new Set([...toDelete, ...quality])];
+    io.log(`R2 holds ${quality.length} quality frame(s) under ${qprefix}`);
   } else {
     io.log(
       "WARNING: R2 credentials are not set (R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY), so only the objects " +

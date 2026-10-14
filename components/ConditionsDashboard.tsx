@@ -58,6 +58,7 @@ import { SeasonalHazards } from "@/components/SeasonalHazards";
 import { seaweedVsAvgPhrase } from "@/lib/vsAveragePhrase";
 import { clarityTileCopy } from "@/lib/sources/clarity";
 import { seaweedTileSub } from "@/lib/sources/sargassum";
+import { OwnerReportLink } from "@/components/quality/OwnerReportLink";
 // --- Beach Day Plus ---------------------------------------------------------
 import { SAFETY_ALERT_KEYS } from "@/lib/db/types";
 import { ripCapFor } from "@/lib/ripRisk";
@@ -1285,6 +1286,7 @@ export function ConditionsDashboard({
             iPhone app
           </a>
         </p>
+        <OwnerReportLink slug={slug} />
         <p className="text-center text-xs text-slate-500">
           v{APP_VERSION}
           {BUILD_NUM && BUILD_NUM !== "0" ? ` · build ${BUILD_NUM}` : ""}

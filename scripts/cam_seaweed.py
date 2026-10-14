@@ -167,6 +167,15 @@ moderate. See
 confirm_seaweed_jumps() and update_pending_claims(). One bad frame from one cam can
 no longer drive the beach headline.
 
+SECOND OPINION ON A HELD JUMP (2026-10-14, docs/QUALITY_PLAN.md): when a jump is held, the
+reader asks ONE other provider to read the SAME image (a claim from Gemini/Groq/OpenRouter
+goes to Clef; a claim from Clef goes to Gemini; no other provider configured -> none). If it
+also says moderate/high, the jump is confirmed at once (`"confirmedBy": "second-opinion:
+<provider>"`). If it disagrees, the jump stays held and the reader POSTs an owner alert to
+the app (/api/quality/alerts: the claim, the second opinion, the other cams' readings, the
+frame's SHA-256). A failed or "unreadable" second opinion changes nothing. At most
+MAX_SECOND_OPINIONS_PER_RUN (6) per tick. See scripts/quality_watch.py.
+
 MORNING (2026-10-13): the day's `morning` is chosen among the captures from 5 AM to
 MORNING_END_HOUR (12) local that have a published seaweed level on at least one cam:
 the one where MORE cams published a level, tie -> the earlier one. A capture with no
@@ -217,6 +226,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from zoneinfo import ZoneInfo
+
+import quality_watch
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")  # 2.0-flash has no free tier
@@ -1362,6 +1373,24 @@ def shrink_for_clef(img: bytes) -> bytes:
     return small
 
 
+def shrink_for_alert(img: bytes) -> bytes | None:
+    """The still shrunk to at most quality_watch.ALERT_FRAME_MAX_BYTES, to ride along with an
+    alert so the review screen shows the exact frame that was judged. Tries 768 px / q60, then
+    512 / q50, then 384 / q40. None when nothing fits or shrinking fails: the alert then goes
+    without a picture and the screen falls back to the nearest archived frame. Never raises."""
+    Image = _pillow_image()
+    limit = quality_watch.ALERT_FRAME_MAX_BYTES
+    try:
+        for max_side, quality in (CLEF_SHRINK, CLEF_SHRINK_FALLBACK, (384, 40)):
+            small = (_shrink_pillow(Image, img, max_side, quality) if Image is not None
+                     else _shrink_ffmpeg(img, max_side, quality))
+            if len(small) <= limit:
+                return small
+    except Exception as e:  # noqa: BLE001 — a missing picture must never block the alert
+        print(f"  warn alert frame shrink: {e}", file=sys.stderr)
+    return None
+
+
 def _clef_raw(reply: object, kind: str) -> dict:
     """Turn the route's reading into the raw-model dict that _parse_out/_parse_uw take.
 
@@ -1800,7 +1829,8 @@ def _same_frame(reading: dict, entry: dict) -> bool:
     return False
 
 
-def confirm_seaweed_jumps(fresh: list[dict], pending: dict[str, dict]) -> list[dict]:
+def confirm_seaweed_jumps(fresh: list[dict], pending: dict[str, dict],
+                          suppressed: "frozenset[str] | set[str]" = frozenset()) -> list[dict]:
     """Hold back an unconfirmed jump to moderate/high seaweed. Returns the fresh
     readings to publish (new dicts for the changed ones; inputs are not mutated).
 
@@ -1818,23 +1848,33 @@ def confirm_seaweed_jumps(fresh: list[dict], pending: dict[str, dict]) -> list[d
     `"claim": {level, coveragePct, note}` for the audit trail; update_pending_claims
     stores the claim for a later tick. A low-sun reading has level None, so it
     neither needs confirming nor confirms anything. Readings below moderate pass
-    through unchanged. Pure."""
+    through unchanged.
+
+    `suppressed` is the set of cam ids the owner marked WRONG today (quality_watch.owner_state).
+    Such a cam cannot confirm by persistence, and its read never confirms another cam. Another
+    fresh, unsuppressed cam can still confirm it (rule b). Unconfirmed, it is published as no
+    seaweed with `"ownerHold": "wrong"` and NO claim: nothing is stored for a later tick, and the
+    beach is not shown as waiting for confirmation. Pure."""
     out = []
     for r in fresh:
         if r.get("level") not in SEAWEED_RANK or SEAWEED_RANK[r["level"]] < _MODERATE:
             out.append(r)
             continue
         by = None
+        held_off = r.get("id") in suppressed
         claim = pending.get(r["id"])
-        if claim is not None and not _same_frame(r, claim):
+        if not held_off and claim is not None and not _same_frame(r, claim):
             by = "persistence"
         else:
             for o in fresh:
-                if o is not r and o.get("level") in SEAWEED_RANK and SEAWEED_RANK[o["level"]] >= _MODERATE:
+                if (o is not r and o.get("id") not in suppressed
+                        and o.get("level") in SEAWEED_RANK and SEAWEED_RANK[o["level"]] >= _MODERATE):
                     by = f"cam:{o['id']}"
                     break
         if by:
             out.append({**r, "confirmedBy": by})
+        elif held_off:
+            out.append({**r, "level": None, "coveragePct": None, "note": None, "ownerHold": "wrong"})
         else:
             out.append({
                 **r,
@@ -1845,7 +1885,8 @@ def confirm_seaweed_jumps(fresh: list[dict], pending: dict[str, dict]) -> list[d
     return out
 
 
-def update_pending_claims(prev_pending: object, current: dict | None, now: dt.datetime) -> dict[str, dict]:
+def update_pending_claims(prev_pending: object, current: dict | None, now: dt.datetime,
+                          drop: "set[str] | frozenset[str]" = frozenset()) -> dict[str, dict]:
     """The `pendingClaims` map to publish: {cam id: {level, coveragePct, note,
     frameAt, frameSha?, claimedAt, confirmed?}}. Starts from the previous map's live
     claims (live_pending_claims drops the expired and the other-day ones), then
@@ -1857,6 +1898,10 @@ def update_pending_claims(prev_pending: object, current: dict | None, now: dt.da
       - a low-sun read (no seaweed level, no claim) changes nothing.
     Pure."""
     claims = live_pending_claims(prev_pending, now)
+    # `drop`: cams the owner marked WRONG today. Their stored claim is cleared at once (a fresh
+    # confirmed read of such a cam, below, may still store a new confirmed marker).
+    for cid in drop:
+        claims.pop(cid, None)
     for c in (current or {}).get("cams", []):
         if c.get("carried") or not c.get("id"):
             continue
@@ -1883,6 +1928,41 @@ def prompt_for_cam(cam: dict) -> str:
     if isinstance(hint, str) and hint.strip():
         return f"{PROMPT} About this camera: {hint.strip()}"
     return PROMPT
+
+
+# Second opinions asked this run (one process = one tick); see quality_watch.MAX_SECOND_OPINIONS_PER_RUN.
+_SECOND_OPINIONS = {"n": 0}
+
+
+def request_second_opinion(cam: dict, held: dict, img: bytes) -> dict | None:
+    """Ask a DIFFERENT provider to read the same image a held jump came from.
+
+    Returns the second reader's {provider, model, level, coveragePct, note}, or None
+    when there is no opinion: no other provider configured, the per-run cap reached,
+    the frame called unreadable, or every attempt failed. None never confirms and never
+    alerts (the jump just stays held, as it did before second opinions). Gemini is tried
+    on each of its models in turn (a separate daily quota each); Clef counts against its
+    own daily cap on the server, so a 429 here is simply "no opinion"."""
+    if _SECOND_OPINIONS["n"] >= quality_watch.MAX_SECOND_OPINIONS_PER_RUN:
+        return None
+    configured = {n for n in ("gemini", "clef") if _provider_configured(n)}
+    name = quality_watch.pick_second_provider(held.get("provider"), configured)
+    if not name:
+        return None
+    _SECOND_OPINIONS["n"] += 1
+    prompt = prompt_for_cam(cam)
+    models = GEMINI_MODELS if name == "gemini" else [None]
+    for model in models:
+        try:
+            reading = assess_with(name, img, prompt, _parse_out, model, "surface")
+        except UnreadableFrame:
+            print(f"  [{cam['id']}] second opinion ({name}): frame unreadable, no opinion")
+            return None
+        except Exception as e:  # noqa: BLE001 — try the next model, then give up
+            print(f"  warn [{cam['id']}] second opinion ({name}): {str(e)[:160]}", file=sys.stderr)
+            continue
+        return quality_watch.opinion_from_reading(reading)
+    return None
 
 
 def beach_coords(slug: str) -> tuple[float, float] | None:
@@ -1912,6 +1992,7 @@ def _frame_time(stamp: object, fallback: dt.datetime) -> dt.datetime:
 def capture_beach(
     slug: str, cams: list[dict], now_local: dt.datetime, gap_state: dict, prev: dict,
     attempted: set | None = None, archive: "ArchiveRun | None" = None,
+    overrides: list | None = None,
 ) -> dict | None:
     """Read every cam configured for one beach. `gap_state` is a single
     {"called": bool} shared across ALL beaches in this run, so CAM_GAP_S spaces
@@ -1927,9 +2008,15 @@ def capture_beach(
     the tick's archive budget (see ArchiveRun). `attempted` (optional) is a set
     that collects (slug, cam id) of every cam this function goes after;
     archive_pass() uses it to fetch only the rest. `archive` (optional) is the
-    tick's shared ArchiveRun; without one this call uses its own."""
+    tick's shared ArchiveRun; without one this call uses its own. `overrides` (optional) is
+    the owner's running seaweed verdicts for this beach (quality_watch.fetch_overrides): a Right
+    confirms a held claim, a Wrong suppresses that cam's claims (see confirm_seaweed_jumps)."""
     run = archive if archive is not None else ArchiveRun()
+    owner = quality_watch.owner_state(overrides or [], prev.get("spentOverrides"), now_local)
+    suppressed = set(owner["wrong"])
+    prev_eff = quality_watch.apply_owner_confirmations(prev, owner["right"])  # the owner's Right, applied
     readings = []
+    imgs: dict[str, bytes] = {}  # stills of moderate/high reads, kept for a second opinion on a held jump
     coords = beach_coords(slug)  # for the low-sun gate; None -> gate off
     for cam in cams:
         src = cam.get("source") or {}
@@ -1996,6 +2083,8 @@ def capture_beach(
             prompt = prompt_for_cam(cam)
             r = assess(img) if prompt == PROMPT else assess(img, prompt)
             reading = {"id": cam["id"], "name": cam["name"], **r}
+            if SEAWEED_RANK.get(r.get("level"), -1) >= _MODERATE:
+                imgs[cam["id"]] = img
             # When the frame was taken (courier: its meta time; feed: latest.json
             # `timestamp`, when it has one) and when we scored it. A later tick
             # may CARRY this reading (see carried_readings) and needs the frame's
@@ -2028,7 +2117,7 @@ def capture_beach(
             print(f"  [{slug}] {cam['id']}: skipped (unreadable per clef)")
         except Exception as e:  # noqa: BLE001
             print(f"  warn [{slug}] {cam['id']}: {e}", file=sys.stderr)
-    run.flush()  # the beach's reads are done: upload its stills now
+    uploads = run.flush()  # the beach's reads are done: upload its stills now
     if not readings:
         return None
     # Every cam the beach is configured with should speak in each tick's roll-up
@@ -2036,7 +2125,7 @@ def capture_beach(
     # (unchanged frame) or failed contributes its last good reading, marked
     # `carried`, while that reading is still fresh enough to score today.
     fresh_ids = {r["id"] for r in readings}
-    carried = carried_readings(prev, cams, fresh_ids, now_local)
+    carried = carried_readings(prev_eff, cams, fresh_ids, now_local)
     # TICK-LEVEL LOW SUN: the per-frame gate above judged each fresh frame by its
     # own time. A group is also stamped with THIS tick's time, and it replaces
     # `latest` and feeds history, so when the sun now is under the threshold no cam in
@@ -2053,20 +2142,50 @@ def capture_beach(
     # different frame, or another cam's fresh read now) before it publishes. Held
     # reads are stored as pending claims by build_beach_output. Carried readings
     # are never re-judged and never confirm anything.
-    confirmed = confirm_seaweed_jumps(readings, live_pending_claims(prev.get("pendingClaims"), now_local))
+    pending = {k: v for k, v in live_pending_claims(prev_eff.get("pendingClaims"), now_local).items()
+               if k not in suppressed}
+    confirmed = confirm_seaweed_jumps(readings, pending, suppressed)
     for after in confirmed:
-        if after.get("unconfirmed"):
+        if after.get("ownerHold"):
+            print(f"  [{slug}] {after['id']}: moderate+ read not published (owner marked this cam wrong today)")
+        elif after.get("unconfirmed"):
             claim = after["claim"]
             print(f"  [{slug}] {after['id']}: seaweed={claim['level']}({claim.get('coveragePct')}%) "
                   "HELD (unconfirmed jump)")
         elif after.get("confirmedBy"):
             print(f"  [{slug}] {after['id']}: seaweed={after['level']} confirmed by {after['confirmedBy']}")
+    # SECOND OPINION: a different provider reads the SAME image of each held jump.
+    # Agreement confirms it now; disagreement keeps it held and tells the app.
+    cam_by_id = {c["id"]: c for c in cams}
+    disagreed: list[tuple[dict, dict]] = []
+    for i, after in enumerate(confirmed):
+        if not after.get("unconfirmed") or after["id"] not in imgs:
+            continue
+        opinion = request_second_opinion(cam_by_id[after["id"]], after, imgs[after["id"]])
+        if opinion is None:
+            continue
+        if quality_watch.agrees(opinion.get("level")):
+            confirmed[i] = quality_watch.confirmed_by_second_opinion(after, opinion)
+            print(f"  [{slug}] {after['id']}: seaweed={opinion['level']} confirmed by "
+                  f"{confirmed[i]['confirmedBy']}")
+        else:
+            disagreed.append((after, opinion))
+            print(f"  [{slug}] {after['id']}: second opinion ({opinion.get('provider')}) says "
+                  f"{opinion.get('level')}: stays HELD")
     readings = confirmed
     by_id = {r["id"]: r for r in readings}
     by_id.update({r["id"]: r for r in carried})
     ordered = [by_id[c["id"]] for c in cams if c["id"] in by_id]
     group = {"capturedAtLocal": now_local.isoformat(timespec="minutes"),
              "hour": now_local.hour, "cams": ordered}
+    # Tell the app about each disagreement, with the other cams as they stand now.
+    for held, opinion in disagreed:
+        body = quality_watch.build_alert(
+            slug, held, opinion, quality_watch.other_cams(ordered, held["id"]), worst_seaweed(group),
+            quality_watch.frame_sha256(imgs[held["id"]]),
+            (uploads or {}).get(f"{slug}/{held['id']}") == "stored",
+            shrink_for_alert(imgs[held["id"]]))
+        print(f"  [{slug}] {held['id']}: quality alert -> {quality_watch.post_alert(body)}")
     if (len(ordered) < len({c["id"] for c in cams})
             or any(c.get("level") not in SEAWEED_RANK for c in ordered)):
         # Some configured cam has neither a fresh nor a recent reading, or one of
@@ -2080,12 +2199,19 @@ def capture_beach(
 def build_beach_output(
     slug: str, tz_name: str, now_local: dt.datetime, providers: list[tuple[str, str]],
     prev: dict, current: dict | None, uw: dict | None, uw_reading: dict | None,
+    overrides: list | None = None,
 ) -> dict:
     """Assemble one beach's cam_seaweed.<slug>.json document — the exact shape
     this script has always written, just computed per-beach now. `uw`/
     `uw_reading` are the ONE shared underwater read for this whole run (see
     main()), not per-beach."""
     today = now_local.date().isoformat()
+    # The owner's verdicts (see capture_beach): a Right is applied to what was published
+    # before; a Wrong clears that cam's stored claim, and is SPENT once the cam reads below moderate.
+    owner = quality_watch.owner_state(overrides or [], prev.get("spentOverrides"), now_local)
+    prev = quality_watch.apply_owner_confirmations(prev, owner["right"])
+    spent = quality_watch.prune_spent(prev.get("spentOverrides"), now_local)
+    spent.update(quality_watch.spent_by(owner["wrong"], (current or {}).get("cams", [])))
     prev_morning = prev.get("morning") if prev.get("dateLocal") == today else None
 
     # The day's `morning` is the best early capture, chosen among the captures from
@@ -2192,7 +2318,7 @@ def build_beach_output(
 
     now_iso = (dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
                .isoformat().replace("+00:00", "Z"))
-    return {
+    doc = {
         # Bump the timestamp only on a fresh capture; otherwise keep prev's so a
         # failed run that re-publishes the last good data doesn't look "fresh".
         "generatedAt": now_iso if current else (prev.get("generatedAt") or now_iso),
@@ -2212,7 +2338,8 @@ def build_beach_output(
         # Stored moderate/high seaweed claims by cam id (held for a second look, or
         # confirmed), each with its frame time; they outlive a carried reading so a
         # slow cam's next different frame can confirm (see update_pending_claims).
-        "pendingClaims": update_pending_claims(prev.get("pendingClaims"), current, now_local),
+        "pendingClaims": update_pending_claims(prev.get("pendingClaims"), current, now_local,
+                                               drop=set(owner["wrong"])),
         # Latest underwater sea-cam read {level, pct, note, capturedAtLocal} —
         # ONE shared calibration signal, same value on every beach's file;
         # carried forward on ticks that skip the ~hourly underwater read. None
@@ -2225,6 +2352,11 @@ def build_beach_output(
         # next run's "same frame already scored" check reads it back.
         "frameShas": frame_shas,
     }
+    # Wrong verdicts already spent (the cam read below moderate since): {cam id: the verdict's
+    # createdAt}. Kept only for the beach-local day; written only when there is one.
+    if spent:
+        doc["spentOverrides"] = spent
+    return doc
 
 
 # --- run window (which ticks the workflow loop spends) -----------------------
@@ -2336,6 +2468,7 @@ def _run_archive_pass(attempted: set, run: "ArchiveRun | None" = None) -> None:
 def main() -> int:
     with _VISION_CALLS_LOCK:
         _VISION_CALLS.clear()
+    _SECOND_OPINIONS["n"] = 0
     registry = load_registry()
     # (slug, cam id) of every cam the vision/underwater paths go after this tick;
     # archive_pass() archives the manifest cams NOT in here.
@@ -2364,6 +2497,8 @@ def main() -> int:
         for slug, entry in registry.items()
     }
     prevs = {slug: fetch_prev(slug) for slug in registry}
+    # The owner's running seaweed verdicts, once per beach per tick. Fails open: [] = as before.
+    overrides_by_slug = {slug: quality_watch.fetch_overrides(slug) for slug in registry}
 
     # One capture pass over every beach's cams. gap_state is shared so
     # CAM_GAP_S spaces every call across the WHOLE run, not just within one
@@ -2374,7 +2509,7 @@ def main() -> int:
         if providers:
             current_by_slug[slug] = capture_beach(
                 slug, entry.get("cams", []), now_by_slug[slug], gap_state, prevs[slug],
-                attempted, archive_run)
+                attempted, archive_run, overrides_by_slug[slug])
         else:
             current_by_slug[slug] = None
 
@@ -2429,7 +2564,7 @@ def main() -> int:
         tz_name = entry.get("timezone", DEFAULT_TZ_NAME)
         out = build_beach_output(
             slug, tz_name, now_by_slug[slug], providers,
-            prevs[slug], current_by_slug[slug], uw, uw_reading,
+            prevs[slug], current_by_slug[slug], uw, uw_reading, overrides_by_slug[slug],
         )
 
         # Non-destructive: never overwrite a beach's published feed with an

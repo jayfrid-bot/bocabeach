@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import type { ConditionsResponse, Location } from "@/lib/types";
 import { ConditionsDashboard } from "@/components/ConditionsDashboard";
@@ -151,6 +152,16 @@ export function AdminConsole() {
           <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Admin · Add a beach</h1>
           <p className="text-sm text-slate-600 dark:text-slate-400">
             Resolve a city or beach name, preview the live dashboard, then commit it.
+          </p>
+          {/* Owner screens for the data-quality loop; each opens only for the owner's phone. */}
+          <p className="mt-1 text-sm">
+            <Link href="/admin/review" className="text-ocean-700 hover:underline dark:text-ocean-300">
+              Quality review
+            </Link>
+            <span className="mx-2 text-slate-400">·</span>
+            <Link href="/admin/report" className="text-ocean-700 hover:underline dark:text-ocean-300">
+              Report conditions
+            </Link>
           </p>
         </div>
         <ThemeToggle />
