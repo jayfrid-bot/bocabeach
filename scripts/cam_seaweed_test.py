@@ -2626,12 +2626,15 @@ class JumpConfirmationTests(WithManifest):
         t = (self.NOW - dt.timedelta(minutes=minutes_before)).astimezone(UTC)
         return self.claim(frame_at=t.strftime("%Y-%m-%dT%H:%M:%SZ"), **kw)
 
-    def test_a_claim_lives_300_minutes_from_when_it_was_scored(self):
-        self.assertEqual(cs.PENDING_CLAIM_MAX_MIN, 300)
-        live = cs.live_pending_claims({"a": self.entry(299), "b": self.entry(301), "c": self.entry(180)}, self.NOW)
-        self.assertEqual(sorted(live), ["a", "c"])
+    def test_a_claim_has_no_minute_limit_only_the_local_date(self):
+        self.assertFalse(hasattr(cs, "PENDING_CLAIM_MAX_MIN"))
+        # NOW is 2:00 PM local: a claim scored at 6:30 AM (450 min ago) is the same local date.
+        live = cs.live_pending_claims({"a": self.entry(60), "b": self.entry(450), "c": self.entry(180)}, self.NOW)
+        self.assertEqual(sorted(live), ["a", "b", "c"])
+        # ...but one scored just before local midnight is yesterday's
+        self.assertEqual(cs.live_pending_claims({"d": self.entry(14 * 60 + 1)}, self.NOW), {})
 
-    def test_a_claim_from_yesterday_does_not_live_even_inside_300_minutes(self):
+    def test_a_claim_from_yesterday_does_not_live_even_a_few_minutes_old(self):
         just_after_midnight = dt.datetime(2026, 10, 13, 1, 0, tzinfo=self.NOW.tzinfo)
         # a frame at 23:30 local yesterday is 90 minutes old but a different local date
         t = (just_after_midnight - dt.timedelta(minutes=90)).astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -2654,11 +2657,11 @@ class JumpConfirmationTests(WithManifest):
         (got,) = self.confirm([frame2], live)
         self.assertEqual((got["level"], got["confirmedBy"]), ("moderate", "persistence"))
 
-    def test_a_claim_older_than_300_minutes_or_from_yesterday_does_not_confirm(self):
+    def test_a_claim_from_yesterday_does_not_confirm(self):
         frame = self.read("ftl", "moderate", 40, frameSha="new", frameAt="2026-10-13T18:00:00Z")
-        for age in (301, 600):
-            live = cs.live_pending_claims({"ftl": self.entry(age)}, self.NOW)
-            self.assertTrue(self.confirm([frame], live)[0]["unconfirmed"], age)
+        live = cs.live_pending_claims({"ftl": self.entry(14 * 60 + 30)}, self.NOW)
+        self.assertEqual(live, {})
+        self.assertTrue(self.confirm([frame], live)[0]["unconfirmed"])
 
     # --- update_pending_claims: what gets stored ---------------------------------------
 
@@ -2690,8 +2693,8 @@ class JumpConfirmationTests(WithManifest):
         carried_below = self.read("b", "none", 0, carried=True)
         self.assertEqual(sorted(cs.update_pending_claims(before, self.group(low, carried_below), self.NOW)), ["a", "b"])
 
-    def test_expired_claims_are_pruned_and_a_missing_capture_keeps_the_live_ones(self):
-        got = cs.update_pending_claims({"a": self.entry(60), "b": self.entry(310)}, None, self.NOW)
+    def test_other_day_claims_are_pruned_and_a_missing_capture_keeps_the_live_ones(self):
+        got = cs.update_pending_claims({"a": self.entry(60), "b": self.entry(15 * 60)}, None, self.NOW)
         self.assertEqual(sorted(got), ["a"])
 
     # --- recent_prev_readings: the CARRY age limits (unchanged) ------------------------
@@ -2809,11 +2812,11 @@ class JumpConfirmationTests(WithManifest):
         if (now - dt.timedelta(minutes=minutes)).date() != now.date():
             self.skipTest("the aged frame would fall on yesterday's local date")
 
-    def test_a_claim_older_than_300_minutes_does_not_confirm(self):
+    def test_a_claim_from_yesterday_does_not_confirm(self):
         _, doc = self.tick({}, self.all_none())
         _, doc = self.tick(doc, {"boca-inlet-surf": self.FALSE_ROCKS})
-        doc["pendingClaims"]["boca-inlet-surf"]["frameAt"] = iso_ago(310)
-        doc["pendingClaims"]["boca-inlet-surf"]["claimedAt"] = iso_ago(310)
+        doc["pendingClaims"]["boca-inlet-surf"]["frameAt"] = iso_ago(26 * 60)
+        doc["pendingClaims"]["boca-inlet-surf"]["claimedAt"] = iso_ago(26 * 60)
         group, _ = self.tick(doc, {"boca-inlet-surf": self.FALSE_ROCKS})
         self.assertTrue(next(c for c in group["cams"] if c["id"] == "boca-inlet-surf")["unconfirmed"])
 
@@ -2949,9 +2952,30 @@ class CourierCadenceTests(WithManifest):
         self.assertTrue(doc["pendingClaims"][self.CAM["id"]]["confirmed"])
         self.assertEqual(cs.worst_seaweed(doc["latest"]), {"level": "moderate", "pct": 40})
 
-    def test_a_claim_older_than_300_minutes_does_not_confirm(self):
-        group, _ = self.read(self.prev_with_claim(310))
-        self.assertTrue(group["cams"][0]["unconfirmed"])
+    def test_codex_round_3_noon_frame_scored_promptly_3pm_frame_first_seen_at_5_01_pm(self):
+        # Frame 1 (noon) scored at once; frame 2 (3 PM) first seen at 5:01 PM, 121 minutes old
+        # (inside the 150-minute courier limit). The claim is 301 minutes old: no minute limit
+        # may drop it.
+        self.skip_near_midnight(305)
+        prev = self.prev_with_claim(301)
+        prev["pendingClaims"][self.CAM["id"]]["frameAt"] = iso_ago(301 + 1)
+        prev["pendingClaims"][self.CAM["id"]]["claimedAt"] = iso_ago(301)
+        group, doc = self.read(prev, grabbed_min_ago=121)
+        r = group["cams"][0]
+        self.assertEqual((r["level"], r["confirmedBy"]), ("moderate", "persistence"))
+        self.assertTrue(doc["pendingClaims"][self.CAM["id"]]["confirmed"])
+
+    def test_a_claim_hours_old_but_from_today_still_confirms(self):
+        self.skip_near_midnight(600)
+        group, _ = self.read(self.prev_with_claim(600))
+        self.assertEqual(group["cams"][0]["confirmedBy"], "persistence")
+
+    def test_a_fresh_read_below_moderate_still_clears_the_claim(self):
+        self.skip_near_midnight(100)
+        prev = self.prev_with_claim(100)
+        with mock.patch.object(CourierCadenceTests, "LOOK", dict(self.LOOK, level="low", coveragePct=8)):
+            _, doc = self.read(prev)
+        self.assertNotIn(self.CAM["id"], doc["pendingClaims"])
 
     def test_courier_frames_180_minutes_apart_each_read_late_still_confirm(self):
         # Codex round 2: each courier frame can be read up to DIRECT_FRAME_MAX_AGE_MIN (150)

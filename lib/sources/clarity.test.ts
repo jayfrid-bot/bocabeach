@@ -187,6 +187,51 @@ describe("summarizeClarity — a low-sun latest between 5:40 PM and the night ga
   });
 });
 
+describe("summarizeClarity — strict capture timestamps (fail closed)", () => {
+  const water = [{ name: "Inlet", water: "clear", waterPct: 80 }] as never;
+  const gate = { now: new Date("2026-10-13T14:00:00-04:00"), timezone: "America/New_York", nowLocalDate: "2026-10-13" };
+  const noWater = [{ name: "Inlet", water: null }] as never;
+
+  it("a malformed latest time is stale: no live read from it", () => {
+    for (const capturedAtLocal of ["2026-10-13T13:99-04:00", "garbage", undefined]) {
+      const d = summarizeClarity({ latest: { capturedAtLocal, cams: water } }, gate);
+      expect(d!.level, String(capturedAtLocal)).toBeNull();
+      expect(d!.note, String(capturedAtLocal)).toMatch(/couple hours old/i);
+    }
+  });
+
+  it("a well-formed recent latest still reads normally", () => {
+    const d = summarizeClarity({ latest: { capturedAtLocal: "2026-10-13T13:50-04:00", cams: water } }, gate);
+    expect(d!.level).toBe("clear");
+  });
+
+  it("a malformed morning rejected by the date check does not come back through the fallback", () => {
+    const d = summarizeClarity(
+      { latest: { capturedAtLocal: "2026-10-13T13:50-04:00", cams: noWater }, morning: { capturedAtLocal: "2026-10-13T08:99-04:00", cams: water } },
+      gate,
+    );
+    expect(d!.level).toBeNull();
+    expect(d!.note).toMatch(/open water/i);
+    // ...nor a yesterday morning when there is no latest at all
+    const y = summarizeClarity({ morning: { capturedAtLocal: "2026-10-12T08:40-04:00", cams: water }, latest: null }, gate);
+    expect(y!.level).toBeNull();
+  });
+
+  it("with the local date unknown the old fallback to morning still applies", () => {
+    const d = summarizeClarity({ latest: null, morning: { capturedAtLocal: "2026-10-13T08:40-04:00", cams: water } });
+    expect(d!.level).toBe("clear");
+  });
+
+  it("the tile copy never throws on a bad timestamp", () => {
+    const base = { level: "clear" as const, pct: 80, note: undefined };
+    for (const capturedAtLocal of ["2026-10-13T08:99-04:00", "garbage", undefined]) {
+      const copy = clarityTileCopy({ ...base, capturedAtLocal }, "America/New_York");
+      expect(copy.sub, String(capturedAtLocal)).not.toMatch(/Invalid|as of/);
+    }
+    expect(clarityTileCopy({ ...base, capturedAtLocal: "2026-10-13T17:30-04:00" }, "America/New_York").sub).toContain("as of 5:30 PM");
+  });
+});
+
 describe("summarizeClarity — legacy feed without clarity fields", () => {
   it("returns null (unavailable) when no cam carries a water field", () => {
     // Old-shape entries: seaweed/crowd only, no `water` key at all.

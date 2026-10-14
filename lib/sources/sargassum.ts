@@ -12,7 +12,7 @@ import { vsAverage, type VsAverageEntry } from "@/lib/vsAverage";
 import { camFeedUrlCandidates } from "@/lib/sources/camFeed";
 import { expectedNextCamRead } from "@/lib/camNextRead";
 import { capCamHistory } from "@/lib/camHistory";
-import { camReadAsOf, pickCamGroup, type CamGroupSource } from "@/lib/camGroup";
+import { camReadAsOf, parseCapturedAtLocal, pickCamGroup, type CamGroupSource } from "@/lib/camGroup";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
 
@@ -60,14 +60,8 @@ const MORNING_PRE_CLEAN_END_HOUR = 10;
 /** Local hour (0-23) of a "YYYY-MM-DDTHH:mm±hh:mm" capture stamp; undefined when it
  *  is missing or malformed (callers then fail closed). */
 function localHour(capturedAtLocal: string | undefined): number | undefined {
-  const m = /^\d{4}-\d{2}-\d{2}T(\d{2}):\d{2}/.exec(capturedAtLocal ?? "");
-  const h = m ? Number(m[1]) : NaN;
-  return h >= 0 && h <= 23 ? h : undefined;
+  return parseCapturedAtLocal(capturedAtLocal)?.hour;
 }
-
-/** How long a held seaweed claim stays unresolved (minutes, from when the reader
- *  scored it). Mirrors PENDING_CLAIM_MAX_MIN in scripts/cam_seaweed.py. */
-const PENDING_CLAIM_MAX_MIN = 300;
 
 /** One entry of the feed's top-level `pendingClaims` map (see scripts/cam_seaweed.py). */
 interface PendingClaim {
@@ -83,8 +77,12 @@ interface PendingClaim {
  * `pendingClaims`, so it does not depend on which capture group the card shows: a
  * held read publishes no seaweed, which can send the card to an earlier clean group
  * (or to "unknown") while the claim is still open. Confirmed markers are not open
- * questions. A claim counts while it is within PENDING_CLAIM_MAX_MIN of `nowMs` and,
- * when the beach's local date and timezone are known, was scored on that date. Pure.
+ * questions. A held claim stays open until the end of the beach-local date it was
+ * scored on, with no minute limit (a slow courier cam's next frame can come hours
+ * later; the reader clears the claim as soon as a fresh read of that cam is below
+ * moderate). Needs the beach's local date and timezone to judge the date; without
+ * them (callers that cannot say what day it is) a claim scored in the last 24 hours
+ * counts. Pure.
  */
 export function hasOpenClaim(
   pending: Record<string, PendingClaim> | null | undefined,
@@ -97,14 +95,14 @@ export function hasOpenClaim(
     if (!c || c.confirmed === true) continue;
     const at = Date.parse(c.claimedAt ?? "");
     if (!Number.isFinite(at)) continue;
-    const ageMin = (nowMs - at) / 60_000;
-    if (ageMin > PENDING_CLAIM_MAX_MIN || ageMin < -5) continue;
     if (nowLocalDate && tz) {
       try {
         if (new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(at)) !== nowLocalDate) continue;
       } catch {
         continue;
       }
+    } else if (nowMs - at > 24 * 3_600_000 || nowMs - at < -5 * 60_000) {
+      continue;
     }
     return true;
   }
@@ -289,7 +287,9 @@ export function summarizeSeaweed(
   const cams = (group?.cams ?? []).filter(hasSeaweedLevel);
   if (!cams.length) {
     // No current reading, but still surface the historical charts if we have any.
-    return byHour || byDay
+    // An open claim alone is enough to answer (a first-ever held observation has no
+    // group with a level and no history yet): the alerts need to see "pending".
+    return byHour || byDay || pendingConfirmation
       ? { level: "unknown", isMorning: false, cams: [], byHour, byDay, vsAvg, nextReadIso, pendingConfirmation }
       : null;
   }

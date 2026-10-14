@@ -12,7 +12,7 @@ import { beachDayVerdict } from "@/lib/format";
 import { uvBand } from "@/lib/uv";
 import { clarityDisplayWord } from "@/lib/sources/clarity";
 import { seaweedAsOf } from "@/lib/sources/sargassum";
-import { camReadAsOf } from "@/lib/camGroup";
+import { camReadAsOf, camReadAsOfDeadlineMs } from "@/lib/camGroup";
 import { listLocations } from "@/config/locations";
 import { applyLiveRipCap, deriveMetrics } from "@/lib/score";
 import { ripCapFor } from "@/lib/ripRisk/resolve";
@@ -352,8 +352,12 @@ export function shareCardModel(
   const sandDisplay = subByKey.get("sandTemp")?.display;
   push("sandTemp", "Sand temp", sandDisplay ? stripEstimateHedge(sandDisplay) : undefined);
 
+  // When a newest-capture read first needs its "as of" time (30 minutes on), so a cached
+  // card expires then instead of keeping the old wording (see changesAtMs below).
+  let readAsOfChangesAtMs: number | undefined;
   const weed = snapshot?.sargassum?.data;
   if (weed?.level && weed.level !== "unknown") {
+    readAsOfChangesAtMs = camReadAsOfDeadlineMs(weed.capturedAtLocal, weed.source !== undefined && weed.source !== "latest");
     const pct = typeof weed.coveragePct === "number" ? `${Math.round(weed.coveragePct)}% covered` : undefined;
     // An evening card must not pass a 5:30 PM read off as current: a fallback read
     // carries its read time.
@@ -366,8 +370,14 @@ export function shareCardModel(
   const clarityData = snapshot?.clarity?.data;
   if (clarityData?.level) {
     // Like seaweed, an earlier capture (kept past the low-sun dusk frames) says when.
+    const clarityFallback = clarityData.source !== undefined && clarityData.source !== "latest";
+    readAsOfChangesAtMs = earliestFuture(
+      nowMs,
+      readAsOfChangesAtMs,
+      camReadAsOfDeadlineMs(clarityData.capturedAtLocal, clarityFallback),
+    );
     push("clarity", "Water clarity", clarityDisplayWord(clarityData.level, clarityData.pct),
-      camReadAsOf(clarityData.capturedAtLocal, tz, clarityData.source !== undefined && clarityData.source !== "latest", nowMs));
+      camReadAsOf(clarityData.capturedAtLocal, tz, clarityFallback, nowMs));
   }
 
   // Crowd only when a cam actually read the beach TODAY — busyness.data.level
@@ -436,7 +446,7 @@ export function shareCardModel(
     tiles: tiles.slice(0, SHARE_CARD_MAX_TILES),
     safety: safetyFor(derived, snapshot),
     ...bestTimeFields(bestTimeLabel(res, nowMs, tz, today, tomorrow)),
-    changesAtMs: earliestFuture(nowMs, nextRipChange(derived?.ripNow, nowMs), sunTileChangesAtMs),
+    changesAtMs: earliestFuture(nowMs, nextRipChange(derived?.ripNow, nowMs), sunTileChangesAtMs, readAsOfChangesAtMs),
     capped: caps.length > 0,
     capNote: caps[0],
     pageUrl: `isitbeachday.com${path}`,

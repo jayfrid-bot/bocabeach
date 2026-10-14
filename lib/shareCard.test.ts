@@ -308,6 +308,40 @@ describe("shareCardModel", () => {
       expect(m.tiles.find((t) => t.key === "clarity")?.note).toBe("as of 6:00 PM");
     });
 
+    it("expires the cached card when a newest-capture read first needs its 'as of' time", () => {
+      // A read taken 10 minutes before NOW_MS is plain now and gains "as of" 20 minutes on.
+      const takenMs = NOW_MS - 10 * 60_000;
+      const stamp = new Date(takenMs).toISOString();
+      const m = shareCardModel(
+        response({
+          sargassum: wrap({ level: "low", coveragePct: 8, source: "latest", capturedAtLocal: stamp }) as ConditionsSnapshot["sargassum"],
+        }),
+        NOW_MS,
+      );
+      expect(m.tiles.find((t) => t.key === "seaweed")?.note).toBe("8% covered");
+      expect(m.changesAtMs).toBe(takenMs + 30 * 60_000 + 1);
+      // clarity's deadline counts too, and the earlier one wins
+      const both = shareCardModel(
+        response({
+          sargassum: wrap({ level: "low", source: "latest", capturedAtLocal: stamp }) as ConditionsSnapshot["sargassum"],
+          clarity: wrap<ClarityData>({ level: "clear", pct: 82, source: "latest", capturedAtLocal: new Date(takenMs - 5 * 60_000).toISOString() }),
+        }),
+        NOW_MS,
+      );
+      expect(both.changesAtMs).toBe(takenMs - 5 * 60_000 + 30 * 60_000 + 1);
+      // a fallback read already says when, and an already-old read has nothing left to change
+      const fallback = shareCardModel(
+        response({ sargassum: wrap({ level: "low", source: "lastSeaweed", capturedAtLocal: stamp }) as ConditionsSnapshot["sargassum"] }),
+        NOW_MS,
+      );
+      expect(fallback.changesAtMs).toBeUndefined();
+      const old = shareCardModel(
+        response({ sargassum: wrap({ level: "low", source: "latest", capturedAtLocal: new Date(NOW_MS - 2 * 3_600_000).toISOString() }) as ConditionsSnapshot["sargassum"] }),
+        NOW_MS,
+      );
+      expect(old.changesAtMs).toBeUndefined();
+    });
+
     it("a live read keeps its plain note, and a fallback with no coverage still says when", () => {
       const live = shareCardModel(
         response({

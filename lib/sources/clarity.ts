@@ -7,12 +7,11 @@ import type {
   Wrapped,
 } from "@/lib/types";
 import { clamp, fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
-import { fmtTime } from "@/lib/format";
 import { fetchSun } from "@/lib/sources/sun";
 import { camFeedUrlCandidates } from "@/lib/sources/camFeed";
 import { expectedNextCamRead } from "@/lib/camNextRead";
 import { capCamHistory } from "@/lib/camHistory";
-import { pickCamGroup, type CamGroupSource } from "@/lib/camGroup";
+import { camReadAsOf, parseCapturedAtLocal, pickCamGroup, type CamGroupSource } from "@/lib/camGroup";
 // The overnight fallback ("what did the water look like on the last readable
 // day, and when does the next read land?") is the same question busyness asks,
 // so both cards share one implementation of day selection, day naming and the
@@ -129,12 +128,9 @@ function unreadableReason(
     }
   }
 
-  if (capturedAtLocal) {
-    const capturedMs = new Date(capturedAtLocal).getTime();
-    if (Number.isFinite(capturedMs) && nowMs - capturedMs > STALE_CAPTURE_MS) {
-      return STALE_NOTE;
-    }
-  }
+  // Fail closed: a capture with no readable time cannot be called fresh.
+  const capturedMs = parseCapturedAtLocal(capturedAtLocal)?.ms;
+  if (capturedMs === undefined || nowMs - capturedMs > STALE_CAPTURE_MS) return STALE_NOTE;
 
   return undefined;
 }
@@ -300,7 +296,14 @@ export function summarizeClarity(
   const picked = pickCamGroup(feed, WATER_SOURCES, (g) => (g.cams ?? []).some(hasWaterGrade), {
     nowLocalDate: gate?.nowLocalDate,
   });
-  const group = picked?.group ?? feed?.latest ?? feed?.morning ?? undefined;
+  // With none, `latest` (so the no-open-water note carries its capture time), and
+  // `morning` only if it passes the same date check pickCamGroup applies: a group
+  // that was rejected above must not come back through the fallback.
+  const group =
+    picked?.group ??
+    feed?.latest ??
+    pickCamGroup({ morning: feed?.morning }, ["morning"], () => true, { nowLocalDate: gate?.nowLocalDate })?.group ??
+    undefined;
   const capturedAtLocal = group?.capturedAtLocal;
 
   // Learned from the last two weeks of actual read times — computed once per
@@ -458,13 +461,13 @@ export function clarityTileCopy(d: ClarityData, tz: string): ClarityTileCopy {
       sub: [
         d.pct != null ? `~${d.pct}% clear` : null,
         compactGateNote(d.note),
-        d.capturedAtLocal ? `as of ${fmtTime(d.capturedAtLocal, tz)}` : null,
+        camReadAsOf(d.capturedAtLocal, tz, true) ?? null,
       ]
         .filter(Boolean)
         .join(" · "),
       subShort: [
         d.pct != null ? `~${d.pct}% clear` : null,
-        d.capturedAtLocal ? `as of ${fmtTime(d.capturedAtLocal, tz)}` : null,
+        camReadAsOf(d.capturedAtLocal, tz, true) ?? null,
       ]
         .filter(Boolean)
         .join(" · "),

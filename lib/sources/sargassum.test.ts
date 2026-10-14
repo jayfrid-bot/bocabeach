@@ -284,6 +284,23 @@ describe("summarizeSeaweed", () => {
   });
 
   describe("fail closed: with the local date known, an undated or malformed capture is not today's", () => {
+    it("rejects an impossible stamp like 08:99, which only looks like a time", () => {
+      const cams = [{ name: "Inlet", level: "low" }] as never;
+      for (const capturedAtLocal of [
+        "2026-10-13T08:99-04:00",
+        "2026-10-13T25:00-04:00",
+        "2026-02-31T08:00-05:00",
+        "2026-10-13T08:00",
+        "2026-10-13T08:00:61-04:00",
+        "2026-10-13T08:00-04:99",
+        "2026-10-13 08:00-04:00",
+      ]) {
+        const g = { capturedAtLocal, cams };
+        expect(summarizeSeaweed({ latest: g, lastSeaweed: g, morning: g }, "2026-10-13"), capturedAtLocal).toBeNull();
+        expect(summarizeSeaweed({ latest: { capturedAtLocal: "2026-10-13T06:00-04:00", cams: [{ name: "x", level: null }] as never }, morning: g }, undefined)!.isMorning, capturedAtLocal).toBe(false);
+      }
+    });
+
     it("rejects an undated latest, lastSeaweed and morning", () => {
       const undated = { cams: [{ name: "Inlet", level: "low" }] as never };
       expect(summarizeSeaweed({ latest: undated, lastSeaweed: undated, morning: undated }, "2026-10-14")).toBeNull();
@@ -359,17 +376,37 @@ describe("summarizeSeaweed", () => {
       expect(d.pendingConfirmation).toBeUndefined();
     });
 
-    it("yesterday's claim, an expired claim, and a malformed one are not pending", () => {
+    it("yesterday's claim and a malformed one are not pending", () => {
       const at = (feed: Record<string, unknown>) => summarizeSeaweed({ latest: clean, ...feed }, "2026-10-13", opts)!.pendingConfirmation;
       expect(at({ pendingClaims: { elbo: claim(18 * 60) } })).toBeUndefined(); // 8 PM yesterday, beach time
-      expect(at({ pendingClaims: { elbo: claim(310) } })).toBeUndefined(); // past 300 minutes
       expect(at({ pendingClaims: { elbo: { level: "moderate" } } })).toBeUndefined(); // no claimedAt
       expect(at({ pendingClaims: null })).toBeUndefined();
     });
 
-    it("hasOpenClaim without a timezone or date checks only the age", () => {
+    it("has no minute limit: a claim scored hours ago on the same local day is still open", () => {
+      // 2 PM now; scored at 7:00 AM (7 hours, 420 minutes ago), same beach-local date
+      const d = summarizeSeaweed({ latest: clean, pendingClaims: { elbo: claim(420) } }, "2026-10-13", opts)!;
+      expect(d.pendingConfirmation).toBe(true);
+    });
+
+    it("hasOpenClaim without a timezone or date can only apply a 24-hour guard", () => {
       expect(hasOpenClaim({ a: claim(10) }, NOW.getTime())).toBe(true);
-      expect(hasOpenClaim({ a: claim(400) }, NOW.getTime())).toBe(false);
+      expect(hasOpenClaim({ a: claim(420) }, NOW.getTime())).toBe(true);
+      expect(hasOpenClaim({ a: claim(30 * 60) }, NOW.getTime())).toBe(false);
+    });
+
+    it("bootstrap: a first-ever held observation, no group with a level and no history, still answers 'pending'", () => {
+      const d = summarizeSeaweed(
+        { latest: held, pendingClaims: { elbo: claim(5) } },
+        "2026-10-13",
+        opts,
+      );
+      expect(d).not.toBeNull();
+      expect(d!.level).toBe("unknown");
+      expect(d!.cams).toHaveLength(0);
+      expect(d!.pendingConfirmation).toBe(true);
+      // with nothing open there is still nothing to say
+      expect(summarizeSeaweed({ latest: held, pendingClaims: { elbo: claim(5, { confirmed: true }) } }, "2026-10-13", opts)).toBeNull();
     });
   });
 

@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { pickCamGroup, groupLocalDate, camReadAsOf, type CamGroupSource } from "@/lib/camGroup";
+import {
+  pickCamGroup,
+  groupLocalDate,
+  camReadAsOf,
+  camReadAsOfDeadlineMs,
+  parseCapturedAtLocal,
+  type CamGroupSource,
+} from "@/lib/camGroup";
 
 const g = (capturedAtLocal: string, ok: boolean) => ({ capturedAtLocal, cams: [{ ok }] });
 const has = (x: { cams?: unknown[] }) => (x.cams ?? []).some((c) => (c as { ok: boolean }).ok);
@@ -93,5 +100,42 @@ describe("camReadAsOf", () => {
     expect(camReadAsOf(undefined, TZ, true)).toBeUndefined();
     expect(camReadAsOf("garbage", TZ, true)).toBeUndefined();
     expect(camReadAsOf(stamp, "Not/AZone", true)).toBeUndefined();
+  });
+});
+
+describe("parseCapturedAtLocal — the one strict capture-stamp parser", () => {
+  it("reads what the producer writes: minutes or seconds, an offset or Z", () => {
+    expect(parseCapturedAtLocal("2026-10-13T17:30-04:00")).toEqual({
+      date: "2026-10-13", hour: 17, ms: Date.parse("2026-10-13T21:30:00Z"),
+    });
+    expect(parseCapturedAtLocal("2026-07-22T16:00:00-04:00")?.hour).toBe(16);
+    expect(parseCapturedAtLocal("2026-10-13T21:30:00Z")?.date).toBe("2026-10-13");
+    expect(parseCapturedAtLocal("2026-10-13T21:30:00.250+05:30")?.hour).toBe(21);
+  });
+
+  it("rejects out-of-range, impossible, offset-less and malformed stamps", () => {
+    for (const bad of [
+      "2026-10-13T08:99-04:00", "2026-10-13T24:00-04:00", "2026-13-01T08:00-04:00", "2026-00-10T08:00-04:00",
+      "2026-02-30T08:00-05:00", "2026-10-13T08:00:75-04:00", "2026-10-13T08:00", "2026-10-13T08:00-24:00",
+      "2026-10-13T08:00-04:60", "2026-10-13", "2026-10-13T8:00-04:00", "garbage", "", undefined, null,
+      "2026-10-13T08:00-04:00junk",
+    ]) {
+      expect(parseCapturedAtLocal(bad as string), String(bad)).toBeUndefined();
+    }
+  });
+
+  it("feeds groupLocalDate, so an impossible time is not 'today'", () => {
+    expect(groupLocalDate({ capturedAtLocal: "2026-10-13T08:99-04:00" })).toBeUndefined();
+    expect(pickCamGroup({ lastSeaweed: g("2026-10-13T08:99-04:00", true) }, SEAWEED, has, { nowLocalDate: TODAY })).toBeNull();
+  });
+});
+
+describe("camReadAsOfDeadlineMs", () => {
+  const stamp = "2026-10-13T18:00-04:00";
+  it("is 30 minutes (and a millisecond) after a newest capture, and nothing for a fallback or a bad stamp", () => {
+    expect(camReadAsOfDeadlineMs(stamp, false)).toBe(Date.parse("2026-10-13T18:30-04:00") + 1);
+    expect(camReadAsOfDeadlineMs(stamp, true)).toBeUndefined();
+    expect(camReadAsOfDeadlineMs("2026-10-13T18:99-04:00", false)).toBeUndefined();
+    expect(camReadAsOfDeadlineMs(undefined, false)).toBeUndefined();
   });
 });

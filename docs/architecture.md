@@ -279,9 +279,10 @@ the frame's time publishes no seaweed or water for that cam, and the same check
 at the tick's time blanks every cam in the group, carried ones too; crowd
 stays), a **jump check** (a moderate/high seaweed read is held until the same
 cam's next *different* frame, or another cam's *fresh* read in the same tick,
-agrees; held claims live in `pendingClaims` on their own 300-minute clock from when
-they were scored, same local date only, because Fort Lauderdale's single courier
-cam is read about every 3 hours and each frame can be read up to 150 minutes late), and an optional per-cam **`visionHint`** in `vision-cams.json` that is
+agrees; held claims live in `pendingClaims` until the end of their beach-local date, with
+no minute limit, because Fort Lauderdale's single courier cam is read about every
+3 hours, each frame can be read up to 150 minutes late, and runs are polled loosely;
+a fresh read of that cam below moderate clears the claim at once), and an optional per-cam **`visionHint`** in `vision-cams.json` that is
 added to the prompt for Gemini and the OpenAI-compatible providers (Clef is
 untouched). Beach coordinates for the gate come from `config/archive-cams.json`.
 The file also carries `lastSeaweed` and `lastWater` (today's newest capture with
@@ -292,9 +293,12 @@ readers pick `latest`, else `lastSeaweed`, else `morning`; water readers pick
 rejects any group from another beach-local date or with an unreadable one
 (seaweed: `latest` too), while busyness keeps `latest`. A fallback read, or any
 read over 30 minutes old (a `latest` the producer kept because no cam had a new
-frame), shows "as of 6:00 PM" on the dashboard and the share card.
-`pendingConfirmation` comes from open (unconfirmed, same-day, under 300 minutes)
-entries in the feed's `pendingClaims`, whatever group the card shows; it stops the
+frame), shows "as of 6:00 PM" on the dashboard and the share card (the share card's
+cache expires at that 30-minute mark). One strict parser in `lib/camGroup.ts` reads
+every capture stamp; an unreadable one is rejected, and clarity treats it as stale.
+`pendingConfirmation` comes from open (unconfirmed, same-day) entries in the
+feed's `pendingClaims`, whatever group the card shows, and a first-ever held
+observation still returns an "unknown" reading so the flag reaches the alerts; it stops the
 push copy saying "no seaweed" and holds back the "turned Excellent" alert until the
 claim resolves.
 

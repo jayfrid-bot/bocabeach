@@ -158,10 +158,12 @@ confirms anything). A held read publishes no seaweed (level/coveragePct/note nul
 and keeps `"unconfirmed": true` plus the `"claim"` {level, coveragePct, note} for the
 audit trail; a confirmed one publishes normally and may carry `"confirmedBy"`. The
 claim itself lives in the top-level `pendingClaims` map (see below), on its own
-clock: PENDING_CLAIM_MAX_MIN = 300 minutes from when it was scored (`claimedAt`), and only
-within the same beach-local date, because a cam read every ~3 hours (Fort
-Lauderdale's single courier cam), each frame read up to 150 minutes late, reaches
-its next frame long after a carried reading has expired. See
+clock: it lives until the end of its beach-local date (judged by when it was scored,
+`claimedAt`) with no minute limit, because a cam read every ~3 hours (Fort
+Lauderdale's single courier cam), each frame read up to 150 minutes late and the run
+itself polled at a loose cadence, can reach its next frame hours after a carried
+reading has expired. It ends sooner only when a fresh read of that cam is below
+moderate. See
 confirm_seaweed_jumps() and update_pending_claims(). One bad frame from one cam can
 no longer drive the beach headline.
 
@@ -389,16 +391,14 @@ VISION_MAX_FRAME_AGE_MIN = float(os.environ.get("VISION_MAX_FRAME_AGE_MIN", "60"
 # at Boca in mid-October (sunrise/sunset are at -0.83 deg). Crowd is unaffected.
 LOW_SUN_DEG = float(os.environ.get("LOW_SUN_DEG", "10"))
 
-# HOW LONG A HELD SEAWEED CLAIM LIVES (minutes). A claim waits for the same cam's NEXT
-# DIFFERENT frame to agree, and that can be far away: a surface courier cam (Fort
-# Lauderdale has no second cam to corroborate it) is read about every 3 hours, longer
-# than a reading may be carried (DIRECT_FRAME_MAX_AGE_MIN). The clock runs from when we
-# SCORED the claim (`claimedAt`), not from its frame time: a courier frame may be up to
-# DIRECT_FRAME_MAX_AGE_MIN (150) old when it is read, so a frame-time clock of 240
-# would lapse between two frames 180 minutes apart that were each read 61+ minutes
-# late. 300 covers the 180-minute cadence with slack. A claim also expires at the
-# beach-local midnight.
-PENDING_CLAIM_MAX_MIN = float(os.environ.get("PENDING_CLAIM_MAX_MIN", "300"))
+# HOW LONG A HELD SEAWEED CLAIM LIVES: until the end of its beach-local date, with no
+# minute limit. A claim waits for the same cam's NEXT DIFFERENT frame to agree, and that
+# can be far away: a surface courier cam (Fort Lauderdale has no second cam to
+# corroborate it) is read about every 3 hours, each frame may be read up to
+# DIRECT_FRAME_MAX_AGE_MIN (150) minutes late, and runs are polled loosely, so any fixed
+# limit can lapse between two real frames (a noon frame scored promptly and the 3 PM
+# frame first seen at 5:01 PM is 301 minutes apart). Midnight still ends it, and a fresh
+# read of the cam below moderate clears it at once (update_pending_claims).
 
 # --- webcam archive (see the module docstring and docs/CAM_ARCHIVE_PLAN.md) ---
 # Where stills are POSTed; the token is read at call time (archive_frame) so a
@@ -1753,17 +1753,16 @@ def apply_low_sun_gate(reading: dict, elev_deg: float | None, threshold: float |
 
 
 def live_pending_claims(pending: object, now: dt.datetime) -> dict[str, dict]:
-    """The stored moderate/high claims that are still alive at `now`: scored
-    (`claimedAt`, else `frameAt` for an entry that lacks it) no more than
-    PENDING_CLAIM_MAX_MIN ago (and not from the future) AND on the same beach-local
-    date as `now` (the beach's own tz is `now`'s). Anything malformed is dropped. A
-    claim is either held (waiting for a second look) or `"confirmed": true` (already
-    published; kept so the next moderate+ frame of a slow cam need not be held
-    again). Pure."""
+    """The stored moderate/high claims that are still alive at `now`: those scored
+    (`claimedAt`, else `frameAt` for an entry that lacks it) on the same beach-local
+    date as `now` (the beach's own tz is `now`'s). There is deliberately no minute limit:
+    a slow courier cam's next frame can come hours later. Anything malformed is dropped.
+    A claim is either held (waiting for a second look) or `"confirmed": true` (already
+    published; kept so the next moderate+ frame of a slow cam need not be held again).
+    Pure."""
     if not isinstance(pending, dict):
         return {}
-    now_utc = now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)
-    local_day = now.date() if now.tzinfo else now_utc.date()
+    local_day = now.date() if now.tzinfo else now.replace(tzinfo=dt.timezone.utc).date()
     out = {}
     for cid, entry in pending.items():
         if not isinstance(entry, dict) or entry.get("level") not in SEAWEED_RANK:
@@ -1776,9 +1775,6 @@ def live_pending_claims(pending: object, now: dt.datetime) -> dict[str, dict]:
             except (TypeError, ValueError):
                 continue
         if at is None:
-            continue
-        age_min = (now_utc - at).total_seconds() / 60
-        if age_min > PENDING_CLAIM_MAX_MIN or age_min < -VISION_MAX_FUTURE_MIN:
             continue
         if now.tzinfo and at.astimezone(now.tzinfo).date() != local_day:
             continue

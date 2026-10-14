@@ -37,10 +37,36 @@ export interface PickCamGroupOptions {
   dateGateLatest?: boolean;
 }
 
+const CAPTURED_AT_RE =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(Z|[+-](\d{2}):(\d{2}))$/;
+
+/**
+ * THE one parser for a capture stamp (`capturedAtLocal`, as scripts/cam_seaweed.py
+ * writes it: "2026-10-13T17:30-04:00", seconds optional, an offset or Z required).
+ * Every range is checked (a real calendar date, hour 0-23, minute and second 0-59,
+ * offset hour 0-23 and minute 0-59) and `Date.parse` must agree, so "08:99" or
+ * "2026-02-31" is rejected rather than half-read. Returns the beach-local date and
+ * hour exactly as written, and the instant in ms; undefined for anything else. Pure.
+ */
+export function parseCapturedAtLocal(
+  stamp: string | null | undefined,
+): { date: string; hour: number; ms: number } | undefined {
+  const m = CAPTURED_AT_RE.exec(stamp ?? "");
+  if (!m) return undefined;
+  const [y, mo, d, h, mi] = [m[1], m[2], m[3], m[4], m[5]].map(Number);
+  const sec = m[6] === undefined ? 0 : Number(m[6]);
+  if (mo < 1 || mo > 12 || h > 23 || mi > 59 || sec > 59) return undefined;
+  if (m[8] !== undefined && (Number(m[8]) > 23 || Number(m[9]) > 59)) return undefined;
+  const probe = new Date(Date.UTC(y, mo - 1, d));
+  if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== mo - 1 || probe.getUTCDate() !== d) return undefined;
+  const ms = Date.parse(stamp as string);
+  if (!Number.isFinite(ms)) return undefined;
+  return { date: `${m[1]}-${m[2]}-${m[3]}`, hour: h, ms };
+}
+
 /** The beach-local YYYY-MM-DD a group was captured on, or undefined when unknown. */
 export function groupLocalDate(group: GroupLike | null | undefined): string | undefined {
-  const d = group?.capturedAtLocal?.slice(0, 10);
-  return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : undefined;
+  return parseCapturedAtLocal(group?.capturedAtLocal)?.date;
 }
 
 /** The first of `sources` (in order) whose group `hasReading` accepts and, when the
@@ -79,9 +105,8 @@ export function camReadAsOf(
   fallback: boolean,
   nowMs?: number,
 ): string | undefined {
-  if (!capturedAtLocal) return undefined;
-  const capturedMs = Date.parse(capturedAtLocal);
-  if (!Number.isFinite(capturedMs)) return undefined;
+  const capturedMs = parseCapturedAtLocal(capturedAtLocal)?.ms;
+  if (capturedMs === undefined || !capturedAtLocal) return undefined;
   const older = nowMs !== undefined && nowMs - capturedMs > STALE_READ_MS;
   if (!fallback && !older) return undefined;
   try {
@@ -89,4 +114,13 @@ export function camReadAsOf(
   } catch {
     return undefined; // an unusable timezone: say nothing rather than "Invalid Date"
   }
+}
+
+/** The instant at which camReadAsOf starts speaking for a NEWEST capture (it is
+ *  already speaking for a fallback group), or undefined when that is not ahead or the
+ *  stamp is unreadable. A cached card must expire then, or it keeps the old wording. */
+export function camReadAsOfDeadlineMs(capturedAtLocal: string | undefined, fallback: boolean): number | undefined {
+  if (fallback) return undefined;
+  const ms = parseCapturedAtLocal(capturedAtLocal)?.ms;
+  return ms === undefined ? undefined : ms + STALE_READ_MS + 1;
 }

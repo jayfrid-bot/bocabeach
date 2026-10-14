@@ -198,6 +198,22 @@ describe("excellentDecision", () => {
     expect(excellentDecision({ ...input, res: withSeaweed(open("2026-09-01T17:55:00Z")) })).not.toBeNull();
   });
 
+  it("bootstrap: a first-ever held observation (no group with a level, no history) still holds the alert back", () => {
+    const data = summarizeSeaweed(
+      {
+        latest: { capturedAtLocal: "2026-09-02T13:50-04:00", cams: [{ name: "Elbo", level: null, unconfirmed: true }] as never },
+        pendingClaims: { elbo: { level: "moderate", claimedAt: "2026-09-02T17:55:00Z" } },
+      },
+      "2026-09-02",
+      { now: new Date(NOW), timezone: "America/New_York" },
+    );
+    expect(data).not.toBeNull(); // used to be null, which dropped the flag
+    const r: ConditionsResponse = { ...res, snapshot: { ...res.snapshot, sargassum: wrapped(data!) } };
+    expect(
+      excellentDecision({ device: device(), summary: summary(95), res: r, nowMs: NOW, date: "2026-09-02" }),
+    ).toBeNull();
+  });
+
   it("uses a per-day key, so tomorrow can fire again", () => {
     const a = excellentDecision({ device: device(), summary: summary(95), res, nowMs: NOW, date: "2026-09-02" });
     const b = excellentDecision({ device: device(), summary: summary(95), res, nowMs: NOW, date: "2026-09-03" });
