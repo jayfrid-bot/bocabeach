@@ -1,5 +1,6 @@
 import type { FlagColor, RipRisk } from "@/lib/types";
 import type { RipNow } from "@/lib/ripRisk";
+import { isWarningTierAlert } from "@/lib/safetyBannerRank";
 
 /**
  * How loud the safety banner is allowed to be.
@@ -35,6 +36,10 @@ export interface SafetyToneInput {
   flags?: FlagColor[];
   /** NWS alert event names, e.g. ["Heat Advisory", "Hurricane Warning"]. */
   alertEvents?: string[];
+  /** The same alerts with their CAP severity. The banner's rank already treats a
+   *  Severe/Extreme product as warning-tier (isWarningTierAlert); passing these
+   *  makes the banner's colour agree with that rank. */
+  alerts?: { event: string; severity?: string }[];
 }
 
 /**
@@ -76,11 +81,13 @@ export function safetyTone(input: SafetyToneInput): SafetyTone {
     !!input.noSwim ||
     ripDanger ||
     flags.some((f) => f === "red" || f === "double-red") ||
-    alerts.some((e) => /warning/i.test(e));
+    alerts.some((e) => /warning/i.test(e)) ||
+    (input.alerts ?? []).some((a) => isWarningTierAlert(a));
   if (danger) return "danger";
 
   const caution =
     alerts.length > 0 ||
+    (input.alerts ?? []).length > 0 ||
     ripCaution ||
     flags.some((f) => f === "yellow" || f === "purple");
   return caution ? "caution" : "calm";

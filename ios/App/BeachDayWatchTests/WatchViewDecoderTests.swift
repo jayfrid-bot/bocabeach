@@ -25,7 +25,7 @@ final class WatchViewDecoderTests: XCTestCase {
         XCTAssertEqual(s.lines.map(\.kind), [.hazard, .safety, .water, .best])
         XCTAssertEqual(s.firstLine(.hazard)?.tone, .danger)
         XCTAssertEqual(s.waterTempF, 86)
-        XCTAssertEqual(s.headlineLine, "Water quality advisory")
+        XCTAssertEqual(s.headlineLine(now: ISODate.parse("2026-10-14T20:00:00Z")!), "Water quality advisory")
         XCTAssertEqual(ISODate.parse("2026-10-14T19:58:20.051Z"), s.dataAt)
         XCTAssertEqual(s.validUntil, ISODate.parse("2026-10-14T20:05:00.000Z"))
     }
@@ -102,6 +102,9 @@ final class WatchViewDecoderTests: XCTestCase {
         let s = try XCTUnwrap(summary(#"{"v":1,"lines":[{"text":"\#(long)"},\#(many)]}"#))
         XCTAssertEqual(s.lines.count, WatchViewDecoder.maxLines)
         XCTAssertFalse(s.lines.contains { $0.text.count > WatchViewDecoder.maxLineLength })
+        // The overlong line is kept, cut with an ellipsis, not dropped.
+        XCTAssertEqual(s.lines[0].text.count, WatchViewDecoder.maxLineLength)
+        XCTAssertTrue(s.lines[0].text.hasSuffix("\u{2026}"))
     }
 
     func testNumbersAreCheckedBeforeAnyIntConversion() {

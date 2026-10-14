@@ -69,6 +69,18 @@ const scenarios: Record<string, (r: ConditionsResponse) => void> = {
     r.snapshot.cityOfficial.data!.flags = [];
     r.snapshot.nws.data!.alerts = [alert("Heat Advisory", "Minor", 60, 300)];
   },
+  "three upcoming products": (r) => {
+    r.snapshot.cityOfficial.data!.flags = [];
+    r.snapshot.nws.data!.alerts = [
+      alert("Heat Advisory", "Minor", 60, 300),
+      alert("Coastal Flood Advisory", "Minor", 90, 400),
+      alert("Special Marine Warning", "Severe", 120, 200),
+    ];
+  },
+  "a Severe product that is not named Warning": (r) => {
+    r.snapshot.cityOfficial.data!.flags = [];
+    r.snapshot.nws.data!.alerts = [alert("Special Weather Statement", "Severe", -30, 90)];
+  },
   "many things at once": (r) => {
     r.snapshot.cityOfficial.data = { ...r.snapshot.cityOfficial.data!, flags: ["red", "purple"], noSwimAdvisory: { title: "NO SWIM", url: "https://x" } };
     r.snapshot.waterQuality.data!.advisory = true;
@@ -172,6 +184,52 @@ describe("the watch says what the website banner says", () => {
     const lines = buildWatchView(r, NOW).lines;
     expect(lines[0]).toEqual({ kind: "safety", text: "Rip current alert", tone: "danger" });
     expect(lines[1].text).toBe("Yellow + purple flags");
+  });
+
+  it("every upcoming product stays visible on the watch, in the website's order", () => {
+    const r = res();
+    scenarios["three upcoming products"](r);
+    const model = bannerModel(r);
+    expect(model.upcomingNonRipAlerts.map((a) => a.event)).toEqual(["Heat Advisory", "Coastal Flood Advisory", "Special Marine Warning"]);
+    const line = buildWatchView(r, NOW).lines.find((l) => l.text.startsWith("3 alerts coming"));
+    expect(line).toEqual({
+      kind: "hazard",
+      text: "3 alerts coming: Heat Advisory, Coastal Flood Advisory, Special Marine Warning",
+      tone: "calm",
+    });
+    // The page names the first and counts the rest in its compact line, and lists every one when opened.
+    expect(bannerHtml(r)).toContain("Heat Advisory begins soon (+2 more)");
+    expect(model.upcomingNonRipAlerts).toHaveLength(3);
+  });
+
+  it("two upcoming products, one of them a rip alert, are both shown", () => {
+    const r = res();
+    r.snapshot.cityOfficial.data!.flags = [];
+    r.snapshot.nws.data!.alerts = [
+      alert("Heat Advisory", "Minor", 60, 300),
+      alert("Rip Current Statement", "Moderate", 90, 400, { headline: "rip" }),
+    ];
+    const texts = buildWatchView(r, NOW).lines.map((l) => l.text);
+    expect(texts).toContain("Heat Advisory soon");
+    expect(texts).toContain("Rip current alert soon");
+  });
+
+  it("a long list of upcoming products is cut with an ellipsis, never dropped, and keeps the count", () => {
+    const r = res();
+    r.snapshot.cityOfficial.data!.flags = [];
+    r.snapshot.nws.data!.alerts = Array.from({ length: 6 }, (_, i) => alert(`Hazardous Weather Outlook Number ${i}`, "Minor", 60 + i, 300));
+    const line = buildWatchView(r, NOW).lines.find((l) => l.text.startsWith("6 alerts coming"))!;
+    expect(line).toBeDefined();
+    expect(line.text.length).toBeLessThanOrEqual(78);
+    expect(line.text.endsWith("\u2026")).toBe(true);
+  });
+
+  it("a Severe or Extreme product is danger on both the page and the watch, whatever its name", () => {
+    const r = res();
+    scenarios["a Severe product that is not named Warning"](r);
+    expect(bannerModel(r).tone).toBe("danger");
+    expect(bannerHtml(r)).toContain("bg-rose-500/10");
+    expect(buildWatchView(r, NOW).lines[0]).toEqual({ kind: "hazard", text: "Special Weather Statement", tone: "danger" });
   });
 
   it("an upcoming alert is shown, as informational", () => {

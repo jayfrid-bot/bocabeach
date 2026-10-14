@@ -56,21 +56,34 @@ enum BeachSelection {
         return t > 0 ? Date(timeIntervalSince1970: t) : nil
     }
 
-    /// Stores a payload from the phone. Returns true only when the beach the watch
-    /// SHOWS changed: a changed favorite or last-viewed beach behind an unchanged
-    /// display must not trigger a fetch or a widget reload. A new home beach on
-    /// the phone clears a pick made on the watch, so the watch follows the phone.
-    @discardableResult
-    static func applySync(home rawHome: Any?, favorites rawFavorites: Any?, lastViewed rawLastViewed: Any? = nil, at date: Date = Date()) -> Bool {
+    /// What a sync changed. `activeChanged`: the beach the watch SHOWS changed, so it must
+    /// fetch and the widget must reload. `metadataChanged`: only the home, favorites or
+    /// last-viewed values behind it changed (an open picker must refresh; nothing is fetched).
+    struct SyncOutcome: Equatable {
+        var activeChanged: Bool
+        var metadataChanged: Bool
+    }
+
+    /// Stores a payload from the phone. A new home beach on the phone clears a pick made
+    /// on the watch, so the watch follows the phone.
+    static func applySyncOutcome(home rawHome: Any?, favorites rawFavorites: Any?, lastViewed rawLastViewed: Any? = nil, at date: Date = Date()) -> SyncOutcome {
         let clean = WatchSync.clean(home: rawHome, favorites: rawFavorites, lastViewed: rawLastViewed)
         let d = SharedStore.defaults
         let before = activeSlug
+        let metadataChanged = clean.home != homeSlug || clean.favorites != favorites || clean.lastViewed != lastViewedSlug
         if clean.home != homeSlug { d.removeObject(forKey: selectedKey) }
         if let home = clean.home { d.set(home, forKey: WatchSync.Key.homeSlug) } else { d.removeObject(forKey: WatchSync.Key.homeSlug) }
         d.set(clean.favorites, forKey: WatchSync.Key.favorites)
         if let last = clean.lastViewed { d.set(last, forKey: WatchSync.Key.lastViewedSlug) } else { d.removeObject(forKey: WatchSync.Key.lastViewedSlug) }
         d.set(date.timeIntervalSince1970, forKey: syncedAtKey)
-        return activeSlug != before
+        return SyncOutcome(activeChanged: activeSlug != before, metadataChanged: metadataChanged)
+    }
+
+    /// True only when the beach the watch shows changed. A changed favorite or last-viewed
+    /// beach behind an unchanged display is not a change here.
+    @discardableResult
+    static func applySync(home rawHome: Any?, favorites rawFavorites: Any?, lastViewed rawLastViewed: Any? = nil, at date: Date = Date()) -> Bool {
+        applySyncOutcome(home: rawHome, favorites: rawFavorites, lastViewed: rawLastViewed, at: date).activeChanged
     }
 
     /// Pick a beach on the watch. Passing the default beach (or nil) goes back to following the phone.

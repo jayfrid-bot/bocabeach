@@ -110,8 +110,9 @@ enum WatchViewDecoder {
     /// Builds what the watch caches and draws. `slug` is the beach that was asked for.
     static func summary(from dto: WatchViewDTO, slug: String, fetchedAt: Date) -> BeachSummary {
         let lines: [SummaryLine] = (dto.lines ?? []).compactMap { raw in
-            guard let text = raw.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !text.isEmpty, text.count <= maxLineLength else { return nil }
+            guard var text = raw.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else { return nil }
+            // A line is never dropped for length: it is cut with an ellipsis.
+            if text.count > maxLineLength { text = String(text.prefix(maxLineLength - 1)) + "\u{2026}" }
             return SummaryLine(
                 kind: LineKind(rawValue: raw.kind ?? "") ?? .other,
                 text: text,

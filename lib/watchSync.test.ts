@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { listLocations } from "@/config/locations";
@@ -218,6 +219,18 @@ describe("Apple Watch app stays in step with the web app", () => {
     }
   });
 
+  it("the release script rejects any argument shape but <build> [--no-upload], before doing any work", () => {
+    const script = new URL("../scripts/ios/build-testflight.sh", import.meta.url).pathname;
+    const pbxBefore = read("ios/App/App.xcodeproj/project.pbxproj");
+    for (const args of [[], ["abc"], ["20261014"], ["2026101401", "--no-uplaod"], ["2026101401", "--no-upload", "extra"], ["2026101401", "-n"], ["2026101401", ""]]) {
+      const r = spawnSync("bash", [script, ...args], { encoding: "utf8" });
+      expect(r.status, JSON.stringify(args)).toBe(2);
+      expect(r.stderr).toContain("Usage: scripts/ios/build-testflight.sh <BUILD_NUMBER> [--no-upload]");
+    }
+    // Nothing was touched by any of those runs.
+    expect(read("ios/App/App.xcodeproj/project.pbxproj")).toBe(pbxBefore);
+  });
+
   it("every target in the project shares one version and build number", () => {
     const pbx = read("ios/App/App.xcodeproj/project.pbxproj");
     const builds = new Set([...pbx.matchAll(/CURRENT_PROJECT_VERSION = (\d+);/g)].map((m) => m[1]));
@@ -246,12 +259,12 @@ describe("Apple Watch app stays in step with the web app", () => {
     expect(types).toEqual(["PreciseLocation", "CoarseLocation", "DeviceID", "ProductInteraction", "PurchaseHistory", "OtherDataTypes"]);
     for (const t of types) expect(doc).toContain(`\`${t}\``);
     expect(manifest).toMatch(/<key>NSPrivacyTracking<\/key>\s*<false\/>/);
-    // Tracking is false for every type; precise location, device id, purchases and settings are linked.
+    // Tracking is false for every type. All are linked: PostHog events carry a persistent visitor id.
     expect([...manifest.matchAll(/NSPrivacyCollectedDataTypeTracking<\/key>\s*<false\/>/g)]).toHaveLength(types.length);
     const linked = [...manifest.matchAll(/NSPrivacyCollectedDataType(?!Purpose)(\w+)<\/string>\s*<key>NSPrivacyCollectedDataTypeLinked<\/key>\s*<(true|false)\/>/g)];
     expect(Object.fromEntries(linked.map((m) => [m[1], m[2]]))).toEqual({
-      PreciseLocation: "true", CoarseLocation: "false", DeviceID: "true",
-      ProductInteraction: "false", PurchaseHistory: "true", OtherDataTypes: "true",
+      PreciseLocation: "true", CoarseLocation: "true", DeviceID: "true",
+      ProductInteraction: "true", PurchaseHistory: "true", OtherDataTypes: "true",
     });
     // The watch app and widget collect nothing.
     for (const dir of ["BeachDayWatch", "BeachDayWatchWidget"]) {

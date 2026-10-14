@@ -16,6 +16,13 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  {
+    date: "2026-10-14",
+    title: "Serious weather alerts stand out",
+    details:
+      "A weather alert the National Weather Service rates severe or extreme now turns the safety banner red, even when its name doesn't end in \"Warning\". Before, it showed in amber.",
+    tag: "improved",
+  },
   // DRAFT, not live: add when the iOS build that carries the Apple Watch app ships.
   // {
   //   date: "YYYY-MM-DD",

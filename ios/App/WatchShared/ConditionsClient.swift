@@ -4,7 +4,7 @@
 //  GET https://app.isitbeachday.com/api/watch/<slug> (lib/watchView.ts): under
 //  2 KB, already decided by the website's own safety and score logic. The route
 //  accepts a bare URL only; any query string is a 400. The edge caches the
-//  answer for 5 minutes.
+//  answer for at most a minute and never past its validUntil.
 //
 
 import Foundation
@@ -15,6 +15,8 @@ enum ConditionsError: Error, Equatable {
     case offline
     case server(Int)
     case badData
+    /// The server's own validUntil had already passed when the answer arrived.
+    case expired
 
     /// Short text for the screen.
     var message: String {
@@ -23,6 +25,7 @@ enum ConditionsError: Error, Equatable {
         case .unknownBeach: return "Beach not found"
         case .server: return "Server problem"
         case .invalidSlug, .badData: return "Unreadable data"
+        case .expired: return "Out of date"
         }
     }
 }
@@ -39,8 +42,8 @@ enum ConditionsClient {
         return URLSession(configuration: config)
     }()
 
-    /// Fetches, summarizes and caches one beach.
-    static func fetch(slug rawSlug: String, now: Date = Date()) async throws -> BeachSummary {
+    /// Fetches, summarizes and (unless told otherwise) caches one beach.
+    static func fetch(slug rawSlug: String, now: Date = Date(), save: Bool = true) async throws -> BeachSummary {
         guard let slug = WatchSync.cleanSlug(rawSlug) else { throw ConditionsError.invalidSlug }
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "debugOffline") { throw ConditionsError.offline }
@@ -50,7 +53,7 @@ enum ConditionsClient {
             guard let data = FileManager.default.contents(atPath: "\(dir)/\(slug).json") else { throw ConditionsError.unknownBeach }
             guard let dto = WatchViewDecoder.decode(data, expectedSlug: slug) else { throw ConditionsError.badData }
             let summary = WatchViewDecoder.summary(from: dto, slug: slug, fetchedAt: now)
-            SummaryCache.save(summary)
+            if save { SummaryCache.save(summary) }
             WidgetFailureCounter.reset(slug)
             return summary
         }
@@ -70,7 +73,9 @@ enum ConditionsClient {
         // 503 "incomplete" and every other non-200 land above: nothing is cached from them.
         guard let dto = WatchViewDecoder.decode(data, expectedSlug: slug) else { throw ConditionsError.badData }
         let summary = WatchViewDecoder.summary(from: dto, slug: slug, fetchedAt: now)
-        SummaryCache.save(summary)
+        // Already past its own validUntil: a failure, and the cache keeps what it had.
+        guard !summary.isExpired(now: now) else { throw ConditionsError.expired }
+        if save { SummaryCache.save(summary) }
         // Any success, from the app or the widget, ends this beach's failure streak.
         WidgetFailureCounter.reset(slug)
         return summary

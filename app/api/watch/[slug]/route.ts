@@ -3,14 +3,15 @@
 // payload (~160 KB) and re-decide safety on its own; now the website's logic
 // decides and the watch only draws. Nothing personal goes in or out.
 //
-// Cache: s-maxage 60 and NO stale-while-revalidate. This view is computed
+// Cache: s-maxage = min(60, seconds until the payload's own validUntil), 0 left =
+// no-store, and NO stale-while-revalidate. This view is computed
 // against the clock (alerts starting and ending, the hourly rip model, the best
 // window), so unlike the raw conditions it must not be served minutes late; the
 // payload's own `validUntil` tells the watch when it stops being current.
 
 import { NextResponse } from "next/server";
 import { getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
-import { buildWatchView } from "@/lib/watchView";
+import { buildWatchView, cacheControlFor } from "@/lib/watchView";
 
 export const revalidate = 300;
 
@@ -45,7 +46,11 @@ export async function GET(
     );
   }
 
-  return NextResponse.json(buildWatchView(publicData as typeof data), {
-    headers: { "Cache-Control": "public, s-maxage=60" },
+  const view = buildWatchView(publicData as typeof data);
+  // The edge may keep it no longer than the view stays valid, and never over a minute.
+  // Already expired (a snapshot older than 15 minutes): nothing to keep.
+  const secondsValid = Math.floor((Date.parse(view.validUntil) - Date.parse(view.capturedAt)) / 1000);
+  return NextResponse.json(view, {
+    headers: { "Cache-Control": cacheControlFor(secondsValid) },
   });
 }

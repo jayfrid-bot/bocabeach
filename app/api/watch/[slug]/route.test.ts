@@ -7,6 +7,7 @@ vi.mock("@/lib/conditions", async (importOriginal) => {
   return { ...actual, getConditions: vi.fn() };
 });
 
+import { cacheControlFor } from "@/lib/watchView";
 import { GET } from "@/app/api/watch/[slug]/route";
 import { getConditions } from "@/lib/conditions";
 
@@ -15,7 +16,16 @@ const req = (slug: string, qs = ""): [Request, { params: Promise<{ slug: string 
   { params: Promise.resolve({ slug }) },
 ];
 
-afterEach(() => vi.mocked(getConditions).mockReset());
+const BUILT = Date.parse(fixture.snapshot.generatedAt);
+afterEach(() => {
+  vi.mocked(getConditions).mockReset();
+  vi.useRealTimers();
+});
+/** The route reads the clock; pin it a given number of seconds after the fixture's snapshot was built. */
+const clockAt = (secondsAfterBuilt: number) => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(BUILT + secondsAfterBuilt * 1000);
+};
 
 describe("GET /api/watch/[slug]", () => {
   it("404s for an unknown beach", async () => {
@@ -39,6 +49,7 @@ describe("GET /api/watch/[slug]", () => {
   });
 
   it("returns a small view cached for at most a minute, with no stale-while-revalidate", async () => {
+    clockAt(0);
     vi.mocked(getConditions).mockResolvedValue(JSON.parse(JSON.stringify(fixture)) as ConditionsResponse);
     const res = await GET(...req("boca-raton"));
     expect(res.status).toBe(200);
@@ -52,6 +63,21 @@ describe("GET /api/watch/[slug]", () => {
     expect(body.budgetAborted).toBeUndefined();
   });
 
+  it("caches for min(60, seconds until validUntil), and not at all once nothing is left", async () => {
+    vi.mocked(getConditions).mockResolvedValue(JSON.parse(JSON.stringify(fixture)) as ConditionsResponse);
+    // validUntil is 15 minutes after the snapshot.
+    clockAt(0);
+    expect((await GET(...req("boca-raton"))).headers.get("Cache-Control")).toBe("public, s-maxage=60");
+    clockAt(15 * 60 - 20); // 20 seconds left
+    expect((await GET(...req("boca-raton"))).headers.get("Cache-Control")).toBe("public, s-maxage=20");
+    clockAt(15 * 60 - 1);
+    expect((await GET(...req("boca-raton"))).headers.get("Cache-Control")).toBe("public, s-maxage=1");
+    clockAt(15 * 60); // expired
+    expect((await GET(...req("boca-raton"))).headers.get("Cache-Control")).toBe("no-store");
+    clockAt(40 * 60); // a snapshot that is long out of date
+    expect((await GET(...req("boca-raton"))).headers.get("Cache-Control")).toBe("no-store");
+  });
+
   it("answers a budget-aborted (incomplete) build with 503 and no-store, never a view", async () => {
     vi.mocked(getConditions).mockResolvedValue({ ...(JSON.parse(JSON.stringify(fixture)) as ConditionsResponse), budgetAborted: true });
     const res = await GET(...req("boca-raton"));
@@ -61,5 +87,17 @@ describe("GET /api/watch/[slug]", () => {
     expect(body.error).toBe("incomplete");
     expect(body.v).toBeUndefined();
     expect(body.score).toBeUndefined();
+  });
+});
+
+describe("cacheControlFor", () => {
+  it("is min(60, seconds), floored, and no-store for nothing or nonsense", () => {
+    expect(cacheControlFor(600)).toBe("public, s-maxage=60");
+    expect(cacheControlFor(60)).toBe("public, s-maxage=60");
+    expect(cacheControlFor(59.9)).toBe("public, s-maxage=59");
+    expect(cacheControlFor(1)).toBe("public, s-maxage=1");
+    for (const bad of [0, 0.4, -5, NaN, Infinity]) {
+      expect(cacheControlFor(bad)).toBe("no-store");
+    }
   });
 });

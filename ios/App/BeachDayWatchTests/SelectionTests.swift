@@ -37,6 +37,17 @@ final class SelectionTests: XCTestCase {
         XCTAssertNil(BeachSelection.activeSlug)
     }
 
+    func testSyncOutcomeSeparatesAShownBeachChangeFromMetadataOnly() {
+        XCTAssertEqual(BeachSelection.applySyncOutcome(home: "boca-raton", favorites: [], lastViewed: nil),
+                       .init(activeChanged: true, metadataChanged: true))
+        // Favorites and last-viewed change behind the same beach: an open picker must refresh, nothing is fetched.
+        XCTAssertEqual(BeachSelection.applySyncOutcome(home: "boca-raton", favorites: ["naples"], lastViewed: "miami-beach"),
+                       .init(activeChanged: false, metadataChanged: true))
+        // Nothing changed at all.
+        XCTAssertEqual(BeachSelection.applySyncOutcome(home: "boca-raton", favorites: ["naples"], lastViewed: "miami-beach"),
+                       .init(activeChanged: false, metadataChanged: false))
+    }
+
     func testPickingTheDefaultBeachFollowsThePhoneAgain() {
         BeachSelection.applySync(home: "boca-raton", favorites: [], lastViewed: nil)
         BeachSelection.select("naples")

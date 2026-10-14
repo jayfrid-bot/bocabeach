@@ -69,8 +69,13 @@ struct BeachSummary: Codable, Equatable {
         now >= fetchedAt && now < validUntil
     }
 
+    /// Past the server's own `validUntil`: nothing in it may be presented as current.
+    func isExpired(now: Date = Date()) -> Bool { now >= validUntil }
+
+    /// Show "as of h:mm" instead of presenting it as current: expired by the server's
+    /// clock, or simply old (over 30 minutes since the server built it).
     func isStale(now: Date = Date()) -> Bool {
-        now.timeIntervalSince(dataAt) > Self.staleAfter
+        isExpired(now: now) || now.timeIntervalSince(dataAt) > Self.staleAfter
     }
 
     /// "Beach Day score 82, Good" for VoiceOver.
@@ -81,14 +86,18 @@ struct BeachSummary: Codable, Equatable {
 
     func firstLine(_ kind: LineKind) -> SummaryLine? { lines.first { $0.kind == kind } }
 
-    /// The single most useful line for a small space: a hazard first, then a
-    /// cautionary flag or rip status, then the best time, then water.
-    var headlineLine: String? {
-        if let hazard = firstLine(.hazard) { return hazard.text }
-        if let safety = firstLine(.safety), safety.tone != .calm { return safety.text }
+    /// The first RELEVANT line in the SERVER's order. The server ranks hazards, flags and
+    /// rip together (the website's order), so a double red flag ahead of approaching rain
+    /// stays ahead of it here. Relevant = a safety line (hazard, safety, "+N more") that is
+    /// not calm; failing that the best time, then water, then the first calm safety line.
+    /// Nothing is returned once the reading has expired: an old alert is not a headline.
+    func headlineLine(now: Date = Date()) -> String? {
+        if isExpired(now: now) { return nil }
+        let safetyKinds: Set<LineKind> = [.hazard, .safety, .more]
+        if let line = lines.first(where: { safetyKinds.contains($0.kind) && $0.tone != .calm }) { return line.text }
         if let best = firstLine(.best) { return best.text }
         if let water = firstLine(.water) { return water.text }
-        return firstLine(.safety)?.text
+        return lines.first(where: { safetyKinds.contains($0.kind) })?.text
     }
 
     /// "3:58 PM" in the watch's own time zone.

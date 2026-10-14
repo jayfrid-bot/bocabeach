@@ -30,7 +30,8 @@ final class WidgetRefreshPolicyTests: XCTestCase {
         guard case .useCache(_, let reload) = WidgetRefreshPolicy.plan(activeSlug: "boca-raton", cached: cached(validInMinutes: 1), now: now) else {
             return XCTFail("expected cache")
         }
-        XCTAssertGreaterThanOrEqual(reload.timeIntervalSince(now), 5 * 60)
+        XCTAssertGreaterThanOrEqual(reload.timeIntervalSince(now), 60)
+        XCTAssertLessThan(reload.timeIntervalSince(now), 5 * 60) // a one-minute floor, not five
     }
 
     func testAReadingPastItsServerValidityFetchesEvenIfJustReceived() {
@@ -54,7 +55,7 @@ final class WidgetRefreshPolicyTests: XCTestCase {
         XCTAssertEqual(WidgetRefreshPolicy.reloadAfterSuccess(validUntil: now.addingTimeInterval(13 * 60), now: now),
                        .after(now.addingTimeInterval(13 * 60)))
         XCTAssertEqual(WidgetRefreshPolicy.reloadAfterSuccess(validUntil: now.addingTimeInterval(60), now: now),
-                       .after(now.addingTimeInterval(5 * 60)))
+                       .after(now.addingTimeInterval(60)))
         XCTAssertEqual(WidgetRefreshPolicy.reloadAfterFailure(failures: 3, now: now), .after(now.addingTimeInterval(120 * 60)))
     }
 

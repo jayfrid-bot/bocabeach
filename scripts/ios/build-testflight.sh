@@ -23,10 +23,20 @@
 # --no-upload stops after the export and verification.
 set -euo pipefail
 
-BUILD="${1:?build number, e.g. 2026101401}"
+usage() {
+  echo "Usage: scripts/ios/build-testflight.sh <BUILD_NUMBER> [--no-upload]" >&2
+  echo "  BUILD_NUMBER is 10 digits, YYYYMMDDNN, e.g. 2026101401. Nothing else is accepted." >&2
+}
+# Strict arguments, checked before ANY work: exactly <build> or <build> --no-upload.
+# A typo such as --no-uplaod must never fall through to an upload.
 UPLOAD=1
-[ "${2:-}" = "--no-upload" ] && UPLOAD=0
-[[ "$BUILD" =~ ^[0-9]{10}$ ]] || { echo "build number must be 10 digits (YYYYMMDDNN), got: $BUILD" >&2; exit 2; }
+case "$#" in
+  1) ;;
+  2) if [ "$2" = "--no-upload" ]; then UPLOAD=0; else usage; exit 2; fi ;;
+  *) usage; exit 2 ;;
+esac
+BUILD="$1"
+[[ "$BUILD" =~ ^[0-9]{10}$ ]] || { usage; exit 2; }
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 KEY_ID="2BH6NC23C4"

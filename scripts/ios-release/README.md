@@ -2,7 +2,8 @@
 
 Verified 2026-10-09 (build 2026100901); updated for the watch app 2026-10-14. No Xcode GUI.
 The steps below are what `scripts/ios/build-testflight.sh <build> [--no-upload]` runs,
-fail-closed (every exit code checked, a new output directory per run, the IPA must be
+fail-closed (exactly `<build> [--no-upload]`: any other arguments print usage and
+exit 2 before any work; every exit code checked, a new output directory per run, the IPA must be
 fresh and carry the requested build number before it is uploaded). Keys live in
 `~/.appstoreconnect/private_keys/` (never in the repo). Issuer ID
 `6d956ebe-b0b8-43a9-8bb0-3ab92e66a4e1`, key `2BH6NC23C4` (App Manager).
@@ -100,22 +101,29 @@ shows as a caution).
 
 Freshness: the payload carries `validUntil`, the earliest of an alert starting or
 ending, the next rip model hour, the best window's end, and 15 minutes after the
-snapshot. The route is cached `s-maxage=60` with no stale-while-revalidate. The
-watch and widget judge freshness by the server's `generatedAt` and `validUntil`,
-not by when they received it. A budget-aborted (incomplete) build answers 503
-`no-store`, which the watch discards without touching its cache.
+snapshot. The route is cached `s-maxage = min(60, seconds until validUntil)`, `no-store`
+when none is left, and never stale-while-revalidate. The watch and widget judge
+freshness by the server's `generatedAt` and `validUntil`, not by when they received
+it: an answer that is already past its `validUntil` is rejected as a failure and
+leaves the cache alone, an expired reading shows "as of h:mm" and no alert headline,
+the widget wakes at `validUntil` (one-minute floor) and the open app refreshes then
+too. A budget-aborted (incomplete) build answers 503 `no-store`, which the watch
+discards without touching its cache. Every upcoming alert product stays visible on the
+watch: one line for one, "N alerts coming: A, B, ..." for several.
 
 It must be deployed before this build ships, or the watch shows "Beach not
 found". Deploying the web app is not part of the iOS release recipe.
 
 **Complication budget.** `WatchShared/WidgetRefreshPolicy.swift`: a cached reading
 is shown with no request while the server calls it current (`validUntil`), and the
-widget wakes at `validUntil` (never sooner than 5 minutes); failures back off 30,
+widget wakes at `validUntil` (never sooner than a minute); failures back off 30,
 60, 120 minutes, counted per beach and cleared by any success for that beach; no
 beach chosen means no reload; snapshots use the cache only. `BeachStore` is the one
-owner of watch-side fetching and of the widget reload (once per change, on success
-or failure); `PhoneLink` only stores what the phone sent, and tells `BeachStore`
-only when the beach shown changed.
+owner of watch-side fetching and of the widget reload: one request per beach at a
+time (a later refresh joins it), one reload per change on success or failure, the
+shared cache written only by the newest answer. `PhoneLink` only stores what the
+phone sent, and tells `BeachStore` when the beach shown changed (fetch and reload)
+or only the favorites/last-viewed lists changed (an open picker refreshes).
 
 **Sync recovery.** The phone keeps the newest payload and retries a failed activation
 or refused delivery 2, 5, 15, 60, 180 seconds apart (delegate-triggered flushes

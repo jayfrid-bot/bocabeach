@@ -48,3 +48,15 @@ describe("safetyTone", () => {
     expect(safetyTone({ ripCurrentRisk: "low", flags: ["green"], alertEvents: [] })).toBe("calm");
   });
 });
+
+describe("Severe/Extreme alerts that are not named Warning", () => {
+  it("are danger, the same as the banner's own ranking treats them", () => {
+    expect(safetyTone({ alerts: [{ event: "Special Weather Statement", severity: "Severe" }] })).toBe("danger");
+    expect(safetyTone({ alerts: [{ event: "Local Area Emergency", severity: "Extreme" }] })).toBe("danger");
+  });
+  it("leave ordinary advisories as a caution and a Warning as danger", () => {
+    expect(safetyTone({ alerts: [{ event: "Heat Advisory", severity: "Minor" }] })).toBe("caution");
+    expect(safetyTone({ alerts: [{ event: "Tornado Warning", severity: "Moderate" }] })).toBe("danger");
+    expect(safetyTone({ alertEvents: ["Heat Advisory"] })).toBe("caution");
+  });
+});

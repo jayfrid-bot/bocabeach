@@ -8,14 +8,17 @@ describes. Reconcile App Privacy in App Store Connect to this list.
 brokers; there are no ads and no ad SDKs. `NSPrivacyTracking` is false and there are no
 tracking domains.
 
-**Data collected** (each: collected, linked to the user or device, used to track = No):
+**Data collected** (each: collected, used to track = No). Linked = Yes for all six types: the
+random device id, the push token, and PostHog's persistent visitor id (kept in local storage;
+anonymous events still carry it, and `person_profiles: "identified_only"` does not change that for
+Apple's definition) all tie the data to a device.
 
 | ASC data type | Manifest key | Linked to the user/device | Purposes | Where it comes from |
 | --- | --- | --- | --- | --- |
 | Precise Location | `PreciseLocation` | Yes (stored with the device id) | App Functionality | Beach Mode only (Plus, opt in): `POST /api/presence` and `/api/hazards`. Latitude, longitude, accuracy, fix time; kept at most 8 hours; removed when Beach Mode is turned off. |
-| Coarse Location | `CoarseLocation` | No | Analytics | PostHog derives a rough location from the network address (`PostHogInit.tsx`; the policy says "rough location from your network address"). |
+| Coarse Location | `CoarseLocation` | Yes (PostHog visitor id) | Analytics | PostHog derives a rough location from the network address (`PostHogInit.tsx`; the policy says "rough location from your network address"). Linked through the PostHog visitor id. |
 | Device ID | `DeviceID` | Yes | App Functionality, Analytics | The random device id (`lib/deviceId.ts`) that ties score profile, alert settings and Plus status to the device; the APNs push token (`/api/devices`, Live Activity tokens); and the scrambled form of the id in the once-a-day app-open count (`/api/open`, Analytics, not linkable to settings). |
-| Product Interaction | `ProductInteraction` | No | Analytics | PostHog: pages opened, time on page, taps (autocapture), no session recording; plus the daily app-open count. |
+| Product Interaction | `ProductInteraction` | Yes (PostHog visitor id) | Analytics | PostHog: pages opened, time on page, taps (autocapture), no session recording; plus the daily app-open count. |
 | Purchase History | `PurchaseHistory` | Yes | App Functionality | RevenueCat receives purchase and subscription status for Beach Day Plus (`/api/revenuecat`). |
 | Other Data Types | `OtherDataTypes` | Yes | App Functionality | Score profile, alert settings, home beach and time zone saved with the device record (`/api/devices`). |
 

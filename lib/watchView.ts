@@ -77,6 +77,12 @@ function flagsText(flags: readonly FlagColor[]): string | null {
   return present.length === 1 ? `${first} flag` : `${first} + ${words.slice(1).join(" + ")} flags`;
 }
 
+/** The watch drops nothing for length: a long line is cut with an ellipsis. */
+const MAX_LINE = 78;
+function fitLine(text: string): string {
+  return text.length <= MAX_LINE ? text : `${text.slice(0, MAX_LINE - 1).trimEnd()}\u2026`;
+}
+
 function safetyLines(res: ConditionsResponse, nowMs: number): WatchLine[] {
   const snap = res.snapshot;
   const radar = snap.precipRadar;
@@ -118,7 +124,7 @@ function safetyLines(res: ConditionsResponse, nowMs: number): WatchLine[] {
     }
     lines.push({
       kind: item.id === "rip" ? "safety" : "hazard",
-      text: item.short,
+      text: fitLine(item.short),
       tone: item.itemTone,
     });
   }
@@ -163,6 +169,14 @@ function bestLine(res: ConditionsResponse, nowMs: number): WatchLine | null {
 }
 
 // ---- freshness --------------------------------------------------------------
+
+/** The route's Cache-Control: s-maxage = min(60, seconds the view stays valid);
+ *  nothing left (or not a number) means no-store. Never stale-while-revalidate. */
+export function cacheControlFor(secondsValid: number): string {
+  const whole = Math.floor(secondsValid);
+  if (!Number.isFinite(whole) || whole <= 0) return "no-store";
+  return `public, s-maxage=${Math.min(60, whole)}`;
+}
 
 /** The earliest future moment any clock-dependent part of this view can change. */
 export function computeValidUntil(res: ConditionsResponse, nowMs: number): number {

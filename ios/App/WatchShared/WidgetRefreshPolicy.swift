@@ -34,7 +34,7 @@ enum WidgetRefreshPolicy {
     static let successInterval: TimeInterval = 30 * 60
     static let maxBackoff: TimeInterval = 120 * 60
     /// Never ask to be woken sooner than this, however close validUntil is.
-    static let minimumGap: TimeInterval = 5 * 60
+    static let minimumGap: TimeInterval = 60
 
     static func plan(activeSlug: String?, cached: BeachSummary?, now: Date) -> Plan {
         guard let slug = activeSlug else { return .setup }

@@ -11,8 +11,12 @@ import Foundation
 import WatchConnectivity
 
 extension Notification.Name {
-    /// Posted on the main thread when the beach the watch SHOWS changed (BeachStore listens).
+    /// Posted on the main thread when the beach the watch SHOWS changed (BeachStore fetches
+    /// and reloads the widget).
     static let beachSelectionChanged = Notification.Name("BeachSelectionChanged")
+    /// Posted when only the home, favorites or last-viewed values changed (an open picker
+    /// refreshes its lists; nothing is fetched).
+    static let beachMetadataChanged = Notification.Name("BeachMetadataChanged")
 }
 
 final class PhoneLink: NSObject, WCSessionDelegate {
@@ -50,12 +54,16 @@ final class PhoneLink: NSObject, WCSessionDelegate {
         guard !context.isEmpty else { return }
         guard ((context[WatchSync.Key.version] as? Int) ?? WatchSync.payloadVersion) <= WatchSync.payloadVersion else { return }
         DispatchQueue.main.async {
-            let activeChanged = BeachSelection.applySync(
+            let outcome = BeachSelection.applySyncOutcome(
                 home: context[WatchSync.Key.homeSlug],
                 favorites: context[WatchSync.Key.favorites],
                 lastViewed: context[WatchSync.Key.lastViewedSlug]
             )
-            if activeChanged { NotificationCenter.default.post(name: .beachSelectionChanged, object: nil) }
+            if outcome.activeChanged {
+                NotificationCenter.default.post(name: .beachSelectionChanged, object: nil)
+            } else if outcome.metadataChanged {
+                NotificationCenter.default.post(name: .beachMetadataChanged, object: nil)
+            }
         }
     }
 

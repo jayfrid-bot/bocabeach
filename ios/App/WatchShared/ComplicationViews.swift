@@ -91,7 +91,7 @@ struct RectangularComplication: View {
                 } else {
                     Text("Conditions unavailable").font(.subheadline)
                 }
-                Text(s.isStale(now: now) ? "as of \(s.asOfText())" : (s.headlineLine ?? " "))
+                Text(s.isStale(now: now) ? "as of \(s.asOfText())" : (s.headlineLine(now: now) ?? " "))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -135,7 +135,8 @@ private func spoken(_ content: ComplicationContent, now: Date) -> String {
     switch content {
     case .summary(let s):
         var parts = [s.name, s.scoreSpokenLabel]
-        if let line = s.headlineLine { parts.append(line) }
+        // The first relevant line in the server's order, and none once expired.
+        if let line = s.headlineLine(now: now) { parts.append(line) }
         if s.isStale(now: now) { parts.append("as of \(s.asOfText())") }
         return parts.joined(separator: ". ")
     case .needsSetup:

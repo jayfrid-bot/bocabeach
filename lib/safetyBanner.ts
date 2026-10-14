@@ -140,6 +140,7 @@ export function buildSafetyBanner(input: SafetyBannerInput): SafetyBannerModel {
     ripNow,
     flags,
     alertEvents: activeNonRipAlerts.map((a) => a.event),
+    alerts: activeNonRipAlerts,
   });
 
   const ripBannerCopy = ripCopy(ripNow, ripNwps?.data?.hours ?? null, nowMs, timezone);
@@ -233,13 +234,16 @@ export function buildSafetyBanner(input: SafetyBannerInput): SafetyBannerModel {
   }
   if (upcomingNonRipAlerts.length) {
     const first = upcomingNonRipAlerts[0].event;
+    const names = upcomingNonRipAlerts.map((a) => a.event);
     candidates.push({
       kind: "other",
       icon: "🕐",
       text: `${first} begins soon${
         upcomingNonRipAlerts.length > 1 ? ` (+${upcomingNonRipAlerts.length - 1} more)` : ""
       }`,
-      short: `${first} soon`,
+      // Every upcoming product is named for a small screen, never just the first.
+      short:
+        names.length === 1 ? `${first} soon` : `${names.length} alerts coming: ${names.join(", ")}`,
       id: "upcoming",
     });
   }
