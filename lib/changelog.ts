@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-14",
+    title: "A simpler look at the app",
+    details:
+      "The website now sums up the free iPhone app in five plain lines: 20 data points in one beach score, alerts, sunrise and sunset heads-ups, your score on the Lock Screen, and a look back at past days.",
+    tag: "improved",
+  },
+  {
     date: "2026-10-13",
     title: "Steadier seaweed readings",
     details:

@@ -140,7 +140,7 @@ async function clippedText(page: Page, selector: string): Promise<string[]> {
 let warmed = false;
 
 test.describe("Beach Day Plus", () => {
-  test("the website shows what Plus includes and points to the app — no questions, no trial", async ({
+  test("the website sells the free app and points to it — no price, no questions, no trial", async ({
     page,
   }) => {
     const errors = await openDashboard(page);
@@ -148,13 +148,15 @@ test.describe("Beach Day Plus", () => {
     // The door on the web is the app, not the questions. The link goes by way
     // of /get-app, which counts the tap before redirecting to the App Store
     // (lib/db/scanFunnel.ts), so a sticker scan can be matched to the install.
-    const card = page.getByRole("region", { name: /Personalize your score in the app/ });
+    const card = page.getByRole("region", { name: /Get the free app/ });
     await expect(card).toBeVisible();
-    await expect(card.getByRole("link", { name: /Get Is It Beach Day for iPhone/ })).toHaveAttribute(
+    await expect(card.getByRole("link", { name: /Download free on the App Store/ })).toHaveAttribute(
       "href",
       "/get-app",
     );
-    await expect(card.getByText("$2.99/mo · $19.99/yr · 3-day free trial")).toBeVisible();
+    // No price on the website: the goal is the download; price and trial live in the app.
+    await expect(card.getByText(/\$\d/)).toHaveCount(0);
+    await expect(card.getByText(/Some features need Beach Day Plus/)).toBeVisible();
     await expect(page.getByRole("button", { name: /Personalize my score/ })).toHaveCount(0);
     // …and nothing is personalized.
     await expect(page.getByRole("group", { name: "Which score to show" })).toHaveCount(0);

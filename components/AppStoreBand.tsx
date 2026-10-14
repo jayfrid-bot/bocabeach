@@ -66,10 +66,10 @@ export function AppStoreBand() {
           />
           <div className="min-w-0">
             <p className="text-sm font-semibold text-balance text-slate-900 dark:text-white">
-              Is It Beach Day is on the App Store
+              Is It Beach Day is free on iPhone
             </p>
             <p className="line-clamp-2 text-pretty text-xs text-slate-600 dark:text-slate-400 sm:line-clamp-1">
-              The full beach score, live cams, and an optional morning heads-up. Free.
+              20 data points in one simple beach score, one tap away.
             </p>
           </div>
         </div>
