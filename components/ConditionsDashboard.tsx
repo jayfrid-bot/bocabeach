@@ -68,6 +68,7 @@ import { BeachModeCard } from "@/components/plus/BeachModeCard";
 import { FirstRunBanner } from "@/components/plus/FirstRunBanner";
 import { HeaderSubtitle } from "@/components/plus/HeaderSubtitle";
 import { HomeBeachRedirect } from "@/components/plus/HomeBeachRedirect";
+import { useRecordLastViewedBeach } from "@/lib/useWatchSync";
 import { Paywall, supportId } from "@/components/plus/Paywall";
 import { PersonalizeCard } from "@/components/plus/PersonalizeCard";
 import { HistorySection } from "@/components/plus/HistorySection";
@@ -325,6 +326,9 @@ export function ConditionsDashboard({
   // byte-for-byte what it always was.
   const plus = usePlus();
   const plusOn = !preview && beaches.length > 0;
+
+  // The Apple Watch app opens on this beach when there is no home beach.
+  useRecordLastViewedBeach(slug, preview);
   // Warm the share-card render while the reader is still on the page. Each card
   // is a multi-second satori render; kicking both formats off now (into the
   // route's edge cache) means that tapping Share a moment later is an instant

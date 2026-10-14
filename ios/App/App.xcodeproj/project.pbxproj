@@ -7,13 +7,20 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0317A5F8A07361B29B314D97 /* Beaches.json in Resources */ = {isa = PBXBuildFile; fileRef = E9DA4F30F537C176B4C01841 /* Beaches.json */; };
+		0C6540383546130B11FBD0F7 /* BeachSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5057104645AB5D44F5A8EEE4 /* BeachSummary.swift */; };
+		1334A49B03E1F77591B5D1BB /* BeachStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F591959D31D6E62A1D86844A /* BeachStore.swift */; };
+		16B6428C809AA3A551617EDB /* PickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B824373DD979397F95D62D2 /* PickerView.swift */; };
+		216F207BE2136A1ED3A22406 /* ConditionsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ACB8D3FB268FF6CB6B241A3 /* ConditionsModels.swift */; };
+		28F5102B981DB5EF74F5546E /* MainView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D7DB249CC7822DE3F5CB07A /* MainView.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
+		35A479DD84B225133DE405F7 /* Summarizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1236B070C612E36407A2C89 /* Summarizer.swift */; };
 		3F5B2398ADE104F1212F76E6 /* BeachSessionActivity.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 751FB9D08435C17C4D1424CB /* BeachSessionActivity.appex */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
 		44046A873E4EE775CE4D68C1 /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E7C0EB58B1F6BEAC35EEC911 /* SwiftUI.framework */; };
-		489E3C5BE94101F8A0E3FB75 /* BeachSessionActivityLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C536892AAAF04BE9FA7461A6 /* BeachSessionActivityLiveActivity.swift */; };
-		63DB7E55C6874833B4FF7A3C /* BeachSessionActivityPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BCC965BF909403D8584F299 /* BeachSessionActivityPlugin.swift */; };
-		EC4077C85C5147248314DAAF /* BeachBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E446D1BCA274725A3D69B1F /* BeachBridgeViewController.swift */; };
 		4516B408A13E4CF9BA2FDA0D /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62DD2A7AB06E4725ACFA1B62 /* SceneDelegate.swift */; };
+		471364486E42CDC4375BC0EF /* BeachDayWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 63EE0205062DC5341D29F0AB /* BeachDayWatch.app */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
+		489E3C5BE94101F8A0E3FB75 /* BeachSessionActivityLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = C536892AAAF04BE9FA7461A6 /* BeachSessionActivityLiveActivity.swift */; };
+		4A0D852E92D15DD29941EBCA /* WatchSyncPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F774667AC2C847E20373A6C /* WatchSyncPayload.swift */; };
 		4CC38E19F6D22BF5796103DD /* ActivityKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6947E1456562E5B41BCD9BA4 /* ActivityKit.framework */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
@@ -22,20 +29,58 @@
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
+		55AED7E0FB924F77D3FEB8C1 /* DebugHooks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23D039A60255E54F33792083 /* DebugHooks.swift */; };
+		5716DBB6A638323F1A0B2391 /* NearestLocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1034E562A7397F83B633FECA /* NearestLocator.swift */; };
 		611B066ED996495C83C7A943 /* BeachSessionDemo.swift in Sources */ = {isa = PBXBuildFile; fileRef = E50A3F37F33E5C66566261D1 /* BeachSessionDemo.swift */; };
+		618620771E3623785ED0DA35 /* ComplicationViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0012EC84795876C30B7788D5 /* ComplicationViews.swift */; };
+		63DB7E55C6874833B4FF7A3C /* BeachSessionActivityPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BCC965BF909403D8584F299 /* BeachSessionActivityPlugin.swift */; };
+		662230B4CF81E420A08AFDDB /* SharedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3715FB0ABFDFBFCE7CC2C992 /* SharedStore.swift */; };
 		69D5CE288EC31D9C36E7C73F /* BeachSessionActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A84C271954F2DF367E4E21A /* BeachSessionActivityBundle.swift */; };
+		70097EAA54714597C9D935D1 /* ConditionsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A935DBD2CB98165C4E10C50 /* ConditionsClient.swift */; };
+		77D3582CD8A7AF01B01E2DBC /* ScoreBands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80344DA9284B9895D0C4C98E /* ScoreBands.swift */; };
+		7D6402CE8F3A3A8C69B8E59D /* Summarizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1236B070C612E36407A2C89 /* Summarizer.swift */; };
+		7EA1B097BEA985074E029C03 /* WatchSyncPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CFEA95B35829771EC314E55 /* WatchSyncPlugin.swift */; };
+		84BD2BD4F3D7EA8179109959 /* ConditionsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A935DBD2CB98165C4E10C50 /* ConditionsClient.swift */; };
+		86941F875CBEDB72905FF98D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 5843176AC27706892D24E35B /* Assets.xcassets */; };
 		8762037FD95F10A645682F8F /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DA14EA36744C240FFED8B9A8 /* WidgetKit.framework */; };
 		884260816AB9C273A6857202 /* BeachSessionAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18A86DD8B5B898EB0DD5C2DD /* BeachSessionAttributes.swift */; };
+		88EDC525180B85675180695D /* WatchSyncPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F774667AC2C847E20373A6C /* WatchSyncPayload.swift */; };
+		9C242451F876F18A7C0A0D79 /* BeachDayWatchWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8AB0C0C723AAD4FFBF3F284 /* BeachDayWatchWidget.swift */; };
+		AD6F916BF41181F046B05F00 /* ScoreBands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80344DA9284B9895D0C4C98E /* ScoreBands.swift */; };
 		BB57C405947EC0E8887AD68F /* BeachSessionAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 18A86DD8B5B898EB0DD5C2DD /* BeachSessionAttributes.swift */; };
+		C39131AFD428FD8D6E14F1D0 /* BeachDayWatchWidget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 9DBA63921188D181AB1E19C4 /* BeachDayWatchWidget.appex */; settings = {ATTRIBUTES = (RemoveHeaderOnCopy, ); }; };
+		C4915517D5AA7467DD062BC6 /* ConditionsModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ACB8D3FB268FF6CB6B241A3 /* ConditionsModels.swift */; };
+		CADF2BA099C26B8ADD2836C9 /* ComplicationViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0012EC84795876C30B7788D5 /* ComplicationViews.swift */; };
+		CB0E245745F3C027C177EDB1 /* SharedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3715FB0ABFDFBFCE7CC2C992 /* SharedStore.swift */; };
+		CD60F81A84A397326DD724BC /* WatchSyncPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F774667AC2C847E20373A6C /* WatchSyncPayload.swift */; };
+		DC850DFAAC18C06733E198C7 /* PhoneLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = B90007ACEB925CAF55B40831 /* PhoneLink.swift */; };
+		E42F94F33AE69D89230764CD /* BeachSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5057104645AB5D44F5A8EEE4 /* BeachSummary.swift */; };
+		E60DABC4B29C9961C0D5651E /* BeachDayWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 616DF0B6FF2A0B56F52D39E3 /* BeachDayWatchApp.swift */; };
+		EC4077C85C5147248314DAAF /* BeachBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E446D1BCA274725A3D69B1F /* BeachBridgeViewController.swift */; };
+		F2771D378DC68F77B7739561 /* BeachCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A6D889A04191B29F1547435 /* BeachCatalog.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		88858A71BA215553F694BCDC /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B9BBD170A032DDF175132582;
+			remoteInfo = BeachDayWatchWidget;
+		};
 		E29C23BEDC8548C9590B48D7 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 988B585825E59D2DF8B2CC05;
 			remoteInfo = BeachSessionActivity;
+		};
+		FFE895D5CF06017DAA74DCF3 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 504EC2FC1FED79650016851F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C28F7BC76F9F46983D8F0742;
+			remoteInfo = BeachDayWatch;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -51,15 +96,46 @@
 			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A1134280A71433861C40F069 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				C39131AFD428FD8D6E14F1D0 /* BeachDayWatchWidget.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DA43E37C74563D76C7957F3F /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				471364486E42CDC4375BC0EF /* BeachDayWatch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0012EC84795876C30B7788D5 /* ComplicationViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ComplicationViews.swift; sourceTree = "<group>"; };
 		03F2535581859D691E906110 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		18A86DD8B5B898EB0DD5C2DD /* BeachSessionAttributes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachSessionAttributes.swift; sourceTree = "<group>"; };
+		0A935DBD2CB98165C4E10C50 /* ConditionsClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConditionsClient.swift; sourceTree = "<group>"; };
 		0BCC965BF909403D8584F299 /* BeachSessionActivityPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachSessionActivityPlugin.swift; sourceTree = "<group>"; };
 		0E446D1BCA274725A3D69B1F /* BeachBridgeViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachBridgeViewController.swift; sourceTree = "<group>"; };
-		62DD2A7AB06E4725ACFA1B62 /* SceneDelegate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		1034E562A7397F83B633FECA /* NearestLocator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NearestLocator.swift; sourceTree = "<group>"; };
+		18A86DD8B5B898EB0DD5C2DD /* BeachSessionAttributes.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachSessionAttributes.swift; sourceTree = "<group>"; };
+		1D7DB249CC7822DE3F5CB07A /* MainView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MainView.swift; sourceTree = "<group>"; };
+		1F774667AC2C847E20373A6C /* WatchSyncPayload.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchSyncPayload.swift; sourceTree = "<group>"; };
+		23D039A60255E54F33792083 /* DebugHooks.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = DebugHooks.swift; sourceTree = "<group>"; };
+		2A6B7AC65BBCE8ED0749347B /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		2CFEA95B35829771EC314E55 /* WatchSyncPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchSyncPlugin.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
+		3715FB0ABFDFBFCE7CC2C992 /* SharedStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SharedStore.swift; sourceTree = "<group>"; };
+		4B824373DD979397F95D62D2 /* PickerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PickerView.swift; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		504EC3071FED79650016851F /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -67,23 +143,54 @@
 		504EC30E1FED79650016851F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		504EC3111FED79650016851F /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		504EC3131FED79650016851F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		5057104645AB5D44F5A8EEE4 /* BeachSummary.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachSummary.swift; sourceTree = "<group>"; };
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
+		5843176AC27706892D24E35B /* Assets.xcassets */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		5A84C271954F2DF367E4E21A /* BeachSessionActivityBundle.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachSessionActivityBundle.swift; sourceTree = "<group>"; };
+		5D5A2B011F3E0E5ECA4AAB6A /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		616DF0B6FF2A0B56F52D39E3 /* BeachDayWatchApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachDayWatchApp.swift; sourceTree = "<group>"; };
+		62DD2A7AB06E4725ACFA1B62 /* SceneDelegate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		63EE0205062DC5341D29F0AB /* BeachDayWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BeachDayWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6947E1456562E5B41BCD9BA4 /* ActivityKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = ActivityKit.framework; path = System/Library/Frameworks/ActivityKit.framework; sourceTree = SDKROOT; };
 		751FB9D08435C17C4D1424CB /* BeachSessionActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BeachSessionActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		75B4F306BE1E611DE0F3CF9F /* BeachDayWatchWidget.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = BeachDayWatchWidget.entitlements; sourceTree = "<group>"; };
+		7A6D889A04191B29F1547435 /* BeachCatalog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachCatalog.swift; sourceTree = "<group>"; };
+		80344DA9284B9895D0C4C98E /* ScoreBands.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScoreBands.swift; sourceTree = "<group>"; };
+		8ACB8D3FB268FF6CB6B241A3 /* ConditionsModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConditionsModels.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		995E3780351A3E7658134A4F /* BeachDayWatch.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = BeachDayWatch.entitlements; sourceTree = "<group>"; };
+		9DBA63921188D181AB1E19C4 /* BeachDayWatchWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BeachDayWatchWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1236B070C612E36407A2C89 /* Summarizer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = Summarizer.swift; sourceTree = "<group>"; };
+		B90007ACEB925CAF55B40831 /* PhoneLink.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PhoneLink.swift; sourceTree = "<group>"; };
 		C536892AAAF04BE9FA7461A6 /* BeachSessionActivityLiveActivity.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachSessionActivityLiveActivity.swift; sourceTree = "<group>"; };
+		D8AB0C0C723AAD4FFBF3F284 /* BeachDayWatchWidget.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachDayWatchWidget.swift; sourceTree = "<group>"; };
 		DA14EA36744C240FFED8B9A8 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		E50A3F37F33E5C66566261D1 /* BeachSessionDemo.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachSessionDemo.swift; sourceTree = "<group>"; };
 		E7C0EB58B1F6BEAC35EEC911 /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
+		E9DA4F30F537C176B4C01841 /* Beaches.json */ = {isa = PBXFileReference; includeInIndex = 1; path = Beaches.json; sourceTree = "<group>"; };
+		F591959D31D6E62A1D86844A /* BeachStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachStore.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		1B06745C147EA903B758E50E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		504EC3011FED79650016851F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		52088FB4179EBA29B377ADBE /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -110,6 +217,36 @@
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
+		372E83363EEBEC2EA6F498DA /* BeachDayWatchWidget */ = {
+			isa = PBXGroup;
+			children = (
+				D8AB0C0C723AAD4FFBF3F284 /* BeachDayWatchWidget.swift */,
+				5D5A2B011F3E0E5ECA4AAB6A /* Info.plist */,
+				75B4F306BE1E611DE0F3CF9F /* BeachDayWatchWidget.entitlements */,
+			);
+			name = BeachDayWatchWidget;
+			path = BeachDayWatchWidget;
+			sourceTree = "<group>";
+		};
+		4801A1A15ED372ED467DA165 /* BeachDayWatch */ = {
+			isa = PBXGroup;
+			children = (
+				616DF0B6FF2A0B56F52D39E3 /* BeachDayWatchApp.swift */,
+				F591959D31D6E62A1D86844A /* BeachStore.swift */,
+				7A6D889A04191B29F1547435 /* BeachCatalog.swift */,
+				23D039A60255E54F33792083 /* DebugHooks.swift */,
+				1D7DB249CC7822DE3F5CB07A /* MainView.swift */,
+				1034E562A7397F83B633FECA /* NearestLocator.swift */,
+				B90007ACEB925CAF55B40831 /* PhoneLink.swift */,
+				4B824373DD979397F95D62D2 /* PickerView.swift */,
+				2A6B7AC65BBCE8ED0749347B /* Info.plist */,
+				995E3780351A3E7658134A4F /* BeachDayWatch.entitlements */,
+				5843176AC27706892D24E35B /* Assets.xcassets */,
+			);
+			name = BeachDayWatch;
+			path = BeachDayWatch;
+			sourceTree = "<group>";
+		};
 		504EC2FB1FED79650016851F = {
 			isa = PBXGroup;
 			children = (
@@ -119,6 +256,9 @@
 				CB675614C16C8C035C498956 /* Shared */,
 				C33089D38720027F24B3649E /* BeachSessionActivity */,
 				1C8D14AD3E58B14D73889E74 /* Frameworks */,
+				4801A1A15ED372ED467DA165 /* BeachDayWatch */,
+				372E83363EEBEC2EA6F498DA /* BeachDayWatchWidget */,
+				94F3FDC6E1E8987CB9A1B94C /* WatchShared */,
 			);
 			sourceTree = "<group>";
 		};
@@ -127,6 +267,8 @@
 			children = (
 				504EC3041FED79650016851F /* App.app */,
 				751FB9D08435C17C4D1424CB /* BeachSessionActivity.appex */,
+				63EE0205062DC5341D29F0AB /* BeachDayWatch.app */,
+				9DBA63921188D181AB1E19C4 /* BeachDayWatchWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -146,8 +288,25 @@
 				0BCC965BF909403D8584F299 /* BeachSessionActivityPlugin.swift */,
 				0E446D1BCA274725A3D69B1F /* BeachBridgeViewController.swift */,
 				62DD2A7AB06E4725ACFA1B62 /* SceneDelegate.swift */,
+				2CFEA95B35829771EC314E55 /* WatchSyncPlugin.swift */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		94F3FDC6E1E8987CB9A1B94C /* WatchShared */ = {
+			isa = PBXGroup;
+			children = (
+				80344DA9284B9895D0C4C98E /* ScoreBands.swift */,
+				8ACB8D3FB268FF6CB6B241A3 /* ConditionsModels.swift */,
+				5057104645AB5D44F5A8EEE4 /* BeachSummary.swift */,
+				A1236B070C612E36407A2C89 /* Summarizer.swift */,
+				3715FB0ABFDFBFCE7CC2C992 /* SharedStore.swift */,
+				0A935DBD2CB98165C4E10C50 /* ConditionsClient.swift */,
+				0012EC84795876C30B7788D5 /* ComplicationViews.swift */,
+				E9DA4F30F537C176B4C01841 /* Beaches.json */,
+			);
+			name = WatchShared;
+			path = WatchShared;
 			sourceTree = "<group>";
 		};
 		C33089D38720027F24B3649E /* BeachSessionActivity */ = {
@@ -165,6 +324,7 @@
 			isa = PBXGroup;
 			children = (
 				18A86DD8B5B898EB0DD5C2DD /* BeachSessionAttributes.swift */,
+				1F774667AC2C847E20373A6C /* WatchSyncPayload.swift */,
 			);
 			name = Shared;
 			path = Shared;
@@ -181,11 +341,13 @@
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
 				1A69D93A49D0B5D9C39011E4 /* Embed Foundation Extensions */,
+				DA43E37C74563D76C7957F3F /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				2DFBBF21552B1B67CD3B8F73 /* PBXTargetDependency */,
+				002AE7AF889E244C3F7180BF /* PBXTargetDependency */,
 			);
 			name = App;
 			packageProductDependencies = (
@@ -212,6 +374,42 @@
 			productReference = 751FB9D08435C17C4D1424CB /* BeachSessionActivity.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		B9BBD170A032DDF175132582 /* BeachDayWatchWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A8AEC45BB45E9842CC0ED013 /* Build configuration list for PBXNativeTarget "BeachDayWatchWidget" */;
+			buildPhases = (
+				C0B0CB40613F7FF38EE45E4C /* Sources */,
+				1B06745C147EA903B758E50E /* Frameworks */,
+				2414C81452DB6E4A42FBBEC4 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = BeachDayWatchWidget;
+			productName = BeachDayWatchWidget;
+			productReference = 9DBA63921188D181AB1E19C4 /* BeachDayWatchWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		C28F7BC76F9F46983D8F0742 /* BeachDayWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2893FBC410EF31C80F00C81B /* Build configuration list for PBXNativeTarget "BeachDayWatch" */;
+			buildPhases = (
+				E472F87D645EA86A706A8E58 /* Sources */,
+				52088FB4179EBA29B377ADBE /* Frameworks */,
+				F583A91A1EA21166A7EC7CA9 /* Resources */,
+				A1134280A71433861C40F069 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				7A45A5BEC9041CE81D7CA411 /* PBXTargetDependency */,
+			);
+			name = BeachDayWatch;
+			productName = BeachDayWatch;
+			productReference = 63EE0205062DC5341D29F0AB /* BeachDayWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -227,6 +425,16 @@
 						ProvisioningStyle = Automatic;
 					};
 					988B585825E59D2DF8B2CC05 = {
+						CreatedOnToolsVersion = 27.0;
+						DevelopmentTeam = F6994Y2RVD;
+						ProvisioningStyle = Automatic;
+					};
+					B9BBD170A032DDF175132582 = {
+						CreatedOnToolsVersion = 27.0;
+						DevelopmentTeam = F6994Y2RVD;
+						ProvisioningStyle = Automatic;
+					};
+					C28F7BC76F9F46983D8F0742 = {
 						CreatedOnToolsVersion = 27.0;
 						DevelopmentTeam = F6994Y2RVD;
 						ProvisioningStyle = Automatic;
@@ -251,11 +459,20 @@
 			targets = (
 				504EC3031FED79650016851F /* App */,
 				988B585825E59D2DF8B2CC05 /* BeachSessionActivity */,
+				C28F7BC76F9F46983D8F0742 /* BeachDayWatch */,
+				B9BBD170A032DDF175132582 /* BeachDayWatchWidget */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		2414C81452DB6E4A42FBBEC4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		504EC3021FED79650016851F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -276,6 +493,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F583A91A1EA21166A7EC7CA9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				86941F875CBEDB72905FF98D /* Assets.xcassets in Resources */,
+				0317A5F8A07361B29B314D97 /* Beaches.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -289,6 +515,24 @@
 				63DB7E55C6874833B4FF7A3C /* BeachSessionActivityPlugin.swift in Sources */,
 				EC4077C85C5147248314DAAF /* BeachBridgeViewController.swift in Sources */,
 				4516B408A13E4CF9BA2FDA0D /* SceneDelegate.swift in Sources */,
+				7EA1B097BEA985074E029C03 /* WatchSyncPlugin.swift in Sources */,
+				88EDC525180B85675180695D /* WatchSyncPayload.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		C0B0CB40613F7FF38EE45E4C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9C242451F876F18A7C0A0D79 /* BeachDayWatchWidget.swift in Sources */,
+				AD6F916BF41181F046B05F00 /* ScoreBands.swift in Sources */,
+				C4915517D5AA7467DD062BC6 /* ConditionsModels.swift in Sources */,
+				E42F94F33AE69D89230764CD /* BeachSummary.swift in Sources */,
+				7D6402CE8F3A3A8C69B8E59D /* Summarizer.swift in Sources */,
+				CB0E245745F3C027C177EDB1 /* SharedStore.swift in Sources */,
+				84BD2BD4F3D7EA8179109959 /* ConditionsClient.swift in Sources */,
+				CADF2BA099C26B8ADD2836C9 /* ComplicationViews.swift in Sources */,
+				CD60F81A84A397326DD724BC /* WatchSyncPayload.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -302,14 +546,49 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E472F87D645EA86A706A8E58 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E60DABC4B29C9961C0D5651E /* BeachDayWatchApp.swift in Sources */,
+				1334A49B03E1F77591B5D1BB /* BeachStore.swift in Sources */,
+				F2771D378DC68F77B7739561 /* BeachCatalog.swift in Sources */,
+				55AED7E0FB924F77D3FEB8C1 /* DebugHooks.swift in Sources */,
+				28F5102B981DB5EF74F5546E /* MainView.swift in Sources */,
+				5716DBB6A638323F1A0B2391 /* NearestLocator.swift in Sources */,
+				DC850DFAAC18C06733E198C7 /* PhoneLink.swift in Sources */,
+				16B6428C809AA3A551617EDB /* PickerView.swift in Sources */,
+				77D3582CD8A7AF01B01E2DBC /* ScoreBands.swift in Sources */,
+				216F207BE2136A1ED3A22406 /* ConditionsModels.swift in Sources */,
+				0C6540383546130B11FBD0F7 /* BeachSummary.swift in Sources */,
+				35A479DD84B225133DE405F7 /* Summarizer.swift in Sources */,
+				662230B4CF81E420A08AFDDB /* SharedStore.swift in Sources */,
+				70097EAA54714597C9D935D1 /* ConditionsClient.swift in Sources */,
+				618620771E3623785ED0DA35 /* ComplicationViews.swift in Sources */,
+				4A0D852E92D15DD29941EBCA /* WatchSyncPayload.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		002AE7AF889E244C3F7180BF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = BeachDayWatch;
+			target = C28F7BC76F9F46983D8F0742 /* BeachDayWatch */;
+			targetProxy = FFE895D5CF06017DAA74DCF3 /* PBXContainerItemProxy */;
+		};
 		2DFBBF21552B1B67CD3B8F73 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			name = BeachSessionActivity;
 			target = 988B585825E59D2DF8B2CC05 /* BeachSessionActivity */;
 			targetProxy = E29C23BEDC8548C9590B48D7 /* PBXContainerItemProxy */;
+		};
+		7A45A5BEC9041CE81D7CA411 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = BeachDayWatchWidget;
+			target = B9BBD170A032DDF175132582 /* BeachDayWatchWidget */;
+			targetProxy = 88858A71BA215553F694BCDC /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -333,6 +612,35 @@
 /* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
+		2FE7B183180783B82BA96038 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = BeachDayWatch/BeachDayWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2026100901;
+				DEVELOPMENT_TEAM = F6994Y2RVD;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BeachDayWatch/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.isitbeachday.app.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
 		504EC3141FED79650016851F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 958DCC722DB07C7200EA8C5F /* debug.xcconfig */;
@@ -526,6 +834,64 @@
 			};
 			name = Release;
 		};
+		9512E75D9E50DC3F267EFDBE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = BeachDayWatchWidget/BeachDayWatchWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2026100901;
+				DEVELOPMENT_TEAM = F6994Y2RVD;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BeachDayWatchWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.isitbeachday.app.watchkitapp.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		ABD4F755C1D991B9FF57EF84 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = BeachDayWatchWidget/BeachDayWatchWidget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2026100901;
+				DEVELOPMENT_TEAM = F6994Y2RVD;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BeachDayWatchWidget/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.isitbeachday.app.watchkitapp.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
 		DF9F28976E9164276ADFEB22 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -554,9 +920,47 @@
 			};
 			name = Debug;
 		};
+		E24D236194B6D47D89AAD0C6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = BeachDayWatch/BeachDayWatch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2026100901;
+				DEVELOPMENT_TEAM = F6994Y2RVD;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = BeachDayWatch/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.isitbeachday.app.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		2893FBC410EF31C80F00C81B /* Build configuration list for PBXNativeTarget "BeachDayWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2FE7B183180783B82BA96038 /* Release */,
+				E24D236194B6D47D89AAD0C6 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		504EC2FF1FED79650016851F /* Build configuration list for PBXProject "App" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -571,6 +975,15 @@
 			buildConfigurations = (
 				504EC3171FED79650016851F /* Debug */,
 				504EC3181FED79650016851F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A8AEC45BB45E9842CC0ED013 /* Build configuration list for PBXNativeTarget "BeachDayWatchWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ABD4F755C1D991B9FF57EF84 /* Release */,
+				9512E75D9E50DC3F267EFDBE /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

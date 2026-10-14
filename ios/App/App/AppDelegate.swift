@@ -21,6 +21,17 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         if ProcessInfo.processInfo.arguments.contains("--probe-live-activity-start-only") {
             BeachSessionActivityPlugin.runProbeStartOnly()
         }
+        // Sends a home beach + favorites to a paired watch, the same path the
+        // WatchSync plugin takes: --probe-watch-sync <home|-> [fav,fav] [lastViewed].
+        if let i = ProcessInfo.processInfo.arguments.firstIndex(of: "--probe-watch-sync"),
+           ProcessInfo.processInfo.arguments.count > i + 1 {
+            let args = ProcessInfo.processInfo.arguments
+            let favs = args.count > i + 2 ? args[i + 2].split(separator: ",").map(String.init) : []
+            let last = args.count > i + 3 ? args[i + 3] : nil
+            WatchSyncHub.shared.send(home: WatchSync.cleanSlug(args[i + 1]),
+                                     favorites: WatchSync.clean(home: nil, favorites: favs).favorites,
+                                     lastViewed: WatchSync.cleanSlug(last))
+        }
         #endif
         return true
     }

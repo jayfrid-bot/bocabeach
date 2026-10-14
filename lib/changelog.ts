@@ -16,6 +16,14 @@ export interface ChangelogEntry {
 }
 
 export const CHANGELOG: ChangelogEntry[] = [
+  // DRAFT, not live: add when the iOS build that carries the Apple Watch app ships.
+  // {
+  //   date: "YYYY-MM-DD",
+  //   title: "Beach Day on your Apple Watch",
+  //   details:
+  //     "See your beach's score, flag and rip current status, water temperature and best time right on your wrist. Add the Beach Day complication to your watch face or Smart Stack. Your home beach comes over from your iPhone, or pick any beach on the watch. Needs the latest iPhone app.",
+  //   tag: "new",
+  // },
   {
     date: "2026-10-13",
     title: "Steadier seaweed readings",

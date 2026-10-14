@@ -2,6 +2,9 @@
 // presence defaults, etc). SSR-safe: every export is a no-op / returns null
 // on the server.
 
+import { getLastViewedBeach } from "@/lib/lastViewedBeach";
+import { syncWatchBeaches } from "@/lib/watchSync";
+
 const STORAGE_KEY = "bd:home-beach";
 
 export function getHomeBeach(): string | null {
@@ -20,6 +23,9 @@ export function setHomeBeach(slug: string): void {
   } catch {
     /* private mode / storage disabled */
   }
+  // Apple Watch app (iOS only; a no-op anywhere else). Sent even when storage
+  // failed: the watch should still follow what the person just picked.
+  void syncWatchBeaches(slug, [], getLastViewedBeach());
 }
 
 export function clearHomeBeach(): void {
@@ -29,4 +35,5 @@ export function clearHomeBeach(): void {
   } catch {
     /* ignore */
   }
+  void syncWatchBeaches(null, [], getLastViewedBeach());
 }

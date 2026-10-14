@@ -17,5 +17,6 @@ import Capacitor
 class BeachBridgeViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginType(BeachSessionActivityPlugin.self)
+        bridge?.registerPluginType(WatchSyncPlugin.self)
     }
 }

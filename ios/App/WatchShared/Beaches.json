@@ -1,0 +1,293 @@
+[
+ {
+  "slug": "asbury-park",
+  "name": "Asbury Park",
+  "region": "Monmouth County, NJ",
+  "lat": 40.1785,
+  "lon": -74.0335
+ },
+ {
+  "slug": "biloxi",
+  "name": "Biloxi",
+  "region": "Harrison County, MS",
+  "lat": 30.396,
+  "lon": -88.8853
+ },
+ {
+  "slug": "boca-raton",
+  "name": "Boca Raton",
+  "region": "Palm Beach County, FL",
+  "lat": 26.3587,
+  "lon": -80.0686,
+  "shore": [
+   [
+    26.3822,
+    -80.0683
+   ],
+   [
+    26.3629,
+    -80.0691
+   ],
+   [
+    26.3535,
+    -80.0699
+   ],
+   [
+    26.3347,
+    -80.073
+   ]
+  ]
+ },
+ {
+  "slug": "cannon-beach",
+  "name": "Cannon Beach",
+  "region": "Clatsop County, OR",
+  "lat": 45.8918,
+  "lon": -123.9615
+ },
+ {
+  "slug": "cape-may",
+  "name": "Cape May",
+  "region": "Cape May, NJ",
+  "lat": 38.9484,
+  "lon": -74.8574
+ },
+ {
+  "slug": "cocoa-beach",
+  "name": "Cocoa Beach",
+  "region": "Brevard County, FL",
+  "lat": 28.3206,
+  "lon": -80.6092
+ },
+ {
+  "slug": "coney-island",
+  "name": "Coney Island",
+  "region": "Kings County, NY",
+  "lat": 40.5721,
+  "lon": -73.9818
+ },
+ {
+  "slug": "crescent-bay-park",
+  "name": "Crescent Bay Park",
+  "region": "Los Angeles County, CA",
+  "lat": 34.0233,
+  "lon": -118.5131
+ },
+ {
+  "slug": "daytona-beach",
+  "name": "Daytona Beach",
+  "region": "Volusia County, FL",
+  "lat": 29.2108,
+  "lon": -81.0228
+ },
+ {
+  "slug": "deerfield-beach",
+  "name": "Deerfield Beach",
+  "region": "Broward County, FL",
+  "lat": 26.3165,
+  "lon": -80.0742
+ },
+ {
+  "slug": "folly-beach",
+  "name": "Folly Beach",
+  "region": "Charleston County, SC",
+  "lat": 32.6613,
+  "lon": -79.9237
+ },
+ {
+  "slug": "fort-lauderdale",
+  "name": "Fort Lauderdale Beach",
+  "region": "Broward County, FL",
+  "lat": 26.1195,
+  "lon": -80.1035
+ },
+ {
+  "slug": "galveston",
+  "name": "Galveston",
+  "region": "Galveston, TX",
+  "lat": 29.318,
+  "lon": -94.7527
+ },
+ {
+  "slug": "grand-isle",
+  "name": "Grand Isle",
+  "region": "Jefferson County, LA",
+  "lat": 29.2366,
+  "lon": -89.9873
+ },
+ {
+  "slug": "gulf-shores",
+  "name": "Gulf Shores",
+  "region": "Baldwin County, AL",
+  "lat": 30.246,
+  "lon": -87.7008
+ },
+ {
+  "slug": "hammonasset-beach",
+  "name": "Hammonasset Beach",
+  "region": "Middlesex County, CT",
+  "lat": 41.2579,
+  "lon": -72.5559
+ },
+ {
+  "slug": "hampton-beach",
+  "name": "Hampton Beach",
+  "region": "Rockingham County, NH",
+  "lat": 42.8723,
+  "lon": -70.8162
+ },
+ {
+  "slug": "huntington-beach",
+  "name": "Huntington Beach",
+  "region": "Orange County, CA",
+  "lat": 33.6534,
+  "lon": -117.9981
+ },
+ {
+  "slug": "jacksonville-beach",
+  "name": "Jacksonville Beach",
+  "region": "Duval County, FL",
+  "lat": 30.3902,
+  "lon": -81.3944
+ },
+ {
+  "slug": "la-jolla",
+  "name": "La Jolla",
+  "region": "San Diego County, CA",
+  "lat": 32.8614,
+  "lon": -117.2553
+ },
+ {
+  "slug": "long-beach",
+  "name": "Long Beach",
+  "region": "Los Angeles County, CA",
+  "lat": 33.7095,
+  "lon": -118.2828
+ },
+ {
+  "slug": "miami-beach",
+  "name": "Miami Beach",
+  "region": "Miami-Dade County, FL",
+  "lat": 25.7345,
+  "lon": -80.157
+ },
+ {
+  "slug": "misquamicut",
+  "name": "Misquamicut",
+  "region": "Washington County, RI",
+  "lat": 41.3207,
+  "lon": -71.8137
+ },
+ {
+  "slug": "montauk",
+  "name": "Montauk",
+  "region": "Suffolk County, NY",
+  "lat": 41.0359,
+  "lon": -71.9545
+ },
+ {
+  "slug": "myrtle-beach",
+  "name": "Myrtle Beach",
+  "region": "Horry County, SC",
+  "lat": 33.6802,
+  "lon": -78.8928
+ },
+ {
+  "slug": "nags-head",
+  "name": "Nags Head",
+  "region": "Dare County, NC",
+  "lat": 35.8341,
+  "lon": -75.5577
+ },
+ {
+  "slug": "naples",
+  "name": "Naples",
+  "region": "Collier County, FL",
+  "lat": 26.1423,
+  "lon": -81.796
+ },
+ {
+  "slug": "ocean-shores",
+  "name": "Ocean Shores",
+  "region": "Grays Harbor County, WA",
+  "lat": 46.9737,
+  "lon": -124.1563
+ },
+ {
+  "slug": "old-orchard-beach",
+  "name": "Old Orchard Beach",
+  "region": "York County, ME",
+  "lat": 43.5206,
+  "lon": -70.3681
+ },
+ {
+  "slug": "pismo-beach",
+  "name": "Pismo Beach",
+  "region": "San Luis Obispo County, CA",
+  "lat": 35.1428,
+  "lon": -120.6413
+ },
+ {
+  "slug": "rehoboth-beach",
+  "name": "Rehoboth Beach",
+  "region": "Sussex County, DE",
+  "lat": 38.7168,
+  "lon": -75.076
+ },
+ {
+  "slug": "santa-cruz",
+  "name": "Santa Cruz",
+  "region": "Santa Cruz County, CA",
+  "lat": 36.9636,
+  "lon": -122.0186
+ },
+ {
+  "slug": "santa-monica",
+  "name": "Santa Monica",
+  "region": "Los Angeles County, CA",
+  "lat": 34.0233,
+  "lon": -118.5131
+ },
+ {
+  "slug": "seaside",
+  "name": "Seaside",
+  "region": "Monterey County, CA",
+  "lat": 36.6041,
+  "lon": -121.8719
+ },
+ {
+  "slug": "south-padre-island",
+  "name": "South Padre Island",
+  "region": "Cameron County, TX",
+  "lat": 26.0292,
+  "lon": -97.1527
+ },
+ {
+  "slug": "tybee-island",
+  "name": "Tybee Island",
+  "region": "Chatham County, GA",
+  "lat": 32.0002,
+  "lon": -80.8457
+ },
+ {
+  "slug": "virginia-beach",
+  "name": "Virginia Beach",
+  "region": "Virginia Beach, VA",
+  "lat": 36.8529,
+  "lon": -75.978
+ },
+ {
+  "slug": "waikiki",
+  "name": "Waikīkī",
+  "region": "Honolulu County, HI",
+  "lat": 21.2815,
+  "lon": -157.8387
+ },
+ {
+  "slug": "wrightsville-beach",
+  "name": "Wrightsville Beach",
+  "region": "New Hanover County, NC",
+  "lat": 34.2085,
+  "lon": -77.7964
+ }
+]
