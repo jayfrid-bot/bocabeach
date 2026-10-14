@@ -38,10 +38,9 @@ export function OwnerCodeGate({ initialError, onEnrolled }: { initialError: stri
         </label>
         <input
           id="owner-code"
-          name="owner-code"
           type="password"
           inputMode="text"
-          autoComplete="off"
+          autoComplete="one-time-code"
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}

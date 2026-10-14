@@ -84,18 +84,27 @@ describe("tapping a notification", () => {
     const tap = plugin.listeners.pushNotificationActionPerformed;
     expect(tap).toBeTypeOf("function");
 
+    const settle = () => new Promise((r) => setTimeout(r, 20)); // the tap handler loads the beach list first
+
     tap({ notification: { data: { url: "https://app.isitbeachday.com/admin/review?alert=42" } } });
+    await settle();
     expect(assign).toHaveBeenLastCalledWith("/admin/review?alert=42");
 
     tap({ notification: { data: { url: "/boca-raton" } } }); // the beach alerts, as before
+    await settle();
     expect(assign).toHaveBeenLastCalledWith("/boca-raton");
 
+    tap({ notification: { data: { url: "https://app.isitbeachday.com/" } } }); // the test push
+    await settle();
+    expect(assign).toHaveBeenLastCalledWith("/");
+
     assign.mockClear();
-    for (const url of ["https://evil.example/admin/review?alert=1", "//evil.example", "javascript:alert(1)", "/api/quality/owner/list", "/admin/other", undefined, 7]) {
+    for (const url of ["https://evil.example/admin/review?alert=1", "//evil.example", "javascript:alert(1)", "/api/quality/owner/list", "/admin/other", "/get-app", "/not-a-beach", undefined, 7]) {
       tap({ notification: { data: { url } } });
     }
     tap({ notification: {} });
     tap(undefined);
+    await settle();
     expect(assign).not.toHaveBeenCalled();
   });
 });

@@ -261,10 +261,18 @@ export async function initNativeTapHandling(): Promise<void> {
     const PN = getPlugin();
     void PN.addListener("pushNotificationActionPerformed", (action: ActionPerformed) => {
       // The payload is outside data: only a path on this app that a push is known to open (never an arbitrary
-      // address). The owner push opens /admin/review?alert=<id>.
+      // address). The owner push opens /admin/review?alert=<id>; the others open a beach page or "/".
       const raw = (action?.notification?.data as { url?: unknown } | undefined)?.url;
-      const target = safeTapTarget(raw, [window.location.origin, "https://app.isitbeachday.com"]);
-      if (target) window.location.assign(target);
+      void (async () => {
+        try {
+          // The beach list is loaded only on a tap, so it does not weigh on every page.
+          const { getLocation } = await import("@/config/locations");
+          const target = safeTapTarget(raw, [window.location.origin, "https://app.isitbeachday.com"], (slug) => !!getLocation(slug));
+          if (target) window.location.assign(target);
+        } catch {
+          /* a tap that cannot be routed does nothing */
+        }
+      })();
     });
   } catch {
     /* no-op off-device */

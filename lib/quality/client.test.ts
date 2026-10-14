@@ -4,6 +4,7 @@ import {
   CARD_REFRESH_MINUTES,
   CARD_REFRESH_WORST_CASE_MINUTES,
   CARD_UPDATE_NOTE,
+  classifyOwnerFailure,
   enrollGateText,
   enrollThisPhone,
   OWNER_TOKEN_KEY,
@@ -98,6 +99,14 @@ describe("enrolling", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: false, error: "bad-code" }), { status: 403 })));
     expect(await enrollThisPhone("nope", "dev-1")).toEqual({ ok: false, error: "bad-code", status: 403 });
     expect(m.size).toBe(0);
+  });
+});
+
+describe("classifyOwnerFailure", () => {
+  it("only a 401 or 403 means 'not the owner'; a passing trouble keeps the owner signed in", () => {
+    expect(classifyOwnerFailure(401)).toBe("unauthorized");
+    expect(classifyOwnerFailure(403)).toBe("unauthorized");
+    for (const status of [0, 400, 404, 429, 500, 502, 503, 504]) expect(classifyOwnerFailure(status), String(status)).toBe("error");
   });
 });
 

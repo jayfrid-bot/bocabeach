@@ -368,9 +368,20 @@ no push token, so the phone gets no owner pushes until you enroll in the app.
 **Tapping an owner push.** The push carries `https://app.isitbeachday.com/admin/review?alert=<id>`.
 The app's tap handler (`lib/push/native.ts`, `lib/push/tapTarget.ts`) opens that
 path in the web view. It accepts only a path on this app that a push is known to
-open: a beach page (`/<slug>`), `/admin/review` (with a plain numeric `alert`) and
-`/admin/report`. An address on another host or scheme, a protocol-relative address,
-and any other path are ignored.
+open: `/` (the test push), a **real beach page** (`/<slug>`, checked against
+`config/locations.ts`, which includes the beaches the admin console added),
+`/admin/review` (with a plain numeric `alert`) and `/admin/report`. Every other
+top-level route is refused, `/get-app` (it redirects off the app), `/support`,
+`/find`, `/privacy`, `/sticker` and `/api` among them. A test walks the `app/`
+folder so a new route cannot slip in: it fails until the route is added to
+`RESERVED_ROUTES`. A second test reads every push producer's `url` and checks it
+passes. An address on another host or scheme, a protocol-relative address, and any
+other path are ignored.
+
+**If the review screen cannot load.** Only a 401 or 403 shows the Owner code box.
+A network error, a 429 or a 5xx keeps the owner signed in and shows "Try again",
+never the code box: enrolling again from the same device would revoke the working
+session.
 
 Enrollment is rate limited: 5 tries per hour per address, 20 per hour in all. The
 counters live in D1 (`owner_enroll_attempts`). One atomic statement bumps a

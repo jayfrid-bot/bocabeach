@@ -19,6 +19,7 @@ import { getDeviceId } from "@/lib/deviceId";
 import { nativePushTokenForOwner } from "@/lib/push/native";
 import {
   CARD_UPDATE_NOTE,
+  classifyOwnerFailure,
   enrollThisPhone,
   ownerErrorText,
   ownerPost,
@@ -40,7 +41,10 @@ interface ListReply {
 
 type Phase =
   | { kind: "loading" }
-  | { kind: "closed"; error: string }
+  /** This phone is not (or no longer) the owner: 401/403 from the owner routes, or a refused enrollment. Shows the code box. */
+  | { kind: "unauthorized"; error: string | null }
+  /** The owner routes failed for another reason (network, 429, 5xx). Keeps the Retry button: never the code box, never a re-enroll. */
+  | { kind: "error"; error: string }
   | { kind: "ready"; open: AlertView[]; recent: AlertView[] };
 
 const CLARITY_LABEL: Record<string, string> = { clear: "Clear", slightly_murky: "Slightly murky", murky: "Murky" };
@@ -221,11 +225,14 @@ export function QualityReview({ focusAlertId }: { focusAlertId: number | null })
         );
       }
     } else {
-      if (r.status === 401) {
+      if (classifyOwnerFailure(r.status) === "unauthorized") {
         writeOwnerToken(null);
         writeOwnerHint(false);
+        setPhase({ kind: "unauthorized", error: null });
+      } else {
+        // The token stays: a flaky connection must never cost the owner the session.
+        setPhase({ kind: "error", error: r.error });
       }
-      setPhase({ kind: "closed", error: r.error });
     }
   }, []);
 
@@ -235,7 +242,7 @@ export function QualityReview({ focusAlertId }: { focusAlertId: number | null })
       if (code) {
         const e = await enrollThisPhone(code, getDeviceId());
         if (!e.ok) {
-          setPhase({ kind: "closed", error: e.error });
+          setPhase({ kind: "unauthorized", error: e.error });
           return;
         }
       }
@@ -252,15 +259,35 @@ export function QualityReview({ focusAlertId }: { focusAlertId: number | null })
   );
 
   // A phone that is not enrolled sees one box and one button, and nothing else.
-  if (phase.kind === "closed") {
+  if (phase.kind === "unauthorized") {
     return (
       <OwnerCodeGate
-        initialError={phase.error === "unauthorized" ? null : phase.error}
+        initialError={phase.error}
         onEnrolled={() => {
           setPhase({ kind: "loading" });
           void load();
         }}
       />
+    );
+  }
+  // An enrolled owner whose request failed for a passing reason: say so and let them retry. No code box.
+  if (phase.kind === "error") {
+    return (
+      <main className="mx-auto max-w-xl px-4 py-10 sm:px-6">
+        <section className={cardCls}>
+          <p className="text-slate-800 dark:text-slate-100">{ownerErrorText(phase.error)}</p>
+          <button
+            type="button"
+            className={`${bigBtn} mt-4 bg-slate-900/5 text-slate-800 dark:bg-white/10 dark:text-white`}
+            onClick={() => {
+              setPhase({ kind: "loading" });
+              void load();
+            }}
+          >
+            Try again
+          </button>
+        </section>
+      </main>
     );
   }
   if (phase.kind === "loading") {

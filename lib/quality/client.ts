@@ -142,6 +142,15 @@ export function ownerErrorText(error: string): string {
 }
 
 /**
+ * What a failed owner call means for the review screen. 401 and 403 say this phone is not (or no longer) the
+ * owner: show the code box. Anything else (no connection, 429, 5xx, a bad reply) is a passing trouble: keep the
+ * owner signed in and show Retry, never the code box, because enrolling again would revoke the working session. Pure.
+ */
+export function classifyOwnerFailure(status: number): "unauthorized" | "error" {
+  return status === 401 || status === 403 ? "unauthorized" : "error";
+}
+
+/**
  * The one line a phone that is NOT enrolled may be told after it tried a code. It says nothing about what the
  * owner screens are: a throttle and a lost connection are plain, and every other refusal is one sentence. Pure.
  */

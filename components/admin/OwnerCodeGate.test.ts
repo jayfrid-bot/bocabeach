@@ -11,7 +11,8 @@ describe("OwnerCodeGate", () => {
     expect(m).toContain("Owner code");
     expect(m).toContain('type="password"');
     expect(m).toContain("Enroll");
-    expect(m).toContain('autoComplete="off"');
+    expect(m).toContain('autoComplete="one-time-code"'); // not a login field: no password manager prompt
+    expect(m).not.toMatch(/name=/); // no field name for a form filler to latch onto
     expect((m.match(/<input/g) ?? []).length).toBe(1);
     expect((m.match(/<button/g) ?? []).length).toBe(1);
     expect(m).not.toMatch(/quality|review|report|alert|beach/i);
