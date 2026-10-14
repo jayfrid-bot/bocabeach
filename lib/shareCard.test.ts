@@ -294,6 +294,20 @@ describe("shareCardModel", () => {
       expect(m.tiles.find((t) => t.key === "seaweed")).toMatchObject({ value: "Low", note: "8% covered · as of 5:30 PM" });
     });
 
+    it("a retained latest from hours ago (a zero-fresh evening) says when, seaweed and clarity", () => {
+      // NOW_MS is the card's clock; the last gradable capture was 6:00 PM and nothing newer exists.
+      const late = Date.parse("2026-09-14T23:30:00.000Z"); // 7:30 PM at the beach
+      const m = shareCardModel(
+        response({
+          sargassum: wrap({ level: "low", coveragePct: 8, source: "latest", capturedAtLocal: "2026-09-14T18:00-04:00" }) as ConditionsSnapshot["sargassum"],
+          clarity: wrap<ClarityData>({ level: "clear", pct: 82, source: "latest", capturedAtLocal: "2026-09-14T18:00-04:00" }),
+        }),
+        late,
+      );
+      expect(m.tiles.find((t) => t.key === "seaweed")?.note).toBe("8% covered · as of 6:00 PM");
+      expect(m.tiles.find((t) => t.key === "clarity")?.note).toBe("as of 6:00 PM");
+    });
+
     it("a live read keeps its plain note, and a fallback with no coverage still says when", () => {
       const live = shareCardModel(
         response({

@@ -279,9 +279,9 @@ the frame's time publishes no seaweed or water for that cam, and the same check
 at the tick's time blanks every cam in the group, carried ones too; crowd
 stays), a **jump check** (a moderate/high seaweed read is held until the same
 cam's next *different* frame, or another cam's *fresh* read in the same tick,
-agrees; held claims live in `pendingClaims` on their own 240-minute clock, same
-local date only, because Fort Lauderdale's single courier cam is read about every
-3 hours), and an optional per-cam **`visionHint`** in `vision-cams.json` that is
+agrees; held claims live in `pendingClaims` on their own 300-minute clock from when
+they were scored, same local date only, because Fort Lauderdale's single courier
+cam is read about every 3 hours and each frame can be read up to 150 minutes late), and an optional per-cam **`visionHint`** in `vision-cams.json` that is
 added to the prompt for Gemini and the OpenAI-compatible providers (Clef is
 untouched). Beach coordinates for the gate come from `config/archive-cams.json`.
 The file also carries `lastSeaweed` and `lastWater` (today's newest capture with
@@ -289,11 +289,14 @@ a seaweed level / a water grade; kept apart because their validity diverges) and
 `morning` (the 5 AM to noon capture with the most seaweed-level cams). Seaweed
 readers pick `latest`, else `lastSeaweed`, else `morning`; water readers pick
 `latest`, else `lastWater`, else `morning`, through `lib/camGroup.ts`, which also
-rejects any group from another beach-local date (seaweed: `latest` too), while
-busyness keeps `latest`. A fallback read shows "as of 5:30 PM" on the dashboard
-and the share card, and `pendingConfirmation` (a held claim in the shown capture)
-stops the push copy saying "no seaweed" and holds back the "turned Excellent"
-alert until the claim resolves.
+rejects any group from another beach-local date or with an unreadable one
+(seaweed: `latest` too), while busyness keeps `latest`. A fallback read, or any
+read over 30 minutes old (a `latest` the producer kept because no cam had a new
+frame), shows "as of 6:00 PM" on the dashboard and the share card.
+`pendingConfirmation` comes from open (unconfirmed, same-day, under 300 minutes)
+entries in the feed's `pendingClaims`, whatever group the card shows; it stops the
+push copy saying "no seaweed" and holds back the "turned Excellent" alert until the
+claim resolves.
 
 **The webcam archive keeps one shot per cam per slot: one per hour, about one per 10 minutes in golden hour.** `scripts/cam_seaweed.py`
 POSTs each cam's still to `/api/cam-frames` on every `sargassum.yml` tick, with

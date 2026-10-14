@@ -12,6 +12,7 @@ import { beachDayVerdict } from "@/lib/format";
 import { uvBand } from "@/lib/uv";
 import { clarityDisplayWord } from "@/lib/sources/clarity";
 import { seaweedAsOf } from "@/lib/sources/sargassum";
+import { camReadAsOf } from "@/lib/camGroup";
 import { listLocations } from "@/config/locations";
 import { applyLiveRipCap, deriveMetrics } from "@/lib/score";
 import { ripCapFor } from "@/lib/ripRisk/resolve";
@@ -356,7 +357,7 @@ export function shareCardModel(
     const pct = typeof weed.coveragePct === "number" ? `${Math.round(weed.coveragePct)}% covered` : undefined;
     // An evening card must not pass a 5:30 PM read off as current: a fallback read
     // carries its read time.
-    const note = [pct, seaweedAsOf(weed, tz)].filter(Boolean).join(" · ") || undefined;
+    const note = [pct, seaweedAsOf(weed, tz, nowMs)].filter(Boolean).join(" · ") || undefined;
     push("seaweed", "Seaweed", capitalize(weed.level), note);
   }
 
@@ -365,11 +366,8 @@ export function shareCardModel(
   const clarityData = snapshot?.clarity?.data;
   if (clarityData?.level) {
     // Like seaweed, an earlier capture (kept past the low-sun dusk frames) says when.
-    const clarityAsOf = clarityData.source && clarityData.source !== "latest" && clarityData.capturedAtLocal
-      ? safeTime(clarityData.capturedAtLocal, tz)
-      : undefined;
     push("clarity", "Water clarity", clarityDisplayWord(clarityData.level, clarityData.pct),
-      clarityAsOf ? `as of ${clarityAsOf}` : undefined);
+      camReadAsOf(clarityData.capturedAtLocal, tz, clarityData.source !== undefined && clarityData.source !== "latest", nowMs));
   }
 
   // Crowd only when a cam actually read the beach TODAY — busyness.data.level

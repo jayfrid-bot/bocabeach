@@ -5,6 +5,7 @@ import { describe, it, expect } from "vitest";
 import { computeScore, DEFAULT_SCORING } from "@/lib/score";
 import { resolveScoring } from "@/lib/profile/resolve";
 import { summarizeForPush } from "@/lib/push/notify";
+import { summarizeSeaweed } from "@/lib/sources/sargassum";
 import {
   excellentDecision,
   isDaylight,
@@ -172,6 +173,29 @@ describe("excellentDecision", () => {
     // Nothing is recorded by the null, so the same day's alert is still available next run.
     const later = excellentDecision({ ...input, res: withSeaweed(undefined) });
     expect(later?.dedupKey).toBe("score-excellent:2026-09-02");
+  });
+
+  it("waits on an open claim in the feed even when the card shows a clean earlier group", () => {
+    const NOW_DATE = new Date(NOW);
+    const open = (claimedAt: string, confirmed = false) =>
+      summarizeSeaweed(
+        {
+          latest: { capturedAtLocal: "2026-09-02T13:50-04:00", cams: [{ name: "Elbo", level: null, unconfirmed: true }] as never },
+          lastSeaweed: { capturedAtLocal: "2026-09-02T11:00-04:00", cams: [{ name: "Elbo", level: "none" }] as never },
+          pendingClaims: { elbo: { level: "moderate", claimedAt, ...(confirmed ? { confirmed: true } : {}) } },
+        },
+        "2026-09-02",
+        { now: NOW_DATE, timezone: "America/New_York" },
+      )!;
+    const withSeaweed = (data: ReturnType<typeof open>): ConditionsResponse => ({
+      ...res,
+      snapshot: { ...res.snapshot, sargassum: wrapped(data) },
+    });
+    const input = { device: device(), summary: summary(95), nowMs: NOW, date: "2026-09-02" };
+    expect(excellentDecision({ ...input, res: withSeaweed(open("2026-09-02T17:55:00Z")) })).toBeNull();
+    // a confirmed marker, or yesterday's claim, does not hold it back
+    expect(excellentDecision({ ...input, res: withSeaweed(open("2026-09-02T17:55:00Z", true)) })).not.toBeNull();
+    expect(excellentDecision({ ...input, res: withSeaweed(open("2026-09-01T17:55:00Z")) })).not.toBeNull();
   });
 
   it("uses a per-day key, so tomorrow can fire again", () => {

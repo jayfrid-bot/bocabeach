@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pickCamGroup, groupLocalDate, type CamGroupSource } from "@/lib/camGroup";
+import { pickCamGroup, groupLocalDate, camReadAsOf, type CamGroupSource } from "@/lib/camGroup";
 
 const g = (capturedAtLocal: string, ok: boolean) => ({ capturedAtLocal, cams: [{ ok }] });
 const has = (x: { cams?: unknown[] }) => (x.cams ?? []).some((c) => (c as { ok: boolean }).ok);
@@ -57,10 +57,41 @@ describe("pickCamGroup — beach-local date", () => {
     expect(pickCamGroup(feed, WATER, has, { nowLocalDate: TODAY })?.source).toBe("latest"); // water has its own night/stale gate
   });
 
-  it("does not reject a group whose capture time it cannot read", () => {
-    expect(pickCamGroup({ latest: { cams: [{ ok: true }] } }, SEAWEED, has, { nowLocalDate: TODAY, dateGateLatest: true })?.source).toBe("latest");
+  it("fails closed: an undated or malformed group is rejected once the local date is known", () => {
+    const undated = { cams: [{ ok: true }] };
+    expect(pickCamGroup({ latest: undated }, SEAWEED, has, { nowLocalDate: TODAY, dateGateLatest: true })).toBeNull();
+    expect(pickCamGroup({ lastSeaweed: undated }, SEAWEED, has, { nowLocalDate: TODAY })).toBeNull();
+    expect(pickCamGroup({ lastWater: g("garbage", true) }, WATER, has, { nowLocalDate: TODAY })).toBeNull();
+    // ...an undated latest is still fine where latest is not date-gated (water's own gates judge it)
+    expect(pickCamGroup({ latest: undated }, WATER, has, { nowLocalDate: TODAY })?.source).toBe("latest");
+    // ...and with no local date known nothing is checked
+    expect(pickCamGroup({ latest: undated }, SEAWEED, has, { dateGateLatest: true })?.source).toBe("latest");
     expect(groupLocalDate({ capturedAtLocal: "garbage" })).toBeUndefined();
     expect(groupLocalDate({ capturedAtLocal: at("17:30") })).toBe(TODAY);
     expect(groupLocalDate(null)).toBeUndefined();
+  });
+});
+
+describe("camReadAsOf", () => {
+  const TZ = "America/New_York";
+  const stamp = "2026-10-13T18:00-04:00";
+  const ms = (hhmm: string) => Date.parse(`2026-10-13T${hhmm}-04:00`);
+
+  it("always speaks for a fallback group", () => {
+    expect(camReadAsOf(stamp, TZ, true)).toBe("as of 6:00 PM");
+    expect(camReadAsOf(stamp, TZ, true, ms("18:05"))).toBe("as of 6:00 PM");
+  });
+
+  it("speaks for a newest capture only once it is over 30 minutes old", () => {
+    expect(camReadAsOf(stamp, TZ, false, ms("18:30"))).toBeUndefined(); // exactly 30 min: still current
+    expect(camReadAsOf(stamp, TZ, false, ms("18:31"))).toBe("as of 6:00 PM");
+    expect(camReadAsOf(stamp, TZ, false, ms("19:30"))).toBe("as of 6:00 PM");
+    expect(camReadAsOf(stamp, TZ, false)).toBeUndefined();
+  });
+
+  it("says nothing when the time or timezone is unusable", () => {
+    expect(camReadAsOf(undefined, TZ, true)).toBeUndefined();
+    expect(camReadAsOf("garbage", TZ, true)).toBeUndefined();
+    expect(camReadAsOf(stamp, "Not/AZone", true)).toBeUndefined();
   });
 });

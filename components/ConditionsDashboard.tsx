@@ -1046,7 +1046,7 @@ export function ConditionsDashboard({
                 // The compared-to-usual phrase rides on the unclamped `extra`
                 // line: inside the clamped sub it ran to 4 lines on a 390 px
                 // phone and was cut off (CI, Deerfield, 2026-10-01).
-                sub={seaweedTileSub(sg, tz)}
+                sub={seaweedTileSub(sg, tz, nowMs)}
                 extra={
                   [seaweedVsAvgPhrase(sg.vsAvg), nextCamReadPhrase(sg.nextReadIso, tz, nowMs)]
                     .filter(Boolean)

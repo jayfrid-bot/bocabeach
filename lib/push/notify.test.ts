@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { summarizeSeaweed } from "@/lib/sources/sargassum";
 import {
   decideNotifications,
   summarizeForPush,
@@ -154,6 +155,30 @@ describe("summarizeForPush", () => {
     expect(summarizeForPush(res({ subScores }), loc).pros).toEqual(["warm water", "quiet", "no seaweed"]);
     // A held cam's moderate/high claim is left out of the level, so "none" may be wrong: say nothing about it.
     expect(summarizeForPush(res({ subScores, pending: true }), loc).pros).toEqual(["warm water", "quiet"]);
+  });
+
+  it("Fort Lauderdale's first held observation: the card falls back to a clean group, and the push still stays quiet", () => {
+    // The newest capture holds a claim (publishes no seaweed), so the seaweed summary falls
+    // back to an earlier clean group; the open claim in the feed must still reach the push.
+    const NOW = new Date("2026-10-13T18:00:00Z");
+    const seaweed = summarizeSeaweed(
+      {
+        latest: { capturedAtLocal: "2026-10-13T13:50-04:00", cams: [{ name: "Elbo", level: null, unconfirmed: true }] as never },
+        lastSeaweed: { capturedAtLocal: "2026-10-13T11:00-04:00", cams: [{ name: "Elbo", level: "none" }] as never },
+        pendingClaims: { elbo: { level: "moderate", claimedAt: "2026-10-13T17:55:00Z" } },
+      },
+      "2026-10-13",
+      { now: NOW, timezone: "America/New_York" },
+    )!;
+    expect(seaweed.level).toBe("none");
+    expect(seaweed.pendingConfirmation).toBe(true);
+    const subScores = [
+      { key: "waterTemp", label: "Water temperature", score: 90, weight: 0.1 },
+      { key: "sargassum", label: "Seaweed (sargassum)", score: 100, weight: 0.07, display: "None" },
+    ];
+    const r = res({ subScores });
+    (r.snapshot as unknown as { sargassum: unknown }).sargassum = { data: seaweed };
+    expect(summarizeForPush(r, loc).pros).toEqual(["warm water"]);
   });
 
   it("still names a real seaweed drawback while a claim is pending", () => {

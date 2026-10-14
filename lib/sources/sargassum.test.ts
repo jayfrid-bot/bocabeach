@@ -2,6 +2,7 @@ import { afterEach, describe, it, expect, vi } from "vitest";
 import {
   summarizeSeaweed,
   fetchSargassum,
+  hasOpenClaim,
   seaweedAsOf,
   seaweedTileSub,
   type CamSeaweedFeed,
@@ -26,6 +27,11 @@ const ONE_CAM = [{ id: "cam-1", name: "Cam 1", provider: "p", embedType: "image"
 
 const BOCA_LOCATION: Location = { ...CAMLESS_LOCATION, slug: "boca-raton", cams: ONE_CAM };
 const DEERFIELD_LOCATION: Location = { ...CAMLESS_LOCATION, slug: "deerfield-beach", cams: ONE_CAM };
+
+/** Today's date at the test beaches' timezone (the fetch path judges groups against it). */
+function todayAtBeach(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: CAMLESS_LOCATION.timezone }).format(new Date());
+}
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -277,6 +283,96 @@ describe("summarizeSeaweed", () => {
     });
   });
 
+  describe("fail closed: with the local date known, an undated or malformed capture is not today's", () => {
+    it("rejects an undated latest, lastSeaweed and morning", () => {
+      const undated = { cams: [{ name: "Inlet", level: "low" }] as never };
+      expect(summarizeSeaweed({ latest: undated, lastSeaweed: undated, morning: undated }, "2026-10-14")).toBeNull();
+      const garbage = { capturedAtLocal: "yesterday-ish", cams: [{ name: "Inlet", level: "low" }] as never };
+      expect(summarizeSeaweed({ latest: garbage, lastSeaweed: garbage, morning: garbage }, "2026-10-14")).toBeNull();
+    });
+
+    it("accepts them only when the local date is unknown", () => {
+      const undated = { cams: [{ name: "Inlet", level: "low" }] as never };
+      expect(summarizeSeaweed({ latest: undated })!.level).toBe("low");
+    });
+
+    it("isMorning needs a successfully parsed hour before 10", () => {
+      const cams = [{ name: "Inlet", level: "low" }] as never;
+      const gated = { capturedAtLocal: "2026-10-13T06:10-04:00", cams: [{ name: "x", level: null, lowSun: true }] as never };
+      const isMorning = (capturedAtLocal: string | undefined) =>
+        summarizeSeaweed({ latest: gated, morning: { capturedAtLocal, cams } })!.isMorning;
+      expect(isMorning("2026-10-13T08:40-04:00")).toBe(true);
+      expect(isMorning("2026-10-13T10:00-04:00")).toBe(false);
+      expect(isMorning(undefined)).toBe(false);
+      expect(isMorning("garbage")).toBe(false);
+      expect(isMorning("2026-10-13Tab:00-04:00")).toBe(false);
+      expect(isMorning("2026-10-13T25:00-04:00")).toBe(false);
+    });
+  });
+
+  describe("pendingConfirmation from the feed's pendingClaims (independent of the group shown)", () => {
+    const TZ = "America/New_York";
+    const NOW = new Date("2026-10-13T18:00:00Z"); // 2 PM at the beach
+    const opts = { now: NOW, timezone: TZ };
+    const claim = (minutesAgo: number, over: Record<string, unknown> = {}) => ({
+      level: "moderate",
+      claimedAt: new Date(NOW.getTime() - minutesAgo * 60_000).toISOString().replace(/\.\d+Z$/, "Z"),
+      ...over,
+    });
+    // Fort Lauderdale's first held observation: the newest capture publishes no seaweed,
+    // so the card falls back to an earlier, clean group.
+    const held = { capturedAtLocal: "2026-10-13T13:50-04:00", cams: [{ name: "Elbo", level: null, unconfirmed: true }] as never };
+    const clean = { capturedAtLocal: "2026-10-13T11:00-04:00", cams: [{ name: "Elbo", level: "none" }] as never };
+
+    it("is true when the card falls back to a clean lastSeaweed while a claim is open", () => {
+      const d = summarizeSeaweed(
+        { latest: held, lastSeaweed: clean, pendingClaims: { elbo: claim(10) } },
+        "2026-10-13",
+        opts,
+      )!;
+      expect(d.source).toBe("lastSeaweed");
+      expect(d.level).toBe("none");
+      expect(d.pendingConfirmation).toBe(true);
+    });
+
+    it("is true on the 'unknown' early return too", () => {
+      const d = summarizeSeaweed(
+        { latest: held, pendingClaims: { elbo: claim(10) }, history: [{ t: "2026-10-13T08:40-04:00", hour: 8, seaweed: "low", cov: 8 }] },
+        "2026-10-13",
+        opts,
+      )!;
+      expect(d.level).toBe("unknown");
+      expect(d.pendingConfirmation).toBe(true);
+    });
+
+    it("a held claim stays open after its carried reading has left the shown capture", () => {
+      const d = summarizeSeaweed(
+        { latest: { capturedAtLocal: "2026-10-13T14:00-04:00", cams: [{ name: "Elbo", level: "none" }] as never }, pendingClaims: { elbo: claim(200) } },
+        "2026-10-13",
+        opts,
+      )!;
+      expect(d.pendingConfirmation).toBe(true);
+    });
+
+    it("a confirmed marker is not an open question", () => {
+      const d = summarizeSeaweed({ latest: clean, pendingClaims: { elbo: claim(10, { confirmed: true }) } }, "2026-10-13", opts)!;
+      expect(d.pendingConfirmation).toBeUndefined();
+    });
+
+    it("yesterday's claim, an expired claim, and a malformed one are not pending", () => {
+      const at = (feed: Record<string, unknown>) => summarizeSeaweed({ latest: clean, ...feed }, "2026-10-13", opts)!.pendingConfirmation;
+      expect(at({ pendingClaims: { elbo: claim(18 * 60) } })).toBeUndefined(); // 8 PM yesterday, beach time
+      expect(at({ pendingClaims: { elbo: claim(310) } })).toBeUndefined(); // past 300 minutes
+      expect(at({ pendingClaims: { elbo: { level: "moderate" } } })).toBeUndefined(); // no claimedAt
+      expect(at({ pendingClaims: null })).toBeUndefined();
+    });
+
+    it("hasOpenClaim without a timezone or date checks only the age", () => {
+      expect(hasOpenClaim({ a: claim(10) }, NOW.getTime())).toBe(true);
+      expect(hasOpenClaim({ a: claim(400) }, NOW.getTime())).toBe(false);
+    });
+  });
+
   describe("honest time on a fallback read", () => {
     const EVENING = {
       capturedAtLocal: "2026-10-13T17:30-04:00",
@@ -289,6 +385,19 @@ describe("summarizeSeaweed", () => {
       const d = summarizeSeaweed({ latest: GATED, lastSeaweed: EVENING })!;
       expect(seaweedAsOf(d, TZ)).toBe("as of 5:30 PM");
       expect(seaweedTileSub(d, TZ)).toBe("📷 cams · ~8% covered · as of 5:30 PM");
+    });
+
+    it("a retained latest from hours ago says when it was taken (a zero-fresh evening)", () => {
+      // 6:00 PM was the last gradable capture; nothing newer came in, so it is still `latest`.
+      const six = { capturedAtLocal: "2026-10-13T18:00-04:00", cams: [{ name: "Inlet", level: "low", coveragePct: 8 }] as never };
+      const d = summarizeSeaweed({ latest: six })!;
+      expect(d.source).toBe("latest");
+      const now730 = Date.parse("2026-10-13T19:30-04:00");
+      expect(seaweedAsOf(d, TZ, now730)).toBe("as of 6:00 PM");
+      expect(seaweedTileSub(d, TZ, now730)).toBe("📷 cams · ~8% covered · as of 6:00 PM");
+      // ...but not for a capture only minutes old, nor with no clock given
+      expect(seaweedAsOf(d, TZ, Date.parse("2026-10-13T18:25-04:00"))).toBeUndefined();
+      expect(seaweedAsOf(d, TZ)).toBeUndefined();
     });
 
     it("a live read adds nothing", () => {
@@ -487,7 +596,7 @@ describe("fetchSargassum — per-beach feed URL + legacy fallback", () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(new Response("not found", { status: 404 }))
-      .mockResolvedValueOnce(jsonResponse({ latest: { cams: [{ name: "A", level: "low" }] } }));
+      .mockResolvedValueOnce(jsonResponse({ latest: { capturedAtLocal: `${todayAtBeach()}T12:00-07:00`, cams: [{ name: "A", level: "low" }] } }));
     vi.stubGlobal("fetch", fetchMock);
 
     const w = await fetchSargassum(BOCA_LOCATION);
