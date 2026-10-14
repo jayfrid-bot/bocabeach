@@ -34,7 +34,7 @@ struct WatchLineDTO: Decodable {
 }
 
 struct WatchViewDTO: Decodable {
-    /// Payload version; a body without it is not from this endpoint.
+    /// Payload version (this build speaks 1); any other value is not for it.
     let v: Int?
     let slug: String?
     let name: String?
@@ -44,9 +44,10 @@ struct WatchViewDTO: Decodable {
     let waterTempF: Double?
     let generatedAt: String?
     let capturedAt: String?
+    let validUntil: String?
 
     private enum CodingKeys: String, CodingKey {
-        case v, slug, name, score, limitedData, lines, waterTempF, generatedAt, capturedAt
+        case v, slug, name, score, limitedData, lines, waterTempF, generatedAt, capturedAt, validUntil
     }
 
     init(from decoder: Decoder) throws {
@@ -60,6 +61,7 @@ struct WatchViewDTO: Decodable {
         waterTempF = try? c.decodeIfPresent(Double.self, forKey: .waterTempF)
         generatedAt = try? c.decodeIfPresent(String.self, forKey: .generatedAt)
         capturedAt = try? c.decodeIfPresent(String.self, forKey: .capturedAt)
+        validUntil = try? c.decodeIfPresent(String.self, forKey: .validUntil)
     }
 }
 
@@ -94,9 +96,14 @@ enum WatchViewDecoder {
         return Int(r)
     }
 
-    /// nil unless the body is a JSON object that carries the payload version.
-    static func decode(_ data: Data) -> WatchViewDTO? {
-        guard let dto = try? JSONDecoder().decode(WatchViewDTO.self, from: data), dto.v != nil else { return nil }
+    static let supportedVersion = 1
+
+    /// nil unless the body is a JSON object with `v == 1` whose slug, when present,
+    /// is the beach that was asked for (a mismatched body must never fill another beach's cache).
+    static func decode(_ data: Data, expectedSlug: String? = nil) -> WatchViewDTO? {
+        guard let dto = try? JSONDecoder().decode(WatchViewDTO.self, from: data),
+              dto.v == supportedVersion else { return nil }
+        if let expectedSlug, let slug = dto.slug, slug != expectedSlug { return nil }
         return dto
     }
 
@@ -108,10 +115,16 @@ enum WatchViewDecoder {
             return SummaryLine(
                 kind: LineKind(rawValue: raw.kind ?? "") ?? .other,
                 text: text,
-                tone: Tone(rawValue: raw.tone ?? "") ?? .calm
+                // An unknown or missing tone is not "all clear": show it as a caution.
+                tone: Tone(rawValue: raw.tone ?? "") ?? .caution
             )
         }
         let name = dto.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let dataAt = ISODate.parse(dto.generatedAt) ?? ISODate.parse(dto.capturedAt) ?? fetchedAt
+        // The server says when the view stops being current. Never trust it past
+        // 15 minutes after the snapshot, and with no value assume exactly that.
+        let ceiling = dataAt.addingTimeInterval(BeachSummary.maxValidity)
+        let validUntil = min(ISODate.parse(dto.validUntil) ?? ceiling, ceiling)
         return BeachSummary(
             slug: slug,
             name: (name?.isEmpty == false ? name : nil) ?? prettify(slug),
@@ -119,7 +132,8 @@ enum WatchViewDecoder {
             limitedData: dto.limitedData ?? false,
             lines: Array(lines.prefix(maxLines)),
             waterTempF: wholeNumber(dto.waterTempF, in: -10...150),
-            dataAt: ISODate.parse(dto.generatedAt) ?? ISODate.parse(dto.capturedAt) ?? fetchedAt,
+            dataAt: dataAt,
+            validUntil: validUntil,
             fetchedAt: fetchedAt
         )
     }

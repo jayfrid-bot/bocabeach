@@ -34,7 +34,7 @@ struct BeachProvider: TimelineProvider {
             SummaryLine(kind: .water, text: "Water 84\u{00B0}F", tone: .calm),
             SummaryLine(kind: .best, text: "Best 10 AM\u{2013}1 PM", tone: .calm),
         ],
-        waterTempF: 84, dataAt: Date(), fetchedAt: Date()
+        waterTempF: 84, dataAt: Date(), validUntil: Date().addingTimeInterval(900), fetchedAt: Date()
     )
 
     func placeholder(in context: Context) -> BeachEntry {
@@ -77,11 +77,11 @@ struct BeachProvider: TimelineProvider {
                 let entry: BeachEntry
                 let reload: WidgetRefreshPolicy.Reload
                 if let fresh = try? await ConditionsClient.fetch(slug: slug) {
-                    WidgetFailureCounter.reset()
                     entry = BeachEntry(date: now, content: .summary(fresh))
-                    reload = WidgetRefreshPolicy.reloadAfterSuccess(now: Date())
+                    // Wake when the server says this stops being current, not sooner than the budget allows.
+                    reload = WidgetRefreshPolicy.reloadAfterSuccess(validUntil: fresh.validUntil, now: Date())
                 } else {
-                    let failures = WidgetFailureCounter.recordFailure()
+                    let failures = WidgetFailureCounter.recordFailure(slug)
                     // Show the last reading (the views mark it "as of") rather than nothing.
                     entry = BeachEntry(date: now, content: cached.map(ComplicationContent.summary) ?? .unavailable)
                     reload = WidgetRefreshPolicy.reloadAfterFailure(failures: failures, now: Date())

@@ -10,14 +10,16 @@ import SwiftUI
 
 @main
 struct BeachDayWatchApp: App {
-    @StateObject private var store: BeachStore
+    @StateObject private var store = BeachStore.shared
 
     init() {
         #if DEBUG
         DebugHooks.applyLaunchArguments()
         #endif
+        // Create the store before the phone link starts, so a delivery that wakes the
+        // app in the background finds its observer.
+        _ = BeachStore.shared
         PhoneLink.shared.start()
-        _store = StateObject(wrappedValue: BeachStore())
     }
 
     var body: some Scene {

@@ -239,6 +239,42 @@ describe("Apple Watch app stays in step with the web app", () => {
     expect([...pbx.matchAll(/PrivacyInfo\.xcprivacy in Resources \*\/ = \{isa = PBXBuildFile/g)]).toHaveLength(3);
   });
 
+  it("the phone manifest declares what the app collects, not tracking, and matches the privacy-label doc", () => {
+    const manifest = read("ios/App/App/PrivacyInfo.xcprivacy");
+    const doc = read("docs/watch/APP_PRIVACY_LABEL.md");
+    const types = [...manifest.matchAll(/<string>NSPrivacyCollectedDataType(?!Purpose)(\w+)<\/string>/g)].map((m) => m[1]);
+    expect(types).toEqual(["PreciseLocation", "CoarseLocation", "DeviceID", "ProductInteraction", "PurchaseHistory", "OtherDataTypes"]);
+    for (const t of types) expect(doc).toContain(`\`${t}\``);
+    expect(manifest).toMatch(/<key>NSPrivacyTracking<\/key>\s*<false\/>/);
+    // Tracking is false for every type; precise location, device id, purchases and settings are linked.
+    expect([...manifest.matchAll(/NSPrivacyCollectedDataTypeTracking<\/key>\s*<false\/>/g)]).toHaveLength(types.length);
+    const linked = [...manifest.matchAll(/NSPrivacyCollectedDataType(?!Purpose)(\w+)<\/string>\s*<key>NSPrivacyCollectedDataTypeLinked<\/key>\s*<(true|false)\/>/g)];
+    expect(Object.fromEntries(linked.map((m) => [m[1], m[2]]))).toEqual({
+      PreciseLocation: "true", CoarseLocation: "false", DeviceID: "true",
+      ProductInteraction: "false", PurchaseHistory: "true", OtherDataTypes: "true",
+    });
+    // The watch app and widget collect nothing.
+    for (const dir of ["BeachDayWatch", "BeachDayWatchWidget"]) {
+      expect(read(`ios/App/${dir}/PrivacyInfo.xcprivacy`)).toMatch(/<key>NSPrivacyCollectedDataTypes<\/key>\s*<array\/>/);
+    }
+  });
+
+  it("the release script fails closed", () => {
+    const sh = read("scripts/ios/build-testflight.sh");
+    expect(sh).toMatch(/^set -euo pipefail$/m);
+    expect(sh).toContain("mktemp -d"); // a new output directory every run
+    expect(sh).toContain("scripts/ios-release/ExportOptions.plist");
+    expect(sh).toContain("UPLOAD SUCCEEDED");
+    expect(sh).not.toMatch(/\barchive\s*\|\s*grep/); // archive output is not piped away from its exit code
+    expect(sh).not.toMatch(/ipa" \|\| true|\|\| true\s*$/m);
+    // Both export files are one: the old second copy is gone.
+    expect(() => read("scripts/ios/ExportOptions.plist")).toThrow();
+    const opts = read("scripts/ios-release/ExportOptions.plist");
+    for (const id of ["com.isitbeachday.app", "com.isitbeachday.app.beachsession", "com.isitbeachday.app.watchkitapp", "com.isitbeachday.app.watchkitapp.widget"]) {
+      expect(opts).toContain(`<key>${id}</key>`);
+    }
+  });
+
   it("the bundled watch beach list has no dead or invalid slugs", () => {
     const bundled = JSON.parse(read("ios/App/WatchShared/Beaches.json")) as { slug: string }[];
     const live = new Set(listLocations().map((l) => l.slug));

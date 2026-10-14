@@ -2,24 +2,26 @@
 // the wrist never says something the page does not. The watch decodes this and
 // nothing else (GET /api/watch/<slug>); it has no safety rules of its own.
 //
-// Every decision below comes from the same functions the dashboard uses:
+// Safety lines come from lib/safetyBanner.ts, the same module the website's
+// SafetyBanner renders, so the watch shows the same hazards in the same order
+// and tones; this file only shortens and truncates them.
 //   score + live rip cap ... lib/score.ts (applyLiveRipCap) + lib/ripRisk (ripCapFor)
-//   flags, rip, advisories, lightning, rain ... deriveMetrics (lib/score.ts), which runs
-//     lib/hazards/assess.ts (most recent strike within 5 mi; stale radar = unknown)
-//     and lib/ripRisk/resolve.ts (the independent NOAA model + SRF word + alerts)
-//   rain on the way ... lib/rainNowcast.ts
+//   hazards, flags, rip, alerts (active AND upcoming) ... lib/safetyBanner.ts
+//   rain ... lib/rainNowcast.ts (measured rain at the beach, or on its way)
 //   best time ... lib/scoreBands.ts goodWindow (Decent or better only)
 // Missing data is null or an absent line, never a guess.
 
-import { applyLiveRipCap, deriveMetrics, type Derived } from "@/lib/score";
+import { applyLiveRipCap, deriveMetrics } from "@/lib/score";
 import { ripCapFor } from "@/lib/ripRisk";
 import { rainNowcast } from "@/lib/rainNowcast";
+import { buildSafetyBanner, type BannerItem } from "@/lib/safetyBanner";
+import { safetyTone, type SafetyTone } from "@/lib/safetyTone";
 import { goodWindow, scoreBand } from "@/lib/scoreBands";
 import { PRECIP_RADAR_STALE_MINUTES } from "@/lib/sources/precipRadar";
 import type { ConditionsResponse, FlagColor } from "@/lib/types";
 
-export type WatchTone = "calm" | "caution" | "danger";
-export type WatchLineKind = "hazard" | "safety" | "water" | "best";
+export type WatchTone = SafetyTone;
+export type WatchLineKind = "hazard" | "safety" | "water" | "best" | "more";
 
 export interface WatchLine {
   kind: WatchLineKind;
@@ -41,101 +43,93 @@ export interface WatchView {
   band: string | null;
   /** The score was built from too little live data. */
   limitedData: boolean;
-  /** In display order: hazards (at most 2), flags and rip, water, best time. */
+  /** In display order: up to 3 safety lines (the website's order), "+N more" when
+   *  more were cut, then water and best time. */
   lines: WatchLine[];
   waterTempF: number | null;
   /** When the server built the conditions snapshot. */
   generatedAt: string | null;
   /** When this view was computed. */
   capturedAt: string;
+  /** The earliest moment something this view says can change: an alert starting
+   *  or ending, the next rip model hour, the best window's end, or 15 minutes
+   *  after generatedAt. After it, the watch must not call this view current. */
+  validUntil: string;
 }
 
 const TONE_RANK: Record<WatchTone, number> = { calm: 0, caution: 1, danger: 2 };
-const MAX_HAZARDS = 2;
+const MAX_SAFETY_LINES = 3;
+/** The longest a computed view may be called current after its snapshot was built. */
+export const MAX_VALID_MS = 15 * 60_000;
 
 const finite = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+const maxTone = (a: WatchTone, b: WatchTone): WatchTone => (TONE_RANK[b] > TONE_RANK[a] ? b : a);
 
-// ---- lines ------------------------------------------------------------------
+// ---- safety lines -----------------------------------------------------------
 
-function hazardLines(res: ConditionsResponse, d: Derived): WatchLine[] {
-  const found: { rank: number; line: WatchLine }[] = [];
-  const add = (rank: number, text: string, tone: WatchTone) =>
-    found.push({ rank, line: { kind: "hazard", text, tone } });
-
-  const s = res.snapshot;
-
-  // Stay-out reasons (lib/safetyLine.ts swimSafety).
-  if (d.lightningWithin5mi) {
-    const mi = s.lightning?.data?.nearestMi;
-    add(100, finite(mi) ? `Lightning ${Math.round(mi * 10) / 10} mi away` : "Lightning within 5 mi", "danger");
-  }
-  if (d.severeAlert) add(90, "Severe weather warning", "danger");
-  if (d.noSwimAdvisory) add(85, "No-swim advisory", "danger");
-  if (d.waterAdvisory) add(80, "Water quality advisory", "danger");
-
-  // Cautions.
-  if (d.highSurfAdvisory) add(60, "High surf advisory", "caution");
-  if (d.surfAdvisory) add(55, "Beach hazards advisory", "caution");
-  if (d.hazardRain?.active) {
-    const storm = d.hazardRain.severity === "storm";
-    add(
-      storm ? 70 : 50,
-      storm ? "Thunderstorm" : d.hazardRain.latched ? "Rain in the last 20 min" : "Raining now",
-      "caution",
-    );
-  } else {
-    // Rain on its way, only from a radar frame that is still fresh.
-    const radar = s.precipRadar;
-    const age = radar?.data?.frameAgeMinutes;
-    const next = finite(age) && age <= PRECIP_RADAR_STALE_MINUTES ? rainNowcast(radar) : null;
-    if (next?.kind === "approaching" && finite(next.etaMinutes)) {
-      add(40, `Rain in ~${next.etaMinutes} min`, "caution");
-    }
-  }
-  if (finite(d.waveHeightFt) && d.waveHeightFt > 4) {
-    add(30, `Rough water, ~${Math.round(d.waveHeightFt)} ft`, "caution");
-  }
-
-  return found
-    .sort((a, b) => b.rank - a.rank)
-    .slice(0, MAX_HAZARDS)
-    .map((f) => f.line);
-}
-
-/** "Yellow + purple flags", "Double red flag"; null when no flag is known. */
-function flagText(flags: readonly FlagColor[]): { text: string; tone: WatchTone } | null {
+/** "Yellow + purple flags", "Double red flag". Order: worst first. */
+function flagsText(flags: readonly FlagColor[]): string | null {
   const order: FlagColor[] = ["double-red", "red", "yellow", "green", "purple"];
   const present = order.filter((f) => flags.includes(f));
   if (!present.length) return null;
-  const name = (f: FlagColor) => (f === "double-red" ? "double red" : f);
-  const first = present[0];
-  const words = present.map(name);
-  const text =
-    present.length === 1
-      ? `${words[0][0].toUpperCase()}${words[0].slice(1)} flag`
-      : `${words[0][0].toUpperCase()}${words[0].slice(1)} + ${words.slice(1).join(" + ")} flags`;
-  const tone: WatchTone =
-    first === "double-red" || first === "red" ? "danger" : first === "green" ? "calm" : "caution";
-  return { text, tone };
+  const words = present.map((f) => (f === "double-red" ? "double red" : f));
+  const first = `${words[0][0].toUpperCase()}${words[0].slice(1)}`;
+  return present.length === 1 ? `${first} flag` : `${first} + ${words.slice(1).join(" + ")} flags`;
 }
 
-function ripText(d: Derived): { text: string; tone: WatchTone } | null {
-  const rip = d.ripNow;
-  if (!rip) return null;
-  if (rip.source === "alert") return { text: "Rip alert", tone: "caution" };
-  if (rip.level === "high") return { text: "Rip high", tone: "caution" };
-  if (rip.level === "moderate") return { text: "Rip moderate", tone: "caution" };
-  if (rip.level === "low") return { text: "Rip low", tone: "calm" };
-  return null;
-}
+function safetyLines(res: ConditionsResponse, nowMs: number): WatchLine[] {
+  const snap = res.snapshot;
+  const radar = snap.precipRadar;
+  const age = radar?.data?.frameAgeMinutes;
+  // Rain only from a radar frame that is still fresh, worded by lib/rainNowcast.ts.
+  const rain = finite(age) && age <= PRECIP_RADAR_STALE_MINUTES ? rainNowcast(radar) : null;
+  const banner = buildSafetyBanner({
+    city: snap.cityOfficial,
+    water: snap.waterQuality,
+    lightning: snap.lightning,
+    nws: snap.nws,
+    ripNwps: snap.ripNwps,
+    timezone: snap.location.timezone,
+    nowMs,
+    rain,
+  });
 
-function safetyLine(d: Derived): WatchLine | null {
-  const flag = flagText(d.flags ?? []);
-  const rip = ripText(d);
-  const parts = [flag, rip].filter((p): p is { text: string; tone: WatchTone } => p != null);
-  if (!parts.length) return null;
-  const tone = parts.reduce<WatchTone>((t, p) => (TONE_RANK[p.tone] > TONE_RANK[t] ? p.tone : t), "calm");
-  return { kind: "safety", text: parts.map((p) => p.text).join(" · "), tone };
+  const flagTone = safetyTone({ flags: banner.flags });
+  const flagLabel = flagsText(banner.flags);
+  // A low rip reading earns no banner block, but it is useful reassurance next to a flag.
+  const ripLow =
+    !banner.hasRipToShow && banner.ripNow.level === "low" && banner.ripNow.source !== "unknown"
+      ? "Rip current low"
+      : null;
+
+  const lines: WatchLine[] = [];
+  let flagAdded = false;
+  for (const item of banner.items as BannerItem[]) {
+    if (item.id.startsWith("flag-")) {
+      // All flags become ONE line, at the rank of the first (worst) flag item.
+      if (flagAdded || !flagLabel) continue;
+      flagAdded = true;
+      lines.push({
+        kind: "safety",
+        text: ripLow ? `${flagLabel} · ${ripLow}` : flagLabel,
+        tone: flagTone,
+      });
+      continue;
+    }
+    lines.push({
+      kind: item.id === "rip" ? "safety" : "hazard",
+      text: item.short,
+      tone: item.itemTone,
+    });
+  }
+  if (!flagAdded && ripLow) lines.push({ kind: "safety", text: ripLow, tone: "calm" });
+
+  if (lines.length <= MAX_SAFETY_LINES) return lines;
+  const hidden = lines.slice(MAX_SAFETY_LINES);
+  return [
+    ...lines.slice(0, MAX_SAFETY_LINES),
+    { kind: "more", text: `+${hidden.length} more`, tone: hidden.reduce<WatchTone>((t, l) => maxTone(t, l.tone), "calm") },
+  ];
 }
 
 /** "4–6 PM", or "11 AM–1 PM" when the halves of the day differ. In the beach's own time zone. */
@@ -168,6 +162,36 @@ function bestLine(res: ConditionsResponse, nowMs: number): WatchLine | null {
   return text ? { kind: "best", text: `Best ${text}`, tone: "calm" } : null;
 }
 
+// ---- freshness --------------------------------------------------------------
+
+/** The earliest future moment any clock-dependent part of this view can change. */
+export function computeValidUntil(res: ConditionsResponse, nowMs: number): number {
+  const snap = res.snapshot;
+  const generated = Date.parse(snap.generatedAt);
+  const candidates: number[] = [(Number.isFinite(generated) ? generated : nowMs) + MAX_VALID_MS];
+  const add = (iso: string | null | undefined) => {
+    const t = iso ? Date.parse(iso) : NaN;
+    if (Number.isFinite(t) && t > nowMs) candidates.push(t);
+  };
+  // Alerts starting or ending (rip and everything else).
+  for (const a of snap.nws?.data?.alerts ?? []) {
+    add(a.onset);
+    add(a.effective);
+    add(a.ends);
+    add(a.expires);
+  }
+  // The surf-zone forecast's own period boundaries.
+  for (const p of snap.nws?.data?.srfPeriods ?? []) {
+    add(p.start);
+    add(p.end);
+  }
+  // The NOAA rip model steps hourly.
+  if (snap.ripNwps?.data) candidates.push(Math.floor(nowMs / 3_600_000) * 3_600_000 + 3_600_000);
+  // Today's best window ending.
+  add(res.multiDayWindows?.[0]?.best?.endIso);
+  return Math.min(...candidates);
+}
+
 // ---- the view ---------------------------------------------------------------
 
 export function buildWatchView(res: ConditionsResponse, nowMs: number = Date.now()): WatchView {
@@ -182,11 +206,9 @@ export function buildWatchView(res: ConditionsResponse, nowMs: number = Date.now
   const score = hasScore ? Math.max(0, Math.min(100, Math.round(scored.score))) : null;
   const band = score == null ? null : scoreBand(score);
 
-  const lines: WatchLine[] = [...hazardLines(res, d)];
-  const safety = safetyLine(d);
-  if (safety) lines.push(safety);
+  const lines: WatchLine[] = [...safetyLines(res, now)];
   const waterTempF = finite(d.waterTempF) && d.waterTempF > -10 && d.waterTempF < 150 ? Math.round(d.waterTempF) : null;
-  if (waterTempF != null) lines.push({ kind: "water", text: `Water ${waterTempF}°F`, tone: "calm" });
+  if (waterTempF != null) lines.push({ kind: "water", text: `Water ${waterTempF}\u00B0F`, tone: "calm" });
   const best = bestLine(res, now);
   if (best) lines.push(best);
 
@@ -202,5 +224,6 @@ export function buildWatchView(res: ConditionsResponse, nowMs: number = Date.now
     waterTempF,
     generatedAt: snap.generatedAt ?? null,
     capturedAt: new Date(now).toISOString(),
+    validUntil: new Date(computeValidUntil(res, now)).toISOString(),
   };
 }

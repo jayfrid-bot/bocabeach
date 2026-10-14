@@ -23,17 +23,26 @@ describe("GET /api/watch/[slug]", () => {
     expect((await GET(...req("nope"))).status).toBe(404);
   });
 
+  it("404s a malformed slug without touching the pipeline, and lets the edge keep the 404", async () => {
+    for (const bad of ["Boca Raton", "../x", "a--b", "x".repeat(65)]) {
+      const res = await GET(...req(bad));
+      expect(res.status).toBe(404);
+      expect(res.headers.get("Cache-Control")).toBe("public, s-maxage=300");
+    }
+    expect(getConditions).not.toHaveBeenCalled();
+  });
+
   it("rejects any query string before touching the pipeline", async () => {
     const res = await GET(...req("boca-raton", "?x=1"));
     expect(res.status).toBe(400);
     expect(getConditions).not.toHaveBeenCalled();
   });
 
-  it("returns a small view, edge-cached like the conditions route", async () => {
+  it("returns a small view cached for at most a minute, with no stale-while-revalidate", async () => {
     vi.mocked(getConditions).mockResolvedValue(JSON.parse(JSON.stringify(fixture)) as ConditionsResponse);
     const res = await GET(...req("boca-raton"));
     expect(res.status).toBe(200);
-    expect(res.headers.get("Cache-Control")).toBe("public, s-maxage=300, stale-while-revalidate=600");
+    expect(res.headers.get("Cache-Control")).toBe("public, s-maxage=60");
     const text = await res.text();
     expect(text.length).toBeLessThan(2048);
     const body = JSON.parse(text);
@@ -43,9 +52,14 @@ describe("GET /api/watch/[slug]", () => {
     expect(body.budgetAborted).toBeUndefined();
   });
 
-  it("lets an incomplete (budget-aborted) build expire fast", async () => {
+  it("answers a budget-aborted (incomplete) build with 503 and no-store, never a view", async () => {
     vi.mocked(getConditions).mockResolvedValue({ ...(JSON.parse(JSON.stringify(fixture)) as ConditionsResponse), budgetAborted: true });
     const res = await GET(...req("boca-raton"));
-    expect(res.headers.get("Cache-Control")).toBe("public, s-maxage=20");
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    const body = await res.json();
+    expect(body.error).toBe("incomplete");
+    expect(body.v).toBeUndefined();
+    expect(body.score).toBeUndefined();
   });
 });

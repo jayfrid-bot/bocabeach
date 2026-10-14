@@ -5,7 +5,7 @@ final class WatchViewDecoderTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
     private func summary(_ json: String, slug: String = "boca-raton") -> BeachSummary? {
-        guard let dto = WatchViewDecoder.decode(Data(json.utf8)) else { return nil }
+        guard let dto = WatchViewDecoder.decode(Data(json.utf8), expectedSlug: slug) else { return nil }
         return WatchViewDecoder.summary(from: dto, slug: slug, fetchedAt: now)
     }
 
@@ -16,7 +16,8 @@ final class WatchViewDecoderTests: XCTestCase {
                   {"kind":"safety","text":"Yellow + purple flags \\u00b7 Rip low","tone":"caution"},
                   {"kind":"water","text":"Water 86\\u00b0F","tone":"calm"},
                   {"kind":"best","text":"Best 3\\u20137 PM","tone":"calm"}],
-         "waterTempF":86,"generatedAt":"2026-10-14T19:58:20.051Z","capturedAt":"2026-10-14T20:00:00.000Z"}
+         "waterTempF":86,"generatedAt":"2026-10-14T19:58:20.051Z","capturedAt":"2026-10-14T20:00:00.000Z",
+         "validUntil":"2026-10-14T20:05:00.000Z"}
         """))
         XCTAssertEqual(s.name, "Boca Raton")
         XCTAssertEqual(s.score, 79)
@@ -26,6 +27,38 @@ final class WatchViewDecoderTests: XCTestCase {
         XCTAssertEqual(s.waterTempF, 86)
         XCTAssertEqual(s.headlineLine, "Water quality advisory")
         XCTAssertEqual(ISODate.parse("2026-10-14T19:58:20.051Z"), s.dataAt)
+        XCTAssertEqual(s.validUntil, ISODate.parse("2026-10-14T20:05:00.000Z"))
+    }
+
+    func testValidUntilIsCappedAtFifteenMinutesAndDefaultsToIt() throws {
+        let built = ISODate.parse("2026-10-14T19:58:20Z")!
+        let capped = try XCTUnwrap(summary(#"{"v":1,"generatedAt":"2026-10-14T19:58:20Z","validUntil":"2026-10-14T23:00:00Z"}"#))
+        XCTAssertEqual(capped.validUntil, built.addingTimeInterval(15 * 60))
+        let missing = try XCTUnwrap(summary(#"{"v":1,"generatedAt":"2026-10-14T19:58:20Z"}"#))
+        XCTAssertEqual(missing.validUntil, built.addingTimeInterval(15 * 60))
+        let junk = try XCTUnwrap(summary(#"{"v":1,"generatedAt":"2026-10-14T19:58:20Z","validUntil":"later"}"#))
+        XCTAssertEqual(junk.validUntil, built.addingTimeInterval(15 * 60))
+        let early = try XCTUnwrap(summary(#"{"v":1,"generatedAt":"2026-10-14T19:58:20Z","validUntil":"2026-10-14T19:59:00Z"}"#))
+        XCTAssertEqual(early.validUntil, ISODate.parse("2026-10-14T19:59:00Z"))
+    }
+
+    func testOnlyVersionOneIsAccepted() {
+        XCTAssertNotNil(summary(#"{"v":1}"#))
+        XCTAssertNil(summary(#"{"v":2,"score":80}"#))
+        XCTAssertNil(summary(#"{"v":0}"#))
+        XCTAssertNil(summary(#"{"v":"1"}"#))
+        XCTAssertNil(summary(#"{"score":80}"#))
+    }
+
+    func testAMismatchedSlugIsRejectedAndAMissingOneIsAllowed() {
+        XCTAssertNil(summary(#"{"v":1,"slug":"naples","score":90}"#, slug: "boca-raton"))
+        XCTAssertNotNil(summary(#"{"v":1,"slug":"boca-raton","score":90}"#, slug: "boca-raton"))
+        XCTAssertNotNil(summary(#"{"v":1,"score":90}"#, slug: "boca-raton"))
+    }
+
+    func testAnUnknownOrMissingToneIsACautionNotAllClear() throws {
+        let s = try XCTUnwrap(summary(#"{"v":1,"lines":[{"kind":"hazard","text":"A","tone":"weird"},{"kind":"hazard","text":"B"},{"kind":"water","text":"C","tone":"calm"}]}"#))
+        XCTAssertEqual(s.lines.map(\.tone), [.caution, .caution, .calm])
     }
 
     func testEmptyObjectWithVersionIsHonestlyUnavailable() throws {
@@ -60,7 +93,7 @@ final class WatchViewDecoderTests: XCTestCase {
           {"kind":"best","text":"   "},null,{"kind":"safety","text":"Green flag","tone":"calm"}]}
         """))
         XCTAssertEqual(s.lines.map(\.text), ["Water 80\u{00B0}F", "Green flag"])
-        XCTAssertEqual(s.lines[0].tone, .calm) // unknown tone falls back to calm
+        XCTAssertEqual(s.lines[0].tone, .caution) // an unknown tone is a caution, never "all clear"
     }
 
     func testOverlongAndExcessLinesAreBounded() throws {
@@ -97,12 +130,21 @@ final class WatchViewDecoderTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(summary(#"{"v":1,"generatedAt":"soon"}"#)).dataAt, now)
     }
 
-    func testStaleAndFreshUseDifferentClocks() throws {
+    func testFreshnessFollowsTheServersClockNotTheTimeOfReceipt() throws {
         var s = try XCTUnwrap(summary(#"{"v":1,"score":80}"#))
-        s.dataAt = now.addingTimeInterval(-45 * 60)   // server built it 45 minutes ago
-        s.fetchedAt = now.addingTimeInterval(-5 * 60) // but this watch got it 5 minutes ago
-        XCTAssertTrue(s.isStale(now: now))
+        // The server built it 45 minutes ago and called it valid for 15; this watch got it 1 minute ago.
+        s.dataAt = now.addingTimeInterval(-45 * 60)
+        s.validUntil = now.addingTimeInterval(-30 * 60)
+        s.fetchedAt = now.addingTimeInterval(-60)
+        XCTAssertTrue(s.isStale(now: now))   // old enough for the "as of" label
+        XCTAssertFalse(s.isFresh(now: now))  // received a minute ago, but not current
+        // Built 2 minutes ago, valid for 13 more.
+        s.dataAt = now.addingTimeInterval(-2 * 60)
+        s.validUntil = now.addingTimeInterval(13 * 60)
+        s.fetchedAt = now.addingTimeInterval(-60)
+        XCTAssertFalse(s.isStale(now: now))
         XCTAssertTrue(s.isFresh(now: now))
-        XCTAssertFalse(s.isFresh(now: now.addingTimeInterval(30 * 60)))
+        XCTAssertFalse(s.isFresh(now: now.addingTimeInterval(14 * 60)))
+        XCTAssertFalse(s.isFresh(now: now.addingTimeInterval(-10 * 60))) // before it was received
     }
 }

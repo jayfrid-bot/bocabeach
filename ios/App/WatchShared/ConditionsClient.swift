@@ -48,9 +48,10 @@ enum ConditionsClient {
         // simulator shares the Mac's file system). Used while /api/watch is not deployed.
         if let dir = SharedStore.defaults.string(forKey: "debug.watchJSON") {
             guard let data = FileManager.default.contents(atPath: "\(dir)/\(slug).json") else { throw ConditionsError.unknownBeach }
-            guard let dto = WatchViewDecoder.decode(data) else { throw ConditionsError.badData }
+            guard let dto = WatchViewDecoder.decode(data, expectedSlug: slug) else { throw ConditionsError.badData }
             let summary = WatchViewDecoder.summary(from: dto, slug: slug, fetchedAt: now)
             SummaryCache.save(summary)
+            WidgetFailureCounter.reset(slug)
             return summary
         }
         #endif
@@ -66,9 +67,12 @@ enum ConditionsClient {
         guard let http = response as? HTTPURLResponse else { throw ConditionsError.badData }
         if http.statusCode == 404 { throw ConditionsError.unknownBeach }
         guard http.statusCode == 200 else { throw ConditionsError.server(http.statusCode) }
-        guard let dto = WatchViewDecoder.decode(data) else { throw ConditionsError.badData }
+        // 503 "incomplete" and every other non-200 land above: nothing is cached from them.
+        guard let dto = WatchViewDecoder.decode(data, expectedSlug: slug) else { throw ConditionsError.badData }
         let summary = WatchViewDecoder.summary(from: dto, slug: slug, fetchedAt: now)
         SummaryCache.save(summary)
+        // Any success, from the app or the widget, ends this beach's failure streak.
+        WidgetFailureCounter.reset(slug)
         return summary
     }
 }

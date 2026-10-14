@@ -28,16 +28,35 @@ import WatchConnectivity
 /// All state lives on one serial queue (`queue`). Capacitor calls plugin methods
 /// on its own queue and WatchConnectivity calls the delegate on a background
 /// thread; both hop onto `queue` before touching anything here.
+///
+/// Recovery: the newest payload is kept (App Group + memory). A failed
+/// activation or a refused delivery, including one hit from a delegate callback,
+/// schedules a bounded retry with backoff (2, 5, 15, 60, 180 seconds). The web
+/// side is told "not yet" until delivery is accepted, so it sends again too.
 final class WatchSyncHub: NSObject, WCSessionDelegate {
     static let shared = WatchSyncHub()
 
     enum SendResult: Equatable {
-        /// Nothing more to do: delivered, unchanged, or no watch to deliver to yet.
-        case ok
-        /// The system refused the context; the web side should try again later.
+        /// Handed to the system, or already was.
+        case delivered
+        /// Kept, and there is nowhere to send it yet (no paired watch, or the watch
+        /// app is not installed). Delivered from the delegate when that changes.
+        case nothingToDeliver
+        /// The session is not active yet; a retry is scheduled.
+        case pending(String)
+        /// The system refused the context; a retry is scheduled.
         case failed(String)
+
+        /// True when the web side may stop resending this payload.
+        var accepted: Bool {
+            switch self {
+            case .delivered, .nothingToDeliver: return true
+            case .pending, .failed: return false
+            }
+        }
     }
 
+    private static let retryDelays: [TimeInterval] = [2, 5, 15, 60, 180]
     private let queue = DispatchQueue(label: "com.isitbeachday.watchsync")
 
     // Only touched on `queue`.
@@ -46,6 +65,8 @@ final class WatchSyncHub: NSObject, WCSessionDelegate {
     private var delivered: [String: Any]?
     private var loaded = false
     private var activating = false
+    private var retryAttempt = 0
+    private var retryItem: DispatchWorkItem?
 
     private var store: UserDefaults { UserDefaults(suiteName: WatchSync.appGroup)! }
 
@@ -54,8 +75,8 @@ final class WatchSyncHub: NSObject, WCSessionDelegate {
         queue.async { self.ensureActivated() }
     }
 
-    /// Calls `completion` on `queue` once the payload has been handed to the system,
-    /// found unchanged, or found to have nowhere to go yet.
+    /// Calls `completion` (on `queue`) once the payload has been handed to the
+    /// system, found unchanged, found to have nowhere to go yet, or has failed.
     func send(home: String?, favorites: [String], lastViewed: String? = nil,
               completion: @escaping (SendResult) -> Void = { _ in }) {
         queue.async {
@@ -72,6 +93,10 @@ final class WatchSyncHub: NSObject, WCSessionDelegate {
             if let home { self.store.set(home, forKey: WatchSync.Key.homeSlug) } else { self.store.removeObject(forKey: WatchSync.Key.homeSlug) }
             self.store.set(favorites, forKey: WatchSync.Key.favorites)
             if let lastViewed { self.store.set(lastViewed, forKey: WatchSync.Key.lastViewedSlug) } else { self.store.removeObject(forKey: WatchSync.Key.lastViewedSlug) }
+            // A new payload gets a fresh retry budget.
+            self.retryAttempt = 0
+            self.retryItem?.cancel()
+            self.retryItem = nil
             completion(self.flush())
         }
     }
@@ -100,8 +125,8 @@ final class WatchSyncHub: NSObject, WCSessionDelegate {
         if latest == nil, let saved = store.dictionary(forKey: "watchSync.context") { latest = saved }
     }
 
-    /// Starts activation unless it is running or done. An activation that failed
-    /// leaves `activating` false, so the next call tries again.
+    /// Starts activation unless it is running or done. A failed activation leaves
+    /// `activating` false, so the next call (or the scheduled retry) tries again.
     private func ensureActivated() {
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
@@ -112,22 +137,46 @@ final class WatchSyncHub: NSObject, WCSessionDelegate {
         }
     }
 
-    /// Hands the newest context to the system when a watch can take it.
+    /// One bounded, backed-off retry of "activate if needed, then flush".
+    private func scheduleRetry() {
+        guard retryItem == nil, retryAttempt < Self.retryDelays.count else { return }
+        let delay = Self.retryDelays[retryAttempt]
+        retryAttempt += 1
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.retryItem = nil
+            self.ensureActivated()
+            _ = self.flush()
+        }
+        retryItem = item
+        queue.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+
+    /// Hands the newest context to the system when a watch can take it. Every
+    /// failure path schedules a retry, so a delegate-triggered flush recovers too.
+    @discardableResult
     private func flush() -> SendResult {
         loadSavedIfNeeded()
-        guard WCSession.isSupported(), let latest else { return .ok }
+        guard WCSession.isSupported(), let latest else { return .nothingToDeliver }
         ensureActivated()
         let session = WCSession.default
-        // Not activated yet, or no watch to receive it: kept, and flushed from the
-        // delegate callbacks below when that changes.
-        guard session.activationState == .activated, session.isPaired, session.isWatchAppInstalled else { return .ok }
-        if let delivered, (delivered as NSDictionary).isEqual(to: latest) { return .ok }
+        guard session.activationState == .activated else {
+            scheduleRetry()
+            return .pending("activating")
+        }
+        // No watch to receive it: kept, and flushed from the delegate callbacks below.
+        guard session.isPaired, session.isWatchAppInstalled else { return .nothingToDeliver }
+        if let delivered, (delivered as NSDictionary).isEqual(to: latest) { return .delivered }
         do {
             try session.updateApplicationContext(latest)
             delivered = latest
-            return .ok
+            retryAttempt = 0
+            retryItem?.cancel()
+            retryItem = nil
+            return .delivered
         } catch {
             NSLog("WatchSync: updateApplicationContext failed: %@", error.localizedDescription)
+            scheduleRetry()
             return .failed(error.localizedDescription)
         }
     }
@@ -141,9 +190,10 @@ final class WatchSyncHub: NSObject, WCSessionDelegate {
             if activationState == .activated {
                 // A new activation can mean a different or reset counterpart: resend.
                 self.delivered = nil
-                _ = self.flush()
+                self.flush()
+            } else {
+                self.scheduleRetry()
             }
-            // On failure `activating` is false, so the next send() activates again.
         }
     }
 
@@ -151,7 +201,7 @@ final class WatchSyncHub: NSObject, WCSessionDelegate {
         queue.async {
             // A newly installed watch app has not seen the last context yet.
             self.delivered = nil
-            _ = self.flush()
+            self.flush()
         }
     }
 
@@ -194,8 +244,9 @@ public class WatchSyncPlugin: CAPPlugin, CAPBridgedPlugin {
     }
 
     /// `{homeSlug: string | null, favorites: string[], lastViewedSlug?: string | null}`
-    /// Resolves `{ok: false, reason}` when the system refused the payload, so the
-    /// web side does not mark it sent and tries again.
+    /// Resolves `ok: true` only once the payload is delivered or has nowhere to go
+    /// yet; while activating or when the system refused it, `{ok: false, reason}`, so
+    /// the web side does not mark it sent and tries again (native also retries).
     @objc func setBeaches(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             guard self.originAllowed() else {
@@ -206,8 +257,11 @@ public class WatchSyncPlugin: CAPPlugin, CAPBridgedPlugin {
                                         lastViewed: call.options["lastViewedSlug"])
             WatchSyncHub.shared.send(home: clean.home, favorites: clean.favorites, lastViewed: clean.lastViewed) { result in
                 switch result {
-                case .ok:
+                case .delivered, .nothingToDeliver:
                     call.resolve(self.statusPayload(ok: true))
+                case .pending(let reason):
+                    // Not accepted yet: the web side keeps the payload and sends it again.
+                    call.resolve(["ok": false, "reason": reason])
                 case .failed(let reason):
                     call.resolve(["ok": false, "reason": "send-failed", "detail": reason])
                 }

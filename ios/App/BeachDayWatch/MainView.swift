@@ -45,10 +45,10 @@ struct MainView: View {
                 }
                 .padding(.horizontal, 4)
             }
-            .refreshable { await store.refresh(force: true) }
+            .refreshable { await store.refresh(.foreground) }
         } else if case .failed(let error) = store.phase {
             ErrorView(message: error.message, name: store.activeName ?? "this beach") {
-                Task { await store.refresh(force: true) }
+                Task { await store.refresh(.foreground) }
             } change: { showPicker = true }
         } else {
             VStack(spacing: 8) {
@@ -120,6 +120,7 @@ struct MainView: View {
         case .safety: return "flag.fill"
         case .water: return "thermometer.medium"
         case .best: return "clock"
+        case .more: return "ellipsis.circle"
         case .other: return "info.circle"
         }
     }
@@ -130,6 +131,7 @@ struct MainView: View {
         case .safety: return "Beach safety"
         case .water: return "Water temperature"
         case .best: return "Best time"
+        case .more: return "More"
         case .other: return "Note"
         }
     }
@@ -147,7 +149,7 @@ struct MainView: View {
             if store.phase == .loading {
                 ProgressView().controlSize(.small)
             } else {
-                Button { Task { await store.refresh(force: true) } } label: {
+                Button { Task { await store.refresh(.foreground) } } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
                 .font(.footnote)

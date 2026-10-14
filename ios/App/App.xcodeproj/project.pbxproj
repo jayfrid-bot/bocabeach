@@ -31,6 +31,7 @@
 		504EC30D1FED79650016851F /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30B1FED79650016851F /* Main.storyboard */; };
 		504EC30F1FED79650016851F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 504EC30E1FED79650016851F /* Assets.xcassets */; };
 		504EC3121FED79650016851F /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 504EC3101FED79650016851F /* LaunchScreen.storyboard */; };
+		506A77CA05401AE14E142D13 /* SelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B038DC796A16FD380CF9E37 /* SelectionTests.swift */; };
 		50B271D11FEDC1A000F3C39B /* public in Resources */ = {isa = PBXBuildFile; fileRef = 50B271D01FEDC1A000F3C39B /* public */; };
 		55AED7E0FB924F77D3FEB8C1 /* DebugHooks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23D039A60255E54F33792083 /* DebugHooks.swift */; };
 		5716DBB6A638323F1A0B2391 /* NearestLocator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1034E562A7397F83B633FECA /* NearestLocator.swift */; };
@@ -175,6 +176,7 @@
 		75B4F306BE1E611DE0F3CF9F /* BeachDayWatchWidget.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = BeachDayWatchWidget.entitlements; sourceTree = "<group>"; };
 		7A6D889A04191B29F1547435 /* BeachCatalog.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachCatalog.swift; sourceTree = "<group>"; };
 		80344DA9284B9895D0C4C98E /* ScoreBands.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ScoreBands.swift; sourceTree = "<group>"; };
+		8B038DC796A16FD380CF9E37 /* SelectionTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SelectionTests.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		995E3780351A3E7658134A4F /* BeachDayWatch.entitlements */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.entitlements; path = BeachDayWatch.entitlements; sourceTree = "<group>"; };
 		9DBA63921188D181AB1E19C4 /* BeachDayWatchWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BeachDayWatchWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -240,6 +242,7 @@
 				A54D9A90742A16E6BF0D75CA /* WatchViewDecoderTests.swift */,
 				A85E61E7A3F53E97537228E7 /* WidgetRefreshPolicyTests.swift */,
 				15BDB3E4315D23BA7C4006DE /* SyncPayloadTests.swift */,
+				8B038DC796A16FD380CF9E37 /* SelectionTests.swift */,
 			);
 			name = BeachDayWatchTests;
 			path = BeachDayWatchTests;
@@ -620,6 +623,7 @@
 				29E7AA8C69B3F0BB50D8BDD4 /* WatchViewDecoderTests.swift in Sources */,
 				8DF279F7FED6AF8F22EA3BE7 /* WidgetRefreshPolicyTests.swift in Sources */,
 				AC36B44CC375803ABC461A1D /* SyncPayloadTests.swift in Sources */,
+				506A77CA05401AE14E142D13 /* SelectionTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

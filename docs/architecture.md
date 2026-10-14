@@ -25,7 +25,7 @@ flowchart TD
 
   PAGE --> COND
   APPUI --> COND
-  WATCH["Apple Watch app + complications"] -->|"GET, no query; edge-cached 5 min"| WATCHR
+  WATCH["Apple Watch app + complications"] -->|"GET, no query; edge-cached 60 s, payload has validUntil"| WATCHR
   APPUI -->|"WatchSync plugin: home beach + last viewed<br/>lib/watchSync.ts (WatchConnectivity)"| WATCH
 
   subgraph routes [HTTP routes]
@@ -56,7 +56,7 @@ flowchart TD
 
   COND --> PIPE[lib/conditions.ts<br/>fetch all sources in parallel]
   WATCHR --> PIPE
-  WATCHR -->|"lib/watchView.ts: same deriveMetrics, hazard,<br/>rip and best-window rules as the dashboard"| SCORE
+  WATCHR -->|"lib/watchView.ts: score + best window as the dashboard;<br/>safety lines from lib/safetyBanner.ts, the module SafetyBanner renders"| SCORE
   SHARE --> PIPE
   PIPE --> SOURCES[lib/sources/*<br/>one adapter per external source<br/>each returns Wrapped&lt;T&gt;, never throws]
   PIPE --> SCORE[lib/score.ts<br/>deriveMetrics + computeScore<br/>hourly + multi-day windows]

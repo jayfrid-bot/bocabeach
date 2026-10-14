@@ -1,8 +1,10 @@
 //
 //  BeachStore.swift
 //
-//  The app's one source of truth: which beach is active, the last conditions
-//  for it, and whether a refresh is running or failed.
+//  The app's one source of truth AND the only owner of fetching and of reloading
+//  the widget. PhoneLink only stores what the phone sent and posts a notification;
+//  nothing else fetches for the app or reloads the widget, so one change causes
+//  one fetch and one reload, on every path (including failure).
 //
 
 import Foundation
@@ -11,11 +13,19 @@ import WidgetKit
 
 @MainActor
 final class BeachStore: ObservableObject {
+    /// One instance for the whole process, created at launch (even a background
+    /// launch from WatchConnectivity), so the notification observer always exists.
+    static let shared = BeachStore()
+
     enum Phase: Equatable {
         case idle
         case loading
         case failed(ConditionsError)
     }
+
+    /// Why a refresh runs. Only a change of beach must always reload the widget;
+    /// a foreground refresh reloads it only when new data was saved.
+    enum Reason { case foreground, selection }
 
     @Published private(set) var activeSlug: String?
     @Published private(set) var home: String?
@@ -24,25 +34,23 @@ final class BeachStore: ObservableObject {
     @Published private(set) var summary: BeachSummary?
     @Published private(set) var phase: Phase = .idle
 
-    /// A refresh newer than this is reused when the app comes forward.
-    private let reuseWindow: TimeInterval = 120
+    /// Bumped by every refresh; a completion that is not the newest is dropped,
+    /// so two overlapping requests for the SAME beach cannot finish out of order.
+    private var generation = 0
 
     private var observer: NSObjectProtocol?
 
-    init() {
+    private init() {
         loadSelection()
         observer = NotificationCenter.default.addObserver(
             forName: .beachSelectionChanged, object: nil, queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
-                self?.loadSelection()
-                await self?.refresh(force: true)
+                guard let self else { return }
+                self.loadSelection()
+                await self.refresh(.selection)
             }
         }
-    }
-
-    deinit {
-        if let observer { NotificationCenter.default.removeObserver(observer) }
     }
 
     var activeName: String? {
@@ -63,44 +71,46 @@ final class BeachStore: ObservableObject {
         }
     }
 
-    /// Foreground refresh: skip when the data is already fresh.
+    /// Foreground refresh: skip when the cached reading is still current by the server's clock.
     func refreshIfNeeded() async {
         loadSelection()
-        if let summary, summary.slug == activeSlug,
-           Date().timeIntervalSince(summary.fetchedAt) < reuseWindow, phase == .idle {
+        if let summary, summary.slug == activeSlug, summary.isFresh(), phase == .idle { return }
+        await refresh(.foreground)
+    }
+
+    func refresh(_ reason: Reason) async {
+        guard let slug = activeSlug else {
+            // Nothing chosen (the phone cleared it): the widget must show setup, once.
+            if reason == .selection { WidgetCenter.shared.reloadAllTimelines() }
             return
         }
-        await refresh(force: false)
-    }
-
-    func refresh(force: Bool) async {
-        // A forced refresh (a new beach was picked) may overlap an older one; stale
-        // completions are dropped below by the activeSlug checks.
-        guard let slug = activeSlug, force || phase != .loading else { return }
+        generation += 1
+        let mine = generation
         phase = .loading
+        var saved = false
         do {
             let fresh = try await ConditionsClient.fetch(slug: slug)
-            // The user may have switched beaches while this was in flight.
-            guard activeSlug == slug else { return }
-            summary = fresh
-            phase = .idle
-            WidgetCenter.shared.reloadAllTimelines()
+            if mine == generation, activeSlug == slug {
+                summary = fresh
+                phase = .idle
+                saved = true
+            }
         } catch let error as ConditionsError {
-            guard activeSlug == slug else { return }
-            phase = .failed(error)
+            if mine == generation, activeSlug == slug { phase = .failed(error) }
         } catch {
-            guard activeSlug == slug else { return }
-            phase = .failed(.badData)
+            if mine == generation, activeSlug == slug { phase = .failed(.badData) }
         }
+        guard mine == generation else { return } // a newer refresh owns the outcome
+        // The one widget reload. After a change of beach it happens even when the
+        // fetch failed, so the widget never stays on "choose a beach"; it then plans
+        // its own fetch from the cache or the network.
+        if saved || reason == .selection { WidgetCenter.shared.reloadAllTimelines() }
     }
 
-    /// Pick a beach on the watch (nil or the home beach = follow home).
+    /// Pick a beach on the watch (nil or the default beach = follow the phone).
     func select(_ slug: String?) async {
         BeachSelection.select(slug)
         loadSelection()
-        await refresh(force: true)
-        // A successful refresh already reloaded the widget once, after saving.
-        // If it failed, the widget must still learn about the new beach.
-        if case .failed = phase { WidgetCenter.shared.reloadAllTimelines() }
+        await refresh(.selection)
     }
 }

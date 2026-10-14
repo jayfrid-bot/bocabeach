@@ -1,24 +1,26 @@
 //
 //  PhoneLink.swift
 //
-//  Receives the home beach and favorites the iPhone app sends with
-//  WatchConnectivity `updateApplicationContext`, keeps them in the App Group
-//  and tells the app and the widget. The latest context is delivered even if
-//  the watch app was not running when the phone sent it.
+//  Receives the home beach, favorites and last-viewed beach the iPhone app sends
+//  with WatchConnectivity `updateApplicationContext` and keeps them in the App
+//  Group. The latest context is delivered even if the watch app was not running
+//  when the phone sent it.
 //
 
 import Foundation
 import WatchConnectivity
-import WatchKit
-import WidgetKit
 
 extension Notification.Name {
-    /// Posted on the main thread when the home beach or favorites changed.
+    /// Posted on the main thread when the beach the watch SHOWS changed (BeachStore listens).
     static let beachSelectionChanged = Notification.Name("BeachSelectionChanged")
 }
 
 final class PhoneLink: NSObject, WCSessionDelegate {
     static let shared = PhoneLink()
+
+    /// Bounded retry for a failed activation: seconds before attempt 1, 2, 3, ...
+    private static let retryDelays: [TimeInterval] = [2, 5, 15, 60, 180]
+    private var retryAttempt = 0
 
     func start() {
         guard WCSession.isSupported() else { return }
@@ -27,33 +29,46 @@ final class PhoneLink: NSObject, WCSessionDelegate {
         session.activate()
     }
 
+    private func retryActivation() {
+        DispatchQueue.main.async {
+            guard self.retryAttempt < Self.retryDelays.count else {
+                NSLog("PhoneLink: giving up on activation until the next launch")
+                return
+            }
+            let delay = Self.retryDelays[self.retryAttempt]
+            self.retryAttempt += 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { self.start() }
+        }
+    }
+
     /// WCSession delegate callbacks arrive on a background thread. The whole
     /// apply (several keys, then the notification) runs on the main queue so it
-    /// cannot interleave with a selection change made on screen.
+    /// cannot interleave with a selection change made on screen. This only STORES
+    /// what the phone sent: BeachStore owns the fetch and the widget reload, and
+    /// is told only when the beach shown actually changed.
     private func apply(_ context: [String: Any]) {
         guard !context.isEmpty else { return }
         guard ((context[WatchSync.Key.version] as? Int) ?? WatchSync.payloadVersion) <= WatchSync.payloadVersion else { return }
         DispatchQueue.main.async {
-            let changed = BeachSelection.applySync(
+            let activeChanged = BeachSelection.applySync(
                 home: context[WatchSync.Key.homeSlug],
                 favorites: context[WatchSync.Key.favorites],
                 lastViewed: context[WatchSync.Key.lastViewedSlug]
             )
-            guard changed else { return }
-            NotificationCenter.default.post(name: .beachSelectionChanged, object: nil)
-            // With the app on screen, BeachStore refetches and reloads the widget
-            // once, after the new data is saved. Otherwise (a background delivery)
-            // ask for a reload here so the complication follows the phone.
-            if WKApplication.shared().applicationState != .active {
-                WidgetCenter.shared.reloadAllTimelines()
-            }
+            if activeChanged { NotificationCenter.default.post(name: .beachSelectionChanged, object: nil) }
         }
     }
 
     // MARK: WCSessionDelegate
 
     func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
-        if activationState == .activated { apply(session.receivedApplicationContext) }
+        if let error { NSLog("PhoneLink: activation failed: %@", error.localizedDescription) }
+        if activationState == .activated {
+            DispatchQueue.main.async { self.retryAttempt = 0 }
+            apply(session.receivedApplicationContext)
+        } else {
+            retryActivation()
+        }
     }
 
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {

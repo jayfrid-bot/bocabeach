@@ -26,7 +26,7 @@ enum Tone: String, Codable, Comparable {
 }
 
 enum LineKind: String, Codable {
-    case hazard, safety, water, best, other
+    case hazard, safety, water, best, more, other
 }
 
 struct SummaryLine: Codable, Equatable {
@@ -47,20 +47,26 @@ struct BeachSummary: Codable, Equatable {
     var waterTempF: Int?
     /// When the server built this snapshot.
     var dataAt: Date
+    /// When the server says this view stops being current: an alert starting or
+    /// ending, the next rip model hour, the best window's end, or 15 minutes after
+    /// `dataAt`, whichever is first.
+    var validUntil: Date
     /// When this watch last received it.
     var fetchedAt: Date
 
+    /// The "as of 3:58 PM" label appears when the snapshot is older than this.
     static let staleAfter: TimeInterval = 30 * 60
-    /// A reading received this recently is used instead of asking the network again.
-    static let freshFor: TimeInterval = 30 * 60
+    /// No view is current longer than this after its snapshot was built.
+    static let maxValidity: TimeInterval = 15 * 60
 
     var displayScore: Int? { score }
 
     var rating: String? { score.map { ScoreBands.band(for: $0).rating } }
 
+    /// Current by the SERVER's clock (its snapshot time and its `validUntil`), not by
+    /// when this watch happened to receive it. A cached reading is reused only while fresh.
     func isFresh(now: Date = Date()) -> Bool {
-        let age = now.timeIntervalSince(fetchedAt)
-        return age >= 0 && age < Self.freshFor
+        now >= fetchedAt && now < validUntil
     }
 
     func isStale(now: Date = Date()) -> Bool {

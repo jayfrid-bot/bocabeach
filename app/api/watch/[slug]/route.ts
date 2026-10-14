@@ -1,8 +1,12 @@
 // GET /api/watch/<slug> — the small, ready-to-show answer the Apple Watch app
 // reads (lib/watchView.ts). The watch used to download the whole conditions
 // payload (~160 KB) and re-decide safety on its own; now the website's logic
-// decides and the watch only draws. Cached at the edge like the conditions
-// route; nothing personal goes in or out.
+// decides and the watch only draws. Nothing personal goes in or out.
+//
+// Cache: s-maxage 60 and NO stale-while-revalidate. This view is computed
+// against the clock (alerts starting and ending, the hourly rip model, the best
+// window), so unlike the raw conditions it must not be served minutes late; the
+// payload's own `validUntil` tells the watch when it stops being current.
 
 import { NextResponse } from "next/server";
 import { getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
@@ -23,18 +27,25 @@ export async function GET(
   }
 
   const { slug } = await params;
+  const notFound = () =>
+    NextResponse.json({ error: "Unknown location" }, { status: 404, headers: { "Cache-Control": "public, s-maxage=300" } });
+  // Syntax first, so a junk path never reaches the pipeline (and the 404 is cached at the edge).
+  if (slug.length > 64 || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) return notFound();
   const data = await getConditions(slug);
-  if (!data) {
-    return NextResponse.json({ error: "Unknown location" }, { status: 404 });
-  }
+  if (!data) return notFound();
   const { budgetAborted, ...publicData } = stripInternalSnapshotFields(data);
 
+  // A build that ran out of upstream budget is deliberately incomplete. Never
+  // hand it out as an answer: an error the watch rejects without touching its
+  // cache, and nothing for the edge to keep.
+  if (budgetAborted) {
+    return NextResponse.json(
+      { error: "incomplete" },
+      { status: 503, headers: { "Cache-Control": "no-store", "Retry-After": "30" } },
+    );
+  }
+
   return NextResponse.json(buildWatchView(publicData as typeof data), {
-    headers: {
-      // A build that ran out of upstream budget is incomplete: let it expire fast.
-      "Cache-Control": budgetAborted
-        ? "public, s-maxage=20"
-        : "public, s-maxage=300, stale-while-revalidate=600",
-    },
+    headers: { "Cache-Control": "public, s-maxage=60" },
   });
 }
