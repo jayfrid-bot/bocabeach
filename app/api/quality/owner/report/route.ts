@@ -1,4 +1,4 @@
-// POST /api/quality/owner/report — "Report conditions". Body { deviceId, slug,
+// POST /api/quality/owner/report — "Report conditions". Body { slug,
 // seaweed?, clarity?, surfFt?, sandF?, note? }. Saves one quality_labels row per
 // signal reported (source "report"), each with the nearest archived frames of
 // that beach, so the owner can tell the app the truth from the sand

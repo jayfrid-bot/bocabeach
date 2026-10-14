@@ -11,17 +11,17 @@
 import type { D1Like } from "@/lib/db/d1Store";
 import { recordAlert } from "@/lib/quality/alerts";
 import { detectJumps, type Detection, type JumpRow } from "@/lib/quality/jumps";
-import type { SendOwnerPush } from "@/lib/quality/notify";
 import { previousHourlyRow, type NewAlert } from "@/lib/quality/store";
 import type { HourlyAlertPayload } from "@/lib/quality/types";
 
 /** The `beach_hourly` columns the watchdog reads. */
 export const JUMP_COLS =
-  "slug, hour_utc, score, wave_ft, surf_ft, wave_source, sand_temp_f, clarity_pct, rain_now, lightning_near, wind_mph, cloud_pct, caps_json, factors_json";
+  "slug, hour_utc, local_date, score, wave_ft, surf_ft, wave_source, sand_temp_f, clarity_pct, rain_now, lightning_near, wind_mph, cloud_pct, caps_json, factors_json";
 
 /** The alert an unexplained jump becomes. Pure. */
 export function alertFromDetection(prev: JumpRow, cur: JumpRow, d: Detection, nowMs: number): NewAlert {
   const payload: HourlyAlertPayload = {
+    localDate: cur.local_date,
     observedAt: cur.hour_utc,
     fromHourUtc: prev.hour_utc,
     from: d.from,
@@ -46,12 +46,13 @@ export interface WatchdogResult {
   found: number;
   explained: number;
   alertIds: number[];
-  pushed: number;
+  /** Alerts that took a push slot (the drain step sends them). */
+  queued: number;
 }
 
-export async function runHourlyWatchdog(db: D1Like, cur: JumpRow, nowMs: number, send: SendOwnerPush): Promise<WatchdogResult> {
+export async function runHourlyWatchdog(db: D1Like, cur: JumpRow, nowMs: number): Promise<WatchdogResult> {
   const prev = await previousHourlyRow<JumpRow>(db, JUMP_COLS, cur.slug, cur.hour_utc);
-  const out: WatchdogResult = { compared: false, found: 0, explained: 0, alertIds: [], pushed: 0 };
+  const out: WatchdogResult = { compared: false, found: 0, explained: 0, alertIds: [], queued: 0 };
   if (!prev) return out;
   const detections = detectJumps(prev, cur);
   out.compared = true;
@@ -61,9 +62,9 @@ export async function runHourlyWatchdog(db: D1Like, cur: JumpRow, nowMs: number,
       out.explained += 1;
       continue;
     }
-    const r = await recordAlert(db, alertFromDetection(prev, cur, d, nowMs), nowMs, send);
+    const r = await recordAlert(db, alertFromDetection(prev, cur, d, nowMs), nowMs);
     if (r.created) out.alertIds.push(r.id);
-    if (r.pushed) out.pushed += 1;
+    if (r.queued) out.queued += 1;
   }
   return out;
 }

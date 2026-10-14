@@ -1,42 +1,97 @@
-// The owner's verdict on a cam's seaweed claim (docs/QUALITY_PLAN.md). Pure:
+// The owner's verdict on ONE EXACT seaweed claim (docs/QUALITY_PLAN.md). Pure:
 // lib/sources/sargassum.ts applies it to the cam feed before it summarizes, and
-// lib/quality/overrides.ts (server only) loads the rows. The cam reader reads the
-// same rows through GET /api/quality/overrides (scripts/quality_watch.py).
+// lib/quality/overrides.ts (server only) loads the rows. The cam reader reads the same
+// rows through GET /api/quality/overrides and applies the same rules
+// (scripts/quality_watch.py; both are tested against lib/quality/verdictVectors.json).
 //
-// An override (migrations/0019 `quality_overrides`) has a cam, a verdict, a start
-// time and an end. It acts on a reading only when it has not ended (the end is the
-// close of the beach-local day) and the reading was scored at or before the
-// override started. A reading with no readable scoring time counts as older. A
-// NEWER fresh reading from the cam is never touched: the cam speaks again and the
-// override has nothing left to act on.
+// TARGET. A verdict names a claim by its cam and its frame: the frame's hash for a feed
+// cam, else the frame's own time. It never acts on "the cam" in general, on a different
+// frame of that cam, or on a reading that merely came before the tap.
 //
-// WRONG: the claim was false. For that cam only:
-//   - its seaweed level, coverage and note are cleared in every capture group
-//     (morning, latest, lastSeaweed), and its held-jump marks are removed;
-//   - its entry in `pendingClaims` is dropped, so the claim no longer counts as an
-//     open question.
-// RIGHT: the claim was true. For that cam only:
-//   - a reading still HELD (`unconfirmed`) publishes the level the owner judged,
-//     with `confirmedBy: "owner"`;
-//   - its held entry in `pendingClaims` becomes a confirmed one (`confirmedBy: "owner"`).
-// Water, crowd and every other cam stay as they were. The rolling history is left
-// alone: it only stores the beach-wide worst, which cannot be split by cam.
+// SUPERSESSION. Of the verdicts for one exact target, the latest wins (created time, then
+// id). The server keeps one active verdict per alert; this rule also settles two alerts
+// about one frame.
+//
+// ACTIONS, for the matching claim only:
+//   publish  (Right, or Wrong with a corrected level of moderate or high): a reading still
+//            HELD for that frame publishes at the verdict's level with `confirmedBy:
+//            "owner"`, and that frame's pending claim becomes a confirmed one.
+//   reject   (Wrong with none, low, or no value): a held reading for that frame is cleared
+//            and nothing is published for it; its pending claim is removed. (The reader
+//            also marks the cam DISPUTED for the rest of the day; the app needs no such
+//            state, because the reader holds the cam's later claims.)
+// Water, crowd and every other cam, and every other frame, stay as they were. The rolling
+// history is left alone: it only stores the beach-wide worst, which cannot be split by cam.
 
 export interface SeaweedOverride {
+  id?: number;
   camId: string;
-  /** Default 'wrong'. */
-  verdict?: "wrong" | "right";
-  /** ISO UTC: readings scored at or before this are acted on. */
+  action: "publish" | "reject";
+  verdict?: "right" | "wrong";
+  /** The level a 'publish' puts out. */
+  level?: string | null;
+  coveragePct?: number | null;
+  note?: string | null;
+  /** The claim's frame hash (first 20 hex), for feed cams. */
+  frameSha?: string | null;
+  /** The frame's own time, for courier cams, kept exactly as the reader wrote it. */
+  frameAt?: string | null;
+  claimedAt?: string | null;
+  /** Beach-local date of the claim. */
+  localDate?: string;
+  /** ISO UTC: when the owner answered. */
   createdAtUtc: string;
-  /** ISO UTC: the override ends here. */
+  /** ISO UTC: the override ends here (the close of the beach-local day). */
   untilUtc: string;
-  /** The claim the owner judged; a 'right' override publishes it. */
-  claim?: { level?: string | null; coveragePct?: number | null; note?: string | null } | null;
 }
 
-interface OverridableReading {
+interface FrameId {
+  frameSha?: string | null;
+  frameAt?: string | null;
+}
+
+/** True when two things name the same frame: equal hash prefixes when both have a hash, else equal frame time. Pure. */
+export function sameFrame(a: FrameId, b: FrameId): boolean {
+  if (a.frameSha && b.frameSha) {
+    const n = Math.min(a.frameSha.length, b.frameSha.length);
+    return n >= 8 && a.frameSha.slice(0, n) === b.frameSha.slice(0, n);
+  }
+  if (a.frameAt && b.frameAt) return a.frameAt === b.frameAt;
+  return false;
+}
+
+/** The key of one exact target: cam plus frame. Null when the verdict has no frame identity (it cannot bind). Pure. */
+export function targetKey(o: { camId: string } & FrameId): string | null {
+  if (o.frameSha) return `${o.camId}|sha:${o.frameSha.slice(0, 20)}`;
+  if (o.frameAt) return `${o.camId}|at:${o.frameAt}`;
+  return null;
+}
+
+/**
+ * The verdicts in force at `nowMs`: not ended, bound to a frame, and the LATEST per exact
+ * target (by created time, then id). Oldest first. Pure.
+ */
+export function effectiveOverrides(list: SeaweedOverride[], nowMs: number): SeaweedOverride[] {
+  const best = new Map<string, SeaweedOverride>();
+  for (const o of list) {
+    const until = Date.parse(o.untilUtc);
+    const made = Date.parse(o.createdAtUtc);
+    if (!Number.isFinite(until) || nowMs >= until || !Number.isFinite(made)) continue;
+    const key = targetKey(o);
+    if (!key) continue;
+    const cur = best.get(key);
+    if (!cur) {
+      best.set(key, o);
+      continue;
+    }
+    const curMade = Date.parse(cur.createdAtUtc);
+    if (made > curMade || (made === curMade && (o.id ?? 0) > (cur.id ?? 0))) best.set(key, o);
+  }
+  return [...best.values()].sort((a, b) => Date.parse(a.createdAtUtc) - Date.parse(b.createdAtUtc) || (a.id ?? 0) - (b.id ?? 0));
+}
+
+interface OverridableReading extends FrameId {
   id?: string;
-  scoredAt?: string;
   level?: unknown;
   coveragePct?: unknown;
   note?: unknown;
@@ -47,8 +102,7 @@ interface OverridableReading {
 interface OverridableGroup {
   cams?: OverridableReading[];
 }
-interface OverridableClaim {
-  claimedAt?: string;
+interface OverridableClaim extends FrameId {
   confirmed?: boolean;
   confirmedBy?: string;
 }
@@ -60,19 +114,6 @@ interface OverridableFeed {
 }
 
 const LEVELS = new Set(["none", "low", "moderate", "high"]);
-
-/** The overrides still running at `nowMs`. */
-export function liveOverrides(list: SeaweedOverride[], nowMs: number): SeaweedOverride[] {
-  return list.filter((o) => {
-    const until = Date.parse(o.untilUtc);
-    return Number.isFinite(until) && nowMs < until && Number.isFinite(Date.parse(o.createdAtUtc));
-  });
-}
-
-function atOrBefore(stamp: unknown, limitMs: number): boolean {
-  const t = typeof stamp === "string" ? Date.parse(stamp) : NaN;
-  return !Number.isFinite(t) || t <= limitMs;
-}
 
 function mapGroup<G extends OverridableGroup>(
   group: G | null | undefined,
@@ -88,57 +129,44 @@ function mapGroup<G extends OverridableGroup>(
   return changed ? { ...group, cams } : group;
 }
 
-function applyWrong(feed: OverridableFeed, o: SeaweedOverride): void {
-  const limit = Date.parse(o.createdAtUtc);
-  const strip = (c: OverridableReading): OverridableReading =>
-    c.id === o.camId && atOrBefore(c.scoredAt, limit)
-      ? { ...c, level: "unknown", coveragePct: undefined, note: undefined, unconfirmed: undefined }
-      : c;
-  feed.morning = mapGroup(feed.morning, strip);
-  feed.latest = mapGroup(feed.latest, strip);
-  feed.lastSeaweed = mapGroup(feed.lastSeaweed, strip);
-  const claims = feed.pendingClaims;
-  if (claims && o.camId in claims && atOrBefore(claims[o.camId]?.claimedAt, limit)) {
-    const { [o.camId]: _dropped, ...kept } = claims;
-    feed.pendingClaims = kept;
-  }
-}
-
-function applyRight(feed: OverridableFeed, o: SeaweedOverride): void {
-  const limit = Date.parse(o.createdAtUtc);
-  const publish = (c: OverridableReading): OverridableReading => {
-    if (c.id !== o.camId || c.unconfirmed !== true || !atOrBefore(c.scoredAt, limit)) return c;
-    const held = (c.claim ?? {}) as { level?: unknown; coveragePct?: unknown; note?: unknown };
-    const judged = o.claim ?? {};
-    const level = typeof judged.level === "string" && LEVELS.has(judged.level) ? judged.level : held.level;
+function applyOne(feed: OverridableFeed, o: SeaweedOverride): void {
+  const held = (c: OverridableReading) => c.id === o.camId && c.unconfirmed === true && sameFrame(c, o);
+  const change = (c: OverridableReading): OverridableReading => {
+    if (!held(c)) return c;
+    if (o.action === "reject") return { ...c, level: "unknown", coveragePct: undefined, note: undefined, unconfirmed: undefined, claim: undefined };
+    const own = (c.claim ?? {}) as { level?: unknown; coveragePct?: unknown; note?: unknown };
+    const level = typeof o.level === "string" && LEVELS.has(o.level) ? o.level : own.level;
     if (typeof level !== "string" || !LEVELS.has(level)) return c;
     return {
       ...c,
       level,
-      coveragePct: judged.coveragePct ?? held.coveragePct ?? undefined,
-      note: judged.note ?? held.note ?? undefined,
+      coveragePct: o.coveragePct ?? own.coveragePct ?? undefined,
+      note: o.note ?? own.note ?? undefined,
       unconfirmed: undefined,
       claim: undefined,
       confirmedBy: "owner",
     };
   };
-  feed.morning = mapGroup(feed.morning, publish);
-  feed.latest = mapGroup(feed.latest, publish);
-  feed.lastSeaweed = mapGroup(feed.lastSeaweed, publish);
+  feed.morning = mapGroup(feed.morning, change);
+  feed.latest = mapGroup(feed.latest, change);
+  feed.lastSeaweed = mapGroup(feed.lastSeaweed, change);
   const claims = feed.pendingClaims;
-  const claim = claims?.[o.camId];
-  if (claims && claim && claim.confirmed !== true && atOrBefore(claim.claimedAt, limit)) {
-    feed.pendingClaims = { ...claims, [o.camId]: { ...claim, confirmed: true, confirmedBy: "owner" } };
+  const entry = claims?.[o.camId];
+  if (claims && entry && sameFrame(entry, o)) {
+    if (o.action === "reject") {
+      const { [o.camId]: _removed, ...kept } = claims;
+      feed.pendingClaims = kept;
+    } else if (entry.confirmed !== true) {
+      feed.pendingClaims = { ...claims, [o.camId]: { ...entry, confirmed: true, confirmedBy: "owner" } };
+    }
   }
 }
 
-/** The feed with the owner's verdicts applied. Returns the same object when no override is running. Pure. */
+/** The feed with the owner's verdicts applied to their exact claims. Returns the same object when none is in force. Pure. */
 export function applySeaweedOverrides<F extends OverridableFeed>(feed: F, overrides: SeaweedOverride[], nowMs: number): F {
-  const live = liveOverrides(overrides, nowMs);
+  const live = effectiveOverrides(overrides, nowMs);
   if (!live.length) return feed;
-  // Oldest verdict first, so a later one on the same cam wins.
-  live.sort((a, b) => Date.parse(a.createdAtUtc) - Date.parse(b.createdAtUtc));
   const out: F = { ...feed };
-  for (const o of live) (o.verdict === "right" ? applyRight : applyWrong)(out, o);
+  for (const o of live) applyOne(out, o);
   return out;
 }

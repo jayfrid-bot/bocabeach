@@ -1,0 +1,67 @@
+{
+  "_about": "Shared test vectors for the owner-verdict rules. lib/quality/seaweedOverrides.ts (TypeScript) and scripts/quality_watch.py (Python) must give these exact answers; lib/quality/seaweedOverrides.test.ts and scripts/quality_watch_test.py both read this file.",
+  "sameFrame": [
+    { "name": "equal hash", "a": { "frameSha": "0123456789abcdef0123", "frameAt": null }, "b": { "frameSha": "0123456789abcdef0123", "frameAt": "2026-10-13T17:20:00Z" }, "same": true },
+    { "name": "a longer hash matches its 20-character prefix", "a": { "frameSha": "0123456789abcdef0123456789" }, "b": { "frameSha": "0123456789abcdef0123" }, "same": true },
+    { "name": "different hashes are different frames even at the same time", "a": { "frameSha": "0123456789abcdef0123", "frameAt": "2026-10-13T17:20:00Z" }, "b": { "frameSha": "ffffffffffffffffffff", "frameAt": "2026-10-13T17:20:00Z" }, "same": false },
+    { "name": "no hash on one side: the frame time decides", "a": { "frameSha": null, "frameAt": "2026-10-13T17:20:00Z" }, "b": { "frameSha": "0123456789abcdef0123", "frameAt": "2026-10-13T17:20:00Z" }, "same": true },
+    { "name": "different frame times", "a": { "frameAt": "2026-10-13T17:20:00Z" }, "b": { "frameAt": "2026-10-13T17:30:00Z" }, "same": false },
+    { "name": "a hash that is too short to trust", "a": { "frameSha": "0123" }, "b": { "frameSha": "0123" }, "same": false },
+    { "name": "nothing to compare", "a": {}, "b": {}, "same": false }
+  ],
+  "targetKey": [
+    { "o": { "camId": "boca-inlet-surf", "frameSha": "0123456789abcdef0123456789", "frameAt": "2026-10-13T17:20:00Z" }, "key": "boca-inlet-surf|sha:0123456789abcdef0123" },
+    { "o": { "camId": "ftl-elbo-beach-cam", "frameSha": null, "frameAt": "2026-10-13T17:20:00Z" }, "key": "ftl-elbo-beach-cam|at:2026-10-13T17:20:00Z" },
+    { "o": { "camId": "boca-south" }, "key": null }
+  ],
+  "effective": [
+    {
+      "name": "the latest verdict per exact target wins",
+      "now": "2026-10-13T18:00:00Z",
+      "overrides": [
+        { "id": 1, "camId": "a", "action": "reject", "frameSha": "11111111111111111111", "createdAtUtc": "2026-10-13T17:30:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" },
+        { "id": 2, "camId": "a", "action": "publish", "frameSha": "11111111111111111111", "createdAtUtc": "2026-10-13T17:40:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" },
+        { "id": 3, "camId": "a", "action": "reject", "frameSha": "22222222222222222222", "createdAtUtc": "2026-10-13T17:35:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" }
+      ],
+      "ids": [3, 2]
+    },
+    {
+      "name": "a tie on time goes to the higher id",
+      "now": "2026-10-13T18:00:00Z",
+      "overrides": [
+        { "id": 5, "camId": "a", "action": "publish", "frameAt": "2026-10-13T17:20:00Z", "createdAtUtc": "2026-10-13T17:30:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" },
+        { "id": 6, "camId": "a", "action": "reject", "frameAt": "2026-10-13T17:20:00Z", "createdAtUtc": "2026-10-13T17:30:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" }
+      ],
+      "ids": [6]
+    },
+    {
+      "name": "the same frame time on two cams is two targets",
+      "now": "2026-10-13T18:00:00Z",
+      "overrides": [
+        { "id": 1, "camId": "a", "action": "publish", "frameAt": "2026-10-13T17:20:00Z", "createdAtUtc": "2026-10-13T17:30:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" },
+        { "id": 2, "camId": "b", "action": "reject", "frameAt": "2026-10-13T17:20:00Z", "createdAtUtc": "2026-10-13T17:31:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" }
+      ],
+      "ids": [1, 2]
+    },
+    {
+      "name": "an ended verdict, one with no frame identity, and one with a bad time are out",
+      "now": "2026-10-13T18:00:00Z",
+      "overrides": [
+        { "id": 1, "camId": "a", "action": "publish", "frameSha": "11111111111111111111", "createdAtUtc": "2026-10-13T17:30:00.000Z", "untilUtc": "2026-10-13T17:59:59.000Z" },
+        { "id": 2, "camId": "a", "action": "publish", "createdAtUtc": "2026-10-13T17:30:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" },
+        { "id": 3, "camId": "a", "action": "publish", "frameSha": "33333333333333333333", "createdAtUtc": "never", "untilUtc": "2026-10-14T04:00:00.000Z" },
+        { "id": 4, "camId": "a", "action": "publish", "frameSha": "44444444444444444444", "createdAtUtc": "2026-10-13T17:30:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" }
+      ],
+      "ids": [4]
+    },
+    {
+      "name": "a Right then a later Wrong on one frame ends as the Wrong; no mixing",
+      "now": "2026-10-13T18:00:00Z",
+      "overrides": [
+        { "id": 9, "camId": "a", "action": "reject", "frameSha": "11111111111111111111", "createdAtUtc": "2026-10-13T17:50:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" },
+        { "id": 8, "camId": "a", "action": "publish", "frameSha": "11111111111111111111", "createdAtUtc": "2026-10-13T17:31:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" }
+      ],
+      "ids": [9]
+    }
+  ]
+}

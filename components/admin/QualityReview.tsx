@@ -1,10 +1,10 @@
 "use client";
 
 // Owner-only review screen (docs/QUALITY_PLAN.md, "Confirm"). A public shell:
-// every alert, picture and number arrives through /api/quality/owner/list,
-// which only the owner's device passes (lib/quality/owner.ts). A phone that is
-// not on the list sees a closed door and its own device id, which it can add to
-// the OWNER_DEVICE_IDS secret.
+// every alert, picture and number arrives through /api/quality/owner/list, which only
+// a phone holding the owner token passes (lib/quality/owner.ts). A phone enrolls once by
+// opening /admin/review#enroll=<code> (the OWNER_ENROLL_CODE secret); the code is read from
+// the address, removed from it, and traded for the token. Any other phone sees a closed door.
 //
 // Each open alert is one card: the picture, one sentence to judge, what the app
 // showed, and two big buttons. "Wrong" opens a one-tap picker for the correct
@@ -14,7 +14,17 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { getDeviceId } from "@/lib/deviceId";
-import { ownerErrorText, ownerPost, writeOwnerHint } from "@/lib/quality/client";
+import { nativePushTokenForOwner } from "@/lib/push/native";
+import {
+  CARD_UPDATE_NOTE,
+  enrollThisPhone,
+  ownerErrorText,
+  ownerPost,
+  syncOwnerPushToken,
+  takeEnrollCode,
+  writeOwnerHint,
+  writeOwnerToken,
+} from "@/lib/quality/client";
 import type { AlertView } from "@/lib/quality/review";
 import { CLARITY_WORDS, SEAWEED_LEVELS } from "@/lib/quality/types";
 import { bigBtn, cardCls, chipBtn, chipOff, inputCls, linkCls, rightBtn, wrongBtn } from "@/components/admin/ownerUi";
@@ -46,7 +56,7 @@ function describeAnswer(a: AlertView): string {
   return truth ? `Wrong, really ${truth}` : "Wrong";
 }
 
-function AlertCard({ alert, focused, onDone }: { alert: AlertView; focused: boolean; onDone: (id: number) => void }) {
+function AlertCard({ alert, focused, onDone }: { alert: AlertView; focused: boolean; onDone: (id: number, overrideAdded: boolean) => void }) {
   const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,9 +71,9 @@ function AlertCard({ alert, focused, onDone }: { alert: AlertView; focused: bool
     async (verdict: "right" | "wrong", correct?: Record<string, unknown>) => {
       setBusy(true);
       setError(null);
-      const r = await ownerPost<{ ok: true }>("/api/quality/owner/answer", { alertId: alert.id, verdict, correct });
+      const r = await ownerPost<{ ok: true; overrideAdded: boolean }>("/api/quality/owner/answer", { alertId: alert.id, verdict, correct });
       setBusy(false);
-      if (r.ok) onDone(alert.id);
+      if (r.ok) onDone(alert.id, r.data.overrideAdded === true);
       else setError(ownerErrorText(r.error));
     },
     [alert.id, onDone],
@@ -179,25 +189,45 @@ function AlertCard({ alert, focused, onDone }: { alert: AlertView; focused: bool
 
 export function QualityReview({ focusAlertId }: { focusAlertId: number | null }) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
-  const [deviceId, setDeviceId] = useState("");
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const r = await ownerPost<ListReply>("/api/quality/owner/list");
     if (r.ok) {
       writeOwnerHint(true);
       setPhase({ kind: "ready", open: r.data.open, recent: r.data.recent });
+      // Tell the server which phone to push to (this one). Quiet when it cannot.
+      void syncOwnerPushToken(nativePushTokenForOwner);
     } else {
-      if (r.error === "not-owner") writeOwnerHint(false);
+      if (r.status === 401) {
+        writeOwnerToken(null);
+        writeOwnerHint(false);
+      }
       setPhase({ kind: "closed", error: r.error });
     }
   }, []);
 
   useEffect(() => {
-    setDeviceId(getDeviceId());
-    void load();
+    void (async () => {
+      const code = takeEnrollCode();
+      if (code) {
+        const e = await enrollThisPhone(code, getDeviceId());
+        if (!e.ok) {
+          setPhase({ kind: "closed", error: e.error });
+          return;
+        }
+      }
+      await load();
+    })();
   }, [load]);
 
-  const answered = useCallback(() => void load(), [load]);
+  const answered = useCallback(
+    (_id: number, overrideAdded: boolean) => {
+      setNotice(overrideAdded ? `Saved. ${CARD_UPDATE_NOTE}` : "Saved as a record only. That claim is not from today, so the beach card is unchanged.");
+      void load();
+    },
+    [load],
+  );
 
   return (
     <main className="mx-auto max-w-xl px-4 py-6 sm:px-6">
@@ -214,13 +244,6 @@ export function QualityReview({ focusAlertId }: { focusAlertId: number | null })
       {phase.kind === "closed" ? (
         <section className={cardCls}>
           <p className="text-slate-800 dark:text-slate-100">{ownerErrorText(phase.error)}</p>
-          {phase.error === "not-owner" || phase.error === "owner-not-configured" ? (
-            <details className="mt-3 text-sm text-slate-600 dark:text-slate-400">
-              <summary className="cursor-pointer">This phone&apos;s device id</summary>
-              <p className="mt-2 break-all font-mono text-xs">{deviceId || "none"}</p>
-              <p className="mt-2">To make this phone the owner, add that id to the OWNER_DEVICE_IDS secret.</p>
-            </details>
-          ) : null}
           <button type="button" className={`${bigBtn} mt-4 bg-slate-900/5 text-slate-800 dark:bg-white/10 dark:text-white`} onClick={() => void load()}>
             Try again
           </button>
@@ -237,6 +260,12 @@ export function QualityReview({ focusAlertId }: { focusAlertId: number | null })
               Refresh
             </button>
           </nav>
+
+          {notice ? (
+            <p role="status" className={`${cardCls} mb-4 text-sm text-slate-800 dark:text-slate-100`}>
+              {notice}
+            </p>
+          ) : null}
 
           {phase.open.length === 0 ? (
             <section className={cardCls}>

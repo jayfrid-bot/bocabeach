@@ -8,6 +8,7 @@ import { CLAIM_A, frameRow } from "@/lib/camFrames/testFixtures";
 import type { CamFrameRow } from "@/lib/camFrames/store";
 import type { JumpRow } from "@/lib/quality/jumps";
 import type { SendOwnerPush, OwnerPush, OwnerPushResult } from "@/lib/quality/notify";
+import { createSession, newOwnerToken, setSessionPushToken } from "@/lib/quality/ownerSessions";
 
 /** A `beach_hourly` row for the columns the watchdog and the report read; override any. */
 export function hourlyValues(over: Record<string, unknown> = {}): Record<string, unknown> {
@@ -82,10 +83,50 @@ export async function insertFrame(db: D1Like, over: Partial<CamFrameRow> & { at?
 /** A push sender that records what it was asked to send. */
 export function fakeSender(result: Partial<OwnerPushResult> = {}): SendOwnerPush & { sent: OwnerPush[] } {
   const sent: OwnerPush[] = [];
-  const fn = (async (msg: OwnerPush) => {
+  const fn = (async (_db: D1Like, msg: OwnerPush) => {
     sent.push(msg);
     return { ok: true, sent: 1, failed: 0, ...result };
   }) as SendOwnerPush & { sent: OwnerPush[] };
   fn.sent = sent;
   return fn;
+}
+
+/** Enroll a fake owner phone straight in the database. Returns its token, and the session id. */
+export async function seedOwnerSession(
+  db: D1Like,
+  opts: { pushToken?: string; deviceId?: string; nowMs?: number } = {},
+): Promise<{ token: string; id: number }> {
+  const token = newOwnerToken();
+  const nowMs = opts.nowMs ?? Date.now();
+  const id = await createSession(db, { deviceId: opts.deviceId ?? "11111111-2222-4333-8444-555555555555", token, nowMs });
+  if (opts.pushToken) await setSessionPushToken(db, id, opts.pushToken, nowMs);
+  return { token, id };
+}
+
+/** Insert an override row straight into the database (answerAlert is what writes them in production). */
+export function insertOverrideRow(db: D1Like, over: Record<string, unknown> = {}): Promise<unknown> {
+  const v: Record<string, unknown> = {
+    alert_id: 1,
+    superseded: 0,
+    slug: "boca-raton",
+    signal: "seaweed",
+    cam_id: "boca-inlet-surf",
+    frame_sha: "a".repeat(20),
+    frame_at: null,
+    claimed_at: "2026-10-13T17:21:00Z",
+    local_date: "2026-10-13",
+    verdict: "right",
+    action: "publish",
+    level: "moderate",
+    coverage_pct: 35,
+    note: null,
+    created_at_utc: "2026-10-13T17:35:00.000Z",
+    until_utc: "2026-10-14T04:00:00.000Z",
+    ...over,
+  };
+  const cols = Object.keys(v);
+  return db
+    .prepare(`INSERT INTO quality_overrides (${cols.join(", ")}) VALUES (${cols.map((_, i) => `?${i + 1}`).join(", ")})`)
+    .bind(...cols.map((c) => v[c]))
+    .run();
 }

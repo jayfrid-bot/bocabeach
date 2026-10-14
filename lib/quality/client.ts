@@ -1,17 +1,44 @@
 // Browser-side helpers for the owner screens (/admin/review, /admin/report).
-// Every call is a POST with this device's id in the body and its install token
-// in `x-install-token`; the server decides whether the device is the owner
-// (lib/quality/owner.ts). Nothing here is a secret or a gate.
+//
+// The owner's phone holds ONE credential: the owner token, handed out once by
+// POST /api/quality/owner/enroll when the phone enrolled with OWNER_ENROLL_CODE (see
+// lib/quality/owner.ts). Every owner call sends it as `Authorization: Bearer <token>`. It lives in
+// this phone's local storage; the server keeps only its SHA-256.
 
-import { getDeviceId } from "@/lib/deviceId";
-import { readInstallToken } from "@/lib/plus/storage";
-
-/** Set on this device after the owner check passes once, so the beach page can show its quiet "Report conditions" link without asking the server on every visit. Display hint only. */
+export const OWNER_TOKEN_KEY = "bd:owner-token";
+/** Set once an owner call succeeds, so the beach page can show its quiet "Report conditions" link without a request. Display hint only. */
 export const OWNER_HINT_KEY = "bd:owner-hint";
+
+function store(): Storage | null {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function readOwnerToken(): string | null {
+  try {
+    return store()?.getItem(OWNER_TOKEN_KEY) || null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeOwnerToken(token: string | null): void {
+  try {
+    const s = store();
+    if (!s) return;
+    if (token) s.setItem(OWNER_TOKEN_KEY, token);
+    else s.removeItem(OWNER_TOKEN_KEY);
+  } catch {
+    /* private mode: the owner screens just ask to enroll again */
+  }
+}
 
 export function readOwnerHint(): boolean {
   try {
-    return typeof localStorage !== "undefined" && localStorage.getItem(OWNER_HINT_KEY) === "1";
+    return store()?.getItem(OWNER_HINT_KEY) === "1";
   } catch {
     return false;
   }
@@ -19,32 +46,28 @@ export function readOwnerHint(): boolean {
 
 export function writeOwnerHint(on: boolean): void {
   try {
-    if (typeof localStorage === "undefined") return;
-    if (on) localStorage.setItem(OWNER_HINT_KEY, "1");
-    else localStorage.removeItem(OWNER_HINT_KEY);
+    const s = store();
+    if (!s) return;
+    if (on) s.setItem(OWNER_HINT_KEY, "1");
+    else s.removeItem(OWNER_HINT_KEY);
   } catch {
     /* private mode: the link just stays hidden */
   }
 }
 
 /** The request init for an owner call. Pure. */
-export function ownerRequestInit(deviceId: string, token: string | null, body: Record<string, unknown>): RequestInit {
+export function ownerRequestInit(token: string | null, body: Record<string, unknown>): RequestInit {
   const headers: Record<string, string> = { "content-type": "application/json" };
-  if (token) headers["x-install-token"] = token;
-  return { method: "POST", headers, body: JSON.stringify({ ...body, deviceId }), cache: "no-store" };
+  if (token) headers.authorization = `Bearer ${token}`;
+  return { method: "POST", headers, body: JSON.stringify(body), cache: "no-store" };
 }
 
-export type OwnerCallResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; error: string; status: number };
+export type OwnerCallResult<T> = { ok: true; data: T } | { ok: false; error: string; status: number };
 
-/** POST to an owner route. Never throws: a network failure is `{ ok: false, error: "network" }`. */
-export async function ownerPost<T>(path: string, body: Record<string, unknown> = {}): Promise<OwnerCallResult<T>> {
-  const deviceId = getDeviceId();
-  if (!deviceId) return { ok: false, error: "no-device", status: 0 };
+async function post<T>(path: string, token: string | null, body: Record<string, unknown>): Promise<OwnerCallResult<T>> {
   let res: Response;
   try {
-    res = await fetch(path, ownerRequestInit(deviceId, readInstallToken(), body));
+    res = await fetch(path, ownerRequestInit(token, body));
   } catch {
     return { ok: false, error: "network", status: 0 };
   }
@@ -59,23 +82,75 @@ export async function ownerPost<T>(path: string, body: Record<string, unknown> =
   return { ok: false, error: typeof obj.error === "string" ? obj.error : "server", status: res.status };
 }
 
+/** POST to an owner route with this phone's owner token. Never throws: a network failure is `{ ok: false, error: "network" }`. */
+export async function ownerPost<T>(path: string, body: Record<string, unknown> = {}): Promise<OwnerCallResult<T>> {
+  const token = readOwnerToken();
+  if (!token) return { ok: false, error: "unauthorized", status: 401 };
+  return post<T>(path, token, body);
+}
+
+/** Enroll this phone: trade the one-time code for an owner token and keep it. The code is sent in the request body only. */
+export async function enrollThisPhone(code: string, deviceId: string): Promise<OwnerCallResult<{ ok: true; token: string }>> {
+  const r = await post<{ ok: true; token: string }>("/api/quality/owner/enroll", null, { code, deviceId });
+  if (r.ok && typeof r.data.token === "string") writeOwnerToken(r.data.token);
+  return r;
+}
+
+/**
+ * Read an enrollment code from the page address and REMOVE it from the address bar. Prefers the
+ * fragment (`#enroll=<code>`, which browsers never send to a server); accepts `?enroll=<code>` too.
+ * `loc` and `history` are injectable for tests. Returns null when there is none.
+ */
+export function takeEnrollCode(
+  loc: Pick<Location, "hash" | "search" | "pathname"> = window.location,
+  hist: Pick<History, "replaceState"> = window.history,
+): string | null {
+  const fromHash = new URLSearchParams(loc.hash.replace(/^#/, "")).get("enroll");
+  const fromQuery = new URLSearchParams(loc.search).get("enroll");
+  const code = fromHash || fromQuery;
+  if (!code) return null;
+  const q = new URLSearchParams(loc.search);
+  q.delete("enroll");
+  const h = new URLSearchParams(loc.hash.replace(/^#/, ""));
+  h.delete("enroll");
+  const qs = q.toString();
+  const hs = h.toString();
+  hist.replaceState(null, "", `${loc.pathname}${qs ? `?${qs}` : ""}${hs ? `#${hs}` : ""}`);
+  return code;
+}
+
+/** Tell the server which phone to push to. Quietly does nothing off iOS or without a token. */
+export async function syncOwnerPushToken(getToken: () => Promise<string | null>): Promise<boolean> {
+  const token = await getToken();
+  if (!token) return false;
+  const r = await ownerPost<{ ok: true }>("/api/quality/owner/push-token", { token, platform: "ios" });
+  return r.ok;
+}
+
 /** Plain words for a refusal, shown instead of an error code. Pure. */
 export function ownerErrorText(error: string): string {
   switch (error) {
-    case "not-owner":
-      return "This phone is not on the owner list.";
-    case "owner-not-configured":
-      return "The owner list is not set up on the server yet.";
-    case "token-required":
-    case "no-token":
-      return "This phone has no install token. Open the app's home screen once, then come back.";
+    case "unauthorized":
+      return "This phone is not enrolled as the owner. Open the enrollment link once.";
+    case "enrollment-closed":
+      return "Enrollment is not open on the server.";
+    case "bad-code":
+      return "That enrollment code did not work.";
+    case "too-many-attempts":
+      return "Too many tries. Wait a while and try again.";
     case "network":
       return "No connection. Try again.";
-    case "no-device":
-      return "This browser cannot keep a device id.";
-    case "already-answered":
-      return "This one was already answered.";
     default:
       return "Something went wrong. Try again.";
   }
 }
+
+/**
+ * How long until the public beach card shows an owner's answer. The server builds a fresh snapshot
+ * on the next request after a tap (the conditions cache key includes the verdicts). What can still
+ * hold the old card is the page's own refresh (every 5 minutes) and, if a network cache keeps
+ * the public conditions answer, its `s-maxage=300, stale-while-revalidate=600`.
+ */
+export const CARD_REFRESH_MINUTES = 5;
+export const CARD_REFRESH_WORST_CASE_MINUTES = 15;
+export const CARD_UPDATE_NOTE = `The beach card updates on its next refresh, within ${CARD_REFRESH_MINUTES} minutes. A copy held by the network can take up to ${CARD_REFRESH_WORST_CASE_MINUTES}.`;

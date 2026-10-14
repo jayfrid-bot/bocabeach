@@ -1,6 +1,7 @@
 // The history archiver hands every row it writes to the quality watchdog
-// (lib/quality/watchdog.ts). Real SQLite holds the earlier hour and the alerts;
-// the build and the owner push are fakes.
+// (lib/quality/watchdog.ts). Real SQLite holds the earlier hour and the alerts; the build is a
+// fake. The archive request only RECORDS the alert and queues its push: it never talks to APNs
+// (the drain step sends it), so it spends no subrequest on delivery.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HAS_SQLITE, makeCamDb, type CamDb } from "@/lib/camFrames/testDb";
@@ -8,16 +9,19 @@ import { scorableResponse } from "@/lib/alerts/fixtures";
 import { getLocation, listLocations } from "@/config/locations";
 import { getStore } from "@/lib/db/store";
 import { hourUtcOf, rowFromConditions } from "@/lib/history/archive";
-import type { OwnerPush } from "@/lib/quality/notify";
 
-const ctl = vi.hoisted(() => ({ db: null as unknown, sent: [] as unknown[] }));
+const ctl = vi.hoisted(() => ({ db: null as unknown, apnsCalls: 0 }));
 vi.mock("@/lib/db/d1Store", () => ({ getD1: async () => ctl.db }));
-vi.mock("@/lib/quality/notify", async (orig) => ({
-  ...(await orig<typeof import("@/lib/quality/notify")>()),
-  sendOwnerPush: async (msg: OwnerPush) => {
-    ctl.sent.push(msg);
-    return { ok: true, sent: 1, failed: 0 };
+vi.mock("@/lib/push/apns", () => ({
+  getApns: () => {
+    ctl.apnsCalls += 1;
+    return null;
   },
+  openApnsSession: () => {
+    ctl.apnsCalls += 1;
+    throw new Error("the archive request must not talk to APNs");
+  },
+  isDeadToken: () => false,
 }));
 vi.mock("@/lib/conditions", () => ({
   getConditionsForLocation: async () => {
@@ -77,7 +81,7 @@ beforeEach(async () => {
   process.env.HISTORY_MAX_BUILDS_PER_DAY = "5000";
   h = makeCamDb({ allMigrations: true }) as CamDb;
   ctl.db = h?.db ?? null;
-  ctl.sent = [];
+  ctl.apnsCalls = 0;
   await fillOtherBeaches();
 });
 afterEach(() => {
@@ -99,12 +103,15 @@ describe.skipIf(!HAS_SQLITE)("archive route and the quality watchdog", () => {
     expect(alerts.find((a) => a.signal === "score")).toEqual({
       slug: "boca-raton", signal: "score", kind: "hourly-jump", dedupe_key: `hourly:boca-raton:score:${HOUR}`,
     });
-    expect(ctl.sent.length).toBeGreaterThanOrEqual(1);
+    // the push is queued for the drain step, and the archive request itself sent nothing
+    expect(h.all("SELECT state FROM quality_push_slots").length).toBeGreaterThanOrEqual(1);
+    expect(h.all("SELECT COUNT(*) AS n FROM quality_alerts WHERE pushed = 1")[0].n).toBe(0);
+    expect(ctl.apnsCalls).toBe(0);
   });
 
-  it("a drop that rain explains makes no alert", async () => {
+  it("a drop that the wind explains makes no alert", async () => {
     const cur = thisHoursRow();
-    await insertPrev({ score: (cur.score as number) + 30, rain_now: cur.rain_now === 1 ? 0 : 1 });
+    await insertPrev({ score: (cur.score as number) + 30, wind_mph: ((cur.wind_mph as number | null) ?? 10) + 8 });
     await post();
     expect(h.all("SELECT COUNT(*) AS n FROM quality_alerts WHERE signal = 'score'")[0].n).toBe(0);
   });

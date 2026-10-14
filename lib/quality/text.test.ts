@@ -9,6 +9,8 @@ const seaweed = (over: Partial<SeaweedAlertPayload> = {}): SeaweedAlertPayload =
   published: { level: "none", pct: 0 },
   claim: { level: "moderate", coveragePct: 35, note: "rocks", provider: "gemini", model: "m" },
   secondOpinion: { provider: "clef", model: "m", level: "none", coveragePct: 0, note: null },
+  claimTarget: { frameSha: "a".repeat(20), frameAt: null, claimedAt: "2026-10-13T17:21:00Z" },
+  localDate: "2026-10-13",
   others: [
     { id: "a", name: "Boca South", level: "none", coveragePct: 0, carried: false },
     { id: "b", name: "South Surf Cam", level: "none", coveragePct: 0, carried: false },

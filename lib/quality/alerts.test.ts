@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HAS_SQLITE, makeCamDb, type CamDb } from "@/lib/camFrames/testDb";
 import { recordAlert } from "@/lib/quality/alerts";
-import { fakeSender } from "@/lib/quality/testHelpers";
 import type { NewAlert } from "@/lib/quality/store";
 import type { HourlyAlertPayload } from "@/lib/quality/types";
 
@@ -31,94 +30,72 @@ const alert = (over: Partial<NewAlert> = {}): NewAlert => ({
   dedupeKey: "k",
   ...over,
 });
-const pushed = () => h.all("SELECT dedupe_key, pushed FROM quality_alerts ORDER BY id").map((r) => `${r.dedupe_key}:${r.pushed}`);
+const slots = () => h.all("SELECT alert_id, slug, signal, state FROM quality_push_slots ORDER BY alert_id");
 
-describe.skipIf(!HAS_SQLITE)("recordAlert", () => {
-  it("stores the alert, pushes it with a plain message and a link to the review screen", async () => {
-    const send = fakeSender();
-    const r = await recordAlert(h.db, alert(), NOON, send);
-    expect(r).toMatchObject({ created: true, pushed: true, reason: "ok" });
-    expect(send.sent).toEqual([
-      {
-        title: "Boca Raton",
-        body: "Check: Beach Day score went from 78 to 58 in an hour, and nothing obvious explains it.",
-        url: `https://app.isitbeachday.com/admin/review?alert=${r.id}`,
-        tag: `quality-${r.id}`,
-      },
-    ]);
-    expect(pushed()).toEqual(["k:1"]);
+describe.skipIf(!HAS_SQLITE)("recordAlert: store always, queue when the rules allow, send never", () => {
+  it("stores the alert and queues one push slot; nothing is sent from here", async () => {
+    const r = await recordAlert(h.db, alert(), NOON);
+    expect(r).toMatchObject({ created: true, queued: true, reason: "queued" });
+    expect(slots()).toEqual([{ alert_id: r.id, slug: "boca-raton", signal: "score", state: "queued" }]);
+    expect(h.all("SELECT pushed FROM quality_alerts")[0].pushed).toBe(0); // pushed becomes 1 only when the drain sends it
   });
 
-  it("a retry of the same alert writes and sends nothing", async () => {
-    const send = fakeSender();
-    await recordAlert(h.db, alert(), NOON, send);
-    const again = await recordAlert(h.db, alert(), NOON + 1000, send);
-    expect(again).toMatchObject({ created: false, pushed: false, reason: "exists" });
-    expect(send.sent).toHaveLength(1);
+  it("a retry of the same alert writes and queues nothing", async () => {
+    await recordAlert(h.db, alert(), NOON);
+    const again = await recordAlert(h.db, alert(), NOON + 1000);
+    expect(again).toMatchObject({ created: false, queued: false, reason: "exists" });
+    expect(h.all("SELECT COUNT(*) AS n FROM quality_alerts")[0].n).toBe(1);
+    expect(slots()).toHaveLength(1);
+  });
+
+  it("an unwatched beach is stored but takes no slot", async () => {
+    const r = await recordAlert(h.db, alert({ slug: "miami-beach" }), NOON);
+    expect(r).toMatchObject({ created: true, queued: false, reason: "unwatched" });
+    expect(slots()).toEqual([]);
     expect(h.all("SELECT COUNT(*) AS n FROM quality_alerts")[0].n).toBe(1);
   });
 
-  it("an unwatched beach is stored but never pushed", async () => {
-    const send = fakeSender();
-    const r = await recordAlert(h.db, alert({ slug: "miami-beach" }), NOON, send);
-    expect(r).toMatchObject({ created: true, pushed: false, reason: "unwatched" });
-    expect(send.sent).toEqual([]);
-    expect(pushed()).toEqual(["k:0"]);
+  it("between 9 PM and 7 AM an alert is stored and waits in the list, without a slot", async () => {
+    const r = await recordAlert(h.db, alert(), Date.parse("2026-10-14T03:00:00.000Z"));
+    expect(r).toMatchObject({ created: true, queued: false, reason: "quiet-hours" });
+    expect(slots()).toEqual([]);
   });
 
-  it("between 9 PM and 7 AM an alert is stored and waits in the list", async () => {
-    const send = fakeSender();
-    const r = await recordAlert(h.db, alert(), Date.parse("2026-10-14T03:00:00.000Z"), send);
-    expect(r).toMatchObject({ created: true, pushed: false, reason: "quiet-hours" });
-    expect(send.sent).toEqual([]);
+  it("the same beach and signal does not queue again inside 3 hours, but another signal does", async () => {
+    await recordAlert(h.db, alert({ dedupeKey: "a" }), NOON);
+    expect(await recordAlert(h.db, alert({ dedupeKey: "b" }), NOON + 2 * 3_600_000)).toMatchObject({ queued: false, reason: "duplicate" });
+    expect(await recordAlert(h.db, alert({ dedupeKey: "c", signal: "sand" }), NOON + 2 * 3_600_000)).toMatchObject({ queued: true });
+    expect(await recordAlert(h.db, alert({ dedupeKey: "d" }), NOON + 3 * 3_600_000 + 1)).toMatchObject({ queued: true });
   });
 
-  it("the same beach and signal does not push again inside 3 hours, but another signal does", async () => {
-    const send = fakeSender();
-    await recordAlert(h.db, alert({ dedupeKey: "a" }), NOON, send);
-    const second = await recordAlert(h.db, alert({ dedupeKey: "b" }), NOON + 2 * 3_600_000, send);
-    expect(second).toMatchObject({ pushed: false, reason: "duplicate" });
-    const otherSignal = await recordAlert(h.db, alert({ dedupeKey: "c", signal: "sand" }), NOON + 2 * 3_600_000, send);
-    expect(otherSignal.pushed).toBe(true);
-    const later = await recordAlert(h.db, alert({ dedupeKey: "d" }), NOON + 3 * 3_600_000, send);
-    expect(later.pushed).toBe(true);
-    expect(pushed()).toEqual(["a:1", "b:0", "c:1", "d:1"]);
-  });
-
-  it("at most 3 pushes a day across all beaches; the 4th is stored", async () => {
-    const send = fakeSender();
+  it("at most 3 a day across all beaches; the 4th is stored with the reason", async () => {
     const beaches = ["boca-raton", "deerfield-beach", "fort-lauderdale", "boca-raton"];
-    const results = [];
+    const out = [];
     for (let i = 0; i < beaches.length; i++) {
-      results.push(await recordAlert(h.db, alert({ slug: beaches[i], signal: i === 3 ? "sand" : "score", dedupeKey: `k${i}` }), NOON + i * 60_000, send));
+      out.push(await recordAlert(h.db, alert({ slug: beaches[i], signal: i === 3 ? "sand" : "score", dedupeKey: `k${i}` }), NOON + i * 60_000));
     }
-    expect(results.map((r) => r.reason)).toEqual(["ok", "ok", "ok", "daily-cap"]);
-    expect(send.sent).toHaveLength(3);
+    expect(out.map((r) => r.reason)).toEqual(["queued", "queued", "queued", "daily-cap"]);
+    expect(h.all("SELECT COUNT(*) AS n FROM quality_alerts")[0].n).toBe(4);
   });
 
-  it("the daily count starts at the owner's midnight", async () => {
-    const send = fakeSender();
-    // Three pushes late yesterday evening (before 9 PM), then one at noon today.
-    const yesterday = Date.parse("2026-10-14T00:00:00.000Z"); // 8 PM EDT on the 13th
-    for (let i = 0; i < 3; i++) {
-      await recordAlert(
-        h.db,
-        alert({ slug: ["boca-raton", "deerfield-beach", "fort-lauderdale"][i], dedupeKey: `y${i}`, createdAt: new Date(yesterday).toISOString() }),
-        yesterday,
-        send,
-      );
-    }
-    const today = await recordAlert(h.db, alert({ dedupeKey: "t" }), NOON, send);
-    expect(today.pushed).toBe(true);
+  it("the hourly rate limit refuses an alert and writes nothing", async () => {
+    for (let i = 0; i < 3; i++) await recordAlert(h.db, alert({ dedupeKey: `r${i}` }), NOON, { maxPerSlugPerHour: 3 });
+    const r = await recordAlert(h.db, alert({ dedupeKey: "r3" }), NOON, { maxPerSlugPerHour: 3 });
+    expect(r).toEqual({ id: 0, created: false, queued: false, reason: "rate-limited" });
+    expect(h.all("SELECT COUNT(*) AS n FROM quality_alerts")[0].n).toBe(3);
   });
 
-  it("a push that fails does not use up the day, and leaves the alert unpushed", async () => {
-    const send = fakeSender({ ok: false, sent: 0, failed: 1 });
-    const r = await recordAlert(h.db, alert(), NOON, send);
-    expect(r).toMatchObject({ created: true, pushed: false, reason: "send-failed" });
-    expect(pushed()).toEqual(["k:0"]);
-    const ok = fakeSender();
-    const next = await recordAlert(h.db, alert({ dedupeKey: "k2" }), NOON + 60_000, ok);
-    expect(next.pushed).toBe(true);
+  it("alerts arriving at once never queue more than 3 pushes for a day (Codex: the daily cap used to race)", async () => {
+    const slugs = ["boca-raton", "deerfield-beach", "fort-lauderdale"];
+    const sigs = ["score", "sand", "surf", "clarity"] as const;
+    const jobs = Array.from({ length: 12 }, (_, i) => recordAlert(h.db, alert({ slug: slugs[i % 3], signal: sigs[i % 4], dedupeKey: `x${i}` }), NOON + i));
+    const results = await Promise.all(jobs);
+    expect(results.filter((r) => r.queued)).toHaveLength(3);
+    expect(slots()).toHaveLength(3);
+  });
+
+  it("alerts at once for one beach and signal never queue two (Codex: the 3-hour window used to race)", async () => {
+    const results = await Promise.all(Array.from({ length: 6 }, (_, i) => recordAlert(h.db, alert({ dedupeKey: `y${i}` }), NOON + i)));
+    expect(results.filter((r) => r.queued)).toHaveLength(1);
   });
 });

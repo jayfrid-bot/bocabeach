@@ -35,12 +35,28 @@ export function inQuietHours(nowMs: number): boolean {
   return hour >= QUIET_START_HOUR || hour < QUIET_END_HOUR;
 }
 
+/** The owner's calendar date (YYYY-MM-DD, America/New_York) at `nowMs`: the key of the daily push count. */
+export function ownerDayKey(nowMs: number): string {
+  return localHourParts(OWNER_TZ, nowMs).date;
+}
+
 /** The instant (ms) the owner's current calendar day began. */
 export function ownerDayStartMs(nowMs: number): number {
   return startOfLocalDayMs(OWNER_TZ, nowMs);
 }
 
 export type PushReason = "ok" | "unwatched" | "quiet-hours" | "duplicate" | "daily-cap";
+
+/**
+ * The two rules that need no database: a watched beach, and not between 9 PM and 7 AM.
+ * The other two (the daily count and the 3-hour repeat) are decided atomically by D1 in
+ * lib/quality/pushSlots.ts. Pure.
+ */
+export function pushEligibility(nowMs: number, slug: string, watched: (slug: string) => boolean = isWatched): PushReason {
+  if (!watched(slug)) return "unwatched";
+  if (inQuietHours(nowMs)) return "quiet-hours";
+  return "ok";
+}
 
 export interface PushDecision {
   push: boolean;
@@ -58,7 +74,11 @@ export interface PushFacts {
   watched?: (slug: string) => boolean;
 }
 
-/** May this alert push? Pure. */
+/**
+ * May this alert push? All four rules as one pure function. This is the SPEC the D1
+ * reservation (pushSlots.ts) is tested against; the live path uses `pushEligibility`
+ * for the first two rules and D1 for the last two. Pure.
+ */
 export function decidePush(f: PushFacts): PushDecision {
   if (!(f.watched ?? isWatched)(f.slug)) return { push: false, reason: "unwatched" };
   if (inQuietHours(f.nowMs)) return { push: false, reason: "quiet-hours" };

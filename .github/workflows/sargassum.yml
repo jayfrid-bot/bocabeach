@@ -193,7 +193,11 @@ jobs:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }} # optional free fallback
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # only used if VISION_PROVIDERS adds "github" (off by default)
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # for the publish push below
-          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }} # webcam archive POSTs (scripts/cam_seaweed.py archive_frame), Clef reads, and owner quality alerts (scripts/quality_watch.py)
+          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }} # webcam archive POSTs (scripts/cam_seaweed.py archive_frame) and Clef reads
+          # The reader's OWN credential for the owner quality routes (scripts/quality_watch.py: POST
+          # /api/quality/alerts, GET /api/quality/overrides). Same value as the Worker secret of the
+          # same name; separate from INGEST_TOKEN. Unset = no alerts and no owner verdicts.
+          QUALITY_INGEST_TOKEN: ${{ secrets.QUALITY_INGEST_TOKEN }}
           # Rollout canary: Clef stays OUT of the default provider order until the
           # route is deployed and smoke-tested (node scripts/clef_route_smoke.mjs
           # <archived r2_key>). Then uncomment this line to put it behind Gemini.

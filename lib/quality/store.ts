@@ -3,7 +3,7 @@
 // real SQLite and routes pass whatever `getD1()` found. Every statement is
 // parameterized.
 
-import type { D1Like } from "@/lib/db/d1Store";
+import type { D1Like, D1Stmt } from "@/lib/db/d1Store";
 import type { AlertKind, AlertRow, LabelRow, LabelSource, OverrideRow, QualitySignal, Verdict } from "@/lib/quality/types";
 
 /** An open alert older than this is marked expired when the list is read. */
@@ -20,25 +20,41 @@ export interface NewAlert {
   dedupeKey: string;
 }
 
+/** The most alerts one beach may create per hour through the reader's POST route. */
+export const MAX_ALERTS_PER_SLUG_HOUR = 20;
+
 /**
  * Store an alert. One atomic INSERT ... ON CONFLICT DO NOTHING on the unique
  * dedupe key, so a retried POST (or a re-run archive tick) never writes twice.
- * Returns the row id and whether this call created it.
+ * With `maxPerSlugPerHour` the same statement also refuses to insert when that
+ * beach already created that many alerts in the last hour (a count inside the
+ * INSERT, so two concurrent calls cannot both slip under it).
+ * Returns the row id, whether this call created it, and `limited` when the hourly
+ * limit (not a duplicate) is why nothing was written.
  */
-export async function insertAlert(db: D1Like, a: NewAlert): Promise<{ id: number; created: boolean }> {
+export async function insertAlert(
+  db: D1Like,
+  a: NewAlert,
+  opts?: { maxPerSlugPerHour?: number },
+): Promise<{ id: number; created: boolean; limited?: boolean }> {
+  const max = opts?.maxPerSlugPerHour ?? 1_000_000;
+  const since = new Date(Date.parse(a.createdAt) - 3_600_000).toISOString();
   const inserted = await db
     .prepare(
       "INSERT INTO quality_alerts (slug, signal, kind, created_at, payload_json, status, dedupe_key, pushed) " +
-        "VALUES (?1, ?2, ?3, ?4, ?5, 'open', ?6, 0) ON CONFLICT(dedupe_key) DO NOTHING RETURNING id",
+        "SELECT ?1, ?2, ?3, ?4, ?5, 'open', ?6, 0 " +
+        "WHERE (SELECT COUNT(*) FROM quality_alerts WHERE slug = ?1 AND created_at >= ?7) < ?8 " +
+        "ON CONFLICT(dedupe_key) DO NOTHING RETURNING id",
     )
-    .bind(a.slug, a.signal, a.kind, a.createdAt, JSON.stringify(a.payload), a.dedupeKey)
+    .bind(a.slug, a.signal, a.kind, a.createdAt, JSON.stringify(a.payload), a.dedupeKey, since, max)
     .first<{ id: number }>();
   if (inserted) return { id: Number(inserted.id), created: true };
   const existing = await db
     .prepare("SELECT id FROM quality_alerts WHERE dedupe_key = ?1")
     .bind(a.dedupeKey)
     .first<{ id: number }>();
-  return { id: Number(existing?.id ?? 0), created: false };
+  if (existing) return { id: Number(existing.id), created: false };
+  return { id: 0, created: false, limited: true };
 }
 
 export async function getAlert(db: D1Like, id: number): Promise<AlertRow | null> {
@@ -47,24 +63,6 @@ export async function getAlert(db: D1Like, id: number): Promise<AlertRow | null>
 
 export async function setAlertPushed(db: D1Like, id: number, pushed: 0 | 1): Promise<void> {
   await db.prepare("UPDATE quality_alerts SET pushed = ?2 WHERE id = ?1").bind(id, pushed).run();
-}
-
-/** Pushes sent at or after `sinceIso` (all beaches, all signals). */
-export async function countPushedSince(db: D1Like, sinceIso: string): Promise<number> {
-  const r = await db
-    .prepare("SELECT COUNT(*) AS n FROM quality_alerts WHERE pushed = 1 AND created_at >= ?1")
-    .bind(sinceIso)
-    .first<{ n: number }>();
-  return Number(r?.n ?? 0);
-}
-
-/** The ISO time of the newest pushed alert for this beach and signal, or null. */
-export async function lastPushedAt(db: D1Like, slug: string, signal: QualitySignal): Promise<string | null> {
-  const r = await db
-    .prepare("SELECT MAX(created_at) AS at FROM quality_alerts WHERE pushed = 1 AND slug = ?1 AND signal = ?2")
-    .bind(slug, signal)
-    .first<{ at: string | null }>();
-  return r?.at ?? null;
 }
 
 /** Mark open alerts older than ALERT_OPEN_MS expired. Returns how many changed. */
@@ -144,44 +142,13 @@ export async function getLabel(db: D1Like, id: number): Promise<LabelRow | null>
   return db.prepare("SELECT * FROM quality_labels WHERE id = ?1").bind(id).first<LabelRow>();
 }
 
-/** Close an alert with its label. False when it was already answered. */
-export async function markAnswered(db: D1Like, alertId: number, labelId: number): Promise<boolean> {
-  const r = await db
-    .prepare("UPDATE quality_alerts SET status = 'answered', label_id = ?2 WHERE id = ?1 AND status != 'answered'")
-    .bind(alertId, labelId)
-    .run();
-  return (r.meta?.changes ?? 0) > 0;
-}
-
-export async function insertOverride(
-  db: D1Like,
-  o: {
-    slug: string;
-    signal: QualitySignal;
-    camId: string;
-    createdAtUtc: string;
-    untilUtc: string;
-    labelId: number | null;
-    verdict: Verdict;
-    /** The claim the owner judged ({level, coveragePct, note}); a 'right' override publishes it. */
-    claim?: unknown;
-  },
-): Promise<void> {
-  await db
-    .prepare(
-      "INSERT INTO quality_overrides (slug, signal, cam_id, created_at_utc, until_utc, label_id, verdict, claim_json) " +
-        "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-    )
-    .bind(o.slug, o.signal, o.camId, o.createdAtUtc, o.untilUtc, o.labelId, o.verdict, json(o.claim))
-    .run();
-}
-
-/** Overrides for one beach and signal that have not ended at `nowMs`. */
+/** Overrides for one beach and signal that have not ended at `nowMs` and were not superseded. */
 export async function activeOverrides(db: D1Like, slug: string, signal: QualitySignal, nowMs: number): Promise<OverrideRow[]> {
   const r = await db
     .prepare(
-      "SELECT id, slug, signal, cam_id, created_at_utc, until_utc, label_id, verdict, claim_json FROM quality_overrides " +
-        "WHERE slug = ?1 AND signal = ?2 AND until_utc > ?3 ORDER BY id",
+      "SELECT id, alert_id, label_id, superseded, slug, signal, cam_id, frame_sha, frame_at, claimed_at, local_date, " +
+        "verdict, action, level, coverage_pct, note, created_at_utc, until_utc FROM quality_overrides " +
+        "WHERE slug = ?1 AND signal = ?2 AND until_utc > ?3 AND superseded = 0 ORDER BY id",
     )
     .bind(slug, signal, new Date(nowMs).toISOString())
     .all<OverrideRow>();
@@ -205,4 +172,10 @@ export async function latestHourlyRow<T>(db: D1Like, cols: string, slug: string)
     .prepare(`SELECT ${cols} FROM beach_hourly WHERE slug = ?1 AND row_kind = 'snapshot' ORDER BY hour_utc DESC LIMIT 1`)
     .bind(slug)
     .first<T>();
+}
+
+/** Run bound statements as ONE transaction (real D1 `batch()`): all of them, or none. */
+export async function runAtomic(db: D1Like, stmts: D1Stmt[]): Promise<void> {
+  if (typeof db.batch !== "function") throw new Error("this database cannot run an atomic batch");
+  await db.batch(stmts);
 }

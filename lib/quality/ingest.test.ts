@@ -13,6 +13,7 @@ const body = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   claim: { level: "moderate", coveragePct: 35, note: "brown rock shelf", provider: "gemini", model: "gemini-2.5-flash" },
   secondOpinion: { provider: "clef", model: "@cf/cloudflare/clef", level: "none", coveragePct: 0, note: null },
   others: [{ id: "boca-south", name: "Boca South", level: "none", coveragePct: 0, carried: false }],
+  claimTarget: { frameSha: SHA, frameAt: "2026-10-13T17:19:30Z", claimedAt: "2026-10-13T17:21:00Z" },
   frame: { sha256: SHA, archivedThisTick: true },
   ...over,
 });
@@ -34,6 +35,8 @@ describe("parseSeaweedAlert", () => {
           claim: { level: "moderate", coveragePct: 35, note: "brown rock shelf", provider: "gemini", model: "gemini-2.5-flash" },
           secondOpinion: { provider: "clef", model: "@cf/cloudflare/clef", level: "none", coveragePct: 0, note: null },
           others: [{ id: "boca-south", name: "Boca South", level: "none", coveragePct: 0, carried: false }],
+          claimTarget: { frameSha: SHA.slice(0, 20), frameAt: "2026-10-13T17:19:30Z", claimedAt: "2026-10-13T17:21:00Z" },
+          localDate: "2026-10-13",
           frame: { sha256: SHA, archivedThisTick: true, r2Key: null },
         },
       },
@@ -100,5 +103,28 @@ describe("parseSeaweedAlert", () => {
       const r = parseSeaweedAlert(body({ frame: { sha256: SHA, archivedThisTick: true, jpegB64: bad } }), NOW);
       expect(r.ok && r.value.frameJpeg).toBeNull();
     }
+  });
+
+  it("keeps the exact claim identity: frame hash (first 20), frame time and claim time, exactly as written", () => {
+    const r = parseSeaweedAlert(body({ claimTarget: { frameSha: "ABCDEF0123456789abcdef0123456789", frameAt: "2026-10-13T17:19:30Z", claimedAt: "2026-10-13T17:21:00Z" } }), NOW);
+    // an upper-case hash is not a hash we wrote: it is dropped, and the time identifies the claim
+    expect(r.ok && r.value.payload.claimTarget).toEqual({ frameSha: null, frameAt: "2026-10-13T17:19:30Z", claimedAt: "2026-10-13T17:21:00Z" });
+    const good = parseSeaweedAlert(body({ claimTarget: { frameSha: "0123456789abcdef0123456789", frameAt: null, claimedAt: "2026-10-13T17:21:00Z" } }), NOW);
+    expect(good.ok && good.value.payload.claimTarget).toEqual({ frameSha: "0123456789abcdef0123", frameAt: null, claimedAt: "2026-10-13T17:21:00Z" });
+  });
+
+  it("a claim with no identity is still recorded (as a record), with nulls", () => {
+    const r = parseSeaweedAlert(body({ claimTarget: undefined }), NOW);
+    expect(r.ok && r.value.payload.claimTarget).toEqual({ frameSha: null, frameAt: null, claimedAt: null });
+    const junk = parseSeaweedAlert(body({ claimTarget: { frameSha: 7, frameAt: "not a time", claimedAt: ["x"] } }), NOW);
+    expect(junk.ok && junk.value.payload.claimTarget).toEqual({ frameSha: null, frameAt: null, claimedAt: null });
+  });
+
+  it("works out the claim's beach-local date, not the UTC date", () => {
+    // 2026-10-14T02:30Z is 10:30 PM EDT on the 13th
+    const night = parseSeaweedAlert(body({ observedAt: "2026-10-14T02:30:00Z" }), Date.parse("2026-10-14T02:35:00.000Z"));
+    expect(night.ok && night.value.payload.localDate).toBe("2026-10-13");
+    const morning = parseSeaweedAlert(body({ observedAt: "2026-10-14T04:30:00Z" }), Date.parse("2026-10-14T04:35:00.000Z"));
+    expect(morning.ok && morning.value.payload.localDate).toBe("2026-10-14");
   });
 });

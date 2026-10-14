@@ -5,7 +5,9 @@ import {
   inQuietHours,
   isWatched,
   MAX_PUSHES_PER_DAY,
+  ownerDayKey,
   ownerDayStartMs,
+  pushEligibility,
   watchedSlugs,
 } from "@/lib/quality/pushPolicy";
 import { endOfLocalDayMs, localMidnightMs, startOfLocalDayMs } from "@/lib/quality/localDay";
@@ -41,6 +43,23 @@ describe("the owner's day", () => {
     expect(ownerDayStartMs(at("2026-11-02T06:00:00Z"))).toBe(at("2026-11-02T05:00:00Z"));
     // Spring forward, Mar 14 2027: midnight is still EST.
     expect(ownerDayStartMs(at("2027-03-14T20:00:00Z"))).toBe(at("2027-03-14T05:00:00Z"));
+  });
+});
+
+describe("ownerDayKey and pushEligibility", () => {
+  it("the day key is the owner's calendar date, not UTC's", () => {
+    expect(ownerDayKey(at("2026-10-14T03:59:00Z"))).toBe("2026-10-13"); // 11:59 PM EDT
+    expect(ownerDayKey(at("2026-10-14T04:00:00Z"))).toBe("2026-10-14");
+    expect(ownerDayKey(at("2026-11-02T04:30:00Z"))).toBe("2026-11-01"); // 11:30 PM EST, the night of the clock change
+  });
+
+  it("only the two rules that need no database: watched beach, waking hours", () => {
+    const noon = at("2026-10-14T16:00:00Z");
+    expect(pushEligibility(noon, "boca-raton")).toBe("ok");
+    expect(pushEligibility(noon, "miami-beach")).toBe("unwatched");
+    expect(pushEligibility(at("2026-10-14T03:00:00Z"), "boca-raton")).toBe("quiet-hours");
+    expect(pushEligibility(at("2026-10-14T03:00:00Z"), "miami-beach")).toBe("unwatched");
+    expect(pushEligibility(noon, "x", () => true)).toBe("ok");
   });
 });
 

@@ -8,38 +8,69 @@
 --                        sand or clarity moved more than nothing explains
 --                        (lib/quality/watchdog.ts).
 --                    `payload_json` holds what was flagged plus the evidence (the
---                    claim, the second opinion, the other cams, the frame's hash).
+--                    claim, the second opinion, the other cams, the exact claim
+--                    identity: cam, frame hash or time, claim time, beach-local date).
 --                    `dedupe_key` is UNIQUE, so a retried POST never double-writes.
---                    `pushed` is 1 when the owner got a push for it; the daily cap
---                    and the 3-hour repeat rule count these rows (lib/quality/
---                    pushPolicy.ts). An alert that was not pushed (quiet hours,
---                    daily cap, unwatched beach) still shows in the review list.
---                    `status` is open until the owner answers, or until it is
---                    older than 24 hours (set to expired when the list is read).
+--                    `pushed` is 1 once a phone accepted the push. `status` is open
+--                    until the owner answers, or until it is older than 24 hours
+--                    (set to expired when the list is read).
+--
+-- quality_push_slots the push LIMITS, enforced by D1 itself. An alert that may push takes
+--                    a slot in ONE conditional INSERT (lib/quality/pushSlots.ts): at most
+--                    3 slots per owner day, and none for a beach and signal that took one
+--                    in the last 3 hours. UNIQUE (owner_day, slot) backs the daily count.
+--                    A slot starts 'queued'; the drain step (POST /api/quality/drain, run by
+--                    workers/history-cron every minute) sends it and marks it 'sent', or
+--                    deletes it (releases it) when the send fails.
 --
 -- quality_labels     the owner's answers, and the owner's own reports. The raw
 --                    material for the golden test set and the weekly scorecard.
 --                    source 'alert'  = a Right/Wrong tap on a quality_alerts row.
 --                    source 'report' = "Report conditions" (no alert behind it;
 --                                      verdict is NULL, correct_value is the truth).
+--                    A second tap on the same alert SUPERSEDES the first: the old label
+--                    keeps its row (superseded = 1) and the unique index allows one
+--                    active label per alert.
 --                    published_value / claimed_value / correct_value are JSON text.
---                    r2_key is the archived frame (cam_frames.r2_key) the label is
---                    about; frames_json lists every nearest frame a report captured.
+--                    r2_key is the frame the label is about: the exact still kept with
+--                    the alert (quality/...), else an archived frame (cam_frames.r2_key).
 --
--- quality_overrides  the owner's seaweed verdict on a cam, honored live until `until_utc`
---                    (the end of the beach-local day) or until the cam gives a NEWER
---                    fresh reading than `created_at_utc`. Two kinds:
---                      'wrong'  drop that cam's reading and claim from the live summary
---                               (lib/quality/seaweedOverrides.ts, in lib/sources/sargassum.ts),
---                               and the cam reader (GET /api/quality/overrides) stops that
---                               cam's further moderate+ claims from confirming by persistence
---                               or second opinion until it reads below moderate.
---                      'right'  publish the claim the owner judged (`claim_json`: level,
---                               coveragePct, note) for that cam's held reading; the reader
---                               stores it as a confirmed claim (confirmedBy "owner").
+-- quality_overrides  the owner's seaweed verdict on ONE EXACT CLAIM, honored live. The target
+--                    is the claim's identity: cam, frame (hash, else time) and claim time.
+--                    It is written only when the claim was made on today's beach-local date
+--                    and the alert was not expired; an older answer stores the label only.
+--                      action 'publish'  (Right, or Wrong with a corrected level of moderate
+--                                         or high): that frame's claim publishes at `level`
+--                                         and its pending claim becomes confirmed ("owner").
+--                      action 'reject'   (Wrong with none, low, or no value): that frame's
+--                                         claim is removed and nothing is published for it,
+--                                         and the cam is DISPUTED for the rest of the day
+--                                         (the reader keeps that state in the feed).
+--                    One active override per alert (unique index); the latest verdict per
+--                    exact target wins (lib/quality/seaweedOverrides.ts and
+--                    scripts/quality_watch.py apply the same rule).
 --
+-- owner_sessions     who the owner is. A phone enrolls once with the OWNER_ENROLL_CODE secret
+--                    and receives a random 32-byte token, shown once and stored here only as
+--                    its SHA-256. Every owner route needs that token. `push_token` is the
+--                    APNs token of the owner's phone, set through an owner route; owner
+--                    pushes go only to it (never to the general devices table).
+CREATE TABLE owner_sessions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  device_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,     -- hex SHA-256 of the owner token
+  push_token TEXT,                     -- APNs token (hex), set by /api/quality/owner/push-token
+  push_updated_at TEXT,                -- ISO
+  created_at TEXT NOT NULL,            -- ISO
+  last_seen TEXT NOT NULL,             -- ISO, refreshed at most every 10 minutes
+  revoked INTEGER NOT NULL DEFAULT 0 CHECK (revoked IN (0, 1))
+);
+CREATE INDEX owner_sessions_active ON owner_sessions(revoked, push_token);
+
 CREATE TABLE quality_labels (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  alert_id INTEGER,                    -- the alert this answers (NULL for a report)
+  superseded INTEGER NOT NULL DEFAULT 0 CHECK (superseded IN (0, 1)),
   slug TEXT NOT NULL,
   signal TEXT NOT NULL CHECK (signal IN ('seaweed', 'clarity', 'surf', 'sand', 'score', 'crowd', 'other')),
   observed_at_utc TEXT NOT NULL,       -- ISO, when the thing was seen (frame time, hour, or the report moment)
@@ -49,13 +80,14 @@ CREATE TABLE quality_labels (
   verdict TEXT CHECK (verdict IN ('right', 'wrong')),
   correct_value TEXT,                  -- JSON: the truth, when the owner gave it
   cam_id TEXT,
-  r2_key TEXT,                         -- an archived frame (cam_frames.r2_key)
+  r2_key TEXT,                         -- the frame behind the label
   frames_json TEXT,                    -- JSON array of {camId, r2Key, displayAtUtc}, for a report
   note TEXT,
   created_at TEXT NOT NULL             -- ISO
 );
 CREATE INDEX quality_labels_slug_signal ON quality_labels(slug, signal, observed_at_utc);
 CREATE INDEX quality_labels_created ON quality_labels(created_at);
+CREATE UNIQUE INDEX quality_labels_one_active_per_alert ON quality_labels(alert_id) WHERE alert_id IS NOT NULL AND superseded = 0;
 
 CREATE TABLE quality_alerts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,23 +97,48 @@ CREATE TABLE quality_alerts (
   created_at TEXT NOT NULL,            -- ISO
   payload_json TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'answered', 'expired')),
-  label_id INTEGER,                    -- quality_labels.id once answered
+  label_id INTEGER,                    -- the active quality_labels.id once answered
   dedupe_key TEXT NOT NULL UNIQUE,
   pushed INTEGER NOT NULL DEFAULT 0 CHECK (pushed IN (0, 1))
 );
 CREATE INDEX quality_alerts_status_created ON quality_alerts(status, created_at);
 CREATE INDEX quality_alerts_slug_signal ON quality_alerts(slug, signal, created_at);
-CREATE INDEX quality_alerts_pushed ON quality_alerts(pushed, created_at);
+CREATE INDEX quality_alerts_slug_created ON quality_alerts(slug, created_at);
+
+CREATE TABLE quality_push_slots (
+  alert_id INTEGER PRIMARY KEY,        -- one slot per alert
+  slug TEXT NOT NULL,
+  signal TEXT NOT NULL,
+  owner_day TEXT NOT NULL,             -- YYYY-MM-DD, America/New_York
+  slot INTEGER NOT NULL,               -- 1, 2, 3, ... within the owner day
+  reserved_at TEXT NOT NULL,           -- ISO
+  state TEXT NOT NULL DEFAULT 'queued' CHECK (state IN ('queued', 'sent')),
+  sent_at TEXT,                        -- ISO
+  UNIQUE (owner_day, slot)
+);
+CREATE INDEX quality_push_slots_key ON quality_push_slots(slug, signal, reserved_at);
+CREATE INDEX quality_push_slots_state ON quality_push_slots(state, reserved_at);
 
 CREATE TABLE quality_overrides (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  alert_id INTEGER NOT NULL,           -- the answered alert
+  label_id INTEGER,                    -- the label written with it
+  superseded INTEGER NOT NULL DEFAULT 0 CHECK (superseded IN (0, 1)),
   slug TEXT NOT NULL,
   signal TEXT NOT NULL CHECK (signal IN ('seaweed', 'clarity', 'surf', 'sand', 'score', 'crowd', 'other')),
   cam_id TEXT NOT NULL,
-  created_at_utc TEXT NOT NULL,        -- ISO; readings scored at or before this are dropped
-  until_utc TEXT NOT NULL,             -- ISO; the override ends here (end of the beach-local day)
-  label_id INTEGER,
-  verdict TEXT NOT NULL DEFAULT 'wrong' CHECK (verdict IN ('right', 'wrong')),
-  claim_json TEXT                      -- JSON {level, coveragePct, note} the owner judged; used by 'right'
+  -- the exact claim this verdict is about
+  frame_sha TEXT,                      -- first 20 hex of the still's SHA-256 (feed cams), else NULL
+  frame_at TEXT,                       -- the frame's own time (courier cams), else NULL
+  claimed_at TEXT,                     -- when the reader scored the claim
+  local_date TEXT NOT NULL,            -- beach-local date of the claim, which is also the day of the answer
+  verdict TEXT NOT NULL CHECK (verdict IN ('right', 'wrong')),
+  action TEXT NOT NULL CHECK (action IN ('publish', 'reject')),
+  level TEXT CHECK (level IN ('none', 'low', 'moderate', 'high')),  -- the level a 'publish' puts out
+  coverage_pct REAL,
+  note TEXT,
+  created_at_utc TEXT NOT NULL,        -- ISO, when the owner answered
+  until_utc TEXT NOT NULL              -- ISO, the end of the beach-local day
 );
 CREATE INDEX quality_overrides_slug_until ON quality_overrides(slug, signal, until_utc);
+CREATE UNIQUE INDEX quality_overrides_one_active_per_alert ON quality_overrides(alert_id) WHERE superseded = 0;

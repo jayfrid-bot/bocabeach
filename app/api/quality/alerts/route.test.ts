@@ -1,31 +1,35 @@
-// POST /api/quality/alerts — the cam reader's held-jump disagreement. Real SQLite
-// for the three quality tables; the owner push is a recording fake.
+// POST /api/quality/alerts — the cam reader's held-jump disagreement. Real SQLite for the
+// quality tables. The route only RECORDS the alert and queues its push slot; the owner push
+// itself is sent by the drain step (app/api/quality/drain), so APNs is never touched here.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HAS_SQLITE, makeCamDb, type CamDb } from "@/lib/camFrames/testDb";
-import type { OwnerPush, OwnerPushResult } from "@/lib/quality/notify";
 import { fakeBucket, type FakeBucket } from "@/lib/camFrames/testFixtures";
 import { MAX_ALERT_BODY_BYTES } from "@/lib/quality/frameUpload";
 
 const ctl = vi.hoisted(() => ({
   db: null as unknown,
   bucket: null as unknown,
-  sent: [] as unknown[],
-  result: { ok: true, sent: 1, failed: 0 } as unknown,
+  apnsCalls: 0,
 }));
 vi.mock("@/lib/db/d1Store", () => ({ getD1: async () => ctl.db }));
 vi.mock("@/lib/camFrames/r2", () => ({ getCamFramesBucket: async () => ctl.bucket }));
-vi.mock("@/lib/quality/notify", async (orig) => ({
-  ...(await orig<typeof import("@/lib/quality/notify")>()),
-  sendOwnerPush: async (msg: OwnerPush): Promise<OwnerPushResult> => {
-    ctl.sent.push(msg);
-    return ctl.result as OwnerPushResult;
+// If anything in this route reached for APNs, this would count it.
+vi.mock("@/lib/push/apns", () => ({
+  getApns: () => {
+    ctl.apnsCalls += 1;
+    return null;
   },
+  openApnsSession: () => {
+    ctl.apnsCalls += 1;
+    throw new Error("the alert route must not talk to APNs");
+  },
+  isDeadToken: () => false,
 }));
 
 import { POST } from "@/app/api/quality/alerts/route";
 
-const TOKEN = "test-ingest-token";
+const TOKEN = "test-quality-token";
 const NOW = Date.parse("2026-10-13T17:30:00.000Z"); // 1:30 PM EDT
 const SHA = "ab".repeat(32);
 
@@ -41,6 +45,7 @@ const alertBody = (over: Record<string, unknown> = {}) => ({
     { id: "boca-south", name: "Boca South", level: "none", coveragePct: 0, carried: false },
     { id: "boca-south-surf", name: "South Surf", level: "none", coveragePct: 0, carried: false },
   ],
+  claimTarget: { frameSha: SHA.slice(0, 20), frameAt: "2026-10-13T17:19:30Z", claimedAt: "2026-10-13T17:21:00Z" },
   frame: { sha256: SHA, archivedThisTick: true },
   ...over,
 });
@@ -60,29 +65,35 @@ let bucket: FakeBucket;
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(NOW);
-  process.env.INGEST_TOKEN = TOKEN;
+  process.env.QUALITY_INGEST_TOKEN = TOKEN;
+  process.env.INGEST_TOKEN = "the-archive-token";
   h = makeCamDb({ allMigrations: true }) as CamDb;
   ctl.db = h?.db ?? null;
-  ctl.sent = [];
-  ctl.result = { ok: true, sent: 1, failed: 0 };
+  ctl.apnsCalls = 0;
   bucket = fakeBucket();
   ctl.bucket = bucket;
 });
 afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
+  delete process.env.QUALITY_INGEST_TOKEN;
   delete process.env.INGEST_TOKEN;
   h?.close();
 });
 
 describe("auth and input", () => {
-  it("503 without INGEST_TOKEN, 401 without the right bearer token", async () => {
+  it("503 without QUALITY_INGEST_TOKEN, 401 without the right bearer token", async () => {
     expect((await post(alertBody(), {})).status).toBe(401);
     expect((await post(alertBody(), { authorization: "Bearer nope" })).status).toBe(401);
     expect((await post(alertBody(), { authorization: TOKEN })).status).toBe(401);
-    delete process.env.INGEST_TOKEN;
+    delete process.env.QUALITY_INGEST_TOKEN;
     expect((await post(alertBody())).status).toBe(503);
-    expect(ctl.sent).toEqual([]);
+  });
+
+  it("the archive's INGEST_TOKEN does not open it: the credentials are split", async () => {
+    expect((await post(alertBody(), { authorization: "Bearer the-archive-token" })).status).toBe(401);
+    delete process.env.QUALITY_INGEST_TOKEN;
+    expect((await post(alertBody(), { authorization: "Bearer the-archive-token" })).status).toBe(503);
   });
 
   it("400 for a body that is not an object, and for each rejected field", async () => {
@@ -104,65 +115,73 @@ describe("auth and input", () => {
   });
 });
 
-describe.skipIf(!HAS_SQLITE)("storing and pushing", () => {
+describe.skipIf(!HAS_SQLITE)("recording and queueing", () => {
+  const slots = () => h.all("SELECT alert_id, state FROM quality_push_slots");
+
   it("503 with no database", async () => {
     ctl.db = null;
     expect((await post(alertBody())).status).toBe(503);
   });
 
-  it("stores the alert and pushes the owner a plain line that opens the review screen", async () => {
+  it("stores the alert with its exact claim identity and queues its push; it sends nothing itself", async () => {
     const res = await post(alertBody());
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
     const out = (await res.json()) as { id: number };
-    expect(out).toMatchObject({ ok: true, created: true, pushed: true, reason: "ok" });
-    expect(ctl.sent).toEqual([
-      {
-        title: "Boca Raton",
-        body: "Check: Boca Inlet cam says moderate seaweed (35%). Other cams: none.",
-        url: `https://app.isitbeachday.com/admin/review?alert=${out.id}`,
-        tag: `quality-${out.id}`,
-      },
-    ]);
+    expect(out).toMatchObject({ ok: true, created: true, queued: true, reason: "queued" });
+    expect(slots()).toEqual([{ alert_id: out.id, state: "queued" }]);
+    expect(ctl.apnsCalls).toBe(0);
     const row = h.all("SELECT slug, signal, kind, status, pushed, dedupe_key, created_at FROM quality_alerts")[0];
     expect(row).toEqual({
-      slug: "boca-raton", signal: "seaweed", kind: "seaweed-held-disagreed", status: "open", pushed: 1,
+      slug: "boca-raton", signal: "seaweed", kind: "seaweed-held-disagreed", status: "open", pushed: 0,
       dedupe_key: `seaweed:boca-raton:boca-inlet-surf:${SHA.slice(0, 16)}`, created_at: "2026-10-13T17:30:00.000Z",
     });
     const payload = JSON.parse(h.all("SELECT payload_json FROM quality_alerts")[0].payload_json as string);
     expect(payload.others.map((o: { id: string }) => o.id)).toEqual(["boca-south", "boca-south-surf"]);
     expect(payload.secondOpinion.level).toBe("none");
+    expect(payload.claimTarget).toEqual({ frameSha: SHA.slice(0, 20), frameAt: "2026-10-13T17:19:30Z", claimedAt: "2026-10-13T17:21:00Z" });
+    expect(payload.localDate).toBe("2026-10-13");
   });
 
-  it("a retry of the same frame stores and pushes nothing more", async () => {
+  it("a retry of the same frame stores and queues nothing more", async () => {
     await post(alertBody());
     const again = await post(alertBody());
-    expect(await again.json()).toMatchObject({ ok: true, created: false, pushed: false, reason: "exists" });
-    expect(ctl.sent).toHaveLength(1);
+    expect(await again.json()).toMatchObject({ ok: true, created: false, queued: false, reason: "exists" });
+    expect(slots()).toHaveLength(1);
     expect(h.all("SELECT COUNT(*) AS n FROM quality_alerts")[0].n).toBe(1);
   });
 
-  it("a second frame from the same cam inside 3 hours is stored but not pushed", async () => {
+  it("a second frame from the same cam inside 3 hours is stored but takes no push slot", async () => {
     await post(alertBody());
     const res = await post(alertBody({ frame: { sha256: "cd".repeat(32), archivedThisTick: true }, observedAt: "2026-10-13T17:29:00Z" }));
-    expect(await res.json()).toMatchObject({ created: true, pushed: false, reason: "duplicate" });
-    expect(ctl.sent).toHaveLength(1);
+    expect(await res.json()).toMatchObject({ created: true, queued: false, reason: "duplicate" });
+    expect(slots()).toHaveLength(1);
     expect(h.all("SELECT COUNT(*) AS n FROM quality_alerts")[0].n).toBe(2);
   });
 
-  it("at night it is stored and waits in the list", async () => {
+  it("at night it is stored and waits in the list, with no slot", async () => {
     vi.setSystemTime(Date.parse("2026-10-14T03:00:00.000Z")); // 11 PM EDT
     const res = await post(alertBody({ observedAt: "2026-10-14T02:55:00Z" }));
-    expect(await res.json()).toMatchObject({ created: true, pushed: false, reason: "quiet-hours" });
-    expect(ctl.sent).toEqual([]);
+    expect(await res.json()).toMatchObject({ created: true, queued: false, reason: "quiet-hours" });
+    expect(slots()).toEqual([]);
   });
 
-  it("when the phone cannot be reached the alert is still kept, as unpushed", async () => {
-    ctl.result = { ok: false, sent: 0, failed: 0, reason: "no-owner" };
-    const res = await post(alertBody());
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ created: true, pushed: false, reason: "send-failed" });
-    expect(h.all("SELECT pushed FROM quality_alerts")[0].pushed).toBe(0);
+  it("429 once a beach has made 20 alerts in an hour, and nothing more is written", async () => {
+    for (let i = 0; i < 20; i++) {
+      const sha = i.toString(16).padStart(2, "0").repeat(32);
+      expect((await post(alertBody({ frame: { sha256: sha, archivedThisTick: false }, observedAt: `2026-10-13T17:${String(i).padStart(2, "0")}:00Z` }))).status).toBe(200);
+    }
+    const over = await post(alertBody({ frame: { sha256: "ff".repeat(32), archivedThisTick: false }, observedAt: "2026-10-13T17:25:00Z" }));
+    expect(over.status).toBe(429);
+    expect(over.headers.get("retry-after")).toBe("3600");
+    expect(await over.json()).toEqual({ ok: false, error: "rate-limited" });
+    expect(h.all("SELECT COUNT(*) AS n FROM quality_alerts")[0].n).toBe(20);
+    // a retry of one that is already stored is still a harmless duplicate, not a 429
+    const dup = await post(alertBody({ frame: { sha256: "00".repeat(32), archivedThisTick: false }, observedAt: "2026-10-13T17:00:00Z" }));
+    expect(dup.status).toBe(200);
+    expect(await dup.json()).toMatchObject({ created: false, reason: "exists" });
+    // another beach is not limited
+    expect((await post(alertBody({ slug: "deerfield-beach", camId: "deerfield-beach-cam" }))).status).toBe(200);
   });
 
   it("answers 500, not a stack trace, when the database fails", async () => {
@@ -212,9 +231,9 @@ describe.skipIf(!HAS_SQLITE)("the exact frame that was judged", () => {
     expect(bucket.objects.size).toBe(0);
   });
 
-  it("no bucket, or a failing one, still stores the alert and pushes it, with no key", async () => {
+  it("no bucket, or a failing one, still stores the alert and queues it, with no key", async () => {
     ctl.bucket = null;
-    expect(await (await post(withFrame())).json()).toMatchObject({ ok: true, created: true, pushed: true });
+    expect(await (await post(withFrame())).json()).toMatchObject({ ok: true, created: true, queued: true });
     expect(storedPayload().frame.r2Key).toBeNull();
     h.exec("DELETE FROM quality_alerts");
     vi.spyOn(console, "error").mockImplementation(() => {});

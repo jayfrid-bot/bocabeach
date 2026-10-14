@@ -1,7 +1,7 @@
 // POST /api/quality/owner/list — the review screen's data: open alerts first,
 // then recent ones, each with its archived frame (a signed 15-minute link), what
 // was published against what was claimed, and the other cams. Owner only
-// (lib/quality/owner.ts).
+// (Bearer owner token, lib/quality/owner.ts).
 
 import { loadReview } from "@/lib/quality/review";
 import { ownerJson, ownerRoute } from "@/lib/quality/ownerRoute";

@@ -3,7 +3,7 @@
 // The alert is stored for the owner's review screen, and pushed to the owner's
 // phone when the rules in lib/quality/pushPolicy.ts allow.
 //
-// Auth: `Authorization: Bearer <INGEST_TOKEN>`, compared in constant time (the
+// Auth: `Authorization: Bearer <QUALITY_INGEST_TOKEN>`, compared in constant time (the
 // same secret the cam archive uses). The reader sends only a disagreement; a
 // second opinion that agreed is confirmed by the reader and never comes here.
 // A retry of the same frame is a no-op (the dedupe key is unique).
@@ -20,17 +20,17 @@ import { readBodyCapped } from "@/lib/camFrames/ingest";
 import { getCamFramesBucket } from "@/lib/camFrames/r2";
 import { MAX_ALERT_BODY_BYTES, storeAlertFrame } from "@/lib/quality/frameUpload";
 import { recordAlert } from "@/lib/quality/alerts";
+import { MAX_ALERTS_PER_SLUG_HOUR } from "@/lib/quality/store";
 import { parseSeaweedAlert } from "@/lib/quality/ingest";
-import { sendOwnerPush } from "@/lib/quality/notify";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const json = (data: unknown, status = 200) =>
-  Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
+const json = (data: unknown, status = 200, extra: Record<string, string> = {}) =>
+  Response.json(data, { status, headers: { "Cache-Control": "no-store", ...extra } });
 
 export async function POST(req: Request): Promise<Response> {
-  const token = process.env.INGEST_TOKEN;
+  const token = process.env.QUALITY_INGEST_TOKEN;
   if (!token) return json({ ok: false, error: "not-configured" }, 503);
   const header = req.headers.get("authorization") ?? "";
   const presented = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
@@ -66,9 +66,11 @@ export async function POST(req: Request): Promise<Response> {
       db,
       { slug, signal: "seaweed", kind: "seaweed-held-disagreed", createdAt: new Date(nowMs).toISOString(), payload, dedupeKey },
       nowMs,
-      sendOwnerPush,
+      { maxPerSlugPerHour: MAX_ALERTS_PER_SLUG_HOUR },
     );
-    return json({ ok: true, id: r.id, created: r.created, pushed: r.pushed, reason: r.reason });
+    // The push itself is sent by the drain step (lib/quality/drain.ts), not here.
+    if (r.reason === "rate-limited") return json({ ok: false, error: "rate-limited" }, 429, { "Retry-After": "3600" });
+    return json({ ok: true, id: r.id, created: r.created, queued: r.queued, reason: r.reason });
   } catch (e) {
     console.error("quality alerts: write failed", e);
     return json({ ok: false, error: "store-unavailable" }, 500);

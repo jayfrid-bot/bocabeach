@@ -1,16 +1,16 @@
-// GET /api/quality/overrides?slug=<beach> — the owner's seaweed verdicts that are
-// still running today, for the cam reader (scripts/cam_seaweed.py, once per beach
-// per tick). docs/QUALITY_PLAN.md says what each one makes the reader do:
+// GET /api/quality/overrides?slug=<beach> — the owner's seaweed verdicts in force today, for
+// the cam reader (scripts/cam_seaweed.py, once per beach per tick). Each one names the EXACT
+// claim it is about (cam, frame hash or time, claim time) and what it does (docs/QUALITY_PLAN.md):
 //
-//   verdict "wrong"  that cam's pending claim is cleared, and its further moderate+
-//                    claims do not confirm by persistence or second opinion until it
-//                    reads below moderate (another fresh cam can still confirm it);
-//   verdict "right"  the held claim is confirmed (`confirmedBy: "owner"`).
+//   action "publish"  that frame's claim publishes at `level` (confirmedBy "owner");
+//   action "reject"   that frame's claim is removed, and the cam is DISPUTED for the rest of
+//                     the day (its later claims then need a second opinion that agrees,
+//                     another fresh cam, an owner Right, or 3 frames over 90 minutes).
 //
-// An override is active until the end of the beach-local day it was made on.
-// Auth: `Authorization: Bearer <INGEST_TOKEN>`, constant-time, the same secret the
-// reader already holds. Read-only; the reader fails open (an error here changes
-// nothing about how it reads today).
+// Only the latest verdict per exact claim is in force; the rows returned are the active,
+// unsuperseded ones, and the reader applies the same supersession rule again.
+// Auth: `Authorization: Bearer <QUALITY_INGEST_TOKEN>`, constant-time. Read-only; the reader
+// fails open (an error here changes nothing about how it reads today).
 
 import { getLocation } from "@/config/locations";
 import { secretEqual } from "@/lib/db/api";
@@ -25,7 +25,7 @@ export const dynamic = "force-dynamic";
 const json = (data: unknown, status = 200) => Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
 
 export async function GET(req: Request): Promise<Response> {
-  const token = process.env.INGEST_TOKEN;
+  const token = process.env.QUALITY_INGEST_TOKEN;
   if (!token) return json({ ok: false, error: "not-configured" }, 503);
   const presented = bearerToken(req.headers.get("authorization"));
   if (!presented || !secretEqual(presented, token)) return json({ ok: false, error: "unauthorized" }, 401);

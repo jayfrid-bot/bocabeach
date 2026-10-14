@@ -8,17 +8,26 @@
 //     sand    changed by 10 F or more
 //     clarity dropped by 15 or more points
 //
-//   A jump is EXPLAINED, and never alerts, when any of these holds:
-//     rain       rain_now changed between the two hours
-//     lightning  lightning_near changed
-//     caps       the set of active score caps changed (flags, advisories, rain
-//                and wind caps; digits are ignored so "~35% covered" is one cap)
-//     wind       the wind moved by 5 mph or more
-//     official   the biggest score contributor is the wave reading and it comes
-//                from an official observation (the buoy); for a surf jump, the
-//                new wave reading is itself a buoy reading
-//     cloud      the sky moved by 30 points or more of cloud cover, and the jump
-//                is a sand change or a score change led by the sky factor
+//   A jump is EXPLAINED, and never alerts, only by a cause that (a) is allowed to explain THAT
+//   signal and (b) pushed the number the way it moved. The signal-to-cause matrix
+//   (CAUSE_MATRIX), with each cause's direction:
+//
+//     cause      explains            only when
+//     rain       score, clarity,     rain_now went from 0 to 1 (rain STARTED; a sand jump must be a
+//                sand               DROP)
+//     lightning  score, clarity      lightning_near went from 0 to 1
+//     caps       score               a cap was ADDED (digits ignored, so "~35% covered" is one cap)
+//     wind       score, surf,        the wind moved 5 mph or more, either way
+//                clarity
+//     official   surf, score         the new wave reading is a buoy observation; for a score drop,
+//                                    the factor that FELL most is the waves
+//     cloud      sand, score         cloud cover moved 30 points or more; for sand the sand moved the
+//                                    opposite way (more cloud, cooler); for a score drop, the factor
+//                                    that FELL most is the sky and cloud cover ROSE
+//
+//   So a cap change cannot hide a clarity or sand anomaly, rain cannot hide a surf jump, and a
+//   buoy cannot excuse a score drop that something else caused. A score drop's cause is its LARGEST
+//   DECLINE: the factor whose share of the score fell most (an improving factor never leads a drop).
 //
 // Only an unexplained jump alerts. Thresholds and rules live here, in one place.
 
@@ -42,11 +51,20 @@ export const MAX_GAP_HOURS = 2;
 export type JumpSignal = "score" | "surf" | "sand" | "clarity";
 export type ExplainReason = "rain" | "lightning" | "caps" | "wind" | "official-observation" | "cloud";
 
+/** Which causes may explain which signal (see the header). */
+export const CAUSE_MATRIX: Record<JumpSignal, readonly ExplainReason[]> = {
+  score: ["rain", "lightning", "caps", "wind", "official-observation", "cloud"],
+  clarity: ["rain", "lightning", "wind"],
+  surf: ["wind", "official-observation"],
+  sand: ["rain", "cloud"],
+};
+
 /** The row columns the watchdog reads. */
 export type JumpRow = Pick<
   BeachHourlyRow,
   | "slug"
   | "hour_utc"
+  | "local_date"
   | "score"
   | "wave_ft"
   | "surf_ft"
@@ -76,7 +94,7 @@ export interface Detection {
   delta: number;
   explained: boolean;
   reasons: ExplainReason[];
-  /** The factor that moved the score most; set for score jumps only. */
+  /** The factor that FELL most (the largest decline); set for score jumps only. */
   cause: FactorCause | null;
 }
 
@@ -128,18 +146,19 @@ function contributions(factors: Factor[]): Map<string, { label: string; points: 
 }
 
 /**
- * The factor whose share of the score changed most between two hours (by
- * absolute size), or null when either hour has no factor breakdown. A factor
- * that had no data in one hour counts as 0 points there. Pure.
+ * The factor whose share of the score FELL most between two hours (the largest decline), or
+ * null when either hour has no factor breakdown or nothing fell. A factor with no data in one
+ * hour counts as 0 points there. An improving factor is never returned: the cause of a score
+ * drop must be something that went down. Pure.
  */
-export function biggestContributor(prevFactorsJson: string | null, curFactorsJson: string | null): FactorCause | null {
+export function largestDecline(prevFactorsJson: string | null, curFactorsJson: string | null): FactorCause | null {
   const prev = contributions(parseFactors(prevFactorsJson));
   const cur = contributions(parseFactors(curFactorsJson));
   if (!prev.size || !cur.size) return null;
   let best: FactorCause | null = null;
   for (const key of new Set([...prev.keys(), ...cur.keys()])) {
     const delta = (cur.get(key)?.points ?? 0) - (prev.get(key)?.points ?? 0);
-    if (best == null || Math.abs(delta) > Math.abs(best.delta)) {
+    if (delta < 0 && (best == null || delta < best.delta)) {
       best = { key, label: (cur.get(key) ?? prev.get(key))?.label ?? key, delta: round1(delta) };
     }
   }
@@ -161,10 +180,10 @@ function capSet(json: string | null): Set<string> {
   return out;
 }
 
-function sameSet(a: Set<string>, b: Set<string>): boolean {
-  if (a.size !== b.size) return false;
-  for (const v of a) if (!b.has(v)) return false;
-  return true;
+/** True when `next` has a cap `prev` did not. */
+function capAdded(prev: Set<string>, next: Set<string>): boolean {
+  for (const v of next) if (!prev.has(v)) return true;
+  return false;
 }
 
 /** True when the two rows are one beach, in order, at most MAX_GAP_HOURS apart. */
@@ -177,36 +196,38 @@ export function comparable(prev: Pick<JumpRow, "slug" | "hour_utc">, cur: Pick<J
   return gap > 0 && gap <= MAX_GAP_HOURS * HOUR_MS;
 }
 
-/** Which of the explain rules apply to a jump between these two rows. Pure. */
+/**
+ * Which causes explain a jump between these two rows: those the matrix allows for the signal,
+ * whose own condition holds, in the direction the jump moved. `delta` is to - from; `cause` is
+ * the largest decline (score jumps only). Pure.
+ */
 export function explainReasons(
   signal: JumpSignal,
   prev: JumpRow,
   cur: JumpRow,
   cause: FactorCause | null,
+  delta: number,
 ): ExplainReason[] {
+  const allowed = CAUSE_MATRIX[signal];
   const reasons: ExplainReason[] = [];
-  if (prev.rain_now != null && cur.rain_now != null && prev.rain_now !== cur.rain_now) reasons.push("rain");
-  if (prev.lightning_near != null && cur.lightning_near != null && prev.lightning_near !== cur.lightning_near) {
-    reasons.push("lightning");
-  }
-  if (prev.caps_json != null && cur.caps_json != null && !sameSet(capSet(prev.caps_json), capSet(cur.caps_json))) {
-    reasons.push("caps");
-  }
+  const add = (r: ExplainReason, holds: boolean) => {
+    if (holds && allowed.includes(r)) reasons.push(r);
+  };
+  // A score or clarity jump is always a drop. A sand jump may go either way: rain only explains a cooling.
+  const cooled = delta < 0;
+  add("rain", prev.rain_now === 0 && cur.rain_now === 1 && (signal !== "sand" || cooled));
+  add("lightning", prev.lightning_near === 0 && cur.lightning_near === 1);
+  add("caps", prev.caps_json != null && cur.caps_json != null && capAdded(capSet(prev.caps_json), capSet(cur.caps_json)));
   const windA = num(prev.wind_mph);
   const windB = num(cur.wind_mph);
-  if (windA != null && windB != null && Math.abs(windB - windA) >= EXPLAIN_THRESHOLDS.windMph) reasons.push("wind");
-  if (cur.wave_source === "observed") {
-    if (signal === "surf" || (signal === "score" && cause?.key === "waves")) reasons.push("official-observation");
-  }
+  add("wind", windA != null && windB != null && Math.abs(windB - windA) >= EXPLAIN_THRESHOLDS.windMph);
+  add("official-observation", cur.wave_source === "observed" && (signal === "surf" || cause?.key === "waves"));
   const cloudA = num(prev.cloud_pct);
   const cloudB = num(cur.cloud_pct);
-  if (
-    cloudA != null &&
-    cloudB != null &&
-    Math.abs(cloudB - cloudA) >= EXPLAIN_THRESHOLDS.cloudPct &&
-    (signal === "sand" || (signal === "score" && cause?.key === "sky"))
-  ) {
-    reasons.push("cloud");
+  if (cloudA != null && cloudB != null && Math.abs(cloudB - cloudA) >= EXPLAIN_THRESHOLDS.cloudPct) {
+    const cloudDelta = cloudB - cloudA;
+    if (signal === "sand") add("cloud", cloudDelta * delta < 0);
+    else add("cloud", cause?.key === "sky" && cloudDelta > 0);
   }
   return reasons;
 }
@@ -233,7 +254,7 @@ export function detectJumps(prev: JumpRow, cur: JumpRow): Detection[] {
   const s0 = num(prev.score);
   const s1 = num(cur.score);
   if (s0 != null && s1 != null && s0 - s1 >= JUMP_THRESHOLDS.scoreDrop) {
-    found.push({ signal: "score", from: s0, to: s1, cause: biggestContributor(prev.factors_json, cur.factors_json) });
+    found.push({ signal: "score", from: s0, to: s1, cause: largestDecline(prev.factors_json, cur.factors_json) });
   }
   const surf = surfPair(prev, cur);
   if (surf && Math.abs(surf[1] - surf[0]) >= JUMP_THRESHOLDS.surfFt) {
@@ -251,12 +272,13 @@ export function detectJumps(prev: JumpRow, cur: JumpRow): Detection[] {
   }
 
   return found.map((f) => {
-    const reasons = explainReasons(f.signal, prev, cur, f.cause);
+    const delta = round1(f.to - f.from);
+    const reasons = explainReasons(f.signal, prev, cur, f.cause, delta);
     return {
       signal: f.signal,
       from: f.from,
       to: f.to,
-      delta: round1(f.to - f.from),
+      delta,
       explained: reasons.length > 0,
       reasons,
       cause: f.cause,

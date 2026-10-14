@@ -1,20 +1,36 @@
 // The owner's Right / Wrong tap on an alert (docs/QUALITY_PLAN.md, "Confirm").
-// It writes a `quality_labels` row, closes the alert, and, for a seaweed
-// alert, adds a `quality_overrides` row, so the live summary and the cam reader
-// drop that cam's claim (Wrong) or publish it (Right) (lib/quality/seaweedOverrides.ts).
+//
+// ONE atomic D1 batch writes: the label, the alert's new status, and (for a seaweed
+// claim made today) the override. Nothing is half done: if any statement fails, none
+// stick. A second tap on the same alert SUPERSEDES the first: the old label and override
+// keep their rows, flagged superseded, and unique indexes allow one active of each per
+// alert. Two taps at once cannot leave two active verdicts.
+//
+// A verdict binds to the EXACT claim the alert is about (cam, frame hash or time, claim
+// time; lib/quality/types.ts ClaimTarget), never to "this cam" or "this moment":
+//   Right                              publish exactly that claim, at its level.
+//   Wrong, correct level moderate/high publish exactly that claim, at the corrected level.
+//   Wrong, correct level none/low,
+//     or no value                      reject that claim: nothing is published for it,
+//                                      and the cam is DISPUTED for the rest of the day.
+// A live override is written only when the claim was made on today's beach-local date and
+// the alert is not expired. An answer to an older alert stores the LABEL only.
 
 import { getLocation } from "@/config/locations";
 import type { D1Like } from "@/lib/db/d1Store";
 import { frameBySha, nearestFrame, nearestFramesAllCams, type FrameRef } from "@/lib/quality/frames";
+import { localHourParts } from "@/lib/history/archive";
 import { endOfLocalDayMs } from "@/lib/quality/localDay";
 import { OWNER_TZ } from "@/lib/quality/pushPolicy";
-import { getAlert, insertLabel, insertOverride, markAnswered } from "@/lib/quality/store";
+import { ALERT_OPEN_MS, getAlert, runAtomic } from "@/lib/quality/store";
 import {
   isClarityWord,
   isSeaweedLevel,
   type HourlyAlertPayload,
+  type OverrideAction,
   type QualitySignal,
   type SeaweedAlertPayload,
+  type SeaweedLevel,
   type Verdict,
 } from "@/lib/quality/types";
 
@@ -41,6 +57,26 @@ export function parseCorrect(signal: QualitySignal, raw: unknown): ParsedCorrect
   return { ok: true, value: { value: Math.round(v * 10) / 10 } };
 }
 
+export interface VerdictEffect {
+  action: OverrideAction;
+  /** The level a 'publish' puts out; null for a 'reject'. */
+  level: SeaweedLevel | null;
+  coveragePct: number | null;
+  note: string | null;
+}
+
+/** What a seaweed verdict does to its claim. Pure. */
+export function verdictEffect(
+  verdict: Verdict,
+  claim: SeaweedAlertPayload["claim"],
+  correct: unknown,
+): VerdictEffect {
+  if (verdict === "right") return { action: "publish", level: claim.level, coveragePct: claim.coveragePct, note: claim.note };
+  const level = (correct as { level?: unknown } | null)?.level;
+  if (level === "moderate" || level === "high") return { action: "publish", level, coveragePct: null, note: null };
+  return { action: "reject", level: null, coveragePct: null, note: null };
+}
+
 export interface AnswerArgs {
   alertId: number;
   verdict: Verdict;
@@ -49,8 +85,8 @@ export interface AnswerArgs {
 }
 
 export type AnswerResult =
-  | { ok: true; labelId: number; overrideAdded: boolean }
-  | { ok: false; error: "not-found" | "already-answered" | "bad-correct" };
+  | { ok: true; labelId: number; overrideAdded: boolean; why?: "not-seaweed" | "expired" | "earlier-day" | "unbound" }
+  | { ok: false; error: "not-found" | "bad-correct" };
 
 function parse<T>(json: string): T | null {
   try {
@@ -81,7 +117,6 @@ async function frameForLabel(db: D1Like, slug: string, kind: string, payload: Se
 export async function answerAlert(db: D1Like, args: AnswerArgs, nowMs: number): Promise<AnswerResult> {
   const alert = await getAlert(db, args.alertId);
   if (!alert) return { ok: false, error: "not-found" };
-  if (alert.status === "answered") return { ok: false, error: "already-answered" };
   const payload = parse<SeaweedAlertPayload | HourlyAlertPayload>(alert.payload_json);
   if (!payload) return { ok: false, error: "not-found" };
 
@@ -91,40 +126,77 @@ export async function answerAlert(db: D1Like, args: AnswerArgs, nowMs: number): 
   const isSeaweed = alert.kind === "seaweed-held-disagreed";
   const sp = payload as SeaweedAlertPayload;
   const hp = payload as HourlyAlertPayload;
+  const tz = getLocation(alert.slug)?.timezone ?? OWNER_TZ;
   const frame = await frameForLabel(db, alert.slug, alert.kind, payload, alert.created_at);
   const createdAt = new Date(nowMs).toISOString();
 
-  const labelId = await insertLabel(db, {
-    slug: alert.slug,
-    signal: alert.signal,
-    observedAt: payload.observedAt,
-    source: "alert",
-    published: isSeaweed ? sp.published : hp.published,
-    claimed: isSeaweed ? sp.claim : { from: hp.from, to: hp.to, delta: hp.delta, cause: hp.cause },
-    verdict: args.verdict,
-    correct: correct.value,
-    camId: isSeaweed ? sp.camId : null,
-    r2Key: (isSeaweed ? sp.frame?.r2Key : null) ?? frame?.r2Key ?? null,
-    createdAt,
-  });
-  if (!(await markAnswered(db, alert.id, labelId))) return { ok: false, error: "already-answered" };
+  // Live only for a seaweed claim made on today's beach-local date, on an alert still open
+  // (not expired by status, and not older than the open window).
+  let why: "not-seaweed" | "expired" | "earlier-day" | "unbound" | undefined;
+  if (!isSeaweed) why = "not-seaweed";
+  else if (alert.status === "expired" || nowMs - Date.parse(alert.created_at) > ALERT_OPEN_MS) why = "expired";
+  else if (sp.localDate !== localHourParts(tz, nowMs).date) why = "earlier-day";
+  // A claim with no frame identity cannot be told apart from its neighbors: label only.
+  else if (!sp.claimTarget?.frameSha && !sp.claimTarget?.frameAt) why = "unbound";
+  const live = why === undefined;
 
-  // A seaweed verdict is honored live: Wrong drops the cam's claim, Right publishes it.
-  // Both last until the end of the beach-local day, or the cam's next fresh reading.
-  let overrideAdded = false;
-  if (isSeaweed) {
-    const tz = getLocation(alert.slug)?.timezone ?? OWNER_TZ;
-    await insertOverride(db, {
-      slug: alert.slug,
-      signal: "seaweed",
-      camId: sp.camId,
-      createdAtUtc: createdAt,
-      untilUtc: new Date(endOfLocalDayMs(tz, nowMs)).toISOString(),
-      labelId,
-      verdict: args.verdict,
-      claim: args.verdict === "right" ? { level: sp.claim.level, coveragePct: sp.claim.coveragePct, note: sp.claim.note } : null,
-    });
-    overrideAdded = true;
+  const label = db
+    .prepare(
+      "INSERT INTO quality_labels (alert_id, superseded, slug, signal, observed_at_utc, source, published_value, claimed_value, " +
+        "verdict, correct_value, cam_id, r2_key, created_at) VALUES (?1, 0, ?2, ?3, ?4, 'alert', ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+    )
+    .bind(
+      alert.id,
+      alert.slug,
+      alert.signal,
+      payload.observedAt,
+      JSON.stringify(isSeaweed ? sp.published : hp.published),
+      JSON.stringify(isSeaweed ? { ...sp.claim, claimTarget: sp.claimTarget } : { from: hp.from, to: hp.to, delta: hp.delta, cause: hp.cause }),
+      args.verdict,
+      correct.value == null ? null : JSON.stringify(correct.value),
+      isSeaweed ? sp.camId : null,
+      (isSeaweed ? sp.frame?.r2Key : null) ?? frame?.r2Key ?? null,
+      createdAt,
+    );
+  const active = "(SELECT id FROM quality_labels WHERE alert_id = ?1 AND superseded = 0)";
+  const stmts = [
+    // A second tap supersedes the first, cleanly.
+    db.prepare("UPDATE quality_labels SET superseded = 1 WHERE alert_id = ?1 AND superseded = 0").bind(alert.id),
+    db.prepare("UPDATE quality_overrides SET superseded = 1 WHERE alert_id = ?1 AND superseded = 0").bind(alert.id),
+    label,
+  ];
+  if (live) {
+    const fx = verdictEffect(args.verdict, sp.claim, correct.value);
+    stmts.push(
+      db
+        .prepare(
+          "INSERT INTO quality_overrides (alert_id, label_id, superseded, slug, signal, cam_id, frame_sha, frame_at, claimed_at, local_date, " +
+            `verdict, action, level, coverage_pct, note, created_at_utc, until_utc) VALUES (?1, ${active}, 0, ?2, 'seaweed', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)`,
+        )
+        .bind(
+          alert.id,
+          alert.slug,
+          sp.camId,
+          sp.claimTarget?.frameSha ?? null,
+          sp.claimTarget?.frameAt ?? null,
+          sp.claimTarget?.claimedAt ?? null,
+          sp.localDate,
+          args.verdict,
+          fx.action,
+          fx.level,
+          fx.coveragePct,
+          fx.note,
+          createdAt,
+          new Date(endOfLocalDayMs(tz, nowMs)).toISOString(),
+        ),
+    );
   }
-  return { ok: true, labelId, overrideAdded };
+  stmts.push(db.prepare(`UPDATE quality_alerts SET status = 'answered', label_id = ${active} WHERE id = ?1`).bind(alert.id));
+  await runAtomic(db, stmts);
+
+  const row = await db
+    .prepare("SELECT id FROM quality_labels WHERE alert_id = ?1 AND superseded = 0")
+    .bind(alert.id)
+    .first<{ id: number }>();
+  return { ok: true, labelId: Number(row?.id ?? 0), overrideAdded: live, ...(why ? { why } : {}) };
 }

@@ -4,7 +4,7 @@
 // the beach, tells the app what is really there. Big taps for seaweed and water
 // clarity, optional surf and sand, an optional note. Each answer is saved as a
 // label, with the nearest saved camera frames, by /api/quality/owner/report
-// (owner device only; a public shell otherwise).
+// (owner token only; a public shell otherwise).
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";

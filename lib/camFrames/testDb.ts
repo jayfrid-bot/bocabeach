@@ -57,10 +57,24 @@ export function makeCamDb(opts?: { allMigrations?: boolean; files?: string[] }):
     : ["0016_cam_frames.sql", "0017_cam_frames_golden.sql"];
   for (const f of files) raw.exec(readFileSync(path.join(dir, f), "utf8"));
   const db: D1Like = {
+    // Like real D1's batch(): all statements or none. A statement that throws rolls the
+    // whole batch back. There is no await between BEGIN and COMMIT, so two concurrent
+    // batches can never interleave.
+    async batch(stmts: D1Stmt[]): Promise<D1RunResult[]> {
+      raw.exec("BEGIN");
+      try {
+        const out = stmts.map((s) => (s as unknown as { _runSync(): D1RunResult })._runSync());
+        raw.exec("COMMIT");
+        return out;
+      } catch (e) {
+        raw.exec("ROLLBACK");
+        throw e;
+      }
+    },
     prepare(sql: string): D1Stmt {
       const stmt = raw.prepare(sql);
       let bound: unknown[] = [];
-      const self: D1Stmt = {
+      const self: D1Stmt & { _runSync(): D1RunResult } = {
         bind(...values: unknown[]) {
           bound = values;
           return self;
@@ -70,6 +84,12 @@ export function makeCamDb(opts?: { allMigrations?: boolean; files?: string[] }):
           return (row === undefined ? null : row) as T | null;
         },
         async run(): Promise<D1RunResult> {
+          const r = stmt.run(...bound);
+          return { success: true, meta: { changes: Number(r.changes) } };
+        },
+        // Used by `batch` below: run now, with no await in between, so a batch is one
+        // uninterrupted step in this single-threaded test process.
+        _runSync(): D1RunResult {
           const r = stmt.run(...bound);
           return { success: true, meta: { changes: Number(r.changes) } };
         },

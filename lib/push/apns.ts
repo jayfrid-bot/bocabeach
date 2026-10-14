@@ -135,13 +135,16 @@ const SANDBOX_HOST = "https://api.sandbox.push.apple.com";
  *  and `openLiveActivitySessions` (BOTH environments, one row's
  *  `apns_environment` at a time — Codex review #5). Pulled out so neither
  *  caller duplicates the request-building logic. */
-function buildSession(host: string, jwt: string, cfg: ApnsConfig): ApnsSession {
+function buildSession(host: string, jwt: string, cfg: ApnsConfig, timeoutMs?: number): ApnsSession {
   const post = async (deviceToken: string, headers: Record<string, string>, body: string): Promise<ApnsResult> => {
     try {
       const res = await fetch(`${host}/3/device/${deviceToken}`, {
         method: "POST",
         headers: { authorization: `bearer ${jwt}`, "content-type": "application/json", ...headers },
         body,
+        // A caller that must not hang (the owner-push drain) passes a timeout; the push
+        // run passes none, exactly as before.
+        ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
       });
       if (res.status === 200) return { ok: true, status: 200 };
       const data = await res.text();
@@ -204,10 +207,10 @@ function buildSession(host: string, jwt: string, cfg: ApnsConfig): ApnsSession {
  * `openLiveActivitySessions` below, which is the ONLY thing that ever talks
  * to the sandbox host.
  */
-export function openApnsSession(cfg: ApnsConfig, nowSec: number): ApnsSession {
+export function openApnsSession(cfg: ApnsConfig, nowSec: number, opts?: { timeoutMs?: number }): ApnsSession {
   const host = cfg.production ? PROD_HOST : SANDBOX_HOST;
   const jwt = buildApnsJwt(cfg, nowSec);
-  return buildSession(host, jwt, cfg);
+  return buildSession(host, jwt, cfg, opts?.timeoutMs);
 }
 
 export interface LiveActivitySessions {

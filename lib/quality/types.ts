@@ -43,6 +43,8 @@ export interface AlertRow {
 
 export interface LabelRow {
   id: number;
+  alert_id: number | null;
+  superseded: 0 | 1;
   slug: string;
   signal: QualitySignal;
   observed_at_utc: string;
@@ -58,18 +60,36 @@ export interface LabelRow {
   created_at: string;
 }
 
+/** What an owner verdict does to the claim it names. */
+export type OverrideAction = "publish" | "reject";
+
+/** One stored owner verdict on one exact seaweed claim (migrations/0019 `quality_overrides`). */
 export interface OverrideRow {
   id: number;
+  alert_id: number;
+  label_id: number | null;
+  superseded: 0 | 1;
   slug: string;
   signal: QualitySignal;
   cam_id: string;
+  frame_sha: string | null;
+  frame_at: string | null;
+  claimed_at: string | null;
+  local_date: string;
+  verdict: Verdict;
+  action: OverrideAction;
+  level: SeaweedLevel | null;
+  coverage_pct: number | null;
+  note: string | null;
   created_at_utc: string;
   until_utc: string;
-  label_id: number | null;
-  /** 'wrong': drop the cam's claim. 'right': publish the claimed level. */
-  verdict: Verdict;
-  /** JSON {level, coveragePct, note} of the claim the owner judged (a 'right' override publishes it). */
-  claim_json: string | null;
+}
+
+/** The identity of one claim: the cam, the frame (hash for feed cams, else the frame's time), and when it was scored. */
+export interface ClaimTarget {
+  frameSha: string | null;
+  frameAt: string | null;
+  claimedAt: string | null;
 }
 
 /** One other cam's current reading, as the reader saw it when it flagged a cam. */
@@ -92,6 +112,10 @@ export interface SeaweedAlertPayload {
   claim: { level: SeaweedLevel; coveragePct: number | null; note: string | null; provider: string | null; model: string | null };
   secondOpinion: { provider: string; model: string | null; level: SeaweedLevel | null; coveragePct: number | null; note: string | null };
   others: OtherCamReading[];
+  /** The exact claim this alert is about; an owner verdict binds to it, never to the cam in general. */
+  claimTarget: ClaimTarget;
+  /** The beach-local date of the claim (YYYY-MM-DD). A verdict acts live only on that same day. */
+  localDate: string;
   /**
    * The exact image: its SHA-256 (hex, of the original still), whether the archive took it
    * this tick, and `r2Key`, the shrunk copy sent with the alert and kept under `quality/`
@@ -102,6 +126,8 @@ export interface SeaweedAlertPayload {
 
 /** The `payload_json` of an 'hourly-jump' alert. */
 export interface HourlyAlertPayload {
+  /** The beach-local date of the hour the jump was seen in. */
+  localDate?: string;
   /** The hour the jump was seen in (hour_utc of the new row). */
   observedAt: string;
   fromHourUtc: string;

@@ -2,37 +2,49 @@
 The cam reader's half of the data-quality loop (docs/QUALITY_PLAN.md, "Catch" and
 "Check"). Imported by scripts/cam_seaweed.py; pure stdlib, no network at import.
 
-When the reader HOLDS a sudden seaweed jump (a moderate/high read that nothing has
-confirmed yet), it asks a second reader to look at the SAME image:
+SECOND OPINION. When the reader HOLDS a sudden seaweed jump (a moderate/high read that
+nothing has confirmed yet), it asks a second reader to look at the SAME image:
 
   * the claim came from Gemini, Groq, OpenRouter or GitHub Models  -> ask Clef
   * the claim came from Clef                                       -> ask Gemini
   * the other provider is not configured                           -> no second opinion
 
-If the second reader also says moderate or high, the reader confirms the jump at
-once (`confirmedBy: "second-opinion:<provider>"`). If it disagrees, the jump stays
-held and the app is told (POST /api/quality/alerts, Bearer INGEST_TOKEN): the app
-stores the alert for the owner's review screen and may push it to the owner's
-phone. If the second reader fails or calls the frame unreadable, nothing happens:
-the jump stays held, exactly as before this existed.
+Exactly ONE provider HTTP attempt per second opinion (no retry, no second Gemini model),
+and the per-tick cap counts those attempts. If the second reader also says moderate or
+high, the jump is confirmed at once (`confirmedBy: "second-opinion:<provider>"`). If it
+disagrees, the jump stays held, the cam is DISPUTED for the rest of the day (below), and
+the app is told (POST /api/quality/alerts, Bearer QUALITY_INGEST_TOKEN): the app stores
+the alert for the owner's review screen and may push it to the owner's phone. If the
+second reader fails or calls the frame unreadable, nothing changes.
 
-OWNER VERDICTS (docs/QUALITY_PLAN.md): the owner taps Right or Wrong on an alert, and the
-app keeps that as an override until the end of the beach-local day. Once per beach per tick
-the reader fetches them (GET /api/quality/overrides, Bearer INGEST_TOKEN; any failure is "no
-overrides", exactly as before):
+A failed alert POST is not lost: it waits in the feed's `pendingAlerts` outbox and is
+retried every tick until the app answers 2xx, and dropped after 24 hours (or at once on a
+permanent 4xx: 400, 404, 413, 422).
 
-  * WRONG on a cam: its pending claim is cleared, and its further moderate+ reads this day
-    do not confirm by persistence or second opinion (they are published as no seaweed, with
-    `ownerHold`), until a fresh read of that cam comes in below moderate: then the override
-    is SPENT (remembered in the feed's `spentOverrides`). Another fresh cam that also claims
-    moderate+ can still confirm it, but a suppressed cam never confirms another.
-  * RIGHT on a held claim: the claim is confirmed. The held reading is published at the
-    claimed level with `confirmedBy: "owner"`, and its pending claim becomes a confirmed one.
+OWNER VERDICTS. The owner taps Right or Wrong on an alert. The app keeps the answer as an
+override that names ONE EXACT CLAIM: the cam and the frame (its hash for a feed cam, else its
+time), and acts only on that claim, only on the day it was made. Once per beach per tick the
+reader fetches the running ones (GET /api/quality/overrides; any failure is "none", exactly as
+before). Of several verdicts on one exact target, the latest wins (same rule as the app;
+lib/quality/verdictVectors.json holds the shared test vectors).
 
-Everything here that decides something is pure and tested (quality_watch_test.py):
-which provider to ask, whether an opinion agrees, how the confirmed reading is
-rebuilt, what the alert body holds. The one network function, post_alert(), never
-raises.
+  * PUBLISH (Right, or Wrong with a corrected level of moderate or high): the held reading
+    of that frame publishes at the verdict's level with `confirmedBy: "owner"`, and that
+    frame's pending claim becomes a confirmed one.
+  * REJECT (Wrong with none, low, or no value): the held reading of that frame is cleared,
+    nothing is published for it, its pending claim is removed, and the cam is DISPUTED.
+
+DISPUTED CAMS. A cam is disputed for the rest of its beach-local day by an owner Wrong, or by a
+second opinion that disagrees. The state lives in the feed (`disputedCams`, same day only). While
+a cam is disputed, its new moderate+ claims are held, and confirm ONLY by (a) a second opinion
+that agrees, (b) a fresh OTHER cam, itself not disputed, claiming moderate+ in the same tick,
+(c) an owner Right, or (d) the same cam claiming moderate+ on at least 3 distinct frames over at
+least 90 minutes (a real bloom on a one-cam beach still publishes). Plain two-frame persistence
+does NOT confirm a disputed cam. A held claim on a disputed cam still alerts the owner. A fresh
+read of the cam below moderate restarts its frame count; any confirmation ends the dispute.
+
+Everything here that decides something is pure and tested (quality_watch_test.py). The network
+functions, post_alert() and fetch_overrides(), never raise.
 """
 import base64
 import datetime as dt
@@ -55,8 +67,9 @@ _MODERATE = 2
 SECOND_OPINION_AFTER = {"clef": "gemini"}
 SECOND_OPINION_DEFAULT = "clef"
 
-# At most this many second opinions in one run (one process = one tick). They are rare
-# (only on a held jump); the cap keeps a misbehaving feed from spending Clef's daily
+# At most this many second-opinion provider HTTP attempts in one run (one process = one tick).
+# Each opinion is exactly one attempt, so this is also the most calls a tick can bill. They are
+# rare (only on a held jump); the cap keeps a misbehaving feed from spending Clef's daily
 # allowance (600 calls a UTC day, server side).
 MAX_SECOND_OPINIONS_PER_RUN = int(os.environ.get("MAX_SECOND_OPINIONS_PER_RUN", "6"))
 
@@ -68,6 +81,14 @@ HTTP_UA = os.environ.get(
     "HTTP_UA",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 )
+
+# The reader's credential for the quality routes. Its own secret (a Worker secret and a GitHub
+# Actions secret), apart from INGEST_TOKEN, which the archive and the Clef route share.
+TOKEN_ENV = "QUALITY_INGEST_TOKEN"
+
+
+def _token(explicit: str | None = None) -> str:
+    return (explicit if explicit is not None else os.environ.get(TOKEN_ENV, "")).strip()
 
 
 def pick_second_provider(claim_provider, configured) -> str | None:
@@ -108,7 +129,7 @@ def confirm_held(held: dict, by: str, claim: dict | None = None) -> dict:
     mutated. Pure."""
     own = held.get("claim") or {}
     use = claim if claim and claim.get("level") in _RANK else own
-    out = {k: v for k, v in held.items() if k not in ("unconfirmed", "claim")}
+    out = {k: v for k, v in held.items() if k not in ("unconfirmed", "claim", "dispute")}
     out["level"] = use.get("level")
     out["coveragePct"] = use.get("coveragePct")
     out["note"] = use.get("note")
@@ -145,6 +166,12 @@ def frame_sha256(img: bytes) -> str:
     return hashlib.sha256(img).hexdigest()
 
 
+def claim_target(held: dict) -> dict:
+    """The exact identity of a held claim, as the reader's own feed records it: the frame's hash
+    (feed cams) and time, and when the claim was scored. An owner verdict binds to this. Pure."""
+    return {"frameSha": held.get("frameSha"), "frameAt": held.get("frameAt"), "claimedAt": held.get("scoredAt")}
+
+
 def build_alert(slug: str, held: dict, opinion: dict, others: list, published, sha256: str | None,
                 archived_this_tick: bool, frame_jpeg: bytes | None = None) -> dict:
     """The body POSTed to /api/quality/alerts for a held jump the second reader did
@@ -167,6 +194,7 @@ def build_alert(slug: str, held: dict, opinion: dict, others: list, published, s
             "provider": held.get("provider"),
             "model": held.get("model"),
         },
+        "claimTarget": claim_target(held),
         "secondOpinion": opinion,
         "others": others,
         "frame": {"sha256": sha256, "archivedThisTick": bool(archived_this_tick),
@@ -177,8 +205,8 @@ def build_alert(slug: str, held: dict, opinion: dict, others: list, published, s
 
 def post_alert(body: dict, token: str | None = None, url: str | None = None) -> str:
     """POST an alert to the app. BEST-EFFORT: never raises. Returns a short status:
-    "no-token" (INGEST_TOKEN unset, nothing sent), "sent", "http-<code>" or "error"."""
-    token = (token if token is not None else os.environ.get("INGEST_TOKEN", "")).strip()
+    "no-token" (QUALITY_INGEST_TOKEN unset, nothing sent), "sent", "http-<code>" or "error"."""
+    token = _token(token)
     if not token:
         return "no-token"
     try:
@@ -203,7 +231,62 @@ def post_alert(body: dict, token: str | None = None, url: str | None = None) -> 
         return "error"
 
 
-# --- owner verdicts -------------------------------------------------------------------------
+# --- the alert outbox ----------------------------------------------------------------------
+
+OUTBOX_MAX_AGE = dt.timedelta(hours=24)
+OUTBOX_MAX_PER_TICK = 5
+# A 4xx that retrying cannot fix: the app refused the alert itself, not the moment.
+PERMANENT_STATUSES = {"http-400", "http-404", "http-413", "http-422"}
+
+
+def utc_iso(t: dt.datetime) -> str:
+    """'2026-10-13T17:20:00Z' for an aware datetime. Pure."""
+    return t.astimezone(dt.timezone.utc).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def alert_key(body: dict) -> str:
+    """One alert per exact image: slug, cam, and the frame's hash (else its time). Pure."""
+    frame = body.get("frame") or {}
+    return f"{body.get('slug')}:{body.get('camId')}:{frame.get('sha256') or body.get('observedAt')}"
+
+
+def queue_alert(outbox: list, body: dict, now: dt.datetime) -> bool:
+    """Put a failed alert in the outbox, once per exact image. The picture is NOT kept (the
+    feed file is read by the app every few minutes, and the app falls back to the archived
+    frame without it). True when it was added. Mutates `outbox`."""
+    key = alert_key(body)
+    if any(e.get("key") == key for e in outbox):
+        return False
+    light = {**body, "frame": {k: v for k, v in (body.get("frame") or {}).items() if k != "jpegB64"}}
+    outbox.append({"key": key, "createdAt": utc_iso(now), "attempts": 1, "body": light})
+    return True
+
+
+def retry_outbox(outbox: object, now: dt.datetime, post=None) -> list[dict]:
+    """Send what is waiting in the outbox, once each (at most OUTBOX_MAX_PER_TICK). Returns the
+    entries still waiting: dropped are those the app accepted, those older than 24 hours, those
+    malformed, and those it refused permanently. `post` is post_alert by default."""
+    post = post or post_alert
+    keep: list[dict] = []
+    tried = 0
+    for e in outbox if isinstance(outbox, list) else []:
+        made = parse_iso(e.get("createdAt")) if isinstance(e, dict) else None
+        if made is None or not isinstance(e.get("body"), dict):
+            continue
+        if now - made > OUTBOX_MAX_AGE:
+            continue
+        if tried >= OUTBOX_MAX_PER_TICK:
+            keep.append(e)
+            continue
+        tried += 1
+        status = post(e["body"])
+        if status == "sent" or status in PERMANENT_STATUSES:
+            continue
+        keep.append({**e, "attempts": int(e.get("attempts") or 1) + 1})
+    return keep
+
+
+# --- owner verdicts: targets, supersession, application ------------------------------------
 
 OVERRIDES_URL = os.environ.get("QUALITY_OVERRIDES_URL", "https://app.isitbeachday.com/api/quality/overrides")
 OVERRIDES_TIMEOUT_S = 8
@@ -221,9 +304,35 @@ def parse_iso(stamp) -> dt.datetime | None:
     return t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
 
 
+def same_frame(a: dict, b: dict) -> bool:
+    """True when two things name the same frame: equal hash prefixes when both have a hash, else
+    equal frame time. Pure. (The app's sameFrame, lib/quality/seaweedOverrides.ts, is the twin.)"""
+    sa, sb = a.get("frameSha"), b.get("frameSha")
+    if sa and sb:
+        n = min(len(sa), len(sb))
+        return n >= 8 and sa[:n] == sb[:n]
+    fa, fb = a.get("frameAt"), b.get("frameAt")
+    return bool(fa and fb and fa == fb)
+
+
+def claim_key(o: dict) -> str | None:
+    """The key of a frame: its hash prefix, else its time; None with neither. Pure."""
+    if o.get("frameSha"):
+        return f"sha:{o['frameSha'][:20]}"
+    if o.get("frameAt"):
+        return f"at:{o['frameAt']}"
+    return None
+
+
+def target_key(o: dict) -> str | None:
+    """The key of one exact target: cam plus frame. None when it has no frame identity. Pure."""
+    k = claim_key(o)
+    return f"{o.get('camId')}|{k}" if k else None
+
+
 def parse_overrides(doc) -> list[dict]:
-    """The reply of GET /api/quality/overrides as [{camId, verdict, createdAt, untilUtc,
-    claim}], seaweed only. A malformed entry is dropped. Pure."""
+    """The reply of GET /api/quality/overrides as a list of overrides (same field names as the
+    reply), seaweed only. A malformed entry is dropped. Pure."""
     out = []
     items = doc.get("overrides") if isinstance(doc, dict) else None
     for o in items if isinstance(items, list) else []:
@@ -232,17 +341,32 @@ def parse_overrides(doc) -> list[dict]:
         cam, created, until = o.get("camId"), o.get("createdAtUtc"), o.get("untilUtc")
         if not isinstance(cam, str) or not cam or parse_iso(created) is None or parse_iso(until) is None:
             continue
-        claim = o.get("claim") if isinstance(o.get("claim"), dict) else None
-        out.append({"camId": cam, "verdict": "right" if o.get("verdict") == "right" else "wrong",
-                    "createdAt": created, "untilUtc": until, "claim": claim})
+        action = "publish" if o.get("action") == "publish" else "reject" if o.get("action") == "reject" else None
+        if action is None:
+            continue
+        out.append({
+            "id": o.get("id") if isinstance(o.get("id"), int) else 0,
+            "camId": cam,
+            "verdict": "right" if o.get("verdict") == "right" else "wrong",
+            "action": action,
+            "level": o.get("level") if o.get("level") in _RANK else None,
+            "coveragePct": o.get("coveragePct"),
+            "note": o.get("note"),
+            "frameSha": o.get("frameSha") if isinstance(o.get("frameSha"), str) else None,
+            "frameAt": o.get("frameAt") if isinstance(o.get("frameAt"), str) else None,
+            "claimedAt": o.get("claimedAt"),
+            "localDate": o.get("localDate"),
+            "createdAtUtc": created,
+            "untilUtc": until,
+        })
     return out
 
 
 def fetch_overrides(slug: str, token: str | None = None, url: str | None = None) -> list[dict]:
-    """The owner's running seaweed verdicts for one beach. FAILS OPEN: with no INGEST_TOKEN,
-    or on any error, it returns [] and the reader behaves exactly as it did before verdicts
-    existed. Never raises."""
-    token = (token if token is not None else os.environ.get("INGEST_TOKEN", "")).strip()
+    """The owner's running seaweed verdicts for one beach. FAILS OPEN: with no
+    QUALITY_INGEST_TOKEN, or on any error, it returns [] and the reader behaves exactly as it did
+    before verdicts existed. Never raises."""
+    token = _token(token)
     if not token:
         return []
     try:
@@ -257,78 +381,137 @@ def fetch_overrides(slug: str, token: str | None = None, url: str | None = None)
         return []
 
 
-def owner_state(overrides: list, spent, now: dt.datetime) -> dict:
-    """What the owner's verdicts mean for this tick:
-      {"wrong": {cam id: createdAt of its latest running Wrong override, not yet spent},
-       "right": [running Right overrides, oldest first]}
-    An override that has ended, or one already recorded in `spent` ({cam id: createdAt}),
-    is not running. Pure."""
-    spent = spent if isinstance(spent, dict) else {}
+def effective_overrides(overrides: list, now: dt.datetime) -> list[dict]:
+    """The verdicts in force at `now`: not ended, bound to a frame, and the LATEST per exact
+    target (created time, then id). Oldest first. The app's effectiveOverrides is the twin. Pure."""
     now_utc = now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)
-    wrong: dict[str, str] = {}
-    right = []
-    for o in sorted(overrides, key=lambda o: parse_iso(o.get("createdAt")) or now_utc):
-        until = parse_iso(o.get("untilUtc"))
-        if until is None or until <= now_utc:
+    best: dict[str, dict] = {}
+    for o in overrides:
+        until, made = parse_iso(o.get("untilUtc")), parse_iso(o.get("createdAtUtc"))
+        key = target_key(o)
+        if until is None or made is None or key is None or until <= now_utc:
             continue
-        if o.get("verdict") == "right":
-            right.append(o)
-        elif spent.get(o["camId"]) != o["createdAt"]:
-            wrong[o["camId"]] = o["createdAt"]
-    return {"wrong": wrong, "right": right}
+        cur = best.get(key)
+        if cur is None:
+            best[key] = o
+            continue
+        cur_made = parse_iso(cur["createdAtUtc"])
+        if made > cur_made or (made == cur_made and (o.get("id") or 0) > (cur.get("id") or 0)):
+            best[key] = o
+    return sorted(best.values(), key=lambda o: (parse_iso(o["createdAtUtc"]), o.get("id") or 0))
 
 
-def spent_by(wrong: dict, cams: list) -> dict[str, str]:
-    """Wrong overrides this tick spends: a cam under one whose FRESH (not carried) reading is
-    below moderate. Returns {cam id: that override's createdAt}. Pure."""
-    out = {}
-    for c in cams or []:
-        cid = c.get("id")
-        if cid in wrong and not c.get("carried") and c.get("level") in _RANK and _RANK[c["level"]] < _MODERATE:
-            out[cid] = wrong[cid]
-    return out
+def owner_state(overrides: list, now: dt.datetime) -> dict:
+    """The owner's verdicts in force, split by what they do:
+      {"publish": [...], "reject": [...]}   (each oldest first). Pure."""
+    live = effective_overrides(overrides, now)
+    return {"publish": [o for o in live if o["action"] == "publish"],
+            "reject": [o for o in live if o["action"] == "reject"]}
 
 
-def prune_spent(spent, now: dt.datetime) -> dict[str, str]:
-    """The spent map without entries made on another beach-local date (an override ends at
-    the close of its day, so a stale entry can never matter). Pure."""
-    if not isinstance(spent, dict):
-        return {}
-    out = {}
-    for cam, created in spent.items():
-        t = parse_iso(created)
-        if t is not None and (not now.tzinfo or t.astimezone(now.tzinfo).date() == now.date()):
-            out[cam] = created
-    return out
-
-
-def apply_owner_confirmations(prev: dict, rights: list) -> dict:
-    """The previous published feed with the owner's Right verdicts applied: a still-held
-    reading of that cam (scored at or before the verdict) becomes published at the judged
-    level with `confirmedBy: "owner"`, in `latest`, `lastSeaweed` and `morning`; and the cam's
-    held pending claim becomes a confirmed one (`confirmed`, `confirmedBy: "owner"`), so its
-    next moderate+ frame is not held again. Returns a new dict; `prev` is not mutated. With
-    nothing to apply it returns `prev` itself. Pure."""
-    if not rights:
+def apply_owner_confirmations(prev: dict, publish: list, reject: list) -> dict:
+    """The previous published feed with the owner's verdicts applied to their exact claims, oldest
+    first. PUBLISH: a reading still held for that frame publishes at the verdict's level with
+    `confirmedBy: "owner"` (in `latest`, `lastSeaweed`, `morning`), and that frame's pending claim
+    becomes confirmed (`confirmedBy: "owner"`). REJECT: a held reading for that frame is cleared and
+    its pending claim removed. Nothing else changes. Returns a new dict; `prev` is not mutated, and
+    with nothing to apply it returns `prev` itself. Pure."""
+    both = sorted([*publish, *reject], key=lambda o: (parse_iso(o["createdAtUtc"]), o.get("id") or 0))
+    if not both:
         return prev
     out = dict(prev)
-    for o in rights:
-        cam, limit, claim = o["camId"], parse_iso(o["createdAt"]), o.get("claim")
+    for o in both:
+        cam = o["camId"]
         for key in ("latest", "lastSeaweed", "morning"):
             group = out.get(key)
             if not isinstance(group, dict) or not isinstance(group.get("cams"), list):
                 continue
             cams = []
             for c in group["cams"]:
-                at = parse_iso(c.get("scoredAt"))
-                if (c.get("id") == cam and c.get("unconfirmed") and (at is None or limit is None or at <= limit)):
-                    c = confirm_held(c, "owner", claim)
+                if c.get("id") == cam and c.get("unconfirmed") and same_frame(c, o):
+                    if o["action"] == "publish":
+                        c = confirm_held(c, "owner", {"level": o.get("level"), "coveragePct": o.get("coveragePct"),
+                                                      "note": o.get("note")})
+                    else:
+                        c = {k: v for k, v in c.items() if k not in ("unconfirmed", "claim")}
+                        c.update({"level": None, "coveragePct": None, "note": None, "ownerRejected": True})
                 cams.append(c)
             out[key] = {**group, "cams": cams}
         claims = out.get("pendingClaims")
         entry = claims.get(cam) if isinstance(claims, dict) else None
-        if isinstance(entry, dict) and not entry.get("confirmed"):
-            at = parse_iso(entry.get("claimedAt")) or parse_iso(entry.get("frameAt"))
-            if at is None or limit is None or at <= limit:
+        if isinstance(entry, dict) and same_frame(entry, o):
+            if o["action"] == "reject":
+                out["pendingClaims"] = {k: v for k, v in claims.items() if k != cam}
+            elif not entry.get("confirmed"):
                 out["pendingClaims"] = {**claims, cam: {**entry, "confirmed": True, "confirmedBy": "owner"}}
     return out
+
+
+# --- disputed cams -------------------------------------------------------------------------
+
+DISPUTE_MIN_FRAMES = 3
+DISPUTE_MIN_SPAN = dt.timedelta(minutes=90)
+DISPUTE_CLAIMS_KEPT = 8
+
+
+def is_active_dispute(entry) -> bool:
+    return isinstance(entry, dict) and not entry.get("resolvedAt")
+
+
+def dispute_state(prev_disputed, rejects: list, publishes: list, now: dt.datetime) -> dict[str, dict]:
+    """The feed's `disputedCams` for this tick: {cam id: {since, reason, date, claims, resolvedAt?}}.
+    Starts from the previous map's entries made TODAY (beach-local date of `now`); adds a dispute for
+    each owner REJECT that is not already covered (a new reject after an entry was resolved starts
+    a fresh dispute); and ends (resolvedAt) an active dispute when an owner PUBLISH on that cam came
+    after it began. A resolved entry stays as a marker, so the same reject is not re-applied. Pure."""
+    today = now.date().isoformat()
+    out: dict[str, dict] = {}
+    if isinstance(prev_disputed, dict):
+        for cam, e in prev_disputed.items():
+            if isinstance(e, dict) and e.get("date") == today:
+                out[cam] = {**e, "claims": list(e.get("claims") or [])}
+    for o in rejects:
+        if o.get("localDate") not in (None, today):
+            continue
+        e = out.get(o["camId"])
+        made = parse_iso(o["createdAtUtc"])
+        resolved = parse_iso(e.get("resolvedAt")) if e else None
+        if e is None or (resolved is not None and made is not None and resolved < made):
+            out[o["camId"]] = {"since": o["createdAtUtc"], "reason": "owner", "date": today, "claims": []}
+    for o in publishes:
+        e = out.get(o["camId"])
+        if is_active_dispute(e):
+            since, made = parse_iso(e.get("since")), parse_iso(o["createdAtUtc"])
+            if since is not None and made is not None and since <= made:
+                e["resolvedAt"] = o["createdAtUtc"]
+    return out
+
+
+def active_disputes(state: dict) -> dict[str, dict]:
+    return {cam: e for cam, e in (state or {}).items() if is_active_dispute(e)}
+
+
+def _claim_time(reading: dict) -> dt.datetime | None:
+    return parse_iso(reading.get("frameAt")) or parse_iso(reading.get("scoredAt"))
+
+
+def record_dispute_claim(entry: dict, reading: dict) -> None:
+    """Remember one held moderate+ frame of a disputed cam (distinct frames only, newest
+    DISPUTE_CLAIMS_KEPT kept). Mutates `entry`."""
+    key = claim_key(reading)
+    t = _claim_time(reading)
+    if key is None or t is None or any(c.get("key") == key for c in entry["claims"]):
+        return
+    entry["claims"].append({"key": key, "at": utc_iso(t)})
+    del entry["claims"][:-DISPUTE_CLAIMS_KEPT]
+
+
+def extended_persistence_ok(entry: dict, reading: dict) -> bool:
+    """Rule (d): with this read, the disputed cam has claimed moderate+ on at least 3 distinct frames
+    spanning at least 90 minutes. Pure."""
+    frames = {c["key"]: parse_iso(c.get("at")) for c in entry.get("claims") or [] if c.get("key")}
+    key, t = claim_key(reading), _claim_time(reading)
+    if key is not None:
+        frames[key] = t
+    times = [t for t in frames.values() if t is not None]
+    return len(frames) >= DISPUTE_MIN_FRAMES and len(times) >= DISPUTE_MIN_FRAMES and max(times) - min(times) >= DISPUTE_MIN_SPAN
