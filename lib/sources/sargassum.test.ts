@@ -122,6 +122,105 @@ describe("summarizeSeaweed", () => {
     expect(summarizeSeaweed({ latest: { cams: [{ name: "A", level: "unknown" }] } })).toBeNull();
   });
 
+  it("reads past cams that publish no seaweed (low sun, or a jump still being confirmed)", () => {
+    // scripts/cam_seaweed.py nulls level/coveragePct/note for a cam whose frame was
+    // taken with the sun under ~10 degrees, or whose jump to moderate+ is unconfirmed.
+    const d = summarizeSeaweed({
+      latest: {
+        capturedAtLocal: "2026-10-13T13:20-04:00",
+        cams: [
+          { name: "Inlet", level: null, coveragePct: null, note: null, unconfirmed: true, claim: { level: "moderate" } },
+          { name: "South surf", level: "none", coveragePct: 0 },
+          { name: "South", level: null, lowSun: true, sunElevDeg: 3.2 },
+        ] as never,
+      },
+    })!;
+    expect(d.level).toBe("none"); // the held-back claim does not drive the headline
+    expect(d.cams.map((c) => c.name)).toEqual(["South surf"]);
+  });
+
+  it("with every cam at low sun there is no current reading, but the charts survive null history fields", () => {
+    const d = summarizeSeaweed({
+      latest: {
+        capturedAtLocal: "2026-10-13T19:10-04:00",
+        cams: [{ name: "Inlet", level: null, lowSun: true }] as never,
+      },
+      history: [
+        { t: "2026-10-13T13:20-04:00", hour: 13, seaweed: "none", cov: 0 },
+        // a dusk tick: the reader published no seaweed for it at all
+        { t: "2026-10-13T19:10-04:00", hour: 19, seaweed: null, cov: null } as never,
+      ],
+    })!;
+    expect(d.level).toBe("unknown");
+    expect(d.cams).toHaveLength(0);
+    expect(d.byHour).toEqual([{ hour: 13, level: "none", avg: 0, samples: 1 }]);
+    expect(d.byDay).toHaveLength(1);
+    expect(d.byDay?.[0].samples).toBe(1);
+  });
+
+  describe("which capture group the card reads (latest, else lastSeaweed, else morning)", () => {
+    const GATED = {
+      capturedAtLocal: "2026-10-13T19:10-04:00",
+      cams: [{ name: "Inlet", level: null, lowSun: true }] as never,
+    };
+    const EVENING = {
+      capturedAtLocal: "2026-10-13T17:30-04:00",
+      cams: [{ name: "Inlet", level: "low", coveragePct: 8 }, { name: "South", level: "none" }] as never,
+    };
+    const MORNING = {
+      capturedAtLocal: "2026-10-13T08:40-04:00",
+      cams: [{ name: "Inlet", level: "moderate", coveragePct: 35 }] as never,
+    };
+    const history = [{ t: "2026-10-13T08:40-04:00", hour: 8, seaweed: "moderate", cov: 35 }];
+
+    it("a live latest wins, even over a newer-looking lastSeaweed field", () => {
+      const live = { capturedAtLocal: "2026-10-13T18:00-04:00", cams: [{ name: "Inlet", level: "none" }] as never };
+      const d = summarizeSeaweed({ latest: live, lastSeaweed: EVENING, morning: MORNING })!;
+      expect(d.level).toBe("none");
+      expect(d.capturedAtLocal).toBe(live.capturedAtLocal);
+      expect(d.isMorning).toBe(false);
+    });
+
+    it("a gated latest falls back to lastSeaweed, labelled with that read's own time", () => {
+      const d = summarizeSeaweed({ latest: GATED, lastSeaweed: EVENING, morning: MORNING })!;
+      expect(d.level).toBe("low");
+      expect(d.coveragePct).toBe(8);
+      expect(d.capturedAtLocal).toBe("2026-10-13T17:30-04:00");
+      expect(d.cams.map((c) => c.name)).toEqual(["Inlet", "South"]);
+      expect(d.isMorning).toBe(false);
+    });
+
+    it("with no lastSeaweed it falls back to the morning group, and says so", () => {
+      const d = summarizeSeaweed({ latest: GATED, morning: MORNING })!;
+      expect(d.level).toBe("moderate");
+      expect(d.capturedAtLocal).toBe("2026-10-13T08:40-04:00");
+      expect(d.isMorning).toBe(true);
+    });
+
+    it("a lastSeaweed with no usable level is skipped too", () => {
+      const d = summarizeSeaweed({ latest: GATED, lastSeaweed: GATED, morning: MORNING })!;
+      expect(d.isMorning).toBe(true);
+    });
+
+    it("with no group carrying a level it is the existing 'unknown' with the charts", () => {
+      const d = summarizeSeaweed({ latest: GATED, lastSeaweed: null, morning: null, history })!;
+      expect(d.level).toBe("unknown");
+      expect(d.isMorning).toBe(false);
+      expect(d.cams).toHaveLength(0);
+      expect(d.byDay).toHaveLength(1);
+      expect(summarizeSeaweed({ latest: GATED })).toBeNull(); // nothing at all to show
+    });
+
+    it("todayReads follow the chosen group's date", () => {
+      const d = summarizeSeaweed({
+        latest: GATED,
+        lastSeaweed: EVENING,
+        history: [{ t: "2026-10-13T17:30-04:00", hour: 17, seaweed: "low", cov: 8 }],
+      })!;
+      expect(d.todayReads).toEqual([{ hour: 17, level: "low", coveragePct: 8 }]);
+    });
+  });
+
   it("derives byHour (avg) and byDay (average) from the rolling history", () => {
     const d = summarizeSeaweed({
       latest: { cams: [{ name: "A", level: "low" }] },

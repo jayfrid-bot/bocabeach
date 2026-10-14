@@ -12,6 +12,7 @@ import { fetchSun } from "@/lib/sources/sun";
 import { camFeedUrlCandidates } from "@/lib/sources/camFeed";
 import { expectedNextCamRead } from "@/lib/camNextRead";
 import { capCamHistory } from "@/lib/camHistory";
+import { pickCamGroup } from "@/lib/camGroup";
 // The overnight fallback ("what did the water look like on the last readable
 // day, and when does the next read land?") is the same question busyness asks,
 // so both cards share one implementation of day selection, day naming and the
@@ -73,6 +74,10 @@ export interface ClarityFeed {
   /** When the off-Netlify job generated this snapshot (ISO) — the real freshness. */
   generatedAt?: string;
   latest?: CamGroup | null;
+  /** Today's newest capture with a published seaweed level (see lib/camGroup.ts).
+   *  At low sun `latest` publishes no water either, so this keeps the last real
+   *  water read for the minutes before the night gate. */
+  lastSeaweed?: CamGroup | null;
   morning?: CamGroup | null;
   history?: HistoryEntry[];
 }
@@ -236,6 +241,11 @@ export function clarityDaySummary(
   };
 }
 
+/** A cam reading that saw open water (water is a valid grade, not null). */
+function hasWaterGrade(c: CamReading | null | undefined): c is CamReading & { water: WaterClarityGrade } {
+  return !!c && typeof c.water === "string" && c.water in RANK;
+}
+
 /** True when the feed actually carries clarity fields (vs a legacy pre-clarity feed). */
 function hasClarityFields(feed: ClarityFeed): boolean {
   const groups = [feed?.latest, feed?.morning];
@@ -277,7 +287,14 @@ export function summarizeClarity(
   const history = capCamHistory(feed?.history);
   if (!hasClarityFields(feed ? { ...feed, history } : feed)) return null;
 
-  const group = feed?.latest ?? feed?.morning ?? undefined;
+  // The newest group where some cam read open water (`latest`, else today's
+  // `lastSeaweed`, else `morning`); with none, `latest ?? morning` as before so
+  // the no-open-water note and its capture time are unchanged.
+  const group =
+    pickCamGroup(feed, (g) => (g.cams ?? []).some(hasWaterGrade))?.group ??
+    feed?.latest ??
+    feed?.morning ??
+    undefined;
   const capturedAtLocal = group?.capturedAtLocal;
 
   // Learned from the last two weeks of actual read times — computed once per
@@ -322,10 +339,7 @@ export function summarizeClarity(
 
   // Only cams that actually saw open water (water is a valid grade, not null).
   const perCam: CamWaterClarity[] = (group?.cams ?? [])
-    .filter(
-      (c): c is CamReading & { water: WaterClarityGrade } =>
-        !!c && typeof c.water === "string" && c.water in RANK,
-    )
+    .filter(hasWaterGrade)
     .map((c) => ({
       id: c.id,
       name: c.name ?? "cam",

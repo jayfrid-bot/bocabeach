@@ -12,6 +12,7 @@ import { vsAverage, type VsAverageEntry } from "@/lib/vsAverage";
 import { camFeedUrlCandidates } from "@/lib/sources/camFeed";
 import { expectedNextCamRead } from "@/lib/camNextRead";
 import { capCamHistory } from "@/lib/camHistory";
+import { pickCamGroup } from "@/lib/camGroup";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
 
@@ -51,11 +52,21 @@ function readRank(e: HistoryEntry): number | undefined {
   if (typeof e.seaweed === "string" && e.seaweed in RANK) return RANK[e.seaweed];
   return undefined;
 }
+/** A cam reading that carries a published seaweed level (the reader nulls it at
+ *  low sun and for a jump still being confirmed). */
+function hasSeaweedLevel(c: unknown): c is CamSeaweedReading {
+  const r = c as CamSeaweedReading | null | undefined;
+  return !!r && typeof r.level === "string" && r.level in RANK;
+}
 export interface CamSeaweedFeed {
   /** When the off-Netlify job generated this snapshot (ISO) — the real freshness. */
   generatedAt?: string;
   morning?: CamGroup | null;
   latest?: CamGroup | null;
+  /** Today's newest capture with a published seaweed level. `latest` can be a
+   *  low-sun capture whose cams publish none; this keeps the last real reading
+   *  through the evening (the reader drops it at the next local date). */
+  lastSeaweed?: CamGroup | null;
   /** Rolling raw cam reads, shared with busyness; we read the `seaweed` field. */
   history?: HistoryEntry[];
 }
@@ -158,8 +169,12 @@ export function summarizeSeaweed(
   const byHour = byHourFromHistory(history);
   const byDay = byDayFromHistory(history);
   const vsAvg = seaweedVsAvg(history, nowLocalDate);
-  const morning = feed?.morning ?? null;
-  const group = feed?.latest ?? morning ?? null;
+  // The newest group with a usable seaweed level: `latest`, else today's
+  // `lastSeaweed`, else `morning` (see lib/camGroup.ts). A low-sun `latest`
+  // publishes none, so the card keeps showing the last real read, labelled with
+  // that read's own time.
+  const picked = pickCamGroup(feed, (g) => (g.cams ?? []).some(hasSeaweedLevel));
+  const group = picked?.group ?? feed?.latest ?? null;
   // Learned from the last two weeks of actual read times — every camera
   // reading (fresh or the "no current reading" case below) gets this line.
   const nextReadIso = nextRead?.timezone
@@ -169,10 +184,7 @@ export function summarizeSeaweed(
         nextRead.timezone,
       )?.iso
     : undefined;
-  const cams = (group?.cams ?? []).filter(
-    (c): c is CamSeaweedReading =>
-      !!c && typeof c.level === "string" && c.level in RANK,
-  );
+  const cams = (group?.cams ?? []).filter(hasSeaweedLevel);
   if (!cams.length) {
     // No current reading, but still surface the historical charts if we have any.
     return byHour || byDay
@@ -207,7 +219,7 @@ export function summarizeSeaweed(
     level: worst.level,
     coveragePct: worst.coveragePct,
     note: worst.note,
-    isMorning: !!morning && group === morning,
+    isMorning: picked?.source === "morning",
     capturedAtLocal: group?.capturedAtLocal,
     cams,
     todayReads: todayReads?.length ? todayReads : undefined,

@@ -28,6 +28,10 @@ interface VisionCam {
   name: string;
   source: VisionCamSource;
   role: "crowd" | "shore";
+  /** Optional short sentence about what this camera sees; scripts/cam_seaweed.py
+   *  appends it to the vision prompt as "About this camera: ..." (Gemini and the
+   *  OpenAI-compatible providers; Clef's fixed server-side questions ignore it). */
+  visionHint?: string;
 }
 interface VisionLocationEntry {
   timezone: string;
@@ -46,6 +50,12 @@ describe("config/vision-cams.json — registry stays in lockstep with LOCATIONS"
 
   it("has at least one beach registered", () => {
     expect(slugs.length).toBeGreaterThan(0);
+  });
+
+  it("the Boca inlet surf cam carries the rock-shelf hint (2026-10-13 false seaweed alarms)", () => {
+    const cam = REGISTRY["boca-raton"].cams.find((c) => c.id === "boca-inlet-surf");
+    expect(cam?.visionHint).toMatch(/rock shelf/i);
+    expect(cam?.visionHint).toMatch(/not seaweed/i);
   });
 
   for (const slug of slugs) {
@@ -71,6 +81,18 @@ describe("config/vision-cams.json — registry stays in lockstep with LOCATIONS"
               `but LOCATIONS["${slug}"].cams has no cam with that id`,
           ).toBe(true);
         });
+
+        if (cam.visionHint !== undefined) {
+          it(`cam "${cam.id}" visionHint is a short plain sentence`, () => {
+            expect(typeof cam.visionHint).toBe("string");
+            const hint = cam.visionHint as string;
+            expect(hint.trim().length).toBeGreaterThan(0);
+            // It rides on every vision call, so keep it short.
+            expect(hint.length).toBeLessThanOrEqual(500);
+            // User-facing copy rule: never name the tech.
+            expect(hint).not.toMatch(/\bAI\b/);
+          });
+        }
 
         if (cam.source.kind === "feed") {
           it(`cam "${cam.id}" feed base/view matches its LOCATIONS snapshotFeed`, () => {

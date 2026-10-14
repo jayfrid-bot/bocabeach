@@ -10,7 +10,8 @@
           "base": "http://video-monitoring.com/beachcams/bocainlet",
           "view": "s16"
         },
-        "role": "shore"
+        "role": "shore",
+        "visionHint": "Near the inlet on the left, a dark rock shelf, wet sand and shallow water look brown or dark. That is not seaweed. Count seaweed only where you see distinct brown or golden clumps, mats, or a clumpy line along the tide line."
       },
       {
         "id": "boca-south-surf",

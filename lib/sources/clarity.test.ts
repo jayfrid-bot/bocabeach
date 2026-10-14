@@ -95,6 +95,64 @@ describe("summarizeClarity — parses a with-clarity capture", () => {
   });
 });
 
+describe("summarizeClarity — cams that publish no water (low sun)", () => {
+  it("skips a low-sun cam (water null) and medians the rest", () => {
+    const d = summarizeClarity(
+      feed([
+        { name: "Inlet", water: null, waterPct: null, lowSun: true, sunElevDeg: 4.1 },
+        { name: "South", water: "clear", waterPct: 80 },
+      ]),
+    );
+    expect(d!.level).toBe("clear");
+    expect(d!.pct).toBe(80);
+    expect(d!.perCam).toHaveLength(1);
+  });
+
+  it("when every cam is at low sun it is an honest no-reading, never a made-up grade", () => {
+    const d = summarizeClarity(
+      feed([
+        { name: "Inlet", water: null, waterPct: null, waterNote: null, lowSun: true },
+        { name: "South", water: null, waterPct: null, waterNote: null, lowSun: true },
+      ]),
+    );
+    expect(d).not.toBeNull(); // the water key is present, so this is not a legacy feed
+    expect(d!.level).toBeNull();
+    expect(d!.status).toBe("unknown");
+  });
+});
+
+describe("summarizeClarity — a low-sun latest between 5:40 PM and the night gate", () => {
+  const gated = {
+    capturedAtLocal: "2026-10-13T19:10:00-04:00",
+    cams: [{ name: "Inlet", water: null, waterPct: null, lowSun: true }] as never,
+  };
+  const evening = {
+    capturedAtLocal: "2026-10-13T17:30:00-04:00",
+    cams: [{ name: "Inlet", water: "clear", waterPct: 82, waterNote: "blue-green" }] as never,
+  };
+  const at = (iso: string) => ({ now: new Date(iso), timezone: "America/New_York" });
+
+  it("keeps the last real water read (lastSeaweed) instead of 'no open water'", () => {
+    const d = summarizeClarity({ latest: gated, lastSeaweed: evening }, at("2026-10-13T19:20:00-04:00"));
+    expect(d!.level).toBe("clear");
+    expect(d!.pct).toBe(82);
+    expect(d!.capturedAtLocal).toBe("2026-10-13T17:30:00-04:00"); // honest about when it was read
+  });
+
+  it("then its own stale gate takes over once that read is over two hours old", () => {
+    const d = summarizeClarity({ latest: gated, lastSeaweed: evening }, at("2026-10-13T19:45:00-04:00"));
+    expect(d!.level).toBeNull();
+    expect(d!.status).toBe("unknown");
+    expect(d!.note).toMatch(/couple hours old/i);
+  });
+
+  it("with no lastSeaweed it is the existing 'no open water' note", () => {
+    const d = summarizeClarity({ latest: gated }, at("2026-10-13T19:20:00-04:00"));
+    expect(d!.level).toBeNull();
+    expect(d!.note).toMatch(/open water/i);
+  });
+});
+
 describe("summarizeClarity — legacy feed without clarity fields", () => {
   it("returns null (unavailable) when no cam carries a water field", () => {
     // Old-shape entries: seaweed/crowd only, no `water` key at all.

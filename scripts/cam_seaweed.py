@@ -10,7 +10,8 @@ PER-BEACH: which cams to read is NOT hard-coded here. It comes from the JSON
 registry at CAM_REGISTRY (default config/vision-cams.json), shaped:
   { "<slug>": { "timezone": "America/New_York",
                 "cams": [ { "id", "name", "role": "crowd"|"shore",
-                            "source": {"kind": "feed"|"direct"|"hls", ...} } ] } }
+                            "source": {"kind": "feed"|"direct"|"hls", ...},
+                            "visionHint": "<optional, see PER-CAM HINT>" } ] } }
 Every slug in the registry is processed in one run, so adding a beach (e.g.
 Deerfield Beach) is a registry edit, not a code change. A `lib/visionCams.test.ts`
 vitest cross-checks every registry cam id + feed base/view against
@@ -136,6 +137,31 @@ empty `morning`, never displaces a complete one, and a later complete morning
 capture replaces a partial one. The courier path had the same gap and gets the
 same treatment.
 
+LOW SUN (2026-10-13): when the sun at the beach is below LOW_SUN_DEG (default 10)
+at the frame's time (`frameAt`, else the scoring time), the reading publishes NO
+seaweed and NO water clarity: low pink light, long shadows and dusk-dark wet sand
+read as seaweed and murk (a 7:30 AM "moderate 20%", a 7:10 PM "high 60%, murky 58"
+on a clear, clean day). Vision is still called, so crowd and people counts stay. The
+reading keeps its seaweed/water keys as null and gains `"lowSun": true` and
+`"sunElevDeg"`. See solar_elevation_deg() and apply_low_sun_gate().
+
+CONFIRM A JUMP (2026-10-13): a fresh `moderate`/`high` read from a cam whose previous
+read was below moderate (or that has no recent previous read) is held back until a
+second look agrees: the same cam claims moderate+ again on its next read, or another
+cam at the beach claims it in the same tick. A held read publishes no seaweed
+(level/coveragePct/note null) and stores `"unconfirmed": true` plus the
+`"claim"` {level, coveragePct, note} for the next tick; a confirmed one publishes
+normally and may carry `"confirmedBy"`. See confirm_seaweed_jumps(). One bad frame
+from one cam can no longer drive the beach headline. A capture where any cam lacks a
+seaweed level (low sun or held) is `partial` for the morning rules, and a capture
+with no seaweed level at all can never become the day's `morning`.
+
+PER-CAM HINT: a cam entry in config/vision-cams.json may carry `"visionHint"`, a short
+plain sentence about what that camera sees (for example a dark rock shelf that is not
+seaweed). prompt_for_cam() appends it to PROMPT as "About this camera: ..." for the
+prompt-based providers (gemini and the OpenAI-compatible ones). Clef takes fixed
+questions server-side and ignores it.
+
 VISION CALL LOG: each tick ends with one line, "vision calls this tick: ...",
 counting every provider/model attempt (ok and failed) so quota exhaustion shows
 in the run log.
@@ -145,6 +171,8 @@ Data shape (cam_seaweed.<slug>.json — identical shape on every beach's file):
     carried forward on ticks that skip the underwater read (like morning/latest).
     Computed AT MOST ONCE per run (not per beach) and copied onto every beach's
     `uw` field — it's one shared calibration signal, not a per-beach reading.
+  lastSeaweed: the most recent capture of TODAY with a published seaweed level (same
+    shape as `latest`); `latest` can be a low-sun capture with none. See build_beach_output.
   history[]: {t, hour, level(crowd), people, crowdPct, seaweed, cov, water, clr}
     plus SPARSE `uw` (pct) + `uwLevel` fields present ONLY on the ~hourly ticks
     that actually ran an underwater read (absent otherwise).
@@ -155,6 +183,7 @@ import datetime as dt
 import hashlib
 import io
 import json
+import math
 import os
 import random
 import re
@@ -329,6 +358,11 @@ DIRECT_FRAME_MAX_AGE_MIN = float(os.environ.get("DIRECT_FRAME_MAX_AGE_MIN", "150
 # the archive, which keeps its own age rule (ARCHIVE_FRAME_MAX_AGE_MIN).
 VISION_MAX_FUTURE_MIN = 5
 VISION_MAX_FRAME_AGE_MIN = float(os.environ.get("VISION_MAX_FRAME_AGE_MIN", "60"))
+
+# LOW SUN: below this solar elevation (degrees) a frame is too dim, too pink or too
+# long-shadowed to grade seaweed or water clarity. 10 deg is about 8:10 AM / 5:40 PM
+# at Boca in mid-October (sunrise/sunset are at -0.83 deg). Crowd is unaffected.
+LOW_SUN_DEG = float(os.environ.get("LOW_SUN_DEG", "10"))
 
 # --- webcam archive (see the module docstring and docs/CAM_ARCHIVE_PLAN.md) ---
 # Where stills are POSTed; the token is read at call time (archive_frame) so a
@@ -1566,26 +1600,21 @@ def _utc_iso(t: dt.datetime) -> str:
     return t.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def carried_readings(prev: dict, cams: list[dict], fresh_ids: set, now: dt.datetime) -> list[dict]:
-    """The last good reading of every configured cam that has NO fresh reading
-    this tick, copied from the previously published `latest` and marked
-    `"carried": true`, so a tick where only some cams changed still rolls up over
-    all of them (a clean changed cam must not erase an unchanged cam's high
-    seaweed from the headline, the history entry or the day's morning).
-
-    A carried reading keeps its original `frameAt` / `scoredAt`; it is dropped
-    once its frame is too old to be scored today: older than
-    VISION_MAX_FRAME_AGE_MIN for a feed cam, DIRECT_FRAME_MAX_AGE_MIN for a
-    courier ("direct") cam, the same limits the live reads obey. A reading with
-    no usable time (written before this field existed) is dropped. Pure."""
+def recent_prev_readings(prev: dict, cams: list[dict], now: dt.datetime) -> dict[str, dict]:
+    """{cam id: reading} for every configured cam whose reading in the previously
+    published `latest` is still young enough to be scored today: its original
+    `frameAt` / `scoredAt` no older than VISION_MAX_FRAME_AGE_MIN for a feed cam,
+    DIRECT_FRAME_MAX_AGE_MIN for a courier ("direct") cam, the same limits the
+    live reads obey (and not more than VISION_MAX_FUTURE_MIN ahead). A reading with
+    no usable time (written before this field existed) is left out. Carried copies
+    keep their original stamps, so they age out on the same clock. Pure."""
     latest = prev.get("latest") if isinstance(prev.get("latest"), dict) else {}
     old = {c["id"]: c for c in (latest.get("cams") or []) if isinstance(c, dict) and c.get("id")}
     now_utc = now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)
-    out = []
+    out = {}
     for cam in cams:
-        cid = cam["id"]
-        r = old.get(cid)
-        if cid in fresh_ids or not r:
+        r = old.get(cam["id"])
+        if not r:
             continue
         stamp = r.get("frameAt") or r.get("scoredAt")
         try:
@@ -1597,8 +1626,186 @@ def carried_readings(prev: dict, cams: list[dict], fresh_ids: set, now: dt.datet
                  else VISION_MAX_FRAME_AGE_MIN)
         if age_min > limit or age_min < -VISION_MAX_FUTURE_MIN:
             continue
-        out.append({**r, "carried": True})
+        out[cam["id"]] = r
     return out
+
+
+def carried_readings(prev: dict, cams: list[dict], fresh_ids: set, now: dt.datetime) -> list[dict]:
+    """The last good reading of every configured cam that has NO fresh reading
+    this tick, copied from the previously published `latest` and marked
+    `"carried": true`, so a tick where only some cams changed still rolls up over
+    all of them (a clean changed cam must not erase an unchanged cam's high
+    seaweed from the headline, the history entry or the day's morning).
+
+    A carried reading keeps its original `frameAt` / `scoredAt` and every other
+    field as-is (a held, unconfirmed seaweed claim stays unconfirmed, so it adds
+    nothing to the headline); it is dropped once its frame is too old to be scored
+    today (see recent_prev_readings for the age limits). Pure."""
+    recent = recent_prev_readings(prev, cams, now)
+    return [{**recent[c["id"]], "carried": True}
+            for c in cams if c["id"] not in fresh_ids and c["id"] in recent]
+
+
+# --- low sun gate + jump confirmation (2026-10-13) ------------------------------
+# See the module docstring. Everything here is pure and unit-tested; capture_beach
+# does the wiring.
+
+# The seaweed / water keys of a reading. A reading that may not publish them keeps
+# the keys with null values (so a feed consumer that tests for the key, such as the
+# app's clarity reader, still sees a cam that was read).
+_SEAWEED_FIELDS = ("level", "coveragePct", "note")
+_WATER_FIELDS = ("water", "waterPct", "waterNote")
+_MODERATE = SEAWEED_RANK["moderate"]
+
+
+def solar_elevation_deg(lat: float, lon: float, when: dt.datetime) -> float:
+    """The sun's geometric elevation above the horizon, in degrees (negative below
+    it), at a coordinate and an instant. NOAA's low-accuracy solar position, the
+    same series as scripts/sun_cam_check.py and lib/sources/sun.ts (those solve for
+    the times at -0.833 deg; this evaluates the angle at a time). No atmospheric
+    refraction, so it reads about 0.5 deg lower than the apparent sun near the
+    horizon, which is immaterial against a 10 deg gate. A naive `when` is UTC. Pure."""
+    when = when if when.tzinfo else when.replace(tzinfo=dt.timezone.utc)
+    when = when.astimezone(dt.timezone.utc)
+    jd = (when - dt.datetime(2000, 1, 1, 12, tzinfo=dt.timezone.utc)).total_seconds() / 86400 + 2451545.0
+    t = (jd - 2451545.0) / 36525
+    l0 = (280.46646 + t * (36000.76983 + t * 0.0003032)) % 360
+    m = math.radians(357.52911 + t * (35999.05029 - 0.0001537 * t))
+    e = 0.016708634 - t * (0.000042037 + 0.0000001267 * t)
+    c = (math.sin(m) * (1.914602 - t * (0.004817 + 0.000014 * t))
+         + math.sin(2 * m) * (0.019993 - 0.000101 * t) + math.sin(3 * m) * 0.000289)
+    app_long = l0 + c - 0.00569 - 0.00478 * math.sin(math.radians(125.04 - 1934.136 * t))
+    obliq = (23 + (26 + (21.448 - t * (46.815 + t * (0.00059 - t * 0.001813))) / 60) / 60
+             + 0.00256 * math.cos(math.radians(125.04 - 1934.136 * t)))
+    declin = math.asin(math.sin(math.radians(obliq)) * math.sin(math.radians(app_long)))
+    var_y = math.tan(math.radians(obliq / 2)) ** 2
+    l0r = math.radians(l0)
+    eq_time = 4 * math.degrees(
+        var_y * math.sin(2 * l0r) - 2 * e * math.sin(m)
+        + 4 * e * var_y * math.sin(m) * math.cos(2 * l0r)
+        - 0.5 * var_y * var_y * math.sin(4 * l0r) - 1.25 * e * e * math.sin(2 * m))
+    minutes_utc = when.hour * 60 + when.minute + when.second / 60
+    hour_angle = math.radians(((minutes_utc + eq_time + 4 * lon) % 1440) / 4 - 180)
+    lat_r = math.radians(lat)
+    sin_elev = (math.sin(lat_r) * math.sin(declin)
+                + math.cos(lat_r) * math.cos(declin) * math.cos(hour_angle))
+    return math.degrees(math.asin(max(-1.0, min(1.0, sin_elev))))
+
+
+def apply_low_sun_gate(reading: dict, elev_deg: float | None, threshold: float | None = None) -> dict:
+    """The reading to publish given the sun's elevation at its frame time. At or
+    above `threshold` (LOW_SUN_DEG), or with an unknown elevation (None: no
+    coordinates), the reading is returned unchanged. Below it, seaweed and water
+    clarity are not published: level/coveragePct/note and water/waterPct/waterNote
+    become null, and the reading gains `"lowSun": true` and `"sunElevDeg"` (1
+    decimal). Crowd, people, provider and the frame stamps are untouched. A low-sun
+    reading makes no seaweed claim for confirm_seaweed_jumps(). Pure; never mutates."""
+    limit = LOW_SUN_DEG if threshold is None else threshold
+    if elev_deg is None or elev_deg >= limit:
+        return reading
+    out = dict(reading)
+    for k in _SEAWEED_FIELDS + _WATER_FIELDS:
+        out[k] = None
+    out["lowSun"] = True
+    out["sunElevDeg"] = round(elev_deg, 1)
+    return out
+
+
+def _claimed_rank(r: dict) -> int:
+    """The seaweed rank a reading speaks for: its published level, else the level
+    of the unconfirmed claim it stores, else -1 (no seaweed read: low sun, none)."""
+    if r.get("level") in SEAWEED_RANK:
+        return SEAWEED_RANK[r["level"]]
+    claim = r.get("claim")
+    if r.get("unconfirmed") and isinstance(claim, dict) and claim.get("level") in SEAWEED_RANK:
+        return SEAWEED_RANK[claim["level"]]
+    return -1
+
+
+def confirm_seaweed_jumps(fresh: list[dict], carried: list[dict], prev_recent: dict[str, dict]) -> list[dict]:
+    """Hold back an unconfirmed jump to moderate/high seaweed. Returns the fresh
+    readings to publish (new dicts for the changed ones; inputs are not mutated).
+
+    A fresh reading whose seaweed `level` is moderate or high is a JUMP when that
+    cam's previous recent reading (`prev_recent`, see recent_prev_readings) did not
+    claim moderate+, or there is none. A jump is CONFIRMED when:
+      (a) persistence: the previous reading claimed moderate+, either a published
+          level or the stored `claim` of an unconfirmed one -> "confirmedBy":
+          "persistence" (this also covers staying at, or rising from, a confirmed
+          moderate+);
+      (b) another cam: any OTHER cam in this tick claims moderate+, a fresh
+          reading by its raw level (two cams that both claim it confirm each
+          other), or a carried reading only when it is itself confirmed (a
+          carried unconfirmed claim confirms nothing) -> "confirmedBy": "cam:<id>".
+    Otherwise it is held: level/coveragePct/note become null (water and crowd are
+    untouched) and the reading gains `"unconfirmed": true` and
+    `"claim": {level, coveragePct, note}` for the next tick to find. A low-sun
+    reading has level None, so it neither needs confirming nor confirms anything.
+    Readings below moderate pass through unchanged. Pure."""
+    out = []
+    for r in fresh:
+        if r.get("level") not in SEAWEED_RANK or SEAWEED_RANK[r["level"]] < _MODERATE:
+            out.append(r)
+            continue
+        prev = prev_recent.get(r["id"])
+        by = None
+        if prev is not None and _claimed_rank(prev) >= _MODERATE:
+            by = "persistence"
+        else:
+            for o in fresh:
+                if o is not r and o.get("level") in SEAWEED_RANK and SEAWEED_RANK[o["level"]] >= _MODERATE:
+                    by = f"cam:{o['id']}"
+                    break
+            else:
+                for o in carried:
+                    if (o.get("level") in SEAWEED_RANK and SEAWEED_RANK[o["level"]] >= _MODERATE
+                            and not o.get("unconfirmed")):
+                        by = f"cam:{o['id']}"
+                        break
+        if by:
+            out.append({**r, "confirmedBy": by})
+        else:
+            out.append({
+                **r,
+                "level": None, "coveragePct": None, "note": None,
+                "unconfirmed": True,
+                "claim": {"level": r["level"], "coveragePct": r.get("coveragePct"), "note": r.get("note")},
+            })
+    return out
+
+
+def prompt_for_cam(cam: dict) -> str:
+    """The vision prompt for one cam: PROMPT, plus the cam's optional
+    `visionHint` (config/vision-cams.json) as a short "About this camera:" line.
+    Used by the prompt-based providers; Clef ignores the prompt. Pure."""
+    hint = cam.get("visionHint")
+    if isinstance(hint, str) and hint.strip():
+        return f"{PROMPT} About this camera: {hint.strip()}"
+    return PROMPT
+
+
+def beach_coords(slug: str) -> tuple[float, float] | None:
+    """(lat, lon) of a beach, from the archive manifest (config/archive-cams.json,
+    generated from config/locations.ts, so it equals the app's own beach
+    coordinates). None when the beach has no manifest entry with coordinates: the
+    low-sun gate then stays off for it (fail open to the old behavior)."""
+    for c in load_archive_cams():
+        if c.get("slug") == slug:
+            try:
+                return float(c["lat"]), float(c["lon"])
+            except (KeyError, TypeError, ValueError):
+                continue
+    return None
+
+
+def _frame_time(stamp: object, fallback: dt.datetime) -> dt.datetime:
+    """A frame's own UTC time from an ISO stamp like '2026-10-13T11:30:00Z', else
+    `fallback` (the scoring time) when it is missing or does not parse."""
+    try:
+        t = dt.datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+    except ValueError:
+        return fallback
+    return t if t.tzinfo else t.replace(tzinfo=dt.timezone.utc)
 
 
 def capture_beach(
@@ -1622,6 +1829,7 @@ def capture_beach(
     tick's shared ArchiveRun; without one this call uses its own."""
     run = archive if archive is not None else ArchiveRun()
     readings = []
+    coords = beach_coords(slug)  # for the low-sun gate; None -> gate off
     for cam in cams:
         src = cam.get("source") or {}
         frame_at = None
@@ -1682,7 +1890,10 @@ def capture_beach(
             if gap_state["called"]:
                 time.sleep(CAM_GAP_S)  # space calls to respect the per-minute limit
             gap_state["called"] = True
-            r = assess(img)
+            # A cam may carry a short hint about what it sees (visionHint); with
+            # none, the call is exactly the plain assess(img) it always was.
+            prompt = prompt_for_cam(cam)
+            r = assess(img) if prompt == PROMPT else assess(img, prompt)
             reading = {"id": cam["id"], "name": cam["name"], **r}
             # When the frame was taken (courier: its meta time; feed: latest.json
             # `timestamp`, when it has one) and when we scored it. A later tick
@@ -1693,10 +1904,23 @@ def capture_beach(
             reading["scoredAt"] = _utc_iso(now_local)
             if sha:
                 reading["frameSha"] = sha
+            # LOW SUN: the sun at the frame's own time (else the scoring time)
+            # decides whether this frame may publish seaweed or water at all. The
+            # vision call was still worth making: crowd and people stay.
+            elev = None
+            if coords:
+                elev = solar_elevation_deg(
+                    coords[0], coords[1], _frame_time(reading.get("frameAt"), now_local))
+            reading = apply_low_sun_gate(reading, elev)
             readings.append(reading)
-            print(f"  [{slug}] {cam['id']}: seaweed={r['level']}({r.get('coveragePct')}%) "
-                  f"crowd={r.get('crowd')}({r.get('crowdPct')}%) "
-                  f"people={r.get('people')} via {r.get('provider')}")
+            if reading.get("lowSun"):
+                print(f"  [{slug}] {cam['id']}: seaweed/water not graded (sun {reading['sunElevDeg']} deg "
+                      f"< {LOW_SUN_DEG:g}) crowd={r.get('crowd')}({r.get('crowdPct')}%) "
+                      f"people={r.get('people')} via {r.get('provider')}")
+            else:
+                print(f"  [{slug}] {cam['id']}: seaweed={r['level']}({r.get('coveragePct')}%) "
+                      f"crowd={r.get('crowd')}({r.get('crowdPct')}%) "
+                      f"people={r.get('people')} via {r.get('provider')}")
         except UnreadableFrame:
             # No reading, and no frameSha recorded (that happens only with a reading
             # above), so a later readable frame from this cam is still scored.
@@ -1712,15 +1936,31 @@ def capture_beach(
     # `carried`, while that reading is still fresh enough to score today.
     fresh_ids = {r["id"] for r in readings}
     carried = carried_readings(prev, cams, fresh_ids, now_local)
+    # CONFIRM A JUMP: a fresh moderate/high from a cam that was below moderate
+    # needs a second look (its own next read, or another cam now) before it
+    # publishes. Held reads keep their claim for the next tick. Carried readings
+    # are never re-judged.
+    confirmed = confirm_seaweed_jumps(readings, carried, recent_prev_readings(prev, cams, now_local))
+    for after in confirmed:
+        if after.get("unconfirmed"):
+            claim = after["claim"]
+            print(f"  [{slug}] {after['id']}: seaweed={claim['level']}({claim.get('coveragePct')}%) "
+                  "HELD (unconfirmed jump)")
+        elif after.get("confirmedBy"):
+            print(f"  [{slug}] {after['id']}: seaweed={after['level']} confirmed by {after['confirmedBy']}")
+    readings = confirmed
     by_id = {r["id"]: r for r in readings}
     by_id.update({r["id"]: r for r in carried})
     ordered = [by_id[c["id"]] for c in cams if c["id"] in by_id]
     group = {"capturedAtLocal": now_local.isoformat(timespec="minutes"),
              "hour": now_local.hour, "cams": ordered}
-    if len(ordered) < len({c["id"] for c in cams}):
-        # Some configured cam has neither a fresh nor a recent reading: the
-        # roll-up covers only part of the beach. build_beach_output will not let
-        # such a capture become (or stay) the day's `morning`.
+    if (len(ordered) < len({c["id"] for c in cams})
+            or any(c.get("level") not in SEAWEED_RANK for c in ordered)):
+        # Some configured cam has neither a fresh nor a recent reading, or one of
+        # them publishes no seaweed (low sun, or a jump still being confirmed): the
+        # seaweed roll-up covers only part of the beach. build_beach_output will
+        # not let such a capture displace a complete `morning` (and a capture with
+        # no seaweed level at all can never be the morning).
         group["partial"] = True
     return group
 
@@ -1742,7 +1982,9 @@ def build_beach_output(
     # one, and a later complete morning capture replaces a partial one, so a
     # half-blind first read cannot lock in the day's authoritative reading.
     morning = prev_morning
-    if current and current["hour"] in MORNING:
+    if current and current["hour"] in MORNING and worst_seaweed(current):
+        # (A capture with no seaweed level at all, every cam at low sun or held
+        # back, says nothing about the beach and can never be the morning.)
         cur_partial = bool(current.get("partial"))
         prev_partial = bool(prev_morning and prev_morning.get("partial"))
         if not prev_morning:
@@ -1754,6 +1996,23 @@ def build_beach_output(
         elif current["hour"] < prev_morning.get("hour", 99):
             morning = current
     latest = current or prev.get("latest")
+
+    # LAST SEAWEED READING OF TODAY: `latest` moves on every capture, including the
+    # low-sun ones at dusk and dawn whose cams publish no seaweed. `lastSeaweed` is
+    # the most recent capture of TODAY (beach-local date) with at least one cam
+    # that has a published seaweed level, so the app can keep showing (and scoring)
+    # the last real reading through the evening and the dark hours instead of an
+    # empty card. A gated tick keeps the earlier one; one from a previous local
+    # date is dropped, so yesterday evening's reading never covers this morning's
+    # dark minutes. Overnight the loop does not rewrite the file, so the evening
+    # value simply stays published.
+    prev_last = prev.get("lastSeaweed") if isinstance(prev.get("lastSeaweed"), dict) else None
+    if current and worst_seaweed(current):
+        last_seaweed = current
+    elif prev.get("dateLocal") == today:
+        last_seaweed = prev_last
+    else:
+        last_seaweed = None
 
     # Rolling RAW history of cam reads -> the app derives all four views from it:
     # busyness by-hour & by-day, and seaweed by-hour & by-day. Each entry records
@@ -1825,6 +2084,9 @@ def build_beach_output(
         "dateLocal": today,
         "morning": morning,  # earliest pre-cleaning reading (highest weight)
         "latest": latest,    # most recent reading (current beach state)
+        # Most recent capture of today with a published seaweed level (see above);
+        # the app's seaweed card uses it when `latest` is gated. None until one.
+        "lastSeaweed": last_seaweed,
         # Latest underwater sea-cam read {level, pct, note, capturedAtLocal} —
         # ONE shared calibration signal, same value on every beach's file;
         # carried forward on ticks that skip the ~hourly underwater read. None

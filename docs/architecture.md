@@ -272,7 +272,18 @@ both use it, and Boca Raton alone falls back to the pre-split single-file
 `cam_seaweed.json` (which the job still publishes as a copy, for one release)
 if its own per-beach file isn't there yet. The underwater "Spinner the Sea
 Cam" read stays a single per-run calibration signal — the same `uw` value is
-copied onto every beach's file, not read once per beach.
+copied onto every beach's file, not read once per beach. Three guards sit
+between a vision read and the published file (no new parts, all inside
+`cam_seaweed.py`): a **low-sun gate** (sun under `LOW_SUN_DEG`, default 10°, at
+the frame's time publishes no seaweed or water for that cam; crowd stays), a
+**jump check** (a first-time moderate/high read from one cam is held until its
+next read, or another cam, agrees), and an optional per-cam **`visionHint`** in
+`vision-cams.json` that is added to the prompt for Gemini and the
+OpenAI-compatible providers (Clef is untouched). Beach coordinates for the gate
+come from `config/archive-cams.json`. The file also carries `lastSeaweed` (today's
+newest capture with a published seaweed level); seaweed and water readers pick
+`latest`, else `lastSeaweed`, else `morning` through `lib/camGroup.ts`, while
+busyness keeps `latest`.
 
 **The webcam archive keeps one shot per cam per slot: one per hour, about one per 10 minutes in golden hour.** `scripts/cam_seaweed.py`
 POSTs each cam's still to `/api/cam-frames` on every `sargassum.yml` tick, with

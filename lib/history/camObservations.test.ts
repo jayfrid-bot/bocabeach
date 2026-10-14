@@ -127,6 +127,17 @@ describe("camReadRow / camReadRowsFromFeed (per-cam detail)", () => {
     expect(camReadRowsFromFeed("boca-raton", { morning: g, latest: g })).toHaveLength(2);
   });
 
+  it("also reads today's lastSeaweed group, de-duplicated against latest", () => {
+    const evening = { capturedAtLocal: "2026-10-06T17:30-04:00", cams: [cam("a")] };
+    const dusk = { capturedAtLocal: "2026-10-06T19:10-04:00", cams: [cam("a")] };
+    const rows = camReadRowsFromFeed("boca-raton", { lastSeaweed: evening, latest: dusk });
+    expect(rows.map((r) => r.captured_at_utc).sort()).toEqual([
+      "2026-10-06T21:30:00.000Z",
+      "2026-10-06T23:10:00.000Z",
+    ]);
+    expect(camReadRowsFromFeed("boca-raton", { lastSeaweed: evening, latest: evening })).toHaveLength(1);
+  });
+
   it("never stores a carried reading as a new per-cam observation", () => {
     const g = { capturedAtLocal: "2026-10-06T07:10-04:00", cams: [cam("a"), { ...cam("b"), carried: true }, cam("c")] };
     expect(camReadRow("boca-raton", g, { ...cam("b"), carried: true })).toBeNull();

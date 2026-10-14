@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-13",
+    title: "Steadier seaweed readings",
+    details:
+      "We had a few false seaweed alarms on a clear, clean day. The cams now skip seaweed and water calls when the sun is too low to judge, and a sudden jump has to be seen twice before it shows. The cam that confuses a dark rock shelf with seaweed now gets a hint about it.",
+    tag: "fixed",
+  },
+  {
+    date: "2026-10-13",
     title: "Clearer sunrise and sunset on the share card",
     details: "The share card now says which sunrise or sunset it means (\"Sunset tonight\", \"Sunrise tomorrow\") and how colorful the sky is forecast to be, for example \"Good color · 78/100\". Sunrise tiles get the color forecast too.",
     tag: "improved",

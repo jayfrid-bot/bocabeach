@@ -101,7 +101,11 @@ class WithManifest(unittest.TestCase):
                 return None
             return {"slots": slots, "current": None, "golden": self.golden_by_slug.get(slug, [])}
 
+        # The low-sun gate (LOW_SUN_DEG) reads the sun at the REAL clock these tests
+        # score frames at; -90 turns it off so no test depends on the time of day.
+        # LowSunGateTests below turn it back on with fixed instants.
         for p in (mock.patch.object(cs, "ARCHIVE_CAMS_PATH", str(MANIFEST_PATH)),
+                  mock.patch.object(cs, "LOW_SUN_DEG", -90.0),
                   mock.patch.object(cs, "fetch_filled_slots", fake_filled)):
             p.start()
             self.addCleanup(p.stop)
@@ -2042,6 +2046,15 @@ class CarriedReadingTests(WithManifest):
     the day's morning. Unchanged (or failed) cams now contribute their last good
     reading, marked carried, while it is still fresh enough to be scored."""
 
+    def setUp(self):
+        super().setUp()
+        # These tests are about CARRYING readings. Their fixture cam A reads "high"
+        # on its very first sighting, which jump confirmation (JumpConfirmationTests)
+        # would hold back for a second look; pass fresh readings through untouched here.
+        p = mock.patch.object(cs, "confirm_seaweed_jumps", lambda fresh, carried, prev_recent: fresh)
+        p.start()
+        self.addCleanup(p.stop)
+
     def cam(self, cid, kind="feed"):
         if kind == "feed":
             return {"id": cid, "name": cid, "source": {"kind": "feed", "base": "http://x", "view": "s4"}}
@@ -2244,6 +2257,580 @@ class CarriedReadingTests(WithManifest):
             c["frameAt"] = iso_ago(151 if c["id"] == "d3" else 149)
         kept = cs.carried_readings(aged, cams, {"d2"}, dt.datetime.now(ZONE))
         self.assertEqual([c["id"] for c in kept], ["d1"])
+
+
+UTC = dt.timezone.utc
+BOCA = (26.3587, -80.0686)  # config/locations.ts boca-raton
+
+
+def utc_at(y, mo, d, h, mi=0):
+    return dt.datetime(y, mo, d, h, mi, tzinfo=UTC)
+
+
+class SolarElevationTests(unittest.TestCase):
+    """solar_elevation_deg: Boca Raton on 2026-10-13, EDT = UTC-4."""
+
+    def test_the_sun_is_at_the_standard_horizon_angle_at_the_solver_sunrise_and_sunset(self):
+        # sun_cam_check.sun_times() (the port of lib/sources/sun.ts) puts sunrise at
+        # 11:18Z (7:18 AM EDT) and sunset at 22:54Z (6:54 PM EDT), at -0.833 deg.
+        import sun_cam_check
+        t = sun_cam_check.sun_times(*BOCA, dt.date(2026, 10, 13))
+        for event in ("sunrise", "sunset"):
+            self.assertAlmostEqual(cs.solar_elevation_deg(*BOCA, t[event]), -0.833, delta=0.1, msg=event)
+
+    def test_known_elevations_that_day(self):
+        for when, want, tol in (
+            (utc_at(2026, 10, 13, 11, 30), 1.7, 0.3),    # 7:30 AM EDT: the false "moderate 20%" frame
+            (utc_at(2026, 10, 13, 12, 0), 8.3, 0.3),     # 8:00 AM: still under the 10 deg gate
+            (utc_at(2026, 10, 13, 17, 0), 55.6, 0.3),    # 1:00 PM: near solar noon (90 - 26.36 - 7.9)
+            (utc_at(2026, 10, 13, 23, 1), -2.4, 0.3),    # 7:01 PM EDT: the false "high 60%" dusk frame
+            (utc_at(2026, 10, 14, 0, 0), -15.3, 0.3),    # 8:00 PM: well after dark
+        ):
+            self.assertAlmostEqual(cs.solar_elevation_deg(*BOCA, when), want, delta=tol, msg=str(when))
+
+    def test_the_1_20_pm_false_alarm_frame_is_high_sun(self):
+        # That one is NOT a low-sun case: the rock shelf is handled by the confirm + hint fixes.
+        self.assertGreater(cs.solar_elevation_deg(*BOCA, utc_at(2026, 10, 13, 17, 20)), 50)
+
+    def test_an_aware_local_time_and_a_naive_utc_time_agree(self):
+        edt = dt.datetime(2026, 10, 13, 7, 30, tzinfo=dt.timezone(dt.timedelta(hours=-4)))
+        self.assertAlmostEqual(cs.solar_elevation_deg(*BOCA, edt),
+                               cs.solar_elevation_deg(*BOCA, dt.datetime(2026, 10, 13, 11, 30)), places=9)
+
+    def test_equator_at_the_september_equinox_noon_is_nearly_overhead(self):
+        # Equinox is ~2026-09-23 00:05Z; at 12:00Z on the prime meridian the sun is
+        # within a few degrees of the zenith (equation of time ~ +7 min, decl ~ 0).
+        self.assertGreater(cs.solar_elevation_deg(0.0, 0.0, utc_at(2026, 9, 23, 12, 0)), 85)
+
+
+class LowSunGateTests(WithManifest):
+    """apply_low_sun_gate (pure) and its wiring in capture_beach."""
+
+    READ = {"id": "boca-inlet-surf", "name": "Inlet", "level": "moderate", "coveragePct": 20,
+            "note": "pink light", "crowd": "quiet", "crowdPct": 5, "people": 3, "crowdNote": "few",
+            "water": "slightly_murky", "waterPct": 58, "waterNote": "tinted",
+            "provider": "gemini", "frameAt": "2026-10-13T11:30:00Z", "scoredAt": "2026-10-13T11:35:00Z",
+            "frameSha": "abc"}
+
+    def test_below_the_threshold_seaweed_and_water_are_nulled_and_crowd_is_kept(self):
+        got = cs.apply_low_sun_gate(self.READ, 1.7234, 10)
+        for k in ("level", "coveragePct", "note", "water", "waterPct", "waterNote"):
+            self.assertIn(k, got)
+            self.assertIsNone(got[k], k)
+        self.assertIs(got["lowSun"], True)
+        self.assertEqual(got["sunElevDeg"], 1.7)
+        for k in ("crowd", "crowdPct", "people", "crowdNote", "provider", "frameAt", "scoredAt", "frameSha", "id", "name"):
+            self.assertEqual(got[k], self.READ[k], k)
+
+    def test_does_not_mutate_its_input(self):
+        before = dict(self.READ)
+        cs.apply_low_sun_gate(self.READ, -3.0, 10)
+        self.assertEqual(self.READ, before)
+
+    def test_at_or_above_the_threshold_the_reading_is_returned_untouched(self):
+        self.assertIs(cs.apply_low_sun_gate(self.READ, 10.0, 10), self.READ)
+        self.assertIs(cs.apply_low_sun_gate(self.READ, 55.0, 10), self.READ)
+
+    def test_unknown_elevation_means_no_gate(self):
+        self.assertIs(cs.apply_low_sun_gate(self.READ, None, 10), self.READ)
+
+    def test_the_threshold_comes_from_the_module_setting_by_default(self):
+        with mock.patch.object(cs, "LOW_SUN_DEG", 20.0):
+            self.assertTrue(cs.apply_low_sun_gate(self.READ, 15.0).get("lowSun"))
+        with mock.patch.object(cs, "LOW_SUN_DEG", 5.0):
+            self.assertNotIn("lowSun", cs.apply_low_sun_gate(self.READ, 15.0))
+
+    def test_the_gated_reading_adds_nothing_to_the_seaweed_or_water_roll_ups(self):
+        group = {"cams": [cs.apply_low_sun_gate(self.READ, 1.7, 10)]}
+        self.assertIsNone(cs.worst_seaweed(group))
+        self.assertIsNone(cs.median_water(group))
+        self.assertEqual(cs.busiest_crowd(group)["level"], "quiet")  # crowd still counts
+
+    # --- wiring in capture_beach ------------------------------------------------
+
+    FEED = {"id": "boca-inlet-surf", "name": "Inlet", "source": {"kind": "feed", "base": "http://x", "view": "s16"}}
+    LOOK = {"level": "moderate", "coveragePct": 20, "note": "n", "crowd": "quiet", "crowdPct": 5, "people": 3,
+            "water": "slightly_murky", "waterPct": 58, "waterNote": "w", "provider": "t"}
+
+    def capture(self, elevation, frame_at="fresh", cam=None):
+        seen = []
+
+        def fake_fetch(c, info=None, feed_cache=None):
+            if info is not None and frame_at:
+                info["frameAt"] = iso_ago(2) if frame_at == "fresh" else frame_at
+            return jpeg()
+
+        def fake_elevation(lat, lon, when):
+            seen.append((lat, lon, when))
+            return elevation
+
+        now = dt.datetime.now(ZONE)
+        out = io.StringIO()
+        with env(INGEST_TOKEN=None), mock.patch.object(cs, "LOW_SUN_DEG", 10.0), \
+                mock.patch.object(cs, "fetch_still", fake_fetch), \
+                mock.patch.object(cs, "archive_frame", lambda *a, **k: "stored"), \
+                mock.patch.object(cs, "assess", lambda img: dict(self.LOOK)), \
+                mock.patch.object(cs, "solar_elevation_deg", fake_elevation), \
+                mock.patch.object(cs.time, "sleep", lambda s: None), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            group = cs.capture_beach("boca-raton", [cam or self.FEED], now, {"called": False}, {})
+        return group, seen, out.getvalue(), now
+
+    def test_a_low_sun_frame_publishes_no_seaweed_or_water_but_keeps_crowd(self):
+        group, seen, out, _ = self.capture(2.0)
+        r = group["cams"][0]
+        self.assertIs(r["lowSun"], True)
+        self.assertEqual(r["sunElevDeg"], 2.0)
+        self.assertIsNone(r["level"])
+        self.assertIsNone(r["water"])
+        self.assertEqual((r["crowd"], r["people"]), ("quiet", 3))
+        self.assertIn("not graded", out)
+        self.assertNotIn("unconfirmed", r)  # a low-sun read makes no claim
+        # No cam left with a seaweed level: the capture is partial and cannot be a morning.
+        self.assertTrue(group["partial"])
+
+    def test_a_high_sun_frame_publishes_normally(self):
+        group, _, _, _ = self.capture(40.0)
+        r = group["cams"][0]
+        self.assertNotIn("lowSun", r)
+        self.assertEqual(r["water"], "slightly_murky")
+
+    def test_the_sun_is_judged_at_the_frame_time_and_the_beach_coordinates(self):
+        frame_at = iso_ago(7)
+        _, seen, _, _ = self.capture(40.0, frame_at=frame_at)
+        (lat, lon, when), = seen
+        self.assertEqual((lat, lon), BOCA)  # from the manifest (config/archive-cams.json)
+        self.assertEqual(when, dt.datetime.strptime(frame_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC))
+
+    def test_with_no_frame_time_it_falls_back_to_the_scoring_time(self):
+        cam = dict(self.FEED, visionTrustNoTimestamp=True)
+        _, seen, _, now = self.capture(40.0, frame_at=None, cam=cam)
+        (_, _, when), = seen
+        self.assertEqual(when, now)
+
+    def test_a_beach_without_coordinates_runs_ungated(self):
+        with mock.patch.object(cs, "beach_coords", lambda slug: None):
+            group, seen, _, _ = self.capture(-5.0)
+        self.assertEqual(seen, [])
+        self.assertNotIn("lowSun", group["cams"][0])
+
+    def test_beach_coords_reads_the_manifest_by_slug(self):
+        self.assertEqual(cs.beach_coords("boca-raton"), BOCA)
+        self.assertEqual(cs.beach_coords("deerfield-beach"), (26.3165, -80.0742))
+        self.assertIsNone(cs.beach_coords("nowhere"))
+
+
+class MorningNeedsSeaweedTests(WithManifest):
+    """A capture with no seaweed level can never be the day's morning; one with some
+    cams lacking a level is partial."""
+
+    NOW = dt.datetime(2026, 10, 13, 8, 30, tzinfo=dt.timezone(dt.timedelta(hours=-4)))
+
+    def doc(self, group, prev=None):
+        with mock.patch.object(cs, "MORNING", range(0, 24)):
+            return cs.build_beach_output("boca-raton", "America/New_York", self.NOW, [("gemini", "m")],
+                                         prev or {}, group, None, None)
+
+    @staticmethod
+    def group(hour, *cams, partial=False):
+        g = {"capturedAtLocal": f"2026-10-13T{hour:02d}:30-04:00", "hour": hour, "cams": list(cams)}
+        if partial:
+            g["partial"] = True
+        return g
+
+    LOW = {"id": "a", "name": "a", "level": None, "coveragePct": None, "note": None,
+           "water": None, "waterPct": None, "waterNote": None, "lowSun": True, "sunElevDeg": 2.0,
+           "crowd": "quiet", "crowdPct": 5, "people": 2}
+    NONE = {"id": "b", "name": "b", "level": "none", "coveragePct": 0, "crowd": "empty", "crowdPct": 0,
+            "people": 0, "water": "clear", "waterPct": 90}
+
+    def test_a_capture_with_no_seaweed_level_never_becomes_the_morning(self):
+        doc = self.doc(self.group(7, self.LOW, dict(self.LOW, id="b")))
+        self.assertIsNone(doc["morning"])
+        self.assertEqual(doc["latest"]["cams"][0]["id"], "a")  # latest still moves (crowd)
+        e = doc["history"][-1]
+        self.assertEqual((e["seaweed"], e["cov"], e["water"], e["clr"]), (None, None, None, None))
+        self.assertEqual(e["level"], "quiet")
+
+    def test_it_does_not_displace_an_existing_morning_either(self):
+        first = self.doc(self.group(8, self.NONE))
+        again = self.doc(self.group(7, self.LOW), prev=first)
+        self.assertEqual(again["morning"], first["morning"])
+
+    def test_a_partial_capture_with_one_level_may_fill_an_empty_morning_and_a_complete_one_replaces_it(self):
+        partial = self.group(8, self.LOW, self.NONE, partial=True)
+        d1 = self.doc(partial)
+        self.assertEqual(d1["morning"], partial)
+        complete = self.group(9, dict(self.NONE, id="a"), self.NONE)
+        d2 = self.doc(complete, prev=d1)
+        self.assertEqual(d2["morning"], complete)
+        # ...and a later partial one never takes it back, even if earlier in the day.
+        d3 = self.doc(self.group(7, self.LOW, self.NONE, partial=True), prev=d2)
+        self.assertEqual(d3["morning"], complete)
+
+
+class LastSeaweedTests(WithManifest):
+    """`lastSeaweed`: today's most recent capture with a published seaweed level, so
+    `latest` going dark (low sun) does not blank the seaweed card or score."""
+
+    EDT = dt.timezone(dt.timedelta(hours=-4))
+    GATED = {"id": "a", "name": "a", "level": None, "coveragePct": None, "note": None,
+             "water": None, "waterPct": None, "waterNote": None, "lowSun": True, "sunElevDeg": 3.0,
+             "crowd": "quiet", "crowdPct": 5, "people": 2}
+    LOW = {"id": "a", "name": "a", "level": "low", "coveragePct": 8, "crowd": "quiet", "crowdPct": 5,
+           "people": 2, "water": "clear", "waterPct": 85}
+
+    def doc(self, day, hour, minute, cams, prev=None):
+        now = dt.datetime(2026, 10, day, hour, minute, tzinfo=self.EDT)
+        group = None
+        if cams is not None:
+            group = {"capturedAtLocal": now.isoformat(timespec="minutes"), "hour": hour, "cams": cams}
+            if any(c.get("level") is None for c in cams):
+                group["partial"] = True
+        return cs.build_beach_output("boca-raton", "America/New_York", now, [("gemini", "m")],
+                                     prev or {}, group, None, None), group
+
+    def test_a_daylight_capture_is_the_last_seaweed_and_the_latest(self):
+        d, g = self.doc(13, 17, 30, [self.LOW])
+        self.assertEqual(d["lastSeaweed"], g)
+        self.assertEqual(d["latest"], g)
+
+    def test_a_gated_evening_tick_keeps_the_5_30_pm_group_while_latest_moves_on(self):
+        d1, g1 = self.doc(13, 17, 30, [self.LOW])
+        d2, g2 = self.doc(13, 19, 10, [self.GATED], prev=d1)
+        self.assertEqual(d2["latest"], g2)            # crowd keeps moving
+        self.assertEqual(d2["lastSeaweed"], g1)       # seaweed stays on the 5:30 PM read
+
+    def test_the_first_gated_tick_of_the_next_morning_drops_yesterdays_reading(self):
+        d1, _ = self.doc(13, 17, 30, [self.LOW])
+        d2, _ = self.doc(14, 6, 40, [self.GATED], prev=d1)
+        self.assertIsNone(d2["lastSeaweed"])
+        # ...and so does a morning run with no capture at all.
+        d3, _ = self.doc(14, 6, 50, None, prev=d1)
+        self.assertIsNone(d3["lastSeaweed"])
+
+    def test_a_fresh_daylight_tick_replaces_it(self):
+        d1, g1 = self.doc(13, 12, 0, [self.LOW])
+        d2, g2 = self.doc(13, 13, 0, [dict(self.LOW, level="none", coveragePct=0)], prev=d1)
+        self.assertEqual(d2["lastSeaweed"], g2)
+        self.assertNotEqual(d2["lastSeaweed"], g1)
+
+    def test_a_run_with_no_capture_keeps_todays_value(self):
+        d1, g1 = self.doc(13, 17, 30, [self.LOW])
+        d2, _ = self.doc(13, 17, 40, None, prev=d1)
+        self.assertEqual(d2["lastSeaweed"], g1)
+
+    def test_none_until_a_capture_has_a_seaweed_level(self):
+        d, _ = self.doc(13, 6, 40, [self.GATED])
+        self.assertIsNone(d["lastSeaweed"])
+        self.assertIsNotNone(d["latest"])
+
+    def test_an_old_feed_without_the_field_is_fine(self):
+        d, _ = self.doc(13, 19, 10, [self.GATED], prev={"dateLocal": "2026-10-13", "latest": None})
+        self.assertIsNone(d["lastSeaweed"])
+
+
+class JumpConfirmationTests(WithManifest):
+    """confirm_seaweed_jumps (pure) and the 2026-10-13 Boca incident replayed through
+    capture_beach + build_beach_output. One cam (boca-inlet-surf) read a false
+    "moderate 35%" at 1:20 PM while the other two read none all day."""
+
+    def read(self, cid, level="none", cov=0, **kw):
+        base = {"id": cid, "name": cid, "level": level, "coveragePct": cov, "note": "n",
+                "crowd": "quiet", "crowdPct": 5, "people": 2, "water": "clear", "waterPct": 80}
+        return {**base, **kw}
+
+    def confirm(self, fresh, carried=(), prev=()):
+        return cs.confirm_seaweed_jumps(list(fresh), list(carried), {r["id"]: r for r in prev})
+
+    # --- the pure function -------------------------------------------------------
+
+    def test_a_lone_moderate_after_none_is_held_with_its_claim_stored(self):
+        a = self.read("a", "moderate", 35)
+        (got,) = self.confirm([a], prev=[self.read("a", "none", 0)])
+        self.assertIsNone(got["level"])
+        self.assertIsNone(got["coveragePct"])
+        self.assertIsNone(got["note"])
+        self.assertIs(got["unconfirmed"], True)
+        self.assertEqual(got["claim"], {"level": "moderate", "coveragePct": 35, "note": "n"})
+        # water and crowd are untouched
+        self.assertEqual((got["water"], got["waterPct"], got["crowd"], got["people"]), ("clear", 80, "quiet", 2))
+        self.assertNotIn("confirmedBy", got)
+        self.assertEqual(a["level"], "moderate")  # input not mutated
+
+    def test_no_previous_reading_at_all_is_also_a_jump(self):
+        (got,) = self.confirm([self.read("a", "high", 60)])
+        self.assertTrue(got["unconfirmed"])
+
+    def test_readings_below_moderate_pass_straight_through(self):
+        for level in ("none", "low"):
+            r = self.read("a", level, 10)
+            self.assertIs(self.confirm([r])[0], r)
+
+    def test_persistence_a_previous_unconfirmed_claim_confirms(self):
+        prev = self.read("a", None, None, unconfirmed=True, claim={"level": "moderate", "coveragePct": 35, "note": "n"})
+        (got,) = self.confirm([self.read("a", "moderate", 30)], prev=[prev])
+        self.assertEqual((got["level"], got["coveragePct"], got["confirmedBy"]), ("moderate", 30, "persistence"))
+        self.assertNotIn("unconfirmed", got)
+
+    def test_persistence_a_previous_confirmed_moderate_plus_needs_nothing_more(self):
+        for before, now in (("moderate", "high"), ("moderate", "moderate"), ("high", "moderate")):
+            (got,) = self.confirm([self.read("a", now, 50)], prev=[self.read("a", before, 40)])
+            self.assertEqual(got["level"], now)
+            self.assertEqual(got["confirmedBy"], "persistence")
+
+    def test_a_previous_low_sun_reading_makes_no_claim(self):
+        prev = self.read("a", None, None, lowSun=True, sunElevDeg=2.0)
+        self.assertTrue(self.confirm([self.read("a", "moderate", 20)], prev=[prev])[0]["unconfirmed"])
+
+    def test_two_cams_that_both_claim_moderate_in_one_tick_confirm_each_other(self):
+        a, b = self.read("a", "moderate", 30), self.read("b", "high", 55)
+        got = self.confirm([a, b])
+        self.assertEqual([(g["id"], g["level"], g["confirmedBy"]) for g in got],
+                         [("a", "moderate", "cam:b"), ("b", "high", "cam:a")])
+
+    def test_a_none_from_another_fresh_cam_does_not_confirm(self):
+        got = self.confirm([self.read("a", "moderate", 30), self.read("b", "none", 0)])
+        self.assertTrue(got[0]["unconfirmed"])
+        self.assertEqual(got[1]["level"], "none")
+
+    def test_a_fresh_low_sun_cam_does_not_confirm(self):
+        low = self.read("b", None, None, lowSun=True, sunElevDeg=3.0)
+        self.assertTrue(self.confirm([self.read("a", "moderate", 30), low])[0]["unconfirmed"])
+
+    def test_a_carried_confirmed_moderate_plus_confirms_another_cam(self):
+        carried = self.read("b", "high", 60, carried=True)
+        (got,) = self.confirm([self.read("a", "moderate", 30)], carried=[carried])
+        self.assertEqual((got["level"], got["confirmedBy"]), ("moderate", "cam:b"))
+
+    def test_a_carried_unconfirmed_claim_confirms_nothing(self):
+        carried = self.read("b", None, None, carried=True, unconfirmed=True,
+                            claim={"level": "high", "coveragePct": 60, "note": "n"})
+        (got,) = self.confirm([self.read("a", "moderate", 30)], carried=[carried])
+        self.assertTrue(got["unconfirmed"])
+
+    def test_confirmation_is_per_cam(self):
+        # A persists (its own previous claim); B is just a none.
+        prev_a = self.read("a", "moderate", 30)
+        got = self.confirm([self.read("a", "moderate", 30), self.read("b", "none", 0)], prev=[prev_a])
+        self.assertEqual(got[0]["confirmedBy"], "persistence")
+        self.assertEqual(got[1]["level"], "none")
+
+    # --- recent_prev_readings: the age limits carried_readings uses -------------------
+
+    CAM = {"id": "a", "name": "a", "source": {"kind": "feed", "base": "http://x", "view": "s4"}}
+
+    def test_recent_prev_readings_applies_the_carry_age_limits(self):
+        now = dt.datetime.now(ZONE)
+        fresh = self.read("a", "moderate", frameAt=iso_ago(59))
+        stale = self.read("a", "moderate", frameAt=iso_ago(61))
+        self.assertIn("a", cs.recent_prev_readings({"latest": {"cams": [fresh]}}, [self.CAM], now))
+        self.assertNotIn("a", cs.recent_prev_readings({"latest": {"cams": [stale]}}, [self.CAM], now))
+        self.assertNotIn("a", cs.recent_prev_readings({"latest": {"cams": [self.read("a")]}}, [self.CAM], now))
+        direct = dict(self.CAM, source={"kind": "direct", "url": "u", "meta": "m"})
+        self.assertIn("a", cs.recent_prev_readings({"latest": {"cams": [stale]}}, [direct], now))
+
+    # --- the incident, replayed ------------------------------------------------------
+
+    CAMS = [
+        {"id": "boca-inlet-surf", "name": "Inlet", "source": {"kind": "feed", "base": "http://x", "view": "s16"}},
+        {"id": "boca-south-surf", "name": "South surf", "source": {"kind": "feed", "base": "http://x", "view": "s11"}},
+        {"id": "boca-south", "name": "South", "source": {"kind": "feed", "base": "http://x", "view": "s4"}},
+    ]
+    NOTHING = {"level": "none", "coveragePct": 0, "crowd": "quiet", "crowdPct": 10, "people": 5,
+               "water": "clear", "waterPct": 85, "provider": "t"}
+    FALSE_ROCKS = dict(NOTHING, level="moderate", coveragePct=35, note="brown rock shelf")
+
+    def setUp(self):
+        super().setUp()
+        self.counter = 0
+        self.tags = {}
+
+    def tick(self, prev, looks, *, cams=None, ages=None):
+        """One tick: looks maps cam id -> reading; a cam not in `looks` keeps its last frame."""
+        cams = cams or self.CAMS
+        self.counter += 1
+        ages = ages or {}
+
+        def fake_fetch(cam, info=None, feed_cache=None):
+            info["frameAt"] = iso_ago(ages.get(cam["id"], 2))
+            if cam["id"] in looks:
+                self.tags[cam["id"]] = self.counter  # a new frame; the others re-serve the old one
+            return jpeg() + f"{cam['id']}:{self.tags[cam['id']]}".encode()
+
+        def fake_assess(img):
+            return dict(looks[img[len(jpeg()):].decode().split(":")[0]])
+
+        now = dt.datetime.now(ZONE)
+        out = io.StringIO()
+        with env(INGEST_TOKEN=None), mock.patch.object(cs, "fetch_still", fake_fetch), \
+                mock.patch.object(cs, "archive_frame", lambda *a, **k: "stored"), \
+                mock.patch.object(cs, "assess", fake_assess), mock.patch.object(cs.time, "sleep", lambda s: None), \
+                contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+            group = cs.capture_beach("boca-raton", cams, now, {"called": False}, prev)
+        doc = cs.build_beach_output("boca-raton", "America/New_York", now, [("gemini", "m")], prev, group, None, None)
+        self.log = out.getvalue()
+        return group, doc
+
+    def all_none(self):
+        return {c["id"]: self.NOTHING for c in self.CAMS}
+
+    def test_replay_one_bad_moderate_between_none_reads_never_reaches_the_headline_or_history(self):
+        _, doc = self.tick({}, self.all_none())
+        # 1:20 PM: the inlet cam alone reads the rock shelf as moderate seaweed.
+        group, doc = self.tick(doc, {"boca-inlet-surf": self.FALSE_ROCKS})
+        held = next(c for c in group["cams"] if c["id"] == "boca-inlet-surf")
+        self.assertIsNone(held["level"])
+        self.assertEqual(held["claim"]["level"], "moderate")
+        self.assertIn("boca-inlet-surf: seaweed=moderate(35%) HELD (unconfirmed jump)", self.log)
+        self.assertEqual(cs.worst_seaweed(group)["level"], "none")  # the others' none reads win
+        self.assertEqual(doc["history"][-1]["seaweed"], "none")
+        self.assertEqual(doc["history"][-1]["cov"], 0)
+        # 1:30 PM: the cam reads none again; the claim is gone and nothing was ever published.
+        group, doc = self.tick(doc, {"boca-inlet-surf": self.NOTHING})
+        self.assertEqual(next(c for c in group["cams"] if c["id"] == "boca-inlet-surf")["level"], "none")
+        self.assertNotIn("moderate", [e["seaweed"] for e in doc["history"]])
+        self.assertFalse(any(c.get("level") == "moderate" for c in doc["latest"]["cams"]))
+
+    def test_replay_the_held_claim_survives_a_tick_where_the_cam_frame_is_unchanged(self):
+        _, doc = self.tick({}, self.all_none())
+        _, doc = self.tick(doc, {"boca-inlet-surf": self.FALSE_ROCKS})
+        # Next tick another cam changes, the inlet frame is the same: it is carried, still held.
+        group, doc = self.tick(doc, {"boca-south": self.NOTHING})
+        carried = next(c for c in group["cams"] if c["id"] == "boca-inlet-surf")
+        self.assertTrue(carried["carried"])
+        self.assertTrue(carried["unconfirmed"])
+        self.assertIsNone(carried["level"])
+        self.assertEqual(cs.worst_seaweed(group)["level"], "none")
+
+    def test_replay_two_consecutive_moderate_reads_from_the_same_cam_publish_on_the_second(self):
+        _, doc = self.tick({}, self.all_none())
+        _, doc = self.tick(doc, {"boca-inlet-surf": self.FALSE_ROCKS})
+        self.assertEqual(doc["history"][-1]["seaweed"], "none")
+        group, doc = self.tick(doc, {"boca-inlet-surf": dict(self.FALSE_ROCKS, coveragePct=30)})
+        pub = next(c for c in group["cams"] if c["id"] == "boca-inlet-surf")
+        self.assertEqual((pub["level"], pub["coveragePct"], pub["confirmedBy"]), ("moderate", 30, "persistence"))
+        self.assertNotIn("unconfirmed", pub)
+        self.assertEqual(doc["history"][-1]["seaweed"], "moderate")
+        self.assertEqual(doc["history"][-1]["cov"], 30)
+        self.assertEqual(cs.worst_seaweed(doc["latest"]), {"level": "moderate", "pct": 30})
+
+    def test_replay_two_cams_claiming_moderate_in_one_tick_publish_immediately(self):
+        _, doc = self.tick({}, self.all_none())
+        group, doc = self.tick(doc, {"boca-inlet-surf": self.FALSE_ROCKS,
+                                     "boca-south-surf": dict(self.FALSE_ROCKS, coveragePct=25)})
+        by = {c["id"]: c for c in group["cams"]}
+        self.assertEqual(by["boca-inlet-surf"]["confirmedBy"], "cam:boca-south-surf")
+        self.assertEqual(by["boca-south-surf"]["confirmedBy"], "cam:boca-inlet-surf")
+        self.assertEqual(doc["history"][-1]["seaweed"], "moderate")
+
+    def test_a_stale_previous_claim_does_not_confirm(self):
+        _, doc = self.tick({}, self.all_none())
+        _, doc = self.tick(doc, {"boca-inlet-surf": self.FALSE_ROCKS})
+        for c in doc["latest"]["cams"]:
+            c["frameAt"] = iso_ago(90)  # the claim is an hour and a half old
+        group, _ = self.tick(doc, {"boca-inlet-surf": self.FALSE_ROCKS})
+        self.assertTrue(next(c for c in group["cams"] if c["id"] == "boca-inlet-surf")["unconfirmed"])
+
+    def test_a_held_read_still_records_its_frame_so_the_same_frame_is_not_scored_twice(self):
+        _, doc = self.tick({}, self.all_none())
+        _, doc = self.tick(doc, {"boca-inlet-surf": self.FALSE_ROCKS})
+        self.assertEqual(doc["frameShas"]["boca-inlet-surf"], cs.frame_sha(jpeg() + b"boca-inlet-surf:2"))
+
+    def test_a_held_cam_makes_the_capture_partial_for_the_morning_rules(self):
+        _, doc = self.tick({}, self.all_none())
+        group, _ = self.tick(doc, {"boca-inlet-surf": self.FALSE_ROCKS})
+        self.assertTrue(group["partial"])
+
+    def test_the_cam_read_row_for_a_held_cam_keeps_the_claim_in_its_raw_json(self):
+        # lib/history/camObservationRow.mjs: null seaweed fields, but the audit trail survives.
+        import subprocess
+        _, doc = self.tick({}, self.all_none())
+        group, _ = self.tick(doc, {"boca-inlet-surf": self.FALSE_ROCKS})
+        held = next(c for c in group["cams"] if c["id"] == "boca-inlet-surf")
+        js = ("import {camReadRow} from './lib/history/camObservationRow.mjs';"
+              "const [g,c]=JSON.parse(process.argv[1]);"
+              "console.log(JSON.stringify(camReadRow('boca-raton',g,c)));")
+        try:
+            out = subprocess.run(["node", "--input-type=module", "-e", js, json.dumps([group, held])],
+                                 cwd=ROOT, capture_output=True, text=True)
+        except FileNotFoundError:
+            self.skipTest("node not available")
+        self.assertEqual(out.returncode, 0, out.stderr[:300])
+        row = json.loads(out.stdout)
+        self.assertIsNone(row["seaweed_level"])
+        self.assertIsNone(row["cov_pct"])
+        self.assertEqual(row["crowd_level"], "quiet")
+        self.assertEqual(json.loads(row["raw_json"])["claim"]["level"], "moderate")
+
+
+class VisionHintTests(WithManifest):
+    """prompt_for_cam: the optional per-cam visionHint rides on PROMPT."""
+
+    HINT = "Dark rock shelf at the left is not seaweed."
+
+    def test_no_hint_means_the_plain_prompt(self):
+        self.assertEqual(cs.prompt_for_cam({"id": "a"}), cs.PROMPT)
+        self.assertEqual(cs.prompt_for_cam({"id": "a", "visionHint": "  "}), cs.PROMPT)
+        self.assertEqual(cs.prompt_for_cam({"id": "a", "visionHint": 5}), cs.PROMPT)
+
+    def test_a_hint_is_appended_as_an_about_this_camera_line(self):
+        p = cs.prompt_for_cam({"id": "a", "visionHint": f"  {self.HINT} "})
+        self.assertTrue(p.startswith(cs.PROMPT))
+        self.assertTrue(p.endswith(f" About this camera: {self.HINT}"))
+
+    def test_the_registry_hint_for_the_inlet_surf_cam_exists_and_is_plain(self):
+        reg = json.loads((ROOT / "config" / "vision-cams.json").read_text(encoding="utf-8"))
+        cam = next(c for c in reg["boca-raton"]["cams"] if c["id"] == "boca-inlet-surf")
+        self.assertIn("rock shelf", cam["visionHint"])
+        self.assertIn("not seaweed", cam["visionHint"])
+        self.assertNotRegex(cam["visionHint"], r"\bAI\b")
+        for other in reg["boca-raton"]["cams"]:
+            if other["id"] != "boca-inlet-surf":
+                self.assertNotIn("visionHint", other)
+
+    def capture(self, cam):
+        prompts = []
+
+        def fake_assess(img, prompt=cs.PROMPT):
+            prompts.append(prompt)
+            return {"level": "none", "coveragePct": 0, "crowd": "quiet", "crowdPct": 5, "people": 2, "provider": "t"}
+
+        def fake_fetch(c, info=None, feed_cache=None):
+            info["frameAt"] = iso_ago(2)
+            return jpeg()
+
+        with env(INGEST_TOKEN=None), mock.patch.object(cs, "fetch_still", fake_fetch), \
+                mock.patch.object(cs, "archive_frame", lambda *a, **k: "stored"), \
+                mock.patch.object(cs, "assess", fake_assess), mock.patch.object(cs.time, "sleep", lambda s: None), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            cs.capture_beach("boca-raton", [cam], dt.datetime.now(ZONE), {"called": False}, {})
+        return prompts
+
+    def test_capture_beach_sends_the_hinted_prompt_only_for_a_cam_with_a_hint(self):
+        base = {"id": "a", "name": "a", "source": {"kind": "feed", "base": "http://x", "view": "s4"}}
+        self.assertEqual(self.capture(base), [cs.PROMPT])
+        (hinted,) = self.capture(dict(base, visionHint=self.HINT))
+        self.assertIn(f"About this camera: {self.HINT}", hinted)
+
+    def test_gemini_gets_the_hint_in_its_request_and_clef_is_left_alone(self):
+        prompt = cs.prompt_for_cam({"visionHint": self.HINT})
+        bodies = []
+
+        def fake_post(url, body, headers=None, timeout=40):
+            bodies.append(json.loads(body))
+            return json.dumps({"candidates": [{"content": {"parts": [{"text": json.dumps(
+                {"seaweed": "none", "crowd": "quiet"})}]}}]}).encode()
+
+        with mock.patch.object(cs, "API_KEY", "k"), mock.patch.object(cs, "_post", fake_post):
+            cs.assess_with("gemini", b"x", prompt, model="g-1")
+        self.assertIn(self.HINT, bodies[0]["contents"][0]["parts"][0]["text"])
+
+        clef_calls = []
+        with mock.patch.object(cs, "_clef_configured", lambda: True), \
+                mock.patch.object(cs, "_clef_out", lambda img, kind="surface": clef_calls.append(kind) or {"seaweed": "none"}):
+            cs.assess_with("clef", b"x", prompt)
+        self.assertEqual(clef_calls, ["surface"])  # no prompt parameter: Clef's questions are fixed server-side
 
 
 ZONE = __import__("zoneinfo").ZoneInfo("America/New_York")
