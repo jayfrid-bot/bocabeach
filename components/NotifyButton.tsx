@@ -7,6 +7,7 @@ import {
   flushPendingUnregister,
   isNativePlatform,
   nativeStatus,
+  whenPushIdle,
 } from "@/lib/push/native";
 
 type State = "init" | "hidden" | "off" | "on" | "denied" | "busy" | "error";
@@ -20,9 +21,15 @@ type State = "init" | "hidden" | "off" | "on" | "denied" | "busy" | "error";
 export async function enableAlertsFlow(
   slug: string,
   prefs: { morning: boolean; safety: boolean },
-): Promise<{ state: "on" } | { state: "denied" | "error"; message: string }> {
+): Promise<{ state: "on" } | { state: "off" } | { state: "denied" | "error"; message: string }> {
   try {
-    await enableNative(slug, prefs);
+    const result = await enableNative(slug, prefs);
+    if (result === "superseded") {
+      // A newer enable or disable was asked for first and wins. Report what the
+      // phone ends up as once everything queued has finished, not a guess.
+      await whenPushIdle();
+      return (await nativeStatus(slug).catch(() => "off" as const)) === "on" ? { state: "on" } : { state: "off" };
+    }
     return { state: "on" };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
@@ -165,6 +172,10 @@ export function NotifyButton({
     const r = await enableAlertsFlow(slug, prefs);
     if (r.state === "on") {
       setState("on");
+      return;
+    }
+    if (r.state === "off") {
+      setState("off");
       return;
     }
     setErr(r.message);

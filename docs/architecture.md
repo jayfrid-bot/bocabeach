@@ -459,7 +459,7 @@ flowchart TD
   ADMINSCANS -->|read the funnel| D1
   STORE -->|tests, next dev w/o bindings| MEM[(memory store<br/>.plus-store.json fallback)]
 
-  KVLEGACY[(PUSH_KV<br/>legacy push-token subs)] -."one-off, by hand:<br/>POST /api/push/import-legacy (x-cron-secret)".-> STORE
+  KVLEGACY[(PUSH_KV<br/>legacy push-token subs<br/>no longer read)]
 
   HAZ2 -->|"per fix"| STRIKES
   HAZ2 -->|"per fix or beach radar"| RAIN
@@ -788,7 +788,7 @@ Route auth, by `x-install-token`:
 | `GET /api/devices` | none (read only) | n/a |
 | `POST /api/devices/purchase` | none, on purpose: writes only what RevenueCat says about that id right now, and must work for Restore right after a reinstall | n/a |
 | `POST /api/open` | none, on purpose: writes only the `app_opens` counter, fires before a token exists | n/a |
-| `/api/revenuecat/webhook`, `/api/push/run`, `/api/push/import-legacy`, `/api/push/test`, `/api/sun-observations`, `/api/admin/*` | shared secrets, not device tokens | n/a |
+| `/api/revenuecat/webhook`, `/api/push/run`, `/api/push/test`, `/api/sun-observations`, `/api/admin/*` | shared secrets, not device tokens | n/a |
 
 *Push-token transfer (accepted risk).* Moving a push token from one row to
 another happens when a reinstall gets a new device id but keeps its APNs/FCM
@@ -824,13 +824,15 @@ after enforcement is on; without it an old app would believe alerts were off
 while the server kept sending them. The route clears D1 first, then deletes the
 legacy KV record, and a KV failure is a 500, never a 200.
 
-*Legacy KV import is a one-off.* `/api/push/run` no longer imports KV
-subscriptions into D1 (a perpetual importer let a stale or lagging KV record
-resurrect alerts a phone had turned off; KV deletes and lists are eventually
-consistent). The remaining KV subscriptions are imported once, by hand:
-`curl -X POST -H "x-cron-secret: $CRON_SECRET" "$ORIGIN/api/push/import-legacy"`
-(`?dryRun=1` only counts). It never deletes KV records and is safe to run twice.
-Nothing calls it on a schedule.
+*No legacy KV importer.* `/api/push/run` does not import KV subscriptions into
+D1, and nothing else does. A perpetual importer let a stale or lagging KV record
+resurrect alerts a phone had turned off (KV deletes and lists are eventually
+consistent), and a one-off route had the same race against a concurrent
+unregister. Production's `PUSH_KV` held exactly 2 legacy native subscriptions
+and both were already in D1, so there is nothing left to import. The KV records
+stay in place (harmless: nothing reads them); unregister still deletes them and
+a failed delete is a 500. (`DeviceStore.importLegacy` remains in the store as an
+unused method with its own tests.)
 
 *Fail closed.* `getStore()` serves the memory store only in development and
 tests. In production (`NODE_ENV=production`) with no D1 binding it throws
@@ -870,8 +872,7 @@ generic error, never the backend's message.
    the unique-token guarantee does not exist. `npm run check:mobile` only
    applies migrations to the local database.
 2. Deploy the code with `INSTALL_TOKEN_ENFORCE` unset.
-3. Run the one-off `/api/push/import-legacy` (above), once.
-4. Watch the missing-token log for 7 days, then set `INSTALL_TOKEN_ENFORCE=on`.
+3. Watch the missing-token log for 7 days, then set `INSTALL_TOKEN_ENFORCE=on`.
 
 **No server-side token recovery.** There is deliberately no route to recover a
 lost token. A phone that loses its saved token but keeps its device id is
@@ -889,11 +890,17 @@ server confirms the unregister. If the call fails (offline, 5xx), the push
 token goes into a queue (`bd:pending-unregister`), the screen says so, and the
 call is retried by an app-wide hook (`lib/push/usePushQueueRetry.ts`, mounted
 in the root layout): on launch, when the phone comes back online, and on every
-return to the foreground. Enable, disable and the retry all go through one
-queue per push token (`lib/push/native.ts` `runSerial`) and a counter of user
-intents, so the latest thing the person asked for wins: a retry issued before
-an enable can never land after it, and a retry stands down while an enable is
-in flight. A 401 is not queued, because it would never succeed.
+return to the foreground. A trigger that arrives while a pass is running
+schedules one more pass after it. Enable, disable and the retry all go through
+ONE app-wide queue (`lib/push/native.ts` `runSerial`; one device per app
+install, and the server row is keyed by device id, not push token), and the
+whole enable lifecycle runs inside it, including getting the push token from the
+OS. Each enable and disable takes a generation number once, when it is asked
+for, and every step checks it before it reaches the server: an enable still
+waiting on APNs when a disable is asked for wakes up, sees it was overtaken and
+sends nothing. A step that has already reached the server always leaves the
+local marker behind so the disable queued behind it can turn it off. A 401 is
+not queued, because it would never succeed.
 
 **"Last N days" history (`/api/history/[slug]`, docs/HISTORY_AND_IMAGERY_
 PLAN.md Part A).** A Plus-only, read-only look at the `beach_hourly` archive

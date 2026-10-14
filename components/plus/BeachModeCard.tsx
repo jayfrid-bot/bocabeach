@@ -1108,6 +1108,10 @@ export function BeachModeCard({
       setServerPushReady(true);
       return;
     }
+    if (r.state === "off") {
+      setLocalPush("off"); // a newer turn-off won; nothing to report
+      return;
+    }
     setLocalPush(r.state === "denied" ? "denied" : "off");
     setPushError(r.message);
   };
