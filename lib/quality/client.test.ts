@@ -4,6 +4,7 @@ import {
   CARD_REFRESH_MINUTES,
   CARD_REFRESH_WORST_CASE_MINUTES,
   CARD_UPDATE_NOTE,
+  enrollGateText,
   enrollThisPhone,
   OWNER_TOKEN_KEY,
   ownerErrorText,
@@ -97,6 +98,16 @@ describe("enrolling", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: false, error: "bad-code" }), { status: 403 })));
     expect(await enrollThisPhone("nope", "dev-1")).toEqual({ ok: false, error: "bad-code", status: 403 });
     expect(m.size).toBe(0);
+  });
+});
+
+describe("enrollGateText", () => {
+  it("tells a stranger nothing about what the owner screens are", () => {
+    expect(enrollGateText("too-many-attempts")).toMatch(/too many/i);
+    expect(enrollGateText("network")).toMatch(/connection/i);
+    for (const e of ["bad-code", "enrollment-closed", "unauthorized", "server", "anything"]) {
+      expect(enrollGateText(e)).toBe("That did not work.");
+    }
   });
 });
 

@@ -30,7 +30,7 @@ vi.mock("@capacitor/core", () => ({
 vi.mock("@capacitor/push-notifications", () => ({ PushNotifications: plugin }));
 vi.mock("@/lib/deviceId", () => ({ getDeviceId: () => "" }));
 
-import { nativePushTokenForOwner } from "@/lib/push/native";
+import { initNativeTapHandling, nativePushTokenForOwner } from "@/lib/push/native";
 
 function stubStorage(entries: Record<string, string>): void {
   const m = new Map(Object.entries(entries));
@@ -73,5 +73,29 @@ describe("nativePushTokenForOwner", () => {
     cap.platform = "web";
     expect(await nativePushTokenForOwner()).toBeNull();
     expect(plugin.registers).toBe(0);
+  });
+});
+
+describe("tapping a notification", () => {
+  it("opens the owner review on the alert, and refuses any address a payload invents", async () => {
+    const assign = vi.fn();
+    vi.stubGlobal("window", { location: { origin: "https://app.isitbeachday.com", assign } });
+    await initNativeTapHandling();
+    const tap = plugin.listeners.pushNotificationActionPerformed;
+    expect(tap).toBeTypeOf("function");
+
+    tap({ notification: { data: { url: "https://app.isitbeachday.com/admin/review?alert=42" } } });
+    expect(assign).toHaveBeenLastCalledWith("/admin/review?alert=42");
+
+    tap({ notification: { data: { url: "/boca-raton" } } }); // the beach alerts, as before
+    expect(assign).toHaveBeenLastCalledWith("/boca-raton");
+
+    assign.mockClear();
+    for (const url of ["https://evil.example/admin/review?alert=1", "//evil.example", "javascript:alert(1)", "/api/quality/owner/list", "/admin/other", undefined, 7]) {
+      tap({ notification: { data: { url } } });
+    }
+    tap({ notification: {} });
+    tap(undefined);
+    expect(assign).not.toHaveBeenCalled();
   });
 });

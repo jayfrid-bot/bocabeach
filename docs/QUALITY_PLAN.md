@@ -334,21 +334,43 @@ both places. The workflow `sargassum.yml` passes it to the reader.
 
 ### Enroll the owner's phone
 
+The owner uses the review screen inside the iPhone app, which has no address bar and
+no universal links. A Safari enrollment cannot give a native push token, so enroll
+**in the app**.
+
 1. Apply the migration: `wrangler d1 migrations apply isitbeachday-plus --remote`
    (migration `0019_quality_loop.sql`).
 2. Deploy the app and `workers/history-cron`.
-3. On the owner's iPhone, open
-   `https://app.isitbeachday.com/admin/review#enroll=<OWNER_ENROLL_CODE>`.
-   Use the `#` form only. Browsers never send a `#` part to a server. The page
-   reads the code, removes it from the address bar, and sends it in a request
-   body. The server never logs it. A `?enroll=<code>` link does **not** work: a
-   query string would reach the server and its logs, so the page ignores it.
-4. The server makes an owner session. It returns a random 32-byte token once. The
+3. In the iPhone app, allow notifications once (turning on alerts for any beach
+   does it).
+4. **Open the hidden door.** Open the Plus settings sheet (or scroll to the bottom
+   of a beach page) and tap the "Support ID" line **5 times within 3 seconds**. The
+   web view goes to `/admin/review`. Nothing on screen changes for anyone else.
+5. A phone that is not enrolled sees only an **Owner code** box and an **Enroll**
+   button. Paste `OWNER_ENROLL_CODE` and tap Enroll. The code is sent in a request
+   body, never in an address, and the box is cleared after the try. It passes the
+   same throttle as the link below.
+6. The server makes an owner session. It returns a random 32-byte token once. The
    phone keeps it. The server keeps only its SHA-256, in `owner_sessions`.
-5. Allow notifications for the app once (turning on alerts for any beach does
-   it). The review screen then asks the phone for a fresh push token and sends it
-   to `POST /api/quality/owner/push-token`, which stores it on the owner session.
-   Owner pushes go only there.
+7. The review screen asks the phone for a fresh push token and sends it to
+   `POST /api/quality/owner/push-token`, which stores it on the owner session.
+   Owner pushes go only there. If this fails, the screen tries again on the next
+   load.
+
+**Other ways in.** On a Mac or in Safari you can open
+`https://app.isitbeachday.com/admin/review#enroll=<OWNER_ENROLL_CODE>`. Use the `#`
+form only. Browsers never send a `#` part to a server. The page reads the code,
+removes it from the address bar, and sends it in a request body. The server never
+logs it. A `?enroll=<code>` link does **not** work: a query string would reach the
+server and its logs, so the page ignores it. A Safari enrollment gives the session
+no push token, so the phone gets no owner pushes until you enroll in the app.
+
+**Tapping an owner push.** The push carries `https://app.isitbeachday.com/admin/review?alert=<id>`.
+The app's tap handler (`lib/push/native.ts`, `lib/push/tapTarget.ts`) opens that
+path in the web view. It accepts only a path on this app that a push is known to
+open: a beach page (`/<slug>`), `/admin/review` (with a plain numeric `alert`) and
+`/admin/report`. An address on another host or scheme, a protocol-relative address,
+and any other path are ignored.
 
 Enrollment is rate limited: 5 tries per hour per address, 20 per hour in all. The
 counters live in D1 (`owner_enroll_attempts`). One atomic statement bumps a

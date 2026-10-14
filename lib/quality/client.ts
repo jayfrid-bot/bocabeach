@@ -142,6 +142,16 @@ export function ownerErrorText(error: string): string {
 }
 
 /**
+ * The one line a phone that is NOT enrolled may be told after it tried a code. It says nothing about what the
+ * owner screens are: a throttle and a lost connection are plain, and every other refusal is one sentence. Pure.
+ */
+export function enrollGateText(error: string): string {
+  if (error === "too-many-attempts") return "Too many tries. Wait a while and try again.";
+  if (error === "network") return "No connection. Try again.";
+  return "That did not work.";
+}
+
+/**
  * How long until the public beach card shows an owner's answer. The server builds a fresh snapshot
  * on the next request after a tap (the conditions cache key includes the verdicts). What can still
  * hold the old card is the page's own refresh (every 5 minutes) and, if a network cache keeps

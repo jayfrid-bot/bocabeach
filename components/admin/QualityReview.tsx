@@ -4,7 +4,9 @@
 // every alert, picture and number arrives through /api/quality/owner/list, which only
 // a phone holding the owner token passes (lib/quality/owner.ts). A phone enrolls once by
 // opening /admin/review#enroll=<code> (the OWNER_ENROLL_CODE secret); the code is read from
-// the address, removed from it, and traded for the token. Any other phone sees a closed door.
+// the address, removed from it, and traded for the token. Inside the iPhone app (no address bar) the
+// owner types the code into the "Owner code" box instead (components/admin/OwnerCodeGate.tsx). Any other
+// phone sees only that box.
 //
 // Each open alert is one card: the picture, one sentence to judge, what the app
 // showed, and two big buttons. "Wrong" opens a one-tap picker for the correct
@@ -27,6 +29,7 @@ import {
 } from "@/lib/quality/client";
 import type { AlertView } from "@/lib/quality/review";
 import { CLARITY_WORDS, SEAWEED_LEVELS } from "@/lib/quality/types";
+import { OwnerCodeGate } from "@/components/admin/OwnerCodeGate";
 import { bigBtn, cardCls, chipBtn, chipOff, inputCls, linkCls, rightBtn, wrongBtn } from "@/components/admin/ownerUi";
 
 interface ListReply {
@@ -248,6 +251,26 @@ export function QualityReview({ focusAlertId }: { focusAlertId: number | null })
     [load],
   );
 
+  // A phone that is not enrolled sees one box and one button, and nothing else.
+  if (phase.kind === "closed") {
+    return (
+      <OwnerCodeGate
+        initialError={phase.error === "unauthorized" ? null : phase.error}
+        onEnrolled={() => {
+          setPhase({ kind: "loading" });
+          void load();
+        }}
+      />
+    );
+  }
+  if (phase.kind === "loading") {
+    return (
+      <main className="mx-auto max-w-xl px-4 py-10 sm:px-6">
+        <p className="text-slate-600 dark:text-slate-400">Loading.</p>
+      </main>
+    );
+  }
+
   return (
     <main className="mx-auto max-w-xl px-4 py-6 sm:px-6">
       <header className="mb-4 flex items-start justify-between gap-3">
@@ -257,17 +280,6 @@ export function QualityReview({ focusAlertId }: { focusAlertId: number | null })
         </div>
         <ThemeToggle />
       </header>
-
-      {phase.kind === "loading" ? <p className="text-slate-600 dark:text-slate-400">Loading.</p> : null}
-
-      {phase.kind === "closed" ? (
-        <section className={cardCls}>
-          <p className="text-slate-800 dark:text-slate-100">{ownerErrorText(phase.error)}</p>
-          <button type="button" className={`${bigBtn} mt-4 bg-slate-900/5 text-slate-800 dark:bg-white/10 dark:text-white`} onClick={() => void load()}>
-            Try again
-          </button>
-        </section>
-      ) : null}
 
       {phase.kind === "ready" ? (
         <>

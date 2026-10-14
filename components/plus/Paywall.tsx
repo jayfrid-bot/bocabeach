@@ -15,6 +15,7 @@ import type { PlusState } from "@/lib/plus/client";
 import { deviceEntitled } from "@/lib/plus/entitlement";
 import { defaultPlan, paywallCopy, PER, type OffersStatus } from "@/lib/plus/paywallCopy";
 import { ErrorLine, PrimaryButton, SecondaryButton, Sheet } from "@/components/plus/Sheet";
+import { useOwnerEntryTap } from "@/lib/quality/ownerEntry";
 
 const APP_STORE_URL = "https://apps.apple.com/us/app/id6779072992";
 const TERMS_URL = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
@@ -280,6 +281,8 @@ export function PaywallBody({
     }
   };
 
+  // Hidden owner entry: five quick taps on the Support ID line open /admin/review (lib/quality/ownerEntry.ts).
+  const ownerEntryTap = useOwnerEntryTap();
   const copySupportId = async () => {
     try {
       await navigator.clipboard.writeText(plus.deviceId);
@@ -487,7 +490,7 @@ export function PaywallBody({
             app user who opens Plus passes through, whatever their plan. */}
         {plus.deviceId ? (
           <div className="flex items-center justify-center gap-1.5 text-xs text-slate-400 dark:text-slate-600">
-            <span>
+            <span onClick={ownerEntryTap}>
               Support ID: <span className="font-mono">{supportId(plus.deviceId)}</span>
             </span>
             <button

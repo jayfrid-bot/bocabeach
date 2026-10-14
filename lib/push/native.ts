@@ -7,6 +7,7 @@ import { Capacitor } from "@capacitor/core";
 import { PushNotifications } from "@capacitor/push-notifications";
 import type { Token, RegistrationError, ActionPerformed } from "@capacitor/push-notifications";
 import { getDeviceId } from "@/lib/deviceId";
+import { safeTapTarget } from "@/lib/push/tapTarget";
 
 /**
  * Resolve the runtime platform robustly. We load the live site inside the
@@ -259,8 +260,11 @@ export async function initNativeTapHandling(): Promise<void> {
   try {
     const PN = getPlugin();
     void PN.addListener("pushNotificationActionPerformed", (action: ActionPerformed) => {
-      const url = (action?.notification?.data as { url?: string } | undefined)?.url;
-      if (url) window.location.assign(url);
+      // The payload is outside data: only a path on this app that a push is known to open (never an arbitrary
+      // address). The owner push opens /admin/review?alert=<id>.
+      const raw = (action?.notification?.data as { url?: unknown } | undefined)?.url;
+      const target = safeTapTarget(raw, [window.location.origin, "https://app.isitbeachday.com"]);
+      if (target) window.location.assign(target);
     });
   } catch {
     /* no-op off-device */

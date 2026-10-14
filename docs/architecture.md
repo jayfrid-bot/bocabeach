@@ -913,11 +913,13 @@ flowchart TD
   DRAIN -->|"lib/quality/notify.ts: ONLY the push token on an owner session<br/>(never the general devices table), ≤3 phones, 5 s timeout per call"| APNSQ[["APNs (fetch)<br/>tap opens /admin/review?alert=id"]]
 
   subgraph confirm ["Confirm: owner screens, public shells, never framed"]
-    REVIEW["/admin/review<br/>components/admin/QualityReview.tsx<br/>enroll from #enroll=code (fragment only) · fresh push token from the native plugin<br/>frame, one sentence, Right / Wrong, one-tap correct value · shows a push that may not have arrived"]
+    REVIEW["/admin/review<br/>components/admin/QualityReview.tsx<br/>enroll from #enroll=code (fragment only) or the Owner code box (a stranger sees only that box) · fresh push token from the native plugin<br/>frame, one sentence, Right / Wrong, one-tap correct value · shows a push that may not have arrived"]
     REPORT["/admin/report<br/>components/admin/ReportConditions.tsx<br/>seaweed, clarity, surf, sand, note"]
+    ENTRY["in the iPhone app: tap the Support ID line 5 times in 3 s<br/>(lib/quality/ownerEntry.ts) → web view goes to /admin/review"]
     LINK["beach page footer link<br/>shown only after the owner screen has worked on the phone<br/>(local storage hint, no request)"]
   end
-  APNSQ -.-> REVIEW
+  APNSQ -.->|"tap: lib/push/tapTarget.ts allows only /slug, /admin/review?alert=id, /admin/report"| REVIEW
+  ENTRY -.-> REVIEW
   LINK -.-> REPORT
 
   subgraph ownerapi ["Owner routes: POST, Authorization Bearer owner token, no-framing headers, 8 KB streaming body cap"]
