@@ -59,6 +59,28 @@ final class WidgetRefreshPolicyTests: XCTestCase {
         XCTAssertEqual(WidgetRefreshPolicy.reloadAfterFailure(failures: 3, now: now), .after(now.addingTimeInterval(120 * 60)))
     }
 
+    func testTheComplicationIsDrawnAgainAtValidUntilEvenIfTheReloadIsFloored() {
+        let valid = now.addingTimeInterval(13 * 60)
+        XCTAssertEqual(WidgetRefreshPolicy.entryDates(from: now, validUntil: valid), [now, valid])
+        // Already lapsed (or lapsing at once): one entry, which renders stale on its own.
+        XCTAssertEqual(WidgetRefreshPolicy.entryDates(from: now, validUntil: now), [now])
+        XCTAssertEqual(WidgetRefreshPolicy.entryDates(from: now, validUntil: now.addingTimeInterval(-60)), [now])
+    }
+
+    func testTheSecondEntryRendersTheStaleLookWithNoAlertHeadline() {
+        let summary = BeachSummary(slug: "boca-raton", name: "Boca Raton", score: 80, limitedData: false,
+                                   lines: [SummaryLine(kind: .hazard, text: "Lightning 3 mi away", tone: .danger)],
+                                   waterTempF: nil, dataAt: now.addingTimeInterval(-60),
+                                   validUntil: now.addingTimeInterval(13 * 60), fetchedAt: now)
+        let dates = WidgetRefreshPolicy.entryDates(from: now, validUntil: summary.validUntil)
+        // The first entry is current and leads with the alert...
+        XCTAssertFalse(summary.isStale(now: dates[0]))
+        XCTAssertEqual(summary.headlineLine(now: dates[0]), "Lightning 3 mi away")
+        // ...the entry at validUntil is the stale look: "as of", no alert headline.
+        XCTAssertTrue(summary.isStale(now: dates[1]))
+        XCTAssertNil(summary.headlineLine(now: dates[1]))
+    }
+
     func testFailureStreaksAreKeptPerBeachAndAnySuccessClearsThem() {
         WidgetFailureCounter.reset("boca-raton"); WidgetFailureCounter.reset("naples")
         defer { WidgetFailureCounter.reset("boca-raton"); WidgetFailureCounter.reset("naples") }

@@ -62,6 +62,7 @@
 		CADF2BA099C26B8ADD2836C9 /* ComplicationViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0012EC84795876C30B7788D5 /* ComplicationViews.swift */; };
 		CB0E245745F3C027C177EDB1 /* SharedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3715FB0ABFDFBFCE7CC2C992 /* SharedStore.swift */; };
 		CD60F81A84A397326DD724BC /* WatchSyncPayload.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F774667AC2C847E20373A6C /* WatchSyncPayload.swift */; };
+		D492EAE0082324F746D723D9 /* ConditionsClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F8576139024FB6F97FB9F6D /* ConditionsClientTests.swift */; };
 		DC850DFAAC18C06733E198C7 /* PhoneLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = B90007ACEB925CAF55B40831 /* PhoneLink.swift */; };
 		E42F94F33AE69D89230764CD /* BeachSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5057104645AB5D44F5A8EEE4 /* BeachSummary.swift */; };
 		E60DABC4B29C9961C0D5651E /* BeachDayWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 616DF0B6FF2A0B56F52D39E3 /* BeachDayWatchApp.swift */; };
@@ -143,6 +144,7 @@
 		0A935DBD2CB98165C4E10C50 /* ConditionsClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConditionsClient.swift; sourceTree = "<group>"; };
 		0BCC965BF909403D8584F299 /* BeachSessionActivityPlugin.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachSessionActivityPlugin.swift; sourceTree = "<group>"; };
 		0E446D1BCA274725A3D69B1F /* BeachBridgeViewController.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = BeachBridgeViewController.swift; sourceTree = "<group>"; };
+		0F8576139024FB6F97FB9F6D /* ConditionsClientTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ConditionsClientTests.swift; sourceTree = "<group>"; };
 		1034E562A7397F83B633FECA /* NearestLocator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NearestLocator.swift; sourceTree = "<group>"; };
 		15BDB3E4315D23BA7C4006DE /* SyncPayloadTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SyncPayloadTests.swift; sourceTree = "<group>"; };
 		15E9E1F8E8A1D5F8C13549DD /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -249,6 +251,7 @@
 				8B038DC796A16FD380CF9E37 /* SelectionTests.swift */,
 				191EC098D52082E4A82BEF88 /* SummaryPresentationTests.swift */,
 				9805E1A109DB12A0411F3552 /* BeachStoreTests.swift */,
+				0F8576139024FB6F97FB9F6D /* ConditionsClientTests.swift */,
 			);
 			name = BeachDayWatchTests;
 			path = BeachDayWatchTests;
@@ -632,6 +635,7 @@
 				506A77CA05401AE14E142D13 /* SelectionTests.swift in Sources */,
 				67E356A50B0089DEE5AD10C0 /* SummaryPresentationTests.swift in Sources */,
 				B461CC5308938D116A24B6D9 /* BeachStoreTests.swift in Sources */,
+				D492EAE0082324F746D723D9 /* ConditionsClientTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

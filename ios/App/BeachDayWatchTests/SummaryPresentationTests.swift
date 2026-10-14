@@ -26,6 +26,18 @@ final class SummaryPresentationTests: XCTestCase {
         XCTAssertEqual(s3.headlineLine(now: now), "Lightning 3 mi away")
     }
 
+    func testACalmHazardLineLikeAnUpcomingAlertStillBeatsBestTimeAndWater() {
+        let s = summary([line(.hazard, "Heat Advisory soon", .calm), line(.water, "Water 86\u{00B0}F", .calm), line(.best, "Best 4\u{2013}6 PM", .calm)])
+        XCTAssertEqual(s.headlineLine(now: now), "Heat Advisory soon")
+        let several = summary([line(.hazard, "3 alerts coming: A, B, C", .calm), line(.best, "Best 4\u{2013}6 PM", .calm)])
+        XCTAssertEqual(several.headlineLine(now: now), "3 alerts coming: A, B, C")
+        // Server order still wins between a calm hazard and a non-calm safety line.
+        let ordered = summary([line(.safety, "Rip current moderate", .caution), line(.hazard, "Heat Advisory soon", .calm)])
+        XCTAssertEqual(ordered.headlineLine(now: now), "Rip current moderate")
+        // A calm safety line (a green flag) is still not enough to outrank the best time.
+        XCTAssertEqual(summary([line(.safety, "Green flag", .calm), line(.best, "Best 4\u{2013}6 PM", .calm)]).headlineLine(now: now), "Best 4\u{2013}6 PM")
+    }
+
     func testCalmSafetyLinesYieldToBestTimeThenWater() {
         let calm = [line(.safety, "Green flag \u{00B7} Rip current low", .calm), line(.water, "Water 86\u{00B0}F", .calm), line(.best, "Best 4\u{2013}6 PM", .calm)]
         XCTAssertEqual(summary(calm).headlineLine(now: now), "Best 4\u{2013}6 PM")

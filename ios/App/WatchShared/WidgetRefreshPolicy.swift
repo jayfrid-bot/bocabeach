@@ -51,6 +51,13 @@ enum WidgetRefreshPolicy {
         return min(successInterval * pow(2, Double(steps)), maxBackoff)
     }
 
+    /// The times at which the complication must be drawn: when the entry starts, and again at
+    /// `validUntil`, when the same reading must flip to its stale ("as of h:mm", no alert
+    /// headline) look even if the network reload is floored or delayed.
+    static func entryDates(from start: Date, validUntil: Date) -> [Date] {
+        validUntil > start ? [start, validUntil] : [start]
+    }
+
     /// After a fetch: wake when the server says the view stops being current.
     static func reloadAfterSuccess(validUntil: Date, now: Date) -> Reload {
         .after(max(validUntil, now.addingTimeInterval(minimumGap)))

@@ -42,18 +42,35 @@ enum ConditionsClient {
         return URLSession(configuration: config)
     }()
 
+    typealias Transport = @Sendable (URL) async throws -> (Data, URLResponse)
+    typealias Clock = @Sendable () -> Date
+
     /// Fetches, summarizes and (unless told otherwise) caches one beach.
-    static func fetch(slug rawSlug: String, now: Date = Date(), save: Bool = true) async throws -> BeachSummary {
+    ///
+    /// The time of receipt is read AFTER the network call returns and is what `fetchedAt` and
+    /// the expiry check use: an answer that was valid when requested but expired in transit is
+    /// rejected, not cached. With `save: false` the caller saves the cache itself, after its own
+    /// check that the answer is still the one it wants (BeachStore does).
+    ///
+    /// `transport` and `clock` are injected by tests; the defaults are the real session and clock.
+    static func fetch(
+        slug rawSlug: String,
+        save: Bool = true,
+        clock: Clock = { Date() },
+        transport: Transport? = nil
+    ) async throws -> BeachSummary {
         guard let slug = WatchSync.cleanSlug(rawSlug) else { throw ConditionsError.invalidSlug }
         #if DEBUG
-        if UserDefaults.standard.bool(forKey: "debugOffline") { throw ConditionsError.offline }
+        // (An injected transport means a test: the launch-argument shortcuts below stay out of it.)
+        if transport == nil, UserDefaults.standard.bool(forKey: "debugOffline") { throw ConditionsError.offline }
         // Simulator only: read <dir>/<slug>.json instead of the network (the watch
         // simulator shares the Mac's file system). Used while /api/watch is not deployed.
-        if let dir = SharedStore.defaults.string(forKey: "debug.watchJSON") {
+        // The expiry check is skipped here: fixtures are made ahead of time.
+        if transport == nil, let dir = SharedStore.defaults.string(forKey: "debug.watchJSON") {
             guard let data = FileManager.default.contents(atPath: "\(dir)/\(slug).json") else { throw ConditionsError.unknownBeach }
             guard let dto = WatchViewDecoder.decode(data, expectedSlug: slug) else { throw ConditionsError.badData }
-            let summary = WatchViewDecoder.summary(from: dto, slug: slug, fetchedAt: now)
-            if save { SummaryCache.save(summary) }
+            var summary = WatchViewDecoder.summary(from: dto, slug: slug, fetchedAt: clock())
+            if save { summary = SummaryCache.store(summary) }
             WidgetFailureCounter.reset(slug)
             return summary
         }
@@ -62,20 +79,26 @@ enum ConditionsClient {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(from: url)
+            if let transport {
+                (data, response) = try await transport(url)
+            } else {
+                (data, response) = try await session.data(from: url)
+            }
         } catch {
             // Every transport failure (no network, timeout, DNS) reads the same on a watch.
             throw ConditionsError.offline
         }
+        // The moment the answer ARRIVED: not when the request started.
+        let receivedAt = clock()
         guard let http = response as? HTTPURLResponse else { throw ConditionsError.badData }
         if http.statusCode == 404 { throw ConditionsError.unknownBeach }
         guard http.statusCode == 200 else { throw ConditionsError.server(http.statusCode) }
         // 503 "incomplete" and every other non-200 land above: nothing is cached from them.
         guard let dto = WatchViewDecoder.decode(data, expectedSlug: slug) else { throw ConditionsError.badData }
-        let summary = WatchViewDecoder.summary(from: dto, slug: slug, fetchedAt: now)
-        // Already past its own validUntil: a failure, and the cache keeps what it had.
-        guard !summary.isExpired(now: now) else { throw ConditionsError.expired }
-        if save { SummaryCache.save(summary) }
+        var summary = WatchViewDecoder.summary(from: dto, slug: slug, fetchedAt: receivedAt)
+        // Already past its own validUntil on arrival: a failure, and the cache keeps what it had.
+        guard !summary.isExpired(now: receivedAt) else { throw ConditionsError.expired }
+        if save { summary = SummaryCache.store(summary) }
         // Any success, from the app or the widget, ends this beach's failure streak.
         WidgetFailureCounter.reset(slug)
         return summary

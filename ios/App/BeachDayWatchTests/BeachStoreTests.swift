@@ -103,6 +103,30 @@ final class BeachStoreTests: XCTestCase {
         XCTAssertEqual(reloads, 1)
     }
 
+    func testAThenBThenAJoinsTheStillRunningARequest() async {
+        BeachSelection.applySync(home: "boca-raton", favorites: [], lastViewed: nil)
+        let gate = Gate(), counter = Counter()
+        let store = makeStore { slug in
+            counter.slugs.append(slug)
+            if slug == "boca-raton" { await gate.wait(); return Self.summary(slug, score: 10) }
+            return Self.summary(slug, score: 99)
+        }
+        store.loadSelection()
+        let firstA = Task { await store.refresh(.selection) }
+        await settle()
+        await store.select("naples")                       // B finishes at once
+        let backToA = Task { await store.select("boca-raton") }  // A again: joins the A request still running
+        await settle()
+        XCTAssertEqual(counter.slugs.filter { $0 == "boca-raton" }.count, 1, "no second request for A")
+        gate.release()
+        await firstA.value
+        await backToA.value
+        XCTAssertEqual(store.activeSlug, "boca-raton")
+        XCTAssertEqual(store.summary?.slug, "boca-raton")
+        XCTAssertEqual(store.summary?.score, 10, "the one A request is published for the beach now on screen")
+        XCTAssertEqual(counter.slugs.filter { $0 == "boca-raton" }.count, 1)
+    }
+
     func testSwitchingBeachesMidRequestKeepsOnlyTheNewestAnswerAndOneReload() async {
         BeachSelection.applySync(home: "boca-raton", favorites: [], lastViewed: nil)
         let slowGate = Gate(), counter = Counter()

@@ -44,15 +44,8 @@ final class BeachStore: ObservableObject {
     @Published private(set) var summary: BeachSummary?
     @Published private(set) var phase: Phase = .idle
 
-    private struct InFlight {
-        let slug: String
-        let generation: Int
-        let task: Task<Void, Never>
-    }
-
-    /// Bumped by every request that starts; only the newest may publish a result.
-    private var generation = 0
-    private var inFlight: InFlight?
+    /// One request per beach: A, then B, then A again joins the A request still running.
+    private var inFlight: [String: Task<Void, Never>] = [:]
     /// A selection-reason refresh is running or was joined: one widget reload is owed.
     private var reloadOwed = false
     private var expiryTask: Task<Void, Never>?
@@ -140,28 +133,26 @@ final class BeachStore: ObservableObject {
         }
         if reason == .selection { reloadOwed = true }
         // Join a request already running for this beach rather than starting a second one.
-        if let current = inFlight, current.slug == slug {
-            await current.task.value
+        if let current = inFlight[slug] {
+            await current.value
             return
         }
-        generation += 1
-        let mine = generation
         phase = .loading
-        let task = Task { @MainActor in await self.run(slug: slug, generation: mine) }
-        inFlight = InFlight(slug: slug, generation: mine, task: task)
+        let task = Task { @MainActor in await self.run(slug: slug) }
+        inFlight[slug] = task
         await task.value
     }
 
-    private func run(slug: String, generation mine: Int) async {
+    private func run(slug: String) async {
         var saved = false
         var failure: ConditionsError?
         do {
             let fresh = try await fetcher(slug)
-            // Only the newest request for the beach on screen may publish, and only it
-            // may write the shared cache (an older answer finishing last must not win).
-            if mine == generation, activeSlug == slug {
-                SummaryCache.save(fresh)
-                summary = fresh
+            // Only a request for the beach on screen publishes or writes the shared cache,
+            // and the cache keeps the NEWEST answer by the server's own time (so an older
+            // one finishing last cannot win, here or in the widget's process).
+            if activeSlug == slug {
+                summary = SummaryCache.store(fresh)
                 phase = .idle
                 saved = true
                 failureStreak = 0
@@ -172,9 +163,11 @@ final class BeachStore: ObservableObject {
         } catch {
             failure = .badData
         }
-        guard mine == generation else { return } // a newer request owns the outcome and the reload
-        if inFlight?.generation == mine { inFlight = nil }
-        if let failure, activeSlug == slug {
+        inFlight[slug] = nil
+        // The user moved to another beach meanwhile: that beach's own request owns the outcome
+        // and the one widget reload that is owed.
+        guard activeSlug == slug else { return }
+        if let failure {
             phase = .failed(failure)
             failureStreak += 1
             scheduleExpiryRefresh() // the cached reading (if any) is kept; try again, backing off

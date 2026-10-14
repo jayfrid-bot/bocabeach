@@ -106,8 +106,19 @@ enum SummaryCache {
         return try? JSONDecoder().decode(BeachSummary.self, from: data)
     }
 
-    static func save(_ summary: BeachSummary) {
-        guard let data = try? JSONEncoder().encode(summary) else { return }
+    static func save(_ summary: BeachSummary) { _ = store(summary) }
+
+    static func remove(_ slug: String) { SharedStore.defaults.removeObject(forKey: key(slug)) }
+
+    /// Writes the summary unless the cache already holds a NEWER one (by the server's
+    /// `dataAt`), and returns whichever is now cached. The ordering lives in the shared
+    /// cache itself, so an older answer finishing last cannot overwrite a newer one,
+    /// whether it came from a task in the app or from the widget's process.
+    @discardableResult
+    static func store(_ summary: BeachSummary) -> BeachSummary {
+        if let existing = load(summary.slug), existing.dataAt > summary.dataAt { return existing }
+        guard let data = try? JSONEncoder().encode(summary) else { return summary }
         SharedStore.defaults.set(data, forKey: key(summary.slug))
+        return summary
     }
 }

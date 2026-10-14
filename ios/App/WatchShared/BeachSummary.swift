@@ -88,16 +88,18 @@ struct BeachSummary: Codable, Equatable {
 
     /// The first RELEVANT line in the SERVER's order. The server ranks hazards, flags and
     /// rip together (the website's order), so a double red flag ahead of approaching rain
-    /// stays ahead of it here. Relevant = a safety line (hazard, safety, "+N more") that is
-    /// not calm; failing that the best time, then water, then the first calm safety line.
-    /// Nothing is returned once the reading has expired: an old alert is not a headline.
+    /// stays ahead of it here. Relevant = ANY hazard line (a calm one too: "Heat Advisory
+    /// soon" is an upcoming alert), or a safety / "+N more" line that is not calm; failing
+    /// that the best time, then water, then the first calm safety line. Nothing is returned
+    /// once the reading has expired: an old alert is not a headline.
     func headlineLine(now: Date = Date()) -> String? {
         if isExpired(now: now) { return nil }
-        let safetyKinds: Set<LineKind> = [.hazard, .safety, .more]
-        if let line = lines.first(where: { safetyKinds.contains($0.kind) && $0.tone != .calm }) { return line.text }
+        if let line = lines.first(where: { $0.kind == .hazard || (($0.kind == .safety || $0.kind == .more) && $0.tone != .calm) }) {
+            return line.text
+        }
         if let best = firstLine(.best) { return best.text }
         if let water = firstLine(.water) { return water.text }
-        return lines.first(where: { safetyKinds.contains($0.kind) })?.text
+        return lines.first(where: { $0.kind == .safety || $0.kind == .more })?.text
     }
 
     /// "3:58 PM" in the watch's own time zone.
