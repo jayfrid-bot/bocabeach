@@ -13,7 +13,7 @@ const body = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   claim: { level: "moderate", coveragePct: 35, note: "brown rock shelf", provider: "gemini", model: "gemini-2.5-flash" },
   secondOpinion: { provider: "clef", model: "@cf/cloudflare/clef", level: "none", coveragePct: 0, note: null },
   others: [{ id: "boca-south", name: "Boca South", level: "none", coveragePct: 0, carried: false }],
-  claimTarget: { frameSha: SHA, frameAt: "2026-10-13T17:19:30Z", claimedAt: "2026-10-13T17:21:00Z" },
+  claimTarget: { frameSha: SHA, frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T17:21:00Z" },
   frame: { sha256: SHA, archivedThisTick: true },
   ...over,
 });
@@ -35,7 +35,7 @@ describe("parseSeaweedAlert", () => {
           claim: { level: "moderate", coveragePct: 35, note: "brown rock shelf", provider: "gemini", model: "gemini-2.5-flash" },
           secondOpinion: { provider: "clef", model: "@cf/cloudflare/clef", level: "none", coveragePct: 0, note: null },
           others: [{ id: "boca-south", name: "Boca South", level: "none", coveragePct: 0, carried: false }],
-          claimTarget: { frameSha: SHA.slice(0, 20), frameAt: "2026-10-13T17:19:30Z", claimedAt: "2026-10-13T17:21:00Z" },
+          claimTarget: { frameSha: SHA.slice(0, 20), frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T17:21:00Z" },
           localDate: "2026-10-13",
           frame: { sha256: SHA, archivedThisTick: true, r2Key: null },
         },
@@ -44,7 +44,10 @@ describe("parseSeaweedAlert", () => {
   });
 
   it("keys the alert by frame time when there is no hash", () => {
-    const r = parseSeaweedAlert(body({ frame: { sha256: null, archivedThisTick: false } }), NOW);
+    const r = parseSeaweedAlert(
+      body({ frame: { sha256: null, archivedThisTick: false }, claimTarget: { frameSha: null, frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T17:21:00Z" } }),
+      NOW,
+    );
     expect(r.ok && r.value.dedupeKey).toBe("seaweed:boca-raton:boca-inlet-surf:2026-10-13T17:20:00.000Z");
   });
 
@@ -88,7 +91,14 @@ describe("parseSeaweedAlert", () => {
   });
 
   it("ignores a malformed hash and out-of-range percentages", () => {
-    const r = parseSeaweedAlert(body({ frame: { sha256: "xyz", archivedThisTick: "yes" }, claim: { level: "moderate", coveragePct: 400 } }), NOW);
+    const r = parseSeaweedAlert(
+      body({
+        frame: { sha256: "xyz", archivedThisTick: "yes" },
+        claimTarget: { frameSha: null, frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T17:21:00Z" },
+        claim: { level: "moderate", coveragePct: 400 },
+      }),
+      NOW,
+    );
     expect(r.ok && r.value.payload.frame).toEqual({ sha256: null, archivedThisTick: false, r2Key: null });
     expect(r.ok && r.value.payload.claim.coveragePct).toBeNull();
   });
@@ -106,25 +116,65 @@ describe("parseSeaweedAlert", () => {
   });
 
   it("keeps the exact claim identity: frame hash (first 20), frame time and claim time, exactly as written", () => {
-    const r = parseSeaweedAlert(body({ claimTarget: { frameSha: "ABCDEF0123456789abcdef0123456789", frameAt: "2026-10-13T17:19:30Z", claimedAt: "2026-10-13T17:21:00Z" } }), NOW);
     // an upper-case hash is not a hash we wrote: it is dropped, and the time identifies the claim
-    expect(r.ok && r.value.payload.claimTarget).toEqual({ frameSha: null, frameAt: "2026-10-13T17:19:30Z", claimedAt: "2026-10-13T17:21:00Z" });
-    const good = parseSeaweedAlert(body({ claimTarget: { frameSha: "0123456789abcdef0123456789", frameAt: null, claimedAt: "2026-10-13T17:21:00Z" } }), NOW);
-    expect(good.ok && good.value.payload.claimTarget).toEqual({ frameSha: "0123456789abcdef0123", frameAt: null, claimedAt: "2026-10-13T17:21:00Z" });
+    const upper = parseSeaweedAlert(
+      body({ claimTarget: { frameSha: "ABCDEF0123456789abcdef0123456789", frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T17:21:00Z" } }),
+      NOW,
+    );
+    expect(upper.ok && upper.value.payload.claimTarget).toEqual({ frameSha: null, frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T17:21:00Z" });
+    // a courier cam has no hash: its time is its identity (the alert's own time is the frame's)
+    const courier = parseSeaweedAlert(
+      body({ frame: { sha256: null }, claimTarget: { frameSha: null, frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T17:21:00Z" } }),
+      NOW,
+    );
+    expect(courier.ok && courier.value.payload.claimTarget).toEqual({ frameSha: null, frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T17:21:00Z" });
   });
 
-  it("a claim with no identity is still recorded (as a record), with nulls", () => {
-    const r = parseSeaweedAlert(body({ claimTarget: undefined }), NOW);
-    expect(r.ok && r.value.payload.claimTarget).toEqual({ frameSha: null, frameAt: null, claimedAt: null });
-    const junk = parseSeaweedAlert(body({ claimTarget: { frameSha: 7, frameAt: "not a time", claimedAt: ["x"] } }), NOW);
-    expect(junk.ok && junk.value.payload.claimTarget).toEqual({ frameSha: null, frameAt: null, claimedAt: null });
+  it("refuses a claim that cannot name one exact claim", () => {
+    const refuse = (claimTarget: unknown, error: string, extra: Record<string, unknown> = {}) =>
+      expect(parseSeaweedAlert(body({ claimTarget, ...extra }), NOW), error).toEqual({ ok: false, error });
+    refuse(undefined, "bad-claim-time");
+    refuse({ frameSha: SHA, frameAt: "2026-10-13T17:20:00Z" }, "bad-claim-time"); // no claimedAt
+    refuse({ frameSha: SHA, frameAt: "2026-10-13T17:20:00Z", claimedAt: "not a time" }, "bad-claim-time");
+    refuse({ frameSha: SHA, frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T19:00:00Z" }, "bad-claim-time"); // future
+    refuse({ frameSha: SHA, frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T03:00:00Z" }, "bad-claim-time"); // 14 h old
+    refuse({ frameSha: SHA, frameAt: "2026-10-13T17:50:00Z", claimedAt: "2026-10-13T17:21:00Z" }, "claim-frame-mismatch"); // not the alert's frame time
+    refuse({ frameSha: null, frameAt: null, claimedAt: "2026-10-13T17:21:00Z" }, "unbound-claim");
+    refuse({ frameSha: 7, frameAt: "not a time", claimedAt: "2026-10-13T17:21:00Z" }, "unbound-claim");
   });
 
-  it("works out the claim's beach-local date, not the UTC date", () => {
+  it("checks the frame hash against the image that came with the alert", () => {
+    const other = "cd".repeat(32);
+    const t = { frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T17:21:00Z" };
+    expect(parseSeaweedAlert(body({ claimTarget: { frameSha: other, ...t } }), NOW)).toEqual({ ok: false, error: "claim-frame-mismatch" });
+    // a hash with no image hash to check it against cannot be trusted
+    expect(parseSeaweedAlert(body({ frame: { sha256: null }, claimTarget: { frameSha: SHA, ...t } }), NOW)).toEqual({ ok: false, error: "claim-frame-mismatch" });
+    // a long hash is cut to 20 and still matches its image
+    const r = parseSeaweedAlert(body({ claimTarget: { frameSha: SHA.slice(0, 30), ...t } }), NOW);
+    expect(r.ok && r.value.payload.claimTarget.frameSha).toBe(SHA.slice(0, 20));
+  });
+
+  it("without a frame time the alert's own time must be the claim time", () => {
+    const t = { frameSha: SHA, frameAt: null };
+    expect(parseSeaweedAlert(body({ observedAt: "2026-10-13T17:21:00Z", claimTarget: { ...t, claimedAt: "2026-10-13T17:21:00Z" } }), NOW).ok).toBe(true);
+    expect(parseSeaweedAlert(body({ observedAt: "2026-10-13T17:20:00Z", claimTarget: { ...t, claimedAt: "2026-10-13T17:21:00Z" } }), NOW)).toEqual({
+      ok: false,
+      error: "claim-frame-mismatch",
+    });
+  });
+
+  it("works out the claim's beach-local date from claimedAt, not the UTC date and not observedAt", () => {
     // 2026-10-14T02:30Z is 10:30 PM EDT on the 13th
-    const night = parseSeaweedAlert(body({ observedAt: "2026-10-14T02:30:00Z" }), Date.parse("2026-10-14T02:35:00.000Z"));
+    const t = (at: string) => ({ frameSha: SHA, frameAt: at, claimedAt: at });
+    const night = parseSeaweedAlert(body({ observedAt: "2026-10-14T02:30:00Z", claimTarget: t("2026-10-14T02:30:00Z") }), Date.parse("2026-10-14T02:35:00.000Z"));
     expect(night.ok && night.value.payload.localDate).toBe("2026-10-13");
-    const morning = parseSeaweedAlert(body({ observedAt: "2026-10-14T04:30:00Z" }), Date.parse("2026-10-14T04:35:00.000Z"));
+    const morning = parseSeaweedAlert(body({ observedAt: "2026-10-14T04:30:00Z", claimTarget: t("2026-10-14T04:30:00Z") }), Date.parse("2026-10-14T04:35:00.000Z"));
     expect(morning.ok && morning.value.payload.localDate).toBe("2026-10-14");
+    // a frame taken at 11:58 PM and scored at 12:02 AM belongs to the day it was SCORED
+    const across = parseSeaweedAlert(
+      body({ observedAt: "2026-10-14T03:58:00Z", claimTarget: { frameSha: SHA, frameAt: "2026-10-14T03:58:00Z", claimedAt: "2026-10-14T04:02:00Z" } }),
+      Date.parse("2026-10-14T04:05:00.000Z"),
+    );
+    expect(across.ok && across.value.payload.localDate).toBe("2026-10-14");
   });
 });

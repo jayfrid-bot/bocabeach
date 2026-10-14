@@ -12,6 +12,10 @@
 // to 9 batches of 5,000 rows). If the cap stops it with rows left, `more` is
 // true and tomorrow's run continues.
 //
+// The same daily run also tidies two small quality tables (docs/QUALITY_PLAN.md): push-slot rows that
+// are `sent` or `unknown` and older than 30 days, and owner-enrollment throttle counters older than
+// two days. A failure there is logged and never fails the cam purge.
+//
 // R2 objects are NOT touched here: the bucket's 367-day lifecycle rule removes
 // them two days after their row is gone, so an orphan object is invisible and a
 // listed row never points at a missing object.
@@ -19,6 +23,8 @@
 import { secretEqual } from "@/lib/db/api";
 import { getD1 } from "@/lib/db/d1Store";
 import { purgeCamFrames } from "@/lib/camFrames/store";
+import { purgeEnrollAttempts } from "@/lib/quality/enrollThrottle";
+import { purgeOldSlots } from "@/lib/quality/pushSlots";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -34,8 +40,17 @@ export async function POST(req: Request): Promise<Response> {
   const db = await getD1();
   if (!db) return Response.json({ error: "database unavailable" }, { status: 503 });
   try {
-    const result = await purgeCamFrames(db, Date.now(), { maxStatements: 10 });
-    return Response.json({ ok: true, ...result });
+    const nowMs = Date.now();
+    const result = await purgeCamFrames(db, nowMs, { maxStatements: 10 });
+    let pushSlots = 0;
+    let enrollCounters = 0;
+    try {
+      pushSlots = await purgeOldSlots(db, nowMs);
+      enrollCounters = await purgeEnrollAttempts(db, nowMs);
+    } catch (e) {
+      console.error("quality purge failed", e);
+    }
+    return Response.json({ ok: true, ...result, pushSlots, enrollCounters });
   } catch {
     return Response.json({ ok: false, error: "purge failed" }, { status: 500 });
   }

@@ -106,6 +106,11 @@ function AlertCard({ alert, focused, onDone }: { alert: AlertView; focused: bool
         <p className="mt-3 rounded-xl bg-slate-100 p-3 text-sm text-slate-500 dark:bg-slate-800 dark:text-slate-400">No saved picture for this one.</p>
       ) : null}
 
+      {alert.pushState === "unknown" ? (
+        <p className="mt-3 rounded-xl bg-amber-100 p-3 text-sm text-amber-900 dark:bg-amber-500/15 dark:text-amber-200">
+          The push for this one may not have reached you. It is here so you do not miss it.
+        </p>
+      ) : null}
       <p className="mt-3 text-lg font-semibold leading-snug text-slate-900 dark:text-white">{alert.statement}</p>
       {alert.published ? <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{alert.published}</p> : null}
       {alert.secondOpinion ? <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{alert.secondOpinion}</p> : null}
@@ -190,14 +195,19 @@ function AlertCard({ alert, focused, onDone }: { alert: AlertView; focused: bool
 export function QualityReview({ focusAlertId }: { focusAlertId: number | null }) {
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [notice, setNotice] = useState<string | null>(null);
+  const pushSynced = useRef(false);
 
   const load = useCallback(async () => {
     const r = await ownerPost<ListReply>("/api/quality/owner/list");
     if (r.ok) {
       writeOwnerHint(true);
       setPhase({ kind: "ready", open: r.data.open, recent: r.data.recent });
-      // Tell the server which phone to push to (this one). Quiet when it cannot.
-      void syncOwnerPushToken(nativePushTokenForOwner);
+      // Tell the server which phone to push to (this one), once per visit, with a FRESH token from the
+      // native push plugin. Quiet when it cannot.
+      if (!pushSynced.current) {
+        pushSynced.current = true;
+        void syncOwnerPushToken(nativePushTokenForOwner);
+      }
     } else {
       if (r.status === 401) {
         writeOwnerToken(null);

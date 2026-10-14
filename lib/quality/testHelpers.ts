@@ -91,14 +91,14 @@ export function fakeSender(result: Partial<OwnerPushResult> = {}): SendOwnerPush
   return fn;
 }
 
-/** Enroll a fake owner phone straight in the database. Returns its token, and the session id. */
+/** Enroll a fake owner phone straight in the database (a new device each call unless `deviceId` is given). Returns its token, and the session id. */
 export async function seedOwnerSession(
   db: D1Like,
   opts: { pushToken?: string; deviceId?: string; nowMs?: number } = {},
 ): Promise<{ token: string; id: number }> {
   const token = newOwnerToken();
   const nowMs = opts.nowMs ?? Date.now();
-  const id = await createSession(db, { deviceId: opts.deviceId ?? "11111111-2222-4333-8444-555555555555", token, nowMs });
+  const id = await createSession(db, { deviceId: opts.deviceId ?? crypto.randomUUID(), token, nowMs });
   if (opts.pushToken) await setSessionPushToken(db, id, opts.pushToken, nowMs);
   return { token, id };
 }

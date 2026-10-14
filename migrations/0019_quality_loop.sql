@@ -15,13 +15,17 @@
 --                    until the owner answers, or until it is older than 24 hours
 --                    (set to expired when the list is read).
 --
--- quality_push_slots the push LIMITS, enforced by D1 itself. An alert that may push takes
---                    a slot in ONE conditional INSERT (lib/quality/pushSlots.ts): at most
---                    3 slots per owner day, and none for a beach and signal that took one
---                    in the last 3 hours. UNIQUE (owner_day, slot) backs the daily count.
---                    A slot starts 'queued'; the drain step (POST /api/quality/drain, run by
---                    workers/history-cron every minute) sends it and marks it 'sent', or
---                    deletes it (releases it) when the send fails.
+-- quality_push_slots the push LIMITS, enforced by D1 itself, and the push QUEUE. An alert that may
+--                    push takes a slot in ONE conditional INSERT (lib/quality/pushSlots.ts), in the same
+--                    batch as the alert itself: at most 3 slots per owner day, and none for a beach and
+--                    signal that took one in the last 3 hours. UNIQUE (owner_day, slot) backs the count.
+--                    State: 'queued' -> the drain (POST /api/quality/drain, run by workers/history-cron
+--                    every minute) CLAIMS it with one conditional UPDATE, setting 'attempting' and a fresh
+--                    attempt_id, BEFORE it calls APNs -> 'sent' (finalized only WHERE attempt_id matches),
+--                    or the slot is deleted (released) when that attempt fails. An 'attempting' row older
+--                    than 10 minutes is never sent again: it becomes 'unknown' (a push that may or may not
+--                    have gone out), shown in the review list. Every state counts toward the day's 3 and
+--                    the 3-hour repeat window. Sent and unknown rows are purged after 30 days.
 --
 -- quality_labels     the owner's answers, and the owner's own reports. The raw
 --                    material for the golden test set and the weekly scorecard.
@@ -35,26 +39,33 @@
 --                    r2_key is the frame the label is about: the exact still kept with
 --                    the alert (quality/...), else an archived frame (cam_frames.r2_key).
 --
--- quality_overrides  the owner's seaweed verdict on ONE EXACT CLAIM, honored live. The target
---                    is the claim's identity: cam, frame (hash, else time) and claim time.
---                    It is written only when the claim was made on today's beach-local date
---                    and the alert was not expired; an older answer stores the label only.
---                      action 'publish'  (Right, or Wrong with a corrected level of moderate
---                                         or high): that frame's claim publishes at `level`
---                                         and its pending claim becomes confirmed ("owner").
---                      action 'reject'   (Wrong with none, low, or no value): that frame's
---                                         claim is removed and nothing is published for it,
---                                         and the cam is DISPUTED for the rest of the day
---                                         (the reader keeps that state in the feed).
---                    One active override per alert (unique index); the latest verdict per
---                    exact target wins (lib/quality/seaweedOverrides.ts and
---                    scripts/quality_watch.py apply the same rule).
+-- quality_overrides  the owner's seaweed verdict on ONE EXACT CLAIM, honored live. The target is the
+--                    claim's identity: cam, frame (hash, else time) AND the time the reader scored it
+--                    (claimed_at, required). It is written only when the claim was made on today's
+--                    beach-local date (the date of claimed_at) and the alert was not expired; an older
+--                    answer stores the label only.
+--                      action 'publish'  (Right, or Wrong with a corrected level of moderate or high):
+--                                         that claim publishes at `level` and its pending claim becomes
+--                                         confirmed ("owner").
+--                      action 'reject'   (Wrong with none, low, or no value): that claim is removed and
+--                                         nothing is published for it, and the cam is DISPUTED for the
+--                                         rest of the day (the reader keeps that state in the feed).
+--                    One active override per alert (unique index). Of all verdicts, one merged event
+--                    stream ordered by (created_at_utc, id) is replayed; the latest verdict per exact
+--                    target wins (lib/quality/seaweedOverrides.ts and scripts/quality_watch.py apply the
+--                    same rules, tested against lib/quality/verdictVectors.json).
 --
--- owner_sessions     who the owner is. A phone enrolls once with the OWNER_ENROLL_CODE secret
---                    and receives a random 32-byte token, shown once and stored here only as
---                    its SHA-256. Every owner route needs that token. `push_token` is the
---                    APNs token of the owner's phone, set through an owner route; owner
---                    pushes go only to it (never to the general devices table).
+-- owner_sessions     who the owner is. A phone enrolls once with the OWNER_ENROLL_CODE secret (in a URL
+--                    fragment, so it never reaches a server log) and receives a random 32-byte token,
+--                    shown once and stored here only as its SHA-256. Every owner route needs that token.
+--                    One ACTIVE session per device_id (enrolling again revokes the old one), and a
+--                    push_token is unique across active sessions (setting it on one session takes it
+--                    from any other). `push_token` is the APNs token of the owner's phone, set through an
+--                    owner route; owner pushes go only to it (never to the general devices table).
+--
+-- owner_enroll_attempts  the enrollment throttle: one counter per (bucket, hour), bumped by one atomic
+--                    statement (INSERT ... ON CONFLICT DO UPDATE ... WHERE n < max). Buckets: an address,
+--                    and 'all'. Purged after 2 days.
 CREATE TABLE owner_sessions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   device_id TEXT NOT NULL,
@@ -66,6 +77,15 @@ CREATE TABLE owner_sessions (
   revoked INTEGER NOT NULL DEFAULT 0 CHECK (revoked IN (0, 1))
 );
 CREATE INDEX owner_sessions_active ON owner_sessions(revoked, push_token);
+CREATE UNIQUE INDEX owner_sessions_one_active_per_device ON owner_sessions(device_id) WHERE revoked = 0;
+CREATE UNIQUE INDEX owner_sessions_push_token_unique ON owner_sessions(push_token) WHERE revoked = 0 AND push_token IS NOT NULL;
+
+CREATE TABLE owner_enroll_attempts (
+  bucket TEXT NOT NULL,                -- 'ip:<address>' or 'all'
+  hour_key TEXT NOT NULL,              -- the UTC hour, e.g. 2026-10-14T16
+  n INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (bucket, hour_key)
+);
 
 CREATE TABLE quality_labels (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -112,7 +132,9 @@ CREATE TABLE quality_push_slots (
   owner_day TEXT NOT NULL,             -- YYYY-MM-DD, America/New_York
   slot INTEGER NOT NULL,               -- 1, 2, 3, ... within the owner day
   reserved_at TEXT NOT NULL,           -- ISO
-  state TEXT NOT NULL DEFAULT 'queued' CHECK (state IN ('queued', 'sent')),
+  state TEXT NOT NULL DEFAULT 'queued' CHECK (state IN ('queued', 'attempting', 'sent', 'unknown')),
+  attempt_id TEXT,                     -- set when the drain claims the slot; finalize and release must match it
+  attempted_at TEXT,                   -- ISO, when it was claimed
   sent_at TEXT,                        -- ISO
   UNIQUE (owner_day, slot)
 );
@@ -130,7 +152,7 @@ CREATE TABLE quality_overrides (
   -- the exact claim this verdict is about
   frame_sha TEXT,                      -- first 20 hex of the still's SHA-256 (feed cams), else NULL
   frame_at TEXT,                       -- the frame's own time (courier cams), else NULL
-  claimed_at TEXT,                     -- when the reader scored the claim
+  claimed_at TEXT NOT NULL,            -- when the reader scored the claim (part of the exact identity)
   local_date TEXT NOT NULL,            -- beach-local date of the claim, which is also the day of the answer
   verdict TEXT NOT NULL CHECK (verdict IN ('right', 'wrong')),
   action TEXT NOT NULL CHECK (action IN ('publish', 'reject')),

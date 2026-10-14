@@ -33,22 +33,33 @@ const TOKEN = "test-quality-token";
 const NOW = Date.parse("2026-10-13T17:30:00.000Z"); // 1:30 PM EDT
 const SHA = "ab".repeat(32);
 
-const alertBody = (over: Record<string, unknown> = {}) => ({
-  slug: "boca-raton",
-  camId: "boca-inlet-surf",
-  camName: "Boca Inlet Cam",
-  observedAt: "2026-10-13T17:20:00Z",
-  published: { level: "none", pct: 0 },
-  claim: { level: "moderate", coveragePct: 35, note: "rock shelf", provider: "gemini", model: "gemini-2.5-flash" },
-  secondOpinion: { provider: "clef", model: "m", level: "none", coveragePct: 0, note: null },
-  others: [
-    { id: "boca-south", name: "Boca South", level: "none", coveragePct: 0, carried: false },
-    { id: "boca-south-surf", name: "South Surf", level: "none", coveragePct: 0, carried: false },
-  ],
-  claimTarget: { frameSha: SHA.slice(0, 20), frameAt: "2026-10-13T17:19:30Z", claimedAt: "2026-10-13T17:21:00Z" },
-  frame: { sha256: SHA, archivedThisTick: true },
-  ...over,
-});
+/** A body as the reader sends it. The claim's identity follows `frame` and `observedAt` unless a test sets `claimTarget`. */
+const alertBody = (over: Record<string, unknown> = {}) => {
+  const b: Record<string, unknown> = {
+    slug: "boca-raton",
+    camId: "boca-inlet-surf",
+    camName: "Boca Inlet Cam",
+    observedAt: "2026-10-13T17:20:00Z",
+    published: { level: "none", pct: 0 },
+    claim: { level: "moderate", coveragePct: 35, note: "rock shelf", provider: "gemini", model: "gemini-2.5-flash" },
+    secondOpinion: { provider: "clef", model: "m", level: "none", coveragePct: 0, note: null },
+    others: [
+      { id: "boca-south", name: "Boca South", level: "none", coveragePct: 0, carried: false },
+      { id: "boca-south-surf", name: "South Surf", level: "none", coveragePct: 0, carried: false },
+    ],
+    frame: { sha256: SHA, archivedThisTick: true },
+    ...over,
+  };
+  if (!("claimTarget" in over)) {
+    const observed = Date.parse(b.observedAt as string);
+    b.claimTarget = {
+      frameSha: (b.frame as { sha256?: string }).sha256?.slice(0, 20) ?? null,
+      frameAt: b.observedAt,
+      claimedAt: Number.isFinite(observed) ? new Date(observed + 60_000).toISOString().replace(/\.\d+Z$/, "Z") : null,
+    };
+  }
+  return b;
+};
 
 function post(body: unknown, headers: Record<string, string> = { authorization: `Bearer ${TOKEN}` }): Promise<Response> {
   return POST(
@@ -104,6 +115,9 @@ describe("auth and input", () => {
       [{ camId: "Bad Cam" }, "bad-cam"],
       [{ observedAt: "never" }, "bad-time"],
       [{ claim: { level: "low" } }, "bad-claim"],
+      [{ claimTarget: { frameSha: SHA.slice(0, 20), frameAt: "2026-10-13T17:20:00Z" } }, "bad-claim-time"],
+      [{ claimTarget: { frameSha: null, frameAt: null, claimedAt: "2026-10-13T17:21:00Z" } }, "unbound-claim"],
+      [{ claimTarget: { frameSha: "ef".repeat(10), frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T17:21:00Z" } }, "claim-frame-mismatch"],
       [{ secondOpinion: { provider: "clef", level: "moderate" } }, "not-a-disagreement"],
       [{ secondOpinion: null }, "bad-second-opinion"],
     ];
@@ -139,7 +153,7 @@ describe.skipIf(!HAS_SQLITE)("recording and queueing", () => {
     const payload = JSON.parse(h.all("SELECT payload_json FROM quality_alerts")[0].payload_json as string);
     expect(payload.others.map((o: { id: string }) => o.id)).toEqual(["boca-south", "boca-south-surf"]);
     expect(payload.secondOpinion.level).toBe("none");
-    expect(payload.claimTarget).toEqual({ frameSha: SHA.slice(0, 20), frameAt: "2026-10-13T17:19:30Z", claimedAt: "2026-10-13T17:21:00Z" });
+    expect(payload.claimTarget).toEqual({ frameSha: SHA.slice(0, 20), frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T17:21:00Z" });
     expect(payload.localDate).toBe("2026-10-13");
   });
 

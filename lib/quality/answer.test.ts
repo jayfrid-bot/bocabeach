@@ -17,7 +17,7 @@ const seaweedPayload = (over: Partial<SeaweedAlertPayload> = {}): SeaweedAlertPa
   claim: { level: "moderate", coveragePct: 35, note: "rocks", provider: "gemini", model: "m" },
   secondOpinion: { provider: "clef", model: "m", level: "none", coveragePct: 0, note: null },
   others: [],
-  claimTarget: { frameSha: SHA20, frameAt: "2026-10-13T17:19:30Z", claimedAt: "2026-10-13T17:21:00Z" },
+  claimTarget: { frameSha: SHA20, frameAt: "2026-10-13T17:20:00Z", claimedAt: "2026-10-13T17:21:00Z" },
   localDate: "2026-10-13",
   frame: { sha256: SHA, archivedThisTick: true },
   ...over,
@@ -86,6 +86,9 @@ describe("verdictEffect", () => {
   });
 });
 
+/** Frame taken and scored at 10:30 PM EDT on the 13th. */
+const NIGHT_CLAIM = { frameSha: SHA20, frameAt: "2026-10-14T02:30:00Z", claimedAt: "2026-10-14T02:31:00Z" };
+
 describe.skipIf(!HAS_SQLITE)("answerAlert: the verdict binds to the exact claim", () => {
   it("Right: a label, a closed alert, and a PUBLISH override carrying the claim's exact identity", async () => {
     const id = await seaweedAlert();
@@ -99,7 +102,7 @@ describe.skipIf(!HAS_SQLITE)("answerAlert: the verdict binds to the exact claim"
     expect(h.all("SELECT status, label_id FROM quality_alerts")[0]).toEqual({ status: "answered", label_id: label.id });
     expect(overrides()).toEqual([
       {
-        alert_id: id, superseded: 0, cam_id: "boca-inlet-surf", frame_sha: SHA20, frame_at: "2026-10-13T17:19:30Z",
+        alert_id: id, superseded: 0, cam_id: "boca-inlet-surf", frame_sha: SHA20, frame_at: "2026-10-13T17:20:00Z",
         claimed_at: "2026-10-13T17:21:00Z", local_date: "2026-10-13", verdict: "right", action: "publish", level: "moderate",
         coverage_pct: 35, label_id: label.id, created_at_utc: "2026-10-13T17:45:00.000Z", until_utc: "2026-10-14T04:00:00.000Z",
       },
@@ -132,8 +135,25 @@ describe.skipIf(!HAS_SQLITE)("answerAlert: the verdict binds to the exact claim"
     expect(labels()).toHaveLength(1);
   });
 
+  it("a claim with no claim time is a label only, even with a frame", async () => {
+    const id = await seaweedAlert(seaweedPayload({ claimTarget: { frameSha: SHA20, frameAt: "2026-10-13T17:20:00Z", claimedAt: null } }));
+    expect(await answerAlert(h.db, { alertId: id, verdict: "wrong" }, NOW)).toMatchObject({ overrideAdded: false, why: "unbound" });
+    expect(overrides()).toEqual([]);
+  });
+
+  it("the beach-local day is the day the claim was SCORED, not the day of the frame or the stored localDate", async () => {
+    // Frame taken at 11:58 PM on the 13th, scored at 12:02 AM on the 14th. The stored localDate is stale (the 13th).
+    const claim = { frameSha: SHA20, frameAt: "2026-10-14T03:58:00Z", claimedAt: "2026-10-14T04:02:00Z" };
+    const id = await seaweedAlert(seaweedPayload({ observedAt: "2026-10-14T03:58:00.000Z", localDate: "2026-10-13", claimTarget: claim }), "2026-10-14T04:05:00.000Z");
+    const r = await answerAlert(h.db, { alertId: id, verdict: "wrong" }, Date.parse("2026-10-14T05:00:00.000Z"));
+    expect(r).toMatchObject({ overrideAdded: true });
+    expect(overrides()[0]).toMatchObject({ local_date: "2026-10-14", until_utc: "2026-10-15T04:00:00.000Z" });
+  });
+
   it("an alert about an EARLIER day stores the label only: yesterday's Wrong cannot suppress today's seaweed", async () => {
-    const id = await seaweedAlert(seaweedPayload({ localDate: "2026-10-12" }), "2026-10-12T17:30:00.000Z");
+    const id = await seaweedAlert(seaweedPayload({ localDate: "2026-10-12", claimTarget: { frameSha: SHA20, frameAt: "2026-10-12T17:20:00Z", claimedAt: "2026-10-12T17:21:00Z" } }),
+      "2026-10-12T17:30:00.000Z",
+    );
     // 20 hours later, still inside the open window, but a different beach-local day
     const r = await answerAlert(h.db, { alertId: id, verdict: "wrong", correct: { level: "none" } }, Date.parse("2026-10-13T13:30:00.000Z"));
     expect(r).toMatchObject({ ok: true, overrideAdded: false, why: "earlier-day" });
@@ -143,10 +163,10 @@ describe.skipIf(!HAS_SQLITE)("answerAlert: the verdict binds to the exact claim"
   });
 
   it("answering after midnight an alert from the night before is label only (cross-midnight)", async () => {
-    const id = await seaweedAlert(seaweedPayload({ observedAt: "2026-10-14T02:30:00.000Z", localDate: "2026-10-13" }), "2026-10-14T02:35:00.000Z");
+    const id = await seaweedAlert(seaweedPayload({ observedAt: "2026-10-14T02:30:00.000Z", localDate: "2026-10-13", claimTarget: NIGHT_CLAIM }), "2026-10-14T02:35:00.000Z");
     const justAfterMidnight = Date.parse("2026-10-14T04:30:00.000Z"); // 12:30 AM EDT on the 14th
     expect(await answerAlert(h.db, { alertId: id, verdict: "wrong" }, justAfterMidnight)).toMatchObject({ overrideAdded: false, why: "earlier-day" });
-    const before = await seaweedAlert(seaweedPayload({ observedAt: "2026-10-14T02:30:00.000Z", localDate: "2026-10-13" }), "2026-10-14T02:35:00.000Z", "again");
+    const before = await seaweedAlert(seaweedPayload({ observedAt: "2026-10-14T02:30:00.000Z", localDate: "2026-10-13", claimTarget: NIGHT_CLAIM }), "2026-10-14T02:35:00.000Z", "again");
     expect(await answerAlert(h.db, { alertId: before, verdict: "wrong" }, Date.parse("2026-10-14T03:30:00.000Z"))).toMatchObject({ overrideAdded: true }); // 11:30 PM: still the 13th
     expect(overrides()[0].until_utc).toBe("2026-10-14T04:00:00.000Z");
   });

@@ -45,7 +45,9 @@ export type SendOwnerPush = (db: D1Like, msg: OwnerPush) => Promise<OwnerPushRes
 /** Send to every enrolled owner phone with a push token. Never throws: a failure is a result. */
 export const sendOwnerPush: SendOwnerPush = async (db, msg) => {
   try {
-    const targets = await sessionsWithPushToken(db, MAX_OWNER_PHONES);
+    // One send per distinct token (the database keeps them unique among active sessions; this is the belt).
+    const seen = new Set<string>();
+    const targets = (await sessionsWithPushToken(db, MAX_OWNER_PHONES * 2)).filter((t) => !seen.has(t.push_token) && seen.add(t.push_token)).slice(0, MAX_OWNER_PHONES);
     if (!targets.length) return { ok: false, sent: 0, failed: 0, reason: "no-owner-token" };
     const apns = getApns();
     if (!apns) return { ok: false, sent: 0, failed: 0, reason: "apns-not-configured" };
@@ -65,7 +67,7 @@ export const sendOwnerPush: SendOwnerPush = async (db, msg) => {
         if (r.ok) sent += 1;
         else {
           failed += 1;
-          if (isDeadToken(r)) await clearSessionPushToken(db, t.id);
+          if (isDeadToken(r)) await clearSessionPushToken(db, t.id, t.push_token);
         }
       }
     } finally {

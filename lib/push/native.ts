@@ -186,21 +186,13 @@ async function registerForToken(): Promise<string> {
 /**
  * This iPhone's APNs token, for the owner screens (they send it to POST /api/quality/owner/push-token
  * so owner alerts reach THIS phone, and only the phone that enrolled). Null off iOS, or when push
- * is not allowed on this phone. It never prompts: a token already saved for any beach is used
- * first; otherwise, only when the permission is already granted, the app registers for a fresh one.
+ * is not allowed on this phone. It never prompts: only when the permission is already granted does
+ * the app ask the plugin for a FRESH token. A token saved earlier for a beach (`native-push:*`) is
+ * never reused: it may be stale, and a stale token is a push to nowhere.
  */
 export async function nativePushTokenForOwner(): Promise<string | null> {
   if (nativePlatform() !== "ios") return null;
   try {
-    if (typeof localStorage !== "undefined") {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith("native-push:")) {
-          const v = localStorage.getItem(key);
-          if (v) return v;
-        }
-      }
-    }
     const perm = await withTimeout(getPlugin().checkPermissions(), 5000, "permission check stalled");
     if (perm.receive !== "granted") return null;
     return await registerForToken();

@@ -9,7 +9,8 @@ import {
   insertAlert,
   insertLabel,
   latestHourlyRow,
-  listAlerts,
+  listOpenAlerts,
+  listRecentAlerts,
   MAX_ALERTS_PER_SLUG_HOUR,
   previousHourlyRow,
   runAtomic,
@@ -35,14 +36,59 @@ const alert = (over: Record<string, unknown> = {}) => ({
 const labelSql =
   "INSERT INTO quality_labels (alert_id, superseded, slug, signal, observed_at_utc, source, verdict, created_at) VALUES (?1, ?2, 'boca-raton', 'seaweed', 'x', 'alert', 'right', 'x')";
 const overrideSql = (alertId: number, superseded: number) =>
-  `INSERT INTO quality_overrides (alert_id, superseded, slug, signal, cam_id, local_date, verdict, action, created_at_utc, until_utc) VALUES (${alertId}, ${superseded}, 'boca-raton', 'seaweed', 'c', '2026-10-13', 'right', 'publish', 'x', 'y')`;
+  `INSERT INTO quality_overrides (alert_id, superseded, slug, signal, cam_id, claimed_at, local_date, verdict, action, created_at_utc, until_utc) VALUES (${alertId}, ${superseded}, 'boca-raton', 'seaweed', 'c', '2026-10-13T17:21:00Z', '2026-10-13', 'right', 'publish', 'x', 'y')`;
 
 describe.skipIf(!HAS_SQLITE)("migration 0019", () => {
-  it("creates the five tables", () => {
+  it("creates the six tables", () => {
     const names = h
-      .all("SELECT name FROM sqlite_master WHERE type = 'table' AND (name LIKE 'quality_%' OR name = 'owner_sessions') ORDER BY name")
+      .all("SELECT name FROM sqlite_master WHERE type = 'table' AND (name LIKE 'quality_%' OR name LIKE 'owner_%') ORDER BY name")
       .map((r) => r.name);
-    expect(names).toEqual(["owner_sessions", "quality_alerts", "quality_labels", "quality_overrides", "quality_push_slots"]);
+    expect(names).toEqual(["owner_enroll_attempts", "owner_sessions", "quality_alerts", "quality_labels", "quality_overrides", "quality_push_slots"]);
+  });
+
+  it("an override must name the time the claim was scored", () => {
+    expect(() => h.exec(overrideSql(1, 0).replace("'2026-10-13T17:21:00Z'", "NULL"))).toThrow(/NOT NULL/);
+  });
+
+  it("allows one ACTIVE owner session per device, and any number once revoked", () => {
+    const ins = (device: string, hash: string, revoked: number) =>
+      `INSERT INTO owner_sessions (device_id, token_hash, created_at, last_seen, revoked) VALUES ('${device}', '${hash}', 'x', 'x', ${revoked})`;
+    h.exec(ins("phone", "h1", 0));
+    expect(() => h.exec(ins("phone", "h2", 0))).toThrow(/UNIQUE/);
+    h.exec(ins("phone", "h3", 1));
+    h.exec(ins("phone", "h4", 1));
+    h.exec(ins("other-phone", "h5", 0));
+  });
+
+  it("a push token belongs to one ACTIVE session at a time", () => {
+    const ins = (device: string, hash: string, tok: string | null, revoked = 0) =>
+      `INSERT INTO owner_sessions (device_id, token_hash, push_token, created_at, last_seen, revoked) VALUES ('${device}', '${hash}', ${tok ? `'${tok}'` : "NULL"}, 'x', 'x', ${revoked})`;
+    h.exec(ins("a", "h1", "tok"));
+    expect(() => h.exec(ins("b", "h2", "tok"))).toThrow(/UNIQUE/);
+    h.exec(ins("c", "h3", "tok", 1)); // a revoked session may keep an old token
+    h.exec(ins("d", "h4", null));
+    h.exec(ins("e", "h5", null)); // many sessions without a token are fine
+  });
+
+  it("a push slot goes through queued, attempting, sent or unknown, and nothing else", () => {
+    const slot = (alert: number, state: string) =>
+      `INSERT INTO quality_push_slots (alert_id, slug, signal, owner_day, slot, reserved_at, state) VALUES (${alert}, 's', 'score', '2026-10-13', ${alert}, 'x', '${state}')`;
+    ["queued", "attempting", "sent", "unknown"].forEach((st, i) => h.exec(slot(i + 1, st)));
+    expect(() => h.exec(slot(9, "released"))).toThrow();
+  });
+
+  it("counts enrollment attempts per bucket and hour, and stops at the limit in the statement itself", async () => {
+    const bump = () =>
+      h.db
+        .prepare(
+          "INSERT INTO owner_enroll_attempts (bucket, hour_key, n) VALUES ('ip:1', '2026-10-13T17', 1) " +
+            "ON CONFLICT(bucket, hour_key) DO UPDATE SET n = n + 1 WHERE n < 2",
+        )
+        .run();
+    expect((await bump()).meta?.changes).toBe(1);
+    expect((await bump()).meta?.changes).toBe(1);
+    expect((await bump()).meta?.changes).toBe(0);
+    expect(h.all("SELECT n FROM owner_enroll_attempts")[0].n).toBe(2);
   });
 
   it("refuses a signal, status, source, verdict or action outside the allowed words", async () => {
@@ -142,16 +188,41 @@ describe.skipIf(!HAS_SQLITE)("alerts", () => {
     expect(await expireOldAlerts(h.db, now)).toBe(0);
   });
 
-  it("listAlerts is newest first, respects the limit, and shows the ACTIVE label's verdict", async () => {
+  it("listOpenAlerts is newest first, respects the limit, and lists open alerts only", async () => {
     for (let i = 1; i <= 5; i++) await insertAlert(h.db, alert({ createdAt: `2026-10-13T1${i}:00:00.000Z`, dedupeKey: `k${i}` }));
-    expect((await listAlerts(h.db, 3)).map((r) => r.dedupe_key)).toEqual(["k5", "k4", "k3"]);
+    h.exec("UPDATE quality_alerts SET status = 'answered' WHERE dedupe_key = 'k4'");
+    expect((await listOpenAlerts(h.db, 3)).map((r) => r.dedupe_key)).toEqual(["k5", "k3", "k2"]);
+  });
+
+  it("an open alert is never buried under newer answered ones", async () => {
+    await insertAlert(h.db, alert({ createdAt: "2026-10-13T10:00:00.000Z", dedupeKey: "old-open" }));
+    for (let i = 0; i < 30; i++) {
+      await insertAlert(h.db, alert({ createdAt: `2026-10-13T11:${String(i).padStart(2, "0")}:00.000Z`, dedupeKey: `done${i}` }));
+    }
+    h.exec("UPDATE quality_alerts SET status = 'answered' WHERE dedupe_key LIKE 'done%'");
+    expect((await listOpenAlerts(h.db, 40)).map((r) => r.dedupe_key)).toEqual(["old-open"]);
+    expect(await listRecentAlerts(h.db, 5)).toHaveLength(5);
+  });
+
+  it("listRecentAlerts shows answered and expired alerts, newest first, with the ACTIVE label's verdict", async () => {
+    for (let i = 1; i <= 5; i++) await insertAlert(h.db, alert({ createdAt: `2026-10-13T1${i}:00:00.000Z`, dedupeKey: `k${i}` }));
     h.exec(
       "INSERT INTO quality_labels (id, alert_id, slug, signal, observed_at_utc, source, verdict, correct_value, created_at) VALUES (90, 5, 'boca-raton', 'seaweed', 'x', 'alert', 'wrong', '{\"level\":\"none\"}', 'x')",
     );
     h.exec("UPDATE quality_alerts SET status = 'answered', label_id = 90 WHERE dedupe_key = 'k5'");
-    const [top] = await listAlerts(h.db, 1);
-    expect(top).toMatchObject({ dedupe_key: "k5", status: "answered", label_id: 90, label_verdict: "wrong" });
-    expect(JSON.parse(top.label_correct!)).toEqual({ level: "none" });
+    h.exec("UPDATE quality_alerts SET status = 'expired' WHERE dedupe_key = 'k2'");
+    const rows = await listRecentAlerts(h.db, 10);
+    expect(rows.map((r) => r.dedupe_key)).toEqual(["k5", "k2"]);
+    expect(rows[0]).toMatchObject({ status: "answered", label_id: 90, label_verdict: "wrong" });
+    expect(JSON.parse(rows[0].label_correct!)).toEqual({ level: "none" });
+  });
+
+  it("each listed alert carries its push slot state, or null", async () => {
+    const a = await insertAlert(h.db, alert({ dedupeKey: "with-slot" }));
+    await insertAlert(h.db, alert({ dedupeKey: "no-slot", createdAt: "2026-10-13T16:00:00.000Z" }));
+    h.exec(`INSERT INTO quality_push_slots (alert_id, slug, signal, owner_day, slot, reserved_at, state) VALUES (${a.id}, 'boca-raton', 'seaweed', '2026-10-13', 1, 'x', 'unknown')`);
+    const rows = await listOpenAlerts(h.db, 10);
+    expect(rows.map((r) => [r.dedupe_key, r.push_state])).toEqual([["with-slot", "unknown"], ["no-slot", null]]);
   });
 });
 
@@ -171,7 +242,7 @@ describe.skipIf(!HAS_SQLITE)("labels and overrides", () => {
     const ins = (alert: number, over: Record<string, unknown> = {}) => {
       const v = { slug: "boca-raton", signal: "seaweed", cam: "boca-inlet-surf", until: "2026-10-14T04:00:00.000Z", sup: 0, ...over };
       h.exec(
-        `INSERT INTO quality_overrides (alert_id, superseded, slug, signal, cam_id, frame_sha, local_date, verdict, action, level, created_at_utc, until_utc) VALUES (${alert}, ${v.sup}, '${v.slug}', '${v.signal}', '${v.cam}', 'aaaaaaaaaaaaaaaaaaaa', '2026-10-13', 'right', 'publish', 'moderate', '2026-10-13T17:00:00.000Z', '${v.until}')`,
+        `INSERT INTO quality_overrides (alert_id, superseded, slug, signal, cam_id, frame_sha, claimed_at, local_date, verdict, action, level, created_at_utc, until_utc) VALUES (${alert}, ${v.sup}, '${v.slug}', '${v.signal}', '${v.cam}', 'aaaaaaaaaaaaaaaaaaaa', '2026-10-13T17:21:00Z', '2026-10-13', 'right', 'publish', 'moderate', '2026-10-13T17:00:00.000Z', '${v.until}')`,
       );
     };
     ins(1);

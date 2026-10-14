@@ -22,11 +22,13 @@ retried every tick until the app answers 2xx, and dropped after 24 hours (or at 
 permanent 4xx: 400, 404, 413, 422).
 
 OWNER VERDICTS. The owner taps Right or Wrong on an alert. The app keeps the answer as an
-override that names ONE EXACT CLAIM: the cam and the frame (its hash for a feed cam, else its
-time), and acts only on that claim, only on the day it was made. Once per beach per tick the
+override that names ONE EXACT CLAIM: the cam, the frame (its hash for a feed cam, else its time)
+AND the time the reader scored it (`claimedAt`, required), and acts only on that claim, only on
+the beach-local day (of claimedAt) it was made. The same image scored again later is a new claim. Once per beach per tick the
 reader fetches the running ones (GET /api/quality/overrides; any failure is "none", exactly as
-before). Of several verdicts on one exact target, the latest wins (same rule as the app;
-lib/quality/verdictVectors.json holds the shared test vectors).
+before). The verdicts in force are ONE merged stream of publishes and rejects, ordered by
+(created time, id) and replayed in that order; of several on one exact target, the latest wins (same
+rules as the app; lib/quality/verdictVectors.json holds the shared test vectors).
 
   * PUBLISH (Right, or Wrong with a corrected level of moderate or high): the held reading
     of that frame publishes at the verdict's level with `confirmedBy: "owner"`, and that
@@ -129,7 +131,7 @@ def confirm_held(held: dict, by: str, claim: dict | None = None) -> dict:
     mutated. Pure."""
     own = held.get("claim") or {}
     use = claim if claim and claim.get("level") in _RANK else own
-    out = {k: v for k, v in held.items() if k not in ("unconfirmed", "claim", "dispute")}
+    out = {k: v for k, v in held.items() if k not in ("unconfirmed", "claim", "dispute", "disputed")}
     out["level"] = use.get("level")
     out["coveragePct"] = use.get("coveragePct")
     out["note"] = use.get("note")
@@ -315,6 +317,12 @@ def same_frame(a: dict, b: dict) -> bool:
     return bool(fa and fb and fa == fb)
 
 
+def same_claim(a: dict, b: dict) -> bool:
+    """True when two things name the same CLAIM: the same frame, scored at the same time. The same
+    image scored again later is a different claim. Pure."""
+    return same_frame(a, b) and bool(a.get("claimedAt")) and a.get("claimedAt") == b.get("claimedAt")
+
+
 def claim_key(o: dict) -> str | None:
     """The key of a frame: its hash prefix, else its time; None with neither. Pure."""
     if o.get("frameSha"):
@@ -325,9 +333,10 @@ def claim_key(o: dict) -> str | None:
 
 
 def target_key(o: dict) -> str | None:
-    """The key of one exact target: cam plus frame. None when it has no frame identity. Pure."""
+    """The key of one exact target: cam, frame and claim time. None when it lacks a frame identity or
+    a claim time (it cannot bind). Pure."""
     k = claim_key(o)
-    return f"{o.get('camId')}|{k}" if k else None
+    return f"{o.get('camId')}|{k}|{o['claimedAt']}" if k and o.get("claimedAt") else None
 
 
 def parse_overrides(doc) -> list[dict]:
@@ -402,21 +411,25 @@ def effective_overrides(overrides: list, now: dt.datetime) -> list[dict]:
 
 
 def owner_state(overrides: list, now: dt.datetime) -> dict:
-    """The owner's verdicts in force, split by what they do:
-      {"publish": [...], "reject": [...]}   (each oldest first). Pure."""
+    """The owner's verdicts in force, as
+      {"publish": [...], "reject": [...], "events": [...]}
+    `events` is ONE merged stream of both, ordered by (created time, id); `publish` and `reject` are
+    the same events split by action, in the same order. Pure."""
     live = effective_overrides(overrides, now)
     return {"publish": [o for o in live if o["action"] == "publish"],
-            "reject": [o for o in live if o["action"] == "reject"]}
+            "reject": [o for o in live if o["action"] == "reject"],
+            "events": live}
 
 
-def apply_owner_confirmations(prev: dict, publish: list, reject: list) -> dict:
-    """The previous published feed with the owner's verdicts applied to their exact claims, oldest
-    first. PUBLISH: a reading still held for that frame publishes at the verdict's level with
-    `confirmedBy: "owner"` (in `latest`, `lastSeaweed`, `morning`), and that frame's pending claim
-    becomes confirmed (`confirmedBy: "owner"`). REJECT: a held reading for that frame is cleared and
-    its pending claim removed. Nothing else changes. Returns a new dict; `prev` is not mutated, and
-    with nothing to apply it returns `prev` itself. Pure."""
-    both = sorted([*publish, *reject], key=lambda o: (parse_iso(o["createdAtUtc"]), o.get("id") or 0))
+def apply_owner_confirmations(prev: dict, events: list) -> dict:
+    """The previous published feed with the owner's verdicts applied, in order, to their exact claims
+    (`events` is owner_state()["events"]). PUBLISH: a reading still held for that claim publishes at the
+    verdict's level with `confirmedBy: "owner"` (in `latest`, `lastSeaweed`, `morning`), and that claim's
+    pending entry becomes confirmed (`confirmedBy: "owner"`). REJECT: a held reading for that claim is
+    cleared and its pending entry removed. A claim is the cam, the frame AND the time it was scored: a
+    verdict never touches another frame, or the same image scored at another time. Returns a new dict;
+    `prev` is not mutated, and with nothing to apply it returns `prev` itself. Pure."""
+    both = sorted(events, key=lambda o: (parse_iso(o["createdAtUtc"]), o.get("id") or 0))
     if not both:
         return prev
     out = dict(prev)
@@ -428,7 +441,9 @@ def apply_owner_confirmations(prev: dict, publish: list, reject: list) -> dict:
                 continue
             cams = []
             for c in group["cams"]:
-                if c.get("id") == cam and c.get("unconfirmed") and same_frame(c, o):
+                if (c.get("id") == cam and c.get("unconfirmed")
+                        and same_claim({"frameSha": c.get("frameSha"), "frameAt": c.get("frameAt"),
+                                        "claimedAt": c.get("scoredAt")}, o)):
                     if o["action"] == "publish":
                         c = confirm_held(c, "owner", {"level": o.get("level"), "coveragePct": o.get("coveragePct"),
                                                       "note": o.get("note")})
@@ -439,7 +454,7 @@ def apply_owner_confirmations(prev: dict, publish: list, reject: list) -> dict:
             out[key] = {**group, "cams": cams}
         claims = out.get("pendingClaims")
         entry = claims.get(cam) if isinstance(claims, dict) else None
-        if isinstance(entry, dict) and same_frame(entry, o):
+        if isinstance(entry, dict) and same_claim(entry, o):
             if o["action"] == "reject":
                 out["pendingClaims"] = {k: v for k, v in claims.items() if k != cam}
             elif not entry.get("confirmed"):
@@ -458,30 +473,33 @@ def is_active_dispute(entry) -> bool:
     return isinstance(entry, dict) and not entry.get("resolvedAt")
 
 
-def dispute_state(prev_disputed, rejects: list, publishes: list, now: dt.datetime) -> dict[str, dict]:
+def dispute_state(prev_disputed, events: list, now: dt.datetime) -> dict[str, dict]:
     """The feed's `disputedCams` for this tick: {cam id: {since, reason, date, claims, resolvedAt?}}.
-    Starts from the previous map's entries made TODAY (beach-local date of `now`); adds a dispute for
-    each owner REJECT that is not already covered (a new reject after an entry was resolved starts
-    a fresh dispute); and ends (resolvedAt) an active dispute when an owner PUBLISH on that cam came
-    after it began. A resolved entry stays as a marker, so the same reject is not re-applied. Pure."""
+    Starts from the previous map's entries made TODAY (beach-local date of `now`), then REPLAYS the
+    owner's verdicts (`events`, owner_state()["events"]: ONE stream of rejects and publishes ordered
+    by (created time, id)), each against the state the one before left:
+      reject  starts a dispute for its cam, unless one is already active; a reject made after an entry
+              was resolved starts a fresh one (so Wrong, Right, Wrong ends disputed);
+      publish ends an active dispute on that cam that began at or before it (Right, Wrong, Right ends
+              not disputed).
+    A resolved entry stays as a marker, so a reject already answered is not applied twice. Pure."""
     today = now.date().isoformat()
     out: dict[str, dict] = {}
     if isinstance(prev_disputed, dict):
         for cam, e in prev_disputed.items():
             if isinstance(e, dict) and e.get("date") == today:
                 out[cam] = {**e, "claims": list(e.get("claims") or [])}
-    for o in rejects:
-        if o.get("localDate") not in (None, today):
-            continue
+    for o in sorted(events, key=lambda o: (parse_iso(o["createdAtUtc"]), o.get("id") or 0)):
         e = out.get(o["camId"])
         made = parse_iso(o["createdAtUtc"])
-        resolved = parse_iso(e.get("resolvedAt")) if e else None
-        if e is None or (resolved is not None and made is not None and resolved < made):
-            out[o["camId"]] = {"since": o["createdAtUtc"], "reason": "owner", "date": today, "claims": []}
-    for o in publishes:
-        e = out.get(o["camId"])
-        if is_active_dispute(e):
-            since, made = parse_iso(e.get("since")), parse_iso(o["createdAtUtc"])
+        if o["action"] == "reject":
+            if o.get("localDate") not in (None, today):
+                continue
+            resolved = parse_iso(e.get("resolvedAt")) if e else None
+            if e is None or (resolved is not None and made is not None and resolved < made):
+                out[o["camId"]] = {"since": o["createdAtUtc"], "reason": "owner", "date": today, "claims": []}
+        elif is_active_dispute(e):
+            since = parse_iso(e.get("since"))
             if since is not None and made is not None and since <= made:
                 e["resolvedAt"] = o["createdAtUtc"]
     return out

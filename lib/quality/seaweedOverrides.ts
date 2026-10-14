@@ -4,13 +4,15 @@
 // rows through GET /api/quality/overrides and applies the same rules
 // (scripts/quality_watch.py; both are tested against lib/quality/verdictVectors.json).
 //
-// TARGET. A verdict names a claim by its cam and its frame: the frame's hash for a feed
-// cam, else the frame's own time. It never acts on "the cam" in general, on a different
-// frame of that cam, or on a reading that merely came before the tap.
+// TARGET. A verdict names a claim by its cam, its frame (the frame's hash for a feed cam, else the
+// frame's own time) AND the time the reader scored it (`claimedAt`, required). It never acts on "the
+// cam" in general, on a different frame of that cam, on the same image scored again later, or on a
+// reading that merely came before the tap.
 //
-// SUPERSESSION. Of the verdicts for one exact target, the latest wins (created time, then
-// id). The server keeps one active verdict per alert; this rule also settles two alerts
-// about one frame.
+// REPLAY. The verdicts in force are ONE merged event stream, publishes and rejects together, ordered
+// by (created time, id), and applied in that order; of the verdicts for one exact target, the latest
+// wins. The server keeps one active verdict per alert; this rule also settles two alerts about one
+// claim. scripts/quality_watch.py replays the same stream the same way.
 //
 // ACTIONS, for the matching claim only:
 //   publish  (Right, or Wrong with a corrected level of moderate or high): a reading still
@@ -36,6 +38,7 @@ export interface SeaweedOverride {
   frameSha?: string | null;
   /** The frame's own time, for courier cams, kept exactly as the reader wrote it. */
   frameAt?: string | null;
+  /** When the reader scored the claim, kept exactly as written. Part of the exact identity. */
   claimedAt?: string | null;
   /** Beach-local date of the claim. */
   localDate?: string;
@@ -50,6 +53,10 @@ interface FrameId {
   frameAt?: string | null;
 }
 
+interface ClaimId extends FrameId {
+  claimedAt?: string | null;
+}
+
 /** True when two things name the same frame: equal hash prefixes when both have a hash, else equal frame time. Pure. */
 export function sameFrame(a: FrameId, b: FrameId): boolean {
   if (a.frameSha && b.frameSha) {
@@ -60,10 +67,16 @@ export function sameFrame(a: FrameId, b: FrameId): boolean {
   return false;
 }
 
-/** The key of one exact target: cam plus frame. Null when the verdict has no frame identity (it cannot bind). Pure. */
-export function targetKey(o: { camId: string } & FrameId): string | null {
-  if (o.frameSha) return `${o.camId}|sha:${o.frameSha.slice(0, 20)}`;
-  if (o.frameAt) return `${o.camId}|at:${o.frameAt}`;
+/** True when two things name the same CLAIM: the same frame, scored at the same time. Pure. */
+export function sameClaim(a: ClaimId, b: ClaimId): boolean {
+  return sameFrame(a, b) && !!a.claimedAt && a.claimedAt === b.claimedAt;
+}
+
+/** The key of one exact target: cam, frame, and claim time. Null when the verdict lacks a frame or a claim time (it cannot bind). Pure. */
+export function targetKey(o: { camId: string } & ClaimId): string | null {
+  if (!o.claimedAt) return null;
+  if (o.frameSha) return `${o.camId}|sha:${o.frameSha.slice(0, 20)}|${o.claimedAt}`;
+  if (o.frameAt) return `${o.camId}|at:${o.frameAt}|${o.claimedAt}`;
   return null;
 }
 
@@ -92,6 +105,8 @@ export function effectiveOverrides(list: SeaweedOverride[], nowMs: number): Seaw
 
 interface OverridableReading extends FrameId {
   id?: string;
+  /** When the reader scored this reading: the claim time. */
+  scoredAt?: string;
   level?: unknown;
   coveragePct?: unknown;
   note?: unknown;
@@ -103,6 +118,7 @@ interface OverridableGroup {
   cams?: OverridableReading[];
 }
 interface OverridableClaim extends FrameId {
+  claimedAt?: string;
   confirmed?: boolean;
   confirmedBy?: string;
 }
@@ -130,7 +146,8 @@ function mapGroup<G extends OverridableGroup>(
 }
 
 function applyOne(feed: OverridableFeed, o: SeaweedOverride): void {
-  const held = (c: OverridableReading) => c.id === o.camId && c.unconfirmed === true && sameFrame(c, o);
+  const held = (c: OverridableReading) =>
+    c.id === o.camId && c.unconfirmed === true && sameClaim({ frameSha: c.frameSha, frameAt: c.frameAt, claimedAt: c.scoredAt }, o);
   const change = (c: OverridableReading): OverridableReading => {
     if (!held(c)) return c;
     if (o.action === "reject") return { ...c, level: "unknown", coveragePct: undefined, note: undefined, unconfirmed: undefined, claim: undefined };
@@ -152,7 +169,7 @@ function applyOne(feed: OverridableFeed, o: SeaweedOverride): void {
   feed.lastSeaweed = mapGroup(feed.lastSeaweed, change);
   const claims = feed.pendingClaims;
   const entry = claims?.[o.camId];
-  if (claims && entry && sameFrame(entry, o)) {
+  if (claims && entry && sameClaim(entry, o)) {
     if (o.action === "reject") {
       const { [o.camId]: _removed, ...kept } = claims;
       feed.pendingClaims = kept;

@@ -81,8 +81,46 @@ describe.skipIf(!HAS_SQLITE)("sessions", () => {
     await setSessionPushToken(h.db, b, "bb".repeat(32), NOW + 1000);
     expect((await sessionsWithPushToken(h.db, 5)).map((s) => s.id)).toEqual([b, a]);
     expect(await sessionsWithPushToken(h.db, 1)).toHaveLength(1);
-    await clearSessionPushToken(h.db, b);
+    expect(await clearSessionPushToken(h.db, b, "bb".repeat(32))).toBe(true);
     expect((await sessionsWithPushToken(h.db, 5)).map((s) => s.id)).toEqual([a]);
+  });
+
+  it("clearing a dead token is compare-and-set: a refreshed token survives a late 'dead' answer", async () => {
+    const a = await createSession(h.db, { deviceId: "a", token: newOwnerToken(), nowMs: NOW });
+    await setSessionPushToken(h.db, a, "old".repeat(20), NOW);
+    await setSessionPushToken(h.db, a, "new".repeat(20), NOW + 1000); // the phone sent a fresh token meanwhile
+    expect(await clearSessionPushToken(h.db, a, "old".repeat(20))).toBe(false);
+    expect(h.all("SELECT push_token FROM owner_sessions")[0].push_token).toBe("new".repeat(20));
+    expect(await clearSessionPushToken(h.db, a, "new".repeat(20))).toBe(true);
+    expect(h.all("SELECT push_token FROM owner_sessions")[0].push_token).toBeNull();
+  });
+
+  it("enrolling again from the same device revokes the old session: one active session per device", async () => {
+    const t1 = newOwnerToken();
+    const t2 = newOwnerToken();
+    const first = await createSession(h.db, { deviceId: "phone", token: t1, nowMs: NOW });
+    await setSessionPushToken(h.db, first, "aa".repeat(32), NOW);
+    const second = await createSession(h.db, { deviceId: "phone", token: t2, nowMs: NOW + 1000 });
+    expect(second).not.toBe(first);
+    expect(await findSession(h.db, t1)).toBeNull();
+    expect(await findSession(h.db, t2)).toMatchObject({ id: second });
+    expect(h.all("SELECT COUNT(*) AS n FROM owner_sessions WHERE device_id = 'phone' AND revoked = 0")[0].n).toBe(1);
+    // the revoked session no longer receives pushes
+    expect(await sessionsWithPushToken(h.db, 5)).toEqual([]);
+  });
+
+  it("two enrollments at once from one device still leave exactly one active session", async () => {
+    await Promise.all([1, 2, 3].map((i) => createSession(h.db, { deviceId: "phone", token: newOwnerToken(), nowMs: NOW + i })));
+    expect(h.all("SELECT COUNT(*) AS n FROM owner_sessions WHERE device_id = 'phone' AND revoked = 0")[0].n).toBe(1);
+  });
+
+  it("a push token moves to the newest session that sets it: one phone is never pushed twice", async () => {
+    const a = await createSession(h.db, { deviceId: "a", token: newOwnerToken(), nowMs: NOW });
+    const b = await createSession(h.db, { deviceId: "b", token: newOwnerToken(), nowMs: NOW });
+    await setSessionPushToken(h.db, a, "tt".repeat(32), NOW);
+    await setSessionPushToken(h.db, b, "tt".repeat(32), NOW + 1000);
+    expect((await sessionsWithPushToken(h.db, 5)).map((s) => s.id)).toEqual([b]);
+    expect(h.all("SELECT push_token FROM owner_sessions WHERE id = ?", a)[0].push_token).toBeNull();
   });
 
   it("a revoked session neither keeps nor receives a push token", async () => {

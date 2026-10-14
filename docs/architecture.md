@@ -161,7 +161,7 @@ flowchart LR
   SARG -->|"every tick, vision on or off: GET /api/cam-frames/slots?slug (one per beach, fails open)<br/>then POST /api/cam-frames?slug&amp;cam&amp;frameAt for cams not yet filled<br/>Bearer INGEST_TOKEN, raw JPEG, best-effort, 15 s timeout, 90 s budget per tick<br/>(scripts/cam_seaweed.py: the stills the vision loop fetched are uploaded after its reads,<br/>archive_pass fetches the rest; frameAt = latest.json timestamp or the uw-frame meta time)"| CAMINGEST["/api/cam-frames (POST) and /api/cam-frames/slots (GET)<br/>constant-time auth; cam must be in the manifest (404 unknown, 403 archive:false);<br/>Content-Length and streamed 600 KB cap; JPEG magic, at least 10 KB; sha-256;<br/>atomic slot claim with a random claim id = one shot per cam per slot of display time<br/>(slot = UTC hour; inside the beach golden-hour windows, sunrise -20/+40 min and sunset -40/+20 min, a 10-minute slot: lib/camFrames/golden.ts)"]
   CAMINGEST -->|"INSERT ... ON CONFLICT DO NOTHING (state pending, claim_id), else take over a pending claim older than 10 min;<br/>R2 put; then ready WHERE claim_id matches (an uncertain finalize is re-read, never rolled back blind);<br/>an unchanged sha vs the newest ready frame is dropped (advisory);<br/>cam_frames, migrations/0016 and 0017 (slot_kind)"| D1
   CAMINGEST -->|"PUT slug/cam/local_date/HHmmZ-sha8-claim8.jpg"| CAMR2[("R2 bucket isitbeachday-cam-frames<br/>binding CAM_FRAMES<br/>lifecycle rule deletes after 367 days")]
-  HISTCRON -->|"once a day, on the 08:17 UTC tick, before the archive call; POST x-cron-secret"| CAMPURGE["/api/cam-frames/purge<br/>at most 10 D1 statements: pending rows older than 1 h,<br/>then rows older than 365 days by received_at_utc<br/>(DELETE of 5,000 rows per statement)"]
+  HISTCRON -->|"once a day, on the 08:17 UTC tick, before the archive call; POST x-cron-secret"| CAMPURGE["/api/cam-frames/purge<br/>at most 10 D1 statements: pending rows older than 1 h,<br/>then rows older than 365 days by received_at_utc<br/>(DELETE of 5,000 rows per statement)<br/>also: push slots sent or unknown older than 30 days,<br/>owner enrollment counters older than 2 days"]
   CAMPURGE -->|"deletes cam_frames rows; R2 objects expire on their own two days later"| D1
   SARG -->|"fallback vision read, only when CLEF_FALLBACK=1 and both Gemini models fail (order: Gemini, Clef, Groq, OpenRouter):<br/>POST /api/vision/clef, Bearer INGEST_TOKEN, JSON {kind surface or underwater, base64 JPEG shrunk to 768 px / q60}<br/>(scripts/cam_seaweed.py; 30 s timeout, one attempt; 401, 429, 502, 503 = provider failed, the chain moves on to Groq;<br/>a frame Clef calls unreadable = NO reading: the chain stops and the cam is skipped this tick, no frameSha)"| CLEFAPI["/api/vision/clef (POST)<br/>constant-time auth; 400 KB streamed cap; AI binding present else 503;<br/>the backtest's questions and answer mapping (lib/vision/clef.ts), after a strict check of every probability, index and noul;<br/>502 on a model error, a malformed reply or a missing field, never an invented value;<br/>reply = the assess() reading shape + provider, model, usage, latencyMs;<br/>one log line per UTC day on the first success (model, kind, latency, tokens only)"]
   CLEFAPI -->|"env.AI.run(@cf/cloudflare/clef), Clef 27B only"| WAI[["Workers AI<br/>binding AI (wrangler.jsonc)<br/>Clef 27B @cf/cloudflare/clef"]]
@@ -889,30 +889,31 @@ every answer is **kept** as a label. The owner side sits behind one gate: an
 flowchart TD
   subgraph catch [Catch and check]
     SARG["sargassum.yml → scripts/cam_seaweed.py<br/>a seaweed jump to moderate or high is HELD<br/>(confirm_seaweed_jumps)"]
-    SECOND["scripts/quality_watch.py second opinion on the SAME image,<br/>exactly ONE provider attempt, at most 6 a tick:<br/>claim from Gemini, Groq or OpenRouter → Clef · claim from Clef → Gemini<br/>agrees → confirmedBy second-opinion:provider · disagrees → stays held,<br/>cam DISPUTED for the day, owner alert · fails or unreadable → nothing"]
+    SECOND["scripts/quality_watch.py second opinion on the SAME image,<br/>for EVERY read still held, BEFORE confirmation across cams (so a cam that just became disputed cannot confirm another);<br/>exactly ONE provider attempt, at most 6 a tick:<br/>claim from Gemini, Groq or OpenRouter → Clef · claim from Clef → Gemini<br/>agrees → confirmedBy second-opinion:provider · disagrees → stays held,<br/>cam DISPUTED for the day, owner alert · fails or unreadable → nothing"]
     HIST["POST /api/history/archive<br/>(workers/history-cron, every minute)<br/>after each beach_hourly row lands"]
     WATCH["lib/quality/watchdog.ts + jumps.ts<br/>this hour vs the last (at most 2 h apart):<br/>score drop ≥15 · surf change ≥2 ft · sand change ≥10 F · clarity drop ≥15<br/>a cause explains a jump only if the signal-to-cause matrix allows it AND it<br/>pushed the number that way; a score drop's cause is its largest DECLINE"]
   end
 
   SARG --> SECOND
+  PREV["fetch_prev: last published feed file per beach<br/>404 = new beach (start empty) · any other failure: retry once, then ABORT the tick:<br/>nothing written, archive still runs, exit 1 (the branch keeps its last good files)"] --> SARG
   HIST --> WATCH
-  SECOND -->|"POST /api/quality/alerts, Bearer QUALITY_INGEST_TOKEN:<br/>claim and its exact identity, second opinion, other cams, frame SHA-256,<br/>the exact still (≤150 KB, base64)"| INGEST["/api/quality/alerts<br/>constant-time auth, 400 KB body cap, strict validation (lib/quality/ingest.ts),<br/>disagreements only, at most 20 alerts per beach per hour (inside the INSERT);<br/>keeps the still in R2 (lib/quality/frameUpload.ts)"]
-  SECOND -.->|"POST failed: queue in the feed's pendingAlerts,<br/>retry every tick until 2xx, drop after 24 h"| SECOND
+  SECOND -->|"POST /api/quality/alerts, Bearer QUALITY_INGEST_TOKEN:<br/>claim and its exact identity (cam, frame hash or time, claimedAt: all required), second opinion, other cams, frame SHA-256,<br/>the exact still (≤150 KB, base64)"| INGEST["/api/quality/alerts<br/>constant-time auth, 400 KB body cap, strict validation (lib/quality/ingest.ts):<br/>the claim identity is checked against the image and times sent; the local date is the one of claimedAt;<br/>disagreements only, at most 20 alerts per beach per hour (inside the INSERT);<br/>keeps the still in R2 (lib/quality/frameUpload.ts)"]
+  SECOND -.->|"POST failed or no token: queue in the feed's pendingAlerts,<br/>retry every tick until 2xx, drop after 24 h"| SECOND
   INGEST -->|"put quality/slug/cam/date/HHmmssZ-sha8.jpg<br/>(its own key shape; best-effort, a failure drops only the picture)"| CAMR2Q[("R2 bucket isitbeachday-cam-frames<br/>binding CAM_FRAMES")]
-  INGEST --> REC["lib/quality/alerts.ts recordAlert<br/>store the alert, then (lib/quality/pushPolicy.ts + pushSlots.ts):<br/>watched beach (vision cams + boca-raton), not 9 PM to 7 AM ET,<br/>then ONE atomic INSERT takes a push slot: at most 3 a day,<br/>not the same beach and signal within 3 h. Sends NOTHING."]
+  INGEST --> REC["lib/quality/alerts.ts recordAlert<br/>ONE D1 batch: the alert INSERT and (lib/quality/pushPolicy.ts + pushSlots.ts)<br/>the slot INSERT, if the beach is watched (vision cams + boca-raton) and it is not 9 PM to 7 AM ET:<br/>at most 3 a day, not the same beach and signal within 3 h, alert open and under 30 min old.<br/>A retry that finds the alert without a slot takes the missing one. Sends NOTHING."]
   WATCH --> REC
-  REC -->|"INSERT ... ON CONFLICT(dedupe_key) DO NOTHING;<br/>slot: conditional INSERT, UNIQUE (owner_day, slot)"| QD[("D1: quality_alerts · quality_push_slots<br/>quality_labels · quality_overrides · owner_sessions<br/>migrations/0019")]
+  REC -->|"INSERT ... ON CONFLICT(dedupe_key) DO NOTHING;<br/>slot: conditional INSERT, UNIQUE (owner_day, slot)"| QD[("D1: quality_alerts · quality_push_slots<br/>quality_labels · quality_overrides · owner_sessions<br/>owner_enroll_attempts · migrations/0019")]
 
   subgraph drain ["Drain: its own request, its own subrequest budget"]
     CRONQ["workers/history-cron, every minute,<br/>AFTER the archive pass (even if it failed)"]
-    DRAIN["POST /api/quality/drain, x-cron-secret CRON_SECRET<br/>lib/quality/drain.ts: at most 3 queued pushes, none in quiet hours,<br/>stale (30 min) dropped; a failed send gives its slot back"]
+    DRAIN["POST /api/quality/drain, x-cron-secret CRON_SECRET<br/>lib/quality/drain.ts: only OPEN alerts, at most 3 pushes, none in quiet hours,<br/>stale (30 min) dropped. CLAIMS each push (queued → attempting, attempt id) BEFORE APNs;<br/>finalizes or releases only WHERE the attempt id matches; an attempt older than 10 min → unknown, never re-sent"]
   end
   CRONQ --> DRAIN
-  DRAIN <-->|"queued slots, mark sent / release"| QD
+  DRAIN <-->|"claim, mark sent / release by attempt id, mark unknown"| QD
   DRAIN -->|"lib/quality/notify.ts: ONLY the push token on an owner session<br/>(never the general devices table), ≤3 phones, 5 s timeout per call"| APNSQ[["APNs (fetch)<br/>tap opens /admin/review?alert=id"]]
 
   subgraph confirm ["Confirm: owner screens, public shells, never framed"]
-    REVIEW["/admin/review<br/>components/admin/QualityReview.tsx<br/>enroll from #enroll=code · frame, one sentence, Right / Wrong, one-tap correct value"]
+    REVIEW["/admin/review<br/>components/admin/QualityReview.tsx<br/>enroll from #enroll=code (fragment only) · fresh push token from the native plugin<br/>frame, one sentence, Right / Wrong, one-tap correct value · shows a push that may not have arrived"]
     REPORT["/admin/report<br/>components/admin/ReportConditions.tsx<br/>seaweed, clarity, surf, sand, note"]
     LINK["beach page footer link<br/>shown only after the owner screen has worked on the phone<br/>(local storage hint, no request)"]
   end
@@ -920,12 +921,12 @@ flowchart TD
   LINK -.-> REPORT
 
   subgraph ownerapi ["Owner routes: POST, Authorization Bearer owner token, no-framing headers, 8 KB streaming body cap"]
-    OENROLL["/api/quality/owner/enroll<br/>code in the BODY, constant-time, 5/h per address, 20/h in all"]
+    OENROLL["/api/quality/owner/enroll<br/>code in the BODY, constant-time, 5/h per address, 20/h in all<br/>(atomic D1 counters, owner_enroll_attempts); one active session per device"]
     OCHECK["/api/quality/owner/check"]
-    OLIST["/api/quality/owner/list<br/>open + recent alerts; the kept still, else the frame by SHA-256,<br/>else the nearest saved frame; signed 15-min image link"]
+    OLIST["/api/quality/owner/list<br/>open alerts and recent answered ones, queried separately (an open one is never buried); the kept still, else the frame by SHA-256,<br/>else the nearest saved frame; signed 15-min image link"]
     OANS["/api/quality/owner/answer<br/>lib/quality/answer.ts: ONE D1 batch"]
     OREP["/api/quality/owner/report<br/>lib/quality/report.ts"]
-    OPUSH["/api/quality/owner/push-token<br/>the phone's APNs token, stored on its session"]
+    OPUSH["/api/quality/owner/push-token<br/>the phone's APNs token, stored on its session, unique across active sessions"]
   end
   REVIEW --> OENROLL
   REVIEW --> OLIST
@@ -939,7 +940,7 @@ flowchart TD
   OLIST -->|"cam_frames lookup (fallback when no kept still)"| D1CF[("D1: cam_frames")]
   OLIST -->|"img src: signed 15-min link to the kept still, else the archived frame"| IMGAPI2["/api/cam-frames/img<br/>serves archive keys and quality/ keys alike;<br/>the cam must still be archived"]
   IMGAPI2 -->|get| CAMR2Q
-  OANS -->|"label + alert status + override in ONE batch; a second tap supersedes the first.<br/>The override binds to the EXACT claim (cam, frame hash or time, claim time, local date):<br/>publish (Right, or Wrong with a corrected moderate/high) or reject (Wrong with none/low).<br/>Written only for a claim made today on an alert not expired; else the label only."| QD
+  OANS -->|"label + alert status + override in ONE batch; a second tap supersedes the first.<br/>The override binds to the EXACT claim (cam, frame hash or time, claimedAt):<br/>publish (Right, or Wrong with a corrected moderate/high) or reject (Wrong with none/low).<br/>Written only for a claim scored today (beach-local date of claimedAt) on an alert not expired; else the label only."| QD
   OREP -->|"one label per signal, nearest frames of each cam, what beach_hourly last showed"| QD
 
   subgraph learn [Honored live and kept]
@@ -950,18 +951,22 @@ flowchart TD
   QD --> LABELS
   QD -->|"GET /api/quality/overrides?slug=, Bearer QUALITY_INGEST_TOKEN<br/>the verdicts in force today, each with its exact target"| OVAPI["/api/quality/overrides"]
   OVAPI -->|"once per beach per tick, fails open<br/>(quality_watch.fetch_overrides)"| SARG
-  SARG -.->|"publish: that frame's held claim publishes (confirmedBy owner)<br/>reject: that claim is removed and the cam is DISPUTED for the day:<br/>its later claims confirm only by an agreeing second opinion, another undisputed fresh cam,<br/>an owner Right, or 3 distinct frames over 90 min (disputedCams in the feed)"| SECOND
+  SARG -.->|"publish: that frame's held claim publishes (confirmedBy owner)<br/>reject: that claim is removed and the cam is DISPUTED for the day<br/>(publishes and rejects replay as ONE stream by created time and id, the same in TS and Python):<br/>its later claims confirm only by an agreeing second opinion, another undisputed fresh cam,<br/>an owner Right, or 3 distinct frames over 90 min (disputedCams in the feed)"| SECOND
 ```
 
 **What each part keeps.** `quality_alerts` is one row per flag (`dedupe_key` is
 unique, so a retried POST or a re-run archive tick writes once; an open alert
 expires after 24 h when the list is read). `quality_push_slots` is the push
-limit, kept by D1: a slot is `queued` until the drain sends it, then `sent`; a
-failed send deletes it. `quality_labels` is one row per answer or report
+limit, kept by D1: a slot is `queued` until the drain claims it (`attempting`,
+with an attempt id), then `sent`; a failed send deletes it (only the holder of the
+attempt id can); an attempt left over for 10 minutes becomes `unknown` and is never
+sent again; sent and unknown rows are purged after 30 days. `quality_labels` is one row per answer or report
 (`verdict` is `right`, `wrong`, or NULL for a report; a second tap marks the old
 label `superseded`). `quality_overrides` is one row per live seaweed answer, with
 the claim's identity, the action, and the level to publish. `owner_sessions`
-holds the hashed owner tokens and each owner phone's push token.
+holds the hashed owner tokens and each owner phone's push token (one active
+session per device; a push token on one active session only).
+`owner_enroll_attempts` holds the enrollment throttle counters.
 
 **Subrequests.** The archive request: 44 for the conditions build, at most 2 for
 the cam feed, none for APNs (it only writes D1). The drain request: at most 3
@@ -969,8 +974,9 @@ pushes times 3 owner phones, so 9 APNs fetches, each cut off at 5 seconds.
 
 **The reader obeys the owner.** Once per beach per tick, `cam_seaweed.py` fetches
 `GET /api/quality/overrides` (fails open). A verdict names one exact claim. Of
-several on one claim, the latest wins; the app and the reader share the rule and
-test it against `lib/quality/verdictVectors.json`. `scripts/cam_archive_remove.ts`
+several on one claim, the latest wins, and the answers replay as one merged stream
+of publishes and rejects ordered by (created time, id); the app and the reader
+share the rules and test them against `lib/quality/verdictVectors.json`. `scripts/cam_archive_remove.ts`
 also erases a cam's `quality/` prefix.
 
 ## External integrations

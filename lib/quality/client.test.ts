@@ -111,8 +111,12 @@ describe("takeEnrollCode", () => {
     expect(take("#enroll=abc123", "")).toEqual({ code: "abc123", replaced: ["/admin/review"] });
   });
 
-  it("also accepts ?enroll= and removes it, keeping other parameters", () => {
-    expect(take("", "?enroll=abc123&alert=7")).toEqual({ code: "abc123", replaced: ["/admin/review?alert=7"] });
+  it("does NOT read ?enroll=: a query reaches the server and its logs, so it is ignored and left alone", () => {
+    expect(take("", "?enroll=abc123&alert=7")).toEqual({ code: null, replaced: [] });
+  });
+
+  it("keeps other query parameters and fragment parameters when it removes the code", () => {
+    expect(take("#enroll=abc123&x=1", "?alert=7")).toEqual({ code: "abc123", replaced: ["/admin/review?alert=7#x=1"] });
   });
 
   it("is null, and changes nothing, with no code", () => {

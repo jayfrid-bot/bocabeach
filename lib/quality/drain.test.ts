@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HAS_SQLITE, makeCamDb, type CamDb } from "@/lib/camFrames/testDb";
 import { recordAlert } from "@/lib/quality/alerts";
 import { drainOwnerPushes, MAX_DRAIN_PER_TICK } from "@/lib/quality/drain";
-import { QUEUED_MAX_AGE_MS, reservePushSlot } from "@/lib/quality/pushSlots";
+import { ATTEMPT_UNKNOWN_MS, claimQueuedPushes, QUEUED_MAX_AGE_MS, reservePushSlot } from "@/lib/quality/pushSlots";
 import { insertAlert } from "@/lib/quality/store";
 import { fakeSender } from "@/lib/quality/testHelpers";
 import type { HourlyAlertPayload, SeaweedAlertPayload } from "@/lib/quality/types";
@@ -40,7 +40,7 @@ describe.skipIf(!HAS_SQLITE)("drainOwnerPushes", () => {
     const a = await queue("boca-raton", "score");
     const send = fakeSender();
     const r = await drainOwnerPushes(h.db, NOON + 30_000, send);
-    expect(r).toEqual({ sent: 1, released: 0, stale: 0 });
+    expect(r).toEqual({ sent: 1, released: 0, stale: 0, unknown: 0 });
     expect(send.sent).toEqual([
       {
         title: "Boca Raton",
@@ -63,7 +63,7 @@ describe.skipIf(!HAS_SQLITE)("drainOwnerPushes", () => {
   it("a send that fails gives its slot back, so the day's push and the repeat window are free again", async () => {
     await queue("boca-raton", "score");
     const r = await drainOwnerPushes(h.db, NOON + 30_000, fakeSender({ ok: false, sent: 0, failed: 1 }));
-    expect(r).toEqual({ sent: 0, released: 1, stale: 0 });
+    expect(r).toEqual({ sent: 0, released: 1, stale: 0, unknown: 0 });
     expect(state()).toEqual([]);
     expect(h.all("SELECT pushed FROM quality_alerts")[0].pushed).toBe(0);
     // the same beach and signal can queue again at once
@@ -83,7 +83,7 @@ describe.skipIf(!HAS_SQLITE)("drainOwnerPushes", () => {
     await reservePushSlot(h.db, { alertId: a, slug: "boca-raton", signal: "score" }, NOON);
     const send = fakeSender();
     const r = await drainOwnerPushes(h.db, NOON + QUEUED_MAX_AGE_MS + 1000, send);
-    expect(r).toMatchObject({ sent: 0, stale: 1 });
+    expect(r).toMatchObject({ sent: 0, stale: 1, unknown: 0 });
     expect(send.sent).toEqual([]);
     expect(state()).toEqual([]);
   });
@@ -92,7 +92,7 @@ describe.skipIf(!HAS_SQLITE)("drainOwnerPushes", () => {
     await queue("boca-raton", "score", Date.parse("2026-10-14T00:58:00.000Z")); // 8:58 PM EDT: queued
     const send = fakeSender();
     const r = await drainOwnerPushes(h.db, Date.parse("2026-10-14T01:01:00.000Z"), send); // 9:01 PM
-    expect(r).toEqual({ sent: 0, released: 1, stale: 0 });
+    expect(r).toEqual({ sent: 0, released: 1, stale: 0, unknown: 0 });
     expect(send.sent).toEqual([]);
     expect(h.all("SELECT COUNT(*) AS n FROM quality_alerts")[0].n).toBe(1);
   });
@@ -101,12 +101,60 @@ describe.skipIf(!HAS_SQLITE)("drainOwnerPushes", () => {
     const a = (await insertAlert(h.db, { slug: "boca-raton", signal: "score", kind: "hourly-jump", createdAt: new Date(NOON).toISOString(), payload, dedupeKey: "bad" })).id;
     h.exec(`UPDATE quality_alerts SET payload_json = '{nope' WHERE id = ${a}`);
     await reservePushSlot(h.db, { alertId: a, slug: "boca-raton", signal: "score" }, NOON);
-    expect(await drainOwnerPushes(h.db, NOON + 30_000, fakeSender())).toEqual({ sent: 0, released: 1, stale: 0 });
+    expect(await drainOwnerPushes(h.db, NOON + 30_000, fakeSender())).toEqual({ sent: 0, released: 1, stale: 0, unknown: 0 });
+  });
+
+  it("two drains at once send a push once", async () => {
+    await queue("boca-raton", "score");
+    const send = fakeSender();
+    const [x, y] = await Promise.all([drainOwnerPushes(h.db, NOON + 30_000, send), drainOwnerPushes(h.db, NOON + 30_001, send)]);
+    expect(x.sent + y.sent).toBe(1);
+    expect(send.sent).toHaveLength(1);
+    expect(state().map((r) => r.state)).toEqual(["sent"]);
+  });
+
+  it("the claim comes BEFORE the send: a drain that finds the slot taken sends nothing", async () => {
+    const a = await queue("boca-raton", "score");
+    // another drain claimed it and has not finished
+    await claimQueuedPushes(h.db, 3, NOON + 10_000);
+    const send = fakeSender();
+    expect(await drainOwnerPushes(h.db, NOON + 20_000, send)).toEqual({ sent: 0, released: 0, stale: 0, unknown: 0 });
+    expect(send.sent).toEqual([]);
+    expect(state()).toEqual([{ alert_id: a.id, state: "attempting" }]);
+  });
+
+  it("an attempt that never finished becomes unknown after 10 minutes and is NOT sent again", async () => {
+    const a = await queue("boca-raton", "score");
+    await claimQueuedPushes(h.db, 3, NOON + 1000); // the process died after APNs may have said yes
+    const send = fakeSender();
+    const r = await drainOwnerPushes(h.db, NOON + 1000 + ATTEMPT_UNKNOWN_MS + 1000, send);
+    expect(r).toEqual({ sent: 0, released: 0, stale: 0, unknown: 1 });
+    expect(send.sent).toEqual([]);
+    expect(state()).toEqual([{ alert_id: a.id, state: "unknown" }]);
+    expect(h.all("SELECT pushed FROM quality_alerts")[0].pushed).toBe(0);
+  });
+
+  it("an answered alert is never pushed, and its queued slot is given back", async () => {
+    const a = await queue("boca-raton", "score");
+    h.exec(`UPDATE quality_alerts SET status = 'answered' WHERE id = ${a.id}`);
+    const send = fakeSender();
+    expect(await drainOwnerPushes(h.db, NOON + 30_000, send)).toEqual({ sent: 0, released: 0, stale: 1, unknown: 0 });
+    expect(send.sent).toEqual([]);
+    expect(state()).toEqual([]);
+  });
+
+  it("a send that fails after a lost race frees nothing that another drain sent", async () => {
+    // Drain 1 claimed and is slow. Drain 2 cannot claim. Only the holder's attempt id can release.
+    await queue("boca-raton", "score");
+    const [mine] = await claimQueuedPushes(h.db, 3, NOON + 1000);
+    const { releaseAttempt } = await import("@/lib/quality/pushSlots");
+    expect(await releaseAttempt(h.db, mine.alert.id, "another-drains-id")).toBe(false);
+    expect(state().map((r) => r.state)).toEqual(["attempting"]);
   });
 
   it("does nothing when nothing is queued", async () => {
     const send = fakeSender();
-    expect(await drainOwnerPushes(h.db, NOON, send)).toEqual({ sent: 0, released: 0, stale: 0 });
+    expect(await drainOwnerPushes(h.db, NOON, send)).toEqual({ sent: 0, released: 0, stale: 0, unknown: 0 });
     expect(send.sent).toEqual([]);
   });
 });

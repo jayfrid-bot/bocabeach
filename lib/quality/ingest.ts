@@ -2,6 +2,9 @@
 // (scripts/cam_seaweed.py -> scripts/quality_watch.py builds the body). The
 // reader is our own code, but the route is reachable with a bearer token, so
 // every field is checked and every string is cut to a sane length. Pure.
+//
+// The claim's identity (frame hash or time, and `claimedAt`) is REQUIRED and is checked against the
+// image and times that came with it: an alert that cannot name one exact claim is refused.
 
 import { getLocation } from "@/config/locations";
 import { isValidId } from "@/lib/camFrames/keys";
@@ -81,13 +84,26 @@ export function parseSeaweedAlert(body: Record<string, unknown>, nowMs: number):
   const frame = obj(body.frame);
   const sha = frame && typeof frame.sha256 === "string" && /^[0-9a-f]{64}$/.test(frame.sha256) ? frame.sha256 : null;
 
-  // The exact claim: the frame (hash for feed cams, else the frame's time) and when it was scored.
+  // The exact claim: the frame (hash for feed cams, else the frame's time) AND when it was scored. All
+  // three are checked against the frame that was judged, so a verdict can only ever bind to this image.
   const ct = obj(body.claimTarget);
   const claimTarget: ClaimTarget = {
     frameSha: ct && typeof ct.frameSha === "string" && /^[0-9a-f]{8,64}$/.test(ct.frameSha) ? ct.frameSha.slice(0, 20) : null,
     frameAt: ct ? stamp(ct.frameAt) : null,
     claimedAt: ct ? stamp(ct.claimedAt) : null,
   };
+  const claimedMs = claimTarget.claimedAt ? Date.parse(claimTarget.claimedAt) : NaN;
+  if (!Number.isFinite(claimedMs) || claimedMs - nowMs > MAX_FUTURE_MS || nowMs - claimedMs > MAX_AGE_MS) {
+    return { ok: false, error: "bad-claim-time" };
+  }
+  if (!claimTarget.frameSha && !claimTarget.frameAt) return { ok: false, error: "unbound-claim" };
+  // The hash must be a prefix of the SHA-256 of the image that came with the alert.
+  if (claimTarget.frameSha && !(sha && sha.startsWith(claimTarget.frameSha))) return { ok: false, error: "claim-frame-mismatch" };
+  // The alert's observedAt is the frame's time, else the scoring time: it must be the claim's own.
+  const frameMs = claimTarget.frameAt ? Date.parse(claimTarget.frameAt) : claimedMs;
+  if (Math.abs(frameMs - observedMs) > 1000) return { ok: false, error: "claim-frame-mismatch" };
+  // A frame cannot be scored before it was taken (a little clock slack allowed).
+  if (claimTarget.frameAt && claimedMs < frameMs - MAX_FUTURE_MS) return { ok: false, error: "bad-claim-time" };
   const tz = getLocation(slug)?.timezone ?? "America/New_York";
 
   const payload: SeaweedAlertPayload = {
@@ -111,7 +127,8 @@ export function parseSeaweedAlert(body: Record<string, unknown>, nowMs: number):
     },
     others,
     claimTarget,
-    localDate: localHourParts(tz, observedMs).date,
+    // The beach-local day of the CLAIM (when it was scored) decides when a verdict on it stops acting.
+    localDate: localHourParts(tz, claimedMs).date,
     frame: { sha256: sha, archivedThisTick: frame?.archivedThisTick === true, r2Key: null },
   };
   // One alert per exact image; with no hash, one per cam and frame time.

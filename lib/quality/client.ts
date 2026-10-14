@@ -97,25 +97,21 @@ export async function enrollThisPhone(code: string, deviceId: string): Promise<O
 }
 
 /**
- * Read an enrollment code from the page address and REMOVE it from the address bar. Prefers the
- * fragment (`#enroll=<code>`, which browsers never send to a server); accepts `?enroll=<code>` too.
- * `loc` and `history` are injectable for tests. Returns null when there is none.
+ * Read an enrollment code from the page address and REMOVE it from the address bar. The code travels
+ * ONLY in the fragment (`#enroll=<code>`): browsers never send a fragment to a server, so it cannot
+ * land in a log. A `?enroll=` query is NOT read (it would already have reached the server) and is
+ * left alone. `loc` and `history` are injectable for tests. Returns null when there is none.
  */
 export function takeEnrollCode(
   loc: Pick<Location, "hash" | "search" | "pathname"> = window.location,
   hist: Pick<History, "replaceState"> = window.history,
 ): string | null {
-  const fromHash = new URLSearchParams(loc.hash.replace(/^#/, "")).get("enroll");
-  const fromQuery = new URLSearchParams(loc.search).get("enroll");
-  const code = fromHash || fromQuery;
-  if (!code) return null;
-  const q = new URLSearchParams(loc.search);
-  q.delete("enroll");
   const h = new URLSearchParams(loc.hash.replace(/^#/, ""));
+  const code = h.get("enroll");
+  if (!code) return null;
   h.delete("enroll");
-  const qs = q.toString();
   const hs = h.toString();
-  hist.replaceState(null, "", `${loc.pathname}${qs ? `?${qs}` : ""}${hs ? `#${hs}` : ""}`);
+  hist.replaceState(null, "", `${loc.pathname}${loc.search}${hs ? `#${hs}` : ""}`);
   return code;
 }
 

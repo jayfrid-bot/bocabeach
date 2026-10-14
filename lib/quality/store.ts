@@ -3,7 +3,7 @@
 // real SQLite and routes pass whatever `getD1()` found. Every statement is
 // parameterized.
 
-import type { D1Like, D1Stmt } from "@/lib/db/d1Store";
+import type { D1Like, D1RunResult, D1Stmt } from "@/lib/db/d1Store";
 import type { AlertKind, AlertRow, LabelRow, LabelSource, OverrideRow, QualitySignal, Verdict } from "@/lib/quality/types";
 
 /** An open alert older than this is marked expired when the list is read. */
@@ -23,6 +23,27 @@ export interface NewAlert {
 /** The most alerts one beach may create per hour through the reader's POST route. */
 export const MAX_ALERTS_PER_SLUG_HOUR = 20;
 
+const ALERT_INSERT_SQL =
+  "INSERT INTO quality_alerts (slug, signal, kind, created_at, payload_json, status, dedupe_key, pushed) " +
+  "SELECT ?1, ?2, ?3, ?4, ?5, 'open', ?6, 0 " +
+  "WHERE (SELECT COUNT(*) FROM quality_alerts WHERE slug = ?1 AND created_at >= ?7) < ?8 " +
+  "ON CONFLICT(dedupe_key) DO NOTHING";
+
+/** The alert INSERT as a statement (for a batch). Same rules as insertAlert, without the row read-back. */
+export function insertAlertStatement(db: D1Like, a: NewAlert, opts?: { maxPerSlugPerHour?: number }): D1Stmt {
+  const max = opts?.maxPerSlugPerHour ?? 1_000_000;
+  const since = new Date(Date.parse(a.createdAt) - 3_600_000).toISOString();
+  return db
+    .prepare(ALERT_INSERT_SQL)
+    .bind(a.slug, a.signal, a.kind, a.createdAt, JSON.stringify(a.payload), a.dedupeKey, since, max);
+}
+
+/** The id of the alert with this dedupe key, or null. */
+export async function alertIdByKey(db: D1Like, dedupeKey: string): Promise<number | null> {
+  const r = await db.prepare("SELECT id FROM quality_alerts WHERE dedupe_key = ?1").bind(dedupeKey).first<{ id: number }>();
+  return r ? Number(r.id) : null;
+}
+
 /**
  * Store an alert. One atomic INSERT ... ON CONFLICT DO NOTHING on the unique
  * dedupe key, so a retried POST (or a re-run archive tick) never writes twice.
@@ -37,24 +58,10 @@ export async function insertAlert(
   a: NewAlert,
   opts?: { maxPerSlugPerHour?: number },
 ): Promise<{ id: number; created: boolean; limited?: boolean }> {
-  const max = opts?.maxPerSlugPerHour ?? 1_000_000;
-  const since = new Date(Date.parse(a.createdAt) - 3_600_000).toISOString();
-  const inserted = await db
-    .prepare(
-      "INSERT INTO quality_alerts (slug, signal, kind, created_at, payload_json, status, dedupe_key, pushed) " +
-        "SELECT ?1, ?2, ?3, ?4, ?5, 'open', ?6, 0 " +
-        "WHERE (SELECT COUNT(*) FROM quality_alerts WHERE slug = ?1 AND created_at >= ?7) < ?8 " +
-        "ON CONFLICT(dedupe_key) DO NOTHING RETURNING id",
-    )
-    .bind(a.slug, a.signal, a.kind, a.createdAt, JSON.stringify(a.payload), a.dedupeKey, since, max)
-    .first<{ id: number }>();
-  if (inserted) return { id: Number(inserted.id), created: true };
-  const existing = await db
-    .prepare("SELECT id FROM quality_alerts WHERE dedupe_key = ?1")
-    .bind(a.dedupeKey)
-    .first<{ id: number }>();
-  if (existing) return { id: Number(existing.id), created: false };
-  return { id: 0, created: false, limited: true };
+  const r = await insertAlertStatement(db, a, opts).run();
+  const id = await alertIdByKey(db, a.dedupeKey);
+  if (id == null) return { id: 0, created: false, limited: true };
+  return { id, created: (r.meta?.changes ?? 0) > 0 };
 }
 
 export async function getAlert(db: D1Like, id: number): Promise<AlertRow | null> {
@@ -78,17 +85,29 @@ export async function expireOldAlerts(db: D1Like, nowMs: number): Promise<number
 export interface AlertWithLabel extends AlertRow {
   label_verdict: Verdict | null;
   label_correct: string | null;
+  /** The alert's push slot state (queued, attempting, sent, unknown), or null when it has none. */
+  push_state: "queued" | "attempting" | "sent" | "unknown" | null;
 }
 
-/** Newest first, each with its label's verdict and correct value when answered. */
-export async function listAlerts(db: D1Like, limit: number): Promise<AlertWithLabel[]> {
+const LIST_SELECT =
+  "SELECT a.id, a.slug, a.signal, a.kind, a.created_at, a.payload_json, a.status, a.label_id, a.dedupe_key, a.pushed, " +
+  "l.verdict AS label_verdict, l.correct_value AS label_correct, " +
+  "(SELECT s.state FROM quality_push_slots s WHERE s.alert_id = a.id) AS push_state " +
+  "FROM quality_alerts a LEFT JOIN quality_labels l ON l.id = a.label_id ";
+
+/** Alerts still waiting for the owner, newest first. Queried on their own, so a run of answered ones can never push an open one out of the list. */
+export async function listOpenAlerts(db: D1Like, limit: number): Promise<AlertWithLabel[]> {
   const r = await db
-    .prepare(
-      "SELECT a.id, a.slug, a.signal, a.kind, a.created_at, a.payload_json, a.status, a.label_id, a.dedupe_key, a.pushed, " +
-        "l.verdict AS label_verdict, l.correct_value AS label_correct " +
-        "FROM quality_alerts a LEFT JOIN quality_labels l ON l.id = a.label_id " +
-        "ORDER BY a.created_at DESC, a.id DESC LIMIT ?1",
-    )
+    .prepare(`${LIST_SELECT}WHERE a.status = 'open' ORDER BY a.created_at DESC, a.id DESC LIMIT ?1`)
+    .bind(limit)
+    .all<AlertWithLabel>();
+  return r.results ?? [];
+}
+
+/** The newest answered and expired alerts, newest first, each with its active label's verdict. */
+export async function listRecentAlerts(db: D1Like, limit: number): Promise<AlertWithLabel[]> {
+  const r = await db
+    .prepare(`${LIST_SELECT}WHERE a.status != 'open' ORDER BY a.created_at DESC, a.id DESC LIMIT ?1`)
     .bind(limit)
     .all<AlertWithLabel>();
   return r.results ?? [];
@@ -174,8 +193,8 @@ export async function latestHourlyRow<T>(db: D1Like, cols: string, slug: string)
     .first<T>();
 }
 
-/** Run bound statements as ONE transaction (real D1 `batch()`): all of them, or none. */
-export async function runAtomic(db: D1Like, stmts: D1Stmt[]): Promise<void> {
+/** Run bound statements as ONE transaction (real D1 `batch()`): all of them, or none. Returns each statement's result. */
+export async function runAtomic(db: D1Like, stmts: D1Stmt[]): Promise<D1RunResult[]> {
   if (typeof db.batch !== "function") throw new Error("this database cannot run an atomic batch");
-  await db.batch(stmts);
+  return db.batch(stmts);
 }

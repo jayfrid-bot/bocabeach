@@ -33,7 +33,7 @@ function row(over: Partial<AlertWithLabel> = {}): AlertWithLabel {
   return {
     id: 7, slug: "boca-raton", signal: "seaweed", kind: "seaweed-held-disagreed",
     created_at: "2026-10-13T17:30:00.000Z", payload_json: JSON.stringify(seaweedPayload),
-    status: "open", label_id: null, dedupe_key: "k", pushed: 1, label_verdict: null, label_correct: null,
+    status: "open", label_id: null, dedupe_key: "k", pushed: 1, label_verdict: null, label_correct: null, push_state: null,
     ...over,
   };
 }
@@ -150,6 +150,27 @@ describe.skipIf(!HAS_SQLITE)("loadReview", () => {
     expect(r.recent.map((a) => a.id)).toEqual([done.id]);
     expect(r.recent[0].answer).toEqual({ verdict: "wrong", correct: { level: "none" } });
     expect(r.recent[0].frames).toEqual([]); // answered alerts show text only
+  });
+
+  it("an open alert is never buried: 30 newer answered alerts do not push it out of the list", async () => {
+    const open = await seaweedAlert("still-open", "2026-10-13T16:00:00.000Z");
+    for (let i = 0; i < 30; i++) {
+      const a = await seaweedAlert(`done${i}`, `2026-10-13T17:${String(i).padStart(2, "0")}:00.000Z`, { ...seaweedPayload, frame: { sha256: null, archivedThisTick: false } });
+      await answerAlert(h.db, { alertId: a.id, verdict: "right" }, NOW);
+    }
+    const r = await loadReview(h.db, NOW);
+    expect(r.open.map((a) => a.id)).toEqual([open.id]);
+    expect(r.recent).toHaveLength(20);
+    expect(r.recent[0].createdAt > r.recent[19].createdAt).toBe(true);
+  });
+
+  it("an unknown push shows on the alert, so the owner knows it may not have arrived", async () => {
+    const a = await seaweedAlert("pushed", "2026-10-13T17:30:00.000Z");
+    h.exec(
+      `INSERT INTO quality_push_slots (alert_id, slug, signal, owner_day, slot, reserved_at, state) VALUES (${a.id}, 'boca-raton', 'seaweed', '2026-10-13', 1, 'x', 'unknown')`,
+    );
+    const r = await loadReview(h.db, NOW);
+    expect(r.open[0]).toMatchObject({ id: a.id, pushed: false, pushState: "unknown" });
   });
 
   it("marks an old open alert expired and lists it under recent", async () => {

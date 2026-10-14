@@ -14,6 +14,7 @@ import { newOwnerToken } from "@/lib/quality/ownerSessions";
 import { seedOwnerSession } from "@/lib/quality/testHelpers";
 
 const CODE = "enrol-code-0123456789abcdef";
+const DEVICE = "11111111-2222-4333-8444-555555555555";
 
 let h: CamDb;
 beforeEach(() => {
@@ -49,16 +50,32 @@ describe("the enrollment code", () => {
 
 describe.skipIf(!HAS_SQLITE)("enrollOwner", () => {
   it("trades the right code for a token, stored only as a hash", async () => {
-    const r = await enrollOwner(post(null), h.db, { code: CODE, deviceId: "dev-1" });
+    const r = await enrollOwner(post(null), h.db, { code: CODE, deviceId: DEVICE });
     expect(r).toEqual({ token: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) });
     const token = (r as { token: string }).token;
     const rows = h.all("SELECT device_id, token_hash, revoked FROM owner_sessions");
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ device_id: "dev-1", revoked: 0 });
+    expect(rows[0]).toMatchObject({ device_id: DEVICE, revoked: 0 });
     expect(JSON.stringify(rows)).not.toContain(token);
     // and that token now opens the owner area
     const gate = await requireOwner(post(null, { authorization: `Bearer ${token}` }), h.db);
     expect(gate).not.toBeInstanceOf(Response);
+  });
+
+  it("a device id that is not an id becomes an anonymous label, so a phone with no storage still enrolls", async () => {
+    await enrollOwner(post(null), h.db, { code: CODE, deviceId: "dev-1" });
+    await enrollOwner(post(null), h.db, { code: CODE, deviceId: undefined });
+    const ids = h.all("SELECT device_id FROM owner_sessions").map((r) => String(r.device_id));
+    expect(ids).toHaveLength(2);
+    expect(ids.every((d) => d.startsWith("anon-"))).toBe(true);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it("enrolling again from the same device replaces its session", async () => {
+    const first = (await enrollOwner(post(null), h.db, { code: CODE, deviceId: DEVICE })) as { token: string };
+    const second = (await enrollOwner(post(null), h.db, { code: CODE, deviceId: DEVICE })) as { token: string };
+    expect(await requireOwner(post(null, { authorization: `Bearer ${first.token}` }), h.db)).toBeInstanceOf(Response);
+    expect(await requireOwner(post(null, { authorization: `Bearer ${second.token}` }), h.db)).not.toBeInstanceOf(Response);
   });
 
   it("refuses a wrong code with no session made", async () => {

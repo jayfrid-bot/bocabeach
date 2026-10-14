@@ -14,7 +14,7 @@ import {
   toFrameView,
   type FrameView,
 } from "@/lib/quality/frames";
-import { expireOldAlerts, listAlerts, type AlertWithLabel } from "@/lib/quality/store";
+import { expireOldAlerts, listOpenAlerts, listRecentAlerts, type AlertWithLabel } from "@/lib/quality/store";
 import { beachName, camLabel, signalWord, statementFor } from "@/lib/quality/text";
 import type {
   AlertKind,
@@ -46,6 +46,8 @@ export interface AlertView {
   secondOpinion: string | null;
   others: { name: string; level: string; carried: boolean }[];
   frames: FrameView[];
+  /** What became of the owner push: 'sent', 'unknown' (it may not have been delivered), 'queued', or none. */
+  pushState: AlertWithLabel["push_state"];
   /** The owner's answer, once given. */
   answer: { verdict: Verdict; correct: unknown } | null;
   input: AnswerInput;
@@ -93,6 +95,7 @@ export function shapeAlert(row: AlertWithLabel): AlertView | null {
     createdAt: row.created_at,
     status: row.status,
     pushed: row.pushed === 1,
+    pushState: row.push_state ?? null,
     statement: statementFor(row.kind, row.signal, payload),
     frames: [] as FrameView[],
     answer:
@@ -149,7 +152,8 @@ async function framesFor(db: D1Like, row: AlertWithLabel, view: AlertView): Prom
 
 /** Open alerts that get frames looked up (answered and expired ones show text only). */
 const FRAME_LIMIT = 12;
-const LIST_LIMIT = 40;
+const OPEN_LIMIT = 40;
+const RECENT_LIMIT = 20;
 
 export interface ReviewPayload {
   open: AlertView[];
@@ -158,14 +162,15 @@ export interface ReviewPayload {
 
 export async function loadReview(db: D1Like, nowMs: number): Promise<ReviewPayload> {
   await expireOldAlerts(db, nowMs);
-  const rows = await listAlerts(db, LIST_LIMIT);
+  // Two queries, not one list split in two: an open alert is never buried under newer answered ones.
+  const openRows = await listOpenAlerts(db, OPEN_LIMIT);
+  const recentRows = await listRecentAlerts(db, RECENT_LIMIT);
   const open: AlertView[] = [];
-  const recent: AlertView[] = [];
   let looked = 0;
-  for (const row of rows) {
+  for (const row of openRows) {
     const view = shapeAlert(row);
     if (!view) continue;
-    if (row.status === "open" && looked < FRAME_LIMIT) {
+    if (looked < FRAME_LIMIT) {
       looked += 1;
       try {
         view.frames = await framesFor(db, row, view);
@@ -173,7 +178,8 @@ export async function loadReview(db: D1Like, nowMs: number): Promise<ReviewPaylo
         console.error("quality review: frame lookup failed", row.id, e);
       }
     }
-    (row.status === "open" ? open : recent).push(view);
+    open.push(view);
   }
-  return { open, recent: recent.slice(0, 20) };
+  const recent = recentRows.map(shapeAlert).filter((v): v is AlertView => v != null);
+  return { open, recent };
 }

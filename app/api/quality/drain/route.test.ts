@@ -73,20 +73,20 @@ describe.skipIf(!HAS_SQLITE)("drain", () => {
     const res = await post();
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
-    expect(await res.json()).toEqual({ ok: true, sent: 1, released: 0, stale: 0 });
+    expect(await res.json()).toEqual({ ok: true, sent: 1, released: 0, stale: 0, unknown: 0 });
     expect(ctl.sent).toEqual([{ token: "ab".repeat(32), url: `https://app.isitbeachday.com/admin/review?alert=${a.id}` }]);
     expect(h.all("SELECT pushed FROM quality_alerts")[0].pushed).toBe(1);
   });
 
   it("with no owner phone enrolled it gives the slot back and sends nothing", async () => {
     await queueOne();
-    expect(await (await post()).json()).toEqual({ ok: true, sent: 0, released: 1, stale: 0 });
+    expect(await (await post()).json()).toEqual({ ok: true, sent: 0, released: 1, stale: 0, unknown: 0 });
     expect(ctl.sent).toEqual([]);
     expect(h.all("SELECT COUNT(*) AS n FROM quality_push_slots")[0].n).toBe(0);
   });
 
   it("is a quiet no-op with nothing queued, and with no database", async () => {
-    expect(await (await post()).json()).toEqual({ ok: true, sent: 0, released: 0, stale: 0 });
+    expect(await (await post()).json()).toEqual({ ok: true, sent: 0, released: 0, stale: 0, unknown: 0 });
     ctl.db = null;
     expect(await (await post()).json()).toMatchObject({ ok: true, sent: 0 });
   });

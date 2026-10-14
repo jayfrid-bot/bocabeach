@@ -298,6 +298,9 @@ jobs:
 
           run_cycle() {
             rm -rf "$feed_dir"; mkdir -p "$feed_dir"
+            # A non-zero exit also means "the last published file of some beach could not be read":
+            # the script then writes nothing, and publish is skipped so the branch keeps its last
+            # good files (the publish step replaces the whole branch with this cycle's files).
             if python scripts/cam_seaweed.py; then
               consecutive_fail=0
               publish && echo "  published $(date -u +%FT%TZ)"

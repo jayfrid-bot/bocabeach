@@ -34,7 +34,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(NOW);
   process.env.CRON_SECRET = SECRET;
-  h = makeCamDb() as CamDb;
+  h = makeCamDb({ allMigrations: true }) as CamDb;
   ctl.db = h?.db ?? null;
 });
 
@@ -99,5 +99,33 @@ describe.skipIf(!HAS_SQLITE)("purge", () => {
     const res = await post();
     expect(res.status).toBe(500);
     expect(JSON.stringify(await res.json())).not.toContain("secret detail");
+  });
+});
+
+describe.skipIf(!HAS_SQLITE)("the quality tables are tidied in the same run", () => {
+  it("deletes sent and unknown push slots older than 30 days and old enrollment counters, and reports the counts", async () => {
+    const slot = (id: number, state: string, daysAgo: number) =>
+      h.exec(
+        `INSERT INTO quality_push_slots (alert_id, slug, signal, owner_day, slot, reserved_at, state) VALUES (${id}, 's', 'score', '2026-09-0${id}', 1, '${new Date(NOW - daysAgo * DAY).toISOString()}', '${state}')`,
+      );
+    slot(1, "sent", 40);
+    slot(2, "unknown", 35);
+    slot(3, "sent", 5);
+    slot(4, "queued", 40);
+    h.exec(`INSERT INTO owner_enroll_attempts (bucket, hour_key, n) VALUES ('ip:x', '${new Date(NOW - 5 * DAY).toISOString().slice(0, 13)}', 3)`);
+    const out = (await (await post()).json()) as Record<string, unknown>;
+    expect(out).toMatchObject({ ok: true, pushSlots: 2, enrollCounters: 1 });
+    expect(h.all("SELECT alert_id FROM quality_push_slots ORDER BY alert_id").map((r) => r.alert_id)).toEqual([3, 4]);
+  });
+
+  it("a failure in the quality tables never fails the cam purge", async () => {
+    h.close();
+    h = makeCamDb() as CamDb; // only the two cam_frames migrations: no quality tables at all
+    ctl.db = h.db;
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await post();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, pushSlots: 0, enrollCounters: 0 });
+    spy.mockRestore();
   });
 });

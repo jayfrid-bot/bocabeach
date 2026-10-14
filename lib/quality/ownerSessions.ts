@@ -4,6 +4,10 @@
 // server makes a random 32-byte token, returns it ONCE, and keeps only its SHA-256 here.
 // Every owner route then needs `Authorization: Bearer <token>`. Nothing about a device id
 // proves anything: a session is the token, and the device id is only a label.
+//
+// ONE active session per device id: enrolling again from the same device revokes the old session
+// (a partial unique index backs it). A push token is unique across active sessions: setting it on one
+// session takes it from any other, so one phone is never pushed twice and never crowds out another.
 
 import type { D1Like } from "@/lib/db/d1Store";
 import { sha256Hex } from "@/lib/camFrames/ingest";
@@ -37,13 +41,18 @@ export interface OwnerSession {
 
 export async function createSession(db: D1Like, a: { deviceId: string; token: string; nowMs: number }): Promise<number> {
   const at = new Date(a.nowMs).toISOString();
-  const r = await db
-    .prepare(
-      "INSERT INTO owner_sessions (device_id, token_hash, created_at, last_seen, revoked) VALUES (?1, ?2, ?3, ?3, 0) RETURNING id",
-    )
-    .bind(a.deviceId, await hashOwnerToken(a.token), at)
-    .first<{ id: number }>();
-  return Number(r?.id ?? 0);
+  const hash = await hashOwnerToken(a.token);
+  const stmts = [
+    // Enrolling again from this device retires its old session in the same step.
+    db.prepare("UPDATE owner_sessions SET revoked = 1 WHERE device_id = ?1 AND revoked = 0").bind(a.deviceId),
+    db
+      .prepare("INSERT INTO owner_sessions (device_id, token_hash, created_at, last_seen, revoked) VALUES (?1, ?2, ?3, ?3, 0)")
+      .bind(a.deviceId, hash, at),
+  ];
+  if (typeof db.batch === "function") await db.batch(stmts);
+  else for (const s of stmts) await s.run();
+  const row = await db.prepare("SELECT id FROM owner_sessions WHERE token_hash = ?1").bind(hash).first<{ id: number }>();
+  return Number(row?.id ?? 0);
 }
 
 /** The live (not revoked) session for a token, or null. */
@@ -60,15 +69,25 @@ export async function touchSession(db: D1Like, s: OwnerSession, nowMs: number): 
   await db.prepare("UPDATE owner_sessions SET last_seen = ?2 WHERE id = ?1").bind(s.id, new Date(nowMs).toISOString()).run();
 }
 
+/** Give this session the APNs token. Any OTHER active session holding the same token loses it first, in the same step. */
 export async function setSessionPushToken(db: D1Like, id: number, pushToken: string, nowMs: number): Promise<void> {
-  await db
-    .prepare("UPDATE owner_sessions SET push_token = ?2, push_updated_at = ?3 WHERE id = ?1 AND revoked = 0")
-    .bind(id, pushToken, new Date(nowMs).toISOString())
-    .run();
+  const stmts = [
+    db.prepare("UPDATE owner_sessions SET push_token = NULL WHERE push_token = ?1 AND id != ?2 AND revoked = 0").bind(pushToken, id),
+    db
+      .prepare("UPDATE owner_sessions SET push_token = ?1, push_updated_at = ?3 WHERE id = ?2 AND revoked = 0")
+      .bind(pushToken, id, new Date(nowMs).toISOString()),
+  ];
+  if (typeof db.batch === "function") await db.batch(stmts);
+  else for (const s of stmts) await s.run();
 }
 
-export async function clearSessionPushToken(db: D1Like, id: number): Promise<void> {
-  await db.prepare("UPDATE owner_sessions SET push_token = NULL WHERE id = ?1").bind(id).run();
+/** Forget a dead token, but only if the session still holds THAT token: a late "dead" answer must not erase a refreshed one. */
+export async function clearSessionPushToken(db: D1Like, id: number, pushToken: string): Promise<boolean> {
+  const r = await db
+    .prepare("UPDATE owner_sessions SET push_token = NULL WHERE id = ?1 AND push_token = ?2")
+    .bind(id, pushToken)
+    .run();
+  return (r.meta?.changes ?? 0) > 0;
 }
 
 export interface PushSession {

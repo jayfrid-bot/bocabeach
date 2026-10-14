@@ -277,7 +277,10 @@ describe.skipIf(!HAS_SQLITE)("answer", () => {
   });
 
   it("an answer to an alert from an earlier day says it was recorded only", async () => {
-    const id = await seed({ localDate: "2026-10-12" });
+    const id = await seed({
+      localDate: "2026-10-12",
+      claimTarget: { frameSha: SHA.slice(0, 20), frameAt: null, claimedAt: "2026-10-12T17:21:00Z" },
+    });
     const out = await (await asOwner(answer, { alertId: id, verdict: "wrong" })).json();
     expect(out).toMatchObject({ ok: true, overrideAdded: false, why: "earlier-day" });
     expect(h.all("SELECT COUNT(*) AS n FROM quality_overrides")[0].n).toBe(0);

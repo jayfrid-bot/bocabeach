@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HAS_SQLITE, makeCamDb, type CamDb } from "@/lib/camFrames/testDb";
 
 const sent: { token: string; payload: Record<string, unknown> }[] = [];
-const apnsCtl = vi.hoisted(() => ({ configured: true, status: 200, reason: "", sessionOpts: null as unknown }));
+const apnsCtl = vi.hoisted(() => ({ configured: true, status: 200, reason: "", sessionOpts: null as unknown, onSend: null as null | (() => Promise<void>) }));
 vi.mock("@/lib/push/apns", () => ({
   getApns: () => (apnsCtl.configured ? { keyId: "k", teamId: "t", bundleId: "b", privateKey: "p", production: false } : null),
   isDeadToken: (r: { status?: number; reason?: string }) => r.status === 410 || (r.status === 400 && r.reason === "BadDeviceToken"),
@@ -11,6 +11,7 @@ vi.mock("@/lib/push/apns", () => ({
     return {
       send: async (token: string, payload: Record<string, unknown>) => {
         sent.push({ token, payload });
+        await apnsCtl.onSend?.();
         return apnsCtl.status === 200 ? { ok: true, status: 200 } : { ok: false, status: apnsCtl.status, reason: apnsCtl.reason };
       },
       sendLiveActivityUpdate: async () => ({ ok: true, status: 200 }),
@@ -35,6 +36,7 @@ beforeEach(() => {
   apnsCtl.configured = true;
   apnsCtl.status = 200;
   apnsCtl.reason = "";
+  apnsCtl.onSend = null;
   h = makeCamDb({ allMigrations: true }) as CamDb;
 });
 afterEach(() => {
@@ -87,6 +89,27 @@ describe.skipIf(!HAS_SQLITE)("sendOwnerPush", () => {
     const r = await sendOwnerPush(h.db, MSG);
     expect(MAX_OWNER_PHONES).toBe(3);
     expect(r.sent).toBe(3);
+  });
+
+  it("sends to a token once, even when two sessions hold it", async () => {
+    // The database keeps tokens unique among active sessions; take the guard away to prove the sender dedupes too.
+    await seedOwnerSession(h.db, { pushToken: TOKEN_A });
+    await seedOwnerSession(h.db, { pushToken: TOKEN_B });
+    h.exec("DROP INDEX owner_sessions_push_token_unique");
+    h.exec(`UPDATE owner_sessions SET push_token = '${TOKEN_A}'`);
+    const r = await sendOwnerPush(h.db, MSG);
+    expect(r).toEqual({ ok: true, sent: 1, failed: 0 });
+    expect(sent.map((s) => s.token)).toEqual([TOKEN_A]);
+  });
+
+  it("a dead-token answer clears only the exact token it was about", async () => {
+    const { id } = await seedOwnerSession(h.db, { pushToken: TOKEN_A });
+    apnsCtl.status = 410;
+    // While the send is in flight the phone refreshes its token; the late 'dead' answer must not erase it.
+    const { setSessionPushToken } = await import("@/lib/quality/ownerSessions");
+    apnsCtl.onSend = () => setSessionPushToken(h.db, id, TOKEN_B, Date.now() + 5000);
+    await sendOwnerPush(h.db, MSG);
+    expect(h.all("SELECT push_token FROM owner_sessions")[0].push_token).toBe(TOKEN_B);
   });
 
   it("a revoked session is not pushed to", async () => {

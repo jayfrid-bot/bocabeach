@@ -165,10 +165,27 @@ class SharedVectorTests(unittest.TestCase):
         for v in VECTORS["targetKey"]:
             self.assertEqual(qw.target_key(v["o"]), v["key"], v["o"])
 
+    def test_same_claim(self):
+        for v in VECTORS["sameClaim"]:
+            self.assertEqual(qw.same_claim(v["a"], v["b"]), v["same"], v["name"])
+
     def test_effective_overrides(self):
         for v in VECTORS["effective"]:
             now = qw.parse_iso(v["now"])
             self.assertEqual([o["id"] for o in qw.effective_overrides(v["overrides"], now)], v["ids"], v["name"])
+
+    def test_the_merged_event_stream_decides_whether_the_cam_ends_disputed(self):
+        checked = 0
+        for v in VECTORS["effective"]:
+            if "disputedAtEnd" not in v:
+                continue
+            now = qw.parse_iso(v["now"]).astimezone(ZoneInfo("America/New_York"))
+            events = qw.owner_state(v["overrides"], now)["events"]
+            self.assertEqual([o["id"] for o in events], v["ids"], v["name"])
+            active = qw.active_disputes(qw.dispute_state(None, events, now))
+            self.assertEqual(bool(active), v["disputedAtEnd"], v["name"])
+            checked += 1
+        self.assertGreaterEqual(checked, 4, "Wrong-Right-Wrong and Right-Wrong-Right are among them")
 
 
 class ParseOverridesTests(unittest.TestCase):
@@ -248,6 +265,7 @@ class OwnerStateTests(unittest.TestCase):
         st = qw.owner_state([ov(action="publish", level="moderate", sha=SHA_A, oid=1), ov(sha=SHA_B, oid=2)], NOW)
         self.assertEqual([o["id"] for o in st["publish"]], [1])
         self.assertEqual([o["id"] for o in st["reject"]], [2])
+        self.assertEqual([o["id"] for o in st["events"]], [1, 2], "one merged stream, oldest first")
 
     def test_a_later_verdict_on_the_same_frame_replaces_the_earlier(self):
         later = "2026-10-13T17:39:00.000Z"
@@ -259,10 +277,19 @@ class OwnerStateTests(unittest.TestCase):
         self.assertEqual((len(st["reject"]), len(st["publish"])), (1, 1))
 
     def test_an_ended_verdict_is_ignored(self):
-        self.assertEqual(qw.owner_state([ov(until="2026-10-13T17:39:59.000Z")], NOW), {"publish": [], "reject": []})
+        self.assertEqual(qw.owner_state([ov(until="2026-10-13T17:39:59.000Z")], NOW), {"publish": [], "reject": [], "events": []})
 
     def test_no_overrides_no_state(self):
-        self.assertEqual(qw.owner_state([], NOW), {"publish": [], "reject": []})
+        self.assertEqual(qw.owner_state([], NOW), {"publish": [], "reject": [], "events": []})
+
+    def test_the_same_image_scored_at_another_time_is_another_claim(self):
+        a = ov(oid=1)
+        b = dict(ov(oid=2, created="2026-10-13T17:36:00.000Z"), claimedAt="2026-10-13T17:40:00Z")
+        st = qw.owner_state([a, b], NOW)
+        self.assertEqual([o["id"] for o in st["events"]], [1, 2], "two targets: the later verdict does not replace the first")
+
+    def test_a_verdict_with_no_claim_time_cannot_bind(self):
+        self.assertEqual(qw.owner_state([dict(ov(), claimedAt=None)], NOW)["events"], [])
 
 
 HELD_AT = "2026-10-13T17:30:00Z"
@@ -292,10 +319,10 @@ class ApplyOwnerConfirmationsTests(unittest.TestCase):
 
     def test_nothing_to_apply_returns_the_same_feed(self):
         p = prev_feed()
-        self.assertIs(qw.apply_owner_confirmations(p, [], []), p)
+        self.assertIs(qw.apply_owner_confirmations(p, []), p)
 
     def test_publish_confirms_exactly_that_frames_held_reading_at_the_verdicts_level(self):
-        out = qw.apply_owner_confirmations(prev_feed(), [self.publish()], [])
+        out = qw.apply_owner_confirmations(prev_feed(), [self.publish()])
         for key in ("latest", "lastSeaweed"):
             a, b = out[key]["cams"]
             self.assertEqual((a["level"], a["coveragePct"], a["confirmedBy"]), ("moderate", 35, "owner"))
@@ -306,12 +333,12 @@ class ApplyOwnerConfirmationsTests(unittest.TestCase):
         self.assertNotIn("confirmed", out["pendingClaims"]["b"])
 
     def test_a_corrected_level_is_what_publishes(self):
-        out = qw.apply_owner_confirmations(prev_feed(), [dict(self.publish(), level="high", coveragePct=60)], [])
+        out = qw.apply_owner_confirmations(prev_feed(), [dict(self.publish(), level="high", coveragePct=60)])
         self.assertEqual((out["latest"]["cams"][0]["level"], out["latest"]["cams"][0]["coveragePct"]), ("high", 60))
 
     def test_a_verdict_for_frame_a_never_touches_a_newer_held_frame_b(self):
         # The owner answered an old alert (frame A); the cam's current held claim is a different frame.
-        out = qw.apply_owner_confirmations(prev_feed(sha=SHA_B, frame_at="2026-10-13T17:29:00Z"), [self.publish(sha=SHA_A)], [])
+        out = qw.apply_owner_confirmations(prev_feed(sha=SHA_B, frame_at="2026-10-13T17:29:00Z"), [self.publish(sha=SHA_A)])
         self.assertTrue(out["latest"]["cams"][0]["unconfirmed"])
         self.assertNotIn("confirmed", out["pendingClaims"]["a"])
 
@@ -319,12 +346,12 @@ class ApplyOwnerConfirmationsTests(unittest.TestCase):
         p = prev_feed(sha=None, frame_at="2026-10-13T17:25:00Z")
         p["pendingClaims"]["a"].pop("frameSha")
         v = self.publish(sha=None, frame_at="2026-10-13T17:25:00Z")
-        self.assertEqual(qw.apply_owner_confirmations(p, [v], [])["latest"]["cams"][0]["confirmedBy"], "owner")
+        self.assertEqual(qw.apply_owner_confirmations(p, [v])["latest"]["cams"][0]["confirmedBy"], "owner")
         other = self.publish(sha=None, frame_at="2026-10-13T17:26:00Z")
-        self.assertTrue(qw.apply_owner_confirmations(p, [other], [])["latest"]["cams"][0]["unconfirmed"])
+        self.assertTrue(qw.apply_owner_confirmations(p, [other])["latest"]["cams"][0]["unconfirmed"])
 
     def test_reject_clears_that_frames_held_reading_and_removes_its_pending_claim(self):
-        out = qw.apply_owner_confirmations(prev_feed(), [], [self.reject()])
+        out = qw.apply_owner_confirmations(prev_feed(), [self.reject()])
         a = out["latest"]["cams"][0]
         self.assertIsNone(a["level"])
         self.assertTrue(a["ownerRejected"])
@@ -334,60 +361,76 @@ class ApplyOwnerConfirmationsTests(unittest.TestCase):
         self.assertIn("b", out["pendingClaims"])
 
     def test_reject_of_another_frame_leaves_the_claim_in_place(self):
-        out = qw.apply_owner_confirmations(prev_feed(), [], [self.reject(sha=SHA_B)])
+        out = qw.apply_owner_confirmations(prev_feed(), [self.reject(sha=SHA_B)])
         self.assertTrue(out["latest"]["cams"][0]["unconfirmed"])
         self.assertIn("a", out["pendingClaims"])
 
     def test_a_reading_that_is_not_held_is_left_alone(self):
         p = prev_feed()
         p["latest"]["cams"][0] = {"id": "a", "level": "none", "scoredAt": HELD_AT, "frameSha": SHA_A}
-        self.assertEqual(qw.apply_owner_confirmations(p, [self.publish()], [])["latest"]["cams"][0]["level"], "none")
+        self.assertEqual(qw.apply_owner_confirmations(p, [self.publish()])["latest"]["cams"][0]["level"], "none")
 
     def test_the_input_is_not_changed(self):
         p = prev_feed()
         before = json.dumps(p, sort_keys=True)
-        qw.apply_owner_confirmations(p, [self.publish()], [self.reject(sha=SHA_B)])
+        qw.apply_owner_confirmations(p, [self.publish(), self.reject(sha=SHA_B)])
         self.assertEqual(json.dumps(p, sort_keys=True), before)
 
     def test_a_feed_with_no_groups_or_claims_is_fine(self):
-        self.assertEqual(qw.apply_owner_confirmations({}, [self.publish()], [self.reject()]), {})
+        self.assertEqual(qw.apply_owner_confirmations({}, [self.publish(), self.reject()]), {})
 
 
 class DisputeStateTests(unittest.TestCase):
     TODAY = "2026-10-13"
 
     def test_an_owner_reject_disputes_its_cam_for_today(self):
-        st = qw.dispute_state(None, [ov(cam="a")], [], NOW)
+        st = qw.dispute_state(None, [ov(cam="a")], NOW)
         self.assertEqual(st["a"], {"since": CREATED, "reason": "owner", "date": self.TODAY, "claims": []})
         self.assertEqual(list(qw.active_disputes(st)), ["a"])
 
     def test_a_reject_from_another_day_does_not_dispute(self):
-        self.assertEqual(qw.dispute_state(None, [ov(cam="a", local_date="2026-10-12")], [], NOW), {})
+        self.assertEqual(qw.dispute_state(None, [ov(cam="a", local_date="2026-10-12")], NOW), {})
 
     def test_the_previous_feeds_entries_carry_over_only_for_today(self):
         prev = {"a": {"since": "x", "reason": "second-opinion", "date": self.TODAY, "claims": [{"key": "k", "at": "t"}]},
                 "b": {"since": "x", "reason": "owner", "date": "2026-10-12", "claims": []}}
-        st = qw.dispute_state(prev, [], [], NOW)
+        st = qw.dispute_state(prev, [], NOW)
         self.assertEqual(list(st), ["a"])
         self.assertEqual(st["a"]["claims"], [{"key": "k", "at": "t"}])
 
     def test_the_same_reject_does_not_reopen_a_resolved_dispute_but_a_newer_one_does(self):
         resolved = {"a": {"since": CREATED, "reason": "owner", "date": self.TODAY, "claims": [], "resolvedAt": "2026-10-13T17:38:00.000Z"}}
-        self.assertEqual(qw.active_disputes(qw.dispute_state(resolved, [ov(cam="a")], [], NOW)), {})
+        self.assertEqual(qw.active_disputes(qw.dispute_state(resolved, [ov(cam="a")], NOW)), {})
         newer = ov(cam="a", created="2026-10-13T17:39:00.000Z", sha=SHA_B, oid=2)
-        st = qw.dispute_state(resolved, [newer], [], NOW)
+        st = qw.dispute_state(resolved, [newer], NOW)
         self.assertEqual(list(qw.active_disputes(st)), ["a"])
         self.assertEqual(st["a"]["since"], "2026-10-13T17:39:00.000Z")
 
     def test_an_owner_publish_after_the_dispute_began_ends_it(self):
         right = ov(cam="a", action="publish", level="moderate", created="2026-10-13T17:39:00.000Z", sha=SHA_B, oid=2)
-        st = qw.dispute_state(None, [ov(cam="a")], [right], NOW)
+        st = qw.dispute_state(None, [ov(cam="a"), right], NOW)
         self.assertEqual(qw.active_disputes(st), {})
         self.assertEqual(st["a"]["resolvedAt"], "2026-10-13T17:39:00.000Z")
 
     def test_an_owner_publish_from_before_the_dispute_does_not_end_it(self):
         early = ov(cam="a", action="publish", level="moderate", created="2026-10-13T17:10:00.000Z", sha=SHA_B, oid=2)
-        self.assertEqual(list(qw.active_disputes(qw.dispute_state(None, [ov(cam="a")], [early], NOW))), ["a"])
+        self.assertEqual(list(qw.active_disputes(qw.dispute_state(None, [early, ov(cam="a")], NOW))), ["a"])
+
+
+    def test_wrong_right_wrong_ends_disputed_and_right_wrong_right_does_not(self):
+        t = ["2026-10-13T17:20:00.000Z", "2026-10-13T17:25:00.000Z", "2026-10-13T17:30:00.000Z"]
+        wrong = lambda oid, at, sha: ov(cam="a", created=at, sha=sha, oid=oid)
+        right = lambda oid, at, sha: ov(cam="a", action="publish", level="moderate", created=at, sha=sha, oid=oid)
+        wrw = [wrong(1, t[0], SHA_A), right(2, t[1], SHA_B), wrong(3, t[2], "cccccccccccccccccccc")]
+        rwr = [right(1, t[0], SHA_A), wrong(2, t[1], SHA_B), right(3, t[2], "cccccccccccccccccccc")]
+        self.assertEqual(list(qw.active_disputes(qw.dispute_state(None, wrw, NOW))), ["a"])
+        self.assertEqual(qw.active_disputes(qw.dispute_state(None, rwr, NOW)), {})
+
+    def test_the_order_of_the_input_does_not_matter(self):
+        t = ["2026-10-13T17:20:00.000Z", "2026-10-13T17:25:00.000Z"]
+        events = [ov(cam="a", created=t[0], oid=1),
+                  ov(cam="a", action="publish", level="moderate", created=t[1], sha=SHA_B, oid=2)]
+        self.assertEqual(qw.dispute_state(None, events, NOW), qw.dispute_state(None, events[::-1], NOW))
 
 
 class ExtendedPersistenceTests(unittest.TestCase):

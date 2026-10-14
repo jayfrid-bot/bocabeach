@@ -13,8 +13,8 @@
 //   Wrong, correct level none/low,
 //     or no value                      reject that claim: nothing is published for it,
 //                                      and the cam is DISPUTED for the rest of the day.
-// A live override is written only when the claim was made on today's beach-local date and
-// the alert is not expired. An answer to an older alert stores the LABEL only.
+// A live override is written only when the claim was scored on today's beach-local date (the date
+// of its `claimedAt`) and the alert is not expired. An answer to an older alert stores the LABEL only.
 
 import { getLocation } from "@/config/locations";
 import type { D1Like } from "@/lib/db/d1Store";
@@ -129,15 +129,17 @@ export async function answerAlert(db: D1Like, args: AnswerArgs, nowMs: number): 
   const tz = getLocation(alert.slug)?.timezone ?? OWNER_TZ;
   const frame = await frameForLabel(db, alert.slug, alert.kind, payload, alert.created_at);
   const createdAt = new Date(nowMs).toISOString();
+  const claimedMs = isSeaweed && sp.claimTarget?.claimedAt ? Date.parse(sp.claimTarget.claimedAt) : NaN;
 
   // Live only for a seaweed claim made on today's beach-local date, on an alert still open
   // (not expired by status, and not older than the open window).
   let why: "not-seaweed" | "expired" | "earlier-day" | "unbound" | undefined;
   if (!isSeaweed) why = "not-seaweed";
   else if (alert.status === "expired" || nowMs - Date.parse(alert.created_at) > ALERT_OPEN_MS) why = "expired";
-  else if (sp.localDate !== localHourParts(tz, nowMs).date) why = "earlier-day";
-  // A claim with no frame identity cannot be told apart from its neighbors: label only.
-  else if (!sp.claimTarget?.frameSha && !sp.claimTarget?.frameAt) why = "unbound";
+  // A claim with no frame identity or no claim time cannot be told apart from its neighbors: label only.
+  else if ((!sp.claimTarget?.frameSha && !sp.claimTarget?.frameAt) || !Number.isFinite(claimedMs)) why = "unbound";
+  // The beach-local day is the CLAIM's (when it was scored), the same rule as ingest and the reader.
+  else if (localHourParts(tz, claimedMs).date !== localHourParts(tz, nowMs).date) why = "earlier-day";
   const live = why === undefined;
 
   const label = db
@@ -180,14 +182,14 @@ export async function answerAlert(db: D1Like, args: AnswerArgs, nowMs: number): 
           sp.claimTarget?.frameSha ?? null,
           sp.claimTarget?.frameAt ?? null,
           sp.claimTarget?.claimedAt ?? null,
-          sp.localDate,
+          localHourParts(tz, claimedMs).date,
           args.verdict,
           fx.action,
           fx.level,
           fx.coveragePct,
           fx.note,
           createdAt,
-          new Date(endOfLocalDayMs(tz, nowMs)).toISOString(),
+          new Date(endOfLocalDayMs(tz, claimedMs)).toISOString(),
         ),
     );
   }

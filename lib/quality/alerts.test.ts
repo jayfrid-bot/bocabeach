@@ -62,17 +62,24 @@ describe.skipIf(!HAS_SQLITE)("recordAlert: store always, queue when the rules al
   });
 
   it("the same beach and signal does not queue again inside 3 hours, but another signal does", async () => {
+    const at = (ms: number) => ({ createdAt: new Date(ms).toISOString() });
     await recordAlert(h.db, alert({ dedupeKey: "a" }), NOON);
-    expect(await recordAlert(h.db, alert({ dedupeKey: "b" }), NOON + 2 * 3_600_000)).toMatchObject({ queued: false, reason: "duplicate" });
-    expect(await recordAlert(h.db, alert({ dedupeKey: "c", signal: "sand" }), NOON + 2 * 3_600_000)).toMatchObject({ queued: true });
-    expect(await recordAlert(h.db, alert({ dedupeKey: "d" }), NOON + 3 * 3_600_000 + 1)).toMatchObject({ queued: true });
+    expect(await recordAlert(h.db, alert({ dedupeKey: "b", ...at(NOON + 2 * 3_600_000) }), NOON + 2 * 3_600_000)).toMatchObject({ queued: false, reason: "duplicate" });
+    expect(await recordAlert(h.db, alert({ dedupeKey: "c", signal: "sand", ...at(NOON + 2 * 3_600_000) }), NOON + 2 * 3_600_000)).toMatchObject({ queued: true });
+    expect(await recordAlert(h.db, alert({ dedupeKey: "d", ...at(NOON + 3 * 3_600_000 + 1) }), NOON + 3 * 3_600_000 + 1)).toMatchObject({ queued: true });
   });
 
   it("at most 3 a day across all beaches; the 4th is stored with the reason", async () => {
     const beaches = ["boca-raton", "deerfield-beach", "fort-lauderdale", "boca-raton"];
     const out = [];
     for (let i = 0; i < beaches.length; i++) {
-      out.push(await recordAlert(h.db, alert({ slug: beaches[i], signal: i === 3 ? "sand" : "score", dedupeKey: `k${i}` }), NOON + i * 60_000));
+      out.push(
+        await recordAlert(
+          h.db,
+          alert({ slug: beaches[i], signal: i === 3 ? "sand" : "score", dedupeKey: `k${i}`, createdAt: new Date(NOON + i * 60_000).toISOString() }),
+          NOON + i * 60_000,
+        ),
+      );
     }
     expect(out.map((r) => r.reason)).toEqual(["queued", "queued", "queued", "daily-cap"]);
     expect(h.all("SELECT COUNT(*) AS n FROM quality_alerts")[0].n).toBe(4);
@@ -97,5 +104,37 @@ describe.skipIf(!HAS_SQLITE)("recordAlert: store always, queue when the rules al
   it("alerts at once for one beach and signal never queue two (Codex: the 3-hour window used to race)", async () => {
     const results = await Promise.all(Array.from({ length: 6 }, (_, i) => recordAlert(h.db, alert({ dedupeKey: `y${i}` }), NOON + i)));
     expect(results.filter((r) => r.queued)).toHaveLength(1);
+  });
+
+  it("the alert and its slot are written in ONE batch: a failing slot statement leaves no alert behind", async () => {
+    // Break the slot table, then try: the whole batch rolls back, so no alert exists without its slot decision.
+    h.exec("DROP TABLE quality_push_slots");
+    await expect(recordAlert(h.db, alert(), NOON)).rejects.toBeTruthy();
+    expect(h.all("SELECT COUNT(*) AS n FROM quality_alerts")[0].n).toBe(0);
+  });
+
+  it("a retry that finds the alert WITHOUT a slot reserves the missing one while it is still eligible", async () => {
+    // The alert exists (an older build wrote it), and no slot was ever taken.
+    await recordAlert(h.db, alert({ dedupeKey: "lost" }), NOON, { maxPerSlugPerHour: 50 });
+    h.exec("DELETE FROM quality_push_slots");
+    const again = await recordAlert(h.db, alert({ dedupeKey: "lost" }), NOON + 60_000);
+    expect(again).toMatchObject({ created: false, queued: true, reason: "queued" });
+    expect(slots()).toHaveLength(1);
+  });
+
+  it("a retry does NOT reserve a slot once the alert is stale or answered", async () => {
+    await recordAlert(h.db, alert({ dedupeKey: "lost" }), NOON);
+    h.exec("DELETE FROM quality_push_slots");
+    expect(await recordAlert(h.db, alert({ dedupeKey: "lost" }), NOON + 31 * 60_000)).toMatchObject({ created: false, queued: false, reason: "exists" });
+    h.exec("UPDATE quality_alerts SET status = 'answered'");
+    expect(await recordAlert(h.db, alert({ dedupeKey: "lost" }), NOON + 60_000)).toMatchObject({ queued: false, reason: "exists" });
+    expect(slots()).toEqual([]);
+  });
+
+  it("a retry of an alert that already has its slot adds nothing", async () => {
+    await recordAlert(h.db, alert(), NOON);
+    const again = await recordAlert(h.db, alert(), NOON + 1000);
+    expect(again).toMatchObject({ created: false, queued: false, reason: "exists" });
+    expect(slots()).toHaveLength(1);
   });
 });

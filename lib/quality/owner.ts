@@ -2,9 +2,12 @@
 //
 // ENROLLMENT. The OWNER_ENROLL_CODE secret is the one-time credential. The owner opens
 // /admin/review#enroll=<code> once on the phone; the page POSTs the code in a request
-// BODY (never in a URL the server sees, never logged) to /api/quality/owner/enroll. If it
-// matches (constant time, after hashing both sides), the server makes a session and returns
-// its token once. Enrollment is rate limited (5 tries an hour per address, 20 an hour in all).
+// BODY (never in a URL the server sees, never logged) to /api/quality/owner/enroll. Only the
+// FRAGMENT form works: a "?enroll=" query would reach server and CDN logs, so it is not read. If the
+// code matches (constant time, after hashing both sides), the server makes a session and returns
+// its token once. Enrollment is limited to 5 tries an hour per address and 20 an hour in all, by an
+// atomic D1 counter (lib/quality/enrollThrottle.ts); enrolling again from the same device revokes
+// the old session.
 // Changing the secret stops the old code from enrolling anyone new; it does NOT end sessions
 // already made. To end them: UPDATE owner_sessions SET revoked = 1 (docs/QUALITY_PLAN.md).
 //
@@ -19,13 +22,13 @@ import { bearerToken, readBodyCapped, sha256Hex } from "@/lib/camFrames/ingest";
 import { secretEqual } from "@/lib/db/api";
 import { getD1, type D1Like } from "@/lib/db/d1Store";
 import { checkRateLimit, clientIp } from "@/lib/plus/rateLimit";
+import { consumeEnrollAttempt, ENROLL_ALL, ENROLL_PER_IP } from "@/lib/quality/enrollThrottle";
+import { isDeviceId } from "@/lib/db/api";
 import { ownerFail } from "@/lib/quality/ownerHeaders";
 import { createSession, findSession, newOwnerToken, touchSession, type OwnerSession } from "@/lib/quality/ownerSessions";
 
 const MAX_ATTEMPTS_IP = 240;
 const WINDOW_MS = 60 * 60 * 1000;
-const ENROLL_PER_IP = 5;
-const ENROLL_ALL = 20;
 /** Owner request bodies are tiny. */
 export const MAX_OWNER_BODY_BYTES = 8 * 1024;
 
@@ -64,14 +67,14 @@ export async function readOwnerBody(req: Request): Promise<JsonBody> {
 export async function enrollOwner(req: Request, db: D1Like, body: Record<string, unknown>): Promise<Response | { token: string }> {
   if (!enrollmentConfigured(process.env.OWNER_ENROLL_CODE)) return ownerFail("enrollment-closed", 503);
   const ip = clientIp(req) ?? "unknown";
-  const [byIp, all] = [
-    await checkRateLimit(`quality-enroll:ip:${ip}`, ENROLL_PER_IP, WINDOW_MS),
-    await checkRateLimit("quality-enroll:all", ENROLL_ALL, WINDOW_MS),
-  ];
-  const limited = byIp.limited ? byIp : all.limited ? all : null;
-  if (limited) return ownerFail("too-many-attempts", 429, { "Retry-After": String(limited.retryAfterSec) });
+  const now = Date.now();
+  // Atomic counters in D1. The address bucket first: a blocked address never spends the shared allowance.
+  const byIp = await consumeEnrollAttempt(db, `ip:${ip}`, now, ENROLL_PER_IP);
+  const all = byIp.allowed ? await consumeEnrollAttempt(db, "all", now, ENROLL_ALL) : byIp;
+  if (!all.allowed) return ownerFail("too-many-attempts", 429, { "Retry-After": String(all.retryAfterSec) });
   if (!(await enrollCodeMatches(body.code))) return ownerFail("bad-code", 403);
-  const deviceId = typeof body.deviceId === "string" ? body.deviceId.slice(0, 128) : "unknown";
+  // A device id is only a label. A missing or odd one gets a random label, so two such phones never revoke each other.
+  const deviceId = isDeviceId(body.deviceId) ? body.deviceId : `anon-${newOwnerToken().slice(0, 12)}`;
   const token = newOwnerToken();
   await createSession(db, { deviceId, token, nowMs: Date.now() });
   return { token };

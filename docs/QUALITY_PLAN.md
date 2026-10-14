@@ -89,10 +89,35 @@ cam becomes **disputed** for the rest of the beach-local day (see below). The
 reader sends an alert to the app. If the second reader fails or calls the frame
 unreadable, nothing changes.
 
+**The order of one tick.** For one beach, the reader works in three steps:
+
+1. Local confirmation. A cam confirms on its own history (persistence, or the
+   long rule for a disputed cam).
+2. Second opinions, for every read that is still held. This finds which cams
+   just became disputed.
+3. Confirmation across cams, using the state that step 2 left.
+
+So a cam whose second reader just disagreed cannot confirm another cam. Two cams
+that both claim a bloom still confirm each other. A cam whose own second reader
+just disagreed needs a backer that is already published, not one that is still
+held. The cost: two cams that claim the same bloom now both use a second opinion
+(it was none before). The cap of six attempts per tick still holds.
+
 **A failed alert is not lost.** The reader keeps it in `pendingAlerts` in the
-feed file and retries it every tick until the app answers 2xx. It drops the
+feed file and retries it every tick until the app answers 2xx. This includes an
+alert it could not send because `QUALITY_INGEST_TOKEN` was unset. It drops the
 alert after 24 hours, or at once on a permanent refusal (400, 404, 413, 422). The
 queued copy has no picture, so the feed file stays small.
+
+**A missing feed file never resets a beach.** The reader reads each beach's last
+published file at the start of a tick. A true HTTP 404 means a new beach: it
+starts empty. Any other failure (a network error, a 5xx, a body that does not
+parse) is retried once. If it still fails, the reader stops the whole tick. It
+writes nothing, still runs the webcam archive, and exits with an error. The
+publish step replaces the whole branch with the files written in that cycle, so a
+single beach cannot be skipped. The branch keeps the last good files. Starting a
+beach from empty would erase its held claims, disputes and outbox. Five failed
+cycles in a row end the loop, so a long outage shows as a red run.
 
 ### Disputed cams
 
@@ -107,7 +132,7 @@ its new moderate-or-high claims are held. They confirm only by one of these:
 
 1. a second opinion that agrees;
 2. a fresh other cam, itself not disputed, that claims moderate or high in the
-   same tick;
+   same tick (checked after the second opinions: see "The order of one tick");
 3. an owner Right;
 4. the same cam claiming moderate or high on at least 3 distinct frames over at
    least 90 minutes. A real bloom on a one-cam beach still publishes.
@@ -136,12 +161,33 @@ one atomic insert (`lib/quality/pushSlots.ts`).
 An alert that fails a rule is still stored. It shows in the review list. It does
 not push. A push that fails gives its slot back.
 
+**The alert and its slot are one step.** The alert insert and the slot
+reservation run in one D1 batch. An alert never exists without its slot decision.
+A slot is taken only for an alert that is still open and less than 30 minutes old.
+A retry that finds the alert stored without a slot takes the missing slot, if the
+alert is still open, still fresh, and the rules still allow it.
+
 **The archive only records.** The hourly archive request writes the alert and
 takes the push slot. It never talks to APNs. The drain step sends the push:
 `workers/history-cron` calls `POST /api/quality/drain` every minute, after its
 archive pass. The drain sends at most 3 pushes per tick. Each APNs call is cut off
 after 5 seconds. It drops a queued push that is more than 30 minutes old, and it
-never sends in quiet hours.
+never sends in quiet hours. It sends only for alerts that are still open.
+
+**A push is sent at most once.** The drain claims a push before it calls APNs. A
+slot moves through these states:
+
+| State | Meaning |
+|---|---|
+| `queued` | Reserved. Waiting for the drain. |
+| `attempting` | A drain claimed it with one conditional update that sets a fresh attempt id. Only that attempt id can finish or release it. |
+| `sent` | APNs accepted it. The alert is marked pushed. |
+| `unknown` | An attempt that was never finished for 10 minutes (the process died, or D1 failed after APNs said yes). It is **not** sent again, because the first send may have reached the phone. The review list says so. |
+
+A send that fails gives its slot back (the row is deleted), and only the attempt
+that holds the slot can do it. Two drains that overlap cannot send the same push:
+the one that loses the claim changes nothing. The daily purge deletes `sent` and
+`unknown` slot rows older than 30 days.
 
 **Subrequest budget.** The archive request keeps its 44-fetch build budget, plus
 at most 2 for the cam feed, and no APNs. The drain is its own request. It makes
@@ -154,9 +200,21 @@ seaweed (35%). Other cams: none." A tap opens `/admin/review?alert=<id>`.
 **Where the push goes.** Only to the push token stored on the owner session
 (below). The push code never reads the general devices table or the general push
 registration. Another person's registration can neither receive these alerts nor
-redirect them.
+redirect them. The database keeps this clean:
 
-**Review screen** (`/admin/review`). One card per open alert. It shows the
+- A device has one active owner session. Enrolling again from the same device
+  revokes the old session.
+- A push token belongs to one active session. Setting it on a session takes it
+  from any other.
+- The owner screens ask the native push plugin for a fresh token each visit. They
+  never reuse a token an earlier beach registration saved on the phone.
+- A token that Apple calls dead is cleared only if the session still holds that
+  exact token. A late answer cannot erase a token the phone just refreshed.
+- A send goes to each distinct token once.
+
+**Review screen** (`/admin/review`). One card per open alert. Open alerts are
+queried on their own, so a run of newer answered alerts can never push an open
+one out of the list. A card says when its push may not have arrived (`unknown`). It shows the
 frame, one sentence to judge, what the app showed, the second reading, and the
 other cams. Two big buttons: Right and Wrong. Wrong opens a one-tap picker for the
 correct value. Seaweed: none, low, moderate, high. Clarity: clear, slightly
@@ -173,8 +231,10 @@ of that cam. The label keeps the key.
 ### What an answer does
 
 An alert names one **exact claim**: the cam, the frame (its hash for a feed cam,
-else its time), when the reader scored it, and the beach-local date. An answer
-binds to that claim. It never acts on "the cam" in general, on a different frame,
+else its time), and when the reader scored it (`claimedAt`). All three are
+required. The app refuses an alert that lacks them, or whose hash is not a prefix
+of the image's SHA-256, or whose time is not the alert's own. An answer binds to
+that claim. It never acts on "the cam" in general, on a different frame,
 or on a reading that merely came before the tap.
 
 | Answer | What it does to that claim |
@@ -183,13 +243,21 @@ or on a reading that merely came before the tap.
 | Wrong, really moderate or high | Publish it at the corrected level, the same way. |
 | Wrong, really none or low, or no value | Reject it: remove its pending claim and publish nothing for that frame. Dispute the cam for the rest of the day. |
 
-The answer acts live only when the claim was made on **today's** beach-local
-date and the alert has not expired. An answer to an older alert stores the label
-and nothing else. The review screen says so.
+The answer acts live only when the claim was scored on **today's** beach-local
+date and the alert has not expired. The date is the date of `claimedAt`, not the
+frame's time. The app uses that one rule at ingest, at the answer and in the
+reader. An answer to an older alert stores the label and nothing else. The review
+screen says so.
 
-Of several answers about one exact claim, the **latest wins**. The app and the
+The same image scored again later is a **different claim**: an answer about the
+first does not touch the second.
+
+**Replay.** The answers in force are one merged stream of publishes and rejects,
+ordered by (created time, id), and applied in that order. Of several answers about
+one exact claim, the latest wins. So Wrong, Right, Wrong on three frames of one
+cam ends disputed, and Right, Wrong, Right ends not disputed. The app and the
 reader apply the same rule. Both are tested against one shared vector file,
-`lib/quality/verdictVectors.json`.
+`lib/quality/verdictVectors.json`, which has both sequences.
 
 **One atomic step.** The label, the alert status and the override are written in
 one D1 batch. If any part fails, none of it sticks. Unique indexes allow one
@@ -255,17 +323,21 @@ both places. The workflow `sargassum.yml` passes it to the reader.
 2. Deploy the app and `workers/history-cron`.
 3. On the owner's iPhone, open
    `https://app.isitbeachday.com/admin/review#enroll=<OWNER_ENROLL_CODE>`.
-   Use the `#` form. Browsers never send a `#` part to a server. The page reads
-   the code, removes it from the address bar, and sends it in a request body. The
-   server never logs it. A `?enroll=<code>` link also works, but the server sees
-   that one in its request URL.
+   Use the `#` form only. Browsers never send a `#` part to a server. The page
+   reads the code, removes it from the address bar, and sends it in a request
+   body. The server never logs it. A `?enroll=<code>` link does **not** work: a
+   query string would reach the server and its logs, so the page ignores it.
 4. The server makes an owner session. It returns a random 32-byte token once. The
    phone keeps it. The server keeps only its SHA-256, in `owner_sessions`.
-5. Turn on alerts for any beach in the app once. The review screen then sends the
-   phone's push token to `POST /api/quality/owner/push-token`, which stores it on
-   the owner session. Owner pushes go only there.
+5. Allow notifications for the app once (turning on alerts for any beach does
+   it). The review screen then asks the phone for a fresh push token and sends it
+   to `POST /api/quality/owner/push-token`, which stores it on the owner session.
+   Owner pushes go only there.
 
-Enrollment is rate limited: 5 tries per hour per address, 20 per hour in all.
+Enrollment is rate limited: 5 tries per hour per address, 20 per hour in all. The
+counters live in D1 (`owner_enroll_attempts`). One atomic statement bumps a
+counter and refuses to pass the limit, so tries that arrive together cannot slip
+past it. The daily purge deletes counters older than 2 days.
 
 ### Rotate or revoke
 
@@ -332,6 +404,11 @@ If one is missing, the incident is not closed.
 - A queued push that the drain cannot send (no owner phone enrolled, a failed
   send, quiet hours, or older than 30 minutes) is not retried. The alert stays in
   the review list.
+- A push whose attempt never finished is marked `unknown` and is not sent again.
+  The owner may or may not have received it. The review list shows the alert
+  either way.
+- If the last published feed file of any beach cannot be read, the reader skips
+  that whole tick (see "Check"). Five such ticks in a row end the loop.
 
 ## Separate hardening item (not in this change)
 

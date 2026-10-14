@@ -1,67 +1,472 @@
 {
-  "_about": "Shared test vectors for the owner-verdict rules. lib/quality/seaweedOverrides.ts (TypeScript) and scripts/quality_watch.py (Python) must give these exact answers; lib/quality/seaweedOverrides.test.ts and scripts/quality_watch_test.py both read this file.",
+  "_about": "Shared test vectors for the owner-verdict rules. lib/quality/seaweedOverrides.ts (TypeScript) and scripts/quality_watch.py (Python) must give these exact answers; lib/quality/seaweedOverrides.test.ts and scripts/quality_watch_test.py both read this file. `sameFrame` and `targetKey` are the identity rules (a target is cam + frame + claim time). `effective` is the replay: the verdicts in force, as one merged stream of publishes and rejects, ordered by (created time, id), the latest per exact target winning; `ids` is that stream. `disputedAtEnd` (read by the Python test only: the app has no dispute state) is whether the cam ends the replay disputed.",
   "sameFrame": [
-    { "name": "equal hash", "a": { "frameSha": "0123456789abcdef0123", "frameAt": null }, "b": { "frameSha": "0123456789abcdef0123", "frameAt": "2026-10-13T17:20:00Z" }, "same": true },
-    { "name": "a longer hash matches its 20-character prefix", "a": { "frameSha": "0123456789abcdef0123456789" }, "b": { "frameSha": "0123456789abcdef0123" }, "same": true },
-    { "name": "different hashes are different frames even at the same time", "a": { "frameSha": "0123456789abcdef0123", "frameAt": "2026-10-13T17:20:00Z" }, "b": { "frameSha": "ffffffffffffffffffff", "frameAt": "2026-10-13T17:20:00Z" }, "same": false },
-    { "name": "no hash on one side: the frame time decides", "a": { "frameSha": null, "frameAt": "2026-10-13T17:20:00Z" }, "b": { "frameSha": "0123456789abcdef0123", "frameAt": "2026-10-13T17:20:00Z" }, "same": true },
-    { "name": "different frame times", "a": { "frameAt": "2026-10-13T17:20:00Z" }, "b": { "frameAt": "2026-10-13T17:30:00Z" }, "same": false },
-    { "name": "a hash that is too short to trust", "a": { "frameSha": "0123" }, "b": { "frameSha": "0123" }, "same": false },
-    { "name": "nothing to compare", "a": {}, "b": {}, "same": false }
+    {
+      "name": "equal hash",
+      "a": {
+        "frameSha": "0123456789abcdef0123",
+        "frameAt": null
+      },
+      "b": {
+        "frameSha": "0123456789abcdef0123",
+        "frameAt": "2026-10-13T17:20:00Z"
+      },
+      "same": true
+    },
+    {
+      "name": "a longer hash matches its 20-character prefix",
+      "a": {
+        "frameSha": "0123456789abcdef0123456789"
+      },
+      "b": {
+        "frameSha": "0123456789abcdef0123"
+      },
+      "same": true
+    },
+    {
+      "name": "different hashes are different frames even at the same time",
+      "a": {
+        "frameSha": "0123456789abcdef0123",
+        "frameAt": "2026-10-13T17:20:00Z"
+      },
+      "b": {
+        "frameSha": "ffffffffffffffffffff",
+        "frameAt": "2026-10-13T17:20:00Z"
+      },
+      "same": false
+    },
+    {
+      "name": "no hash on one side: the frame time decides",
+      "a": {
+        "frameSha": null,
+        "frameAt": "2026-10-13T17:20:00Z"
+      },
+      "b": {
+        "frameSha": "0123456789abcdef0123",
+        "frameAt": "2026-10-13T17:20:00Z"
+      },
+      "same": true
+    },
+    {
+      "name": "different frame times",
+      "a": {
+        "frameAt": "2026-10-13T17:20:00Z"
+      },
+      "b": {
+        "frameAt": "2026-10-13T17:30:00Z"
+      },
+      "same": false
+    },
+    {
+      "name": "a hash that is too short to trust",
+      "a": {
+        "frameSha": "0123"
+      },
+      "b": {
+        "frameSha": "0123"
+      },
+      "same": false
+    },
+    {
+      "name": "nothing to compare",
+      "a": {},
+      "b": {},
+      "same": false
+    }
+  ],
+  "sameClaim": [
+    {
+      "name": "same frame, same claim time",
+      "a": {
+        "frameSha": "0123456789abcdef0123",
+        "claimedAt": "2026-10-13T17:21:00Z"
+      },
+      "b": {
+        "frameSha": "0123456789abcdef0123",
+        "claimedAt": "2026-10-13T17:21:00Z"
+      },
+      "same": true
+    },
+    {
+      "name": "the same image scored again later is a different claim",
+      "a": {
+        "frameSha": "0123456789abcdef0123",
+        "claimedAt": "2026-10-13T17:21:00Z"
+      },
+      "b": {
+        "frameSha": "0123456789abcdef0123",
+        "claimedAt": "2026-10-13T17:31:00Z"
+      },
+      "same": false
+    },
+    {
+      "name": "no claim time is never the same claim",
+      "a": {
+        "frameSha": "0123456789abcdef0123"
+      },
+      "b": {
+        "frameSha": "0123456789abcdef0123"
+      },
+      "same": false
+    },
+    {
+      "name": "a different frame scored at the same time",
+      "a": {
+        "frameSha": "0123456789abcdef0123",
+        "claimedAt": "2026-10-13T17:21:00Z"
+      },
+      "b": {
+        "frameSha": "ffffffffffffffffffff",
+        "claimedAt": "2026-10-13T17:21:00Z"
+      },
+      "same": false
+    }
   ],
   "targetKey": [
-    { "o": { "camId": "boca-inlet-surf", "frameSha": "0123456789abcdef0123456789", "frameAt": "2026-10-13T17:20:00Z" }, "key": "boca-inlet-surf|sha:0123456789abcdef0123" },
-    { "o": { "camId": "ftl-elbo-beach-cam", "frameSha": null, "frameAt": "2026-10-13T17:20:00Z" }, "key": "ftl-elbo-beach-cam|at:2026-10-13T17:20:00Z" },
-    { "o": { "camId": "boca-south" }, "key": null }
+    {
+      "o": {
+        "camId": "boca-inlet-surf",
+        "frameSha": "0123456789abcdef0123456789",
+        "frameAt": "2026-10-13T17:20:00Z",
+        "claimedAt": "2026-10-13T17:21:00Z"
+      },
+      "key": "boca-inlet-surf|sha:0123456789abcdef0123|2026-10-13T17:21:00Z"
+    },
+    {
+      "o": {
+        "camId": "ftl-elbo-beach-cam",
+        "frameSha": null,
+        "frameAt": "2026-10-13T17:20:00Z",
+        "claimedAt": "2026-10-13T17:21:00Z"
+      },
+      "key": "ftl-elbo-beach-cam|at:2026-10-13T17:20:00Z|2026-10-13T17:21:00Z"
+    },
+    {
+      "o": {
+        "camId": "boca-south",
+        "claimedAt": "2026-10-13T17:21:00Z"
+      },
+      "key": null
+    },
+    {
+      "o": {
+        "camId": "boca-south",
+        "frameSha": "0123456789abcdef0123"
+      },
+      "key": null
+    }
   ],
   "effective": [
     {
       "name": "the latest verdict per exact target wins",
       "now": "2026-10-13T18:00:00Z",
       "overrides": [
-        { "id": 1, "camId": "a", "action": "reject", "frameSha": "11111111111111111111", "createdAtUtc": "2026-10-13T17:30:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" },
-        { "id": 2, "camId": "a", "action": "publish", "frameSha": "11111111111111111111", "createdAtUtc": "2026-10-13T17:40:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" },
-        { "id": 3, "camId": "a", "action": "reject", "frameSha": "22222222222222222222", "createdAtUtc": "2026-10-13T17:35:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" }
+        {
+          "id": 1,
+          "camId": "a",
+          "action": "reject",
+          "frameSha": "11111111111111111111",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:30:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        },
+        {
+          "id": 2,
+          "camId": "a",
+          "action": "publish",
+          "frameSha": "11111111111111111111",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:40:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        },
+        {
+          "id": 3,
+          "camId": "a",
+          "action": "reject",
+          "frameSha": "22222222222222222222",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:35:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        }
       ],
-      "ids": [3, 2]
+      "ids": [
+        3,
+        2
+      ],
+      "disputedAtEnd": false
     },
     {
       "name": "a tie on time goes to the higher id",
       "now": "2026-10-13T18:00:00Z",
       "overrides": [
-        { "id": 5, "camId": "a", "action": "publish", "frameAt": "2026-10-13T17:20:00Z", "createdAtUtc": "2026-10-13T17:30:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" },
-        { "id": 6, "camId": "a", "action": "reject", "frameAt": "2026-10-13T17:20:00Z", "createdAtUtc": "2026-10-13T17:30:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" }
+        {
+          "id": 5,
+          "camId": "a",
+          "action": "publish",
+          "frameSha": null,
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:30:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z",
+          "frameAt": "2026-10-13T17:20:00Z"
+        },
+        {
+          "id": 6,
+          "camId": "a",
+          "action": "reject",
+          "frameSha": null,
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:30:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z",
+          "frameAt": "2026-10-13T17:20:00Z"
+        }
       ],
-      "ids": [6]
+      "ids": [
+        6
+      ]
     },
     {
       "name": "the same frame time on two cams is two targets",
       "now": "2026-10-13T18:00:00Z",
       "overrides": [
-        { "id": 1, "camId": "a", "action": "publish", "frameAt": "2026-10-13T17:20:00Z", "createdAtUtc": "2026-10-13T17:30:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" },
-        { "id": 2, "camId": "b", "action": "reject", "frameAt": "2026-10-13T17:20:00Z", "createdAtUtc": "2026-10-13T17:31:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" }
+        {
+          "id": 1,
+          "camId": "a",
+          "action": "publish",
+          "frameSha": null,
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:30:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z",
+          "frameAt": "2026-10-13T17:20:00Z"
+        },
+        {
+          "id": 2,
+          "camId": "b",
+          "action": "reject",
+          "frameSha": null,
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:31:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z",
+          "frameAt": "2026-10-13T17:20:00Z"
+        }
       ],
-      "ids": [1, 2]
+      "ids": [
+        1,
+        2
+      ]
     },
     {
-      "name": "an ended verdict, one with no frame identity, and one with a bad time are out",
+      "name": "the same frame scored at two different times is two claims, so two targets",
       "now": "2026-10-13T18:00:00Z",
       "overrides": [
-        { "id": 1, "camId": "a", "action": "publish", "frameSha": "11111111111111111111", "createdAtUtc": "2026-10-13T17:30:00.000Z", "untilUtc": "2026-10-13T17:59:59.000Z" },
-        { "id": 2, "camId": "a", "action": "publish", "createdAtUtc": "2026-10-13T17:30:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" },
-        { "id": 3, "camId": "a", "action": "publish", "frameSha": "33333333333333333333", "createdAtUtc": "never", "untilUtc": "2026-10-14T04:00:00.000Z" },
-        { "id": 4, "camId": "a", "action": "publish", "frameSha": "44444444444444444444", "createdAtUtc": "2026-10-13T17:30:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" }
+        {
+          "id": 1,
+          "camId": "a",
+          "action": "publish",
+          "frameSha": "11111111111111111111",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:30:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        },
+        {
+          "id": 2,
+          "camId": "a",
+          "action": "reject",
+          "frameSha": "11111111111111111111",
+          "claimedAt": "2026-10-13T17:29:00Z",
+          "createdAtUtc": "2026-10-13T17:31:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        }
       ],
-      "ids": [4]
+      "ids": [
+        1,
+        2
+      ]
     },
     {
-      "name": "a Right then a later Wrong on one frame ends as the Wrong; no mixing",
+      "name": "an ended verdict, one with no frame identity, one with no claim time, and one with a bad time are out",
       "now": "2026-10-13T18:00:00Z",
       "overrides": [
-        { "id": 9, "camId": "a", "action": "reject", "frameSha": "11111111111111111111", "createdAtUtc": "2026-10-13T17:50:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" },
-        { "id": 8, "camId": "a", "action": "publish", "frameSha": "11111111111111111111", "createdAtUtc": "2026-10-13T17:31:00.000Z", "untilUtc": "2026-10-14T04:00:00.000Z" }
+        {
+          "id": 1,
+          "camId": "a",
+          "action": "publish",
+          "frameSha": "11111111111111111111",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:30:00.000Z",
+          "untilUtc": "2026-10-13T17:59:59.000Z"
+        },
+        {
+          "id": 2,
+          "camId": "a",
+          "action": "publish",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:30:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        },
+        {
+          "id": 3,
+          "camId": "a",
+          "action": "publish",
+          "frameSha": "33333333333333333333",
+          "createdAtUtc": "2026-10-13T17:30:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        },
+        {
+          "id": 4,
+          "camId": "a",
+          "action": "publish",
+          "frameSha": "33333333333333333333",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "never",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        },
+        {
+          "id": 5,
+          "camId": "a",
+          "action": "publish",
+          "frameSha": "22222222222222222222",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:30:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        }
       ],
-      "ids": [9]
+      "ids": [
+        5
+      ]
+    },
+    {
+      "name": "a Right then a later Wrong on one claim ends as the Wrong",
+      "now": "2026-10-13T18:00:00Z",
+      "overrides": [
+        {
+          "id": 9,
+          "camId": "a",
+          "action": "reject",
+          "frameSha": "11111111111111111111",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:50:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        },
+        {
+          "id": 8,
+          "camId": "a",
+          "action": "publish",
+          "frameSha": "11111111111111111111",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:31:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        }
+      ],
+      "ids": [
+        9
+      ]
+    },
+    {
+      "name": "Wrong, Right, Wrong on three frames of one cam: replayed in order, the cam ends DISPUTED",
+      "now": "2026-10-13T18:00:00Z",
+      "overrides": [
+        {
+          "id": 3,
+          "camId": "a",
+          "action": "reject",
+          "frameSha": "33333333333333333333",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:50:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        },
+        {
+          "id": 1,
+          "camId": "a",
+          "action": "reject",
+          "frameSha": "11111111111111111111",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:30:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        },
+        {
+          "id": 2,
+          "camId": "a",
+          "action": "publish",
+          "frameSha": "22222222222222222222",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:40:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        }
+      ],
+      "ids": [
+        1,
+        2,
+        3
+      ],
+      "disputedAtEnd": true
+    },
+    {
+      "name": "Right, Wrong, Right on three frames of one cam: replayed in order, the cam ends NOT disputed",
+      "now": "2026-10-13T18:00:00Z",
+      "overrides": [
+        {
+          "id": 3,
+          "camId": "a",
+          "action": "publish",
+          "frameSha": "33333333333333333333",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:50:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        },
+        {
+          "id": 1,
+          "camId": "a",
+          "action": "publish",
+          "frameSha": "11111111111111111111",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:30:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        },
+        {
+          "id": 2,
+          "camId": "a",
+          "action": "reject",
+          "frameSha": "22222222222222222222",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:40:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        }
+      ],
+      "ids": [
+        1,
+        2,
+        3
+      ],
+      "disputedAtEnd": false
+    },
+    {
+      "name": "two verdicts made at the same instant replay by id",
+      "now": "2026-10-13T18:00:00Z",
+      "overrides": [
+        {
+          "id": 8,
+          "camId": "a",
+          "action": "reject",
+          "frameSha": "22222222222222222222",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:40:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        },
+        {
+          "id": 7,
+          "camId": "a",
+          "action": "publish",
+          "frameSha": "11111111111111111111",
+          "claimedAt": "2026-10-13T17:21:00Z",
+          "createdAtUtc": "2026-10-13T17:40:00.000Z",
+          "untilUtc": "2026-10-14T04:00:00.000Z"
+        }
+      ],
+      "ids": [
+        7,
+        8
+      ],
+      "disputedAtEnd": true
     }
   ]
 }

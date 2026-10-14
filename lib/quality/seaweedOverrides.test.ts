@@ -3,6 +3,7 @@ import vectors from "@/lib/quality/verdictVectors.json";
 import {
   applySeaweedOverrides,
   effectiveOverrides,
+  sameClaim,
   sameFrame,
   targetKey,
   type SeaweedOverride,
@@ -15,21 +16,30 @@ const SHA_A = "aaaaaaaaaaaaaaaaaaaa";
 const SHA_B = "bbbbbbbbbbbbbbbbbbbb";
 const CREATED = "2026-10-13T17:40:00.000Z";
 const UNTIL = "2026-10-14T04:00:00.000Z";
+/** When the reader scored the held reading (the cam() helper's scoredAt): the claim time. */
+const CLAIMED = "2026-10-13T17:30:00Z";
 
 describe("the shared verdict vectors (scripts/quality_watch_test.py reads the same file)", () => {
   it("sameFrame", () => {
     for (const v of vectors.sameFrame) expect(sameFrame(v.a, v.b), v.name).toBe(v.same);
   });
 
+  it("sameClaim", () => {
+    for (const v of vectors.sameClaim) expect(sameClaim(v.a, v.b), v.name).toBe(v.same);
+  });
+
   it("targetKey", () => {
     for (const v of vectors.targetKey) expect(targetKey(v.o), JSON.stringify(v.o)).toBe(v.key);
   });
 
-  it("effectiveOverrides: the latest verdict per exact target wins", () => {
+  it("effectiveOverrides: the latest verdict per exact target wins, as one merged stream ordered by (created time, id)", () => {
     for (const v of vectors.effective) {
       const ids = effectiveOverrides(v.overrides as SeaweedOverride[], Date.parse(v.now)).map((o) => o.id);
       expect(ids, v.name).toEqual(v.ids);
     }
+    const names = vectors.effective.map((v) => v.name).join(" | ");
+    expect(names).toContain("Wrong, Right, Wrong");
+    expect(names).toContain("Right, Wrong, Right");
   });
 });
 
@@ -63,11 +73,11 @@ function heldFeed(sha = SHA_A): CamSeaweedFeed {
 
 const publish = (over: Partial<SeaweedOverride> = {}): SeaweedOverride => ({
   id: 1, camId: "boca-inlet-surf", verdict: "right", action: "publish", level: "moderate", coveragePct: 35, note: "weed line",
-  frameSha: SHA_A, frameAt: null, createdAtUtc: CREATED, untilUtc: UNTIL, ...over,
+  frameSha: SHA_A, frameAt: null, claimedAt: CLAIMED, createdAtUtc: CREATED, untilUtc: UNTIL, ...over,
 });
 const reject = (over: Partial<SeaweedOverride> = {}): SeaweedOverride => ({
   id: 2, camId: "boca-inlet-surf", verdict: "wrong", action: "reject", level: null, frameSha: SHA_A, frameAt: null,
-  createdAtUtc: CREATED, untilUtc: UNTIL, ...over,
+  claimedAt: CLAIMED, createdAtUtc: CREATED, untilUtc: UNTIL, ...over,
 });
 const inlet = (g: { cams?: unknown[] } | null | undefined) => (g!.cams![0] as Record<string, unknown>);
 
@@ -124,6 +134,16 @@ describe("applySeaweedOverrides: publish", () => {
     expect(applySeaweedOverrides(f, [publish({ camId: "boca-south" })], NOW).latest!.cams![0]).toMatchObject({ unconfirmed: true });
     expect(applySeaweedOverrides(f, [publish({ untilUtc: "2026-10-13T17:00:00.000Z" })], NOW)).toBe(f);
     expect(applySeaweedOverrides(f, [publish({ frameSha: null, frameAt: null })], NOW)).toBe(f);
+    expect(applySeaweedOverrides(f, [publish({ claimedAt: null })], NOW)).toBe(f);
+  });
+
+  it("the same image scored at another time is a different claim: the verdict does not touch it", () => {
+    const f = heldFeed();
+    const late = { claimedAt: "2026-10-13T17:40:00Z" };
+    const out = applySeaweedOverrides(f, [publish(late), reject({ ...late, id: 5 })], NOW);
+    expect(inlet(out.latest).unconfirmed).toBe(true);
+    expect(out.pendingClaims!["boca-inlet-surf"]).toBeDefined();
+    expect(out.pendingClaims!["boca-inlet-surf"].confirmed).toBeUndefined();
   });
 
   it("leaves a reading that is not held alone", () => {
@@ -174,6 +194,18 @@ describe("applySeaweedOverrides: supersession", () => {
     }
   });
 
+  it("Wrong, Right, Wrong and Right, Wrong, Right on three frames replay as one stream in time order", () => {
+    // Three frames of one cam, three verdicts. The held frame is A (the first); the others are other frames.
+    const at = (m: number) => `2026-10-13T17:${String(m).padStart(2, "0")}:00.000Z`;
+    const wrw = [reject({ id: 1, createdAtUtc: at(30) }), publish({ id: 2, frameSha: SHA_B, createdAtUtc: at(35) }), reject({ id: 3, frameSha: "c".repeat(20), createdAtUtc: at(40) })];
+    expect(effectiveOverrides(wrw, NOW).map((o) => [o.id, o.action])).toEqual([[1, "reject"], [2, "publish"], [3, "reject"]]);
+    expect(effectiveOverrides([...wrw].reverse(), NOW).map((o) => o.id)).toEqual([1, 2, 3]);
+    const out = applySeaweedOverrides(heldFeed(), wrw, NOW);
+    expect(inlet(out.latest).level).toBe("unknown"); // frame A was rejected; B and C are other frames
+    const rwr = [publish({ id: 1, createdAtUtc: at(30) }), reject({ id: 2, frameSha: SHA_B, createdAtUtc: at(35) }), publish({ id: 3, frameSha: "c".repeat(20), createdAtUtc: at(40) })];
+    expect(inlet(applySeaweedOverrides(heldFeed(), rwr, NOW).latest).confirmedBy).toBe("owner");
+  });
+
   it("verdicts on two different frames of one cam are independent", () => {
     const f = heldFeed();
     const out = applySeaweedOverrides(f, [reject({ frameSha: SHA_B }), publish({ frameSha: SHA_A })], NOW);
@@ -194,16 +226,20 @@ describe("fetchSargassum with an override loader", () => {
     noaaTideStationId: "x", ndbcBuoyId: "x", cams: [{ id: "c", name: "c", provider: "p", embedType: "image" as const, url: "https://example.com" }],
   } as Location;
 
-  function stubFeed(): void {
+  function stubFeed(): string {
     const today = new Intl.DateTimeFormat("en-CA", { timeZone: BOCA.timezone }).format(new Date());
     const nowIso = new Date().toISOString().replace(/\.\d+Z$/, "Z");
     const group = { capturedAtLocal: `${today}T12:00-04:00`, cams: [heldInlet(SHA_A, nowIso), cam("boca-south", "none", { scoredAt: nowIso })] };
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ generatedAt: nowIso, latest: { ...group, cams: group.cams.map((c) => ({ ...c, scoredAt: nowIso })) } }), { status: 200 })));
+    return nowIso;
   }
 
   it("applies the loaded verdicts to the feed it just fetched", async () => {
-    stubFeed();
-    const loader = vi.fn(async () => [publish({ createdAtUtc: new Date().toISOString(), untilUtc: new Date(Date.now() + 3_600_000).toISOString() })]);
+    // stubFeed scores the held reading "now", to the second: that is the claim time the verdict names.
+    const claimedAt = stubFeed();
+    const loader = vi.fn(async () => [
+      publish({ claimedAt, frameAt: claimedAt, frameSha: SHA_A, createdAtUtc: new Date().toISOString(), untilUtc: new Date(Date.now() + 3_600_000).toISOString() }),
+    ]);
     const w = await fetchSargassum(BOCA, loader);
     expect(loader).toHaveBeenCalledWith("boca-raton");
     expect(w.data?.level).toBe("moderate");
