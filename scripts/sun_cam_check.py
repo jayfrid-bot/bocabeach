@@ -73,6 +73,9 @@ SCORING (deterministic; bump SUN_CAM_SCORE_VERSION whenever any of this changes)
        the largest blob of bright warm pixels (hue <= 65 or >= 300, S >= 0.35,
        V >= 0.85) within 10% of the frame height of the horizon line (the lowest edge
        of the sky regions).
+       A warm candidate must be compact: its bounding box at most 3:1 long-to-thin and
+       the blob at least 40% of that box. A horizon band or a cloud streak is skipped
+       (the next largest blob is tried); if none qualifies, nothing is masked.
     3. Every pixel within R of the blob's centroid is left out, where
        R = clamp(2.5 x equivalent radius, 6% of frame width, 25% of frame width).
     4. No blob, no mask. The masked pixels count against valid_frac, like glare, so a
@@ -240,6 +243,8 @@ GLOW_HORIZON_BAND = 0.10  # no disc: look for the warm blob this close (frame he
 GLOW_WARM_HUE_MAX = 65.0  # red .. yellow-orange; warm glow candidates are bright and saturated
 GLOW_WARM_S_MIN = 0.35
 GLOW_WARM_V_MIN = 0.85
+GLOW_MAX_ASPECT = 3.0  # a warm sun candidate must be compact: bounding box at most this long-to-thin ...
+GLOW_MIN_FILL = 0.4  # ... and fill at least this share of its bounding box. A horizon band or a cloud streak is not a sun.
 GLOW_RADIUS_FACTOR = 2.5  # mask radius = this x the blob's equivalent radius ...
 GLOW_MIN_RADIUS_FRAC = 0.06  # ... but at least this fraction of the frame width ...
 GLOW_MAX_RADIUS_FRAC = 0.25  # ... and at most this (a washed-out sky is not a sun)
@@ -436,16 +441,19 @@ def find_sun(rgb: Any, regions: List[List[float]]) -> Optional[Dict[str, Any]]:
         ):
             warm[i] = True
     for mask, kind in ((disc, "disc"), (warm, "warm")):
-        comps = _components(mask, w, h)
-        if not comps:
-            continue
-        best = max(comps, key=len)
-        if len(best) < GLOW_MIN_AREA_PX:
-            continue
-        cx = sum(box[0] + REDUCE_FACTOR * (j % w) + REDUCE_FACTOR / 2.0 for j in best) / len(best)
-        cy = sum(box[1] + REDUCE_FACTOR * (j // w) + REDUCE_FACTOR / 2.0 for j in best) / len(best)
-        area_px = len(best) * REDUCE_FACTOR * REDUCE_FACTOR
-        return {"x": cx, "y": cy, "r_eq": math.sqrt(area_px / math.pi), "kind": kind, "area": len(best)}
+        for best in sorted(_components(mask, w, h), key=len, reverse=True):
+            if len(best) < GLOW_MIN_AREA_PX:
+                break  # sorted: nothing smaller can qualify either
+            xs = [j % w for j in best]
+            ys = [j // w for j in best]
+            bw, bh = max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+            # The blown-out disc and its halo can be ragged, so only the warm fallback needs the shape check.
+            if kind == "warm" and (max(bw, bh) / min(bw, bh) > GLOW_MAX_ASPECT or len(best) / (bw * bh) < GLOW_MIN_FILL):
+                continue  # long, thin or ragged: a horizon band or a streak, not a sun
+            cx = sum(box[0] + REDUCE_FACTOR * x + REDUCE_FACTOR / 2.0 for x in xs) / len(best)
+            cy = sum(box[1] + REDUCE_FACTOR * y + REDUCE_FACTOR / 2.0 for y in ys) / len(best)
+            area_px = len(best) * REDUCE_FACTOR * REDUCE_FACTOR
+            return {"x": cx, "y": cy, "r_eq": math.sqrt(area_px / math.pi), "kind": kind, "area": len(best)}
     return None
 
 

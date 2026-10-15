@@ -170,6 +170,34 @@ class GlowMaskTests(unittest.TestCase):
         self.assertGreater(sc.score_image(plain, SKY, glow=False)["score"], 20)
         self.assertLess(sc.score_image(plain, SKY)["score"], 8)
 
+    def test_a_sunless_full_width_warm_band_is_not_a_sun_and_masks_nothing(self):
+        # An orange band along the horizon with no sun in it (lit cloud or a broad dawn sky).
+        im = Image.new("RGB", (640, 360), (70, 120, 200))
+        im.paste((255, 150, 40), (0, 200, 640, 250))
+        im.paste((225, 70, 120), (0, 10, 640, 40))
+        self.assertIsNone(sc.find_sun(im, SKY))
+        m = sc.score_image(im, SKY)
+        self.assertEqual(m["glow_masked_frac"], 0.0)
+        self.assertEqual(m["score"], sc.score_image(im, SKY, glow=False)["score"])
+        self.assertGreater(m["score"], 60)
+
+    def test_a_thin_streak_is_skipped_but_a_real_disc_beside_it_is_still_masked(self):
+        im = Image.new("RGB", (640, 360), (70, 120, 200))
+        im.paste((255, 150, 40), (0, 216, 400, 226))  # a long thin horizon streak: the biggest warm blob
+        disc(im, 520, 250, 28, (255, 150, 40))  # a compact bright disc on the horizon
+        sun = sc.find_sun(im, SKY)
+        self.assertIsNotNone(sun)
+        self.assertEqual(sun["kind"], "warm")
+        self.assertAlmostEqual(sun["x"], 520, delta=15)  # the disc, not the streak's centre at x=200
+        self.assertGreater(sc.score_image(im, SKY)["glow_masked_frac"], 0.02)
+
+    def test_a_ragged_sparse_warm_blob_is_not_a_sun(self):
+        im = Image.new("RGB", (640, 360), (70, 120, 200))
+        for x in range(200, 440, 16):  # a comb: connected by a thin spine, mostly empty inside its bounding box
+            im.paste((255, 150, 40), (x, 205, x + 8, 255))
+        im.paste((255, 150, 40), (200, 205, 440, 213))
+        self.assertIsNone(sc.find_sun(im, SKY))
+
     def test_warm_candidates_far_above_the_horizon_are_not_taken_for_the_sun(self):
         im = Image.new("RGB", (640, 360), (70, 120, 200))
         disc(im, 320, 40, 45, (255, 150, 40))  # a bright gold cloud near the top of the sky, nowhere near the horizon
