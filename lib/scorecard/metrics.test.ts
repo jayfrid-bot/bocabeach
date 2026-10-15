@@ -204,7 +204,7 @@ describe("sunColorMetrics — error numbers", () => {
 });
 
 describe("sunColorMetrics — camera view and future events", () => {
-  it("keeps cams that look at the sun apart from cams that look away", () => {
+  it("keeps cams that look at the sun apart from cams that look away (afterglow is never scored)", () => {
     const rows: SunPredictionRow[] = [];
     for (let n = 0; n < 10; n++) rows.push(pred(n, 120, 60, 70, { observed_source: "sun-cam:a:solar" }));
     for (let n = 10; n < 12; n++) rows.push(pred(n, 120, 60, 70, { observed_source: "sun-cam:b:antisolar" }));
@@ -213,9 +213,34 @@ describe("sunColorMetrics — camera view and future events", () => {
     const v = Object.fromEntries(r.byView.map((g) => [g.key, g]));
     expect(v.solar.events).toBe(10);
     expect(v.solar.mae).toBe(10);
-    expect(v.antisolar.events).toBe(2);
-    expect(v.antisolar.mae).toBeNull();
+    expect(v.afterglow.events).toBe(2);
+    expect(v.afterglow.rows).toBe(2);
+    expect(v.afterglow.mae).toBeNull();
+    expect(v.afterglow.bias).toBeNull();
+    expect(v.antisolar).toBeUndefined();
     expect(v.other.events).toBe(1);
+    // the two afterglow events are not pairs, so they do not count anywhere else
+    expect(r.pairedEvents).toBe(11);
+    expect(r.pairedRows).toBe(11);
+    expect(r.overall.events).toBe(11);
+  });
+
+  it("an afterglow reading is not the truth for an event's call, even when it is the only reading", () => {
+    // 12 events, all with a forecast made 120 min ahead; only the afterglow cam saw them
+    const rows = Array.from({ length: 12 }, (_, n) => pred(n, 120, 80, 20, { observed_source: "sun-cam:b:antisolar" }));
+    const r = sunColorMetrics(rows, { min: 1 });
+    expect(r.pairedEvents).toBe(0);
+    expect(r.calls.events).toBe(0);
+    expect(r.overall.mae).toBeNull();
+    expect(r.byView.map((g) => g.key)).toEqual(["afterglow"]);
+    // a solar reading of the same event is the truth even when an afterglow row sits beside it
+    const mixed = [
+      pred(0, 120, 80, 20, { observed_source: "sun-cam:b:antisolar" }),
+      pred(0, 90, 80, 70, { observed_source: "sun-cam:a:solar" }),
+    ];
+    const m = sunColorMetrics(mixed, { min: 1 });
+    expect(m.calls.events).toBe(1);
+    expect(m.overall.mae).toBe(10);
   });
 
   it("with nowMs, events that have not happened yet stay out of the distribution", () => {

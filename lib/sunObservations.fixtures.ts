@@ -2,7 +2,7 @@
 
 import { getLocation } from "@/config/locations";
 import { computeSunTimes } from "@/lib/sources/sun";
-import { SUN_CAMS, expectedView, robustPeak } from "@/lib/sunObservations";
+import { SUN_CAMS, camFacing, expectedView, robustPeak } from "@/lib/sunObservations";
 import type { SunEventObservationRow, SunEventPredictionRow } from "@/lib/history/types";
 
 /** The sunrise the Elbo Room frames of 2026-10-06 recorded (the first labelled example). */
@@ -75,7 +75,7 @@ export function sunObservationBody(opts: BodyOpts = {}, over: Record<string, unk
     event_date_local: date,
     event_iso: iso,
     cam_id: camId,
-    view: expectedView(kind, cam.facing_azimuth_deg),
+    view: expectedView(kind, camFacing(cam)),
     distance_mi: beach.distance_mi,
     observed_score: round(rp.value, 1),
     warm_frac: peakFrame.warm_frac,

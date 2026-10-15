@@ -181,8 +181,10 @@ export interface SunColorResult {
   byLead: ErrorGroup[];
   byBeach: ErrorGroup[];
   byAlgo: ErrorGroup[];
-  /** By how the cam looked at the sky: toward the sun ("solar") or away
-   *  ("antisolar"). The two read different things, so they are kept apart. */
+  /** By how the cam looked at the sky: toward the sun ("solar") or away from it
+   *  ("afterglow", stored as the antisolar view). Only solar readings are the truth for an
+   *  event's color: the afterglow group lists its events and rows but never an error, and
+   *  its rows are left out of every other number here. */
   byView: ErrorGroup[];
   calls: {
     /** Paired events that have a call (a forecast made >= 60 min ahead). */
@@ -239,8 +241,8 @@ function callOf(eventRows: SunPredictionRow[]): SunPredictionRow | null {
 }
 
 function observedOf(eventRows: SunPredictionRow[], call: SunPredictionRow | null): number | null {
-  if (call && finite(call.observed_score)) return call.observed_score;
-  const row = eventRows.find((r) => finite(r.observed_score));
+  if (call && finite(call.observed_score) && !isAfterglow(call)) return call.observed_score;
+  const row = eventRows.find((r) => finite(r.observed_score) && !isAfterglow(r));
   return row ? (row.observed_score as number) : null;
 }
 
@@ -303,10 +305,15 @@ function distRow(
   };
 }
 
-/** "sun-cam:ftl-elbo-beach-cam:solar" -> "solar"; anything else -> "other". */
+/** "sun-cam:ftl-elbo-beach-cam:solar" -> "solar"; ":antisolar" -> "afterglow"; anything else -> "other". */
 export function sunViewOf(observedSource: string | null): string {
   const m = /^sun-cam:[^:]*:(solar|antisolar)$/.exec(observedSource ?? "");
-  return m ? m[1] : "other";
+  return m ? (m[1] === "antisolar" ? "afterglow" : "solar") : "other";
+}
+
+/** A reading from a cam that looked away from the sun: stored, but never the truth for the event's color. */
+function isAfterglow(r: Pick<SunPredictionRow, "observed_source">): boolean {
+  return sunViewOf(r.observed_source) === "afterglow";
 }
 
 /**
@@ -324,7 +331,8 @@ export function sunColorMetrics(
   const rateMin = opts.rateMin ?? MIN_RATE_CALLS;
   const scored = rows.filter((r) => finite(r.score));
   const byEvent = groupBy(scored, eventKey);
-  const paired = scored.filter((r) => finite(r.observed_score));
+  const afterglow = scored.filter((r) => finite(r.observed_score) && isAfterglow(r));
+  const paired = scored.filter((r) => finite(r.observed_score) && !isAfterglow(r));
   const pairedEvents = new Set(paired.map(eventKey)).size;
   const ready = pairedEvents >= min;
 
@@ -348,6 +356,16 @@ export function sunColorMetrics(
   const byView = [...groupBy(paired, (r) => sunViewOf(r.observed_source))]
     .map(([k, v]) => errorGroup(k, v, min))
     .sort((a, b) => (a.key < b.key ? -1 : 1));
+  if (afterglow.length > 0) {
+    byView.unshift({
+      key: "afterglow",
+      events: new Set(afterglow.map(eventKey)).size,
+      rows: afterglow.length,
+      mae: null,
+      bias: null,
+      collecting: "afterglow, not used as truth",
+    });
+  }
 
   // The call analysis and the distribution work per EVENT.
   const perEvent: { slug: string; pred: number; obs: number | null }[] = [];

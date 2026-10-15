@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { getLocation } from "@/config/locations";
-import { SUN_CAMS } from "@/lib/sunObservations";
+import { SUN_CAMS, camFacing } from "@/lib/sunObservations";
 
 function miles(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 3958.7613;
@@ -67,6 +67,16 @@ describe("config/sun-cams.json", () => {
     for (const cam of SUN_CAMS) {
       const slugs = cam.beaches.map((b) => b.slug).sort();
       expect(slugs).toEqual(cam.id.startsWith("deerfield") ? ["boca-raton", "deerfield-beach"] : ["fort-lauderdale"]);
+    }
+  });
+
+  it("every cam's facing is east or west and agrees with its azimuth", () => {
+    for (const cam of SUN_CAMS) {
+      expect(["east", "west"], `${cam.id} facing`).toContain(camFacing(cam));
+      if (cam.facing !== undefined) {
+        const derived = cam.facing_azimuth_deg % 360 < 180 ? "east" : "west";
+        expect(cam.facing, `${cam.id}: facing disagrees with facing_azimuth_deg`).toBe(derived);
+      }
     }
   });
 

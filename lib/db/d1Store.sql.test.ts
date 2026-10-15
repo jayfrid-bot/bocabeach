@@ -1139,7 +1139,7 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       expect((await store.sunEventPredictionsFor("boca-raton", EVENT)).find((p) => p.event_kind === "sunrise")).toMatchObject({ score: 58, band: "good" });
     });
 
-    it("never overwrites a solar observation with an antisolar one, in either arrival order", async () => {
+    it("an antisolar (afterglow) observation is stored but never becomes the truth, in either arrival order", async () => {
       await store.upsertSunEventPredictions([predictionRow()]);
       await store.recordSunEventObservation(observationRow({ cam_id: "solar-cam", view: "solar", distance_mi: 2.9, observed_score: 85 }));
       await store.recordSunEventObservation(observationRow({ cam_id: "anti-cam", view: "antisolar", distance_mi: 0, observed_score: 30 }));
@@ -1147,8 +1147,10 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
 
       const other = freshStore() as DeviceStore;
       await other.upsertSunEventPredictions([predictionRow()]);
-      await other.recordSunEventObservation(observationRow({ cam_id: "anti-cam", view: "antisolar", distance_mi: 0, observed_score: 30 }));
-      expect((await truth(EVENT, other))[0][1]).toBe("sun-cam:anti-cam:antisolar");
+      const lone = await other.recordSunEventObservation(observationRow({ cam_id: "anti-cam", view: "antisolar", distance_mi: 0, observed_score: 30 }));
+      expect(lone).toEqual({ stored: true, predictionsUpdated: 0 });
+      expect((await truth(EVENT, other))[0]).toEqual([null, null, null]); // stored below, but no truth on the prediction
+      expect(await other.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06")).toHaveLength(1);
       await other.recordSunEventObservation(observationRow({ cam_id: "solar-cam", view: "solar", distance_mi: 2.9, observed_score: 85 }));
       expect((await truth(EVENT, other))[0]).toEqual([85, "sun-cam:solar-cam:solar", "2026-10-06T14:05:00.000Z"]);
     });

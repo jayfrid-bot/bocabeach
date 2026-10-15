@@ -101,7 +101,7 @@ const sunPredKey = (r: Pick<SunEventPredictionRow, "slug" | "event_kind" | "even
   `${r.slug}|${r.event_kind}|${r.event_iso}|${r.as_of_hour_utc}`;
 const sunObsKey = (r: Pick<SunEventObservationRow, "slug" | "event_kind" | "event_date_local" | "cam_id">) =>
   `${r.slug}|${r.event_kind}|${r.event_date_local}|${r.cam_id}`;
-/** Solar before antisolar, then the nearest cam, then cam_id (mirrors d1Store's BEST_SUN_OBSERVATION). */
+/** Solar before antisolar, then the nearest cam, then cam_id (read order; only a SOLAR row is ever the best observation, mirroring d1Store's BEST_SUN_OBSERVATION). */
 const compareSunObservations = (a: SunEventObservationRow, b: SunEventObservationRow): number =>
   Number(b.view === "solar") - Number(a.view === "solar") ||
   a.distance_mi - b.distance_mi ||
@@ -732,7 +732,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
     },
 
     // Sun-event observations (migrations/0015) — mirrors d1Store: upsert the
-    // observation, then write the BEST observation of that event (solar first,
+    // observation, then write the BEST observation of that event (solar views only,
     // nearest cam) onto every prediction row within +-15 min, leaving rows a
     // human labelled alone.
     async recordSunEventObservation(row: SunEventObservationRow) {
@@ -749,12 +749,14 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
         stored = true;
       }
       const best = [...sunObservations.values()]
-        .filter((o) => o.slug === row.slug && o.event_kind === row.event_kind && o.event_date_local === row.event_date_local)
+        .filter((o) => o.slug === row.slug && o.event_kind === row.event_kind && o.event_date_local === row.event_date_local && o.view === "solar")
         .sort(compareSunObservations)[0];
       const eventMs = Date.parse(row.event_iso);
-      const source = sunCamObservedSource(best.cam_id, best.view);
+      const source = best ? sunCamObservedSource(best.cam_id, best.view) : "";
       let predictionsUpdated = 0;
-      for (const [pkey, pred] of sunPredictions) {
+      // Only a solar view is the truth for an event's color. An antisolar one (afterglow) is
+      // stored above but never written onto a prediction row.
+      for (const [pkey, pred] of best ? sunPredictions : []) {
         if (pred.slug !== row.slug || pred.event_kind !== row.event_kind) continue;
         if (!(Math.abs(Date.parse(pred.event_iso) - eventMs) <= SUN_OBS_MATCH_WINDOW_MS)) continue;
         if (pred.observed_source !== null && !pred.observed_source.startsWith("sun-cam:")) continue;
