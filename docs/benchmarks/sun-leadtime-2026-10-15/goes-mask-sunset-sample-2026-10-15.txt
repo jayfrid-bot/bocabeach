@@ -1,0 +1,11 @@
+21:55Z granule 2026-10-15T21:41:17Z cloud 12.9 beam 12.9 sunElev 14.6 valid 49 / 49
+22:04Z granule 2026-10-15T21:56:17Z cloud 23.8 beam 23.8 sunElev 11.4 valid 49 / 49
+22:13Z granule 2026-10-15T21:56:17Z cloud 23.8 beam 23.8 sunElev 11.4 valid 49 / 49
+22:22Z granule 2026-10-15T22:11:17Z cloud 40.1 beam 40.1 sunElev 8.1 valid 49 / 49
+22:31Z granule 2026-10-15T22:26:17Z cloud 36.0 beam None sunElev 4.9 valid 49 / 49
+22:40Z granule 2026-10-15T22:26:17Z cloud 36.0 beam None sunElev 4.9 valid 49 / 49
+22:49Z granule 2026-10-15T22:41:17Z cloud 46.9 beam None sunElev 1.6 valid 49 / 49
+22:58Z granule 2026-10-15T22:51:17Z cloud 81.7 beam None sunElev -0.6 valid 49 / 49
+23:07Z granule 2026-10-15T23:01:17Z cloud 70.1 beam None sunElev -2.9 valid 49 / 49
+23:16Z granule 2026-10-15T23:11:17Z cloud 24.4 beam None sunElev -5.1 valid 49 / 49
+done

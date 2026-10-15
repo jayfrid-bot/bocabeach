@@ -47,3 +47,17 @@ and uncorrelated at every lead. The reasons are in the inputs, not the clock.
   (Naples pier) for real sunset truth; label east-cam sunset scores "afterglow".
 - Then recalibrate the model (the 97 on any deck) and re-run this table.
 - Until then, show the score as an outlook with low confidence at every lead.
+
+## Follow-up: sunset sample of the old Clear Sky Mask feed (2026-10-15)
+
+`goes-mask-sunset-sample-2026-10-15.txt` — Boca Raton, every ~9 min, 21:55Z → 23:16Z
+(sunset 22:52Z). Findings:
+- Quality pixels were fine at low sun: 49/49 valid in every granule, down to the sun
+  at −5°. The "never verified" result was not a quality-flag gap. Two real causes:
+  the mask's sun-path read (`beamCloudPct`) is null below 5° sun elevation, and the
+  model had not scored the satellite since version 2026-10-06.2 anyway.
+- The mask itself is unstable at the terminator: overhead cloud read 47% → 82% →
+  70% → 24% between 22:49Z and 23:16Z as the product switched day/night modes. That
+  rules it out as the event-time input and supports the IR cloud-top height product
+  shipped the same day (`ABI-L2-ACHA2KMC`), which read a steady 48% at 22:41Z with a
+  clear sun path (0% low) and a 33% mid/high canvas.
