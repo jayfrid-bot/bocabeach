@@ -182,7 +182,11 @@ function buildSunQualityNerdInfo(args: {
     computation,
     sources: [
       ...(fromSatellite
-        ? ["NOAA GOES-19 cloud-top height (2 km, read within the last 35 min) — cloud by level + the low cloud along the sun's path"]
+        ? [
+            b?.satellite?.horizon === "ir-overhead"
+              ? "NOAA GOES-19 cloud-top height (2 km, read within the last 35 min) — cloud by level overhead; the sun's path was not read"
+              : "NOAA GOES-19 cloud-top height (2 km, read within the last 35 min) — cloud by level + the low cloud along the sun's path",
+          ]
         : []),
       fromSatellite
         ? "Open-Meteo hourly forecast — humidity"
@@ -191,7 +195,9 @@ function buildSunQualityNerdInfo(args: {
       "Sun/golden-hour times — computed locally (NOAA solar-position algorithm)",
     ],
     notes: fromSatellite
-      ? "The cloud mix and the horizon come from the satellite's cloud-top heights, read within the last 35 minutes, not from the forecast. Peak-color timing and the modifiers are research-informed heuristics, not guarantees."
+      ? b?.satellite?.horizon === "ir-overhead"
+        ? "The cloud mix comes from the satellite's cloud-top heights overhead, read within the last 35 minutes; the sun's path itself was not read, so the horizon is an estimate. Peak-color timing and the modifiers are research-informed heuristics, not guarantees."
+        : "The cloud mix and the horizon come from the satellite's cloud-top heights, read within the last 35 minutes, not from the forecast. Peak-color timing and the modifiers are research-informed heuristics, not guarantees."
       : knownTotalOnly
       ? "Cloud-by-level wasn't available for this hour, so this falls back to total cloud cover on a flatter, more conservative curve — the real color potential could be higher or lower."
       : b && b.horizonPath.startsWith("~")

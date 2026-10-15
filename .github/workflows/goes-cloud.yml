@@ -95,12 +95,13 @@ jobs:
       - name: Install deps
         run: pip install --quiet --disable-pip-version-check h5py numpy
 
-      - name: Build + publish cloud feed on a ~15-minute loop through daylight
+      - name: Build + publish cloud feed on a 15-minute loop (5 minutes near sunrise/sunset)
         # Loop pattern per sargassum.yml/lightning.yml (see sargassum.yml's
         # header for the full rationale): each cycle runs the one-shot
         # script, publishes its output to the cloud-data branch, then sleeps
-        # to the next 15-min wall-clock boundary so cadence stays ~15 min
-        # regardless of how long the cycle itself took (S3 retries, etc).
+        # to the next wall-clock boundary — every 5 min while any beach is
+        # within 90 min of its sunrise or sunset (`--cadence` prints fast),
+        # else every 15 — so cadence holds regardless of cycle length.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GOES_OUT: ${{ runner.temp }}/goes_cloud.json
@@ -131,8 +132,8 @@ jobs:
           }
 
           # Where we are in today's reading window, from the script itself:
-          #   day   = earliest sunrise - 75 min to latest sunset + 45 min across
-          #           the configured beaches (each on its own local date);
+          #   day   = inside ANY beach's own window (its sunrise - 75 min to
+          #           its sunset + 45 min, on its local yesterday/today/tomorrow);
           #   dusk  = the 20 min after that, for a loop that STARTS then;
           #   night = otherwise.
           # If the script cannot say (it prints "unknown" or fails), fall back

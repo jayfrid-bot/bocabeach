@@ -925,8 +925,11 @@ export async function POST(req: Request): Promise<Response> {
                   // Default: evaluated this run, regardless of outcome — a
                   // transient send failure, or a lost claim race no other
                   // run has yet confirmed, flips this back to `false` below
-                  // so a later tick inside the SAME window retries.
-                  sunColorTerminal = true;
+                  // so a later tick inside the SAME window retries. A run the
+                  // live-clock guard SKIPPED (stale forecast-only snapshot)
+                  // never evaluated anything: leave the device unlatched so the
+                  // next tick, on a fresh snapshot, can still send this event.
+                  sunColorTerminal = !sunColorSkipReason;
 
                   if (outcome.kind === "in-window") {
                     const sunColor = sunColorDecision({
