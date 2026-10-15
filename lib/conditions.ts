@@ -449,8 +449,22 @@ class BudgetAbortedDuringBuild extends Error {
  * the owner taps Right or Wrong the next request builds a fresh snapshot instead of serving
  * the one built before the tap. It is "0" for every beach with no cams and every beach with
  * no verdicts, so the key is then exactly what it always was.
+ *
+ * `reliable === false` means the fingerprint lookup itself failed, so "0" means UNKNOWN, not
+ * "no verdicts". Such a request must neither read nor write the real entry (it could serve a
+ * pre-correction answer, or store one under the key a healthy request will use). It gets its
+ * own short-lived key instead: rebuilt at most about once per 30 s per beach during a database
+ * outage, and the real entries stay clean.
  */
-const cachedConditions = (slug: string, ovVersion: string) =>
+const UNRELIABLE_REVALIDATE_S = 30;
+export const conditionsCacheKey = (slug: string, fp: { version: string; reliable: boolean }): string[] =>
+  !fp.reliable
+    ? ["conditions", slug, "unreliable"]
+    : fp.version === "0"
+      ? ["conditions", slug]
+      : ["conditions", slug, `ov-${fp.version}`];
+
+const cachedConditions = (slug: string, fp: { version: string; reliable: boolean }) =>
   unstable_cache(
     async () => {
       const response = await getConditionsForLocation(getLocation(slug)!);
@@ -463,8 +477,8 @@ const cachedConditions = (slug: string, ovVersion: string) =>
       }
       return response;
     },
-    ovVersion === "0" ? ["conditions", slug] : ["conditions", slug, `ov-${ovVersion}`],
-    { revalidate: 120, tags: [`conditions-${slug}`] },
+    conditionsCacheKey(slug, fp),
+    { revalidate: fp.reliable ? 120 : UNRELIABLE_REVALIDATE_S, tags: [`conditions-${slug}`] },
   )();
 
 /**
@@ -498,16 +512,20 @@ export async function conditionsOverrides(slug: string): Promise<{ version: stri
   return loc?.cams?.length ? await overridesFingerprint(slug) : { version: "0", reliable: true };
 }
 
-/** `opts.ovVersion`: a fingerprint the caller already read (see {@link conditionsOverrides}); skips a second read. */
+/**
+ * `opts.fingerprint`: the complete fingerprint ({version, reliable}) a caller already read
+ * (see {@link conditionsOverrides}); skips a second read. A caller that passes none gets it
+ * read once in here.
+ */
 export async function getConditions(
   slug: string,
-  opts: { ovVersion?: string } = {},
+  opts: { fingerprint?: { version: string; reliable: boolean } } = {},
 ): Promise<ConditionsResponse | null> {
   const loc = getLocation(slug);
   if (!loc) return null;
   try {
-    const ovVersion = opts.ovVersion ?? (await conditionsOverrides(slug)).version;
-    return await cachedConditions(slug, ovVersion);
+    const fingerprint = opts.fingerprint ?? (await conditionsOverrides(slug));
+    return await cachedConditions(slug, fingerprint);
   } catch (e) {
     if (e instanceof BudgetAbortedDuringBuild) {
       // Never cached (the throw above stopped that) — hand the caller the

@@ -178,7 +178,7 @@ Cache API (`caches.default`) under an internal key made of the beach slug and
 the owner-override fingerprint:
 `https://cache.isitbeachday.internal/watchview/<slug>/<fingerprint>`. The
 fingerprint is the same one the conditions cache key uses
-(`conditionsOverridesVersion`, `lib/conditions.ts`). When the owner corrects a
+(`conditionsOverrides`, `lib/conditions.ts`). When the owner corrects a
 reading, it changes, and every view stored before the correction is never found
 again. The entry's `max-age` is the seconds left until the view's `validUntil`,
 so a recent view lasts up to 15 minutes. It never saves a partial or expired

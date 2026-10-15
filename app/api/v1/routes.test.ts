@@ -265,7 +265,7 @@ describe("GET /api/v1/nearest", () => {
     cached.mockResolvedValue(null);
     const b = await (await near("?lat=26.36&lon=-80.06&limit=3&scores=true")).json();
     expect(mocked).toHaveBeenCalledTimes(1);
-    expect(mocked).toHaveBeenCalledWith("boca-raton", { ovVersion: "0" });
+    expect(mocked).toHaveBeenCalledWith("boca-raton", { fingerprint: { version: "0", reliable: true } });
     expect(b.scored).toBe(1);
     expect(b.beaches[0].conditions.score).toEqual(expect.any(Number));
     expect(b.beaches[1].conditions).toBeNull();
@@ -295,7 +295,7 @@ describe("GET /api/v1/nearest", () => {
     cached.mockImplementation(async (slug: string) => ({ ...warmView(slug)!, validUntil: past }));
     const b = await (await near("?lat=26.36&lon=-80.06&limit=3&scores=true")).json();
     expect(mocked).toHaveBeenCalledTimes(1);
-    expect(mocked).toHaveBeenCalledWith("boca-raton", { ovVersion: "0" }); // the nearest wins
+    expect(mocked).toHaveBeenCalledWith("boca-raton", { fingerprint: { version: "0", reliable: true } }); // the nearest wins
     expect(b.scored).toBe(1);
     expect(b.beaches[0].conditions.score).toEqual(expect.any(Number));
     expect(b.beaches[1].conditions).toBeNull();

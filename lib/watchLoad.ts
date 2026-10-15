@@ -37,12 +37,13 @@ export async function loadWatchView(slug: string, opts: { cacheOnly?: boolean } 
   // recent-view store. If the lookup failed ("0" means unknown, not "no verdicts"), nothing is
   // read from or written to the recent-view store, so a pre-correction answer can never sit
   // under a fingerprint that later looks current.
-  const { version: ov, reliable } = await conditionsOverrides(slug);
+  const fingerprint = await conditionsOverrides(slug);
+  const { version: ov, reliable } = fingerprint;
   if (opts.cacheOnly) {
     const view = reliable ? await peekWatchView(slug, ov) : null;
     return view ? { status: "ok", view } : { status: "not_cached" };
   }
-  const data = await getConditions(slug, { ovVersion: ov });
+  const data = await getConditions(slug, { fingerprint });
   if (!data) return { status: "not_found" };
   const { budgetAborted, ...publicData } = stripInternalSnapshotFields(data);
   if (budgetAborted) return { status: "incomplete" };

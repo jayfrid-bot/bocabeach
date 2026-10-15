@@ -301,35 +301,85 @@ async function dispatch(msg: Record<string, unknown>): Promise<Dispatched> {
   }
 }
 
+/** Split on `sep` outside double-quoted strings (RFC 9110 section 5.6.4: backslash escapes inside quotes). */
+function splitOutsideQuotes(input: string, sep: string): string[] | null {
+  const parts: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i];
+    if (inQuotes) {
+      cur += ch;
+      if (ch === "\\" && i + 1 < input.length) cur += input[++i];
+      else if (ch === '"') inQuotes = false;
+    } else if (ch === '"') {
+      inQuotes = true;
+      cur += ch;
+    } else if (ch === sep) {
+      parts.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  if (inQuotes) return null; // unterminated quote: not a valid header value
+  parts.push(cur);
+  return parts;
+}
+
+/** A parameter value: a token as is, or a quoted-string with its quotes and escapes removed. */
+function paramValue(raw: string): string {
+  const v = raw.trim();
+  return v.startsWith('"') && v.endsWith('"') && v.length >= 2 ? v.slice(1, -1).replace(/\\(.)/g, "$1") : v;
+}
+
 /**
- * RFC 9110 section 12.5.1. The reply is bare application/json (no media parameters), so:
- *  - a media range that carries parameters other than q (and charset=utf-8, which the body
- *    already is) does NOT match it and is ignored;
+ * RFC 9110 sections 12.5.1 and 5.6.6. The reply is bare application/json (no media
+ * parameters), so:
+ *  - the Accept list is split on commas and the parameters on semicolons only OUTSIDE quoted
+ *    strings, and a quoted value equals the same token (charset="utf-8" is charset=utf-8);
+ *  - `q` is the weight wherever it appears among the parameters; every other parameter is a
+ *    media parameter, and a range with media parameters (other than charset=utf-8, which the
+ *    body already is) does NOT match the bare type, so it is ignored;
  *  - of the ranges that do match, the most specific wins (application/json, then
  *    application/*, then * / *), and q=0 on that range means "not acceptable".
- * So "application/json;q=0, * / *" and "application/json;profile=x, application/json;q=0" both
- * refuse JSON. No Accept header = anything goes.
+ * So "application/json;q=0, * / *" and "application/json;q=1;profile=x, application/json;q=0"
+ * both refuse JSON. A malformed range (bad q, unterminated quote) is ignored. No Accept
+ * header = anything goes.
  */
 function acceptsJson(accept: string | null): boolean {
   if (accept === null) return true;
+  const ranges = splitOutsideQuotes(accept, ",");
+  if (!ranges) return false;
   let bestSpecificity = 0;
   let bestQ = 0;
-  for (const token of accept.split(",")) {
-    const [media, ...params] = token.split(";").map((t) => t.trim().toLowerCase());
+  for (const range of ranges) {
+    const pieces = splitOutsideQuotes(range, ";");
+    if (!pieces) continue;
+    const media = pieces[0].trim().toLowerCase();
     const specificity = media === "application/json" ? 3 : media === "application/*" ? 2 : media === "*/*" ? 1 : 0;
     if (!specificity) continue;
-    // Parameters before q are media parameters; q and anything after it is the weight.
-    const qIndex = params.findIndex((p) => /^q\s*=/.test(p));
-    const mediaParams = (qIndex === -1 ? params : params.slice(0, qIndex)).filter((p) => p !== "" && p !== "charset=utf-8");
-    if (mediaParams.length > 0) continue; // this range asks for a variant we do not send
-    const qRaw = qIndex === -1 ? undefined : /^q\s*=\s*(.+)$/.exec(params[qIndex])?.[1];
-    const q = qRaw === undefined ? 1 : Number(qRaw);
-    const qValue = Number.isFinite(q) ? q : 1;
+    let q: number | null = 1;
+    let hasMediaParams = false;
+    let sawQ = false;
+    for (const piece of pieces.slice(1)) {
+      if (piece.trim() === "") continue;
+      const eq = piece.indexOf("=");
+      const name = (eq === -1 ? piece : piece.slice(0, eq)).trim().toLowerCase();
+      const value = eq === -1 ? "" : paramValue(piece.slice(eq + 1));
+      if (name === "q" && !sawQ) {
+        sawQ = true;
+        q = /^(0(\.[0-9]{0,3})?|1(\.0{0,3})?)$/.test(value) ? Number(value) : null;
+      } else if (name === "charset" && value.toLowerCase() === "utf-8") {
+        // Our body is UTF-8: this parameter describes what we send.
+      } else {
+        hasMediaParams = true;
+      }
+    }
+    if (q === null || hasMediaParams) continue;
     if (specificity > bestSpecificity) {
       bestSpecificity = specificity;
-      bestQ = qValue;
+      bestQ = q;
     } else if (specificity === bestSpecificity) {
-      bestQ = Math.max(bestQ, qValue);
+      bestQ = Math.max(bestQ, q);
     }
   }
   return bestSpecificity > 0 && bestQ > 0;

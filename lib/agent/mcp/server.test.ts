@@ -232,7 +232,7 @@ describe("tools/call happy paths", () => {
     cached.mockResolvedValue(null);
     const r = (await tool("best_beach_today", { lat: 26.36, lon: -80.06, radius_miles: 250, compare: 5 })).result;
     expect(mocked).toHaveBeenCalledTimes(1);
-    expect(mocked).toHaveBeenCalledWith("boca-raton", { ovVersion: "0" }); // the nearest one
+    expect(mocked).toHaveBeenCalledWith("boca-raton", { fingerprint: { version: "0", reliable: true } }); // the nearest one
     const d = r.structuredContent;
     expect(d.comparedCount).toBe(5);
     expect(d.ranking).toHaveLength(1);
@@ -407,6 +407,19 @@ describe("protocol errors", () => {
       "application/json;q=0, application/json;profile=x",
       "application/json;profile=x",
       "application/json;version=2, text/html",
+      // q is the weight wherever it sits; what else is there is a media parameter.
+      "application/json;q=1;profile=x",
+      "application/json;profile=x;q=1",
+      "application/json;q=1;profile=x, application/json;q=0",
+      // Quote-aware: the comma and semicolon are inside the quoted value, so this is one range.
+      'text/html;x="a, application/json;q=1", */*;q=0',
+      'application/json;profile="a,b;c";q=1',
+      'application/json;profile="a\\"b, */*";q=1',
+      // Malformed: ignored, so nothing allows JSON.
+      "application/json;q=0.",
+      "application/json;q=abc",
+      "application/json;q=1.5",
+      'application/json;profile="unterminated, */*',
     ]) {
       expect((await POST(post(rpc("ping"), { accept }))).status, accept).toBe(406);
     }
@@ -416,6 +429,12 @@ describe("protocol errors", () => {
       "application/*;q=0, application/json;q=0.1",
       "text/html, */*;q=0.1",
       "application/json;charset=utf-8",
+      'application/json;charset="utf-8"',
+      'application/json; charset="UTF-8"; q=0.5',
+      "application/json;q=0.5;charset=utf-8",
+      'text/html;x="a, b;c", application/json',
+      'text/html;x="a, b;c", */*;q=0.1',
+      "application/json;q=1.000",
       "application/json; charset=UTF-8; q=0.8",
       "application/json;profile=x;q=0, application/json",
       "application/json;profile=x, */*",

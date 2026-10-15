@@ -78,7 +78,7 @@ describe("recent-view identity includes the owner-override fingerprint", () => {
     vi.mocked(getConditions).mockResolvedValue(copy());
     await loadWatchView("boca-raton");
     expect(vi.mocked(storeWatchView).mock.calls[0][1]).toBe("3.17");
-    expect(getConditions).toHaveBeenCalledWith("boca-raton", { ovVersion: "3.17" }); // read once, handed to the build
+    expect(getConditions).toHaveBeenCalledWith("boca-raton", { fingerprint: { version: "3.17", reliable: true } }); // read once, handed to the build
     expect(overridesFingerprint).toHaveBeenCalledTimes(2); // one read per loadWatchView call
     vi.mocked(overridesFingerprint).mockResolvedValue({ version: "0", reliable: true });
   });
