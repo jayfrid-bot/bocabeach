@@ -37,6 +37,9 @@ enum DebugHooks {
         // Remembered across launches (a background relaunch ignores arguments); "-" clears it.
         if let dir = d.string(forKey: "debugWatchJSON") {
             if dir == "-" { SharedStore.defaults.removeObject(forKey: "debug.watchJSON") } else { SharedStore.defaults.set(dir, forKey: "debug.watchJSON") }
+            // Drop cached readings so the next load fetches (from the fixture or the network)
+            // instead of showing a still-fresh live reading.
+            SummaryCache.removeAll()
         }
         let age = d.double(forKey: "debugAgeCache")
         if age > 0, let slug = BeachSelection.activeSlug, var cached = SummaryCache.load(slug) {
