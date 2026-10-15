@@ -1,20 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConditionsResponse } from "@/lib/types";
 
+vi.mock("@/lib/watchViewCache", () => ({ peekWatchView: vi.fn(), storeWatchView: vi.fn(async () => true) }));
+
 vi.mock("@/lib/conditions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/conditions")>();
-  return { ...actual, getConditions: vi.fn(), getCachedConditions: vi.fn() };
+  return { ...actual, getConditions: vi.fn() };
 });
 
 import { DELETE, GET, OPTIONS, PATCH, POST, PUT } from "@/app/mcp/route";
-import { getCachedConditions, getConditions } from "@/lib/conditions";
+import { getConditions } from "@/lib/conditions";
+import { peekWatchView } from "@/lib/watchViewCache";
 import { resetAgentRateLimit } from "@/lib/agent/rateLimit";
 import { MCP_MAX_BODY_BYTES } from "@/lib/agent/constants";
 import { ALLOWED_ORIGINS, LATEST_PROTOCOL_VERSION } from "@/lib/agent/mcp/server";
-import { BUILT_MS, conditionsFor, post, req, rpc } from "@/lib/agent/testkit";
+import { BUILT_MS, conditionsFor, warmView, post, req, rpc } from "@/lib/agent/testkit";
 
 const mocked = vi.mocked(getConditions);
-const cached = vi.mocked(getCachedConditions);
+const cached = vi.mocked(peekWatchView);
 let logs: string[];
 
 beforeEach(() => {
@@ -22,7 +25,7 @@ beforeEach(() => {
   logs = [];
   vi.spyOn(console, "log").mockImplementation((s: string) => void logs.push(String(s)));
   mocked.mockImplementation(async (slug: string) => conditionsFor(slug));
-  cached.mockImplementation(async (slug: string) => conditionsFor(slug)); // warm shared cache
+  cached.mockImplementation(async (slug: string) => warmView(slug)); // warm shared cache
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(BUILT_MS);
 });
@@ -165,10 +168,9 @@ describe("tools/call happy paths", () => {
   it("best_beach_today ranks by score and says what it left out", async () => {
     // Give each beach a different cap so the order is decided by the score, not by distance.
     cached.mockImplementation(async (slug: string) => {
-      const c = conditionsFor(slug)!;
-      const bump: Record<string, number> = { "deerfield-beach": 90 };
-      if (bump[slug]) c.score = { ...c.score, score: bump[slug] };
-      return c;
+      const v = warmView(slug)!;
+      if (slug === "deerfield-beach") Object.assign(v, { score: 90, rating: "Excellent", band: "excellent" });
+      return v;
     });
     const r = (await tool("best_beach_today", { lat: 26.36, lon: -80.06, radius_miles: 100, compare: 3 })).result;
     const d = r.structuredContent;
@@ -196,7 +198,7 @@ describe("tools/call happy paths", () => {
   });
 
   it("best_beach_today reports beaches it could not build instead of failing", async () => {
-    cached.mockImplementation(async (slug: string) => (slug === "boca-raton" ? null : conditionsFor(slug)));
+    cached.mockImplementation(async (slug: string) => (slug === "boca-raton" ? null : warmView(slug)));
     mocked.mockImplementation(async (slug: string) => (slug === "boca-raton" ? null : conditionsFor(slug)));
     const d = (await tool("best_beach_today", { state: "FL", compare: 3 })).result.structuredContent;
     expect(d.skipped).toEqual([{ slug: "boca-raton", name: "Boca Raton", reason: "not_found" }]);
@@ -366,15 +368,39 @@ describe("protocol errors", () => {
     expect((await POST(post(rpc("ping"), { "content-type": "Application/JSON; charset=utf-8" }))).status).toBe(200);
     expect((await POST(post(rpc("ping"), { accept: "text/event-stream" }))).status).toBe(406);
     expect((await POST(post(rpc("ping"), { accept: "*/*" }))).status).toBe(200);
+    // q=0 means "not acceptable"; any other q is fine.
+    expect((await POST(post(rpc("ping"), { accept: "application/json;q=0" }))).status).toBe(406);
+    expect((await POST(post(rpc("ping"), { accept: "application/json; q=0.0, text/event-stream" }))).status).toBe(406);
+    expect((await POST(post(rpc("ping"), { accept: "*/*;q=0" }))).status).toBe(406);
+    expect((await POST(post(rpc("ping"), { accept: "text/event-stream, application/json;q=0.5" }))).status).toBe(200);
     expect((await POST(post(rpc("ping"), { accept: "application/json, text/event-stream" }))).status).toBe(200);
   });
 
-  it("accepts only the 2025-06-18 protocol version header; a missing header is allowed", async () => {
-    for (const v of ["2020-01-01", "2025-03-26", "2024-11-05", "2099-01-01"]) {
-      expect((await POST(post(rpc("ping"), { "mcp-protocol-version": v }))).status, v).toBe(400);
+  it("accepts only the 2025-06-18 protocol version header", async () => {
+    for (const v of ["2020-01-01", "2025-03-26", "2024-11-05", "2099-01-01", ""]) {
+      expect((await POST(post(rpc("ping"), { "mcp-protocol-version": v }))).status, JSON.stringify(v)).toBe(400);
+      // A wrong value is refused on initialize too.
+      expect((await POST(post(rpc("initialize", INIT), { "mcp-protocol-version": v }))).status, `init ${JSON.stringify(v)}`).toBe(400);
     }
     expect((await POST(post(rpc("ping"), { "mcp-protocol-version": "2025-06-18" }))).status).toBe(200);
-    expect((await POST(post(rpc("ping")))).status).toBe(200);
+  });
+
+  it("allows a missing MCP-Protocol-Version on initialize only", async () => {
+    const none = { "mcp-protocol-version": "none" };
+    expect((await POST(post(rpc("initialize", INIT), none))).status).toBe(200);
+    const requests = [
+      rpc("ping"),
+      rpc("tools/list"),
+      rpc("tools/call", { name: "list_beaches", arguments: {} }),
+      JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+      JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
+    ];
+    for (const body of requests) {
+      const res = await POST(post(body, none));
+      expect(res.status, body).toBe(400);
+      expect((await res.json()).error.message).toMatch(/MCP-Protocol-Version: 2025-06-18 is required/);
+    }
+    expect(mocked).not.toHaveBeenCalled();
   });
 
   it("allows no Origin and the site's own origins, and refuses any other with 403", async () => {
@@ -439,6 +465,15 @@ describe("guardrails", () => {
     expect(last!.headers.get("Access-Control-Allow-Origin")).toBe("https://app.isitbeachday.com");
     expect((await last!.json()).error.code).toBe(-32029);
     expect((await POST(post(rpc("ping"), { "cf-connecting-ip": "203.0.113.51" }))).status).toBe(200);
+  });
+
+  it("checks Origin before the limiter: refused origins do not spend the address's allowance", async () => {
+    const ip = { "cf-connecting-ip": "203.0.113.99" };
+    for (let i = 0; i < 300; i++) {
+      expect((await POST(post(rpc("ping"), { ...ip, origin: "https://evil.example" }))).status).toBe(403);
+    }
+    // The victim's real traffic from the same address still has its whole budget.
+    expect((await POST(post(rpc("ping"), ip))).status).toBe(200);
   });
 
   it("logs the method and tool name but never arguments or addresses", async () => {

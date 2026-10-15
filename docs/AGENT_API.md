@@ -30,14 +30,20 @@ public, read-only and free. There is no key and no account.
 curl -s https://isitbeachday.com/mcp \
   -H 'content-type: application/json' \
   -H 'accept: application/json, text/event-stream' \
+  -H 'mcp-protocol-version: 2025-06-18' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'
+
+# After initialize, every request must send MCP-Protocol-Version: 2025-06-18 (400 without it).
+# initialize itself may leave it out.
 
 # List the tools
 curl -s https://isitbeachday.com/mcp -H 'content-type: application/json' \
+  -H 'mcp-protocol-version: 2025-06-18' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 
 # Get one beach
 curl -s https://isitbeachday.com/mcp -H 'content-type: application/json' \
+  -H 'mcp-protocol-version: 2025-06-18' \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_beach_score","arguments":{"slug":"boca-raton"}}}'
 
 # Or the MCP Inspector
@@ -100,18 +106,21 @@ Codes: `bad_request` (400), `not_found` (404), `rate_limited` (429),
 - MCP request checks: `Content-Type: application/json` (415 otherwise), a present
   `Accept` must allow JSON (406), `initialize` needs `protocolVersion`,
   `capabilities` and `clientInfo` (name, version). A present
-  `MCP-Protocol-Version` must be `2025-06-18`; a missing one is allowed.
+  `MCP-Protocol-Version` must be exactly `2025-06-18` on every request after
+  `initialize` (400 otherwise); `initialize` itself may omit it. A wrong value is
+  400 on any request.
 - MCP `Origin` check: no `Origin` header is allowed (a connector's server sends
   none). A present `Origin` must be `https://isitbeachday.com` or
   `https://app.isitbeachday.com`, else 403. CORS headers are sent only to those
   origins. A browser-only client on another origin (for example the MCP Inspector
   UI in a page) will not work; use its proxy or the terminal.
-- Caching: the app does NOT run a response cache (Workers Cache is not enabled).
+- Caching: the app does NOT run an automatic response cache (Workers Cache is not enabled).
   Live answers send `Cache-Control: public, s-maxage=min(60, seconds to
   validUntil)` (`no-store` once expired or partial) as an honest hint for any
   downstream cache. `/nearest` is always `no-store` because the URL holds a
-  location. The real protection for the data sources is the shared 120-second
-  conditions cache (KV) behind `unstable_cache`.
+  location. The protection for the data sources is the shared 120-second
+  conditions cache (KV) behind `unstable_cache` for single builds, plus the
+  recent-view store and the one-cold-build rule below for comparisons.
 - Strict input: query values must be canonical, so equal questions look equal if
   a cache is ever put in front. Unknown or repeated parameters, whitespace,
   leading zeros, exponents, plus signs, `scores` other than `true`/`false`,
@@ -159,9 +168,24 @@ with the buckets.
 A cold build of one beach is about 25 subrequests. Workers Free allows 50
 external subrequests per request; Workers Paid allows 10,000. So a request may
 build at most ONE beach fresh. Every other beach in a comparison or a scored
-nearest list is read from the shared conditions cache only
-(`getCachedConditions`, `lib/conditions.ts`). A beach with no recent snapshot is
-never built. It is listed as not compared right now, with its slug
-(`notComparedNow` in `best_beach_today`; `conditions: null` and a `note` in
-nearest). Ask for it with `get_beach_score` or `/beaches/{slug}`, which builds it
-and warms the cache. A failed or partial build is never shown as an answer.
+nearest list is read with a cache-only peek (`peekWatchView`,
+`lib/watchViewCache.ts`).
+
+The recent-view store: whenever `loadWatchView` builds a view successfully (the
+agent API, MCP, or `/api/watch`), it saves that compact view in the Workers
+Cache API (`caches.default`) under the internal key
+`https://cache.isitbeachday.internal/watchview/<slug>`, with `max-age` equal to
+the seconds left until the view's `validUntil`. It never saves a partial or
+expired view, and it makes no KV writes. A peek is only `caches.default.match`,
+accepted while `validUntil` is still in the future. It builds nothing and writes
+nothing. The store is per datacenter, so a peek may miss a beach that another
+datacenter has. The Cache API stores only on a custom domain (not
+`*.workers.dev`), and where `caches` does not exist (Node, tests, `next dev`) a
+peek always misses. In those places a comparison builds one beach and lists the
+rest as not compared right now.
+
+A beach with no recent view is never built by a comparison. It is listed as not
+compared right now, with its slug (`notComparedNow` in `best_beach_today`;
+`conditions: null` and a `note` in nearest). Ask for it with `get_beach_score`
+or `/beaches/{slug}`, which builds it and saves its view. A failed or partial
+build is never shown as an answer.

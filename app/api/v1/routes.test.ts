@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConditionsResponse } from "@/lib/types";
 
+vi.mock("@/lib/watchViewCache", () => ({ peekWatchView: vi.fn(), storeWatchView: vi.fn(async () => true) }));
+
 vi.mock("@/lib/conditions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/conditions")>();
-  return { ...actual, getConditions: vi.fn(), getCachedConditions: vi.fn() };
+  return { ...actual, getConditions: vi.fn() };
 });
 
 import * as listRoute from "@/app/api/v1/beaches/route";
@@ -14,12 +16,13 @@ import { GET as listGET, OPTIONS as listOPTIONS } from "@/app/api/v1/beaches/rou
 import { GET as beachGET } from "@/app/api/v1/beaches/[slug]/route";
 import { GET as nearestGET } from "@/app/api/v1/nearest/route";
 import { GET as openapiGET } from "@/app/api/v1/openapi.json/route";
-import { getCachedConditions, getConditions } from "@/lib/conditions";
+import { getConditions } from "@/lib/conditions";
+import { peekWatchView } from "@/lib/watchViewCache";
 import { resetAgentRateLimit } from "@/lib/agent/rateLimit";
-import { BUILT_MS, conditionsFor, req } from "@/lib/agent/testkit";
+import { BUILT_MS, conditionsFor, warmView, req } from "@/lib/agent/testkit";
 
 const mocked = vi.mocked(getConditions);
-const cached = vi.mocked(getCachedConditions);
+const cached = vi.mocked(peekWatchView);
 const beach = (slug: string, qs = "", headers?: HeadersInit) =>
   beachGET(req(`/api/v1/beaches/${slug}${qs}`, { headers }), { params: Promise.resolve({ slug }) });
 
@@ -30,7 +33,7 @@ beforeEach(() => {
   vi.spyOn(console, "log").mockImplementation((s: string) => void logs.push(String(s)));
   mocked.mockImplementation(async (slug: string) => conditionsFor(slug));
   // A warm shared cache by default; tests for a cold cache override this.
-  cached.mockImplementation(async (slug: string) => conditionsFor(slug));
+  cached.mockImplementation(async (slug: string) => warmView(slug));
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(BUILT_MS);
 });

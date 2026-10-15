@@ -2,15 +2,18 @@ import { readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("@/lib/watchViewCache", () => ({ peekWatchView: vi.fn(), storeWatchView: vi.fn(async () => true) }));
+
 vi.mock("@/lib/conditions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/conditions")>();
-  return { ...actual, getConditions: vi.fn(), getCachedConditions: vi.fn() };
+  return { ...actual, getConditions: vi.fn() };
 });
 
 import { GET as listGET } from "@/app/api/v1/beaches/route";
 import { GET as beachGET } from "@/app/api/v1/beaches/[slug]/route";
 import { GET as nearestGET } from "@/app/api/v1/nearest/route";
-import { getCachedConditions, getConditions } from "@/lib/conditions";
+import { getConditions } from "@/lib/conditions";
+import { peekWatchView } from "@/lib/watchViewCache";
 import { buildLlmsTxt } from "@/lib/agent/llmsTxt";
 import { MCP_URL, OPENAPI_PATH, SITE_URL } from "@/lib/agent/constants";
 import { buildOpenApi } from "@/lib/agent/openapi";
@@ -24,7 +27,7 @@ import {
 } from "@/lib/agent/params";
 import { resetAgentRateLimit } from "@/lib/agent/rateLimit";
 import { validateJson, type JsonSchema } from "@/lib/agent/schema";
-import { BUILT_MS, conditionsFor, req } from "@/lib/agent/testkit";
+import { BUILT_MS, conditionsFor, warmView, req } from "@/lib/agent/testkit";
 
 const spec = buildOpenApi();
 const ROOT = join(process.cwd(), "app/api/v1");
@@ -70,15 +73,25 @@ describe("OpenAPI document", () => {
     const params = (path: string) => Object.fromEntries(((spec.paths as any)[path].get.parameters as Param[]).map((p) => [p.name, p.schema]));
     const accepts = (schema: Param["schema"], v: string) => (schema.enum ? schema.enum.includes(v) : new RegExp(schema.pattern!).test(v));
     const n = params("/nearest");
-    const inputs = ["0", "26.35", "-80.07", "10", "05", "026", "+1", " 1", "1 ", "1e1", ".5", "5.", "-0", "", "true", "false", "1", "TRUE", "11", "3"];
+    const inputs = [
+      "0", "26.35", "-80.07", "10", "05", "026", "+1", " 1", "1 ", "1e1", ".5", "5.", "-0", "-0.0", "-0.00", "0.0", "-0.5", "",
+      "true", "false", "1", "TRUE", "11", "3", "26.35\n",
+      "89.9999", "90", "90.0", "90.1", "90.0001", "91", "99", "-90", "-90.0", "-90.1", "-91", "100", "179.99", "180", "180.0", "180.1",
+      "181", "-180", "-180.5", "-181", "199", "1".repeat(25), "0." + "1".repeat(22), "0." + "1".repeat(23), "12." + "0".repeat(21),
+    ];
     for (const v of inputs) {
-      for (const k of ["lat", "lon"] as const) {
-        const code = parseNumber(v, k, -1e9, 1e9).ok;
-        // -0 is refused by code only; the pattern allows the spelling "-0", so skip that one case.
-        if (v !== "-0") expect(accepts(n[k], v), `${k}=${JSON.stringify(v)}`).toBe(code);
-      }
+      const lat = parseNumber(v, "lat", -90, 90).ok;
+      const lon = parseNumber(v, "lon", -180, 180).ok;
+      expect(accepts(n.lat, v), `lat=${JSON.stringify(v)}`).toBe(lat);
+      expect(accepts(n.lon, v), `lon=${JSON.stringify(v)}`).toBe(lon);
       expect(accepts(n.limit, v), `limit=${JSON.stringify(v)}`).toBe(parseInteger(v, "limit", 1, 10).ok);
       expect(accepts(n.scores, v), `scores=${JSON.stringify(v)}`).toBe(parseBool(v, "scores").ok);
+    }
+    // And a sweep of generated numbers around the limits.
+    for (let i = -2000; i <= 2000; i += 7) {
+      const v = (i / 10).toString();
+      expect(accepts(n.lat, v), `lat=${v}`).toBe(parseNumber(v, "lat", -90, 90).ok);
+      expect(accepts(n.lon, v), `lon=${v}`).toBe(parseNumber(v, "lon", -180, 180).ok);
     }
     const l = params("/beaches");
     for (const v of ["Broward", "Palm Beach", " x", "x ", "", "x".repeat(80), "x".repeat(81)]) {
@@ -144,13 +157,13 @@ describe("real answers fit the documented schemas", () => {
     resetAgentRateLimit();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.mocked(getConditions).mockImplementation(async (slug: string) => conditionsFor(slug));
-    vi.mocked(getCachedConditions).mockImplementation(async (slug: string) => conditionsFor(slug));
+    vi.mocked(peekWatchView).mockImplementation(async (slug: string) => warmView(slug));
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(BUILT_MS);
   });
   afterEach(() => {
     vi.mocked(getConditions).mockReset();
-    vi.mocked(getCachedConditions).mockReset();
+    vi.mocked(peekWatchView).mockReset();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });

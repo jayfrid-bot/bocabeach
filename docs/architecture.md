@@ -25,7 +25,7 @@ flowchart TD
 
   PAGE --> COND
   APPUI --> COND
-  WATCH["Apple Watch app + complications"] -->|"GET, no query; edge-cached 60 s, payload has validUntil"| WATCHR
+  WATCH["Apple Watch app + complications"] -->|"GET, no query; Cache-Control s-maxage hint of 60 s at most (no Workers Cache), payload has validUntil"| WATCHR
   APPUI -->|"WatchSync plugin: home beach + last viewed<br/>lib/watchSync.ts (WatchConnectivity)"| WATCH
 
   subgraph routes [HTTP routes]
@@ -57,9 +57,9 @@ flowchart TD
   V1 -->|"one counter line per request:<br/>route, status, user-agent family. No IP, no coordinates"| CFLOGS[(Workers logs)]
   MCPR --> CFLOGS
   V1 --> AGENTQ
-  MCPR -->|"tools: list_beaches, get_beach_score,<br/>find_nearest_beach, best_beach_today"| AGENTQ["lib/agent/queries.ts + beachView.ts<br/>one read path for REST and MCP;<br/>scores read from the shared 120 s cache, at most ONE cold build per request"]
+  MCPR -->|"tools: list_beaches, get_beach_score,<br/>find_nearest_beach, best_beach_today"| AGENTQ["lib/agent/queries.ts + beachView.ts<br/>one read path for REST and MCP;<br/>scores read from recent views, at most ONE cold build per request"]
   AGENTQ -->|"beach directory + nearest to the shoreline"| LOC
-  AGENTQ -->|"loadWatchView, cacheOnly for all but one beach<br/>(getCachedConditions never builds); summary, attribution, safety note added on top"| WATCHLOAD
+  AGENTQ -->|"loadWatchView, cacheOnly for all but one beach<br/>(peek never builds or writes); summary, attribution, safety note added on top"| WATCHLOAD
 
   APPUI -->|"once per calendar day, on load + resume<br/>lib/useAppOpenPing.ts"| OPENR
   OPENR -->|"app_opens (hashed id)"| OPENS[lib/db/appOpens.ts<br/>daily active users]
@@ -74,6 +74,8 @@ flowchart TD
   COND --> PIPE[lib/conditions.ts<br/>fetch all sources in parallel]
   WATCHR --> WATCHLOAD["lib/watchLoad.ts<br/>loadWatchView: fetch, refuse a partial build (budgetAborted),<br/>strip internal fields, build the view, cache seconds<br/>(one code path for watch, tablet and agents)"]
   WATCHLOAD --> PIPE
+  WATCHLOAD -->|"after every successful build: store the compact view,<br/>max-age = time to validUntil, never partial or expired. No KV writes"| WVCACHE[("Workers Cache API caches.default<br/>key https://cache.isitbeachday.internal/watchview/&lt;slug&gt;<br/>per datacenter, lib/watchViewCache.ts")]
+  WVCACHE -.->|"cacheOnly peek: match() only, accepted while validUntil is in the future"| WATCHLOAD
   WATCHR -->|"lib/watchView.ts: score + best window as the dashboard;<br/>safety lines from lib/safetyBanner.ts, the module SafetyBanner renders"| SCORE
   SHARE --> PIPE
   PIPE --> SOURCES[lib/sources/*<br/>one adapter per external source<br/>each returns Wrapped&lt;T&gt;, never throws]
@@ -123,13 +125,17 @@ hand-written, stateless JSON-RPC handler (`lib/agent/mcp/server.ts`, spec
 limits run per IP before any work, as two budgets: REST 60 a minute and MCP 300 a minute, each
 a Workers Rate Limiting binding (`AGENT_RATE_LIMITER`, `AGENT_MCP_RATE_LIMITER`
 in wrangler.jsonc `ratelimits`) when bound, else an in-isolate token bucket.
-`/mcp` implements only protocol revision 2025-06-18 and checks `Origin`. Workers
-Cache is not enabled, so `Cache-Control` on the answers is only a hint; the real
-protection for the data sources is the shared 120-second conditions cache. A
+`/mcp` implements only protocol revision 2025-06-18, checks `Origin` before the
+rate limiter, and requires `MCP-Protocol-Version: 2025-06-18` on every request
+after `initialize`. Automatic Workers Cache is not enabled, so `Cache-Control`
+on the answers is only a hint. The protection for the data sources is a rule: a
 request builds at most ONE beach cold (about 25 subrequests; Workers Free allows
-50): all other beaches in a comparison or a scored nearest list come from
-`getCachedConditions` (cache read only, never a build) and are reported as not
-compared right now when they have no recent snapshot.
+50). Every other beach in a comparison or a scored nearest list is read with
+`peekWatchView` (`lib/watchViewCache.ts`): a `caches.default.match` for the
+compact view that `loadWatchView` stored when it last built that beach, kept
+only until its `validUntil`. The peek builds nothing and writes nothing, and a
+beach it cannot find is reported as not compared right now. No KV writes; the
+store is per datacenter and does nothing where `caches` does not exist.
 Setup and examples: `docs/AGENT_API.md`.
 
 ## 2. Scheduled jobs — keeping the feeds current

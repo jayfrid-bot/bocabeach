@@ -4,7 +4,8 @@
 // owns the content; this file owns only "fetch, refuse a partial build, strip
 // internal fields, and say how long the answer may be cached".
 
-import { getCachedConditions, getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
+import { getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
+import { peekWatchView, storeWatchView } from "@/lib/watchViewCache";
 import { buildWatchView, cacheControlFor, type WatchView } from "@/lib/watchView";
 import type { ConditionsResponse } from "@/lib/types";
 
@@ -22,19 +23,24 @@ export type WatchLoad =
   | { status: "not_cached" };
 
 /**
- * `cacheOnly` reads the shared conditions cache and never starts a build. A miss, or a
- * cached view that is already past its `validUntil`, is "not_cached".
+ * `cacheOnly` reads the recent-view store (lib/watchViewCache.ts) and never starts a
+ * build or writes anything: a hit is a view that is still inside its validUntil, a miss
+ * is "not_cached". A normal call builds, and remembers every successful view there.
  */
 export async function loadWatchView(slug: string): Promise<Exclude<WatchLoad, { status: "not_cached" }>>;
 export async function loadWatchView(slug: string, opts: { cacheOnly: true }): Promise<WatchLoad>;
 export async function loadWatchView(slug: string, opts: { cacheOnly?: boolean } = {}): Promise<WatchLoad> {
   if (!isValidSlug(slug)) return { status: "not_found" };
-  const data = opts.cacheOnly ? await getCachedConditions(slug) : await getConditions(slug);
-  if (!data) return opts.cacheOnly ? { status: "not_cached" } : { status: "not_found" };
+  if (opts.cacheOnly) {
+    const view = await peekWatchView(slug);
+    return view ? { status: "ok", view } : { status: "not_cached" };
+  }
+  const data = await getConditions(slug);
+  if (!data) return { status: "not_found" };
   const { budgetAborted, ...publicData } = stripInternalSnapshotFields(data);
   if (budgetAborted) return { status: "incomplete" };
   const view = buildWatchView(publicData as ConditionsResponse);
-  if (opts.cacheOnly && Date.parse(view.validUntil) <= Date.now()) return { status: "not_cached" };
+  await storeWatchView(view); // best effort, never throws
   return { status: "ok", view };
 }
 

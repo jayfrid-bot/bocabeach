@@ -58,7 +58,7 @@ const round2 = (n: number): number => {
 
 /**
  * Nearest beaches, optionally with compact scores for the first `scoreCount`. Scores
- * come from the shared conditions cache; at most ONE beach (the nearest one that is
+ * come from the recent-view store (lib/watchViewCache.ts); at most ONE beach (the nearest one that is
  * not cached) is built for the request (see loadMany). The others say so in `note`.
  */
 export async function runNearest(opts: {

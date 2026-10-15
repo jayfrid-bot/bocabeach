@@ -8,6 +8,12 @@ export type Parsed<T> = { ok: true; value: T } | { ok: false; message: string };
 // no negative zero). Anything else is a 400, never a quiet guess.
 export const DECIMAL_PATTERN = "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$";
 const DECIMAL = new RegExp(DECIMAL_PATTERN);
+// The same rules as parseNumber(raw, "lat" | "lon", ...), written as one pattern each so the
+// OpenAPI document can state them exactly: canonical decimal, at most 24 characters, no -0,
+// and inside the range (-90..90, -180..180). A test checks pattern and parser agree.
+const NO_NEGATIVE_ZERO = "(?!-0(\\.0+)?$)";
+export const LAT_PATTERN = `^(?=.{1,24}$)${NO_NEGATIVE_ZERO}-?(90(\\.0+)?|[1-8]?[0-9](\\.[0-9]+)?)$`;
+export const LON_PATTERN = `^(?=.{1,24}$)${NO_NEGATIVE_ZERO}-?(180(\\.0+)?|1[0-7][0-9](\\.[0-9]+)?|[1-9]?[0-9](\\.[0-9]+)?)$`;
 const INTEGER = /^(0|[1-9]\d{0,5})$/;
 const fail = (message: string): { ok: false; message: string } => ({ ok: false, message });
 

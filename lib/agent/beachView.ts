@@ -97,7 +97,7 @@ export function toBeachConditions(view: WatchView): BeachConditions | null {
   };
 }
 
-/** `cacheOnly`: read the shared conditions cache and never start a build. */
+/** `cacheOnly`: read the recent-view store (lib/watchViewCache.ts) and never start a build. */
 export async function loadBeachConditions(slug: string): Promise<Exclude<BeachLoad, { status: "not_cached" }>>;
 export async function loadBeachConditions(slug: string, opts: { cacheOnly: true }): Promise<BeachLoad>;
 export async function loadBeachConditions(slug: string, opts: { cacheOnly?: boolean } = {}): Promise<BeachLoad> {

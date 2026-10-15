@@ -12,7 +12,10 @@
 //     so there is nothing to store and nothing to expire.
 //   - Origin is validated (spec MUST, DNS-rebinding protection): no Origin header is fine
 //     (server-to-server connectors); a present Origin must be on ALLOWED_ORIGINS, else 403.
-//   - POST needs Content-Type application/json (415). A present Accept must allow JSON (406).
+//   - POST needs Content-Type application/json (415). A present Accept must allow JSON (406),
+//     and q=0 means not acceptable.
+//   - MCP-Protocol-Version: optional on initialize only; every later POST must send exactly
+//     2025-06-18 (400 otherwise). A present wrong value is 400 on any request.
 //   - GET, DELETE and every other method answer 405 (no SSE stream, no session).
 //   - tools/call: an unknown tool is a JSON-RPC error (-32602); bad arguments and
 //     lookups that fail (unknown beach) come back as a tool result with isError true,
@@ -300,10 +303,12 @@ async function dispatch(msg: Record<string, unknown>): Promise<Dispatched> {
 
 function acceptsJson(accept: string | null): boolean {
   if (accept === null) return true; // lenient: a client that sends no Accept still gets JSON
-  return accept
-    .split(",")
-    .map((t) => t.split(";")[0].trim().toLowerCase())
-    .some((t) => t === "application/json" || t === "application/*" || t === "*/*");
+  return accept.split(",").some((token) => {
+    const [media, ...params] = token.split(";").map((t) => t.trim().toLowerCase());
+    if (media !== "application/json" && media !== "application/*" && media !== "*/*") return false;
+    const q = params.map((p) => /^q\s*=\s*(.+)$/.exec(p)?.[1]).find((v) => v !== undefined);
+    return q === undefined || !(Number(q) === 0); // q=0 means "not acceptable"
+  });
 }
 
 export async function handleMcpPost(req: Request): Promise<Response> {
@@ -313,6 +318,9 @@ export async function handleMcpPost(req: Request): Promise<Response> {
     return d.response;
   };
 
+  // Origin first: a forbidden origin must not spend the address's rate-limit allowance.
+  if (checkOrigin(req).state === "bad") return finish({ response: forbiddenOrigin() });
+
   const limit = await checkAgentRateLimit(req, "mcp");
   if (limit.limited) {
     return finish(
@@ -320,8 +328,6 @@ export async function handleMcpPost(req: Request): Promise<Response> {
       { limited: true },
     );
   }
-
-  if (checkOrigin(req).state === "bad") return finish({ response: forbiddenOrigin() });
 
   const mediaType = (req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
   if (mediaType !== "application/json") {
@@ -331,14 +337,15 @@ export async function handleMcpPost(req: Request): Promise<Response> {
     return finish({ response: rpcError(null, ERR.invalidRequest, "Accept must allow application/json.", 406) });
   }
 
-  // A missing MCP-Protocol-Version is allowed (this server keeps no session to tell it apart);
-  // a present one must be the revision this server implements.
+  // A present MCP-Protocol-Version must be the revision this server implements. A missing one
+  // is allowed only on initialize (checked below, once the body says which method it is).
   const version = req.headers.get("mcp-protocol-version");
   if (version !== null && version !== LATEST_PROTOCOL_VERSION) {
     return finish({
       response: rpcError(null, ERR.invalidRequest, `Unsupported MCP-Protocol-Version "${version.slice(0, 20)}". Supported: ${SUPPORTED_PROTOCOL_VERSIONS.join(", ")}.`, 400),
     });
   }
+
   const body = await readBodyCapped(req, MCP_MAX_BODY_BYTES);
   if (!body.ok) {
     return body.reason === "too_large"
@@ -357,6 +364,12 @@ export async function handleMcpPost(req: Request): Promise<Response> {
   }
   if (!isObject(msg) || msg.jsonrpc !== "2.0") {
     return finish({ response: rpcError(null, ERR.invalidRequest, 'Invalid request: expected a JSON-RPC 2.0 object ("jsonrpc": "2.0").', 400) });
+  }
+  if (version === null && msg.method !== "initialize") {
+    return finish({
+      response: rpcError(null, ERR.invalidRequest, `MCP-Protocol-Version: ${LATEST_PROTOCOL_VERSION} is required on every request after initialize.`, 400),
+      rpc: typeof msg.method === "string" ? msg.method : undefined,
+    });
   }
   if (typeof msg.method !== "string") {
     // A response to a server request (we send none) is accepted and ignored.

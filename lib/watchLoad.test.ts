@@ -2,17 +2,21 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import fixture from "@/lib/__fixtures__/boca-2026-09-04-phantom-rain.json";
 import type { ConditionsResponse } from "@/lib/types";
 
+vi.mock("@/lib/watchViewCache", () => ({ peekWatchView: vi.fn(), storeWatchView: vi.fn(async () => true) }));
+
 vi.mock("@/lib/conditions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/conditions")>();
-  return { ...actual, getConditions: vi.fn(), getCachedConditions: vi.fn() };
+  return { ...actual, getConditions: vi.fn() };
 });
 
-import { getCachedConditions, getConditions } from "@/lib/conditions";
+import { getConditions } from "@/lib/conditions";
+import { peekWatchView, storeWatchView } from "@/lib/watchViewCache";
 import { isValidSlug, loadWatchView, secondsValid, viewCacheControl } from "@/lib/watchLoad";
 
 afterEach(() => {
   vi.mocked(getConditions).mockReset();
-  vi.mocked(getCachedConditions).mockReset();
+  vi.mocked(peekWatchView).mockReset();
+  vi.mocked(storeWatchView).mockClear();
   vi.useRealTimers();
 });
 const copy = () => JSON.parse(JSON.stringify(fixture)) as ConditionsResponse;
@@ -38,27 +42,49 @@ describe("loadWatchView", () => {
   });
 });
 
+describe("loadWatchView remembers what it builds", () => {
+  it("stores every successful view, once", async () => {
+    vi.mocked(getConditions).mockResolvedValue(copy());
+    const r = await loadWatchView("boca-raton");
+    expect(r.status).toBe("ok");
+    expect(storeWatchView).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(storeWatchView).mock.calls[0][0]).toEqual(r.status === "ok" ? r.view : null);
+  });
+  it("stores nothing for a partial build, an unknown beach or a bad slug", async () => {
+    vi.mocked(getConditions).mockResolvedValue({ ...copy(), budgetAborted: true });
+    expect((await loadWatchView("boca-raton")).status).toBe("incomplete");
+    vi.mocked(getConditions).mockResolvedValue(null);
+    expect((await loadWatchView("nope")).status).toBe("not_found");
+    expect((await loadWatchView("../x")).status).toBe("not_found");
+    expect(storeWatchView).not.toHaveBeenCalled();
+  });
+});
+
 describe("loadWatchView with cacheOnly", () => {
-  const BUILT = Date.parse(fixture.snapshot.generatedAt);
-  it("uses only the cache: a hit is a view, a miss is not_cached, and no build is started", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(BUILT);
-    vi.mocked(getCachedConditions).mockResolvedValue(copy());
-    expect((await loadWatchView("boca-raton", { cacheOnly: true })).status).toBe("ok");
-    vi.mocked(getCachedConditions).mockResolvedValue(null);
+  const stored = async () => {
+    vi.mocked(getConditions).mockResolvedValue(copy());
+    const r = await loadWatchView("boca-raton");
+    vi.mocked(getConditions).mockClear();
+    vi.mocked(storeWatchView).mockClear();
+    return r.status === "ok" ? r.view : null;
+  };
+  it("returns a stored view and never builds or writes", async () => {
+    const view = await stored();
+    vi.mocked(peekWatchView).mockResolvedValue(view);
+    const r = await loadWatchView("boca-raton", { cacheOnly: true });
+    expect(r).toEqual({ status: "ok", view });
+    expect(getConditions).not.toHaveBeenCalled();
+    expect(storeWatchView).not.toHaveBeenCalled();
+  });
+  it("reports not_cached on a miss, and still never builds or writes", async () => {
+    vi.mocked(peekWatchView).mockResolvedValue(null);
     expect((await loadWatchView("boca-raton", { cacheOnly: true })).status).toBe("not_cached");
     expect(getConditions).not.toHaveBeenCalled();
+    expect(storeWatchView).not.toHaveBeenCalled();
   });
-  it("treats a cached view that is already past its validUntil as not_cached", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    vi.setSystemTime(BUILT + 20 * 60_000);
-    vi.mocked(getCachedConditions).mockResolvedValue(copy());
-    expect((await loadWatchView("boca-raton", { cacheOnly: true })).status).toBe("not_cached");
-  });
-  it("still refuses a partial build and a malformed slug", async () => {
-    vi.mocked(getCachedConditions).mockResolvedValue({ ...copy(), budgetAborted: true });
-    expect((await loadWatchView("boca-raton", { cacheOnly: true })).status).toBe("incomplete");
+  it("refuses a malformed slug without touching the cache", async () => {
     expect((await loadWatchView("../x", { cacheOnly: true })).status).toBe("not_found");
+    expect(peekWatchView).not.toHaveBeenCalled();
   });
 });
 

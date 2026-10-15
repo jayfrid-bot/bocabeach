@@ -7,7 +7,7 @@
 //  1. A Cloudflare Workers Rate Limiting binding per scope (wrangler.jsonc "ratelimits":
 //     AGENT_RATE_LIMITER and AGENT_MCP_RATE_LIMITER), when bound. Cloudflare counters
 //     are per location and eventually consistent, so this is a brake, not a hard
-//     ceiling on cost. The real protection for the data sources is the shared 120-s
+//     ceiling on cost. The real protection for the data sources is the recent-view store (lib/watchViewCache.ts), the shared 120-s
 //     conditions cache plus the "one cold build per request" rule (beachView.loadMany).
 //  2. An in-isolate token bucket, used when the binding is missing (local dev, tests,
 //     a deploy that did not add it) or throws. Each isolate has its own buckets.

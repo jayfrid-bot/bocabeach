@@ -3,7 +3,7 @@
 // (every route has a path, every path has a route, query names match the code) and
 // checks real route answers against these response schemas.
 
-import { DECIMAL_PATTERN, MAX_REGION_LEN, MAX_STATE_LEN, TEXT_PARAM_PATTERN } from "@/lib/agent/params";
+import { LAT_PATTERN, LON_PATTERN, MAX_REGION_LEN, MAX_STATE_LEN, TEXT_PARAM_PATTERN } from "@/lib/agent/params";
 import {
   API_BASE_PATH,
   CREDIT,
@@ -234,7 +234,7 @@ export function buildOpenApi() {
           tags: ["beaches"],
           summary: "Live conditions for one beach",
           description:
-            "The same answer the website and the Apple Watch app show. The response sends `Cache-Control: public, s-maxage=<seconds>` (at most 60, never past `validUntil`, `no-store` once expired) as a hint for downstream caches; the app itself reads a shared 120-second conditions cache. Other methods than GET answer 405 with the same error shape.",
+            "The same answer the website and the Apple Watch app show. The response sends `Cache-Control: public, s-maxage=<seconds>` (at most 60, never past `validUntil`, `no-store` once expired) as a hint for downstream caches; the app itself reads a shared 120-second conditions cache and keeps no response cache. Other methods than GET answer 405 with the same error shape.",
           parameters: [
             {
               name: "slug",
@@ -266,21 +266,21 @@ export function buildOpenApi() {
           operationId: "findNearestBeaches",
           tags: ["beaches"],
           summary: "Beaches nearest a point",
-          description: `Measured to the closest point on each beach's shoreline. With scores=true the nearest ${MAX_REST_SCORES} beaches try to carry a compact score from the shared 120-second conditions cache; at most one beach per request is built fresh, and a beach without a recent snapshot has conditions null and is named in \`note\`. The coordinates are not stored or logged by the app. The answer echoes them rounded to 2 decimals and is sent with Cache-Control: no-store.`,
+          description: `Measured to the closest point on each beach's shoreline. With scores=true the nearest ${MAX_REST_SCORES} beaches try to carry a compact score from a recent view kept for that beach; at most one beach per request is built fresh, and a beach without a recent view has conditions null and is named in \`note\`. The coordinates are not stored or logged by the app. The answer echoes them rounded to 2 decimals and is sent with Cache-Control: no-store.`,
           parameters: [
             {
               name: "lat",
               in: "query",
               required: true,
-              description: "Latitude, -90 to 90. A plain decimal: no spaces, plus sign, exponent or leading zeros (26.35, not 026.35 or 2.635e1).",
-              schema: { type: "string", pattern: DECIMAL_PATTERN, examples: ["26.35"] },
+              description: "Latitude, -90 to 90 (the pattern enforces the range). A plain decimal of at most 24 characters: no spaces, plus sign, exponent, leading zeros or negative zero (26.35, not 026.35, 2.635e1 or -0).",
+              schema: { type: "string", maxLength: 24, pattern: LAT_PATTERN, examples: ["26.35"] },
             },
             {
               name: "lon",
               in: "query",
               required: true,
-              description: "Longitude, -180 to 180. Same plain-decimal form as lat.",
-              schema: { type: "string", pattern: DECIMAL_PATTERN, examples: ["-80.07"] },
+              description: "Longitude, -180 to 180 (the pattern enforces the range). Same plain-decimal form as lat.",
+              schema: { type: "string", maxLength: 24, pattern: LON_PATTERN, examples: ["-80.07"] },
             },
             {
               name: "limit",
