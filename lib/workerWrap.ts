@@ -37,6 +37,13 @@ export function cleanVary(value: string | null): string | null {
 
 const NO_BODY_STATUS = new Set([204, 304]);
 
+/** Add `no-transform` to a Cache-Control value (or make it the whole value), once. */
+export function withNoTransform(value: string | null): string {
+  if (!value || !value.trim()) return "no-transform";
+  const parts = value.split(",").map((p) => p.trim()).filter(Boolean);
+  return parts.some((p) => p.toLowerCase() === "no-transform") ? parts.join(", ") : [...parts, "no-transform"].join(", ");
+}
+
 /**
  * Read the whole body and send it again with an explicit Content-Length. 204 and 304 carry no
  * body and no Content-Length. A 1xx/101 or a response with a WebSocket is returned as it is.
@@ -49,13 +56,18 @@ export async function bufferResponse(res: Response, method: string): Promise<Res
   const vary = cleanVary(headers.get("Vary"));
   if (vary === null) headers.delete("Vary");
   else headers.set("Vary", vary);
+  // Cloudflare's edge recompresses text for clients that send Accept-Encoding, and a recompressed
+  // reply goes out chunked again. These replies are a few KB, so ask the edge to leave them as sent.
+  headers.set("Cache-Control", withNoTransform(headers.get("Cache-Control")));
 
   if (res.status < 200 || (res as { webSocket?: unknown }).webSocket) return res;
   if (NO_BODY_STATUS.has(res.status)) {
     headers.delete("Content-Length");
+    await res.body?.cancel();
     return new Response(null, { status: res.status, statusText: res.statusText, headers });
   }
   if (method === "HEAD") {
+    await res.body?.cancel();
     return new Response(null, { status: res.status, statusText: res.statusText, headers });
   }
   const buf = await res.arrayBuffer();

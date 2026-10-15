@@ -69,7 +69,7 @@ describe("the wrapper on agent paths", () => {
     expect(res.status).toBe(200);
     expect(res.statusText).toBe("OK");
     expect(res.headers.get("Content-Type")).toBe("application/json");
-    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(res.headers.get("Cache-Control")).toBe("no-store, no-transform");
     expect(res.headers.get("X-Keep")).toBe("1");
   });
 
@@ -155,3 +155,24 @@ describe("bufferResponse", () => {
     expect(await bufferResponse(ws, "GET")).toBe(ws);
   });
 });
+
+describe("withNoTransform", () => {
+  it("adds no-transform once and keeps the other directives", async () => {
+    const { withNoTransform } = await import("./workerWrap");
+    expect(withNoTransform(null)).toBe("no-transform");
+    expect(withNoTransform("")).toBe("no-transform");
+    expect(withNoTransform("public, s-maxage=60")).toBe("public, s-maxage=60, no-transform");
+    expect(withNoTransform("no-store, No-Transform")).toBe("no-store, No-Transform");
+  });
+
+  it("buffered agent replies carry no-transform", async () => {
+    const { bufferResponse } = await import("./workerWrap");
+    const out = await bufferResponse(
+      new Response("{}", { headers: { "Cache-Control": "public, s-maxage=60" } }),
+      "POST",
+    );
+    expect(out.headers.get("Cache-Control")).toBe("public, s-maxage=60, no-transform");
+    expect(out.headers.get("Content-Length")).toBe("2");
+  });
+});
+
