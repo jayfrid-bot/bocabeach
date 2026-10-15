@@ -42,7 +42,24 @@ flowchart TD
     ADMINSCANS["/api/admin/scans<br/>(owner-only, read the sticker funnel)"]
     VERSION["/api/version<br/>(deployed git SHA, no-store)"]
     OPENR["/api/open<br/>(once a day per device: count an app open)"]
+    V1["/api/v1/beaches, /api/v1/beaches/[slug], /api/v1/nearest<br/>(public read-only JSON for apps and assistants:<br/>CORS *, no cookies, no Plus or device data, no cam images)"]
+    OPENAPI["/api/v1/openapi.json<br/>(OpenAPI 3.1, hand-written in lib/agent/openapi.ts;<br/>a test checks it against the route files)"]
+    LLMS["/llms.txt<br/>(plain-text guide: what the app is, endpoints, MCP URL,<br/>credit and usage rules; built from lib/agent/constants.ts)"]
+    MCPR["/mcp<br/>(remote MCP server, Streamable HTTP, STATELESS:<br/>JSON-RPC over POST, 32 KB body cap, GET/DELETE = 405)"]
   end
+
+  AGENTS["Assistants (Claude, ChatGPT) and developer apps"] -->|"POST JSON-RPC: initialize, tools/list, tools/call<br/>(custom connector URL)"| MCPR
+  AGENTS -->|"GET, edge-cached 60 s at most, payload has validUntil"| V1
+  AGENTS --> OPENAPI
+  AGENTS --> LLMS
+  V1 -->|"every request, before any work"| RATELIMIT
+  MCPR -->|"every request, before any work"| RATELIMIT["lib/agent/rateLimit.ts, per IP:<br/>Workers Rate Limiting binding AGENT_RATE_LIMITER (60 per 60 s),<br/>else an in-isolate token bucket. No KV, no Durable Object"]
+  V1 -->|"one counter line per request:<br/>route, status, user-agent family. No IP, no coordinates"| CFLOGS[(Workers logs)]
+  MCPR --> CFLOGS
+  V1 --> AGENTQ
+  MCPR -->|"tools: list_beaches, get_beach_score,<br/>find_nearest_beach, best_beach_today"| AGENTQ["lib/agent/queries.ts + beachView.ts<br/>one read path for REST and MCP;<br/>at most 3 live scores per REST call, 5 per best_beach_today"]
+  AGENTQ -->|"beach directory + nearest to the shoreline"| LOC
+  AGENTQ -->|"live score: summary, attribution, safety note added on top"| WATCHLOAD
 
   APPUI -->|"once per calendar day, on load + resume<br/>lib/useAppOpenPing.ts"| OPENR
   OPENR -->|"app_opens (hashed id)"| OPENS[lib/db/appOpens.ts<br/>daily active users]
@@ -55,7 +72,8 @@ flowchart TD
   ADMINSCANS --> FUNNEL
 
   COND --> PIPE[lib/conditions.ts<br/>fetch all sources in parallel]
-  WATCHR --> PIPE
+  WATCHR --> WATCHLOAD["lib/watchLoad.ts<br/>loadWatchView: fetch, refuse a partial build (budgetAborted),<br/>strip internal fields, build the view, cache seconds<br/>(one code path for watch, tablet and agents)"]
+  WATCHLOAD --> PIPE
   WATCHR -->|"lib/watchView.ts: score + best window as the dashboard;<br/>safety lines from lib/safetyBanner.ts, the module SafetyBanner renders"| SCORE
   SHARE --> PIPE
   PIPE --> SOURCES[lib/sources/*<br/>one adapter per external source<br/>each returns Wrapped&lt;T&gt;, never throws]
@@ -91,6 +109,23 @@ On the Plus side, the app also calls the device/presence routes directly
 are also what `/api/hazards` and Beach Mode's arrival check (`establishesArrival`,
 `lib/plus/beachMode.ts`) use to decide "which beach" / "am I at the beach" —
 one shared rule, client and server.
+
+**The agent surface: JSON API, OpenAPI, llms.txt and a remote MCP server.**
+Assistants and apps read the same answer the website and the Apple Watch show.
+`lib/watchLoad.ts` is the one loader behind `/api/watch/[slug]`, `/api/v1/*` and
+the MCP tools: it fetches the conditions, refuses a partial build, strips
+internal fields and builds the view (`lib/watchView.ts`). `lib/agent/beachView.ts`
+adds the page link, a one-sentence summary, the attribution and the safety note
+("Lifeguard flags and posted warnings always win."). `lib/agent/queries.ts` holds
+the list and nearest logic once, so REST and MCP cannot disagree. `/mcp` is a
+hand-written, stateless JSON-RPC handler (`lib/agent/mcp/server.ts`, spec
+2025-06-18): no session id, no Durable Object, no KV, JSON replies only. Rate
+limits run per IP before any work: the Workers Rate Limiting binding
+`AGENT_RATE_LIMITER` (wrangler.jsonc `ratelimits`) when bound, else an
+in-isolate token bucket. A call may build live scores for at most 3 beaches
+(REST) or 5 (`best_beach_today`); each uncached build is a full source fan-out,
+so these caps protect the upstream sources and the Workers subrequest limit.
+Setup and examples: `docs/AGENT_API.md`.
 
 ## 2. Scheduled jobs — keeping the feeds current
 

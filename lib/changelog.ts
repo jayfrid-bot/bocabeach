@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-14",
+    title: "Ask an assistant about the beach",
+    details:
+      "Apps and assistants like ChatGPT and Claude can now read the same beach score and safety notes this page shows. Add isitbeachday.com/mcp as a connector and ask which beach is best today. Developers: see the new \"For developers\" link at the bottom of the page. Lifeguard flags and posted warnings still win.",
+    tag: "new",
+  },
+  {
+    date: "2026-10-14",
     title: "Serious weather alerts stand out",
     details:
       "A weather alert the National Weather Service rates severe or extreme now turns the safety banner red, even when its name doesn't end in \"Warning\". Before, it showed in amber.",

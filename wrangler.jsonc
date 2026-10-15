@@ -38,6 +38,13 @@
   // day in D1 (vision_daily_calls, migrations/0018) and stops at 600
   // (lib/vision/dailyCap.ts). No new secret.
   "ai": { "binding": "AI" },
+  // Public agent surface (/api/v1/*, /mcp; lib/agent/rateLimit.ts): per-IP limit with the
+  // Workers Rate Limiting binding. 60 requests per 60 s per IP, counted at the edge
+  // location. No cost, no storage. If this binding is missing, the code falls back to a
+  // per-isolate token bucket. Change the numbers here; period can only be 10 or 60.
+  "ratelimits": [
+    { "name": "AGENT_RATE_LIMITER", "namespace_id": "1001", "simple": { "limit": 60, "period": 60 } }
+  ],
   // Hazard alerts are LIVE. They were paused while they fired off a person's HOME
   // beach (lightning 5 mi from a beach you're nowhere near is noise); they now fire
   // only from a live presence fix — see lib/alerts/*. Set this to "off" to stop

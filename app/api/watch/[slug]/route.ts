@@ -10,8 +10,7 @@
 // payload's own `validUntil` tells the watch when it stops being current.
 
 import { NextResponse } from "next/server";
-import { getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
-import { buildWatchView, cacheControlFor } from "@/lib/watchView";
+import { isValidSlug, loadWatchView, viewCacheControl } from "@/lib/watchLoad";
 
 export const revalidate = 300;
 
@@ -31,26 +30,23 @@ export async function GET(
   const notFound = () =>
     NextResponse.json({ error: "Unknown location" }, { status: 404, headers: { "Cache-Control": "public, s-maxage=300" } });
   // Syntax first, so a junk path never reaches the pipeline (and the 404 is cached at the edge).
-  if (slug.length > 64 || !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) return notFound();
-  const data = await getConditions(slug);
-  if (!data) return notFound();
-  const { budgetAborted, ...publicData } = stripInternalSnapshotFields(data);
+  if (!isValidSlug(slug)) return notFound();
+  const loaded = await loadWatchView(slug);
+  if (loaded.status === "not_found") return notFound();
 
   // A build that ran out of upstream budget is deliberately incomplete. Never
   // hand it out as an answer: an error the watch rejects without touching its
   // cache, and nothing for the edge to keep.
-  if (budgetAborted) {
+  if (loaded.status === "incomplete") {
     return NextResponse.json(
       { error: "incomplete" },
       { status: 503, headers: { "Cache-Control": "no-store", "Retry-After": "30" } },
     );
   }
 
-  const view = buildWatchView(publicData as typeof data);
   // The edge may keep it no longer than the view stays valid, and never over a minute.
   // Already expired (a snapshot older than 15 minutes): nothing to keep.
-  const secondsValid = Math.floor((Date.parse(view.validUntil) - Date.parse(view.capturedAt)) / 1000);
-  return NextResponse.json(view, {
-    headers: { "Cache-Control": cacheControlFor(secondsValid) },
+  return NextResponse.json(loaded.view, {
+    headers: { "Cache-Control": viewCacheControl(loaded.view) },
   });
 }

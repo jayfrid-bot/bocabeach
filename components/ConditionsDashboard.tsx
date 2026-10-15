@@ -1292,6 +1292,11 @@ export function ConditionsDashboard({
           >
             iPhone app
           </a>
+          {/* Plain-text guide for assistants and developers (lib/agent/llmsTxt.ts). */}
+          <span className="mx-1.5">·</span>
+          <a href="/llms.txt" className="hover:underline">
+            For developers
+          </a>
         </p>
         <OwnerReportLink slug={slug} />
         <p className="text-center text-xs text-slate-500">
