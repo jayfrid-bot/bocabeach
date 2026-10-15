@@ -5,6 +5,7 @@
 import { findBeach } from "@/lib/agent/beaches";
 import { ATTRIBUTION, DISCLAIMER, SAFETY_NOTE } from "@/lib/agent/constants";
 import { loadWatchView } from "@/lib/watchLoad";
+import type { SunForecastField } from "@/lib/sunForecastWindow";
 import type { WatchLine, WatchView } from "@/lib/watchView";
 
 export interface BeachConditions {
@@ -32,6 +33,10 @@ export interface BeachConditions {
   waterTempF: number | null;
   /** Best window today, e.g. "4–6 PM", or null (see lines for "No good window today"). */
   bestTime: string | null;
+  /** The next sunrise or sunset and when its color forecast opens (an hour
+   *  before). While pending, `text` is the line to say, e.g. "Sunset forecast
+   *  at 5:52 PM". Never carries a color score. Null without sun times. */
+  sunForecast: SunForecastField | null;
   /** When the server built the conditions snapshot. */
   generatedAt: string | null;
   /** Same moment as generatedAt, or when this view was computed if that is unknown. */
@@ -89,6 +94,7 @@ export function toBeachConditions(view: WatchView): BeachConditions | null {
     lines: view.lines,
     waterTempF: view.waterTempF,
     bestTime,
+    sunForecast: view.sunForecast,
     generatedAt: view.generatedAt,
     updatedAt: view.generatedAt ?? view.capturedAt,
     capturedAt: view.capturedAt,

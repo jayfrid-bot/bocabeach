@@ -409,6 +409,20 @@ describe.skipIf(!HAS_SQLITE)("sun color scores", () => {
     expect(body.sun.sunset).toMatchObject({ score: 55, band: "good" });
   });
 
+  it("hides a still-to-come event's score until 60 minutes before it; a past event keeps its record", async () => {
+    sunPred({ event_kind: "sunrise", event_iso: "2026-10-10T11:17:00.000Z", as_of_hour_utc: "2026-10-10T10:00:00.000Z", score: 64, band: "good", lead_minutes: 30 });
+    sunPred({ as_of_hour_utc: "2026-10-10T18:00:00.000Z", score: 61, band: "good", lead_minutes: 297 });
+    // 1:00 PM EDT on the day: sunrise is over, the 6:57 PM sunset is nearly six hours away.
+    vi.setSystemTime(Date.parse("2026-10-10T17:00:00.000Z"));
+    const early = await dayBody();
+    expect(early.sun.sunrise).toMatchObject({ score: 64 });
+    expect(early.sun.sunset).toBeNull();
+    // 22:00Z is 57 minutes before the 22:57Z sunset: the window is open.
+    vi.setSystemTime(Date.parse("2026-10-10T22:00:00.000Z"));
+    const inside = await dayBody();
+    expect(inside.sun.sunset).toMatchObject({ score: 61 });
+  });
+
   it("uses the BEACH-LOCAL date: an 11 PM Boca sunset-time event on Oct 10 belongs to Oct 10, not to Oct 11 UTC", async () => {
     // 2026-10-11T03:30Z is 11:30 PM EDT on Oct 10: the requested day, though it is Oct 11 in UTC.
     sunPred({ event_kind: "sunset", event_iso: "2026-10-11T03:30:00.000Z", as_of_hour_utc: "2026-10-11T02:00:00.000Z", score: 70, band: "vivid" });

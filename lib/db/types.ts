@@ -84,9 +84,17 @@ export type SunColorMinBand = "vivid" | "epic";
 export const DEFAULT_SUN_COLOR_MIN_BAND: SunColorMinBand = "vivid"; // "Great or better"
 
 /** How long before the event to send the alert — the only choices the
- *  settings sheet offers (components/plus/PlusSettingsSheet.tsx). */
-export const SUN_COLOR_LEAD_OPTIONS = [30, 60, 120, 180] as const;
+ *  settings sheet offers (components/plus/PlusSettingsSheet.tsx). The color
+ *  forecast opens 60 minutes before the event (lib/sunForecastWindow.ts), so
+ *  nothing longer than 60 is offered: 2 h and 3 h leads were removed
+ *  2026-10-15 because they promised a score before we could see the sky. */
+export const SUN_COLOR_LEAD_OPTIONS = [30, 60] as const;
 export type SunColorLeadMin = (typeof SUN_COLOR_LEAD_OPTIONS)[number];
+
+/** Lead values an older app build may still send or have stored (120 and 180
+ *  were choices until 2026-10-15). The API still accepts them so an older
+ *  build's save does not fail; they are read back as the 60-minute lead. */
+export const SUN_COLOR_LEAD_LEGACY = [120, 180] as const;
 
 export const DEFAULT_SUN_COLOR_LEAD_MIN: SunColorLeadMin = 60;
 
@@ -454,8 +462,8 @@ function resolveSunColorMinBand(v: string | null | undefined): SunColorMinBand {
 }
 
 /** Same fallback rule for the lead time — anything not one of the offered
- *  choices (corrupt write, or a future option this build predates) reads as
- *  the default. */
+ *  choices (corrupt write, a legacy 2 h / 3 h lead, or a future option this
+ *  build predates) reads as the default, the 60-minute lead. */
 function resolveSunColorLeadMin(v: number | null | undefined): number {
   return typeof v === "number" && (SUN_COLOR_LEAD_OPTIONS as readonly number[]).includes(v)
     ? v

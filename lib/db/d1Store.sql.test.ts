@@ -336,9 +336,15 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
     });
 
     it("persists a chosen threshold and lead time", async () => {
-      await store.upsertDevice("sc2", { sunColorMinBand: "epic", sunColorLeadMin: 180 });
+      await store.upsertDevice("sc2", { sunColorMinBand: "epic", sunColorLeadMin: 30 });
       const dev = await store.getDevice("sc2");
-      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 180 });
+      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 30 });
+    });
+
+    it("a legacy 2 h / 3 h lead (offered until 2026-10-15) reads back as the 60-minute default", async () => {
+      await store.upsertDevice("sc2b", { sunColorMinBand: "epic", sunColorLeadMin: 180 });
+      const dev = await store.getDevice("sc2b");
+      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 60 });
     });
 
     it("an unrelated write afterward leaves the sun-color columns untouched", async () => {
@@ -352,14 +358,14 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       await store.upsertDevice("sc4", {});
       await Promise.all([
         store.upsertDevice("sc4", { sunColorMinBand: "epic" }),
-        store.upsertDevice("sc4", { sunColorLeadMin: 120 }),
+        store.upsertDevice("sc4", { sunColorLeadMin: 30 }),
       ]);
       const dev = await store.getDevice("sc4");
-      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 120 });
+      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 30 });
     });
 
     it("null resets a column back to NULL (the default), a real UPDATE ... = NULL, not a no-op", async () => {
-      await store.upsertDevice("sc5", { sunColorMinBand: "epic", sunColorLeadMin: 180 });
+      await store.upsertDevice("sc5", { sunColorMinBand: "epic", sunColorLeadMin: 30 });
       await store.upsertDevice("sc5", { sunColorMinBand: null, sunColorLeadMin: null });
       const dev = await store.getDevice("sc5");
       expect(dev?.sunColor).toEqual({ minBand: "vivid", leadMin: 60 });

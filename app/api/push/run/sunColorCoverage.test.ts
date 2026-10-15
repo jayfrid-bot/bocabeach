@@ -139,6 +139,7 @@ beforeEach(() => {
   resetMemoryStore();
   ctl.fcmSends = [];
   process.env.CRON_SECRET = "test-cron-secret";
+  process.env.SUN_ALERTS_ENABLED = "on"; // default is off (lib/alerts/sunColor.ts sunAlertsEnabled)
   delete process.env.PUSH_RUN_MAX_BEACHES; // the real default (2)
 });
 

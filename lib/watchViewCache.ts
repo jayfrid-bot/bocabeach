@@ -50,8 +50,25 @@ const TONES = new Set(["calm", "caution", "danger"]);
 const KINDS = new Set(["hazard", "safety", "water", "best", "more"]);
 const VIEW_KEYS = [
   "v", "slug", "name", "score", "rating", "band", "limitedData", "lines",
-  "waterTempF", "generatedAt", "capturedAt", "validUntil",
+  "waterTempF", "sunForecast", "generatedAt", "capturedAt", "validUntil",
 ].sort();
+const SUN_FORECAST_KEYS = ["availableAt", "eventAt", "kind", "state", "text"];
+
+/** `sunForecast` is null or exactly { kind, state, availableAt, eventAt, text } (no score, ever). */
+function isSunForecast(v: unknown): boolean {
+  if (v === null) return true;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  const o = v as Record<string, unknown>;
+  const keys = Object.keys(o).sort();
+  if (keys.length !== SUN_FORECAST_KEYS.length || keys.some((k, i) => k !== SUN_FORECAST_KEYS[i])) return false;
+  return (
+    (o.kind === "sunrise" || o.kind === "sunset") &&
+    (o.state === "pending" || o.state === "available") &&
+    isDate(o.availableAt) &&
+    isDate(o.eventAt) &&
+    (o.state === "pending" ? isStr(o.text) && o.text.length <= 200 : o.text === null)
+  );
+}
 
 const isStr = (v: unknown): v is string => typeof v === "string";
 const isDate = (v: unknown): v is string => isStr(v) && Number.isFinite(Date.parse(v));
@@ -74,6 +91,7 @@ export function isWatchView(x: unknown, slug: string): x is WatchView {
   if ((o.score === null) !== (o.rating === null)) return false;
   if (typeof o.limitedData !== "boolean") return false;
   if (!isIntOrNull(o.waterTempF, WATER_TEMP_MIN_F, WATER_TEMP_MAX_F)) return false;
+  if (!isSunForecast(o.sunForecast)) return false;
   if (!(o.generatedAt === null || isDate(o.generatedAt)) || !isDate(o.capturedAt) || !isDate(o.validUntil)) return false;
   if (!Array.isArray(o.lines) || o.lines.length > MAX_WATCH_LINES) return false;
   return o.lines.every((l) => {

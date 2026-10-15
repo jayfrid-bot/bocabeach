@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-15",
+    title: "Sunrise and sunset color waits for a real look at the sky",
+    details:
+      "Sunrise and sunset color now shows only when we can actually see the sky an hour before. Until then the card says when the forecast will be ready, for example \"Sunset forecast at 5:52 PM\", and the share picture says the same. Sunrise and sunset color alerts are paused until we can check them against what the satellite sees.",
+    tag: "improved",
+  },
+  {
+    date: "2026-10-15",
     title: "Ask about tomorrow and the next day",
     details:
       "Apps and assistants can now ask for a 3-day beach outlook: the expected best score each day, the best time to go, the sky, and any safety notes for that day. It is a forecast, so check again the morning of. The assistant connection also works with more apps now.",

@@ -62,10 +62,18 @@ describe("POST /api/devices — sun-color pref + settings", () => {
 
   it("accepts a valid threshold and lead time", async () => {
     await POST(post({ deviceId: DEV }));
-    const res = await POST(post({ deviceId: DEV, sunColorMinBand: "epic", sunColorLeadMin: 120 }));
+    const res = await POST(post({ deviceId: DEV, sunColorMinBand: "epic", sunColorLeadMin: 30 }));
     const body = await json(res);
     expect(body.ok).toBe(true);
-    expect(body.device?.sunColor).toEqual({ minBand: "epic", leadMin: 120 });
+    expect(body.device?.sunColor).toEqual({ minBand: "epic", leadMin: 30 });
+  });
+
+  it("still accepts a legacy 2 h / 3 h lead from an older app build, and reads it back as 1 h", async () => {
+    await POST(post({ deviceId: DEV }));
+    const res = await POST(post({ deviceId: DEV, sunColorLeadMin: 180 }));
+    expect(res.status).toBe(200);
+    const body = await json(res);
+    expect(body.device?.sunColor).toEqual({ minBand: "vivid", leadMin: 60 });
   });
 
   it("rejects an unrecognized threshold", async () => {
@@ -93,9 +101,9 @@ describe("POST /api/devices — sun-color pref + settings", () => {
   });
 
   it("changing the threshold leaves the lead time untouched, and vice versa", async () => {
-    await POST(post({ deviceId: DEV, sunColorLeadMin: 180 }));
+    await POST(post({ deviceId: DEV, sunColorLeadMin: 30 }));
     const res = await POST(post({ deviceId: DEV, sunColorMinBand: "epic" }));
     const body = await json(res);
-    expect(body.device?.sunColor).toEqual({ minBand: "epic", leadMin: 180 });
+    expect(body.device?.sunColor).toEqual({ minBand: "epic", leadMin: 30 });
   });
 });

@@ -9,6 +9,8 @@
 //   hazards, flags, rip, alerts (active AND upcoming) ... lib/safetyBanner.ts
 //   rain ... lib/rainNowcast.ts (measured rain at the beach, or on its way)
 //   best time ... lib/scoreBands.ts goodWindow (Decent or better only)
+//   sun forecast ... lib/sunForecastWindow.ts (WHEN the next sunrise/sunset color
+//                    forecast opens; the view never carries the color score itself)
 // Missing data is null or an absent line, never a guess.
 
 import { applyLiveRipCap, deriveMetrics } from "@/lib/score";
@@ -18,6 +20,7 @@ import { buildSafetyBanner, type BannerItem } from "@/lib/safetyBanner";
 import { safetyTone, type SafetyTone } from "@/lib/safetyTone";
 import { goodWindow, scoreBand } from "@/lib/scoreBands";
 import { PRECIP_RADAR_STALE_MINUTES } from "@/lib/sources/precipRadar";
+import { nextSunForecastField, type SunForecastField } from "@/lib/sunForecastWindow";
 import type { ConditionsResponse, FlagColor } from "@/lib/types";
 
 export type WatchTone = SafetyTone;
@@ -47,12 +50,19 @@ export interface WatchView {
    *  more were cut, then water and best time. */
   lines: WatchLine[];
   waterTempF: number | null;
+  /** The next sunrise or sunset and when its color forecast opens (60 minutes
+   *  before the event). While `state` is "pending", `text` is the one line to
+   *  show, e.g. "Sunset forecast at 5:52 PM". There is never a color score in
+   *  this field, pending or not: the number lives only in the app. Null when
+   *  the beach has no usable sun times. */
+  sunForecast: SunForecastField | null;
   /** When the server built the conditions snapshot. */
   generatedAt: string | null;
   /** When this view was computed. */
   capturedAt: string;
   /** The earliest moment something this view says can change: an alert starting
-   *  or ending, the next rip model hour, the best window's end, or 15 minutes
+   *  or ending, the next rip model hour, the best window's end, the sun forecast
+   *  window opening, or 15 minutes
    *  after generatedAt. After it, the watch must not call this view current. */
   validUntil: string;
 }
@@ -213,6 +223,9 @@ export function computeValidUntil(res: ConditionsResponse, nowMs: number): numbe
   if (snap.ripNwps?.data) candidates.push(Math.floor(nowMs / 3_600_000) * 3_600_000 + 3_600_000);
   // Today's best window ending.
   add(res.multiDayWindows?.[0]?.best?.endIso);
+  // The sun color forecast window opening (pending -> available).
+  const sunForecast = nextSunForecastField(snap.sun?.data, nowMs, snap.location.timezone);
+  if (sunForecast?.state === "pending") add(sunForecast.availableAt);
   return Math.min(...candidates);
 }
 
@@ -246,6 +259,7 @@ export function buildWatchView(res: ConditionsResponse, nowMs: number = Date.now
     limitedData: scored.dataCoverage === "limited",
     lines,
     waterTempF,
+    sunForecast: nextSunForecastField(snap.sun?.data, now, snap.location.timezone),
     generatedAt: snap.generatedAt ?? null,
     capturedAt: new Date(now).toISOString(),
     validUntil: new Date(computeValidUntil(res, now)).toISOString(),

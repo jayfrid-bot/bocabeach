@@ -715,8 +715,6 @@ const SUN_COLOR_THRESHOLD_CHOICES: { value: SunColorMinBand; label: string }[] =
 const SUN_COLOR_LEAD_LABELS: Record<(typeof SUN_COLOR_LEAD_OPTIONS)[number], string> = {
   30: "30 min",
   60: "1 h",
-  120: "2 h",
-  180: "3 h",
 };
 
 /** Today's sunrise for a beach, minus a lead time, formatted for the "we'd
@@ -744,9 +742,9 @@ function exampleWakeTime(
 
 /** The sun-color alert's own two settings — threshold and lead time — shown
  *  only while its toggle is on (Requirement #2). The lead-time example line
- *  makes an early lead a conscious choice ("a 3 h lead on a 7:00 AM sunrise
- *  means 4:00 AM" per the spec), rather than a surprise the first time it
- *  actually fires. */
+ *  shows what time the alert would come, rather than a surprise the first
+ *  time it actually fires. The forecast opens 60 minutes before the event
+ *  (lib/sunForecastWindow.ts), so 30 min and 1 h are the only leads. */
 function SunColorSettings({
   sunColor,
   home,

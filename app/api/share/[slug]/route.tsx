@@ -277,14 +277,16 @@ function Tile({ tile, sizes }: { tile: ShareCardTile; sizes: TileSizes }) {
   );
 }
 
-/** A long note ("Amazing color · 100/100", 23 chars) would clip on the STORY
+/** A long note ("Amazing color · 100/100", 23 chars; "Sunset forecast at 5:52 PM", 26) would clip on the STORY
  *  card at its 25 px note size (~283 px in a 266 px tile, Codex 2026-10-13);
  *  step it down there so the "/100" always shows. The square card's 17 px note
  *  already fits (~192 px of 294 px), so only large bases shrink. */
 function noteSizeFor(note: string, base: number): number {
   if (base < 20 || note.length <= 18) return base;
   if (note.length <= 21) return Math.round(base * 0.9);
-  return Math.round(base * 0.82);
+  // "Sunrise forecast at 6:19 AM" (27 chars) is the longest note: smallest step.
+  if (note.length <= 24) return Math.round(base * 0.82);
+  return Math.round(base * 0.72);
 }
 
 /** Steps a long value ("Crystal clear", "Churned up") down so it fits its

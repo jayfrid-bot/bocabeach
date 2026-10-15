@@ -199,6 +199,17 @@ describe("tools/call happy paths", () => {
     expect(r.structuredContent.attribution.dataSources.length).toBeGreaterThan(0);
   });
 
+  it("get_beach_score carries the sun forecast state and its line, never a color score", async () => {
+    const r = (await tool("get_beach_score", { slug: "boca-raton" })).result;
+    const f = r.structuredContent.sunForecast;
+    expect(f).not.toBeUndefined();
+    if (f) {
+      expect(["sunrise", "sunset"]).toContain(f.kind);
+      expect(Object.keys(f).sort()).toEqual(["availableAt", "eventAt", "kind", "state", "text"]);
+      if (f.state === "pending") expect(r.content[0].text).toContain(f.text);
+    }
+  });
+
   it("find_nearest_beach returns beaches, with scores only on request and never more than 3", async () => {
     const plain = (await tool("find_nearest_beach", { lat: 26.361234, lon: -80.064567 })).result;
     expect(JSON.stringify(plain)).not.toContain("26.361234");

@@ -22,6 +22,12 @@ import {
 } from "@/lib/sunQuality";
 import { FlipCard, NerdBack } from "@/components/FlipCard";
 import { assembleSunEventQuality } from "@/lib/sunAlert";
+import {
+  SUN_FORECAST_WINDOW_MINUTES,
+  sunForecastPendingText,
+  sunForecastWindow,
+  type SunForecastWindow,
+} from "@/lib/sunForecastWindow";
 
 /** One plain sentence on what the number means, first line on the flip side.
  *  Great starts at 70 and Amazing at 90 (lib/sunQuality.ts BAND_CUTOFFS). */
@@ -102,15 +108,23 @@ function buildSunQualityNerdInfo(args: {
   result: SunEventQuality;
   peakLine: string | null;
   goldenLine: string;
+  /** "Sunset forecast at 5:52 PM" while the forecast window is closed (the
+   *  color number is withheld everywhere, back included); null once open. */
+  pendingText: string | null;
 }): NerdInfo {
-  const { event, timeIso, tz, cloud, humidityPct, result, peakLine, goldenLine } = args;
+  const { event, timeIso, tz, cloud, humidityPct, result, peakLine, goldenLine, pendingText } = args;
   const meta = result.band ? sunQualityBandMeta(result.band) : null;
   const time = fmtTime(timeIso, tz);
   const knownTotalOnly = !hasCompleteLevelSplit(cloud) && !!cloud && cloud.totalPct != null;
   const b = result.breakdown;
 
-  const computation: string[] =
-    result.score == null
+  const computation: string[] = pendingText
+    ? [
+        pendingText,
+        `The color forecast opens ${SUN_FORECAST_WINDOW_MINUTES} minutes before the ${event}. Until then any number would be a guess.`,
+        goldenLine,
+      ]
+    : result.score == null
       ? ["No forecast cloud reading for this hour yet."]
       : b
         ? [
@@ -142,7 +156,7 @@ function buildSunQualityNerdInfo(args: {
           {SUN_SCORE_HINT} How colorful the next sunrise or sunset should be, judged from the cloud mix.
         </div>
         <div className="relative mt-2 h-2 rounded-full" style={{ background: GRADIENT }}>
-          {result.score != null && meta ? (
+          {!pendingText && result.score != null && meta ? (
             <div
               className="absolute top-1/2 h-3.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow ring-2 ring-slate-900"
               style={{ left: `${Math.min(100, Math.max(0, result.score))}%` }}
@@ -150,9 +164,11 @@ function buildSunQualityNerdInfo(args: {
             />
           ) : null}
         </div>
-        <div className="mt-1.5 break-words text-xs leading-snug text-slate-600 dark:text-slate-400">
-          {result.note}
-        </div>
+        {pendingText ? null : (
+          <div className="mt-1.5 break-words text-xs leading-snug text-slate-600 dark:text-slate-400">
+            {result.note}
+          </div>
+        )}
       </div>
     ),
     explainer:
@@ -341,12 +357,25 @@ export function SunScoreHeadline({
   );
 }
 
+/** The card headline while the forecast window is closed: when the forecast
+ *  will be ready, in plain words. No number, no band word, no "/100".
+ *  Exported for tests. */
+export function SunForecastPendingHeadline({ kind, availableAtIso, tz }: { kind: SunEventKind; availableAtIso: string; tz: string }) {
+  const text = sunForecastPendingText(kind, availableAtIso, tz);
+  return (
+    <div className="mt-1 flex items-center gap-2">
+      <span className="text-base font-semibold leading-tight text-slate-700 dark:text-slate-200">{text}</span>
+    </div>
+  );
+}
+
 function SunQualityFront({
   timing,
   nowMs,
   tz,
   scored,
   result,
+  forecast,
 }: {
   /** Where we stand relative to the next golden window. */
   timing: GoldenHourTiming;
@@ -357,6 +386,9 @@ function SunQualityFront({
   /** The sun event the color score belongs to (null when there are no times). */
   scored: SunEventTime | null;
   result: SunEventQuality;
+  /** The forecast window for `scored` (lib/sunForecastWindow.ts): while
+   *  "pending" the score is withheld and the headline says when it opens. */
+  forecast: SunForecastWindow | null;
 }) {
   const target = timing.target;
   const during = timing.phase === "during";
@@ -387,7 +419,11 @@ function SunQualityFront({
 
       <div className="flex flex-1 flex-col justify-center">
         {/* The rating IS the headline — the 0-100 number with its plain word. */}
-        <SunScoreHeadline kind={kind} result={result} />
+        {forecast?.state === "pending" && scored ? (
+          <SunForecastPendingHeadline kind={scored.event} availableAtIso={forecast.availableAtIso} tz={tz} />
+        ) : (
+          <SunScoreHeadline kind={kind} result={result} />
+        )}
 
         {/* Wraps freely at every width: these lines are the point of the card. */}
         <div
@@ -498,6 +534,14 @@ export function SunQualityCard({
     ? `Golden hour ${fmtTime(scored.goldenStartIso, tz)}–${fmtTime(scored.goldenEndIso, tz)} (20 min either side of the ${scored.event})`
     : `Golden hour ${fmtTime(scored.goldenStartIso, tz)}–${fmtTime(scored.goldenEndIso, tz)} (20 min either side of the ${scored.event}, estimated)`;
 
+  // The forecast window (lib/sunForecastWindow.ts): the color score shows only
+  // from 60 minutes before the event. Judged on the live clock once mounted
+  // (the pinned snapshot time on the server and first paint, so hydration
+  // matches). Pending: no number anywhere on the card, front or back.
+  const forecast = sunForecastWindow(scored.timeIso, clientNowMs ?? nowD.getTime());
+  const pendingText =
+    forecast?.state === "pending" ? sunForecastPendingText(scored.event, forecast.availableAtIso, tz) : null;
+
   const info = buildSunQualityNerdInfo({
     event: scored.event,
     timeIso: scored.timeIso,
@@ -505,8 +549,9 @@ export function SunQualityCard({
     cloud: point?.cloud,
     humidityPct: point?.humidityPct,
     result,
-    peakLine,
+    peakLine: pendingText ? null : peakLine,
     goldenLine,
+    pendingText,
   });
 
   return (
@@ -519,6 +564,7 @@ export function SunQualityCard({
           tz={tz}
           scored={scored}
           result={result}
+          forecast={forecast}
         />
       }
       back={<NerdBack info={info} />}

@@ -59,11 +59,22 @@ const schemas: Record<string, JsonSchema> = {
     required: ["count", "beaches"],
     properties: { count: { type: "integer" }, beaches: { type: "array", items: ref("Beach") } },
   },
+  SunForecast: {
+    type: "object",
+    required: ["kind", "state", "availableAt", "eventAt", "text"],
+    properties: {
+      kind: { type: "string", enum: ["sunrise", "sunset"] },
+      state: { type: "string", enum: ["pending", "available"], description: "pending until 60 minutes before the event, then available." },
+      availableAt: { type: "string", description: "When the color forecast opens (ISO 8601)." },
+      eventAt: { type: "string", description: "The sunrise or sunset itself (ISO 8601)." },
+      text: { ...nullable("string"), description: 'While pending, e.g. "Sunset forecast at 5:52 PM" (beach-local time). Null once available.' },
+    },
+  },
   BeachConditions: {
     type: "object",
     required: [
       "v", "slug", "name", "region", "state", "url", "lat", "lon", "score", "rating", "band", "limitedData",
-      "summary", "lines", "waterTempF", "bestTime", "generatedAt", "updatedAt", "capturedAt", "validUntil",
+      "summary", "lines", "waterTempF", "bestTime", "sunForecast", "generatedAt", "updatedAt", "capturedAt", "validUntil",
       "safetyNote", "disclaimer", "attribution",
     ],
     properties: {
@@ -83,6 +94,11 @@ const schemas: Record<string, JsonSchema> = {
       lines: { type: "array", items: ref("WatchLine"), description: "Safety lines first (worst first), then water temperature and best time." },
       waterTempF: nullable("integer"),
       bestTime: { ...nullable("string"), description: 'Best window today in the beach\'s own time zone, e.g. "4–6 PM".' },
+      sunForecast: {
+        description:
+          "The next sunrise or sunset and when its color forecast opens, 60 minutes before the event. While state is pending, text is the line to say. Never carries a color score. Null without sun times.",
+        oneOf: [ref("SunForecast"), { type: "null" }],
+      },
       generatedAt: nullable("string"),
       updatedAt: { type: "string", description: "When the underlying data was last built (ISO 8601)." },
       capturedAt: { type: "string" },

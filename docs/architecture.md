@@ -573,7 +573,10 @@ flowchart TD
   %% Sunrise/sunset color alert — Plus, opt-in, standalone only (no
   %% coalescing with the digest or "turned Excellent": its own short
   %% lead-time window, not the 8 AM run those two share).
-  PIPE2 -.->|"same res already fetched<br/>for the digest/Excellent check, no extra call"| SUNCOLOR["lib/alerts/sunColor.ts<br/>sunColorDecision over lib/sunAlert.ts's predictNextSunEvent:<br/>score &ge; device's cutoff (Great 70 / Amazing 90) AND<br/>now in [event&minus;lead, event&minus;lead+10min) AND event &le;4h away"]
+  PIPE2 -.->|"same res already fetched<br/>for the digest/Excellent check, no extra call"| SUNCOLOR["lib/alerts/sunColor.ts<br/>sunColorDecision over lib/sunAlert.ts's predictNextSunEvent:<br/>score &ge; device's cutoff (Great 70 / Amazing 90) AND<br/>now in [event&minus;lead, event&minus;lead+10min), lead capped at 60 min,<br/>AND the forecast window is open (event &le;60 min away).<br/>Behind SUN_ALERTS_ENABLED (default OFF): the route never selects,<br/>fetches for, evaluates or logs this alert while it is off"]
+  SUNWIN["lib/sunForecastWindow.ts<br/>the sunrise/sunset color score exists only from event&minus;60 min;<br/>before that every surface says 'Sunset forecast at 5:52 PM' and shows no number"]
+  SUNWIN -->|"window gate + 60-min lead cap"| SUNCOLOR
+  SUNWIN -.->|"same gate: sun card, share card tile (lib/shareCard.ts),<br/>watch view + agent payloads (sunForecast field, never a score),<br/>Plus day view (still-to-come events only; past events keep their archived score)"| SUNSURF["user-facing sun surfaces"]
   SUNCOLOR --> CLAIM
   SUNCOLOR -->|"alert_log key sun-color:&lt;kind&gt;:&lt;beach-local date&gt;,<br/>once per event, ever"| D1
 
@@ -617,9 +620,15 @@ has cloud overhead, which is the color canvas, not a horizon blocker
 own threshold (Great-or-better, score &ge; 70, or Amazing-only, score &ge;
 90 — `lib/sunQuality.ts`'s own band cutoffs) AND the REAL wall clock falls
 inside `[event − lead, event − lead + 10 min)`, where `lead` is the
-device's own 30/60/120/180-minute choice — AND the predicted event is no
-more than 4 hours away (a farther-out forecast isn't trustworthy enough to
-alert on). A transient send failure releases its claim immediately via
+device's own 30- or 60-minute choice (an older 120/180 reads as 60) — AND
+the forecast window is open: the event is no more than 60 minutes away
+(`lib/sunForecastWindow.ts`; the benchmark in
+docs/benchmarks/sun-leadtime-2026-10-15 found the forecast untrustworthy at
+every lead, so the app shows no color number earlier than that, and no alert
+may carry one). The whole alert is behind the `SUN_ALERTS_ENABLED` variable,
+default OFF (wrangler.jsonc): with it off the push route never selects a
+beach for this alert, never fetches for it, never evaluates, sends, latches
+or logs it, until the satellite observation input ships. A transient send failure releases its claim immediately via
 `store.releaseSend` (ownership-safe — see below) rather than waiting out
 the 10-minute abandoned-claim window, so the very next 5-minute cron tick
 can already retry it inside the same window. Both settings live on the

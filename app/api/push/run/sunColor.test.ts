@@ -163,6 +163,7 @@ describe("POST /api/push/run — sun-color alert", () => {
     ctl.fcmSends = [];
     ctl.failNext = 0;
     process.env.CRON_SECRET = "test-cron-secret";
+    process.env.SUN_ALERTS_ENABLED = "on"; // default is off (lib/alerts/sunColor.ts sunAlertsEnabled)
     delete process.env.PUSH_SAFETY_ALERTS;
   });
 
@@ -291,6 +292,38 @@ describe("POST /api/push/run — sun-color alert", () => {
     const store = await getStore();
     await store.upsertDevice(DEV, { sunColorLeadMin: 30 });
 
+    const body = (await (await run()).json()) as Record<string, unknown>;
+    expect(body.sunColor).toBe(1);
+    expect(ctl.fcmMessages).toHaveLength(1);
+  });
+
+  it("SUN_ALERTS_ENABLED off (the default): no sun-color push, no alert log, even at the window start", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(Date.parse(SUNSET_ISO) - 60 * 60_000));
+    await seedDevice();
+    for (const value of [undefined, "off", "", "0", "false"]) {
+      if (value === undefined) delete process.env.SUN_ALERTS_ENABLED;
+      else process.env.SUN_ALERTS_ENABLED = value;
+      const body = (await (await run()).json()) as Record<string, unknown>;
+      expect(body.sunColor).toBe(0);
+      expect(ctl.fcmMessages).toEqual([]);
+    }
+    const store = await getStore();
+    expect(await store.lastAlert(DEV, "sun-color:sunset:2026-09-02")).toBeNull();
+  });
+
+  it("a legacy 2-hour or 3-hour lead is capped at the forecast window: nothing before 60 minutes, one push at 60", async () => {
+    vi.useFakeTimers();
+    await seedDevice();
+    const store = await getStore();
+    await store.upsertDevice(DEV, { sunColorLeadMin: 180 }); // a value an older build stored
+    for (const minutesOut of [180, 120, 90, 61]) {
+      vi.setSystemTime(new Date(Date.parse(SUNSET_ISO) - minutesOut * 60_000));
+      const body = (await (await run()).json()) as Record<string, unknown>;
+      expect(body.sunColor).toBe(0);
+    }
+    expect(ctl.fcmMessages).toEqual([]);
+    vi.setSystemTime(new Date(Date.parse(SUNSET_ISO) - 60 * 60_000));
     const body = (await (await run()).json()) as Record<string, unknown>;
     expect(body.sunColor).toBe(1);
     expect(ctl.fcmMessages).toHaveLength(1);
