@@ -1,7 +1,9 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "isitbeachday",
-  "main": ".open-next/worker.js",
+  // worker.ts wraps OpenNext's generated .open-next/worker.js: the agent paths get a Content-Length
+  // instead of a chunked stream (lib/workerWrap.ts). It re-exports everything the generated worker exports.
+  "main": "worker.ts",
   "compatibility_date": "2025-03-01",
   "compatibility_flags": ["nodejs_compat"],
   "assets": {

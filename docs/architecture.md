@@ -7,7 +7,11 @@ Day Plus alert pipeline. Update this file in the same commit as any change
 that adds, removes, or rewires a part.
 
 Hosting: **Cloudflare Workers**, built with OpenNext (`npm run deploy`). See
-`docs/HANDOFF.md` for the deploy command and owner to-dos.
+`docs/HANDOFF.md` for the deploy command and owner to-dos. `wrangler.jsonc` `main`
+is `worker.ts`, a thin wrapper around OpenNext's generated `.open-next/worker.js`
+(it re-exports every named export, such as the Durable Object classes) that sends
+the agent paths as complete bodies with a `Content-Length`; see
+`docs/AGENT_API.md`, "Worker entry".
 
 ## 1. Request path — a page or app call
 
@@ -27,6 +31,11 @@ flowchart TD
   APPUI --> COND
   WATCH["Apple Watch app + complications"] -->|"GET, no query; Cache-Control s-maxage hint of 60 s at most (no Workers Cache), payload has validUntil"| WATCHR
   APPUI -->|"WatchSync plugin: home beach + last viewed<br/>lib/watchSync.ts (WatchConnectivity)"| WATCH
+
+  EDGE["Worker entry worker.ts (wrangler main), lib/workerWrap.ts:<br/>wraps OpenNext's .open-next/worker.js. For /mcp, /api/v1/*, /api/watch/*, /llms.txt only:<br/>buffer the body, send Content-Length, drop Next's Vary: rsc tokens.<br/>Every other path passes through untouched (streaming pages stream)"]
+  PAGE --> EDGE
+  APPUI --> EDGE
+  EDGE --> routes
 
   subgraph routes [HTTP routes]
     COND["/api/conditions/[slug]"]

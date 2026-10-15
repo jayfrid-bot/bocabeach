@@ -136,9 +136,11 @@ Codes: `bad_request` (400), `not_found` (404), `rate_limited` (429),
   is HTTP 400 with a JSON-RPC error body. A client whose
   `Accept` names only `text/event-stream` gets the same JSON as one SSE event
   (`event: message`, `data: ...`, blank line), also with `Content-Length`.
-  Next.js adds its own `Vary: rsc, next-router-state-tree, ...` to every App Router
-  response before the route runs, and a route cannot remove it; strip it at the edge
-  if a client objects (`/mcp` adds `Vary: Origin` when it echoes an origin).
+  A route cannot keep these on the wire by itself: Next and OpenNext re-stream every
+  response after the route returns (`Transfer-Encoding: chunked`, no `Content-Length`)
+  and Next adds `Vary: rsc, next-router-state-tree, ...`. The Worker entry fixes both;
+  see "Worker entry" below. (`/mcp` adds `Vary: Origin` when it echoes an origin; that
+  token is kept.)
 - MCP request checks: `Content-Type: application/json` (415 otherwise). `Accept`
   may be absent, `*/*`, `application/json` or (alone) `text/event-stream`; one that
   allows neither is 406, and the most specific media range wins, so
@@ -170,6 +172,39 @@ Codes: `bad_request` (400), `not_found` (404), `rate_limited` (429),
   user-agent family (claude, chatgpt, gemini, script, browser, ...). For MCP it
   adds the JSON-RPC method and tool name. Never an IP, a query string or tool
   arguments. Find them with `wrangler tail` or Workers Logs.
+
+## Worker entry
+
+`wrangler.jsonc` has `"main": "worker.ts"` (it was `.open-next/worker.js`). `worker.ts`
+imports the default handler from OpenNext's generated `.open-next/worker.js`, re-exports
+every named export of that file with `export *` (today `DOQueueHandler`,
+`DOShardedTagCache` and `BucketCachePurge`, the Durable Object classes OpenNext declares),
+and wraps `fetch` with `lib/workerWrap.ts`. For `/mcp`, `/api/v1/*`, `/api/watch/*` and
+`/llms.txt` ONLY it reads the whole body, then answers with the same status, status text
+and headers plus an explicit `Content-Length` (0 for an empty body such as 202; no body and
+no length for 204 and 304), without `Transfer-Encoding`, and without Next's `Vary` tokens
+(`rsc`, `next-router-state-tree`, `next-router-prefetch`, `next-router-segment-prefetch`,
+`next-url`; `Vary: Origin` stays). HEAD keeps the route's own headers. Every other path is
+returned untouched, so pages keep streaming.
+
+Build and deploy are unchanged: `npm run deploy` (check:mobile, then `opennextjs-cloudflare
+build`, then `wrangler deploy`). For a preview, build first, then upload a version:
+
+```bash
+npx opennextjs-cloudflare build        # makes .open-next/, which worker.ts imports
+npx wrangler versions upload           # a preview version with its own URL; nothing goes live
+curl -si https://<version-id>-isitbeachday.<account>.workers.dev/mcp \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized"}'   # expect 202, content-length: 0
+```
+
+`worker.ts` fails to bundle if `.open-next/worker.js` does not exist, so always build first.
+`tsconfig.json` excludes `worker.ts` from type checking for the same reason. Check the
+bundle without deploying: `npx wrangler deploy --dry-run --outdir /tmp/out`, then look for
+`export { BucketCachePurge, DOQueueHandler, DOShardedTagCache, ... as default }` at the end of
+`/tmp/out/worker.js`. Note that Cloudflare may still compress or re-frame a response at its
+edge (for example when the client sends `Accept-Encoding`); the Worker's job is to hand the
+platform a fixed-length body.
 
 ## Rate limiting: the bindings to deploy
 
