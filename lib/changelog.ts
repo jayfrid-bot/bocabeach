@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-15",
+    title: "Ask about tomorrow and the next day",
+    details:
+      "Apps and assistants can now ask for a 3-day beach outlook: the expected best score each day, the best time to go, the sky, and any safety notes for that day. It is a forecast, so check again the morning of. The assistant connection also works with more apps now.",
+    tag: "new",
+  },
+  {
     date: "2026-10-14",
     title: "Ask an assistant about the beach",
     details:

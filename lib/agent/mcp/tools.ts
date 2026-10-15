@@ -1,4 +1,4 @@
-// The four MCP tools. Each has a JSON Schema (sent in tools/list and used to check
+// The five MCP tools. Each has a JSON Schema (sent in tools/list and used to check
 // the arguments) and a run() that calls the same shared code the REST routes use.
 // Every output carries the attribution and the safety note, as text and as
 // structuredContent.
@@ -15,14 +15,17 @@ import {
   ATTRIBUTION,
   CREDIT,
   DEFAULT_COMPARE,
+  DEFAULT_OUTLOOK_DAYS,
   DEFAULT_RADIUS_MILES,
   DISCLAIMER,
   MAX_COMPARE,
   MAX_MCP_NEAREST,
+  MAX_OUTLOOK_DAYS,
   MAX_RADIUS_MILES,
   MAX_REST_SCORES,
   SAFETY_NOTE,
 } from "@/lib/agent/constants";
+import { loadBeachOutlook } from "@/lib/agent/outlook";
 import { runListBeaches, runNearest } from "@/lib/agent/queries";
 import { isValidSlug } from "@/lib/watchLoad";
 import type { JsonSchema } from "@/lib/agent/schema";
@@ -168,7 +171,7 @@ interface RankedEntry extends CompactConditions {
 const bestBeachToday: ToolDef = {
   name: "best_beach_today",
   title: "Pick the best beach today",
-  description: `Compare a few beaches right now and pick the one with the highest Beach Day score. Give a state or region, or a latitude and longitude (optionally with radius_miles), or both. Compares at most ${MAX_COMPARE} beaches (default ${DEFAULT_COMPARE}); with lat/lon it takes the nearest ones, otherwise the first ones in the list, and says which were left out. To protect the data sources it uses recent snapshots and builds at most one new one per call; beaches without a recent snapshot are listed as not compared right now (ask for them with get_beach_score). Each result has its safety summary, so mention any danger-level notice before recommending a beach. Lifeguard flags and posted warnings always win.`,
+  description: `Compare a few beaches right now and pick the one with the highest Beach Day score for TODAY (for tomorrow or the weekend, use get_beach_outlook on one beach). Give a state or region, or a latitude and longitude (optionally with radius_miles), or both. Compares at most ${MAX_COMPARE} beaches (default ${DEFAULT_COMPARE}); with lat/lon it takes the nearest ones, otherwise the first ones in the list, and says which were left out. To protect the data sources it uses recent snapshots and builds at most one new one per call; beaches without a recent snapshot are listed as not compared right now (ask for them with get_beach_score). Each result has its safety summary, so mention any danger-level notice before recommending a beach. Lifeguard flags and posted warnings always win.`,
   inputSchema: {
     type: "object",
     properties: {
@@ -280,7 +283,35 @@ const bestBeachToday: ToolDef = {
   },
 };
 
-export const TOOLS: readonly ToolDef[] = [listBeaches, getBeachScore, findNearestBeach, bestBeachToday];
+// ---- get_beach_outlook -------------------------------------------------------
+
+const getBeachOutlook: ToolDef = {
+  name: "get_beach_outlook",
+  title: "Get a beach's 1-3 day outlook",
+  description: `Get a short forecast of the Beach Day score for one beach for the next 1-${MAX_OUTLOOK_DAYS} days (today counts as day 1; default ${DEFAULT_OUTLOOK_DAYS}): for each day the expected peak score and rating, the best window in the beach's local time, a short sky word, and any safety notes for that day. Use it for "how is tomorrow?" or "what about the weekend?" (it reaches at most ${MAX_OUTLOOK_DAYS} days ahead). It is a forecast, not a guarantee: check again the morning of. Future days carry no live lifeguard flags or alerts; for right-now safety use get_beach_score. Lifeguard flags and posted warnings always win. Use list_beaches or find_nearest_beach first to get the slug.`,
+  inputSchema: {
+    type: "object",
+    required: ["slug"],
+    properties: {
+      slug: { type: "string", maxLength: 64, pattern: "^[a-z0-9]+(-[a-z0-9]+)*$", description: 'The beach slug from list_beaches, e.g. "boca-raton".' },
+      days: { type: "integer", minimum: 1, maximum: MAX_OUTLOOK_DAYS, default: DEFAULT_OUTLOOK_DAYS, description: `How many days, counting today as 1 (1-${MAX_OUTLOOK_DAYS}). Default ${DEFAULT_OUTLOOK_DAYS}.` },
+    },
+    additionalProperties: false,
+  },
+  async run(args) {
+    const slug = String(args.slug);
+    const days = (args.days as number | undefined) ?? DEFAULT_OUTLOOK_DAYS;
+    if (!isValidSlug(slug)) return fail(`"${slug.slice(0, 64)}" is not a valid beach slug. Call list_beaches to see the slugs.`);
+    const r = await loadBeachOutlook(slug, days);
+    if (r.status === "not_found") return fail(`No beach with slug "${slug}". Call list_beaches to see the slugs.`);
+    if (r.status === "incomplete") return fail("The forecast is temporarily incomplete. Try again in about 30 seconds.");
+    if (r.status === "expired") return fail("The forecast is being refreshed and the last reading is out of date. Try again in about 30 seconds.");
+    const o = r.outlook;
+    return { text: `${o.summary}\nBeach page: ${o.url}\n${FOOTER}`, data: { ...o } };
+  },
+};
+
+export const TOOLS: readonly ToolDef[] = [listBeaches, getBeachScore, findNearestBeach, bestBeachToday, getBeachOutlook];
 export const TOOLS_BY_NAME: ReadonlyMap<string, ToolDef> = new Map(TOOLS.map((t) => [t.name, t]));
 export const TOOL_NAMES = TOOLS.map((t) => t.name);
 

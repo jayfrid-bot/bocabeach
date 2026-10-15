@@ -12,6 +12,24 @@ export const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Max-Age": "86400",
 };
 
+/**
+ * A fully buffered response: the whole body is one string/byte array with an explicit
+ * Content-Length, never a stream and never chunked. Every JSON answer of /api/v1 and /mcp goes
+ * through here, so a client always gets a complete body whose size it can check.
+ * `body` null means an empty body (Content-Length: 0), for 202.
+ */
+export function bufferedResponse(
+  body: string | null,
+  status: number,
+  headers: Record<string, string> = {},
+): Response {
+  const bytes = body === null ? new Uint8Array(0) : new TextEncoder().encode(body);
+  const h = new Headers(headers);
+  h.set("Content-Length", String(bytes.byteLength));
+  const noBody = status === 204 || status === 205 || status === 304; // a Response with these statuses cannot carry a body
+  return new Response(noBody ? null : bytes, { status, headers: h });
+}
+
 export type ErrorCode =
   | "bad_request"
   | "not_found"
@@ -32,11 +50,12 @@ export function apiError(
 ): Response {
   const headers: Record<string, string> = { "Cache-Control": extra.cacheControl ?? "no-store" };
   if (extra.retryAfterSec != null) headers["Retry-After"] = String(extra.retryAfterSec);
-  return Response.json({ error: { code, message } } satisfies ApiErrorBody, { status, headers });
+  headers["Content-Type"] = "application/json";
+  return bufferedResponse(JSON.stringify({ error: { code, message } } satisfies ApiErrorBody), status, headers);
 }
 
 export function jsonOk(body: unknown, cacheControl: string): Response {
-  return Response.json(body, { headers: { "Cache-Control": cacheControl } });
+  return bufferedResponse(JSON.stringify(body), 200, { "Content-Type": "application/json", "Cache-Control": cacheControl });
 }
 
 export function withCors(res: Response): Response {

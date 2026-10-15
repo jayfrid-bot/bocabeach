@@ -46,6 +46,13 @@ export const MAX_COMPARE = 5;
 export const DEFAULT_COMPARE = 3;
 export const DEFAULT_RADIUS_MILES = 60;
 export const MAX_RADIUS_MILES = 250;
+/** get_beach_outlook / GET .../outlook: calendar days, counting today as day 1. */
+export const MAX_OUTLOOK_DAYS = 3;
+export const DEFAULT_OUTLOOK_DAYS = 3;
+export const OUTLOOK_NOTE = "Forecast, not a guarantee; check again the morning of.";
+/** Most JSON-RPC messages in one batch POST (2025-03-26 clients), and most tools/call among them. */
+export const MCP_MAX_BATCH = 10;
+export const MCP_MAX_BATCH_TOOL_CALLS = 3;
 /** Request body cap for /mcp, in bytes. */
 export const MCP_MAX_BODY_BYTES = 32 * 1024;
 /** A nearest beach farther than this gets a "nothing close" note. */

@@ -13,7 +13,7 @@ import { getConditions } from "@/lib/conditions";
 import { peekWatchView } from "@/lib/watchViewCache";
 import { resetAgentRateLimit } from "@/lib/agent/rateLimit";
 import { MCP_MAX_BODY_BYTES } from "@/lib/agent/constants";
-import { ALLOWED_ORIGINS, LATEST_PROTOCOL_VERSION } from "@/lib/agent/mcp/server";
+import { ALLOWED_ORIGINS, LATEST_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS } from "@/lib/agent/mcp/server";
 import { BUILT_MS, conditionsFor, warmView, post, req, rpc } from "@/lib/agent/testkit";
 
 const mocked = vi.mocked(getConditions);
@@ -47,13 +47,13 @@ const tool = async (name: string, args?: unknown, id = 7) => {
 };
 
 const INIT = {
-  protocolVersion: "2025-06-18",
+  protocolVersion: "2025-11-25",
   capabilities: {},
   clientInfo: { name: "t", version: "1" },
 };
 
 describe("initialize", () => {
-  it("answers with the one revision it implements, tools only, no session", async () => {
+  it("answers the latest revision to a client that asks for it, tools only, no session", async () => {
     const { res, json } = await call(rpc("initialize", INIT, "abc"));
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("application/json");
@@ -61,17 +61,52 @@ describe("initialize", () => {
     expect(res.headers.get("Set-Cookie")).toBeNull();
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     expect(json).toMatchObject({ jsonrpc: "2.0", id: "abc" });
-    expect(json.result.protocolVersion).toBe("2025-06-18");
+    expect(json.result.protocolVersion).toBe("2025-11-25");
     expect(json.result.capabilities).toEqual({ tools: { listChanged: false } });
     expect(json.result.serverInfo.name).toBe("isitbeachday");
     expect(json.result.instructions).toContain("Lifeguard flags and posted warnings always win.");
   });
 
-  it("answers 2025-06-18 whatever version the client asks for", async () => {
-    for (const asked of ["2025-03-26", "2024-11-05", "1999-01-01", "2099-01-01", ""]) {
-      const { json } = await call(rpc("initialize", { ...INIT, protocolVersion: asked }));
+  it("echoes each revision it serves, newest first", async () => {
+    expect(SUPPORTED_PROTOCOL_VERSIONS).toEqual(["2025-11-25", "2025-06-18", "2025-03-26"]);
+    expect(LATEST_PROTOCOL_VERSION).toBe("2025-11-25");
+    for (const asked of SUPPORTED_PROTOCOL_VERSIONS) {
+      const { res, json } = await call(rpc("initialize", { ...INIT, protocolVersion: asked }));
+      expect(res.status, asked).toBe(200);
+      expect(json.result.protocolVersion, asked).toBe(asked);
+    }
+  });
+
+  it("negotiates down to the latest served revision for an unknown one, never an error", async () => {
+    for (const asked of ["2024-11-05", "1999-01-01", "2099-01-01", "2025-06-19", "latest", ""]) {
+      const { res, json } = await call(rpc("initialize", { ...INIT, protocolVersion: asked }));
+      expect(res.status, asked).toBe(200);
+      expect(json.error, asked).toBeUndefined();
       expect(json.result.protocolVersion, asked).toBe(LATEST_PROTOCOL_VERSION);
     }
+  });
+
+  it("ignores MCP-Protocol-Version on initialize: absent, matching, different or junk", async () => {
+    for (const header of ["none", "2025-11-25", "2025-06-18", "2025-03-26", "2020-01-01", "banana", "x".repeat(200)]) {
+      const { res, json } = await call(rpc("initialize", INIT), { "mcp-protocol-version": header });
+      expect(res.status, header).toBe(200);
+      expect(json.result.protocolVersion, header).toBe("2025-11-25");
+    }
+    // The body decides, not the header.
+    const { json } = await call(rpc("initialize", { ...INIT, protocolVersion: "2025-03-26" }), { "mcp-protocol-version": "2025-11-25" });
+    expect(json.result.protocolVersion).toBe("2025-03-26");
+  });
+
+  it("shapes serverInfo to the negotiated revision", async () => {
+    const info = async (v: string) => (await call(rpc("initialize", { ...INIT, protocolVersion: v }))).json.result.serverInfo;
+    expect(await info("2025-11-25")).toMatchObject({ name: "isitbeachday", title: "Is It Beach Day", description: expect.any(String) });
+    const mid = await info("2025-06-18");
+    expect(mid.title).toBe("Is It Beach Day");
+    expect(mid.description).toBeUndefined();
+    const old = await info("2025-03-26");
+    expect(old.title).toBeUndefined();
+    expect(old.description).toBeUndefined();
+    expect(old.name).toBe("isitbeachday");
   });
 
   it("requires protocolVersion, capabilities and clientInfo (name, version)", async () => {
@@ -103,10 +138,10 @@ describe("initialize", () => {
 });
 
 describe("tools/list", () => {
-  it("lists four read-only tools with descriptions and JSON schemas", async () => {
+  it("lists five read-only tools with descriptions and JSON schemas", async () => {
     const { json } = await call(rpc("tools/list"));
     const tools = json.result.tools as Array<Record<string, any>>;
-    expect(tools.map((t) => t.name)).toEqual(["list_beaches", "get_beach_score", "find_nearest_beach", "best_beach_today"]);
+    expect(tools.map((t) => t.name)).toEqual(["list_beaches", "get_beach_score", "find_nearest_beach", "best_beach_today", "get_beach_outlook"]);
     for (const t of tools) {
       expect(t.description.length).toBeGreaterThan(60);
       expect(t.title).toBeTruthy();
@@ -116,6 +151,23 @@ describe("tools/list", () => {
     }
     expect(tools[1].inputSchema.required).toEqual(["slug"]);
     expect(tools[2].inputSchema.properties.limit.maximum).toBe(5);
+    expect(tools[4].inputSchema.required).toEqual(["slug"]);
+    expect(tools[4].inputSchema.properties.days).toMatchObject({ minimum: 1, maximum: 3, default: 3 });
+    expect(tools[3].description).toMatch(/TODAY/);
+    expect(tools[3].description).toContain("get_beach_outlook");
+  });
+
+  it("drops fields a 2025-03-26 client does not know, only when the header says so", async () => {
+    const old = (await call(rpc("tools/list"), { "mcp-protocol-version": "2025-03-26" })).json.result.tools as Array<Record<string, any>>;
+    for (const t of old) {
+      expect(t.title).toBeUndefined();
+      expect(t.annotations.readOnlyHint).toBe(true);
+    }
+    const none = (await call(rpc("tools/list"), { "mcp-protocol-version": "none" })).json.result.tools as Array<Record<string, any>>;
+    expect(none.every((t) => typeof t.title === "string")).toBe(true);
+    const r = (await call(rpc("tools/call", { name: "get_beach_score", arguments: { slug: "boca-raton" } }), { "mcp-protocol-version": "2025-03-26" })).json.result;
+    expect(r.content[0].text).toContain("Boca Raton");
+    expect(r.structuredContent).toBeUndefined();
   });
 });
 
@@ -260,6 +312,60 @@ describe("tools/call happy paths", () => {
   });
 });
 
+describe("get_beach_outlook", () => {
+  it("returns a day-by-day outlook with the forecast note, attribution and safety note", async () => {
+    const r = (await tool("get_beach_outlook", { slug: "boca-raton" })).result;
+    expect(r.isError).toBeUndefined();
+    const d = r.structuredContent;
+    expect(d.slug).toBe("boca-raton");
+    expect(d.days).toHaveLength(3);
+    expect(d.days[0]).toMatchObject({ label: "Today", weekday: "Friday", peakScore: 80, rating: "Good" });
+    expect(d.days[1].bestWindow.text).toBe("11 AM–7 PM");
+    expect(d.forecastNote).toBe("Forecast, not a guarantee; check again the morning of.");
+    expect(d.safetyNote).toBe("Lifeguard flags and posted warnings always win.");
+    expect(d.attribution.credit).toContain("Is It Beach Day");
+    expect(r.content[0].text).toContain("Tomorrow (Saturday)");
+    expect(r.content[0].text).toContain("Forecast, not a guarantee; check again the morning of.");
+    expect(r.content[0].text).toContain("Score by Is It Beach Day — isitbeachday.com");
+  });
+
+  it("honors days 1 to 3 and refuses 0, 4, a fraction and a string", async () => {
+    for (const n of [1, 2, 3]) {
+      expect((await tool("get_beach_outlook", { slug: "boca-raton", days: n })).result.structuredContent.days).toHaveLength(n);
+    }
+    for (const days of [0, 4, 2.5, "2", -1]) {
+      const r = (await tool("get_beach_outlook", { slug: "boca-raton", days })).result;
+      expect(r.isError, String(days)).toBe(true);
+    }
+    expect(mocked).toHaveBeenCalledTimes(3);
+  });
+
+  it("builds at most one beach, and reads nothing for bad input", async () => {
+    await tool("get_beach_outlook", { slug: "boca-raton" });
+    expect(mocked).toHaveBeenCalledTimes(1);
+    mocked.mockClear();
+    expect((await tool("get_beach_outlook", { slug: "Bad Slug" })).result.isError).toBe(true);
+    expect((await tool("get_beach_outlook", {})).result.isError).toBe(true);
+    expect((await tool("get_beach_outlook", { slug: "nope" })).result.isError).toBe(true);
+    expect((await tool("get_beach_outlook", { slug: "nope" })).result.content[0].text).toContain("list_beaches");
+  });
+
+  it("is honest when forecast data is missing, and refuses a partial or expired reading", async () => {
+    mocked.mockImplementation(async (slug: string) => ({ ...conditionsFor(slug)!, multiDayWindows: [] }));
+    const none = (await tool("get_beach_outlook", { slug: "boca-raton" })).result;
+    expect(none.isError).toBeUndefined();
+    expect(none.structuredContent.days).toEqual([]);
+    expect(none.content[0].text).toMatch(/No forecast days/);
+    mocked.mockImplementation(async (slug: string) => ({ ...conditionsFor(slug)!, budgetAborted: true }) as ConditionsResponse);
+    expect((await tool("get_beach_outlook", { slug: "boca-raton" })).result.content[0].text).toMatch(/temporarily incomplete/);
+    mocked.mockImplementation(async (slug: string) => conditionsFor(slug));
+    vi.setSystemTime(BUILT_MS + 16 * 60 * 1000);
+    const late = (await tool("get_beach_outlook", { slug: "boca-raton" })).result;
+    expect(late.isError).toBe(true);
+    expect(late.content[0].text).toMatch(/out of date/);
+  });
+});
+
 describe("tools/call errors", () => {
   it("an unknown tool is a JSON-RPC error", async () => {
     const json = await tool("drop_tables", {});
@@ -327,12 +433,10 @@ describe("protocol errors", () => {
     expect(json).toMatchObject({ jsonrpc: "2.0", id: null, error: { code: -32700 } });
   });
 
-  it("a non-JSON-RPC body, a batch, and a bad method are invalid requests", async () => {
+  it("a non-JSON-RPC body, an empty batch, and a bad method are invalid requests", async () => {
     expect((await call(JSON.stringify({ hello: "world" }))).res.status).toBe(400);
     expect((await call(JSON.stringify({ jsonrpc: "1.0", id: 1, method: "ping" }))).json.error.code).toBe(-32600);
-    const batch = await call(JSON.stringify([{ jsonrpc: "2.0", id: 1, method: "ping" }]));
-    expect(batch.res.status).toBe(400);
-    expect(batch.json.error.message).toMatch(/Batch/);
+    expect((await call("[]")).res.status).toBe(400);
     expect((await call(JSON.stringify({ jsonrpc: "2.0", id: 1, method: 5 }))).res.status).toBe(400);
     expect((await call("null")).res.status).toBe(400);
   });
@@ -388,11 +492,15 @@ describe("protocol errors", () => {
     // A string body makes fetch add text/plain, which is also refused.
     expect((await POST(noType)).status).toBe(415);
     expect((await POST(post(rpc("ping"), { "content-type": "Application/JSON; charset=utf-8" }))).status).toBe(200);
-    expect((await POST(post(rpc("ping"), { accept: "text/event-stream" }))).status).toBe(406);
+    // A client that names only text/event-stream is served (as one SSE event), not refused.
+    expect((await POST(post(rpc("ping"), { accept: "text/event-stream" }))).status).toBe(200);
+    expect((await POST(post(rpc("ping"), { accept: "application/json;q=0, text/event-stream" }))).status).toBe(200);
+    expect((await POST(post(rpc("ping"), { accept: "text/event-stream;q=0" }))).status).toBe(406);
+    expect((await POST(post(rpc("ping"), { accept: "" }))).status).toBe(200);
     expect((await POST(post(rpc("ping"), { accept: "*/*" }))).status).toBe(200);
     // q=0 means "not acceptable"; any other q is fine.
     expect((await POST(post(rpc("ping"), { accept: "application/json;q=0" }))).status).toBe(406);
-    expect((await POST(post(rpc("ping"), { accept: "application/json; q=0.0, text/event-stream" }))).status).toBe(406);
+    expect((await POST(post(rpc("ping"), { accept: "application/json; q=0.0, text/event-stream" }))).status).toBe(200);
     expect((await POST(post(rpc("ping"), { accept: "*/*;q=0" }))).status).toBe(406);
     expect((await POST(post(rpc("ping"), { accept: "text/event-stream, application/json;q=0.5" }))).status).toBe(200);
     // RFC 9110: the most specific range wins, whatever the order.
@@ -445,31 +553,49 @@ describe("protocol errors", () => {
     expect((await POST(post(rpc("ping"), { accept: "application/json, text/event-stream" }))).status).toBe(200);
   });
 
-  it("accepts only the 2025-06-18 protocol version header", async () => {
-    for (const v of ["2020-01-01", "2025-03-26", "2024-11-05", "2099-01-01", ""]) {
-      expect((await POST(post(rpc("ping"), { "mcp-protocol-version": v }))).status, JSON.stringify(v)).toBe(400);
-      // A wrong value is refused on initialize too.
-      expect((await POST(post(rpc("initialize", INIT), { "mcp-protocol-version": v }))).status, `init ${JSON.stringify(v)}`).toBe(400);
+  it("accepts a served MCP-Protocol-Version on any request and refuses an unserved one after initialize", async () => {
+    for (const v of SUPPORTED_PROTOCOL_VERSIONS) {
+      expect((await POST(post(rpc("ping"), { "mcp-protocol-version": v }))).status, v).toBe(200);
+      expect((await POST(post(rpc("initialize", INIT), { "mcp-protocol-version": v }))).status, `init ${v}`).toBe(200);
     }
-    expect((await POST(post(rpc("ping"), { "mcp-protocol-version": "2025-06-18" }))).status).toBe(200);
+    for (const v of ["2020-01-01", "2024-11-05", "2099-01-01", "2025-6-18", "latest", " x "]) {
+      const res = await POST(post(rpc("ping"), { "mcp-protocol-version": v }));
+      expect(res.status, JSON.stringify(v)).toBe(400);
+      const err = (await res.json()).error;
+      expect(err.code).toBe(-32600);
+      for (const ok of SUPPORTED_PROTOCOL_VERSIONS) expect(err.message).toContain(ok);
+      // initialize ignores it.
+      expect((await POST(post(rpc("initialize", INIT), { "mcp-protocol-version": v }))).status, `init ${JSON.stringify(v)}`).toBe(200);
+    }
+    // Notifications and client responses are checked like requests.
+    const note = JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" });
+    expect((await POST(post(note, { "mcp-protocol-version": "2020-01-01" }))).status).toBe(400);
+    expect((await POST(post(note, { "mcp-protocol-version": "2025-03-26" }))).status).toBe(202);
+    // An empty header counts as absent.
+    expect((await POST(post(rpc("ping"), { "mcp-protocol-version": "" }))).status).toBe(200);
   });
 
-  it("allows a missing MCP-Protocol-Version on initialize only", async () => {
+  it("allows a missing MCP-Protocol-Version on every request and assumes the latest behavior", async () => {
     const none = { "mcp-protocol-version": "none" };
-    expect((await POST(post(rpc("initialize", INIT), none))).status).toBe(200);
     const requests = [
+      rpc("initialize", INIT),
       rpc("ping"),
       rpc("tools/list"),
       rpc("tools/call", { name: "list_beaches", arguments: {} }),
-      JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
-      JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} }),
     ];
-    for (const body of requests) {
-      const res = await POST(post(body, none));
-      expect(res.status, body).toBe(400);
-      expect((await res.json()).error.message).toMatch(/MCP-Protocol-Version: 2025-06-18 is required/);
+    for (const body of requests) expect((await POST(post(body, none))).status, body).toBe(200);
+    for (const body of [JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }), JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} })]) {
+      expect((await POST(post(body, none))).status, body).toBe(202);
     }
+    const r = (await call(rpc("tools/call", { name: "list_beaches", arguments: { state: "FL" } }), none)).json.result;
+    expect(r.structuredContent.count).toBeGreaterThan(0);
     expect(mocked).not.toHaveBeenCalled();
+  });
+
+  it("ignores an incoming Mcp-Session-Id and never issues one", async () => {
+    const res = await POST(post(rpc("tools/list"), { "mcp-session-id": "abc123" }));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Mcp-Session-Id")).toBeNull();
   });
 
   it("allows no Origin and the site's own origins, and refuses any other with 403", async () => {
@@ -504,7 +630,8 @@ describe("protocol errors", () => {
       expect(res.headers.get("Allow")).toContain("POST");
       const body = await res.json();
       expect(body.tools).toContain("get_beach_score");
-      expect(body.protocolVersion).toBe("2025-06-18");
+      expect(body.protocolVersion).toBe("2025-11-25");
+      expect(body.supportedProtocolVersions).toEqual(["2025-11-25", "2025-06-18", "2025-03-26"]);
     }
     expect(GET(req("/mcp", { headers: { origin: "https://evil.example" } })).status).toBe(403);
   });

@@ -33,8 +33,9 @@ curl -s https://isitbeachday.com/mcp \
   -H 'mcp-protocol-version: 2025-06-18' \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'
 
-# After initialize, every request must send MCP-Protocol-Version: 2025-06-18 (400 without it).
-# initialize itself may leave it out.
+# MCP-Protocol-Version may be sent on every request, initialize included (ignored there).
+# After initialize it may also be left out. A value that is not 2025-11-25, 2025-06-18 or
+# 2025-03-26 is a 400 that lists the revisions we serve.
 
 # List the tools
 curl -s https://isitbeachday.com/mcp -H 'content-type: application/json' \
@@ -57,7 +58,12 @@ npx @modelcontextprotocol/inspector   # transport: Streamable HTTP, URL: https:/
 | `list_beaches` | `state?`, `region?` | See the covered beaches and their slugs. |
 | `get_beach_score` | `slug` | Get the score, rating, safety lines, water temperature and best time. |
 | `find_nearest_beach` | `lat`, `lon`, `limit?` (max 5), `include_scores?` | Find the nearest beaches. Scores cover the nearest 3 only, from recent snapshots. |
-| `best_beach_today` | `state?`, `region?`, `lat?`, `lon?`, `radius_miles?`, `compare?` (max 5, default 3) | Compare a few beaches and pick the highest score. Beaches without a recent snapshot are listed as not compared right now. |
+| `best_beach_today` | `state?`, `region?`, `lat?`, `lon?`, `radius_miles?`, `compare?` (max 5, default 3) | Compare a few beaches and pick the highest score for today. Beaches without a recent snapshot are listed as not compared right now. |
+| `get_beach_outlook` | `slug`, `days?` (1-3, default 3) | Get a short forecast for one beach: per day the expected peak score and rating, best window, sky word and safety notes. Forecast, not a guarantee; check again the morning of. |
+
+`best_beach_today` has no `day` argument on purpose: the recent-view store keeps only
+the current reading, so ranking several beaches for tomorrow would need one cold
+build per beach. Ask for the outlook of one or two beaches instead.
 
 Every result has a text block and `structuredContent`. Both carry the
 attribution and the safety note. A tool that cannot answer (unknown beach, bad
@@ -69,8 +75,16 @@ unknown tool name is a JSON-RPC error `-32602`.
 ```bash
 curl -s 'https://isitbeachday.com/api/v1/beaches?state=FL'
 curl -s 'https://isitbeachday.com/api/v1/beaches/boca-raton'
+curl -s 'https://isitbeachday.com/api/v1/beaches/boca-raton/outlook?days=3'
 curl -s 'https://isitbeachday.com/api/v1/nearest?lat=26.36&lon=-80.06&limit=3&scores=true'
 ```
+
+The outlook counts calendar days from today (today is day 1), so `days=3` is today,
+tomorrow and the day after. Per day it gives `peakScore`, `rating`, `bestWindow`
+(`text` is local time such as "10 AM–1 PM"; `good` is true at Decent or better), `sky` and
+`notes` (safety notes for the peak hour). Future days carry no live flags or alerts; use
+`/beaches/{slug}` for right now. If forecast data for a day is missing, that day is left
+out and `note` says so.
 
 ```js
 const r = await fetch("https://isitbeachday.com/api/v1/beaches/boca-raton");
@@ -95,21 +109,36 @@ Codes: `bad_request` (400), `not_found` (404), `rate_limited` (429),
 
 - `lib/watchLoad.ts` is the one loader behind the watch, `/api/v1/*` and the MCP
   tools. Same score, same safety lines.
-- `lib/agent/mcp/server.ts` is a small hand-written MCP handler. It implements
-  ONLY spec revision 2025-06-18 and answers `initialize` with that revision
-  whatever the client asks. Why not `@modelcontextprotocol/sdk`: it is not a
-  dependency of this app, it needs `zod` and a Node-stream transport built for
-  sessions, and four read-only tools need only four JSON-RPC methods. No
-  session id, no Durable Object, no KV. Batches are refused (2025-06-18 removed
-  them). No SSE stream: GET answers 405. Older clients that need batching or the
-  legacy SSE transport are not served.
-- MCP request checks: `Content-Type: application/json` (415 otherwise), a present
-  `Accept` must allow JSON (406; the most specific media range wins, so
-  `application/json;q=0, */*` is refused), `initialize` needs `protocolVersion`,
-  `capabilities` and `clientInfo` (name, version). A present
-  `MCP-Protocol-Version` must be exactly `2025-06-18` on every request after
-  `initialize` (400 otherwise); `initialize` itself may omit it. A wrong value is
-  400 on any request.
+- `lib/agent/mcp/server.ts` is a small hand-written MCP handler. It serves spec
+  revisions 2025-11-25, 2025-06-18 and 2025-03-26. `initialize` answers the
+  client's `protocolVersion` when we serve it, else the latest (2025-11-25); it is
+  never an error. Why not `@modelcontextprotocol/sdk`: it is not a dependency of
+  this app, it needs `zod` and a Node-stream transport built for sessions, and five
+  read-only tools need only a few JSON-RPC methods. No session id (an incoming
+  `Mcp-Session-Id` is ignored), no Durable Object, no KV. No SSE stream: GET
+  answers 405. 2025-11-25 changed nothing a tools-only server must do beyond
+  optional fields (icons, `Implementation.description`, JSON Schema 2020-12 as the
+  default dialect, input-validation errors as tool errors, 403 for a bad Origin).
+  We already did the last two; `serverInfo.description` is sent for 2025-11-25 only;
+  `title` and `structuredContent` only for 2025-06-18 and later (the 2025-03-26
+  shapes lack them). Capabilities advertised: `tools` with `listChanged: false`.
+- MCP transport: every reply is serialized to a string and sent with an explicit
+  `Content-Length` (no streaming, no chunked). A notification, a client response or
+  a batch of only those gets 202 with `Content-Length: 0`. A batch (JSON array, at
+  most 10 messages and 3 `tools/call`) is answered with an array. A client whose
+  `Accept` names only `text/event-stream` gets the same JSON as one SSE event
+  (`event: message`, `data: ...`, blank line), also with `Content-Length`.
+  Next.js adds its own `Vary: rsc, next-router-state-tree, ...` to every App Router
+  response before the route runs, and a route cannot remove it; strip it at the edge
+  if a client objects (`/mcp` adds `Vary: Origin` when it echoes an origin).
+- MCP request checks: `Content-Type: application/json` (415 otherwise). `Accept`
+  may be absent, `*/*`, `application/json` or (alone) `text/event-stream`; one that
+  allows neither is 406, and the most specific media range wins, so
+  `application/json;q=0, */*` is refused. `initialize` needs `protocolVersion`,
+  `capabilities` and `clientInfo` (name, version). `MCP-Protocol-Version` is ignored
+  on `initialize` (any value) and may be left out on later requests (the latest
+  behavior is assumed); a present value on a later request must be one of the three
+  revisions, else 400 with the list.
 - MCP `Origin` check: no `Origin` header is allowed (a connector's server sends
   none). A present `Origin` must be `https://isitbeachday.com` or
   `https://app.isitbeachday.com`, else 403. CORS headers are sent only to those

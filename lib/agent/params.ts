@@ -78,6 +78,7 @@ export const MAX_STATE_LEN = 40;
 export const MAX_REGION_LEN = 80;
 export const BEACH_LIST_QUERY_KEYS = ["state", "region"] as const;
 export const NEAREST_QUERY_KEYS = ["lat", "lon", "limit", "scores"] as const;
+export const OUTLOOK_QUERY_KEYS = ["days"] as const;
 
 /** An unknown or repeated query key is an error, so junk cannot mint cache entries. */
 export function checkQueryKeys(sp: URLSearchParams, allowed: readonly string[]): Parsed<true> {

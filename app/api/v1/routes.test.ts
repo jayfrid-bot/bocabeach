@@ -11,10 +11,12 @@ vi.mock("@/lib/conditions", async (importOriginal) => {
 import * as listRoute from "@/app/api/v1/beaches/route";
 import * as beachRoute from "@/app/api/v1/beaches/[slug]/route";
 import * as nearestRoute from "@/app/api/v1/nearest/route";
+import * as outlookRoute from "@/app/api/v1/beaches/[slug]/outlook/route";
 import * as openapiRoute from "@/app/api/v1/openapi.json/route";
 import { GET as listGET, OPTIONS as listOPTIONS } from "@/app/api/v1/beaches/route";
 import { GET as beachGET } from "@/app/api/v1/beaches/[slug]/route";
 import { GET as nearestGET } from "@/app/api/v1/nearest/route";
+import { GET as outlookGET } from "@/app/api/v1/beaches/[slug]/outlook/route";
 import { GET as openapiGET } from "@/app/api/v1/openapi.json/route";
 import { getConditions } from "@/lib/conditions";
 import { peekWatchView, storeWatchView } from "@/lib/watchViewCache";
@@ -217,6 +219,103 @@ describe("GET /api/v1/beaches/{slug}", () => {
   });
 });
 
+describe("GET /api/v1/beaches/{slug}/outlook", () => {
+  const outlook = (slug: string, qs = "") =>
+    outlookGET(req(`/api/v1/beaches/${slug}/outlook${qs}`), { params: Promise.resolve({ slug }) });
+
+  it("returns three days by default with the forecast note, attribution and safety note", async () => {
+    const res = await outlook("boca-raton");
+    expect(res.status).toBe(200);
+    expectPublicHeaders(res);
+    expect(res.headers.get("Cache-Control")).toBe("public, s-maxage=60");
+    const b = await res.json();
+    expect(b.slug).toBe("boca-raton");
+    expect(b.requestedDays).toBe(3);
+    expect(b.days.map((d: { label: string }) => d.label)).toEqual(["Today", "Tomorrow", "Sunday"]);
+    expect(b.days[1]).toMatchObject({ date: "2026-09-05", weekday: "Saturday", peakScore: 78, rating: "Good", sky: "Overcast" });
+    expect(b.days[1].bestWindow.text).toBe("11 AM–7 PM");
+    expect(b.forecastNote).toBe("Forecast, not a guarantee; check again the morning of.");
+    expect(b.safetyNote).toBe("Lifeguard flags and posted warnings always win.");
+    expect(b.attribution.credit).toBe("Score by Is It Beach Day — isitbeachday.com");
+    expect(Date.parse(b.validUntil)).toBeGreaterThan(BUILT_MS);
+  });
+
+  it("honors days=1..3 and refuses everything else", async () => {
+    for (const n of [1, 2, 3]) expect((await (await outlook("boca-raton", `?days=${n}`)).json()).days).toHaveLength(n);
+    for (const qs of ["?days=0", "?days=4", "?days=03", "?days=2.5", "?days=", "?days=%202", "?days=abc", "?days=1&days=2", "?x=1", "?days=1e0"]) {
+      const res = await outlook("boca-raton", qs);
+      expect(res.status, qs).toBe(400);
+      expect((await res.json()).error.code).toBe("bad_request");
+    }
+    expect(mocked).toHaveBeenCalledTimes(3);
+  });
+
+  it("builds only this beach, once per request", async () => {
+    await outlook("boca-raton");
+    expect(mocked).toHaveBeenCalledTimes(1);
+    expect(cached).not.toHaveBeenCalled();
+  });
+
+  it("404s an unknown or malformed slug without touching the pipeline for junk", async () => {
+    const res = await outlook("nope");
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Cache-Control")).toBe("public, s-maxage=300");
+    mocked.mockClear();
+    for (const bad of ["Boca Raton", "../x", "a--b", "x".repeat(65)]) expect((await outlook(bad)).status).toBe(404);
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
+  it("is honest when forecast data is missing: 200 with no days and a note", async () => {
+    mocked.mockImplementation(async (slug: string) => ({ ...conditionsFor(slug)!, multiDayWindows: [] }));
+    const b = await (await outlook("boca-raton")).json();
+    expect(b.days).toEqual([]);
+    expect(b.note).toMatch(/No forecast days/);
+  });
+
+  it("503s with Retry-After and no-store for a partial build or an out-of-date reading", async () => {
+    mocked.mockImplementation(async (slug: string) => ({ ...conditionsFor(slug)!, budgetAborted: true }) as ConditionsResponse);
+    const partial = await outlook("boca-raton");
+    expect(partial.status).toBe(503);
+    expect(partial.headers.get("Retry-After")).toBe("30");
+    expect(partial.headers.get("Cache-Control")).toBe("no-store");
+    mocked.mockImplementation(async (slug: string) => conditionsFor(slug));
+    vi.setSystemTime(BUILT_MS + 16 * 60 * 1000);
+    const late = await outlook("boca-raton");
+    expect(late.status).toBe(503);
+    expect((await late.json()).error.code).toBe("unavailable");
+  });
+});
+
+describe("every v1 answer is buffered with a correct Content-Length", () => {
+  it("covers success, errors, 404, 405 and 429", async () => {
+    const outlook = (slug: string, qs = "") => outlookGET(req(`/api/v1/beaches/${slug}/outlook${qs}`), { params: Promise.resolve({ slug }) });
+    const answers: Array<[string, Response]> = [
+      ["list", await listGET(req("/api/v1/beaches"))],
+      ["list 400", await listGET(req("/api/v1/beaches?state=Atlantis"))],
+      ["beach", await beach("boca-raton")],
+      ["beach 404", await beach("nope")],
+      ["outlook", await outlook("boca-raton")],
+      ["outlook 400", await outlook("boca-raton", "?days=9")],
+      ["nearest", await nearestGET(req("/api/v1/nearest?lat=26.36&lon=-80.06&scores=true"))],
+      ["nearest 400", await nearestGET(req("/api/v1/nearest"))],
+      ["openapi", await openapiGET(req("/api/v1/openapi.json"))],
+      ["405", await (beachRoute.POST as (r: Request) => Response)(req("/api/v1/beaches/boca-raton", { method: "POST" }))],
+    ];
+    mocked.mockRejectedValue(new Error("boom"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    answers.push(["500", await beach("boca-raton")]);
+    for (let i = 0; i < 41; i++) answers.push(["429", await listGET(req("/api/v1/beaches", { headers: { "cf-connecting-ip": "203.0.113.200" } }))]);
+    for (const [label, res] of answers.slice(0, 11).concat(answers.slice(-1))) {
+      const bytes = (await res.clone().arrayBuffer()).byteLength;
+      expect(res.headers.get("Content-Length"), label).toBe(String(bytes));
+      expect(res.headers.get("Transfer-Encoding"), label).toBeNull();
+      expect(res.headers.get("Content-Type"), label).toBe("application/json");
+      JSON.parse(await res.text());
+    }
+    expect(answers.at(-1)![1].status).toBe(429);
+  });
+});
+
 describe("GET /api/v1/nearest", () => {
   const near = (qs: string) => nearestGET(req(`/api/v1/nearest${qs}`));
 
@@ -364,6 +463,7 @@ describe("methods other than GET", () => {
   const routes: Array<[string, Record<string, unknown>]> = [
     ["/api/v1/beaches", listRoute],
     ["/api/v1/beaches/boca-raton", beachRoute],
+    ["/api/v1/beaches/boca-raton/outlook", outlookRoute],
     ["/api/v1/nearest", nearestRoute],
     ["/api/v1/openapi.json", openapiRoute],
   ];

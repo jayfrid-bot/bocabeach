@@ -43,13 +43,35 @@ export async function loadWatchView(slug: string, opts: { cacheOnly?: boolean } 
     const view = reliable ? await peekWatchView(slug, ov) : null;
     return view ? { status: "ok", view } : { status: "not_cached" };
   }
-  const data = await getConditions(slug, { fingerprint });
+  const loaded = await loadPublicConditions(slug, fingerprint);
+  if (loaded.status !== "ok") return loaded;
+  const view = buildWatchView(loaded.conditions);
+  if (reliable) await storeWatchView(view, ov); // best effort, never throws
+  return { status: "ok", view };
+}
+
+export type PublicConditionsLoad =
+  | { status: "ok"; conditions: ConditionsResponse }
+  | { status: "not_found" }
+  | { status: "incomplete" };
+
+/**
+ * The full public conditions response for one beach (the shared 120-s conditions cache, or one
+ * build), with the internal fields stripped. A partial build is "incomplete". For views that
+ * need more than the compact watch view, such as the multi-day outlook. One call is at most
+ * ONE build.
+ */
+export async function loadPublicConditions(
+  slug: string,
+  fingerprint?: { version: string; reliable: boolean },
+): Promise<PublicConditionsLoad> {
+  if (!isValidSlug(slug)) return { status: "not_found" };
+  const fp = fingerprint ?? (await conditionsOverrides(slug));
+  const data = await getConditions(slug, { fingerprint: fp });
   if (!data) return { status: "not_found" };
   const { budgetAborted, ...publicData } = stripInternalSnapshotFields(data);
   if (budgetAborted) return { status: "incomplete" };
-  const view = buildWatchView(publicData as ConditionsResponse);
-  if (reliable) await storeWatchView(view, ov); // best effort, never throws
-  return { status: "ok", view };
+  return { status: "ok", conditions: publicData as ConditionsResponse };
 }
 
 /** Whole seconds this view may still be called current at `nowMs` (0 or less = expired). */

@@ -8,6 +8,7 @@ import {
   DISCLAIMER,
   MAX_COMPARE,
   MAX_NEAREST_LIMIT,
+  MAX_OUTLOOK_DAYS,
   MAX_REST_SCORES,
   MCP_MAX_BODY_BYTES,
   MCP_URL,
@@ -16,6 +17,7 @@ import {
   SITE_URL,
 } from "@/lib/agent/constants";
 import { listBeachSummaries } from "@/lib/agent/beaches";
+import { SUPPORTED_PROTOCOL_VERSIONS } from "@/lib/agent/mcp/server";
 import { TOOLS } from "@/lib/agent/mcp/tools";
 
 export function buildLlmsTxt(): string {
@@ -24,7 +26,7 @@ export function buildLlmsTxt(): string {
   const states = [...new Set(beaches.map((b) => b.state).filter(Boolean))].sort().join(", ");
   return `# Is It Beach Day
 
-> Live beach conditions for ${beaches.length} US beaches (states: ${states}). One 0-100 Beach Day score per beach, plus swim-safety lines (lifeguard flags, rip currents, lightning, rain, weather alerts, water quality), water temperature and the best time today. Free, read-only, no account or key.
+> Live beach conditions for ${beaches.length} US beaches (states: ${states}). One 0-100 Beach Day score per beach, plus swim-safety lines (lifeguard flags, rip currents, lightning, rain, weather alerts, water quality), water temperature and the best time today, plus a 1-3 day score outlook. Free, read-only, no account or key.
 
 ## Safety and credit (please follow)
 
@@ -35,7 +37,9 @@ export function buildLlmsTxt(): string {
 
 ## Connect an assistant (MCP)
 
-- MCP server (Streamable HTTP, stateless, no sign-in, protocol revision 2025-06-18 only; send the header MCP-Protocol-Version: 2025-06-18 on every request after initialize): ${MCP_URL}
+- MCP server (Streamable HTTP, stateless, no sign-in, no session; protocol revisions ${SUPPORTED_PROTOCOL_VERSIONS.join(", ")}; initialize answers the revision you ask for, or the latest we serve): ${MCP_URL}
+- You may send the header MCP-Protocol-Version on every request, initialize included. After initialize it may also be left out; a value that is not one of the revisions above is a 400.
+- Answers are complete JSON bodies with a Content-Length. A client that accepts only text/event-stream gets one SSE event. A batch (JSON array) is accepted.
 - In Claude or ChatGPT, add it as a custom connector with that URL.
 - Tools:
 ${TOOLS.map((t) => `  - \`${t.name}\`: ${t.description.split(". ")[0]}.`).join("\n")}
@@ -47,6 +51,7 @@ ${TOOLS.map((t) => `  - \`${t.name}\`: ${t.description.split(". ")[0]}.`).join("
 - \`GET ${api}/beaches\`: every beach (slug, name, state, lat, lon, page URL). Optional \`?state=FL\` and \`?region=Broward\`.
 - \`GET ${api}/beaches/{slug}\`: live score, rating, safety lines, water temperature, best time, page URL, attribution.
 - \`GET ${api}/nearest?lat=&lon=&limit=&scores=\`: nearest beaches to a point (limit up to ${MAX_NEAREST_LIMIT}). \`scores=true\` adds a compact live score to the nearest ${MAX_REST_SCORES}.
+- \`GET ${api}/beaches/{slug}/outlook?days=\`: a 1-${MAX_OUTLOOK_DAYS} day outlook (today is day 1; default ${MAX_OUTLOOK_DAYS}): per day the expected peak score and rating, the best window in local time, a sky word and safety notes. A forecast, not a guarantee: check again the morning of.
 - Write query values in plain canonical form (\`lat=26.35\`, \`scores=true\`; no spaces, plus signs, exponents or leading zeros). Anything else is a 400.
 - CORS is open for GET. No cookies. Errors are JSON: \`{"error":{"code":"...","message":"..."}}\`.
 

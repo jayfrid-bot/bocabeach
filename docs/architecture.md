@@ -42,10 +42,10 @@ flowchart TD
     ADMINSCANS["/api/admin/scans<br/>(owner-only, read the sticker funnel)"]
     VERSION["/api/version<br/>(deployed git SHA, no-store)"]
     OPENR["/api/open<br/>(once a day per device: count an app open)"]
-    V1["/api/v1/beaches, /api/v1/beaches/[slug], /api/v1/nearest<br/>(public read-only JSON for apps and assistants:<br/>CORS *, no cookies, no Plus or device data, no cam images)"]
+    V1["/api/v1/beaches, /api/v1/beaches/[slug], /api/v1/beaches/[slug]/outlook, /api/v1/nearest<br/>(public read-only JSON for apps and assistants:<br/>CORS *, no cookies, no Plus or device data, no cam images)"]
     OPENAPI["/api/v1/openapi.json<br/>(OpenAPI 3.1, hand-written in lib/agent/openapi.ts;<br/>a test checks it against the route files)"]
     LLMS["/llms.txt<br/>(plain-text guide: what the app is, endpoints, MCP URL,<br/>credit and usage rules; built from lib/agent/constants.ts)"]
-    MCPR["/mcp<br/>(remote MCP server, Streamable HTTP, STATELESS:<br/>JSON-RPC over POST, 32 KB body cap, GET/DELETE = 405)"]
+    MCPR["/mcp<br/>(remote MCP server, Streamable HTTP, STATELESS:<br/>JSON-RPC over POST (one message or a batch), 32 KB body cap,<br/>buffered replies with Content-Length, GET/DELETE = 405)"]
   end
 
   AGENTS["Assistants (Claude, ChatGPT) and developer apps"] -->|"POST JSON-RPC: initialize, tools/list, tools/call<br/>(custom connector URL)"| MCPR
@@ -57,6 +57,9 @@ flowchart TD
   V1 -->|"one counter line per request:<br/>route, status, user-agent family. No IP, no coordinates"| CFLOGS[(Workers logs)]
   MCPR --> CFLOGS
   V1 --> AGENTQ
+  V1 -->|"outlook: one beach, ONE build at most"| OUTLOOK["lib/agent/outlook.ts<br/>1-3 day outlook from multiDayWindows (the dashboard's<br/>'best beach times for the next few days')"]
+  MCPR -->|"get_beach_outlook"| OUTLOOK
+  OUTLOOK -->|"loadPublicConditions: shared 120-s conditions cache or one build"| WATCHLOAD
   MCPR -->|"tools: list_beaches, get_beach_score,<br/>find_nearest_beach, best_beach_today"| AGENTQ["lib/agent/queries.ts + beachView.ts<br/>one read path for REST and MCP;<br/>scores read from recent views, at most ONE cold build per request"]
   AGENTQ -->|"beach directory + nearest to the shoreline"| LOC
   AGENTQ -->|"loadWatchView, cacheOnly for all but one beach<br/>(peek never builds or writes); summary, attribution, safety note added on top"| WATCHLOAD
@@ -121,13 +124,19 @@ adds the page link, a one-sentence summary, the attribution and the safety note
 ("Lifeguard flags and posted warnings always win."). `lib/agent/queries.ts` holds
 the list and nearest logic once, so REST and MCP cannot disagree. `/mcp` is a
 hand-written, stateless JSON-RPC handler (`lib/agent/mcp/server.ts`, spec
-2025-06-18): no session id, no Durable Object, no KV, JSON replies only. Rate
+2025-11-25, 2025-06-18 and 2025-03-26): no session id, no Durable Object, no KV.
+Every reply is buffered with a `Content-Length` (never chunked); a client that
+accepts only `text/event-stream` gets one SSE event. Rate
 limits run per IP before any work, as two budgets: REST 60 a minute and MCP 300 a minute, each
 a Workers Rate Limiting binding (`AGENT_RATE_LIMITER`, `AGENT_MCP_RATE_LIMITER`
 in wrangler.jsonc `ratelimits`) when bound, else an in-isolate token bucket.
-`/mcp` implements only protocol revision 2025-06-18, checks `Origin` before the
-rate limiter, and requires `MCP-Protocol-Version: 2025-06-18` on every request
-after `initialize`. Automatic Workers Cache is not enabled, so `Cache-Control`
+`initialize` echoes a client revision we serve, else answers the latest.
+`MCP-Protocol-Version` is ignored on `initialize`, optional after it, and a
+present value must be a served revision (400 otherwise). `/mcp` checks `Origin`
+before the rate limiter. `lib/agent/outlook.ts` serves the 1-3 day outlook
+(`get_beach_outlook` and `/api/v1/beaches/{slug}/outlook`) from the same
+multi-day windows the dashboard shows, through `loadPublicConditions` in
+`lib/watchLoad.ts` (one beach, at most one build). Automatic Workers Cache is not enabled, so `Cache-Control`
 on the answers is only a hint. The protection for the data sources is a rule: a
 request builds at most ONE beach cold (about 25 subrequests; Workers Free allows
 50). Every other beach in a comparison or a scored nearest list is read with

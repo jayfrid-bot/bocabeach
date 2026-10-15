@@ -12,6 +12,7 @@ vi.mock("@/lib/conditions", async (importOriginal) => {
 import { GET as listGET } from "@/app/api/v1/beaches/route";
 import { GET as beachGET } from "@/app/api/v1/beaches/[slug]/route";
 import { GET as nearestGET } from "@/app/api/v1/nearest/route";
+import { GET as outlookGET } from "@/app/api/v1/beaches/[slug]/outlook/route";
 import { getConditions } from "@/lib/conditions";
 import { peekWatchView } from "@/lib/watchViewCache";
 import { buildLlmsTxt } from "@/lib/agent/llmsTxt";
@@ -20,6 +21,7 @@ import { buildOpenApi } from "@/lib/agent/openapi";
 import {
   BEACH_LIST_QUERY_KEYS,
   NEAREST_QUERY_KEYS,
+  OUTLOOK_QUERY_KEYS,
   parseBool,
   parseInteger,
   parseLat,
@@ -128,6 +130,8 @@ describe("OpenAPI document", () => {
     expect(names("/nearest", "query")).toEqual([...NEAREST_QUERY_KEYS].sort());
     expect(names("/beaches/{slug}", "query")).toEqual([]);
     expect(names("/beaches/{slug}", "path")).toEqual(["slug"]);
+    expect(names("/beaches/{slug}/outlook", "query")).toEqual([...OUTLOOK_QUERY_KEYS].sort());
+    expect(names("/beaches/{slug}/outlook", "path")).toEqual(["slug"]);
     expect(params("/nearest").filter((p) => p.required).map((p) => p.name).sort()).toEqual(["lat", "lon"]);
     expect(params("/beaches/{slug}")[0].required).toBe(true);
   });
@@ -153,6 +157,14 @@ describe("OpenAPI document", () => {
     }
     expect(txt).toContain("Lifeguard flags and posted warnings always win.");
     expect(txt).toContain("Score by Is It Beach Day");
+  });
+
+  it("llms.txt names the outlook tool, the outlook route and the protocol revisions", () => {
+    const txt = buildLlmsTxt();
+    expect(txt).toContain("`get_beach_outlook`");
+    expect(txt).toContain("/api/v1/beaches/{slug}/outlook?days=");
+    expect(txt).toContain("2025-11-25, 2025-06-18, 2025-03-26");
+    expect(txt).toContain("check again the morning of");
   });
 });
 
@@ -184,6 +196,11 @@ describe("real answers fit the documented schemas", () => {
   it("GET /beaches/{slug}", async () => {
     check(await jsonOf(beachGET(req("/api/v1/beaches/boca-raton"), { params: Promise.resolve({ slug: "boca-raton" }) })), "BeachConditions");
   });
+  it("GET /beaches/{slug}/outlook, for every day count", async () => {
+    for (const n of [1, 2, 3]) {
+      check(await jsonOf(outlookGET(req(`/api/v1/beaches/boca-raton/outlook?days=${n}`), { params: Promise.resolve({ slug: "boca-raton" }) })), "BeachOutlook");
+    }
+  });
   it("GET /nearest, with and without scores", async () => {
     check(await jsonOf(nearestGET(req("/api/v1/nearest?lat=26.36&lon=-80.06&limit=5"))), "NearestResponse");
     check(await jsonOf(nearestGET(req("/api/v1/nearest?lat=26.36&lon=-80.06&limit=5&scores=true"))), "NearestResponse");
@@ -193,8 +210,15 @@ describe("real answers fit the documented schemas", () => {
       listGET(req("/api/v1/beaches?state=Atlantis")),
       beachGET(req("/api/v1/beaches/nope"), { params: Promise.resolve({ slug: "nope" }) }),
       nearestGET(req("/api/v1/nearest")),
+      outlookGET(req("/api/v1/beaches/nope/outlook"), { params: Promise.resolve({ slug: "nope" }) }),
+      outlookGET(req("/api/v1/beaches/boca-raton/outlook?days=9"), { params: Promise.resolve({ slug: "boca-raton" }) }),
     ];
     for (const r of bads) check(await jsonOf(r), "Error");
+  });
+  it("the outlook schema catches a drifted answer", async () => {
+    const body = await jsonOf(outlookGET(req("/api/v1/beaches/boca-raton/outlook"), { params: Promise.resolve({ slug: "boca-raton" }) }));
+    delete body.days[0].rating;
+    expect(validateJson(body, { $ref: "#/components/schemas/BeachOutlook" } as JsonSchema, spec)).not.toEqual([]);
   });
   it("the schema checker does catch a drifted answer", async () => {
     const body = await jsonOf(beachGET(req("/api/v1/beaches/boca-raton"), { params: Promise.resolve({ slug: "boca-raton" }) }));
