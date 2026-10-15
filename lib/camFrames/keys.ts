@@ -103,3 +103,69 @@ export function camPrefix(slug: string, camId: string): string {
   if (!isValidId(slug) || !isValidId(camId)) throw new Error("bad slug or cam id");
   return `${slug}/${camId}/`;
 }
+
+// --- Quality frames --------------------------------------------------------
+// The exact image behind a quality alert (docs/QUALITY_PLAN.md): the cam reader
+// sends a shrunk copy with the alert, and the app keeps it in the same bucket
+// under its own prefix, so it is never mistaken for an archive frame and never
+// collides with one:
+//
+//   quality/<slug>/<cam_id>/<utc_date>/<HHmmss>Z-<sha8>.jpg
+//
+// utc_date and HHmmss are the UTC time of the frame; sha8 is the first 8 hex
+// characters of the SHA-256 of THESE bytes (the shrunk copy, not the original).
+
+const QUALITY_KEY_RE =
+  /^quality\/([a-z0-9]+(?:-[a-z0-9]+)*)\/([a-z0-9]+(?:-[a-z0-9]+)*)\/(\d{4}-\d{2}-\d{2})\/([01]\d|2[0-3])([0-5]\d)([0-5]\d)Z-([0-9a-f]{8})\.jpg$/;
+
+export interface ParsedQualityKey {
+  slug: string;
+  camId: string;
+  utcDate: string;
+  sha8: string;
+}
+
+/** Build a quality-frame key from the frame's UTC time. Throws on malformed input. */
+export function buildQualityFrameKey(args: { slug: string; camId: string; atMs: number; sha256Hex: string }): string {
+  const { slug, camId, atMs, sha256Hex } = args;
+  if (!isValidId(slug) || !isValidId(camId)) throw new Error("bad slug or cam id");
+  if (!Number.isFinite(atMs)) throw new Error("bad time");
+  if (!/^[0-9a-f]{64}$/.test(sha256Hex)) throw new Error("bad sha256");
+  const d = new Date(atMs);
+  const p = (n: number) => String(n).padStart(2, "0");
+  const date = d.toISOString().slice(0, 10);
+  return `quality/${slug}/${camId}/${date}/${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}Z-${sha8(sha256Hex)}.jpg`;
+}
+
+/** Parse a quality-frame key, or null when it is not exactly the shape above. */
+export function parseQualityFrameKey(key: unknown): ParsedQualityKey | null {
+  if (typeof key !== "string" || key.length > 220) return null;
+  const m = QUALITY_KEY_RE.exec(key);
+  if (!m) return null;
+  const [, slug, camId, utcDate, , , , hash] = m;
+  if (slug.length > MAX_ID_LEN || camId.length > MAX_ID_LEN || !isCalendarDate(utcDate)) return null;
+  return { slug, camId, utcDate, sha8: hash };
+}
+
+export function isQualityFrameKey(key: unknown): key is string {
+  return parseQualityFrameKey(key) !== null;
+}
+
+/** A key the signed-image route may serve: an archive frame or a quality frame. */
+export function isSignableKey(key: unknown): key is string {
+  return isValidFrameKey(key) || isQualityFrameKey(key);
+}
+
+/** The slug and cam id of either kind of key, or null. */
+export function camOfKey(key: unknown): { slug: string; camId: string } | null {
+  const a = parseFrameKey(key);
+  if (a) return { slug: a.slug, camId: a.camId };
+  const q = parseQualityFrameKey(key);
+  return q ? { slug: q.slug, camId: q.camId } : null;
+}
+
+/** The R2 prefix that holds every quality frame of one cam. */
+export function qualityCamPrefix(slug: string, camId: string): string {
+  if (!isValidId(slug) || !isValidId(camId)) throw new Error("bad slug or cam id");
+  return `quality/${slug}/${camId}/`;
+}

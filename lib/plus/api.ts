@@ -8,7 +8,9 @@ import type { AlertPrefs, DeviceRecord, SunColorMinBand } from "@/lib/db/types";
 import type { ScoreProfile } from "@/lib/profile/types";
 import type { DaySummary, HistoryBestEver, HistoryRecords, HistoryVersions } from "@/lib/history/summary";
 import type { DayViewPayload } from "@/lib/history/dayView";
-import { readInstallToken, writeInstallToken } from "@/lib/plus/storage";
+import { readInstallToken } from "@/lib/plus/storage";
+import { claimBeforeWrite } from "@/lib/plus/installToken";
+import { CLIENT_CAP_HEADER, CLIENT_CAP_VALUE } from "@/lib/plus/clientCap";
 
 export interface PlusResult {
   ok: boolean;
@@ -49,23 +51,29 @@ export interface PresenceBody {
   source: "auto" | "manual";
 }
 
-/** Every Plus call carries the install token (Codex review #1), when this
- *  phone has one — `/api/live-activity/register`, `/end`, and `/api/hazards`
- *  require it once a device has a hash on file; every other route accepts it
- *  optionally and logs nothing. A phone with no token yet (never called
- *  POST /api/devices, or lost local storage) simply omits the header, same
- *  as before this existed. */
+/** Every Plus call carries the install token (Codex review #1) when this
+ *  phone has one. The phone makes the token itself (lib/plus/installToken.ts);
+ *  the server requires it for any change to a device row (`/api/devices`,
+ *  `/api/presence`, trial, unlock, push registration) and for
+ *  `/api/live-activity/*`, `/api/hazards` and `/api/history`. It is never
+ *  logged. With no saved token (storage refused it) the header is omitted. */
 function withInstallToken(init?: RequestInit): RequestInit | undefined {
   const token = readInstallToken();
-  // No token → leave `init` exactly as the caller passed it (including
-  // `undefined` for a bare GET) rather than manufacturing an empty object.
-  if (!token) return init;
+  const isWrite = (init?.method ?? "GET").toUpperCase() !== "GET";
+  // A bare read with no token is left exactly as the caller passed it.
+  if (!token && !isWrite) return init;
   const headers = new Headers(init?.headers);
-  headers.set("x-install-token", token);
+  // Writes say this build knows about install tokens, so a write that still
+  // arrives without one is not mistaken for an older app.
+  if (isWrite) headers.set(CLIENT_CAP_HEADER, CLIENT_CAP_VALUE);
+  if (token) headers.set("x-install-token", token);
   return { ...init, headers };
 }
 
 async function request(url: string, init?: RequestInit): Promise<PlusResult> {
+  // A write waits for the install-token claim (one at a time, shared by every
+  // caller) so it can never race it and be refused. Reads do not wait.
+  if ((init?.method ?? "GET").toUpperCase() !== "GET") await claimBeforeWrite();
   let res: Response;
   try {
     res = await fetch(url, withInstallToken(init));
@@ -83,11 +91,7 @@ async function request(url: string, init?: RequestInit): Promise<PlusResult> {
     device?: unknown;
     error?: unknown;
     pushReady?: unknown;
-    installToken?: unknown;
   };
-  // POST /api/devices mints this at most once per device — capture it the
-  // moment it arrives, whichever call site triggered the mint.
-  if (typeof obj.installToken === "string" && obj.installToken) writeInstallToken(obj.installToken);
   if (res.ok && obj.ok === true) {
     return {
       ok: true,
@@ -339,6 +343,8 @@ export function plusErrorMessage(error: string | null): string {
       return "Your purchase went through, but we couldn't confirm it yet. Tap Restore in a moment, or reopen the app.";
     case "store-restore-error":
       return "We couldn't reach the App Store. Check your connection and tap Restore again.";
+    case "no-token":
+      return "We could not confirm this is your phone. Close and reopen the app, then try again.";
     case "bad-request":
       return "Something about that request was wrong. Try again.";
     default:

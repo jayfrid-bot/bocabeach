@@ -155,3 +155,39 @@ describe("storage", () => {
     expect((await get(await signedUrl())).status).toBe(503);
   });
 });
+
+describe("a quality frame (the exact image kept with an alert)", () => {
+  const Q = "quality/boca-raton/boca-south/2026-10-11/140512Z-01234567.jpg";
+
+  it("is served like an archive frame", async () => {
+    const bytes = fakeJpeg(8_000, 5);
+    bucket.objects.set(Q, { bytes });
+    const res = await get(await signedUrl(Q));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/jpeg");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes);
+  });
+
+  it("needs a good signature for ITS key: another key's signature does not open it", async () => {
+    bucket.objects.set(Q, { bytes: fakeJpeg(8_000, 5) });
+    const url = await signedUrl(K);
+    url.searchParams.set("k", Q);
+    expect((await get(url)).status).toBe(403);
+  });
+
+  it("is blocked at once when its cam stops being archived, and 404s for an unknown cam or a gone object", async () => {
+    bucket.objects.set(Q, { bytes: fakeJpeg(8_000, 5) });
+    ctl.disabled.add("boca-south");
+    expect((await get(await signedUrl(Q))).status).toBe(403);
+    ctl.disabled = new Set();
+    const unknown = "quality/boca-raton/no-such-cam/2026-10-11/140512Z-01234567.jpg";
+    bucket.objects.set(unknown, { bytes: fakeJpeg(8_000, 5) });
+    expect((await get(await signedUrl(unknown))).status).toBe(404);
+    bucket.objects.delete(Q);
+    expect((await get(await signedUrl(Q))).status).toBe(404);
+  });
+
+  it("a path trick under quality/ is not a key at all", async () => {
+    await expect(signedUrl("quality/boca-raton/../x/2026-10-11/140512Z-01234567.jpg")).rejects.toThrow();
+  });
+});

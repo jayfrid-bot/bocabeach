@@ -4,9 +4,10 @@
 // in-memory backend because vitest sets VITEST.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { POST as devicesPost, GET as devicesGet } from "@/app/api/devices/route";
+import { POST as rawDevicesPost, GET as devicesGet } from "@/app/api/devices/route";
+import { tokenCarrier } from "@/lib/db/installTokenTestKit";
 import { POST as trialPost } from "@/app/api/devices/trial/route";
-import { POST as unlockPost } from "@/app/api/devices/unlock/route";
+import { POST as rawUnlockPost } from "@/app/api/devices/unlock/route";
 import { POST as presencePost, DELETE as presenceDelete } from "@/app/api/presence/route";
 import { getStore } from "@/lib/db/store";
 import { resetMemoryStore } from "@/lib/db/memoryStore";
@@ -14,6 +15,14 @@ import { resetMemoryRateLimit } from "@/lib/plus/rateLimit";
 import { MAX_ARM_MS } from "@/lib/db/plus";
 
 const DEV = "11111111-2222-4333-8444-555555555555";
+
+// Remembers the install token the first /api/devices call returns and sends it on
+// later calls, as the app does. Auth itself is covered by installTokenGate.test.ts.
+const tokenJar = new Map<string, string>();
+const devicesCarrier = tokenCarrier(rawDevicesPost, tokenJar);
+const unlockCarrier = tokenCarrier(rawUnlockPost, tokenJar);
+const devicesPost = devicesCarrier.call;
+const unlockPost = unlockCarrier.call;
 const HOUR = 3600 * 1000;
 
 /** The app shell's User-Agent tag (capacitor.config appendUserAgent). The trial
@@ -28,6 +37,7 @@ function post(url: string, body: unknown, ua: string = APP_UA, ip?: string): Req
 }
 
 beforeEach(() => {
+  devicesCarrier.reset(); // clears the shared jar
   resetMemoryStore();
   resetMemoryRateLimit();
 });
@@ -144,34 +154,24 @@ describe("POST /api/devices", () => {
 
   // --- Install token identity (Codex review #1) -----------------------------
   describe("installToken", () => {
-    it("mints one on the first call for a device and never again on later calls", async () => {
-      const first = await json(
-        await devicesPost(post("https://x/api/devices", { deviceId: DEV, platform: "ios" })),
-      );
-      expect(typeof first.installToken).toBe("string");
-      expect((first.installToken as string).length).toBeGreaterThan(0);
-
-      const second = await json(
-        await devicesPost(post("https://x/api/devices", { deviceId: DEV, tz: "America/New_York" })),
-      );
-      expect(second.installToken).toBeUndefined();
+    // The phone makes its own token; the server never does. The gate itself is
+    // covered in installTokenGate.test.ts. These check the basics through this
+    // file's carrier.
+    it("never makes a token for a request that has none, and leaves the row unclaimed", async () => {
+      const res = await json(await rawDevicesPost(post("https://x/api/devices", { deviceId: DEV, platform: "ios" })));
+      expect(res.installToken).toBeUndefined();
+      expect(await (await getStore()).getInstallTokenHash(DEV)).toBeNull();
     });
 
-    it("two different devices get two different tokens", async () => {
-      const DEV2 = "22222222-2222-4333-8444-555555555555";
-      const a = await json(await devicesPost(post("https://x/api/devices", { deviceId: DEV, platform: "ios" })));
-      const b = await json(await devicesPost(post("https://x/api/devices", { deviceId: DEV2, platform: "ios" })));
-      expect(a.installToken).not.toBe(b.installToken);
-    });
-
-    it("stores only the hash — the raw token never appears in the stored device row", async () => {
-      const res = await json(
-        await devicesPost(post("https://x/api/devices", { deviceId: DEV, platform: "ios" })),
-      );
-      const store = await getStore();
-      const hash = await store.getInstallTokenHash(DEV);
+    it("binds the hash of the token the phone sent, and nothing but the hash is stored", async () => {
+      const sent = "phone-made-token-" + "k".repeat(30);
+      const req = post("https://x/api/devices", { deviceId: DEV, platform: "ios" });
+      req.headers.set("x-install-token", sent);
+      const res = await json(await rawDevicesPost(req));
+      expect(res.installTokenBound).toBe(true);
+      const hash = await (await getStore()).getInstallTokenHash(DEV);
       expect(hash).toBeTruthy();
-      expect(hash).not.toBe(res.installToken);
+      expect(hash).not.toBe(sent);
     });
   });
 });

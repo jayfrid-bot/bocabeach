@@ -158,12 +158,15 @@ flowchart LR
   HIST -->|"sun_event_predictions (migrations/0013): the sunrise + sunset the card shows<br/>(event kept until its golden window closes — lib/sunCardEvent.ts, shared with the card),<br/>one row per beach per archive hour, score + every input, one multi-row upsert,<br/>same assembleSunEventQuality as the card and the alert; retried once inline,<br/>never fails the beach_hourly row; observed_* filled later by SUNOBS"| D1
   SDATA -->|"history[] + latest/morning per-cam reads, read through the same<br/>lib/sources/camFeed.ts URL resolver the live sources use"| HIST
   HIST -->|"cam_observations (every history[] read not yet stored: crowd, seaweed, water,<br/>clarity, underwater uw) + cam_reads (per-cam detail), migrations 0006/0014,<br/>INSERT OR IGNORE, vision-cam beaches only (config/vision-cams.json),<br/>lib/history/camObservations.ts; a feed failure never fails the beach_hourly row"| D1
+  HIST -->|"quality watchdog, after the row lands (lib/quality/watchdog.ts, section 4):<br/>this hour vs the last; an unexplained jump in score, surf, sand or clarity<br/>becomes a quality_alerts row and, within the push rules, a QUEUED push slot (no APNs here); failure never fails the row"| D1
+  HISTCRON -->|"after the archive pass, every tick: POST /api/quality/drain, x-cron-secret<br/>sends the queued owner pushes (section 4); a failed archive pass does not skip it"| QDRAIN["/api/quality/drain<br/>≤3 pushes, 5 s per APNs call, section 4"]
+  SARG -->|"a held seaweed jump the second reader (Clef or Gemini) does not back:<br/>POST /api/quality/alerts, Bearer QUALITY_INGEST_TOKEN (section 4)"| QALERT["/api/quality/alerts<br/>owner alert + review screen, section 4"]
   BACKFILL["scripts/backfill_cam_history.mjs (one-shot; shares<br/>lib/history/camObservationRow.mjs with the archiver)"] -->|cam_observations| D1
   SARG -->|reads| ACAMS["config/archive-cams.json<br/>the 11 archived cams, generated from config/locations.ts<br/>by scripts/gen_archive_cams.ts (a cam with archive false is left out)"]
   SARG -->|"every tick, vision on or off: GET /api/cam-frames/slots?slug (one per beach, fails open)<br/>then POST /api/cam-frames?slug&amp;cam&amp;frameAt for cams not yet filled<br/>Bearer INGEST_TOKEN, raw JPEG, best-effort, 15 s timeout, 90 s budget per tick<br/>(scripts/cam_seaweed.py: the stills the vision loop fetched are uploaded after its reads,<br/>archive_pass fetches the rest; frameAt = latest.json timestamp or the uw-frame meta time)"| CAMINGEST["/api/cam-frames (POST) and /api/cam-frames/slots (GET)<br/>constant-time auth; cam must be in the manifest (404 unknown, 403 archive:false);<br/>Content-Length and streamed 600 KB cap; JPEG magic, at least 10 KB; sha-256;<br/>atomic slot claim with a random claim id = one shot per cam per slot of display time<br/>(slot = UTC hour; inside the beach golden-hour windows, sunrise -20/+40 min and sunset -40/+20 min, a 10-minute slot: lib/camFrames/golden.ts)"]
   CAMINGEST -->|"INSERT ... ON CONFLICT DO NOTHING (state pending, claim_id), else take over a pending claim older than 10 min;<br/>R2 put; then ready WHERE claim_id matches (an uncertain finalize is re-read, never rolled back blind);<br/>an unchanged sha vs the newest ready frame is dropped (advisory);<br/>cam_frames, migrations/0016 and 0017 (slot_kind)"| D1
   CAMINGEST -->|"PUT slug/cam/local_date/HHmmZ-sha8-claim8.jpg"| CAMR2[("R2 bucket isitbeachday-cam-frames<br/>binding CAM_FRAMES<br/>lifecycle rule deletes after 367 days")]
-  HISTCRON -->|"once a day, on the 08:17 UTC tick, before the archive call; POST x-cron-secret"| CAMPURGE["/api/cam-frames/purge<br/>at most 10 D1 statements: pending rows older than 1 h,<br/>then rows older than 365 days by received_at_utc<br/>(DELETE of 5,000 rows per statement)"]
+  HISTCRON -->|"once a day, on the 08:17 UTC tick, before the archive call; POST x-cron-secret"| CAMPURGE["/api/cam-frames/purge<br/>at most 10 D1 statements: pending rows older than 1 h,<br/>then rows older than 365 days by received_at_utc<br/>(DELETE of 5,000 rows per statement)<br/>also: push slots sent or unknown older than 30 days,<br/>owner enrollment counters older than 2 days"]
   CAMPURGE -->|"deletes cam_frames rows; R2 objects expire on their own two days later"| D1
   SARG -->|"fallback vision read, only when CLEF_FALLBACK=1 and both Gemini models fail (order: Gemini, Clef, Groq, OpenRouter):<br/>POST /api/vision/clef, Bearer INGEST_TOKEN, JSON {kind surface or underwater, base64 JPEG shrunk to 768 px / q60}<br/>(scripts/cam_seaweed.py; 30 s timeout, one attempt; 401, 429, 502, 503 = provider failed, the chain moves on to Groq;<br/>a frame Clef calls unreadable = NO reading: the chain stops and the cam is skipped this tick, no frameSha)"| CLEFAPI["/api/vision/clef (POST)<br/>constant-time auth; 400 KB streamed cap; AI binding present else 503;<br/>the backtest's questions and answer mapping (lib/vision/clef.ts), after a strict check of every probability, index and noul;<br/>502 on a model error, a malformed reply or a missing field, never an invented value;<br/>reply = the assess() reading shape + provider, model, usage, latencyMs;<br/>one log line per UTC day on the first success (model, kind, latency, tokens only)"]
   CLEFAPI -->|"env.AI.run(@cf/cloudflare/clef), Clef 27B only"| WAI[["Workers AI<br/>binding AI (wrangler.jsonc)<br/>Clef 27B @cf/cloudflare/clef"]]
@@ -426,12 +429,12 @@ below.
 ```mermaid
 flowchart TD
   subgraph app [App]
-    OPEN[Open / foreground] -->|deviceId, profile, prefs| DEV["/api/devices<br/>POST upsert · GET read"]
-    OPEN -->|fix: lat, lon, accuracy| PRES["/api/presence<br/>POST arm · DELETE disarm"]
-    TRIAL["/api/devices/trial<br/>3-day trial, once (fallback when billing is off)"]
-    UNLOCK["/api/devices/unlock<br/>code → 365-day plan"]
+    OPEN[Open / foreground] -->|deviceId, profile, prefs| DEV["/api/devices<br/>POST upsert (install token) · GET read"]
+    OPEN -->|fix: lat, lon, accuracy| PRES["/api/presence<br/>POST arm · DELETE disarm (install token)"]
+    TRIAL["/api/devices/trial<br/>3-day trial, once (fallback when billing is off) (install token)"]
+    UNLOCK["/api/devices/unlock<br/>code → 365-day plan (install token)"]
     BUY["/api/devices/purchase<br/>after a store purchase or Restore"]
-    REG["/api/push/register-native<br/>/api/push/unregister-native"]
+    REG["/api/push/register-native<br/>/api/push/unregister-native<br/>(install token; first call claims one)"]
     HAZ2["/api/hazards<br/>POST — native-only, rate-limited<br/>'where you stand' lightning + rain"]
     LAREG["/api/live-activity/register<br/>POST — native-only, rate-limited<br/>start/rotate a Beach Session token"]
     LAEND["/api/live-activity/end<br/>POST — native-only, rate-limited<br/>Off / dismiss"]
@@ -464,7 +467,7 @@ flowchart TD
   ADMINSCANS -->|read the funnel| D1
   STORE -->|tests, next dev w/o bindings| MEM[(memory store<br/>.plus-store.json fallback)]
 
-  KVLEGACY[(PUSH_KV<br/>legacy push-token subs)] -.imported once per device.-> STORE
+  KVLEGACY[(PUSH_KV<br/>legacy push-token subs<br/>no longer read)]
 
   HAZ2 -->|"per fix"| STRIKES
   HAZ2 -->|"per fix or beach radar"| RAIN
@@ -740,31 +743,172 @@ so they don't collide, but it means one namespace serves two unrelated jobs.
 Worth splitting if either one grows enough to matter.
 
 **Install token identity (`devices.token_hash`/`token_used_at`,
-migrations/0008_device_tokens.sql).** `POST /api/devices` mints a 32-byte
-install token the first time it sees a device row with no `token_hash` yet
-(first minter wins), returns it once as `installToken`, and stores only its
-sha256 hash. `/api/live-activity/register`, `/end`, and `/api/hazards`
-require a matching `x-install-token` header once a device has a hash on file
-(401 `no-token`), or `token-required` when it doesn't yet; every check goes
-through the shared `lib/db/installTokenAuth.ts` `requireInstallToken`, which
-also stamps `token_used_at` (once, on the first successful check for a
-token — kept for cheap diagnostics only; nothing gates on it). See that
-file's THREAT MODEL comment for the full model.
+migrations/0008_device_tokens.sql).** The device id is not a secret (the app
+shows it as the "Support ID"), so the install token is what proves a caller is
+the phone that owns a device row.
 
-**No server-side token recovery.** There is deliberately no route to
-recover a lost install token. A device that loses its token after it has
-already been used (reinstall, cleared storage) reads back `no-token` and the
-client (`lib/plus/client.ts` `ensureInstallToken`/`bootstrapInstallToken`)
-degrades to a plain "not available" state for Live Activity / Where-you-
-stand — nothing else (Plus alerts, presence, prefs) depends on this token.
-On a `no-token` 401 from `/api/hazards`, the client clears its cached token,
-retries the `POST /api/devices` bootstrap once (which answers with no token
-since the hash already exists), and latches "not available" for the rest of
-the session if nothing new arrives — it does not keep hammering the server.
-A reinstall gets a fresh deviceId, and RevenueCat restore-purchases (keyed
-off the store account, not deviceId) carries the Plus entitlement back
-without the old token. App Attest (device-bound auth) is the planned
-upgrade — see `docs/BUILD_PLAN.md`'s Later section.
+*The phone makes the token.* `lib/plus/installToken.ts` makes 32 random bytes
+with `crypto.getRandomValues`, **saves them to local storage first**, and only
+then sends them as `x-install-token`. If storage will not keep the token, no
+claim is sent. The server stores only the sha256 hash and binds it with one
+conditional statement (`DeviceStore.claimInstallToken`). **The server never
+makes a token.** A token that is sent but cannot be bound is a 401 (with
+enforcement on or off), and a successful bind is reported as
+`installTokenBound: true` in the response; the phone saves its "claimed" flag
+from that signal alone, never from a bare 200. The claim is idempotent: presenting the hash that is already on file succeeds again, so a
+lost response, a killed app or a retry cannot lock the phone out. A 401 never
+deletes the saved token. One claim runs at a time (single flight), and every
+write the app makes waits for it (`lib/plus/api.ts`), so a queued write cannot
+race the claim and be refused.
+
+*Which rows a claim can take.* A new id: created with the hash. A row with the
+same hash: success. A row with a different hash: refused. A row with **no**
+hash yet: if it has a push token, the request must present that same push token
+as proof (the app reads it from its `native-push:<slug>` marker and sends it as
+`pushProof` to `/api/devices`, or as the registration's own `token` to
+`/api/push/register-native`); if it has no push token, the first claimer wins.
+That last case is the accepted residual risk for a row that was never active.
+It is low value, because such a row has no push target to redirect. In
+production there are 10 rows with no hash and 1 of them has a push token.
+
+*The guard rides inside the write.* No route reads "is this caller allowed?" and
+then writes. `lib/db/installGuard.ts` builds an `InstallGuard` from the header,
+and the store method that does the write applies it in the same statement
+(`d1Store.ts` `guardSql`, spliced into the `WHERE`; `memoryStore` does the same
+check with no `await` in between). A refused write changes nothing and throws
+`InstallGuardDenied` (401 `no-token`). `claimTrial`, `setPresence`,
+`clearPresence`, `upsertDevice`, `transferPushToken` and `clearPushRegistration`
+all take it. The one read left in a few routes (for example the entitlement
+check in `/api/presence`) is business logic, not authorization. The SQL compares
+two sha256 digests; the raw token never reaches the database.
+
+Route auth, by `x-install-token`:
+
+| Route | Token | If the row has a different token, or none yet |
+|---|---|---|
+| `POST /api/push/register-native` (with `deviceId`) | required when enforcing; also binds it (minting route) | 401 `no-token`, nothing written. A token sent that cannot be bound is 401 even with enforcement off. No token sent and enforcement off: goes through, row stays unclaimed |
+| `POST /api/push/register-native` (no `deviceId`, old builds) | none | n/a: only writes the `legacy:<push token>` row; holding the push token is the proof. Uses the same atomic move |
+| `POST /api/push/unregister-native` | none: the **push token** is the authorization (see "Safe unregister") | n/a. Never 401. A failed legacy-KV delete is a 500, not a success |
+| `POST /api/devices` (prefs, home beach, profile, tz) | required; also binds it (minting route) | 401 `no-token`, nothing written |
+| `POST /api/devices/trial`, `/unlock` | required, always | 401 `no-token` (`unlock` checks the code first). A row with no token yet gets 401; the app claims through `/api/devices` and retries |
+| `POST`/`DELETE /api/presence` | required, always | 401 `no-token` |
+| `POST /api/live-activity/register`, `/end`; `POST /api/hazards`; `POST /api/history/[slug]` and `/day` | required (`requireInstallToken`) | 401 `no-token`, or `token-required` when the row has none |
+| `GET /api/devices` | none (read only) | n/a |
+| `POST /api/devices/purchase` | none, on purpose: writes only what RevenueCat says about that id right now, and must work for Restore right after a reinstall | n/a |
+| `POST /api/open` | none, on purpose: writes only the `app_opens` counter, fires before a token exists | n/a |
+| `/api/revenuecat/webhook`, `/api/push/run`, `/api/push/test`, `/api/sun-observations`, `/api/admin/*` | shared secrets, not device tokens | n/a |
+
+*Push-token transfer (accepted risk).* Moving a push token from one row to
+another happens when a reinstall gets a new device id but keeps its APNs/FCM
+token, or when an old build's `legacy:` row is adopted. Authorization for the
+move is **possession of the push token**: the caller must send it, and a
+caller that holds it can take it over from the row that has it without that
+row's install token. We accept this because a push token is high-entropy,
+never shown to a user, and only obtainable from the phone, from APNs/FCM, or
+from our own database; a reinstalled phone has lost its old install token, so
+requiring it would strand the phone with no alerts. The move itself is atomic:
+`DeviceStore.transferPushToken` is one D1 batch (every other row lets go of
+the token, a legacy row is deleted, the destination takes it), and a failure
+leaves every row as it was. migrations/0020_push_token_unique.sql adds a
+unique index on `push_token`, after clearing existing duplicates so the row
+that changed most recently keeps the token; a second holder cannot appear. The
+destination write is still guarded by its own install token, so a call without
+it detaches nobody. The legacy no-`deviceId` path uses the same move.
+
+*No proof laundering.* In the same transfer statement batch, a destination row
+that has **no install hash** may take a push token only if its current push
+token is NULL or already equals the one presented (`UPSERT_DEVICE` ?34 and the
+detach statements' `NOT EXISTS` clause; the memory store checks the same).
+Without it, a tokenless caller (allowed while enforcement is off) could swap
+the row's push token P for their own Q, then "prove" Q and claim the row. The
+sequence P, then Q, then claim is a test (`installTokenGate.test.ts`,
+`installTokenSql.test.ts`).
+
+*Safe unregister.* `POST /api/push/unregister-native` is authorized by the push
+token alone, with or without an install token and with enforcement on or off.
+All it can do is turn alerts OFF for the phone that holds that token, and it is
+what lets an older app (which has no install token to send) switch alerts off
+after enforcement is on; without it an old app would believe alerts were off
+while the server kept sending them. The route clears D1 first, then deletes the
+legacy KV record, and a KV failure is a 500, never a 200.
+
+*No legacy KV importer.* `/api/push/run` does not import KV subscriptions into
+D1, and nothing else does. A perpetual importer let a stale or lagging KV record
+resurrect alerts a phone had turned off (KV deletes and lists are eventually
+consistent), and a one-off route had the same race against a concurrent
+unregister. Production's `PUSH_KV` held exactly 2 legacy native subscriptions
+and both were already in D1, so there is nothing left to import. The KV records
+stay in place (harmless: nothing reads them); unregister still deletes them and
+a failed delete is a 500. (`DeviceStore.importLegacy` remains in the store as an
+unused method with its own tests.)
+
+*Fail closed.* `getStore()` serves the memory store only in development and
+tests. In production (`NODE_ENV=production`) with no D1 binding it throws
+`StoreUnavailableError` and the routes answer 503 `store-unavailable`; an empty
+stand-in store would make every real device look unclaimed.
+
+*Logs.* No install token, hash or push token is logged. Legacy device ids
+contain the push token (base64url), so push/run and alerts/run log them as
+`redactDeviceId` (`legacy:` plus a short digest). The push routes return a
+generic error, never the backend's message.
+
+**Staged rollout: `INSTALL_TOKEN_ENFORCE`** (env var, default off).
+- *Off:* every route accepts a request with no token exactly as before this
+  change, but still verifies a token when one is sent (a wrong or unbindable
+  token is 401), and the minting routes still claim. A tokenless request to a
+  minting route leaves the row unclaimed; the server never makes a token.
+  Every request that arrives without a token logs one line,
+  `{"event":"install_token_missing","route":"/api/...","enforce":false,"clientCap":false}`
+  (no id, no token). `clientCap` is true when the client sent
+  `x-client-cap: install-token-v1`, which every current app build sends; so
+  `clientCap:false` lines are older apps, and `clientCap:true` lines are current
+  apps whose storage refused a token.
+- *On:* no valid token, no write. A missing token, a wrong token, and a row
+  with no token yet are all 401 on every route in the table above, except
+  unregister, which stays open to the push token (see "Safe unregister").
+- *Gate for turning it on:* the count of `install_token_missing` lines with
+  `clientCap:false` is near zero over **7 days** (not 48 hours: a dormant app
+  contributes nothing to the log until it is opened, and the version check only
+  runs on a later resume). Because unregister no longer needs the install token,
+  an old app that stays dormant can still switch its alerts off after the flip;
+  what it loses is writes (prefs, presence, registration) until it reloads.
+  Turning the flag back off is a one-line rollback.
+
+**Deploy order.**
+1. `wrangler d1 migrations apply isitbeachday-plus --remote` (applies
+   `0020_push_token_unique.sql`). It must land BEFORE the new code: until then
+   the unique-token guarantee does not exist. `npm run check:mobile` only
+   applies migrations to the local database.
+2. Deploy the code with `INSTALL_TOKEN_ENFORCE` unset.
+3. Watch the missing-token log for 7 days, then set `INSTALL_TOKEN_ENFORCE=on`.
+
+**No server-side token recovery.** There is deliberately no route to recover a
+lost token. A phone that loses its saved token but keeps its device id is
+refused on every route that changes its row; `enableNative` and
+`disableNative` show a plain error, and Live Activity / Where-you-stand show
+"not available". The device id sits in the same local storage as the token, so
+losing one normally loses both and the app starts over as a new device. A
+reinstall gets a fresh deviceId, and RevenueCat restore-purchases (keyed off
+the store account, not deviceId) carries the Plus entitlement back. App Attest
+(device-bound auth) is the planned upgrade; see `docs/BUILD_PLAN.md`'s Later
+section.
+
+**Turning alerts off.** `disableNative` keeps alerts shown as on until the
+server confirms the unregister. If the call fails (offline, 5xx), the push
+token goes into a queue (`bd:pending-unregister`), the screen says so, and the
+call is retried by an app-wide hook (`lib/push/usePushQueueRetry.ts`, mounted
+in the root layout): on launch, when the phone comes back online, and on every
+return to the foreground. A trigger that arrives while a pass is running
+schedules one more pass after it. Enable, disable and the retry all go through
+ONE app-wide queue (`lib/push/native.ts` `runSerial`; one device per app
+install, and the server row is keyed by device id, not push token), and the
+whole enable lifecycle runs inside it, including getting the push token from the
+OS. Each enable and disable takes a generation number once, when it is asked
+for, and every step checks it before it reaches the server: an enable still
+waiting on APNs when a disable is asked for wakes up, sees it was overtaken and
+sends nothing. A step that has already reached the server always leaves the
+local marker behind so the disable queued behind it can turn it off. A 401 is
+not queued, because it would never succeed.
 
 **"Last N days" history (`/api/history/[slug]`, docs/HISTORY_AND_IMAGERY_
 PLAN.md Part A).** A Plus-only, read-only look at the `beach_hourly` archive
@@ -877,6 +1021,112 @@ report always calls these installs *probable*. What we keep about a network is a
 salted, truncated hash of the IP and nothing else, swept once the six-hour
 window has passed. `/api/admin/scans` reads the whole chain in two queries.
 
+## 4. Data-quality loop — catch, check, confirm, learn
+
+The loop that stops a wrong number from reaching the beach unseen (plan:
+`docs/QUALITY_PLAN.md`, phase 1). Two things **catch** a suspect number, a
+second reader **checks** the cam one, the owner **confirms** on a phone, and
+every answer is **kept** as a label. The owner side sits behind one gate: an
+**owner token**, handed out once when the phone enrolls with the
+`OWNER_ENROLL_CODE` secret, and kept on the server only as a SHA-256
+(`owner_sessions`, `lib/quality/owner.ts`). A device id proves nothing.
+
+```mermaid
+flowchart TD
+  subgraph catch [Catch and check]
+    SARG["sargassum.yml → scripts/cam_seaweed.py<br/>a seaweed jump to moderate or high is HELD<br/>(confirm_seaweed_jumps)"]
+    SECOND["scripts/quality_watch.py second opinion on the SAME image,<br/>for EVERY read still held, BEFORE confirmation across cams (so a cam that just became disputed cannot confirm another);<br/>exactly ONE provider attempt, at most 6 a tick:<br/>claim from Gemini, Groq or OpenRouter → Clef · claim from Clef → Gemini<br/>agrees → confirmedBy second-opinion:provider · disagrees → stays held,<br/>cam DISPUTED for the day, owner alert · fails or unreadable → nothing"]
+    HIST["POST /api/history/archive<br/>(workers/history-cron, every minute)<br/>after each beach_hourly row lands"]
+    WATCH["lib/quality/watchdog.ts + jumps.ts<br/>this hour vs the last (at most 2 h apart):<br/>score drop ≥15 · surf change ≥2 ft · sand change ≥10 F · clarity drop ≥15<br/>a cause explains a jump only if the signal-to-cause matrix allows it AND it<br/>pushed the number that way; a score drop's cause is its largest DECLINE"]
+  end
+
+  SARG --> SECOND
+  PREV["fetch_prev: last published feed file per beach<br/>404 = new beach (start empty) · any other failure: retry once, then ABORT the tick:<br/>nothing written, archive still runs, exit 1 (the branch keeps its last good files)"] --> SARG
+  HIST --> WATCH
+  SECOND -->|"POST /api/quality/alerts, Bearer QUALITY_INGEST_TOKEN:<br/>claim and its exact identity (cam, frame hash or time, claimedAt: all required), second opinion, other cams, frame SHA-256,<br/>the exact still (≤150 KB, base64)"| INGEST["/api/quality/alerts<br/>constant-time auth, 400 KB body cap, strict validation (lib/quality/ingest.ts):<br/>the claim identity is checked against the image and times sent; the dedupe key includes claimedAt; the local date is the one of claimedAt;<br/>disagreements only, at most 20 alerts per beach per hour (inside the INSERT);<br/>keeps the still in R2 (lib/quality/frameUpload.ts)"]
+  SECOND -.->|"POST failed or no token: queue in the feed's pendingAlerts,<br/>retry every tick until 2xx, drop after 24 h"| SECOND
+  INGEST -->|"put quality/slug/cam/date/HHmmssZ-sha8.jpg<br/>(its own key shape; best-effort, a failure drops only the picture)"| CAMR2Q[("R2 bucket isitbeachday-cam-frames<br/>binding CAM_FRAMES")]
+  INGEST --> REC["lib/quality/alerts.ts recordAlert<br/>ONE D1 batch: the alert INSERT and (lib/quality/pushPolicy.ts + pushSlots.ts)<br/>the slot INSERT, if the beach is watched (vision cams + boca-raton) and it is not 9 PM to 7 AM ET:<br/>at most 3 a day, not the same beach and signal within 3 h, alert open and under 30 min old.<br/>A retry that finds the alert without a slot takes the missing one. Sends NOTHING."]
+  WATCH --> REC
+  REC -->|"INSERT ... ON CONFLICT(dedupe_key) DO NOTHING;<br/>slot: conditional INSERT, UNIQUE (owner_day, slot)"| QD[("D1: quality_alerts · quality_push_slots<br/>quality_labels · quality_overrides · owner_sessions<br/>owner_enroll_attempts · migrations/0019")]
+
+  subgraph drain ["Drain: its own request, its own subrequest budget"]
+    CRONQ["workers/history-cron, every minute,<br/>AFTER the archive pass (even if it failed)"]
+    DRAIN["POST /api/quality/drain, x-cron-secret CRON_SECRET<br/>lib/quality/drain.ts: only OPEN alerts, at most 3 pushes, none in quiet hours,<br/>stale (30 min) dropped. CLAIMS each push (queued → attempting, attempt id) BEFORE APNs;<br/>finalizes or releases only WHERE the attempt id matches; release only on a definitive Apple refusal (an HTTP status);<br/>no answer (timeout, network) stays attempting; an attempt older than 10 min → unknown, never re-sent"]
+  end
+  CRONQ --> DRAIN
+  DRAIN <-->|"claim, mark sent / release by attempt id, mark unknown"| QD
+  DRAIN -->|"lib/quality/notify.ts: ONLY the push token on an owner session<br/>(never the general devices table), ≤3 phones, 5 s timeout per call"| APNSQ[["APNs (fetch)<br/>tap opens /admin/review?alert=id"]]
+
+  subgraph confirm ["Confirm: owner screens, public shells, never framed"]
+    REVIEW["/admin/review<br/>components/admin/QualityReview.tsx<br/>enroll from #enroll=code (fragment only) or the Owner code box (a stranger sees only that box) · fresh push token from the native plugin<br/>frame, one sentence, Right / Wrong, one-tap correct value · shows a push that may not have arrived"]
+    REPORT["/admin/report<br/>components/admin/ReportConditions.tsx<br/>seaweed, clarity, surf, sand, note"]
+    ENTRY["in the iPhone app: tap the Support ID line 5 times in 3 s<br/>(lib/quality/ownerEntry.ts) → web view goes to /admin/review"]
+    LINK["beach page footer link<br/>shown only after the owner screen has worked on the phone<br/>(local storage hint, no request)"]
+  end
+  APNSQ -.->|"tap: lib/push/tapTarget.ts allows only /, a real /beach (bundled slug set, lazy lookup for a newer beach, else /), /admin/review?alert=id, /admin/report"| REVIEW
+  ENTRY -.-> REVIEW
+  LINK -.-> REPORT
+
+  subgraph ownerapi ["Owner routes: POST, Authorization Bearer owner token, no-framing headers, 8 KB streaming body cap"]
+    OENROLL["/api/quality/owner/enroll<br/>code in the BODY, constant-time, 5/h per address, 20/h in all<br/>(atomic D1 counters, owner_enroll_attempts); one active session per device"]
+    OCHECK["/api/quality/owner/check"]
+    OLIST["/api/quality/owner/list<br/>open alerts and recent answered ones, queried separately (an open one is never buried); the kept still, else the frame by SHA-256,<br/>else the nearest saved frame; signed 15-min image link"]
+    OANS["/api/quality/owner/answer<br/>lib/quality/answer.ts: ONE D1 batch"]
+    OREP["/api/quality/owner/report<br/>lib/quality/report.ts"]
+    OPUSH["/api/quality/owner/push-token<br/>the phone's APNs token, stored on its session, unique across active sessions"]
+  end
+  REVIEW --> OENROLL
+  REVIEW --> OLIST
+  REVIEW --> OANS
+  REVIEW --> OPUSH
+  REPORT --> OREP
+  REVIEW --> OCHECK
+  OENROLL -->|"session: SHA-256 of a random 32-byte token"| QD
+  OPUSH --> QD
+  OLIST --> QD
+  OLIST -->|"cam_frames lookup (fallback when no kept still)"| D1CF[("D1: cam_frames")]
+  OLIST -->|"img src: signed 15-min link to the kept still, else the archived frame"| IMGAPI2["/api/cam-frames/img<br/>serves archive keys and quality/ keys alike;<br/>the cam must still be archived"]
+  IMGAPI2 -->|get| CAMR2Q
+  OANS -->|"label + alert status + override in ONE batch; a second tap supersedes the first.<br/>The override binds to the EXACT claim (cam, frame hash or time, claimedAt):<br/>publish (Right, or Wrong with a corrected moderate/high) or reject (Wrong with none/low).<br/>Written only for a claim scored today (beach-local date of claimedAt) on an alert not expired; else the label only."| QD
+  OREP -->|"one label per signal, nearest frames of each cam, what beach_hourly last showed"| QD
+
+  subgraph learn [Honored live and kept]
+    CONDQ["lib/conditions.ts → lib/sources/sargassum.ts<br/>cache key includes overridesVersion, so the NEXT request after an answer builds fresh;<br/>applySeaweedOverrides: publish that frame's claim, or reject it, never another frame"]
+    LABELS["quality_labels<br/>feed the golden set and the scorecard (phases 2 and 3)"]
+  end
+  QD --> CONDQ
+  QD --> LABELS
+  QD -->|"GET /api/quality/overrides?slug=, Bearer QUALITY_INGEST_TOKEN<br/>the verdicts in force today, each with its exact target"| OVAPI["/api/quality/overrides"]
+  OVAPI -->|"once per beach per tick, fails open<br/>(quality_watch.fetch_overrides)"| SARG
+  SARG -.->|"publish: that frame's held claim publishes (confirmedBy owner)<br/>reject: that claim is removed and the cam is DISPUTED for the day<br/>(publishes and rejects replay as ONE stream by (created time, id); disputedCams keeps sinceId/resolvedId so every tick replays the same):<br/>its later claims confirm only by an agreeing second opinion, another undisputed fresh cam,<br/>an owner Right, or 3 distinct frames over 90 min (disputedCams in the feed)"| SECOND
+```
+
+**What each part keeps.** `quality_alerts` is one row per flag (`dedupe_key` is
+unique, so a retried POST or a re-run archive tick writes once; an open alert
+expires after 24 h when the list is read). `quality_push_slots` is the push
+limit, kept by D1: a slot is `queued` until the drain claims it (`attempting`,
+with an attempt id), then `sent`; a failed send deletes it (only the holder of the
+attempt id can); an attempt left over for 10 minutes becomes `unknown` and is never
+sent again; sent and unknown rows are purged after 30 days. `quality_labels` is one row per answer or report
+(`verdict` is `right`, `wrong`, or NULL for a report; a second tap marks the old
+label `superseded`). `quality_overrides` is one row per live seaweed answer, with
+the claim's identity, the action, and the level to publish. `owner_sessions`
+holds the hashed owner tokens and each owner phone's push token (one active
+session per device; a push token on one active session only).
+`owner_enroll_attempts` holds the enrollment throttle counters.
+
+**Subrequests.** The archive request: 44 for the conditions build, at most 2 for
+the cam feed, none for APNs (it only writes D1). The drain request: at most 3
+pushes times 3 owner phones, so 9 APNs fetches, each cut off at 5 seconds.
+
+**The reader obeys the owner.** Once per beach per tick, `cam_seaweed.py` fetches
+`GET /api/quality/overrides` (fails open). A verdict names one exact claim. Of
+several on one claim, the latest wins, and the answers replay as one merged stream
+of publishes and rejects ordered by (created time, id); the app and the reader
+share the rules and test them against `lib/quality/verdictVectors.json`. `scripts/cam_archive_remove.ts`
+also erases a cam's `quality/` prefix.
+
 ## External integrations
 
 | Source | Used for |
@@ -890,14 +1140,14 @@ window has passed. `/api/admin/scans` reads the whole chain in two queries.
 | MET Norway | Secondary forecast model (consensus) |
 | EPA AirNow / CAMS | Air quality |
 | NOAA S3 (GOES, GLM, MRMS) | Cloud cover, lightning strikes, radar rain nowcast |
-| Gemini / Cloudflare Workers AI (Clef 27B, via `/api/vision/clef`) / Groq / OpenRouter / GitHub Models | Beach-cam vision reads (seaweed, busyness, water clarity), tried in that order |
+| Gemini / Cloudflare Workers AI (Clef 27B, via `/api/vision/clef`) / Groq / OpenRouter / GitHub Models | Beach-cam vision reads (seaweed, busyness, water clarity), tried in that order. Also the second opinion on a held seaweed jump: Clef checks a Gemini, Groq or OpenRouter claim, Gemini checks a Clef claim (`scripts/quality_watch.py`) |
 | iNaturalist | Portuguese man-o'-war sighting reports |
 | FL Healthy Beaches | Water-quality advisories |
 | video-monitoring.com | Public beach cam still frames |
 | YouTube | Deerfield Beach underwater + surface cam sources, and Fort Lauderdale Beach's Elbo Room cam, live-embed only (`workers/uw-frame`) |
 | ArcGIS (City of Deerfield Beach dashboard) | Lifeguard flag status read (`workers/uw-frame`) |
 | City of Fort Lauderdale Fire Rescue "Beach Conditions" page | Lifeguard flags, sea pests, ocean report (`workers/uw-frame`, Browser Rendering) |
-| Apple Push Notification service (APNs) | iOS push delivery |
+| Apple Push Notification service (APNs) | iOS push delivery, including the owner-only quality alerts (`lib/quality/notify.ts`) |
 | Firebase Cloud Messaging (FCM) | Android push delivery |
 | PostHog (US cloud) | Product analytics for the website and both app shells (page paths, time on page, taps). Browser-side only via `components/PostHogInit.tsx`; anonymous, no identify, localStorage not cookies, no recordings. Key in `lib/analytics/posthog.ts`; project "Is It Beach Day" in its own free PostHog org (Endeared uses the "btc" org) |
 

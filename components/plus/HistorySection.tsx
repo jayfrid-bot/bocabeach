@@ -464,6 +464,9 @@ export type BootstrapInstallToken = (opts?: {
  * device, forceRefresh's `clearInstallToken()` on that path could
  * permanently strip a device of its only token, breaking history, hazards,
  * and Live Activities for good — no server-side recovery exists).
+ * (Since push-token-auth, forceRefresh no longer clears the saved token at all;
+ * it only asks the server to bind it once more. The rule below still holds: a
+ * fetch error has nothing to do with the token, so it never asks.)
  *
  * - `fetch-error` (the token is presumably fine; the FETCH failed): only
  *   revalidates. Never calls `bootstrap` at all, so it can never clear

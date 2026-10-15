@@ -23,6 +23,13 @@ export const CHANGELOG: ChangelogEntry[] = [
       "A weather alert the National Weather Service rates severe or extreme now turns the safety banner red, even when its name doesn't end in \"Warning\". Before, it showed in amber.",
     tag: "improved",
   },
+  {
+    date: "2026-10-14",
+    title: "A simpler look at the app",
+    details:
+      "The website now sums up the free iPhone app in five plain lines: 20 data points in one beach score, alerts, sunrise and sunset heads-ups, your score on the Lock Screen, and a look back at past days.",
+    tag: "improved",
+  },
   // DRAFT, not live: add when the iOS build that carries the Apple Watch app ships.
   // {
   //   date: "YYYY-MM-DD",

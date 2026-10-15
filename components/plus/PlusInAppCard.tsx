@@ -1,21 +1,22 @@
 "use client";
 
 /**
- * The door to Plus on the WEBSITE. Plus lives only in the phone app — billing,
- * location and push all do — so the site never runs the questions, the reveal
- * or the paywall. It says what Plus is, what it costs, and where to get it.
- * Everything the free dashboard shows stays exactly as it is above this card.
+ * The door to the APP on the WEBSITE. The goal is a download, so this card
+ * sells the free app — 20 data points in one score, plus alerts — and shows no
+ * price: the price and the free trial live in the app, one tap from the
+ * paywall (Apple requires the app to show them before any purchase). One small
+ * line says some features need Plus, so nobody downloads expecting free alerts
+ * and meets a paywall. Five lines at most, each a plain benefit. Everything the
+ * free dashboard shows stays exactly as it is above this card.
  */
 import { GET_APP_PATH } from "@/lib/appStore";
 
 const INCLUDED = [
-  "Your own Beach Day score, tuned to how you use the beach — swimming, kids, sun, snorkeling, dog walks, surf.",
-  "Safety alerts while you're at the beach: lightning and rain from your spot, plus flags, rip current and gusts.",
-  "Your Beach Session on the Lock Screen: live score, conditions and lightning warnings while you're on the sand.",
-  "Sunrise and sunset alerts when the sky is forecast to be colorful, 30 minutes to 3 hours ahead.",
-  "Coming-up alerts: king tides, supermoons, meteor showers and rocket launches you can watch from the beach.",
-  "Look back: up to 30 days at your beach, with records — and the best day ever, anywhere.",
-  "Best beach times, the 7-day outlook and a morning summary, all in your own number.",
+  "Lightning and rain alerts where you're standing",
+  "A heads-up before a great sunrise or sunset",
+  "A beach score tuned to how you use the beach",
+  "Your live beach score on the Lock Screen",
+  "Look back at any past day at your beach",
 ];
 
 export function PlusInAppCard() {
@@ -33,10 +34,10 @@ export function PlusInAppCard() {
             id="plus-in-app-title"
             className="text-base font-semibold text-slate-900 dark:text-white"
           >
-            Personalize your score in the app
+            Get the free app
           </h3>
           <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">
-            Beach Day Plus lives in the iPhone app. Everything on this page stays free.
+            20 data points in one simple beach score, plus alerts in your pocket.
           </p>
         </div>
       </div>
@@ -52,20 +53,16 @@ export function PlusInAppCard() {
         ))}
       </ul>
 
-      <p className="mt-3 text-center text-sm font-semibold tabular-nums text-slate-900 dark:text-white">
-        $2.99/mo · $19.99/yr · 3-day free trial
-      </p>
-
       <a
         href={GET_APP_PATH}
         target="_blank"
         rel="noopener noreferrer"
         className="mt-3 flex min-h-[44px] w-full items-center justify-center rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:hover:bg-slate-100"
       >
-        Get Is It Beach Day for iPhone
+        Download free on the App Store
       </a>
       <p className="mt-2 text-center text-xs text-slate-500 dark:text-slate-400">
-        Android is coming.
+        Some features need Beach Day Plus. Try it free in the app. Android is coming.
       </p>
     </section>
   );

@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { disableNative, enableNative, isNativePlatform, nativeStatus } from "@/lib/push/native";
+import {
+  disableNative,
+  enableNative,
+  flushPendingUnregister,
+  isNativePlatform,
+  nativeStatus,
+  whenPushIdle,
+} from "@/lib/push/native";
 
 type State = "init" | "hidden" | "off" | "on" | "denied" | "busy" | "error";
 
@@ -14,9 +21,15 @@ type State = "init" | "hidden" | "off" | "on" | "denied" | "busy" | "error";
 export async function enableAlertsFlow(
   slug: string,
   prefs: { morning: boolean; safety: boolean },
-): Promise<{ state: "on" } | { state: "denied" | "error"; message: string }> {
+): Promise<{ state: "on" } | { state: "off" } | { state: "denied" | "error"; message: string }> {
   try {
-    await enableNative(slug, prefs);
+    const result = await enableNative(slug, prefs);
+    if (result === "superseded") {
+      // A newer enable or disable was asked for first and wins. Report what the
+      // phone ends up as once everything queued has finished, not a guess.
+      await whenPushIdle();
+      return (await nativeStatus(slug).catch(() => "off" as const)) === "on" ? { state: "on" } : { state: "off" };
+    }
     return { state: "on" };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
@@ -119,7 +132,12 @@ export function NotifyButton({
         // (a flaky bridge round-trip), the button must still appear. nativeStatus
         // then refines it to on/denied.
         setState((s) => (s === "on" || s === "denied" ? s : "off"));
-        nativeStatus(slug)
+        // First finish any turn-off that never reached the server, so the
+        // state shown below is the real one.
+        // (Capped at 3 s: a slow network must not hold the real state back.)
+        Promise.race([flushPendingUnregister(), new Promise<void>((r) => setTimeout(r, 3000))])
+          .catch(() => {})
+          .then(() => nativeStatus(slug))
           .then((s) => alive && setState(s))
           .catch(() => alive && setState("off"));
         return;
@@ -156,6 +174,10 @@ export function NotifyButton({
       setState("on");
       return;
     }
+    if (r.state === "off") {
+      setState("off");
+      return;
+    }
     setErr(r.message);
     setState(r.state);
   };
@@ -163,10 +185,15 @@ export function NotifyButton({
   const disable = async () => {
     setMenuOpen(false);
     setState("busy");
+    setErr(null);
     try {
       await disableNative(slug);
-    } finally {
       setState("off");
+    } catch (e) {
+      // The server refused (this phone could not prove it owns the device), so
+      // alerts are still on there. Say so instead of showing "off".
+      setErr(e instanceof Error ? e.message : "Couldn't turn alerts off. Try again.");
+      setState("on");
     }
   };
 
@@ -246,6 +273,15 @@ export function NotifyButton({
               </button>
             </div>
           </>
+        ) : null}
+        {err ? (
+          <span
+            role="status"
+            aria-live="polite"
+            className="absolute right-0 top-full z-50 mt-2 w-56 rounded-lg bg-rose-600 px-3 py-2 text-xs leading-snug text-white shadow-lg dark:bg-rose-500"
+          >
+            {err}
+          </span>
         ) : null}
       </span>
     );

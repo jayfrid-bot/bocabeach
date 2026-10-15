@@ -8,6 +8,12 @@ import {
   isValidId,
   parseFrameKey,
   sha8,
+  buildQualityFrameKey,
+  camOfKey,
+  isQualityFrameKey,
+  isSignableKey,
+  parseQualityFrameKey,
+  qualityCamPrefix,
 } from "@/lib/camFrames/keys";
 
 const SHA = "0123456789abcdef".repeat(4);
@@ -144,5 +150,59 @@ describe("helpers", () => {
     expect(sha8(SHA)).toBe("01234567");
     expect(camPrefix("boca-raton", "boca-south")).toBe("boca-raton/boca-south/");
     expect(() => camPrefix("Boca", "x")).toThrow();
+  });
+});
+
+describe("quality frame keys (the exact image behind a quality alert)", () => {
+  const AT = Date.parse("2026-10-13T17:20:15.000Z");
+
+  it("builds quality/<slug>/<cam>/<utc date>/<HHmmss>Z-<sha8>.jpg", () => {
+    expect(buildQualityFrameKey({ slug: "boca-raton", camId: "boca-inlet-surf", atMs: AT, sha256Hex: SHA })).toBe(
+      "quality/boca-raton/boca-inlet-surf/2026-10-13/172015Z-01234567.jpg",
+    );
+  });
+
+  it("parses what it builds, and nothing else", () => {
+    const key = buildQualityFrameKey({ slug: "boca-raton", camId: "boca-inlet-surf", atMs: AT, sha256Hex: SHA });
+    expect(parseQualityFrameKey(key)).toEqual({ slug: "boca-raton", camId: "boca-inlet-surf", utcDate: "2026-10-13", sha8: "01234567" });
+    for (const bad of [
+      "boca-raton/boca-inlet-surf/2026-10-13/172015Z-01234567.jpg",
+      "quality/boca-raton/boca-inlet-surf/2026-10-13/172015Z-01234567.png",
+      "quality/boca-raton/../2026-10-13/172015Z-01234567.jpg",
+      "quality/Boca/cam/2026-10-13/172015Z-01234567.jpg",
+      "quality/boca-raton/cam/2026-13-45/172015Z-01234567.jpg",
+      "quality/boca-raton/cam/2026-10-13/252015Z-01234567.jpg",
+      "quality/boca-raton/cam/2026-10-13/172015Z-0123456.jpg",
+      "quality/boca-raton/cam/2026-10-13/172015Z-01234567.jpg/extra",
+      "",
+      null,
+      7,
+    ]) {
+      expect(parseQualityFrameKey(bad), String(bad)).toBeNull();
+    }
+  });
+
+  it("refuses to build from malformed input", () => {
+    expect(() => buildQualityFrameKey({ slug: "Bad", camId: "c", atMs: AT, sha256Hex: SHA })).toThrow();
+    expect(() => buildQualityFrameKey({ slug: "s", camId: "c", atMs: Number.NaN, sha256Hex: SHA })).toThrow();
+    expect(() => buildQualityFrameKey({ slug: "s", camId: "c", atMs: AT, sha256Hex: "nope" })).toThrow();
+  });
+
+  it("is signable and names its cam, and is not an archive key", () => {
+    const key = buildQualityFrameKey({ slug: "boca-raton", camId: "boca-inlet-surf", atMs: AT, sha256Hex: SHA });
+    expect(isQualityFrameKey(key)).toBe(true);
+    expect(isValidFrameKey(key)).toBe(false);
+    expect(isSignableKey(key)).toBe(true);
+    expect(isSignableKey("boca-raton/boca-south/2026-10-11/1420Z-01234567-cccccccc.jpg")).toBe(true);
+    expect(isSignableKey("random/key.jpg")).toBe(false);
+    expect(camOfKey(key)).toEqual({ slug: "boca-raton", camId: "boca-inlet-surf" });
+    expect(camOfKey("boca-raton/boca-south/2026-10-11/1420Z-01234567-cccccccc.jpg")).toEqual({ slug: "boca-raton", camId: "boca-south" });
+    expect(camOfKey("nope")).toBeNull();
+  });
+
+  it("has its own per-cam prefix, apart from the archive's", () => {
+    expect(qualityCamPrefix("boca-raton", "boca-inlet-surf")).toBe("quality/boca-raton/boca-inlet-surf/");
+    expect(camPrefix("boca-raton", "boca-inlet-surf")).toBe("boca-raton/boca-inlet-surf/");
+    expect(() => qualityCamPrefix("Bad", "c")).toThrow();
   });
 });

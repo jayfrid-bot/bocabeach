@@ -154,7 +154,8 @@ until a second look agrees: (a) the SAME cam's next DIFFERENT frame (another
 frameSha, or frameAt for a courier cam) is moderate+ too, while its stored claim is
 alive, or (b) another cam at the beach has a FRESH moderate+ read in the same tick
 (two such cams confirm each other; a reading carried from an earlier tick never
-confirms anything). A held read publishes no seaweed (level/coveragePct/note null)
+confirms anything; (b) runs LAST, after the second opinions, so a cam whose second reader just
+disagreed cannot confirm another cam). A held read publishes no seaweed (level/coveragePct/note null)
 and keeps `"unconfirmed": true` plus the `"claim"` {level, coveragePct, note} for the
 audit trail; a confirmed one publishes normally and may carry `"confirmedBy"`. The
 claim itself lives in the top-level `pendingClaims` map (see below), on its own
@@ -166,6 +167,30 @@ reading has expired. It ends sooner only when a fresh read of that cam is below
 moderate. See
 confirm_seaweed_jumps() and update_pending_claims(). One bad frame from one cam can
 no longer drive the beach headline.
+
+SECOND OPINION ON A HELD JUMP (2026-10-14, docs/QUALITY_PLAN.md): when a jump is held, the
+reader asks ONE other provider to read the SAME image (a claim from Gemini/Groq/OpenRouter
+goes to Clef; a claim from Clef goes to Gemini; no other provider configured -> none), with
+exactly one HTTP attempt (no retry, no second model) and at most MAX_SECOND_OPINIONS_PER_RUN (6)
+attempts per tick. If it also says moderate/high, the jump is confirmed at once (`"confirmedBy":
+"second-opinion:<provider>"`). If it disagrees, the jump stays held, the cam is DISPUTED for the
+rest of its beach-local day (`disputedCams` in the feed), and the reader POSTs an owner alert to
+the app (/api/quality/alerts, Bearer QUALITY_INGEST_TOKEN: the claim and its exact identity, the
+second opinion, the other cams' readings, the frame's SHA-256, and the shrunk still). A POST that
+fails waits in the feed's `pendingAlerts` and is retried each tick (dropped after 24 h). While a
+cam is disputed, plain persistence does not confirm it: only a second opinion that agrees, another
+fresh undisputed cam, an owner Right, or the same cam on 3 distinct frames over 90 minutes.
+An owner's Right/Wrong on an alert reaches the reader as an override bound to that exact claim
+(the cam, the frame AND the time it was scored; GET /api/quality/overrides, once per beach per tick,
+fails open). The tick runs in order: local confirmation (persistence), then a second opinion for EVERY
+read still held, then confirmation across cams on the state that left. An alert that fails to send
+for any reason (the missing token included) waits in the outbox. See scripts/quality_watch.py.
+
+LAST PUBLISHED FILE: fetch_prev() returns {} only for a true HTTP 404 (a new beach). Any other failure
+(network, 5xx, a body that is not a JSON object) is retried once and then ABORTS the whole tick: nothing
+is written, the archive pass still runs, main() returns 1. The publish step replaces the branch with the
+files written in that cycle, so one beach cannot be skipped alone, and starting a beach from {} would erase
+its held claims, disputes and outbox. Five failed cycles in a row end the loop (sargassum.yml).
 
 MORNING (2026-10-13): the day's `morning` is chosen among the captures from 5 AM to
 MORNING_END_HOUR (12) local that have a published seaweed level on at least one cam:
@@ -217,6 +242,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from zoneinfo import ZoneInfo
+
+import quality_watch
 
 API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")  # 2.0-flash has no free tier
@@ -1181,11 +1208,13 @@ def archive_pass(attempted: set, cams: list[dict] | None = None, run: "ArchiveRu
     return {"attempted": len(todo), "results": results, "dropped": run.dropped}
 
 
-def _post(url: str, body: bytes, headers: dict | None = None, timeout: int = 40) -> bytes:
-    """POST JSON, retrying transient quota (429) / overload (5xx) with backoff."""
+def _post(url: str, body: bytes, headers: dict | None = None, timeout: int = 40, retries: int | None = None) -> bytes:
+    """POST JSON, retrying transient quota (429) / overload (5xx) with backoff. `retries` (default
+    MAX_RETRIES) of 0 makes exactly one HTTP attempt."""
+    max_retries = MAX_RETRIES if retries is None else retries
     hdrs = {"Content-Type": "application/json", "User-Agent": HTTP_UA, **(headers or {})}
     delay = 2.0
-    for attempt in range(MAX_RETRIES + 1):
+    for attempt in range(max_retries + 1):
         req = urllib.request.Request(url, data=body, headers=hdrs)
         try:
             return urllib.request.urlopen(req, timeout=timeout).read()
@@ -1198,13 +1227,13 @@ def _post(url: str, body: bytes, headers: dict | None = None, timeout: int = 40)
             # on to the next model/provider; per-minute limits still get retried.
             if e.code == 429 and "current quota" in detail:
                 raise RuntimeError(f"HTTP 429 (daily quota spent): {detail[:120]}") from None
-            if e.code in RETRY_STATUSES and attempt < MAX_RETRIES:
+            if e.code in RETRY_STATUSES and attempt < max_retries:
                 time.sleep(delay + random.uniform(0, 0.75))
                 delay *= 2.2
                 continue
             raise RuntimeError(f"HTTP {e.code}: {detail}") from None
         except urllib.error.URLError as e:
-            if attempt < MAX_RETRIES:
+            if attempt < max_retries:
                 time.sleep(delay + random.uniform(0, 0.75))
                 delay *= 2.2
                 continue
@@ -1265,7 +1294,7 @@ def _parse_uw(out: dict) -> dict:
     }
 
 
-def _gemini_out(img: bytes, prompt: str = PROMPT, model: str | None = None) -> dict:
+def _gemini_out(img: bytes, prompt: str = PROMPT, model: str | None = None, retries: int | None = None) -> dict:
     model = model or MODEL
     body = json.dumps({
         "contents": [{"parts": [
@@ -1277,7 +1306,7 @@ def _gemini_out(img: bytes, prompt: str = PROMPT, model: str | None = None) -> d
     }).encode()
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
            f"{model}:generateContent?key={API_KEY}")
-    resp = json.loads(_post(url, body))
+    resp = json.loads(_post(url, body) if retries is None else _post(url, body, retries=retries))
     return _extract_json(resp["candidates"][0]["content"]["parts"][0]["text"])
 
 
@@ -1360,6 +1389,24 @@ def shrink_for_clef(img: bytes) -> bytes:
     if len(small) > CLEF_SMALL_MAX_BYTES:
         small = one(*CLEF_SHRINK_FALLBACK)
     return small
+
+
+def shrink_for_alert(img: bytes) -> bytes | None:
+    """The still shrunk to at most quality_watch.ALERT_FRAME_MAX_BYTES, to ride along with an
+    alert so the review screen shows the exact frame that was judged. Tries 768 px / q60, then
+    512 / q50, then 384 / q40. None when nothing fits or shrinking fails: the alert then goes
+    without a picture and the screen falls back to the nearest archived frame. Never raises."""
+    Image = _pillow_image()
+    limit = quality_watch.ALERT_FRAME_MAX_BYTES
+    try:
+        for max_side, quality in (CLEF_SHRINK, CLEF_SHRINK_FALLBACK, (384, 40)):
+            small = (_shrink_pillow(Image, img, max_side, quality) if Image is not None
+                     else _shrink_ffmpeg(img, max_side, quality))
+            if len(small) <= limit:
+                return small
+    except Exception as e:  # noqa: BLE001 — a missing picture must never block the alert
+        print(f"  warn alert frame shrink: {e}", file=sys.stderr)
+    return None
 
 
 def _clef_raw(reply: object, kind: str) -> dict:
@@ -1468,18 +1515,19 @@ def vision_call_summary() -> str:
 
 
 def assess_with(name: str, img: bytes, prompt: str = PROMPT, parse=_parse_out,
-                model: str | None = None, kind: str | None = None) -> dict:
+                model: str | None = None, kind: str | None = None, single_attempt: bool = False) -> dict:
     """Read one image with exactly ONE named provider (for per-provider eval).
 
     `prompt`/`parse` let the same provider plumbing serve both the beach read
     (default) and the underwater read (UW_PROMPT + _parse_uw). `kind` ("surface"
     or "underwater") only matters to clef, which takes questions, not a prompt;
-    it defaults from `parse`."""
+    it defaults from `parse`. `single_attempt` makes exactly ONE HTTP attempt (no backoff retry);
+    a second opinion uses it so the per-tick cap counts real provider calls."""
     if name == "gemini":
         if not API_KEY:
             raise RuntimeError("gemini not configured")
         model = model or MODEL
-        call = lambda: _gemini_out(img, prompt, model)  # noqa: E731
+        call = (lambda: _gemini_out(img, prompt, model, 0)) if single_attempt else (lambda: _gemini_out(img, prompt, model))  # noqa: E731
     elif name == "clef":
         if not _clef_configured():
             raise RuntimeError("clef not configured")
@@ -1618,21 +1666,56 @@ def median_water(group: dict | None) -> dict | None:
     return {"level": closest["water"], "pct": med}
 
 
+class PrevFetchError(Exception):
+    """The beach's last published file could not be read for a reason other than "it does not exist"
+    (a network error, a 5xx, a document that does not parse)."""
+
+
+def _fetch_prev_file(name: str) -> dict | None:
+    """One published file as a dict: None when the branch has no such file (a true HTTP 404), a
+    PrevFetchError on any other failure or a body that is not a JSON object."""
+    try:
+        doc = json.loads(_get(f"{PREV_BASE}/{name}").decode("utf-8", "replace"))
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None
+        raise PrevFetchError(f"{name}: HTTP {e.code}") from e
+    except Exception as e:  # noqa: BLE001
+        raise PrevFetchError(f"{name}: {str(e)[:120]}") from e
+    if not isinstance(doc, dict):
+        raise PrevFetchError(f"{name}: not a JSON object")
+    return doc
+
+
 def fetch_prev(slug: str) -> dict:
     """The beach's last published file: "<PREV_BASE>/cam_seaweed.<slug>.json".
-    For LEGACY_SLUG only, falls back to the pre-split "cam_seaweed.json" if the
-    per-beach file 404s (an old sargassum-data branch commit, or the very first
-    run of this per-beach version). Any other slug that 404s just starts fresh
-    — {} — same as it always has for a brand-new beach."""
-    try:
-        return json.loads(_get(f"{PREV_BASE}/cam_seaweed.{slug}.json").decode("utf-8", "replace"))
-    except Exception:  # noqa: BLE001
-        if slug != LEGACY_SLUG:
-            return {}
-        try:
-            return json.loads(_get(f"{PREV_BASE}/cam_seaweed.json").decode("utf-8", "replace"))
-        except Exception:  # noqa: BLE001
-            return {}
+    A true 404 means a new beach and returns {} (for LEGACY_SLUG only, it first falls back to the
+    pre-split "cam_seaweed.json"). Any OTHER failure raises PrevFetchError: starting from {} would
+    erase the beach's held claims, disputes, outbox and morning reading, so main() will not
+    publish on it (see main)."""
+    doc = _fetch_prev_file(f"cam_seaweed.{slug}.json")
+    if doc is None and slug == LEGACY_SLUG:
+        doc = _fetch_prev_file("cam_seaweed.json")
+    return doc if doc is not None else {}
+
+
+def fetch_prevs(slugs, fetch=None, retries: int = 1) -> "tuple[dict[str, dict], list[str]]":
+    """fetch_prev for every slug, each tried once more after a failure. Returns ({slug: doc}, [slugs
+    that still failed]). Never raises."""
+    fetch = fetch or fetch_prev
+    docs: dict[str, dict] = {}
+    failed: list[str] = []
+    for slug in slugs:
+        for attempt in range(retries + 1):
+            try:
+                docs[slug] = fetch(slug)
+                break
+            except PrevFetchError as e:
+                print(f"  warn [{slug}] last published file: {e}"
+                      + (" (retrying)" if attempt < retries else ""), file=sys.stderr)
+        else:
+            failed.append(slug)
+    return docs, failed
 
 
 def _utc_iso(t: dt.datetime) -> str:
@@ -1800,7 +1883,8 @@ def _same_frame(reading: dict, entry: dict) -> bool:
     return False
 
 
-def confirm_seaweed_jumps(fresh: list[dict], pending: dict[str, dict]) -> list[dict]:
+def confirm_seaweed_jumps(fresh: list[dict], pending: dict[str, dict],
+                          disputed: "dict[str, dict] | None" = None, cross_cam: bool = True) -> list[dict]:
     """Hold back an unconfirmed jump to moderate/high seaweed. Returns the fresh
     readings to publish (new dicts for the changed ones; inputs are not mutated).
 
@@ -1818,30 +1902,83 @@ def confirm_seaweed_jumps(fresh: list[dict], pending: dict[str, dict]) -> list[d
     `"claim": {level, coveragePct, note}` for the audit trail; update_pending_claims
     stores the claim for a later tick. A low-sun reading has level None, so it
     neither needs confirming nor confirms anything. Readings below moderate pass
-    through unchanged. Pure."""
+    through unchanged.
+
+    `disputed` is the ACTIVE disputed cams of the day ({cam id: entry}, quality_watch.dispute_state:
+    an owner Wrong, or a second opinion that disagreed). A disputed cam is NOT confirmed by plain
+    persistence (a). It is confirmed by (b) only if the other cam is itself not disputed, and by (d)
+    the same cam claiming moderate+ on at least 3 distinct frames over 90 minutes
+    (`"confirmedBy": "dispute-persistence"`). Otherwise it is held like any claim (and the owner is
+    still alerted). A disputed cam never confirms another cam. A second opinion that agrees, and an
+    owner Right, are applied outside this function.
+
+    `cross_cam=False` leaves out (b). capture_beach uses that: it asks the second opinions of every
+    held read FIRST, learns which cams just became disputed, and only then runs confirm_across_cams()
+    on the result, so a cam whose second reader just disagreed cannot confirm another cam. Pure."""
+    disputed = disputed or {}
     out = []
     for r in fresh:
         if r.get("level") not in SEAWEED_RANK or SEAWEED_RANK[r["level"]] < _MODERATE:
             out.append(r)
             continue
         by = None
+        entry = disputed.get(r.get("id"))
         claim = pending.get(r["id"])
-        if claim is not None and not _same_frame(r, claim):
+        if entry is None and claim is not None and not _same_frame(r, claim):
             by = "persistence"
         else:
-            for o in fresh:
-                if o is not r and o.get("level") in SEAWEED_RANK and SEAWEED_RANK[o["level"]] >= _MODERATE:
+            for o in fresh if cross_cam else ():
+                if (o is not r and o.get("id") not in disputed
+                        and o.get("level") in SEAWEED_RANK and SEAWEED_RANK[o["level"]] >= _MODERATE):
                     by = f"cam:{o['id']}"
                     break
+            if by is None and entry is not None and quality_watch.extended_persistence_ok(entry, r):
+                by = "dispute-persistence"
         if by:
             out.append({**r, "confirmedBy": by})
         else:
-            out.append({
+            held = {
                 **r,
                 "level": None, "coveragePct": None, "note": None,
                 "unconfirmed": True,
                 "claim": {"level": r["level"], "coveragePct": r.get("coveragePct"), "note": r.get("note")},
-            })
+            }
+            if entry is not None:
+                held["disputed"] = True
+            out.append(held)
+    return out
+
+
+def _raw_level(r: dict) -> str | None:
+    """The level a fresh read claimed, held or not. Pure."""
+    return (r.get("claim") or {}).get("level") or r.get("level")
+
+
+def confirm_across_cams(readings: list[dict], disputed: "dict[str, dict] | None" = None) -> list[dict]:
+    """Rule (b), run AFTER the second opinions: a still-held read is confirmed when another FRESH
+    read of this tick claims moderate+ (held or not) and that other cam is not disputed. `disputed`
+    must be the post-second-opinion set: the cams disputed before this tick plus every cam whose
+    second reader just disagreed (its `dispute` mark). So two cams that both claim it still confirm
+    each other, but never through a cam that was just shown to be doubtful. A cam whose own second
+    reader just disagreed needs more: its backer must already be PUBLISHED (not itself held), so it
+    cannot publish on the word of a claim that is still waiting. A carried read neither confirms nor is
+    confirmed. Returns new dicts for the changed reads; inputs are not mutated. Pure."""
+    bad = set(disputed or {}) | {r.get("id") for r in readings if r.get("dispute")}
+    out = []
+    for r in readings:
+        if r.get("unconfirmed") and not r.get("carried"):
+            by = None
+            for o in readings:
+                if (o is r or o.get("carried") or o.get("id") in bad
+                        or _raw_level(o) not in SEAWEED_RANK or SEAWEED_RANK[_raw_level(o)] < _MODERATE):
+                    continue
+                if r.get("dispute") and o.get("unconfirmed"):
+                    continue
+                by = f"cam:{o['id']}"
+                break
+            if by:
+                r = quality_watch.confirm_held(r, by)
+        out.append(r)
     return out
 
 
@@ -1885,6 +2022,38 @@ def prompt_for_cam(cam: dict) -> str:
     return PROMPT
 
 
+# Second opinions asked this run (one process = one tick); see quality_watch.MAX_SECOND_OPINIONS_PER_RUN.
+_SECOND_OPINIONS = {"n": 0}
+
+
+def request_second_opinion(cam: dict, held: dict, img: bytes) -> dict | None:
+    """Ask a DIFFERENT provider to read the same image a held jump came from.
+
+    Exactly ONE provider HTTP attempt: no backoff retry, and no second Gemini model. Returns the
+    second reader's {provider, model, level, coveragePct, note}, or None when there is no opinion:
+    no other provider configured, the per-run cap on attempts reached, the frame called
+    unreadable, or the one attempt failed. None never confirms, never disputes and never alerts
+    (the jump just stays held). The cap counts attempts, so it is also the most provider calls a
+    tick can spend; Clef counts against its own daily cap on the server, so a 429 here is simply
+    "no opinion"."""
+    if _SECOND_OPINIONS["n"] >= quality_watch.MAX_SECOND_OPINIONS_PER_RUN:
+        return None
+    configured = {n for n in ("gemini", "clef") if _provider_configured(n)}
+    name = quality_watch.pick_second_provider(held.get("provider"), configured)
+    if not name:
+        return None
+    _SECOND_OPINIONS["n"] += 1  # one attempt, counted before it is made
+    try:
+        reading = assess_with(name, img, prompt_for_cam(cam), _parse_out, None, "surface", single_attempt=True)
+    except UnreadableFrame:
+        print(f"  [{cam['id']}] second opinion ({name}): frame unreadable, no opinion")
+        return None
+    except Exception as e:  # noqa: BLE001 — no opinion; the jump stays held
+        print(f"  warn [{cam['id']}] second opinion ({name}): {str(e)[:160]}", file=sys.stderr)
+        return None
+    return quality_watch.opinion_from_reading(reading)
+
+
 def beach_coords(slug: str) -> tuple[float, float] | None:
     """(lat, lon) of a beach, from the archive manifest (config/archive-cams.json,
     generated from config/locations.ts, so it equals the app's own beach
@@ -1912,6 +2081,7 @@ def _frame_time(stamp: object, fallback: dt.datetime) -> dt.datetime:
 def capture_beach(
     slug: str, cams: list[dict], now_local: dt.datetime, gap_state: dict, prev: dict,
     attempted: set | None = None, archive: "ArchiveRun | None" = None,
+    overrides: list | None = None, outbox: list | None = None,
 ) -> dict | None:
     """Read every cam configured for one beach. `gap_state` is a single
     {"called": bool} shared across ALL beaches in this run, so CAM_GAP_S spaces
@@ -1927,9 +2097,18 @@ def capture_beach(
     the tick's archive budget (see ArchiveRun). `attempted` (optional) is a set
     that collects (slug, cam id) of every cam this function goes after;
     archive_pass() uses it to fetch only the rest. `archive` (optional) is the
-    tick's shared ArchiveRun; without one this call uses its own."""
+    tick's shared ArchiveRun; without one this call uses its own. `overrides` (optional) is
+    the owner's running seaweed verdicts for this beach (quality_watch.fetch_overrides): each is
+    bound to one exact claim, and publishes it or rejects it (and disputes the cam; see
+    confirm_seaweed_jumps). `outbox` (optional) collects owner alerts whose POST failed, to be
+    written to the feed and retried next tick (quality_watch.queue_alert)."""
     run = archive if archive is not None else ArchiveRun()
+    owner = quality_watch.owner_state(overrides or [], now_local)
+    prev_eff = quality_watch.apply_owner_confirmations(prev, owner["events"])
+    disputes = quality_watch.active_disputes(quality_watch.dispute_state(
+        prev_eff.get("disputedCams"), owner["events"], now_local))
     readings = []
+    imgs: dict[str, bytes] = {}  # stills of moderate/high reads, kept for a second opinion on a held jump
     coords = beach_coords(slug)  # for the low-sun gate; None -> gate off
     for cam in cams:
         src = cam.get("source") or {}
@@ -1996,6 +2175,8 @@ def capture_beach(
             prompt = prompt_for_cam(cam)
             r = assess(img) if prompt == PROMPT else assess(img, prompt)
             reading = {"id": cam["id"], "name": cam["name"], **r}
+            if SEAWEED_RANK.get(r.get("level"), -1) >= _MODERATE:
+                imgs[cam["id"]] = img
             # When the frame was taken (courier: its meta time; feed: latest.json
             # `timestamp`, when it has one) and when we scored it. A later tick
             # may CARRY this reading (see carried_readings) and needs the frame's
@@ -2028,7 +2209,7 @@ def capture_beach(
             print(f"  [{slug}] {cam['id']}: skipped (unreadable per clef)")
         except Exception as e:  # noqa: BLE001
             print(f"  warn [{slug}] {cam['id']}: {e}", file=sys.stderr)
-    run.flush()  # the beach's reads are done: upload its stills now
+    uploads = run.flush()  # the beach's reads are done: upload its stills now
     if not readings:
         return None
     # Every cam the beach is configured with should speak in each tick's roll-up
@@ -2036,7 +2217,7 @@ def capture_beach(
     # (unchanged frame) or failed contributes its last good reading, marked
     # `carried`, while that reading is still fresh enough to score today.
     fresh_ids = {r["id"] for r in readings}
-    carried = carried_readings(prev, cams, fresh_ids, now_local)
+    carried = carried_readings(prev_eff, cams, fresh_ids, now_local)
     # TICK-LEVEL LOW SUN: the per-frame gate above judged each fresh frame by its
     # own time. A group is also stamped with THIS tick's time, and it replaces
     # `latest` and feeds history, so when the sun now is under the threshold no cam in
@@ -2049,24 +2230,63 @@ def capture_beach(
         carried = [c if c.get("lowSun") else apply_low_sun_gate(c, tick_elev) for c in carried]
         print(f"  [{slug}] tick at low sun ({tick_elev:.1f} deg < {LOW_SUN_DEG:g}): "
               "no seaweed or water published this tick")
-    # CONFIRM A JUMP: a fresh moderate/high needs a second look (this cam's next
-    # different frame, or another cam's fresh read now) before it publishes. Held
-    # reads are stored as pending claims by build_beach_output. Carried readings
-    # are never re-judged and never confirm anything.
-    confirmed = confirm_seaweed_jumps(readings, live_pending_claims(prev.get("pendingClaims"), now_local))
+    # CONFIRM A JUMP, in three ordered steps. A fresh moderate/high needs a second look before it
+    # publishes. Carried readings are never re-judged and never confirm anything. Held reads are
+    # stored as pending claims by build_beach_output.
+    #  1. LOCAL: this cam's own history (persistence, or the long rule for a disputed cam).
+    #  2. SECOND OPINIONS for EVERY read still held, so each cam's dispute state is known.
+    #  3. ACROSS CAMS, on the state step 2 left: a cam whose second reader just disagreed is disputed
+    #     and cannot confirm another cam (two cams that both claim it still confirm each other).
+    confirmed = confirm_seaweed_jumps(readings, live_pending_claims(prev_eff.get("pendingClaims"), now_local),
+                                      disputes, cross_cam=False)
+    cam_by_id = {c["id"]: c for c in cams}
+    disagreed: list[tuple[dict, dict]] = []
+    for i, after in enumerate(confirmed):
+        if not after.get("unconfirmed") or after["id"] not in imgs:
+            continue
+        opinion = request_second_opinion(cam_by_id[after["id"]], after, imgs[after["id"]])
+        if opinion is None:
+            continue
+        if quality_watch.agrees(opinion.get("level")):
+            confirmed[i] = quality_watch.confirmed_by_second_opinion(after, opinion)
+            print(f"  [{slug}] {after['id']}: seaweed={opinion['level']} confirmed by "
+                  f"{confirmed[i]['confirmedBy']}")
+        else:
+            # Disagreement: the claim stays held, and the cam is DISPUTED for the rest of the day
+            # (build_beach_output records it in the feed), so the next frame cannot confirm by persistence.
+            confirmed[i] = {**after, "dispute": "second-opinion"}
+            disagreed.append((confirmed[i], opinion))
+            print(f"  [{slug}] {after['id']}: second opinion ({opinion.get('provider')}) says "
+                  f"{opinion.get('level')}: stays HELD, cam disputed for today")
+    confirmed = confirm_across_cams(confirmed, disputes)
     for after in confirmed:
         if after.get("unconfirmed"):
             claim = after["claim"]
             print(f"  [{slug}] {after['id']}: seaweed={claim['level']}({claim.get('coveragePct')}%) "
-                  "HELD (unconfirmed jump)")
-        elif after.get("confirmedBy"):
+                  f"HELD ({'disputed cam' if after.get('disputed') or after.get('dispute') else 'unconfirmed jump'})")
+        elif after.get("confirmedBy") and not str(after["confirmedBy"]).startswith("second-opinion"):
             print(f"  [{slug}] {after['id']}: seaweed={after['level']} confirmed by {after['confirmedBy']}")
+    # A read that was confirmed across cams after its own second reader disagreed is no longer
+    # disputed (any confirmation ends a dispute), so its alert is not sent.
+    disagreed = [(h, o) for h, o in disagreed
+                 if any(c["id"] == h["id"] and c.get("unconfirmed") for c in confirmed)]
     readings = confirmed
     by_id = {r["id"]: r for r in readings}
     by_id.update({r["id"]: r for r in carried})
     ordered = [by_id[c["id"]] for c in cams if c["id"] in by_id]
     group = {"capturedAtLocal": now_local.isoformat(timespec="minutes"),
              "hour": now_local.hour, "cams": ordered}
+    # Tell the app about each disagreement, with the other cams as they stand now.
+    for held, opinion in disagreed:
+        body = quality_watch.build_alert(
+            slug, held, opinion, quality_watch.other_cams(ordered, held["id"]), worst_seaweed(group),
+            quality_watch.frame_sha256(imgs[held["id"]]),
+            (uploads or {}).get(f"{slug}/{held['id']}") == "stored",
+            shrink_for_alert(imgs[held["id"]]))
+        status = quality_watch.post_alert(body)
+        # A failed POST waits in the feed's outbox and is retried every tick (up to 24 hours).
+        queued = outbox is not None and status != "sent" and quality_watch.queue_alert(outbox, body, now_local)
+        print(f"  [{slug}] {held['id']}: quality alert -> {status}" + (" (queued to retry)" if queued else ""))
     if (len(ordered) < len({c["id"] for c in cams})
             or any(c.get("level") not in SEAWEED_RANK for c in ordered)):
         # Some configured cam has neither a fresh nor a recent reading, or one of
@@ -2080,12 +2300,36 @@ def capture_beach(
 def build_beach_output(
     slug: str, tz_name: str, now_local: dt.datetime, providers: list[tuple[str, str]],
     prev: dict, current: dict | None, uw: dict | None, uw_reading: dict | None,
+    overrides: list | None = None, outbox: list | None = None,
 ) -> dict:
     """Assemble one beach's cam_seaweed.<slug>.json document — the exact shape
     this script has always written, just computed per-beach now. `uw`/
     `uw_reading` are the ONE shared underwater read for this whole run (see
     main()), not per-beach."""
     today = now_local.date().isoformat()
+    # The owner's verdicts (see capture_beach), each bound to one exact claim: a publish confirms it,
+    # a reject removes it. A disputed cam (an owner Wrong, or a second opinion that disagreed) is
+    # recorded in the feed for the rest of the beach-local day.
+    owner = quality_watch.owner_state(overrides or [], now_local)
+    prev = quality_watch.apply_owner_confirmations(prev, owner["events"])
+    now_stamp = quality_watch.utc_iso(now_local)
+    disputes = quality_watch.dispute_state(prev.get("disputedCams"), owner["events"], now_local)
+    for c in (current or {}).get("cams", []):
+        cid = c.get("id")
+        if c.get("carried") or not cid:
+            continue
+        if c.get("dispute") == "second-opinion" and not quality_watch.is_active_dispute(disputes.get(cid)):
+            disputes[cid] = {"since": now_stamp, "reason": "second-opinion", "date": today, "claims": []}
+        entry = disputes.get(cid)
+        if not quality_watch.is_active_dispute(entry):
+            continue
+        if c.get("confirmedBy"):
+            entry["resolvedAt"] = now_stamp  # any confirmation ends the dispute
+            entry["resolvedId"] = quality_watch.CONFIRMED_ID
+        elif c.get("unconfirmed"):
+            quality_watch.record_dispute_claim(entry, c)  # one more distinct held frame
+        elif c.get("level") in SEAWEED_RANK and SEAWEED_RANK[c["level"]] < _MODERATE:
+            entry["claims"] = []  # a fresh clean read restarts the count
     prev_morning = prev.get("morning") if prev.get("dateLocal") == today else None
 
     # The day's `morning` is the best early capture, chosen among the captures from
@@ -2192,7 +2436,7 @@ def build_beach_output(
 
     now_iso = (dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
                .isoformat().replace("+00:00", "Z"))
-    return {
+    doc = {
         # Bump the timestamp only on a fresh capture; otherwise keep prev's so a
         # failed run that re-publishes the last good data doesn't look "fresh".
         "generatedAt": now_iso if current else (prev.get("generatedAt") or now_iso),
@@ -2225,6 +2469,13 @@ def build_beach_output(
         # next run's "same frame already scored" check reads it back.
         "frameShas": frame_shas,
     }
+    # Disputed cams of the beach-local day: {cam id: {since, reason, date, claims, resolvedAt?}}.
+    if disputes:
+        doc["disputedCams"] = disputes
+    # Owner alerts whose POST failed, retried every tick until the app answers (dropped after 24 h).
+    if outbox:
+        doc["pendingAlerts"] = outbox
+    return doc
 
 
 # --- run window (which ticks the workflow loop spends) -----------------------
@@ -2336,6 +2587,7 @@ def _run_archive_pass(attempted: set, run: "ArchiveRun | None" = None) -> None:
 def main() -> int:
     with _VISION_CALLS_LOCK:
         _VISION_CALLS.clear()
+    _SECOND_OPINIONS["n"] = 0
     registry = load_registry()
     # (slug, cam id) of every cam the vision/underwater paths go after this tick;
     # archive_pass() archives the manifest cams NOT in here.
@@ -2363,7 +2615,23 @@ def main() -> int:
         slug: dt.datetime.now(ZoneInfo(entry.get("timezone", DEFAULT_TZ_NAME)))
         for slug, entry in registry.items()
     }
-    prevs = {slug: fetch_prev(slug) for slug in registry}
+    prevs, prev_failed = fetch_prevs(registry)
+    if prev_failed:
+        # The publish step replaces the whole branch with the files written THIS cycle, so one beach
+        # cannot be left alone: writing it from an empty start would erase its held claims, disputes
+        # and outbox, and leaving it out would drop its file. Write nothing and fail the cycle (the
+        # loop retries in ten minutes and bails after five failures in a row). The archive still runs.
+        print(f"ABORT: could not read the last published feed of {', '.join(prev_failed)}; "
+              "nothing is written or published this tick", file=sys.stderr)
+        _run_archive_pass(attempted, archive_run)
+        return 1
+    # The owner's running seaweed verdicts, once per beach per tick. Fails open: [] = as before.
+    overrides_by_slug = {slug: quality_watch.fetch_overrides(slug) for slug in registry}
+    # Owner alerts that failed to send on an earlier tick wait in each beach's feed (`pendingAlerts`):
+    # try each once now, drop what the app took, what is older than 24 hours, or what it refused for good.
+    outbox_by_slug = {
+        slug: quality_watch.retry_outbox(prevs[slug].get("pendingAlerts"), now_by_slug[slug]) for slug in registry
+    }
 
     # One capture pass over every beach's cams. gap_state is shared so
     # CAM_GAP_S spaces every call across the WHOLE run, not just within one
@@ -2374,7 +2642,7 @@ def main() -> int:
         if providers:
             current_by_slug[slug] = capture_beach(
                 slug, entry.get("cams", []), now_by_slug[slug], gap_state, prevs[slug],
-                attempted, archive_run)
+                attempted, archive_run, overrides_by_slug[slug], outbox_by_slug[slug])
         else:
             current_by_slug[slug] = None
 
@@ -2429,7 +2697,7 @@ def main() -> int:
         tz_name = entry.get("timezone", DEFAULT_TZ_NAME)
         out = build_beach_output(
             slug, tz_name, now_by_slug[slug], providers,
-            prevs[slug], current_by_slug[slug], uw, uw_reading,
+            prevs[slug], current_by_slug[slug], uw, uw_reading, overrides_by_slug[slug], outbox_by_slug[slug],
         )
 
         # Non-destructive: never overwrite a beach's published feed with an

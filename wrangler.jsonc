@@ -45,6 +45,15 @@
   "vars": {
     "PUSH_SAFETY_ALERTS": "on"
   }
+  // Data-quality loop (docs/QUALITY_PLAN.md, migrations/0019). Secrets, set with `wrangler secret put`:
+  //   OWNER_ENROLL_CODE     the one-time code a phone uses to become the owner: open
+  //                         /admin/review#enroll=<code> once. The server keeps only a SHA-256 of
+  //                         the token it hands back (owner_sessions). Unset = nobody can enroll.
+  //   QUALITY_INGEST_TOKEN  the cam reader's credential for /api/quality/alerts and
+  //                         /api/quality/overrides. Also a GitHub Actions secret (sargassum.yml).
+  //                         Separate from INGEST_TOKEN.
+  // Owner pushes (APNs, iPhone) go only to the push token stored on an owner session, and are sent
+  // by /api/quality/drain, which workers/history-cron calls every minute with CRON_SECRET.
   // NOTE: custom domains (isitbeachday.com, www, app.isitbeachday.com) are attached
   // to this Worker via the Cloudflare API/dashboard, deliberately NOT via a `routes`
   // array here — a routes array risks reconciling-away the dashboard-managed domains

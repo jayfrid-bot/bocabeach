@@ -243,3 +243,42 @@ describe("openLiveActivitySessions — one client per environment (Codex review 
     expect(connectedHosts.sort()).toEqual(["https://api.push.apple.com", "https://api.sandbox.push.apple.com"]);
   });
 });
+
+
+describe("openApnsSession: an optional per-call timeout (the owner-push drain uses 5 s)", () => {
+  const sendOne = (timeoutMs?: number) =>
+    openApnsSession(testCfg(), 1_700_000_000, timeoutMs ? { timeoutMs } : undefined).send("tok", { title: "t", body: "b", url: "u" });
+
+  it("passes an abort signal only when asked, and leaves the ordinary push run's calls exactly as they were", async () => {
+    const outer = globalThis.fetch;
+    const seen: Array<AbortSignal | undefined> = [];
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      seen.push(init.signal as AbortSignal | undefined);
+      return new Response("", { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      await sendOne();
+      await sendOne(5000);
+    } finally {
+      globalThis.fetch = outer;
+    }
+    expect(seen[0]).toBeUndefined();
+    expect(seen[1]).toBeInstanceOf(AbortSignal);
+    expect(seen[1]!.aborted).toBe(false);
+  });
+
+  it("a call that outlasts the timeout is a failed result, not a hang or a throw", async () => {
+    const outer = globalThis.fetch;
+    globalThis.fetch = ((_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        (init.signal as AbortSignal).addEventListener("abort", () => reject(new DOMException("timed out", "TimeoutError")));
+      })) as unknown as typeof fetch;
+    try {
+      const r = await sendOne(20);
+      expect(r.ok).toBe(false);
+      expect(r.reason).toMatch(/timed out|TimeoutError/);
+    } finally {
+      globalThis.fetch = outer;
+    }
+  });
+});

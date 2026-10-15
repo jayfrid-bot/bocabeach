@@ -28,6 +28,11 @@
  * time is 08:17 UTC first POSTs /api/cam-frames/purge, then runs the normal
  * archive pass. A purge failure is logged and never stops the archive call.
  * GET /?task=purge runs the purge on demand, behind the same secret.
+ *
+ * QUALITY DRAIN (docs/QUALITY_PLAN.md): after the archive pass, EVERY tick also POSTs
+ * /api/quality/drain, which sends the owner pushes that quality alerts queued. It is its own
+ * request (its own subrequest budget), and a failed archive pass does not skip it.
+ * GET /?task=drain runs it on demand, behind the same secret.
  */
 
 export interface Env {
@@ -47,6 +52,12 @@ export interface Env {
 const RUN_URL = "https://app.isitbeachday.com/api/history/archive";
 /** Daily cleanup of the webcam archive index (D1 rows past 365 days, stale pending rows). */
 const PURGE_URL = "https://app.isitbeachday.com/api/cam-frames/purge";
+/**
+ * Owner-push drain (docs/QUALITY_PLAN.md): sends the pushes that quality alerts queued. The archive
+ * request only RECORDS alerts; this separate request sends them (at most 3, each APNs call cut off
+ * after 5 s), so the archive request spends no subrequest on APNs. Every tick, after the archive pass.
+ */
+const DRAIN_URL = "https://app.isitbeachday.com/api/quality/drain";
 /** The purge rides the every-minute tick that lands on this UTC time. */
 const PURGE_HOUR_UTC = 8;
 const PURGE_MINUTE_UTC = 17;
@@ -99,6 +110,23 @@ async function runPurge(env: Env): Promise<RunResult> {
   }
 }
 
+/** One drain call. Never throws — a failed drain is logged and the next minute tries again. */
+async function runDrain(env: Env): Promise<RunResult> {
+  if (!env.CRON_SECRET) {
+    return { ok: false, status: 0, body: "CRON_SECRET not set on history-cron" };
+  }
+  try {
+    const res = await fetch(DRAIN_URL, {
+      method: "POST",
+      headers: { "x-cron-secret": env.CRON_SECRET },
+    });
+    const body = (await res.text()).slice(0, 2000);
+    return { ok: res.ok, status: res.status, body };
+  } catch (e) {
+    return { ok: false, status: 0, body: `fetch failed: ${(e as Error).message}` };
+  }
+}
+
 export default {
   async scheduled(ctrl: ScheduledController, env: Env): Promise<void> {
     if (isPurgeTick(ctrl.scheduledTime)) {
@@ -121,6 +149,8 @@ export default {
       }
       if (idle) break;
     }
+    // Always, even when an archive pass failed: queued owner pushes should not wait on it.
+    console.log("history-cron quality drain:", JSON.stringify(await runDrain(env)));
   },
 
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -128,7 +158,7 @@ export default {
       return new Response("unauthorized", { status: 401 });
     }
     const task = new URL(req.url).searchParams.get("task");
-    const r = task === "purge" ? await runPurge(env) : await runOnce(env);
+    const r = task === "purge" ? await runPurge(env) : task === "drain" ? await runDrain(env) : await runOnce(env);
     return Response.json(r, { status: r.ok ? 200 : 502 });
   },
 };

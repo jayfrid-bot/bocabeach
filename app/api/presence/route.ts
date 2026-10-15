@@ -11,11 +11,19 @@
 //          (LOC-03), and the card must not claim otherwise.
 //   DELETE { deviceId }  (or ?deviceId=…)  Disarms.
 //
+// Both verbs change where safety alerts fire, so they need the device's
+// `x-install-token` (401 `no-token`, nothing written). The check is part of the
+// write itself (store.setPresence / clearPresence take the guard). A device the
+// server has no token for yet gets 401; the app binds one through /api/devices
+// and retries. (While INSTALL_TOKEN_ENFORCE is off, a request with no token is
+// let through as before.)
+//
 // The stored fix is what the alerts engine uses for per-device lightning
 // distance, so it is deliberately short-lived and never returned to any client.
 
 import { getLocation } from "@/config/locations";
-import { badRequest, fail, isDeviceId, num, okDevice, readBody } from "@/lib/db/api";
+import { badRequest, fail, isDeviceId, num, okDevice, readBody, storeFailure } from "@/lib/db/api";
+import { guardForWrite } from "@/lib/db/installTokenAuth";
 import { getStore } from "@/lib/db/store";
 import { entitled } from "@/lib/db/types";
 import { MAX_ARM_MS } from "@/lib/db/plus";
@@ -63,22 +71,17 @@ export async function POST(req: Request): Promise<Response> {
     const device = await store.getDevice(body.deviceId);
     if (!device || !entitled(device, now)) return fail("not-entitled", 403);
 
-    await store.setPresence(body.deviceId, {
-      slug,
-      lat,
-      lon,
-      accuracyM,
-      fixAt,
-      armedUntil,
-      source,
-    });
+    await store.setPresence(
+      body.deviceId,
+      { slug, lat, lon, accuracyM, fixAt, armedUntil, source },
+      guardForWrite(req, "/api/presence"),
+    );
     const updated = await store.getDevice(body.deviceId);
     // Delivery readiness is a separate fact from monitoring (LOC-03).
     const pushReady = !!(await store.getPushToken(body.deviceId));
     return okDevice(updated ?? device, { pushReady });
   } catch (e) {
-    console.error("presence: arm failed", e);
-    return fail("store-unavailable", 500);
+    return storeFailure(e, "presence: arm failed");
   }
 }
 
@@ -93,7 +96,7 @@ export async function DELETE(req: Request): Promise<Response> {
     const store = await getStore();
     const device = await store.getDevice(deviceId);
     if (!device) return fail("not-found", 404);
-    await store.clearPresence(deviceId);
+    await store.clearPresence(deviceId, guardForWrite(req, "/api/presence"));
     // Round-6: re-read rather than locally overlaying `presence: null` onto
     // the pre-clear `device` — that object still carries the OLD
     // `updatedAt`, which `isStaleDeviceResponse` (lib/plus/client.ts) would
@@ -105,7 +108,6 @@ export async function DELETE(req: Request): Promise<Response> {
     const updated = await store.getDevice(deviceId);
     return okDevice(updated ?? { ...device, presence: null });
   } catch (e) {
-    console.error("presence: disarm failed", e);
-    return fail("store-unavailable", 500);
+    return storeFailure(e, "presence: disarm failed");
   }
 }

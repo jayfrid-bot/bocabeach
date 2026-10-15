@@ -13,6 +13,7 @@ import { camFeedUrlCandidates } from "@/lib/sources/camFeed";
 import { expectedNextCamRead } from "@/lib/camNextRead";
 import { capCamHistory } from "@/lib/camHistory";
 import { camReadAsOf, parseCapturedAtLocal, pickCamGroup, type CamGroupSource } from "@/lib/camGroup";
+import { applySeaweedOverrides, type SeaweedOverride } from "@/lib/quality/seaweedOverrides";
 
 const ATTRIBUTION = "Beach cams + Gemini vision";
 
@@ -339,8 +340,14 @@ export function summarizeSeaweed(
   };
 }
 
+/**
+ * `loadOverrides` (server only, lib/quality/overrides.ts) supplies the owner's
+ * "Wrong" taps for this beach: cam readings to leave out of the summary. It is a
+ * parameter, not an import, because this file is also bundled for the browser.
+ */
 export async function fetchSargassum(
   loc: Location,
+  loadOverrides?: (slug: string) => Promise<SeaweedOverride[]>,
 ): Promise<Wrapped<SargassumData>> {
   // Seaweed is read from the cam-vision job, which only covers beaches with
   // configured cams (currently just Boca). For a cam-less beach there is no
@@ -382,7 +389,9 @@ export async function fetchSargassum(
       };
     }
     if (!res.ok) throw new Error(`cam seaweed feed -> ${res.status}`);
-    const feed = (await res.json()) as CamSeaweedFeed;
+    const rawFeed = (await res.json()) as CamSeaweedFeed;
+    // The owner's "Wrong" taps: drop those cams' readings and claims before summarizing.
+    const feed = loadOverrides ? applySeaweedOverrides(rawFeed, await loadOverrides(loc.slug), Date.now()) : rawFeed;
     // The GitHub CDN's Date header is serve-time, not when the job generated the
     // snapshot — report the older of the two so RelativeTime matches the card.
     fetchedAt = oldestIso(feed.generatedAt, fetchedAtOf(res));

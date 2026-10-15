@@ -84,109 +84,60 @@ function installFakeLocalStorage() {
   } as Storage;
 }
 
-describe("bootstrapInstallToken", () => {
+describe("bootstrapInstallToken (the install-token claim; the details are in installToken.test.ts)", () => {
+  const fetchCtl = { calls: [] as { token: string | null }[], status: 200 };
   beforeEach(() => {
     installFakeLocalStorage();
-    apiCtl.saveDevice.mockReset();
     resetInstallTokenLatch();
+    fetchCtl.calls = [];
+    fetchCtl.status = 200;
+    (globalThis as { fetch?: unknown }).fetch = async (_url: string, init: RequestInit) => {
+      fetchCtl.calls.push({ token: new Headers(init.headers).get("x-install-token") });
+      return new Response(JSON.stringify({ ok: fetchCtl.status === 200, installTokenBound: fetchCtl.status === 200, device: { id: DEV } }), { status: fetchCtl.status });
+    };
   });
   afterEach(() => {
     delete (globalThis as { localStorage?: unknown }).localStorage;
+    delete (globalThis as { fetch?: unknown }).fetch;
   });
 
-  it("returns the already-cached token with no network call at all", async () => {
+  it("a confirmed token returns with no network call at all", async () => {
     store.writeInstallToken("cached-token");
+    store.writeInstallClaimed(true);
     const { token } = await bootstrapInstallToken();
     expect(token).toBe("cached-token");
-    expect(apiCtl.saveDevice).not.toHaveBeenCalled();
+    expect(fetchCtl.calls).toHaveLength(0);
   });
 
-  it("a fresh device (no hash yet) mints on the plain POST /api/devices", async () => {
-    apiCtl.saveDevice.mockImplementation(async () => {
-      store.writeInstallToken("minted-token"); // what api.ts's request() does on a real response
-      return { ok: true, device: { id: DEV }, error: null, status: 200 };
-    });
-    const { token } = await bootstrapInstallToken();
-    expect(token).toBe("minted-token");
-    expect(apiCtl.saveDevice).toHaveBeenCalledTimes(1);
+  it("a fresh phone makes its own token, saves it, and claims it", async () => {
+    const { token, device } = await bootstrapInstallToken();
+    expect(token).toBeTruthy();
+    expect(store.readInstallToken()).toBe(token);
+    expect(fetchCtl.calls).toEqual([{ token }]);
+    expect(device).toEqual({ id: DEV });
   });
 
-  it("a hash already exists server-side but this phone has nothing: resolves null, no recovery route to fall back to", async () => {
-    apiCtl.saveDevice.mockResolvedValue({ ok: true, device: { id: DEV }, error: null, status: 200 }); // no installToken in the response
+  it("a refused claim (401) resolves null but keeps the saved token", async () => {
+    store.writeInstallToken("mine");
+    fetchCtl.status = 401;
     const { token } = await bootstrapInstallToken();
     expect(token).toBeNull();
-    expect(apiCtl.saveDevice).toHaveBeenCalledTimes(1);
+    expect(store.readInstallToken()).toBe("mine");
   });
 
-  it("latches 'no token' for the session after one empty mint response — later plain calls skip the network", async () => {
-    apiCtl.saveDevice.mockResolvedValue({ ok: true, device: { id: DEV }, error: null, status: 200 });
-    const first = await bootstrapInstallToken();
-    expect(first.token).toBeNull();
-    expect(apiCtl.saveDevice).toHaveBeenCalledTimes(1);
-
-    // A second plain bootstrap this "session" must NOT hit the network again
-    // — nothing about the answer changes moment to moment.
-    const second = await bootstrapInstallToken();
-    expect(second.token).toBeNull();
-    expect(apiCtl.saveDevice).toHaveBeenCalledTimes(1); // still 1, not 2
+  it("forceRefresh asks once more this session and never clears the saved token", async () => {
+    store.writeInstallToken("mine");
+    fetchCtl.status = 401;
+    await bootstrapInstallToken();
+    await bootstrapInstallToken({ forceRefresh: true });
+    await bootstrapInstallToken({ forceRefresh: true });
+    expect(fetchCtl.calls).toHaveLength(2);
+    expect(store.readInstallToken()).toBe("mine");
   });
 
-  it("forceRefresh clears a stale cached token and makes one real round trip; a repeat this session is latched", async () => {
-    // A 401 says the cached token is bad — bootstrapInstallToken must not
-    // just hand it straight back out.
-    store.writeInstallToken("stale-token");
-    apiCtl.saveDevice.mockResolvedValue({ ok: true, device: { id: DEV }, error: null, status: 200 }); // still no fresh token
-    const first = await bootstrapInstallToken({ forceRefresh: true });
-    expect(first.token).toBeNull();
-    expect(store.readInstallToken()).toBeNull(); // the stale value was cleared, not just ignored
-    expect(apiCtl.saveDevice).toHaveBeenCalledTimes(1);
-
-    // Codex round-4 #4: a PERMANENTLY lost token must not POST on every
-    // forced retry for the rest of the session — one forced refresh per
-    // session, then latch, same as the plain path already does.
-    const second = await bootstrapInstallToken({ forceRefresh: true });
-    expect(second.token).toBeNull();
-    expect(apiCtl.saveDevice).toHaveBeenCalledTimes(1); // still 1, not 2 — latched
-  });
-
-  it("forceRefresh that succeeds returns the fresh token", async () => {
-    store.writeInstallToken("stale-token");
-    apiCtl.saveDevice.mockImplementation(async () => {
-      store.writeInstallToken("fresh-token");
-      return { ok: true, device: { id: DEV }, error: null, status: 200 };
-    });
-    const { token } = await bootstrapInstallToken({ forceRefresh: true });
-    expect(token).toBe("fresh-token");
-  });
-
-  it("a second forced refresh this session reuses the cache from the first, no second POST", async () => {
-    store.writeInstallToken("stale-token");
-    apiCtl.saveDevice.mockImplementation(async () => {
-      store.writeInstallToken("fresh-token");
-      return { ok: true, device: { id: DEV }, error: null, status: 200 };
-    });
-    const first = await bootstrapInstallToken({ forceRefresh: true });
-    expect(first.token).toBe("fresh-token");
-    expect(apiCtl.saveDevice).toHaveBeenCalledTimes(1);
-
-    const second = await bootstrapInstallToken({ forceRefresh: true });
-    expect(second.token).toBe("fresh-token"); // read back from cache, not re-minted
-    expect(apiCtl.saveDevice).toHaveBeenCalledTimes(1); // no second round trip
-  });
-
-  it("overlapping callers dedupe into a single in-flight bootstrap", async () => {
-    let resolveSave: (v: unknown) => void = () => {};
-    apiCtl.saveDevice.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          resolveSave = resolve;
-        }),
-    );
-    const a = bootstrapInstallToken();
-    const b = bootstrapInstallToken();
-    resolveSave({ ok: true, device: { id: DEV }, error: null, status: 200 });
-    await Promise.all([a, b]);
-    expect(apiCtl.saveDevice).toHaveBeenCalledTimes(1);
+  it("overlapping callers dedupe into a single in-flight claim", async () => {
+    await Promise.all([bootstrapInstallToken(), bootstrapInstallToken()]);
+    expect(fetchCtl.calls).toHaveLength(1);
   });
 });
 

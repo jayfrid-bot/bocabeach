@@ -26,6 +26,7 @@ import { getHomeBeach, setHomeBeach } from "@/lib/homeBeach";
 import type { LocationPublic } from "@/lib/types";
 import { shouldShowCodeEntry, supportId } from "@/components/plus/Paywall";
 import { Chip, ErrorLine, PrimaryButton, SecondaryButton, Sheet } from "@/components/plus/Sheet";
+import { useOwnerEntryTap } from "@/lib/quality/ownerEntry";
 
 const HEAT_CHOICES: { value: HeatPreference; label: string }[] = [
   { value: "cooler", label: "Cooler" },
@@ -183,6 +184,8 @@ export function PlusSettingsSheet({
     } else setError(plusErrorMessage(res.error));
   };
 
+  // Hidden owner entry: five quick taps on the Support ID line open /admin/review (lib/quality/ownerEntry.ts).
+  const ownerEntryTap = useOwnerEntryTap();
   const copySupportId = async () => {
     try {
       await navigator.clipboard.writeText(plus.deviceId);
@@ -470,7 +473,7 @@ export function PlusSettingsSheet({
         </SecondaryButton>
         {plus.deviceId ? (
           <div className="flex items-center justify-between gap-2 px-1 text-xs text-slate-500 dark:text-slate-400">
-            <span>
+            <span onClick={ownerEntryTap}>
               Support ID:{" "}
               <span className="font-mono tabular-nums text-slate-700 dark:text-slate-300">
                 {supportId(plus.deviceId)}

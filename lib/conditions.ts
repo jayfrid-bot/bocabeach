@@ -18,6 +18,7 @@ import { fetchGfs } from "@/lib/sources/modelEnsemble";
 import { fetchNowcast } from "@/lib/sources/nowcast";
 import { fetchNws } from "@/lib/sources/nws";
 import { fetchSargassum } from "@/lib/sources/sargassum";
+import { loadSeaweedOverrides, overridesVersion } from "@/lib/quality/overrides";
 import { fetchRipNwps } from "@/lib/sources/ripNwps";
 import { fetchSun } from "@/lib/sources/sun";
 import { fetchTides } from "@/lib/sources/tides";
@@ -213,7 +214,7 @@ export async function getSnapshotForLocation(
     fetchLightning(loc),
     fetchGoesCloud(loc),
     fetchPrecipRadar(loc),
-    fetchSargassum(loc),
+    fetchSargassum(loc, loadSeaweedOverrides),
     fetchRipNwps(loc.slug),
     fetchBusyness(loc),
     fetchClarity(loc),
@@ -442,7 +443,14 @@ class BudgetAbortedDuringBuild extends Error {
   }
 }
 
-const cachedConditions = (slug: string) =>
+/**
+ * `ovVersion` is the fingerprint of the owner's seaweed verdicts in force for this beach
+ * (lib/quality/overrides.ts `overridesVersion`). It is part of the cache key, so the moment
+ * the owner taps Right or Wrong the next request builds a fresh snapshot instead of serving
+ * the one built before the tap. It is "0" for every beach with no cams and every beach with
+ * no verdicts, so the key is then exactly what it always was.
+ */
+const cachedConditions = (slug: string, ovVersion: string) =>
   unstable_cache(
     async () => {
       const response = await getConditionsForLocation(getLocation(slug)!);
@@ -455,7 +463,7 @@ const cachedConditions = (slug: string) =>
       }
       return response;
     },
-    ["conditions", slug],
+    ovVersion === "0" ? ["conditions", slug] : ["conditions", slug, `ov-${ovVersion}`],
     { revalidate: 120, tags: [`conditions-${slug}`] },
   )();
 
@@ -484,7 +492,8 @@ export async function getConditions(
   const loc = getLocation(slug);
   if (!loc) return null;
   try {
-    return await cachedConditions(slug);
+    const ovVersion = loc.cams?.length ? await overridesVersion(slug) : "0";
+    return await cachedConditions(slug, ovVersion);
   } catch (e) {
     if (e instanceof BudgetAbortedDuringBuild) {
       // Never cached (the throw above stopped that) — hand the caller the

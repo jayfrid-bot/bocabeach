@@ -42,6 +42,19 @@ const nextConfig = {
     // Cam thumbnails / external snapshots are loaded from third-party hosts.
     remotePatterns: [{ protocol: "https", hostname: "**" }],
   },
+  // The owner area must never be framed by another site: a framed owner screen could be clicked
+  // through without the owner seeing what was tapped (docs/QUALITY_PLAN.md). The owner API
+  // answers carry the same two headers themselves (lib/quality/ownerHeaders.ts).
+  async headers() {
+    const noFraming = [
+      { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
+      { key: "X-Frame-Options", value: "DENY" },
+    ];
+    return [
+      { source: "/admin/:path*", headers: noFraming },
+      { source: "/api/quality/owner/:path*", headers: noFraming },
+    ];
+  },
   env: {
     // Inlined at build (available in client components via process.env.*).
     NEXT_PUBLIC_APP_VERSION: pkg.version,

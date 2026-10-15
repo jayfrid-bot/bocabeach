@@ -9,7 +9,7 @@
 // by anyone holding an old key slice, and it compares in constant time.
 
 import { secretEqual } from "@/lib/db/api";
-import { isValidFrameKey } from "@/lib/camFrames/keys";
+import { isSignableKey } from "@/lib/camFrames/keys";
 
 export const DEFAULT_TTL_SEC = 900;
 /** verify() refuses an expiry further out than this. */
@@ -60,7 +60,7 @@ export async function sign(
   ttlSec: number = DEFAULT_TTL_SEC,
   opts?: { nowSec?: number; key?: string },
 ): Promise<SignedFrame> {
-  if (!isValidFrameKey(k)) throw new Error("cam frame: malformed key");
+  if (!isSignableKey(k)) throw new Error("cam frame: malformed key");
   const key = urlKey(opts?.key);
   if (!key) throw new Error("cam frame: CAM_FRAME_URL_KEY is not set");
   if (!Number.isInteger(ttlSec) || ttlSec < 1 || ttlSec > MAX_EXP_AHEAD_SEC) {
@@ -83,7 +83,7 @@ export async function verify(
   nowSec: number = Math.floor(Date.now() / 1000),
   opts?: { key?: string },
 ): Promise<boolean> {
-  if (!isValidFrameKey(k)) return false;
+  if (!isSignableKey(k)) return false;
   if (typeof sig !== "string" || !SIG_RE.test(sig)) return false;
   let expN: number;
   if (typeof exp === "number") {

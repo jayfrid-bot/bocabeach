@@ -588,6 +588,8 @@ export interface StormActivityData {
 export type SargassumRisk = "none" | "low" | "moderate" | "high" | "unknown";
 /** One beach-cam's observed reading (from the vision job): seaweed + crowd. */
 export interface CamSeaweedReading {
+  /** The cam's id in config/vision-cams.json (the reader writes it on every reading). */
+  id?: string;
   name: string;
   level: SargassumRisk;
   /** 0-100 % of visible sand/shore covered by sargassum (refines the score). */
@@ -608,6 +610,8 @@ export interface CamSeaweedReading {
   lowSun?: boolean;
   /** Copied from an earlier tick because this cam had no new frame. */
   carried?: boolean;
+  /** When the reader scored this reading, UTC ISO. A seaweed override compares against it. */
+  scoredAt?: string;
 }
 /** Typical seaweed by local hour, learned from the rolling cam history. */
 export interface SargassumByHour {

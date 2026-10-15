@@ -1,10 +1,11 @@
-// history-cron: the every-minute tick still archives; the daily tick purges.
+// history-cron: the every-minute tick still archives, then drains the owner-push queue; the daily tick purges.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../src/index";
 
 const ARCHIVE = "https://app.isitbeachday.com/api/history/archive";
 const PURGE = "https://app.isitbeachday.com/api/cam-frames/purge";
+const DRAIN = "https://app.isitbeachday.com/api/quality/drain";
 const env = { CRON_SECRET: "cron-secret-test" };
 
 type Call = { url: string; method: string | undefined; secret: string | null };
@@ -37,22 +38,25 @@ const T_0817 = at("2026-10-12T08:17:00Z");
 const T_0818 = at("2026-10-12T08:18:00Z");
 
 describe("scheduled", () => {
-  it("an ordinary minute POSTs only the archive route, once, with the secret", async () => {
+  it("an ordinary minute POSTs the archive route once and then the drain route, each with the secret", async () => {
     await tick(at("2026-10-12T14:05:00Z"));
-    expect(calls).toEqual([{ url: ARCHIVE, method: "POST", secret: env.CRON_SECRET }]);
+    expect(calls).toEqual([
+      { url: ARCHIVE, method: "POST", secret: env.CRON_SECRET },
+      { url: DRAIN, method: "POST", secret: env.CRON_SECRET },
+    ]);
   });
 
   it("the minutes either side of 08:17 UTC run only the archive", async () => {
     await tick(T_0816);
     await tick(T_0818);
-    expect(calls.map((c) => c.url)).toEqual([ARCHIVE, ARCHIVE]);
+    expect(calls.map((c) => c.url)).toEqual([ARCHIVE, DRAIN, ARCHIVE, DRAIN]);
   });
 
   it("08:17 on a different hour or 08:xx on a different minute does not purge", async () => {
     await tick(at("2026-10-12T20:17:00Z"));
     await tick(at("2026-10-12T07:17:00Z"));
     await tick(at("2026-10-12T08:47:00Z"));
-    expect(calls.map((c) => c.url)).toEqual([ARCHIVE, ARCHIVE, ARCHIVE]);
+    expect(calls.map((c) => c.url)).toEqual([ARCHIVE, DRAIN, ARCHIVE, DRAIN, ARCHIVE, DRAIN]);
   });
 
   it("the 08:17 UTC tick runs both: purge first, then archive, each with the secret", async () => {
@@ -60,12 +64,13 @@ describe("scheduled", () => {
     expect(calls).toEqual([
       { url: PURGE, method: "POST", secret: env.CRON_SECRET },
       { url: ARCHIVE, method: "POST", secret: env.CRON_SECRET },
+      { url: DRAIN, method: "POST", secret: env.CRON_SECRET },
     ]);
   });
 
   it("08:17 UTC counts in UTC whatever the seconds are", async () => {
     await tick(at("2026-10-12T08:17:59Z"));
-    expect(calls.map((c) => c.url)).toEqual([PURGE, ARCHIVE]);
+    expect(calls.map((c) => c.url)).toEqual([PURGE, ARCHIVE, DRAIN]);
   });
 
   it("a purge that fails (HTTP 500 or a thrown fetch) still runs the archive call", async () => {
@@ -75,7 +80,7 @@ describe("scheduled", () => {
       return url === PURGE ? new Response("boom", { status: 500 }) : new Response(JSON.stringify({ archived: 0, claimed: 0 }), { status: 200 });
     });
     await tick(T_0817);
-    expect(calls.map((c) => c.url)).toEqual([PURGE, ARCHIVE]);
+    expect(calls.map((c) => c.url)).toEqual([PURGE, ARCHIVE, DRAIN]);
 
     calls = [];
     f.mockImplementation(async (url: string) => {
@@ -84,25 +89,45 @@ describe("scheduled", () => {
       return new Response(JSON.stringify({ archived: 0, claimed: 0 }), { status: 200 });
     });
     await expect(tick(T_0817)).resolves.toBeUndefined();
-    expect(calls.map((c) => c.url)).toEqual([PURGE, ARCHIVE]);
+    expect(calls.map((c) => c.url)).toEqual([PURGE, ARCHIVE, DRAIN]);
   });
 
   it("the purge runs once per tick even with PASSES_PER_TICK above 1", async () => {
     await tick(T_0817, { ...env, PASSES_PER_TICK: "3" });
     expect(calls.filter((c) => c.url === PURGE)).toHaveLength(1);
     expect(calls.filter((c) => c.url === ARCHIVE)).toHaveLength(3);
+    expect(calls.filter((c) => c.url === DRAIN)).toHaveLength(1); // one drain per tick, after every archive pass
+    expect(calls.at(-1)?.url).toBe(DRAIN);
   });
 
   it("the archive path still honors PASSES_PER_TICK and the idle stop", async () => {
     await tick(T_0816, { ...env, PASSES_PER_TICK: "3" });
-    expect(calls.map((c) => c.url)).toEqual([ARCHIVE, ARCHIVE, ARCHIVE]);
+    expect(calls.map((c) => c.url)).toEqual([ARCHIVE, ARCHIVE, ARCHIVE, DRAIN]);
     calls = [];
     (fetch as unknown as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => {
       calls.push({ url, method: "POST", secret: null });
       return new Response(JSON.stringify({ archived: 0, claimed: 0 }), { status: 200 });
     });
     await tick(T_0816, { ...env, PASSES_PER_TICK: "3" });
-    expect(calls).toHaveLength(1);
+    expect(calls.map((c) => c.url)).toEqual([ARCHIVE, DRAIN]);
+  });
+
+  it("a failing archive pass does not skip the drain, and a failing drain never throws", async () => {
+    const f = fetch as unknown as ReturnType<typeof vi.fn>;
+    f.mockImplementation(async (url: string) => {
+      calls.push({ url, method: "POST", secret: null });
+      return url === ARCHIVE ? new Response("boom", { status: 500 }) : new Response("{}", { status: 200 });
+    });
+    await tick(T_0816);
+    expect(calls.map((c) => c.url)).toEqual([ARCHIVE, DRAIN]);
+    calls = [];
+    f.mockImplementation(async (url: string) => {
+      calls.push({ url, method: "POST", secret: null });
+      if (url === DRAIN) throw new Error("network down");
+      return new Response(JSON.stringify({ archived: 0, claimed: 0 }), { status: 200 });
+    });
+    await expect(tick(T_0816)).resolves.toBeUndefined();
+    expect(calls.map((c) => c.url)).toEqual([ARCHIVE, DRAIN]);
   });
 
   it("without a secret nothing is called and nothing throws", async () => {
@@ -120,12 +145,15 @@ describe("fetch (on-demand)", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("runs the archive pass by default and the purge with ?task=purge", async () => {
+  it("runs the archive pass by default, the purge with ?task=purge and the drain with ?task=drain", async () => {
     await get("");
     expect(calls.map((c) => c.url)).toEqual([ARCHIVE]);
     calls = [];
     await get("?task=purge");
     expect(calls.map((c) => c.url)).toEqual([PURGE]);
+    calls = [];
+    await get("?task=drain");
+    expect(calls.map((c) => c.url)).toEqual([DRAIN]);
   });
 });
 

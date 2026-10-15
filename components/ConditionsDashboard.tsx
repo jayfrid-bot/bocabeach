@@ -58,6 +58,7 @@ import { SeasonalHazards } from "@/components/SeasonalHazards";
 import { seaweedVsAvgPhrase } from "@/lib/vsAveragePhrase";
 import { clarityTileCopy } from "@/lib/sources/clarity";
 import { seaweedTileSub } from "@/lib/sources/sargassum";
+import { OwnerReportLink } from "@/components/quality/OwnerReportLink";
 // --- Beach Day Plus ---------------------------------------------------------
 import { SAFETY_ALERT_KEYS } from "@/lib/db/types";
 import { ripCapFor } from "@/lib/ripRisk";
@@ -77,6 +78,7 @@ import { PlusOnboarding } from "@/components/plus/PlusOnboarding";
 import { PlusSettingsSheet } from "@/components/plus/PlusSettingsSheet";
 import { SafetyLine } from "@/components/plus/SafetyLine";
 import { ScoreToggle } from "@/components/plus/ScoreToggle";
+import { useOwnerEntryTap } from "@/lib/quality/ownerEntry";
 
 // Throw on non-OK so an error body (e.g. a 404 `{error}`) never replaces the
 // good snapshot — SWR keeps the last good data and the consumer guard holds.
@@ -356,6 +358,8 @@ export function ConditionsDashboard({
   // Support ID in the footer (Codex round 2 #1) reuses this same
   // hydration-safe native flag — app-only, since a plain web visitor has no
   // device row on our server worth a support id for.
+  // Hidden owner entry: five quick taps on the Support ID line open /admin/review (lib/quality/ownerEntry.ts).
+  const ownerEntryTap = useOwnerEntryTap();
   const [footerIdCopied, setFooterIdCopied] = useState(false);
   // Same try/catch shape as components/plus/Paywall.tsx's copySupportId
   // (Codex round 3 #2): `navigator.clipboard` itself can be undefined (no
@@ -1289,6 +1293,7 @@ export function ConditionsDashboard({
             iPhone app
           </a>
         </p>
+        <OwnerReportLink slug={slug} />
         <p className="text-center text-xs text-slate-500">
           v{APP_VERSION}
           {BUILD_NUM && BUILD_NUM !== "0" ? ` · build ${BUILD_NUM}` : ""}
@@ -1325,7 +1330,7 @@ export function ConditionsDashboard({
             the app afterward — see above), so this never mismatches SSR. */}
         {native && plus.deviceId ? (
           <p className="flex items-center justify-center gap-1.5 text-center text-xs text-slate-400 dark:text-slate-600">
-            <span>
+            <span onClick={ownerEntryTap}>
               Support ID: <span className="font-mono">{supportId(plus.deviceId)}</span>
             </span>
             <button
