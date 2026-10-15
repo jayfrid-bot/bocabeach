@@ -5,6 +5,8 @@ import {
   checkQueryKeys,
   parseBool,
   parseInteger,
+  parseLat,
+  parseLon,
   parseNumber,
   parseText,
 } from "@/lib/agent/params";
@@ -28,6 +30,25 @@ describe("parseNumber (canonical decimals only)", () => {
     const re = new RegExp(DECIMAL_PATTERN);
     for (const good of ["0", "26.35", "-80.07", "10"]) expect(re.test(good), good).toBe(true);
     for (const bad of ["", "+5", ".5", "5.", "026", "1e2", " 1"]) expect(re.test(bad), bad).toBe(false);
+  });
+});
+
+describe("parseLat / parseLon (judged by the published pattern, never by rounding)", () => {
+  it("refuses a value that would only round into range", () => {
+    const justOver = "90." + "0".repeat(20) + "1";
+    expect(justOver.length).toBe(24);
+    expect(Number(justOver)).toBe(90); // JavaScript would quietly accept it
+    expect(parseLat(justOver).ok).toBe(false);
+    expect(parseLat("-" + justOver.slice(0, 22) + "1").ok).toBe(false);
+    expect(parseLon("180." + "0".repeat(19) + "1").ok).toBe(false);
+    expect(parseLat("90").ok && parseLat("90.0").ok && parseLat("-90").ok).toBe(true);
+    expect(parseLon("180").ok && parseLon("-180.000").ok && parseLon("-80.07").ok).toBe(true);
+    expect(parseLat("90.1").ok || parseLat("-0").ok || parseLat("91").ok).toBe(false);
+    expect(parseLon("181").ok || parseLon("-0.0").ok).toBe(false);
+  });
+  it("returns the number", () => {
+    expect(parseLat("26.35")).toEqual({ ok: true, value: 26.35 });
+    expect(parseLon("-80.07")).toEqual({ ok: true, value: -80.07 });
   });
 });
 

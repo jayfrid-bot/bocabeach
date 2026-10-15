@@ -14,6 +14,8 @@ const DECIMAL = new RegExp(DECIMAL_PATTERN);
 const NO_NEGATIVE_ZERO = "(?!-0(\\.0+)?$)";
 export const LAT_PATTERN = `^(?=.{1,24}$)${NO_NEGATIVE_ZERO}-?(90(\\.0+)?|[1-8]?[0-9](\\.[0-9]+)?)$`;
 export const LON_PATTERN = `^(?=.{1,24}$)${NO_NEGATIVE_ZERO}-?(180(\\.0+)?|1[0-7][0-9](\\.[0-9]+)?|[1-9]?[0-9](\\.[0-9]+)?)$`;
+const LAT_RE = new RegExp(LAT_PATTERN);
+const LON_RE = new RegExp(LON_PATTERN);
 const INTEGER = /^(0|[1-9]\d{0,5})$/;
 const fail = (message: string): { ok: false; message: string } => ({ ok: false, message });
 
@@ -25,6 +27,22 @@ export function parseNumber(raw: string, name: string, min: number, max: number)
   if (!Number.isFinite(n) || n < min || n > max) return fail(`${name} must be between ${min} and ${max}.`);
   if (n === 0 && raw.startsWith("-")) return fail(`${name} must be written as 0, not -0.`);
   return { ok: true, value: n };
+}
+
+/** Latitude, judged by the very pattern the OpenAPI document publishes (no rounding at the edges). */
+export function parseLat(raw: string): Parsed<number> {
+  if (!LAT_RE.test(raw)) {
+    return fail("lat must be a plain decimal from -90 to 90, such as 26.35 (no spaces, plus sign, exponent, leading zeros or -0).");
+  }
+  return { ok: true, value: Number(raw) };
+}
+
+/** Longitude, judged by the very pattern the OpenAPI document publishes. */
+export function parseLon(raw: string): Parsed<number> {
+  if (!LON_RE.test(raw)) {
+    return fail("lon must be a plain decimal from -180 to 180, such as -80.07 (no spaces, plus sign, exponent, leading zeros or -0).");
+  }
+  return { ok: true, value: Number(raw) };
 }
 
 export function parseInteger(raw: string, name: string, min: number, max: number): Parsed<number> {

@@ -486,13 +486,24 @@ const cachedConditions = (slug: string, ovVersion: string) =>
  */
 export { CONDITIONS_MAX_STALE_MS } from "@/lib/conditionsFreshness";
 
+/**
+ * The owner-override fingerprint the conditions cache key uses ("0" for a beach with no cams
+ * or no running verdicts). Exported so other stores of a built answer (the recent-view store,
+ * lib/watchViewCache.ts) can include it in their identity and drop an answer the moment the
+ * owner corrects a reading.
+ */
+export async function conditionsOverridesVersion(slug: string): Promise<string> {
+  const loc = getLocation(slug);
+  return loc?.cams?.length ? await overridesVersion(slug) : "0";
+}
+
 export async function getConditions(
   slug: string,
 ): Promise<ConditionsResponse | null> {
   const loc = getLocation(slug);
   if (!loc) return null;
   try {
-    const ovVersion = loc.cams?.length ? await overridesVersion(slug) : "0";
+    const ovVersion = await conditionsOverridesVersion(slug);
     return await cachedConditions(slug, ovVersion);
   } catch (e) {
     if (e instanceof BudgetAbortedDuringBuild) {

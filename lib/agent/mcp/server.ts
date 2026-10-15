@@ -301,14 +301,30 @@ async function dispatch(msg: Record<string, unknown>): Promise<Dispatched> {
   }
 }
 
+/**
+ * RFC 9110 section 12.5.1: the most specific media range that matches application/json decides
+ * (application/json beats application/* beats * / *), and q=0 on that range means "not
+ * acceptable". So "application/json;q=0, * / *" refuses JSON. No Accept header = anything goes.
+ */
 function acceptsJson(accept: string | null): boolean {
-  if (accept === null) return true; // lenient: a client that sends no Accept still gets JSON
-  return accept.split(",").some((token) => {
+  if (accept === null) return true;
+  let bestSpecificity = 0;
+  let bestQ = 0;
+  for (const token of accept.split(",")) {
     const [media, ...params] = token.split(";").map((t) => t.trim().toLowerCase());
-    if (media !== "application/json" && media !== "application/*" && media !== "*/*") return false;
-    const q = params.map((p) => /^q\s*=\s*(.+)$/.exec(p)?.[1]).find((v) => v !== undefined);
-    return q === undefined || !(Number(q) === 0); // q=0 means "not acceptable"
-  });
+    const specificity = media === "application/json" ? 3 : media === "application/*" ? 2 : media === "*/*" ? 1 : 0;
+    if (!specificity) continue;
+    const qRaw = params.map((p) => /^q\s*=\s*(.+)$/.exec(p)?.[1]).find((v) => v !== undefined);
+    const q = qRaw === undefined ? 1 : Number(qRaw);
+    const qValue = Number.isFinite(q) ? q : 1;
+    if (specificity > bestSpecificity) {
+      bestSpecificity = specificity;
+      bestQ = qValue;
+    } else if (specificity === bestSpecificity) {
+      bestQ = Math.max(bestQ, qValue);
+    }
+  }
+  return bestSpecificity > 0 && bestQ > 0;
 }
 
 export async function handleMcpPost(req: Request): Promise<Response> {

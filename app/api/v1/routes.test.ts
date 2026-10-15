@@ -17,7 +17,7 @@ import { GET as beachGET } from "@/app/api/v1/beaches/[slug]/route";
 import { GET as nearestGET } from "@/app/api/v1/nearest/route";
 import { GET as openapiGET } from "@/app/api/v1/openapi.json/route";
 import { getConditions } from "@/lib/conditions";
-import { peekWatchView } from "@/lib/watchViewCache";
+import { peekWatchView, storeWatchView } from "@/lib/watchViewCache";
 import { resetAgentRateLimit } from "@/lib/agent/rateLimit";
 import { BUILT_MS, conditionsFor, warmView, req } from "@/lib/agent/testkit";
 
@@ -137,11 +137,41 @@ describe("GET /api/v1/beaches/{slug}", () => {
     }
   });
 
-  it("caches for min(60 s, time left) and not at all once expired", async () => {
+  it("caches for min(60 s, time left)", async () => {
     vi.setSystemTime(BUILT_MS + (15 * 60 - 20) * 1000);
     expect((await beach("boca-raton")).headers.get("Cache-Control")).toBe("public, s-maxage=20");
+  });
+
+  it("counts the cache time from the clock when the response is made, after any slow step", async () => {
+    // 60 s of validity left when the view is built; the recent-view write then takes 40 s.
+    vi.setSystemTime(BUILT_MS + 14 * 60 * 1000);
+    vi.mocked(storeWatchView).mockImplementationOnce(async () => {
+      vi.setSystemTime(Date.now() + 40_000);
+      return true;
+    });
+    const res = await beach("boca-raton");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("public, s-maxage=20");
+  });
+
+  it("never serves a reading that is already past its validUntil: 503 with Retry-After, never cached", async () => {
+    // e.g. a stale value from the conditions cache that is still refreshing.
     vi.setSystemTime(BUILT_MS + 15 * 60 * 1000);
-    expect((await beach("boca-raton")).headers.get("Cache-Control")).toBe("no-store");
+    const res = await beach("boca-raton");
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(res.headers.get("Retry-After")).toBe("30");
+    const body = await res.json();
+    expect(body.error.code).toBe("unavailable");
+    expect(body.score).toBeUndefined();
+    // And one that expires during the recent-view write is refused too.
+    vi.setSystemTime(BUILT_MS + 14 * 60 * 1000 + 30_000);
+    vi.mocked(storeWatchView).mockImplementationOnce(async () => {
+      vi.setSystemTime(BUILT_MS + 16 * 60 * 1000);
+      return true;
+    });
+    // The view is built at 14:30, valid 30 s more; the clock jumps past that before it is served.
+    expect((await beach("boca-raton")).status).toBe(503);
   });
 
   it("returns a cacheable 404 for an unknown or malformed slug, without touching the pipeline for junk", async () => {
@@ -242,6 +272,21 @@ describe("GET /api/v1/nearest", () => {
     expect(b.beaches[2].conditions).toBeNull();
     expect(b.note).toContain(b.beaches[1].slug);
     expect(b.note).toContain(b.beaches[2].slug);
+    expect(b.note).toMatch(/Not scored right now/);
+  });
+
+  it("never ranks or shows a stored view that has expired by the time it is returned", async () => {
+    cached.mockImplementation(async (slug: string) => warmView(slug));
+    // The one cold build is slow: the clock passes every stored view's validUntil while it runs.
+    cached.mockImplementationOnce(async () => null); // boca-raton is not stored, so it is the one built
+    mocked.mockImplementation(async (slug: string) => {
+      const c = conditionsFor(slug);
+      vi.setSystemTime(BUILT_MS + 16 * 60 * 1000);
+      return c;
+    });
+    const b = await (await near("?lat=26.36&lon=-80.06&limit=3&scores=true")).json();
+    expect(b.scored).toBe(0);
+    expect(b.beaches.every((x: { conditions: unknown }) => x.conditions === null)).toBe(true);
     expect(b.note).toMatch(/Not scored right now/);
   });
 

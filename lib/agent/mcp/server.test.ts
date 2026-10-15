@@ -206,6 +206,28 @@ describe("tools/call happy paths", () => {
     expect(d.best).not.toBeNull();
   });
 
+  it("best_beach_today never ranks a view that expired while the one cold build ran", async () => {
+    cached.mockImplementation(async (slug: string) => (slug === "boca-raton" ? null : warmView(slug)));
+    mocked.mockImplementation(async (slug: string) => {
+      vi.setSystemTime(BUILT_MS + 16 * 60 * 1000); // every stored view is now past its validUntil
+      return conditionsFor(slug);
+    });
+    const r = (await tool("best_beach_today", { lat: 26.36, lon: -80.06, compare: 3 })).result;
+    const d = r.structuredContent;
+    expect(d.best).toBeNull();
+    expect(d.ranking).toEqual([]);
+    expect(d.notComparedNow).toHaveLength(3);
+    expect(r.content[0].text).toMatch(/No clear pick/);
+  });
+
+  it("get_beach_score refuses a reading that is already out of date", async () => {
+    vi.setSystemTime(BUILT_MS + 16 * 60 * 1000);
+    const r = (await tool("get_beach_score", { slug: "boca-raton" })).result;
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toMatch(/out of date/);
+    expect(r.structuredContent).toBeUndefined();
+  });
+
   it("best_beach_today builds at most ONE beach when the cache is cold, and names the rest", async () => {
     cached.mockResolvedValue(null);
     const r = (await tool("best_beach_today", { lat: 26.36, lon: -80.06, radius_miles: 250, compare: 5 })).result;
@@ -373,6 +395,25 @@ describe("protocol errors", () => {
     expect((await POST(post(rpc("ping"), { accept: "application/json; q=0.0, text/event-stream" }))).status).toBe(406);
     expect((await POST(post(rpc("ping"), { accept: "*/*;q=0" }))).status).toBe(406);
     expect((await POST(post(rpc("ping"), { accept: "text/event-stream, application/json;q=0.5" }))).status).toBe(200);
+    // RFC 9110: the most specific range wins, whatever the order.
+    for (const accept of [
+      "application/json;q=0, */*;q=1",
+      "*/*;q=1, application/json;q=0",
+      "application/json;q=0, application/*",
+      "application/*;q=0, */*",
+      "application/json;q=0, application/*;q=1, */*;q=1",
+    ]) {
+      expect((await POST(post(rpc("ping"), { accept }))).status, accept).toBe(406);
+    }
+    for (const accept of [
+      "application/json, */*;q=0",
+      "*/*;q=0, application/json",
+      "application/*;q=0, application/json;q=0.1",
+      "text/html, */*;q=0.1",
+    ]) {
+      expect((await POST(post(rpc("ping"), { accept }))).status, accept).toBe(200);
+    }
+    expect((await POST(post(rpc("ping"), { accept: "text/html" }))).status).toBe(406);
     expect((await POST(post(rpc("ping"), { accept: "application/json, text/event-stream" }))).status).toBe(200);
   });
 

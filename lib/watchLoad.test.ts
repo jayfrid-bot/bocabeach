@@ -4,6 +4,11 @@ import type { ConditionsResponse } from "@/lib/types";
 
 vi.mock("@/lib/watchViewCache", () => ({ peekWatchView: vi.fn(), storeWatchView: vi.fn(async () => true) }));
 
+vi.mock("@/lib/quality/overrides", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/quality/overrides")>();
+  return { ...actual, overridesVersion: vi.fn(async () => "0") };
+});
+
 vi.mock("@/lib/conditions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/conditions")>();
   return { ...actual, getConditions: vi.fn() };
@@ -11,6 +16,7 @@ vi.mock("@/lib/conditions", async (importOriginal) => {
 
 import { getConditions } from "@/lib/conditions";
 import { peekWatchView, storeWatchView } from "@/lib/watchViewCache";
+import { overridesVersion } from "@/lib/quality/overrides";
 import { isValidSlug, loadWatchView, secondsValid, viewCacheControl } from "@/lib/watchLoad";
 
 afterEach(() => {
@@ -49,6 +55,8 @@ describe("loadWatchView remembers what it builds", () => {
     expect(r.status).toBe("ok");
     expect(storeWatchView).toHaveBeenCalledTimes(1);
     expect(vi.mocked(storeWatchView).mock.calls[0][0]).toEqual(r.status === "ok" ? r.view : null);
+    // Stored under the owner-override fingerprint.
+    expect(vi.mocked(storeWatchView).mock.calls[0][1]).toBe("0");
   });
   it("stores nothing for a partial build, an unknown beach or a bad slug", async () => {
     vi.mocked(getConditions).mockResolvedValue({ ...copy(), budgetAborted: true });
@@ -57,6 +65,26 @@ describe("loadWatchView remembers what it builds", () => {
     expect((await loadWatchView("nope")).status).toBe("not_found");
     expect((await loadWatchView("../x")).status).toBe("not_found");
     expect(storeWatchView).not.toHaveBeenCalled();
+  });
+});
+
+describe("recent-view identity includes the owner-override fingerprint", () => {
+  it("uses the fingerprint the conditions cache key uses, for both the read and the write", async () => {
+    vi.mocked(overridesVersion).mockResolvedValue("3.17"); // boca-raton has cams
+    vi.mocked(peekWatchView).mockResolvedValue(null);
+    await loadWatchView("boca-raton", { cacheOnly: true });
+    expect(peekWatchView).toHaveBeenCalledWith("boca-raton", "3.17");
+    vi.mocked(getConditions).mockResolvedValue(copy());
+    await loadWatchView("boca-raton");
+    expect(vi.mocked(storeWatchView).mock.calls[0][1]).toBe("3.17");
+    vi.mocked(overridesVersion).mockResolvedValue("0");
+  });
+  it("is just '0' for a beach with no cams (no database read)", async () => {
+    vi.mocked(overridesVersion).mockClear();
+    vi.mocked(peekWatchView).mockResolvedValue(null);
+    await loadWatchView("miami-beach", { cacheOnly: true });
+    expect(peekWatchView).toHaveBeenCalledWith("miami-beach", "0");
+    expect(overridesVersion).not.toHaveBeenCalled();
   });
 });
 
@@ -73,6 +101,7 @@ describe("loadWatchView with cacheOnly", () => {
     vi.mocked(peekWatchView).mockResolvedValue(view);
     const r = await loadWatchView("boca-raton", { cacheOnly: true });
     expect(r).toEqual({ status: "ok", view });
+    expect(peekWatchView).toHaveBeenCalledWith("boca-raton", "0");
     expect(getConditions).not.toHaveBeenCalled();
     expect(storeWatchView).not.toHaveBeenCalled();
   });
@@ -93,12 +122,15 @@ describe("slug and cache helpers", () => {
     expect(isValidSlug("boca-raton")).toBe(true);
     for (const bad of ["", "Boca", "a--b", "-a", "a-", "a b", "x".repeat(65)]) expect(isValidSlug(bad), bad).toBe(false);
   });
-  it("computes cache time from the view", () => {
-    const a = { capturedAt: "2026-10-14T15:00:00Z", validUntil: "2026-10-14T15:05:00Z" };
-    const b = { capturedAt: "2026-10-14T15:00:00Z", validUntil: "2026-10-14T15:00:20Z" };
-    expect(secondsValid(b)).toBe(20);
-    expect(viewCacheControl(a)).toBe("public, s-maxage=60");
-    expect(viewCacheControl(b)).toBe("public, s-maxage=20");
-    expect(viewCacheControl({ capturedAt: a.capturedAt, validUntil: a.capturedAt })).toBe("no-store");
+  it("computes cache time from the clock at the moment of the call, not from when the view was captured", () => {
+    const v = { validUntil: "2026-10-14T15:05:00Z" };
+    const t = (iso: string) => Date.parse(iso);
+    expect(secondsValid(v, t("2026-10-14T15:04:40Z"))).toBe(20);
+    expect(viewCacheControl(v, t("2026-10-14T15:00:00Z"))).toBe("public, s-maxage=60");
+    expect(viewCacheControl(v, t("2026-10-14T15:04:40Z"))).toBe("public, s-maxage=20");
+    expect(viewCacheControl(v, t("2026-10-14T15:04:59Z"))).toBe("public, s-maxage=1");
+    expect(viewCacheControl(v, t("2026-10-14T15:05:00Z"))).toBe("no-store");
+    expect(viewCacheControl(v, t("2026-10-14T16:00:00Z"))).toBe("no-store");
+    expect(viewCacheControl({ validUntil: "nonsense" }, 0)).toBe("no-store");
   });
 });

@@ -104,7 +104,8 @@ Codes: `bad_request` (400), `not_found` (404), `rate_limited` (429),
   them). No SSE stream: GET answers 405. Older clients that need batching or the
   legacy SSE transport are not served.
 - MCP request checks: `Content-Type: application/json` (415 otherwise), a present
-  `Accept` must allow JSON (406), `initialize` needs `protocolVersion`,
+  `Accept` must allow JSON (406; the most specific media range wins, so
+  `application/json;q=0, */*` is refused), `initialize` needs `protocolVersion`,
   `capabilities` and `clientInfo` (name, version). A present
   `MCP-Protocol-Version` must be exactly `2025-06-18` on every request after
   `initialize` (400 otherwise); `initialize` itself may omit it. A wrong value is
@@ -173,19 +174,39 @@ nearest list is read with a cache-only peek (`peekWatchView`,
 
 The recent-view store: whenever `loadWatchView` builds a view successfully (the
 agent API, MCP, or `/api/watch`), it saves that compact view in the Workers
-Cache API (`caches.default`) under the internal key
-`https://cache.isitbeachday.internal/watchview/<slug>`, with `max-age` equal to
-the seconds left until the view's `validUntil`. It never saves a partial or
-expired view, and it makes no KV writes. A peek is only `caches.default.match`,
-accepted while `validUntil` is still in the future. It builds nothing and writes
-nothing. The store is per datacenter, so a peek may miss a beach that another
-datacenter has. The Cache API stores only on a custom domain (not
-`*.workers.dev`), and where `caches` does not exist (Node, tests, `next dev`) a
-peek always misses. In those places a comparison builds one beach and lists the
-rest as not compared right now.
+Cache API (`caches.default`) under an internal key made of the beach slug and
+the owner-override fingerprint:
+`https://cache.isitbeachday.internal/watchview/<slug>/<fingerprint>`. The
+fingerprint is the same one the conditions cache key uses
+(`conditionsOverridesVersion`, `lib/conditions.ts`). When the owner corrects a
+reading, it changes, and every view stored before the correction is never found
+again. The entry's `max-age` is the seconds left until the view's `validUntil`,
+so a recent view lasts up to 15 minutes. It never saves a partial or expired
+view, and it makes no KV writes.
 
-A beach with no recent view is never built by a comparison. It is listed as not
-compared right now, with its slug (`notComparedNow` in `best_beach_today`;
-`conditions: null` and a `note` in nearest). Ask for it with `get_beach_score`
-or `/beaches/{slug}`, which builds it and saves its view. A failed or partial
-build is never shown as an answer.
+A peek is only `caches.default.match`. It builds nothing and writes nothing.
+It accepts an entry only if the whole stored view passes a strict check (exact
+fields, types and ranges, matching slug and fingerprint) and its `validUntil`
+is still in the future. The store is per datacenter, so a peek may miss a beach
+that another datacenter has. The Cache API stores only on a custom domain (not
+`*.workers.dev`), and where `caches` does not exist (Node, tests, `next dev`) a
+peek always misses.
+
+How a comparison treats each beach:
+
+- A beach with a current recent view is read from the store, with no build.
+- The FIRST beach that has no current view (the nearest one, with lat/lon) is
+  built, and its view is saved. This is the one cold build per request.
+- Every other beach without a current view is not built. It is listed as not
+  compared right now, with its slug (`notComparedNow` in `best_beach_today`;
+  `conditions: null` and a `note` in nearest). Ask for it with `get_beach_score`
+  or `/beaches/{slug}`, which builds it and saves its view.
+- Expiry is checked again with the live clock after all waiting, just before a
+  score is served or ranked. A view that ran out in the meantime (for example
+  while the one build ran, or a stale value the conditions cache served while it
+  refreshes) is treated like a missing one: not compared right now. For a single
+  beach (`/beaches/{slug}`, `get_beach_score`) it is a 503 with `Retry-After: 30`
+  (MCP: a tool error), the same as a partial build. A partial or expired view is
+  never shown as an answer.
+- `Cache-Control` on a live answer counts down from the clock at the moment the
+  response is made, so a downstream cache never keeps it past `validUntil`.

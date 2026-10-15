@@ -38,10 +38,16 @@ export function GET(req: Request, ctx: { params: Promise<{ slug: string }> }) {
     if (!isValidSlug(slug)) return notFound();
     const loaded = await loadBeachConditions(slug);
     if (loaded.status === "not_found") return notFound();
-    if (loaded.status === "incomplete") {
-      return apiError(503, "unavailable", "Conditions are temporarily incomplete. Try again in 30 seconds.", {
-        retryAfterSec: 30,
-      });
+    if (loaded.status === "incomplete" || loaded.status === "expired") {
+      // Same answer for a partial build and for a reading that is already out of date: never served.
+      return apiError(
+        503,
+        "unavailable",
+        loaded.status === "incomplete"
+          ? "Conditions are temporarily incomplete. Try again in 30 seconds."
+          : "Conditions are being refreshed and the last reading is out of date. Try again in 30 seconds.",
+        { retryAfterSec: 30 },
+      );
     }
     return jsonOk(loaded.conditions, viewCacheControl(loaded.conditions));
   });

@@ -22,7 +22,8 @@ import {
   NEAREST_QUERY_KEYS,
   parseBool,
   parseInteger,
-  parseNumber,
+  parseLat,
+  parseLon,
   parseText,
 } from "@/lib/agent/params";
 import { resetAgentRateLimit } from "@/lib/agent/rateLimit";
@@ -77,11 +78,14 @@ describe("OpenAPI document", () => {
       "0", "26.35", "-80.07", "10", "05", "026", "+1", " 1", "1 ", "1e1", ".5", "5.", "-0", "-0.0", "-0.00", "0.0", "-0.5", "",
       "true", "false", "1", "TRUE", "11", "3", "26.35\n",
       "89.9999", "90", "90.0", "90.1", "90.0001", "91", "99", "-90", "-90.0", "-90.1", "-91", "100", "179.99", "180", "180.0", "180.1",
-      "181", "-180", "-180.5", "-181", "199", "1".repeat(25), "0." + "1".repeat(22), "0." + "1".repeat(23), "12." + "0".repeat(21),
+      "181", "-180", "-180.5", "-181", "199", "1".repeat(25),
+      // Values that only round to an in-range number must be refused, like the pattern refuses them.
+      "90." + "0".repeat(20) + "1", "-90." + "0".repeat(19) + "1", "180." + "0".repeat(19) + "1", "89.99999999999999999999", "0." + "1".repeat(22), "0." + "1".repeat(23), "12." + "0".repeat(21),
     ];
+    // The runtime parser and the published pattern agree on every one of these.
     for (const v of inputs) {
-      const lat = parseNumber(v, "lat", -90, 90).ok;
-      const lon = parseNumber(v, "lon", -180, 180).ok;
+      const lat = parseLat(v).ok;
+      const lon = parseLon(v).ok;
       expect(accepts(n.lat, v), `lat=${JSON.stringify(v)}`).toBe(lat);
       expect(accepts(n.lon, v), `lon=${JSON.stringify(v)}`).toBe(lon);
       expect(accepts(n.limit, v), `limit=${JSON.stringify(v)}`).toBe(parseInteger(v, "limit", 1, 10).ok);
@@ -90,8 +94,8 @@ describe("OpenAPI document", () => {
     // And a sweep of generated numbers around the limits.
     for (let i = -2000; i <= 2000; i += 7) {
       const v = (i / 10).toString();
-      expect(accepts(n.lat, v), `lat=${v}`).toBe(parseNumber(v, "lat", -90, 90).ok);
-      expect(accepts(n.lon, v), `lon=${v}`).toBe(parseNumber(v, "lon", -180, 180).ok);
+      expect(accepts(n.lat, v), `lat=${v}`).toBe(parseLat(v).ok);
+      expect(accepts(n.lon, v), `lon=${v}`).toBe(parseLon(v).ok);
     }
     const l = params("/beaches");
     for (const v of ["Broward", "Palm Beach", " x", "x ", "", "x".repeat(80), "x".repeat(81)]) {

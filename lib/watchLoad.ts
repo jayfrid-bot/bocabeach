@@ -4,7 +4,7 @@
 // owns the content; this file owns only "fetch, refuse a partial build, strip
 // internal fields, and say how long the answer may be cached".
 
-import { getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
+import { conditionsOverridesVersion, getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
 import { peekWatchView, storeWatchView } from "@/lib/watchViewCache";
 import { buildWatchView, cacheControlFor, type WatchView } from "@/lib/watchView";
 import type { ConditionsResponse } from "@/lib/types";
@@ -31,8 +31,11 @@ export async function loadWatchView(slug: string): Promise<Exclude<WatchLoad, { 
 export async function loadWatchView(slug: string, opts: { cacheOnly: true }): Promise<WatchLoad>;
 export async function loadWatchView(slug: string, opts: { cacheOnly?: boolean } = {}): Promise<WatchLoad> {
   if (!isValidSlug(slug)) return { status: "not_found" };
+  // The owner-override fingerprint is part of a stored view's identity: a correction by the
+  // owner changes it, and every view stored before the correction stops matching.
+  const ov = await conditionsOverridesVersion(slug);
   if (opts.cacheOnly) {
-    const view = await peekWatchView(slug);
+    const view = await peekWatchView(slug, ov);
     return view ? { status: "ok", view } : { status: "not_cached" };
   }
   const data = await getConditions(slug);
@@ -40,16 +43,20 @@ export async function loadWatchView(slug: string, opts: { cacheOnly?: boolean } 
   const { budgetAborted, ...publicData } = stripInternalSnapshotFields(data);
   if (budgetAborted) return { status: "incomplete" };
   const view = buildWatchView(publicData as ConditionsResponse);
-  await storeWatchView(view); // best effort, never throws
+  await storeWatchView(view, ov); // best effort, never throws
   return { status: "ok", view };
 }
 
-/** Whole seconds this view may still be called current (0 or less = expired). */
-export function secondsValid(view: Pick<WatchView, "validUntil" | "capturedAt">): number {
-  return Math.floor((Date.parse(view.validUntil) - Date.parse(view.capturedAt)) / 1000);
+/** Whole seconds this view may still be called current at `nowMs` (0 or less = expired). */
+export function secondsValid(view: Pick<WatchView, "validUntil">, nowMs: number = Date.now()): number {
+  return Math.floor((Date.parse(view.validUntil) - nowMs) / 1000);
 }
 
-/** Cache-Control for one view: min(60 s, time left), or no-store when none is left. */
-export function viewCacheControl(view: Pick<WatchView, "validUntil" | "capturedAt">): string {
-  return cacheControlFor(secondsValid(view));
+/**
+ * Cache-Control for one view, computed from the clock at the moment the response is made
+ * (after every await, including the recent-view write): min(60 s, time left), or no-store
+ * at zero or less. A downstream cache can therefore never keep it past validUntil.
+ */
+export function viewCacheControl(view: Pick<WatchView, "validUntil">, nowMs: number = Date.now()): string {
+  return cacheControlFor(secondsValid(view, nowMs));
 }

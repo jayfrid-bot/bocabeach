@@ -74,7 +74,7 @@ flowchart TD
   COND --> PIPE[lib/conditions.ts<br/>fetch all sources in parallel]
   WATCHR --> WATCHLOAD["lib/watchLoad.ts<br/>loadWatchView: fetch, refuse a partial build (budgetAborted),<br/>strip internal fields, build the view, cache seconds<br/>(one code path for watch, tablet and agents)"]
   WATCHLOAD --> PIPE
-  WATCHLOAD -->|"after every successful build: store the compact view,<br/>max-age = time to validUntil, never partial or expired. No KV writes"| WVCACHE[("Workers Cache API caches.default<br/>key https://cache.isitbeachday.internal/watchview/&lt;slug&gt;<br/>per datacenter, lib/watchViewCache.ts")]
+  WATCHLOAD -->|"after every successful build: store the compact view,<br/>max-age = time to validUntil, never partial or expired. No KV writes"| WVCACHE[("Workers Cache API caches.default<br/>key https://cache.isitbeachday.internal/watchview/&lt;slug&gt;/&lt;owner-override fingerprint&gt;<br/>per datacenter, lib/watchViewCache.ts")]
   WVCACHE -.->|"cacheOnly peek: match() only, accepted while validUntil is in the future"| WATCHLOAD
   WATCHR -->|"lib/watchView.ts: score + best window as the dashboard;<br/>safety lines from lib/safetyBanner.ts, the module SafetyBanner renders"| SCORE
   SHARE --> PIPE
@@ -133,8 +133,11 @@ request builds at most ONE beach cold (about 25 subrequests; Workers Free allows
 50). Every other beach in a comparison or a scored nearest list is read with
 `peekWatchView` (`lib/watchViewCache.ts`): a `caches.default.match` for the
 compact view that `loadWatchView` stored when it last built that beach, kept
-only until its `validUntil`. The peek builds nothing and writes nothing, and a
-beach it cannot find is reported as not compared right now. No KV writes; the
+only until its `validUntil` and keyed by the owner-override fingerprint, so an
+owner correction drops it. The first uncached beach is the one built. The peek builds nothing and writes nothing, and a
+beach it cannot find is reported as not compared right now. Expiry is checked
+again with the live clock right before any score is served or ranked; an
+expired reading is never served (503 for a single beach). No KV writes; the
 store is per datacenter and does nothing where `caches` does not exist.
 Setup and examples: `docs/AGENT_API.md`.
 

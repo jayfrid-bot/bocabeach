@@ -8,13 +8,12 @@
 import { MAX_NEAREST_LIMIT, DEFAULT_NEAREST_LIMIT, MAX_REST_SCORES } from "@/lib/agent/constants";
 import { apiError, guardedGet, jsonOk, preflight, methodNotAllowed } from "@/lib/agent/http";
 import {
-  LAT_RANGE,
-  LON_RANGE,
   NEAREST_QUERY_KEYS,
   checkQueryKeys,
   parseBool,
   parseInteger,
-  parseNumber,
+  parseLat,
+  parseLon,
 } from "@/lib/agent/params";
 import { runNearest } from "@/lib/agent/queries";
 
@@ -40,9 +39,9 @@ export function GET(req: Request) {
     const latRaw = sp.get("lat");
     const lonRaw = sp.get("lon");
     if (latRaw === null || lonRaw === null) return apiError(400, "bad_request", "lat and lon are required.");
-    const lat = parseNumber(latRaw, "lat", LAT_RANGE[0], LAT_RANGE[1]);
+    const lat = parseLat(latRaw);
     if (!lat.ok) return apiError(400, "bad_request", lat.message);
-    const lon = parseNumber(lonRaw, "lon", LON_RANGE[0], LON_RANGE[1]);
+    const lon = parseLon(lonRaw);
     if (!lon.ok) return apiError(400, "bad_request", lon.message);
 
     let limit = DEFAULT_NEAREST_LIMIT;

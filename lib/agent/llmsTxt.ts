@@ -35,7 +35,7 @@ export function buildLlmsTxt(): string {
 
 ## Connect an assistant (MCP)
 
-- MCP server (Streamable HTTP, stateless, no sign-in, protocol revision 2025-06-18 only): ${MCP_URL}
+- MCP server (Streamable HTTP, stateless, no sign-in, protocol revision 2025-06-18 only; send the header MCP-Protocol-Version: 2025-06-18 on every request after initialize): ${MCP_URL}
 - In Claude or ChatGPT, add it as a custom connector with that URL.
 - Tools:
 ${TOOLS.map((t) => `  - \`${t.name}\`: ${t.description.split(". ")[0]}.`).join("\n")}
@@ -53,8 +53,8 @@ ${TOOLS.map((t) => `  - \`${t.name}\`: ${t.description.split(". ")[0]}.`).join("
 ## Usage rules
 
 - Limits per IP address: about 60 requests a minute on the JSON API and 300 a minute on MCP. Over the limit you get HTTP 429 and a \`Retry-After\` header.
-- Each live answer carries \`validUntil\`; do not call it current after that moment. \`Cache-Control\` on the answers is a hint for your own caches. We do not run a response cache; the score comes from a shared cache that refreshes about every 2 minutes.
-- To protect the data sources, one call builds at most one beach fresh. \`best_beach_today\` compares at most ${MAX_COMPARE} beaches and lists those without a recent snapshot as not compared right now.
+- Each live answer carries \`validUntil\`; do not call it current after that moment. We never serve a reading already past its \`validUntil\`: you get a 503 with \`Retry-After\` instead (a tool error in MCP). \`Cache-Control\` on the answers is a hint for your own caches and counts down to \`validUntil\`. We do not run a response cache.
+- To protect the data sources, a comparison builds at most one beach fresh (the first one without a recent view). Other beaches are read from recent views, which last up to 15 minutes. A beach with no current view is listed as not compared right now; ask for it by slug with \`get_beach_score\`. \`best_beach_today\` compares at most ${MAX_COMPARE} beaches.
 - The MCP endpoint accepts bodies up to ${MCP_MAX_BODY_BYTES / 1024} KB. Browser calls to MCP must come from isitbeachday.com; servers and connectors send no Origin header and are fine.
 - The app does not store or log the coordinates you send. The answer echoes them rounded to 2 decimals, is never cached, and the URL may still show in your own or your network's records.
 - No personal, device or Plus-subscriber data is available here, and no webcam images.

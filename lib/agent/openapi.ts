@@ -255,7 +255,7 @@ export function buildOpenApi() {
             "429": rateLimited,
             "500": serverError,
             "503": {
-              ...errorResponse("Conditions were incomplete. Retry after the Retry-After seconds."),
+              ...errorResponse("Conditions were incomplete, or the last reading was already out of date and is being refreshed. Retry after the Retry-After seconds."),
               headers: { "Retry-After": { schema: { type: "integer" } }, ...corsHeaders },
             },
           },

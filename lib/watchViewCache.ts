@@ -12,7 +12,8 @@
 //  - No KV writes (free-tier write quota). The cache is per datacenter, which is fine: a
 //    miss only means "not compared right now".
 //  - Where `caches` does not exist (Node, tests, next dev), peek is a miss and store does nothing.
-//  - Keys are synthetic internal URLs; nothing is ever served from them to a visitor.
+//  - Keys are synthetic internal URLs; nothing is ever served from them to a visitor. A key
+//    holds the beach slug and the owner-override fingerprint (see watchViewKey).
 //  - Only the compact public view is stored: no snapshot, no coordinates of a visitor.
 //  - Workers Cache only stores on a custom domain (not workers.dev); the site is on one.
 
@@ -37,30 +38,75 @@ function defaultCache(): CacheLike | null {
   }
 }
 
-export const watchViewKey = (slug: string): string => `${KEY_PREFIX}${encodeURIComponent(slug)}`;
+/**
+ * The key includes the owner-override fingerprint (the same one the conditions cache key
+ * uses), so a correction by the owner changes the key and every view stored before it is
+ * simply never found again. The stored envelope repeats it and a read checks it too.
+ */
+export const watchViewKey = (slug: string, ov: string): string =>
+  `${KEY_PREFIX}${encodeURIComponent(slug)}/${encodeURIComponent(ov)}`;
+
+const TONES = new Set(["calm", "caution", "danger"]);
+const KINDS = new Set(["hazard", "safety", "water", "best", "more"]);
+const VIEW_KEYS = [
+  "v", "slug", "name", "score", "rating", "band", "limitedData", "lines",
+  "waterTempF", "generatedAt", "capturedAt", "validUntil",
+].sort();
 
 const isStr = (v: unknown): v is string => typeof v === "string";
+const isDate = (v: unknown): v is string => isStr(v) && Number.isFinite(Date.parse(v));
+const isStrOrNull = (v: unknown): boolean => v === null || isStr(v);
+const isIntOrNull = (v: unknown, lo: number, hi: number): boolean =>
+  v === null || (typeof v === "number" && Number.isInteger(v) && v >= lo && v <= hi);
 
-/** The stored view for `slug` if one exists and is still valid at `nowMs`; otherwise null. Read-only. */
-export async function peekWatchView(slug: string, nowMs: number = Date.now()): Promise<WatchView | null> {
+/**
+ * A full structural check of a stored view: exact key set, every field the right type and
+ * range, every line a known kind and tone. Anything else (a damaged entry, an entry written
+ * by an older or newer shape) is rejected, which only ever costs a miss.
+ */
+export function isWatchView(x: unknown, slug: string): x is WatchView {
+  if (!x || typeof x !== "object" || Array.isArray(x)) return false;
+  const o = x as Record<string, unknown>;
+  const keys = Object.keys(o).sort();
+  if (keys.length !== VIEW_KEYS.length || keys.some((k, i) => k !== VIEW_KEYS[i])) return false;
+  if (o.v !== 1 || o.slug !== slug || !isStr(o.name)) return false;
+  if (!isIntOrNull(o.score, 0, 100) || !isStrOrNull(o.rating) || !isStrOrNull(o.band)) return false;
+  if ((o.score === null) !== (o.rating === null)) return false;
+  if (typeof o.limitedData !== "boolean") return false;
+  if (!isIntOrNull(o.waterTempF, -9, 149)) return false;
+  if (!(o.generatedAt === null || isDate(o.generatedAt)) || !isDate(o.capturedAt) || !isDate(o.validUntil)) return false;
+  if (!Array.isArray(o.lines) || o.lines.length > 8) return false;
+  return o.lines.every((l) => {
+    if (!l || typeof l !== "object" || Array.isArray(l)) return false;
+    const line = l as Record<string, unknown>;
+    const k = Object.keys(line);
+    return k.length === 3 && isStr(line.text) && line.text.length <= 200 && KINDS.has(line.kind as string) && TONES.has(line.tone as string);
+  });
+}
+
+/**
+ * The stored view for `slug` + override fingerprint `ov` if one exists, is well formed, and
+ * is still valid at `nowMs`; otherwise null. Read-only.
+ */
+export async function peekWatchView(slug: string, ov: string, nowMs: number = Date.now()): Promise<WatchView | null> {
   const cache = defaultCache();
   if (!cache) return null;
   try {
-    const res = await cache.match(watchViewKey(slug));
+    const res = await cache.match(watchViewKey(slug, ov));
     if (!res) return null;
-    const v = (await res.json()) as Partial<WatchView> | null;
-    if (!v || typeof v !== "object" || v.v !== 1 || v.slug !== slug) return null;
-    if (!isStr(v.validUntil) || !isStr(v.capturedAt) || !Array.isArray(v.lines)) return null;
-    const until = Date.parse(v.validUntil);
-    if (!Number.isFinite(until) || until <= nowMs) return null;
-    return v as WatchView;
+    const env = (await res.json()) as { v?: unknown; ov?: unknown; view?: unknown } | null;
+    if (!env || typeof env !== "object" || env.v !== 1 || env.ov !== ov) return null;
+    if (!isWatchView(env.view, slug)) return null;
+    const until = Date.parse(env.view.validUntil);
+    if (until <= nowMs) return null;
+    return env.view;
   } catch {
     return null;
   }
 }
 
 /** Remember a successfully built view until its validUntil. Best effort: never throws. */
-export async function storeWatchView(view: WatchView, nowMs: number = Date.now()): Promise<boolean> {
+export async function storeWatchView(view: WatchView, ov: string, nowMs: number = Date.now()): Promise<boolean> {
   const cache = defaultCache();
   if (!cache) return false;
   const until = Date.parse(view.validUntil);
@@ -68,8 +114,8 @@ export async function storeWatchView(view: WatchView, nowMs: number = Date.now()
   if (!Number.isFinite(seconds) || seconds <= 0) return false;
   try {
     await cache.put(
-      watchViewKey(view.slug),
-      new Response(JSON.stringify(view), {
+      watchViewKey(view.slug, ov),
+      new Response(JSON.stringify({ v: 1, ov, view }), {
         headers: { "Content-Type": "application/json", "Cache-Control": `max-age=${seconds}` },
       }),
     );

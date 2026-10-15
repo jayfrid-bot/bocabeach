@@ -49,6 +49,8 @@ export type BeachLoad =
   | { status: "ok"; conditions: BeachConditions }
   | { status: "not_found" }
   | { status: "incomplete" }
+  /** The view was already past its validUntil when it was about to be served. Never served or ranked. */
+  | { status: "expired" }
   | { status: "not_cached" };
 
 /** "Boca Raton: 78/100 (Good). Yellow flag. Water 82°F. Best 4–6 PM." */
@@ -97,14 +99,26 @@ export function toBeachConditions(view: WatchView): BeachConditions | null {
   };
 }
 
-/** `cacheOnly`: read the recent-view store (lib/watchViewCache.ts) and never start a build. */
+/** True while the answer may still be called current, by the live clock. */
+export function isLive(c: Pick<BeachConditions, "validUntil">, nowMs: number = Date.now()): boolean {
+  const until = Date.parse(c.validUntil);
+  return Number.isFinite(until) && until > nowMs;
+}
+
+/**
+ * `cacheOnly`: read the recent-view store (lib/watchViewCache.ts) and never start a build.
+ * A view that is past its validUntil by the clock at the moment of return (after every
+ * await, including a stale value the conditions cache served while it refreshes) comes back
+ * as "expired" and is never served or ranked.
+ */
 export async function loadBeachConditions(slug: string): Promise<Exclude<BeachLoad, { status: "not_cached" }>>;
 export async function loadBeachConditions(slug: string, opts: { cacheOnly: true }): Promise<BeachLoad>;
 export async function loadBeachConditions(slug: string, opts: { cacheOnly?: boolean } = {}): Promise<BeachLoad> {
   const loaded = opts.cacheOnly ? await loadWatchView(slug, { cacheOnly: true }) : await loadWatchView(slug);
   if (loaded.status !== "ok") return loaded;
   const conditions = toBeachConditions(loaded.view);
-  return conditions ? { status: "ok", conditions } : { status: "not_found" };
+  if (!conditions) return { status: "not_found" };
+  return isLive(conditions) ? { status: "ok", conditions } : { status: "expired" };
 }
 
 /** The small form used when several beaches are listed together. */
@@ -133,14 +147,16 @@ export function compactConditions(c: BeachConditions): CompactConditions {
 
 export type ScoreOutcome =
   | { slug: string; ok: true; conditions: BeachConditions }
-  | { slug: string; ok: false; reason: "not_found" | "incomplete" | "not_cached" | "error" };
+  | { slug: string; ok: false; reason: "not_found" | "incomplete" | "expired" | "not_cached" | "error" };
 
 /**
  * Score several beaches in one request WITHOUT fanning out into cold builds. A cold
  * build is a full source fetch (about 25 subrequests); Workers Free allows 50 per
  * request. So: every beach is first read from the shared cache (no build); then at
  * most ONE beach that was not cached, the first in `slugs` order, is built. Every
- * other uncached beach comes back as reason "not_cached" and is never built.
+ * other uncached beach comes back as reason "not_cached" and is never built. A last
+ * sweep with the live clock turns any view that expired while we waited into "expired",
+ * so nothing past its validUntil is ever returned as a score.
  */
 export async function loadMany(slugs: readonly string[]): Promise<ScoreOutcome[]> {
   const toOutcome = (slug: string, r: PromiseSettledResult<BeachLoad>): ScoreOutcome => {
@@ -156,5 +172,6 @@ export async function loadMany(slugs: readonly string[]): Promise<ScoreOutcome[]
     const [built] = await Promise.allSettled([loadBeachConditions(slug)]);
     out[firstMiss] = toOutcome(slug, built);
   }
-  return out;
+  const now = Date.now();
+  return out.map((o): ScoreOutcome => (o.ok && !isLive(o.conditions, now) ? { slug: o.slug, ok: false, reason: "expired" } : o));
 }

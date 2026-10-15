@@ -79,7 +79,7 @@ export async function runNearest(opts: {
     const o = bySlug.get(b.slug);
     if (!o) return b;
     if (!o.ok) {
-      (o.reason === "not_cached" ? notNow : failed).push(b.slug);
+      (o.reason === "not_cached" || o.reason === "expired" ? notNow : failed).push(b.slug);
       return { ...b, conditions: null };
     }
     scored += 1;
@@ -90,7 +90,7 @@ export async function runNearest(opts: {
     notes.push(`The nearest covered beach is ${beaches[0].distanceMiles} miles away. Nothing is close to this point.`);
   }
   if (notNow.length) {
-    notes.push(`Not scored right now (no recent snapshot; one is built per request at most): ${notNow.join(", ")}. Ask for one beach by slug to get its score.`);
+    notes.push(`Not scored right now (no current snapshot; at most one is built per request): ${notNow.join(", ")}. Ask for one beach by slug to get its score.`);
   }
   if (failed.length) notes.push(`Scores could not be built right now for: ${failed.join(", ")}. Try again shortly.`);
   return {

@@ -112,6 +112,7 @@ const getBeachScore: ToolDef = {
     const r = await loadBeachConditions(slug);
     if (r.status === "not_found") return fail(`No beach with slug "${slug}". Call list_beaches to see the slugs.`);
     if (r.status === "incomplete") return fail("Conditions are temporarily incomplete. Try again in about 30 seconds.");
+    if (r.status === "expired") return fail("Conditions are being refreshed and the last reading is out of date. Try again in about 30 seconds.");
     return { text: conditionsText(r.conditions), data: { ...r.conditions } };
   },
 };
@@ -221,7 +222,7 @@ const bestBeachToday: ToolDef = {
     for (const o of outcomes) {
       const b = byName.get(o.slug)!;
       if (o.ok) scored.push({ b, c: o.conditions });
-      else if (o.reason === "not_cached") notComparedNow.push({ slug: o.slug, name: b.name, reason: "no_recent_snapshot" });
+      else if (o.reason === "not_cached" || o.reason === "expired") notComparedNow.push({ slug: o.slug, name: b.name, reason: "no_recent_snapshot" });
       else skipped.push({ slug: o.slug, name: b.name, reason: o.reason });
     }
     // Highest score first; a beach with no usable score goes last; nearer breaks a tie.
