@@ -232,7 +232,7 @@ describe("tools/call happy paths", () => {
     cached.mockResolvedValue(null);
     const r = (await tool("best_beach_today", { lat: 26.36, lon: -80.06, radius_miles: 250, compare: 5 })).result;
     expect(mocked).toHaveBeenCalledTimes(1);
-    expect(mocked).toHaveBeenCalledWith("boca-raton"); // the nearest one
+    expect(mocked).toHaveBeenCalledWith("boca-raton", { ovVersion: "0" }); // the nearest one
     const d = r.structuredContent;
     expect(d.comparedCount).toBe(5);
     expect(d.ranking).toHaveLength(1);
@@ -402,6 +402,11 @@ describe("protocol errors", () => {
       "application/json;q=0, application/*",
       "application/*;q=0, */*",
       "application/json;q=0, application/*;q=1, */*;q=1",
+      // A range with media parameters does not match the bare JSON we send, so it cannot rescue it.
+      "application/json;profile=x;q=1, application/json;q=0",
+      "application/json;q=0, application/json;profile=x",
+      "application/json;profile=x",
+      "application/json;version=2, text/html",
     ]) {
       expect((await POST(post(rpc("ping"), { accept }))).status, accept).toBe(406);
     }
@@ -410,6 +415,10 @@ describe("protocol errors", () => {
       "*/*;q=0, application/json",
       "application/*;q=0, application/json;q=0.1",
       "text/html, */*;q=0.1",
+      "application/json;charset=utf-8",
+      "application/json; charset=UTF-8; q=0.8",
+      "application/json;profile=x;q=0, application/json",
+      "application/json;profile=x, */*",
     ]) {
       expect((await POST(post(rpc("ping"), { accept }))).status, accept).toBe(200);
     }

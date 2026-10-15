@@ -5,7 +5,7 @@ import { insertOverrideRow } from "@/lib/quality/testHelpers";
 const ctl = vi.hoisted(() => ({ db: null as unknown }));
 vi.mock("@/lib/db/d1Store", () => ({ getD1: async () => ctl.db }));
 
-import { loadSeaweedOverrides, overrideFromRow, overridesVersion } from "@/lib/quality/overrides";
+import { loadSeaweedOverrides, overrideFromRow, overridesFingerprint, overridesVersion } from "@/lib/quality/overrides";
 import type { OverrideRow } from "@/lib/quality/types";
 
 let h: CamDb;
@@ -70,6 +70,16 @@ describe("overridesVersion: the cache key that makes an owner's answer show at o
     expect(await overridesVersion("boca-raton", undefined, T)).toBe("0");
     h.exec("DROP TABLE quality_overrides");
     expect(await overridesVersion("boca-raton", undefined, T)).toBe("0");
+  });
+
+  it("tells 'no verdicts' (reliable) from 'the lookup failed' (not reliable)", async () => {
+    ctl.db = null;
+    expect(await overridesFingerprint("boca-raton", undefined, T)).toEqual({ version: "0", reliable: true });
+    if (!HAS_SQLITE) return;
+    ctl.db = h.db;
+    expect(await overridesFingerprint("boca-raton", undefined, T)).toEqual({ version: "0", reliable: true });
+    h.exec("DROP TABLE quality_overrides");
+    expect(await overridesFingerprint("boca-raton", undefined, T)).toEqual({ version: "0", reliable: false });
   });
 
   it.skipIf(!HAS_SQLITE)("changes when a verdict is added, so the next request builds a fresh snapshot", async () => {

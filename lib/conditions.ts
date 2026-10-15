@@ -18,7 +18,7 @@ import { fetchGfs } from "@/lib/sources/modelEnsemble";
 import { fetchNowcast } from "@/lib/sources/nowcast";
 import { fetchNws } from "@/lib/sources/nws";
 import { fetchSargassum } from "@/lib/sources/sargassum";
-import { loadSeaweedOverrides, overridesVersion } from "@/lib/quality/overrides";
+import { loadSeaweedOverrides, overridesFingerprint } from "@/lib/quality/overrides";
 import { fetchRipNwps } from "@/lib/sources/ripNwps";
 import { fetchSun } from "@/lib/sources/sun";
 import { fetchTides } from "@/lib/sources/tides";
@@ -488,22 +488,25 @@ export { CONDITIONS_MAX_STALE_MS } from "@/lib/conditionsFreshness";
 
 /**
  * The owner-override fingerprint the conditions cache key uses ("0" for a beach with no cams
- * or no running verdicts). Exported so other stores of a built answer (the recent-view store,
- * lib/watchViewCache.ts) can include it in their identity and drop an answer the moment the
- * owner corrects a reading.
+ * or no running verdicts), with whether it can be trusted (false = the lookup failed, so "0"
+ * means unknown). Read it ONCE per request and hand it to {@link getConditions} so the build,
+ * the cache key and any other store of the answer (the recent-view store,
+ * lib/watchViewCache.ts) all agree on one value.
  */
-export async function conditionsOverridesVersion(slug: string): Promise<string> {
+export async function conditionsOverrides(slug: string): Promise<{ version: string; reliable: boolean }> {
   const loc = getLocation(slug);
-  return loc?.cams?.length ? await overridesVersion(slug) : "0";
+  return loc?.cams?.length ? await overridesFingerprint(slug) : { version: "0", reliable: true };
 }
 
+/** `opts.ovVersion`: a fingerprint the caller already read (see {@link conditionsOverrides}); skips a second read. */
 export async function getConditions(
   slug: string,
+  opts: { ovVersion?: string } = {},
 ): Promise<ConditionsResponse | null> {
   const loc = getLocation(slug);
   if (!loc) return null;
   try {
-    const ovVersion = await conditionsOverridesVersion(slug);
+    const ovVersion = opts.ovVersion ?? (await conditionsOverrides(slug)).version;
     return await cachedConditions(slug, ovVersion);
   } catch (e) {
     if (e instanceof BudgetAbortedDuringBuild) {

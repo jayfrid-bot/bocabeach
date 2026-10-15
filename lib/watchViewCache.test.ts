@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isWatchView, peekWatchView, storeWatchView, watchViewKey } from "@/lib/watchViewCache";
-import type { WatchView } from "@/lib/watchView";
+import { MAX_WATCH_LINES, WATER_TEMP_MAX_F, WATER_TEMP_MIN_F, waterTempForView, type WatchView } from "@/lib/watchView";
 
 const OV = "0";
 const NOW = Date.parse("2026-10-14T15:00:00Z");
@@ -134,7 +134,10 @@ describe("storeWatchView + peekWatchView", () => {
       env({ ...view(), lines: [{ kind: "nope", text: "x", tone: "calm" }] }),
       env({ ...view(), lines: [{ kind: "water", text: "x", tone: "loud" }] }),
       env({ ...view(), lines: [{ kind: "water", text: "x", tone: "calm", extra: 1 }] }),
-      env({ ...view(), lines: Array.from({ length: 9 }, () => ({ kind: "water", text: "x", tone: "calm" })) }),
+      env({ ...view(), lines: Array.from({ length: MAX_WATCH_LINES + 1 }, () => ({ kind: "water", text: "x", tone: "calm" })) }),
+      env({ ...view(), waterTempF: WATER_TEMP_MAX_F + 1 }),
+      env({ ...view(), waterTempF: WATER_TEMP_MIN_F - 1 }),
+      env({ ...view(), waterTempF: 80.5 }),
       env(view(), { v: 2 }),
       env(view(), { ov: "other" }),
       view(), // an unwrapped view
@@ -150,6 +153,23 @@ describe("storeWatchView + peekWatchView", () => {
     // And a well-formed one passes.
     m.mockImplementationOnce(async () => new Response(JSON.stringify(env(view()))));
     expect(await peekWatchView("boca-raton", OV)).toEqual(view());
+  });
+
+  it("accepts every water temperature buildWatchView can produce, including the rounded edges", () => {
+    // Readings strictly inside (-10, 150) are rounded, so -10 and 150 are real values a view can hold.
+    expect(waterTempForView(-9.6)).toBe(-10);
+    expect(waterTempForView(149.6)).toBe(150);
+    expect(waterTempForView(-10)).toBeNull();
+    expect(waterTempForView(150)).toBeNull();
+    for (let t = -12; t <= 152; t += 0.1) {
+      const w = waterTempForView(t);
+      expect(isWatchView(view({ waterTempF: w }), "boca-raton"), `water ${t}`).toBe(true);
+    }
+  });
+
+  it("accepts the largest set of lines a view can have", () => {
+    const lines = Array.from({ length: MAX_WATCH_LINES }, (_, i) => ({ kind: "hazard" as const, text: `line ${i}`, tone: "caution" as const }));
+    expect(isWatchView(view({ lines }), "boca-raton")).toBe(true);
   });
 
   it("isWatchView accepts a good view with a null score and rating", () => {

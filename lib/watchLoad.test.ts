@@ -6,7 +6,7 @@ vi.mock("@/lib/watchViewCache", () => ({ peekWatchView: vi.fn(), storeWatchView:
 
 vi.mock("@/lib/quality/overrides", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/quality/overrides")>();
-  return { ...actual, overridesVersion: vi.fn(async () => "0") };
+  return { ...actual, overridesFingerprint: vi.fn(async () => ({ version: "0", reliable: true })) };
 });
 
 vi.mock("@/lib/conditions", async (importOriginal) => {
@@ -16,7 +16,7 @@ vi.mock("@/lib/conditions", async (importOriginal) => {
 
 import { getConditions } from "@/lib/conditions";
 import { peekWatchView, storeWatchView } from "@/lib/watchViewCache";
-import { overridesVersion } from "@/lib/quality/overrides";
+import { overridesFingerprint } from "@/lib/quality/overrides";
 import { isValidSlug, loadWatchView, secondsValid, viewCacheControl } from "@/lib/watchLoad";
 
 afterEach(() => {
@@ -70,21 +70,34 @@ describe("loadWatchView remembers what it builds", () => {
 
 describe("recent-view identity includes the owner-override fingerprint", () => {
   it("uses the fingerprint the conditions cache key uses, for both the read and the write", async () => {
-    vi.mocked(overridesVersion).mockResolvedValue("3.17"); // boca-raton has cams
+    vi.mocked(overridesFingerprint).mockClear();
+    vi.mocked(overridesFingerprint).mockResolvedValue({ version: "3.17", reliable: true }); // boca-raton has cams
     vi.mocked(peekWatchView).mockResolvedValue(null);
     await loadWatchView("boca-raton", { cacheOnly: true });
     expect(peekWatchView).toHaveBeenCalledWith("boca-raton", "3.17");
     vi.mocked(getConditions).mockResolvedValue(copy());
     await loadWatchView("boca-raton");
     expect(vi.mocked(storeWatchView).mock.calls[0][1]).toBe("3.17");
-    vi.mocked(overridesVersion).mockResolvedValue("0");
+    expect(getConditions).toHaveBeenCalledWith("boca-raton", { ovVersion: "3.17" }); // read once, handed to the build
+    expect(overridesFingerprint).toHaveBeenCalledTimes(2); // one read per loadWatchView call
+    vi.mocked(overridesFingerprint).mockResolvedValue({ version: "0", reliable: true });
+  });
+  it("does not read from or write to the recent-view store when the fingerprint lookup failed", async () => {
+    vi.mocked(overridesFingerprint).mockResolvedValue({ version: "0", reliable: false });
+    vi.mocked(peekWatchView).mockResolvedValue(null);
+    expect((await loadWatchView("boca-raton", { cacheOnly: true })).status).toBe("not_cached");
+    expect(peekWatchView).not.toHaveBeenCalled();
+    vi.mocked(getConditions).mockResolvedValue(copy());
+    expect((await loadWatchView("boca-raton")).status).toBe("ok"); // still answers, from a normal build
+    expect(storeWatchView).not.toHaveBeenCalled();
+    vi.mocked(overridesFingerprint).mockResolvedValue({ version: "0", reliable: true });
   });
   it("is just '0' for a beach with no cams (no database read)", async () => {
-    vi.mocked(overridesVersion).mockClear();
+    vi.mocked(overridesFingerprint).mockClear();
     vi.mocked(peekWatchView).mockResolvedValue(null);
     await loadWatchView("miami-beach", { cacheOnly: true });
     expect(peekWatchView).toHaveBeenCalledWith("miami-beach", "0");
-    expect(overridesVersion).not.toHaveBeenCalled();
+    expect(overridesFingerprint).not.toHaveBeenCalled();
   });
 });
 

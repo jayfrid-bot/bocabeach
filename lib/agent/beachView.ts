@@ -166,7 +166,9 @@ export async function loadMany(slugs: readonly string[]): Promise<ScoreOutcome[]
   };
   const peeked = await Promise.allSettled(slugs.map((s) => loadBeachConditions(s, { cacheOnly: true })));
   const out = slugs.map((slug, i) => toOutcome(slug, peeked[i]));
-  const firstMiss = out.findIndex((o) => !o.ok && o.reason === "not_cached");
+  // A beach with no current view is eligible for the one cold build, whether it was missing
+  // from the store or its stored view ran out while we looked. The first one (the nearest) wins.
+  const firstMiss = out.findIndex((o) => !o.ok && (o.reason === "not_cached" || o.reason === "expired"));
   if (firstMiss >= 0) {
     const slug = slugs[firstMiss];
     const [built] = await Promise.allSettled([loadBeachConditions(slug)]);

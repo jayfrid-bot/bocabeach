@@ -302,9 +302,13 @@ async function dispatch(msg: Record<string, unknown>): Promise<Dispatched> {
 }
 
 /**
- * RFC 9110 section 12.5.1: the most specific media range that matches application/json decides
- * (application/json beats application/* beats * / *), and q=0 on that range means "not
- * acceptable". So "application/json;q=0, * / *" refuses JSON. No Accept header = anything goes.
+ * RFC 9110 section 12.5.1. The reply is bare application/json (no media parameters), so:
+ *  - a media range that carries parameters other than q (and charset=utf-8, which the body
+ *    already is) does NOT match it and is ignored;
+ *  - of the ranges that do match, the most specific wins (application/json, then
+ *    application/*, then * / *), and q=0 on that range means "not acceptable".
+ * So "application/json;q=0, * / *" and "application/json;profile=x, application/json;q=0" both
+ * refuse JSON. No Accept header = anything goes.
  */
 function acceptsJson(accept: string | null): boolean {
   if (accept === null) return true;
@@ -314,7 +318,11 @@ function acceptsJson(accept: string | null): boolean {
     const [media, ...params] = token.split(";").map((t) => t.trim().toLowerCase());
     const specificity = media === "application/json" ? 3 : media === "application/*" ? 2 : media === "*/*" ? 1 : 0;
     if (!specificity) continue;
-    const qRaw = params.map((p) => /^q\s*=\s*(.+)$/.exec(p)?.[1]).find((v) => v !== undefined);
+    // Parameters before q are media parameters; q and anything after it is the weight.
+    const qIndex = params.findIndex((p) => /^q\s*=/.test(p));
+    const mediaParams = (qIndex === -1 ? params : params.slice(0, qIndex)).filter((p) => p !== "" && p !== "charset=utf-8");
+    if (mediaParams.length > 0) continue; // this range asks for a variant we do not send
+    const qRaw = qIndex === -1 ? undefined : /^q\s*=\s*(.+)$/.exec(params[qIndex])?.[1];
     const q = qRaw === undefined ? 1 : Number(qRaw);
     const qValue = Number.isFinite(q) ? q : 1;
     if (specificity > bestSpecificity) {

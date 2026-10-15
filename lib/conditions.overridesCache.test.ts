@@ -20,9 +20,9 @@ vi.mock("next/cache", () => ({
 }));
 vi.mock("@/lib/quality/overrides", () => ({
   loadSeaweedOverrides: async () => [],
-  overridesVersion: async (slug: string) => {
+  overridesFingerprint: async (slug: string) => {
     ctl.versionCalls.push(slug);
-    return ctl.version;
+    return { version: ctl.version, reliable: true };
   },
 }));
 
@@ -83,5 +83,19 @@ describe("the conditions cache key and the owner's verdicts", () => {
       await get(camless.slug);
       expect(ctl.versionCalls).toEqual([]);
     }
+  });
+});
+
+describe("a caller that already read the fingerprint hands it in", () => {
+  it("getConditions uses it for the cache key and does not read it again", async () => {
+    const run = (ov: string) => runWithBudget(new SubrequestBudget(500), () => getConditions("boca-raton", { ovVersion: ov }));
+    ctl.version = "9.9"; // what a second, independent read would have said
+    await run("0");
+    expect(ctl.versionCalls).toEqual([]);
+    expect(ctl.builds).toBe(1);
+    await run("0");
+    expect(ctl.builds).toBe(1); // same key, cached
+    await run("2.5");
+    expect(ctl.builds).toBe(2); // a different fingerprint is a different key
   });
 });

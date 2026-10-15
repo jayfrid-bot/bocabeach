@@ -4,7 +4,7 @@
 // owns the content; this file owns only "fetch, refuse a partial build, strip
 // internal fields, and say how long the answer may be cached".
 
-import { conditionsOverridesVersion, getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
+import { conditionsOverrides, getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
 import { peekWatchView, storeWatchView } from "@/lib/watchViewCache";
 import { buildWatchView, cacheControlFor, type WatchView } from "@/lib/watchView";
 import type { ConditionsResponse } from "@/lib/types";
@@ -33,17 +33,21 @@ export async function loadWatchView(slug: string, opts: { cacheOnly?: boolean } 
   if (!isValidSlug(slug)) return { status: "not_found" };
   // The owner-override fingerprint is part of a stored view's identity: a correction by the
   // owner changes it, and every view stored before the correction stops matching.
-  const ov = await conditionsOverridesVersion(slug);
+  // Read ONCE and used for everything below: the conditions-cache key, the build, and the
+  // recent-view store. If the lookup failed ("0" means unknown, not "no verdicts"), nothing is
+  // read from or written to the recent-view store, so a pre-correction answer can never sit
+  // under a fingerprint that later looks current.
+  const { version: ov, reliable } = await conditionsOverrides(slug);
   if (opts.cacheOnly) {
-    const view = await peekWatchView(slug, ov);
+    const view = reliable ? await peekWatchView(slug, ov) : null;
     return view ? { status: "ok", view } : { status: "not_cached" };
   }
-  const data = await getConditions(slug);
+  const data = await getConditions(slug, { ovVersion: ov });
   if (!data) return { status: "not_found" };
   const { budgetAborted, ...publicData } = stripInternalSnapshotFields(data);
   if (budgetAborted) return { status: "incomplete" };
   const view = buildWatchView(publicData as ConditionsResponse);
-  await storeWatchView(view, ov); // best effort, never throws
+  if (reliable) await storeWatchView(view, ov); // best effort, never throws
   return { status: "ok", view };
 }
 

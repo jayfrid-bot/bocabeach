@@ -265,7 +265,7 @@ describe("GET /api/v1/nearest", () => {
     cached.mockResolvedValue(null);
     const b = await (await near("?lat=26.36&lon=-80.06&limit=3&scores=true")).json();
     expect(mocked).toHaveBeenCalledTimes(1);
-    expect(mocked).toHaveBeenCalledWith("boca-raton");
+    expect(mocked).toHaveBeenCalledWith("boca-raton", { ovVersion: "0" });
     expect(b.scored).toBe(1);
     expect(b.beaches[0].conditions.score).toEqual(expect.any(Number));
     expect(b.beaches[1].conditions).toBeNull();
@@ -288,6 +288,18 @@ describe("GET /api/v1/nearest", () => {
     expect(b.scored).toBe(0);
     expect(b.beaches.every((x: { conditions: unknown }) => x.conditions === null)).toBe(true);
     expect(b.note).toMatch(/Not scored right now/);
+  });
+
+  it("a stored view that turns out expired is eligible for the one cold build, like a missing one", async () => {
+    const past = new Date(BUILT_MS - 60_000).toISOString();
+    cached.mockImplementation(async (slug: string) => ({ ...warmView(slug)!, validUntil: past }));
+    const b = await (await near("?lat=26.36&lon=-80.06&limit=3&scores=true")).json();
+    expect(mocked).toHaveBeenCalledTimes(1);
+    expect(mocked).toHaveBeenCalledWith("boca-raton", { ovVersion: "0" }); // the nearest wins
+    expect(b.scored).toBe(1);
+    expect(b.beaches[0].conditions.score).toEqual(expect.any(Number));
+    expect(b.beaches[1].conditions).toBeNull();
+    expect(b.beaches[2].conditions).toBeNull();
   });
 
   it("a failed build is reported, not shown as an answer", async () => {

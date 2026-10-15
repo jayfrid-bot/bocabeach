@@ -17,7 +17,7 @@
 //  - Only the compact public view is stored: no snapshot, no coordinates of a visitor.
 //  - Workers Cache only stores on a custom domain (not workers.dev); the site is on one.
 
-import type { WatchView } from "@/lib/watchView";
+import { MAX_WATCH_LINES, WATER_TEMP_MAX_F, WATER_TEMP_MIN_F, type WatchView } from "@/lib/watchView";
 
 const KEY_PREFIX = "https://cache.isitbeachday.internal/watchview/";
 /** Never keep an entry longer than the watch view's own maximum validity. */
@@ -73,9 +73,9 @@ export function isWatchView(x: unknown, slug: string): x is WatchView {
   if (!isIntOrNull(o.score, 0, 100) || !isStrOrNull(o.rating) || !isStrOrNull(o.band)) return false;
   if ((o.score === null) !== (o.rating === null)) return false;
   if (typeof o.limitedData !== "boolean") return false;
-  if (!isIntOrNull(o.waterTempF, -9, 149)) return false;
+  if (!isIntOrNull(o.waterTempF, WATER_TEMP_MIN_F, WATER_TEMP_MAX_F)) return false;
   if (!(o.generatedAt === null || isDate(o.generatedAt)) || !isDate(o.capturedAt) || !isDate(o.validUntil)) return false;
-  if (!Array.isArray(o.lines) || o.lines.length > 8) return false;
+  if (!Array.isArray(o.lines) || o.lines.length > MAX_WATCH_LINES) return false;
   return o.lines.every((l) => {
     if (!l || typeof l !== "object" || Array.isArray(l)) return false;
     const line = l as Record<string, unknown>;

@@ -58,7 +58,17 @@ export interface WatchView {
 }
 
 const TONE_RANK: Record<WatchTone, number> = { calm: 0, caution: 1, danger: 2 };
-const MAX_SAFETY_LINES = 3;
+export const MAX_SAFETY_LINES = 3;
+/** Safety lines (at most MAX_SAFETY_LINES), "+N more", water temperature, best time. */
+export const MAX_WATCH_LINES = MAX_SAFETY_LINES + 3;
+/** A water temperature outside (MIN, MAX) exclusive is treated as no reading; inside, it is rounded, so a view can hold MIN..MAX inclusive. */
+export const WATER_TEMP_MIN_F = -10;
+export const WATER_TEMP_MAX_F = 150;
+
+/** The water temperature a view shows: rounded, or null for a missing or implausible reading. */
+export function waterTempForView(f: unknown): number | null {
+  return typeof f === "number" && Number.isFinite(f) && f > WATER_TEMP_MIN_F && f < WATER_TEMP_MAX_F ? Math.round(f) : null;
+}
 /** The longest a computed view may be called current after its snapshot was built. */
 export const MAX_VALID_MS = 15 * 60_000;
 
@@ -221,7 +231,7 @@ export function buildWatchView(res: ConditionsResponse, nowMs: number = Date.now
   const band = score == null ? null : scoreBand(score);
 
   const lines: WatchLine[] = [...safetyLines(res, now)];
-  const waterTempF = finite(d.waterTempF) && d.waterTempF > -10 && d.waterTempF < 150 ? Math.round(d.waterTempF) : null;
+  const waterTempF = waterTempForView(d.waterTempF);
   if (waterTempF != null) lines.push({ kind: "water", text: `Water ${waterTempF}\u00B0F`, tone: "calm" });
   const best = bestLine(res, now);
   if (best) lines.push(best);

@@ -45,9 +45,23 @@ export async function loadSeaweedOverrides(slug: string, nowMs: number = Date.no
  * or the database cannot be reached.
  */
 export async function overridesVersion(slug: string, db?: D1Like | null, nowMs: number = Date.now()): Promise<string> {
+  return (await overridesFingerprint(slug, db, nowMs)).version;
+}
+
+/**
+ * The same fingerprint, plus whether it can be trusted. `reliable` is false only when the
+ * database query itself failed: "0" then means "unknown", not "no verdicts". With no database
+ * bound at all (local dev, tests) no verdicts can exist, so "0" is reliable. Anything that
+ * stores a built answer under this fingerprint must skip the store when it is not reliable.
+ */
+export async function overridesFingerprint(
+  slug: string,
+  db?: D1Like | null,
+  nowMs: number = Date.now(),
+): Promise<{ version: string; reliable: boolean }> {
   try {
     const d = db === undefined ? await getD1() : db;
-    if (!d) return "0";
+    if (!d) return { version: "0", reliable: true };
     const r = await d
       .prepare(
         "SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS maxId FROM quality_overrides " +
@@ -55,8 +69,8 @@ export async function overridesVersion(slug: string, db?: D1Like | null, nowMs: 
       )
       .bind(slug, new Date(nowMs).toISOString())
       .first<{ n: number; maxId: number }>();
-    return r && Number(r.n) > 0 ? `${r.n}.${r.maxId}` : "0";
+    return { version: r && Number(r.n) > 0 ? `${r.n}.${r.maxId}` : "0", reliable: true };
   } catch {
-    return "0";
+    return { version: "0", reliable: false };
   }
 }
