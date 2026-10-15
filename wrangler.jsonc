@@ -60,6 +60,8 @@
   // ships (owner, 2026-10-15; docs/benchmarks/sun-leadtime-2026-10-15/REPORT.md). Set
   // SUN_ALERTS_ENABLED to "on" to turn them back on. Missing = off. Only the push is
   // gated: the sun card and its "forecast at ..." line stay on in the app.
+  // The app's copy about the alert follows NEXT_PUBLIC_SUN_ALERTS, a BUILD-time variable
+  // (lib/plus/flags.ts): set it to "on" together with SUN_ALERTS_ENABLED, then redeploy.
   "vars": {
     "PUSH_SAFETY_ALERTS": "on",
     "SUN_ALERTS_ENABLED": "off"

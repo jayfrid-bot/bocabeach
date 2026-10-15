@@ -2,6 +2,7 @@
 // alert. Kept here (not in a component) so the copy is testable and there is a
 // single place to change what any of it is called.
 
+import { sunColorAlertLabel } from "@/lib/plus/sunAlertCopy";
 import { ALERT_KEYS, type AlertKey } from "@/lib/db/types";
 import type { FactorMultiplier, SubKey } from "@/lib/profile/types";
 
@@ -62,7 +63,9 @@ export const ALERT_LABELS: Record<AlertKey, string> = {
   // Opt-in, same reason — the label says what it's for; the threshold and
   // lead-time choices live in their own rows, shown only while this is on
   // (components/plus/PlusSettingsSheet.tsx).
-  "sun-color": "Great sunrise or sunset coming",
+  // Reads "Great sunrise or sunset coming" only while the alert is on; off, the
+  // toggle is hidden anyway (visibleAlertGroups) and this is the neutral name.
+  "sun-color": sunColorAlertLabel(),
 };
 
 /** At-the-beach alerts first, then the daily ones. */

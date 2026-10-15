@@ -15,6 +15,7 @@ import type { PlusState } from "@/lib/plus/client";
 import { deviceEntitled } from "@/lib/plus/entitlement";
 import { defaultPlan, paywallCopy, PER, type OffersStatus } from "@/lib/plus/paywallCopy";
 import { ErrorLine, PrimaryButton, SecondaryButton, Sheet } from "@/components/plus/Sheet";
+import { paywallSunBenefit } from "@/lib/plus/sunAlertCopy";
 import { useOwnerEntryTap } from "@/lib/quality/ownerEntry";
 
 const APP_STORE_URL = "https://apps.apple.com/us/app/id6779072992";
@@ -85,11 +86,7 @@ const BENEFITS: { icon: string; title: string; body: string }[] = [
     title: "Beach Session on your Lock Screen",
     body: "Your live score, conditions and lightning warnings, without unlocking.",
   },
-  {
-    icon: "🌅",
-    title: "Sunrise and sunset alerts",
-    body: "A heads-up when the sky is forecast to be colorful.",
-  },
+  paywallSunBenefit(),
   {
     icon: "🚀",
     title: "Coming-up alerts",

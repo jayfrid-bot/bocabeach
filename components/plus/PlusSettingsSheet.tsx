@@ -13,6 +13,7 @@ import type {
   WaveMode,
 } from "@/lib/profile/types";
 import { SUN_COLOR_LEAD_OPTIONS, type AlertKey, type SunColorMinBand } from "@/lib/db/types";
+import { visibleAlertGroups } from "@/lib/plus/sunAlertCopy";
 import { ALERT_GROUPS, ALERT_LABELS, FACTOR_LABELS, FACTOR_ORDER, MULTIPLIER_STOPS } from "@/lib/plus/labels";
 import { computeSunTimes } from "@/lib/sources/sun";
 import { fmtTime } from "@/lib/format";
@@ -400,7 +401,7 @@ export function PlusSettingsSheet({
           {!plus.deviceLoaded ? (
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Loading your settings…</p>
           ) : null}
-          {ALERT_GROUPS.map((group) => (
+          {visibleAlertGroups(ALERT_GROUPS).map((group) => (
             <div key={group.title} className="mt-3">
               <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                 {group.title}
