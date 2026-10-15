@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { GOES_CLOUD_STALE_MINUTES, fetchGoesCloud } from "@/lib/sources/goesCloud";
+import { GOES_CLOUD_STALE_MINUTES, fetchGoesCloud, parseGoesIr } from "@/lib/sources/goesCloud";
 import type { Location } from "@/lib/types";
 
 // The ACM 4-level cloud mask -> 0-1 fraction mapping actually lives in
@@ -144,5 +144,126 @@ describe("fetchGoesCloud: old-format feed (no beamCloudPct/sunElevDeg/version) s
     expect(result.data?.cloudPct).toBe(31.3);
     expect(result.data?.beamCloudPct).toBe(69.1);
     expect(result.data?.sunElevDeg).toBe(51.0);
+  });
+});
+
+describe("feed version 3: the cloud-top (IR) block", () => {
+  const loc: Location = {
+    slug: "boca-raton",
+    name: "Boca Raton",
+    region: "FL",
+    lat: 26.36,
+    lon: -80.07,
+    timezone: "America/New_York",
+    noaaTideStationId: "8722670",
+    ndbcBuoyId: "lkwf1",
+    cams: [],
+  };
+  const irGranule = new Date(Date.now() - 7 * 60_000).toISOString();
+  const irBlock = {
+    lowPct: 9.3,
+    midPct: 0.4,
+    highPct: 1.8,
+    irCloudPct: 11.6,
+    unclassifiedPct: 0,
+    classifiedPct: 100,
+    validPixels: 225,
+    totalPixels: 225,
+    events: {
+      sunset: { eventIso: "2026-10-15T22:52:20Z", azDeg: 260.3, beamLowPct: 3.2, beamMidHighPct: 22.4, antiMidHighPct: 22.7, beamSamples: 7 },
+    },
+  };
+  const feed = (beach: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+    version: 3,
+    generatedAt: new Date().toISOString(),
+    granuleStartIso: new Date(Date.now() - 5 * 60_000).toISOString(),
+    irGranuleStartIso: irGranule,
+    irProduct: "ABI-L2-ACHA2KMC",
+    satellite: "GOES-19",
+    beaches: { "boca-raton": { cloudPct: 2, beamCloudPct: null, sunElevDeg: 3, validPixels: 49, totalPixels: 49, ...beach } },
+    ...extra,
+  });
+  const serve = (body: unknown) =>
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(body), { status: 200, headers: { date: new Date().toUTCString() } })));
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("parses the per-beach ir block and stamps it with the IR granule time", async () => {
+    serve(feed({ ir: irBlock }));
+    const result = await fetchGoesCloud(loc);
+    expect(result.status).toBe("ok");
+    const ir = result.data!.ir!;
+    expect([ir.lowPct, ir.midPct, ir.highPct, ir.irCloudPct]).toEqual([9.3, 0.4, 1.8, 11.6]);
+    expect(ir.granuleStartIso).toBe(irGranule);
+    expect(ir.events.sunset).toEqual({ eventIso: "2026-10-15T22:52:20Z", azDeg: 260.3, beamLowPct: 3.2, beamMidHighPct: 22.4, antiMidHighPct: 22.7, beamSamples: 7 });
+    expect(ir.events.sunrise).toBeUndefined();
+    // the mask fields are untouched
+    expect(result.data!.cloudPct).toBe(2);
+    expect(result.data!.sunElevDeg).toBe(3);
+  });
+
+  it("an older feed (version 2, no ir, no irGranuleStartIso) still works and has no ir", async () => {
+    const v2 = feed({});
+    delete (v2 as Record<string, unknown>).irGranuleStartIso;
+    (v2 as Record<string, unknown>).version = 2;
+    serve(v2);
+    const result = await fetchGoesCloud(loc);
+    expect(result.status).toBe("ok");
+    expect(result.data!.cloudPct).toBe(2);
+    expect(result.data!.ir).toBeNull();
+  });
+
+  it("a v3 feed whose height product was down that cycle (irGranuleStartIso null) has no ir", async () => {
+    serve(feed({ ir: irBlock }, { irGranuleStartIso: null }));
+    expect((await fetchGoesCloud(loc)).data!.ir).toBeNull();
+  });
+
+  it("a beach with no ir block (too few good pixels) has no ir", async () => {
+    serve(feed({}));
+    expect((await fetchGoesCloud(loc)).data!.ir).toBeNull();
+  });
+});
+
+describe("parseGoesIr", () => {
+  const at = "2026-10-15T22:40:00Z";
+  const good = { lowPct: 1, midPct: 2, highPct: 3, irCloudPct: 6, unclassifiedPct: 0, classifiedPct: null, validPixels: 225, totalPixels: 225, events: {} };
+
+  it("accepts a clear sky (classifiedPct null: nothing to classify)", () => {
+    const ir = parseGoesIr({ ...good, lowPct: 0, midPct: 0, highPct: 0, irCloudPct: 0 }, at)!;
+    expect(ir.classifiedPct).toBeNull();
+    expect(ir.events).toEqual({});
+  });
+
+  it("is all-or-nothing on the layer shares", () => {
+    for (const bad of [{ lowPct: null }, { midPct: "5" }, { highPct: 120 }, { irCloudPct: -1 }, { lowPct: Number.NaN }]) {
+      expect(parseGoesIr({ ...good, ...bad }, at)).toBeNull();
+    }
+    const { midPct: _drop, ...partial } = good;
+    expect(parseGoesIr(partial, at)).toBeNull();
+  });
+
+  it("rejects a missing or unparseable IR granule time, and non-objects", () => {
+    expect(parseGoesIr(good, undefined)).toBeNull();
+    expect(parseGoesIr(good, null)).toBeNull();
+    expect(parseGoesIr(good, "not a date")).toBeNull();
+    expect(parseGoesIr(null, at)).toBeNull();
+    expect(parseGoesIr("x", at)).toBeNull();
+  });
+
+  it("drops a malformed event but keeps the good one, and nulls out-of-range path shares", () => {
+    const ir = parseGoesIr(
+      {
+        ...good,
+        events: {
+          sunrise: { eventIso: "garbage", azDeg: 99 },
+          sunset: { eventIso: "2026-10-15T22:52:20Z", azDeg: 260.3, beamLowPct: 150, beamMidHighPct: 20, antiMidHighPct: null, beamSamples: 5 },
+        },
+      },
+      at,
+    )!;
+    expect(ir.events.sunrise).toBeUndefined();
+    expect(ir.events.sunset).toMatchObject({ beamLowPct: null, beamMidHighPct: 20, antiMidHighPct: null, beamSamples: 5 });
   });
 });

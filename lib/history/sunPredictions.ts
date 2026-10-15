@@ -125,14 +125,14 @@ export function sunEventRowsFromConditions(
   const air = snap.airQuality?.data;
 
   return events.map((ev) => {
-    const { point, horizon, horizonSource, result, peak } = assembleSunEventQuality(ev, {
+    const { point, cloud, horizon, horizonSource, result, peak } = assembleSunEventQuality(ev, {
       hourly,
       airQuality: air,
       goesCloud: goes,
       nowMs: anchorMs,
     });
     const path = sunModelPath({
-      cloud: point?.cloud,
+      cloud,
       humidityPct: point?.humidityPct,
       aod: air?.aod,
       pm2_5: air?.pm2_5,
@@ -154,10 +154,14 @@ export function sunEventRowsFromConditions(
       note: result.note,
       breakdown_json: result.breakdown ? JSON.stringify(result.breakdown) : null,
 
-      low_cloud_pct: numOrNull(point?.cloud.lowPct),
-      mid_cloud_pct: numOrNull(point?.cloud.midPct),
-      high_cloud_pct: numOrNull(point?.cloud.highPct),
-      total_cloud_pct: numOrNull(point?.cloud.totalPct),
+      // The cloud mix the model was handed: the satellite's when a fresh IR
+      // read fed it (breakdown_json.source = "satellite-ir"), else the forecast
+      // point's. The total-only path has no breakdown_json and only ever runs
+      // on the forecast.
+      low_cloud_pct: numOrNull(cloud?.lowPct),
+      mid_cloud_pct: numOrNull(cloud?.midPct),
+      high_cloud_pct: numOrNull(cloud?.highPct),
+      total_cloud_pct: numOrNull(cloud?.totalPct),
       humidity_pct: numOrNull(point?.humidityPct),
       aod: numOrNull(air?.aod),
       pm2_5: numOrNull(air?.pm2_5),

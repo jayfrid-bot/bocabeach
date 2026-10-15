@@ -1,7 +1,9 @@
 name: GOES Cloud Feed
 
 # Builds a small goes_cloud.json of SATELLITE-OBSERVED cloud cover per beach
-# (NOAA GOES-19 ABI Clear Sky Mask) and publishes it to the `cloud-data`
+# (NOAA GOES-19 ABI Clear Sky Mask, plus the ACHA 2 km cloud-top height that
+# splits it into low / mid / high decks and works through twilight) and
+# publishes it to the `cloud-data`
 # branch (NOT main), mirroring lightning.yml — the netCDF/pixel work runs here
 # on free public-repo Actions minutes and never touches the Netlify build/bill.
 # The web app reads the published file via raw.githubusercontent.com
@@ -20,6 +22,14 @@ name: GOES Cloud Feed
 # cron alone never kept the loops going: Sep 24-28 2026 the morning loop
 # started 4-5 h late, so the handoff (not the cron) is what keeps it live.
 #
+# RUN WINDOW: the loop reads from 75 min before the earliest sunrise to 45 min
+# after the latest sunset across the configured beaches (each on its own local
+# date), asked of the script itself: `python scripts/goes_cloud.py
+# --window-state` (the same idea as sargassum.yml's cam_seaweed.py
+# --window-state). The old fixed 05:55-20:35 ET clock window ended before a
+# June sunset in Texas and before any Pacific-coast sunset, and the sunset
+# colour model needs the reads that bracket the event itself.
+#
 # CADENCE MATH is unchanged by this fix and MUST be respected by the loop:
 # the ACMC cloud-mask product itself only updates on a ~5-min cadence, so
 # there is no value (and only NOAA S3 anonymous-fetch quota cost) in reading
@@ -37,7 +47,7 @@ on:
     - cron: "*/15 * * * *"
   push:
     branches: [main]
-    paths: [".github/workflows/goes-cloud.yml", "scripts/goes_cloud.py"]
+    paths: [".github/workflows/goes-cloud.yml", "scripts/goes_cloud.py", "scripts/sun_cam_check.py"]
   workflow_dispatch: {}
 
 permissions:
@@ -106,15 +116,30 @@ jobs:
             echo $(( 900 - rem ))
           }
 
-          # True while local (America/New_York) time is inside the daylight
-          # window GOES cloud cover cares about for the sand model + sky
-          # score. A bit later than the cam feed's window: sunset-color
-          # scoring wants the evening granules too.
-          in_daylight() {
-            local hm hm10
+          # Where we are in today's reading window, from the script itself:
+          #   day   = earliest sunrise - 75 min to latest sunset + 45 min across
+          #           the configured beaches (each on its own local date);
+          #   dusk  = the 20 min after that, for a loop that STARTS then;
+          #   night = otherwise.
+          # If the script cannot say (it prints "unknown" or fails), fall back
+          # to a fixed America/New_York clock window wide enough for every
+          # beach in the CONUS sector (Pacific coast sunsets run to ~22:00 ET
+          # in summer): day 05:00-22:10, dusk 22:11-22:30.
+          window_state() {
+            local state hm hm10
+            state=$(python scripts/goes_cloud.py --window-state 2>/dev/null | tail -n 1)
+            case "$state" in
+              day|dusk|night) echo "$state"; return 0 ;;
+            esac
             hm=$(TZ="America/New_York" date +%H%M)
             hm10=$((10#$hm)) # force base-10: a leading zero would read as octal
-            [ "$hm10" -ge 555 ] && [ "$hm10" -le 2035 ]
+            if [ "$hm10" -ge 500 ] && [ "$hm10" -le 2210 ]; then echo day
+            elif [ "$hm10" -ge 2211 ] && [ "$hm10" -le 2230 ]; then echo dusk
+            else echo night; fi
+          }
+
+          in_daylight() {
+            [ "$(window_state)" = "day" ]
           }
 
           publish() {
@@ -133,14 +158,11 @@ jobs:
             cd - >/dev/null
           }
 
-          # True in the first ~20 min after the daylight window closes — a
+          # True in the first ~20 min after the reading window closes — a
           # loop that STARTS then (the previous one's shift ended right at
           # dusk) still owes the one dusk read below.
           just_after_dusk() {
-            local hm hm10
-            hm=$(TZ="America/New_York" date +%H%M)
-            hm10=$((10#$hm))
-            [ "$hm10" -ge 2036 ] && [ "$hm10" -le 2055 ]
+            [ "$(window_state)" = "dusk" ]
           }
 
           consecutive_fail=0
@@ -173,7 +195,7 @@ jobs:
               # 4-5 h late on Sep 26-28 2026. One read right at dusk still
               # publishes the night carry-forward; no other reads until morning.
               if [ "$did_day" -eq 1 ] || { [ "$first" -eq 1 ] && just_after_dusk; }; then
-                echo "outside daylight window (05:55-20:35 America/New_York) — one final read for the night carry-forward, then idling until morning"
+                echo "outside the reading window (sunrise-75 min to sunset+45 min) — one final read for the night carry-forward, then idling until morning"
                 run_cycle
                 if [ "$consecutive_fail" -ge 5 ]; then
                   echo "5 consecutive cycle failures (last one the dusk read) — bailing so this shows as a red run"

@@ -89,7 +89,10 @@ export interface SunEventPredictionRow {
   aod: number | null;
   pm2_5: number | null;
   horizon_cloud_pct: number | null;
-  horizon_source: "beam" | "overhead" | null;
+  /** "beam"/"overhead": the Clear Sky Mask (recorded, not scored). "ir-beam"/
+   *  "ir-overhead": the GOES cloud-top read (scored; added 2026-10-15, no
+   *  migration: the column is free-text). */
+  horizon_source: "beam" | "overhead" | "ir-beam" | "ir-overhead" | null;
   horizon_fresh: 0 | 1 | null;
   seasonal_prior: number | null;
   point_time: string | null;
