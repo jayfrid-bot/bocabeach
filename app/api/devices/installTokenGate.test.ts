@@ -53,6 +53,7 @@ afterEach(() => {
   process.env = { ...OLD };
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 describe("POST /api/devices — enforcing", () => {
@@ -303,9 +304,9 @@ describe("trial, unlock, presence — INSTALL_TOKEN_ENFORCE off", () => {
 });
 
 describe("fail closed without a database", () => {
-  it("in production a missing D1 binding is a 503 on every one of these routes", async () => {
+  it("on the Workers runtime a missing D1 binding is a 503 on every one of these routes", async () => {
     vi.stubEnv("VITEST", "");
-    vi.stubEnv("NODE_ENV", "production");
+    vi.stubGlobal("navigator", { userAgent: "Cloudflare-Workers" });
     vi.spyOn(console, "error").mockImplementation(() => {});
     expect((await devicesPost(req("https://x/api/devices", { deviceId: DEV }, TOKEN))).status).toBe(503);
     expect((await trialPost(req("https://x/api/devices/trial", { deviceId: DEV }, TOKEN))).status).toBe(503);
