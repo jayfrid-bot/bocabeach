@@ -156,14 +156,15 @@ const schemas: Record<string, JsonSchema> = {
   },
   OutlookDay: {
     type: "object",
-    required: ["date", "weekday", "label", "peakScore", "rating", "bestWindow", "sky", "notes", "summary"],
+    required: ["date", "weekday", "label", "noTimeLeft", "peakScore", "rating", "bestWindow", "sky", "notes", "summary"],
     properties: {
       date: { type: "string", description: "YYYY-MM-DD in the beach's local time." },
       weekday: { type: "string", description: 'Full weekday name, e.g. "Saturday".' },
       label: { type: "string", description: '"Today", "Tomorrow" or the weekday.' },
-      peakScore: { ...nullable("integer"), minimum: 0, maximum: 100, description: "Expected peak Beach Day score for the day. Null when no hours scored." },
+      noTimeLeft: { type: "boolean", description: "True only for today when no daylight beach time is left. peakScore, bestWindow and sky are then null and notes is empty." },
+      peakScore: { ...nullable("integer"), minimum: 0, maximum: 100, description: "Expected peak Beach Day score for the day. Null when no hours scored, or when no beach time is left today." },
       rating: { ...nullable("string"), description: "Excellent, Good, Decent, Marginal or Poor." },
-      bestWindow: { description: "Best stretch of daylight. Null when none is left (today after it ended) or none scored.", oneOf: [ref("OutlookWindow"), { type: "null" }] },
+      bestWindow: { description: "Best stretch of daylight. Null when none scored, or when no beach time is left today.", oneOf: [ref("OutlookWindow"), { type: "null" }] },
       sky: { ...nullable("string"), description: 'Short sky word, e.g. "Mostly Sunny".' },
       notes: { type: "array", items: { type: "string" }, description: "Safety notes for the peak hour (the caps the score model applied). Empty when there are none." },
       summary: { type: "string" },

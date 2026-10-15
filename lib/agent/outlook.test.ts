@@ -74,13 +74,38 @@ describe("buildOutlook", () => {
     expect(d.summary).toMatch(/No good window/);
   });
 
-  it("offers no window for today once it has ended, and invents nothing", () => {
+  it("evening: when today's window has ended, today says no beach time is left and shows no past peak", () => {
+    const res = fixture();
+    res.multiDayWindows[0].peakBreakdown!.caps = ["Rip current risk: Moderate"];
     const late = Date.parse("2026-09-04T23:30:00Z");
-    const d = buildOutlook(fixture(), 1, late)!.days[0];
-    expect(d.bestWindow).toBeNull();
-    expect(d.summary).toMatch(/No time left today/);
-    // Tomorrow's window is not treated as over.
-    expect(buildOutlook(fixture(), 2, late)!.days[1].bestWindow).not.toBeNull();
+    const o = buildOutlook(res, 3, late)!;
+    const today = o.days[0];
+    expect(today).toMatchObject({ label: "Today", noTimeLeft: true, peakScore: null, rating: null, bestWindow: null, sky: null, notes: [] });
+    expect(today.summary).toBe("Today (Friday): no beach time left today.");
+    expect(o.summary).not.toMatch(/expected peak 80/);
+    // Days still count from today, and the other days are untouched.
+    expect(o.days.map((d) => d.label)).toEqual(["Today", "Tomorrow", "Sunday"]);
+    expect(o.days[1]).toMatchObject({ noTimeLeft: false, peakScore: 78 });
+    expect(o.days[1].bestWindow).not.toBeNull();
+    expect(o.note).toBeUndefined();
+  });
+
+  it("evening: when all of today's daylight is past (no window at all), same answer, never the past peak", () => {
+    const res = fixture();
+    res.multiDayWindows[0].best = null; // peakScore (80) and its breakdown still describe hours that are gone
+    res.multiDayWindows[0].peakBreakdown!.caps = ["Rip current risk: Moderate"];
+    const o = buildOutlook(res, 1, BUILT_MS)!;
+    expect(o.days).toHaveLength(1);
+    expect(o.days[0]).toMatchObject({ noTimeLeft: true, peakScore: null, rating: null, bestWindow: null, sky: null, notes: [] });
+    expect(JSON.stringify(o)).not.toContain("Rip current risk");
+    expect(o.summary).toContain("no beach time left today");
+  });
+
+  it("a day other than today is never marked as having no time left", () => {
+    const res = fixture();
+    res.multiDayWindows[1].best = null;
+    const d = buildOutlook(res, 2, BUILT_MS)!.days[1];
+    expect(d.noTimeLeft).toBe(false);
   });
 
   it("leaves out a day with no data and says so, instead of guessing", () => {
@@ -107,7 +132,7 @@ describe("buildOutlook", () => {
     expect(d.peakScore).toBeNull();
     expect(d.rating).toBeNull();
     expect(d.bestWindow).toBeNull();
-    expect(d.sky).not.toBeNull(); // from the emoji
+    expect(d.sky).toBe("Mostly Sunny"); // from the emoji, in the same Title Case the sky text uses
     expect(d.notes).toEqual([]);
     expect(d.summary).toMatch(/no usable score/);
   });

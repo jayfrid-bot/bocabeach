@@ -13,7 +13,7 @@ import { DELETE, GET, OPTIONS, POST } from "@/app/mcp/route";
 import { getConditions } from "@/lib/conditions";
 import { peekWatchView } from "@/lib/watchViewCache";
 import { resetAgentRateLimit } from "@/lib/agent/rateLimit";
-import { MCP_MAX_BATCH, MCP_MAX_BODY_BYTES } from "@/lib/agent/constants";
+import { MCP_MAX_BATCH, MCP_MAX_BATCH_TOOL_CALLS, MCP_MAX_BODY_BYTES } from "@/lib/agent/constants";
 import { BUILT_MS, conditionsFor, warmView, post, req, rpc } from "@/lib/agent/testkit";
 
 const mocked = vi.mocked(getConditions);
@@ -82,18 +82,23 @@ describe("batches (2025-03-26 clients)", () => {
     expect((await POST(post(`[${msg("initialize", 1, INIT)}]`, { "mcp-protocol-version": "2020-01-01" }))).status).toBe(200);
   });
 
-  it("caps the batch size and the tools/call in it (each can start a build)", async () => {
+  it("caps the batch size, and allows ONE tools/call per batch (each can start a build, a batch is one rate-limit token)", async () => {
     const many = `[${Array.from({ length: MCP_MAX_BATCH + 1 }, (_, i) => msg("ping", i + 1)).join(",")}]`;
     const tooMany = await POST(post(many));
     expect(tooMany.status).toBe(400);
     await expectBuffered(tooMany, "too many");
+    expect(MCP_MAX_BATCH_TOOL_CALLS).toBe(1);
     const call = (i: number) => msg("tools/call", i, { name: "get_beach_score", arguments: { slug: "boca-raton" } });
-    const out = await (await POST(post(`[${[1, 2, 3, 4, 5].map(call).join(",")}]`))).json();
+    const out = await (await POST(post(`[${msg("ping", 9)},${call(1)},${call(2)},${call(3)},${msg("tools/list", 8)}]`))).json();
     expect(out).toHaveLength(5);
-    expect(out.slice(0, 3).every((m: { result?: unknown }) => m.result)).toBe(true);
-    expect(out[3].error.message).toMatch(/at most 3 tools\/call/);
-    expect(out[4].error.message).toMatch(/at most 3 tools\/call/);
-    expect(mocked.mock.calls.length).toBeLessThanOrEqual(3);
+    expect(out[0].result).toEqual({});
+    expect(out[1].result.content[0].text).toContain("Boca Raton");
+    for (const i of [2, 3]) {
+      expect(out[i].error.message).toMatch(/at most 1 tools\/call/);
+      expect(out[i].error.message).toMatch(/own POST/);
+    }
+    expect(out[4].result.tools).toHaveLength(5); // cheap methods are not capped
+    expect(mocked).toHaveBeenCalledTimes(1);
   });
 
   it("an empty batch is an invalid request", async () => {

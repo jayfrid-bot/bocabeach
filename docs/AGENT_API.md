@@ -34,7 +34,7 @@ curl -s https://isitbeachday.com/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'
 
 # MCP-Protocol-Version may be sent on every request, initialize included (ignored there).
-# After initialize it may also be left out. A value that is not 2025-11-25, 2025-06-18 or
+# After initialize it may also be left out (2025-03-26 behavior is then assumed). A value that is not 2025-11-25, 2025-06-18 or
 # 2025-03-26 is a 400 that lists the revisions we serve.
 
 # List the tools
@@ -84,7 +84,10 @@ tomorrow and the day after. Per day it gives `peakScore`, `rating`, `bestWindow`
 (`text` is local time such as "10 AM–1 PM"; `good` is true at Decent or better), `sky` and
 `notes` (safety notes for the peak hour). Future days carry no live flags or alerts; use
 `/beaches/{slug}` for right now. If forecast data for a day is missing, that day is left
-out and `note` says so.
+out and `note` says so. Once today has no daylight time left (no window, or the window
+has ended) today stays in the list as day 1 with `noTimeLeft: true`, a null `peakScore`,
+`bestWindow` and `sky`, and no `notes`: a peak from hours that are gone is not an
+expectation.
 
 ```js
 const r = await fetch("https://isitbeachday.com/api/v1/beaches/boca-raton");
@@ -125,7 +128,12 @@ Codes: `bad_request` (400), `not_found` (404), `rate_limited` (429),
 - MCP transport: every reply is serialized to a string and sent with an explicit
   `Content-Length` (no streaming, no chunked). A notification, a client response or
   a batch of only those gets 202 with `Content-Length: 0`. A batch (JSON array, at
-  most 10 messages and 3 `tools/call`) is answered with an array. A client whose
+  most 10 messages and ONE `tools/call`) is answered with an array. A batch costs
+  one rate-limit token and each `tools/call` can start a data build, so a second
+  `tools/call` in the same batch gets a per-item error ("send each tools/call in its
+  own POST"); pings, `tools/list` and notifications are not capped. A message with
+  `"id": null` (or any id that is not a string or number) that is not a notification
+  is HTTP 400 with a JSON-RPC error body. A client whose
   `Accept` names only `text/event-stream` gets the same JSON as one SSE event
   (`event: message`, `data: ...`, blank line), also with `Content-Length`.
   Next.js adds its own `Vary: rsc, next-router-state-tree, ...` to every App Router
@@ -136,8 +144,9 @@ Codes: `bad_request` (400), `not_found` (404), `rate_limited` (429),
   allows neither is 406, and the most specific media range wins, so
   `application/json;q=0, */*` is refused. `initialize` needs `protocolVersion`,
   `capabilities` and `clientInfo` (name, version). `MCP-Protocol-Version` is ignored
-  on `initialize` (any value) and may be left out on later requests (the latest
-  behavior is assumed); a present value on a later request must be one of the three
+  on `initialize` (any value) and may be left out on later requests (the 2025-03-26
+  shape is assumed, per the spec's SHOULD: no tool `title`, no `structuredContent`; the
+  text result carries every fact); a present value on a later request must be one of the three
   revisions, else 400 with the list.
 - MCP `Origin` check: no `Origin` header is allowed (a connector's server sends
   none). A present `Origin` must be `https://isitbeachday.com` or

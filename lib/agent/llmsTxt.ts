@@ -5,6 +5,7 @@ import {
   API_BASE_PATH,
   CREDIT,
   DATA_SOURCES,
+  DEFAULT_OUTLOOK_DAYS,
   DISCLAIMER,
   MAX_COMPARE,
   MAX_NEAREST_LIMIT,
@@ -38,7 +39,7 @@ export function buildLlmsTxt(): string {
 ## Connect an assistant (MCP)
 
 - MCP server (Streamable HTTP, stateless, no sign-in, no session; protocol revisions ${SUPPORTED_PROTOCOL_VERSIONS.join(", ")}; initialize answers the revision you ask for, or the latest we serve): ${MCP_URL}
-- You may send the header MCP-Protocol-Version on every request, initialize included. After initialize it may also be left out; a value that is not one of the revisions above is a 400.
+- You may send the header MCP-Protocol-Version on every request, initialize included. After initialize it may also be left out (we then assume 2025-03-26: plain text results without structuredContent); a value that is not one of the revisions above is a 400.
 - Answers are complete JSON bodies with a Content-Length. A client that accepts only text/event-stream gets one SSE event. A batch (JSON array) is accepted.
 - In Claude or ChatGPT, add it as a custom connector with that URL.
 - Tools:
@@ -51,7 +52,7 @@ ${TOOLS.map((t) => `  - \`${t.name}\`: ${t.description.split(". ")[0]}.`).join("
 - \`GET ${api}/beaches\`: every beach (slug, name, state, lat, lon, page URL). Optional \`?state=FL\` and \`?region=Broward\`.
 - \`GET ${api}/beaches/{slug}\`: live score, rating, safety lines, water temperature, best time, page URL, attribution.
 - \`GET ${api}/nearest?lat=&lon=&limit=&scores=\`: nearest beaches to a point (limit up to ${MAX_NEAREST_LIMIT}). \`scores=true\` adds a compact live score to the nearest ${MAX_REST_SCORES}.
-- \`GET ${api}/beaches/{slug}/outlook?days=\`: a 1-${MAX_OUTLOOK_DAYS} day outlook (today is day 1; default ${MAX_OUTLOOK_DAYS}): per day the expected peak score and rating, the best window in local time, a sky word and safety notes. A forecast, not a guarantee: check again the morning of.
+- \`GET ${api}/beaches/{slug}/outlook?days=\`: a 1-${MAX_OUTLOOK_DAYS} day outlook (today is day 1; default ${DEFAULT_OUTLOOK_DAYS}): per day the expected peak score and rating, the best window in local time, a sky word and safety notes. A forecast, not a guarantee: check again the morning of.
 - Write query values in plain canonical form (\`lat=26.35\`, \`scores=true\`; no spaces, plus signs, exponents or leading zeros). Anything else is a 400.
 - CORS is open for GET. No cookies. Errors are JSON: \`{"error":{"code":"...","message":"..."}}\`.
 

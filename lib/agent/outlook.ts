@@ -31,7 +31,9 @@ export interface OutlookDay {
   weekday: string;
   /** "Today", "Tomorrow", or the weekday. */
   label: string;
-  /** Expected peak Beach Day score for the day, 0-100, or null when no hours scored. */
+  /** True only for today when no daylight beach time is left (peakScore, bestWindow, sky are then null). */
+  noTimeLeft: boolean;
+  /** Expected peak Beach Day score for the day, 0-100, or null when no hours scored (or no time left today). */
   peakScore: number | null;
   rating: string | null;
   /** Best stretch of daylight. Null when no window is left or none scored. */
@@ -72,8 +74,8 @@ export interface BeachOutlook {
 
 const SKY_BY_EMOJI: Record<string, string> = {
   "☀️": "Sunny",
-  "🌤️": "Mostly sunny",
-  "⛅": "Partly cloudy",
+  "🌤️": "Mostly Sunny",
+  "⛅": "Partly Cloudy",
   "☁️": "Cloudy",
   "🌫️": "Fog",
   "🌦️": "Showers",
@@ -103,22 +105,31 @@ const weekdayOf = (key: string): string =>
   new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "long" }).format(new Date(`${key}T12:00:00Z`));
 
 function buildDay(w: DayWindow, label: string, weekday: string, tz: string, nowMs: number, isToday: boolean): OutlookDay {
+  const head = label === weekday ? label : `${label} (${weekday})`;
+
+  // Today with no daylight time left: either there is no window at all (every daylight hour is
+  // past) or the window has ended. The day's peak then comes from hours that are gone, so it is
+  // not an expectation; show no score, sky or safety notes from those hours.
+  const best = w.best;
+  const bestEnd = best ? Date.parse(best.endIso) : NaN;
+  if (isToday && (!best || !Number.isFinite(bestEnd) || bestEnd <= nowMs)) {
+    return {
+      date: w.date, weekday, label,
+      noTimeLeft: true,
+      peakScore: null, rating: null, bestWindow: null, sky: null, notes: [],
+      summary: `${head}: no beach time left today.`,
+    };
+  }
+
   const peakScore = typeof w.peakScore === "number" && Number.isFinite(w.peakScore) ? Math.max(0, Math.min(100, Math.round(w.peakScore))) : null;
   const rating = peakScore == null ? null : scoreBand(peakScore).rating;
 
   let bestWindow: OutlookWindow | null = null;
-  let windowOver = false;
-  const best = w.best;
   if (best) {
-    const end = Date.parse(best.endIso);
-    if (isToday && (!Number.isFinite(end) || end <= nowMs)) {
-      windowOver = true; // today's window has ended; the day is not over for the score, but there is no time to offer
-    } else {
-      const text = windowText(best.startIso, best.endIso, tz);
-      if (text) {
-        const score = Math.round(best.score);
-        bestWindow = { startIso: best.startIso, endIso: best.endIso, text, score, rating: scoreBand(score).rating, good: goodWindow({ score }) !== null };
-      }
+    const text = windowText(best.startIso, best.endIso, tz);
+    if (text) {
+      const score = Math.round(best.score);
+      bestWindow = { startIso: best.startIso, endIso: best.endIso, text, score, rating: scoreBand(score).rating, good: goodWindow({ score }) !== null };
     }
   }
 
@@ -126,17 +137,14 @@ function buildDay(w: DayWindow, label: string, weekday: string, tz: string, nowM
   const notes = [...(w.peakBreakdown?.caps ?? [])];
 
   const parts: string[] = [];
-  const head = label === weekday ? label : `${label} (${weekday})`;
   parts.push(peakScore == null ? `${head}: no usable score.` : `${head}: expected peak ${peakScore}/100 (${rating}).`);
   if (bestWindow) {
     parts.push(bestWindow.good ? `Best ${bestWindow.text}.` : `No good window; the best stretch (${bestWindow.text}) only reaches ${bestWindow.score}, ${bestWindow.rating}.`);
-  } else if (windowOver) {
-    parts.push("No time left today.");
   }
   if (sky) parts.push(`Sky: ${sky}.`);
   if (notes.length) parts.push(`Safety notes: ${notes.map((n) => n.replace(/[.\s]+$/, "")).join("; ")}.`);
 
-  return { date: w.date, weekday, label, peakScore, rating, bestWindow, sky, notes, summary: parts.join(" ") };
+  return { date: w.date, weekday, label, noTimeLeft: false, peakScore, rating, bestWindow, sky, notes, summary: parts.join(" ") };
 }
 
 /** Build the outlook from a conditions response. `days` counts calendar days from today (1-3). */

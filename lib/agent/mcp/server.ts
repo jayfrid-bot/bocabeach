@@ -12,7 +12,8 @@
 //   - Revisions served: 2025-11-25, 2025-06-18, 2025-03-26. initialize answers the client's
 //     protocolVersion when it is one of those, else the latest one (never an error).
 //   - MCP-Protocol-Version: ignored on initialize (any value). On later requests it may be
-//     missing (the latest behavior is assumed); a present value must be a served revision,
+//     missing the 2025-03-26 shape is assumed (the spec's SHOULD: no tool `title`, no
+//     structuredContent, plain text results); a present value must be a served revision,
 //     else 400 with the list. So a client may send it on every request, initialize included.
 //   - No Mcp-Session-Id is ever issued; an incoming one is ignored. Nothing is stored.
 //   - Origin is validated (spec MUST, DNS-rebinding protection): no Origin header is fine
@@ -28,7 +29,8 @@
 //     validation errors).
 //   - Revision differences honored (2025-11-25 changed nothing for a tools-only server beyond
 //     optional fields): serverInfo.title and tool `title` / `structuredContent` are sent only
-//     when the request names a revision that has them (2025-06-18 and later); input schemas use
+//     when the request names a revision that has them (2025-06-18 and later); a request that
+//     names none gets the 2025-03-26 shape, whose text content carries every fact; input schemas use
 //     only keywords common to every JSON Schema dialect, so the 2020-12 default holds.
 //     Capabilities advertised: tools only, listChanged false. No resources, prompts, logging,
 //     completions, tasks, icons or sampling.
@@ -53,6 +55,9 @@ import { TOOLS, TOOLS_BY_NAME } from "@/lib/agent/mcp/tools";
 export const SUPPORTED_PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"] as const;
 export type ProtocolVersion = (typeof SUPPORTED_PROTOCOL_VERSIONS)[number];
 export const LATEST_PROTOCOL_VERSION: ProtocolVersion = SUPPORTED_PROTOCOL_VERSIONS[0];
+
+/** Assumed for a non-initialize request that sends no MCP-Protocol-Version (the spec's SHOULD). */
+const ASSUMED_PROTOCOL_VERSION: ProtocolVersion = "2025-03-26";
 
 const isSupportedVersion = (v: string): v is ProtocolVersion => (SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(v);
 /** True when `v` is `min` or newer. */
@@ -227,7 +232,7 @@ interface Dispatched {
   tool?: string;
 }
 
-/** `ver`: the revision the request names (header or negotiated); the latest when none. */
+/** `ver`: the revision the request names in MCP-Protocol-Version; 2025-03-26 when it names none. */
 async function dispatch(msg: Record<string, unknown>, id: string | number, ver: ProtocolVersion): Promise<Dispatched> {
   const method = msg.method as string;
   const params = msg.params;
@@ -368,7 +373,7 @@ async function processMessage(msg: unknown, ver: ProtocolVersion): Promise<Proce
   if (typeof id !== "string" && typeof id !== "number") {
     // A notification (such as notifications/initialized): accept it and say nothing.
     if ("id" in msg && id !== undefined) {
-      return { message: errMsg(null, ERR.invalidRequest, "id must be a string or a number."), status: 200, rpc: method };
+      return { message: errMsg(null, ERR.invalidRequest, "id must be a string or a number."), status: 400, rpc: method };
     }
     return { message: null, status: 202, rpc: method };
   }
@@ -517,10 +522,10 @@ export async function handleMcpPost(req: Request): Promise<Response> {
   }
 
   // MCP-Protocol-Version: ignored on initialize, whatever it says. On any other request a missing
-  // (or empty) header is fine and the latest behavior is assumed; a present one must be served.
+  // (or empty) header is fine and 2025-03-26 is assumed (spec SHOULD); a present one must be served.
   const headerRaw = req.headers.get("mcp-protocol-version")?.trim() || null;
   const isInit = Array.isArray(msg) ? msg.some(isInitialize) : isInitialize(msg);
-  let ver: ProtocolVersion = LATEST_PROTOCOL_VERSION;
+  let ver: ProtocolVersion = ASSUMED_PROTOCOL_VERSION;
   if (headerRaw !== null && !isInit) {
     if (!isSupportedVersion(headerRaw)) {
       return finish({
@@ -546,7 +551,7 @@ export async function handleMcpPost(req: Request): Promise<Response> {
     let calls = 0;
     for (const m of msg) {
       if (isObject(m) && m.method === "tools/call" && (typeof m.id === "string" || typeof m.id === "number") && ++calls > MCP_MAX_BATCH_TOOL_CALLS) {
-        replies.push(errMsg(m.id, ERR.tooLarge, `A batch may hold at most ${MCP_MAX_BATCH_TOOL_CALLS} tools/call. Send the rest in another POST.`));
+        replies.push(errMsg(m.id, ERR.tooLarge, `A batch may hold at most ${MCP_MAX_BATCH_TOOL_CALLS} tools/call (each can start a data build). Send each tools/call in its own POST.`));
         continue;
       }
       const p = await processMessage(m, ver);

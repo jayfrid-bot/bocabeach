@@ -157,14 +157,17 @@ describe("tools/list", () => {
     expect(tools[3].description).toContain("get_beach_outlook");
   });
 
-  it("drops fields a 2025-03-26 client does not know, only when the header says so", async () => {
+  it("drops fields a 2025-03-26 client does not know, when the header says so or is missing", async () => {
     const old = (await call(rpc("tools/list"), { "mcp-protocol-version": "2025-03-26" })).json.result.tools as Array<Record<string, any>>;
     for (const t of old) {
       expect(t.title).toBeUndefined();
       expect(t.annotations.readOnlyHint).toBe(true);
     }
+    // No header at all: the spec's SHOULD is to assume 2025-03-26, so the same shape.
     const none = (await call(rpc("tools/list"), { "mcp-protocol-version": "none" })).json.result.tools as Array<Record<string, any>>;
-    expect(none.every((t) => typeof t.title === "string")).toBe(true);
+    expect(none.every((t) => t.title === undefined && t.annotations.readOnlyHint === true)).toBe(true);
+    const newer = (await call(rpc("tools/list"), { "mcp-protocol-version": "2025-11-25" })).json.result.tools as Array<Record<string, any>>;
+    expect(newer.every((t) => typeof t.title === "string")).toBe(true);
     const r = (await call(rpc("tools/call", { name: "get_beach_score", arguments: { slug: "boca-raton" } }), { "mcp-protocol-version": "2025-03-26" })).json.result;
     expect(r.content[0].text).toContain("Boca Raton");
     expect(r.structuredContent).toBeUndefined();
@@ -441,6 +444,16 @@ describe("protocol errors", () => {
     expect((await call("null")).res.status).toBe(400);
   });
 
+  it("a message with id null (or another bad id) that is not a notification is HTTP 400 with a JSON-RPC error", async () => {
+    for (const id of [null, {}, [], true]) {
+      const { res, json } = await call(JSON.stringify({ jsonrpc: "2.0", id, method: "ping" }));
+      expect(res.status, JSON.stringify(id)).toBe(400);
+      expect(json).toMatchObject({ jsonrpc: "2.0", id: null, error: { code: -32600 } });
+    }
+    // A real notification (no id at all) is still 202.
+    expect((await POST(post(JSON.stringify({ jsonrpc: "2.0", method: "ping" })))).status).toBe(202);
+  });
+
   it("an unknown method is method-not-found", async () => {
     const { json } = await call(rpc("resources/list"));
     expect(json.error.code).toBe(-32601);
@@ -575,7 +588,7 @@ describe("protocol errors", () => {
     expect((await POST(post(rpc("ping"), { "mcp-protocol-version": "" }))).status).toBe(200);
   });
 
-  it("allows a missing MCP-Protocol-Version on every request and assumes the latest behavior", async () => {
+  it("allows a missing MCP-Protocol-Version on every request and assumes 2025-03-26", async () => {
     const none = { "mcp-protocol-version": "none" };
     const requests = [
       rpc("initialize", INIT),
@@ -588,7 +601,10 @@ describe("protocol errors", () => {
       expect((await POST(post(body, none))).status, body).toBe(202);
     }
     const r = (await call(rpc("tools/call", { name: "list_beaches", arguments: { state: "FL" } }), none)).json.result;
-    expect(r.structuredContent.count).toBeGreaterThan(0);
+    expect(r.structuredContent).toBeUndefined(); // 2025-03-26 shape; the text carries the facts
+    expect(r.content[0].text).toContain("boca-raton");
+    const withHeader = (await call(rpc("tools/call", { name: "list_beaches", arguments: { state: "FL" } }))).json.result;
+    expect(withHeader.structuredContent.count).toBeGreaterThan(0);
     expect(mocked).not.toHaveBeenCalled();
   });
 
