@@ -58,6 +58,7 @@ afterEach(() => {
   process.env = { ...OLD };
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 /** A phone that already claimed TOKEN and registered OWNER_PUSH. */
@@ -351,14 +352,24 @@ describe("INSTALL_TOKEN_ENFORCE off (the staged rollout)", () => {
 });
 
 describe("fail closed without a database", () => {
-  it("in production a missing D1 binding is a 503, not an empty memory store", async () => {
+  it("on the Workers runtime a missing D1 binding is a 503, not an empty memory store", async () => {
     vi.stubEnv("VITEST", "");
-    vi.stubEnv("NODE_ENV", "production");
+    vi.stubGlobal("navigator", { userAgent: "Cloudflare-Workers" });
     vi.spyOn(console, "error").mockImplementation(() => {});
     const reg = await registerPost(register({}, TOKEN));
     expect(reg.status).toBe(503);
     const unreg = await unregisterPost(unregister({ token: OWNER_PUSH }, TOKEN));
     expect(unreg.status).toBe(503);
+  });
+});
+
+describe("a plain Node server (CI's next start) keeps the memory store", () => {
+  it("NODE_ENV=production without the Workers runtime does not 503", async () => {
+    vi.stubEnv("VITEST", "");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const unreg = await unregisterPost(unregister({ token: OWNER_PUSH }, TOKEN));
+    expect(unreg.status).not.toBe(503);
   });
 });
 

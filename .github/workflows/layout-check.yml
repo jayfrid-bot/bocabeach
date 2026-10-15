@@ -43,12 +43,12 @@ jobs:
       - name: Build (CI serves the built app, not the dev server)
         run: npm run build
 
-      # The Plus API routes (/api/devices, /api/presence) talk to D1. Even under
-      # `next start`, next.config.mjs's initOpenNextCloudflareForDev wires a LOCAL
-      # miniflare D1 — an empty database with no tables — so without this step the
-      # routes 500 with "no such table: devices" and e2e/plus.spec.ts's trial test
-      # fails on the resulting console error. Local mode needs no Cloudflare
-      # credentials; it just seeds .wrangler/state from migrations/.
+      # The Plus API routes (/api/devices, /api/presence) talk to D1. Under
+      # `next start` there are no Cloudflare bindings (next.config.mjs only wires
+      # local ones for `next dev`), so the routes use the in-memory store
+      # (lib/db/store.ts: only the Workers runtime fails closed without D1). This
+      # step keeps .wrangler/state seeded for any run that does wire local D1.
+      # Local mode needs no Cloudflare credentials.
       - name: Apply D1 migrations to the local test database
         run: npx wrangler d1 migrations apply isitbeachday-plus --local
 

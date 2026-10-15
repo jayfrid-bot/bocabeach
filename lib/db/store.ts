@@ -704,7 +704,7 @@ export interface DeviceStore {
 /**
  * Pick a backend: D1 when the `DB` binding is wired (production, and `next dev`
  * once `initOpenNextCloudflareForDev` has run). The memory/file store is for
- * development and tests ONLY: in production a missing binding throws
+ * development, tests and plain Node servers ONLY: on the Workers runtime a missing binding throws
  * `StoreUnavailableError` (routes answer 503) instead of quietly serving an
  * empty store, which would make every real device look unclaimed and accept
  * writes that vanish. Tests always get memory — no bindings, no files, no
@@ -714,7 +714,18 @@ export async function getStore(): Promise<DeviceStore> {
   if (!process.env.VITEST) {
     const db = await getD1();
     if (db) return d1Store(db);
-    if (process.env.NODE_ENV === "production") throw new StoreUnavailableError();
+    if (isWorkersRuntime()) throw new StoreUnavailableError();
   }
   return memoryStore();
+}
+
+/**
+ * True only when this code runs on Cloudflare's Workers runtime (workerd sets
+ * `navigator.userAgent` to "Cloudflare-Workers"). That is where the `DB`
+ * binding must exist, so a missing one fails closed. A plain Node server — the
+ * CI layout check serves the built app with `next start`, which has no
+ * Cloudflare bindings at all — keeps the memory store, as before.
+ */
+export function isWorkersRuntime(): boolean {
+  return typeof navigator !== "undefined" && navigator.userAgent === "Cloudflare-Workers";
 }
