@@ -8,6 +8,7 @@ import {
   MIN_FRAMES_PER_BUCKET,
   PRE_END_MIN,
   SUN_OBSERVATION_MAX_SERIES,
+  camFacing,
   coverageCounts,
   expectedView,
   localDateOf,
@@ -75,9 +76,42 @@ describe("parseSunObservation — accepts what the script sends", () => {
     const body = sunObservationBody({ kind: "sunset", peakAtMin: 10, scoredAt: "2026-10-07T00:00:00.000Z" });
     const r = parseSunObservation(body, Date.parse("2026-10-07T03:00:00Z"));
     expect(r.ok && r.row.view).toBe("antisolar");
-    expect(expectedView("sunset", 90)).toBe("antisolar");
-    expect(expectedView("sunrise", 90)).toBe("solar");
-    expect(expectedView("sunset", 270)).toBe("solar");
+    expect(expectedView("sunset", "east")).toBe("antisolar");
+    expect(expectedView("sunrise", "east")).toBe("solar");
+  });
+
+  it("a west-facing cam is the mirror image: sunset solar, sunrise antisolar", () => {
+    expect(expectedView("sunset", "west")).toBe("solar");
+    expect(expectedView("sunrise", "west")).toBe("antisolar");
+  });
+
+  it("camFacing uses the registry's facing, else derives it from the azimuth (below 180 east, otherwise west)", () => {
+    expect(camFacing({ facing: "west", facing_azimuth_deg: 90 })).toBe("west");
+    expect(camFacing({ facing_azimuth_deg: 90 })).toBe("east");
+    expect(camFacing({ facing_azimuth_deg: 179.9 })).toBe("east");
+    expect(camFacing({ facing_azimuth_deg: 180 })).toBe("west");
+    expect(camFacing({ facing_azimuth_deg: 270 })).toBe("west");
+    expect(camFacing({ facing_azimuth_deg: -90 })).toBe("west");
+    expect(camFacing({ facing_azimuth_deg: 450 })).toBe("east");
+  });
+
+  it("rejects a sunrise labeled antisolar and a sunset labeled solar for an east-facing cam", () => {
+    expect(bad(sunObservationBody({}, { view: "antisolar" }))).toMatch(/view does not match/);
+    const sunset = sunObservationBody({ kind: "sunset", peakAtMin: 10, scoredAt: "2026-10-07T00:00:00.000Z" });
+    expect(bad({ ...sunset, view: "solar" }, Date.parse("2026-10-07T03:00:00Z"))).toMatch(/view does not match/);
+  });
+
+  it("keeps the glow_masked_frac diagnostic of each frame, and rejects a bad one", () => {
+    const series = (sunObservationBody().series as Frame[]).map((f, i) => ({ ...f, glow_masked_frac: i / 100 }));
+    const r = parseSunObservation(honestBody(series), NOW);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const stored = JSON.parse(r.row.series_json) as { glow_masked_frac: number }[];
+    expect(stored[3].glow_masked_frac).toBe(0.03);
+    const broken = series.map((f, i) => (i === 2 ? { ...f, glow_masked_frac: 1.5 } : f));
+    expect(bad(honestBody(broken))).toMatch(/malformed/);
+    const text = series.map((f, i) => (i === 2 ? { ...f, glow_masked_frac: "0.1" } : f));
+    expect(bad(honestBody(text as unknown as Frame[]))).toMatch(/malformed/);
   });
 
   it("a Deerfield cam reporting for Boca Raton carries the 2.9 mi distance", () => {

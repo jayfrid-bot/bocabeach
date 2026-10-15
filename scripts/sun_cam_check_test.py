@@ -9,6 +9,7 @@ import sys
 import unittest
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sun_cam_check as sc  # noqa: E402
@@ -83,6 +84,131 @@ class ScoringTests(unittest.TestCase):
             self.assertLess(scores[plain], 10, plain)
 
 
+def disc(im, cx, cy, r, rgb):
+    from PIL import ImageDraw
+
+    ImageDraw.Draw(im).ellipse([cx - r, cy - r, cx + r, cy + r], fill=rgb)
+
+
+def glow_frame(size=(640, 360), sun=(320, 200), core=40, glow=90, bands=False):
+    """A clear blue sky with a sun: a blown-out white core, an orange glow around it,
+    and (optionally) hot-pink cloud bands across the top, far from the sun."""
+    im = Image.new("RGB", size, (70, 120, 200))
+    disc(im, sun[0], sun[1], glow, (235, 120, 50))
+    disc(im, sun[0], sun[1], core, (255, 255, 245))
+    if bands:
+        for y0, y1 in ((8, 28), (45, 65)):
+            im.paste((225, 70, 120), (0, y0, size[0], y1))
+    return im
+
+
+SKY = [[0.0, 0.0, 1.0, 0.7]]
+
+
+@unittest.skipIf(Image is None, "Pillow missing")
+class GlowMaskTests(unittest.TestCase):
+    def test_a_clear_sky_with_a_bright_sun_glow_no_longer_scores_as_colorful(self):
+        im = glow_frame()
+        old = sc.score_image(im, SKY, glow=False)
+        new = sc.score_image(im, SKY)
+        self.assertGreater(old["score"], 30)  # the old rule counted the glow as warm sky
+        self.assertLess(new["score"], 10)
+        self.assertLess(new["warm_frac"], 0.02)
+        self.assertGreater(new["glow_masked_frac"], 0.08)
+
+    def test_lit_cloud_bands_away_from_the_sun_still_score_high(self):
+        im = glow_frame(bands=True)
+        new = sc.score_image(im, SKY)
+        self.assertGreater(new["score"], 70)
+        self.assertGreater(new["warm_frac"], 0.15)
+        # the glow beside them is removed, so the clouds alone carry the score
+        self.assertLess(sc.score_image(glow_frame(), SKY)["score"], new["score"] / 5)
+
+    def test_the_mask_follows_the_sun_not_the_frame_centre(self):
+        left = sc.find_sun(glow_frame(sun=(120, 200)), SKY)
+        right = sc.find_sun(glow_frame(sun=(520, 200)), SKY)
+        self.assertEqual(left["kind"], "disc")
+        self.assertAlmostEqual(left["x"], 120, delta=6)
+        self.assertAlmostEqual(left["y"], 200, delta=6)
+        self.assertAlmostEqual(right["x"], 520, delta=6)
+        self.assertLess(sc.score_image(glow_frame(sun=(120, 200)), SKY)["score"], 10)
+
+    def test_the_radius_scales_with_the_blob_within_the_floor_and_the_cap(self):
+        small = sc.find_sun(glow_frame(core=14, glow=16), SKY)
+        big = sc.find_sun(glow_frame(core=60, glow=70), SKY)
+        self.assertAlmostEqual(sc.glow_radius(small, 640), 0.06 * 640)  # the floor
+        self.assertAlmostEqual(sc.glow_radius(big, 640), 2.5 * 60, delta=3)  # 2.5x the equivalent radius
+        self.assertAlmostEqual(sc.glow_radius({"r_eq": 1000.0}, 640), 0.25 * 640)  # the cap
+
+    def test_a_tiny_bright_speck_is_not_the_sun(self):
+        im = Image.new("RGB", (640, 360), (70, 120, 200))
+        disc(im, 300, 50, 3, (255, 255, 250))  # a glint on a cloud edge
+        self.assertIsNone(sc.find_sun(im, SKY))
+        with_speck = sc.score_image(im, SKY)
+        self.assertEqual(with_speck["glow_masked_frac"], 0.0)
+
+    def test_a_sun_below_the_horizon_is_found_as_the_brightest_warm_blob_near_the_horizon(self):
+        # No blown-out disc: a saturated gold blob sits on the horizon (the bottom edge of the sky region)
+        # inside a wider, dimmer orange wash. Warm sky near the top is a different thing and stays.
+        im = Image.new("RGB", (640, 360), (70, 120, 200))
+        disc(im, 320, 240, 90, (200, 100, 50))  # dim wash: warm, but V < 0.85
+        disc(im, 320, 240, 45, (255, 150, 40))  # the bright core
+        im.paste((225, 70, 120), (0, 10, 640, 35))  # hot-pink cloud band, far above
+        sun = sc.find_sun(im, SKY)
+        self.assertIsNotNone(sun)
+        self.assertEqual(sun["kind"], "warm")
+        self.assertAlmostEqual(sun["x"], 320, delta=6)
+        self.assertAlmostEqual(sun["y"], 240, delta=10)  # a little low: candidates must sit in the horizon band
+        old = sc.score_image(im, SKY, glow=False)
+        new = sc.score_image(im, SKY)
+        self.assertGreater(new["glow_masked_frac"], 0.1)
+        self.assertLess(new["warm_frac"], old["warm_frac"] + 1e-9)
+        # without the cloud band, the same sunrise glow scores near nothing
+        plain = Image.new("RGB", (640, 360), (70, 120, 200))
+        disc(plain, 320, 240, 90, (200, 100, 50))
+        disc(plain, 320, 240, 45, (255, 150, 40))
+        self.assertGreater(sc.score_image(plain, SKY, glow=False)["score"], 20)
+        self.assertLess(sc.score_image(plain, SKY)["score"], 8)
+
+    def test_warm_candidates_far_above_the_horizon_are_not_taken_for_the_sun(self):
+        im = Image.new("RGB", (640, 360), (70, 120, 200))
+        disc(im, 320, 40, 45, (255, 150, 40))  # a bright gold cloud near the top of the sky, nowhere near the horizon
+        self.assertIsNone(sc.find_sun(im, SKY))
+
+    def test_no_sun_means_no_mask_and_the_old_score(self):
+        im = Image.new("RGB", (160, 90))
+        im.paste((200, 100, 60), (0, 0, 80, 90))  # warm, but not bright enough to look like a sun
+        im.paste((190, 80, 120), (80, 0, 160, 90))
+        a, b = sc.score_image(im, FULL), sc.score_image(im, FULL, glow=False)
+        self.assertEqual(a["glow_masked_frac"], 0.0)
+        self.assertEqual(a["score"], b["score"])
+
+    def test_masked_pixels_count_against_valid_frac_like_glare(self):
+        new = sc.score_image(glow_frame(), SKY)
+        old = sc.score_image(glow_frame(), SKY, glow=False)
+        self.assertAlmostEqual(old["valid_frac"] - new["valid_frac"], new["glow_masked_frac"], places=3)
+
+    def test_the_series_carries_glow_masked_frac(self):
+        event = datetime(2026, 10, 6, 11, 15, tzinfo=timezone.utc)
+        frames = []
+        for k in range(25):
+            t = event + timedelta(seconds=150 * (k - 14))
+            frames.append({"t": t, "valid_frac": 0.8, "warm_frac": 0.2, "colorfulness": 50.0, "warm_sat": 0.4, "score": 40.0, "glow_masked_frac": 0.123456})
+        result, _info = sc.build_result(frames, event)
+        self.assertIsNotNone(result)
+        self.assertTrue(all(f["glow_masked_frac"] == 0.1235 for f in result["series"]))
+
+    def test_the_score_version_was_bumped_for_the_new_rule(self):
+        self.assertGreater(sc.SUN_CAM_SCORE_VERSION, "2026-10-06.2")
+
+    @unittest.skipUnless(OCT6_DIR.exists(), "the 2026-10-06 Elbo frames are not on this machine")
+    def test_the_oct6_elbo_calibration_anchor_survives_the_glow_mask(self):
+        cam = next(c for c in sc.load_config()["cams"] if c["id"] == "ftl-elbo-beach-cam")
+        peak = sc.score_file(OCT6_DIR / "1105Z.jpg", cam["sky_regions"])
+        self.assertTrue(90 <= peak["score"] <= 97, peak["score"])
+        self.assertGreater(peak["glow_masked_frac"], 0.0)  # the mask did run on the anchor frame
+
+
 class SolarTests(unittest.TestCase):
     # Reference values from lib/sources/sun.ts computeSunTimes (same algorithm, same constants).
     REF = [
@@ -99,10 +225,46 @@ class SolarTests(unittest.TestCase):
             self.assertEqual(sc.iso_z(t["sunset"]), set_)
 
     def test_view_east_facing(self):
-        t = sc.sun_times(26.12, -80.10, date(2026, 10, 6))
-        self.assertEqual(sc.view_for(90, t["sunrise_az"]), "solar")
-        self.assertEqual(sc.view_for(90, t["sunset_az"]), "antisolar")
-        self.assertEqual(sc.view_for(270, t["sunset_az"]), "solar")
+        self.assertEqual(sc.view_for("east", "sunrise"), "solar")
+        self.assertEqual(sc.view_for("east", "sunset"), "antisolar")
+
+    def test_view_west_facing_is_the_mirror_image(self):
+        self.assertEqual(sc.view_for("west", "sunset"), "solar")
+        self.assertEqual(sc.view_for("west", "sunrise"), "antisolar")
+
+    def test_view_rejects_a_facing_that_is_not_east_or_west(self):
+        with self.assertRaises(ValueError):
+            sc.view_for("north", "sunrise")
+        with self.assertRaises(ValueError):
+            sc.view_for(90, "sunrise")
+
+    def test_cam_facing_uses_the_registry_value_else_derives_it_from_the_azimuth(self):
+        self.assertEqual(sc.cam_facing({"facing": "west", "facing_azimuth_deg": 90}), "west")
+        self.assertEqual(sc.cam_facing({"facing_azimuth_deg": 90}), "east")
+        self.assertEqual(sc.cam_facing({"facing_azimuth_deg": 179.9}), "east")
+        self.assertEqual(sc.cam_facing({"facing_azimuth_deg": 180}), "west")
+        self.assertEqual(sc.cam_facing({"facing_azimuth_deg": 270}), "west")
+        self.assertEqual(sc.cam_facing({"facing_azimuth_deg": -90}), "west")
+        self.assertEqual(sc.cam_facing({"facing": "sideways", "facing_azimuth_deg": 90}), "east")  # an invalid value falls back to the azimuth
+
+    def test_every_registry_cam_has_a_facing_that_agrees_with_its_azimuth(self):
+        for cam in sc.load_config()["cams"]:
+            derived = "east" if cam["facing_azimuth_deg"] % 360 < 180 else "west"
+            self.assertEqual(sc.cam_facing(cam), derived, cam["id"])
+            if "facing" in cam:
+                self.assertEqual(cam["facing"], derived, cam["id"])
+
+    def test_due_events_label_the_view_by_the_cams_facing(self):
+        tz = ZoneInfo("America/New_York")
+        east = {"id": "e", "lat": 26.1, "lon": -80.1, "facing_azimuth_deg": 90, "beaches": [{"slug": "x", "lat": 26.1, "lon": -80.1, "distance_mi": 0}]}
+        west = {**east, "id": "w", "facing_azimuth_deg": 270, "facing": "west"}
+        now = datetime(2026, 10, 6, 15, 0, tzinfo=timezone.utc)
+        views = lambda cam: {e["kind"]: e["view"] for e in sc.due_events(cam, now, tz, True) if e["local_date"] == "2026-10-06"}
+        self.assertEqual(views(east), {"sunrise": "solar"})  # only the sunrise has happened yet at 15:00Z
+        self.assertEqual(views(west), {"sunrise": "antisolar"})
+        late = datetime(2026, 10, 7, 0, 30, tzinfo=timezone.utc)
+        self.assertEqual({e["kind"]: e["view"] for e in sc.due_events(east, late, tz, True) if e["local_date"] == "2026-10-06"}["sunset"], "antisolar")
+        self.assertEqual({e["kind"]: e["view"] for e in sc.due_events(west, late, tz, True) if e["local_date"] == "2026-10-06"}["sunset"], "solar")
 
 
 class TimelineTests(unittest.TestCase):

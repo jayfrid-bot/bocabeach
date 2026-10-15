@@ -195,16 +195,18 @@ ON CONFLICT(${SUN_OBS_KEY_COLS.join(", ")}) DO UPDATE SET
 WHERE (${SUN_SCORE_KEY("excluded")}) > (${SUN_SCORE_KEY("sun_event_observations")})
 `;
 
-/** The one observation of an event that goes onto its prediction rows: solar
- *  view before antisolar, then the nearest cam, then cam_id for a stable tie. */
+/** The one observation of an event that goes onto its prediction rows: the nearest
+ *  SOLAR-view cam, then cam_id for a stable tie. An antisolar observation (the afterglow
+ *  behind an east cam at a sunset, a west cam at a sunrise) is stored but is never the
+ *  truth for the event's color, so it never reaches a prediction row. */
 const BEST_SUN_OBSERVATION = (col: string) =>
   `(SELECT ${col} FROM sun_event_observations o
-     WHERE o.slug = ?1 AND o.event_kind = ?2 AND o.event_date_local = ?3
-     ORDER BY (o.view = 'solar') DESC, o.distance_mi ASC, o.cam_id ASC LIMIT 1)`;
+     WHERE o.slug = ?1 AND o.event_kind = ?2 AND o.event_date_local = ?3 AND o.view = 'solar'
+     ORDER BY o.distance_mi ASC, o.cam_id ASC LIMIT 1)`;
 
 /** Fill observed_* on the predictions of that event (event_iso within 15 min).
- *  Recomputes the best observation from the table, so arrival order never
- *  matters and a solar observation is never replaced by an antisolar one. Rows
+ *  Recomputes the best (solar) observation from the table, so arrival order never
+ *  matters, and an antisolar observation changes nothing here. Rows
  *  labelled by hand (any observed_source not starting 'sun-cam:') stay as they
  *  are, and rows that already hold exactly the best observation are not touched,
  *  so a duplicate or stale replay (which leaves the table unchanged) changes

@@ -21,7 +21,7 @@ const ALLOWED_KEYS = new Set([
   "slug", "event_kind", "event_date_local", "event_iso", "cam_id", "view", "distance_mi",
   "observed_score", "warm_frac", "colorfulness", "peak_frame_iso", "series", "score_version", "scored_at", "credit",
 ]);
-const SERIES_KEYS = new Set(["t", "score", "warm_frac", "colorfulness", "warm_sat"]);
+const SERIES_KEYS = new Set(["t", "score", "warm_frac", "colorfulness", "warm_sat", "glow_masked_frac"]);
 
 /** The event instant must sit within this of the beach's own computed time. */
 const EVENT_TOLERANCE_MS = 5 * 60_000;
@@ -93,11 +93,16 @@ export interface SunCamBeach {
   lon: number;
   distance_mi: number;
 }
+/** Which way a cam looks: east sees the sunrise head-on, west sees the sunset head-on. */
+export type CamFacing = "east" | "west";
+
 export interface SunCam {
   id: string;
   name: string;
   youtube_id: string;
   facing_azimuth_deg: number;
+  /** Registry `facing`; when absent it is derived from facing_azimuth_deg (see camFacing). */
+  facing?: CamFacing;
   lat: number;
   lon: number;
   credit: string;
@@ -133,16 +138,20 @@ export function localDateOf(ms: number, timeZone: string): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ms));
 }
 
+/** A cam's facing: the registry's `facing`, else derived from facing_azimuth_deg (below 180 = east, otherwise west). */
+export function camFacing(cam: Pick<SunCam, "facing" | "facing_azimuth_deg">): CamFacing {
+  if (cam.facing === "east" || cam.facing === "west") return cam.facing;
+  return (((cam.facing_azimuth_deg % 360) + 360) % 360) < 180 ? "east" : "west";
+}
+
 /**
- * What the view should be for an event at a cam: 'solar' when the cam looks
- * within 60 degrees of where the sun is at that event (nominally due east for a
- * sunrise, due west for a sunset), else 'antisolar'. East-facing cams: sunrise
- * is solar, sunset antisolar.
+ * What the view should be for an event at a cam: 'solar' when the cam looks at the
+ * sun (an east cam at a sunrise, a west cam at a sunset), else 'antisolar' (it looks
+ * away and sees the afterglow on the clouds behind it). Only a solar view is the
+ * truth for the event's color; an antisolar one is stored but never used as truth.
  */
-export function expectedView(kind: "sunrise" | "sunset", facingDeg: number): "solar" | "antisolar" {
-  const sunAz = kind === "sunrise" ? 90 : 270;
-  const diff = Math.abs((((facingDeg - sunAz + 180) % 360) + 360) % 360 - 180);
-  return diff <= 60 ? "solar" : "antisolar";
+export function expectedView(kind: "sunrise" | "sunset", facing: CamFacing): "solar" | "antisolar" {
+  return (facing === "east") === (kind === "sunrise") ? "solar" : "antisolar";
 }
 
 export interface SeriesFrame {
@@ -151,6 +160,8 @@ export interface SeriesFrame {
   warm_frac: number;
   colorfulness: number;
   warm_sat: number;
+  /** Diagnostic: share of the sky region left out as sun glow (absent in series scored before 2026-10-15.1). */
+  glow_masked_frac?: number;
 }
 
 /** For each frame, the best score among the OTHER frames within PEAK_NEIGHBOR_SECONDS; null when none is that close. */
@@ -240,7 +251,7 @@ export function parseSunObservation(body: unknown, nowMs: number): SunObservatio
   const loc = getLocation(slug);
   if (!loc) return fail("unknown beach");
   if (credit !== cam.credit) return fail("credit does not match the cam's registered credit");
-  if (view !== expectedView(kind, cam.facing_azimuth_deg)) return fail("view does not match the event and the cam's facing");
+  if (view !== expectedView(kind, camFacing(cam))) return fail("view does not match the event and the cam's facing");
 
   const distance = numIn(body.distance_mi, 0, 25);
   if (distance === null || Math.abs(distance - beach.distance_mi) > 0.05) return fail("distance_mi does not match the registry");
@@ -289,13 +300,22 @@ export function parseSunObservation(body: unknown, nowMs: number): SunObservatio
     const fc = numIn(raw.colorfulness, 0, 255);
     const fp = numIn(raw.warm_sat, 0, 1);
     if (tMs === null || fs === null || fw === null || fc === null || fp === null) return fail("a series entry is malformed");
+    const fg = raw.glow_masked_frac === undefined ? undefined : numIn(raw.glow_masked_frac, 0, 1);
+    if (fg === null) return fail("a series entry is malformed");
     const offsetMin = (tMs - eventMs) / 60_000;
     if (offsetMin < WINDOW_START_MIN - WINDOW_SLACK_MIN || offsetMin > WINDOW_END_MIN + WINDOW_SLACK_MIN) {
       return fail(`a series frame is outside the event window (${WINDOW_START_MIN - WINDOW_SLACK_MIN}..+${WINDOW_END_MIN + WINDOW_SLACK_MIN} min)`);
     }
     if (tMs <= prevMs) return fail("series frames must be in strictly increasing time order");
     prevMs = tMs;
-    frames.push({ t: new Date(tMs).toISOString(), score: fs, warm_frac: fw, colorfulness: fc, warm_sat: fp });
+    frames.push({
+      t: new Date(tMs).toISOString(),
+      score: fs,
+      warm_frac: fw,
+      colorfulness: fc,
+      warm_sat: fp,
+      ...(fg === undefined ? {} : { glow_masked_frac: fg }),
+    });
   }
   if (scoredMs < prevMs) return fail("scored_at is before the last series frame");
 
