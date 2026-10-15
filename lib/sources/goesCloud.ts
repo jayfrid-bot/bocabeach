@@ -145,7 +145,11 @@ export async function fetchGoesCloud(loc: Location): Promise<Wrapped<GoesCloudDa
     const b = feed.beaches[loc.slug];
     // No reading for this beach (out of the CONUS grid, or too few
     // good-quality pixels in its neighborhood this pass) — never fabricate.
-    if (!b || b.cloudPct == null) {
+    // The IR block has its own, larger box: when the mask box is empty but the
+    // IR block is good, keep the data (mask fields null) so the sun-color model
+    // still sees the IR read.
+    const ir = b ? parseGoesIr(b.ir, feed.irGranuleStartIso) : null;
+    if (!b || (b.cloudPct == null && !ir)) {
       return {
         source: ATTRIBUTION,
         status: stale ? "stale" : "best-effort",
@@ -157,7 +161,7 @@ export async function fetchGoesCloud(loc: Location): Promise<Wrapped<GoesCloudDa
     }
 
     const data: GoesCloudData = {
-      cloudPct: b.cloudPct,
+      cloudPct: b.cloudPct ?? null,
       // b.beamCloudPct is absent (not just null) on an old-format feed —
       // `?? null` normalizes both "old feed" and "computed, no signal" to
       // the same null, which satelliteBeamCloudPct treats identically
@@ -170,7 +174,7 @@ export async function fetchGoesCloud(loc: Location): Promise<Wrapped<GoesCloudDa
       granuleStartIso: feed.granuleStartIso,
       // Absent on a pre-v3 feed; `?? null` keeps "old feed" and "no IR this
       // cycle" the same to every consumer (the forecast is the fallback).
-      ir: parseGoesIr(b.ir, feed.irGranuleStartIso),
+      ir,
     };
     return {
       source: ATTRIBUTION,

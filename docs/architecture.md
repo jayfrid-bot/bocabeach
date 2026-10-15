@@ -169,7 +169,7 @@ inside a Worker, call the app's own API).
 flowchart LR
   subgraph gh [GitHub Actions — .github/workflows]
     LGT["lightning.yml — GLM Lightning Feed<br/>~1-min reads in ~5.5h loops, each loop dispatches the next<br/>(*/10 cron = fallback)"]
-    GOES["goes-cloud.yml — GOES Cloud Feed<br/>15-min reads from earliest sunrise − 75 min to latest sunset + 45 min<br/>(scripts/goes_cloud.py --window-state), idles overnight;<br/>Clear Sky Mask + ACHA 2 km cloud-top height → low/mid/high split and the sun-path read;<br/>~340-min loops, each dispatches the next (*/15 cron = fallback)"]
+    GOES["goes-cloud.yml — GOES Cloud Feed<br/>reads while any beach is inside its sunrise − 75 min … sunset + 45 min window<br/>(scripts/goes_cloud.py --window-state), every 5 min within 90 min of a sun event (--cadence), else 15 min; idles overnight;<br/>Clear Sky Mask + ACHA 2 km cloud-top height → low/mid/high split and the sun-path read;<br/>~340-min loops, each dispatches the next (*/15 cron = fallback)"]
     MRMS["mrms.yml — MRMS Radar Rain Nowcast<br/>10-min reads around the clock;<br/>~340-min loops, each dispatches the next (*/10 cron = fallback)"]
     SARG["sargassum.yml — Cam Vision Feed<br/>10-min reads 5:55a-8:05p ET, idles overnight;<br/>~340-min loops, each dispatches the next (hourly cron = fallback that waits pending behind a live loop and never cancels it);<br/>feed frames already scored are skipped (frameShas)"]
     RIPNWPS["rip-nwps.yml — NOAA Rip Current Model Feed<br/>every 3h"]
@@ -213,7 +213,7 @@ flowchart LR
   SOURCES6 --> RIPRESOLVE[lib/ripRisk/resolve.ts<br/>resolveRipNow: alert &gt; fresh model &gt; SRF forecast &gt; unknown]
   SOURCES3 -->|"last 2 weeks of read times"| CAMNEXT[lib/camNextRead.ts<br/>learns the next cam read time,<br/>no fixed schedule]
   GDATA --> SOURCES4["lib/sources/goesCloud.ts<br/>parses the v3 ir block (older feeds: ir null)"]
-  SOURCES4 -->|"ir: used only if its scan is ≤20 min old<br/>and the event is ≤60 min away; else the forecast"| SUNALERT["lib/sunAlert.ts assembleSunEventQuality<br/>source: satellite-ir or forecast"]
+  SOURCES4 -->|"ir: used only if its scan is ≤35 min old<br/>and the event is ≤60 min away; else the forecast"| SUNALERT["lib/sunAlert.ts assembleSunEventQuality<br/>source: satellite-ir or forecast"]
   MDATA --> SOURCES5[lib/sources/precipRadar.ts<br/>parses lastWetIso → wetMinutesAgo<br/>on the server clock]
   LLDATA --> SOURCES7[lib/sources/launchLibrary.ts<br/>per-beach LaunchSkyEvent: bearing/distance,<br/>range-tier eligibility, day/twilight/night light state]
   KTDATA --> SOURCES8[lib/sources/kingTide.ts<br/>per-station flood-threshold + top-1%-of-year<br/>episodes, episode-merged]
@@ -613,7 +613,7 @@ against the conditions snapshot's OWN `generatedAt`, not the push run's
 wall clock, so it agrees with what the card would show for that exact
 snapshot. Since sun model version 2026-10-15.1 the primary input is the GOES
 cloud-top-height read (`ir` in the goes-cloud feed, ACHA 2 km: day and night,
-low deck vs mid/high deck): when its scan is at most 20 min before `nowMs` and
+low deck vs mid/high deck): when its scan is at most 35 min before `nowMs` and
 `nowMs` is at most 60 min from the event, its low/mid/high shares are the cloud
 mix and the low cloud along the sun's azimuth AT THE EVENT is the verified
 horizon (`resolveIrObservation`). Otherwise the hourly forecast is the fallback.

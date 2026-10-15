@@ -12,7 +12,8 @@ import {
   BEAM_IMMINENT_MINUTES,
   IR_EVENT_WINDOW_MINUTES,
   IR_MAX_GRANULE_AGE_MINUTES,
-  IR_MIN_CLASSIFIED_PCT,
+  IR_MAX_UNCLASSIFIED_PCT,
+  sunColorLiveGuard,
 } from "@/lib/sunAlert";
 import type { HourlyCloudPoint } from "@/lib/sunQuality";
 import { FIXTURE_SUNRISE, FIXTURE_SUNSET, scorableResponse } from "@/lib/alerts/fixtures";
@@ -215,7 +216,8 @@ describe("resolveIrObservation", () => {
   it("uses the overhead low share as the horizon when the path read is missing or for another event", () => {
     const noBeam = ir({ events: { sunset: { eventIso: EVENT_ISO, azDeg: 260, beamLowPct: null, beamMidHighPct: null, antiMidHighPct: null, beamSamples: 1 } } });
     const o = resolveIrObservation({ ir: noBeam }, EVENT, NOW)!;
-    expect(o.horizon).toEqual({ cloudPct: 5, fresh: true });
+    // Overhead only: the path was not read, so the horizon is NOT verified.
+    expect(o.horizon).toEqual({ cloudPct: 5, fresh: false });
     expect(o.horizonSource).toBe("ir-overhead");
     const wrongEvent = ir({ events: { sunset: { eventIso: "2026-10-16T22:51:00.000Z", azDeg: 260, beamLowPct: 90, beamMidHighPct: 0, antiMidHighPct: 0, beamSamples: 7 } } });
     expect(resolveIrObservation({ ir: wrongEvent }, EVENT, NOW)!.horizonSource).toBe("ir-overhead");
@@ -241,10 +243,21 @@ describe("resolveIrObservation", () => {
     expect(resolveIrObservation(g(after), EVENT, after)).toBeDefined();
   });
 
-  it("refuses a read whose cloud mostly has no height, but accepts a clear box", () => {
-    expect(resolveIrObservation({ ir: ir({ classifiedPct: IR_MIN_CLASSIFIED_PCT - 1 }) }, EVENT, NOW)).toBeUndefined();
-    expect(resolveIrObservation({ ir: ir({ classifiedPct: IR_MIN_CLASSIFIED_PCT }) }, EVENT, NOW)).toBeDefined();
-    expect(resolveIrObservation({ ir: ir({ classifiedPct: null, irCloudPct: 0, lowPct: 0, midPct: 0, highPct: 0 }) }, EVENT, NOW)).toBeDefined();
+  it("gates on the share of ALL pixels that are cloud without a height, not on the share of the cloud", () => {
+    expect(resolveIrObservation({ ir: ir({ unclassifiedPct: IR_MAX_UNCLASSIFIED_PCT + 1, classifiedPct: 70 }) }, EVENT, NOW)).toBeUndefined();
+    expect(resolveIrObservation({ ir: ir({ unclassifiedPct: IR_MAX_UNCLASSIFIED_PCT }) }, EVENT, NOW)).toBeDefined();
+    // A 2% cloud box whose few cloudy pixels have no height (0% classified) still counts: Miami at sunrise.
+    const miami = ir({ lowPct: 0, midPct: 0, highPct: 0, irCloudPct: 2, unclassifiedPct: 2, classifiedPct: 0 });
+    expect(resolveIrObservation({ ir: miami }, EVENT, NOW)).toBeDefined();
+    expect(resolveIrObservation({ ir: ir({ classifiedPct: null, unclassifiedPct: 0, irCloudPct: 0, lowPct: 0, midPct: 0, highPct: 0 }) }, EVENT, NOW)).toBeDefined();
+  });
+
+  it("keeps a read that is up to 35 minutes old: the age the app really sees near the end of a cycle", () => {
+    expect(IR_MAX_GRANULE_AGE_MINUTES).toBe(35);
+    for (const age of [5, 15, 30, 35]) {
+      const g = ir({ granuleStartIso: new Date(NOW - age * 60_000).toISOString() });
+      expect(resolveIrObservation({ ir: g }, EVENT, NOW), `${age} min`).toBeDefined();
+    }
   });
 
   it("is undefined with no IR read at all (old feed, no pixels, no goes)", () => {
@@ -287,8 +300,8 @@ describe("assembleSunEventQuality — source selection", () => {
 
   it("falls back to the forecast when the IR read is stale, far from the event, or low quality", () => {
     const forecast: HourlyCloudPoint[] = [{ time: "2026-10-15T23:00:00.000Z", cloud: { lowPct: 10, midPct: 40, highPct: 20, totalPct: 55 }, humidityPct: 60 }];
-    const stale = ir({ granuleStartIso: minutesBefore(EVENT_ISO, 90) });
-    const lowQ = ir({ classifiedPct: 10 });
+    const stale = ir({ granuleStartIso: minutesBefore(EVENT_ISO, 120) });
+    const lowQ = ir({ unclassifiedPct: 40, classifiedPct: 10 });
     for (const [goes, nowMs] of [
       [{ ir: stale }, NOW],
       [{ ir: ir() }, ms(minutesBefore(EVENT_ISO, 180))],
@@ -333,5 +346,51 @@ describe("assembleSunEventQuality — source selection", () => {
     expect(pred.band).toBe("vivid");
     const noIr = { ...res, snapshot: { ...res.snapshot, goesCloud: { ...res.snapshot.goesCloud, data: { ...res.snapshot.goesCloud.data!, ir: null } } } } as ConditionsResponse;
     expect(predictNextSunEvent(noIr, NOW)!.band).toBe("plain");
+  });
+});
+
+describe("overhead-only IR read: not a verified horizon", () => {
+  const NOW = ms(minutesBefore(EVENT_ISO, 30));
+  const sunset = { event: "sunset" as const, timeIso: EVENT_ISO };
+  const noPath = ir({ lowPct: 40, events: {} });
+
+  it("feeds the overhead low share as the CloudMix and leaves the horizon unverified", () => {
+    const a = assembleSunEventQuality(sunset, { hourly: EMPTY_FORECAST, goesCloud: { ir: noPath }, nowMs: NOW });
+    expect(a.source).toBe("satellite-ir");
+    expect(a.cloud!.lowPct).toBe(40);
+    expect(a.horizon).toEqual({ cloudPct: 40, fresh: false });
+    expect(a.horizonSource).toBe("ir-overhead");
+    expect(a.result.breakdown!.horizonPath).toMatch(/satellite overhead; path not read/);
+    expect(a.result.breakdown!.horizonPath).not.toMatch(/\(satellite\)$/);
+    expect(a.result.breakdown!.satellite!.horizon).toBe("ir-overhead");
+    // The clear path is the forecast-style estimate from that low share, not 100 - 40.
+    const withPath = assembleSunEventQuality(sunset, { hourly: EMPTY_FORECAST, goesCloud: { ir: ir({ lowPct: 40 }) }, nowMs: NOW });
+    expect(withPath.result.breakdown!.horizonPath).toMatch(/\(satellite\)$/);
+  });
+});
+
+describe("sunColorLiveGuard — the alert reads the live clock", () => {
+  const pred = (over: Record<string, unknown> = {}) => ({ eventIso: EVENT_ISO, score: 80, source: "forecast" as const, irGranuleStartIso: null, ...over });
+  const live = ms(minutesBefore(EVENT_ISO, 30));
+  const builtHoursEarlier = ms(minutesBefore(EVENT_ISO, 240));
+
+  it("skips a forecast score from a snapshot built before the satellite window, once the window is open", () => {
+    expect(sunColorLiveGuard(pred(), live, builtHoursEarlier)).toMatch(/stale forecast/);
+    expect(sunColorLiveGuard(pred(), ms(minutesBefore(EVENT_ISO, IR_EVENT_WINDOW_MINUTES)), builtHoursEarlier)).toMatch(/stale forecast/);
+  });
+  it("lets a forecast score through while the event is still far out on the live clock", () => {
+    expect(sunColorLiveGuard(pred(), ms(minutesBefore(EVENT_ISO, IR_EVENT_WINDOW_MINUTES + 30)), builtHoursEarlier)).toBeNull();
+  });
+  it("lets a forecast score through when the snapshot was built INSIDE the window (feed down: degrade, not skip)", () => {
+    expect(sunColorLiveGuard(pred(), live, ms(minutesBefore(EVENT_ISO, 35)))).toBeNull();
+  });
+  it("lets a fresh satellite score through, skips one whose read aged out on the live clock", () => {
+    expect(sunColorLiveGuard(pred({ source: "satellite-ir", irGranuleStartIso: minutesBefore(EVENT_ISO, 40) }), live, live)).toBeNull();
+    expect(sunColorLiveGuard(pred({ source: "satellite-ir", irGranuleStartIso: minutesBefore(EVENT_ISO, 90) }), live, live)).toMatch(/too old/);
+  });
+  it("has nothing to guard without a score, or with an unreadable snapshot clock", () => {
+    expect(sunColorLiveGuard(null, live, live)).toBeNull();
+    expect(sunColorLiveGuard(pred({ score: null }), live, builtHoursEarlier)).toBeNull();
+    expect(sunColorLiveGuard(pred(), live, Number.NaN)).toBeNull();
   });
 });

@@ -272,8 +272,12 @@ class SunEvents(unittest.TestCase):
 
 class RunWindow(unittest.TestCase):
     # Boca 2026-10-15: sunrise 11:19:37Z, sunset 22:52:20Z. Window = 10:04:37Z .. 23:37:20Z.
-    def test_window_is_sunrise_minus_75_to_sunset_plus_45(self):
-        start, end = gc.run_window([BOCA], utc(2026, 10, 15, 15, 0))
+    LA = {"slug": "santa-monica", "lat": 34.01, "lon": -118.5, "timezone": "America/Los_Angeles"}
+
+    def test_a_beachs_window_is_sunrise_minus_75_to_sunset_plus_45(self):
+        wins = gc.beach_windows(BOCA, utc(2026, 10, 15, 15, 0))
+        self.assertEqual(len(wins), 3)  # yesterday, today, tomorrow
+        start, end = wins[1]
         self.assertEqual(start.replace(microsecond=0), utc(2026, 10, 15, 10, 4, 37))
         self.assertEqual(end.replace(microsecond=0), utc(2026, 10, 15, 23, 37, 20))
 
@@ -291,30 +295,93 @@ class RunWindow(unittest.TestCase):
         for now, want in cases:
             self.assertEqual(gc.window_state(now, [BOCA]), want, now.isoformat())
 
-    def test_the_old_fixed_window_missed_the_event_this_one_covers(self):
-        # The old loop stopped at 20:35 ET (00:35Z). A June sunset at 8:15 PM EDT
-        # plus 45 min is 9:00 PM EDT: still "day" now.
-        june = {"slug": "boca-raton", "lat": 26.3587, "lon": -80.0686, "timezone": "America/New_York"}
-        self.assertEqual(gc.window_state(utc(2026, 6, 21, 0, 50), [june]), "day")  # 8:50 PM EDT on the 20th
+    def test_across_zones_the_night_between_eastern_sunset_and_sunrise_stays_night(self):
+        # The bug: after Eastern midnight but before Pacific midnight the code paired
+        # tomorrow's Eastern sunset with today's Pacific sunrise and read "day".
+        # Boca's window ends 2026-10-16 ~23:37Z the day before and starts 10:04Z; LA's runs
+        # ~13:20Z .. 02:20Z. Between LA's end and Boca's start nothing is open.
+        for now in (utc(2026, 10, 16, 4, 0), utc(2026, 10, 16, 6, 59), utc(2026, 10, 16, 8, 0)):
+            self.assertEqual(gc.window_state(now, [BOCA, self.LA]), "night", now.isoformat())
+        # ...and it is day when either beach's window is open.
+        self.assertEqual(gc.window_state(utc(2026, 10, 16, 1, 0), [BOCA, self.LA]), "day")  # LA's evening
+        self.assertEqual(gc.window_state(utc(2026, 10, 16, 10, 30), [BOCA, self.LA]), "day")  # Boca's morning
 
-    def test_widest_beach_sets_each_end(self):
-        la = {"slug": "santa-monica", "lat": 34.01, "lon": -118.5, "timezone": "America/Los_Angeles"}
-        start, end = gc.run_window([BOCA, la], utc(2026, 10, 15, 15, 0))
-        self.assertEqual(start.replace(microsecond=0), utc(2026, 10, 15, 10, 4, 37))  # Boca rises first
-        self.assertGreater(end, utc(2026, 10, 16, 1, 0))  # LA sets after midnight UTC
+    def test_dusk_is_the_twenty_minutes_after_any_windows_end(self):
+        la_end = gc.beach_windows(self.LA, utc(2026, 10, 15, 20, 0))[1][1]
+        self.assertEqual(gc.window_state(la_end + dt.timedelta(minutes=10), [self.LA]), "dusk")
+        self.assertEqual(gc.window_state(la_end + dt.timedelta(minutes=25), [self.LA]), "night")
+        self.assertEqual(gc.window_state(la_end + dt.timedelta(minutes=10), [BOCA, self.LA]), "dusk")
+
+    def _day_hours(self, beaches, day):
+        t0 = utc(day.year, day.month, day.day)
+        return sum(5 for m in range(0, 1440, 5) if gc.window_state(t0 + dt.timedelta(minutes=m), beaches) == "day") / 60
+
+    def test_total_daily_coverage_is_bounded(self):
+        # One zone: a long June day plus the 2 h of margin stays under 17 h.
+        self.assertLess(self._day_hours([BOCA], dt.date(2026, 6, 21)), 17)
+        self.assertLess(self._day_hours([BOCA], dt.date(2026, 10, 15)), 15)
+        # Boca + Los Angeles: the zones overlap, so the union is longer, but never ~24 h
+        # (the cross-zone date mixing gave ~23 h on 2026-06-21) and the night gap survives.
+        both = self._day_hours([BOCA, self.LA], dt.date(2026, 6, 21))
+        self.assertLess(both, 20)
+        self.assertGreater(24 - both, 4)
+
+    def test_every_configured_beach_still_leaves_a_night(self):
+        beaches = gc.load_beaches()
+        for day in (dt.date(2026, 6, 21), dt.date(2026, 10, 16), dt.date(2026, 12, 21)):
+            hours = self._day_hours(beaches, day)
+            self.assertLess(hours, 22, f"{day}: {hours} h")
+            self.assertGreater(24 - hours, 2, f"{day}: {hours} h")
+        # The two dates the reviewer flagged are night at 04:00Z / 06:59Z on 2026-10-16.
+        for t in (utc(2026, 10, 16, 4, 0), utc(2026, 10, 16, 6, 59)):
+            self.assertEqual(gc.window_state(t, beaches), "night", t.isoformat())
 
     def test_beaches_outside_the_conus_sector_do_not_stretch_the_window(self):
         waikiki = {"slug": "waikiki", "lat": 21.28, "lon": -157.83, "timezone": "Pacific/Honolulu"}
-        self.assertEqual(gc.run_window([BOCA, waikiki], utc(2026, 10, 15, 15, 0)), gc.run_window([BOCA], utc(2026, 10, 15, 15, 0)))
+        self.assertEqual(gc.beach_windows(waikiki, utc(2026, 10, 15, 15, 0)), [])
+        now = utc(2026, 10, 15, 15, 0)
+        self.assertEqual(gc.run_windows([BOCA, waikiki], now), gc.run_windows([BOCA], now))
+
+    def test_overlapping_windows_merge(self):
+        merged = gc.run_windows([BOCA, self.LA], utc(2026, 10, 15, 15, 0))
+        for (_a, a_end), (b_start, _b) in zip(merged, merged[1:]):
+            self.assertLess(a_end, b_start)
 
     def test_unknown_when_no_beach_gives_a_window(self):
-        self.assertIsNone(gc.run_window([], utc(2026, 10, 15, 15, 0)))
+        self.assertEqual(gc.run_windows([], utc(2026, 10, 15, 15, 0)), [])
         self.assertEqual(gc.window_state(utc(2026, 10, 15, 15, 0), []), "unknown")
 
     def test_the_configured_beaches_load_with_timezones(self):
         beaches = {b["slug"]: b for b in gc.load_beaches()}
         self.assertEqual(beaches["boca-raton"]["timezone"], "America/New_York")
         self.assertEqual(beaches["gulf-shores"]["timezone"], "America/Chicago")
+
+
+class Cadence(unittest.TestCase):
+    def test_fast_within_90_minutes_of_an_event_either_side_slow_otherwise(self):
+        # Boca sunset 22:52:20Z, sunrise 11:19:37Z.
+        cases = [
+            (utc(2026, 10, 15, 21, 20), "slow"),  # 92 min before sunset: just outside the band
+            (utc(2026, 10, 15, 21, 30), "fast"),  # 82 min before
+            (utc(2026, 10, 15, 22, 52), "fast"),
+            (utc(2026, 10, 16, 0, 15), "fast"),  # 83 min after
+            (utc(2026, 10, 16, 0, 30), "slow"),  # 98 min after
+            (utc(2026, 10, 15, 16, 0), "slow"),  # midday
+            (utc(2026, 10, 15, 11, 0), "fast"),
+            (utc(2026, 10, 15, 9, 40), "slow"),
+        ]
+        for now, want in cases:
+            self.assertEqual(gc.cadence_state(now, [BOCA]), want, now.isoformat())
+
+    def test_any_beach_in_any_zone_makes_it_fast(self):
+        la = {"slug": "santa-monica", "lat": 34.01, "lon": -118.5, "timezone": "America/Los_Angeles"}
+        # 00:40Z on the 16th is 5:40 PM PDT: Los Angeles is ~20 min before sunset, Boca is in the dark.
+        self.assertEqual(gc.cadence_state(utc(2026, 10, 16, 0, 40), [BOCA, la]), "fast")
+        self.assertEqual(gc.cadence_state(utc(2026, 10, 16, 0, 40), [BOCA]), "slow")
+
+    def test_beaches_outside_the_conus_sector_are_ignored(self):
+        waikiki = {"slug": "waikiki", "lat": 21.28, "lon": -157.83, "timezone": "Pacific/Honolulu"}
+        self.assertEqual(gc.cadence_state(utc(2026, 10, 16, 3, 50), [waikiki]), "slow")
 
 
 class ScanPairing(unittest.TestCase):

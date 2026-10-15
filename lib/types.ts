@@ -478,8 +478,9 @@ export interface GoesCloudData {
    *  DIRECTLY OVERHEAD this beach (see scripts/goes_cloud.py for the
    *  level->fraction mapping). Only present when enough good-quality pixels
    *  were available. Kept for the Sky sub-score/display — see beamCloudPct
-   *  for the sand model's input. */
-  cloudPct: number;
+   *  for the sand model's input. Null when the mask had too few good pixels in
+   *  its (small) box but the IR block still has a read (`ir`). */
+  cloudPct: number | null;
   /** 0-100 observed cloud fraction along the DIRECT SOLAR BEAM path (offset
    *  boxes stepped toward the sun at several altitude slots — see
    *  scripts/goes_cloud.py's beam_cloud_pct()). This is what actually blocks
