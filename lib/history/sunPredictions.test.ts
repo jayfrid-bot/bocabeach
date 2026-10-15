@@ -333,8 +333,8 @@ describe("sunEventRowsFromConditions — which source fed the model is archived"
     }
   });
 
-  it("a granule more than 20 minutes old falls back to the forecast", () => {
-    const row = withIr(irRead({ granuleStartIso: "2026-10-06T10:30:00.000Z" }));
+  it("a granule more than 35 minutes old falls back to the forecast", () => {
+    const row = withIr(irRead({ granuleStartIso: "2026-10-06T10:25:00.000Z" })); // 40 min before the 11:05 snapshot
     expect(JSON.parse(row.breakdown_json!).source).toBe("forecast");
     expect(row.mid_cloud_pct).toBe(67);
   });

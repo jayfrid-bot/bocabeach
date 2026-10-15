@@ -221,15 +221,30 @@ RUN WINDOW
 ----------
 `python scripts/goes_cloud.py --window-state` prints one word for the workflow
 loop (.github/workflows/goes-cloud.yml), like cam_seaweed.py --window-state:
-  day      earliest sunrise - 75 min .. latest sunset + 45 min across the
-           configured beaches inside the CONUS sector (each on its own local
-           date; Pacific-coast beaches stretch the evening end): the loop reads;
-  dusk     the 20 minutes after `day` ends: a loop that STARTS then still owes
-           the one carry-forward read for the night;
+  day      now is inside ANY beach's window: sunrise - 75 min .. sunset + 45
+           min, computed per beach for its local yesterday, today and tomorrow
+           (beaches in the CONUS sector only; the zones overlap, so the union is
+           ~20 h on a June day and ~15-16 h in December): the loop reads;
+  dusk     within 20 minutes after any window's end: a loop that STARTS then
+           still owes the one carry-forward read for the night;
   night    otherwise: the loop idles;
   unknown  the window could not be computed: the workflow uses a fixed clock
            window instead.
 Sunrise/sunset come from scripts/sun_cam_check.py (a port of lib/sources/sun.ts).
+
+`--cadence` prints `fast` while any beach is within 90 min of its sunrise or
+sunset, else `slow`; the loop sleeps to the next 5-minute boundary when fast and
+the next 15-minute boundary when slow.
+
+COST PER CYCLE (measured 2026-10-15): the newest mask (~5.4 MB) for the old
+fields, plus the newest mask+height pair (the height lands ~4.5 min after the
+scan, so the pair is usually the previous scan: a second mask ~5.4 MB and the
+height ~4 MB) = about 13 MB and ~7 s of runtime on most cycles (~9 MB when the
+newest scan already has its height). NOAA Open Data egress is free; the cost is
+runner time inside a loop that is already running. With 39 beaches over four
+time zones some beach is within 90 min of an event ~13-14 h a day, so 5-min
+cadence runs ~160 cycles and 15-min cadence ~15-35 more (the window is ~15-21 h):
+about 2.2-2.5 GB and ~20-25 min of fetch time a day.
 """
 from __future__ import annotations
 
@@ -832,47 +847,100 @@ def in_conus_sector(lat: float, lon: float) -> bool:
     return CONUS_LAT[0] <= lat <= CONUS_LAT[1] and CONUS_LON[0] <= lon <= CONUS_LON[1]
 
 
-def run_window(beaches: list[dict], now: dt.datetime) -> tuple[dt.datetime, dt.datetime] | None:
-    """(start, end) of today's reading window in UTC: the earliest sunrise minus
-    RUN_WINDOW_BEFORE_MIN to the latest sunset plus RUN_WINDOW_AFTER_MIN across
-    `beaches`, each on its own local date. A beach with no sunrise or sunset
-    that day, without coordinates, or outside the GOES CONUS sector adds nothing. None when no beach gives a
-    window."""
-    now_utc = now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)
-    starts: list[dt.datetime] = []
-    ends: list[dt.datetime] = []
-    for b in beaches:
+def beach_windows(b: dict, now: dt.datetime) -> list[tuple[dt.datetime, dt.datetime]]:
+    """One beach's reading windows (sunrise - RUN_WINDOW_BEFORE_MIN to sunset +
+    RUN_WINDOW_AFTER_MIN) for its local YESTERDAY, TODAY and TOMORROW. Three days
+    because the window of one local date can straddle UTC midnight, and because
+    beaches in different zones sit on different local dates at the same instant:
+    pairing one beach's tomorrow sunset with another's today sunrise (the first
+    version of this function) read "day" through most of the night. Empty for a
+    beach outside the CONUS sector, without coordinates, or with no sunrise or
+    sunset (polar)."""
+    try:
+        lat, lon = float(b["lat"]), float(b["lon"])
+        if not in_conus_sector(lat, lon):
+            return []
         try:
-            if not in_conus_sector(float(b["lat"]), float(b["lon"])):
-                continue
-            try:
-                zone = ZoneInfo(b.get("timezone") or DEFAULT_TZ_NAME)
-            except Exception:  # noqa: BLE001
-                zone = ZoneInfo(DEFAULT_TZ_NAME)
-            t = _sun_times_for(float(b["lat"]), float(b["lon"]), now_utc.astimezone(zone).date())
-        except Exception as e:  # noqa: BLE001 — one odd beach must not blank the window
-            print(f"  warn run window [{b.get('slug')}]: {e}", file=sys.stderr)
-            continue
-        if t.get("sunrise") and t.get("sunset"):
-            starts.append(t["sunrise"] - dt.timedelta(minutes=RUN_WINDOW_BEFORE_MIN))
-            ends.append(t["sunset"] + dt.timedelta(minutes=RUN_WINDOW_AFTER_MIN))
-    if not starts or not ends:
-        return None
-    return min(starts), max(ends)
+            zone = ZoneInfo(b.get("timezone") or DEFAULT_TZ_NAME)
+        except Exception:  # noqa: BLE001
+            zone = ZoneInfo(DEFAULT_TZ_NAME)
+        local_day = now.astimezone(zone).date()
+        out = []
+        for offset in (-1, 0, 1):
+            t = _sun_times_for(lat, lon, local_day + dt.timedelta(days=offset))
+            if t.get("sunrise") and t.get("sunset"):
+                out.append(
+                    (
+                        t["sunrise"] - dt.timedelta(minutes=RUN_WINDOW_BEFORE_MIN),
+                        t["sunset"] + dt.timedelta(minutes=RUN_WINDOW_AFTER_MIN),
+                    )
+                )
+        return out
+    except Exception as e:  # noqa: BLE001 — one odd beach must not blank the window
+        print(f"  warn run window [{b.get('slug')}]: {e}", file=sys.stderr)
+        return []
+
+
+def run_windows(beaches: list[dict], now: dt.datetime) -> list[tuple[dt.datetime, dt.datetime]]:
+    """Every beach's windows around `now` (see beach_windows), merged where they
+    overlap, sorted. The loop reads while `now` is inside ANY of them."""
+    now_utc = now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)
+    spans = sorted(w for b in beaches for w in beach_windows(b, now_utc))
+    merged: list[tuple[dt.datetime, dt.datetime]] = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def window_state(now: dt.datetime | None = None, beaches: list[dict] | None = None) -> str:
-    """'day', 'dusk', 'night' or 'unknown' (see RUN WINDOW in the docstring)."""
+    """'day' (now is inside any beach's window), 'dusk' (within RUN_DUSK_GRACE_MIN
+    after any window's end), 'night', or 'unknown' (no beach gives a window)."""
     now = now or dt.datetime.now(dt.timezone.utc)
-    window = run_window(load_beaches() if beaches is None else beaches, now)
-    if window is None:
+    windows = run_windows(load_beaches() if beaches is None else beaches, now)
+    if not windows:
         return "unknown"
-    start, end = window
-    if start <= now < end:
+    if any(start <= now < end for start, end in windows):
         return "day"
-    if end <= now < end + dt.timedelta(minutes=RUN_DUSK_GRACE_MIN):
+    if any(end <= now < end + dt.timedelta(minutes=RUN_DUSK_GRACE_MIN) for _start, end in windows):
         return "dusk"
     return "night"
+
+
+# A beach "near a sun event" for cadence: its sunrise or sunset is within this
+# many minutes either side of now. The read goes to FAST_CADENCE_S then.
+EVENT_NEAR_MIN = 90
+FAST_CADENCE_S = 300
+SLOW_CADENCE_S = 900
+
+
+def cadence_state(now: dt.datetime | None = None, beaches: list[dict] | None = None) -> str:
+    """'fast' while any CONUS beach is within EVENT_NEAR_MIN minutes of its sunrise
+    or sunset, else 'slow'. The height product lands ~4.5 min after a scan and the
+    app accepts an IR read up to 35 min old, so reads every 5 min near an event
+    keep the number the model sees from jumping between cycles."""
+    now = now or dt.datetime.now(dt.timezone.utc)
+    for b in load_beaches() if beaches is None else beaches:
+        try:
+            lat, lon = float(b["lat"]), float(b["lon"])
+            if in_conus_sector(lat, lon) and sun_events_near(lat, lon, b.get("timezone") or DEFAULT_TZ_NAME, now, EVENT_NEAR_MIN):
+                return "fast"
+        except Exception as e:  # noqa: BLE001
+            print(f"  warn cadence [{b.get('slug')}]: {e}", file=sys.stderr)
+    return "slow"
+
+
+def cadence_main() -> int:
+    """`--cadence`: print 'fast' or 'slow' (the workflow's sleep step reads it).
+    Always exits 0; the workflow treats anything but 'fast' as slow."""
+    try:
+        print(cadence_state())
+    except Exception as e:  # noqa: BLE001
+        print(f"  warn cadence: {e}", file=sys.stderr)
+        print("slow")
+    return 0
 
 
 def window_state_main() -> int:
@@ -881,10 +949,10 @@ def window_state_main() -> int:
     try:
         now = dt.datetime.now(dt.timezone.utc)
         beaches = load_beaches()
-        window = run_window(beaches, now)
+        windows = run_windows(beaches, now)
         state = window_state(now, beaches)
-        if window:
-            print(f"run window {window[0].strftime('%H:%MZ')}-{window[1].strftime('%H:%MZ')} -> {state}", file=sys.stderr)
+        span = ", ".join(f"{a.strftime('%d %H:%MZ')}-{b.strftime('%d %H:%MZ')}" for a, b in windows)
+        print(f"run windows {span} -> {state}", file=sys.stderr)
         print(state)
     except Exception as e:  # noqa: BLE001
         print(f"  warn run window: {e}", file=sys.stderr)
@@ -1179,4 +1247,6 @@ def add_ir_reads(beaches: list[dict], results: dict[str, dict], acm_key: str, ac
 if __name__ == "__main__":
     if "--window-state" in sys.argv[1:]:
         raise SystemExit(window_state_main())
+    if "--cadence" in sys.argv[1:]:
+        raise SystemExit(cadence_main())
     raise SystemExit(main())

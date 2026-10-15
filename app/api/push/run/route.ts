@@ -43,7 +43,7 @@ import {
   readSkyAlertCandidates,
   selectComingUpEvent,
 } from "@/lib/alerts/comingUp";
-import { predictNextSunEvent } from "@/lib/sunAlert";
+import { predictNextSunEvent, sunColorLiveGuard } from "@/lib/sunAlert";
 import {
   sunColorDecision,
   sunColorMismatchOutcome,
@@ -622,6 +622,19 @@ export async function POST(req: Request): Promise<Response> {
         const sunColorPrediction = sunAlertsOn
           ? predictNextSunEvent(res, Date.parse(res.snapshot.generatedAt))
           : null;
+        // LIVE-clock guard (2026-10-15). The prediction above is read on the
+        // snapshot's clock, so a snapshot built more than 60 min before the event
+        // is forecast-only even when the satellite window has since opened. The
+        // alert must not push that stale forecast as if the satellite had spoken:
+        // it is SKIPPED and logged, not rebuilt (this alert is opt-in and off by
+        // default). A snapshot built inside the window that is still forecast-
+        // sourced (feed down) degrades to the forecast as before. The
+        // send-window decision still uses `nowMs`.
+        const sunColorSkipReason = sunColorLiveGuard(sunColorPrediction, nowMs, Date.parse(res.snapshot.generatedAt));
+        if (sunColorSkipReason) {
+          console.warn(`[push/run] sun-color skipped for ${loc.slug}: ${sunColorSkipReason}`);
+        }
+        const sunColorAlertPrediction = sunColorSkipReason ? null : sunColorPrediction;
 
         for (const sub of group) {
           // Every alert is Plus. A free device gets nothing here, and nothing is
@@ -918,7 +931,7 @@ export async function POST(req: Request): Promise<Response> {
                   if (outcome.kind === "in-window") {
                     const sunColor = sunColorDecision({
                       device: sub.device,
-                      prediction: sunColorPrediction,
+                      prediction: sunColorAlertPrediction,
                       beachName: loc.name,
                       tz: loc.timezone,
                       nowMs,

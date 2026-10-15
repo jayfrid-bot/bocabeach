@@ -220,6 +220,21 @@ describe("feed version 3: the cloud-top (IR) block", () => {
     expect((await fetchGoesCloud(loc)).data!.ir).toBeNull();
   });
 
+  it("keeps the ir block when the mask box is empty (cloudPct null): mask fields null, ir present", async () => {
+    serve(feed({ cloudPct: null, beamCloudPct: null, validPixels: 2, ir: irBlock }));
+    const result = await fetchGoesCloud(loc);
+    expect(result.status).toBe("ok");
+    expect(result.data).not.toBeNull();
+    expect(result.data!.cloudPct).toBeNull();
+    expect(result.data!.beamCloudPct).toBeNull();
+    expect(result.data!.ir!.lowPct).toBe(9.3);
+  });
+
+  it("an empty mask box AND no usable ir is still no data", async () => {
+    serve(feed({ cloudPct: null, validPixels: 2 }));
+    expect((await fetchGoesCloud(loc)).data).toBeNull();
+  });
+
   it("a beach with no ir block (too few good pixels) has no ir", async () => {
     serve(feed({}));
     expect((await fetchGoesCloud(loc)).data!.ir).toBeNull();

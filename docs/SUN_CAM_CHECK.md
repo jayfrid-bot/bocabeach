@@ -17,14 +17,14 @@ GOES-19 ACHA 2 km cloud-top height with the same-scan Clear Sky Mask. It works
 at night and through twilight. It sorts each pixel's cloud top into low (< 2 km),
 mid (2-6 km) and high (6 km and up), and for each sunrise and sunset near the
 scan it reads the cloud along the sun's azimuth at the event. When the scan is at
-most 20 minutes old and the event is at most 60 minutes away, `lib/sunAlert.ts`
+most 35 minutes old and the event is at most 60 minutes away, `lib/sunAlert.ts`
 feeds those numbers to the model. Otherwise the hourly forecast feeds it.
 
 Each `sun_event_predictions` row says which: `breakdown_json.source` is
 `satellite-ir` or `forecast` (the total-only path has no breakdown and only runs
 on the forecast). For a satellite row, `breakdown_json.satellite` also holds the
 scan time and the mid/high cloud toward and away from the sun (recorded, not
-scored), and `horizon_source` is `ir-beam` or `ir-overhead`. The cloud input
+scored), and `horizon_source` is `ir-beam` (low cloud read along the sun's path: a verified horizon) or `ir-overhead` (no path read; the overhead low share stands in and the horizon is NOT verified). The cloud input
 columns hold the mix the model was handed.
 
 ```sql

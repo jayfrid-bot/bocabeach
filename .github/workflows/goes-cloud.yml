@@ -22,21 +22,30 @@ name: GOES Cloud Feed
 # cron alone never kept the loops going: Sep 24-28 2026 the morning loop
 # started 4-5 h late, so the handoff (not the cron) is what keeps it live.
 #
-# RUN WINDOW: the loop reads from 75 min before the earliest sunrise to 45 min
-# after the latest sunset across the configured beaches (each on its own local
-# date), asked of the script itself: `python scripts/goes_cloud.py
+# RUN WINDOW: the loop reads while the clock is inside ANY beach's window of
+# sunrise - 75 min to sunset + 45 min (each beach on its own local dates),
+# asked of the script itself: `python scripts/goes_cloud.py
 # --window-state` (the same idea as sargassum.yml's cam_seaweed.py
 # --window-state). The old fixed 05:55-20:35 ET clock window ended before a
 # June sunset in Texas and before any Pacific-coast sunset, and the sunset
 # colour model needs the reads that bracket the event itself.
 #
-# CADENCE MATH is unchanged by this fix and MUST be respected by the loop:
-# the ACMC cloud-mask product itself only updates on a ~5-min cadence, so
-# there is no value (and only NOAA S3 anonymous-fetch quota cost) in reading
-# faster than every 15 min. The loop enforces this by sleeping to the next
-# :00/:15/:30/:45 wall-clock boundary after each cycle (not a fixed
-# "sleep 900"), so a slow cycle (retries/backoff) can never compound into
-# faster-than-15-min reads.
+# CADENCE MATH MUST be respected by the loop: the ACMC mask and the ACHA height
+# update every ~5 min and the height lands ~4.5 min after its scan, so reading
+# faster than every 5 min has no value. The loop reads every 15 min normally and
+# every 5 min while any beach is within 90 min of its sunrise or sunset
+# (`python scripts/goes_cloud.py --cadence`): the app accepts an IR read up to 35
+# min old (lib/sunAlert.ts IR_MAX_GRANULE_AGE_MINUTES), and with 15-min reads
+# plus the height lag and GitHub's ~5-min raw cache the age it sees ranges 5-35
+# min. The loop sleeps to the next wall-clock boundary after each cycle (not a
+# fixed "sleep 300/900"), so a slow cycle (retries/backoff) can never compound
+# into faster-than-cadence reads.
+#
+# COST: most cycles fetch two mask files (~5.4 MB each: the newest scan for the
+# old fields, and the newest scan that already has its height) plus the height
+# (~4 MB) = ~13 MB and ~7 s. Near events some beach is always within 90 min for
+# ~13-14 h a day, so ~160 five-minute cycles plus ~15-35 fifteen-minute ones:
+# ~2.2-2.5 GB and ~20-25 min of fetch time a day. NOAA Open Data egress is free.
 
 on:
   schedule:
@@ -102,18 +111,23 @@ jobs:
           feed="${GOES_OUT}"
           budget_min=340 # leaves ~10 min headroom under the 350 timeout-minutes above
 
-          # Seconds until the next :00/:15/:30/:45 wall-clock boundary. Relies
-          # on America/New_York (and UTC) using whole-hour offsets, so a UTC
-          # epoch mod 900 lines up with local 15-minute boundaries too — no TZ
-          # math needed here for the sleep itself (only the daylight check
-          # below needs the actual local clock).
+          # Seconds until the next wall-clock boundary: :00/:05/:10/... while any
+          # beach is within 90 min of its sunrise or sunset (`--cadence` prints
+          # "fast"), :00/:15/:30/:45 otherwise. 15-min boundaries are also 5-min
+          # boundaries, so switching state never skips a slot. Relies on
+          # America/New_York (and UTC) using whole-hour offsets, so a UTC epoch
+          # mod 300/900 lines up with local boundaries too — no TZ math needed
+          # for the sleep itself.
           sleep_to_boundary() {
-            local now rem
+            local now rem step state
+            step=900
+            state=$(python scripts/goes_cloud.py --cadence 2>/dev/null | tail -n 1)
+            [ "$state" = "fast" ] && step=300
             now=$(date +%s)
-            rem=$(( now % 900 ))
+            rem=$(( now % step ))
             # Always a strictly FUTURE boundary (never 0): no two passes can
             # share a grid point, and an idle night pass can't spin.
-            echo $(( 900 - rem ))
+            echo $(( step - rem ))
           }
 
           # Where we are in today's reading window, from the script itself:

@@ -110,7 +110,9 @@ vi.mock("@/lib/conditions", () => ({
         nws: { status: "ok", data: { alerts: [] } },
         cityOfficial: { status: "ok", data: null },
         waterQuality: { status: "ok", data: null },
-        generatedAt: SUNRISE_ISO, // stable/irrelevant here — only the sun/hourly fields matter
+        // The snapshot is built on the live (fake) clock, as the real route's is: a snapshot
+        // stamped hours before the window would be a stale forecast (sunColorLiveGuard).
+        generatedAt: new Date().toISOString(),
         sun: { status: "ok", data: { sunrise: SUNRISE_ISO, sunset: SUNSET_ISO } },
         hourly: {
           status: "ok",

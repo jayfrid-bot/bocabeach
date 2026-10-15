@@ -41,14 +41,18 @@ export const BEAM_IMMINENT_MINUTES = 90;
  *  primary input when fresh). Structurally compatible with `GoesCloudData`
  *  plus the wrapper's `status`. */
 type GoesCloudInput =
-  | { beamCloudPct?: number | null; cloudPct?: number; status?: string; ir?: GoesIrData | null }
+  | { beamCloudPct?: number | null; cloudPct?: number | null; status?: string; ir?: GoesIrData | null }
   | null
   | undefined;
 
 /** How old the IR granule's scan may be (vs `nowMs`) and still count as "the
- *  sky right now". The ACHA height lands ~5 min after the scan and the feed
- *  loop reads every 15 min, so 20 min is one missed cycle of slack. */
-export const IR_MAX_GRANULE_AGE_MINUTES = 20;
+ *  sky right now". Worst case the app sees: the ACHA height lands ~4.5 min after
+ *  its scan, the feed job reads every 5 min near a sun event (15 min otherwise)
+ *  and takes seconds to publish, GitHub's raw CDN caches the file ~5 min, and
+ *  the app revalidates every 60 s. That is an IR age of ~5-30 min with the
+ *  5-min cadence (and up to ~35 at the 15-min cadence), so 35 keeps the source
+ *  from flipping to the forecast for a third of every cycle. */
+export const IR_MAX_GRANULE_AGE_MINUTES = 35;
 /** The IR read speaks only for an event this close (minutes) to `nowMs`: a
  *  live observation cannot vouch for a sunrise hours away. */
 export const IR_EVENT_WINDOW_MINUTES = 60;
@@ -56,10 +60,12 @@ export const IR_EVENT_WINDOW_MINUTES = 60;
  *  one being scored agree to within this (both come from the same NOAA solver,
  *  so they differ by seconds; the slack is for a stale golden-window pick). */
 export const IR_EVENT_MATCH_MINUTES = 15;
-/** Skip the IR read when fewer than this share of its cloudy pixels got a
- *  cloud-top height (the layer split would be mostly guesswork). A clear box
- *  (no cloud to classify) always passes. */
-export const IR_MIN_CLASSIFIED_PCT = 60;
+/** Skip the IR read when more than this share of ALL the box's pixels are
+ *  cloudy with no usable cloud-top height (the layer split would be mostly
+ *  guesswork). It is a share of the box, not of the cloudy pixels: a 2% cloud
+ *  box whose few cloudy pixels have no height must still count (Miami at
+ *  sunrise), while a box that is 25% unclassified must not. */
+export const IR_MAX_UNCLASSIFIED_PCT = 20;
 
 export type { SunModelSource };
 
@@ -69,7 +75,9 @@ export interface IrObservation {
   cloud: CloudMix;
   horizon: HorizonPath;
   /** Which number is the horizon: the low cloud along the sun's azimuth at the
-   *  event ("ir-beam"), or the overhead low share when no path read exists. */
+   *  event ("ir-beam", verified), or the overhead low share when no path read
+   *  exists ("ir-overhead", NOT verified: `horizon.fresh` is false and the model
+   *  estimates the clear path from the same overhead low share). */
   horizonSource: "ir-beam" | "ir-overhead";
   granuleStartIso: string;
   granuleAgeMinutes: number;
@@ -100,7 +108,7 @@ export function resolveIrObservation(
   // and the snapshot; anything further ahead is not trusted.
   if (ageMin > IR_MAX_GRANULE_AGE_MINUTES || ageMin < -2) return undefined;
   if (Math.abs(eventMs - nowMs) > IR_EVENT_WINDOW_MINUTES * 60_000) return undefined;
-  if (ir.classifiedPct != null && ir.classifiedPct < IR_MIN_CLASSIFIED_PCT) return undefined;
+  if (ir.unclassifiedPct != null && ir.unclassifiedPct > IR_MAX_UNCLASSIFIED_PCT) return undefined;
 
   const path = ir.events?.[event.event];
   const pathMatches =
@@ -108,7 +116,7 @@ export function resolveIrObservation(
   const beamLow = pathMatches ? path.beamLowPct : null;
   return {
     cloud: { lowPct: ir.lowPct, midPct: ir.midPct, highPct: ir.highPct, totalPct: ir.irCloudPct },
-    horizon: { cloudPct: beamLow ?? ir.lowPct, fresh: true },
+    horizon: { cloudPct: beamLow ?? ir.lowPct, fresh: beamLow != null },
     horizonSource: beamLow != null ? "ir-beam" : "ir-overhead",
     granuleStartIso: ir.granuleStartIso,
     granuleAgeMinutes: Math.max(0, Math.round(ageMin)),
@@ -269,6 +277,13 @@ export function assembleSunEventQuality(
         ...scored,
         breakdown: {
           ...scored.breakdown,
+          // Overhead-only read: the path toward the sun was not read, so the
+          // horizon is an estimate, and the text must not say "satellite-clear".
+          ...(ir && !ir.horizon.fresh
+            ? {
+                horizonPath: `~${Math.round(lowCloudClearPath(ir.cloud.lowPct ?? 0))}/100 — satellite overhead; path not read (${Math.round(ir.cloud.lowPct ?? 0)}% low cloud)`,
+              }
+            : {}),
           ...(source ? { source } : {}),
           ...(ir
             ? {
@@ -314,6 +329,11 @@ export interface SunEventPrediction {
    *  hour yet. */
   score: number | null;
   band: SunQualityBand | null;
+  /** What fed the model's cloud mix (null when it had none). The push route
+   *  uses it to refuse a forecast-sourced score inside the satellite window. */
+  source?: SunModelSource | null;
+  /** Scan start of the satellite read behind a "satellite-ir" score. */
+  irGranuleStartIso?: string | null;
 }
 
 /**
@@ -368,7 +388,7 @@ export function predictNextSunEvent(res: ConditionsResponse, nowMs: number): Sun
   const goes = snap.goesCloud?.data
     ? { ...snap.goesCloud.data, status: snap.goesCloud.status }
     : null;
-  const { result, peak } = assembleSunEventQuality(next, {
+  const { result, peak, source, ir } = assembleSunEventQuality(next, {
     hourly,
     airQuality: snap.airQuality?.data,
     goesCloud: goes,
@@ -381,5 +401,47 @@ export function predictNextSunEvent(res: ConditionsResponse, nowMs: number): Sun
     peakIso: peak?.iso ?? next.timeIso,
     score: result.score,
     band: result.band,
+    source,
+    irGranuleStartIso: ir?.granuleStartIso ?? null,
   };
+}
+
+/**
+ * Why a prediction must NOT be pushed right now, judged on the LIVE clock
+ * (`nowMs`), or null when it may go. `predictNextSunEvent` scores against the
+ * snapshot's own clock (`snapshotMs`), so a snapshot built long before the
+ * event reads as forecast-only even though the satellite window has since
+ * opened; and a cached snapshot's satellite read can have aged past its limit.
+ *   - forecast-sourced, the event is inside the satellite window NOW, but it
+ *     was outside it when the snapshot was built: the satellite never had a
+ *     chance to speak, so the number is a stale forecast. SKIP. (A snapshot
+ *     built INSIDE the window that is still forecast-sourced means the feed was
+ *     genuinely unavailable; that degrades to the forecast as before.)
+ *   - satellite-sourced, but the read is older than the limit on the live clock:
+ *     SKIP.
+ * The caller logs the reason. The alert is opt-in and off by default, so
+ * skipping costs nothing today.
+ */
+export function sunColorLiveGuard(
+  prediction: Pick<SunEventPrediction, "eventIso" | "score" | "source" | "irGranuleStartIso"> | null,
+  nowMs: number,
+  snapshotMs: number,
+): string | null {
+  if (!prediction || prediction.score == null) return null;
+  const eventMs = Date.parse(prediction.eventIso);
+  if (!Number.isFinite(eventMs)) return null;
+  const windowMs = IR_EVENT_WINDOW_MINUTES * 60_000;
+  if (
+    prediction.source === "forecast" &&
+    Math.abs(eventMs - nowMs) <= windowMs &&
+    Number.isFinite(snapshotMs) &&
+    Math.abs(eventMs - snapshotMs) > windowMs
+  ) {
+    return "snapshot built before the satellite window; score is a stale forecast";
+  }
+  if (prediction.source === "satellite-ir" && prediction.irGranuleStartIso) {
+    const ageMin = (nowMs - Date.parse(prediction.irGranuleStartIso)) / 60_000;
+    if (!(ageMin <= IR_MAX_GRANULE_AGE_MINUTES)) return "satellite read too old at send time";
+  }
+  return null;
 }

@@ -703,7 +703,7 @@ export function nearestHourlyPoint(
 //     events; honestly labeled "air clarity (now)").
 //   - CLOUD MIX + HORIZON / CLEAR-PATH (2026-10-15): the primary input is the
 //     GOES cloud-top-height read (lib/sources/goesCloud.ts `ir`), used by
-//     lib/sunAlert.ts only when its granule is within 20 min of now AND now is
+//     lib/sunAlert.ts only when its granule is within 35 min of now AND now is
 //     within 60 min of the event: low/mid/high shares become the CloudMix and
 //     the low cloud along the sun's azimuth at the event becomes `horizon` with
 //     `fresh:true`. Otherwise the hourly forecast fills the CloudMix and

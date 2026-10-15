@@ -70,7 +70,7 @@ export interface SunQualityCardProps {
    *  read is the model's primary input ONLY when fresh and the event is
    *  imminent (lib/sunAlert.ts resolveIrObservation); the mask fields are
    *  recorded, not scored. */
-  goesCloud?: { beamCloudPct?: number | null; cloudPct?: number; status?: string; ir?: GoesIrData | null } | null;
+  goesCloud?: { beamCloudPct?: number | null; cloudPct?: number | null; status?: string; ir?: GoesIrData | null } | null;
 }
 
 function eventIcon(event: SunEventKind): string {
@@ -182,7 +182,7 @@ function buildSunQualityNerdInfo(args: {
     computation,
     sources: [
       ...(fromSatellite
-        ? ["NOAA GOES-19 cloud-top height (2 km, read within the last 20 min) — cloud by level + the low cloud along the sun's path"]
+        ? ["NOAA GOES-19 cloud-top height (2 km, read within the last 35 min) — cloud by level + the low cloud along the sun's path"]
         : []),
       fromSatellite
         ? "Open-Meteo hourly forecast — humidity"
@@ -191,7 +191,7 @@ function buildSunQualityNerdInfo(args: {
       "Sun/golden-hour times — computed locally (NOAA solar-position algorithm)",
     ],
     notes: fromSatellite
-      ? "The cloud mix and the horizon come from the satellite's cloud-top heights, read within the last 20 minutes, not from the forecast. Peak-color timing and the modifiers are research-informed heuristics, not guarantees."
+      ? "The cloud mix and the horizon come from the satellite's cloud-top heights, read within the last 35 minutes, not from the forecast. Peak-color timing and the modifiers are research-informed heuristics, not guarantees."
       : knownTotalOnly
       ? "Cloud-by-level wasn't available for this hour, so this falls back to total cloud cover on a flatter, more conservative curve — the real color potential could be higher or lower."
       : b && b.horizonPath.startsWith("~")
