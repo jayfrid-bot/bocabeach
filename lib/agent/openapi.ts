@@ -3,6 +3,7 @@
 // (every route has a path, every path has a route, query names match the code) and
 // checks real route answers against these response schemas.
 
+import { DECIMAL_PATTERN, MAX_REGION_LEN, MAX_STATE_LEN, TEXT_PARAM_PATTERN } from "@/lib/agent/params";
 import {
   API_BASE_PATH,
   CREDIT,
@@ -129,11 +130,12 @@ const schemas: Record<string, JsonSchema> = {
     properties: {
       query: {
         type: "object",
+        description: "The point asked about, rounded to 2 decimals. Distances use the exact point.",
         required: ["lat", "lon", "limit"],
         properties: { lat: { type: "number" }, lon: { type: "number" }, limit: { type: "integer" } },
       },
       count: { type: "integer" },
-      scored: { type: "integer", description: "How many beaches carry a live score in this answer." },
+      scored: { type: "integer", description: "How many beaches carry a score in this answer." },
       beaches: { type: "array", items: ref("NearbyBeach") },
       note: { type: "string" },
     },
@@ -166,6 +168,8 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": { schema: { type: "string", const: "*" } },
 };
 
+const serverError = errorResponse("Something went wrong on our side. Try again shortly.");
+
 const rateLimited = {
   ...errorResponse("Too many requests from this address. Wait for Retry-After seconds."),
   headers: { "Retry-After": { schema: { type: "integer" } }, ...corsHeaders },
@@ -180,7 +184,7 @@ export function buildOpenApi() {
       summary: "Live beach scores and safety lines for US beaches. Read-only, no key.",
       description: [
         "Live Beach Day scores (0-100), swim-safety lines, water temperature and best time for the beaches covered by Is It Beach Day.",
-        "Free to use and open to browsers and agents. No account or key. Please keep to a few requests per minute and cache answers until `validUntil`.",
+        "Free to use and open to browsers and agents. No account or key. Requests are limited to about 60 per minute per IP address. Answers carry `validUntil`; do not call an answer current after it. Query parameters must be written in one canonical form (see each parameter); anything else is a 400.",
         `Always show the credit: "${CREDIT}". ${SAFETY_NOTE}`,
         `Also available as an MCP server at ${MCP_URL}. A plain-text guide is at ${SITE_URL}${LLMS_TXT_PATH}.`,
       ].join("\n\n"),
@@ -201,15 +205,15 @@ export function buildOpenApi() {
               name: "state",
               in: "query",
               required: false,
-              description: 'Two-letter code or full name, e.g. "FL" or "Florida".',
-              schema: { type: "string", maxLength: 40 },
+              description: 'Two-letter code or full name, e.g. "FL" or "Florida". Not empty, no space at either end.',
+              schema: { type: "string", minLength: 1, maxLength: MAX_STATE_LEN, pattern: TEXT_PARAM_PATTERN },
             },
             {
               name: "region",
               in: "query",
               required: false,
-              description: 'Text found in the beach name or region, e.g. "Broward".',
-              schema: { type: "string", maxLength: 80 },
+              description: 'Text found in the beach name or region, e.g. "Broward". Not empty, no space at either end. Longer values are refused, not cut.',
+              schema: { type: "string", minLength: 1, maxLength: MAX_REGION_LEN, pattern: TEXT_PARAM_PATTERN },
             },
           ],
           responses: {
@@ -218,8 +222,9 @@ export function buildOpenApi() {
               headers: corsHeaders,
               content: { "application/json": { schema: ref("BeachList") } },
             },
-            "400": errorResponse("Unknown state or query parameter."),
+            "400": errorResponse("Unknown state, a value that is not in canonical form, or an unknown or repeated query parameter."),
             "429": rateLimited,
+            "500": serverError,
           },
         },
       },
@@ -229,7 +234,7 @@ export function buildOpenApi() {
           tags: ["beaches"],
           summary: "Live conditions for one beach",
           description:
-            "The same answer the website and the Apple Watch app show. Cached at the edge for at most 60 seconds and never past `validUntil`.",
+            "The same answer the website and the Apple Watch app show. The response sends `Cache-Control: public, s-maxage=<seconds>` (at most 60, never past `validUntil`, `no-store` once expired) as a hint for downstream caches; the app itself reads a shared 120-second conditions cache. Other methods than GET answer 405 with the same error shape.",
           parameters: [
             {
               name: "slug",
@@ -248,7 +253,11 @@ export function buildOpenApi() {
             "400": errorResponse("A query parameter was given. This route takes none."),
             "404": errorResponse("Unknown beach."),
             "429": rateLimited,
-            "503": errorResponse("Conditions were incomplete. Retry after the Retry-After seconds."),
+            "500": serverError,
+            "503": {
+              ...errorResponse("Conditions were incomplete. Retry after the Retry-After seconds."),
+              headers: { "Retry-After": { schema: { type: "integer" } }, ...corsHeaders },
+            },
           },
         },
       },
@@ -257,23 +266,35 @@ export function buildOpenApi() {
           operationId: "findNearestBeaches",
           tags: ["beaches"],
           summary: "Beaches nearest a point",
-          description: `Measured to the closest point on each beach's shoreline. With scores=true the nearest ${MAX_REST_SCORES} beaches also carry a compact live score. The coordinates are not stored or logged.`,
+          description: `Measured to the closest point on each beach's shoreline. With scores=true the nearest ${MAX_REST_SCORES} beaches try to carry a compact score from the shared 120-second conditions cache; at most one beach per request is built fresh, and a beach without a recent snapshot has conditions null and is named in \`note\`. The coordinates are not stored or logged by the app. The answer echoes them rounded to 2 decimals and is sent with Cache-Control: no-store.`,
           parameters: [
-            { name: "lat", in: "query", required: true, description: "Latitude, -90 to 90.", schema: { type: "number", minimum: -90, maximum: 90 } },
-            { name: "lon", in: "query", required: true, description: "Longitude, -180 to 180.", schema: { type: "number", minimum: -180, maximum: 180 } },
+            {
+              name: "lat",
+              in: "query",
+              required: true,
+              description: "Latitude, -90 to 90. A plain decimal: no spaces, plus sign, exponent or leading zeros (26.35, not 026.35 or 2.635e1).",
+              schema: { type: "string", pattern: DECIMAL_PATTERN, examples: ["26.35"] },
+            },
+            {
+              name: "lon",
+              in: "query",
+              required: true,
+              description: "Longitude, -180 to 180. Same plain-decimal form as lat.",
+              schema: { type: "string", pattern: DECIMAL_PATTERN, examples: ["-80.07"] },
+            },
             {
               name: "limit",
               in: "query",
               required: false,
-              description: `How many beaches to return, 1 to ${MAX_NEAREST_LIMIT}. Default ${DEFAULT_NEAREST_LIMIT}.`,
-              schema: { type: "integer", minimum: 1, maximum: MAX_NEAREST_LIMIT, default: DEFAULT_NEAREST_LIMIT },
+              description: `How many beaches to return, 1 to ${MAX_NEAREST_LIMIT}. Default ${DEFAULT_NEAREST_LIMIT}. No leading zeros.`,
+              schema: { type: "string", pattern: `^([1-9]|${MAX_NEAREST_LIMIT})$`, default: String(DEFAULT_NEAREST_LIMIT) },
             },
             {
               name: "scores",
               in: "query",
               required: false,
-              description: `Include a compact live score for the nearest ${MAX_REST_SCORES} beaches. Default false.`,
-              schema: { type: "boolean", default: false },
+              description: `Exactly "true" or "false". With true, the nearest ${MAX_REST_SCORES} beaches also try to carry a compact score. Default false.`,
+              schema: { type: "string", enum: ["true", "false"], default: "false" },
             },
           ],
           responses: {
@@ -282,8 +303,9 @@ export function buildOpenApi() {
               headers: corsHeaders,
               content: { "application/json": { schema: ref("NearestResponse") } },
             },
-            "400": errorResponse("Missing or out-of-range lat, lon, limit or scores."),
+            "400": errorResponse("Missing, out-of-range or non-canonical lat, lon, limit or scores, or an unknown or repeated query parameter."),
             "429": rateLimited,
+            "500": serverError,
           },
         },
       },
@@ -293,8 +315,10 @@ export function buildOpenApi() {
           tags: ["meta"],
           summary: "This document",
           responses: {
+            "400": errorResponse("This route takes no query parameters."),
             "200": { description: "The OpenAPI 3.1 description.", headers: corsHeaders, content: { "application/json": { schema: { type: "object" } } } },
             "429": rateLimited,
+            "500": serverError,
           },
         },
       },

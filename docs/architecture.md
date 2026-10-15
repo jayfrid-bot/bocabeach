@@ -49,17 +49,17 @@ flowchart TD
   end
 
   AGENTS["Assistants (Claude, ChatGPT) and developer apps"] -->|"POST JSON-RPC: initialize, tools/list, tools/call<br/>(custom connector URL)"| MCPR
-  AGENTS -->|"GET, edge-cached 60 s at most, payload has validUntil"| V1
+  AGENTS -->|"GET; payload has validUntil; Cache-Control is a hint only,<br/>no Workers Cache; /nearest is no-store"| V1
   AGENTS --> OPENAPI
   AGENTS --> LLMS
   V1 -->|"every request, before any work"| RATELIMIT
-  MCPR -->|"every request, before any work"| RATELIMIT["lib/agent/rateLimit.ts, per IP:<br/>Workers Rate Limiting binding AGENT_RATE_LIMITER (60 per 60 s),<br/>else an in-isolate token bucket. No KV, no Durable Object"]
+  MCPR -->|"every request, before any work"| RATELIMIT["lib/agent/rateLimit.ts, per IP, two budgets:<br/>REST 60/min (binding AGENT_RATE_LIMITER), MCP 300/min (AGENT_MCP_RATE_LIMITER),<br/>else an in-isolate token bucket. No KV, no Durable Object"]
   V1 -->|"one counter line per request:<br/>route, status, user-agent family. No IP, no coordinates"| CFLOGS[(Workers logs)]
   MCPR --> CFLOGS
   V1 --> AGENTQ
-  MCPR -->|"tools: list_beaches, get_beach_score,<br/>find_nearest_beach, best_beach_today"| AGENTQ["lib/agent/queries.ts + beachView.ts<br/>one read path for REST and MCP;<br/>at most 3 live scores per REST call, 5 per best_beach_today"]
+  MCPR -->|"tools: list_beaches, get_beach_score,<br/>find_nearest_beach, best_beach_today"| AGENTQ["lib/agent/queries.ts + beachView.ts<br/>one read path for REST and MCP;<br/>scores read from the shared 120 s cache, at most ONE cold build per request"]
   AGENTQ -->|"beach directory + nearest to the shoreline"| LOC
-  AGENTQ -->|"live score: summary, attribution, safety note added on top"| WATCHLOAD
+  AGENTQ -->|"loadWatchView, cacheOnly for all but one beach<br/>(getCachedConditions never builds); summary, attribution, safety note added on top"| WATCHLOAD
 
   APPUI -->|"once per calendar day, on load + resume<br/>lib/useAppOpenPing.ts"| OPENR
   OPENR -->|"app_opens (hashed id)"| OPENS[lib/db/appOpens.ts<br/>daily active users]
@@ -120,11 +120,16 @@ adds the page link, a one-sentence summary, the attribution and the safety note
 the list and nearest logic once, so REST and MCP cannot disagree. `/mcp` is a
 hand-written, stateless JSON-RPC handler (`lib/agent/mcp/server.ts`, spec
 2025-06-18): no session id, no Durable Object, no KV, JSON replies only. Rate
-limits run per IP before any work: the Workers Rate Limiting binding
-`AGENT_RATE_LIMITER` (wrangler.jsonc `ratelimits`) when bound, else an
-in-isolate token bucket. A call may build live scores for at most 3 beaches
-(REST) or 5 (`best_beach_today`); each uncached build is a full source fan-out,
-so these caps protect the upstream sources and the Workers subrequest limit.
+limits run per IP before any work, as two budgets: REST 60 a minute and MCP 300 a minute, each
+a Workers Rate Limiting binding (`AGENT_RATE_LIMITER`, `AGENT_MCP_RATE_LIMITER`
+in wrangler.jsonc `ratelimits`) when bound, else an in-isolate token bucket.
+`/mcp` implements only protocol revision 2025-06-18 and checks `Origin`. Workers
+Cache is not enabled, so `Cache-Control` on the answers is only a hint; the real
+protection for the data sources is the shared 120-second conditions cache. A
+request builds at most ONE beach cold (about 25 subrequests; Workers Free allows
+50): all other beaches in a comparison or a scored nearest list come from
+`getCachedConditions` (cache read only, never a build) and are reported as not
+compared right now when they have no recent snapshot.
 Setup and examples: `docs/AGENT_API.md`.
 
 ## 2. Scheduled jobs — keeping the feeds current

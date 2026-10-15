@@ -35,7 +35,7 @@ export function buildLlmsTxt(): string {
 
 ## Connect an assistant (MCP)
 
-- MCP server (Streamable HTTP, stateless, no sign-in): ${MCP_URL}
+- MCP server (Streamable HTTP, stateless, no sign-in, protocol revision 2025-06-18 only): ${MCP_URL}
 - In Claude or ChatGPT, add it as a custom connector with that URL.
 - Tools:
 ${TOOLS.map((t) => `  - \`${t.name}\`: ${t.description.split(". ")[0]}.`).join("\n")}
@@ -47,14 +47,16 @@ ${TOOLS.map((t) => `  - \`${t.name}\`: ${t.description.split(". ")[0]}.`).join("
 - \`GET ${api}/beaches\`: every beach (slug, name, state, lat, lon, page URL). Optional \`?state=FL\` and \`?region=Broward\`.
 - \`GET ${api}/beaches/{slug}\`: live score, rating, safety lines, water temperature, best time, page URL, attribution.
 - \`GET ${api}/nearest?lat=&lon=&limit=&scores=\`: nearest beaches to a point (limit up to ${MAX_NEAREST_LIMIT}). \`scores=true\` adds a compact live score to the nearest ${MAX_REST_SCORES}.
+- Write query values in plain canonical form (\`lat=26.35\`, \`scores=true\`; no spaces, plus signs, exponents or leading zeros). Anything else is a 400.
 - CORS is open for GET. No cookies. Errors are JSON: \`{"error":{"code":"...","message":"..."}}\`.
 
 ## Usage rules
 
-- Keep to a few requests per minute. Requests are limited per IP address; over the limit you get HTTP 429 and a \`Retry-After\` header.
-- Cache each answer until its \`validUntil\` (never more than 60 seconds at the edge).
-- The MCP endpoint accepts bodies up to ${MCP_MAX_BODY_BYTES / 1024} KB. \`best_beach_today\` compares at most ${MAX_COMPARE} beaches.
-- Coordinates you send are used for the answer only and are not stored or logged.
+- Limits per IP address: about 60 requests a minute on the JSON API and 300 a minute on MCP. Over the limit you get HTTP 429 and a \`Retry-After\` header.
+- Each live answer carries \`validUntil\`; do not call it current after that moment. \`Cache-Control\` on the answers is a hint for your own caches. We do not run a response cache; the score comes from a shared cache that refreshes about every 2 minutes.
+- To protect the data sources, one call builds at most one beach fresh. \`best_beach_today\` compares at most ${MAX_COMPARE} beaches and lists those without a recent snapshot as not compared right now.
+- The MCP endpoint accepts bodies up to ${MCP_MAX_BODY_BYTES / 1024} KB. Browser calls to MCP must come from isitbeachday.com; servers and connectors send no Origin header and are fine.
+- The app does not store or log the coordinates you send. The answer echoes them rounded to 2 decimals, is never cached, and the URL may still show in your own or your network's records.
 - No personal, device or Plus-subscriber data is available here, and no webcam images.
 
 ## Data sources

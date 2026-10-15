@@ -48,6 +48,15 @@ export function preflight(): Response {
   return withCors(new Response(null, { status: 204 }));
 }
 
+/** POST, PUT, PATCH, DELETE on a read-only route: the JSON error shape, with CORS and Allow. */
+export function methodNotAllowed(req: Request, route: string): Response {
+  const res = apiError(405, "method_not_allowed", "This API is read-only. Use GET.");
+  res.headers.set("Allow", "GET, OPTIONS");
+  withCors(res);
+  logAgentRequest(req, { route, status: 405 });
+  return res;
+}
+
 /**
  * Run a GET handler behind the rate limit, with CORS on every outcome, an error
  * shape for surprises, and one counter log line.
@@ -55,7 +64,7 @@ export function preflight(): Response {
 export async function guardedGet(req: Request, route: string, handler: () => Promise<Response> | Response): Promise<Response> {
   let res: Response;
   let limited = false;
-  const limit = await checkAgentRateLimit(req);
+  const limit = await checkAgentRateLimit(req, "rest");
   if (limit.limited) {
     limited = true;
     res = apiError(429, "rate_limited", "Too many requests. Slow down and retry after the Retry-After seconds.", {

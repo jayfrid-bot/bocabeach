@@ -4,17 +4,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/conditions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/conditions")>();
-  return { ...actual, getConditions: vi.fn() };
+  return { ...actual, getConditions: vi.fn(), getCachedConditions: vi.fn() };
 });
 
 import { GET as listGET } from "@/app/api/v1/beaches/route";
 import { GET as beachGET } from "@/app/api/v1/beaches/[slug]/route";
 import { GET as nearestGET } from "@/app/api/v1/nearest/route";
-import { getConditions } from "@/lib/conditions";
+import { getCachedConditions, getConditions } from "@/lib/conditions";
 import { buildLlmsTxt } from "@/lib/agent/llmsTxt";
 import { MCP_URL, OPENAPI_PATH, SITE_URL } from "@/lib/agent/constants";
 import { buildOpenApi } from "@/lib/agent/openapi";
-import { BEACH_LIST_QUERY_KEYS, NEAREST_QUERY_KEYS } from "@/lib/agent/params";
+import {
+  BEACH_LIST_QUERY_KEYS,
+  NEAREST_QUERY_KEYS,
+  parseBool,
+  parseInteger,
+  parseNumber,
+  parseText,
+} from "@/lib/agent/params";
 import { resetAgentRateLimit } from "@/lib/agent/rateLimit";
 import { validateJson, type JsonSchema } from "@/lib/agent/schema";
 import { BUILT_MS, conditionsFor, req } from "@/lib/agent/testkit";
@@ -47,14 +54,53 @@ describe("OpenAPI document", () => {
     expect(Object.keys(spec.paths).sort()).toEqual(files.map(specPathOf).sort());
   });
 
-  it("describes the same methods each route exports", async () => {
+  it("documents GET only, and every route answers GET, a CORS preflight and the other methods (405)", async () => {
     for (const file of files) {
       const mod = (await import(/* @vite-ignore */ file)) as Record<string, unknown>;
-      const exported = ["GET", "POST", "PUT", "PATCH", "DELETE"].filter((m) => typeof mod[m] === "function").map((m) => m.toLowerCase());
       const documented = Object.keys((spec.paths as Record<string, Record<string, unknown>>)[specPathOf(file)]).sort();
-      expect(documented, file).toEqual(exported.sort());
-      expect(typeof mod.OPTIONS, `${file} answers CORS preflight`).toBe("function");
+      expect(documented, file).toEqual(["get"]);
+      for (const m of ["GET", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"]) {
+        expect(typeof mod[m], `${file} exports ${m}`).toBe("function");
+      }
     }
+  });
+
+  it("documents the same input rules the code enforces", () => {
+    type Param = { name: string; schema: { pattern?: string; enum?: string[]; maxLength?: number; minLength?: number } };
+    const params = (path: string) => Object.fromEntries(((spec.paths as any)[path].get.parameters as Param[]).map((p) => [p.name, p.schema]));
+    const accepts = (schema: Param["schema"], v: string) => (schema.enum ? schema.enum.includes(v) : new RegExp(schema.pattern!).test(v));
+    const n = params("/nearest");
+    const inputs = ["0", "26.35", "-80.07", "10", "05", "026", "+1", " 1", "1 ", "1e1", ".5", "5.", "-0", "", "true", "false", "1", "TRUE", "11", "3"];
+    for (const v of inputs) {
+      for (const k of ["lat", "lon"] as const) {
+        const code = parseNumber(v, k, -1e9, 1e9).ok;
+        // -0 is refused by code only; the pattern allows the spelling "-0", so skip that one case.
+        if (v !== "-0") expect(accepts(n[k], v), `${k}=${JSON.stringify(v)}`).toBe(code);
+      }
+      expect(accepts(n.limit, v), `limit=${JSON.stringify(v)}`).toBe(parseInteger(v, "limit", 1, 10).ok);
+      expect(accepts(n.scores, v), `scores=${JSON.stringify(v)}`).toBe(parseBool(v, "scores").ok);
+    }
+    const l = params("/beaches");
+    for (const v of ["Broward", "Palm Beach", " x", "x ", "", "x".repeat(80), "x".repeat(81)]) {
+      const code = parseText(v, "region", 80).ok;
+      const doc = v.length >= 1 && v.length <= (l.region.maxLength as number) && accepts(l.region, v);
+      expect(doc, JSON.stringify(v.slice(0, 12))).toBe(code);
+    }
+  });
+
+  it("documents 500 on every operation and Retry-After on the 503", () => {
+    for (const p of Object.values(spec.paths) as Array<{ get: { responses: Record<string, any> } }>) {
+      expect(p.get.responses).toHaveProperty("500");
+    }
+    expect((spec.paths as any)["/beaches/{slug}"].get.responses["503"].headers).toHaveProperty("Retry-After");
+    expect((spec.paths as any)["/openapi.json"].get.responses).toHaveProperty("400");
+  });
+
+  it("makes no claim of an edge response cache and keeps the coordinate wording honest", () => {
+    const text = JSON.stringify(spec) + buildLlmsTxt();
+    expect(text).not.toMatch(/cached at the edge|edge-cached|at the edge/i);
+    expect(text).not.toMatch(/not stored or logged(?! by the app)/);
+    expect(text).toMatch(/not store or log the coordinates|not stored or logged by the app/);
   });
 
   it("lists the same query and path parameters the routes read", () => {
@@ -98,11 +144,13 @@ describe("real answers fit the documented schemas", () => {
     resetAgentRateLimit();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     vi.mocked(getConditions).mockImplementation(async (slug: string) => conditionsFor(slug));
+    vi.mocked(getCachedConditions).mockImplementation(async (slug: string) => conditionsFor(slug));
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(BUILT_MS);
   });
   afterEach(() => {
     vi.mocked(getConditions).mockReset();
+    vi.mocked(getCachedConditions).mockReset();
     vi.useRealTimers();
     vi.restoreAllMocks();
   });

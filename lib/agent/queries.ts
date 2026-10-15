@@ -11,7 +11,7 @@ import {
 } from "@/lib/agent/beaches";
 import { compactConditions, loadMany, type CompactConditions } from "@/lib/agent/beachView";
 import { FAR_AWAY_MILES } from "@/lib/agent/constants";
-import type { Parsed } from "@/lib/agent/params";
+import { MAX_REGION_LEN, MAX_STATE_LEN, parseText, type Parsed } from "@/lib/agent/params";
 
 export interface ListQuery {
   state?: string;
@@ -20,12 +20,19 @@ export interface ListQuery {
 
 export function runListBeaches(raw: ListQuery): Parsed<{ count: number; beaches: BeachSummary[] }> {
   let state: string | undefined;
-  if (raw.state !== undefined && raw.state.trim() !== "") {
-    const s = normalizeState(raw.state);
-    if (!s) return { ok: false, message: `Unknown state "${raw.state.slice(0, 40)}". Use a two-letter code like FL or a full name like Florida.` };
+  if (raw.state !== undefined) {
+    const t = parseText(raw.state, "state", MAX_STATE_LEN);
+    if (!t.ok) return t;
+    const s = normalizeState(t.value);
+    if (!s) return { ok: false, message: `Unknown state "${t.value}". Use a two-letter code like FL or a full name like Florida.` };
     state = s;
   }
-  const region = raw.region?.trim() ? raw.region.trim().slice(0, 80) : undefined;
+  let region: string | undefined;
+  if (raw.region !== undefined) {
+    const t = parseText(raw.region, "region", MAX_REGION_LEN);
+    if (!t.ok) return t;
+    region = t.value;
+  }
   const beaches = filterBeaches(listBeachSummaries(), { state, region });
   return { ok: true, value: { count: beaches.length, beaches } };
 }
@@ -35,50 +42,62 @@ export interface NearbyWithConditions extends NearbyBeach {
 }
 
 export interface NearestResult {
+  /** The point asked about, rounded to 2 decimals (about 1 km). Distances use the exact point. */
   query: { lat: number; lon: number; limit: number };
   count: number;
-  /** How many of these beaches had a live score built for this request. */
+  /** How many of these beaches carry a live score in this answer. */
   scored: number;
   beaches: NearbyWithConditions[];
   note?: string;
-  /** Validity of the scores included, for cache headers. */
-  views: Array<{ validUntil: string; capturedAt: string }>;
 }
 
+const round2 = (n: number): number => {
+  const r = Math.round(n * 100) / 100;
+  return r === 0 ? 0 : r; // never -0
+};
+
+/**
+ * Nearest beaches, optionally with compact scores for the first `scoreCount`. Scores
+ * come from the shared conditions cache; at most ONE beach (the nearest one that is
+ * not cached) is built for the request (see loadMany). The others say so in `note`.
+ */
 export async function runNearest(opts: {
   lat: number;
   lon: number;
   limit: number;
-  /** How many of the nearest beaches to build scores for (0 = none). */
+  /** How many of the nearest beaches to try to score (0 = none). */
   scoreCount: number;
 }): Promise<NearestResult> {
   const near = nearestBeaches(opts.lat, opts.lon, opts.limit);
   const toScore = near.slice(0, Math.max(0, opts.scoreCount));
   const outcomes = toScore.length ? await loadMany(toScore.map((b) => b.slug)) : [];
   const bySlug = new Map(outcomes.map((o) => [o.slug, o]));
-  const views: NearestResult["views"] = [];
   let scored = 0;
+  const notNow: string[] = [];
+  const failed: string[] = [];
   const beaches = near.map((b): NearbyWithConditions => {
     const o = bySlug.get(b.slug);
     if (!o) return b;
-    if (!o.ok) return { ...b, conditions: null };
+    if (!o.ok) {
+      (o.reason === "not_cached" ? notNow : failed).push(b.slug);
+      return { ...b, conditions: null };
+    }
     scored += 1;
-    views.push({ validUntil: o.conditions.validUntil, capturedAt: o.conditions.capturedAt });
     return { ...b, conditions: compactConditions(o.conditions) };
   });
   const notes: string[] = [];
   if (beaches.length && beaches[0].distanceMiles > FAR_AWAY_MILES) {
     notes.push(`The nearest covered beach is ${beaches[0].distanceMiles} miles away. Nothing is close to this point.`);
   }
-  if (toScore.length && scored < toScore.length) {
-    notes.push("Some scores could not be built right now (conditions: null). Try again shortly.");
+  if (notNow.length) {
+    notes.push(`Not scored right now (no recent snapshot; one is built per request at most): ${notNow.join(", ")}. Ask for one beach by slug to get its score.`);
   }
+  if (failed.length) notes.push(`Scores could not be built right now for: ${failed.join(", ")}. Try again shortly.`);
   return {
-    query: { lat: opts.lat, lon: opts.lon, limit: opts.limit },
+    query: { lat: round2(opts.lat), lon: round2(opts.lon), limit: opts.limit },
     count: beaches.length,
     scored,
     beaches,
     ...(notes.length ? { note: notes.join(" ") } : {}),
-    views,
   };
 }

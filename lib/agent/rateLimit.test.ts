@@ -8,13 +8,10 @@ vi.mock("@opennextjs/cloudflare", () => ({
   },
 }));
 
-import {
-  BUCKET_CAPACITY,
-  BUCKET_REFILL_PER_SEC,
-  checkAgentRateLimit,
-  resetAgentRateLimit,
-  takeToken,
-} from "@/lib/agent/rateLimit";
+import { SCOPE_LIMITS, checkAgentRateLimit, resetAgentRateLimit, takeToken } from "@/lib/agent/rateLimit";
+
+const BUCKET_CAPACITY = SCOPE_LIMITS.rest.capacity;
+const BUCKET_REFILL_PER_SEC = SCOPE_LIMITS.rest.refillPerSec;
 
 const reqFrom = (ip: string) => new Request("https://isitbeachday.com/mcp", { headers: { "cf-connecting-ip": ip } });
 
@@ -44,15 +41,15 @@ describe("token bucket (no binding)", () => {
   });
 
   it("keeps each address separate", async () => {
-    for (let i = 0; i < BUCKET_CAPACITY + 1; i++) await checkAgentRateLimit(reqFrom("1.1.1.1"), 5);
-    expect((await checkAgentRateLimit(reqFrom("1.1.1.1"), 5)).limited).toBe(true);
-    expect((await checkAgentRateLimit(reqFrom("2.2.2.2"), 5)).limited).toBe(false);
+    for (let i = 0; i < BUCKET_CAPACITY + 1; i++) await checkAgentRateLimit(reqFrom("1.1.1.1"), "rest", 5);
+    expect((await checkAgentRateLimit(reqFrom("1.1.1.1"), "rest", 5)).limited).toBe(true);
+    expect((await checkAgentRateLimit(reqFrom("2.2.2.2"), "rest", 5)).limited).toBe(false);
   });
 
   it("uses one shared bucket when there is no address header (local dev)", async () => {
     const bare = () => new Request("https://isitbeachday.com/mcp");
-    for (let i = 0; i < BUCKET_CAPACITY; i++) await checkAgentRateLimit(bare(), 9);
-    expect((await checkAgentRateLimit(bare(), 9)).limited).toBe(true);
+    for (let i = 0; i < BUCKET_CAPACITY; i++) await checkAgentRateLimit(bare(), "rest", 9);
+    expect((await checkAgentRateLimit(bare(), "rest", 9)).limited).toBe(true);
   });
 
   it("stays bounded when many addresses arrive", () => {
@@ -61,6 +58,35 @@ describe("token bucket (no binding)", () => {
     expect(takeToken("ip-5999", 1).limited).toBe(false);
     for (let i = 0; i < BUCKET_CAPACITY; i++) takeToken("ip-0", 1);
     expect(takeToken("ip-0", 1).limited).toBe(true);
+  });
+});
+
+describe("two budgets", () => {
+  it("gives MCP five times the REST rate, in separate buckets for the same address", () => {
+    expect(SCOPE_LIMITS.rest.perMinute).toBe(60);
+    expect(SCOPE_LIMITS.mcp.perMinute).toBe(300);
+    expect(SCOPE_LIMITS.mcp.refillPerSec * 60).toBe(300);
+    for (let i = 0; i < SCOPE_LIMITS.rest.capacity; i++) takeToken("5.5.5.5", 0, "rest");
+    expect(takeToken("5.5.5.5", 0, "rest").limited).toBe(true);
+    // The same address still has its whole MCP budget.
+    for (let i = 0; i < SCOPE_LIMITS.mcp.capacity; i++) expect(takeToken("5.5.5.5", 0, "mcp").limited).toBe(false);
+    expect(takeToken("5.5.5.5", 0, "mcp").limited).toBe(true);
+  });
+
+  it("uses a different binding per scope", async () => {
+    const rest = vi.fn(async () => ({ success: true }));
+    const mcp = vi.fn(async () => ({ success: false }));
+    ctx.env = { AGENT_RATE_LIMITER: { limit: rest }, AGENT_MCP_RATE_LIMITER: { limit: mcp } };
+    expect((await checkAgentRateLimit(reqFrom("4.4.4.4"), "rest")).limited).toBe(false);
+    expect((await checkAgentRateLimit(reqFrom("4.4.4.4"), "mcp")).limited).toBe(true);
+    expect(rest).toHaveBeenCalledTimes(1);
+    expect(mcp).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the bucket for a scope whose binding is missing", async () => {
+    ctx.env = { AGENT_RATE_LIMITER: { limit: async () => ({ success: true }) } };
+    for (let i = 0; i < SCOPE_LIMITS.mcp.capacity; i++) await checkAgentRateLimit(reqFrom("3.3.3.3"), "mcp", 1);
+    expect((await checkAgentRateLimit(reqFrom("3.3.3.3"), "mcp", 1)).limited).toBe(true);
   });
 });
 
@@ -79,12 +105,12 @@ describe("Workers Rate Limiting binding", () => {
 
   it("falls back to the bucket when the binding throws", async () => {
     ctx.env = { AGENT_RATE_LIMITER: { limit: async () => { throw new Error("down"); } } };
-    for (let i = 0; i < BUCKET_CAPACITY; i++) expect((await checkAgentRateLimit(reqFrom("7.7.7.7"), 1)).limited).toBe(false);
-    expect((await checkAgentRateLimit(reqFrom("7.7.7.7"), 1)).limited).toBe(true);
+    for (let i = 0; i < BUCKET_CAPACITY; i++) expect((await checkAgentRateLimit(reqFrom("7.7.7.7"), "rest", 1)).limited).toBe(false);
+    expect((await checkAgentRateLimit(reqFrom("7.7.7.7"), "rest", 1)).limited).toBe(true);
   });
 
   it("falls back when the Cloudflare context is unavailable", async () => {
     ctx.fail = true;
-    expect((await checkAgentRateLimit(reqFrom("6.6.6.6"), 1)).limited).toBe(false);
+    expect((await checkAgentRateLimit(reqFrom("6.6.6.6"), "rest", 1)).limited).toBe(false);
   });
 });

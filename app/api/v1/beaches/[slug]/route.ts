@@ -7,7 +7,7 @@
 // stale-while-revalidate (same rule as /api/watch). A partial build is a 503.
 
 import { loadBeachConditions } from "@/lib/agent/beachView";
-import { apiError, guardedGet, jsonOk, preflight } from "@/lib/agent/http";
+import { apiError, guardedGet, jsonOk, preflight, methodNotAllowed } from "@/lib/agent/http";
 import { checkQueryKeys } from "@/lib/agent/params";
 import { isValidSlug, viewCacheControl } from "@/lib/watchLoad";
 
@@ -18,6 +18,13 @@ const NOT_FOUND_CACHE = "public, s-maxage=300";
 export function OPTIONS() {
   return preflight();
 }
+
+// Read-only: every other method gets the JSON error shape with CORS (not Next's bare 405).
+const notAllowed = (req: Request) => methodNotAllowed(req, "/api/v1/beaches/[slug]");
+export const POST = notAllowed;
+export const PUT = notAllowed;
+export const PATCH = notAllowed;
+export const DELETE = notAllowed;
 
 export function GET(req: Request, ctx: { params: Promise<{ slug: string }> }) {
   return guardedGet(req, "/api/v1/beaches/[slug]", async () => {

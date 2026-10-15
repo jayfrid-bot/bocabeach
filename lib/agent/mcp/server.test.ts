@@ -3,17 +3,18 @@ import type { ConditionsResponse } from "@/lib/types";
 
 vi.mock("@/lib/conditions", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/conditions")>();
-  return { ...actual, getConditions: vi.fn() };
+  return { ...actual, getConditions: vi.fn(), getCachedConditions: vi.fn() };
 });
 
-import { DELETE, GET, OPTIONS, POST } from "@/app/mcp/route";
-import { getConditions } from "@/lib/conditions";
+import { DELETE, GET, OPTIONS, PATCH, POST, PUT } from "@/app/mcp/route";
+import { getCachedConditions, getConditions } from "@/lib/conditions";
 import { resetAgentRateLimit } from "@/lib/agent/rateLimit";
 import { MCP_MAX_BODY_BYTES } from "@/lib/agent/constants";
-import { LATEST_PROTOCOL_VERSION } from "@/lib/agent/mcp/server";
+import { ALLOWED_ORIGINS, LATEST_PROTOCOL_VERSION } from "@/lib/agent/mcp/server";
 import { BUILT_MS, conditionsFor, post, req, rpc } from "@/lib/agent/testkit";
 
 const mocked = vi.mocked(getConditions);
+const cached = vi.mocked(getCachedConditions);
 let logs: string[];
 
 beforeEach(() => {
@@ -21,11 +22,13 @@ beforeEach(() => {
   logs = [];
   vi.spyOn(console, "log").mockImplementation((s: string) => void logs.push(String(s)));
   mocked.mockImplementation(async (slug: string) => conditionsFor(slug));
+  cached.mockImplementation(async (slug: string) => conditionsFor(slug)); // warm shared cache
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(BUILT_MS);
 });
 afterEach(() => {
   mocked.mockReset();
+  cached.mockReset();
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
@@ -40,27 +43,49 @@ const tool = async (name: string, args?: unknown, id = 7) => {
   return json;
 };
 
+const INIT = {
+  protocolVersion: "2025-06-18",
+  capabilities: {},
+  clientInfo: { name: "t", version: "1" },
+};
+
 describe("initialize", () => {
-  it("negotiates the version and advertises tools only, with no session", async () => {
-    const { res, json } = await call(
-      rpc("initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "t", version: "1" } }, "abc"),
-    );
+  it("answers with the one revision it implements, tools only, no session", async () => {
+    const { res, json } = await call(rpc("initialize", INIT, "abc"));
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toContain("application/json");
     expect(res.headers.get("Mcp-Session-Id")).toBeNull();
     expect(res.headers.get("Set-Cookie")).toBeNull();
-    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     expect(json).toMatchObject({ jsonrpc: "2.0", id: "abc" });
-    expect(json.result.protocolVersion).toBe("2025-03-26");
+    expect(json.result.protocolVersion).toBe("2025-06-18");
     expect(json.result.capabilities).toEqual({ tools: { listChanged: false } });
     expect(json.result.serverInfo.name).toBe("isitbeachday");
     expect(json.result.instructions).toContain("Lifeguard flags and posted warnings always win.");
   });
 
-  it("answers an unknown or missing version with the latest one", async () => {
-    expect((await call(rpc("initialize", { protocolVersion: "1999-01-01" }))).json.result.protocolVersion).toBe(LATEST_PROTOCOL_VERSION);
-    expect((await call(rpc("initialize"))).json.result.protocolVersion).toBe(LATEST_PROTOCOL_VERSION);
+  it("answers 2025-06-18 whatever version the client asks for", async () => {
+    for (const asked of ["2025-03-26", "2024-11-05", "1999-01-01", "2099-01-01", ""]) {
+      const { json } = await call(rpc("initialize", { ...INIT, protocolVersion: asked }));
+      expect(json.result.protocolVersion, asked).toBe(LATEST_PROTOCOL_VERSION);
+    }
+  });
+
+  it("requires protocolVersion, capabilities and clientInfo (name, version)", async () => {
+    const cases: Array<[unknown, RegExp]> = [
+      [undefined, /protocolVersion/],
+      [{}, /protocolVersion/],
+      [{ protocolVersion: 5, capabilities: {}, clientInfo: { name: "t", version: "1" } }, /protocolVersion/],
+      [{ protocolVersion: "2025-06-18", clientInfo: { name: "t", version: "1" } }, /capabilities/],
+      [{ protocolVersion: "2025-06-18", capabilities: {} }, /clientInfo/],
+      [{ protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "t" } }, /clientInfo\.version/],
+      [{ protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { version: "1" } }, /clientInfo\.name/],
+    ];
+    for (const [params, re] of cases) {
+      const { json } = await call(rpc("initialize", params));
+      expect(json.error.code).toBe(-32602);
+      expect(json.error.message).toMatch(re);
+    }
   });
 
   it("accepts the initialized notification with 202 and no body", async () => {
@@ -117,15 +142,19 @@ describe("tools/call happy paths", () => {
   });
 
   it("find_nearest_beach returns beaches, with scores only on request and never more than 3", async () => {
-    const plain = (await tool("find_nearest_beach", { lat: 26.36, lon: -80.06 })).result;
+    const plain = (await tool("find_nearest_beach", { lat: 26.361234, lon: -80.064567 })).result;
+    expect(JSON.stringify(plain)).not.toContain("26.361234");
     expect(plain.structuredContent.count).toBe(3);
     expect(plain.structuredContent.beaches[0].slug).toBe("boca-raton");
     expect(plain.content[0].text).toContain("slug: boca-raton");
     expect(mocked).not.toHaveBeenCalled();
+    expect(cached).not.toHaveBeenCalled();
     const scored = (await tool("find_nearest_beach", { lat: 26.36, lon: -80.06, limit: 5, include_scores: true })).result;
     expect(scored.structuredContent.scored).toBe(3);
-    expect(mocked).toHaveBeenCalledTimes(3);
+    expect(cached).toHaveBeenCalledTimes(3);
+    expect(mocked).not.toHaveBeenCalled();
     expect(scored.structuredContent.safetyNote).toBeTruthy();
+    expect(scored.structuredContent.query).toEqual({ lat: 26.36, lon: -80.06, limit: 5 });
   });
 
   it("find_nearest_beach says when nothing is close", async () => {
@@ -135,7 +164,7 @@ describe("tools/call happy paths", () => {
 
   it("best_beach_today ranks by score and says what it left out", async () => {
     // Give each beach a different cap so the order is decided by the score, not by distance.
-    mocked.mockImplementation(async (slug: string) => {
+    cached.mockImplementation(async (slug: string) => {
       const c = conditionsFor(slug)!;
       const bump: Record<string, number> = { "deerfield-beach": 90 };
       if (bump[slug]) c.score = { ...c.score, score: bump[slug] };
@@ -160,17 +189,44 @@ describe("tools/call happy paths", () => {
   it("best_beach_today by state compares the first few and caps at 5", async () => {
     const r = (await tool("best_beach_today", { state: "FL", compare: 5 })).result;
     expect(r.structuredContent.comparedCount).toBe(5);
-    expect(mocked).toHaveBeenCalledTimes(5);
+    expect(cached).toHaveBeenCalledTimes(5);
+    expect(mocked).not.toHaveBeenCalled();
     expect(r.structuredContent.notCompared.length).toBeGreaterThan(0);
     expect(r.content[0].text).toMatch(/Give lat and lon/);
   });
 
   it("best_beach_today reports beaches it could not build instead of failing", async () => {
+    cached.mockImplementation(async (slug: string) => (slug === "boca-raton" ? null : conditionsFor(slug)));
     mocked.mockImplementation(async (slug: string) => (slug === "boca-raton" ? null : conditionsFor(slug)));
     const d = (await tool("best_beach_today", { state: "FL", compare: 3 })).result.structuredContent;
     expect(d.skipped).toEqual([{ slug: "boca-raton", name: "Boca Raton", reason: "not_found" }]);
     expect(d.ranking).toHaveLength(2);
     expect(d.best).not.toBeNull();
+  });
+
+  it("best_beach_today builds at most ONE beach when the cache is cold, and names the rest", async () => {
+    cached.mockResolvedValue(null);
+    const r = (await tool("best_beach_today", { lat: 26.36, lon: -80.06, radius_miles: 250, compare: 5 })).result;
+    expect(mocked).toHaveBeenCalledTimes(1);
+    expect(mocked).toHaveBeenCalledWith("boca-raton"); // the nearest one
+    const d = r.structuredContent;
+    expect(d.comparedCount).toBe(5);
+    expect(d.ranking).toHaveLength(1);
+    expect(d.best.slug).toBe("boca-raton");
+    expect(d.notComparedNow).toHaveLength(4);
+    for (const n of d.notComparedNow) {
+      expect(n).toEqual({ slug: expect.any(String), name: expect.any(String), reason: "no_recent_snapshot" });
+      expect(r.content[0].text).toContain(n.slug);
+    }
+    expect(r.content[0].text).toMatch(/Not compared right now/);
+    expect(d.skipped).toEqual([]);
+  });
+
+  it("best_beach_today with a warm cache builds nothing at all", async () => {
+    const r = (await tool("best_beach_today", { state: "FL", compare: 5 })).result;
+    expect(r.structuredContent.ranking).toHaveLength(5);
+    expect(r.structuredContent.notComparedNow).toEqual([]);
+    expect(mocked).not.toHaveBeenCalled();
   });
 
   it("best_beach_today with an empty area says so", async () => {
@@ -198,6 +254,7 @@ describe("tools/call errors", () => {
       ["find_nearest_beach", { lat: 1, lon: 1, limit: 6 }, /at most 5/],
       ["best_beach_today", { compare: 9, state: "FL" }, /at most 5/],
       ["list_beaches", { state: 3 }, /expected string/],
+      ["list_beaches", { region: "x".repeat(81) }, /too long/],
     ];
     for (const [name, args, re] of cases) {
       const json = await tool(name, args);
@@ -211,6 +268,8 @@ describe("tools/call errors", () => {
     expect((await tool("get_beach_score", { slug: "nope" })).result).toMatchObject({ isError: true });
     expect((await tool("get_beach_score", { slug: "nope" })).result.content[0].text).toContain("list_beaches");
     expect((await tool("list_beaches", { state: "Atlantis" })).result.isError).toBe(true);
+    expect((await tool("list_beaches", { state: " FL" })).result.isError).toBe(true);
+    expect((await tool("list_beaches", { region: "" })).result.isError).toBe(true);
     expect((await tool("best_beach_today", {})).result.isError).toBe(true);
     expect((await tool("best_beach_today", { lat: 26 })).result.isError).toBe(true);
   });
@@ -296,36 +355,88 @@ describe("protocol errors", () => {
     expect((await call(json)).res.status).toBe(200);
   });
 
-  it("refuses a non-JSON content type and an unsupported protocol version header", async () => {
-    expect((await POST(post(rpc("ping"), { "content-type": "text/plain" }))).status).toBe(415);
-    const old = await POST(post(rpc("ping"), { "mcp-protocol-version": "2020-01-01" }));
-    expect(old.status).toBe(400);
-    expect((await POST(post(rpc("ping"), { "mcp-protocol-version": "2025-06-18" }))).status).toBe(200);
+  it("requires Content-Type application/json (parameters allowed), and an Accept that allows JSON", async () => {
+    for (const ct of ["text/plain", "application/x-www-form-urlencoded", "application/jsonx", ""]) {
+      const res = await POST(post(rpc("ping"), { "content-type": ct }));
+      expect(res.status, ct).toBe(415);
+    }
+    const noType = new Request("https://isitbeachday.com/mcp", { method: "POST", body: rpc("ping") });
+    // A string body makes fetch add text/plain, which is also refused.
+    expect((await POST(noType)).status).toBe(415);
+    expect((await POST(post(rpc("ping"), { "content-type": "Application/JSON; charset=utf-8" }))).status).toBe(200);
+    expect((await POST(post(rpc("ping"), { accept: "text/event-stream" }))).status).toBe(406);
+    expect((await POST(post(rpc("ping"), { accept: "*/*" }))).status).toBe(200);
+    expect((await POST(post(rpc("ping"), { accept: "application/json, text/event-stream" }))).status).toBe(200);
   });
 
-  it("GET and DELETE are 405 with a short description; OPTIONS is a preflight", async () => {
-    for (const handler of [GET, DELETE]) {
+  it("accepts only the 2025-06-18 protocol version header; a missing header is allowed", async () => {
+    for (const v of ["2020-01-01", "2025-03-26", "2024-11-05", "2099-01-01"]) {
+      expect((await POST(post(rpc("ping"), { "mcp-protocol-version": v }))).status, v).toBe(400);
+    }
+    expect((await POST(post(rpc("ping"), { "mcp-protocol-version": "2025-06-18" }))).status).toBe(200);
+    expect((await POST(post(rpc("ping")))).status).toBe(200);
+  });
+
+  it("allows no Origin and the site's own origins, and refuses any other with 403", async () => {
+    expect((await POST(post(rpc("ping")))).status).toBe(200);
+    for (const origin of ALLOWED_ORIGINS) {
+      const res = await POST(post(rpc("ping"), { origin }));
+      expect(res.status, origin).toBe(200);
+      expect(res.headers.get("Access-Control-Allow-Origin")).toBe(origin);
+      expect(res.headers.get("Vary")).toBe("Origin");
+    }
+    for (const origin of [
+      "https://evil.example", "http://isitbeachday.com", "https://isitbeachday.com.evil.example",
+      "https://www.isitbeachday.com", "null", "http://localhost:3000", "https://isitbeachday.com/",
+    ]) {
+      const res = await POST(post(rpc("ping"), { origin }));
+      expect(res.status, origin).toBe(403);
+      expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+      expect((await res.json()).error.message).toMatch(/Origin/);
+    }
+    expect(mocked).not.toHaveBeenCalled();
+  });
+
+  it("sends no CORS headers when there is no Origin (a connector's server)", async () => {
+    const res = await POST(post(rpc("ping")));
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+  });
+
+  it("GET, DELETE, PUT and PATCH are 405 with a short description", async () => {
+    for (const handler of [GET, DELETE, PUT, PATCH]) {
       const res = handler(req("/mcp"));
       expect(res.status).toBe(405);
       expect(res.headers.get("Allow")).toContain("POST");
       const body = await res.json();
       expect(body.tools).toContain("get_beach_score");
+      expect(body.protocolVersion).toBe("2025-06-18");
     }
-    const pre = OPTIONS();
-    expect(pre.status).toBe(204);
-    expect(pre.headers.get("Access-Control-Allow-Methods")).toContain("POST");
-    expect(pre.headers.get("Access-Control-Allow-Headers")).toContain("MCP-Protocol-Version");
+    expect(GET(req("/mcp", { headers: { origin: "https://evil.example" } })).status).toBe(403);
+  });
+
+  it("answers a preflight only for an allowed origin", () => {
+    const ok = OPTIONS(req("/mcp", { method: "OPTIONS", headers: { origin: "https://isitbeachday.com" } }));
+    expect(ok.status).toBe(204);
+    expect(ok.headers.get("Access-Control-Allow-Origin")).toBe("https://isitbeachday.com");
+    expect(ok.headers.get("Access-Control-Allow-Methods")).toContain("POST");
+    expect(ok.headers.get("Access-Control-Allow-Headers")).toContain("MCP-Protocol-Version");
+    expect(OPTIONS(req("/mcp", { method: "OPTIONS", headers: { origin: "https://evil.example" } })).status).toBe(403);
+    const bare = OPTIONS(req("/mcp", { method: "OPTIONS" }));
+    expect(bare.status).toBe(204);
+    expect(bare.headers.get("Access-Control-Allow-Origin")).toBeNull();
   });
 });
 
 describe("guardrails", () => {
-  it("rate limits per IP with a JSON-RPC error, Retry-After and CORS", async () => {
-    const hit = () => POST(post(rpc("ping"), { "cf-connecting-ip": "203.0.113.50" }));
+  it("rate limits per IP on its own, larger budget, with a JSON-RPC error and Retry-After", async () => {
+    const hit = () => POST(post(rpc("ping"), { "cf-connecting-ip": "203.0.113.50", origin: "https://app.isitbeachday.com" }));
     let last: Response | undefined;
-    for (let i = 0; i < 41; i++) last = await hit();
-    expect(last!.status).toBe(429);
+    // More than the REST burst (40) is fine on MCP.
+    for (let i = 0; i < 120; i++) expect((last = await hit()).status).toBe(200);
+    last = await hit();
+    expect(last.status).toBe(429);
     expect(Number(last!.headers.get("Retry-After"))).toBeGreaterThanOrEqual(1);
-    expect(last!.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(last!.headers.get("Access-Control-Allow-Origin")).toBe("https://app.isitbeachday.com");
     expect((await last!.json()).error.code).toBe(-32029);
     expect((await POST(post(rpc("ping"), { "cf-connecting-ip": "203.0.113.51" }))).status).toBe(200);
   });

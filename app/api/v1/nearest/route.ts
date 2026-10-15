@@ -1,11 +1,12 @@
 // GET /api/v1/nearest?lat=&lon=&limit=&scores= — the closest beaches to a point,
 // measured to each beach's shoreline. With scores=true, the nearest few (at most
 // MAX_REST_SCORES) also carry a compact live score; the cap protects the upstream
-// data sources. The coordinates are used for this answer only and are never stored
-// or logged.
+// data sources. Scores come from the shared conditions cache; at most one beach per
+// request is built cold. The app does not store or log the coordinates; the answer
+// echoes them rounded to 2 decimals and is never cached (no-store).
 
 import { MAX_NEAREST_LIMIT, DEFAULT_NEAREST_LIMIT, MAX_REST_SCORES } from "@/lib/agent/constants";
-import { apiError, guardedGet, jsonOk, preflight } from "@/lib/agent/http";
+import { apiError, guardedGet, jsonOk, preflight, methodNotAllowed } from "@/lib/agent/http";
 import {
   LAT_RANGE,
   LON_RANGE,
@@ -16,13 +17,19 @@ import {
   parseNumber,
 } from "@/lib/agent/params";
 import { runNearest } from "@/lib/agent/queries";
-import { viewsCacheControl } from "@/lib/watchLoad";
 
 export const dynamic = "force-dynamic";
 
 export function OPTIONS() {
   return preflight();
 }
+
+// Read-only: every other method gets the JSON error shape with CORS (not Next's bare 405).
+const notAllowed = (req: Request) => methodNotAllowed(req, "/api/v1/nearest");
+export const POST = notAllowed;
+export const PUT = notAllowed;
+export const PATCH = notAllowed;
+export const DELETE = notAllowed;
 
 export function GET(req: Request) {
   return guardedGet(req, "/api/v1/nearest", async () => {
@@ -55,14 +62,7 @@ export function GET(req: Request) {
 
     const scoreCount = withScores ? Math.min(limit, MAX_REST_SCORES) : 0;
     const result = await runNearest({ lat: lat.value, lon: lon.value, limit, scoreCount });
-    const { views, ...body } = result;
-    // Distances never change. Scores follow the same rule as /beaches/{slug}, and a
-    // partial answer (a score that failed to build) is never kept by the edge.
-    const cache = !withScores
-      ? "public, s-maxage=3600"
-      : result.scored < Math.min(scoreCount, result.count)
-        ? "no-store"
-        : viewsCacheControl(views);
-    return jsonOk(body, cache);
+    // The URL carries a location, so no cache keeps this answer.
+    return jsonOk(result, "no-store");
   });
 }

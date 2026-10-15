@@ -4,7 +4,7 @@
 // owns the content; this file owns only "fetch, refuse a partial build, strip
 // internal fields, and say how long the answer may be cached".
 
-import { getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
+import { getCachedConditions, getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
 import { buildWatchView, cacheControlFor, type WatchView } from "@/lib/watchView";
 import type { ConditionsResponse } from "@/lib/types";
 
@@ -17,15 +17,25 @@ export type WatchLoad =
   | { status: "ok"; view: WatchView }
   | { status: "not_found" }
   /** The build ran out of upstream budget. Deliberately incomplete: never an answer. */
-  | { status: "incomplete" };
+  | { status: "incomplete" }
+  /** Cache-only lookups only: no recent snapshot was in the shared cache, and none was built. */
+  | { status: "not_cached" };
 
-export async function loadWatchView(slug: string): Promise<WatchLoad> {
+/**
+ * `cacheOnly` reads the shared conditions cache and never starts a build. A miss, or a
+ * cached view that is already past its `validUntil`, is "not_cached".
+ */
+export async function loadWatchView(slug: string): Promise<Exclude<WatchLoad, { status: "not_cached" }>>;
+export async function loadWatchView(slug: string, opts: { cacheOnly: true }): Promise<WatchLoad>;
+export async function loadWatchView(slug: string, opts: { cacheOnly?: boolean } = {}): Promise<WatchLoad> {
   if (!isValidSlug(slug)) return { status: "not_found" };
-  const data = await getConditions(slug);
-  if (!data) return { status: "not_found" };
+  const data = opts.cacheOnly ? await getCachedConditions(slug) : await getConditions(slug);
+  if (!data) return opts.cacheOnly ? { status: "not_cached" } : { status: "not_found" };
   const { budgetAborted, ...publicData } = stripInternalSnapshotFields(data);
   if (budgetAborted) return { status: "incomplete" };
-  return { status: "ok", view: buildWatchView(publicData as ConditionsResponse) };
+  const view = buildWatchView(publicData as ConditionsResponse);
+  if (opts.cacheOnly && Date.parse(view.validUntil) <= Date.now()) return { status: "not_cached" };
+  return { status: "ok", view };
 }
 
 /** Whole seconds this view may still be called current (0 or less = expired). */
@@ -36,10 +46,4 @@ export function secondsValid(view: Pick<WatchView, "validUntil" | "capturedAt">)
 /** Cache-Control for one view: min(60 s, time left), or no-store when none is left. */
 export function viewCacheControl(view: Pick<WatchView, "validUntil" | "capturedAt">): string {
   return cacheControlFor(secondsValid(view));
-}
-
-/** Cache-Control for several views at once: the shortest one wins. */
-export function viewsCacheControl(views: Array<Pick<WatchView, "validUntil" | "capturedAt">>): string {
-  if (!views.length) return "no-store";
-  return cacheControlFor(Math.min(...views.map(secondsValid)));
 }

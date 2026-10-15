@@ -7,23 +7,29 @@
 //   - POST /mcp, one JSON-RPC message per request (batches were removed in 2025-06-18).
 //   - A request gets a JSON body (application/json, never an SSE stream).
 //   - A notification or a response gets 202 Accepted with no body.
-//   - initialize negotiates the protocol version; no Mcp-Session-Id is ever issued,
+//   - ONLY revision 2025-06-18 is implemented, advertised and negotiated: initialize
+//     answers 2025-06-18 whatever the client asks for. No Mcp-Session-Id is ever issued,
 //     so there is nothing to store and nothing to expire.
-//   - GET and DELETE answer 405 (the server opens no SSE stream and has no session).
+//   - Origin is validated (spec MUST, DNS-rebinding protection): no Origin header is fine
+//     (server-to-server connectors); a present Origin must be on ALLOWED_ORIGINS, else 403.
+//   - POST needs Content-Type application/json (415). A present Accept must allow JSON (406).
+//   - GET, DELETE and every other method answer 405 (no SSE stream, no session).
 //   - tools/call: an unknown tool is a JSON-RPC error (-32602); bad arguments and
 //     lookups that fail (unknown beach) come back as a tool result with isError true,
 //     so the model can read the message and fix its call.
 // No Durable Object, no KV, no cookies. Tool arguments are never logged.
 
 import { MCP_MAX_BODY_BYTES, MCP_PATH, SAFETY_NOTE, SITE_URL, CREDIT } from "@/lib/agent/constants";
-import { CORS_HEADERS } from "@/lib/agent/http";
 import { logAgentRequest } from "@/lib/agent/log";
 import { checkAgentRateLimit } from "@/lib/agent/rateLimit";
 import { validateJson } from "@/lib/agent/schema";
 import { TOOLS, TOOLS_BY_NAME } from "@/lib/agent/mcp/tools";
 
 export const LATEST_PROTOCOL_VERSION = "2025-06-18";
-export const SUPPORTED_PROTOCOL_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"] as const;
+/** The only revision this server implements. Older clients (batching, legacy SSE) are not served. */
+export const SUPPORTED_PROTOCOL_VERSIONS = [LATEST_PROTOCOL_VERSION] as const;
+/** Browser origins allowed to call /mcp. A request with no Origin header (a connector's server) is allowed. */
+export const ALLOWED_ORIGINS: readonly string[] = ["https://isitbeachday.com", "https://app.isitbeachday.com"];
 export const SERVER_INFO = {
   name: "isitbeachday",
   title: "Is It Beach Day",
@@ -50,15 +56,29 @@ const ERR = {
 type RpcId = string | number | null;
 
 function baseHeaders(extra: Record<string, string> = {}): Headers {
-  const h = new Headers({
-    "Cache-Control": "no-store",
-    "Content-Type": "application/json",
-    ...CORS_HEADERS,
-    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Accept, MCP-Protocol-Version, Mcp-Session-Id, Last-Event-ID",
-    ...extra,
-  });
-  return h;
+  return new Headers({ "Cache-Control": "no-store", "Content-Type": "application/json", ...extra });
+}
+
+type OriginCheck = { state: "none" } | { state: "ok"; origin: string } | { state: "bad" };
+
+function checkOrigin(req: Request): OriginCheck {
+  const origin = req.headers.get("origin");
+  if (origin === null) return { state: "none" };
+  return ALLOWED_ORIGINS.includes(origin) ? { state: "ok", origin } : { state: "bad" };
+}
+
+/** CORS only for an allowed browser origin, echoed back (never "*"). */
+function withMcpCors(req: Request, res: Response): Response {
+  const o = checkOrigin(req);
+  if (o.state === "ok") {
+    res.headers.set("Access-Control-Allow-Origin", o.origin);
+    res.headers.set("Vary", "Origin");
+    res.headers.set("Access-Control-Allow-Methods", "POST, OPTIONS");
+    res.headers.set("Access-Control-Allow-Headers", "Content-Type, Accept, MCP-Protocol-Version");
+    res.headers.set("Access-Control-Expose-Headers", "Retry-After");
+    res.headers.set("Access-Control-Max-Age", "86400");
+  }
+  return res;
 }
 
 function rpcError(id: RpcId, code: number, message: string, status = 200, extra: Record<string, string> = {}): Response {
@@ -78,28 +98,38 @@ function accepted(): Response {
   return new Response(null, { status: 202, headers: h });
 }
 
-export function mcpPreflight(): Response {
+const forbiddenOrigin = (): Response =>
+  rpcError(null, ERR.invalidRequest, "Origin not allowed.", 403);
+
+export function mcpPreflight(req: Request): Response {
+  if (checkOrigin(req).state === "bad") return forbiddenOrigin();
   const h = baseHeaders();
   h.delete("Content-Type");
-  return new Response(null, { status: 204, headers: h });
+  return withMcpCors(req, new Response(null, { status: 204, headers: h }));
 }
 
-/** GET and DELETE: no SSE stream, no sessions. A short description helps people who open the URL. */
+/** GET, DELETE and any other method: no SSE stream, no sessions. A short description helps people who open the URL. */
 export function mcpMethodNotAllowed(req: Request): Response {
-  const res = new Response(
-    JSON.stringify({
-      error: {
-        code: "method_not_allowed",
-        message: `This is a stateless MCP endpoint. Send JSON-RPC with POST ${MCP_PATH}. It opens no event stream and keeps no session.`,
-      },
-      server: SERVER_INFO,
-      protocolVersion: LATEST_PROTOCOL_VERSION,
-      tools: TOOLS.map((t) => t.name),
-      docs: `${SITE_URL}/llms.txt`,
-    }),
-    { status: 405, headers: baseHeaders({ Allow: "POST, OPTIONS" }) },
-  );
-  logAgentRequest(req, { route: MCP_PATH, status: 405 });
+  const res =
+    checkOrigin(req).state === "bad"
+      ? forbiddenOrigin()
+      : withMcpCors(
+          req,
+          new Response(
+            JSON.stringify({
+              error: {
+                code: "method_not_allowed",
+                message: `This is a stateless MCP endpoint. Send JSON-RPC with POST ${MCP_PATH}. It opens no event stream and keeps no session.`,
+              },
+              server: SERVER_INFO,
+              protocolVersion: LATEST_PROTOCOL_VERSION,
+              tools: TOOLS.map((t) => t.name),
+              docs: `${SITE_URL}/llms.txt`,
+            }),
+            { status: 405, headers: baseHeaders({ Allow: "POST, OPTIONS" }) },
+          ),
+        );
+  logAgentRequest(req, { route: MCP_PATH, status: res.status });
   return res;
 }
 
@@ -166,15 +196,25 @@ async function dispatch(msg: Record<string, unknown>): Promise<Dispatched> {
 
   switch (method) {
     case "initialize": {
-      const asked = isObject(params) ? params.protocolVersion : undefined;
-      const version =
-        typeof asked === "string" && (SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(asked)
-          ? asked
-          : LATEST_PROTOCOL_VERSION;
+      // The spec's required fields. Only the protocolVersion VALUE is lenient: any string is
+      // accepted and answered with the one revision this server implements.
+      const p = isObject(params) ? params : {};
+      const missing: string[] = [];
+      if (typeof p.protocolVersion !== "string") missing.push("protocolVersion (string)");
+      if (!isObject(p.capabilities)) missing.push("capabilities (object)");
+      const ci = isObject(p.clientInfo) ? p.clientInfo : null;
+      if (!ci) missing.push("clientInfo (object)");
+      else {
+        if (typeof ci.name !== "string") missing.push("clientInfo.name (string)");
+        if (typeof ci.version !== "string") missing.push("clientInfo.version (string)");
+      }
+      if (missing.length) {
+        return { rpc: method, response: rpcError(id, ERR.invalidParams, `initialize needs: ${missing.join(", ")}.`) };
+      }
       return {
         rpc: method,
         response: rpcResult(id, {
-          protocolVersion: version,
+          protocolVersion: LATEST_PROTOCOL_VERSION,
           capabilities: { tools: { listChanged: false } },
           serverInfo: SERVER_INFO,
           instructions: SERVER_INSTRUCTIONS,
@@ -258,13 +298,22 @@ async function dispatch(msg: Record<string, unknown>): Promise<Dispatched> {
   }
 }
 
+function acceptsJson(accept: string | null): boolean {
+  if (accept === null) return true; // lenient: a client that sends no Accept still gets JSON
+  return accept
+    .split(",")
+    .map((t) => t.split(";")[0].trim().toLowerCase())
+    .some((t) => t === "application/json" || t === "application/*" || t === "*/*");
+}
+
 export async function handleMcpPost(req: Request): Promise<Response> {
   const finish = (d: Dispatched, extra: { limited?: boolean } = {}) => {
+    withMcpCors(req, d.response);
     logAgentRequest(req, { route: MCP_PATH, status: d.response.status, rpc: d.rpc, tool: d.tool, limited: extra.limited || undefined });
     return d.response;
   };
 
-  const limit = await checkAgentRateLimit(req);
+  const limit = await checkAgentRateLimit(req, "mcp");
   if (limit.limited) {
     return finish(
       { response: rpcError(null, ERR.rateLimited, "Too many requests. Retry after the Retry-After seconds.", 429, { "Retry-After": String(limit.retryAfterSec) }) },
@@ -272,18 +321,24 @@ export async function handleMcpPost(req: Request): Promise<Response> {
     );
   }
 
-  const contentType = req.headers.get("content-type");
-  if (contentType && !/json/i.test(contentType)) {
+  if (checkOrigin(req).state === "bad") return finish({ response: forbiddenOrigin() });
+
+  const mediaType = (req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
+  if (mediaType !== "application/json") {
     return finish({ response: rpcError(null, ERR.invalidRequest, "Content-Type must be application/json.", 415) });
   }
+  if (!acceptsJson(req.headers.get("accept"))) {
+    return finish({ response: rpcError(null, ERR.invalidRequest, "Accept must allow application/json.", 406) });
+  }
 
+  // A missing MCP-Protocol-Version is allowed (this server keeps no session to tell it apart);
+  // a present one must be the revision this server implements.
   const version = req.headers.get("mcp-protocol-version");
-  if (version && !(SUPPORTED_PROTOCOL_VERSIONS as readonly string[]).includes(version)) {
+  if (version !== null && version !== LATEST_PROTOCOL_VERSION) {
     return finish({
       response: rpcError(null, ERR.invalidRequest, `Unsupported MCP-Protocol-Version "${version.slice(0, 20)}". Supported: ${SUPPORTED_PROTOCOL_VERSIONS.join(", ")}.`, 400),
     });
   }
-
   const body = await readBodyCapped(req, MCP_MAX_BODY_BYTES);
   if (!body.ok) {
     return body.reason === "too_large"

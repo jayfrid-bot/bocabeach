@@ -1,23 +1,33 @@
-// Per-IP rate limit for /api/v1/* and /mcp.
+// Per-IP rate limits for /api/v1/* (scope "rest") and /mcp (scope "mcp"), as two
+// separate budgets: REST 60 per minute per IP, MCP 300 per minute per IP. MCP gets
+// more because hosted connectors (Claude, ChatGPT) share egress addresses, and one
+// connector setup spends several calls (initialize, initialized, tools/list).
 //
 // Two layers, no new paid service and no Durable Object:
-//  1. The Cloudflare Workers Rate Limiting binding AGENT_RATE_LIMITER (wrangler.jsonc
-//     "ratelimits"), when it is bound. It counts per key across the whole edge
-//     location, so it is the real limit.
+//  1. A Cloudflare Workers Rate Limiting binding per scope (wrangler.jsonc "ratelimits":
+//     AGENT_RATE_LIMITER and AGENT_MCP_RATE_LIMITER), when bound. Cloudflare counters
+//     are per location and eventually consistent, so this is a brake, not a hard
+//     ceiling on cost. The real protection for the data sources is the shared 120-s
+//     conditions cache plus the "one cold build per request" rule (beachView.loadMany).
 //  2. An in-isolate token bucket, used when the binding is missing (local dev, tests,
-//     a deploy that did not add it) or throws. Each isolate has its own buckets, so a
-//     determined caller can get several times the limit; it still stops a tight loop.
-// The edge cache on the GET answers (Cache-Control s-maxage) absorbs repeat reads.
+//     a deploy that did not add it) or throws. Each isolate has its own buckets.
 //
 // Never uses KV: a KV write per request would burn the free daily write quota.
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { clientIp } from "@/lib/plus/rateLimit";
 
-/** Sustained requests per second per IP in the fallback bucket (= 60 per minute). */
-export const BUCKET_REFILL_PER_SEC = 1;
-/** Burst a quiet client may spend at once. */
-export const BUCKET_CAPACITY = 40;
+export type LimitScope = "rest" | "mcp";
+
+const SCOPES: Record<LimitScope, { binding: string; capacity: number; refillPerSec: number; perMinute: number }> = {
+  rest: { binding: "AGENT_RATE_LIMITER", capacity: 40, refillPerSec: 1, perMinute: 60 },
+  mcp: { binding: "AGENT_MCP_RATE_LIMITER", capacity: 120, refillPerSec: 5, perMinute: 300 },
+};
+
+/** Fallback bucket numbers for REST (kept for tests and docs). */
+export const BUCKET_CAPACITY = SCOPES.rest.capacity;
+export const BUCKET_REFILL_PER_SEC = SCOPES.rest.refillPerSec;
+export const SCOPE_LIMITS = SCOPES;
 const MAX_TRACKED_IPS = 5_000;
 /** The binding's own period; used for Retry-After when it says no. */
 const BINDING_PERIOD_SEC = 60;
@@ -38,7 +48,9 @@ export function resetAgentRateLimit(): void {
 }
 
 /** Take one token from `key`'s bucket. Pure apart from the module-level map. */
-export function takeToken(key: string, nowMs: number): AgentLimitResult {
+export function takeToken(key: string, nowMs: number, scope: LimitScope = "rest"): AgentLimitResult {
+  const { capacity, refillPerSec } = SCOPES[scope];
+  key = `${scope}:${key}`;
   let b = buckets.get(key);
   if (!b) {
     if (buckets.size >= MAX_TRACKED_IPS) {
@@ -49,10 +61,10 @@ export function takeToken(key: string, nowMs: number): AgentLimitResult {
         buckets.delete(k);
       }
     }
-    b = { tokens: BUCKET_CAPACITY, at: nowMs };
+    b = { tokens: capacity, at: nowMs };
   } else {
     const elapsedSec = Math.max(0, (nowMs - b.at) / 1000);
-    b.tokens = Math.min(BUCKET_CAPACITY, b.tokens + elapsedSec * BUCKET_REFILL_PER_SEC);
+    b.tokens = Math.min(capacity, b.tokens + elapsedSec * refillPerSec);
     b.at = nowMs;
     buckets.delete(key); // re-insert so recently used keys sit at the end
   }
@@ -61,22 +73,26 @@ export function takeToken(key: string, nowMs: number): AgentLimitResult {
     b.tokens -= 1;
     return { limited: false, retryAfterSec: 0 };
   }
-  return { limited: true, retryAfterSec: Math.max(1, Math.ceil((1 - b.tokens) / BUCKET_REFILL_PER_SEC)) };
+  return { limited: true, retryAfterSec: Math.max(1, Math.ceil((1 - b.tokens) / refillPerSec)) };
 }
 
-async function getBinding(): Promise<RateLimitBinding | null> {
+async function getBinding(scope: LimitScope): Promise<RateLimitBinding | null> {
   try {
     const ctx = await getCloudflareContext({ async: true });
-    const b = (ctx?.env as Record<string, unknown> | undefined)?.AGENT_RATE_LIMITER as RateLimitBinding | undefined;
+    const b = (ctx?.env as Record<string, unknown> | undefined)?.[SCOPES[scope].binding] as RateLimitBinding | undefined;
     return b && typeof b.limit === "function" ? b : null;
   } catch {
     return null;
   }
 }
 
-export async function checkAgentRateLimit(req: Request, nowMs: number = Date.now()): Promise<AgentLimitResult> {
+export async function checkAgentRateLimit(
+  req: Request,
+  scope: LimitScope = "rest",
+  nowMs: number = Date.now(),
+): Promise<AgentLimitResult> {
   const ip = clientIp(req) ?? "unknown";
-  const binding = await getBinding();
+  const binding = await getBinding(scope);
   if (binding) {
     try {
       const { success } = await binding.limit({ key: ip });
@@ -85,5 +101,5 @@ export async function checkAgentRateLimit(req: Request, nowMs: number = Date.now
       // Fall through to the bucket: a broken limiter must not turn into no limit at all.
     }
   }
-  return takeToken(ip, nowMs);
+  return takeToken(ip, nowMs, scope);
 }

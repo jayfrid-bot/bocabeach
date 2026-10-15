@@ -48,7 +48,8 @@ export interface BeachConditions {
 export type BeachLoad =
   | { status: "ok"; conditions: BeachConditions }
   | { status: "not_found" }
-  | { status: "incomplete" };
+  | { status: "incomplete" }
+  | { status: "not_cached" };
 
 /** "Boca Raton: 78/100 (Good). Yellow flag. Water 82°F. Best 4–6 PM." */
 export function summarize(view: Pick<WatchView, "name" | "score" | "rating" | "lines">): string {
@@ -96,8 +97,11 @@ export function toBeachConditions(view: WatchView): BeachConditions | null {
   };
 }
 
-export async function loadBeachConditions(slug: string): Promise<BeachLoad> {
-  const loaded = await loadWatchView(slug);
+/** `cacheOnly`: read the shared conditions cache and never start a build. */
+export async function loadBeachConditions(slug: string): Promise<Exclude<BeachLoad, { status: "not_cached" }>>;
+export async function loadBeachConditions(slug: string, opts: { cacheOnly: true }): Promise<BeachLoad>;
+export async function loadBeachConditions(slug: string, opts: { cacheOnly?: boolean } = {}): Promise<BeachLoad> {
+  const loaded = opts.cacheOnly ? await loadWatchView(slug, { cacheOnly: true }) : await loadWatchView(slug);
   if (loaded.status !== "ok") return loaded;
   const conditions = toBeachConditions(loaded.view);
   return conditions ? { status: "ok", conditions } : { status: "not_found" };
@@ -129,15 +133,28 @@ export function compactConditions(c: BeachConditions): CompactConditions {
 
 export type ScoreOutcome =
   | { slug: string; ok: true; conditions: BeachConditions }
-  | { slug: string; ok: false; reason: "not_found" | "incomplete" | "error" };
+  | { slug: string; ok: false; reason: "not_found" | "incomplete" | "not_cached" | "error" };
 
-/** Build several beaches at once. A failure on one never sinks the others. */
+/**
+ * Score several beaches in one request WITHOUT fanning out into cold builds. A cold
+ * build is a full source fetch (about 25 subrequests); Workers Free allows 50 per
+ * request. So: every beach is first read from the shared cache (no build); then at
+ * most ONE beach that was not cached, the first in `slugs` order, is built. Every
+ * other uncached beach comes back as reason "not_cached" and is never built.
+ */
 export async function loadMany(slugs: readonly string[]): Promise<ScoreOutcome[]> {
-  const settled = await Promise.allSettled(slugs.map((s) => loadBeachConditions(s)));
-  return settled.map((r, i): ScoreOutcome => {
-    const slug = slugs[i];
+  const toOutcome = (slug: string, r: PromiseSettledResult<BeachLoad>): ScoreOutcome => {
     if (r.status === "rejected") return { slug, ok: false, reason: "error" };
     if (r.value.status === "ok") return { slug, ok: true, conditions: r.value.conditions };
     return { slug, ok: false, reason: r.value.status };
-  });
+  };
+  const peeked = await Promise.allSettled(slugs.map((s) => loadBeachConditions(s, { cacheOnly: true })));
+  const out = slugs.map((slug, i) => toOutcome(slug, peeked[i]));
+  const firstMiss = out.findIndex((o) => !o.ok && o.reason === "not_cached");
+  if (firstMiss >= 0) {
+    const slug = slugs[firstMiss];
+    const [built] = await Promise.allSettled([loadBeachConditions(slug)]);
+    out[firstMiss] = toOutcome(slug, built);
+  }
+  return out;
 }

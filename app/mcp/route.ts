@@ -18,6 +18,14 @@ export function DELETE(req: Request) {
   return mcpMethodNotAllowed(req);
 }
 
-export function OPTIONS() {
-  return mcpPreflight();
+export function PUT(req: Request) {
+  return mcpMethodNotAllowed(req);
+}
+
+export function PATCH(req: Request) {
+  return mcpMethodNotAllowed(req);
+}
+
+export function OPTIONS(req: Request) {
+  return mcpPreflight(req);
 }

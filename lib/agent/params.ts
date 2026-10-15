@@ -3,36 +3,55 @@
 
 export type Parsed<T> = { ok: true; value: T } | { ok: false; message: string };
 
-const DECIMAL = /^[+-]?(\d+(\.\d*)?|\.\d+)$/;
+// Strict and canonical: one spelling per value, so the same question is always asked the
+// same way (no whitespace, no plus sign, no exponent, no leading zeros, no "5.", no ".5",
+// no negative zero). Anything else is a 400, never a quiet guess.
+export const DECIMAL_PATTERN = "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$";
+const DECIMAL = new RegExp(DECIMAL_PATTERN);
+const INTEGER = /^(0|[1-9]\d{0,5})$/;
 const fail = (message: string): { ok: false; message: string } => ({ ok: false, message });
 
 export function parseNumber(raw: string, name: string, min: number, max: number): Parsed<number> {
-  const t = raw.trim();
-  if (t.length === 0 || t.length > 24 || !DECIMAL.test(t)) return fail(`${name} must be a number.`);
-  const n = Number(t);
+  if (raw.length === 0 || raw.length > 24 || !DECIMAL.test(raw)) {
+    return fail(`${name} must be a plain decimal number such as 26.35 (no spaces, plus sign, exponent or leading zeros).`);
+  }
+  const n = Number(raw);
   if (!Number.isFinite(n) || n < min || n > max) return fail(`${name} must be between ${min} and ${max}.`);
+  if (n === 0 && raw.startsWith("-")) return fail(`${name} must be written as 0, not -0.`);
   return { ok: true, value: n };
 }
 
 export function parseInteger(raw: string, name: string, min: number, max: number): Parsed<number> {
-  const t = raw.trim();
-  if (!/^\d{1,6}$/.test(t)) return fail(`${name} must be a whole number from ${min} to ${max}.`);
-  const n = Number(t);
+  if (!INTEGER.test(raw)) return fail(`${name} must be a whole number from ${min} to ${max}, with no leading zeros.`);
+  const n = Number(raw);
   if (n < min || n > max) return fail(`${name} must be a whole number from ${min} to ${max}.`);
   return { ok: true, value: n };
 }
 
+/** Exactly "true" or "false". */
 export function parseBool(raw: string, name: string): Parsed<boolean> {
-  const t = raw.trim().toLowerCase();
-  if (t === "true" || t === "1") return { ok: true, value: true };
-  if (t === "false" || t === "0") return { ok: true, value: false };
-  return fail(`${name} must be true or false.`);
+  if (raw === "true") return { ok: true, value: true };
+  if (raw === "false") return { ok: true, value: false };
+  return fail(`${name} must be exactly true or false.`);
+}
+
+/** Free text filters: not empty, no space at either end, no control characters, never cut short. */
+export const TEXT_PARAM_PATTERN = "^\\S(.*\\S)?$";
+export function parseText(raw: string, name: string, maxLen: number): Parsed<string> {
+  if (raw.length === 0) return fail(`${name} must not be empty. Leave it out instead.`);
+  if (raw.length > maxLen) return fail(`${name} is too long (at most ${maxLen} characters).`);
+  if (/[\u0000-\u001f\u007f]/.test(raw) || raw !== raw.trim()) {
+    return fail(`${name} must not have spaces at either end or control characters.`);
+  }
+  return { ok: true, value: raw };
 }
 
 export const LAT_RANGE: [number, number] = [-90, 90];
 export const LON_RANGE: [number, number] = [-180, 180];
 
 /** The names a route accepts. Used to refuse unknown keys, and by the OpenAPI parity test. */
+export const MAX_STATE_LEN = 40;
+export const MAX_REGION_LEN = 80;
 export const BEACH_LIST_QUERY_KEYS = ["state", "region"] as const;
 export const NEAREST_QUERY_KEYS = ["lat", "lon", "limit", "scores"] as const;
 

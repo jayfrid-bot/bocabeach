@@ -443,6 +443,13 @@ class BudgetAbortedDuringBuild extends Error {
   }
 }
 
+/** Thrown by a cache-only lookup when the shared cache has no entry for the beach. */
+class CacheOnlyMiss extends Error {
+  constructor() {
+    super("conditions cache miss (cache-only lookup)");
+  }
+}
+
 /**
  * `ovVersion` is the fingerprint of the owner's seaweed verdicts in force for this beach
  * (lib/quality/overrides.ts `overridesVersion`). It is part of the cache key, so the moment
@@ -450,9 +457,13 @@ class BudgetAbortedDuringBuild extends Error {
  * the one built before the tap. It is "0" for every beach with no cams and every beach with
  * no verdicts, so the key is then exactly what it always was.
  */
-const cachedConditions = (slug: string, ovVersion: string) =>
+const cachedConditions = (slug: string, ovVersion: string, cacheOnly = false) =>
   unstable_cache(
     async () => {
+      // Cache-only lookups (getCachedConditions) must never start a build. Throwing
+      // here means nothing is written, and the cache key text (this callback's source)
+      // is the same in both modes, so a lookup reads the very entry a normal call writes.
+      if (cacheOnly) throw new CacheOnlyMiss();
       const response = await getConditionsForLocation(getLocation(slug)!);
       // Checked right after the build, still inside the same ALS
       // continuation `runWithBudget` (lib/alerts/budget.ts) established —
@@ -503,6 +514,27 @@ export async function getConditions(
       return { ...e.response, budgetAborted: true };
     }
     throw e;
+  }
+}
+
+/**
+ * Read the shared 120-s conditions cache and NOTHING else: a hit returns the cached
+ * response, a miss returns null and starts no build (no source fetches). This is how
+ * the public agent API (REST and MCP) compares several beaches in one request without
+ * fanning out into several cold builds, which would pass the Workers subrequest limit.
+ * A stale entry may come back (the cache serves stale while it refreshes); callers
+ * check the response's own freshness. Also null for an unknown slug.
+ */
+export async function getCachedConditions(slug: string): Promise<ConditionsResponse | null> {
+  const loc = getLocation(slug);
+  if (!loc) return null;
+  try {
+    const ovVersion = loc.cams?.length ? await overridesVersion(slug) : "0";
+    const hit = await cachedConditions(slug, ovVersion, true);
+    return hit ?? null;
+  } catch (e) {
+    if (e instanceof CacheOnlyMiss) return null;
+    return null; // a cache read problem is a miss, never a build
   }
 }
 
