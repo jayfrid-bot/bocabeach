@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { fmtTime } from "@/lib/format";
 import type { NerdInfo } from "@/lib/nerdInfo";
+import type { GoesIrData } from "@/lib/types";
 import {
   goldenHourTiming,
   goldenTrack,
@@ -65,9 +66,11 @@ export interface SunQualityCardProps {
   /** Current air-clarity reading (aerosol optical depth + PM2.5) — a small
    *  modifier on the color score. Optional/honest-null. */
   airQuality?: { aod?: number; pm2_5?: number } | null;
-  /** Satellite beam/horizon-path cloud right now (GOES) + its wrapper status —
-   *  used as the clear-path input ONLY when fresh and the event is imminent. */
-  goesCloud?: { beamCloudPct?: number | null; cloudPct?: number; status?: string } | null;
+  /** Satellite cloud right now (GOES) + its wrapper status. Its cloud-top `ir`
+   *  read is the model's primary input ONLY when fresh and the event is
+   *  imminent (lib/sunAlert.ts resolveIrObservation); the mask fields are
+   *  recorded, not scored. */
+  goesCloud?: { beamCloudPct?: number | null; cloudPct?: number; status?: string; ir?: GoesIrData | null } | null;
 }
 
 function eventIcon(event: SunEventKind): string {
@@ -117,6 +120,7 @@ function buildSunQualityNerdInfo(args: {
   const time = fmtTime(timeIso, tz);
   const knownTotalOnly = !hasCompleteLevelSplit(cloud) && !!cloud && cloud.totalPct != null;
   const b = result.breakdown;
+  const fromSatellite = b?.source === "satellite-ir";
 
   const computation: string[] = pendingText
     ? [
@@ -177,11 +181,18 @@ function buildSunQualityNerdInfo(args: {
       "score = 0.85·canvas·(clearPath ÷ 100) + 0.15·seasonalPrior, × aerosol × humidity modifiers — the clear path scales the canvas, so a cloudless sky earns little. clearPath = 100 for low cloud ≤20%, then falls to 0 at 90% (forecast low cloud). canvas = 100 − 2.2·(distance of 0.5·mid + 0.7·high outside 35–80), × a solid-mid-deck factor (1.0 at ≤80% mid down to 0.35 at 100%). Modifiers: clean air (AOD<0.15) small bonus, haze/PM2.5 penalties (−25%/−35% caps); humidity only when there's no aerosol reading, and only above 92% (−8% cap). Calibrated on Jul–Oct 2026 Boca history so ~20% of events score Great or better and ~10% Amazing. Peak color lags to the sun's −2°→−4° window when there's a high-cloud deck. Every constant is a tuned heuristic except the low-cloud clear-path blocker (Corfidi/NOAA). Without the low/mid/high split, a flatter total-cloud curve is used instead. Golden hour is the sun between +6° and −4° (a ±20-min window only as a fallback); blue hour comes from a solar-elevation solve (sun at −6°) out to the golden window's edge.",
     computation,
     sources: [
-      "Open-Meteo hourly forecast — cloud cover by level (low/mid/high) + humidity",
+      ...(fromSatellite
+        ? ["NOAA GOES-19 cloud-top height (2 km, read within the last 20 min) — cloud by level + the low cloud along the sun's path"]
+        : []),
+      fromSatellite
+        ? "Open-Meteo hourly forecast — humidity"
+        : "Open-Meteo hourly forecast — cloud cover by level (low/mid/high) + humidity",
       "Open-Meteo air quality — aerosol optical depth (CAMS) + PM2.5",
       "Sun/golden-hour times — computed locally (NOAA solar-position algorithm)",
     ],
-    notes: knownTotalOnly
+    notes: fromSatellite
+      ? "The cloud mix and the horizon come from the satellite's cloud-top heights, read within the last 20 minutes, not from the forecast. Peak-color timing and the modifiers are research-informed heuristics, not guarantees."
+      : knownTotalOnly
       ? "Cloud-by-level wasn't available for this hour, so this falls back to total cloud cover on a flatter, more conservative curve — the real color potential could be higher or lower."
       : b && b.horizonPath.startsWith("~")
         ? "The horizon path is estimated from the forecast's low cloud. The satellite can't tell a low deck on the horizon from the high deck that lights up, so it isn't used here."
@@ -523,7 +534,7 @@ export function SunQualityCard({
   // (lib/sunAlert.ts) — same nearest-hourly-point read, same horizon
   // freshness rule, same peak-color estimate, so the card and the alert can
   // never quietly disagree about the same beach at the same instant.
-  const { point, result, peak } = assembleSunEventQuality(scored, {
+  const { point, cloud, result, peak } = assembleSunEventQuality(scored, {
     hourly,
     airQuality,
     goesCloud,
@@ -546,7 +557,7 @@ export function SunQualityCard({
     event: scored.event,
     timeIso: scored.timeIso,
     tz,
-    cloud: point?.cloud,
+    cloud,
     humidityPct: point?.humidityPct,
     result,
     peakLine: pendingText ? null : peakLine,

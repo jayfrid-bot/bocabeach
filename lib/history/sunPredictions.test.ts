@@ -6,7 +6,7 @@ import { sunEventRowsFromConditions, nextSunEventsBoth } from "@/lib/history/sun
 import { SUN_QUALITY_VERSION, sunEventQuality, sunModelPath } from "@/lib/sunQuality";
 import { resolveSunHorizonDetailed, resolveSunHorizon, predictNextSunEvent } from "@/lib/sunAlert";
 import { sunCardTiming } from "@/lib/sunCardEvent";
-import type { ConditionsResponse } from "@/lib/types";
+import type { ConditionsResponse, GoesIrData } from "@/lib/types";
 
 const boca = getLocation("boca-raton")!;
 const wrap = <T,>(data: T) => ({ source: "test", status: "ok" as const, fetchedAt: "", attribution: "test", data });
@@ -90,7 +90,7 @@ describe("sunEventRowsFromConditions — 2026-10-06 Boca sunrise fixture", () =>
     expect(sunrise.model_path).toBe("factor");
     expect(sunrise.seasonal_prior).toBe(55);
     expect(sunrise.algo_version).toBe(SUN_QUALITY_VERSION);
-    expect(SUN_QUALITY_VERSION).toBe("2026-10-06.2");
+    expect(SUN_QUALITY_VERSION).toBe("2026-10-15.1");
     expect(sunrise.engine_version).toBeTruthy();
     expect(JSON.parse(sunrise.breakdown_json!)).toHaveProperty("horizonPath");
     expect(sunrise.note).toBeTruthy();
@@ -255,5 +255,97 @@ describe("resolveSunHorizonDetailed", () => {
     for (const g of [beam, over, null]) {
       expect(resolveSunHorizon(g, ev, now)).toEqual(resolveSunHorizonDetailed(g, ev, now).horizon);
     }
+  });
+});
+
+/** A cloud-top read for the Boca 2026-10-06 sunrise (11:15Z): a clear
+ *  horizon and a half-covered mid deck, granule 8 min before the snapshot. */
+function irRead(over: Partial<GoesIrData> = {}): GoesIrData {
+  return {
+    lowPct: 4,
+    midPct: 55,
+    highPct: 10,
+    irCloudPct: 70,
+    unclassifiedPct: 1,
+    classifiedPct: 98,
+    validPixels: 225,
+    totalPixels: 225,
+    granuleStartIso: "2026-10-06T10:57:00.000Z",
+    events: {
+      sunrise: {
+        eventIso: "2026-10-06T11:15:00.000Z",
+        azDeg: 94,
+        beamLowPct: 6,
+        beamMidHighPct: 48,
+        antiMidHighPct: 20,
+        beamSamples: 7,
+      },
+    },
+    ...over,
+  };
+}
+
+describe("sunEventRowsFromConditions — which source fed the model is archived", () => {
+  const withIr = (ir: GoesIrData | null) => {
+    const res = bocaOct6();
+    res.snapshot.goesCloud = wrap({ cloudPct: 40, beamCloudPct: null, validPixels: 90, totalPixels: 100, granuleAgeMinutes: 8, granuleStartIso: "2026-10-06T10:57:00.000Z", ir });
+    return sunEventRowsFromConditions(res, boca, Date.parse("2026-10-06T11:20:00Z"), { hourUtc: "2026-10-06T11:00:00.000Z" }).find(
+      (r) => r.event_kind === "sunrise",
+    )!;
+  };
+
+  it("a fresh cloud-top read feeds the model: source, inputs and horizon are the satellite's", () => {
+    const row = withIr(irRead());
+    expect(JSON.parse(row.breakdown_json!).source).toBe("satellite-ir");
+    expect(JSON.parse(row.breakdown_json!).satellite).toMatchObject({ horizon: "ir-beam", granuleStartIso: "2026-10-06T10:57:00.000Z", granuleAgeMinutes: 8, sunwardMidHighPct: 48, antiMidHighPct: 20 });
+    // The inputs columns hold what the model was handed (the IR mix), not the forecast's.
+    expect([row.low_cloud_pct, row.mid_cloud_pct, row.high_cloud_pct, row.total_cloud_pct]).toEqual([4, 55, 10, 70]);
+    expect(row.horizon_cloud_pct).toBe(6);
+    expect(row.horizon_source).toBe("ir-beam");
+    expect(row.horizon_fresh).toBe(1);
+    expect(row.model_path).toBe("factor");
+    expect(JSON.parse(row.breakdown_json!).horizonPath).toMatch(/satellite/);
+    // The forecast point is still looked up (humidity, point_time).
+    expect(row.humidity_pct).toBe(87);
+    expect(row.point_time).toBe("2026-10-06T11:00:00.000Z");
+  });
+
+  it("stores exactly the score the shared model gives for the satellite inputs", () => {
+    const row = withIr(irRead());
+    const direct = sunEventQuality({
+      cloud: { lowPct: 4, midPct: 55, highPct: 10, totalPct: 70 },
+      humidityPct: 87,
+      aod: 0.14,
+      pm2_5: 13.6,
+      horizon: { cloudPct: 6, fresh: true },
+    });
+    expect(row.score).toBe(direct.score);
+    expect(row.band).toBe(direct.band);
+  });
+
+  it("without an IR read the forecast feeds it and the row says so", () => {
+    for (const ir of [null, undefined as unknown as null]) {
+      const row = withIr(ir);
+      expect(JSON.parse(row.breakdown_json!).source).toBe("forecast");
+      expect(JSON.parse(row.breakdown_json!)).not.toHaveProperty("satellite");
+      expect([row.low_cloud_pct, row.mid_cloud_pct, row.high_cloud_pct]).toEqual([0, 67, 48]);
+      expect(row.horizon_source).toBe("overhead"); // the mask horizon: recorded, not scored
+    }
+  });
+
+  it("a granule more than 20 minutes old falls back to the forecast", () => {
+    const row = withIr(irRead({ granuleStartIso: "2026-10-06T10:30:00.000Z" }));
+    expect(JSON.parse(row.breakdown_json!).source).toBe("forecast");
+    expect(row.mid_cloud_pct).toBe(67);
+  });
+
+  it("an event more than 60 minutes away falls back to the forecast (the sunset hours out)", () => {
+    const res = bocaOct6();
+    res.snapshot.goesCloud = wrap({ cloudPct: 40, beamCloudPct: null, validPixels: 90, totalPixels: 100, granuleAgeMinutes: 8, granuleStartIso: "2026-10-06T10:57:00.000Z", ir: irRead() });
+    const rows = sunEventRowsFromConditions(res, boca, Date.parse("2026-10-06T11:20:00Z"), { hourUtc: "2026-10-06T11:00:00.000Z" });
+    const sunset = rows.find((r) => r.event_kind === "sunset")!;
+    expect(sunset.breakdown_json).toBeNull(); // no forecast point near the sunset either: nothing scored
+    expect(sunset.score).toBeNull();
+    expect(sunset.horizon_source).toBe("overhead");
   });
 });

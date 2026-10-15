@@ -113,6 +113,92 @@ beamCloudPct; if too few of the offset boxes have enough valid pixels,
 beamCloudPct falls back to the overhead box rather than fabricating a beam
 reading from noise.
 
+IR CLOUD-TOP READ (event-time sky, day AND night) — 2026-10-15
+-----------------------------------------------------------------
+WHY: docs/benchmarks/sun-leadtime-2026-10-15/REPORT.md. The sunrise/sunset
+color model needs to know whether the cloud on the horizon is a LOW deck (kills
+the show) or a MID/HIGH deck (the canvas that lights up). The Clear Sky Mask
+cannot tell the two apart, and the forecast cloud layers missed real cloud on
+2026-10-14 and 10-15. This block adds a satellite OBSERVATION of cloud-top
+height that works through twilight and at night.
+
+PRODUCT CHOSEN: ABI-L2-ACHA2KMC (GOES-R Enterprise "ACHA" Cloud Top Height,
+2 km, CONUS, ~every 5 min). Why it, and not the alternatives:
+  - It is a retrieval from the IR bands (11, 12, 13.3 um with 8.5 um), so it
+    needs no sunlight: valid at sunrise, sunset and overnight.
+  - It is ~4 MB/granule (the same order as the ACMC mask we already pull; the
+    10 km ACHAC is 0.3 MB but a 15 km box would hold only ~2 pixels; the full
+    disk/mesoscale variants are larger or cover the wrong area).
+  - Band 13 (CMIPC C13, 10.3 um, 3.7 MB) only gives a brightness temperature.
+    Turning that into a height needs a clear-sky surface temperature and a
+    lapse-rate guess, and it mislabels thin cirrus (too warm -> "low") and
+    anything over a warm ocean at the horizon. ACHA already does that
+    retrieval with NWP profiles, so we use its answer. (Band 13 stays the
+    documented fallback if ACHA ever disappears; not implemented.)
+  - ACHA only retrieves where the clear-sky mask says cloud, so cloudy-vs-clear
+    comes from the SAME-scan ACMC granule (ACM 2/3 = cloudy). The two files are
+    paired by their scan-start token; the newest scan present in both is used.
+
+LAYER THRESHOLDS (cloud TOP height, from the HT variable, metres):
+    low   top <  2000 m   (below ~800 hPa)
+    mid   2000 <= top < 6000 m
+    high  top >= 6000 m   (above ~ 450 hPa)
+These are Open-Meteo's own definitions (cloud_cover_low = up to 2 km, mid =
+2-6 km, high = above 6 km), so the satellite mix drops straight into the same
+`CloudMix` the forecast fallback fills. They sit close to the ISCCP/WMO
+pressure bands (low >680 hPa, mid 680-440, high <440 hPa). Source for the
+retrieval itself: GOES-R ABI L2+ Cloud Top Height ATBD (ACHA, Heidinger et
+al.); product variable HT (m), DQF flags 0 good_quality, 1 marginal_quality,
+2 retrieval_attempted, 3 bad_quality, 4 opaque_retrieval (NOAA GOES-R PUG
+Vol. 5, ACHA section). Mask values: PUG Vol. 5, "Clear Sky Mask".
+Known ACHA limits (why the fields are an observation, not a truth): it reports
+ONE top per pixel, so thin cirrus over a low deck reads "high" and the low deck
+underneath is unseen; low clouds under a temperature inversion can be placed up
+to ~1 km too high (so a deck near 2 km can land in "mid").
+
+DQF is respected twice: a pixel is counted at all only when the ACM DQF is 0
+(good) and the ACM value is 0-3; a cloudy pixel is given a layer only when its
+ACHA DQF is 0 or 1 (good/marginal) and HT is not the fill value. A cloudy
+pixel without a usable height is "unclassified" (counted in irCloudPct and
+unclassifiedPct, in none of low/mid/high), and `classifiedPct` says what share
+of the cloudy pixels got a layer. A beach with fewer than GOES_MIN_VALID_PIXELS
+good mask pixels gets no IR read (null), never a guess.
+
+PER-BEACH OUTPUT (beaches[slug].ir; the old fields are unchanged):
+  lowPct / midPct / highPct   0-100 share of the beach box (GOES_IR_BOX_KM,
+                              default 31 km square) whose cloud TOP is in that
+                              band. Layers do not overlap, so low+mid+high <=
+                              irCloudPct.
+  irCloudPct                  0-100 share that is cloudy (ACM 2 or 3) at all.
+  unclassifiedPct, classifiedPct, validPixels, totalPixels   quality.
+  events.{sunrise,sunset}     only for events within IR_EVENT_WINDOW_MIN of the
+                              IR granule, each with eventIso, azDeg (the sun's
+                              azimuth AT THE EVENT, from the app's own NOAA
+                              solver, not "now"), and the path reads below.
+Feed top level: irGranuleStartIso (scan start of the pair used), irProduct.
+
+HORIZON PATH (at the EVENT, not "now"): boxes (GOES_IR_BEAM_BOX_KM, default 15
+km) are stepped out along the sun's azimuth at IR_PATH_DISTANCES_KM = 10, 20,
+35, 55, 80, 110, 150 km. This replaces beam_cloud_pct()'s altitude/tan(elev)
+offsets, which are meaningless at 0 deg (they send every slot past 35 km, and
+the function returns null below 5 deg). At the event the sun is on the horizon,
+so the ray from the beach rises only with distance: height above ground
+z(d) = d*tan(elev) + d^2/(2*R_eff), elev = 0, R_eff = 4/3 earth radius (standard
+refraction). A LOW pixel (top < 2 km, base assumed near the ground) blocks the
+sun when its top reaches the ray, top >= z(d). Mid/high pixels are not counted
+as blockers: their bases are unknown and a sun under a lifted deck is exactly
+the lit-canvas case.
+  beamLowPct      mean over the valid distances of the blocking-low share.
+  beamMidHighPct  mean over the valid distances of the mid+high share (the
+                  sunward canvas).
+  antiMidHighPct  the same mid+high share, but along the OPPOSITE azimuth (the
+                  afterglow sky; what an east-facing cam sees at sunset).
+  beamSamples     how many of the 7 distances had enough good pixels. Fewer
+                  than IR_MIN_PATH_SAMPLES -> the path fields are null.
+The mean (not a max, not a product) is the same corridor estimator as
+beam_cloud_pct(); see its note on why. No calibration data exist yet, so these
+are a documented first cut.
+
 ENV OVERRIDES (mirrors glm_lightning.py's style)
 ---------------------------------------------------
   GOES_BUCKET               default https://noaa-goes19.s3.amazonaws.com
@@ -124,7 +210,29 @@ ENV OVERRIDES (mirrors glm_lightning.py's style)
   GOES_GRANULE_KEY            force a specific S3 key instead of searching for the
                                newest granule (testability/reproducing a known case)
   GOES_OUT                   output path (default goes_cloud.json)
+  GOES_IR                    set to 0 to skip the IR cloud-top read (default 1)
+  GOES_IR_BOX_KM             IR beach box side, km (default 31)
+  GOES_IR_BEAM_BOX_KM        IR path box side, km (default 15)
+  GOES_IR_MAX_LOOKBACK_HOURS how far back to look for an ACMC+ACHA pair (default 3)
+  GOES_IR_ACM_KEY / GOES_IR_HEIGHT_KEY   force a specific ACMC/ACHA2KMC pair
+                              (both required; reproduce a known sunrise/sunset)
+
+RUN WINDOW
+----------
+`python scripts/goes_cloud.py --window-state` prints one word for the workflow
+loop (.github/workflows/goes-cloud.yml), like cam_seaweed.py --window-state:
+  day      earliest sunrise - 75 min .. latest sunset + 45 min across the
+           configured beaches inside the CONUS sector (each on its own local
+           date; Pacific-coast beaches stretch the evening end): the loop reads;
+  dusk     the 20 minutes after `day` ends: a loop that STARTS then still owes
+           the one carry-forward read for the night;
+  night    otherwise: the loop idles;
+  unknown  the window could not be computed: the workflow uses a fixed clock
+           window instead.
+Sunrise/sunset come from scripts/sun_cam_check.py (a port of lib/sources/sun.ts).
 """
+from __future__ import annotations
+
 import datetime as dt
 import json
 import math
@@ -135,9 +243,13 @@ import tempfile
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
+from zoneinfo import ZoneInfo
 
-import h5py
 import numpy as np
+
+# h5py is imported inside the functions that open a granule, so the pure helpers
+# (and --window-state, and the unit tests) need only numpy.
 
 BUCKET = os.environ.get("GOES_BUCKET", "https://noaa-goes19.s3.amazonaws.com")
 PRODUCT = os.environ.get("GOES_PRODUCT", "ABI-L2-ACMC")
@@ -155,9 +267,10 @@ OUT = os.environ.get("GOES_OUT", "goes_cloud.json")
 # 20:16Z granule that confirmed beam-path cloud blocking).
 GRANULE_KEY_OVERRIDE = os.environ.get("GOES_GRANULE_KEY")
 SATELLITE = "GOES-19"
-# Feed schema version. Bumped for the beamCloudPct/sunElevDeg addition so
-# consumers can tell an old-format cached/stale feed apart from a new one.
-FEED_VERSION = 2
+# Feed schema version. 2 = beamCloudPct/sunElevDeg; 3 = the per-beach `ir`
+# block + irGranuleStartIso/irProduct (IR cloud-top read). Consumers can tell an
+# old-format cached/stale feed apart from a new one.
+FEED_VERSION = 3
 S3_NS = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
 
 # ACM's 4-level cloud mask -> a 0-1 cloud fraction. See module docstring.
@@ -238,7 +351,7 @@ class AbiNav:
         self.e2 = (req_m**2 - rpol_m**2) / req_m**2
 
     @classmethod
-    def from_h5(cls, f: h5py.File) -> "AbiNav":
+    def from_h5(cls, f) -> "AbiNav":
         proj = f["goes_imager_projection"].attrs
         return cls(
             req_m=float(np.asarray(proj["semi_major_axis"]).ravel()[0]),
@@ -401,6 +514,384 @@ def beam_cloud_pct(
     return round(max(beach_pct, mean_offset), 1)
 
 
+# --- IR cloud-top read (ACHA 2 km) — see the module docstring ----------------
+IR_ENABLED = os.environ.get("GOES_IR", "1") != "0"
+HEIGHT_PRODUCT = "ABI-L2-ACHA2KMC"
+IR_MAX_LOOKBACK_HOURS = int(os.environ.get("GOES_IR_MAX_LOOKBACK_HOURS", "3"))
+IR_BOX_KM = float(os.environ.get("GOES_IR_BOX_KM", "31"))
+IR_BEAM_BOX_KM = float(os.environ.get("GOES_IR_BEAM_BOX_KM", "15"))
+IR_ACM_KEY_OVERRIDE = os.environ.get("GOES_IR_ACM_KEY")
+IR_HEIGHT_KEY_OVERRIDE = os.environ.get("GOES_IR_HEIGHT_KEY")
+# Cloud-top layer bands, metres (Open-Meteo's own low/mid/high definitions).
+LOW_TOP_M = 2000.0
+MID_TOP_M = 6000.0
+# ACHA DQF values whose height is used: 0 good_quality, 1 marginal_quality.
+HT_USABLE_DQF = (0, 1)
+HT_FILL = 65535  # HT valid_range is 0..65530; 65535 is the fill value
+# Distances (km) stepped along the sun's (or anti-sun) azimuth at the event.
+IR_PATH_DISTANCES_KM = (10.0, 20.0, 35.0, 55.0, 80.0, 110.0, 150.0)
+IR_MIN_PATH_SAMPLES = 3
+# The sun at the event: on the horizon (apparent). The ray rises only with
+# distance (and earth curvature), see ray_height_m().
+EVENT_SUN_ELEV_DEG = 0.0
+# 4/3 of the earth radius: the standard-refraction "effective" radius.
+EFFECTIVE_EARTH_RADIUS_KM = 8495.0
+# Only events within this many minutes of the IR granule are published; the app
+# uses an IR read only within 60 min of its event.
+IR_EVENT_WINDOW_MIN = 120
+DEFAULT_TZ_NAME = "America/New_York"
+
+
+@dataclass
+class BoxCounts:
+    """Pixel counts for one box on the IR grid (all DQF-gated)."""
+
+    total: int  # pixels in the box
+    valid: int  # ACM DQF 0 and ACM 0-3
+    cloudy: int  # valid and ACM 2 (probably cloudy) or 3 (cloudy)
+    low: int  # cloudy, usable ACHA height, top < LOW_TOP_M
+    mid: int
+    high: int  # top >= MID_TOP_M
+    unclassified: int  # cloudy, but no usable ACHA height
+    blocking_low: int = 0  # low pixels whose top reaches the ray (path boxes only)
+
+
+class IrGrid:
+    """The ACMC mask + ACHA2KMC height of ONE scan, on the shared 2 km ABI
+    fixed grid, with lat/lon -> pixel navigation. Plain arrays in, so the unit
+    tests can build one from numpy without any granule file."""
+
+    def __init__(self, nav, x_off, x_scale, y_off, y_scale, acm, acm_dqf, ht_raw, ht_dqf, ht_scale, ht_offset=0.0):
+        self.nav = nav
+        self.x_off, self.x_scale = x_off, x_scale
+        self.y_off, self.y_scale = y_off, y_scale
+        self.acm, self.acm_dqf = acm, acm_dqf
+        self.ht_raw, self.ht_dqf = ht_raw, ht_dqf
+        self.ht_scale, self.ht_offset = ht_scale, ht_offset
+        self.n_rows, self.n_cols = acm.shape
+
+    def pixel(self, lat: float, lon: float) -> tuple[int, int] | None:
+        """(row, col) of the pixel nearest (lat, lon), or None when the point is
+        off the CONUS grid or the visible disk."""
+        try:
+            x, y = self.nav.forward(lat, lon)
+        except (ValueError, ZeroDivisionError):
+            return None
+        col_f = (x - self.x_off) / self.x_scale
+        row_f = (y - self.y_off) / self.y_scale
+        if not (-0.5 <= col_f < self.n_cols - 0.5 and -0.5 <= row_f < self.n_rows - 0.5):
+            return None
+        return int(round(row_f)), int(round(col_f))
+
+    def box(self, lat: float, lon: float, radius_px: int, ray_height_m: float | None = None) -> BoxCounts | None:
+        """Counts for the (2*radius_px+1)-pixel box around (lat, lon). With
+        `ray_height_m` (path boxes), also counts the low pixels tall enough to
+        reach the sun's ray there."""
+        rc = self.pixel(lat, lon)
+        if rc is None:
+            return None
+        row, col = rc
+        r0, r1 = max(0, row - radius_px), min(self.n_rows, row + radius_px + 1)
+        c0, c1 = max(0, col - radius_px), min(self.n_cols, col + radius_px + 1)
+        acm = self.acm[r0:r1, c0:c1]
+        valid = (self.acm_dqf[r0:r1, c0:c1] == 0) & (acm <= 3)
+        cloudy = valid & (acm >= 2)
+        ht_raw = self.ht_raw[r0:r1, c0:c1]
+        ht_ok = np.isin(self.ht_dqf[r0:r1, c0:c1], HT_USABLE_DQF) & (ht_raw != HT_FILL)
+        classified = cloudy & ht_ok
+        ht_m = ht_raw.astype("float64") * self.ht_scale + self.ht_offset
+        low = classified & (ht_m < LOW_TOP_M)
+        mid = classified & (ht_m >= LOW_TOP_M) & (ht_m < MID_TOP_M)
+        high = classified & (ht_m >= MID_TOP_M)
+        blocking = int((low & (ht_m >= ray_height_m)).sum()) if ray_height_m is not None else 0
+        return BoxCounts(
+            total=int(acm.size),
+            valid=int(valid.sum()),
+            cloudy=int(cloudy.sum()),
+            low=int(low.sum()),
+            mid=int(mid.sum()),
+            high=int(high.sum()),
+            unclassified=int((cloudy & ~ht_ok).sum()),
+            blocking_low=blocking,
+        )
+
+
+def _pct(n: int, d: int) -> float:
+    return round(100.0 * n / d, 1)
+
+
+def overhead_read(c: BoxCounts | None, min_valid: int) -> dict | None:
+    """Layer shares for the beach box, or None with too few good pixels."""
+    if c is None or c.valid < min_valid:
+        return None
+    return {
+        "lowPct": _pct(c.low, c.valid),
+        "midPct": _pct(c.mid, c.valid),
+        "highPct": _pct(c.high, c.valid),
+        "irCloudPct": _pct(c.cloudy, c.valid),
+        "unclassifiedPct": _pct(c.unclassified, c.valid),
+        # Share of the cloudy pixels that got a layer; null when there is no cloud.
+        "classifiedPct": _pct(c.low + c.mid + c.high, c.cloudy) if c.cloudy else None,
+        "validPixels": c.valid,
+        "totalPixels": c.total,
+    }
+
+
+def ray_height_m(d_km: float, elev_deg: float = EVENT_SUN_ELEV_DEG) -> float:
+    """Height (m) above the ground of a straight sun ray leaving the beach at
+    apparent elevation `elev_deg`, at ground distance `d_km` toward the sun:
+    d*tan(elev) + d^2/(2*R_eff). At elev 0 it is 0.1 km at 10 km, 0.7 km at
+    110 km, 1.3 km at 150 km. Never below 0."""
+    h_km = d_km * math.tan(math.radians(elev_deg)) + d_km**2 / (2.0 * EFFECTIVE_EARTH_RADIUS_KM)
+    return max(0.0, h_km * 1000.0)
+
+
+def path_read(
+    grid: IrGrid,
+    lat: float,
+    lon: float,
+    az_deg: float,
+    radius_px: int,
+    min_valid: int,
+    elev_deg: float = EVENT_SUN_ELEV_DEG,
+) -> dict:
+    """Cloud along the azimuth `az_deg` from (lat, lon): the mean blocking-low
+    share and the mean mid+high share over the distances that had enough good
+    pixels. All three values are None when fewer than IR_MIN_PATH_SAMPLES
+    distances had a read (off-grid, or masked)."""
+    blocking: list[float] = []
+    midhigh: list[float] = []
+    for d_km in IR_PATH_DISTANCES_KM:
+        olat, olon = offset_latlon(lat, lon, d_km, az_deg)
+        c = grid.box(olat, olon, radius_px, ray_height_m=ray_height_m(d_km, elev_deg))
+        if c is None or c.valid < min_valid:
+            continue
+        blocking.append(100.0 * c.blocking_low / c.valid)
+        midhigh.append(100.0 * (c.mid + c.high) / c.valid)
+    if len(blocking) < IR_MIN_PATH_SAMPLES:
+        return {"beamLowPct": None, "beamMidHighPct": None, "beamSamples": len(blocking)}
+    return {
+        "beamLowPct": round(float(np.mean(blocking)), 1),
+        "beamMidHighPct": round(float(np.mean(midhigh)), 1),
+        "beamSamples": len(blocking),
+    }
+
+
+def _sun_times_for(lat: float, lon: float, day: dt.date) -> dict:
+    """sun_cam_check.sun_times(), imported on demand (it sits next to this file)."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import sun_cam_check  # noqa: PLC0415 — lazy: only the IR and run-window code need it
+
+    return sun_cam_check.sun_times(lat, lon, day)
+
+
+def sun_events_near(
+    lat: float, lon: float, tz_name: str, ref: dt.datetime, window_min: float = IR_EVENT_WINDOW_MIN
+) -> dict[str, dict]:
+    """{'sunrise'|'sunset': {eventIso, azDeg}} for the sunrise and sunset closest
+    to `ref` (UTC), each kept only if within `window_min` minutes of it. Days are
+    the beach-local calendar days around `ref`, as the app calls them. azDeg is
+    the sun's azimuth AT THE EVENT."""
+    try:
+        zone = ZoneInfo(tz_name or DEFAULT_TZ_NAME)
+    except Exception:  # noqa: BLE001 — unknown zone name: use the default
+        zone = ZoneInfo(DEFAULT_TZ_NAME)
+    local_day = ref.astimezone(zone).date()
+    best: dict[str, tuple[float, dict]] = {}
+    for offset in (-1, 0, 1):
+        t = _sun_times_for(lat, lon, local_day + dt.timedelta(days=offset))
+        for kind in ("sunrise", "sunset"):
+            when, az = t.get(kind), t.get(f"{kind}_az")
+            if when is None or az is None:
+                continue
+            gap_min = abs((when - ref).total_seconds()) / 60.0
+            if gap_min <= window_min and (kind not in best or gap_min < best[kind][0]):
+                best[kind] = (
+                    gap_min,
+                    {"eventIso": when.replace(microsecond=0).isoformat().replace("+00:00", "Z"), "azDeg": round(az, 1)},
+                )
+    return {k: v[1] for k, v in best.items()}
+
+
+def ir_beach_read(
+    grid: IrGrid, b: dict, granule_start: dt.datetime, min_valid: int, box_px: int, beam_px: int
+) -> dict | None:
+    """The `ir` block for one beach: overhead layer shares plus, for each sun
+    event near the granule, the path reads toward and away from the sun."""
+    lat, lon = b["lat"], b["lon"]
+    read = overhead_read(grid.box(lat, lon, box_px), min_valid)
+    if read is None:
+        return None
+    events: dict[str, dict] = {}
+    for kind, ev in sun_events_near(lat, lon, b.get("timezone") or DEFAULT_TZ_NAME, granule_start).items():
+        toward = path_read(grid, lat, lon, ev["azDeg"], beam_px, min_valid)
+        away = path_read(grid, lat, lon, (ev["azDeg"] + 180.0) % 360.0, beam_px, min_valid)
+        events[kind] = {
+            **ev,
+            "beamLowPct": toward["beamLowPct"],
+            "beamMidHighPct": toward["beamMidHighPct"],
+            "antiMidHighPct": away["beamMidHighPct"],
+            "beamSamples": toward["beamSamples"],
+        }
+    read["events"] = events
+    return read
+
+
+def find_ir_pair() -> tuple[dt.datetime, str, str] | None:
+    """The newest scan present in BOTH the ACMC mask and the ACHA2KMC height
+    listings, as (scan_start, acm_key, height_key). Walks back hour by hour (the
+    height product lands a few minutes after the mask, so the newest mask scan
+    often has no height yet)."""
+    now = dt.datetime.now(dt.timezone.utc)
+    t = now.replace(minute=0, second=0, microsecond=0)
+    for i in range(IR_MAX_LOOKBACK_HOURS + 1):
+        hour = t - dt.timedelta(hours=i)
+        found: dict[str, dict[dt.datetime, str]] = {}
+        for product in (PRODUCT, HEIGHT_PRODUCT):
+            prefix = f"{product}/{hour.year}/{int(hour.strftime('%j')):03d}/{hour.hour:02d}/"
+            try:
+                keys = list_keys(prefix)
+            except Exception as e:  # noqa: BLE001
+                print(f"warn: list {prefix}: {e}", file=sys.stderr)
+                keys = []
+            found[product] = {st: k for k in keys if (st := start_time(k)) is not None}
+        pair = newest_common_scan(found[PRODUCT], found[HEIGHT_PRODUCT])
+        if pair is not None:
+            return pair
+    return None
+
+
+def newest_common_scan(
+    masks: dict[dt.datetime, str], heights: dict[dt.datetime, str]
+) -> tuple[dt.datetime, str, str] | None:
+    """(scan_start, mask_key, height_key) for the newest scan start that both
+    {scan_start: key} maps hold, or None."""
+    common = sorted(set(masks) & set(heights))
+    if not common:
+        return None
+    st = common[-1]
+    return st, masks[st], heights[st]
+
+
+def load_ir_grid(acm_buf: bytes, height_buf: bytes) -> IrGrid:
+    """Open an ACMC and an ACHA2KMC granule and build the IrGrid. Raises if the
+    two are not on the same grid."""
+    import h5py  # noqa: PLC0415
+
+    def _scalar(a) -> float:
+        return float(np.asarray(a).ravel()[0])
+
+    with tempfile.NamedTemporaryFile(suffix=".nc") as t_acm, tempfile.NamedTemporaryFile(suffix=".nc") as t_ht:
+        t_acm.write(acm_buf)
+        t_acm.flush()
+        t_ht.write(height_buf)
+        t_ht.flush()
+        with h5py.File(t_acm.name, "r") as fa, h5py.File(t_ht.name, "r") as fh:
+            nav = AbiNav.from_h5(fa)
+            ax, ay = fa["x"].attrs, fa["y"].attrs
+            hx, hy = fh["x"].attrs, fh["y"].attrs
+            x_off, x_scale = _scalar(ax["add_offset"]), _scalar(ax["scale_factor"])
+            y_off, y_scale = _scalar(ay["add_offset"]), _scalar(ay["scale_factor"])
+            same_grid = (
+                fa["ACM"].shape == fh["HT"].shape
+                and abs(x_off - _scalar(hx["add_offset"])) < 1e-9
+                and abs(x_scale - _scalar(hx["scale_factor"])) < 1e-12
+                and abs(y_off - _scalar(hy["add_offset"])) < 1e-9
+                and abs(y_scale - _scalar(hy["scale_factor"])) < 1e-12
+            )
+            if not same_grid:
+                raise ValueError("ACMC and ACHA2KMC granules are not on the same grid")
+            return IrGrid(
+                nav,
+                x_off,
+                x_scale,
+                y_off,
+                y_scale,
+                acm=fa["ACM"][:],
+                acm_dqf=fa["DQF"][:],
+                ht_raw=fh["HT"][:],
+                ht_dqf=fh["DQF"][:],
+                ht_scale=_scalar(fh["HT"].attrs["scale_factor"]),
+                ht_offset=_scalar(fh["HT"].attrs["add_offset"]),
+            )
+
+
+# --- run window (which ticks the workflow loop spends) -----------------------
+RUN_WINDOW_BEFORE_MIN = 75
+RUN_WINDOW_AFTER_MIN = 45
+RUN_DUSK_GRACE_MIN = 20
+# The GOES-East CONUS sector, roughly. A beach outside it (Hawaii) never gets a
+# read, so it must not stretch the run window.
+CONUS_LAT = (24.0, 50.0)
+CONUS_LON = (-126.0, -66.0)
+
+
+def in_conus_sector(lat: float, lon: float) -> bool:
+    return CONUS_LAT[0] <= lat <= CONUS_LAT[1] and CONUS_LON[0] <= lon <= CONUS_LON[1]
+
+
+def run_window(beaches: list[dict], now: dt.datetime) -> tuple[dt.datetime, dt.datetime] | None:
+    """(start, end) of today's reading window in UTC: the earliest sunrise minus
+    RUN_WINDOW_BEFORE_MIN to the latest sunset plus RUN_WINDOW_AFTER_MIN across
+    `beaches`, each on its own local date. A beach with no sunrise or sunset
+    that day, without coordinates, or outside the GOES CONUS sector adds nothing. None when no beach gives a
+    window."""
+    now_utc = now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)
+    starts: list[dt.datetime] = []
+    ends: list[dt.datetime] = []
+    for b in beaches:
+        try:
+            if not in_conus_sector(float(b["lat"]), float(b["lon"])):
+                continue
+            try:
+                zone = ZoneInfo(b.get("timezone") or DEFAULT_TZ_NAME)
+            except Exception:  # noqa: BLE001
+                zone = ZoneInfo(DEFAULT_TZ_NAME)
+            t = _sun_times_for(float(b["lat"]), float(b["lon"]), now_utc.astimezone(zone).date())
+        except Exception as e:  # noqa: BLE001 — one odd beach must not blank the window
+            print(f"  warn run window [{b.get('slug')}]: {e}", file=sys.stderr)
+            continue
+        if t.get("sunrise") and t.get("sunset"):
+            starts.append(t["sunrise"] - dt.timedelta(minutes=RUN_WINDOW_BEFORE_MIN))
+            ends.append(t["sunset"] + dt.timedelta(minutes=RUN_WINDOW_AFTER_MIN))
+    if not starts or not ends:
+        return None
+    return min(starts), max(ends)
+
+
+def window_state(now: dt.datetime | None = None, beaches: list[dict] | None = None) -> str:
+    """'day', 'dusk', 'night' or 'unknown' (see RUN WINDOW in the docstring)."""
+    now = now or dt.datetime.now(dt.timezone.utc)
+    window = run_window(load_beaches() if beaches is None else beaches, now)
+    if window is None:
+        return "unknown"
+    start, end = window
+    if start <= now < end:
+        return "day"
+    if end <= now < end + dt.timedelta(minutes=RUN_DUSK_GRACE_MIN):
+        return "dusk"
+    return "night"
+
+
+def window_state_main() -> int:
+    """`--window-state`: the state on stdout (the workflow reads the last line),
+    the window on stderr for the log. Always exits 0."""
+    try:
+        now = dt.datetime.now(dt.timezone.utc)
+        beaches = load_beaches()
+        window = run_window(beaches, now)
+        state = window_state(now, beaches)
+        if window:
+            print(f"run window {window[0].strftime('%H:%MZ')}-{window[1].strftime('%H:%MZ')} -> {state}", file=sys.stderr)
+        print(state)
+    except Exception as e:  # noqa: BLE001
+        print(f"  warn run window: {e}", file=sys.stderr)
+        print("unknown")
+    return 0
+
+
 # --- beach list: config/locations.ts (hand-curated) + locations.generated.json
 def load_beaches() -> list[dict]:
     """Merge the hand-curated TS locations with the admin-added generated JSON,
@@ -423,8 +914,16 @@ def load_beaches() -> list[dict]:
             chunk = em.group(2)
             lat_m = re.search(r"\blat:\s*(-?\d+(?:\.\d+)?)", chunk)
             lon_m = re.search(r"\blon:\s*(-?\d+(?:\.\d+)?)", chunk)
+            tz_m = re.search(r'\btimezone:\s*"([^"]+)"', chunk)
             if lat_m and lon_m and slug not in seen:
-                beaches.append({"slug": slug, "lat": float(lat_m.group(1)), "lon": float(lon_m.group(1))})
+                beaches.append(
+                    {
+                        "slug": slug,
+                        "lat": float(lat_m.group(1)),
+                        "lon": float(lon_m.group(1)),
+                        "timezone": tz_m.group(1) if tz_m else DEFAULT_TZ_NAME,
+                    }
+                )
                 seen.add(slug)
     except Exception as e:  # noqa: BLE001
         print(f"warn: could not parse config/locations.ts: {e}", file=sys.stderr)
@@ -437,7 +936,9 @@ def load_beaches() -> list[dict]:
             slug = loc.get("slug")
             lat, lon = loc.get("lat"), loc.get("lon")
             if slug and slug not in seen and isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-                beaches.append({"slug": slug, "lat": float(lat), "lon": float(lon)})
+                beaches.append(
+                    {"slug": slug, "lat": float(lat), "lon": float(lon), "timezone": loc.get("timezone") or DEFAULT_TZ_NAME}
+                )
                 seen.add(slug)
     except Exception as e:  # noqa: BLE001
         print(f"warn: could not read config/locations.generated.json: {e}", file=sys.stderr)
@@ -479,6 +980,8 @@ def main() -> int:
 
     buf = _get(f"{BUCKET}/{key}", timeout=90)
     print(f"downloaded {len(buf) / 1e6:.2f} MB")
+
+    import h5py  # noqa: PLC0415 — lazy, see the import note at the top
 
     with tempfile.NamedTemporaryFile(suffix=".nc") as tf:
         tf.write(buf)
@@ -602,11 +1105,25 @@ def main() -> int:
             else:
                 print("self-check: no in-domain beaches to validate against (unexpected)")
 
+    # IR cloud-top read (ACHA height + same-scan mask). Never fails the cycle:
+    # the old Clear Sky Mask fields above are published either way.
+    ir_start = None
+    if IR_ENABLED:
+        try:
+            ir_start = add_ir_reads(beaches, results, key, buf)
+        except Exception as e:  # noqa: BLE001
+            print(f"warn: IR cloud-top read failed, publishing without it: {e}", file=sys.stderr)
+            ir_start = None
+            for r in results.values():
+                r.pop("ir", None)
+
     out = {
         "version": FEED_VERSION,
         "generatedAt": now.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "granuleStartIso": granule_start.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "satellite": SATELLITE,
+        "irGranuleStartIso": ir_start.replace(microsecond=0).isoformat().replace("+00:00", "Z") if ir_start else None,
+        "irProduct": HEIGHT_PRODUCT if ir_start else None,
         "beaches": results,
     }
     out_path = OUT if os.path.isabs(OUT) else os.path.join(REPO_ROOT, OUT)
@@ -614,12 +1131,52 @@ def main() -> int:
         json.dump(out, fh, separators=(",", ":"))
     n_ok = sum(1 for v in results.values() if v["cloudPct"] is not None)
     n_beam = sum(1 for v in results.values() if v["beamCloudPct"] is not None)
+    n_ir = sum(1 for v in results.values() if v.get("ir"))
     print(
         f"wrote {out_path}: {n_ok}/{len(results)} beaches with a valid overhead cloud %, "
-        f"{n_beam}/{len(results)} with a valid beam-path cloud %"
+        f"{n_beam}/{len(results)} with a valid beam-path cloud %, "
+        f"{n_ir}/{len(results)} with an IR cloud-top read"
     )
     return 0
 
 
+def add_ir_reads(beaches: list[dict], results: dict[str, dict], acm_key: str, acm_buf: bytes) -> dt.datetime | None:
+    """Attach `ir` to each beach in `results`. Finds the newest ACMC+ACHA2KMC
+    scan pair (or the GOES_IR_*_KEY override), reuses the already-downloaded
+    mask when it is the same granule, and returns the pair's scan start (None
+    when no pair exists)."""
+    if IR_ACM_KEY_OVERRIDE and IR_HEIGHT_KEY_OVERRIDE:
+        st = start_time(IR_ACM_KEY_OVERRIDE)
+        if st is None:
+            print("warn: GOES_IR_ACM_KEY doesn't match the granule-key pattern; skipping IR", file=sys.stderr)
+            return None
+        pair: tuple[dt.datetime, str, str] | None = (st, IR_ACM_KEY_OVERRIDE, IR_HEIGHT_KEY_OVERRIDE)
+        print("using GOES_IR_ACM_KEY / GOES_IR_HEIGHT_KEY override")
+    else:
+        pair = find_ir_pair()
+    if pair is None:
+        print(f"warn: no ACMC + {HEIGHT_PRODUCT} scan pair within {IR_MAX_LOOKBACK_HOURS}h; no IR read", file=sys.stderr)
+        return None
+    ir_start, ir_acm_key, ir_height_key = pair
+    age_min = (dt.datetime.now(dt.timezone.utc) - ir_start).total_seconds() / 60
+    print(f"IR scan: {ir_height_key} (start {ir_start.isoformat()}, {age_min:.1f} min old)")
+    ir_acm_buf = acm_buf if ir_acm_key == acm_key else _get(f"{BUCKET}/{ir_acm_key}", timeout=90)
+    height_buf = _get(f"{BUCKET}/{ir_height_key}", timeout=90)
+    print(f"downloaded IR height {len(height_buf) / 1e6:.2f} MB" + ("" if ir_acm_key == acm_key else f" + mask {len(ir_acm_buf) / 1e6:.2f} MB"))
+    grid = load_ir_grid(ir_acm_buf, height_buf)
+    box_px = max(1, round((IR_BOX_KM / PIXEL_KM - 1) / 2))
+    beam_px = max(1, round((IR_BEAM_BOX_KM / PIXEL_KM - 1) / 2))
+    n = 0
+    for b in beaches:
+        read = ir_beach_read(grid, b, ir_start, MIN_VALID_PIXELS, box_px, beam_px)
+        if read is not None and b["slug"] in results:
+            results[b["slug"]]["ir"] = read
+            n += 1
+    print(f"IR read for {n}/{len(beaches)} beaches")
+    return ir_start
+
+
 if __name__ == "__main__":
+    if "--window-state" in sys.argv[1:]:
+        raise SystemExit(window_state_main())
     raise SystemExit(main())

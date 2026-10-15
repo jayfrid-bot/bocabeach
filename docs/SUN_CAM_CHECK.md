@@ -9,6 +9,36 @@ Why it exists: on 2026-10-06 the model said "Good" for a spectacular sunrise.
 Nothing recorded what the sky really did. That sunrise is now the first labeled
 example (about 95/100).
 
+## What the model sees (2026-10-15.1)
+
+The prediction side takes its cloud mix from a satellite OBSERVATION when one is
+fresh. `scripts/goes_cloud.py` (GOES Cloud Feed, `cloud-data` branch) reads the
+GOES-19 ACHA 2 km cloud-top height with the same-scan Clear Sky Mask. It works
+at night and through twilight. It sorts each pixel's cloud top into low (< 2 km),
+mid (2-6 km) and high (6 km and up), and for each sunrise and sunset near the
+scan it reads the cloud along the sun's azimuth at the event. When the scan is at
+most 20 minutes old and the event is at most 60 minutes away, `lib/sunAlert.ts`
+feeds those numbers to the model. Otherwise the hourly forecast feeds it.
+
+Each `sun_event_predictions` row says which: `breakdown_json.source` is
+`satellite-ir` or `forecast` (the total-only path has no breakdown and only runs
+on the forecast). For a satellite row, `breakdown_json.satellite` also holds the
+scan time and the mid/high cloud toward and away from the sun (recorded, not
+scored), and `horizon_source` is `ir-beam` or `ir-overhead`. The cloud input
+columns hold the mix the model was handed.
+
+```sql
+SELECT json_extract(breakdown_json, '$.source') AS source, COUNT(*), AVG(ABS(score - observed_score))
+FROM sun_event_predictions
+WHERE observed_score IS NOT NULL AND model_path = 'factor'
+GROUP BY 1;
+```
+
+Known limits of the satellite read: ACHA gives one cloud top per pixel, so thin
+cirrus over a low deck reads as high; a low deck under an inversion can read up
+to about 1 km too high. Low cloud far out toward the sun can also be the lit
+canvas (the 2026-10-14 sunrise), which the model still counts as a blocker.
+
 ## How it works
 
 `scripts/sun_cam_check.py` runs on the owner's Mac every 30 minutes (launchd).
