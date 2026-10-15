@@ -140,7 +140,9 @@ leaves out a circle around the sun before it scores color.
    are a glint or a cloud edge. If there is no such blob (the disc is below the
    horizon or hidden), the sun is the largest blob of bright warm pixels (hue `<= 65`
    or `>= 300`, `S >= 0.35`, `V >= 0.85`) within 10% of the frame height of the
-   horizon line (the lowest edge of the sky regions).
+   horizon line (the lowest edge of the sky regions). A warm blob must be compact:
+   its bounding box at most 3:1 long to thin, and the blob at least 40% of that box.
+   A horizon band or a cloud streak is skipped. If no blob qualifies, nothing is masked.
 3. **Mask a circle.** Every pixel within `R` of the blob's centroid is left out.
    `R = 2.5 x the blob's equivalent radius`, held between 6% and 25% of the frame width.
 4. **No blob, no mask.**
@@ -151,14 +153,15 @@ says little, so it is down-weighted (or dropped when `valid_frac < 0.10`).
 diagnostic: it is kept in each series frame and not used in the score.
 
 Limits. Color alone cannot tell a broad clear-sky glow from lit cloud. The 25% cap
-means a glow wider than that still leaves some warm sky. A thin sky strip, like the
+means a glow wider than that still leaves some warm sky, and a broad glow with no
+compact sun in view is not masked at all. A thin sky strip, like the
 Deerfield pier cam's top 13%, is almost all glow zone at sunrise, so its score is
 weak truth. The Elbo Room cam shows the whole sky and is the better truth.
 
 Re-score check (`SUN_CAM_SCORE_VERSION` 2026-10-15.1). The Elbo Room 2026-10-06
 peak frame (07:05) went 94.4 to 93.4. The two Deerfield pier sunrise frames went 89.1
-to 92.1 (2026-10-14, a golden sky: the mask took 58% of the strip and the rest is
-still strongly warm) and 22.9 to 24.9 (2026-10-15, a low bank). The 2026-10-14 sunset
+to 89.1 (2026-10-14, a golden sky with no sun in view: the warm area is a full-width
+band, so nothing is masked) and 22.9 to 24.9 (2026-10-15, a low bank). The 2026-10-14 sunset
 frame stayed at 0.6.
 
 ### Usable frames and coverage
