@@ -78,7 +78,7 @@
  * flag read) run at a given tick is decided inside the handler by
  * src/lib/schedule.ts:
  *   - deerfield-spinner-uw: every tick (unchanged, 15 grabs/day)
- *   - the 3 surface cams:   only on a "surface hour" (UTC hour % 3 === 1,
+ *   - the surface cams (6): only on a "surface hour" (UTC hour % 3 === 1,
  *                            i.e. 10/13/16/19/22 UTC) AND only while it's
  *                            daylight in America/New_York — 5 ticks/day
  *   - lifeguard flags:      once per tick, while it's daylight in

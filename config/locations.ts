@@ -334,11 +334,14 @@ export const LOCATIONS: Location[] = [
     // comes from the Fort Myers gauge on the Caloosahatchee, ~14 mi north.
     noaaWaterLevelStationId: "8725520",
     ndbcBuoyId: "fmrf1", // Fort Myers C-MAN (water temp only, no waves)
-    ndbcBuoyFallbackId: "42098", // Egmont Channel (waves, ~99 mi north)
+    // No wave buoy fallback on purpose: the nearest (42098, Egmont Channel) is
+    // ~99 mi north in Tampa Bay and a buoy outranks the local wave model
+    // (lib/score.ts), so it would set this beach's surf. Open-Meteo at the
+    // beach is the honest source here.
     // Site names exactly as published by the FL Healthy Beaches feed (Lee).
     healthyBeaches: {
       county: "Lee",
-      sites: ["LYNN HALL PARK", "BOWDITCH PARK"],
+      sites: ["NEWTON PARK", "BOWDITCH PARK"],
     },
     surfZone: { office: "TBW", name: "Coastal Lee" }, // NWS Tampa Bay Surf Zone Forecast
     cams: [

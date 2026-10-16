@@ -147,7 +147,8 @@ real event (the DVR holds only 4 hours).
 - If Visit Fort Myers restarts its stream, the video id changes. Only the Elbo Room
   cam has a lookup fallback today. Update `youtube_id` in `config/sun-cams.json`,
   `scripts/cam_courier_local.sh`, `workers/uw-frame/src/lib/schedule.ts` and the cam's
-  `url` in `config/locations.ts` together (a vitest keeps them in step).
+  `url` in `config/locations.ts` together (a vitest checks the registry, courier and
+  locations agree; `schedule.ts` is checked by hand).
 
 ## Scoring
 

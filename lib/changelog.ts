@@ -20,7 +20,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-10-15",
     title: "Two Gulf beaches: Fort Myers Beach and Pensacola Beach",
     details:
-      "Fort Myers Beach and Pensacola Beach are now on the list, each with a live beach camera. Both cameras look west, so you can watch the sun set over the Gulf of Mexico. Camera views come from Visit Fort Myers and the Santa Rosa Island Authority.",
+      "Fort Myers Beach and Pensacola Beach are now on the list, each with a live beach camera. Both cameras look west over the Gulf of Mexico, so their evening frames catch the sunset glow (Pensacola has the sun itself in view). Camera views come from Visit Fort Myers and the Santa Rosa Island Authority.",
     tag: "new",
   },
   {
