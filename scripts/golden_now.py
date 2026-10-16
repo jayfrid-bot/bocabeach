@@ -46,7 +46,7 @@ SUNSET_BEFORE_MIN = 40
 SUNSET_AFTER_MIN = 20
 
 # The beaches the Mac courier feeds (scripts/cam_courier_local.sh CAMS array).
-COURIER_SLUGS = ("deerfield-beach", "fort-lauderdale")
+COURIER_SLUGS = ("deerfield-beach", "fort-lauderdale", "fort-myers-beach", "pensacola-beach")
 
 Window = Tuple[str, datetime, datetime]  # (kind, start, end), UTC, half-open
 

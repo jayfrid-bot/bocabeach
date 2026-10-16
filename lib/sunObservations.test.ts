@@ -104,6 +104,26 @@ describe("parseSunObservation — accepts what the script sends", () => {
     expect(parseSunObservation(body, Date.parse("2027-06-22T03:00:00Z")).ok).toBe(true);
   });
 
+  it("a west-facing Gulf cam: its sunset is the solar view, and an antisolar sunset is refused", () => {
+    // Fort Myers Beach (Eastern) and Pensacola Beach (Central): the local date and the sun time follow each beach.
+    for (const [slug, camId, date, nowIso] of [
+      ["fort-myers-beach", "fort-myers-beach-cam", "2026-10-15", "2026-10-16T01:00:00Z"],
+      ["pensacola-beach", "pensacola-sria-west-cam", "2026-10-15", "2026-10-16T02:00:00Z"],
+    ] as const) {
+      const body = sunObservationBody({ slug, camId, kind: "sunset", date, peakAtMin: 5, scoredAt: "2026-10-16T00:00:00.000Z" });
+      expect(body.view).toBe("solar");
+      const r = parseSunObservation(body, Date.parse(nowIso));
+      expect(r.ok && r.row.view).toBe("solar");
+      expect(bad({ ...body, view: "antisolar" }, Date.parse(nowIso))).toMatch(/view/);
+    }
+  });
+
+  it("a west-facing cam's sunrise is the antisolar view", () => {
+    const body = sunObservationBody({ slug: "pensacola-beach", camId: "pensacola-sria-west-cam", kind: "sunrise", date: "2026-10-15", scoredAt: "2026-10-15T16:00:00.000Z" });
+    expect(body.view).toBe("antisolar");
+    expect(parseSunObservation(body, Date.parse("2026-10-15T18:00:00Z")).ok).toBe(true);
+  });
+
   it("accepts a score_version whose counter has two digits", () => {
     expect(parseSunObservation(sunObservationBody({ version: "2026-10-06.12" }), NOW).ok).toBe(true);
   });

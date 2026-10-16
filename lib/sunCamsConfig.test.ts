@@ -6,7 +6,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { getLocation } from "@/config/locations";
-import { SUN_CAMS } from "@/lib/sunObservations";
+import { SUN_CAMS, expectedView } from "@/lib/sunObservations";
 
 function miles(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 3958.7613;
@@ -16,7 +16,7 @@ function miles(lat1: number, lon1: number, lat2: number, lon2: number): number {
 }
 
 function locationCam(camId: string) {
-  for (const slug of ["boca-raton", "deerfield-beach", "fort-lauderdale"]) {
+  for (const slug of ["boca-raton", "deerfield-beach", "fort-lauderdale", "fort-myers-beach", "pensacola-beach"]) {
     const cam = getLocation(slug)?.cams?.find((c) => c.id === camId);
     if (cam) return cam;
   }
@@ -24,13 +24,37 @@ function locationCam(camId: string) {
 }
 
 describe("config/sun-cams.json", () => {
-  it("lists the four 24/7 livestream cams", () => {
+  it("lists the six 24/7 livestream cams", () => {
     expect(SUN_CAMS.map((c) => c.id).sort()).toEqual([
       "deerfield-beach-cam",
       "deerfield-pier-cam",
       "deerfield-surf-cam",
+      "fort-myers-beach-cam",
       "ftl-elbo-beach-cam",
+      "pensacola-sria-west-cam",
     ]);
+  });
+
+  it("the two Gulf cams face west: a sunset is the solar view, a sunrise the antisolar view", () => {
+    const west = SUN_CAMS.filter((c) => c.facing === "west");
+    expect(west.map((c) => c.id).sort()).toEqual(["fort-myers-beach-cam", "pensacola-sria-west-cam"]);
+    for (const cam of west) {
+      expect(cam.facing_azimuth_deg).toBeGreaterThanOrEqual(210);
+      expect(cam.facing_azimuth_deg).toBeLessThanOrEqual(300);
+      expect(expectedView("sunset", cam.facing_azimuth_deg)).toBe("solar");
+      expect(expectedView("sunrise", cam.facing_azimuth_deg)).toBe("antisolar");
+    }
+  });
+
+  it("every cam without a facing label looks east (the Atlantic cams)", () => {
+    for (const cam of SUN_CAMS.filter((c) => c.facing === undefined)) {
+      expect(cam.facing_azimuth_deg).toBe(90);
+    }
+  });
+
+  it("the west cams credit a public body (no business cam is added without permission)", () => {
+    expect(SUN_CAMS.find((c) => c.id === "pensacola-sria-west-cam")?.credit).toMatch(/Santa Rosa Island Authority/);
+    expect(SUN_CAMS.find((c) => c.id === "fort-myers-beach-cam")?.credit).toMatch(/Visit Fort Myers/);
   });
 
   it("every cam is a registered cam with the same credit, and its YouTube id matches the courier's", () => {
@@ -63,10 +87,15 @@ describe("config/sun-cams.json", () => {
     }
   });
 
-  it("the Deerfield cams also stand in for Boca Raton; Elbo Room only for Fort Lauderdale", () => {
+  it("the Deerfield cams also stand in for Boca Raton; every other cam serves only its own beach", () => {
+    const own: Record<string, string> = {
+      "ftl-elbo-beach-cam": "fort-lauderdale",
+      "fort-myers-beach-cam": "fort-myers-beach",
+      "pensacola-sria-west-cam": "pensacola-beach",
+    };
     for (const cam of SUN_CAMS) {
       const slugs = cam.beaches.map((b) => b.slug).sort();
-      expect(slugs).toEqual(cam.id.startsWith("deerfield") ? ["boca-raton", "deerfield-beach"] : ["fort-lauderdale"]);
+      expect(slugs).toEqual(cam.id.startsWith("deerfield") ? ["boca-raton", "deerfield-beach"] : [own[cam.id]]);
     }
   });
 

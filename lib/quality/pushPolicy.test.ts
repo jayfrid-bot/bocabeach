@@ -85,7 +85,7 @@ describe("localDay helpers", () => {
 
 describe("watched beaches", () => {
   it("are boca-raton plus every vision-cam beach", () => {
-    expect(watchedSlugs().sort()).toEqual(["boca-raton", "deerfield-beach", "fort-lauderdale"]);
+    expect(watchedSlugs().sort()).toEqual(["boca-raton", "deerfield-beach", "fort-lauderdale", "fort-myers-beach", "pensacola-beach"]);
     expect(isWatched("deerfield-beach")).toBe(true);
     expect(isWatched("miami-beach")).toBe(false);
   });

@@ -35,6 +35,7 @@ export const NWPS_RIP_COVERAGE: Record<string, NwpsRipCoverage> = {
   "nags-head": { region: "er", office: "mhx", lon: -75.555, lat: 35.8367, distKm: 0.38 },
   "naples": { region: "sr", office: "mfl", lon: -81.818, lat: 26.1293, distKm: 2.63 },
   "old-orchard-beach": { region: "er", office: "gyx", lon: -70.36, lat: 43.5175, distKm: 0.74 },
+  "pensacola-beach": { region: "sr", office: "mob", lon: -87.135, lat: 30.3282, distKm: 0.69 },
   "rehoboth-beach": { region: "er", office: "phi", lon: -75.072, lat: 38.7106, distKm: 0.77 },
   "tybee-island": { region: "er", office: "chs", lon: -80.841, lat: 32.0086, distKm: 1.03 },
   "virginia-beach": { region: "er", office: "akq", lon: -75.971, lat: 36.852, distKm: 0.63 },

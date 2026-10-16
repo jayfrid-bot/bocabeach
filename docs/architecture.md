@@ -244,7 +244,7 @@ flowchart LR
   IMGAPI -->|"get"| CAMR2
   REMOVE["scripts/cam_archive_remove.ts (by hand; dry run unless --yes)<br/>lists the cam prefix through the R2 S3 API when R2 keys are set,<br/>wrangler r2 object delete + D1 DELETE for one cam"] -->|"erase one cam on a request"| CAMR2
   REMOVE --> D1
-  SUNCAM -->|"yt-dlp -J → HLS playlist (~4 h DVR); one frame every 2.5 min,<br/>event −35 … +25 min, per config/sun-cams.json cam"| YTLIVE[["YouTube livestream DVR<br/>Elbo Room + 3 Deerfield cams, all facing east"]]
+  SUNCAM -->|"yt-dlp -J → HLS playlist (~4 h DVR); one frame every 2.5 min,<br/>event −35 … +25 min, per config/sun-cams.json cam"| YTLIVE[["YouTube livestream DVR<br/>Elbo Room + 3 Deerfield cams (east) and Fort Myers Beach + Pensacola Beach cams (west)"]]
   SUNCAM -->|"POST /api/sun-observations — Bearer INGEST_TOKEN<br/>robust-peak score + series + scored_at, per beach / event / cam;<br/>incomplete captures are never sent"| SUNOBS["/api/sun-observations<br/>constant-time auth, bounded 32 KB read, strict validation<br/>that recomputes coverage + robust peak (lib/sunObservations.ts)"]
   OWNER["owner's Mac"] -->|"POST /api/push/test — Bearer INGEST_TOKEN, {deviceId}:<br/>one real APNs alert to one device, writes no alert state"| PUSHTEST["/api/push/test"]
   SUNOBS -->|"sun_event_observations (migrations/0015)<br/>upsert only when (score_version, scored_at) is newer —<br/>duplicates and stale replays are no-ops; credit stored"| D1
@@ -257,8 +257,9 @@ flowchart LR
 
 **`workers/uw-frame` is a multi-cam courier, not a single grab.** Deerfield
 Beach's cams (underwater, crowd/sand, surf, pier) plus Fort Lauderdale
-Beach's Elbo Room cam (crowd/sand, owner approved) exist only as YouTube live
-streams — there's no still-image feed — so each cron tick opens ONE headless
+Beach's Elbo Room cam (crowd/sand, owner approved), plus the two west-facing Gulf
+cams (Visit Fort Myers at Fort Myers Beach, the Santa Rosa Island Authority at
+Pensacola Beach), exist only as YouTube live streams — there's no still-image feed — so each cron tick opens ONE headless
 Chrome and reuses the SAME page across every camera due that tick (navigate
 the embed, wait for it to actually be playing, screenshot, move to the next
 cam) rather than launching a browser per camera. The same browser also loads
@@ -289,8 +290,8 @@ current frame in its `source` field ("courier" or "browser").
 **The sun-cam check gives every sunrise and sunset a "what actually happened"
 score.** `scripts/sun_cam_check.py` runs on the owner's Mac every 30 minutes
 (`scripts/com.isitbeachday.suncam.plist`; YouTube blocks datacenter IPs, so it
-cannot run in a Worker or Action). It reads the 24/7 east-facing livestreams in
-`config/sun-cams.json`. YouTube keeps ~4 hours of DVR for each, so a run up to
+cannot run in a Worker or Action). It reads the 24/7 livestreams in
+`config/sun-cams.json` (four face east over the Atlantic; two, tagged `"facing": "west"`, face west over the Gulf). YouTube keeps ~4 hours of DVR for each, so a run up to
 3.5 hours after an event rebuilds it: one frame every 2.5 minutes from 35
 minutes before to 25 minutes after the event, each scored 0-100 on how much of
 the sky is lit warm. The event's score is a robust peak (a frame counts for at
@@ -299,7 +300,7 @@ without enough frames before, around, and after the event is never uploaded. The
 `POST /api/sun-observations` with the courier's `INGEST_TOKEN`, lands in
 `sun_event_observations` (migrations/0015), and the best observation (solar view
 first, then nearest cam) is copied onto the matching `sun_event_predictions`
-rows. Sunrise views are `solar`, sunset views `antisolar`. Every stored row
+rows. For an east cam, sunrise views are `solar` and sunset views `antisolar`; for a west cam it is the other way round. Every stored row
 carries the cam owner's credit string (Elbo Room asked for one). See
 `docs/SUN_CAM_CHECK.md`.
 
@@ -1211,7 +1212,7 @@ also erases a cam's `quality/` prefix.
 | iNaturalist | Portuguese man-o'-war sighting reports |
 | FL Healthy Beaches | Water-quality advisories |
 | video-monitoring.com | Public beach cam still frames |
-| YouTube | Deerfield Beach underwater + surface cam sources, and Fort Lauderdale Beach's Elbo Room cam, live-embed only (`workers/uw-frame`) |
+| YouTube | Deerfield Beach underwater + surface cam sources, Fort Lauderdale Beach's Elbo Room cam, and the Fort Myers Beach and Pensacola Beach west-facing cams, live-embed only (`workers/uw-frame`) |
 | ArcGIS (City of Deerfield Beach dashboard) | Lifeguard flag status read (`workers/uw-frame`) |
 | City of Fort Lauderdale Fire Rescue "Beach Conditions" page | Lifeguard flags, sea pests, ocean report (`workers/uw-frame`, Browser Rendering) |
 | Apple Push Notification service (APNs) | iOS push delivery, including the owner-only quality alerts (`lib/quality/notify.ts`) |

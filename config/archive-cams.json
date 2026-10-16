@@ -155,6 +155,34 @@
         "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=ftl-elbo-beach-cam",
         "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=ftl-elbo-beach-cam"
       }
+    },
+    {
+      "slug": "fort-myers-beach",
+      "id": "fort-myers-beach-cam",
+      "name": "Fort Myers Beach Cam",
+      "attribution": "Live stream courtesy Visit Fort Myers (Lee County Visitor & Convention Bureau)",
+      "timezone": "America/New_York",
+      "lat": 26.4538,
+      "lon": -81.9571,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=fort-myers-beach-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=fort-myers-beach-cam"
+      }
+    },
+    {
+      "slug": "pensacola-beach",
+      "id": "pensacola-sria-west-cam",
+      "name": "Pensacola Beach — West Cam",
+      "attribution": "Live stream courtesy Santa Rosa Island Authority",
+      "timezone": "America/Chicago",
+      "lat": 30.3303,
+      "lon": -87.1418,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=pensacola-sria-west-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=pensacola-sria-west-cam"
+      }
     }
   ]
 }

@@ -3,7 +3,7 @@
 <!--
   GOLDEN-HOUR companion to com.isitbeachday.camcourier.plist (the hourly :07
   job). Same script, but launched with the golden-only flag, so it grabs the courier
-  cams (Deerfield Beach, Fort Lauderdale) every 10 minutes while a sunrise
+  cams (Deerfield Beach, Fort Lauderdale, Fort Myers Beach, Pensacola Beach) every 10 minutes while a sunrise
   (-20/+40 min) or sunset (-40/+20 min) window is open, matching the webcam
   archive's 10-minute golden slots. See scripts/cam_courier_local.sh.
 
@@ -13,12 +13,14 @@
   run lock, so a golden run that meets a still-running hourly run just skips.
 
   LAUNCHD USES LOCAL TIME (the Mac is on America/New_York). Across the whole
-  year the windows of both beaches open no earlier than 06:07 (sunrise, late
-  May) and close no later than 08:16 (sunrise, early March), and the sunset
+  year the windows of the four beaches open no earlier than 06:07 (sunrise, late
+  May) and close no later than 08:46 (sunrise, early March; Pensacola Beach is
+  on Central time, so its clock reads an hour later in Eastern), and the sunset
   windows open no earlier than 16:47 (late November) and close no later than
-  20:37 (early July). So this fires at :00/:10/:20/:30/:40/:50 of local hours
-  6-8 and 16-20. Most fires on a given day are outside the window; the script
-  asks scripts/golden_now.py and exits at once when it is.
+  21:14 (early July, Pensacola Beach). So this fires at :00/:10/:20/:30/:40/:50
+  of local hours 6-8 and 16-20, plus :00 and :10 of hour 21. Most fires on a
+  given day are outside the window; the script asks scripts/golden_now.py and
+  exits at once when it is.
 
   NOT INSTALLED by this change. To install (replace __HOME__ first):
     sed "s#__HOME__#$HOME#g" scripts/com.isitbeachday.camcourier.golden.plist \
@@ -49,7 +51,7 @@
   <key>WorkingDirectory</key>
   <string>__HOME__/Projects/bocabeach</string>
 
-  <!-- Every 10 minutes through local hours 6-8 and 16-20 (48 fires a day). -->
+  <!-- Every 10 minutes through local hours 6-8 and 16-20, plus 21:00 and 21:10 (50 fires a day). -->
   <key>StartCalendarInterval</key>
   <array>
     <dict><key>Minute</key><integer>0</integer><key>Hour</key><integer>6</integer></dict>
@@ -100,6 +102,8 @@
     <dict><key>Minute</key><integer>30</integer><key>Hour</key><integer>20</integer></dict>
     <dict><key>Minute</key><integer>40</integer><key>Hour</key><integer>20</integer></dict>
     <dict><key>Minute</key><integer>50</integer><key>Hour</key><integer>20</integer></dict>
+    <dict><key>Minute</key><integer>0</integer><key>Hour</key><integer>21</integer></dict>
+    <dict><key>Minute</key><integer>10</integer><key>Hour</key><integer>21</integer></dict>
   </array>
 
   <key>RunAtLoad</key>

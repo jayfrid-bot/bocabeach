@@ -52,6 +52,7 @@ export const NDBC_STATION_REPORTS_WAVES: Record<string, boolean> = {
   "41112": true, // Offshore Fernandina Beach, FL (132) — wave buoy
   "41113": true, // Cape Canaveral Nearshore, FL (143) — wave buoy
   "42012": true, // Orange Beach, AL — 44 NM SE of Mobile, AL — wave buoy
+  "42098": true, // Egmont Channel Entrance, FL (214) — wave buoy (WVHT live 2026-10-15); Fort Myers Beach fallback, ~99 mi north
   "42035": true, // Galveston, TX — 22 NM East of Galveston, TX — wave buoy
   "42084": true, // Southwest Pass Entrance W, LA (256) — nearshore wave buoy
   "42092": true, // Aransas Pass Channel Entrance S, TX (252), Waverider buoy —
@@ -90,6 +91,7 @@ export const NDBC_STATION_REPORTS_WAVES: Record<string, boolean> = {
   CHYV2: false, // 8638999 Cape Henry, VA — tide gauge
   CMAN4: false, // 8536110 Cape May, NJ — tide gauge
   CPXC1: false, // Cal Poly Pier, CA — met station, no wave sensor
+  FMRF1: false, // 8725520 Fort Myers, FL — tide gauge (WVHT "MM" 2026-10-15); Fort Myers Beach primary
   FPKG1: false, // 8670870 Fort Pulaski, GA — tide gauge
   GISL1: false, // 8761724 Grand Isle, LA — tide gauge
   GTOT2: false, // 8771450 Galveston Pier 21, TX — tide gauge
@@ -108,6 +110,7 @@ export const NDBC_STATION_REPORTS_WAVES: Record<string, boolean> = {
   OOUH1: false, // 1612340 Honolulu, HI — tide gauge
   ORIN7: false, // 8652587 Oregon Inlet Marina, NC — tide gauge
   PNLM6: false, // 8741533 Pascagoula NOAA Lab, MS — tide gauge
+  PCLF1: false, // 8729840 Pensacola, FL — tide gauge (WVHT "MM" 2026-10-15); Pensacola Beach primary
   PPTA1: false, // Perdido Pass, AL — met/tide station, no wave sensor
   RKXF1: false, // Upper Henderson Creek, Rookery Bay Reserve, FL — met station
   ROBN4: false, // 8530973 Robbins Reef, NJ — tide gauge

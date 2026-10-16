@@ -63,9 +63,11 @@ Things that went wrong while building it:
 
 ## The cams
 
-All four are 24/7 YouTube streams that face east over the Atlantic. The Boca
-Raton cams (video-monitoring.com) upload only from about 8:00 AM to 5:30 PM, so
-they never see a sunrise or sunset and are not used.
+Six 24/7 YouTube streams. Four face east over the Atlantic and two face west
+over the Gulf of Mexico (added 2026-10-15; see
+`docs/research/2026-10-15-west-facing-cams.md`). The Boca Raton cams
+(video-monitoring.com) upload only from about 8:00 AM to 5:30 PM, so they never
+see a sunrise or sunset and are not used.
 
 | Cam | Observes (distance from the beach pin) | Sky region (x0, y0, x1, y1 as fractions of the frame) |
 | --- | --- | --- |
@@ -73,16 +75,41 @@ they never see a sunrise or sunset and are not used.
 | `deerfield-beach-cam` | deerfield-beach (0.0), boca-raton (2.9) | [.13, 0, .73, .40], [.50, .40, .73, .49], [.73, .10, 1, .49] |
 | `deerfield-surf-cam` | deerfield-beach (0.0), boca-raton (2.9) | [0, .05, .78, .25], [.78, .10, 1, .25] |
 | `deerfield-pier-cam` | deerfield-beach (0.1), boca-raton (2.9) | [0, .08, .27, .13], [.27, 0, .89, .13], [.89, .08, 1, .13] |
+| `fort-myers-beach-cam` (Visit Fort Myers) WEST | fort-myers-beach (0.1 mi) | [0, 0, .5, .20], [.5, 0, 1, .17] |
+| `pensacola-sria-west-cam` (Santa Rosa Island Authority) WEST | pensacola-beach (0.0 mi) | [0, 0, .25, .13], [.25, 0, .5, .10], [.5, 0, .58, .06], [.65, 0, .8, .09], [.8, 0, 1, .15] |
 
 The regions keep the sky and drop the flagpole, palms, pier, beach, water, and the
 burned-in text. The Deerfield surf cam is a PTZ camera that pans between presets.
 Its horizon sits anywhere from 27% to 46% down the frame, so its region is only
 the top slice that is sky in every pose.
 
-**View.** A sunrise is `solar`: the cam looks straight at the sun. A sunset is
-`antisolar`: the cam looks away and sees clouds that catch the afterglow. They are
-stored apart, so calibration never mixes them. The sunset score has not yet been
-checked against a real event, because the DVR holds only 4 hours.
+**View.** For an east cam, a sunrise is `solar`: the cam looks straight at the sun.
+A sunset is `antisolar`: the cam looks away and sees clouds that catch the afterglow.
+For a west cam it is the other way round: the sunset is `solar` (the sun goes down in
+frame) and the sunrise is `antisolar`. The code decides this from `facing_azimuth_deg`
+alone (within 60 degrees of the sun's azimuth = solar). A west cam also carries
+`"facing": "west"`, a human label that tests pin. Solar and antisolar scores are
+stored apart, so calibration never mixes them. Until 2026-10-15 every cam looked east,
+so no `solar` sunset existed. The west cams are the first source of one. The sunset
+score has not yet been checked against a real event, because the DVR holds only 4 hours.
+
+**West cams: things to know.**
+
+- Both are public bodies' streams (Santa Rosa Island Authority; Visit Fort Myers, the
+  Lee County Visitor & Convention Bureau). Their credit strings are in the registry
+  and the ingest route rejects any other.
+- The Fort Myers Beach cam can be panned by visitors on visitfortmyers.com ("take
+  control", one viewer at a time), like the Deerfield surf cam. Its sky regions are
+  drawn for the usual pose. Visit Fort Myers says most of its cams are live 6 AM to
+  11 PM Eastern and show a timelapse when off, so the sunset is live but a sunrise
+  before 6 AM is not (Fort Myers Beach sunrise is after 7 AM all year).
+- Pensacola Beach is on Central time. The script already works in each beach's local
+  date, so nothing else changes. The courier's golden launchd job gained 21:00 and
+  21:10 Eastern for its summer sunset.
+- If Visit Fort Myers restarts its stream, the video id changes. Only the Elbo Room
+  cam has a lookup fallback today. Update `youtube_id` in `config/sun-cams.json`,
+  `scripts/cam_courier_local.sh`, `workers/uw-frame/src/lib/schedule.ts` and the cam's
+  `url` in `config/locations.ts` together (a vitest keeps them in step).
 
 ## Scoring
 
@@ -247,6 +274,13 @@ Elbo Room gave permission to use its stream as long as it is credited. The strin
 `Live stream courtesy Elbo Room (ElboRoom.com)` lives in `config/sun-cams.json`.
 The ingest route rejects any other credit for that cam, and every stored row carries
 it. Keep it wherever these frames or scores are shown.
+
+The Gulf cams carry their own credit strings (`Live stream courtesy Santa Rosa Island
+Authority`, `Live stream courtesy Visit Fort Myers (Lee County Visitor & Convention
+Bureau)`). Both are public bodies' streams with no published terms, so the owner
+should still send each a short courtesy note. Business cams (resorts, bars) need
+permission first, as Elbo Room did; `docs/research/2026-10-15-west-facing-cams.md`
+lists the ones worth asking.
 
 ## Install
 

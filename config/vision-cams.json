@@ -84,5 +84,37 @@
         "role": "crowd"
       }
     ]
+  },
+  "fort-myers-beach": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "fort-myers-beach-cam",
+        "name": "Fort Myers Beach Cam",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=fort-myers-beach-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=fort-myers-beach-cam"
+        },
+        "role": "shore",
+        "visionHint": "The foreground is a beach construction site (piles of sand, pipes, machines and workers). That is not seaweed and not a crowd. Judge only the waterline, the surf and the people on the open sand near the water."
+      }
+    ]
+  },
+  "pensacola-beach": {
+    "timezone": "America/Chicago",
+    "cams": [
+      {
+        "id": "pensacola-sria-west-cam",
+        "name": "Pensacola Beach — West Cam",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=pensacola-sria-west-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=pensacola-sria-west-cam"
+        },
+        "role": "shore",
+        "visionHint": "A wide fisheye view along the beach. The Gulf is on the left and the white sand on the right. Pale foam and bright sun glitter on the water are not seaweed."
+      }
+    ]
   }
 }

@@ -102,6 +102,13 @@
   "lon": -80.1035
  },
  {
+  "slug": "fort-myers-beach",
+  "name": "Fort Myers Beach",
+  "region": "Lee County, FL",
+  "lat": 26.4538,
+  "lon": -81.9571
+ },
+ {
   "slug": "galveston",
   "name": "Galveston",
   "region": "Galveston, TX",
@@ -219,6 +226,13 @@
   "region": "York County, ME",
   "lat": 43.5206,
   "lon": -70.3681
+ },
+ {
+  "slug": "pensacola-beach",
+  "name": "Pensacola Beach",
+  "region": "Escambia County, FL",
+  "lat": 30.3303,
+  "lon": -87.1418
  },
  {
   "slug": "pismo-beach",

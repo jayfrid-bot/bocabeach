@@ -5,7 +5,7 @@ import { LOCATIONS } from "@/config/locations";
 import visionCams from "@/config/vision-cams.json";
 import { archiveCams, buildArchiveManifestJson, lookupCam } from "@/lib/camFrames/manifest";
 
-/** The eleven cams the owner chose to archive (2026-10-11), by id. */
+/** The cams the archive keeps, by id: the eleven the owner chose (2026-10-11) plus the two west-facing Gulf cams (2026-10-15). */
 const EXPECTED_IDS = [
   "boca-inlet",
   "boca-inlet-jetty",
@@ -17,14 +17,16 @@ const EXPECTED_IDS = [
   "deerfield-pier-cam",
   "deerfield-spinner-uw",
   "deerfield-surf-cam",
+  "fort-myers-beach-cam",
   "ftl-elbo-beach-cam",
+  "pensacola-sria-west-cam",
 ];
 
 describe("archive manifest", () => {
-  it("is exactly the 11 configured cams", () => {
+  it("is exactly the 13 configured cams", () => {
     const ids = archiveCams().map((c) => c.camId).sort();
     expect(ids).toEqual(EXPECTED_IDS);
-    expect(ids).toHaveLength(11);
+    expect(ids).toHaveLength(13);
   });
 
   it("covers every cam in locations.ts that has a proxied still", () => {

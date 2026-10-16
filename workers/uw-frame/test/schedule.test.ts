@@ -9,13 +9,15 @@ import {
 } from "../src/lib/schedule";
 
 describe("registry", () => {
-  it("has exactly the five documented cameras", () => {
+  it("has exactly the seven documented cameras", () => {
     expect(CAMERA_REGISTRY.map((c) => c.id)).toEqual([
       "deerfield-spinner-uw",
       "deerfield-beach-cam",
       "deerfield-surf-cam",
       "deerfield-pier-cam",
       "ftl-elbo-beach-cam",
+      "fort-myers-beach-cam",
+      "pensacola-sria-west-cam",
     ]);
   });
 
@@ -30,6 +32,12 @@ describe("registry", () => {
     expect(findCamera("not-a-cam")).toBeUndefined();
     expect(findCamera(null)).toBeUndefined();
     expect(findCamera(undefined)).toBeUndefined();
+  });
+
+  it("finds the two west-facing Gulf cams by id", () => {
+    expect(findCamera("fort-myers-beach-cam")?.videoId).toBe("nj9jdOXXhEo");
+    expect(findCamera("pensacola-sria-west-cam")?.videoId).toBe("HKIc6CYlMzI");
+    expect(findCamera("pensacola-sria-west-cam")?.cadence).toBe("3h-daylight");
   });
 
   it("finds the Fort Lauderdale (Elbo Room) cam by id", () => {
@@ -82,7 +90,7 @@ describe("camsDueAtTick", () => {
     expect(due.map((c) => c.id)).toEqual(["deerfield-spinner-uw"]);
   });
 
-  it("grabs all five cams on a daylight surface hour", () => {
+  it("grabs the underwater cam and all six surface cams on a daylight surface hour", () => {
     // 13:00 UTC = 9am EDT: daylight AND a surface hour.
     const due = camsDueAtTick(new Date("2026-07-15T13:00:00Z"));
     expect(due.map((c) => c.id).sort()).toEqual(
@@ -92,6 +100,8 @@ describe("camsDueAtTick", () => {
         "deerfield-surf-cam",
         "deerfield-pier-cam",
         "ftl-elbo-beach-cam",
+        "fort-myers-beach-cam",
+        "pensacola-sria-west-cam",
       ].sort()
     );
   });

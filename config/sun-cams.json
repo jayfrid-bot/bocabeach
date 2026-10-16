@@ -1,8 +1,8 @@
 {
   "$comment": [
     "Registry for scripts/sun_cam_check.py and POST /api/sun-observations (docs/SUN_CAM_CHECK.md).",
-    "Every cam here is a 24/7 YouTube livestream facing EAST over the Atlantic, so a sunrise is a 'solar' view and a sunset an 'antisolar' view.",
-    "sky_regions are [x0, y0, x1, y1] as fractions of the frame (0,0 = top-left). They keep the sky and drop the flagpole, palms, pier, beach, water and the burned-in text overlays. They were drawn from real 1280x720 frames (Elbo: the 2026-10-06 sunrise frames; Deerfield: live frames pulled from the uw-frame worker on 2026-10-06).",
+    "The cams up to and including 'deerfield-pier-cam' are 24/7 YouTube livestreams facing EAST over the Atlantic, so a sunrise is a 'solar' view and a sunset an 'antisolar' view. A cam that carries \"facing\": \"west\" looks WEST over the Gulf of Mexico, so for it a sunset is the 'solar' view (the sun sets in frame) and a sunrise is 'antisolar'. \"facing\" is a human label: the code reads only facing_azimuth_deg (within 60 degrees of the sun = solar).",
+    "sky_regions are [x0, y0, x1, y1] as fractions of the frame (0,0 = top-left). They keep the sky and drop the flagpole, palms, pier, beach, water and the burned-in text overlays. They were drawn from real 1280x720 frames (Elbo: the 2026-10-06 sunrise frames; Deerfield: live frames pulled from the uw-frame worker on 2026-10-06; the two Gulf cams: the 2026-10-15 sunset frames saved under docs/research/2026-10-15-west-facing-cams/, with the regions drawn over them in the *-sky-regions.jpg files).",
     "beaches[].lat/lon repeat config/locations.ts; distance_mi is the great-circle distance from that beach's pin to the cam, rounded to 0.1 mi. lib/sunCamsConfig.test.ts keeps both in lockstep with locations.ts.",
     "credit is stored with every observation and the ingest route rejects any other string. Elbo Room gave the owner permission to use its stream as long as it is credited."
   ],
@@ -82,6 +82,45 @@
         [0.0, 0.08, 0.27, 0.13],
         [0.27, 0.0, 0.89, 0.13],
         [0.89, 0.08, 1.0, 0.13]
+      ]
+    },
+    {
+      "id": "fort-myers-beach-cam",
+      "name": "Fort Myers Beach Cam (Visit Fort Myers)",
+      "youtube_id": "nj9jdOXXhEo",
+      "note": "A fixed camera on the Times Square block looking south-west over the beach and the Gulf, with a beach-building site in the foreground. The sun sets just beyond the right edge in October (the frame sees the sky and the afterglow) and inside the frame near the winter solstice. Visitors can pan it from visitfortmyers.com, so the regions are for the usual pose.",
+      "facing": "west",
+      "facing_azimuth_deg": 225,
+      "lat": 26.4533,
+      "lon": -81.9561,
+      "credit": "Live stream courtesy Visit Fort Myers (Lee County Visitor & Convention Bureau)",
+      "beaches": [
+        { "slug": "fort-myers-beach", "lat": 26.4538, "lon": -81.9571, "distance_mi": 0.1 }
+      ],
+      "sky_regions": [
+        [0.0, 0.0, 0.5, 0.2],
+        [0.5, 0.0, 1.0, 0.17]
+      ]
+    },
+    {
+      "id": "pensacola-sria-west-cam",
+      "name": "Pensacola Beach - West Cam (Santa Rosa Island Authority)",
+      "note": "A fisheye camera on Casino Beach looking west along the sand: the Gulf is on the left, the beach and a low skyline on the right. The sky is a thin strip along the top and the horizon curves, so the regions follow it.",
+      "youtube_id": "HKIc6CYlMzI",
+      "facing": "west",
+      "facing_azimuth_deg": 260,
+      "lat": 30.33,
+      "lon": -87.1424,
+      "credit": "Live stream courtesy Santa Rosa Island Authority",
+      "beaches": [
+        { "slug": "pensacola-beach", "lat": 30.3303, "lon": -87.1418, "distance_mi": 0.0 }
+      ],
+      "sky_regions": [
+        [0.0, 0.0, 0.25, 0.13],
+        [0.25, 0.0, 0.5, 0.1],
+        [0.5, 0.0, 0.58, 0.06],
+        [0.65, 0.0, 0.8, 0.09],
+        [0.8, 0.0, 1.0, 0.15]
       ]
     }
   ]

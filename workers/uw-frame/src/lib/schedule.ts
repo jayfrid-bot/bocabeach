@@ -12,7 +12,9 @@ export type CameraId =
   | "deerfield-beach-cam"
   | "deerfield-surf-cam"
   | "deerfield-pier-cam"
-  | "ftl-elbo-beach-cam";
+  | "ftl-elbo-beach-cam"
+  | "fort-myers-beach-cam"
+  | "pensacola-sria-west-cam";
 
 /**
  * "hourly"       — grabbed on every cron tick (today's Spinner behaviour).
@@ -75,6 +77,20 @@ export const CAMERA_REGISTRY: readonly CameraSpec[] = [
     videoId: "1j1lgppb0PY",
     label: "Fort Lauderdale Beach Cam (Elbo Room)",
     purpose: "crowd/sand",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "fort-myers-beach-cam",
+    videoId: "nj9jdOXXhEo",
+    label: "Fort Myers Beach Cam (Visit Fort Myers)",
+    purpose: "shoreline",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "pensacola-sria-west-cam",
+    videoId: "HKIc6CYlMzI",
+    label: "Pensacola Beach West Cam (Santa Rosa Island Authority)",
+    purpose: "shoreline",
     cadence: "3h-daylight",
   },
 ] as const;

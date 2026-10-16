@@ -311,6 +311,101 @@ export const LOCATIONS: Location[] = [
       },
     ],
   },
+  {
+    slug: "fort-myers-beach",
+    name: "Fort Myers Beach",
+    region: "Lee County, FL",
+    updatedAt: "2026-10-15",
+    // Lynn Hall Memorial Park, by the Fort Myers Beach pier (Estero Island,
+    // Gulf side). The resolver's own pick (a GNIS centroid) sits in the water
+    // north of Bowditch Point, so this entry is hand-curated. The Gulf lies to
+    // the southwest, so a clear evening sky is over the water: this is a WEST
+    // coast beach (sunsets over the Gulf), unlike every other curated beach.
+    lat: 26.4538,
+    lon: -81.9571,
+    timezone: "America/New_York",
+    // coastNormalDeg and coast are left unset on purpose: nobody has reviewed
+    // the shoreline normal (about 235 deg from the map), and its presence is
+    // what switches on the orientation-dependent rip-current and "over the
+    // water" copy. The owner can set both after a look at the map.
+    noaaTideStationId: "8725366", // Matanzas Pass (fixed bridge), 0.3 mi (predictions)
+    noaaTideStationFallbackId: "8725351", // Estero Island, Estero Bay
+    // 8725366 is a subordinate PREDICTION station. The measured water level
+    // comes from the Fort Myers gauge on the Caloosahatchee, ~14 mi north.
+    noaaWaterLevelStationId: "8725520",
+    ndbcBuoyId: "fmrf1", // Fort Myers C-MAN (water temp only, no waves)
+    ndbcBuoyFallbackId: "42098", // Egmont Channel (waves, ~99 mi north)
+    // Site names exactly as published by the FL Healthy Beaches feed (Lee).
+    healthyBeaches: {
+      county: "Lee",
+      sites: ["LYNN HALL PARK", "BOWDITCH PARK"],
+    },
+    surfZone: { office: "TBW", name: "Coastal Lee" }, // NWS Tampa Bay Surf Zone Forecast
+    cams: [
+      {
+        // Visit Fort Myers (the Lee County Visitor & Convention Bureau) runs this
+        // public YouTube livestream, "Fort Myers Beach Live Webcam", from the
+        // Times Square block beside the pier. It looks over the beach and the
+        // Gulf. Frames come from the owner's courier, as for Deerfield.
+        id: "fort-myers-beach-cam",
+        name: "Fort Myers Beach Cam",
+        provider: "Visit Fort Myers",
+        embedType: "image",
+        url: "https://www.youtube.com/watch?v=nj9jdOXXhEo",
+        snapshotUrl: "https://uw-frame.entwined-app.workers.dev/frame?cam=fort-myers-beach-cam",
+        snapshotMetaUrl: "https://uw-frame.entwined-app.workers.dev/meta?cam=fort-myers-beach-cam",
+        attribution: "Live stream courtesy Visit Fort Myers (Lee County Visitor & Convention Bureau)",
+        lat: 26.4533,
+        lon: -81.9561,
+      },
+    ],
+  },
+  {
+    slug: "pensacola-beach",
+    name: "Pensacola Beach",
+    region: "Escambia County, FL",
+    updatedAt: "2026-10-15",
+    // Casino Beach, beside the Pensacola Beach Gulf pier on Santa Rosa Island.
+    // The Gulf is to the south and the island runs east-west, so a camera that
+    // looks west along the sand sees the sun set over the water and the
+    // spit. Time zone is Central.
+    lat: 30.3303,
+    lon: -87.1418,
+    timezone: "America/Chicago",
+    // coastNormalDeg and coast are left unset on purpose (about 180 deg from
+    // the map, not reviewed); see the Fort Myers Beach entry.
+    noaaTideStationId: "8729807", // Pensacola Beach Pier, 0.2 mi (predictions)
+    noaaTideStationFallbackId: "8729840", // Pensacola
+    // 8729807 publishes no observations. The measured water level comes from the
+    // Pensacola gauge on the bay, ~6.6 mi north.
+    noaaWaterLevelStationId: "8729840",
+    ndbcBuoyId: "pclf1", // Pensacola C-MAN (water temp only, no waves)
+    ndbcBuoyFallbackId: "42012", // Orange Beach (waves, ~31 mi west)
+    // Site names exactly as published by the FL Healthy Beaches feed (Escambia).
+    healthyBeaches: {
+      county: "Escambia",
+      sites: ["CASINO BEACH", "PARK WEST - GULFSIDE"],
+    },
+    surfZone: { office: "MOB", name: "Escambia Coastal" }, // NWS Mobile Surf Zone Forecast
+    cams: [
+      {
+        // Santa Rosa Island Authority (the public body that runs Pensacola Beach)
+        // streams "SRIA - West Cam" on its own YouTube channel: a wide-angle view
+        // west along Casino Beach. Its "East Cam" faces the other way and is not
+        // used. Frames come from the owner's courier, as for Deerfield.
+        id: "pensacola-sria-west-cam",
+        name: "Pensacola Beach — West Cam",
+        provider: "Santa Rosa Island Authority",
+        embedType: "image",
+        url: "https://www.youtube.com/watch?v=HKIc6CYlMzI",
+        snapshotUrl: "https://uw-frame.entwined-app.workers.dev/frame?cam=pensacola-sria-west-cam",
+        snapshotMetaUrl: "https://uw-frame.entwined-app.workers.dev/meta?cam=pensacola-sria-west-cam",
+        attribution: "Live stream courtesy Santa Rosa Island Authority",
+        lat: 30.33,
+        lon: -87.1424,
+      },
+    ],
+  },
 ];
 
 /** Hand-curated entries first, then admin-added (generated) ones; deduped by slug. */

@@ -31,10 +31,14 @@ ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = ROOT / "config" / "archive-cams.json"
 
 # The eleven cams the owner chose to archive (2026-10-11).
+# Every beach in the archive manifest. The pre-check asks the app once per beach.
+BEACH_SLUGS = ("boca-raton", "deerfield-beach", "fort-lauderdale", "fort-myers-beach", "pensacola-beach")
+
 EXPECTED_IDS = {
     "boca-inlet", "boca-inlet-jetty", "boca-inlet-north", "boca-inlet-surf",
     "boca-south", "boca-south-surf", "deerfield-beach-cam", "deerfield-pier-cam",
     "deerfield-spinner-uw", "deerfield-surf-cam", "ftl-elbo-beach-cam",
+    "fort-myers-beach-cam", "pensacola-sria-west-cam",
 }
 
 
@@ -119,16 +123,16 @@ class WithManifest(unittest.TestCase):
 
 
 class ArchiveSetTests(WithManifest):
-    def test_archive_set_is_exactly_the_eleven_configured_cams(self):
+    def test_archive_set_is_exactly_the_thirteen_configured_cams(self):
         ids = [c["id"] for c in cs.load_archive_cams()]
         self.assertEqual(set(ids), EXPECTED_IDS)
-        self.assertEqual(len(ids), 11)
-        self.assertEqual(len(set(ids)), 11, "no cam listed twice")
+        self.assertEqual(len(ids), 13)
+        self.assertEqual(len(set(ids)), 13, "no cam listed twice")
 
     def test_archive_set_matches_config_locations_ts(self):
         # Cam ids are the only `id:` keys in locations.ts. The TypeScript test
         # (lib/camFrames/manifest.test.ts) checks the full file; this one proves
-        # the Python side reads the same eleven.
+        # the Python side reads the same thirteen.
         text = (ROOT / "config" / "locations.ts").read_text(encoding="utf-8")
         ts_ids = set(re.findall(r'^\s+id: "([a-z0-9-]+)",', text, flags=re.M))
         self.assertEqual(ts_ids, EXPECTED_IDS)
@@ -619,17 +623,17 @@ class ArchivePassBase(WithManifest):
 
 
 class ArchivePassTests(ArchivePassBase):
-    def test_with_nothing_attempted_it_covers_all_eleven_cams(self):
+    def test_with_nothing_attempted_it_covers_all_thirteen_cams(self):
         out, fetched, archived = self.run_pass(set())
         self.assertEqual(set(fetched), EXPECTED_IDS)
-        self.assertEqual(len(fetched), 11)
+        self.assertEqual(len(fetched), 13)
         self.assertEqual({c for c, _ in archived}, EXPECTED_IDS)
-        self.assertEqual(out["attempted"], 11)
+        self.assertEqual(out["attempted"], 13)
 
     def test_it_fetches_only_cams_the_vision_loop_did_not(self):
         registry = json.loads((ROOT / "config" / "vision-cams.json").read_text(encoding="utf-8"))
         attempted = {(slug, c["id"]) for slug, e in registry.items() for c in e["cams"]}
-        self.assertEqual(len(attempted), 7)
+        self.assertEqual(len(attempted), 9)
         out, fetched, _ = self.run_pass(set(attempted))
         self.assertEqual(set(fetched), {"boca-inlet", "boca-inlet-north", "boca-inlet-jetty", "deerfield-spinner-uw"})
         self.assertEqual(out["attempted"], 4)
@@ -638,7 +642,7 @@ class ArchivePassTests(ArchivePassBase):
         attempted = {("deerfield-beach", "deerfield-spinner-uw")}
         _, fetched, _ = self.run_pass(attempted)
         self.assertNotIn("deerfield-spinner-uw", fetched)
-        self.assertEqual(len(fetched), 10)
+        self.assertEqual(len(fetched), 12)
 
     def test_it_adds_what_it_fetched_to_attempted(self):
         attempted = set()
@@ -655,7 +659,7 @@ class ArchivePassTests(ArchivePassBase):
                 mock.patch.object(cs, "assess", side_effect=AssertionError("vision must not run")):
             self.assertEqual(cs._enabled_providers(), [])
             _, fetched, _ = self.run_pass(set())
-        self.assertEqual(len(fetched), 11)
+        self.assertEqual(len(fetched), 13)
 
     def test_without_a_token_it_fetches_nothing(self):
         out, fetched, archived = self.run_pass(set(), token=None)
@@ -676,11 +680,11 @@ class ArchivePassTests(ArchivePassBase):
             _, fetched, archived = self.run_pass(set(), meta_by_url={url: bad})
             self.assertNotIn("deerfield-pier-cam", fetched)
             self.assertNotIn("deerfield-pier-cam", {c for c, _ in archived})
-            self.assertEqual(len(fetched), 10)
+            self.assertEqual(len(fetched), 12)
 
     def test_one_cam_failing_does_not_stop_the_others(self):
         out, fetched, archived = self.run_pass(set(), fail_ids={"boca-inlet", "deerfield-surf-cam"})
-        self.assertEqual(len(archived), 9)
+        self.assertEqual(len(archived), 11)
         self.assertEqual(out["results"]["boca-raton/boca-inlet"], "error")
 
     def test_main_runs_the_archive_pass_even_with_no_vision_provider(self):
@@ -961,13 +965,13 @@ class ArchiveRunTests(WithManifest):
     def test_precheck_asks_once_per_beach_and_never_twice(self):
         run = cs.ArchiveRun()
         with env(INGEST_TOKEN="tok"):
-            run.precheck({"boca-raton", "deerfield-beach", "fort-lauderdale"})
-            run.precheck({"boca-raton", "deerfield-beach", "fort-lauderdale"})
-        self.assertEqual(sorted(self.filled_calls), ["boca-raton", "deerfield-beach", "fort-lauderdale"])
+            run.precheck(set(BEACH_SLUGS))
+            run.precheck(set(BEACH_SLUGS))
+        self.assertEqual(sorted(self.filled_calls), sorted(BEACH_SLUGS))
 
-    def test_the_manifest_needs_at_most_three_precheck_requests(self):
+    def test_the_manifest_needs_one_precheck_request_per_beach(self):
         slugs = {c["slug"] for c in cs.load_archive_cams()}
-        self.assertEqual(len(slugs), 3)
+        self.assertEqual(slugs, set(BEACH_SLUGS))
 
     def test_no_token_means_no_precheck(self):
         with env(INGEST_TOKEN=None):
@@ -1100,7 +1104,7 @@ class ArchivePassPrecheckTests(ArchivePassBase):
         self.assertNotIn("boca-inlet", fetched)
         self.assertNotIn("boca-inlet-north", fetched)
         self.assertIn("boca-inlet-jetty", fetched)
-        self.assertEqual(len(fetched), 9)
+        self.assertEqual(len(fetched), 11)
         self.assertEqual(out["results"]["boca-raton/boca-inlet"], "filled")
 
     def test_a_courier_cam_whose_own_hour_is_filled_is_not_downloaded(self):
@@ -1124,15 +1128,15 @@ class ArchivePassPrecheckTests(ArchivePassBase):
         self.assertEqual(out["results"]["boca-raton/boca-inlet"], "filled")
 
     def test_a_failed_precheck_behaves_as_before_everything_is_fetched_and_uploaded(self):
-        for slug in ("boca-raton", "deerfield-beach", "fort-lauderdale"):
+        for slug in BEACH_SLUGS:
             self.filled_by_slug[slug] = None
         out, fetched, archived = self.run_pass(set())
-        self.assertEqual(len(fetched), 11)
-        self.assertEqual(len(archived), 11)
+        self.assertEqual(len(fetched), 13)
+        self.assertEqual(len(archived), 13)
 
-    def test_the_whole_pass_asks_the_app_at_most_three_times(self):
+    def test_the_whole_pass_asks_the_app_once_per_beach(self):
         self.run_pass(set())
-        self.assertEqual(sorted(self.filled_calls), ["boca-raton", "deerfield-beach", "fort-lauderdale"])
+        self.assertEqual(sorted(self.filled_calls), sorted(BEACH_SLUGS))
 
     def test_a_stale_courier_frame_is_not_downloaded(self):
         meta_url = "https://uw-frame.entwined-app.workers.dev/meta?cam=ftl-elbo-beach-cam"
@@ -1323,14 +1327,14 @@ class GoldenSlotTests(WithManifest):
         with self.at("2026-10-11T11:24:00Z"):
             self.assertFalse(self.run_for(run, "boca-south"))
 
-    def test_a_golden_tick_still_asks_the_app_at_most_three_times(self):
-        for slug in ("boca-raton", "deerfield-beach", "fort-lauderdale"):
+    def test_a_golden_tick_still_asks_the_app_once_per_beach(self):
+        for slug in BEACH_SLUGS:
             self.golden_by_slug[slug] = self.WINDOW
         run = cs.ArchiveRun()
         with env(INGEST_TOKEN="tok"):
             run.precheck({c["slug"] for c in cs.load_archive_cams()})
             run.precheck({c["slug"] for c in cs.load_archive_cams()})
-        self.assertEqual(sorted(self.filled_calls), ["boca-raton", "deerfield-beach", "fort-lauderdale"])
+        self.assertEqual(sorted(self.filled_calls), sorted(BEACH_SLUGS))
 
     def test_archive_pass_inside_a_window_skips_only_cams_whose_ten_minute_slot_is_filled(self):
         now = dt.datetime.now(dt.timezone.utc)
@@ -1359,13 +1363,21 @@ class RunWindowTests(WithManifest):
     """The loop's reading window: earliest sunrise - 30 min to latest sunset + 30 min."""
 
     def cams(self):
-        return cs.load_archive_cams()
+        # The Eastern-time beaches. The tests below pin Eastern clock times; the one
+        # Central-time beach (Pensacola Beach) has its own test further down.
+        return [c for c in cs.load_archive_cams() if c["timezone"] == "America/New_York"]
 
     def test_every_manifest_cam_carries_coordinates(self):
-        for c in self.cams():
+        for c in cs.load_archive_cams():
             self.assertIsInstance(c["lat"], float, c["id"])
             self.assertIsInstance(c["lon"], float, c["id"])
-        self.assertEqual(len({c["slug"] for c in self.cams()}), 3)
+        self.assertEqual(len({c["slug"] for c in cs.load_archive_cams()}), 5)
+
+    def test_the_central_time_beach_stretches_the_window_into_the_night(self):
+        now = utc("2026-06-21T16:00:00Z")
+        _, east_end = cs.run_window(self.cams(), now)
+        _, all_end = cs.run_window(cs.load_archive_cams(), now)
+        self.assertGreater(all_end, east_end)  # Pensacola Beach sets last, on the clock the courier keeps
 
     def test_summer_the_window_runs_past_eight_forty_pm_eastern(self):
         start, end = cs.run_window(self.cams(), utc("2026-06-21T16:00:00Z"))

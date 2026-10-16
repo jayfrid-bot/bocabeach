@@ -98,6 +98,9 @@ export interface SunCam {
   name: string;
   youtube_id: string;
   facing_azimuth_deg: number;
+  /** Human label for the cam's direction ("east" is implied when absent). The code reads only
+   *  facing_azimuth_deg; this keeps the registry readable and lets tests pin the west cams. */
+  facing?: "east" | "west";
   lat: number;
   lon: number;
   credit: string;

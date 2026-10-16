@@ -10,9 +10,9 @@
 # lib/camFrames/golden.ts — but the hourly run gives these courier cams at
 # most one frame an hour. The golden launchd job fires at :00/:10/:20/:30/:40/:50
 # through every local hour a window can touch (6-8 and 16-20 America/New_York,
-# all seasons) and this flag makes the run grab ONLY while
+# all seasons, plus 21:00 and 21:10 for Pensacola Beach's summer sunset) and this flag makes the run grab ONLY while
 # `python3 scripts/golden_now.py` says it is inside a window for the courier
-# beaches (Deerfield Beach, Fort Lauderdale); outside one it logs a line and
+# beaches (Deerfield Beach, Fort Lauderdale, Fort Myers Beach, Pensacola Beach); outside one it logs a line and
 # exits 0. If golden_now.py cannot tell (exit 2) the run logs an ERROR and exits
 # 1 without grabbing; the hourly job still runs. Two runs never overlap: a run
 # that finds another one in progress logs it and exits 0.
@@ -132,12 +132,20 @@ fi
 # also runs a patio cam (shows bar patrons) and a "weather station" cam
 # (shows the street) on the same page — neither is a beach/ocean view, so
 # neither is added here, on purpose.
+#
+# fort-myers-beach-cam (Visit Fort Myers) and pensacola-sria-west-cam (Santa Rosa
+# Island Authority) are public tourism-board and public-authority streams that
+# face WEST over the Gulf (added 2026-10-15 for sunset truth; see
+# docs/research/2026-10-15-west-facing-cams.md). Pensacola is on Central time;
+# the daylight gate below is Eastern, which still covers its evening.
 CAMS=(
   "deerfield-spinner-uw:SHfAtWHr9Ks"
   "deerfield-beach-cam:rdeoEeJ00xA"
   "deerfield-surf-cam:hIeFPNHfuoY"
   "deerfield-pier-cam:H33wtprQqSM"
   "ftl-elbo-beach-cam:1j1lgppb0PY"
+  "fort-myers-beach-cam:nj9jdOXXhEo"
+  "pensacola-sria-west-cam:HKIc6CYlMzI"
 )
 
 # One run at a time (scripts/courier_lock.sh says how the lock stays safe). The
