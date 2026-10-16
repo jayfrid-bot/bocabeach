@@ -334,10 +334,14 @@ export const LOCATIONS: Location[] = [
     // comes from the Fort Myers gauge on the Caloosahatchee, ~14 mi north.
     noaaWaterLevelStationId: "8725520",
     ndbcBuoyId: "FMRF1", // Fort Myers C-MAN (water temp only, no waves)
-    // No wave buoy fallback on purpose: the nearest (42098, Egmont Channel) is
-    // ~99 mi north in Tampa Bay and a buoy outranks the local wave model
-    // (lib/score.ts), so it would set this beach's surf. Open-Meteo at the
-    // beach is the honest source here.
+    // No wave buoy on purpose: the nearest wave-reporting station (42098, Egmont
+    // Channel) is ~99 mi north in Tampa Bay, and a buoy outranks the local wave
+    // model (lib/score.ts), so it would set this beach's surf. The Gulf C-series
+    // buoys off Fort Myers (42023/42013) and the coastal stations (NPSF1, VENF1)
+    // report no wave height (checked 2026-10-15). Surf here is model-sourced and
+    // labeled as such; no NWPS nearshore coverage either (config/nwpsRip.ts).
+    noWaveStationReason:
+      "No NDBC station within ~75 mi reports wave height (42023, 42013, NPSF1, VENF1 all MM, 2026-10-15); the nearest, 42098 Egmont Channel, is ~99 mi north in Tampa Bay. Surf is model-sourced and labeled.",
     // Site names exactly as published by the FL Healthy Beaches feed (Lee).
     healthyBeaches: {
       county: "Lee",

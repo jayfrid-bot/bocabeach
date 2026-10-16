@@ -51,6 +51,18 @@ describe("buoy wave coverage (deterministic — the CI guard)", () => {
     expect(violations[0].reason).toBe("unclassified-station");
   });
 
+  it("lets a beach through only with a written no-wave-station reason", () => {
+    const short: BuoyConfigured[] = [{ slug: "a", ndbcBuoyId: "LKWF1", noWaveStationReason: "none nearby" }];
+    expect(buoyCoverageViolations(short)).toHaveLength(1);
+    const ok: BuoyConfigured[] = [
+      { slug: "b", ndbcBuoyId: "LKWF1", noWaveStationReason: "No NDBC station within 75 mi reports wave height; surf is model-sourced and labeled." },
+    ];
+    expect(buoyCoverageViolations(ok)).toEqual([]);
+    // an unclassified station is still a violation, reason or not
+    const unk: BuoyConfigured[] = [{ slug: "c", ndbcBuoyId: "99999", noWaveStationReason: "No NDBC station within 75 mi reports wave height; surf is model-sourced and labeled." }];
+    expect(buoyCoverageViolations(unk)[0].reason).toBe("unclassified-station");
+  });
+
   it("accepts a beach that has a real wave buoy anywhere in its pair", () => {
     const ok: BuoyConfigured[] = [
       { slug: "a", ndbcBuoyId: "41122" }, // wave buoy as primary, no fallback

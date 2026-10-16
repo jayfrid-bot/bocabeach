@@ -1353,6 +1353,14 @@ export interface Location {
   ndbcBuoyId: string;
   ndbcBuoyFallbackId?: string;
   /**
+   * Set ONLY when no NDBC station anywhere near this beach reports wave height
+   * (the CI guard lib/sources/ndbcStations.test.ts then lets the beach through).
+   * Say why, in a sentence: the surf height for this beach comes from the wave
+   * MODEL and every surface that shows it (card, watch, agent feed, archive
+   * wave_source) labels it as modeled, never as observed.
+   */
+  noWaveStationReason?: string;
+  /**
    * FL Healthy Beaches (DOH) water-quality config. `county` is the DOH county
    * name exactly as published by the feed (e.g. "Palm Beach", "Broward");
    * `sites` are the SPLocation sampling-site names (matched case-insensitively)

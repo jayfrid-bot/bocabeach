@@ -133,6 +133,8 @@ export function reportsWaves(stationId: string): boolean | undefined {
 /** The subset of a Location this check needs. LOCATIONS (Location[]) satisfies
  *  it structurally, and tests can pass minimal fixtures. */
 export interface BuoyConfigured {
+  /** A written reason when no wave-reporting station exists near the beach (see lib/types.ts). */
+  noWaveStationReason?: string;
   slug: string;
   ndbcBuoyId: string;
   ndbcBuoyFallbackId?: string;
@@ -186,6 +188,11 @@ export function buoyCoverageViolations(
       continue; // can't judge wave coverage until every station is classified
     }
     if (!stations.some((id) => reportsWaves(id) === true)) {
+      // A beach may opt out ONLY with a written reason: the Gulf coast south of
+      // Tampa has no wave-reporting NDBC station within ~75 mi (Fort Myers Beach,
+      // 2026-10-15). Its surf is then model-sourced and labeled as such
+      // (MetricSource kind "model"), which is the opposite of "silent".
+      if ((loc.noWaveStationReason ?? "").trim().length >= 30) continue;
       violations.push({
         slug: loc.slug,
         reason: "no-wave-station",
