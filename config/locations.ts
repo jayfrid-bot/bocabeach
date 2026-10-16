@@ -333,7 +333,7 @@ export const LOCATIONS: Location[] = [
     // 8725366 is a subordinate PREDICTION station. The measured water level
     // comes from the Fort Myers gauge on the Caloosahatchee, ~14 mi north.
     noaaWaterLevelStationId: "8725520",
-    ndbcBuoyId: "fmrf1", // Fort Myers C-MAN (water temp only, no waves)
+    ndbcBuoyId: "FMRF1", // Fort Myers C-MAN (water temp only, no waves)
     // No wave buoy fallback on purpose: the nearest (42098, Egmont Channel) is
     // ~99 mi north in Tampa Bay and a buoy outranks the local wave model
     // (lib/score.ts), so it would set this beach's surf. Open-Meteo at the
@@ -382,7 +382,7 @@ export const LOCATIONS: Location[] = [
     // 8729807 publishes no observations. The measured water level comes from the
     // Pensacola gauge on the bay, ~6.6 mi north.
     noaaWaterLevelStationId: "8729840",
-    ndbcBuoyId: "pclf1", // Pensacola C-MAN (water temp only, no waves)
+    ndbcBuoyId: "PCLF1", // Pensacola C-MAN (water temp only, no waves)
     ndbcBuoyFallbackId: "42012", // Orange Beach (waves, ~31 mi west)
     // Site names exactly as published by the FL Healthy Beaches feed (Escambia).
     healthyBeaches: {

@@ -196,7 +196,8 @@ async function fetchOne(
   id: string,
 ): Promise<{ data: BuoyData | null; at: string }> {
   const res = await fetchWithTimeout(
-    `https://www.ndbc.noaa.gov/data/realtime2/${id}.txt`,
+    // NDBC file names are uppercase; a lowercase station id 404s.
+    `https://www.ndbc.noaa.gov/data/realtime2/${id.toUpperCase()}.txt`,
     { next: { revalidate: 600 } },
   );
   if (!res.ok) throw new Error(`NDBC ${id} -> ${res.status}`);
