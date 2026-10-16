@@ -282,6 +282,46 @@ describe("rip model works even when the NWS feed failed", () => {
   });
 });
 
+describe("sun forecast window", () => {
+  // The fixture's sunset is 7:36:55 PM EDT, so its color forecast opens at 6:36 PM.
+  it("is pending in mid-afternoon, with the line and no score", () => {
+    const v = buildWatchView(res(), NOW);
+    expect(v.sunForecast).toEqual({
+      kind: "sunset",
+      state: "pending",
+      availableAt: "2026-09-04T22:36:55.497Z",
+      eventAt: "2026-09-04T23:36:55.497Z",
+      text: "Sunset forecast at 6:36 PM",
+    });
+    expect(JSON.stringify(v)).not.toMatch(/"sun(Score|Color)|color ·|\/100/);
+  });
+
+  it("is available inside the hour before sunset: state only, no line, still no score", () => {
+    const v = buildWatchView(res(), Date.parse("2026-09-04T23:00:00.000Z"));
+    expect(v.sunForecast).toMatchObject({ kind: "sunset", state: "available", text: null });
+    expect(v.sunForecast).not.toHaveProperty("score");
+  });
+
+  it("rolls to tomorrow's sunrise once the sunset has passed", () => {
+    const v = buildWatchView(res(), Date.parse("2026-09-05T00:30:00.000Z"));
+    expect(v.sunForecast).toMatchObject({ kind: "sunrise", state: "pending", text: "Sunrise forecast at 6:01 AM" });
+  });
+
+  it("is null when the beach has no sun times", () => {
+    const r = res();
+    r.snapshot.sun = { status: "error", data: null } as unknown as ConditionsResponse["snapshot"]["sun"];
+    expect(buildWatchView(r, NOW).sunForecast).toBeNull();
+  });
+
+  it("ends the view's life at the moment the window opens, so a cached view never hides the number late", () => {
+    const r = res();
+    const opens = Date.parse("2026-09-04T22:36:55.497Z");
+    const t = opens - 5 * 60_000; // five minutes before the window
+    r.snapshot.generatedAt = iso(t);
+    expect(computeValidUntil(r, t)).toBe(opens);
+  });
+});
+
 describe("validUntil", () => {
   it("is at most 15 minutes after the snapshot was built", () => {
     const r = res();

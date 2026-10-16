@@ -88,6 +88,7 @@ function conditionsText(c: BeachConditions): string {
   return [
     c.summary,
     c.limitedData ? "Note: this score uses limited live data." : "",
+    c.sunForecast?.state === "pending" ? c.sunForecast.text : "",
     `Updated ${c.updatedAt}; treat as current until ${c.validUntil}.`,
     `Beach page: ${c.url}`,
     FOOTER,

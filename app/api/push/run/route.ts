@@ -43,8 +43,14 @@ import {
   readSkyAlertCandidates,
   selectComingUpEvent,
 } from "@/lib/alerts/comingUp";
-import { predictNextSunEvent } from "@/lib/sunAlert";
-import { sunColorDecision, sunColorMismatchOutcome, sunColorSlugNeed, nextSunEventEstimate } from "@/lib/alerts/sunColor";
+import { predictNextSunEvent, sunColorLiveGuard } from "@/lib/sunAlert";
+import {
+  sunColorDecision,
+  sunColorMismatchOutcome,
+  sunColorSlugNeed,
+  nextSunEventEstimate,
+  sunAlertsEnabled,
+} from "@/lib/alerts/sunColor";
 import {
   SubrequestBudget,
   pushRunSubrequestBudget,
@@ -372,6 +378,10 @@ export async function POST(req: Request): Promise<Response> {
   let comingUpSent = 0;
   /** The opt-in sun-color alert — always standalone, never coalesced. */
   let sunColorSent = 0;
+  /** SUN_ALERTS_ENABLED (default OFF): the owner wants no sunrise/sunset color
+   *  push until the satellite observation input ships. Off means the alert is
+   *  never selected, fetched for, evaluated, sent, latched or logged. */
+  const sunAlertsOn = sunAlertsEnabled();
   let pruned = 0;
   /** Devices the home loop could not finish. The run carries on to the next. */
   let errors = 0;
@@ -453,8 +463,9 @@ export async function POST(req: Request): Promise<Response> {
           const already = await store.lastAlert(sub.device.id, `score-excellent:${date}`);
           if (!already) candidate = true;
         }
-        // Sun-color (opt-in): candidate whenever the next sun event is
-        // within ~4h (computed WITHOUT fetching conditions —
+        // Sun-color (opt-in, and only while SUN_ALERTS_ENABLED is on):
+        // candidate whenever the next sun event is within the ~60-minute
+        // forecast window (computed WITHOUT fetching conditions —
         // computeSunTimes is pure), due once inside the actual send window
         // so it's never starved by the cap below. Neither flag is set once
         // this device's own `sunColorCheckedKey` already names the SAME
@@ -463,7 +474,7 @@ export async function POST(req: Request): Promise<Response> {
         // starving other same-timezone beaches' round-robin slots (Codex
         // review item 2). One `lastAlert` check, only when there's
         // something to gain from it.
-        if (sub.device.prefs["sun-color"] === true) {
+        if (sunAlertsOn && sub.device.prefs["sun-color"] === true) {
           const need = sunColorSlugNeed(loc, sub.device, sub.sent, nowMs);
           if (need.eventKey && (need.due || need.candidate)) {
             const already = await store.lastAlert(sub.device.id, need.eventKey);
@@ -608,7 +619,22 @@ export async function POST(req: Request): Promise<Response> {
         // snapshot. The send-WINDOW decision below still uses the real
         // wall clock (`nowMs`) — whether to push right now is a different
         // question from how the snapshot itself should be read.
-        const sunColorPrediction = predictNextSunEvent(res, Date.parse(res.snapshot.generatedAt));
+        const sunColorPrediction = sunAlertsOn
+          ? predictNextSunEvent(res, Date.parse(res.snapshot.generatedAt))
+          : null;
+        // LIVE-clock guard (2026-10-15). The prediction above is read on the
+        // snapshot's clock, so a snapshot built more than 60 min before the event
+        // is forecast-only even when the satellite window has since opened. The
+        // alert must not push that stale forecast as if the satellite had spoken:
+        // it is SKIPPED and logged, not rebuilt (this alert is opt-in and off by
+        // default). A snapshot built inside the window that is still forecast-
+        // sourced (feed down) degrades to the forecast as before. The
+        // send-window decision still uses `nowMs`.
+        const sunColorSkipReason = sunColorLiveGuard(sunColorPrediction, nowMs, Date.parse(res.snapshot.generatedAt));
+        if (sunColorSkipReason) {
+          console.warn(`[push/run] sun-color skipped for ${loc.slug}: ${sunColorSkipReason}`);
+        }
+        const sunColorAlertPrediction = sunColorSkipReason ? null : sunColorPrediction;
 
         for (const sub of group) {
           // Every alert is Plus. A free device gets nothing here, and nothing is
@@ -862,7 +888,7 @@ export async function POST(req: Request): Promise<Response> {
             // with the digest or "turned Excellent" (unlike coming-up, it
             // fires on its own short lead-time window, not the 8 AM run those
             // two share). The send/no-send decision itself — cutoff, window,
-            // 4h-trust gate — lives entirely in the pure `sunColorDecision`
+            // forecast-window gate — lives entirely in the pure `sunColorDecision`
             // (lib/alerts/sunColor.ts); this block does the claim/send/mark
             // dance every other standalone alert here does, PLUS the
             // "checked"/"defer" bookkeeping (round-2 item 2, round-3 item 1)
@@ -880,7 +906,7 @@ export async function POST(req: Request): Promise<Response> {
             // always was — hours-out is not this device's moment — but
             // `sunColorSlugNeed` already encodes that distinction, so
             // checking `need.due` covers it.
-            if (sub.device.prefs["sun-color"] === true && sub.device.homeSlug) {
+            if (sunAlertsOn && sub.device.prefs["sun-color"] === true && sub.device.homeSlug) {
               const need = sunColorSlugNeed(loc, sub.device, sub.sent, nowMs);
               if (need.due && need.eventKey) {
                 sunColorEventKeyThisRun = need.eventKey;
@@ -899,13 +925,16 @@ export async function POST(req: Request): Promise<Response> {
                   // Default: evaluated this run, regardless of outcome — a
                   // transient send failure, or a lost claim race no other
                   // run has yet confirmed, flips this back to `false` below
-                  // so a later tick inside the SAME window retries.
-                  sunColorTerminal = true;
+                  // so a later tick inside the SAME window retries. A run the
+                  // live-clock guard SKIPPED (stale forecast-only snapshot)
+                  // never evaluated anything: leave the device unlatched so the
+                  // next tick, on a fresh snapshot, can still send this event.
+                  sunColorTerminal = !sunColorSkipReason;
 
                   if (outcome.kind === "in-window") {
                     const sunColor = sunColorDecision({
                       device: sub.device,
-                      prediction: sunColorPrediction,
+                      prediction: sunColorAlertPrediction,
                       beachName: loc.name,
                       tz: loc.timezone,
                       nowMs,

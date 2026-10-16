@@ -1,8 +1,8 @@
 {
   "$comment": [
     "Registry for scripts/sun_cam_check.py and POST /api/sun-observations (docs/SUN_CAM_CHECK.md).",
-    "The cams up to and including 'deerfield-pier-cam' are 24/7 YouTube livestreams facing EAST over the Atlantic, so a sunrise is a 'solar' view and a sunset an 'antisolar' view. A cam that carries \"facing\": \"west\" looks WEST over the Gulf of Mexico, so for it a sunset is the 'solar' view (the sun sets in frame) and a sunrise is 'antisolar'. \"facing\" is a human label: the code reads only facing_azimuth_deg (within 60 degrees of the sun = solar).",
-    "sky_regions are [x0, y0, x1, y1] as fractions of the frame (0,0 = top-left). They keep the sky and drop the flagpole, palms, pier, beach, water and the burned-in text overlays. They were drawn from real 1280x720 frames (Elbo: the 2026-10-06 sunrise frames; Deerfield: live frames pulled from the uw-frame worker on 2026-10-06; the two Gulf cams: the 2026-10-15 sunset frames saved under docs/research/2026-10-15-west-facing-cams/, with the regions drawn over them in the *-sky-regions.jpg files).",
+    "Every cam here is a 24/7 YouTube livestream. The four Atlantic cams face EAST; the two Gulf cams (Fort Myers Beach, Pensacola Beach, added 2026-10-15, see docs/research/2026-10-15-west-facing-cams.md) face WEST. `facing` is 'east' or 'west' (derived from facing_azimuth_deg when absent: below 180 = east, else west). An east cam sees a sunrise as a 'solar' view and a sunset as 'antisolar'; a west cam is the reverse. Only a 'solar' view is the truth for an event's color; an 'antisolar' view is the afterglow behind the cam, stored but never used as truth.",
+    "sky_regions are [x0, y0, x1, y1] as fractions of the frame (0,0 = top-left). They keep the sky and drop the flagpole, palms, pier, beach, water and the burned-in text overlays. They were drawn from real 1280x720 frames (Elbo: the 2026-10-06 sunrise frames; Deerfield: live frames pulled from the uw-frame worker on 2026-10-06).",
     "beaches[].lat/lon repeat config/locations.ts; distance_mi is the great-circle distance from that beach's pin to the cam, rounded to 0.1 mi. lib/sunCamsConfig.test.ts keeps both in lockstep with locations.ts.",
     "credit is stored with every observation and the ingest route rejects any other string. Elbo Room gave the owner permission to use its stream as long as it is credited."
   ],
@@ -14,6 +14,7 @@
       "name": "Fort Lauderdale Beach Cam (Elbo Room)",
       "youtube_id": "1j1lgppb0PY",
       "facing_azimuth_deg": 90,
+      "facing": "east",
       "lat": 26.1195,
       "lon": -80.1035,
       "credit": "Live stream courtesy Elbo Room (ElboRoom.com)",
@@ -35,6 +36,7 @@
       "name": "Deerfield Beach Cam",
       "youtube_id": "rdeoEeJ00xA",
       "facing_azimuth_deg": 90,
+      "facing": "east",
       "lat": 26.3165,
       "lon": -80.0742,
       "credit": "Live stream courtesy City of Deerfield Beach",
@@ -54,6 +56,7 @@
       "note": "A PTZ camera: it pans between presets, and the horizon sits anywhere from y=0.27 to y=0.46. The sky region is therefore only the top slice that is sky in every pose.",
       "youtube_id": "hIeFPNHfuoY",
       "facing_azimuth_deg": 90,
+      "facing": "east",
       "lat": 26.3165,
       "lon": -80.0742,
       "credit": "Live stream courtesy City of Deerfield Beach",
@@ -71,6 +74,7 @@
       "name": "Deerfield Beach - Fishing Pier Cam",
       "youtube_id": "H33wtprQqSM",
       "facing_azimuth_deg": 90,
+      "facing": "east",
       "lat": 26.3172,
       "lon": -80.0738,
       "credit": "Live stream courtesy City of Deerfield Beach",

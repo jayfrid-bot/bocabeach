@@ -55,8 +55,16 @@
   // beach (lightning 5 mi from a beach you're nowhere near is noise); they now fire
   // only from a live presence fix — see lib/alerts/*. Set this to "off" to stop
   // every hazard alert app-wide without a deploy of the engine.
+  //
+  // Sunrise/sunset color push alerts are OFF until the satellite observation input
+  // ships (owner, 2026-10-15; docs/benchmarks/sun-leadtime-2026-10-15/REPORT.md). Set
+  // SUN_ALERTS_ENABLED to "on" to turn them back on. Missing = off. Only the push is
+  // gated: the sun card and its "forecast at ..." line stay on in the app.
+  // The app's copy about the alert follows NEXT_PUBLIC_SUN_ALERTS, a BUILD-time variable
+  // (lib/plus/flags.ts): set it to "on" together with SUN_ALERTS_ENABLED, then redeploy.
   "vars": {
-    "PUSH_SAFETY_ALERTS": "on"
+    "PUSH_SAFETY_ALERTS": "on",
+    "SUN_ALERTS_ENABLED": "off"
   }
   // Data-quality loop (docs/QUALITY_PLAN.md, migrations/0019). Secrets, set with `wrangler secret put`:
   //   OWNER_ENROLL_CODE     the one-time code a phone uses to become the owner: open

@@ -191,7 +191,7 @@ export async function POST(
       sun: shapeSun(bounds?.sun_json ?? null, date, (iso) => {
         const at = Date.parse(iso);
         return Number.isFinite(at) ? localHourParts(loc.timezone, at).date : null;
-      }),
+      }, now),
       archiveStart,
       framesStart,
     };

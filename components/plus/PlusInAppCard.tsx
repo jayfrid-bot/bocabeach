@@ -10,10 +10,11 @@
  * free dashboard shows stays exactly as it is above this card.
  */
 import { GET_APP_PATH } from "@/lib/appStore";
+import { inAppSunLine } from "@/lib/plus/sunAlertCopy";
 
 const INCLUDED = [
   "Lightning and rain alerts where you're standing",
-  "A heads-up before a great sunrise or sunset",
+  inAppSunLine(),
   "A beach score tuned to how you use the beach",
   "Your live beach score on the Lock Screen",
   "Look back at any past day at your beach",

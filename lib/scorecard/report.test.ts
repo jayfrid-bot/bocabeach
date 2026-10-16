@@ -208,7 +208,9 @@ describe("buildScorecard — enough data", () => {
 
   it("sun: counts a camera reading with no forecast, and matches within 15 minutes", () => {
     expect(card.sun.ok && card.sun.result.observations).toBe(2);
-    expect(card.sun.ok && card.sun.result.observationsWithoutForecast).toBe(1);
+    // the sunset reading is afterglow (antisolar): counted apart, never "unmatched" and never scored
+    expect(card.sun.ok && card.sun.result.afterglowObservations).toBe(1);
+    expect(card.sun.ok && card.sun.result.observationsWithoutForecast).toBe(0);
   });
 
   it("rain: the headline is the 'dry for 2+ hrs' promise", () => {

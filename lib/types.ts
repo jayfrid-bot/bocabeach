@@ -478,8 +478,9 @@ export interface GoesCloudData {
    *  DIRECTLY OVERHEAD this beach (see scripts/goes_cloud.py for the
    *  level->fraction mapping). Only present when enough good-quality pixels
    *  were available. Kept for the Sky sub-score/display — see beamCloudPct
-   *  for the sand model's input. */
-  cloudPct: number;
+   *  for the sand model's input. Null when the mask had too few good pixels in
+   *  its (small) box but the IR block still has a read (`ir`). */
+  cloudPct: number | null;
   /** 0-100 observed cloud fraction along the DIRECT SOLAR BEAM path (offset
    *  boxes stepped toward the sun at several altitude slots — see
    *  scripts/goes_cloud.py's beam_cloud_pct()). This is what actually blocks
@@ -504,6 +505,53 @@ export interface GoesCloudData {
    *  normal. This is what lib/sources/goesCloud.ts's staleness gate reads. */
   granuleAgeMinutes: number;
   granuleStartIso: string;
+  /** Cloud-top-height read (GOES-19 ACHA 2 km + the same-scan mask): works
+   *  through twilight and at night, and tells a low deck from a mid/high one.
+   *  Absent on a pre-v3 feed, null for a beach with no good pixels. Has its OWN
+   *  granule time (`ir.granuleStartIso`): the height product lands a few
+   *  minutes after the mask. */
+  ir?: GoesIrData | null;
+}
+
+/** Which sun event a path read belongs to. */
+export type GoesIrEventKind = "sunrise" | "sunset";
+
+/** Cloud along the sun's azimuth at ONE sun event (sunrise or sunset), read
+ *  from the IR granule — see scripts/goes_cloud.py "HORIZON PATH". */
+export interface GoesIrEvent {
+  /** The event this read was made for (the app's own NOAA solver). */
+  eventIso: string;
+  /** The sun's azimuth AT THE EVENT, degrees clockwise from north. */
+  azDeg: number;
+  /** 0-100 mean share of LOW cloud (top < 2 km) tall enough to reach the
+   *  sun's ray, along the path toward the sun. Null = too few good pixels. */
+  beamLowPct: number | null;
+  /** 0-100 mean share of mid + high cloud along the path toward the sun. */
+  beamMidHighPct: number | null;
+  /** The same mid + high share along the OPPOSITE azimuth (the afterglow sky). */
+  antiMidHighPct: number | null;
+  /** How many of the path's sample distances had enough good pixels. */
+  beamSamples: number;
+}
+
+export interface GoesIrData {
+  /** 0-100 shares of the beach box (about 31 km square) by cloud-TOP height:
+   *  low < 2 km, mid 2-6 km, high >= 6 km. Layers do not overlap. */
+  lowPct: number;
+  midPct: number;
+  highPct: number;
+  /** 0-100 share that is cloudy (mask 2 or 3) at all. */
+  irCloudPct: number;
+  /** 0-100 share that is cloudy but has no usable cloud-top height. */
+  unclassifiedPct: number | null;
+  /** 0-100 share of the CLOUDY pixels that got a layer; null when no cloud. */
+  classifiedPct: number | null;
+  validPixels: number;
+  totalPixels: number;
+  /** Scan start of the mask + height pair behind this read. */
+  granuleStartIso: string;
+  /** Path reads per sun event near the granule (absent kinds = none near). */
+  events: Partial<Record<GoesIrEventKind, GoesIrEvent>>;
 }
 
 // --- Radar-observed precipitation (NOAA MRMS PrecipRate, via an off-Netlify

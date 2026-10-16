@@ -1,7 +1,7 @@
-import type { GoesCloudData, Location, Wrapped } from "@/lib/types";
+import type { GoesCloudData, GoesIrData, GoesIrEvent, GoesIrEventKind, Location, Wrapped } from "@/lib/types";
 import { fetchedAtOf, fetchWithTimeout, nowIso, oldestIso } from "@/lib/util";
 
-const ATTRIBUTION = "NOAA GOES-19 ABI Clear Sky Mask (satellite-observed cloud)";
+const ATTRIBUTION = "NOAA GOES-19 ABI Clear Sky Mask + Cloud Top Height (satellite-observed cloud)";
 
 /**
  * Where the precomputed satellite cloud feed lives. The heavy netCDF/pixel
@@ -30,6 +30,9 @@ export const GOES_CLOUD_STALE_MINUTES = 45;
 
 interface GoesCloudFeedBeach {
   cloudPct: number | null;
+  // Feed version 3+: the cloud-top-height read. Absent on an older feed. Parsed
+  // defensively by parseGoesIr (an odd payload degrades to "no IR", never an error).
+  ir?: unknown;
   // Absent on an old-format feed (pre beam-path support) — old cached feeds
   // and the very first deploy after this ships are the reason these are
   // optional rather than required. See lib/types.ts's GoesCloudData for what
@@ -45,8 +48,64 @@ interface GoesCloudFeed {
   version?: number;
   generatedAt: string;
   granuleStartIso: string;
+  // Version 3+: scan start of the mask + cloud-top-height pair behind the `ir`
+  // blocks (null when the height product was unavailable that cycle).
+  irGranuleStartIso?: string | null;
   satellite: string;
   beaches: Record<string, GoesCloudFeedBeach>;
+}
+
+const finite = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+const pctOrNull = (v: unknown): number | null => (finite(v) && v >= 0 && v <= 100 ? v : null);
+
+function parseIrEvent(raw: unknown): GoesIrEvent | null {
+  if (!raw || typeof raw !== "object") return null;
+  const e = raw as Record<string, unknown>;
+  if (typeof e.eventIso !== "string" || !Number.isFinite(Date.parse(e.eventIso)) || !finite(e.azDeg)) return null;
+  return {
+    eventIso: e.eventIso,
+    azDeg: e.azDeg,
+    beamLowPct: pctOrNull(e.beamLowPct),
+    beamMidHighPct: pctOrNull(e.beamMidHighPct),
+    antiMidHighPct: pctOrNull(e.antiMidHighPct),
+    beamSamples: finite(e.beamSamples) ? e.beamSamples : 0,
+  };
+}
+
+/**
+ * Read one beach's `ir` block (feed version 3+). Returns null — never throws —
+ * for a missing/old-format block, a beach with no good pixels (the feed writes
+ * no `ir` then), an IR granule time that does not parse, or a layer share that
+ * is not a 0-100 number. Layer shares are all-or-nothing: a partial split would
+ * let a missing level default to a fabricated clear canvas.
+ */
+export function parseGoesIr(raw: unknown, irGranuleStartIso: unknown): GoesIrData | null {
+  if (!raw || typeof raw !== "object") return null;
+  if (typeof irGranuleStartIso !== "string" || !Number.isFinite(Date.parse(irGranuleStartIso))) return null;
+  const r = raw as Record<string, unknown>;
+  const low = pctOrNull(r.lowPct);
+  const mid = pctOrNull(r.midPct);
+  const high = pctOrNull(r.highPct);
+  const cloud = pctOrNull(r.irCloudPct);
+  if (low == null || mid == null || high == null || cloud == null) return null;
+  const events: Partial<Record<GoesIrEventKind, GoesIrEvent>> = {};
+  const rawEvents = r.events && typeof r.events === "object" ? (r.events as Record<string, unknown>) : {};
+  for (const kind of ["sunrise", "sunset"] as const) {
+    const ev = parseIrEvent(rawEvents[kind]);
+    if (ev) events[kind] = ev;
+  }
+  return {
+    lowPct: low,
+    midPct: mid,
+    highPct: high,
+    irCloudPct: cloud,
+    unclassifiedPct: pctOrNull(r.unclassifiedPct),
+    classifiedPct: pctOrNull(r.classifiedPct),
+    validPixels: finite(r.validPixels) ? r.validPixels : 0,
+    totalPixels: finite(r.totalPixels) ? r.totalPixels : 0,
+    granuleStartIso: irGranuleStartIso,
+    events,
+  };
 }
 
 export async function fetchGoesCloud(loc: Location): Promise<Wrapped<GoesCloudData>> {
@@ -86,7 +145,11 @@ export async function fetchGoesCloud(loc: Location): Promise<Wrapped<GoesCloudDa
     const b = feed.beaches[loc.slug];
     // No reading for this beach (out of the CONUS grid, or too few
     // good-quality pixels in its neighborhood this pass) — never fabricate.
-    if (!b || b.cloudPct == null) {
+    // The IR block has its own, larger box: when the mask box is empty but the
+    // IR block is good, keep the data (mask fields null) so the sun-color model
+    // still sees the IR read.
+    const ir = b ? parseGoesIr(b.ir, feed.irGranuleStartIso) : null;
+    if (!b || (b.cloudPct == null && !ir)) {
       return {
         source: ATTRIBUTION,
         status: stale ? "stale" : "best-effort",
@@ -98,7 +161,7 @@ export async function fetchGoesCloud(loc: Location): Promise<Wrapped<GoesCloudDa
     }
 
     const data: GoesCloudData = {
-      cloudPct: b.cloudPct,
+      cloudPct: b.cloudPct ?? null,
       // b.beamCloudPct is absent (not just null) on an old-format feed —
       // `?? null` normalizes both "old feed" and "computed, no signal" to
       // the same null, which satelliteBeamCloudPct treats identically
@@ -109,6 +172,9 @@ export async function fetchGoesCloud(loc: Location): Promise<Wrapped<GoesCloudDa
       totalPixels: b.totalPixels,
       granuleAgeMinutes,
       granuleStartIso: feed.granuleStartIso,
+      // Absent on a pre-v3 feed; `?? null` keeps "old feed" and "no IR this
+      // cycle" the same to every consumer (the forecast is the fallback).
+      ir,
     };
     return {
       source: ATTRIBUTION,

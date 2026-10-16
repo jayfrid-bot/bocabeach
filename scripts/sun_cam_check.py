@@ -32,9 +32,11 @@ Each run, for every cam in config/sun-cams.json and every beach it observes:
   5. save the frames under ~/Projects/bocabeach-sunframes/<local-date>/<event>/<cam>/
      (peak at full quality, the rest at low JPEG quality; that folder is backed
      up hourly) and POST the result to /api/sun-observations.
-Sunrise views are "solar" (the cam looks straight at the sun); sunset views are
-"antisolar" (the cam looks away from it and sees clouds catching the afterglow),
-so calibration can treat them apart.
+Each cam has a facing ("east" or "west"; config `facing`, else derived from
+facing_azimuth_deg: below 180 is east). An east cam sees a sunrise as "solar" and a
+sunset as "antisolar"; a west cam is the reverse. A "solar" view is the truth for
+an event's color. An "antisolar" view looks away from the sun and sees only the
+afterglow on the clouds behind the cam: it is stored, but never used as the truth.
 
 SCORING (deterministic; bump SUN_CAM_SCORE_VERSION whenever any of this changes):
   Work on the sky region of each frame (config sky_regions), shrunk 4x by box
@@ -60,6 +62,27 @@ SCORING (deterministic; bump SUN_CAM_SCORE_VERSION whenever any of this changes)
   a mid/high deck lit pink and red across the top) scores ~94; plain blue sky
   and white-sun daytime frames score below ~15.
   Per-frame scores are rounded to 1 decimal before the event score is taken.
+
+  SUN GLOW MASK: the orange glow around the sun is not "colorful sky" (a clear
+  sunrise has it too), so the color terms are computed WITHOUT it. Per frame:
+    1. Search box = the bounding box of the sky regions, plus 8% of the frame height
+       below it (the horizon, so a sun that sits just under the regions is found).
+    2. The sun is the largest connected blob (4-neighbour, on the shrunk frame) of
+       V > 0.92 and S < 0.25 (the disc and its blown-out halo) with at least 30
+       shrunk pixels. If there is none (the disc is below the horizon or hidden), it is
+       the largest blob of bright warm pixels (hue <= 65 or >= 300, S >= 0.35,
+       V >= 0.85) within 10% of the frame height of the horizon line (the lowest edge
+       of the sky regions).
+       A warm candidate must be compact: its bounding box at most 3:1 long-to-thin and
+       the blob at least 40% of that box. A horizon band or a cloud streak is skipped
+       (the next largest blob is tried); if none qualifies, nothing is masked.
+    3. Every pixel within R of the blob's centroid is left out, where
+       R = clamp(2.5 x equivalent radius, 6% of frame width, 25% of frame width).
+    4. No blob, no mask. The masked pixels count against valid_frac, like glare, so a
+       frame that is mostly glow says little (it is down-weighted, or dropped if
+       valid_frac < 0.10).
+  glow_masked_frac (diagnostic, kept in the series) = masked pixels that would
+  otherwise have counted / region pixels.
 
   USABLE frames: a frame whose valid_frac is below 0.10 (nearly all dark or blown
   out) is an artifact and is dropped from the series.
@@ -158,7 +181,7 @@ os.environ["PATH"] = os.pathsep.join(
 )
 
 # YYYY-MM-DD.N: the server orders re-scores by this (date, then N as a number), then by scored_at.
-SUN_CAM_SCORE_VERSION = "2026-10-06.2"
+SUN_CAM_SCORE_VERSION = "2026-10-15.1"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = REPO_ROOT / "config" / "sun-cams.json"
@@ -210,6 +233,21 @@ P_MIN_WARM = 0.05
 C_FULL_VALID = 0.30
 WEIGHT_W, WEIGHT_K, WEIGHT_P = 0.55, 0.20, 0.25
 REDUCE_FACTOR = 4
+
+# --- Sun glow mask (see "SUN GLOW MASK" in the docstring) -------------------
+# The saturated orange glow around the sun is not "colorful sky": a perfectly clear
+# sunrise has it too. So a circle around the sun is left out of the color score.
+GLOW_DOMAIN_EXTEND = 0.08  # the search box is the sky regions' bounding box, plus this much frame height below them (the horizon)
+GLOW_MIN_AREA_PX = 30  # smaller blobs (a bright cloud edge, a glint) are not the sun; area is in REDUCE_FACTOR-shrunk pixels
+GLOW_HORIZON_BAND = 0.10  # no disc: look for the warm blob this close (frame height) above the horizon line, and below it
+GLOW_WARM_HUE_MAX = 65.0  # red .. yellow-orange; warm glow candidates are bright and saturated
+GLOW_WARM_S_MIN = 0.35
+GLOW_WARM_V_MIN = 0.85
+GLOW_MAX_ASPECT = 3.0  # a warm sun candidate must be compact: bounding box at most this long-to-thin ...
+GLOW_MIN_FILL = 0.4  # ... and fill at least this share of its bounding box. A horizon band or a cloud streak is not a sun.
+GLOW_RADIUS_FACTOR = 2.5  # mask radius = this x the blob's equivalent radius ...
+GLOW_MIN_RADIUS_FRAC = 0.06  # ... but at least this fraction of the frame width ...
+GLOW_MAX_RADIUS_FRAC = 0.25  # ... and at most this (a washed-out sky is not a sun)
 
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
@@ -301,13 +339,22 @@ def sun_times(lat: float, lon: float, d: date) -> Dict[str, Any]:
     }
 
 
-def view_for(facing_deg: float, sun_az: Optional[float]) -> str:
-    """'solar' when the cam looks within 60 degrees of where the sun is at the
-    event, else 'antisolar'. East-facing cams: sunrise = solar, sunset = antisolar."""
-    if sun_az is None:
-        return "antisolar"
-    diff = abs((facing_deg - sun_az + 180.0) % 360.0 - 180.0)
-    return "solar" if diff <= 60.0 else "antisolar"
+def cam_facing(cam: Dict[str, Any]) -> str:
+    """'east' or 'west'. The registry's `facing` when present, else derived from
+    facing_azimuth_deg (below 180 = east, otherwise west)."""
+    facing = cam.get("facing")
+    if facing in ("east", "west"):
+        return facing
+    return "east" if float(cam["facing_azimuth_deg"]) % 360.0 < 180.0 else "west"
+
+
+def view_for(facing: str, kind: str) -> str:
+    """'solar' when the cam looks at the sun for this event, else 'antisolar'.
+    An east cam sees a sunrise as solar and a sunset as antisolar; a west cam is the
+    reverse. Only a solar view is the truth for the event's color."""
+    if facing not in ("east", "west"):
+        raise ValueError(f"facing must be 'east' or 'west', got {facing!r}")
+    return "solar" if (facing == "east") == (kind == "sunrise") else "antisolar"
 
 
 # ===========================================================================
@@ -328,12 +375,105 @@ def combine_score(warm_frac: float, colorfulness: float, warm_sat: float, valid_
     return 100.0 * conf * (WEIGHT_W * w + WEIGHT_K * k + WEIGHT_P * p)
 
 
-def score_image(img: Any, regions: List[List[float]]) -> Dict[str, float]:
-    """Score one PIL image over its sky regions. Returns the per-frame metrics."""
+def _components(mask: List[bool], w: int, h: int) -> List[List[int]]:
+    """4-neighbour connected components of a w x h boolean grid, as lists of indices."""
+    seen = [False] * (w * h)
+    comps: List[List[int]] = []
+    for start in range(w * h):
+        if not mask[start] or seen[start]:
+            continue
+        seen[start] = True
+        stack = [start]
+        pts: List[int] = []
+        while stack:
+            j = stack.pop()
+            pts.append(j)
+            x, y = j % w, j // w
+            if x + 1 < w and mask[j + 1] and not seen[j + 1]:
+                seen[j + 1] = True
+                stack.append(j + 1)
+            if x > 0 and mask[j - 1] and not seen[j - 1]:
+                seen[j - 1] = True
+                stack.append(j - 1)
+            if y + 1 < h and mask[j + w] and not seen[j + w]:
+                seen[j + w] = True
+                stack.append(j + w)
+            if y > 0 and mask[j - w] and not seen[j - w]:
+                seen[j - w] = True
+                stack.append(j - w)
+        comps.append(pts)
+    return comps
+
+
+def find_sun(rgb: Any, regions: List[List[float]]) -> Optional[Dict[str, Any]]:
+    """Locate the sun for the glow mask (see "SUN GLOW MASK" in the docstring).
+    Returns {x, y, r_eq, kind, area} in full-frame pixels (kind 'disc' or 'warm'), or None."""
+    width, height = rgb.size
+    x0 = min(r[0] for r in regions)
+    x1 = max(r[2] for r in regions)
+    y0 = min(r[1] for r in regions)
+    horizon = max(r[3] for r in regions)
+    y1 = min(1.0, horizon + GLOW_DOMAIN_EXTEND)
+    left, top = int(x0 * width), int(y0 * height)
+    box = (left, top, max(int(x1 * width), left + 1), max(int(y1 * height), top + 1))
+    crop = rgb.crop(box)
+    if REDUCE_FACTOR > 1:
+        crop = crop.reduce(REDUCE_FACTOR)
+    w, h = crop.size
+    hsv = crop.convert("HSV").tobytes()
+    horizon_row = (horizon - GLOW_HORIZON_BAND) * height  # warm candidates must sit at or below this frame row
+    disc = [False] * (w * h)
+    warm = [False] * (w * h)
+    for i in range(w * h):
+        v = hsv[3 * i + 2] / 255.0
+        if v < GLOW_WARM_V_MIN:
+            continue
+        s_ = hsv[3 * i + 1] / 255.0
+        if v > GLARE_V and s_ < GLARE_S:
+            disc[i] = True
+            continue
+        hue = hsv[3 * i] * 360.0 / 255.0
+        if (
+            v >= GLOW_WARM_V_MIN
+            and s_ >= GLOW_WARM_S_MIN
+            and (hue <= GLOW_WARM_HUE_MAX or hue >= WARM_HUE_MIN)
+            and box[1] + REDUCE_FACTOR * (i // w) >= horizon_row
+        ):
+            warm[i] = True
+    for mask, kind in ((disc, "disc"), (warm, "warm")):
+        for best in sorted(_components(mask, w, h), key=len, reverse=True):
+            if len(best) < GLOW_MIN_AREA_PX:
+                break  # sorted: nothing smaller can qualify either
+            xs = [j % w for j in best]
+            ys = [j // w for j in best]
+            bw, bh = max(xs) - min(xs) + 1, max(ys) - min(ys) + 1
+            # The blown-out disc and its halo can be ragged, so only the warm fallback needs the shape check.
+            if kind == "warm" and (max(bw, bh) / min(bw, bh) > GLOW_MAX_ASPECT or len(best) / (bw * bh) < GLOW_MIN_FILL):
+                continue  # long, thin or ragged: a horizon band or a streak, not a sun
+            cx = sum(box[0] + REDUCE_FACTOR * x + REDUCE_FACTOR / 2.0 for x in xs) / len(best)
+            cy = sum(box[1] + REDUCE_FACTOR * y + REDUCE_FACTOR / 2.0 for y in ys) / len(best)
+            area_px = len(best) * REDUCE_FACTOR * REDUCE_FACTOR
+            return {"x": cx, "y": cy, "r_eq": math.sqrt(area_px / math.pi), "kind": kind, "area": len(best)}
+    return None
+
+
+def glow_radius(sun: Dict[str, Any], frame_width: int) -> float:
+    """The mask radius in full-frame pixels: 2.5x the blob's equivalent radius, clamped to 6%..25% of the width."""
+    r = GLOW_RADIUS_FACTOR * sun["r_eq"]
+    return min(max(r, GLOW_MIN_RADIUS_FRAC * frame_width), GLOW_MAX_RADIUS_FRAC * frame_width)
+
+
+def score_image(img: Any, regions: List[List[float]], glow: bool = True) -> Dict[str, float]:
+    """Score one PIL image over its sky regions. Returns the per-frame metrics.
+    With glow=True (the scoring rule) a circle around the sun is left out; glow=False
+    reproduces the pre-2026-10-15 scores."""
     rgb = img.convert("RGB")
     width, height = rgb.size
+    sun = find_sun(rgb, regions) if glow else None
+    glow_r2 = glow_radius(sun, width) ** 2 if sun else 0.0
     total = 0
     n = 0
+    masked = 0
     warm = 0
     warm_s = 0.0
     sum_rg = sum_yb = sum_rg2 = sum_yb2 = 0.0
@@ -342,6 +482,7 @@ def score_image(img: Any, regions: List[List[float]]) -> Dict[str, float]:
         crop = rgb.crop(box)
         if REDUCE_FACTOR > 1:
             crop = crop.reduce(REDUCE_FACTOR)
+        cw = crop.size[0]
         rgb_bytes = crop.tobytes()
         hsv_bytes = crop.convert("HSV").tobytes()
         for i in range(0, len(rgb_bytes), 3):
@@ -352,6 +493,13 @@ def score_image(img: Any, regions: List[List[float]]) -> Dict[str, float]:
             s = hsv_bytes[i + 1] / 255.0
             if v > GLARE_V and s < GLARE_S:
                 continue
+            if sun:
+                p = i // 3
+                px = box[0] + REDUCE_FACTOR * (p % cw) + REDUCE_FACTOR / 2.0
+                py = box[1] + REDUCE_FACTOR * (p // cw) + REDUCE_FACTOR / 2.0
+                if (px - sun["x"]) ** 2 + (py - sun["y"]) ** 2 <= glow_r2:
+                    masked += 1
+                    continue
             r, g, b = rgb_bytes[i], rgb_bytes[i + 1], rgb_bytes[i + 2]
             n += 1
             rg = r - g
@@ -364,8 +512,9 @@ def score_image(img: Any, regions: List[List[float]]) -> Dict[str, float]:
             if (hue <= WARM_HUE_MAX or hue >= WARM_HUE_MIN) and s >= WARM_S_MIN and v >= WARM_V_MIN:
                 warm += 1
                 warm_s += s
+    glow_masked_frac = masked / total if total else 0.0
     if total == 0 or n == 0:
-        return {"valid_frac": 0.0, "warm_frac": 0.0, "colorfulness": 0.0, "warm_sat": 0.0, "score": 0.0}
+        return {"valid_frac": 0.0, "warm_frac": 0.0, "colorfulness": 0.0, "warm_sat": 0.0, "glow_masked_frac": glow_masked_frac, "score": 0.0}
     mean_rg, mean_yb = sum_rg / n, sum_yb / n
     std_rg = math.sqrt(max(0.0, sum_rg2 / n - mean_rg * mean_rg))
     std_yb = math.sqrt(max(0.0, sum_yb2 / n - mean_yb * mean_yb))
@@ -378,6 +527,7 @@ def score_image(img: Any, regions: List[List[float]]) -> Dict[str, float]:
         "warm_frac": warm_frac,
         "colorfulness": colorfulness,
         "warm_sat": warm_sat,
+        "glow_masked_frac": glow_masked_frac,
         "score": combine_score(warm_frac, colorfulness, warm_sat, valid_frac),
     }
 
@@ -803,6 +953,7 @@ def build_result(frames: List[Dict[str, Any]], event_t: datetime) -> Tuple[Optio
             "warm_frac": round(f["warm_frac"], 4),
             "colorfulness": round(f["colorfulness"], 1),
             "warm_sat": round(f["warm_sat"], 3),
+            "glow_masked_frac": round(f.get("glow_masked_frac", 0.0), 4),
         }
         for f in usable
     ]
@@ -888,7 +1039,7 @@ def read_token() -> Optional[str]:
 
 def print_series(label: str, frames: List[Dict[str, Any]], peak_t: Optional[datetime], event_t: Optional[datetime] = None) -> None:
     print(f"\n{label}")
-    print(f"  {'frame (UTC)':<22}{'warm':>7}{'color':>8}{'wsat':>7}{'valid':>7}{'score':>8}")
+    print(f"  {'frame (UTC)':<22}{'warm':>7}{'color':>8}{'wsat':>7}{'valid':>7}{'glow':>6}{'score':>8}")
     for f in frames:
         mark = " <- PEAK" if peak_t is not None and f["t"] == peak_t else ""
         notes = []
@@ -900,7 +1051,7 @@ def print_series(label: str, frames: List[Dict[str, Any]], peak_t: Optional[date
             notes.append("unusable")
         out = f"  ({', '.join(notes)})" if notes else ""
         print(
-            f"  {iso_z(f['t']):<22}{f['warm_frac']:>7.3f}{f['colorfulness']:>8.1f}{f['warm_sat']:>7.2f}{f['valid_frac']:>7.2f}{f['score']:>8.1f}{mark}{out}"
+            f"  {iso_z(f['t']):<22}{f['warm_frac']:>7.3f}{f['colorfulness']:>8.1f}{f['warm_sat']:>7.2f}{f['valid_frac']:>7.2f}{f.get('glow_masked_frac', 0.0):>6.2f}{f['score']:>8.1f}{mark}{out}"
         )
 
 
@@ -941,7 +1092,7 @@ def run_from_dir(args: argparse.Namespace, cfg: Dict[str, Any]) -> int:
         return 2
     first = beaches[0]
     first_event = sts[first["slug"]][kind]
-    view = view_for(cam["facing_azimuth_deg"], sts[first["slug"]][f"{kind}_az"])
+    view = view_for(cam_facing(cam), kind)
 
     files = sorted(p for p in d.iterdir() if p.is_file() and FRAME_RE.match(p.name) and not p.name.lower().startswith("peak-"))
     if not files:
@@ -1011,7 +1162,7 @@ def due_events(cam: Dict[str, Any], now: datetime, tz: Any, force: bool) -> List
     beach the cam observes. Grouped per (date, kind): one frame series per cam."""
     out: Dict[Tuple[str, str], Dict[str, Any]] = {}
     today = now.astimezone(tz).date()
-    facing = cam["facing_azimuth_deg"]
+    facing = cam_facing(cam)
     for offset in (-1, 0, 1):
         d = today + timedelta(days=offset)
         cam_st = sun_times(cam["lat"], cam["lon"], d)
@@ -1030,7 +1181,7 @@ def due_events(cam: Dict[str, Any], now: datetime, tz: Any, force: bool) -> List
                 bst = sun_times(b["lat"], b["lon"], d)
                 if bst[kind] is not None:
                     beaches.append({"beach": b, "event_t": bst[kind]})
-            out[key] = {"local_date": d.isoformat(), "kind": kind, "cam_event_t": cam_event, "view": view_for(facing, cam_st[f"{kind}_az"]), "beaches": beaches}
+            out[key] = {"local_date": d.isoformat(), "kind": kind, "cam_event_t": cam_event, "view": view_for(facing, kind), "beaches": beaches}
     return list(out.values())
 
 

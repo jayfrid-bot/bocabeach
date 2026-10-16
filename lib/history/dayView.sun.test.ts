@@ -34,3 +34,32 @@ describe("shapeSun", () => {
     expect(shapeSun(json, "2026-10-10", localDate).sunset).toMatchObject({ score: 80 });
   });
 });
+
+describe("shapeSun with the real clock (forecast window)", () => {
+  const json = JSON.stringify([
+    { kind: "sunrise", eventIso: "2026-10-10T11:17:00.000Z", score: 63, band: "good" },
+    { kind: "sunset", eventIso: "2026-10-10T22:57:00.000Z", score: 80, band: "vivid" },
+  ]);
+  const at = (iso: string) => Date.parse(iso);
+
+  it("keeps past events: an archived score is a record, not a prediction", () => {
+    const out = shapeSun(json, "2026-10-10", localDate, at("2026-10-11T08:00:00.000Z"));
+    expect(out.sunrise).toMatchObject({ score: 63 });
+    expect(out.sunset).toMatchObject({ score: 80 });
+  });
+
+  it("drops a still-to-come event until 60 minutes before it", () => {
+    // Midday: sunrise is over, the 5:57 PM-ish sunset is hours away.
+    const midday = shapeSun(json, "2026-10-10", localDate, at("2026-10-10T17:00:00.000Z"));
+    expect(midday.sunrise).toMatchObject({ score: 63 });
+    expect(midday.sunset).toBeNull();
+    // 61 minutes out: still hidden. 60 minutes out: shown.
+    expect(shapeSun(json, "2026-10-10", localDate, at("2026-10-10T21:56:00.000Z")).sunset).toBeNull();
+    expect(shapeSun(json, "2026-10-10", localDate, at("2026-10-10T21:57:00.000Z")).sunset).toMatchObject({ score: 80 });
+  });
+
+  it("before dawn, both of today's events are hidden", () => {
+    const out = shapeSun(json, "2026-10-10", localDate, at("2026-10-10T05:00:00.000Z"));
+    expect(out).toEqual({ sunrise: null, sunset: null });
+  });
+});

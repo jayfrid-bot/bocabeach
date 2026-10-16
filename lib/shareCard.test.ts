@@ -382,24 +382,54 @@ describe("shareCardModel", () => {
         { time: "2026-09-14T23:00:00.000Z", cloudCoverLowPct: 10, cloudCoverMidPct: 35, cloudCoverHighPct: 10, ...over },
       ]) as unknown as ConditionsSnapshot["hourly"];
 
-    it("adds the sunset color score and word as the tile's note while the sunset is ahead", () => {
+    // The sunset is 7:30 PM EDT; its forecast window opens an hour before, 6:30 PM EDT.
+    const WINDOW_OPEN_MS = Date.parse("2026-09-14T22:30:00.000Z");
+    const INSIDE_MS = Date.parse("2026-09-14T22:45:00.000Z"); // 6:45 PM EDT
+
+    it("before the window opens, says when the forecast will be ready and shows no score", () => {
+      const m = shareCardModel(
+        response({ sun: wrap({ sunset: SUNSET }) as ConditionsSnapshot["sun"], hourly: hourly() }),
+        NOW_MS,
+      );
+      expect(m.tiles.find((t) => t.key === "sun")).toEqual({
+        key: "sun",
+        label: "Sunset tonight",
+        value: "7:30 PM",
+        note: "Sunset forecast at 6:30 PM",
+      });
+      const note = m.tiles.find((t) => t.key === "sun")?.note ?? "";
+      expect(note).not.toMatch(/\/100|color|Poor|Fair|Good|Great|Amazing|\d{2}\/|\bAI\b/);
+    });
+
+    it("says it even with no hourly forecast yet: the line is about timing, not data", () => {
+      const m = shareCardModel(response({ sun: wrap({ sunset: SUNSET }) as ConditionsSnapshot["sun"] }), NOW_MS);
+      expect(m.tiles.find((t) => t.key === "sun")).toMatchObject({ note: "Sunset forecast at 6:30 PM" });
+    });
+
+    it("inside the window, adds the sunset color score and word as the tile's note", () => {
       const q = sunEventQuality({ cloud: { lowPct: 10, midPct: 35, highPct: 10 } });
       const expected = `${sunQualityBandMeta(q.band!).label} color · ${q.score}/100`;
       const m = shareCardModel(
         response({ sun: wrap({ sunset: SUNSET }) as ConditionsSnapshot["sun"], hourly: hourly() }),
-        NOW_MS,
+        INSIDE_MS,
       );
       expect(q.score).not.toBeNull();
       expect(m.tiles.find((t) => t.key === "sun")).toEqual({ key: "sun", label: "Sunset tonight", value: "7:30 PM", note: expected });
       expect(expected).toMatch(/^(Poor|Fair|Good|Great|Amazing) color · \d{1,3}\/100$/);
     });
 
-    it("shows the time alone when there is no forecast for the sunset hour", () => {
-      const m = shareCardModel(response({ sun: wrap({ sunset: SUNSET }) as ConditionsSnapshot["sun"] }), NOW_MS);
+    it("the score appears at the exact minute the window opens, not before", () => {
+      const res = response({ sun: wrap({ sunset: SUNSET }) as ConditionsSnapshot["sun"], hourly: hourly() });
+      expect(shareCardModel(res, WINDOW_OPEN_MS - 1).tiles.find((t) => t.key === "sun")?.note).toBe("Sunset forecast at 6:30 PM");
+      expect(shareCardModel(res, WINDOW_OPEN_MS).tiles.find((t) => t.key === "sun")?.note).toMatch(/ color · \d{1,3}\/100$/);
+    });
+
+    it("inside the window, shows the time alone when there is no forecast for the sunset hour", () => {
+      const m = shareCardModel(response({ sun: wrap({ sunset: SUNSET }) as ConditionsSnapshot["sun"] }), INSIDE_MS);
       expect(m.tiles.find((t) => t.key === "sun")).toEqual({ key: "sun", label: "Sunset tonight", value: "7:30 PM" });
     });
 
-    it("once the sunset has passed, the tile is tomorrow's sunrise with ITS color forecast", () => {
+    it("once the sunset has passed, the tile is tomorrow's sunrise, with when ITS forecast opens", () => {
       const m = shareCardModel(
         response({
           sun: wrap({ sunset: "2026-09-14T19:00:00.000Z", tomorrowSunrise: "2026-09-15T10:55:00.000Z" }) as ConditionsSnapshot["sun"],
@@ -408,14 +438,34 @@ describe("shareCardModel", () => {
         NOW_MS,
       );
       const tile = m.tiles.find((t) => t.key === "sun");
-      expect(tile).toMatchObject({ label: "Sunrise tomorrow", value: "6:55 AM" });
+      expect(tile).toMatchObject({ label: "Sunrise tomorrow", value: "6:55 AM", note: "Sunrise forecast at 5:55 AM" });
+    });
+
+    it("a sunrise inside its window carries ITS color forecast", () => {
+      const m = shareCardModel(
+        response({
+          sun: wrap({ sunset: "2026-09-14T19:00:00.000Z", tomorrowSunrise: "2026-09-15T10:55:00.000Z" }) as ConditionsSnapshot["sun"],
+          hourly: hourly({ time: "2026-09-15T11:00:00.000Z" }),
+        }),
+        Date.parse("2026-09-15T10:00:00.000Z"),
+      );
+      const tile = m.tiles.find((t) => t.key === "sun");
+      expect(tile).toMatchObject({ label: "Sunrise today", value: "6:55 AM" });
       expect(tile?.note).toMatch(/^(Poor|Fair|Good|Great|Amazing) color · \d{1,3}\/100$/);
     });
 
-    it("the card's cache ends at the sunset it advertises", () => {
+    it("while pending, the card's cache ends when the window opens (so the number never lingers late)", () => {
       const m = shareCardModel(
         response({ sun: wrap({ sunset: SUNSET }) as ConditionsSnapshot["sun"], hourly: hourly() }),
         NOW_MS,
+      );
+      expect(m.changesAtMs).toBe(WINDOW_OPEN_MS);
+    });
+
+    it("inside the window, the card's cache ends at the sunset it advertises", () => {
+      const m = shareCardModel(
+        response({ sun: wrap({ sunset: SUNSET }) as ConditionsSnapshot["sun"], hourly: hourly() }),
+        INSIDE_MS,
       );
       expect(m.changesAtMs).toBe(Date.parse(SUNSET));
     });

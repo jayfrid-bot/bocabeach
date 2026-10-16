@@ -16,12 +16,15 @@ import {
   sunColorEstimateKey,
   sunColorEventKey,
   sunColorLeadPhrase,
+  effectiveSunColorLeadMin,
+  sunAlertsEnabled,
   sunColorMismatchOutcome,
   sunColorSlugNeed,
   nextSunEventEstimate,
   type SunColorAlertInput,
 } from "@/lib/alerts/sunColor";
 import { defaultPrefs, type DeviceRecord } from "@/lib/db/types";
+import { SUN_FORECAST_WINDOW_MS } from "@/lib/sunForecastWindow";
 import type { SunEventPrediction } from "@/lib/sunAlert";
 
 const TZ = "America/New_York";
@@ -105,6 +108,62 @@ describe("sunColorEventKey (round-2 item 3 — beach-local date, not UTC date-ho
   it("sunrise and sunset never share a key for the same instant", () => {
     const iso = "2026-09-02T10:00:00Z";
     expect(sunColorEventKey("sunrise", iso, TZ)).not.toBe(sunColorEventKey("sunset", iso, TZ));
+  });
+});
+
+describe("the forecast window caps every sun-color alert (no early alerts)", () => {
+  const eventMs = Date.parse(EVENT_ISO);
+
+  it("SUN_COLOR_MAX_LEAD_MS is the 60-minute forecast window, not the old 4 hours", () => {
+    expect(SUN_COLOR_MAX_LEAD_MS).toBe(60 * 60_000);
+    expect(SUN_FORECAST_WINDOW_MS).toBe(60 * 60_000);
+  });
+
+  it("effective lead never exceeds 60 minutes", () => {
+    expect(effectiveSunColorLeadMin(30)).toBe(30);
+    expect(effectiveSunColorLeadMin(60)).toBe(60);
+    expect(effectiveSunColorLeadMin(120)).toBe(60);
+    expect(effectiveSunColorLeadMin(180)).toBe(60);
+  });
+
+  it("a legacy 3 h lead sends nothing at 3 h, 2 h or 61 minutes, and sends from 60 minutes out", () => {
+    const legacy = device({ sunColor: { minBand: "vivid", leadMin: 180 } });
+    for (const minutesOut of [180, 120, 90, 61]) {
+      expect(sunColorDecision(baseInput({ device: legacy, nowMs: eventMs - minutesOut * 60_000 }))).toBeNull();
+    }
+    const d = sunColorDecision(baseInput({ device: legacy, nowMs: eventMs - 60 * 60_000 }));
+    expect(d).not.toBeNull();
+    expect(d?.body).toContain("about an hour away");
+  });
+
+  it("no push of any kind before the window, whatever the score", () => {
+    for (const leadMin of [30, 60, 120, 180]) {
+      const dev = device({ sunColor: { minBand: "vivid", leadMin } });
+      const pred = prediction({ score: 99, band: "epic" });
+      expect(sunColorDecision(baseInput({ device: dev, prediction: pred, nowMs: eventMs - 61 * 60_000 }))).toBeNull();
+      expect(sunColorDecision(baseInput({ device: dev, prediction: pred, nowMs: eventMs - 4 * 60 * 60_000 }))).toBeNull();
+    }
+  });
+
+  it("the 30-minute lead still works inside the window", () => {
+    const dev = device({ sunColor: { minBand: "vivid", leadMin: 30 } });
+    expect(sunColorDecision(baseInput({ device: dev, nowMs: eventMs - 30 * 60_000 }))).not.toBeNull();
+    expect(sunColorDecision(baseInput({ device: dev, nowMs: eventMs - 45 * 60_000 }))).toBeNull();
+  });
+});
+
+describe("sunAlertsEnabled (SUN_ALERTS_ENABLED, default off)", () => {
+  it("is off when unset, empty, or anything but a plain yes", () => {
+    expect(sunAlertsEnabled({})).toBe(false);
+    for (const v of ["", "off", "OFF", "0", "false", "no", "maybe"]) {
+      expect(sunAlertsEnabled({ SUN_ALERTS_ENABLED: v })).toBe(false);
+    }
+  });
+
+  it("turns on for on / 1 / true / yes, any case, with stray spaces", () => {
+    for (const v of ["on", "ON", "1", "true", "True", " yes "]) {
+      expect(sunAlertsEnabled({ SUN_ALERTS_ENABLED: v })).toBe(true);
+    }
   });
 });
 
@@ -291,8 +350,11 @@ describe("sunColorLeadPhrase", () => {
   it("words every offered lead time", () => {
     expect(sunColorLeadPhrase(30)).toMatch(/half hour/);
     expect(sunColorLeadPhrase(60)).toMatch(/an hour/);
-    expect(sunColorLeadPhrase(120)).toMatch(/two hours/);
-    expect(sunColorLeadPhrase(180)).toMatch(/three hours/);
+  });
+
+  it("a legacy 2 h / 3 h lead reads as the 60-minute phrase: the alert can't fire before the forecast opens", () => {
+    expect(sunColorLeadPhrase(120)).toMatch(/an hour/);
+    expect(sunColorLeadPhrase(180)).toMatch(/an hour/);
   });
 });
 
@@ -345,14 +407,29 @@ describe("sunColorSlugNeed", () => {
     expect(need).toEqual({ due: false, candidate: false, eventKey: null });
   });
 
-  it("candidate (not yet due) when the next event is a few hours out", () => {
-    // ~3.5h before Boca Raton's early-September sunset (~7:35 PM ET) — well
-    // under the 4h horizon, but well outside the 60-min-lead send window.
-    const nowMs = Date.parse("2026-09-02T20:00:00Z"); // ~4 PM ET
-    const need = sunColorSlugNeed(BOCA, device(), {}, nowMs);
+  it("candidate (not yet due) just ahead of the window: 70 minutes out", () => {
+    // The forecast window is 60 min; the estimate gets 15 min of slack on the far side.
+    const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T18:00:00Z"));
+    const need = sunColorSlugNeed(BOCA, device(), {}, probe!.eventMs - 70 * 60_000);
     expect(need.candidate).toBe(true);
     expect(need.due).toBe(false);
     expect(need.eventKey).toMatch(/^sun-color:sunset:/);
+  });
+
+  it("neither candidate nor due when the next event is a few hours out: no early alerts (forecast window is 60 min)", () => {
+    // ~3.5h before Boca Raton's early-September sunset (~7:35 PM ET).
+    const nowMs = Date.parse("2026-09-02T20:00:00Z"); // ~4 PM ET
+    const need = sunColorSlugNeed(BOCA, device(), {}, nowMs);
+    expect(need.candidate).toBe(false);
+    expect(need.due).toBe(false);
+  });
+
+  it("a legacy 3 h lead is capped: due only from 60 minutes out, never at 3 h or 2 h", () => {
+    const probe = nextSunEventEstimate(BOCA, Date.parse("2026-09-02T18:00:00Z"));
+    const legacy = device({ sunColor: { minBand: "vivid", leadMin: 180 } });
+    expect(sunColorSlugNeed(BOCA, legacy, {}, probe!.eventMs - 180 * 60_000)).toMatchObject({ due: false, candidate: false });
+    expect(sunColorSlugNeed(BOCA, legacy, {}, probe!.eventMs - 120 * 60_000)).toMatchObject({ due: false, candidate: false });
+    expect(sunColorSlugNeed(BOCA, legacy, {}, probe!.eventMs - 60 * 60_000)).toMatchObject({ due: true, candidate: true });
   });
 
   it("due once inside the send window", () => {

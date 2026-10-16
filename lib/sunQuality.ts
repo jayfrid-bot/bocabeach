@@ -30,7 +30,11 @@
  * tell which formula produced which score. BUMP IT whenever a curve, weight,
  * threshold, or band cutoff in this module changes.
  */
-export const SUN_QUALITY_VERSION = "2026-10-06.2";
+export const SUN_QUALITY_VERSION = "2026-10-15.1";
+// 2026-10-15.1: the cloud mix and the horizon come from a fresh satellite
+// cloud-top read (GOES ACHA, lib/sunAlert.ts resolveIrObservation) when one
+// speaks for the event; the forecast layers are the fallback. The curves, the
+// weights and the band cutoffs are unchanged.
 
 export type SunEventKind = "sunrise" | "sunset";
 
@@ -57,13 +61,14 @@ export interface CloudMix {
 }
 
 /**
- * Satellite-observed clearness along the low-sun beam/horizon path (GOES ABI,
- * via lib/sources/goesCloud.ts's `beamCloudPct`). This is the single most
- * science-backed input — a clear horizon is what lets the low sun's beam reach
- * the cloud canvas at all. `fresh` is set by the caller ONLY when the satellite
- * granule is current AND the event is imminent (a "right now" observation can't
- * speak for a sunrise 12 hours out); when it's stale/far, the model degrades to
- * a low-cloud estimate and says the horizon path is unverified.
+ * Satellite-observed low cloud along the sun's path at the event (GOES ABI
+ * cloud-top height, via lib/sources/goesCloud.ts's `ir` block and lib/sunAlert.ts
+ * `resolveIrObservation`). This is the single most science-backed input — a
+ * clear horizon is what lets the low sun's beam reach the cloud canvas at all.
+ * `fresh` is set by the caller ONLY when the satellite granule is current AND
+ * the event is imminent (a "right now" observation can't speak for a sunrise 12
+ * hours out); when it's stale/far, the model degrades to a low-cloud forecast
+ * estimate and says the horizon path is unverified.
  */
 export interface HorizonPath {
   /** 0-100 cloud fraction along the beam/horizon path. */
@@ -92,6 +97,10 @@ export interface SunEventQualityInput {
   seasonalPrior?: number;
 }
 
+/** What fed the model's cloud mix: a fresh satellite cloud-top read, or the
+ *  hourly forecast. */
+export type SunModelSource = "satellite-ir" | "forecast";
+
 /** Transparent per-factor breakdown (the spinoff app's differentiator) — each
  *  string is a plain-English one-liner for the flip-card back. Only populated
  *  on the richer factor-model path; the fallback path leaves it undefined. */
@@ -104,6 +113,20 @@ export interface SunFactorBreakdown {
   airClarity?: string;
   /** e.g. "muggy −10%". Omitted when humidity isn't a factor. */
   humidity?: string;
+  /** Which input fed the cloud mix. Added by lib/sunAlert.ts (the model itself
+   *  does not know); archived in `breakdown_json`. */
+  source?: SunModelSource;
+  /** The satellite read behind a "satellite-ir" score (recording only). */
+  satellite?: {
+    granuleStartIso: string;
+    granuleAgeMinutes: number;
+    /** "ir-beam" = low cloud along the sun's azimuth; "ir-overhead" = the IR
+     *  low share overhead (no path read for this event). */
+    horizon: "ir-beam" | "ir-overhead";
+    /** Mid + high cloud toward and away from the sun (not scored). */
+    sunwardMidHighPct: number | null;
+    antiMidHighPct: number | null;
+  };
 }
 
 export interface SunEventQuality {
@@ -230,9 +253,10 @@ function solidMidDeckFactor(midPct: number): number {
 /**
  * CLEAR-PATH (highest-weighted, most science-backed): can the low sun's beam
  * actually reach the canvas, or is the horizon socked in? A FRESH satellite
- * beam-path sample is used directly (100 − beamCloud%) when a caller passes
- * one; the live app does not (lib/sunAlert.ts), so this is the forecast
- * low-cloud estimate (lowCloudClearPath) flagged as unverified.
+ * satellite horizon sample is used directly (100 − low-cloud%) when a caller
+ * passes one (lib/sunAlert.ts does, from the GOES cloud-top read, when it is
+ * fresh); otherwise this is the forecast low-cloud estimate (lowCloudClearPath)
+ * flagged as unverified.
  */
 function clearPathScore(
   lowPct: number,
@@ -677,10 +701,14 @@ export function nearestHourlyPoint(
 //     `aerosol_optical_depth` (+ PM2.5, already fetched) — a CURRENT reading,
 //     applied as a small ±modifier (slowly varying, so acceptable for near-term
 //     events; honestly labeled "air clarity (now)").
-//   - HORIZON / CLEAR-PATH: GOES beam-path cloud (lib/sources/goesCloud.ts's
-//     `beamCloudPct`) is a live "right now" observation, so the card passes it
-//     as `horizon` with `fresh:true` ONLY when the granule is current AND the
-//     event is imminent; otherwise clearPath degrades to a low-cloud estimate.
+//   - CLOUD MIX + HORIZON / CLEAR-PATH (2026-10-15): the primary input is the
+//     GOES cloud-top-height read (lib/sources/goesCloud.ts `ir`), used by
+//     lib/sunAlert.ts only when its granule is within 35 min of now AND now is
+//     within 60 min of the event: low/mid/high shares become the CloudMix and
+//     the low cloud along the sun's azimuth at the event becomes `horizon` with
+//     `fresh:true`. Otherwise the hourly forecast fills the CloudMix and
+//     clearPath degrades to a low-cloud estimate. (The older Clear Sky Mask
+//     `beamCloudPct`/`cloudPct` horizon is recorded but not scored.)
 //   - PRESSURE / post-frontal bonus: NOT wired — HourlyMetrics carries no
 //     surface-pressure field (only dew point), so per the spec that factor is
 //     skipped rather than adding a new fetch. Re-add if pressure is ever fetched.

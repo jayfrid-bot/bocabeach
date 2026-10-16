@@ -18,6 +18,28 @@ import { fmtTime } from "@/lib/format";
 import { localHourParts } from "@/lib/history/archive";
 import { computeSunTimes } from "@/lib/sources/sun";
 import { buildAlert, type AlertDecision, type SunColorSubject } from "@/lib/alerts/catalog";
+import {
+  SUN_FORECAST_WINDOW_MINUTES,
+  SUN_FORECAST_WINDOW_MS,
+  sunForecastWindow,
+} from "@/lib/sunForecastWindow";
+
+/**
+ * Master switch for the sunrise/sunset color push, read from the
+ * `SUN_ALERTS_ENABLED` environment variable. DEFAULT OFF: the owner wants no
+ * color alerts until the satellite observation input ships (2026-10-15, see
+ * docs/benchmarks/sun-leadtime-2026-10-15/REPORT.md — the forecast alone is
+ * about 30 points off at every lead). Only "on", "1", "true" or "yes" (any
+ * case) turn it on. The sun card, share card and the pending copy are NOT
+ * behind this flag; only the push is. The push route checks it before it
+ * selects a beach for the sun-color alert and before it evaluates one, so with
+ * the flag off nothing is fetched, sent, latched or written to the alert log
+ * for this alert.
+ */
+export function sunAlertsEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  const raw = (env.SUN_ALERTS_ENABLED ?? "off").trim().toLowerCase();
+  return raw === "on" || raw === "1" || raw === "true" || raw === "yes";
+}
 
 /**
  * Score cutoff for the default threshold, "Great or better" — matches
@@ -38,10 +60,12 @@ export function sunColorCutoffFor(minBand: SunColorMinBand): number {
   return minBand === "epic" ? SUN_COLOR_AMAZING_CUTOFF : SUN_COLOR_GREAT_CUTOFF;
 }
 
-/** A prediction more than this far out isn't trustworthy yet (Requirement
- *  #3) — the forecast cloud reading for an event this far ahead is too
- *  coarse to promise a push over. */
-export const SUN_COLOR_MAX_LEAD_MS = 4 * 60 * 60 * 1000;
+/** No sun-color push of any kind before the forecast window opens: the color
+ *  score is shown from SUN_FORECAST_WINDOW_MINUTES (60) before the event
+ *  (lib/sunForecastWindow.ts), and an alert must never carry a number the app
+ *  itself would still be hiding. This was 4 hours until 2026-10-15; the
+ *  benchmark showed the forecast is not trustworthy at ANY lead. */
+export const SUN_COLOR_MAX_LEAD_MS = SUN_FORECAST_WINDOW_MS;
 
 /**
  * The send window's width: `[event - lead, event - lead + 10 min)`. Back to
@@ -82,9 +106,19 @@ export const SUN_COLOR_ESTIMATE_HORIZON_TOLERANCE_MS = 15 * 60 * 1000;
  */
 export const SUN_COLOR_MISMATCH_DEFER_MAX_MS = 15 * 60 * 1000;
 
-/** The send window for one event/lead pair, as `[start, end)` epoch ms. */
+/** A device's lead time as it actually applies: never longer than the
+ *  forecast window (60 min). A device that still has a legacy 2 h / 3 h lead
+ *  stored is treated as 60 — the alert can fire no earlier than the window
+ *  opens. Every window calculation below goes through this. */
+export function effectiveSunColorLeadMin(leadMin: number): number {
+  return Math.min(leadMin, SUN_FORECAST_WINDOW_MINUTES);
+}
+
+/** The send window for one event/lead pair, as `[start, end)` epoch ms. The
+ *  lead is capped at the forecast window, so `start` is never earlier than
+ *  the moment the score becomes visible. */
 export function sunColorSendWindow(eventMs: number, leadMin: number): { start: number; end: number } {
-  const start = eventMs - leadMin * 60_000;
+  const start = eventMs - effectiveSunColorLeadMin(leadMin) * 60_000;
   return { start, end: start + SUN_COLOR_SEND_WINDOW_MS };
 }
 
@@ -150,17 +184,7 @@ export function sunColorEstimateKey(
 /** "about an hour" / "the next half hour" — the device's lead-time setting,
  *  worded for the push body and for the settings sheet's example line. */
 export function sunColorLeadPhrase(leadMin: number): string {
-  switch (leadMin) {
-    case 30:
-      return "the next half hour";
-    case 120:
-      return "about two hours";
-    case 180:
-      return "about three hours";
-    case 60:
-    default:
-      return "about an hour";
-  }
+  return effectiveSunColorLeadMin(leadMin) <= 30 ? "the next half hour" : "about an hour";
 }
 
 export interface SunColorAlertInput {
@@ -180,8 +204,8 @@ export interface SunColorAlertInput {
 /**
  * Decide whether to send the sun-color alert to one device this tick.
  * Score >= the device's own cutoff, AND `now` is within
- * `[event - lead, event - lead + 10 min)`, AND the predicted event is <= 4h
- * away (a farther-out prediction isn't trustworthy yet). Returns a ready
+ * `[event - lead, event - lead + 10 min)` (lead capped at 60 min), AND the
+ * forecast window is open (the event is <= 60 min away). Returns a ready
  * `AlertDecision` (title/body/tag/dedupKey) or null.
  */
 export function sunColorDecision(input: SunColorAlertInput): AlertDecision | null {
@@ -190,12 +214,15 @@ export function sunColorDecision(input: SunColorAlertInput): AlertDecision | nul
   if (!device.homeSlug) return null;
   if (!prediction || prediction.score == null || prediction.band == null) return null;
 
+  // Never before the forecast window opens (lib/sunForecastWindow.ts).
+  if (sunForecastWindow(prediction.eventIso, nowMs)?.state !== "available") return null;
+
   const cutoff = sunColorCutoffFor(device.sunColor.minBand);
   if (prediction.score < cutoff) return null;
 
   const eventMs = Date.parse(prediction.eventIso);
   if (!Number.isFinite(eventMs)) return null;
-  if (eventMs - nowMs > SUN_COLOR_MAX_LEAD_MS) return null; // too far out to trust yet
+  if (eventMs - nowMs > SUN_COLOR_MAX_LEAD_MS) return null; // forecast window not open yet
   if (!sunColorInWindow(prediction, device.sunColor.leadMin, nowMs)) return null;
 
   const bandLabel = sunQualityBandMeta(prediction.band).label; // "Great" | "Amazing"
@@ -296,8 +323,8 @@ export interface SunColorSlugNeed {
 /**
  * Does a device's home beach need its conditions fetched this tick, purely
  * for the sun-color alert? `candidate` (elastic — fine to pick up next
- * tick) whenever the next event is within roughly 4h (a little slack on the
- * FAR side only — `SUN_COLOR_ESTIMATE_HORIZON_TOLERANCE_MS`); `due` (must
+ * tick) whenever the next event is within roughly the 60-minute forecast
+ * window (a little slack on the FAR side only — `SUN_COLOR_ESTIMATE_HORIZON_TOLERANCE_MS`); `due` (must
  * not be starved) only once inside the actual send window, with a little
  * slack on the window's END only (`SUN_COLOR_ESTIMATE_WINDOW_END_TOLERANCE_MS`)
  * — NEVER on the start (round-2 item 4: selecting a beach before its window

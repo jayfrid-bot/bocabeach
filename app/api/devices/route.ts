@@ -28,6 +28,7 @@ import { getStore } from "@/lib/db/store";
 import {
   ALERT_KEYS,
   entitled,
+  SUN_COLOR_LEAD_LEGACY,
   SUN_COLOR_LEAD_OPTIONS,
   type AlertPrefs,
   type DevicePatch,
@@ -121,7 +122,9 @@ function patchFromBody(body: Record<string, unknown>): DevicePatch | null {
   }
   if (body.sunColorLeadMin !== undefined) {
     const v = body.sunColorLeadMin;
-    if (v !== null && !(SUN_COLOR_LEAD_OPTIONS as readonly unknown[]).includes(v)) return null;
+    // Legacy 120/180 are still accepted (an older build may send them); they read back as 60.
+    const accepted = [...SUN_COLOR_LEAD_OPTIONS, ...SUN_COLOR_LEAD_LEGACY] as readonly unknown[];
+    if (v !== null && !accepted.includes(v)) return null;
     patch.sunColorLeadMin = v as number | null;
   }
 

@@ -89,8 +89,10 @@ export interface BuildOptions {
 export type Section<T> = { ok: true; result: T } | { ok: false; error: string };
 
 export interface SunSection extends SunColorResult {
-  /** Camera readings that matched no forecast row (null when unknown). */
+  /** Solar camera readings that matched no forecast row (null when unknown). Afterglow readings are counted apart. */
   observationsWithoutForecast: number | null;
+  /** Afterglow (antisolar) camera readings in the window: stored, never scored (null when unknown). */
+  afterglowObservations: number | null;
   /** Camera readings in the archive. */
   observations: number | null;
   /** Forecast rows loaded. */
@@ -209,7 +211,8 @@ export function buildScorecard(raw: RawData, opts: BuildOptions = {}): Scorecard
           windowDays: raw.sunWindowDays ?? null,
           lifetime: raw.sunLifetime ?? null,
           observations: obs ? obs.length : null,
-          observationsWithoutForecast: obs ? obs.filter((o) => !matchesForecast(o, pairedRows)).length : null,
+          observationsWithoutForecast: obs ? obs.filter((o) => o.view !== "antisolar" && !matchesForecast(o, pairedRows)).length : null,
+          afterglowObservations: obs ? obs.filter((o) => o.view === "antisolar").length : null,
         };
       })
     : unavailable(raw.errors.sunPredictions, "No sun-color forecasts were loaded.");
@@ -372,10 +375,14 @@ function sunSection(s: Section<SunSection>): string {
     );
   }
   if (r.observations != null) {
-    out.push(
-      `- Camera readings in the window: ${r.observations}` +
-        (r.observationsWithoutForecast ? `; ${r.observationsWithoutForecast} of them matched no forecast row, so they cannot be scored.` : "."),
-    );
+    const notes: string[] = [];
+    if (r.afterglowObservations) {
+      notes.push(`${r.afterglowObservations} are afterglow (the cam looked away from the sun), kept but never scored`);
+    }
+    if (r.observationsWithoutForecast) {
+      notes.push(`${r.observationsWithoutForecast} matched no forecast row, so they cannot be scored`);
+    }
+    out.push(`- Camera readings in the window: ${r.observations}` + (notes.length ? `; ${notes.join("; ")}.` : "."));
   }
 
   if (r.pairedEvents > 0) {
@@ -391,7 +398,7 @@ function sunSection(s: Section<SunSection>): string {
         ...errorRows(r.byBand, (k) => `We said: ${BAND_LABEL[k] ?? k}`),
         ...errorRows(r.byBeach, (k) => `Beach: ${k}`),
         ...errorRows(r.byAlgo, (k) => `Model version: ${k}`),
-        ...errorRows(r.byView, (k) => `Camera view: ${k}`),
+        ...errorRows(r.byView, (k) => `Camera view: ${k === "afterglow" ? "afterglow (not scored)" : k}`),
       ]),
     );
   }

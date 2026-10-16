@@ -174,6 +174,7 @@ describe("POST /api/push/run — sun-color ESTIMATE-vs-SNAPSHOT disagreement (ro
     ctl.fcmMessages = [];
     ctl.conditionsCalls = [];
     process.env.CRON_SECRET = "test-cron-secret";
+    process.env.SUN_ALERTS_ENABLED = "on"; // default is off (lib/alerts/sunColor.ts sunAlertsEnabled)
     delete process.env.PUSH_SAFETY_ALERTS;
     vi.useFakeTimers();
   });

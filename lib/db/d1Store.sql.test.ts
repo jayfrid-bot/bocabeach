@@ -336,9 +336,15 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
     });
 
     it("persists a chosen threshold and lead time", async () => {
-      await store.upsertDevice("sc2", { sunColorMinBand: "epic", sunColorLeadMin: 180 });
+      await store.upsertDevice("sc2", { sunColorMinBand: "epic", sunColorLeadMin: 30 });
       const dev = await store.getDevice("sc2");
-      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 180 });
+      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 30 });
+    });
+
+    it("a legacy 2 h / 3 h lead (offered until 2026-10-15) reads back as the 60-minute default", async () => {
+      await store.upsertDevice("sc2b", { sunColorMinBand: "epic", sunColorLeadMin: 180 });
+      const dev = await store.getDevice("sc2b");
+      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 60 });
     });
 
     it("an unrelated write afterward leaves the sun-color columns untouched", async () => {
@@ -352,14 +358,14 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       await store.upsertDevice("sc4", {});
       await Promise.all([
         store.upsertDevice("sc4", { sunColorMinBand: "epic" }),
-        store.upsertDevice("sc4", { sunColorLeadMin: 120 }),
+        store.upsertDevice("sc4", { sunColorLeadMin: 30 }),
       ]);
       const dev = await store.getDevice("sc4");
-      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 120 });
+      expect(dev?.sunColor).toEqual({ minBand: "epic", leadMin: 30 });
     });
 
     it("null resets a column back to NULL (the default), a real UPDATE ... = NULL, not a no-op", async () => {
-      await store.upsertDevice("sc5", { sunColorMinBand: "epic", sunColorLeadMin: 180 });
+      await store.upsertDevice("sc5", { sunColorMinBand: "epic", sunColorLeadMin: 30 });
       await store.upsertDevice("sc5", { sunColorMinBand: null, sunColorLeadMin: null });
       const dev = await store.getDevice("sc5");
       expect(dev?.sunColor).toEqual({ minBand: "vivid", leadMin: 60 });
@@ -1139,7 +1145,7 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       expect((await store.sunEventPredictionsFor("boca-raton", EVENT)).find((p) => p.event_kind === "sunrise")).toMatchObject({ score: 58, band: "good" });
     });
 
-    it("never overwrites a solar observation with an antisolar one, in either arrival order", async () => {
+    it("an antisolar (afterglow) observation is stored but never becomes the truth, in either arrival order", async () => {
       await store.upsertSunEventPredictions([predictionRow()]);
       await store.recordSunEventObservation(observationRow({ cam_id: "solar-cam", view: "solar", distance_mi: 2.9, observed_score: 85 }));
       await store.recordSunEventObservation(observationRow({ cam_id: "anti-cam", view: "antisolar", distance_mi: 0, observed_score: 30 }));
@@ -1147,8 +1153,10 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
 
       const other = freshStore() as DeviceStore;
       await other.upsertSunEventPredictions([predictionRow()]);
-      await other.recordSunEventObservation(observationRow({ cam_id: "anti-cam", view: "antisolar", distance_mi: 0, observed_score: 30 }));
-      expect((await truth(EVENT, other))[0][1]).toBe("sun-cam:anti-cam:antisolar");
+      const lone = await other.recordSunEventObservation(observationRow({ cam_id: "anti-cam", view: "antisolar", distance_mi: 0, observed_score: 30 }));
+      expect(lone).toEqual({ stored: true, predictionsUpdated: 0 });
+      expect((await truth(EVENT, other))[0]).toEqual([null, null, null]); // stored below, but no truth on the prediction
+      expect(await other.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06")).toHaveLength(1);
       await other.recordSunEventObservation(observationRow({ cam_id: "solar-cam", view: "solar", distance_mi: 2.9, observed_score: 85 }));
       expect((await truth(EVENT, other))[0]).toEqual([85, "sun-cam:solar-cam:solar", "2026-10-06T14:05:00.000Z"]);
     });

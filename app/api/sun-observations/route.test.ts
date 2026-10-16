@@ -377,6 +377,34 @@ describe("filling the prediction rows", () => {
     expect(await source()).toMatchObject({ observed_score: 90, observed_source: "sun-cam:deerfield-beach-cam:solar" });
   });
 
+  it("an east cam's sunset (antisolar, the afterglow) is stored but is never the truth on the prediction rows", async () => {
+    vi.setSystemTime(new Date("2026-10-07T03:00:00.000Z"));
+    const store = await getStore();
+    const sunsetIso = eventIso("fort-lauderdale", "sunset", "2026-10-06");
+    await store.upsertSunEventPredictions([predictionRow({ slug: "fort-lauderdale", event_kind: "sunset", event_iso: sunsetIso })]);
+    const body = sunObservationBody({ kind: "sunset", peakAtMin: 10, scoredAt: "2026-10-07T00:00:00.000Z" });
+    expect(body.view).toBe("antisolar");
+    const res = await post(body);
+    expect(await json(res)).toMatchObject({ ok: true, stored: true, predictionsUpdated: 0 });
+    const rows = await store.sunEventObservationsFor("fort-lauderdale", "sunset", "2026-10-06");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].view).toBe("antisolar");
+    expect((await store.sunEventPredictionsFor("fort-lauderdale", sunsetIso))[0]).toMatchObject({
+      observed_score: null,
+      observed_source: null,
+      observed_at: null,
+    });
+  });
+
+  it("400s a view that does not match the event and the cam's facing, in both directions", async () => {
+    const rise = await post(sunObservationBody({}, { view: "antisolar" }));
+    expect(rise.status).toBe(400);
+    expect(String((await json(rise)).detail)).toMatch(/view does not match/);
+    vi.setSystemTime(new Date("2026-10-07T03:00:00.000Z"));
+    const set = await post({ ...sunObservationBody({ kind: "sunset", peakAtMin: 10, scoredAt: "2026-10-07T00:00:00.000Z" }), view: "solar" });
+    expect(set.status).toBe(400);
+  });
+
   it("leaves a hand-labelled row alone, and replaces an earlier sun-cam label", async () => {
     const store = await getStore();
     await store.upsertSunEventPredictions([

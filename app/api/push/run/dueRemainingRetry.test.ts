@@ -149,6 +149,7 @@ describe("POST /api/push/run — dueRemaining counts retryable work (round-3 ite
     ctl.failNextSend = true;
     ctl.fcmSends = 0;
     process.env.CRON_SECRET = "test-cron-secret";
+    process.env.SUN_ALERTS_ENABLED = "on"; // default is off (lib/alerts/sunColor.ts sunAlertsEnabled)
     delete process.env.PUSH_SAFETY_ALERTS;
     vi.useFakeTimers();
     vi.setSystemTime(new Date(WINDOW_START));

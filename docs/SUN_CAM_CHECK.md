@@ -9,6 +9,36 @@ Why it exists: on 2026-10-06 the model said "Good" for a spectacular sunrise.
 Nothing recorded what the sky really did. That sunrise is now the first labeled
 example (about 95/100).
 
+## What the model sees (2026-10-15.1)
+
+The prediction side takes its cloud mix from a satellite OBSERVATION when one is
+fresh. `scripts/goes_cloud.py` (GOES Cloud Feed, `cloud-data` branch) reads the
+GOES-19 ACHA 2 km cloud-top height with the same-scan Clear Sky Mask. It works
+at night and through twilight. It sorts each pixel's cloud top into low (< 2 km),
+mid (2-6 km) and high (6 km and up), and for each sunrise and sunset near the
+scan it reads the cloud along the sun's azimuth at the event. When the scan is at
+most 35 minutes old and the event is at most 60 minutes away, `lib/sunAlert.ts`
+feeds those numbers to the model. Otherwise the hourly forecast feeds it.
+
+Each `sun_event_predictions` row says which: `breakdown_json.source` is
+`satellite-ir` or `forecast` (the total-only path has no breakdown and only runs
+on the forecast). For a satellite row, `breakdown_json.satellite` also holds the
+scan time and the mid/high cloud toward and away from the sun (recorded, not
+scored), and `horizon_source` is `ir-beam` (low cloud read along the sun's path: a verified horizon) or `ir-overhead` (no path read; the overhead low share stands in and the horizon is NOT verified). The cloud input
+columns hold the mix the model was handed.
+
+```sql
+SELECT json_extract(breakdown_json, '$.source') AS source, COUNT(*), AVG(ABS(score - observed_score))
+FROM sun_event_predictions
+WHERE observed_score IS NOT NULL AND model_path = 'factor'
+GROUP BY 1;
+```
+
+Known limits of the satellite read: ACHA gives one cloud top per pixel, so thin
+cirrus over a low deck reads as high; a low deck under an inversion can read up
+to about 1 km too high. Low cloud far out toward the sun can also be the lit
+canvas (the 2026-10-14 sunrise), which the model still counts as a blocker.
+
 ## How it works
 
 `scripts/sun_cam_check.py` runs on the owner's Mac every 30 minutes (launchd).
@@ -65,9 +95,11 @@ Things that went wrong while building it:
 
 Six 24/7 YouTube streams. Four face east over the Atlantic and two face west
 over the Gulf of Mexico (added 2026-10-15; see
-`docs/research/2026-10-15-west-facing-cams.md`). The Boca Raton cams
-(video-monitoring.com) upload only from about 8:00 AM to 5:30 PM, so they never
-see a sunrise or sunset and are not used.
+`docs/research/2026-10-15-west-facing-cams.md`). Each cam has a `facing` field
+(`"east"` or `"west"`) in `config/sun-cams.json`. When it is absent, the script and
+the server derive it from `facing_azimuth_deg`: below 180 is east, anything else is
+west. The Boca Raton cams (video-monitoring.com) upload only from about 8:00 AM to
+5:30 PM, so they never see a sunrise or sunset and are not used.
 
 | Cam | Observes (distance from the beach pin) | Sky region (x0, y0, x1, y1 as fractions of the frame) |
 | --- | --- | --- |
@@ -83,15 +115,21 @@ burned-in text. The Deerfield surf cam is a PTZ camera that pans between presets
 Its horizon sits anywhere from 27% to 46% down the frame, so its region is only
 the top slice that is sky in every pose.
 
-**View.** For an east cam, a sunrise is `solar`: the cam looks straight at the sun.
-A sunset is `antisolar`: the cam looks away and sees clouds that catch the afterglow.
-For a west cam it is the other way round: the sunset is `solar` (the sun goes down in
-frame) and the sunrise is `antisolar`. The code decides this from `facing_azimuth_deg`
-alone (within 60 degrees of the sun's azimuth = solar). A west cam also carries
-`"facing": "west"`, a human label that tests pin. Solar and antisolar scores are
-stored apart, so calibration never mixes them. Until 2026-10-15 every cam looked east,
-so no `solar` sunset existed. The west cams are the first source of one. The sunset
-score has not yet been checked against a real event, because the DVR holds only 4 hours.
+**View.** The view depends on the event and the cam's facing.
+
+| Cam facing | Sunrise | Sunset |
+| --- | --- | --- |
+| east | `solar` | `antisolar` |
+| west | `antisolar` | `solar` |
+
+A `solar` view looks straight at the sun. It is the **truth** for that event's color.
+An `antisolar` view looks away from the sun and sees only the afterglow on the clouds
+behind the cam. Reports call it **afterglow**. The route stores it, but it is never
+the truth for the event's color: it is not written onto `sun_event_predictions`, and
+the scorecard leaves it out of every error number. The server rejects an upload whose
+`view` does not match the event and the cam's facing. Until 2026-10-15 every cam faced east, so no sunset had a truth. The two west cams
+are the first source of one; their sunset score has not yet been checked against a
+real event (the DVR holds only 4 hours).
 
 **West cams: things to know.**
 
@@ -119,7 +157,8 @@ every observation. Change it whenever any constant changes.
 Each frame is cropped to the sky region and shrunk 4x. For each pixel (S and V from
 0 to 1, hue H in degrees):
 
-- **Ignored:** near-black (`V < 0.18`) and sun glare (`V > 0.92` and `S < 0.25`).
+- **Ignored:** near-black (`V < 0.18`), sun glare (`V > 0.92` and `S < 0.25`), and
+  the sun glow (see "The sun glow mask").
 - **Warm:** `(H <= 50 or H >= 300)` and `S >= 0.30` and `V >= 0.35`. This covers red,
   orange, gold, pink, and magenta.
 
@@ -139,6 +178,44 @@ score = 100 * C * (0.55 W + 0.20 K + 0.25 P)
 ```
 
 Per-frame scores are rounded to 1 decimal before the event score is taken.
+
+### The sun glow mask
+
+The orange glow around the sun is not colorful sky. A perfectly clear sunrise has
+it. Masking only the blown-out disc let that glow count as warm sky. So each frame
+leaves out a circle around the sun before it scores color.
+
+1. **Search box.** The bounding box of the sky regions, plus 8% of the frame height
+   below it. That extra strip holds the horizon, so a sun that sits just under the
+   regions is still found.
+2. **Find the sun.** It is the largest connected blob (4-neighbour, on the shrunk
+   frame) of `V > 0.92` and `S < 0.25`, with at least 30 shrunk pixels. Smaller blobs
+   are a glint or a cloud edge. If there is no such blob (the disc is below the
+   horizon or hidden), the sun is the largest blob of bright warm pixels (hue `<= 65`
+   or `>= 300`, `S >= 0.35`, `V >= 0.85`) within 10% of the frame height of the
+   horizon line (the lowest edge of the sky regions). A warm blob must be compact:
+   its bounding box at most 3:1 long to thin, and the blob at least 40% of that box.
+   A horizon band or a cloud streak is skipped. If no blob qualifies, nothing is masked.
+3. **Mask a circle.** Every pixel within `R` of the blob's centroid is left out.
+   `R = 2.5 x the blob's equivalent radius`, held between 6% and 25% of the frame width.
+4. **No blob, no mask.**
+
+Masked pixels count against `valid_frac`, like glare. A frame that is mostly glow
+says little, so it is down-weighted (or dropped when `valid_frac < 0.10`).
+`glow_masked_frac` is the share of region pixels the mask removed. It is a
+diagnostic: it is kept in each series frame and not used in the score.
+
+Limits. Color alone cannot tell a broad clear-sky glow from lit cloud. The 25% cap
+means a glow wider than that still leaves some warm sky, and a broad glow with no
+compact sun in view is not masked at all. A thin sky strip, like the
+Deerfield pier cam's top 13%, is almost all glow zone at sunrise, so its score is
+weak truth. The Elbo Room cam shows the whole sky and is the better truth.
+
+Re-score check (`SUN_CAM_SCORE_VERSION` 2026-10-15.1). The Elbo Room 2026-10-06
+peak frame (07:05) went 94.4 to 93.4. The two Deerfield pier sunrise frames went 89.1
+to 89.1 (2026-10-14, a golden sky with no sun in view: the warm area is a full-width
+band, so nothing is masked) and 22.9 to 24.9 (2026-10-15, a low bank). The 2026-10-14 sunset
+frame stayed at 0.6.
 
 ### Usable frames and coverage
 
@@ -197,7 +274,7 @@ upload"). The Python (`robust_peak`) and TypeScript (`robustPeak`) versions are
 checked against each other with two fixtures made by the script.
 
 Calibration anchors: the 2026-10-06 Elbo Room sunrise peak (about 07:05 local, a
-mid and high cloud deck lit pink and red) scores 94. Plain blue sky and white
+mid and high cloud deck lit pink and red) scores 93 (94 before the glow mask). Plain blue sky and white
 midday frames score under 10 (0 to 2 at midday).
 
 What the score is not: a measure of beauty. It measures how much of the visible
@@ -220,6 +297,10 @@ The route (`app/api/sun-observations/route.ts`, `lib/sunObservations.ts`):
   unknown fields;
 - checks the cam and beach pair against `config/sun-cams.json`, and the credit and
   distance against the registry;
+- checks `view` against the event and the cam's facing (`facing`, else derived from
+  `facing_azimuth_deg`): an east cam is solar at a sunrise and antisolar at a sunset,
+  and a west cam is the reverse;
+- accepts an optional `glow_masked_frac` (0 to 1) on each series frame and keeps it;
 - checks the event time against the beach's own computed sunrise or sunset (5
   minutes), and the local date against the beach's time zone;
 - recomputes the temporal coverage from the series and rejects an upload with fewer
@@ -249,10 +330,14 @@ After the upsert, the route sets `observed_score`, `observed_source`, and
 `observed_at` (the best observation's `scored_at`) on the `sun_event_predictions` rows with the same slug and event kind
 and an `event_iso` within 15 minutes of the event.
 
-- When several cams reported the same event, the best one is written: solar before
-  antisolar, then the smaller `distance_mi`, then `cam_id`. The route recomputes it
-  from the table each time, so the order of arrival does not matter. An antisolar
-  observation never replaces a solar one.
+- Only **solar** observations are written. When several solar cams reported the same
+  event, the best one is written: the smaller `distance_mi`, then `cam_id`. The route
+  recomputes it from the table each time, so the order of arrival does not matter.
+- An **antisolar** observation (afterglow) is stored in `sun_event_observations`, and
+  that is all. It is never the truth for the event's color, so it changes no
+  prediction row. Rows an older route filled from an antisolar cam keep their label
+  (`sun-cam:<cam_id>:antisolar`). The scorecard leaves them out of the error numbers
+  and counts them as afterglow.
 - `observed_source` reads `sun-cam:<cam_id>:<view>`.
 - A row labeled by hand (any other `observed_source`) is left alone.
 - A row that already holds the best observation is not touched. So a duplicate or
@@ -327,7 +412,11 @@ python3 scripts/sun_cam_check.py \
 
 ## Known gaps
 
-- Sunset (antisolar) scoring is untested on a real event.
+- No sunset has a truth yet: every cam faces east, so a sunset is afterglow only. A
+  west-facing cam (add it to `config/sun-cams.json` with `"facing": "west"`) fixes this.
+- The glow mask is a circle with a capped radius. A broad clear-sky glow can leave
+  some warm sky outside it, and a thin sky strip is mostly glow zone. Treat a high
+  score from a clear sky with no clouds as suspect, and check `glow_masked_frac`.
 - Camera auto-exposure changes how a frame looks. The score is per frame, and the
   the robust peak is taken across 25 frames.
 - A cam that is down, re-aimed, or restarted gives an incomplete capture, which is

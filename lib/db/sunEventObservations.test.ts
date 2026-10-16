@@ -74,7 +74,7 @@ describe("recordSunEventObservation (memory store)", () => {
     expect(order).toEqual(["c-cam", "a-cam", "b-cam", "z-cam"]);
   });
 
-  it("never overwrites a solar observation with an antisolar one, in either arrival order", async () => {
+  it("an antisolar (afterglow) observation is stored but never becomes the truth, in either arrival order", async () => {
     const store = await getStore();
     await store.upsertSunEventPredictions([predictionRow()]);
     await store.recordSunEventObservation(observationRow({ cam_id: "solar-cam", view: "solar", distance_mi: 2.9, observed_score: 85 }));
@@ -84,8 +84,10 @@ describe("recordSunEventObservation (memory store)", () => {
     resetMemoryStore();
     const fresh = await getStore();
     await fresh.upsertSunEventPredictions([predictionRow()]);
-    await fresh.recordSunEventObservation(observationRow({ cam_id: "anti-cam", view: "antisolar", distance_mi: 0, observed_score: 30 }));
-    expect(await truth()).toEqual([{ score: 30, source: "sun-cam:anti-cam:antisolar", at: "2026-10-06T14:05:00.000Z" }]);
+    const lone = await fresh.recordSunEventObservation(observationRow({ cam_id: "anti-cam", view: "antisolar", distance_mi: 0, observed_score: 30 }));
+    expect(lone).toEqual({ stored: true, predictionsUpdated: 0 });
+    expect(await truth()).toEqual([{ score: null, source: null, at: null }]); // the afterglow row is kept, but is no truth
+    expect(await fresh.sunEventObservationsFor("boca-raton", "sunrise", "2026-10-06")).toHaveLength(1);
     await fresh.recordSunEventObservation(observationRow({ cam_id: "solar-cam", view: "solar", distance_mi: 2.9, observed_score: 85 }));
     expect(await truth()).toEqual([{ score: 85, source: "sun-cam:solar-cam:solar", at: "2026-10-06T14:05:00.000Z" }]);
   });

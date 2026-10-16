@@ -13,6 +13,7 @@ import type {
   WaveMode,
 } from "@/lib/profile/types";
 import { SUN_COLOR_LEAD_OPTIONS, type AlertKey, type SunColorMinBand } from "@/lib/db/types";
+import { visibleAlertGroups } from "@/lib/plus/sunAlertCopy";
 import { ALERT_GROUPS, ALERT_LABELS, FACTOR_LABELS, FACTOR_ORDER, MULTIPLIER_STOPS } from "@/lib/plus/labels";
 import { computeSunTimes } from "@/lib/sources/sun";
 import { fmtTime } from "@/lib/format";
@@ -400,7 +401,7 @@ export function PlusSettingsSheet({
           {!plus.deviceLoaded ? (
             <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Loading your settings…</p>
           ) : null}
-          {ALERT_GROUPS.map((group) => (
+          {visibleAlertGroups(ALERT_GROUPS).map((group) => (
             <div key={group.title} className="mt-3">
               <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                 {group.title}
@@ -715,8 +716,6 @@ const SUN_COLOR_THRESHOLD_CHOICES: { value: SunColorMinBand; label: string }[] =
 const SUN_COLOR_LEAD_LABELS: Record<(typeof SUN_COLOR_LEAD_OPTIONS)[number], string> = {
   30: "30 min",
   60: "1 h",
-  120: "2 h",
-  180: "3 h",
 };
 
 /** Today's sunrise for a beach, minus a lead time, formatted for the "we'd
@@ -744,9 +743,9 @@ function exampleWakeTime(
 
 /** The sun-color alert's own two settings — threshold and lead time — shown
  *  only while its toggle is on (Requirement #2). The lead-time example line
- *  makes an early lead a conscious choice ("a 3 h lead on a 7:00 AM sunrise
- *  means 4:00 AM" per the spec), rather than a surprise the first time it
- *  actually fires. */
+ *  shows what time the alert would come, rather than a surprise the first
+ *  time it actually fires. The forecast opens 60 minutes before the event
+ *  (lib/sunForecastWindow.ts), so 30 min and 1 h are the only leads. */
 function SunColorSettings({
   sunColor,
   home,

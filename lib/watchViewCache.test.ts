@@ -14,6 +14,13 @@ const view = (over: Partial<WatchView> = {}): WatchView => ({
   limitedData: false,
   lines: [{ kind: "water", text: "Water 82°F", tone: "calm" }],
   waterTempF: 82,
+  sunForecast: {
+    kind: "sunset",
+    state: "pending",
+    availableAt: "2026-10-14T21:52:00.000Z",
+    eventAt: "2026-10-14T22:52:00.000Z",
+    text: "Sunset forecast at 5:52 PM",
+  },
   generatedAt: "2026-10-14T14:59:00.000Z",
   capturedAt: "2026-10-14T15:00:00.000Z",
   validUntil: "2026-10-14T15:10:00.000Z",
@@ -138,6 +145,11 @@ describe("storeWatchView + peekWatchView", () => {
       env({ ...view(), waterTempF: WATER_TEMP_MAX_F + 1 }),
       env({ ...view(), waterTempF: WATER_TEMP_MIN_F - 1 }),
       env({ ...view(), waterTempF: 80.5 }),
+      env({ ...view(), sunForecast: undefined }), // an entry from before the field existed is a miss
+      env({ ...view(), sunForecast: { ...view().sunForecast, score: 78 } }), // a score never rides along
+      env({ ...view(), sunForecast: { ...view().sunForecast, state: "soon" } }),
+      env({ ...view(), sunForecast: { ...view().sunForecast, text: null } }), // pending needs its line
+      env({ ...view(), sunForecast: { ...view().sunForecast, state: "available" } }), // available has no line
       env(view(), { v: 2 }),
       env(view(), { ov: "other" }),
       view(), // an unwrapped view

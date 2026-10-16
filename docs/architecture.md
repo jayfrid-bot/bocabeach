@@ -169,7 +169,7 @@ inside a Worker, call the app's own API).
 flowchart LR
   subgraph gh [GitHub Actions — .github/workflows]
     LGT["lightning.yml — GLM Lightning Feed<br/>~1-min reads in ~5.5h loops, each loop dispatches the next<br/>(*/10 cron = fallback)"]
-    GOES["goes-cloud.yml — GOES Cloud Feed<br/>15-min reads 5:55a-8:35p ET, idles overnight;<br/>~340-min loops, each dispatches the next (*/15 cron = fallback)"]
+    GOES["goes-cloud.yml — GOES Cloud Feed<br/>reads while any beach is inside its sunrise − 75 min … sunset + 45 min window<br/>(scripts/goes_cloud.py --window-state), every 5 min within 90 min of a sun event (--cadence), else 15 min; idles overnight;<br/>Clear Sky Mask + ACHA 2 km cloud-top height → low/mid/high split and the sun-path read;<br/>~340-min loops, each dispatches the next (*/15 cron = fallback)"]
     MRMS["mrms.yml — MRMS Radar Rain Nowcast<br/>10-min reads around the clock;<br/>~340-min loops, each dispatches the next (*/10 cron = fallback)"]
     SARG["sargassum.yml — Cam Vision Feed<br/>10-min reads 5:55a-8:05p ET, idles overnight;<br/>~340-min loops, each dispatches the next (hourly cron = fallback that waits pending behind a live loop and never cancels it);<br/>feed frames already scored are skipped (frameShas)"]
     RIPNWPS["rip-nwps.yml — NOAA Rip Current Model Feed<br/>every 3h"]
@@ -198,7 +198,8 @@ flowchart LR
   RIPNWPS -->|reads| NWPSMAP[config/nwpsRip.ts<br/>beach → NWS office + nearest model grid point,<br/>built by scripts/nwps_rip_map.mjs]
   RIPNWPS -->|"downloads each mapped office's<br/>NOAA NWPS CG1 ripprob file ONCE"| NOMADS[["nomads.ncep.noaa.gov<br/>NWPS rip current model (Dusek &amp; Seim 2013)"]]
   RIPNWPS -->|writes| RDATA[(rip-data branch<br/>rip_nwps.json — its OWN branch, NOT<br/>sargassum-data, which sargassum.yml/<br/>backfill-pct.yml force-push as an orphan<br/>and would silently wipe it)]
-  GOES -->|writes| GDATA[(GOES cloud data)]
+  GOES -->|"anonymous S3 reads: ABI-L2-ACMC mask + ABI-L2-ACHA2KMC height,<br/>newest scan present in both"| NOAAS3[["NOAA GOES-19 on AWS Open Data<br/>noaa-goes19.s3.amazonaws.com"]]
+  GOES -->|"writes goes_cloud.json v3 (single-commit orphan)"| GDATA[("cloud-data branch<br/>per beach: cloudPct, beamCloudPct, and ir = low/mid/high/irCloud shares<br/>+ a sun-path read per sunrise and sunset")]
   MRMS -->|writes| MDATA[(MRMS rain nowcast data)]
   EVAL -->|archives + scores stills| SDATA
   LAUNCHLIB -->|"paginated pull, throttle-aware (≤15 req/hour)"| LL2API[["Launch Library 2<br/>thespacedevs.com"]]
@@ -211,7 +212,8 @@ flowchart LR
   RDATA -->|rip_nwps.json| SOURCES6[lib/sources/ripNwps.ts<br/>per-beach hourly probability series,<br/>stale &gt;36h treated as unavailable]
   SOURCES6 --> RIPRESOLVE[lib/ripRisk/resolve.ts<br/>resolveRipNow: alert &gt; fresh model &gt; SRF forecast &gt; unknown]
   SOURCES3 -->|"last 2 weeks of read times"| CAMNEXT[lib/camNextRead.ts<br/>learns the next cam read time,<br/>no fixed schedule]
-  GDATA --> SOURCES4[lib/sources/goesCloud.ts]
+  GDATA --> SOURCES4["lib/sources/goesCloud.ts<br/>parses the v3 ir block (older feeds: ir null)"]
+  SOURCES4 -->|"ir: used only if its scan is ≤35 min old<br/>and the event is ≤60 min away; else the forecast"| SUNALERT["lib/sunAlert.ts assembleSunEventQuality<br/>source: satellite-ir or forecast"]
   MDATA --> SOURCES5[lib/sources/precipRadar.ts<br/>parses lastWetIso → wetMinutesAgo<br/>on the server clock]
   LLDATA --> SOURCES7[lib/sources/launchLibrary.ts<br/>per-beach LaunchSkyEvent: bearing/distance,<br/>range-tier eligibility, day/twilight/night light state]
   KTDATA --> SOURCES8[lib/sources/kingTide.ts<br/>per-station flood-threshold + top-1%-of-year<br/>episodes, episode-merged]
@@ -574,7 +576,10 @@ flowchart TD
   %% Sunrise/sunset color alert — Plus, opt-in, standalone only (no
   %% coalescing with the digest or "turned Excellent": its own short
   %% lead-time window, not the 8 AM run those two share).
-  PIPE2 -.->|"same res already fetched<br/>for the digest/Excellent check, no extra call"| SUNCOLOR["lib/alerts/sunColor.ts<br/>sunColorDecision over lib/sunAlert.ts's predictNextSunEvent:<br/>score &ge; device's cutoff (Great 70 / Amazing 90) AND<br/>now in [event&minus;lead, event&minus;lead+10min) AND event &le;4h away"]
+  PIPE2 -.->|"same res already fetched<br/>for the digest/Excellent check, no extra call"| SUNCOLOR["lib/alerts/sunColor.ts<br/>sunColorDecision over lib/sunAlert.ts's predictNextSunEvent:<br/>score &ge; device's cutoff (Great 70 / Amazing 90) AND<br/>now in [event&minus;lead, event&minus;lead+10min), lead capped at 60 min,<br/>AND the forecast window is open (event &le;60 min away).<br/>Behind SUN_ALERTS_ENABLED (default OFF): the route never selects,<br/>fetches for, evaluates or logs this alert while it is off"]
+  SUNWIN["lib/sunForecastWindow.ts<br/>the sunrise/sunset color score exists only from event&minus;60 min;<br/>before that every surface says 'Sunset forecast at 5:52 PM' and shows no number"]
+  SUNWIN -->|"window gate + 60-min lead cap"| SUNCOLOR
+  SUNWIN -.->|"same gate: sun card, share card tile (lib/shareCard.ts),<br/>watch view + agent payloads (sunForecast field, never a score),<br/>Plus day view (still-to-come events only; past events keep their archived score)"| SUNSURF["user-facing sun surfaces"]
   SUNCOLOR --> CLAIM
   SUNCOLOR -->|"alert_log key sun-color:&lt;kind&gt;:&lt;beach-local date&gt;,<br/>once per event, ever"| D1
 
@@ -610,17 +615,30 @@ and current air quality — off the SAME conditions build the digest/Excellent c
 for that beach (no extra outbound call). `predictNextSunEvent` is scored
 against the conditions snapshot's OWN `generatedAt`, not the push run's
 wall clock, so it agrees with what the card would show for that exact
-snapshot. The GOES reading is resolved and archived but, since sun model
-version 2026-10-06.2, not scored: near sunrise/sunset the clear-sky mask only
-has cloud overhead, which is the color canvas, not a horizon blocker
-(docs/benchmarks/2026-10-06-sun-model). `lib/alerts/sunColor.ts`'s
+snapshot. Since sun model version 2026-10-15.1 the primary input is the GOES
+cloud-top-height read (`ir` in the goes-cloud feed, ACHA 2 km: day and night,
+low deck vs mid/high deck): when its scan is at most 35 min before `nowMs` and
+`nowMs` is at most 60 min from the event, its low/mid/high shares are the cloud
+mix and the low cloud along the sun's azimuth AT THE EVENT is the verified
+horizon (`resolveIrObservation`). Otherwise the hourly forecast is the fallback.
+The archive records which one fed the model (`breakdown_json.source`, with
+`horizon_source` `ir-beam`/`ir-overhead` when the satellite did). The older
+Clear Sky Mask horizon (`cloudPct`/`beamCloudPct`) is still recorded but not
+scored: near sunrise/sunset it only has cloud overhead, which is the color
+canvas, not a horizon blocker (docs/benchmarks/2026-10-06-sun-model). `lib/alerts/sunColor.ts`'s
 `sunColorDecision` sends only when the predicted score clears the device's
 own threshold (Great-or-better, score &ge; 70, or Amazing-only, score &ge;
 90 — `lib/sunQuality.ts`'s own band cutoffs) AND the REAL wall clock falls
 inside `[event − lead, event − lead + 10 min)`, where `lead` is the
-device's own 30/60/120/180-minute choice — AND the predicted event is no
-more than 4 hours away (a farther-out forecast isn't trustworthy enough to
-alert on). A transient send failure releases its claim immediately via
+device's own 30- or 60-minute choice (an older 120/180 reads as 60) — AND
+the forecast window is open: the event is no more than 60 minutes away
+(`lib/sunForecastWindow.ts`; the benchmark in
+docs/benchmarks/sun-leadtime-2026-10-15 found the forecast untrustworthy at
+every lead, so the app shows no color number earlier than that, and no alert
+may carry one). The whole alert is behind the `SUN_ALERTS_ENABLED` variable,
+default OFF (wrangler.jsonc): with it off the push route never selects a
+beach for this alert, never fetches for it, never evaluates, sends, latches
+or logs it, until the satellite observation input ships. A transient send failure releases its claim immediately via
 `store.releaseSend` (ownership-safe — see below) rather than waiting out
 the 10-minute abandoned-claim window, so the very next 5-minute cron tick
 can already retry it inside the same window. Both settings live on the

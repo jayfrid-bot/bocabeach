@@ -21,6 +21,7 @@ import { fmtTime } from "@/lib/format";
 import { assembleSunEventQuality, sunQualityHourlyPoints } from "@/lib/sunAlert";
 import { nextSunEventsBoth } from "@/lib/history/sunPredictions";
 import { sunQualityBandMeta } from "@/lib/sunQuality";
+import { SUN_FORECAST_WINDOW_MS, sunForecastPendingText, sunForecastWindow } from "@/lib/sunForecastWindow";
 import { CONDITIONS_MAX_STALE_MS } from "@/lib/conditionsFreshness";
 
 export interface ShareCardTile {
@@ -401,8 +402,8 @@ export function shareCardModel(
   // so the card's cache must not outlive either (Codex, 2026-10-13).
   let sunTileChangesAtMs: number | undefined;
   if (sunsetAhead && sun?.sunset) {
-    sunTileChangesAtMs = Date.parse(sun.sunset);
-    push("sun", "Sunset tonight", safeTime(sun.sunset, tz), sunColorNote(res, "sunset", sun.sunset, asOfMs));
+    sunTileChangesAtMs = sunTileChangeAt(Date.parse(sun.sunset), nowMs);
+    push("sun", "Sunset tonight", safeTime(sun.sunset, tz), sunColorNote(res, "sunset", sun.sunset, asOfMs, nowMs, tz));
   } else {
     const nextRise = [sun?.sunrise, sun?.tomorrowSunrise].find(
       (iso): iso is string => !!iso && Date.parse(iso) > nowMs,
@@ -410,8 +411,8 @@ export function shareCardModel(
     if (nextRise) {
       const riseDay = localDateKey(Date.parse(nextRise), tz);
       const label = riseDay === tomorrow ? "Sunrise tomorrow" : riseDay === today ? "Sunrise today" : "Sunrise";
-      sunTileChangesAtMs = Math.min(Date.parse(nextRise), nextLocalMidnightMs(nowMs, tz) ?? Infinity);
-      push("sun", label, safeTime(nextRise, tz), sunColorNote(res, "sunrise", nextRise, asOfMs));
+      sunTileChangesAtMs = Math.min(sunTileChangeAt(Date.parse(nextRise), nowMs), nextLocalMidnightMs(nowMs, tz) ?? Infinity);
+      push("sun", label, safeTime(nextRise, tz), sunColorNote(res, "sunrise", nextRise, asOfMs, nowMs, tz));
     }
   }
 
@@ -454,18 +455,37 @@ export function shareCardModel(
   };
 }
 
-/** The sky-color forecast for one sunrise/sunset, worded for the tile's small
- *  line: "Good color · 78/100". The word says what kind of rating it is (the
- *  colors of the sky), so a bare "78 Good" is never left to guess at. Scored
- *  exactly as the sun card and the push alert score it (the same assembly, off
- *  the snapshot's own clock). Undefined when there is no forecast for the event
- *  hour or no usable location, so the tile then shows the time alone. */
+/** The next moment the sun tile's note can change: the event itself, or, when
+ *  the color forecast is still pending, the moment its window opens
+ *  (lib/sunForecastWindow.ts), whichever comes first. */
+function sunTileChangeAt(eventMs: number, nowMs: number): number {
+  const opensAt = eventMs - SUN_FORECAST_WINDOW_MS;
+  return opensAt > nowMs ? opensAt : eventMs;
+}
+
+/** The tile's small line for one sunrise/sunset.
+ *
+ *  - Before the forecast window opens (60 minutes ahead of the event): no
+ *    score at all, only when it will be ready: "Sunset forecast at 5:52 PM".
+ *    The score must never look like a prediction before we can see the sky.
+ *  - Inside the window: the sky-color forecast, "Good color · 78/100". The word
+ *    says what kind of rating it is (the colors of the sky), so a bare "78 Good"
+ *    is never left to guess at. Scored exactly as the sun card and the push
+ *    alert score it (the same assembly, off the snapshot's own clock).
+ *
+ *  Undefined (the tile then shows the time alone) when the window is open but
+ *  there is no forecast for the event hour or no usable location. */
 function sunColorNote(
   res: ConditionsResponse | null | undefined,
   kind: "sunrise" | "sunset",
   eventIso: string,
   anchorMs: number,
+  nowMs: number,
+  tz: string,
 ): string | undefined {
+  const window = sunForecastWindow(eventIso, nowMs);
+  if (!window) return undefined;
+  if (window.state === "pending") return sunForecastPendingText(kind, window.availableAtIso, tz);
   try {
     const snap = res?.snapshot;
     const loc = snap?.location;

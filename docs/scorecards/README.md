@@ -221,3 +221,4 @@ Read each week's numbers against these dates. Archived rows carry `engine_versio
 
 - **2026-10-06 — scoring 2026-10-06.1:** comfort (dew point) curve retuned for the shore: free up to 65°F, −2.5 points per °F above (was free to 60°F, −5 per °F). Expected effect from history: average daytime score +1.9, Excellent hours roughly doubled.
 - **2026-10-06 — sun color 2026-10-06.2:** satellite overhead cloud no longer scored as a horizon blocker; canvas plateau 35–80; humidity only without an aerosol reading.
+- **2026-10-15 — sun color 2026-10-15.1:** the cloud mix and the horizon come from the GOES cloud-top-height read when its scan is at most 35 min old and the event at most 60 min away; the forecast is the fallback. Curves, weights and band cutoffs are unchanged. Rows carry `breakdown_json.source` (`satellite-ir` or `forecast`).
