@@ -138,6 +138,19 @@ fi
 # face WEST over the Gulf (added 2026-10-15 for sunset truth; see
 # docs/research/2026-10-15-west-facing-cams.md). Pensacola is on Central time;
 # the daylight gate below is Eastern, which still covers its evening.
+#
+# SLOW CAMS (2026-10-16): an entry may end in ":slow" ("id:video-id:slow"). A slow
+# cam is grabbed only on the hourly job, only at the UTC hours the uw-frame worker
+# calls "surface hours" (10, 13, 16, 19, 22: every third hour, the "3h-daylight"
+# cadence of its registry), and never in a --golden-only run. YouTube starts its
+# "confirm you're not a bot" check at about 150 yt-dlp calls in 15 minutes from
+# one address, so the ten Gulf and Keys cams below add 10 calls to five hourly
+# runs a day, not to every run. --force still grabs every cam.
+#   Added 2026-10-16 with the owner's credit and a link to the owner's page (see
+#   config/locations.ts and docs/research/2026-10-16-gulf-cams.md): Siesta Beach
+#   Live, White Sands (Anna Maria Island), Holmes Beach, Margaritaville and Pink
+#   Shell (Fort Myers Beach), Sterling Reef, Shores of Panama and Sharky's (Panama
+#   City Beach), Fort Zachary Taylor (Key West) and Sunset Grille (Marathon).
 CAMS=(
   "deerfield-spinner-uw:SHfAtWHr9Ks"
   "deerfield-beach-cam:rdeoEeJ00xA"
@@ -146,7 +159,35 @@ CAMS=(
   "ftl-elbo-beach-cam:1j1lgppb0PY"
   "fort-myers-beach-cam:nj9jdOXXhEo"
   "pensacola-sria-west-cam:HKIc6CYlMzI"
+  "siesta-beach-cam:NLhxcyzXQxM:slow"
+  "white-sands-ami-cam:ecD9ZDXLE6A:slow"
+  "holmes-beach-cam:_W0Gf1Le2qc:slow"
+  "margaritaville-fmb-cam:2qd9j2CbIpg:slow"
+  "pink-shell-fmb-cam:uK-eZz0w-go:slow"
+  "enco-sterling-reef-cam:Y82E6_IVEdY:slow"
+  "enco-shores-of-panama-cam:GFsRPlw81W8:slow"
+  "sharkys-pcb-cam:EYs8y8gOwf0:slow"
+  "fort-zachary-taylor-cam:sDXwrYQPeOQ:slow"
+  "sunset-grille-marathon-cam:SXMC-MzSncI:slow"
 )
+
+# True when the given UTC hour (00-23) is one of the worker's "surface hours"
+# (hour % 3 == 1; see isSurfaceCamHour in workers/uw-frame/src/lib/schedule.ts).
+slow_cam_due() {
+  local hour="$1"
+  (( 10#$hour % 3 == 1 ))
+}
+
+# True when a cam of this tier ("" or "slow") is due in this run, given the UTC
+# hour: a normal cam always is; a slow cam is not in a --golden-only run, and
+# otherwise only at a surface hour. --force makes every cam due.
+cam_due() {
+  local tier="$1" hour="$2"
+  [[ "$tier" != "slow" ]] && return 0
+  [[ "$FORCE" -eq 1 ]] && return 0
+  [[ "$GOLDEN_ONLY" -eq 1 ]] && return 1
+  slow_cam_due "$hour"
+}
 
 # One run at a time (scripts/courier_lock.sh says how the lock stays safe). The
 # hourly :07 job and the 10-minute golden job can meet.
@@ -298,14 +339,22 @@ grab_and_upload() {
 }
 
 uploaded=0
+attempted=0
+utc_hour="$(date -u +%H)"
 for entry in "${CAMS[@]}"; do
   cam_id="${entry%%:*}"
-  video_id="${entry#*:}"
+  rest="${entry#*:}"
+  video_id="${rest%%:*}"
+  tier=""
+  [[ "$rest" == *:* ]] && tier="${rest#*:}"
+  # A slow cam waits for a surface hour on the hourly job (see the CAMS note).
+  cam_due "$tier" "$utc_hour" || continue
+  attempted=$((attempted + 1))
   if grab_and_upload "$cam_id" "$video_id"; then
     uploaded=$((uploaded + 1))
   fi
 done
 
-log "done: $uploaded/${#CAMS[@]} cams uploaded"
+log "done: $uploaded/$attempted cams uploaded"
 [[ "$uploaded" -gt 0 ]] && exit 0
 exit 1

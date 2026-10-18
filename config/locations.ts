@@ -365,6 +365,41 @@ export const LOCATIONS: Location[] = [
         lat: 26.4533,
         lon: -81.9561,
       },
+      {
+        // Margaritaville Beach Resort Fort Myers Beach streams "License to Chill
+        // Live Beach Cam" on its own YouTube channel, from the roof of the resort
+        // on Crescent Street, looking west-south-west over the beach and the
+        // Gulf. The owner's logo (top left) and an AccuWeather box (top right) are
+        // burned into the frame. Added 2026-10-16 with credit and a link to the
+        // resort's webcam page; it comes down the same day if the owner asks.
+        id: "margaritaville-fmb-cam",
+        name: "Fort Myers Beach — License to Chill",
+        provider: "Margaritaville Beach Resort Fort Myers Beach",
+        embedType: "image",
+        url: "https://www.margaritavilleresorts.com/margaritaville-beach-resort-fort-myers-beach/webcam",
+        snapshotUrl: "https://uw-frame.entwined-app.workers.dev/frame?cam=margaritaville-fmb-cam",
+        snapshotMetaUrl: "https://uw-frame.entwined-app.workers.dev/meta?cam=margaritaville-fmb-cam",
+        attribution: "Live stream courtesy Margaritaville Beach Resort Fort Myers Beach",
+        lat: 26.4546,
+        lon: -81.9539,
+      },
+      {
+        // Pink Shell Beach Resort & Marina owns this view (its page,
+        // pinkshell.com/live-webcams, is named in the stream description). The
+        // stream we pull is the copy on the "Florida Live" YouTube channel, the only
+        // live id found (2026-10-16). It looks west over the resort pool and beach.
+        // Added with credit; it comes down the same day if the owner asks.
+        id: "pink-shell-fmb-cam",
+        name: "Fort Myers Beach — Pink Shell",
+        provider: "Pink Shell Beach Resort & Marina",
+        embedType: "image",
+        url: "https://www.pinkshell.com/live-webcams/",
+        snapshotUrl: "https://uw-frame.entwined-app.workers.dev/frame?cam=pink-shell-fmb-cam",
+        snapshotMetaUrl: "https://uw-frame.entwined-app.workers.dev/meta?cam=pink-shell-fmb-cam",
+        attribution: "Live stream courtesy Pink Shell Beach Resort & Marina",
+        lat: 26.4606,
+        lon: -81.965,
+      },
     ],
   },
   {
@@ -410,6 +445,290 @@ export const LOCATIONS: Location[] = [
         attribution: "Live stream courtesy Santa Rosa Island Authority",
         lat: 30.33,
         lon: -87.1424,
+      },
+    ],
+  },
+  // --- Gulf coast and Keys cams, added 2026-10-16 (owner decision: add every
+  // usable Florida cam now, with the owner credited and linked; if an owner
+  // objects, the cam comes down the same day). Research and owner contacts:
+  // docs/research/2026-10-15-west-facing-cams.md and
+  // docs/research/2026-10-16-cam-owner-contacts.md. Each beach below was run
+  // through lib/resolve (nearest tide stations, NDBC stations, NWS surf zone).
+  // coastNormalDeg and coast stay unset, as for Fort Myers Beach.
+  {
+    slug: "siesta-key",
+    name: "Siesta Key",
+    region: "Sarasota County, FL",
+    updatedAt: "2026-10-16",
+    // Siesta Beach (Siesta Key Public Beach). The beach faces west over the Gulf,
+    // so the sun sets over the water. The pin is the beach registry's own point.
+    lat: 27.2648,
+    lon: -82.5507,
+    timezone: "America/New_York",
+    noaaTideStationId: "8726034", // Siesta Key, Big Sarasota Pass, 1.5 mi (predictions)
+    noaaTideStationFallbackId: "8726083", // Sarasota, Sarasota Bay
+    // No measured water level: the nearest real gauge (St. Petersburg) is ~34 mi
+    // north, too far to say anything about this beach.
+    ndbcBuoyId: "42098", // Egmont Channel Entrance (waves + water temp, ~32 mi north)
+    // The Venice C-MAN (VENF1, 15 mi) reports no water temperature or waves
+    // (2026-10-16), so the wave buoy is the only usable station.
+    // Site name exactly as published by the FL Healthy Beaches feed (Sarasota).
+    healthyBeaches: {
+      county: "Sarasota",
+      sites: ["SIESTA KEY BEACH"],
+    },
+    surfZone: { office: "TBW", name: "Coastal Sarasota" }, // NWS Tampa Bay Surf Zone Forecast
+    cams: [
+      {
+        // "Siesta Beach Live", a public 24/7 YouTube stream from the beach. Visit
+        // Sarasota County, the county's tourism body, promotes it and its page
+        // links this exact video; other pages credit it as "Sarasota County
+        // Webcam". Both names are credited. A high view west over the flat sand,
+        // dunes and palmettos. Frames come from the owner's courier, as for
+        // Deerfield.
+        id: "siesta-beach-cam",
+        name: "Siesta Beach Live",
+        provider: "Sarasota County / Visit Sarasota County",
+        embedType: "image",
+        url: "https://www.visitsarasota.com/siesta-key-beach-cam",
+        snapshotUrl: "https://uw-frame.entwined-app.workers.dev/frame?cam=siesta-beach-cam",
+        snapshotMetaUrl: "https://uw-frame.entwined-app.workers.dev/meta?cam=siesta-beach-cam",
+        attribution: "Live stream courtesy Sarasota County and Visit Sarasota County",
+        lat: 27.2654,
+        lon: -82.5528,
+      },
+    ],
+  },
+  {
+    slug: "anna-maria-island",
+    name: "Anna Maria Island",
+    region: "Manatee County, FL",
+    updatedAt: "2026-10-16",
+    // Manatee Public Beach, Holmes Beach, mid-island. The island is about seven
+    // miles long and faces the Gulf to the west. Both cams are in Holmes Beach,
+    // within a mile of this pin, so Holmes Beach is a second cam here and not
+    // its own beach.
+    lat: 27.4998,
+    lon: -82.714,
+    timezone: "America/New_York",
+    noaaTideStationId: "8726243", // Anna Maria Key, Bradenton Beach, 0.2 mi (predictions)
+    noaaTideStationFallbackId: "8726282", // Anna Maria Key, city pier
+    // Neither Anna Maria station publishes observations. The measured water level
+    // comes from the St. Petersburg gauge, ~19 mi north.
+    noaaWaterLevelStationId: "8726520",
+    // Egmont Channel Entrance (waves + water temp, ~15 mi north). The resolver's
+    // own pick, Port Manatee (PMAF1), sits inside Tampa Bay and reads bay water.
+    ndbcBuoyId: "42098",
+    // Site name exactly as published by the FL Healthy Beaches feed (Manatee).
+    healthyBeaches: {
+      county: "Manatee",
+      sites: ["MANATEE PUBLIC BEACH NORTH"],
+    },
+    surfZone: { office: "TBW", name: "Coastal Manatee" }, // NWS Tampa Bay Surf Zone Forecast
+    cams: [
+      {
+        // White Sands Beach Resort, 6504 Gulf Drive, streams its beach camera on its
+        // own YouTube channel (WHITESANDSFLORIDA). A fisheye view along the sand
+        // and the Gulf, south-west to west. The resort's name and a clock are
+        // burned into the frame. Its second stream has no DVR and is not used.
+        id: "white-sands-ami-cam",
+        name: "Anna Maria Island — White Sands",
+        provider: "White Sands Beach Resort",
+        embedType: "image",
+        url: "https://www.whitesandsbeachresort.com/beachcams-white-sands-anna-maria-island",
+        snapshotUrl: "https://uw-frame.entwined-app.workers.dev/frame?cam=white-sands-ami-cam",
+        snapshotMetaUrl: "https://uw-frame.entwined-app.workers.dev/meta?cam=white-sands-ami-cam",
+        attribution: "Live stream courtesy White Sands Beach Resort",
+        lat: 27.5117,
+        lon: -82.722,
+      },
+      {
+        // "Anna Maria Island - Holmes Beach, FL" on the "Beach Live Cams" YouTube
+        // channel. REAL OWNER UNKNOWN: the channel is credited for now. The frame
+        // shows loungers and a "Cedar Cove Resort Weather Station" sign on the sand,
+        // so the camera may belong to Cedar Cove Resort in Holmes Beach; nobody
+        // has confirmed that, and the credit and link should change once the owner
+        // is known. The cam's own position is also unknown: lat/lon below is this
+        // beach's pin.
+        id: "holmes-beach-cam",
+        name: "Holmes Beach",
+        provider: "Beach Live Cams",
+        embedType: "image",
+        url: "https://www.youtube.com/watch?v=_W0Gf1Le2qc",
+        snapshotUrl: "https://uw-frame.entwined-app.workers.dev/frame?cam=holmes-beach-cam",
+        snapshotMetaUrl: "https://uw-frame.entwined-app.workers.dev/meta?cam=holmes-beach-cam",
+        attribution: "Live stream courtesy Beach Live Cams (YouTube channel)",
+        lat: 27.4998,
+        lon: -82.714,
+      },
+    ],
+  },
+  {
+    slug: "panama-city-beach",
+    name: "Panama City Beach",
+    region: "Bay County, FL",
+    updatedAt: "2026-10-16",
+    // The Gulf beach in front of Laketown Wharf on South Thomas Drive, the middle
+    // of the long Panama City Beach shoreline. Two of the three cams are within
+    // half a mile; Sharky's is about four miles north-west on Front Beach Road.
+    // The beach faces south here, so the sun sets along the sand, not out to sea.
+    // Bay County is on Central time.
+    lat: 30.1745,
+    lon: -85.804,
+    timezone: "America/Chicago",
+    noaaTideStationId: "8729210", // Panama City Beach (Gulf pier gauge), 5 mi north-west
+    noaaTideStationFallbackId: "8729108", // Panama City (St. Andrew Bay entrance)
+    // 8729210 is a real gauge, so the measured water level comes from it too.
+    noaaWaterLevelStationId: "8729210",
+    ndbcBuoyId: "PCBF1", // Panama City Beach C-MAN (water temp only, no waves)
+    // No wave buoy on purpose, as for Fort Myers Beach: the nearest wave-reporting
+    // station (42039, deep Gulf) is ~98 mi south, and a buoy that far offshore
+    // would set this beach's surf. The nearshore stations (42028, 42027, PACF1,
+    // PCBF1) report no wave height. Surf is model-sourced and labeled as such.
+    noWaveStationReason:
+      "No NDBC station within ~95 mi reports wave height (PCBF1, PACF1, 42028 and 42027 are water-temperature stations, 2026-10-16); the nearest, 42039, is ~98 mi south in the deep Gulf. Surf is model-sourced and labeled.",
+    // Site names exactly as published by the FL Healthy Beaches feed (Bay). Both
+    // are at the north-west end of the beach, the nearest listed Gulf sites.
+    healthyBeaches: {
+      county: "Bay",
+      sites: ["PCB CITY PIER", "BID-A-WEE BEACH"],
+    },
+    surfZone: { office: "TAE", name: "Coastal Bay" }, // NWS Tallahassee Surf Zone Forecast
+    cams: [
+      {
+        // ENCO Electronic Systems (an engineering firm that runs beach cams for
+        // resorts) streams "Sterling Reef Panama City Beach, FL" on its own
+        // YouTube channel. A wide view west-south-west along the sand to the
+        // Gulf pier. Added with credit; it comes down the same day if the owner
+        // asks.
+        id: "enco-sterling-reef-cam",
+        name: "Panama City Beach — Sterling Reef",
+        provider: "ENCO Electronic Systems",
+        embedType: "image",
+        url: "https://www.youtube.com/watch?v=Y82E6_IVEdY",
+        snapshotUrl: "https://uw-frame.entwined-app.workers.dev/frame?cam=enco-sterling-reef-cam",
+        snapshotMetaUrl: "https://uw-frame.entwined-app.workers.dev/meta?cam=enco-sterling-reef-cam",
+        attribution: "Live stream courtesy ENCO Electronic Systems",
+        lat: 30.1712,
+        lon: -85.7977,
+      },
+      {
+        // ENCO's second Panama City Beach stream, "Shores of Panama". A beach
+        // walkway with people in the foreground and the Gulf beyond it.
+        id: "enco-shores-of-panama-cam",
+        name: "Panama City Beach — Shores of Panama",
+        provider: "ENCO Electronic Systems",
+        embedType: "image",
+        url: "https://www.youtube.com/watch?v=GFsRPlw81W8",
+        snapshotUrl: "https://uw-frame.entwined-app.workers.dev/frame?cam=enco-shores-of-panama-cam",
+        snapshotMetaUrl: "https://uw-frame.entwined-app.workers.dev/meta?cam=enco-shores-of-panama-cam",
+        attribution: "Live stream courtesy ENCO Electronic Systems",
+        lat: 30.1755,
+        lon: -85.8038,
+      },
+      {
+        // Sharky's Beachfront Restaurant, 15201 Front Beach Road. Its own cam page
+        // embeds two YouTube ids (VFqCaZhD3j4, Vonsne1kp4A); both answered "live
+        // stream recording is not available" on 2026-10-16, so this is the copy
+        // on the "Florida Live" channel, the only live id found. A deck with
+        // diners in the foreground and the beach and Gulf behind; a thatch roof
+        // takes the right edge. Swap in Sharky's own ids when they stream again.
+        id: "sharkys-pcb-cam",
+        name: "Panama City Beach — Sharky's",
+        provider: "Sharky's Beachfront Restaurant",
+        embedType: "image",
+        url: "https://sharkysbeach.com/panama-city-beach-webcam-at-sharkys-beachfront-restaurant/",
+        snapshotUrl: "https://uw-frame.entwined-app.workers.dev/frame?cam=sharkys-pcb-cam",
+        snapshotMetaUrl: "https://uw-frame.entwined-app.workers.dev/meta?cam=sharkys-pcb-cam",
+        attribution: "Live stream courtesy Sharky's Beachfront Restaurant",
+        lat: 30.2084,
+        lon: -85.8636,
+      },
+    ],
+  },
+  {
+    slug: "key-west",
+    name: "Key West",
+    region: "Monroe County, FL",
+    updatedAt: "2026-10-16",
+    // Fort Zachary Taylor Historic State Park beach, at the south-west tip of
+    // Key West. Its water faces south-west, so the sun sets in view. Higgs and
+    // Smathers beaches are on the other side of the island.
+    lat: 24.5462,
+    lon: -81.8104,
+    timezone: "America/New_York",
+    noaaTideStationId: "8724580", // Key West (real gauge), 0.7 mi (predictions + observations)
+    noaaTideStationFallbackId: "8724557", // Key West, south side, White Street Pier
+    noaaWaterLevelStationId: "8724580",
+    ndbcBuoyId: "KYWF1", // Key West C-MAN (water temp only, no waves)
+    ndbcBuoyFallbackId: "42095", // Satan Shoal (waves, ~14 mi south-west)
+    // Site name exactly as published by the FL Healthy Beaches feed (Monroe).
+    healthyBeaches: {
+      county: "Monroe",
+      sites: ["FT ZACHARY TAYLOR STATE PARK"],
+    },
+    // No surfZone: NWS Key West (KEY) issues no Surf Zone Forecast product
+    // (checked 2026-10-16), so the rip-risk card has nothing to read here.
+    cams: [
+      {
+        // Fort Zachary Taylor beach ("Beach Tiki - Beach View 2" is burned into the
+        // frame), shared on the "Florida Live" YouTube channel. REAL OWNER NOT
+        // CONFIRMED: the park's own site shows a beach cam too, but nobody has
+        // shown it is this feed. Until then the credit names the beach and the
+        // channel. The sky is only the top strip of the frame. The cam's own
+        // position is not surveyed: lat/lon below is the beach pin.
+        id: "fort-zachary-taylor-cam",
+        name: "Key West — Fort Zachary Taylor",
+        provider: "Florida Live",
+        embedType: "image",
+        url: "https://www.youtube.com/watch?v=sDXwrYQPeOQ",
+        snapshotUrl: "https://uw-frame.entwined-app.workers.dev/frame?cam=fort-zachary-taylor-cam",
+        snapshotMetaUrl: "https://uw-frame.entwined-app.workers.dev/meta?cam=fort-zachary-taylor-cam",
+        attribution: "Live stream of Fort Zachary Taylor Beach, shared by Florida Live (YouTube channel)",
+        lat: 24.5462,
+        lon: -81.8104,
+      },
+    ],
+  },
+  {
+    slug: "marathon",
+    name: "Marathon",
+    region: "Monroe County, FL",
+    updatedAt: "2026-10-16",
+    // The Gulf (Florida Bay) side of Marathon at Sunset Grille, Knights Key,
+    // beside the old Seven Mile Bridge, where the sun sets in view. The Atlantic
+    // beach (Sombrero Beach) is a separate branch's work (cams-atlantic) and is
+    // not part of this entry.
+    lat: 24.7065,
+    lon: -81.1239,
+    timezone: "America/New_York",
+    noaaTideStationId: "8723970", // Vaca Key, Florida Bay (real gauge), ~1 mi (predictions + observations)
+    noaaTideStationFallbackId: "8724008", // Knight Key Channel, Florida Bay
+    noaaWaterLevelStationId: "8723970",
+    ndbcBuoyId: "VCAF1", // Vaca Key C-MAN (water temp only, no waves)
+    // Satan Shoal is the nearest wave station (~60 mi, off the Atlantic side), so
+    // a wave read here is a far-off one.
+    ndbcBuoyFallbackId: "42095",
+    // No healthyBeaches: the Healthy Beaches sites in Marathon (Sombrero Beach) are
+    // on the Atlantic side; none is at this bayside spot.
+    // No surfZone: NWS Key West (KEY) issues no Surf Zone Forecast product.
+    cams: [
+      {
+        // Sunset Grille & Raw Bar, 7 Knights Key Blvd, hosts this camera; Overseas
+        // Media Group (its "Seek Florida Keys" brand) runs the cam and asks for
+        // permission by email. A pool deck, palms and the old Seven Mile Bridge,
+        // looking west across the water. The "omg" mark and the restaurant logo are
+        // burned in. Added with credit; it comes down the same day if the owner asks.
+        id: "sunset-grille-marathon-cam",
+        name: "Marathon — Sunset Grille",
+        provider: "Sunset Grille & Raw Bar / Seek Florida Keys",
+        embedType: "image",
+        url: "https://overseasmediagroup.com/webcams/sunset-grille-marathon/",
+        snapshotUrl: "https://uw-frame.entwined-app.workers.dev/frame?cam=sunset-grille-marathon-cam",
+        snapshotMetaUrl: "https://uw-frame.entwined-app.workers.dev/meta?cam=sunset-grille-marathon-cam",
+        attribution: "Live stream courtesy Sunset Grille & Raw Bar and Seek Florida Keys (Overseas Media Group)",
+        lat: 24.7065,
+        lon: -81.1239,
       },
     ],
   },

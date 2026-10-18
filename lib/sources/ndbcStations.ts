@@ -53,6 +53,7 @@ export const NDBC_STATION_REPORTS_WAVES: Record<string, boolean> = {
   "41113": true, // Cape Canaveral Nearshore, FL (143) — wave buoy
   "42012": true, // Orange Beach, AL — 44 NM SE of Mobile, AL — wave buoy
   "42098": true, // Egmont Channel Entrance, FL (214) — wave buoy (WVHT live 2026-10-15); Fort Myers Beach fallback, ~99 mi north
+  "42095": true, // Satan Shoal, FL (244) — wave buoy (WVHT live 2026-10-16); Key West fallback (~14 mi), Marathon fallback (~60 mi)
   "42035": true, // Galveston, TX — 22 NM East of Galveston, TX — wave buoy
   "42084": true, // Southwest Pass Entrance W, LA (256) — nearshore wave buoy
   "42092": true, // Aransas Pass Channel Entrance S, TX (252), Waverider buoy —
@@ -97,6 +98,7 @@ export const NDBC_STATION_REPORTS_WAVES: Record<string, boolean> = {
   GTOT2: false, // 8771450 Galveston Pier 21, TX — tide gauge
   ICAC1: false, // 9410840 Santa Monica Pier, CA — tide gauge
   JMPN7: false, // 8658163 Wrightsville Beach, NC — tide gauge
+  KYWF1: false, // 8724580 Key West, FL — tide gauge (WVHT "MM" 2026-10-16); Key West primary
   LJAC1: false, // 9410230 La Jolla, CA — tide gauge
   LJPC1: true, // La Jolla, CA (073) — nearshore wave buoy (reports live)
   LWSD1: false, // 8557380 Lewes, DE — tide gauge
@@ -110,6 +112,7 @@ export const NDBC_STATION_REPORTS_WAVES: Record<string, boolean> = {
   OOUH1: false, // 1612340 Honolulu, HI — tide gauge
   ORIN7: false, // 8652587 Oregon Inlet Marina, NC — tide gauge
   PNLM6: false, // 8741533 Pascagoula NOAA Lab, MS — tide gauge
+  PCBF1: false, // 8729210 Panama City Beach, FL — tide gauge (WVHT "MM" 2026-10-16); Panama City Beach primary
   PCLF1: false, // 8729840 Pensacola, FL — tide gauge (WVHT "MM" 2026-10-15); Pensacola Beach primary
   PPTA1: false, // Perdido Pass, AL — met/tide station, no wave sensor
   RKXF1: false, // Upper Henderson Creek, Rookery Bay Reserve, FL — met station
@@ -118,6 +121,7 @@ export const NDBC_STATION_REPORTS_WAVES: Record<string, boolean> = {
   SSBN7: true, // Sunset Beach Nearshore Waves (SUN2WAVE) — wave buoy (reports live)
   TRDF1: false, // 8721604 Trident Pier, FL — tide gauge
   VAKF1: false, // 8723214 Virginia Key, FL — tide gauge
+  VCAF1: false, // 8723970 Vaca Key, FL — tide gauge (WVHT "MM" 2026-10-16); Marathon primary
   WPTW1: false, // 9441102 Westport, WA — tide gauge
 };
 

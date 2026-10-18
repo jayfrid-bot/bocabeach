@@ -1,10 +1,10 @@
 {
   "$comment": [
     "Registry for scripts/sun_cam_check.py and POST /api/sun-observations (docs/SUN_CAM_CHECK.md).",
-    "Every cam here is a 24/7 YouTube livestream. The four Atlantic cams face EAST; the two Gulf cams (Fort Myers Beach, Pensacola Beach, added 2026-10-15, see docs/research/2026-10-15-west-facing-cams.md) face WEST. `facing` is 'east' or 'west' (derived from facing_azimuth_deg when absent: below 180 = east, else west). An east cam sees a sunrise as a 'solar' view and a sunset as 'antisolar'; a west cam is the reverse. Only a 'solar' view is the truth for an event's color; an 'antisolar' view is the afterglow behind the cam, stored but never used as truth.",
+    "Every cam here is a 24/7 YouTube livestream. The four Atlantic cams face EAST; the two public-body Gulf cams (Fort Myers Beach, Pensacola Beach, added 2026-10-15, see docs/research/2026-10-15-west-facing-cams.md) and the ten owner-credited Gulf and Keys cams after them (added 2026-10-16, see docs/research/2026-10-16-gulf-cams.md) face WEST. `facing` is 'east' or 'west' (derived from facing_azimuth_deg when absent: below 180 = east, else west). An east cam sees a sunrise as a 'solar' view and a sunset as 'antisolar'; a west cam is the reverse. Only a 'solar' view is the truth for an event's color; an 'antisolar' view is the afterglow behind the cam, stored but never used as truth.",
     "sky_regions are [x0, y0, x1, y1] as fractions of the frame (0,0 = top-left). They keep the sky and drop the flagpole, palms, pier, beach, water and the burned-in text overlays. They were drawn from real 1280x720 frames (Elbo: the 2026-10-06 sunrise frames; Deerfield: live frames pulled from the uw-frame worker on 2026-10-06).",
     "beaches[].lat/lon repeat config/locations.ts; distance_mi is the great-circle distance from that beach's pin to the cam, rounded to 0.1 mi. lib/sunCamsConfig.test.ts keeps both in lockstep with locations.ts.",
-    "credit is stored with every observation and the ingest route rejects any other string. Elbo Room gave the owner permission to use its stream as long as it is credited."
+    "credit is stored with every observation and the ingest route rejects any other string. Elbo Room gave the owner permission to use its stream as long as it is credited. The ten cams added 2026-10-16 are used on the owner's decision, each with a credit and a link to the owner's page; if an owner objects, that cam is removed the same day."
   ],
   "version": 1,
   "timezone": "America/New_York",
@@ -125,6 +125,190 @@
         [0.5, 0.0, 0.58, 0.06],
         [0.65, 0.0, 0.8, 0.09],
         [0.8, 0.0, 1.0, 0.15]
+      ]
+    },
+    {
+      "id": "siesta-beach-cam",
+      "name": "Siesta Beach Live (Sarasota County / Visit Sarasota County)",
+      "youtube_id": "NLhxcyzXQxM",
+      "note": "A high fixed camera over Siesta Beach looking west: flat sand and the Gulf under a wide sky, with dune palmettos and a rail in the lower half. The horizon sits about 30% down the frame, so the region is the top 28%. Regions drawn on a live afternoon frame (2026-10-16).",
+      "facing": "west",
+      "facing_azimuth_deg": 260,
+      "lat": 27.2654,
+      "lon": -82.5528,
+      "credit": "Live stream courtesy Sarasota County and Visit Sarasota County",
+      "beaches": [
+        { "slug": "siesta-key", "lat": 27.2648, "lon": -82.5507, "distance_mi": 0.1 }
+      ],
+      "sky_regions": [
+        [0.0, 0.0, 1.0, 0.28]
+      ]
+    },
+    {
+      "id": "white-sands-ami-cam",
+      "name": "Anna Maria Island - White Sands (White Sands Beach Resort)",
+      "youtube_id": "ecD9ZDXLE6A",
+      "note": "A fisheye camera on the beach looking south-west to west: sky over the Gulf, palms left and right, and the sun sets at the right edge. A clock is burned in at the top left and the resort's web address at the bottom, so the regions skip both. Regions drawn on a live afternoon frame (2026-10-16).",
+      "facing": "west",
+      "facing_azimuth_deg": 230,
+      "lat": 27.5117,
+      "lon": -82.722,
+      "credit": "Live stream courtesy White Sands Beach Resort",
+      "beaches": [
+        { "slug": "anna-maria-island", "lat": 27.4998, "lon": -82.714, "distance_mi": 1.0 }
+      ],
+      "sky_regions": [
+        [0.36, 0.0, 1.0, 0.3],
+        [0.0, 0.11, 0.36, 0.3],
+        [0.22, 0.3, 0.45, 0.62]
+      ]
+    },
+    {
+      "id": "holmes-beach-cam",
+      "name": "Holmes Beach (Beach Live Cams)",
+      "youtube_id": "_W0Gf1Le2qc",
+      "note": "A fixed camera on the sand looking west over the Gulf, with a palm on each side. The real owner is unknown (a re-streaming channel; a 'Cedar Cove Resort Weather Station' sign is in view), so the credit names the channel. The camera's own position is not surveyed: lat/lon is the beach pin. Regions drawn on a live afternoon frame (2026-10-16).",
+      "facing": "west",
+      "facing_azimuth_deg": 255,
+      "lat": 27.4998,
+      "lon": -82.714,
+      "credit": "Live stream courtesy Beach Live Cams (YouTube channel)",
+      "beaches": [
+        { "slug": "anna-maria-island", "lat": 27.4998, "lon": -82.714, "distance_mi": 0.0 }
+      ],
+      "sky_regions": [
+        [0.37, 0.0, 0.59, 0.4],
+        [0.0, 0.27, 0.14, 0.41],
+        [0.18, 0.27, 0.36, 0.41],
+        [0.6, 0.09, 0.8, 0.4],
+        [0.88, 0.14, 1.0, 0.4]
+      ]
+    },
+    {
+      "id": "margaritaville-fmb-cam",
+      "name": "Fort Myers Beach - License to Chill (Margaritaville Beach Resort)",
+      "youtube_id": "2qd9j2CbIpg",
+      "note": "A rooftop camera looking west-south-west over the resort and the beach: a very wide sky with the sun setting in frame. The resort logo (top left) and an AccuWeather box (top right) are burned in, so the regions skip both; a construction crane reaches 48% down, so the regions stop at 46%. Regions drawn on a live afternoon frame (2026-10-16).",
+      "facing": "west",
+      "facing_azimuth_deg": 255,
+      "lat": 26.4546,
+      "lon": -81.9539,
+      "credit": "Live stream courtesy Margaritaville Beach Resort Fort Myers Beach",
+      "beaches": [
+        { "slug": "fort-myers-beach", "lat": 26.4538, "lon": -81.9571, "distance_mi": 0.2 }
+      ],
+      "sky_regions": [
+        [0.17, 0.0, 0.88, 0.46],
+        [0.0, 0.21, 0.17, 0.46],
+        [0.88, 0.26, 1.0, 0.46]
+      ]
+    },
+    {
+      "id": "pink-shell-fmb-cam",
+      "name": "Fort Myers Beach - Pink Shell (Pink Shell Beach Resort & Marina)",
+      "youtube_id": "uK-eZz0w-go",
+      "note": "A camera over the resort pool and beach looking west. The sky is a thin strip above the horizon with palms across it, and a clock is burned in at the top left, so only two small clear patches are kept. This is the weakest sky of the Gulf cams. Regions drawn on a live afternoon frame (2026-10-16).",
+      "facing": "west",
+      "facing_azimuth_deg": 260,
+      "lat": 26.4606,
+      "lon": -81.965,
+      "credit": "Live stream courtesy Pink Shell Beach Resort & Marina",
+      "beaches": [
+        { "slug": "fort-myers-beach", "lat": 26.4538, "lon": -81.9571, "distance_mi": 0.7 }
+      ],
+      "sky_regions": [
+        [0.46, 0.0, 0.84, 0.055],
+        [0.0, 0.09, 0.09, 0.17]
+      ]
+    },
+    {
+      "id": "enco-sterling-reef-cam",
+      "name": "Panama City Beach - Sterling Reef (ENCO Electronic Systems)",
+      "youtube_id": "Y82E6_IVEdY",
+      "note": "A fixed camera on the sand looking west-south-west along the beach to the Gulf pier. The beach faces south here, so the sun sets along the shore and the sky is the top 42% of the frame. A lens streak from the sun crosses the middle in daytime. Regions drawn on a live afternoon frame (2026-10-16).",
+      "facing": "west",
+      "facing_azimuth_deg": 240,
+      "lat": 30.1712,
+      "lon": -85.7977,
+      "credit": "Live stream courtesy ENCO Electronic Systems",
+      "beaches": [
+        { "slug": "panama-city-beach", "lat": 30.1745, "lon": -85.804, "distance_mi": 0.4 }
+      ],
+      "sky_regions": [
+        [0.0, 0.0, 1.0, 0.42]
+      ]
+    },
+    {
+      "id": "enco-shores-of-panama-cam",
+      "name": "Panama City Beach - Shores of Panama (ENCO Electronic Systems)",
+      "youtube_id": "GFsRPlw81W8",
+      "note": "A camera over a beach walkway looking south-west: people in the foreground, the beach and the Gulf beyond. The sun sets at the right edge. The horizon slopes from 55% down on the left to 46% on the right, so the region is the top 44%. Regions drawn on a live afternoon frame (2026-10-16).",
+      "facing": "west",
+      "facing_azimuth_deg": 230,
+      "lat": 30.1755,
+      "lon": -85.8038,
+      "credit": "Live stream courtesy ENCO Electronic Systems",
+      "beaches": [
+        { "slug": "panama-city-beach", "lat": 30.1745, "lon": -85.804, "distance_mi": 0.1 }
+      ],
+      "sky_regions": [
+        [0.0, 0.0, 1.0, 0.44]
+      ]
+    },
+    {
+      "id": "sharkys-pcb-cam",
+      "name": "Panama City Beach - Sharky's (Sharky's Beachfront Restaurant)",
+      "youtube_id": "EYs8y8gOwf0",
+      "note": "A camera on the restaurant deck looking west-south-west over the beach and the Gulf. This is the copy on the Florida Live channel: both ids on Sharky's own page were dead on 2026-10-16. A thatch roof takes the right edge, so the region stops at 85% across. The camera is about 4 miles from the beach pin. Regions drawn on a live afternoon frame (2026-10-16).",
+      "facing": "west",
+      "facing_azimuth_deg": 245,
+      "lat": 30.2084,
+      "lon": -85.8636,
+      "credit": "Live stream courtesy Sharky's Beachfront Restaurant",
+      "beaches": [
+        { "slug": "panama-city-beach", "lat": 30.1745, "lon": -85.804, "distance_mi": 4.3 }
+      ],
+      "sky_regions": [
+        [0.0, 0.0, 0.85, 0.34]
+      ]
+    },
+    {
+      "id": "fort-zachary-taylor-cam",
+      "name": "Key West - Fort Zachary Taylor (shared by Florida Live)",
+      "youtube_id": "sDXwrYQPeOQ",
+      "note": "A camera on the beach looking south-west over the water, with loungers and umbrellas filling the frame. The sky is only the top strip: the horizon curves from 25% down on the left to 10% in the middle. A caption is burned in at the top left. The stream keeps about 3.6 hours of DVR. The owner is not confirmed (see config/locations.ts). The camera's own position is not surveyed: lat/lon is the beach pin. Regions drawn on a live afternoon frame (2026-10-16).",
+      "facing": "west",
+      "facing_azimuth_deg": 240,
+      "lat": 24.5462,
+      "lon": -81.8104,
+      "credit": "Live stream of Fort Zachary Taylor Beach, shared by Florida Live (YouTube channel)",
+      "beaches": [
+        { "slug": "key-west", "lat": 24.5462, "lon": -81.8104, "distance_mi": 0.0 }
+      ],
+      "sky_regions": [
+        [0.0, 0.04, 0.2, 0.15],
+        [0.2, 0.04, 0.4, 0.09],
+        [0.4, 0.0, 0.76, 0.085]
+      ]
+    },
+    {
+      "id": "sunset-grille-marathon-cam",
+      "name": "Marathon - Sunset Grille (Sunset Grille & Raw Bar / Seek Florida Keys)",
+      "youtube_id": "SXMC-MzSncI",
+      "note": "A camera over the restaurant's pool deck looking west across the water to the old Seven Mile Bridge; the sun sets in frame. Palms cross the sky, so the regions are a top band plus three gaps between the palms. The 'omg' mark and the restaurant logo are burned in below the horizon. Regions drawn on a live afternoon frame (2026-10-16).",
+      "facing": "west",
+      "facing_azimuth_deg": 260,
+      "lat": 24.7065,
+      "lon": -81.1239,
+      "credit": "Live stream courtesy Sunset Grille & Raw Bar and Seek Florida Keys (Overseas Media Group)",
+      "beaches": [
+        { "slug": "marathon", "lat": 24.7065, "lon": -81.1239, "distance_mi": 0.0 }
+      ],
+      "sky_regions": [
+        [0.0, 0.0, 0.98, 0.11],
+        [0.15, 0.11, 0.235, 0.42],
+        [0.44, 0.11, 0.52, 0.36],
+        [0.7, 0.11, 0.77, 0.4]
       ]
     }
   ]

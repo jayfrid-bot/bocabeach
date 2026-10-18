@@ -171,6 +171,34 @@
       }
     },
     {
+      "slug": "fort-myers-beach",
+      "id": "margaritaville-fmb-cam",
+      "name": "Fort Myers Beach — License to Chill",
+      "attribution": "Live stream courtesy Margaritaville Beach Resort Fort Myers Beach",
+      "timezone": "America/New_York",
+      "lat": 26.4538,
+      "lon": -81.9571,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=margaritaville-fmb-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=margaritaville-fmb-cam"
+      }
+    },
+    {
+      "slug": "fort-myers-beach",
+      "id": "pink-shell-fmb-cam",
+      "name": "Fort Myers Beach — Pink Shell",
+      "attribution": "Live stream courtesy Pink Shell Beach Resort & Marina",
+      "timezone": "America/New_York",
+      "lat": 26.4538,
+      "lon": -81.9571,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=pink-shell-fmb-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=pink-shell-fmb-cam"
+      }
+    },
+    {
       "slug": "pensacola-beach",
       "id": "pensacola-sria-west-cam",
       "name": "Pensacola Beach — West Cam",
@@ -182,6 +210,118 @@
         "kind": "direct",
         "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=pensacola-sria-west-cam",
         "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=pensacola-sria-west-cam"
+      }
+    },
+    {
+      "slug": "siesta-key",
+      "id": "siesta-beach-cam",
+      "name": "Siesta Beach Live",
+      "attribution": "Live stream courtesy Sarasota County and Visit Sarasota County",
+      "timezone": "America/New_York",
+      "lat": 27.2648,
+      "lon": -82.5507,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=siesta-beach-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=siesta-beach-cam"
+      }
+    },
+    {
+      "slug": "anna-maria-island",
+      "id": "white-sands-ami-cam",
+      "name": "Anna Maria Island — White Sands",
+      "attribution": "Live stream courtesy White Sands Beach Resort",
+      "timezone": "America/New_York",
+      "lat": 27.4998,
+      "lon": -82.714,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=white-sands-ami-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=white-sands-ami-cam"
+      }
+    },
+    {
+      "slug": "anna-maria-island",
+      "id": "holmes-beach-cam",
+      "name": "Holmes Beach",
+      "attribution": "Live stream courtesy Beach Live Cams (YouTube channel)",
+      "timezone": "America/New_York",
+      "lat": 27.4998,
+      "lon": -82.714,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=holmes-beach-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=holmes-beach-cam"
+      }
+    },
+    {
+      "slug": "panama-city-beach",
+      "id": "enco-sterling-reef-cam",
+      "name": "Panama City Beach — Sterling Reef",
+      "attribution": "Live stream courtesy ENCO Electronic Systems",
+      "timezone": "America/Chicago",
+      "lat": 30.1745,
+      "lon": -85.804,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=enco-sterling-reef-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=enco-sterling-reef-cam"
+      }
+    },
+    {
+      "slug": "panama-city-beach",
+      "id": "enco-shores-of-panama-cam",
+      "name": "Panama City Beach — Shores of Panama",
+      "attribution": "Live stream courtesy ENCO Electronic Systems",
+      "timezone": "America/Chicago",
+      "lat": 30.1745,
+      "lon": -85.804,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=enco-shores-of-panama-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=enco-shores-of-panama-cam"
+      }
+    },
+    {
+      "slug": "panama-city-beach",
+      "id": "sharkys-pcb-cam",
+      "name": "Panama City Beach — Sharky's",
+      "attribution": "Live stream courtesy Sharky's Beachfront Restaurant",
+      "timezone": "America/Chicago",
+      "lat": 30.1745,
+      "lon": -85.804,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=sharkys-pcb-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=sharkys-pcb-cam"
+      }
+    },
+    {
+      "slug": "key-west",
+      "id": "fort-zachary-taylor-cam",
+      "name": "Key West — Fort Zachary Taylor",
+      "attribution": "Live stream of Fort Zachary Taylor Beach, shared by Florida Live (YouTube channel)",
+      "timezone": "America/New_York",
+      "lat": 24.5462,
+      "lon": -81.8104,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=fort-zachary-taylor-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=fort-zachary-taylor-cam"
+      }
+    },
+    {
+      "slug": "marathon",
+      "id": "sunset-grille-marathon-cam",
+      "name": "Marathon — Sunset Grille",
+      "attribution": "Live stream courtesy Sunset Grille & Raw Bar and Seek Florida Keys (Overseas Media Group)",
+      "timezone": "America/New_York",
+      "lat": 24.7065,
+      "lon": -81.1239,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=sunset-grille-marathon-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=sunset-grille-marathon-cam"
       }
     }
   ]

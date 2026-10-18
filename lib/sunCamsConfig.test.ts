@@ -16,7 +16,7 @@ function miles(lat1: number, lon1: number, lat2: number, lon2: number): number {
 }
 
 function locationCam(camId: string) {
-  for (const slug of ["boca-raton", "deerfield-beach", "fort-lauderdale", "fort-myers-beach", "pensacola-beach"]) {
+  for (const slug of ["boca-raton", "deerfield-beach", "fort-lauderdale", "fort-myers-beach", "pensacola-beach", "siesta-key", "anna-maria-island", "panama-city-beach", "key-west", "marathon"]) {
     const cam = getLocation(slug)?.cams?.find((c) => c.id === camId);
     if (cam) return cam;
   }
@@ -24,20 +24,43 @@ function locationCam(camId: string) {
 }
 
 describe("config/sun-cams.json", () => {
-  it("lists the six 24/7 livestream cams", () => {
+  it("lists the sixteen 24/7 livestream cams", () => {
     expect(SUN_CAMS.map((c) => c.id).sort()).toEqual([
       "deerfield-beach-cam",
       "deerfield-pier-cam",
       "deerfield-surf-cam",
+      "enco-shores-of-panama-cam",
+      "enco-sterling-reef-cam",
       "fort-myers-beach-cam",
+      "fort-zachary-taylor-cam",
       "ftl-elbo-beach-cam",
+      "holmes-beach-cam",
+      "margaritaville-fmb-cam",
       "pensacola-sria-west-cam",
+      "pink-shell-fmb-cam",
+      "sharkys-pcb-cam",
+      "siesta-beach-cam",
+      "sunset-grille-marathon-cam",
+      "white-sands-ami-cam",
     ]);
   });
 
-  it("the two Gulf cams face west: a sunset is the solar view, a sunrise the antisolar view", () => {
+  it("the twelve Gulf and Keys cams face west: a sunset is the solar view, a sunrise the antisolar view", () => {
     const west = SUN_CAMS.filter((c) => c.facing === "west");
-    expect(west.map((c) => c.id).sort()).toEqual(["fort-myers-beach-cam", "pensacola-sria-west-cam"]);
+    expect(west.map((c) => c.id).sort()).toEqual([
+      "enco-shores-of-panama-cam",
+      "enco-sterling-reef-cam",
+      "fort-myers-beach-cam",
+      "fort-zachary-taylor-cam",
+      "holmes-beach-cam",
+      "margaritaville-fmb-cam",
+      "pensacola-sria-west-cam",
+      "pink-shell-fmb-cam",
+      "sharkys-pcb-cam",
+      "siesta-beach-cam",
+      "sunset-grille-marathon-cam",
+      "white-sands-ami-cam",
+    ]);
     for (const cam of west) {
       expect(cam.facing_azimuth_deg).toBeGreaterThanOrEqual(210);
       expect(cam.facing_azimuth_deg).toBeLessThanOrEqual(300);
@@ -52,7 +75,7 @@ describe("config/sun-cams.json", () => {
     }
   });
 
-  it("the west cams credit a public body (no business cam is added without permission)", () => {
+  it("the two public-body west cams credit the public body", () => {
     expect(SUN_CAMS.find((c) => c.id === "pensacola-sria-west-cam")?.credit).toMatch(/Santa Rosa Island Authority/);
     expect(SUN_CAMS.find((c) => c.id === "fort-myers-beach-cam")?.credit).toMatch(/Visit Fort Myers/);
   });
@@ -67,6 +90,21 @@ describe("config/sun-cams.json", () => {
       if (registered?.url?.includes("youtube.com")) expect(registered.url).toContain(cam.youtube_id);
       expect(cam.lat).toBeCloseTo(registered?.lat ?? 0, 4);
       expect(cam.lon).toBeCloseTo(registered?.lon ?? 0, 4);
+    }
+  });
+
+  it("each cam added 2026-10-16 carries a credit line and a link, and none is a commercial network", () => {
+    const added = [
+      "siesta-beach-cam", "white-sands-ami-cam", "holmes-beach-cam", "margaritaville-fmb-cam", "pink-shell-fmb-cam",
+      "enco-sterling-reef-cam", "enco-shores-of-panama-cam", "sharkys-pcb-cam", "fort-zachary-taylor-cam", "sunset-grille-marathon-cam",
+    ];
+    for (const id of added) {
+      const sun = SUN_CAMS.find((c) => c.id === id);
+      const reg = locationCam(id);
+      expect(sun?.credit, id).toMatch(/^Live stream /);
+      expect(reg?.url, id).toMatch(/^https:\/\//);
+      expect(reg?.attribution, id).toBe(sun?.credit);
+      expect(`${reg?.url} ${reg?.provider}`, id).not.toMatch(/surfline|earthcam|hdontap|skylinewebcams|ozolio|ptztv/i);
     }
   });
 
@@ -92,6 +130,16 @@ describe("config/sun-cams.json", () => {
       "ftl-elbo-beach-cam": "fort-lauderdale",
       "fort-myers-beach-cam": "fort-myers-beach",
       "pensacola-sria-west-cam": "pensacola-beach",
+      "siesta-beach-cam": "siesta-key",
+      "white-sands-ami-cam": "anna-maria-island",
+      "holmes-beach-cam": "anna-maria-island",
+      "margaritaville-fmb-cam": "fort-myers-beach",
+      "pink-shell-fmb-cam": "fort-myers-beach",
+      "enco-sterling-reef-cam": "panama-city-beach",
+      "enco-shores-of-panama-cam": "panama-city-beach",
+      "sharkys-pcb-cam": "panama-city-beach",
+      "fort-zachary-taylor-cam": "key-west",
+      "sunset-grille-marathon-cam": "marathon",
     };
     for (const cam of SUN_CAMS) {
       const slugs = cam.beaches.map((b) => b.slug).sort();

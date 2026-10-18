@@ -13,6 +13,7 @@ export interface NwpsRipCoverage {
 }
 
 export const NWPS_RIP_COVERAGE: Record<string, NwpsRipCoverage> = {
+  "anna-maria-island": { region: "sr", office: "tbw", lon: -82.715, lat: 27.4904, distKm: 1.05 },
   "asbury-park": { region: "er", office: "phi", lon: -74.015, lat: 40.1665, distKm: 2.06 },
   "boca-raton": { region: "sr", office: "mfl", lon: -80.066, lat: 26.3616, distKm: 0.41 },
   "cape-may": { region: "er", office: "phi", lon: -74.849, lat: 38.952, distKm: 0.83 },
@@ -27,7 +28,9 @@ export const NWPS_RIP_COVERAGE: Record<string, NwpsRipCoverage> = {
   "hammonasset-beach": { region: "er", office: "okx", lon: -72.562, lat: 41.2591, distKm: 0.53 },
   "huntington-beach": { region: "wr", office: "sgx", lon: -118.001, lat: 33.6512, distKm: 0.36 },
   "jacksonville-beach": { region: "sr", office: "jax", lon: -81.394, lat: 30.3814, distKm: 0.98 },
+  "key-west": { region: "sr", office: "key", lon: -81.818, lat: 24.545, distKm: 0.78 },
   "la-jolla": { region: "wr", office: "sgx", lon: -117.258, lat: 32.8631, distKm: 0.31 },
+  "marathon": { region: "sr", office: "key", lon: -81.132, lat: 24.6842, distKm: 2.61 },
   "miami-beach": { region: "sr", office: "mfl", lon: -80.131, lat: 25.7422, distKm: 2.74 },
   "misquamicut": { region: "er", office: "box", lon: -71.808, lat: 41.3145, distKm: 0.83 },
   "montauk": { region: "er", office: "okx", lon: -71.946, lat: 41.0276, distKm: 1.17 },
@@ -35,8 +38,10 @@ export const NWPS_RIP_COVERAGE: Record<string, NwpsRipCoverage> = {
   "nags-head": { region: "er", office: "mhx", lon: -75.555, lat: 35.8367, distKm: 0.38 },
   "naples": { region: "sr", office: "mfl", lon: -81.818, lat: 26.1293, distKm: 2.63 },
   "old-orchard-beach": { region: "er", office: "gyx", lon: -70.36, lat: 43.5175, distKm: 0.74 },
+  "panama-city-beach": { region: "sr", office: "tae", lon: -85.812, lat: 30.1737, distKm: 0.77 },
   "pensacola-beach": { region: "sr", office: "mob", lon: -87.135, lat: 30.3282, distKm: 0.69 },
   "rehoboth-beach": { region: "er", office: "phi", lon: -75.072, lat: 38.7106, distKm: 0.77 },
+  "siesta-key": { region: "sr", office: "tbw", lon: -82.558, lat: 27.2612, distKm: 0.83 },
   "tybee-island": { region: "er", office: "chs", lon: -80.841, lat: 32.0086, distKm: 1.03 },
   "virginia-beach": { region: "er", office: "akq", lon: -75.971, lat: 36.852, distKm: 0.63 },
   "waikiki": { region: "pr", office: "hfo", lon: -157.84, lat: 21.2739, distKm: 0.85 },

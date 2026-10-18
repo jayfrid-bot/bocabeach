@@ -9,7 +9,7 @@ import {
 } from "../src/lib/schedule";
 
 describe("registry", () => {
-  it("has exactly the seven documented cameras", () => {
+  it("has exactly the seventeen documented cameras", () => {
     expect(CAMERA_REGISTRY.map((c) => c.id)).toEqual([
       "deerfield-spinner-uw",
       "deerfield-beach-cam",
@@ -18,6 +18,16 @@ describe("registry", () => {
       "ftl-elbo-beach-cam",
       "fort-myers-beach-cam",
       "pensacola-sria-west-cam",
+      "siesta-beach-cam",
+      "white-sands-ami-cam",
+      "holmes-beach-cam",
+      "margaritaville-fmb-cam",
+      "pink-shell-fmb-cam",
+      "enco-sterling-reef-cam",
+      "enco-shores-of-panama-cam",
+      "sharkys-pcb-cam",
+      "fort-zachary-taylor-cam",
+      "sunset-grille-marathon-cam",
     ]);
   });
 
@@ -38,6 +48,24 @@ describe("registry", () => {
     expect(findCamera("fort-myers-beach-cam")?.videoId).toBe("nj9jdOXXhEo");
     expect(findCamera("pensacola-sria-west-cam")?.videoId).toBe("HKIc6CYlMzI");
     expect(findCamera("pensacola-sria-west-cam")?.cadence).toBe("3h-daylight");
+  });
+
+  it("registers the ten Gulf and Keys cams on the slowest cadence, after the older cams", () => {
+    const tail = CAMERA_REGISTRY.slice(-10);
+    expect(tail.map((c) => c.id)).toEqual([
+      "siesta-beach-cam",
+      "white-sands-ami-cam",
+      "holmes-beach-cam",
+      "margaritaville-fmb-cam",
+      "pink-shell-fmb-cam",
+      "enco-sterling-reef-cam",
+      "enco-shores-of-panama-cam",
+      "sharkys-pcb-cam",
+      "fort-zachary-taylor-cam",
+      "sunset-grille-marathon-cam",
+    ]);
+    for (const cam of tail) expect(cam.cadence).toBe("3h-daylight");
+    expect(findCamera("sharkys-pcb-cam")?.videoId).toBe("EYs8y8gOwf0");
   });
 
   it("finds the Fort Lauderdale (Elbo Room) cam by id", () => {
@@ -90,7 +118,7 @@ describe("camsDueAtTick", () => {
     expect(due.map((c) => c.id)).toEqual(["deerfield-spinner-uw"]);
   });
 
-  it("grabs the underwater cam and all six surface cams on a daylight surface hour", () => {
+  it("grabs the underwater cam and all sixteen surface cams on a daylight surface hour", () => {
     // 13:00 UTC = 9am EDT: daylight AND a surface hour.
     const due = camsDueAtTick(new Date("2026-07-15T13:00:00Z"));
     expect(due.map((c) => c.id).sort()).toEqual(
@@ -102,6 +130,16 @@ describe("camsDueAtTick", () => {
         "ftl-elbo-beach-cam",
         "fort-myers-beach-cam",
         "pensacola-sria-west-cam",
+        "siesta-beach-cam",
+        "white-sands-ami-cam",
+        "holmes-beach-cam",
+        "margaritaville-fmb-cam",
+        "pink-shell-fmb-cam",
+        "enco-sterling-reef-cam",
+        "enco-shores-of-panama-cam",
+        "sharkys-pcb-cam",
+        "fort-zachary-taylor-cam",
+        "sunset-grille-marathon-cam",
       ].sort()
     );
   });
