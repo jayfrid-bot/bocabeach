@@ -35,7 +35,7 @@ flowchart TD
   WATCH["Apple Watch app + complications"] -->|"GET, no query; Cache-Control s-maxage hint of 60 s at most (no Workers Cache), payload has validUntil"| WATCHR
   APPUI -->|"WatchSync plugin: home beach + last viewed<br/>lib/watchSync.ts (WatchConnectivity)"| WATCH
 
-  EDGECACHE["Edge cache lib/edgeCache.ts (outermost wrapper in worker.ts):<br/>GET/HEAD /, /&lt;beach&gt;, /api/conditions/&lt;slug&gt; with no query, no Authorization/Range,<br/>no RSC or Next-Router-* headers. Key = Worker version id + path + web/native UA + owner-override fingerprint.<br/>Fresh 60 s (data 5 min) → served; stale up to 10 min → served + ONE background refresh (ctx.waitUntil);<br/>older → renders inline. Stores only a 200 with the ibd-edge marker ok=1 (or the flagship's 308), never Set-Cookie.<br/>No KV, no scheduled pre-builds"]
+  EDGECACHE["Edge cache lib/edgeCache.ts (outermost wrapper in worker.ts):<br/>GET/HEAD /, /&lt;beach&gt;, /api/conditions/&lt;slug&gt; with no query, no Authorization/Range,<br/>no RSC or Next-Router-* headers. Key = Worker version id + path + web/native UA + owner-override fingerprint.<br/>Fresh 60 s (data 5 min) → served; stale up to 10 min → served + ONE background refresh (ctx.waitUntil);<br/>older, or data over 30 min → renders inline. Stores only a 200 with the ibd-edge marker ok=1 (or the flagship's 308), never Set-Cookie.<br/>No KV, no scheduled pre-builds"]
   EDGEMEM[("In-isolate LRU<br/>8 MB")]
   EDGECOLO[("Workers Cache API caches.default<br/>key https://edge-cache.isitbeachday.internal/f1/&lt;version&gt;/…<br/>per datacenter; no-op on *.workers.dev")]
   EDGECACHE <-->|"1st tier"| EDGEMEM
@@ -146,8 +146,8 @@ content="v1;gen=…;ok=1">` and the JSON sends the header `x-ibd-edge`
 (`lib/edgeMarker.ts`). A partial build, a data outage, an error, a 404 or any
 response with `Set-Cookie` is never stored. A copy is fresh for 60 seconds
 while its data is at most 5 minutes old. After that it is served for up to
-10 minutes while one background refresh runs; past 10 minutes the request
-renders inline. Browsers get the route's own `Cache-Control` (pages stay
+10 minutes while one background refresh runs; past 10 minutes, or when its
+data is more than 30 minutes old, the request renders inline. Browsers get the route's own `Cache-Control` (pages stay
 `private, no-store`). Copies live in an in-isolate LRU and in `caches.default`
 (per datacenter, custom domains only). There are no KV writes and no scheduled
 pre-builds. Details and measurements:

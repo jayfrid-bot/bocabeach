@@ -24,7 +24,8 @@
 //   fresh   stored <= FRESH_MS ago and its data generated <= DATA_FRESH_MS ago: served as it is.
 //   stale   stored <= MAX_STALE_MS ago: served, and ONE background refresh starts (ctx.waitUntil,
 //           one in flight per key per isolate, at most one try per MIN_REFRESH_GAP_MS).
-//   expired older: not served; the request renders inline, like before this cache existed.
+//   expired older, or its data is older than DATA_MAX_AGE_MS: not served; the request renders
+//           inline, like before this cache existed.
 // No scheduled pre-builds: a copy is only ever built because someone asked for that beach.
 //
 // Storage: an in-isolate LRU (MEMORY_BUDGET_BYTES) in front of the Workers Cache API
@@ -34,7 +35,8 @@
 //
 // Browser headers are kept exactly as the route set them (pages stay `private, no-store`), so a
 // browser never keeps an old page; the edge copy is separate. Two headers are added:
-// x-edge-cache (HIT, STALE, MISS) and x-edge-age (seconds since the copy was stored).
+// x-edge-cache (HIT, STALE, MISS, BYPASS), x-edge-age (seconds since the copy was stored) and
+// x-edge-data-age (seconds since its data was generated).
 //
 // No imports from the app except the two dependency-free files below (wrangler bundles this
 // file outside Next).
@@ -51,6 +53,8 @@ export const FRESH_MS = 60_000;
 export const MAX_STALE_MS = 10 * 60_000;
 /** A copy whose data is older than this is refreshed even inside FRESH_MS. */
 export const DATA_FRESH_MS = 5 * 60_000;
+/** A copy whose data is older than this is never served: the request renders inline. */
+export const DATA_MAX_AGE_MS = 30 * 60_000;
 export const MIN_REFRESH_GAP_MS = 15_000;
 /** Owner-override fingerprint: reused for this long without a database read... */
 export const FP_FRESH_MS = 30_000;
@@ -149,6 +153,7 @@ export type Freshness = "fresh" | "stale" | "expired";
 export function freshness(e: Pick<Entry, "storedAt" | "dataAt">, now: number): Freshness {
   const age = Math.max(0, now - e.storedAt);
   if (age > MAX_STALE_MS) return "expired";
+  if (e.dataAt !== null && now - e.dataAt > DATA_MAX_AGE_MS) return "expired";
   if (age <= FRESH_MS && (e.dataAt === null || now - e.dataAt <= DATA_FRESH_MS)) return "fresh";
   return "stale";
 }
@@ -212,6 +217,7 @@ export function serveEntry(e: Entry, method: string, state: "HIT" | "STALE", now
   const headers = new Headers(e.headers);
   headers.set("x-edge-cache", state);
   headers.set("x-edge-age", String(Math.max(0, Math.floor((now - e.storedAt) / 1000))));
+  if (e.dataAt !== null) headers.set("x-edge-data-age", String(Math.max(0, Math.floor((now - e.dataAt) / 1000))));
   const body = method === "HEAD" || e.status === 204 || e.status === 304 ? null : e.body;
   return new Response(body, { status: e.status, headers });
 }

@@ -89,7 +89,8 @@ I could not measure the zone without a deploy. Check it after the deploy with
    - *stale*: stored ≤ 10 min ago. Served (`STALE`), and one background refresh starts with
      `ctx.waitUntil`. There is one refresh in flight per key per isolate, and at most one try
      per 15 s per key.
-   - *expired*: older. The request renders inline (`MISS`), as before this change.
+   - *expired*: older, or its data is more than 30 min old. The request renders inline
+     (`MISS`), as before this change.
 5. **Store**, after the response is complete (`store`), only when all of these are true:
    - status 200 (or a 301/308 to a same-site path, for the flagship's `/boca-raton`);
    - no `Set-Cookie`, no `Content-Encoding`;
@@ -168,6 +169,10 @@ Per-user state was checked:
   - After 3 min, the request waits for D1.
   - So a correction reaches every visitor in about 30 s, plus one request.
   - The memo is shared per colo through `caches.default`.
+  - The query now skips superseded rows (`superseded = 0`), the same rows that
+    `activeOverrides` uses. Before, an answer that superseded a verdict without adding a new
+    one left the fingerprint unchanged. This also affected the 120-s conditions cache key.
+    Codex found it in review.
 - **Cam takedowns** are a config change plus a deploy. A deploy is a new version id, so no
   copy from before the takedown can be found again.
 - **D1 consistency.** D1 sessions or read replicas are not in use. So the edge read and the
@@ -207,7 +212,8 @@ builders and BeachFinder link to `/` for the flagship.
 - The edge copy keeps the route's headers, but not `Set-Cookie` (never stored), `Date`,
   `Content-Length` or `Age`. Inside the Cache API, the copy has its own `max-age=600`, and the
   route's `Cache-Control`/`Vary` are kept aside and restored on the way out.
-- Added: `x-edge-cache: HIT | STALE | MISS | BYPASS` and `x-edge-age: <seconds>`.
+- Added: `x-edge-cache: HIT | STALE | MISS | BYPASS`, `x-edge-age: <seconds>` (age of the
+  copy) and `x-edge-data-age: <seconds>` (age of its data).
 
 ## Workers limits (the account is on Workers Free)
 
@@ -229,8 +235,8 @@ builders and BeachFinder link to `/` for the flagship.
 1. **The zone was not measured.** The behaviour on the custom domain (the second tier) is
    argued from the documentation and from `lib/watchViewCache.ts`, which uses the same
    synthetic-host pattern. Check `x-edge-cache` after the deploy.
-2. **The edge layer can serve a page up to 10 min old** while a refresh runs, and data up to
-   about 5 minutes older than that. The page labels its age, and the client asks for newer data
+2. **The edge layer can serve a page up to 10 min old** while a refresh runs. It never serves
+   a copy whose data is more than 30 min old. The page labels its age, and the client asks for newer data
    by itself. If that is too loose, lower `MAX_STALE_MS` in `lib/edgeCache.ts`.
 3. **The marker is a contract between the pages and the cache.** If a page stops rendering it,
    that page is simply not cached (fail-safe). A test fails if either beach page loses it.

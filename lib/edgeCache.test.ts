@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   BYPASS_HEADERS,
   DATA_FRESH_MS,
+  DATA_MAX_AGE_MS,
   FP_FRESH_MS,
   FP_MAX_STALE_MS,
   FRESH_MS,
@@ -167,7 +168,8 @@ describe("freshness bounds", () => {
   it("a copy with old data is stale even when just stored", () => {
     expect(freshness(e(1_000, DATA_FRESH_MS), T0)).toBe("fresh");
     expect(freshness(e(1_000, DATA_FRESH_MS + 1), T0)).toBe("stale");
-    expect(freshness(e(1_000, 60 * 60_000), T0)).toBe("stale");
+    expect(freshness(e(1_000, DATA_MAX_AGE_MS), T0)).toBe("stale");
+    expect(freshness(e(1_000, DATA_MAX_AGE_MS + 1), T0)).toBe("expired");
   });
   it("a redirect has no data time", () => {
     expect(freshness(e(1_000, null), T0)).toBe("fresh");
@@ -368,6 +370,7 @@ describe("withEdgeCache", () => {
     const b = await h.call(req("/jupiter"));
     expect(b.headers.get("x-edge-cache")).toBe("HIT");
     expect(b.headers.get("x-edge-age")).toBe("5");
+    expect(b.headers.get("x-edge-data-age")).toBe("35");
     expect(await b.text()).toBe(aBody);
     expect(b.headers.get("cache-control")).toBe("private, no-cache, no-store, max-age=0, must-revalidate");
     expect(b.headers.get("vary")).toBe("rsc, next-router-state-tree");
