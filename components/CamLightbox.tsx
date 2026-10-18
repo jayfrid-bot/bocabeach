@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { ZoomableImage } from "@/components/ZoomableImage";
 
@@ -11,6 +11,9 @@ import { ZoomableImage } from "@/components/ZoomableImage";
  * screen as everywhere else the picture is shown.
  *
  * Keyboard: Escape closes, Tab stays inside, focus goes back to the tapped cam.
+ * While open, the page under it is inert and hidden from screen readers, and
+ * the whole overlay takes every touch, so a pinch or drag on its header or
+ * footer cannot zoom or scroll the page behind it.
  */
 export function CamLightbox({
   src,
@@ -18,6 +21,7 @@ export function CamLightbox({
   credit,
   liveUrl,
   stamp,
+  openerRef,
   onClose,
 }: {
   src: string;
@@ -26,18 +30,33 @@ export function CamLightbox({
   liveUrl?: string;
   /** e.g. "📷 4:52 PM" — when the still was taken. */
   stamp?: string;
+  /** The tapped cam: focus goes back to it on close. (iOS does not focus a
+   *  tapped button, so document.activeElement cannot be trusted for this.) */
+  openerRef?: RefObject<HTMLElement | null>;
   onClose: () => void;
 }) {
   const root = useRef<HTMLDivElement | null>(null);
+  // The picture as it was when opened. The page refreshes its data every few
+  // minutes and that changes the cam URL; following it would reload the
+  // picture and throw away the viewer's zoom.
+  const [frozenSrc] = useState(src);
   const close = useRef(onClose);
   useEffect(() => {
     close.current = onClose;
   });
 
   useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
+    const opener = openerRef?.current ?? null;
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
+    // Everything else on the page goes inert while the viewer is open.
+    const hidden: HTMLElement[] = [];
+    for (const el of Array.from(document.body.children)) {
+      if (el === root.current || !(el instanceof HTMLElement) || el.hasAttribute("inert")) continue;
+      el.setAttribute("inert", "");
+      el.setAttribute("aria-hidden", "true");
+      hidden.push(el);
+    }
     root.current?.querySelector<HTMLElement>("button")?.focus();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -65,8 +84,13 @@ export function CamLightbox({
     return () => {
       window.removeEventListener("keydown", onKey, true);
       document.body.style.overflow = prevOverflow;
-      opener?.focus();
+      for (const el of hidden) {
+        el.removeAttribute("inert");
+        el.removeAttribute("aria-hidden");
+      }
+      opener?.focus({ preventScroll: true });
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- set up once per open; the opener is read at open time on purpose
   }, []);
 
   const NAV =
@@ -78,6 +102,7 @@ export function CamLightbox({
       aria-modal="true"
       aria-label={`${name}, full screen`}
       className="fixed inset-0 z-[60] flex flex-col bg-black pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)]"
+      style={{ touchAction: "none", overscrollBehavior: "contain" }}
     >
       <div className="flex items-center justify-between gap-3 px-4 py-2 text-white">
         <div className="min-w-0 flex-1">
@@ -89,7 +114,7 @@ export function CamLightbox({
         </button>
       </div>
       <div className="min-h-0 flex-1">
-        <ZoomableImage src={src} alt={`${name}, live still`} />
+        <ZoomableImage src={frozenSrc} alt={`${name}, live still`} />
       </div>
       <div className="flex items-center justify-between gap-3 px-4 py-3 text-white">
         <p className="min-w-0 flex-1 text-[11px] leading-snug text-white/70">

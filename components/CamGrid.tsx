@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { CamView } from "@/lib/types";
 import { CamLightbox } from "@/components/CamLightbox";
 import { fmtTime } from "@/lib/format";
@@ -59,13 +59,14 @@ function FeaturedCam({ cam, tz, dataAt }: { cam: CamView; tz: string; dataAt?: s
   const stale = state === "feed-stale" || state === "data-stale";
   const dim = stale;
   const [open, setOpen] = useState(false);
+  const opener = useRef<HTMLButtonElement | null>(null);
   const stamp = cam.capturedAt ? `\u{1F4F7} ${fmtTime(cam.capturedAt, tz)}` : undefined;
   return (
     <>
     <button
+      ref={opener}
       type="button"
       onClick={() => setOpen(true)}
-      aria-label={`${cam.name}: open full screen to zoom`}
       className="group block w-full overflow-hidden rounded-2xl bg-slate-900 text-left ring-1 ring-slate-900/10 dark:ring-white/10 transition hover:ring-ocean-500/50"
     >
       <div className="relative aspect-video w-full overflow-hidden">
@@ -119,6 +120,7 @@ function FeaturedCam({ cam, tz, dataAt }: { cam: CamView; tz: string; dataAt?: s
           )}
         </div>
         <CamStamp cam={cam} tz={tz} />
+        <span className="sr-only">Open full screen to zoom.</span>
         {cam.attribution ? (
           <div className="mt-0.5 truncate text-[11px] text-slate-500">{cam.attribution}</div>
         ) : null}
@@ -131,6 +133,7 @@ function FeaturedCam({ cam, tz, dataAt }: { cam: CamView; tz: string; dataAt?: s
         credit={cam.attribution}
         liveUrl={cam.url}
         stamp={stamp}
+        openerRef={opener}
         onClose={() => setOpen(false)}
       />
     ) : null}
