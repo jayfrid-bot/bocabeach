@@ -5,6 +5,7 @@ import { LogoMark } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ConditionsDashboard } from "@/components/ConditionsDashboard";
 import { isNativeAppRequest } from "@/lib/nativeRequest";
+import { EDGE_MARKER_NAME, edgeMarkerContent } from "@/lib/edgeMarker";
 
 // Dynamic so we can read the request User-Agent to detect the native app shell
 // AND so the in-app WebView always gets fresh, uncached HTML (which references
@@ -51,15 +52,19 @@ export default async function Home() {
     // props (it'd otherwise reach the client via RSC serialization
     // regardless of ConditionsDashboard's own narrower prop type).
     return (
-      <ConditionsDashboard
-        slug={primary.slug}
-        initial={stripInternalSnapshotFields(data)}
-        browseHref={browseHref}
-        isNativeApp={isNativeApp}
-        // The served-beach list powers the location features (nearest beach,
-        // home beach, near-you chip) — public fields only.
-        beaches={locations.map(toPublicLocation)}
-      />
+      <>
+        {/* Tells the edge cache (lib/edgeCache.ts) this is a complete beach page. */}
+        <meta name={EDGE_MARKER_NAME} content={edgeMarkerContent(data)} />
+        <ConditionsDashboard
+          slug={primary.slug}
+          initial={stripInternalSnapshotFields(data)}
+          browseHref={browseHref}
+          isNativeApp={isNativeApp}
+          // The served-beach list powers the location features (nearest beach,
+          // home beach, near-you chip) — public fields only.
+          beaches={locations.map(toPublicLocation)}
+        />
+      </>
     );
   }
   return (

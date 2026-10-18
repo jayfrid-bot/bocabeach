@@ -5,6 +5,7 @@ import { getLocation, listLocations, toPublicLocation } from "@/config/locations
 import { ConditionsDashboard } from "@/components/ConditionsDashboard";
 import { isNativeAppRequest } from "@/lib/nativeRequest";
 import { beachDescription } from "./beachDescription";
+import { EDGE_MARKER_NAME, edgeMarkerContent } from "@/lib/edgeMarker";
 
 const SITE_URL = "https://isitbeachday.com";
 
@@ -98,6 +99,8 @@ export default async function BeachPage({
 
   return (
     <>
+      {/* Tells the edge cache (lib/edgeCache.ts) this is a complete beach page. */}
+      <meta name={EDGE_MARKER_NAME} content={edgeMarkerContent(data)} />
       {jsonLd ? (
         <script
           type="application/ld+json"

@@ -4,6 +4,7 @@
 
 import { getD1, type D1Like } from "@/lib/db/d1Store";
 import { activeOverrides } from "@/lib/quality/store";
+import { OVERRIDES_FINGERPRINT_SQL, fingerprintFromRow } from "@/lib/quality/overridesFingerprintSql";
 import type { SeaweedOverride } from "@/lib/quality/seaweedOverrides";
 import type { OverrideRow } from "@/lib/quality/types";
 
@@ -63,13 +64,10 @@ export async function overridesFingerprint(
     const d = db === undefined ? await getD1() : db;
     if (!d) return { version: "0", reliable: true };
     const r = await d
-      .prepare(
-        "SELECT COUNT(*) AS n, COALESCE(MAX(id), 0) AS maxId FROM quality_overrides " +
-          "WHERE slug = ?1 AND signal = 'seaweed' AND until_utc > ?2",
-      )
+      .prepare(OVERRIDES_FINGERPRINT_SQL)
       .bind(slug, new Date(nowMs).toISOString())
       .first<{ n: number; maxId: number }>();
-    return { version: r && Number(r.n) > 0 ? `${r.n}.${r.maxId}` : "0", reliable: true };
+    return { version: fingerprintFromRow(r), reliable: true };
   } catch {
     return { version: "0", reliable: false };
   }

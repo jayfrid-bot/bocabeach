@@ -185,7 +185,10 @@ and headers plus an explicit `Content-Length` (0 for an empty body such as 202; 
 no length for 204 and 304), without `Transfer-Encoding`, and without Next's `Vary` tokens
 (`rsc`, `next-router-state-tree`, `next-router-prefetch`, `next-router-segment-prefetch`,
 `next-url`; `Vary: Origin` stays). HEAD keeps the route's own headers. Every other path is
-returned untouched, so pages keep streaming.
+returned untouched, so pages keep streaming. Outside that wrapper sits the edge cache
+(`lib/edgeCache.ts`, 2026-10-18). It handles only `/`, `/<beach>` and
+`/api/conditions/<slug>` (GET or HEAD, no query string), so no agent path goes through it;
+see `docs/benchmarks/2026-10-18-perf/edge-cache.md`.
 
 Build and deploy are unchanged: `npm run deploy` (check:mobile, then `opennextjs-cloudflare
 build`, then `wrangler deploy`). For a preview, build first, then upload a version:
