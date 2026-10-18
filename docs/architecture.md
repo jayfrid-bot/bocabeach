@@ -1118,12 +1118,13 @@ Gated like `/api/hazards`: native app only, a rate-limited deviceId (300/hr
 by IP, 60/hr by device), the install token once one is on file, then
 `entitled(device, now)` — a free device gets 403 `not-entitled`, never a
 peek at the data. The route itself never calls `getConditions`; it runs
-four archive reads (auth and device hydration add their own D1 calls):
+archive reads (auth and device hydration add their own D1 calls):
 `DeviceStore.hourlyHistory` (`WHERE slug = ? AND row_kind = 'snapshot' AND
 local_date BETWEEN ? AND ?`, capped at 31 days, for the on-screen 7/14/30-day
-strip) plus `DeviceStore.historyRecords`'s own two statements — one UNION
-ALL of six single-row subqueries (best score, hottest sand, biggest surf,
-quietest 10 AM-6 PM reading, warmest water, clearest water) and one small meta aggregate
+strip) plus `DeviceStore.historyRecords`'s own three statements — one UNION
+ALL of four single-row subqueries (best score, hottest sand, biggest surf,
+quietest 10 AM-6 PM reading), a second of two (warmest water, clearest water;
+D1 allows at most 5 terms in one compound SELECT, so it is separate) and one small meta aggregate
 (`MIN(local_date)`, `COUNT(DISTINCT local_date)`, and `MIN(CASE WHEN
 surf_ft IS NOT NULL THEN local_date END)` as `surfSince`, folded into the
 SAME statement rather than a 4th) — fed through the pure summarizer
@@ -1135,7 +1136,7 @@ record reads the `surf_ft` column only (the breaking-surf estimate), never
 `surf_ft` postdates the archive itself (migration 0010), `surfSince` is
 normally later than `archiveStartedAt`; the "Biggest surf" tile captions
 that gap ("since Sept 28") instead of implying full-archive coverage.
-The fourth statement is `DeviceStore.historySunRecords`: one UNION ALL of two
+The last statement is `DeviceStore.historySunRecords`: one UNION ALL of two
 single-row subqueries over `sun_event_predictions` (best sunrise, best sunset).
 Each event scores as its LAST forecast made at or before the event (the same
 rule the day view uses), one GROUP BY on the primary key; the highest event

@@ -273,12 +273,10 @@ async function insertOrIgnoreRows<R extends object>(
   return { written: results.reduce((n, r) => n + Number(r?.meta?.changes ?? 0), 0) };
 }
 
-/** Lifetime records — one UNION ALL of six parenthesized single-row
+/** Lifetime records — one UNION ALL of four parenthesized single-row
  *  subqueries (see `historyRecords` below for the tie-break/window
- *  rationale). One numbered parameter: ?1 = slug. The two water arms carry
- *  guards (lib/history/recordRules.ts): a plausible range, and the value (or a
- *  higher one) in at least two hours of the same day; clarity also ignores days
- *  before the low-sun fix. Every arm ranks across the
+ *  rationale). One numbered parameter: ?1 = slug. (The water records are the
+ *  separate HISTORY_WATER_RECORDS_UNION: D1 caps a compound SELECT at 5 terms.) Every arm ranks across the
  *  beach's WHOLE archive and every scoring formula version: a row keeps the
  *  score it was given, and the best of them stands even after a later formula
  *  change. (`engine_version` is returned for information only.) */
@@ -310,7 +308,14 @@ SELECT * FROM (
   WHERE slug = ?1 AND row_kind = 'snapshot' AND crowd_pct IS NOT NULL AND local_hour BETWEEN 10 AND 18
   ORDER BY crowd_pct ASC, hour_utc ASC LIMIT 1
 )
-UNION ALL
+`;
+
+/** The two water records, a second statement because D1 allows at most FIVE
+ *  terms in one compound SELECT (a six-arm union fails in production with
+ *  "too many terms in compound SELECT", local SQLite does not). ?1 = slug.
+ *  Guards: lib/history/recordRules.ts. Clarity ignores days before the
+ *  low-sun fix. */
+export const HISTORY_WATER_RECORDS_UNION = `
 SELECT * FROM (
   SELECT 'warmest_water' AS kind, b.local_date, b.local_hour, b.water_temp_f AS value, b.engine_version
   FROM beach_hourly b
@@ -1538,7 +1543,10 @@ export function d1Store(db: D1Like): DeviceStore {
     // 3 AM near-zero reading would otherwise "win" quietest for a reason
     // that has nothing to do with the beach being pleasant then).
     async historyRecords(slug: string) {
-      const recordsResult = await db.prepare(HISTORY_RECORDS_UNION).bind(slug).all<HistoryRecordRow>();
+      const [recordsResult, waterResult] = await Promise.all([
+        db.prepare(HISTORY_RECORDS_UNION).bind(slug).all<HistoryRecordRow>(),
+        db.prepare(HISTORY_WATER_RECORDS_UNION).bind(slug).all<HistoryRecordRow>(),
+      ]);
       // Same meta query as before, plus `surf_since` — the earliest
       // local_date with a non-null surf_ft, folded into this ONE aggregate
       // (via a CASE inside MIN) rather than a 4th statement, so the route
@@ -1552,7 +1560,7 @@ export function d1Store(db: D1Like): DeviceStore {
         .bind(slug)
         .first<{ min_date: string | null; day_count: number; surf_since: string | null }>();
       return {
-        records: recordsResult.results ?? [],
+        records: [...(recordsResult.results ?? []), ...(waterResult.results ?? [])],
         archiveStartedAt: summaryRow?.min_date ?? null,
         dayCount: summaryRow?.day_count ?? 0,
         surfSince: summaryRow?.surf_since ?? null,

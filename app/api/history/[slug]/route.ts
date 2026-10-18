@@ -12,9 +12,10 @@
 // bump resets nothing. They never compare one beach with another. The
 // response still names which formulas scored the shown days (`versions`,
 // lib/scoringVersions.ts) as plain information; the UI draws no formula marks.
-// Four D1 statements total, all reads: the window SELECT (`hourlyHistory`),
-// the UNION ALL of single-row subqueries and one small meta aggregate (both
-// inside `historyRecords`), and the sunrise/sunset UNION (`historySunRecords`).
+// Five D1 statements total, all reads: the window SELECT (`hourlyHistory`),
+// two UNION ALLs of single-row subqueries (D1 allows 5 terms per compound
+// SELECT) and one small meta aggregate (all inside `historyRecords`), and the
+// sunrise/sunset UNION (`historySunRecords`).
 //
 // Gate: the same shape live-activity/register and hazards use, combined —
 // app-only (Plus is sold and delivered only inside the phone app), a valid

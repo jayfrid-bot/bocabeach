@@ -18,6 +18,7 @@ import path from "node:path";
 import {
   d1Store,
   HISTORY_RECORDS_UNION,
+  HISTORY_WATER_RECORDS_UNION,
   REGISTER_LIVE_ACTIVITY,
   SUN_RECORDS_UNION,
   SUPERSEDE_OTHER_ACTIVE_IF_LANDED,
@@ -901,9 +902,17 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       }
       const kindOf = async (kind: string) => (await store.historyRecords("boca-raton")).records.find((r) => r.kind === kind);
 
+      // Local SQLite allows 500 terms in a compound SELECT; Cloudflare D1 allows 5.
+      // A six-arm union passed every local test and failed in production.
+      it("no history record statement exceeds D1's limit of 5 terms in a compound SELECT", () => {
+        for (const sql of [HISTORY_RECORDS_UNION, HISTORY_WATER_RECORDS_UNION, SUN_RECORDS_UNION]) {
+          expect((sql.match(/UNION ALL/g) ?? []).length + 1).toBeLessThanOrEqual(5);
+        }
+      });
+
       it("each water arm reads this beach's rows by index; the same-day count never scans the table", async () => {
         const raw = freshRawDb();
-        const plan = ((await raw!.prepare(`EXPLAIN QUERY PLAN ${HISTORY_RECORDS_UNION}`).bind("boca-raton").all<{ detail: string }>()).results ?? [])
+        const plan = ((await raw!.prepare(`EXPLAIN QUERY PLAN ${HISTORY_WATER_RECORDS_UNION}`).bind("boca-raton").all<{ detail: string }>()).results ?? [])
           .map((r) => r.detail)
           .join("\n");
         expect(plan).not.toMatch(/SCAN (b|c|beach_hourly)\b(?! USING)/);
