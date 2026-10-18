@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getConditions } from "@/lib/conditions";
 import { toWire } from "@/lib/clientConditions";
+import { EDGE_DATA_HEADER, edgeMarkerContent } from "@/lib/edgeMarker";
 
 // The page's own copy of /api/conditions/<slug>: same data, a third of the bytes
 // (lib/clientConditions.ts says how). /api/conditions/<slug> itself is untouched —
@@ -35,6 +36,9 @@ export async function GET(
   // the fields no client code reads.
   return NextResponse.json(toWire(data), {
     headers: {
+      // For the edge cache (lib/edgeCache.ts): the snapshot time and ok=1 only for a complete
+      // build. Read from `data` before toWire drops budgetAborted.
+      [EDGE_DATA_HEADER]: edgeMarkerContent(data),
       "Cache-Control": isFreshnessCheck
         ? "public, s-maxage=20"
         : "public, s-maxage=300, stale-while-revalidate=600",

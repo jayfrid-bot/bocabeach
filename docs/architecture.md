@@ -12,8 +12,8 @@ is `worker.ts`, a thin wrapper around OpenNext's generated `.open-next/worker.js
 (it re-exports every named export, such as the Durable Object classes) that sends
 the agent paths as complete bodies with a `Content-Length`; see
 `docs/AGENT_API.md`, "Worker entry". Around that sits the edge cache
-(`lib/edgeCache.ts`): it answers repeat requests for the beach pages and
-`/api/conditions/<slug>` from a stored copy and refreshes the copy in the
+(`lib/edgeCache.ts`): it answers repeat requests for the beach pages,
+`/api/conditions/<slug>` and the dashboard's `/api/conditions/<slug>/lean` from a stored copy and refreshes the copy in the
 background (see "The edge cache" below the first diagram).
 
 ## 1. Request path — a page or app call
@@ -37,7 +37,7 @@ flowchart TD
   WATCH["Apple Watch app + complications"] -->|"GET, no query; Cache-Control s-maxage hint of 60 s at most (no Workers Cache), payload has validUntil"| WATCHR
   APPUI -->|"WatchSync plugin: home beach + last viewed<br/>lib/watchSync.ts (WatchConnectivity)"| WATCH
 
-  EDGECACHE["Edge cache lib/edgeCache.ts (outermost wrapper in worker.ts):<br/>GET/HEAD /, /&lt;beach&gt;, /api/conditions/&lt;slug&gt; with no query, no Authorization/Range,<br/>no RSC or Next-Router-* headers. Key = Worker version id + path + web/native UA + owner-override fingerprint.<br/>Fresh 60 s (data 5 min) → served; stale up to 10 min → served + ONE background refresh (ctx.waitUntil);<br/>older, or data over 30 min → renders inline. Stores only a 200 with the ibd-edge marker ok=1 (or the flagship's 308), never Set-Cookie.<br/>No KV, no scheduled pre-builds"]
+  EDGECACHE["Edge cache lib/edgeCache.ts (outermost wrapper in worker.ts):<br/>GET/HEAD /, /&lt;beach&gt;, /api/conditions/&lt;slug&gt; and /api/conditions/&lt;slug&gt;/lean with no query, no Authorization/Range,<br/>no RSC or Next-Router-* headers. Key = Worker version id + path + web/native UA + owner-override fingerprint.<br/>Fresh 60 s (data 5 min) → served; stale up to 10 min → served + ONE background refresh (ctx.waitUntil);<br/>older, or data over 30 min → renders inline. Stores only a 200 with the ibd-edge marker or x-ibd-edge header ok=1 (or the flagship's 308), never Set-Cookie.<br/>No KV, no scheduled pre-builds"]
   EDGEMEM[("In-isolate LRU<br/>8 MB")]
   EDGECOLO[("Workers Cache API caches.default<br/>key https://edge-cache.isitbeachday.internal/f1/&lt;version&gt;/…<br/>per datacenter; no-op on *.workers.dev")]
   EDGECACHE <-->|"1st tier"| EDGEMEM
@@ -51,7 +51,7 @@ flowchart TD
 
   subgraph routes [HTTP routes]
     COND["/api/conditions/[slug]<br/>(public endpoint, full shape, unchanged)"]
-    CONDLEAN["/api/conditions/[slug]/lean<br/>(the dashboard's own copy: wire form of lib/clientConditions.ts,<br/>row arrays packed into columns, server-only fields dropped, ~1/3 the bytes;<br/>same cache headers and query rules as the public route)"]
+    CONDLEAN["/api/conditions/[slug]/lean<br/>(the dashboard's own copy: wire form of lib/clientConditions.ts,<br/>row arrays packed into columns, server-only fields dropped, ~1/3 the bytes;<br/>same cache headers, query rules and x-ibd-edge header as the public route)"]
     WATCHR["/api/watch/[slug]<br/>(small ready-to-show view for the Apple Watch app)"]
     SHARE["/api/share/[slug]<br/>(shareable social card PNG, story/square; every page view sends HEAD for both formats ~1 s after load to fill the cache without downloading the pictures)"]
     RESOLVE["/api/resolve<br/>(name/zip → nearest served beach)"]
@@ -137,8 +137,9 @@ flowchart TD
 **The edge cache (`lib/edgeCache.ts`, 2026-10-18).** A beach page costs the
 server 100 ms or more of work even when the conditions are already cached, so
 the Worker entry keeps a ready copy of each beach page and of
-`/api/conditions/<slug>`. A request that may use a copy is a GET or HEAD for
-`/`, `/<beach>` or `/api/conditions/<slug>` with no query string, no
+`/api/conditions/<slug>` and of the dashboard's `/api/conditions/<slug>/lean` (each its own
+key). A request that may use a copy is a GET or HEAD for `/`, `/<beach>`,
+`/api/conditions/<slug>` or `/api/conditions/<slug>/lean` with no query string, no
 `Authorization` or `Range` header and none of Next's client-router headers
 (`RSC`, `Next-Router-*`, `Next-Action`, `Next-Url`). Everything else goes
 straight through, unchanged. The copy's key holds the Worker version id (the
@@ -147,7 +148,7 @@ another; the path; a web or native-app variant (the only request input a beach
 page reads is the User-Agent); and the owner-override fingerprint, so an owner
 correction changes the key within about 30 seconds. A copy is stored only when
 the route says it is complete: the page renders `<meta name="ibd-edge"
-content="v1;gen=…;ok=1">` and the JSON sends the header `x-ibd-edge`
+content="v1;gen=…;ok=1">` and both JSON routes send the header `x-ibd-edge`
 (`lib/edgeMarker.ts`). A partial build, a data outage, an error, a 404 or any
 response with `Set-Cookie` is never stored. A copy is fresh for 60 seconds
 while its data is at most 5 minutes old. After that it is served for up to
@@ -170,7 +171,7 @@ flowchart TD
   subgraph SWBOX [Service worker public/sw.js, in the browser]
     SW[fetch handler<br/>lib/swRules.test.ts] --> STATICC[("ibd-static-s1<br/>/_next/static/* cache-first,<br/>kept across builds, trimmed by count")]
     SW --> PAGEC[("ibd-pages-s1-build<br/>/ and /beach, stale-while-revalidate,<br/>copy over 6 h is not shown as current")]
-    SW --> DATAC[("ibd-data-s1-build<br/>/api/conditions/slug, first call of a page load only")]
+    SW --> DATAC[("ibd-data-s1-build<br/>/api/conditions/slug/lean (the dashboard's packed data call),<br/>first call of a page load only; posted to the page packed, unpacked there")]
   end
   SW -->|"background refresh, no-store"| EDGE2["Worker (worker.ts) + routes in diagram 1"]
   SW -->|"postMessage: fresh snapshot, build changed"| BR
@@ -179,7 +180,7 @@ flowchart TD
 ```
 
 Never cached: non-GET, Authorization or Range, any query string on a page, `/admin`, every
-`/api/*` except `/api/conditions/<beach>`, `/mcp`, `/api/v1`, push, history, devices,
+`/api/*` except `/api/conditions/<beach>/lean` (the public `/api/conditions/<beach>` included), `/mcp`, `/api/v1`, push, history, devices,
 RevenueCat, the install-token routes, non-200 and opaque answers.
 
 On the Plus side, the app also calls the device/presence routes directly

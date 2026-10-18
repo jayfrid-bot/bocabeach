@@ -10,13 +10,15 @@
  *                          fresh copy behind it. A copy older than 6 hours is not shown
  *                          as current: the network answers, and the old copy is used
  *                          only if the network is slow (3 s) or down.
- *  - /api/conditions/<b>   the first call of each page load is stale-while-revalidate.
- *                          Later calls (poll, resume, Refresh button) go to the network.
- *                          When fresh data lands the worker posts it to the page.
+ *  - /api/conditions/<b>/lean  the dashboard's data call (the packed form). The first
+ *                          call of each page load is stale-while-revalidate. Later calls
+ *                          (poll, resume, Refresh button) go to the network. When fresh
+ *                          data lands the worker posts it to the page, still packed.
  *  - everything else       untouched. The worker never calls respondWith for it.
  *
  * Never cached: any non-GET, any request with Authorization or Range, any query string
- * on a page, /admin, /api/* other than conditions, /mcp, /api/v1, push, history,
+ * on a page, /admin, /api/* other than conditions/<b>/lean (the public
+ * /api/conditions/<b> included), /mcp, /api/v1, push, history,
  * devices, RevenueCat, install-token routes, non-200 and opaque answers.
  *
  * Versioning: the page registers /sw.js?v=<build>. A new build installs a new worker.
@@ -88,7 +90,12 @@ var RESERVED_SEGMENTS = [
 ];
 
 var SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-var CONDITIONS_RE = /^\/api\/conditions\/([a-z0-9]+(?:-[a-z0-9]+)*)$/;
+/**
+ * The dashboard's data call is the packed /api/conditions/<b>/lean (lib/clientConditions.ts).
+ * The public /api/conditions/<b> is left to the network: nothing on a web page calls it, and
+ * one data route keeps "the first call of a page load" unambiguous.
+ */
+var CONDITIONS_RE = /^\/api\/conditions\/([a-z0-9]+(?:-[a-z0-9]+)*)\/lean$/;
 
 // ---------------------------------------------------------------------------
 // Pure rules (no I/O). Exposed as self.IBD_SW for the unit tests.

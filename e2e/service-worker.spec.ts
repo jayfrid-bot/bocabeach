@@ -44,8 +44,11 @@ test("registers, takes control, and warms the cache on the first visit", async (
   const page = await firstVisit(context);
   await page.reload();
   await readyWorker(page);
-  await expect.poll(async () => (await cachedUrls(page)).some((u) => u.startsWith("/api/conditions/")), { timeout: 15_000 }).toBe(true);
+  // The dashboard's data call is the packed lean route; the page asks the worker to save it.
+  await expect.poll(async () => (await cachedUrls(page)).some((u) => /^\/api\/conditions\/[a-z0-9-]+\/lean$/.test(u)), { timeout: 15_000 }).toBe(true);
   const urls = await cachedUrls(page);
+  // The public JSON is never the worker's: nothing on the page calls it.
+  expect(urls.some((u) => /^\/api\/conditions\/[a-z0-9-]+$/.test(u))).toBe(false);
   expect(urls).toContain("/");
   expect(urls.some((u) => u.startsWith("/_next/static/"))).toBe(true);
 });
@@ -78,6 +81,13 @@ test("a repeat open comes from the worker, shows the score at once, then updates
   await seed.close();
 
   const again = await context.newPage();
+  // The saved page's own snapshot is only seconds old, and a page whose snapshot is under
+  // 3 minutes old makes no data call on load (lib/conditionsFreshness.ts). Run this page's
+  // clock 4 minutes ahead so it does, as a page saved a few minutes ago would.
+  await again.addInitScript(() => {
+    const realNow = Date.now.bind(Date);
+    Date.now = () => realNow() + 4 * 60_000;
+  });
   // Record every message the worker posts to the page.
   await again.addInitScript(() => {
     const w = window as unknown as { __msgs: { type: string; at?: string }[] };
@@ -114,17 +124,18 @@ test("a repeat open comes from the worker, shows the score at once, then updates
 
 test("the worker keeps its hands off everything that must stay live", async ({ context }) => {
   const page = await firstVisit(context);
-  for (const p of ["/api/version", "/find", "/privacy", "/support", "/admin/review", "/api/history/boca-raton", "/mcp", "/api/v1/beaches", "/llms.txt", "/sw-kill", "/jupiter?x=1", "/api/conditions/boca-raton?fresh=1"]) {
+  for (const p of ["/api/version", "/find", "/privacy", "/support", "/admin/review", "/api/history/boca-raton", "/mcp", "/api/v1/beaches", "/llms.txt", "/sw-kill", "/jupiter?x=1", "/api/conditions/boca-raton?fresh=1", "/api/conditions/boca-raton/lean?fresh=1", "/api/conditions/jupiter"]) {
     await page.goto(p).catch(() => {});
     await page.waitForTimeout(150);
   }
   await page.evaluate(() => fetch("/api/devices", { method: "POST", body: "{}" }).catch(() => {}));
   await page.evaluate(() => fetch("/api/version", { headers: { Authorization: "Bearer x" } }).catch(() => {}));
   const urls = await cachedUrls(page);
-  const allowed = (u: string) => u === "/" || /^\/[a-z0-9-]+$/.test(u) || u.startsWith("/_next/static/") || u.startsWith("/api/conditions/") || u === "/__ibd/kill-check";
+  const lean = /^\/api\/conditions\/[a-z0-9-]+\/lean$/;
+  const allowed = (u: string) => u === "/" || /^\/[a-z0-9-]+$/.test(u) || u.startsWith("/_next/static/") || lean.test(u) || u === "/__ibd/kill-check";
   const bad = urls.filter((u) => !allowed(u) || ["/find", "/privacy", "/support", "/admin", "/mcp", "/sw-kill"].includes(u));
   expect(bad).toEqual([]);
-  expect(urls.filter((u) => u.startsWith("/api/") && !u.startsWith("/api/conditions/"))).toEqual([]);
+  expect(urls.filter((u) => u.startsWith("/api/") && !lean.test(u))).toEqual([]);
 });
 
 test("works offline once visited", async ({ context }) => {

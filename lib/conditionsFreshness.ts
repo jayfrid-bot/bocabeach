@@ -43,9 +43,30 @@ export function shouldRefetchForFreshness(generatedAtIso: string, nowMs: number,
  */
 export const MOUNT_REVALIDATE_AFTER_MS = 3 * 60 * 1000;
 
-/** Pure decision for ConditionsDashboard: refetch right after mounting, or trust the HTML? */
+/**
+ * Pure decision for ConditionsDashboard: refetch right after mounting, or trust the HTML?
+ * `generatedAtIso` is the snapshot's own time from the HTML, never when a copy of the page
+ * was stored (the edge cache, lib/edgeCache.ts, and the service worker, public/sw.js, may
+ * hand out a page up to minutes or hours after it was built). So a stored page whose
+ * snapshot is 9 minutes old still asks for new data.
+ */
 export function shouldRevalidateOnMount(generatedAtIso: string, nowMs: number): boolean {
   const generatedMs = Date.parse(generatedAtIso);
   if (!Number.isFinite(generatedMs)) return true; // cannot tell how old it is: ask
   return nowMs - generatedMs > MOUNT_REVALIDATE_AFTER_MS;
+}
+
+/**
+ * Never step back in time. A data answer can be older than what is on screen: the service
+ * worker answers the first data call of a page load from its saved copy, and the edge cache
+ * keeps the page and the data route as separate copies. True when `incoming` is older than
+ * `shown`, so the dashboard keeps what it shows (the worker posts the fresh one after).
+ */
+export function isOlderSnapshot(
+  incoming: { snapshot?: { generatedAt?: string } } | null | undefined,
+  shown: { snapshot?: { generatedAt?: string } } | null | undefined,
+): boolean {
+  const a = Date.parse(incoming?.snapshot?.generatedAt ?? "");
+  const b = Date.parse(shown?.snapshot?.generatedAt ?? "");
+  return Number.isFinite(a) && Number.isFinite(b) && a < b;
 }

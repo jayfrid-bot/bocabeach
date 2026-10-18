@@ -168,7 +168,7 @@ describe("sw.js routing rules", () => {
     expect(rules.classify(req("/_next/static/css/68bf.css"))?.kind).toBe("static");
     expect(rules.classify(req("/", { mode: "navigate" }))?.kind).toBe("page");
     expect(rules.classify(req("/siesta-key", { mode: "navigate" }))?.kind).toBe("page");
-    const c = rules.classify(req("/api/conditions/boca-raton"));
+    const c = rules.classify(req("/api/conditions/boca-raton/lean"));
     expect(c).toMatchObject({ kind: "conditions", slug: "boca-raton" });
   });
 
@@ -177,12 +177,16 @@ describe("sw.js routing rules", () => {
     expect(slugs.length).toBeGreaterThan(30);
     for (const s of slugs) {
       expect(rules.classify(req(`/${s}`, { mode: "navigate" }))?.kind, s).toBe("page");
-      expect(rules.classify(req(`/api/conditions/${s}`))?.kind, s).toBe("conditions");
+      expect(rules.classify(req(`/api/conditions/${s}/lean`))?.kind, s).toBe("conditions");
     }
   });
 
   it("never touches the paths that must stay live", () => {
     const never = [
+      // the public JSON: nothing on a web page calls it; the dashboard reads /lean
+      "/api/conditions/boca-raton",
+      "/api/conditions/boca-raton/lean/x",
+      "/api/conditions/boca-raton/leaner",
       "/admin",
       "/admin/review",
       "/api/admin/add",
@@ -225,13 +229,13 @@ describe("sw.js routing rules", () => {
   });
 
   it("leaves non-GET, credentialed, ranged, cross-origin and query-string requests alone", () => {
-    expect(rules.classify(req("/api/conditions/boca-raton", { method: "POST" }))).toBeNull();
-    expect(rules.classify(req("/api/conditions/boca-raton", { hasAuth: true }))).toBeNull();
+    expect(rules.classify(req("/api/conditions/boca-raton/lean", { method: "POST" }))).toBeNull();
+    expect(rules.classify(req("/api/conditions/boca-raton/lean", { hasAuth: true }))).toBeNull();
     expect(rules.classify(req("/_next/static/media/a.woff2", { hasRange: true }))).toBeNull();
     expect(rules.classify(req("https://evil.test/_next/static/a.js"))).toBeNull();
     expect(rules.classify(req("https://user:pw@app.test/_next/static/a.js"))).toBeNull();
     // the dashboard's deliberate freshness check and any other query go to the network
-    expect(rules.classify(req("/api/conditions/boca-raton?fresh=1"))).toBeNull();
+    expect(rules.classify(req("/api/conditions/boca-raton/lean?fresh=1"))).toBeNull();
     expect(rules.classify(req("/?ref=tag", { mode: "navigate" }))).toBeNull();
     expect(rules.classify(req("/siesta-key?x=1", { mode: "navigate" }))).toBeNull();
     // a page is only a navigation: a script fetching "/" is not
@@ -468,9 +472,9 @@ describe("sw.js behaviour", () => {
 
   it("conditions: first call is answered from the cache, then the fresh snapshot is posted", async () => {
     const w = makeWorker();
-    const url = `${ORIGIN}/api/conditions/boca-raton`;
+    const url = `${ORIGIN}/api/conditions/boca-raton/lean`;
     w.net.routes.set(url, () => jsonRes(cond("2026-10-18T10:00:00Z")));
-    const first = await w.dispatch({ url: "/api/conditions/boca-raton", clientId: "tab1" });
+    const first = await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "tab1" });
     expect((await first!.json()).snapshot.generatedAt).toBe("2026-10-18T10:00:00Z");
     const mine = () => w.posted.filter((m) => m.type === "ibd-fresh" && !m.toJupiter);
     expect(mine()).toHaveLength(1); // delivered:true, no data
@@ -485,7 +489,7 @@ describe("sw.js behaviour", () => {
     aged.headers.set("x-ibd-cached-at", String(Date.now() - 120_000));
     data.store.set(url, aged);
     w.net.routes.set(url, () => jsonRes(cond("2026-10-18T10:05:00Z")));
-    const second = await w.dispatch({ url: "/api/conditions/boca-raton", clientId: "tab2" });
+    const second = await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "tab2" });
     expect((await second!.json()).snapshot.generatedAt).toBe("2026-10-18T10:00:00Z"); // instant, old
     const fresh = mine();
     expect(fresh).toHaveLength(1);
@@ -493,18 +497,42 @@ describe("sw.js behaviour", () => {
     expect((fresh[0].data as { snapshot: { generatedAt: string } }).snapshot.generatedAt).toBe("2026-10-18T10:05:00Z");
   });
 
+  it("conditions: the packed lean answer is stored and posted as it came (the page unpacks it)", async () => {
+    const w = makeWorker();
+    const url = `${ORIGIN}/api/conditions/boca-raton/lean`;
+    const packed = (g: string) =>
+      JSON.stringify({ wire: 1, snapshot: { generatedAt: g, hourly: { data: { $packed: 1, n: 0, k: [], c: [] } } } });
+    w.net.routes.set(url, () => jsonRes(packed("2026-10-18T10:00:00Z")));
+    await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "p1" });
+    const data = await w.caches.open("ibd-data-s1-v1");
+    const s = data.store.get(url)!;
+    expect(JSON.parse(await s.clone().text()).wire).toBe(1);
+    const aged = new Response(await s.clone().text(), { headers: new Headers(s.headers) });
+    aged.headers.set("x-ibd-cached-at", String(Date.now() - 120_000));
+    data.store.set(url, aged);
+    w.posted.length = 0;
+    w.net.routes.set(url, () => jsonRes(packed("2026-10-18T10:05:00Z")));
+    await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "p2" });
+    const m = w.posted.filter((x) => x.type === "ibd-fresh" && !x.toJupiter);
+    expect(m).toHaveLength(1);
+    const posted = m[0].data as { wire: number; snapshot: { generatedAt: string; hourly: { data: { $packed: number } } } };
+    expect(posted.wire).toBe(1);
+    expect(posted.snapshot.generatedAt).toBe("2026-10-18T10:05:00Z");
+    expect(posted.snapshot.hourly.data.$packed).toBe(1);
+  });
+
   it("conditions: an unchanged refresh still posts the snapshot, so the page can never be left behind", async () => {
     const w = makeWorker();
-    const url = `${ORIGIN}/api/conditions/boca-raton`;
+    const url = `${ORIGIN}/api/conditions/boca-raton/lean`;
     w.net.routes.set(url, () => jsonRes(cond("2026-10-18T10:00:00Z")));
-    await w.dispatch({ url: "/api/conditions/boca-raton", clientId: "u1" });
+    await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "u1" });
     const data = await w.caches.open("ibd-data-s1-v1");
     const s = data.store.get(url)!;
     const aged = new Response(await s.clone().text(), { headers: new Headers(s.headers) });
     aged.headers.set("x-ibd-cached-at", String(Date.now() - 120_000));
     data.store.set(url, aged);
     w.posted.length = 0;
-    await w.dispatch({ url: "/api/conditions/boca-raton", clientId: "u2" });
+    await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "u2" });
     const m = w.posted.filter((x) => x.type === "ibd-fresh" && !x.toJupiter);
     expect(m).toHaveLength(1);
     expect(m[0].changed).toBe(false);
@@ -513,49 +541,49 @@ describe("sw.js behaviour", () => {
 
   it("conditions: later calls in the same page load (poll, Refresh) go to the network", async () => {
     const w = makeWorker();
-    const url = `${ORIGIN}/api/conditions/boca-raton`;
+    const url = `${ORIGIN}/api/conditions/boca-raton/lean`;
     let g = "2026-10-18T10:00:00Z";
     w.net.routes.set(url, () => jsonRes(cond(g)));
-    await w.dispatch({ url: "/api/conditions/boca-raton", clientId: "tab1" });
+    await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "tab1" });
     g = "2026-10-18T10:05:00Z";
-    const poll = await w.dispatch({ url: "/api/conditions/boca-raton", clientId: "tab1" });
+    const poll = await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "tab1" });
     expect((await poll!.json()).snapshot.generatedAt).toBe("2026-10-18T10:05:00Z");
     // offline poll falls back to the last good copy
     w.net.down = true;
-    const off = await w.dispatch({ url: "/api/conditions/boca-raton", clientId: "tab1" });
+    const off = await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "tab1" });
     expect((await off!.json()).snapshot.generatedAt).toBe("2026-10-18T10:05:00Z");
   });
 
   it("conditions: ?fresh=1, errors and wrong bodies are never stored", async () => {
     const w = makeWorker();
-    const url = `${ORIGIN}/api/conditions/boca-raton`;
-    expect(await w.dispatch({ url: "/api/conditions/boca-raton?fresh=1" })).toBeNull(); // worker stays out
+    const url = `${ORIGIN}/api/conditions/boca-raton/lean`;
+    expect(await w.dispatch({ url: "/api/conditions/boca-raton/lean?fresh=1" })).toBeNull(); // worker stays out
     w.net.routes.set(url, () => new Response(JSON.stringify({ error: "Unknown location" }), { status: 404, headers: { "content-type": "application/json" } }));
-    const r = await w.dispatch({ url: "/api/conditions/boca-raton" });
+    const r = await w.dispatch({ url: "/api/conditions/boca-raton/lean" });
     expect(r!.status).toBe(404);
     w.net.routes.set(url, () => jsonRes(JSON.stringify({ hello: "world" })));
-    await w.dispatch({ url: "/api/conditions/boca-raton", clientId: "t2" });
+    await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "t2" });
     const data = await w.caches.open("ibd-data-s1-v1");
     expect(data.store.size).toBe(0);
   });
 
   it("conditions: an old copy (over 6 h) waits for the network instead of posing as current", async () => {
     const w = makeWorker();
-    const url = `${ORIGIN}/api/conditions/boca-raton`;
+    const url = `${ORIGIN}/api/conditions/boca-raton/lean`;
     const data = await w.caches.open("ibd-data-s1-v1");
     data.store.set(url, new Response(cond("2026-10-18T01:00:00Z"), { headers: { "content-type": "application/json", "x-ibd-cached-at": String(Date.now() - 8 * 3600_000) } }));
     w.net.routes.set(url, () => jsonRes(cond("2026-10-18T10:00:00Z")));
-    const r = await w.dispatch({ url: "/api/conditions/boca-raton", clientId: "n1" });
+    const r = await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "n1" });
     expect((await r!.json()).snapshot.generatedAt).toBe("2026-10-18T10:00:00Z");
   });
 
   it("conditions: a failed refresh tells the page", async () => {
     const w = makeWorker();
-    const url = `${ORIGIN}/api/conditions/boca-raton`;
+    const url = `${ORIGIN}/api/conditions/boca-raton/lean`;
     const data = await w.caches.open("ibd-data-s1-v1");
     data.store.set(url, new Response(cond("2026-10-18T10:00:00Z"), { headers: { "content-type": "application/json", "x-ibd-cached-at": String(Date.now() - 120_000) } }));
     w.net.down = true;
-    const r = await w.dispatch({ url: "/api/conditions/boca-raton", clientId: "f1" });
+    const r = await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "f1" });
     expect((await r!.json()).snapshot.generatedAt).toBe("2026-10-18T10:00:00Z");
     expect(w.posted.some((m) => m.type === "ibd-fresh-failed")).toBe(true);
   });

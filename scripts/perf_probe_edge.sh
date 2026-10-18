@@ -7,7 +7,7 @@
 set -euo pipefail
 BASE="${1:-https://app.isitbeachday.com}"
 RUNS="${2:-10}"
-PATHS=(/ /siesta-key /jupiter /boca-raton /api/conditions/boca-raton /api/conditions/siesta-key /api/conditions/jupiter)
+PATHS=(/ /siesta-key /jupiter /boca-raton /api/conditions/boca-raton /api/conditions/siesta-key /api/conditions/jupiter /api/conditions/boca-raton/lean /api/conditions/jupiter/lean)
 med() { printf "%s\n" "$@" | sort -n | awk '{a[NR]=$1} END{print a[int((NR+1)/2)]}'; }
 ms() { echo "$1*1000" | bc; }
 printf "%-30s %8s %8s %9s %9s  %s\n" path ttfb_p50 ttfb_max setup_p50 after_p50 edge

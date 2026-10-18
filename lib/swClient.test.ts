@@ -1,9 +1,14 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { toWire } from "@/lib/clientConditions";
+import type { ConditionsResponse } from "@/lib/types";
 import {
   BUILD_RELOAD_GAP_MS,
   BUILD_RELOAD_WINDOW_MS,
   SAVED_NOTE_AFTER_MS,
   formatSavedAt,
+  freshConditionsFromMessage,
+  leanDataPath,
   optOutState,
   savedAtFromServerTiming,
   shouldApplyFresh,
@@ -97,5 +102,38 @@ describe("shouldReloadForNewBuild", () => {
     expect(shouldReloadForNewBuild({ ...base, openedAt: base.now - BUILD_RELOAD_WINDOW_MS - 1 })).toBe(false);
     expect(shouldReloadForNewBuild({ ...base, lastReloadAt: base.now - BUILD_RELOAD_GAP_MS + 1 })).toBe(false);
     expect(shouldReloadForNewBuild({ ...base, lastReloadAt: base.now - BUILD_RELOAD_GAP_MS - 1 })).toBe(true);
+  });
+});
+
+describe("freshConditionsFromMessage (the worker posts the lean route's packed form)", () => {
+  const full = JSON.parse(readFileSync("lib/__fixtures__/conditions-boca-raton-2026-10-18.json", "utf8")) as ConditionsResponse;
+  const wire = JSON.parse(JSON.stringify(toWire(full)));
+  const gen = full.snapshot.generatedAt;
+  const msg = (data: unknown, slug = "boca-raton") => ({ type: "ibd-fresh", kind: "conditions", slug, data });
+
+  it("the dashboard's data call is the lean route", () => {
+    expect(leanDataPath("boca-raton")).toBe("/api/conditions/boca-raton/lean");
+  });
+
+  it("unpacks a packed snapshot into the plain shape every card reads", () => {
+    const earlier = new Date(Date.parse(gen) - 60_000).toISOString();
+    const out = freshConditionsFromMessage(msg(wire), "boca-raton", earlier)!;
+    expect(out).not.toBeNull();
+    expect((out as unknown as { wire?: unknown }).wire).toBeUndefined();
+    expect(out.snapshot.generatedAt).toBe(gen);
+    const hourly = (out.snapshot as unknown as { hourly?: { data?: unknown } }).hourly?.data;
+    expect(Array.isArray(hourly)).toBe(true);
+    expect(hourly).toEqual((full.snapshot as unknown as { hourly?: { data?: unknown } }).hourly?.data);
+  });
+
+  it("keeps the newer-or-equal and same-beach rules", () => {
+    const later = new Date(Date.parse(gen) + 60_000).toISOString();
+    expect(freshConditionsFromMessage(msg(wire), "boca-raton", later)).toBeNull();
+    expect(freshConditionsFromMessage(msg(wire, "jupiter"), "boca-raton", gen)).toBeNull();
+    expect(freshConditionsFromMessage(msg(wire), "boca-raton", gen)).not.toBeNull();
+  });
+
+  it("still accepts a plain snapshot", () => {
+    expect(freshConditionsFromMessage(msg(full), "boca-raton", gen)?.snapshot.generatedAt).toBe(gen);
   });
 });

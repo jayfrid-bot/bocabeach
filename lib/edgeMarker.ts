@@ -1,7 +1,8 @@
 // The one signal a beach page or the conditions JSON gives the edge cache (lib/edgeCache.ts):
 // "this answer is a complete conditions build, generated at <time>". A page carries it as
 //   <meta name="ibd-edge" content="v1;gen=<ISO>;ok=1">
-// and /api/conditions/<slug> as the response header `x-ibd-edge` with the same value.
+// and /api/conditions/<slug> (and its packed /lean copy) as the response header `x-ibd-edge`
+// with the same value.
 //
 // The edge cache stores a 200 beach page or conditions answer ONLY when the marker is present
 // and says ok=1. So a page that is not a beach page, the "couldn't load conditions" fallback,

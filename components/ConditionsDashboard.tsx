@@ -17,7 +17,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { ScoreExplainer } from "@/components/ScoreExplainer";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { isPullRefreshing } from "@/lib/refreshInFlight";
-import { shouldRefetchForFreshness, shouldRevalidateOnMount } from "@/lib/conditionsFreshness";
+import { isOlderSnapshot, shouldRefetchForFreshness, shouldRevalidateOnMount } from "@/lib/conditionsFreshness";
 import { useSwRevalidate } from "@/lib/useSwRevalidate";
 import { ScoreWheel } from "@/components/ScoreWheel";
 import { ScoreCapBanner } from "@/components/ScoreCapBanner";
@@ -201,9 +201,17 @@ export function ConditionsDashboard({
   // the same on the server and the client, which keeps `isValidating` (the Refresh
   // button's label) identical in both and hydration clean — and the effect below
   // asks only when the snapshot we were handed is old.
+  // What is on screen, for the never-step-back rule below (set after `res` is known).
+  const shownRef = useRef<ConditionsResponse>(initial);
+  // A poll, focus or mount answer older than what is shown (a saved copy from the service
+  // worker or the edge cache) keeps what is shown; the fresher copy follows by message or poll.
+  const fetchNewest = useCallback(async (u: string) => {
+    const fresh = await fetcher(u);
+    return isOlderSnapshot(fresh, shownRef.current) ? shownRef.current : fresh;
+  }, []);
   const { data, mutate, isValidating } = useSWR<ConditionsResponse>(
     preview ? null : `/api/conditions/${slug}/lean`,
-    fetcher,
+    fetchNewest,
     {
       fallbackData: initial,
       revalidateOnMount: false,
@@ -258,6 +266,9 @@ export function ConditionsDashboard({
   // error body lacking `.snapshot` must never shadow the good initial data.
   const res = data && data.snapshot ? data : initial;
   const snap = res.snapshot;
+  useEffect(() => {
+    shownRef.current = res;
+  }, [res]);
 
   // Stale-while-revalidate freshness retry (Codex round 2/3): unstable_cache's
   // 120-s revalidate under OpenNext can serve the FIRST visitor to a

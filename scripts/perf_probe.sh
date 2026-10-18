@@ -5,7 +5,7 @@
 set -euo pipefail
 BASE="${1:-https://app.isitbeachday.com}"
 RUNS="${2:-5}"
-PATHS=(/ /siesta-key /jupiter /api/conditions/boca-raton /api/conditions/siesta-key /api/conditions/jupiter)
+PATHS=(/ /siesta-key /jupiter /api/conditions/boca-raton /api/conditions/siesta-key /api/conditions/jupiter /api/conditions/boca-raton/lean /api/conditions/jupiter/lean)
 printf "%-32s %8s %8s %8s %10s\n" path ttfb_p50 ttfb_max total_p50 bytes_br
 for p in "${PATHS[@]}"; do
   ttfbs=(); totals=(); bytes=0

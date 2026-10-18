@@ -7,6 +7,7 @@
 //   GET/HEAD  /                     the flagship beach page (PRIMARY_SLUG)
 //   GET/HEAD  /<beach-slug>         a beach page (a 200 with the ibd-edge marker, or the flagship's 308)
 //   GET/HEAD  /api/conditions/<slug>  the public conditions JSON (a 200 with x-ibd-edge ok=1)
+//   GET/HEAD  /api/conditions/<slug>/lean  the dashboard's packed copy of it (same rule)
 // and only with NO query string, NO Authorization, NO Range and none of Next's client-router
 // headers (RSC, Next-Router-*, Next-Action, Next-Url). Cookies are ignored: these routes read none
 // (a test checks the page sources). The only request input a beach page reads is the User-Agent
@@ -69,7 +70,7 @@ const KEY_ORIGIN = "https://edge-cache.isitbeachday.internal";
 
 /** Top-level paths that are not beaches (app/ routes and files). A test checks app/ against it. */
 export const RESERVED_TOP_LEVEL = new Set([
-  "admin", "api", "find", "get-app", "mcp", "privacy", "sticker", "support",
+  "admin", "api", "find", "get-app", "mcp", "privacy", "sticker", "support", "sw-kill",
   "opengraph-image", "twitter-image", "icon", "apple-icon", "manifest", "robots", "sitemap",
   "_next", "favicon",
 ]);
@@ -115,7 +116,10 @@ export function classify(request: Request): Classified {
   const variant = NATIVE_UA.test(request.headers.get("user-agent") ?? "") ? "native" : "web";
   const path = url.pathname;
   if (path === "/") return { route: { kind: "page", path, slug: PRIMARY_SLUG, variant } };
-  const api = /^\/api\/conditions\/([^/]+)$/.exec(path);
+  // /api/conditions/<slug> (the public JSON) and /api/conditions/<slug>/lean (the packed copy
+  // the dashboard polls, lib/clientConditions.ts). Each path is its own key, so the two shapes
+  // never mix; both carry the x-ibd-edge header with the snapshot time.
+  const api = /^\/api\/conditions\/([^/]+)(?:\/lean)?$/.exec(path);
   if (api) {
     const slug = api[1];
     // The JSON does not depend on the User-Agent: one variant.

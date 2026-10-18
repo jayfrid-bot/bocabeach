@@ -32,7 +32,7 @@ The iOS app is a Capacitor shell that loads the live site from the network.
 | --- | --- |
 | `/_next/static/*` | Cache first. Files are hashed. Kept across builds, trimmed to 150 files when over 200. |
 | `/` and `/<beach>` (navigations, no query string) | Stale while revalidate. Copy under 6 hours old: answer from the cache, fetch a new copy behind it. Older: ask the network, use the old copy only if the network is silent for 3 s or down. A reload or hard reload goes to the network. |
-| `/api/conditions/<beach>` | The first call of each page load is stale while revalidate. Later calls (5-minute poll, resume, Refresh button, pull to refresh) go to the network and fall back to the saved copy only on failure. `?fresh=1` is never touched. |
+| `/api/conditions/<beach>/lean` | The dashboard's data call (the packed form, `lib/clientConditions.ts`). The first call of each page load is stale while revalidate. Later calls (5-minute poll, resume, Refresh button, pull to refresh) go to the network and fall back to the saved copy only on failure. `?fresh=1` is never touched. The fresh copy is posted to the page packed; `lib/useSwRevalidate.ts` unpacks it. The public `/api/conditions/<beach>` is not handled: nothing on a web page calls it. |
 | Everything else | The worker does not answer. |
 
 Never cached: non-GET, `Authorization`, `Range`, any query string on a page, `/admin`, every `/api/*` except conditions
@@ -138,3 +138,13 @@ The `_headers` fix plus the app-bound flag is far less code.
 - The worker serves the first conditions call from its copy, so the Refresh button's "Refreshing…" can flip early. Only the first call per page load is served from the copy; Refresh and the poll go to the network.
 - Storage: about 2 MB of build files plus about 500 KB per saved page (decoded HTML) and 15 KB per beach.
 - Edge crew (`perf-edge-cache`) changes to `Cache-Control` on HTML or conditions do not matter to the worker (it overrides pages and uses its own age rule), but a change to the URL shape of `/api/conditions/<beach>` or the chunk path would.
+
+## Integration with the payload and edge-cache work (2026-10-18)
+
+- The dashboard reads `/api/conditions/<beach>/lean`, so that is the worker's data route.
+- A page whose snapshot is under 3 minutes old makes no data call on load
+  (`lib/conditionsFreshness.ts`). So the page asks the worker to save its beach's lean data
+  once (`ibd-warm`, from `lib/useSwRevalidate.ts`), and the "first call of a page load"
+  happens only when the saved page is older than that.
+- A data answer older than what the page shows is ignored (`isOlderSnapshot`); the worker's
+  fresh copy follows by message.

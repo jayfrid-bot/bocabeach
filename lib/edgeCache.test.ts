@@ -62,6 +62,24 @@ describe("classify: what may be cached", () => {
     expect("route" in classify(req("/jupiter", { method: "HEAD" }))).toBe(true);
   });
 
+  it("the dashboard's packed copy, /api/conditions/<slug>/lean, under its own path", () => {
+    expect(classify(req("/api/conditions/jupiter/lean"))).toEqual({
+      route: { kind: "api", path: "/api/conditions/jupiter/lean", slug: "jupiter", variant: "web" },
+    });
+    expect(classify(req("/api/conditions/jupiter/lean", { ua: APP_UA }))).toMatchObject({ route: { variant: "web" } });
+    expect(classify(req("/api/conditions/jupiter/lean", { method: "HEAD" }))).toMatchObject({ route: { kind: "api" } });
+    // The same rules as the public JSON: any query (the dashboard's ?fresh=1 retry) goes through.
+    for (const p of ["/api/conditions/jupiter/lean?fresh=1", "/api/conditions/jupiter/lean?x=1", "/api/conditions/jupiter/lean?"]) {
+      expect(classify(req(p)), p).toEqual({ bypass: "query" });
+    }
+    for (const h of BYPASS_HEADERS) {
+      expect(classify(req("/api/conditions/jupiter/lean", { headers: { [h]: "1" } })), h).toEqual({ bypass: `header:${h}` });
+    }
+    for (const p of ["/api/conditions/jupiter/lean/x", "/api/conditions/Bad_Slug/lean", "/api/conditions//lean", "/api/conditions/jupiter/leaner"]) {
+      expect("bypass" in classify(req(p)), p).toBe(true);
+    }
+  });
+
   it("the native app shell is its own variant for pages, not for the JSON", () => {
     expect(classify(req("/jupiter", { ua: APP_UA }))).toMatchObject({ route: { variant: "native" } });
     expect(classify(req("/", { ua: "x IsItBeachDayApp/android" }))).toMatchObject({ route: { variant: "native" } });
@@ -145,8 +163,9 @@ describe("cache key", () => {
       cacheKey({ ...route, variant: "native" }, "ver-1", "0"),
       cacheKey({ ...route, path: "/siesta-key", slug: "siesta-key" }, "ver-1", "0"),
       cacheKey({ ...route, kind: "api", path: "/api/conditions/jupiter" }, "ver-1", "0"),
+      cacheKey({ ...route, kind: "api", path: "/api/conditions/jupiter/lean" }, "ver-1", "0"),
     ];
-    expect(new Set([k, ...others]).size).toBe(6);
+    expect(new Set([k, ...others]).size).toBe(7);
     expect(cacheKey({ kind: "page", path: "/", slug: PRIMARY_SLUG, variant: "web" }, "v", "0")).not.toBe(
       cacheKey({ kind: "page", path: `/${PRIMARY_SLUG}`, slug: PRIMARY_SLUG, variant: "web" }, "v", "0"),
     );
@@ -249,7 +268,9 @@ describe("beach page sources", () => {
     for (const f of ["app/page.tsx", "app/[slug]/page.tsx"]) {
       expect(readFileSync(join(ROOT, f), "utf8"), f).toMatch(/<meta name=\{EDGE_MARKER_NAME\} content=\{edgeMarkerContent\(data\)\}/);
     }
-    expect(readFileSync(join(ROOT, "app/api/conditions/[slug]/route.ts"), "utf8")).toMatch(/\[EDGE_DATA_HEADER\]: edgeMarkerContent\(data\)/);
+    for (const f of ["app/api/conditions/[slug]/route.ts", "app/api/conditions/[slug]/lean/route.ts"]) {
+      expect(readFileSync(join(ROOT, f), "utf8"), f).toMatch(/\[EDGE_DATA_HEADER\]: edgeMarkerContent\(data\)/);
+    }
   });
   it("the owner-override fingerprint is one query for both bundles", () => {
     const src = readFileSync(join(ROOT, "lib/quality/overrides.ts"), "utf8");
@@ -621,6 +642,59 @@ describe("withEdgeCache", () => {
     expect(hit.headers.get("x-edge-cache")).toBe("HIT");
     expect(hit.headers.get("cache-control")).toBe("public, s-maxage=300, stale-while-revalidate=600");
     expect(await hit.text()).toBe('{"snapshot":{}}');
+  });
+
+  it("caches the lean JSON under its own key and reads its data time from x-ibd-edge", async () => {
+    let gen = GEN;
+    const h = harness((r) =>
+      new Response(r.url.endsWith("/lean") ? `{"wire":1,"snapshot":{"generatedAt":"${gen}"}}` : '{"snapshot":{}}', {
+        headers: { "content-type": "application/json", [EDGE_DATA_HEADER]: `v1;gen=${gen};ok=1`, "cache-control": "public, s-maxage=300, stale-while-revalidate=600" },
+      }),
+    );
+    await (await h.call(req("/api/conditions/jupiter/lean"))).text();
+    await h.settle();
+    const hit = await h.call(req("/api/conditions/jupiter/lean"));
+    expect(hit.headers.get("x-edge-cache")).toBe("HIT");
+    expect(hit.headers.get("x-edge-data-age")).toBe("30");
+    expect(await hit.text()).toContain('"wire":1');
+    // The public JSON is a different key: a miss, never the packed body.
+    const pub = await h.call(req("/api/conditions/jupiter"));
+    expect(pub.headers.get("x-edge-cache")).toBe("MISS");
+    expect(await pub.text()).toBe('{"snapshot":{}}');
+    await h.settle();
+    // ?fresh=1 always reaches the route, untagged.
+    const before = h.inner.mock.calls.length;
+    const fresh = await h.call(req("/api/conditions/jupiter/lean?fresh=1"));
+    expect(fresh.headers.get("x-edge-cache")).toBeNull();
+    expect(h.inner.mock.calls.length).toBe(before + 1);
+
+    // A lean copy whose snapshot is old (by its x-ibd-edge time, not when it was stored) is stale.
+    gen = new Date(T0 - DATA_FRESH_MS - 60_000).toISOString();
+    const h2 = harness(() =>
+      new Response(`{"wire":1,"snapshot":{"generatedAt":"${gen}"}}`, { headers: { "content-type": "application/json", [EDGE_DATA_HEADER]: `v1;gen=${gen};ok=1` } }),
+    );
+    await (await h2.call(req("/api/conditions/jupiter/lean"))).text();
+    await h2.settle();
+    const stale = await h2.call(req("/api/conditions/jupiter/lean"));
+    expect(stale.headers.get("x-edge-cache")).toBe("STALE");
+    expect(Number(stale.headers.get("x-edge-data-age"))).toBe((DATA_FRESH_MS + 60_000) / 1000);
+    await h2.settle();
+
+    // ...one past DATA_MAX_AGE_MS is never served: the request renders inline.
+    gen = new Date(T0 - DATA_MAX_AGE_MS - 1000).toISOString();
+    const h3 = harness(() =>
+      new Response(`{"wire":1,"snapshot":{}}`, { headers: { "content-type": "application/json", [EDGE_DATA_HEADER]: `v1;gen=${gen};ok=1` } }),
+    );
+    await (await h3.call(req("/api/conditions/jupiter/lean"))).text();
+    await h3.settle();
+    expect((await h3.call(req("/api/conditions/jupiter/lean"))).headers.get("x-edge-cache")).toBe("MISS");
+
+    // ...and a lean answer without the header is never stored.
+    const h4 = harness(() => new Response(`{"wire":1,"snapshot":{}}`, { headers: { "content-type": "application/json" } }));
+    await (await h4.call(req("/api/conditions/jupiter/lean"))).text();
+    await h4.settle();
+    expect(h4.cache.puts).toBe(0);
+    expect((await h4.call(req("/api/conditions/jupiter/lean"))).headers.get("x-edge-cache")).toBe("MISS");
   });
 
   it("the miss response still streams the body the route produced", async () => {

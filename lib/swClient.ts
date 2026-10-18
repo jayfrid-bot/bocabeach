@@ -3,6 +3,9 @@
 // The worker's own rules are tested in lib/swRules.test.ts; docs/SERVICE_WORKER.md
 // explains the whole design.
 
+import type { ConditionsResponse } from "@/lib/types";
+import { fromWire, type WireConditions } from "@/lib/clientConditions";
+
 /** The native shells append this to the user agent (capacitor.config.ts). */
 export const NATIVE_SHELL_UA_MARK = "IsItBeachDayApp/";
 
@@ -94,6 +97,30 @@ export function shouldApplyFresh<T extends { snapshot?: { generatedAt?: string }
   const shown = Date.parse(shownGeneratedAt);
   if (Number.isFinite(shown) && incoming < shown) return null;
   return data as T;
+}
+
+/** The dashboard's data call, which the worker answers and refreshes (public/sw.js). */
+export function leanDataPath(slug: string): string {
+  return `/api/conditions/${slug}/lean`;
+}
+
+/**
+ * The fresh snapshot in a worker message, unpacked for the dashboard. The worker caches
+ * and posts the lean route's packed form as it came (lib/clientConditions.ts), so it is
+ * unpacked here; the same newer-or-equal rule as shouldApplyFresh applies.
+ */
+export function freshConditionsFromMessage(
+  msg: FreshMessage | null | undefined,
+  slug: string,
+  shownGeneratedAt: string,
+): ConditionsResponse | null {
+  const data = shouldApplyFresh<WireConditions | ConditionsResponse>(msg, slug, shownGeneratedAt);
+  if (!data) return null;
+  try {
+    return fromWire(data);
+  } catch {
+    return null; // a malformed packed body is ignored; the poll still runs
+  }
 }
 
 /**

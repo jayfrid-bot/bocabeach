@@ -14,6 +14,7 @@ vi.mock("@/lib/conditions", async (importOriginal) => {
 import { GET } from "@/app/api/conditions/[slug]/lean/route";
 import { getConditions } from "@/lib/conditions";
 import { fromWire, isWire } from "@/lib/clientConditions";
+import { EDGE_DATA_HEADER, parseEdgeMarkerContent } from "@/lib/edgeMarker";
 
 const real = JSON.parse(
   readFileSync("lib/__fixtures__/conditions-boca-raton-2026-10-18.json", "utf8"),
@@ -48,6 +49,15 @@ describe("GET /api/conditions/[slug]/lean", () => {
       "public, s-maxage=300, stale-while-revalidate=600",
     );
     expect((await GET(...req("boca-raton", "?fresh=1"))).headers.get("cache-control")).toBe("public, s-maxage=20");
+  });
+
+  it("tells the edge cache the snapshot time, and ok=0 for a partial build", async () => {
+    vi.mocked(getConditions).mockResolvedValue(real);
+    const m = parseEdgeMarkerContent((await GET(...req("boca-raton"))).headers.get(EDGE_DATA_HEADER));
+    expect(m).toEqual({ generatedAtMs: Date.parse(real.snapshot.generatedAt), ok: true });
+    vi.mocked(getConditions).mockResolvedValue({ ...real, budgetAborted: true });
+    const partial = parseEdgeMarkerContent((await GET(...req("boca-raton"))).headers.get(EDGE_DATA_HEADER));
+    expect(partial?.ok).toBe(false);
   });
 
   it("rejects any other query string before it reaches the conditions pipeline", async () => {
