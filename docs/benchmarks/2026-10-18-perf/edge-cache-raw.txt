@@ -1,0 +1,167 @@
+Raw probe output for edge-cache.md. Probe machine: owner's laptop on home Wi-Fi (Florida), Cloudflare colo MIA.
+ping 1.1.1.1 at the time: min 10.7 / avg 23.6 / max 70.9 ms, stddev 16.4 ms.
+
+########## Final run (version 96af90b6 = the committed code) and controls ##########
+# edge ON preview (https://96af90b6-isitbeachday.entwined-app.workers.dev), version 96af90b6, 2026-10-18T20:58:15Z
+## run 1 = cold: perf_probe.sh 10 (new connection each request)
+path                             ttfb_p50 ttfb_max total_p50   bytes_br
+/                                    175ms    1328ms     214ms      63782
+/siesta-key                          127ms    2020ms     231ms      57041
+/jupiter                             151ms    1198ms     209ms      59716
+/api/conditions/boca-raton           117ms     283ms     119ms      17744
+/api/conditions/siesta-key            94ms     149ms     110ms      13832
+/api/conditions/jupiter              115ms     311ms     120ms      15786
+## run 2 = warm: perf_probe.sh 10
+path                             ttfb_p50 ttfb_max total_p50   bytes_br
+/                                    106ms    1087ms     119ms      63782
+/siesta-key                          124ms     174ms     134ms      57041
+/jupiter                             104ms     238ms     116ms      59716
+/api/conditions/boca-raton            83ms     142ms      88ms      17744
+/api/conditions/siesta-key           100ms     194ms     104ms      13849
+/api/conditions/jupiter              104ms     154ms     105ms      15833
+## perf_probe_edge.sh 10 (warm)
+path                           ttfb_p50 ttfb_max setup_p50 after_p50  edge
+/                                  102ms     229ms       38ms       64ms  HIT=10 
+/siesta-key                        115ms     159ms       36ms       64ms  HIT=10 
+/jupiter                           119ms     440ms       38ms       78ms  HIT=10 
+/boca-raton                        112ms     197ms       34ms       79ms  HIT=9 MISS=1 
+/api/conditions/boca-raton          86ms     112ms       37ms       52ms  HIT=10 
+/api/conditions/siesta-key          88ms     130ms       35ms       52ms  HIT=10 
+/api/conditions/jupiter             85ms     202ms       36ms       50ms  HIT=10 
+## perf_probe_reuse.sh 20 (warm, reused connection)
+path                               min     p25     p50     p90 new_conns
+/icon-192.png                     30ms    40ms    50ms   104ms 0
+/                                 39ms    53ms    60ms    92ms 0
+/siesta-key                       42ms    49ms    59ms   144ms 0
+/jupiter                          35ms    48ms    61ms   170ms 0
+/boca-raton                       32ms    37ms    46ms   109ms 0
+/api/conditions/boca-raton        30ms    38ms    43ms    98ms 0
+/api/conditions/siesta-key        30ms    36ms    40ms    54ms 0
+/api/conditions/jupiter           30ms    37ms    48ms   142ms 0
+
+# edge OFF control (https://83bdde6a-isitbeachday.entwined-app.workers.dev), right after
+## perf_probe_reuse.sh 20
+path                               min     p25     p50     p90 new_conns
+/icon-192.png                     34ms    44ms    51ms    92ms 0
+/                                151ms   160ms   205ms   748ms 0
+/siesta-key                      123ms   165ms   184ms   224ms 0
+/jupiter                         130ms   160ms   170ms   239ms 0
+/boca-raton                       45ms    56ms    71ms    93ms 0
+/api/conditions/boca-raton        75ms    90ms   109ms   202ms 0
+/api/conditions/siesta-key        76ms    84ms    94ms   199ms 0
+/api/conditions/jupiter           66ms    85ms    97ms   183ms 0
+# zone (production, no edge cache), right after
+## perf_probe.sh 10
+path                             ttfb_p50 ttfb_max total_p50   bytes_br
+/                                    382ms    1068ms     435ms      63588
+/siesta-key                          279ms    1276ms     337ms      57126
+/jupiter                             272ms     839ms     350ms      59863
+/api/conditions/boca-raton           153ms    1282ms     186ms      18331
+/api/conditions/siesta-key           129ms    1255ms     134ms      14321
+/api/conditions/jupiter              167ms     292ms     187ms      16429
+## perf_probe_reuse.sh 20
+path                               min     p25     p50     p90 new_conns
+/icon-192.png                     23ms    40ms    52ms   230ms 0
+/                                118ms   144ms   161ms   267ms 0
+/siesta-key                      104ms   132ms   143ms   260ms 0
+/jupiter                          99ms   139ms   187ms   375ms 0
+/boca-raton                       35ms    51ms    60ms   187ms 0
+/api/conditions/boca-raton        71ms    78ms    87ms   239ms 0
+/api/conditions/siesta-key        62ms    77ms    93ms   166ms 0
+/api/conditions/jupiter           57ms    72ms    82ms   262ms 0
+
+########## Earlier run: edge OFF control (83bdde6a, same build, no CF_VERSION_METADATA binding) ##########
+# edge OFF preview (https://83bdde6a-isitbeachday.entwined-app.workers.dev), same build, 2026-10-18T20:54:08Z
+## perf_probe.sh 10 (new connection each request)
+path                             ttfb_p50 ttfb_max total_p50   bytes_br
+/                                    724ms    1214ms     800ms      63916
+/siesta-key                          257ms     659ms     287ms      57083
+/jupiter                             240ms     823ms     332ms      60119
+/api/conditions/boca-raton           165ms     354ms     170ms      18146
+/api/conditions/siesta-key           174ms     399ms     204ms      14266
+/api/conditions/jupiter              144ms     323ms     150ms      16102
+## perf_probe_edge.sh 10
+path                           ttfb_p50 ttfb_max setup_p50 after_p50  edge
+/                                  211ms     306ms       36ms      161ms  -=10 
+/siesta-key                        212ms     651ms       47ms      161ms  -=10 
+/jupiter                           247ms     295ms       38ms      208ms  -=10 
+/boca-raton                        109ms     766ms       40ms       68ms  -=10 
+/api/conditions/boca-raton         185ms     842ms       38ms      118ms  -=10 
+/api/conditions/siesta-key         138ms     358ms       39ms       93ms  -=10 
+/api/conditions/jupiter            162ms     249ms       39ms      114ms  -=10 
+## perf_probe_reuse.sh 20 (reused connection)
+path                               min     p25     p50     p90 new_conns
+/icon-192.png                     35ms    42ms    51ms    78ms 0
+/                                127ms   146ms   174ms   225ms 0
+/siesta-key                      107ms   137ms   162ms   215ms 0
+/jupiter                         118ms   160ms   174ms   252ms 0
+/boca-raton                       39ms    50ms    60ms   151ms 0
+/api/conditions/boca-raton        83ms    96ms   101ms   196ms 0
+/api/conditions/siesta-key        71ms    83ms    91ms   136ms 0
+/api/conditions/jupiter           64ms    78ms    85ms   177ms 0
+
+########## Earlier run: edge ON (d4c4c036, first upload), cold then warm ##########
+## perf_probe.sh 10, cold (first request per path = MISS)
+path                             ttfb_p50 ttfb_max total_p50   bytes_br
+/                                    144ms    7442ms     154ms      64077
+/siesta-key                          134ms    9463ms     153ms      57213
+/jupiter                             142ms    2564ms     161ms      59996
+/api/conditions/boca-raton           127ms     249ms     129ms      17720
+/api/conditions/siesta-key           122ms     214ms     131ms      13882
+/api/conditions/jupiter              134ms    1254ms     138ms      15796
+## perf_probe.sh 10, warm
+path                             ttfb_p50 ttfb_max total_p50   bytes_br
+/                                    106ms     183ms     123ms      64077
+/siesta-key                          144ms    2213ms     167ms      57213
+/jupiter                             146ms     195ms     157ms      59996
+/api/conditions/boca-raton           113ms     178ms     115ms      17727
+/api/conditions/siesta-key           130ms     307ms     136ms      13877
+/api/conditions/jupiter              131ms     361ms     138ms      15750
+## perf_probe_edge.sh 10
+path                           ttfb_p50 ttfb_max setup_p50 after_p50  edge
+/                                  112ms     448ms       40ms       71ms  HIT=10 
+/siesta-key                        133ms     282ms       36ms       96ms  HIT=10 
+/jupiter                           170ms     781ms       64ms      105ms  HIT=10 
+/boca-raton                        141ms    1272ms       46ms       74ms  HIT=9 MISS=1 
+/api/conditions/boca-raton         136ms     219ms       47ms       95ms  HIT=10 
+/api/conditions/siesta-key         121ms     222ms       41ms       73ms  HIT=10 
+/api/conditions/jupiter            124ms    1127ms       36ms       82ms  HIT=10 
+
+# edge ON preview (https://d4c4c036-isitbeachday.entwined-app.workers.dev), warm, 2026-10-18T20:55:26Z
+## perf_probe.sh 10 (new connection each request)
+path                             ttfb_p50 ttfb_max total_p50   bytes_br
+/                                    147ms     431ms     149ms      63782
+/siesta-key                          115ms     469ms     136ms      57041
+/jupiter                             114ms     605ms     138ms      59957
+/api/conditions/boca-raton            82ms     246ms      97ms      17738
+/api/conditions/siesta-key           107ms     340ms     122ms      13883
+/api/conditions/jupiter              115ms     218ms     145ms      15822
+## perf_probe_edge.sh 10
+path                           ttfb_p50 ttfb_max setup_p50 after_p50  edge
+/                                  103ms     226ms       40ms       58ms  HIT=10 
+/siesta-key                        103ms     147ms       35ms       65ms  HIT=10 
+/jupiter                            97ms     299ms       41ms       56ms  HIT=10 
+/boca-raton                        120ms     215ms       39ms       81ms  HIT=9 STALE=1 
+/api/conditions/boca-raton         106ms     324ms       41ms       62ms  HIT=10 
+/api/conditions/siesta-key         107ms     370ms       48ms       50ms  HIT=10 
+/api/conditions/jupiter            110ms     243ms       48ms       55ms  HIT=10 
+## perf_probe_reuse.sh 20 (reused connection)
+path                               min     p25     p50     p90 new_conns
+/icon-192.png                     35ms    46ms    56ms   107ms 0
+/                                 43ms    58ms    69ms   162ms 0
+/siesta-key                       42ms    53ms    64ms   147ms 0
+/jupiter                          40ms    53ms    69ms   119ms 0
+/boca-raton                       35ms    47ms    57ms    98ms 0
+/api/conditions/boca-raton        34ms    48ms    57ms   159ms 0
+/api/conditions/siesta-key        33ms    38ms    56ms   181ms 0
+/api/conditions/jupiter           33ms    42ms    44ms    86ms 0
+
+########## Production zone before the change, split view ##########
+path                           ttfb_p50 ttfb_max setup_p50 after_p50  edge
+/                                  762ms    1025ms       48ms      720ms  -=5 
+/siesta-key                        361ms     607ms       38ms      246ms  -=5 
+/jupiter                           352ms     693ms       37ms      239ms  -=5 
+/boca-raton                        121ms     133ms       44ms       66ms  -=5 
+/api/conditions/boca-raton         140ms     170ms       40ms      103ms  -=5 
+/api/conditions/siesta-key         126ms     177ms       40ms       87ms  -=5 
+/api/conditions/jupiter            128ms     223ms       37ms       90ms  -=5 
