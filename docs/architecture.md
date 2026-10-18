@@ -246,7 +246,7 @@ flowchart LR
   IMGAPI -->|"get"| CAMR2
   REMOVE["scripts/cam_archive_remove.ts (by hand; dry run unless --yes)<br/>lists the cam prefix through the R2 S3 API when R2 keys are set,<br/>wrangler r2 object delete + D1 DELETE for one cam"] -->|"erase one cam on a request"| CAMR2
   REMOVE --> D1
-  SUNCAM -->|"yt-dlp -J → HLS playlist (~4 h DVR); one frame every 2.5 min,<br/>event −35 … +25 min, per config/sun-cams.json cam"| YTLIVE[["YouTube livestream DVR<br/>Elbo Room + 3 Deerfield cams (east) and Fort Myers Beach + Pensacola Beach cams (west)"]]
+  SUNCAM -->|"yt-dlp -J → HLS playlist (~4 h DVR); one frame every 2.5 min,<br/>event −35 … +25 min, per config/sun-cams.json cam"| YTLIVE[["YouTube livestream DVR<br/>Elbo Room + 3 Deerfield cams + Jacksonville Beach cam (east) and Fort Myers Beach + Pensacola Beach cams (west)"]]
   SUNCAM -->|"POST /api/sun-observations — Bearer INGEST_TOKEN<br/>robust-peak score + series + scored_at, per beach / event / cam;<br/>incomplete captures are never sent"| SUNOBS["/api/sun-observations<br/>constant-time auth, bounded 32 KB read, strict validation<br/>that recomputes coverage + robust peak (lib/sunObservations.ts)"]
   OWNER["owner's Mac"] -->|"POST /api/push/test — Bearer INGEST_TOKEN, {deviceId}:<br/>one real APNs alert to one device, writes no alert state"| PUSHTEST["/api/push/test"]
   SUNOBS -->|"sun_event_observations (migrations/0015)<br/>upsert only when (score_version, scored_at) is newer —<br/>duplicates and stale replays are no-ops; credit stored"| D1
@@ -261,7 +261,10 @@ flowchart LR
 Beach's cams (underwater, crowd/sand, surf, pier) plus Fort Lauderdale
 Beach's Elbo Room cam (crowd/sand, owner approved), plus the two west-facing Gulf
 cams (Visit Fort Myers at Fort Myers Beach, the Santa Rosa Island Authority at
-Pensacola Beach), exist only as YouTube live streams — there's no still-image feed — so each cron tick opens ONE headless
+Pensacola Beach), plus 15 Florida Atlantic-coast cams added 2026-10-17 (Jacksonville Beach to Key West:
+county, city, tourism-board and local-business streams, each credited to its owner in `config/locations.ts`;
+the Mac courier pulls them hourly only, from its `HOURLY_CAMS` list, never on a golden-hour run, so the
+seven older cams keep their pull rate and the 15 add 15 `yt-dlp` pulls an hour), exist only as YouTube live streams — there's no still-image feed — so each cron tick opens ONE headless
 Chrome and reuses the SAME page across every camera due that tick (navigate
 the embed, wait for it to actually be playing, screenshot, move to the next
 cam) rather than launching a browser per camera. The same browser also loads
@@ -1229,8 +1232,8 @@ also erases a cam's `quality/` prefix.
 | Gemini / Cloudflare Workers AI (Clef 27B, via `/api/vision/clef`) / Groq / OpenRouter / GitHub Models | Beach-cam vision reads (seaweed, busyness, water clarity), tried in that order. Also the second opinion on a held seaweed jump: Clef checks a Gemini, Groq or OpenRouter claim, Gemini checks a Clef claim (`scripts/quality_watch.py`) |
 | iNaturalist | Portuguese man-o'-war sighting reports |
 | FL Healthy Beaches | Water-quality advisories |
-| video-monitoring.com | Public beach cam still frames |
-| YouTube | Deerfield Beach underwater + surface cam sources, Fort Lauderdale Beach's Elbo Room cam, and the Fort Myers Beach and Pensacola Beach west-facing cams, live-embed only (`workers/uw-frame`) |
+| video-monitoring.com | Public beach cam still frames: Palm Beach County ERM (Boca Raton, Lake Worth Inlet), the Jupiter Inlet District, Martin County (Jensen, Bathtub Beach, Hobe Sound) and the Sebastian Inlet District. The same `snapshotFeed` path serves all of them, with no YouTube pull |
+| YouTube | Deerfield Beach underwater + surface cam sources, Fort Lauderdale Beach's Elbo Room cam, the Fort Myers Beach and Pensacola Beach west-facing cams, and 15 Florida Atlantic-coast cams (Jacksonville Beach to Key West), live-embed only (`workers/uw-frame`) |
 | ArcGIS (City of Deerfield Beach dashboard) | Lifeguard flag status read (`workers/uw-frame`) |
 | City of Fort Lauderdale Fire Rescue "Beach Conditions" page | Lifeguard flags, sea pests, ocean report (`workers/uw-frame`, Browser Rendering) |
 | Apple Push Notification service (APNs) | iOS push delivery, including the owner-only quality alerts (`lib/quality/notify.ts`) |
