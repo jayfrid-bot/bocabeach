@@ -1,20 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  launchd job for scripts/cam_courier_local.sh — see that script's header
+  ROUTINE launchd job for scripts/cam_courier_local.sh — see that script's header
   for the token-file setup and what this job does.
 
-  This is the HOURLY job. Its golden-hour companion, which grabs every 10
-  minutes inside a sunrise/sunset window, is
-  scripts/com.isitbeachday.camcourier.golden.plist (same script, golden-only flag);
-  install both. launchd cannot pass different arguments per calendar entry, so
-  they have to be two jobs.
+  Every 5 minutes, at :03, :08, ... :58. Each run asks scripts/courier_schedule.py which
+  cams are due (a cam whose last good frame is 57+ minutes old; a few cams per run, most
+  overdue first), so the cams spread over the hour instead of all firing at :07. Most
+  runs find nothing due and exit at once without a log line. The daylight gate
+  (06:00-20:59 America/New_York) is inside the scheduler.
 
-  NOT INSTALLED by this change. To install (replace __HOME__ first):
+  Its golden-hour companion (every 10 minutes, golden-only flag) is
+  scripts/com.isitbeachday.camcourier.golden.plist. Install both. launchd cannot pass
+  different arguments per calendar entry, so they are two jobs. Both go through the
+  shared yt-dlp pacer (scripts/yt_pacer.py); see docs/courier-pacing.md.
+
+  To install (replace __HOME__ first):
     sed "s#__HOME__#$HOME#g" scripts/com.isitbeachday.camcourier.plist \
       > "$HOME/Library/LaunchAgents/com.isitbeachday.camcourier.plist"
     launchctl bootstrap gui/$(id -u) \
       "$HOME/Library/LaunchAgents/com.isitbeachday.camcourier.plist"
+
+  To replace an installed copy: launchctl bootout gui/$(id -u)/com.isitbeachday.camcourier
+  first, then run the two commands above.
 
   To uninstall:
     launchctl bootout gui/$(id -u)/com.isitbeachday.camcourier
@@ -38,39 +46,25 @@
   <key>WorkingDirectory</key>
   <string>__HOME__/Projects/bocabeach</string>
 
-  <!-- Every hour at minute 7 (staggered off the worker's own top-of-hour
-       cron ticks so a courier upload and a browser-grab tick don't usually
-       land at the exact same instant). -->
+  <!-- Every hour at :03, :08, ... :58 (12 fires an hour, offset from the golden job's :00/:10/... fires). -->
   <key>StartCalendarInterval</key>
   <array>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>0</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>1</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>2</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>3</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>4</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>5</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>6</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>7</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>8</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>9</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>10</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>11</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>12</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>13</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>14</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>15</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>16</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>17</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>18</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>19</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>20</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>21</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>22</integer></dict>
-    <dict><key>Minute</key><integer>7</integer><key>Hour</key><integer>23</integer></dict>
+    <dict><key>Minute</key><integer>3</integer></dict>
+    <dict><key>Minute</key><integer>8</integer></dict>
+    <dict><key>Minute</key><integer>13</integer></dict>
+    <dict><key>Minute</key><integer>18</integer></dict>
+    <dict><key>Minute</key><integer>23</integer></dict>
+    <dict><key>Minute</key><integer>28</integer></dict>
+    <dict><key>Minute</key><integer>33</integer></dict>
+    <dict><key>Minute</key><integer>38</integer></dict>
+    <dict><key>Minute</key><integer>43</integer></dict>
+    <dict><key>Minute</key><integer>48</integer></dict>
+    <dict><key>Minute</key><integer>53</integer></dict>
+    <dict><key>Minute</key><integer>58</integer></dict>
   </array>
 
-  <key>RunAtLoad</key>
-  <true/>
+  <!-- No RunAtLoad: a run at load would fire at the same instant as the golden job's
+       load. The next calendar minute is at most 5 minutes away. -->
 
   <key>StandardOutPath</key>
   <string>__HOME__/Library/Logs/cam-courier.log</string>

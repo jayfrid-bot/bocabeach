@@ -114,9 +114,12 @@ class PolarTests(unittest.TestCase):
 
 
 class LaunchdScheduleTests(unittest.TestCase):
-    """scripts/com.isitbeachday.camcourier.golden.plist must fire on every
-    10-minute mark that falls inside a golden window, on every day of the year
-    (launchd runs on the Mac's LOCAL time, America/New_York)."""
+    """The two courier plists. launchd runs on the Mac's LOCAL time (America/New_York).
+
+    The golden plist used to list the local hours of the four original beaches' windows.
+    A beach farther north or west (a summer sunrise at 05:30, a Texas sunset at 21:30)
+    would fall outside such a list, so it now fires every 10 minutes ALL day and
+    scripts/courier_schedule.py asks the sun."""
 
     SCRIPTS = Path(__file__).resolve().parent
 
@@ -124,52 +127,45 @@ class LaunchdScheduleTests(unittest.TestCase):
         with open(self.SCRIPTS / name, "rb") as fh:
             return plistlib.load(fh)
 
-    def test_golden_job_passes_the_flag_and_the_hourly_job_does_not(self):
+    def test_golden_job_passes_the_flag_and_the_routine_job_does_not(self):
         golden = self.load("com.isitbeachday.camcourier.golden.plist")
-        hourly = self.load("com.isitbeachday.camcourier.plist")
+        routine = self.load("com.isitbeachday.camcourier.plist")
         self.assertEqual(golden["ProgramArguments"][-1], "--golden-only")
-        self.assertEqual(golden["ProgramArguments"][:-1], hourly["ProgramArguments"])
-        self.assertNotEqual(golden["Label"], hourly["Label"])
-        self.assertNotIn("--golden-only", hourly["ProgramArguments"])
+        self.assertEqual(golden["ProgramArguments"][:-1], routine["ProgramArguments"])
+        self.assertNotEqual(golden["Label"], routine["Label"])
+        self.assertNotIn("--golden-only", routine["ProgramArguments"])
 
-    def test_the_hourly_job_is_unchanged_minute_7_of_every_hour(self):
-        fires = {(e["Hour"], e["Minute"]) for e in self.load("com.isitbeachday.camcourier.plist")["StartCalendarInterval"]}
-        self.assertEqual(fires, {(h, 7) for h in range(24)})
+    def test_the_routine_job_fires_every_five_minutes_all_day_off_the_golden_marks(self):
+        entries = self.load("com.isitbeachday.camcourier.plist")["StartCalendarInterval"]
+        self.assertTrue(all("Hour" not in e for e in entries))
+        minutes = sorted(e["Minute"] for e in entries)
+        self.assertEqual(minutes, list(range(3, 60, 5)))
+        self.assertTrue(all(m % 10 != 0 for m in minutes))  # never on a golden mark
 
-    def test_every_ten_minute_mark_inside_a_window_has_a_launch(self):
-        fires = {(e["Hour"], e["Minute"]) for e in self.load("com.isitbeachday.camcourier.golden.plist")["StartCalendarInterval"]}
-        self.assertTrue(all(m % 10 == 0 for _, m in fires))
+    def test_the_golden_job_fires_on_every_ten_minute_mark_all_day(self):
+        entries = self.load("com.isitbeachday.camcourier.golden.plist")["StartCalendarInterval"]
+        self.assertTrue(all("Hour" not in e for e in entries))
+        self.assertEqual(sorted(e["Minute"] for e in entries), [0, 10, 20, 30, 40, 50])
+
+    def test_every_ten_minute_mark_inside_a_window_has_a_launch_for_every_beach(self):
+        # With no Hour key every hour fires; so any 10-minute mark in any window, for ANY
+        # beach in the manifest, has a launch. Check the windows really are on 10-min marks.
+        entries = self.load("com.isitbeachday.camcourier.golden.plist")["StartCalendarInterval"]
+        marks = {e["Minute"] for e in entries}
         zone = ZoneInfo("America/New_York")
         day, missed = date(2026, 1, 1), []
         while day.year == 2026:
             noon = datetime(day.year, day.month, day.day, 12, tzinfo=zone).astimezone(timezone.utc)
-            for slug in gn.COURIER_SLUGS:
+            for slug in BEACHES:
                 for kind, start, end in gn.windows_for(BEACHES[slug], noon):
                     t = start
                     while t < end:
                         local = t.astimezone(zone)
-                        if local.minute % 10 == 0 and (local.hour, local.minute) not in fires:
+                        if local.minute % 10 == 0 and local.minute not in marks:
                             missed.append((str(day), slug, kind, local.strftime("%H:%M")))
-                        t += timedelta(minutes=1)
-            day += timedelta(days=1)
-        self.assertEqual(missed, [])
-
-    def test_the_schedule_has_no_pointless_hours(self):
-        # Every hour in the plist is touched by a window on at least one day of the year.
-        fires = {(e["Hour"], e["Minute"]) for e in self.load("com.isitbeachday.camcourier.golden.plist")["StartCalendarInterval"]}
-        hours_used = set()
-        zone = ZoneInfo("America/New_York")
-        day = date(2026, 1, 1)
-        while day.year == 2026:
-            noon = datetime(day.year, day.month, day.day, 12, tzinfo=zone).astimezone(timezone.utc)
-            for slug in gn.COURIER_SLUGS:
-                for _, start, end in gn.windows_for(BEACHES[slug], noon):
-                    t = start
-                    while t < end:
-                        hours_used.add(t.astimezone(zone).hour)
                         t += timedelta(minutes=5)
-            day += timedelta(days=1)
-        self.assertEqual({h for h, _ in fires}, hours_used)
+            day += timedelta(days=7)
+        self.assertEqual(missed, [])
 
 
 class CliTests(unittest.TestCase):

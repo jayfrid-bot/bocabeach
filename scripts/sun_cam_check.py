@@ -130,6 +130,14 @@ USAGE:
       --date/--event/--cam/--slug). Add --dry-run to print without uploading.
   Other flags: --cams a,b  --now ISO  --json  --verbose
 
+PACING: every yt-dlp call (the manifest issue, the fallback search) goes through
+scripts/yt_pacer.py, the call budget shared by all jobs on the box (docs/courier-pacing.md).
+The tier is "sun": it may use 48 of the 60 calls per 15 minutes and waits up to 15 minutes
+for a slot (the DVR keeps 4 hours, so a late start costs nothing). After a bot check the
+run stops and the next run (30 minutes on) tries again. Frames come from DvrSession.prefetch:
+all the event's segments in parallel from ONE manifest issue, so a cam-event costs one
+yt-dlp call, not three.
+
 INSTALL the launchd job (NOT done by the change that added this file):
   1. pip install pillow; make sure yt-dlp and ffmpeg are installed (the courier
      already needs them).
@@ -165,6 +173,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -179,6 +188,11 @@ except ImportError:  # pragma: no cover - Python < 3.9
 os.environ["PATH"] = os.pathsep.join(
     [str(Path.home() / ".hermes/node/bin"), "/opt/homebrew/bin", "/usr/local/bin", os.environ.get("PATH", "")]
 )
+
+# Every yt-dlp call goes through the shared pacer (scripts/yt_pacer.py): one call budget
+# for all jobs on the box, and a 20-minute stop for all of them after a bot check.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import yt_pacer  # noqa: E402
 
 # YYYY-MM-DD.N: the server orders re-scores by this (date, then N as a number), then by scored_at.
 SUN_CAM_SCORE_VERSION = "2026-10-15.1"
@@ -665,43 +679,46 @@ def _http_get(url: str, timeout: int = 30) -> bytes:
         return resp.read()
 
 
+_PACER: Optional[Any] = None
+
+
+def _pacer() -> Any:
+    global _PACER
+    if _PACER is None:
+        _PACER = yt_pacer.Pacer()
+    return _PACER
+
+
+def _backing_off() -> bool:
+    """True while a bot-check backoff is in force (any job set it). Never raises."""
+    try:
+        return bool(_pacer().in_backoff())
+    except Exception:  # noqa: BLE001 - the pacer must never take the job down
+        return False
+
+
 def _resolve_elbo_fallback(cam: Dict[str, Any]) -> Optional[str]:
-    """Elbo Room's stream id changes whenever they restart. Scrape the CURRENT
-    id from their beach-cam page (the same trick scripts/cam_courier_local.sh
-    uses) and accept the first playable one whose title contains the configured
-    word (the weather-station stream on the same page shows the street)."""
+    """A cam's stream id can change whenever its owner restarts it (Elbo Room). Scrape
+    the CURRENT id from the cam's own page and accept the first stream whose title
+    contains the configured word (the weather-station stream on the same page shows the
+    street). One implementation, shared with the courier: yt_pacer.find_fallback_video_id.
+    The id found is remembered for 12 hours under `vid:<cam id>`."""
     fb = cam.get("fallback")
     if not fb:
         return None
-    try:
-        html = _http_get(fb["page"], timeout=20).decode("utf-8", "replace")
-    except Exception as exc:  # noqa: BLE001 - best effort
-        log(f"{cam['id']}: fallback page fetch failed: {exc}")
-        return None
-    seen: List[str] = []
-    for cand in re.findall(r"live_chat\?v=([A-Za-z0-9_-]{6,})", html):
-        if cand not in seen:
-            seen.append(cand)
-    for cand in seen:
-        try:
-            r = _run(["yt-dlp", "--no-warnings", "--print", "%(title)s", f"https://www.youtube.com/watch?v={cand}"], 40)
-        except subprocess.TimeoutExpired:
-            continue
-        if r.returncode == 0 and fb.get("title_contains", "") in r.stdout:
-            log(f"{cam['id']}: fallback video id -> {cand}")
-            return cand
-    return None
+    vid, _status = yt_pacer.find_fallback_video_id(_pacer(), cam["id"], fb["page"], fb.get("title_contains", ""), "sun")
+    return vid
 
 
-def _ytdlp_info(video_id: str) -> Optional[Dict[str, Any]]:
-    try:
-        r = _run(["yt-dlp", "-J", "--no-warnings", "--no-playlist", "--socket-timeout", "20", f"https://www.youtube.com/watch?v={video_id}"], 90)
-    except subprocess.TimeoutExpired:
+def _ytdlp_info(video_id: str, label: str = "") -> Optional[Dict[str, Any]]:
+    res = _pacer().run(
+        ["yt-dlp", "-J", "--no-warnings", "--no-playlist", "--socket-timeout", "20", f"https://www.youtube.com/watch?v={video_id}"],
+        "sun", label or video_id, timeout_s=90,
+    )
+    if res.status != "ok" or not res.stdout.strip():
         return None
-    if r.returncode != 0 or not r.stdout.strip():
-        return None
     try:
-        return json.loads(r.stdout)
+        return json.loads(res.stdout)
     except ValueError:
         return None
 
@@ -719,9 +736,20 @@ def _pick_hls_format(info: Dict[str, Any]) -> Optional[str]:
 
 # YouTube signs every segment URL in a playlist for only ~30 s: after that the
 # same URL answers 403 (measured 2026-10-06; a playlist's first ~15 frames fetch
-# fine, then everything 403s). So the session re-issues the manifest (one
-# `yt-dlp -J`, ~1.5 s) every REFRESH_AFTER_S seconds, and again on any 403.
+# fine, then everything 403s). Measured again 2026-10-16: segments play up to ~25 s
+# after yt-dlp issued the manifest, 403 at ~31 s, and fetching the SAME playlist URL
+# again does not help (its 6-hour /expire/ is not the limit that matters). So the
+# session re-issues the manifest (one `yt-dlp -J`, ~1.5 s) every REFRESH_AFTER_S
+# seconds, and again on any 403.
 REFRESH_AFTER_S = 18.0
+
+# PREFETCH: instead of one frame at a time (about 9 frames per issued manifest, so 3
+# yt-dlp calls for 25 frames), download the event's segments in parallel right after
+# the manifest is issued, inside PREFETCH_BUDGET_S, then cut the frames from the local
+# files. That is ONE yt-dlp call per cam per event in the usual case.
+PREFETCH_WORKERS = 6
+PREFETCH_BUDGET_S = 22.0
+PREFETCH_MAX_ROUNDS = 3  # at most this many manifest issues to collect the segments
 
 
 class DvrSession:
@@ -733,14 +761,21 @@ class DvrSession:
         self.timeline: Optional[HlsTimeline] = None
         self.issued = 0.0
         self.refreshes = 0
+        self._segs: Dict[float, Path] = {}  # segment start (epoch) -> prefetched file
+        try:
+            known = _pacer().cache_get(f"vid:{cam['id']}")  # an id the courier or an earlier run rediscovered
+        except Exception:  # noqa: BLE001
+            known = None
+        if known:
+            self.video_id = known
 
     def _issue(self) -> Optional[HlsTimeline]:
-        info = _ytdlp_info(self.video_id)
-        if info is None and self.cam.get("fallback"):
+        info = _ytdlp_info(self.video_id, self.cam["id"])
+        if info is None and self.cam.get("fallback") and not _backing_off():
             log(f"{self.cam['id']}: video id {self.video_id} failed; trying the fallback lookup")
             alt = _resolve_elbo_fallback(self.cam)
             if alt:
-                info = _ytdlp_info(alt)
+                info = _ytdlp_info(alt, self.cam["id"])
                 if info is not None:
                     self.video_id = alt
         if info is None:
@@ -774,6 +809,20 @@ class DvrSession:
             log(f"{self.cam['id']}: DVR {iso_z(span[0])} .. {iso_z(span[1])} ({len(tl.segments)} segments)")
         return True
 
+    @staticmethod
+    def _get_segment(url: str, dest: Path) -> str:
+        """'ok', 'forbidden' (401/403: the URL went stale) or 'error'."""
+        for attempt in (1, 2):
+            try:
+                dest.write_bytes(_http_get(url, timeout=30))
+                return "ok"
+            except urllib.error.HTTPError as exc:
+                return "forbidden" if exc.code in (401, 403) else "error"
+            except (urllib.error.URLError, OSError, ValueError):
+                if attempt == 2:
+                    return "error"
+        return "error"
+
     def _fetch(self, t: datetime, dest: Path) -> Optional[Tuple[datetime, str]]:
         """Download the segment containing `t`. Returns (segment start, 'ok')
         or (.., 'forbidden') on a 403, None when there is nothing to fetch."""
@@ -783,32 +832,77 @@ class DvrSession:
         if hit is None:
             return None
         start, _dur, url = hit
-        for attempt in (1, 2):
-            try:
-                dest.write_bytes(_http_get(url, timeout=30))
-                return start, "ok"
-            except urllib.error.HTTPError as exc:
-                return start, "forbidden" if exc.code in (401, 403) else "error"
-            except (urllib.error.URLError, OSError, ValueError):
-                if attempt == 2:
-                    return start, "error"
-        return start, "error"
+        return start, self._get_segment(url, dest)
+
+    def prefetch(self, times: List[datetime], workdir: Path) -> int:
+        """Download every segment the sample `times` need, in parallel, inside the
+        window in which a freshly issued manifest still works. Returns how many
+        segments are now on disk. Whatever it misses, frame() fetches the old way."""
+        if self.timeline is None:
+            return 0
+        if time.monotonic() - self.issued > 5.0:
+            self.open()  # the manifest is not fresh: one new issue, then the whole batch
+
+        def pending() -> Dict[float, str]:
+            todo: Dict[float, str] = {}
+            tl = self.timeline
+            for t in times:
+                hit = tl.locate(t) if tl else None
+                if hit is None:
+                    continue
+                key = round(hit[0].timestamp(), 2)
+                f = self._segs.get(key)
+                if f is None or not f.exists():
+                    todo[key] = hit[2]
+            return todo
+
+        for rnd in range(PREFETCH_MAX_ROUNDS):
+            todo = pending()
+            if not todo:
+                break
+            if rnd > 0:
+                if not self.open():  # the URLs in `todo` went stale: one fresh issue for what is left
+                    break
+                todo = pending()
+                if not todo:
+                    break
+            deadline = self.issued + PREFETCH_BUDGET_S
+
+            def grab(item: Tuple[float, str]) -> Tuple[float, str, Path]:
+                key, url = item
+                dest = workdir / f"pre-{key:.2f}.ts"
+                if time.monotonic() > deadline:
+                    return key, "late", dest
+                return key, self._get_segment(url, dest), dest
+
+            with ThreadPoolExecutor(max_workers=PREFETCH_WORKERS) as pool:
+                for key, status, dest in pool.map(grab, list(todo.items())):
+                    if status == "ok":
+                        self._segs[key] = dest
+        return len(self._segs)
 
     def frame(self, t: datetime, workdir: Path) -> Optional[Path]:
         """One frame at instant `t`, or None (outside the DVR, a segment that
         403s even on a fresh manifest because it predates a stream restart, ...)."""
         if self.timeline is None:
             return None
-        if time.monotonic() - self.issued > REFRESH_AFTER_S:
-            self.open()  # on failure keep the old timeline; the 403 path below retries
         seg = workdir / "seg.ts"
         out = workdir / "frame.jpg"
         for p in (seg, out):
             if p.exists():
                 p.unlink()
-        got = self._fetch(t, seg)
-        if got is not None and got[1] == "forbidden" and self.open():
+        got: Optional[Tuple[datetime, str]] = None
+        hit0 = self.timeline.locate(t)
+        pre = self._segs.get(round(hit0[0].timestamp(), 2)) if hit0 else None
+        if hit0 is not None and pre is not None and pre.exists():
+            seg = pre  # fetched in prefetch(): no manifest issue, no download
+            got = (hit0[0], "ok")
+        else:
+            if time.monotonic() - self.issued > REFRESH_AFTER_S:
+                self.open()  # on failure keep the old timeline; the 403 path below retries
             got = self._fetch(t, seg)
+            if got is not None and got[1] == "forbidden" and self.open():
+                got = self._fetch(t, seg)
         if got is None or got[1] != "ok":
             return None
         offset = max(0.0, (t - got[0]).total_seconds())
@@ -1239,8 +1333,13 @@ def run_normal(args: argparse.Namespace, cfg: Dict[str, Any]) -> int:
             if args.verbose:
                 log(f"{cam['id']}: nothing due")
             continue
+        if _backing_off():
+            log("yt-dlp backoff in force (a bot check stopped every job for 20 minutes): leaving the rest for the next run")
+            break
         dvr = DvrSession(cam)
         if not dvr.open():
+            if _backing_off():
+                break
             failures += 1
             continue
         for ev, pending in todo:
@@ -1248,6 +1347,9 @@ def run_normal(args: argparse.Namespace, cfg: Dict[str, Any]) -> int:
             targets = sample_times(ev["cam_event_t"])
             scored: List[Dict[str, Any]] = []
             with tempfile.TemporaryDirectory(prefix="suncam-") as tmp:
+                prefetch = getattr(dvr, "prefetch", None)
+                if prefetch is not None:
+                    prefetch(targets, Path(tmp))  # the whole event from ONE manifest issue, in parallel
                 for t in targets:
                     path = dvr.frame(t, Path(tmp))
                     if path is None:

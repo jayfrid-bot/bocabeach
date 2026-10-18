@@ -12,7 +12,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import sun_cam_check as sc  # noqa: E402
+import sun_cam_check as sc
+import yt_pacer  # noqa: E402
 
 try:
     from PIL import Image
@@ -515,6 +516,9 @@ class IncompleteHandlingTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.saved = (sc.STATE_FILE, sc.FRAMES_ROOT, sc.TOKEN_FILE, sc.DvrSession, sc.score_file, sc.post_observation, sc.save_frames)
+        self.saved_pacer = sc._PACER
+        sc._PACER = yt_pacer.Pacer(Path(self.tmp.name) / "ytpace", quiet=True)
+        self.addCleanup(lambda: setattr(sc, "_PACER", self.saved_pacer))
         sc.STATE_FILE = Path(self.tmp.name) / "state.json"
         sc.FRAMES_ROOT = Path(self.tmp.name) / "frames"
         sc.TOKEN_FILE = Path(self.tmp.name) / "token"
@@ -593,6 +597,141 @@ class IncompleteHandlingTests(unittest.TestCase):
         self.assertEqual(self.state()["fort-lauderdale|sunrise|2026-10-06|ftl-elbo-beach-cam"]["status"], "uploaded")
         self.run_at(90)
         self.assertEqual(len(self.posts), 1)  # already done
+
+
+class PrefetchAndPacerTests(unittest.TestCase):
+    """DvrSession.prefetch: the whole event from ONE manifest issue, and the pacer wiring."""
+
+    START = datetime(2026, 10, 6, 10, 0, 0, tzinfo=timezone.utc)
+
+    def setUp(self):
+        import tempfile
+        import threading
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.saved = (sc._PACER, sc._http_get, sc._run)
+        sc._PACER = yt_pacer.Pacer(Path(self.tmp.name) / "ytpace", quiet=True)
+        self.addCleanup(lambda: (setattr(sc, "_PACER", self.saved[0]), setattr(sc, "_http_get", self.saved[1]), setattr(sc, "_run", self.saved[2])))
+        self.gets = []
+        self.lock = threading.Lock()
+        self.stale_prefix = None
+        outer = self
+
+        def fake_get(url, timeout=30):
+            with outer.lock:
+                outer.gets.append(url)
+            if outer.stale_prefix and url.startswith(outer.stale_prefix):
+                raise sc.urllib.error.HTTPError(url, 403, "forbidden", {}, None)
+            return b"x" * 3000
+
+        sc._http_get = fake_get
+        self.cam = {"id": "test-cam", "youtube_id": "VID", "sky_regions": [[0, 0, 1, 1]]}
+        self.session = sc.DvrSession(self.cam)
+        self.issues = 0
+        outer_session = self.session
+
+        def open_():
+            outer.issues += 1
+            outer_session.timeline = outer.timeline(f"https://cdn/issue{outer.issues}/")
+            outer_session.issued = sc.time.monotonic()
+            outer_session.refreshes += 1
+            return True
+
+        self.session.open = open_
+        open_()
+        self.issues = 1
+        self.times = [self.START + timedelta(seconds=150 * i + 2) for i in range(25)]
+
+    def timeline(self, prefix):
+        lines = ["#EXTM3U", f"#EXT-X-PROGRAM-DATE-TIME:{self.START.strftime('%Y-%m-%dT%H:%M:%S')}.000Z"]
+        for i in range(2000):
+            lines += ["#EXTINF:5.0,", f"{prefix}seg{i}.ts"]
+        return sc.HlsTimeline.parse("\n".join(lines))
+
+    def test_one_manifest_issue_serves_a_whole_event(self):
+        n = self.session.prefetch(self.times, Path(self.tmp.name))
+        self.assertEqual(n, 25)
+        self.assertEqual(self.issues, 1)  # no refresh at all
+        self.assertEqual(len(self.gets), 25)  # one download per segment, none twice
+
+    def test_frames_come_from_the_prefetched_files_without_more_downloads_or_issues(self):
+        self.session.prefetch(self.times, Path(self.tmp.name))
+        seen = []
+
+        def fake_run(cmd, timeout):
+            seen.append(cmd)
+            Path(cmd[-1]).write_bytes(b"j" * 5000)
+            return sc.subprocess.CompletedProcess(cmd, 0, "", "")
+
+        sc._run = fake_run
+        work = Path(self.tmp.name) / "w"
+        work.mkdir()
+        for t in self.times[:5]:
+            self.assertIsNotNone(self.session.frame(t, work))
+        self.assertEqual(len(self.gets), 25)
+        self.assertEqual(self.issues, 1)
+        self.assertTrue(all("pre-" in c[c.index("-i") + 1] for c in seen))
+
+    def test_stale_urls_cost_one_more_issue_not_one_per_frame(self):
+        self.stale_prefix = "https://cdn/issue1/"  # the first manifest went stale before the downloads ran
+        n = self.session.prefetch(self.times, Path(self.tmp.name))
+        self.assertEqual(n, 25)
+        self.assertEqual(self.issues, 2)
+
+    def test_a_manifest_older_than_five_seconds_is_reissued_first(self):
+        self.session.issued = sc.time.monotonic() - 10
+        self.session.prefetch(self.times, Path(self.tmp.name))
+        self.assertEqual(self.issues, 2)
+        self.assertEqual(len(self.gets), 25)
+
+    def test_prefetch_gives_up_after_three_issues(self):
+        sc.PREFETCH_BUDGET_S, saved = -1.0, sc.PREFETCH_BUDGET_S  # every download is "late"
+        self.addCleanup(lambda: setattr(sc, "PREFETCH_BUDGET_S", saved))
+        n = self.session.prefetch(self.times, Path(self.tmp.name))
+        self.assertEqual(n, 0)
+        self.assertEqual(self.issues, sc.PREFETCH_MAX_ROUNDS)
+
+    def test_ytdlp_info_goes_through_the_pacer_as_a_sun_call(self):
+        import os
+        import stat
+
+        bin_dir = Path(self.tmp.name) / "bin"
+        bin_dir.mkdir()
+        f = bin_dir / "yt-dlp"
+        f.write_text('#!/bin/bash\necho \'{"formats": []}\'\n')
+        f.chmod(f.stat().st_mode | stat.S_IXUSR)
+        old = os.environ["PATH"]
+        os.environ["PATH"] = f"{bin_dir}:{old}"
+        self.addCleanup(lambda: os.environ.__setitem__("PATH", old))
+        self.assertEqual(sc._ytdlp_info("VID", "test-cam"), {"formats": []})
+        u = sc._pacer().usage()
+        self.assertEqual(u["by_tier"], {"sun": 1})
+
+    def test_a_bot_check_stops_the_run_and_does_not_count_as_a_failure(self):
+        import argparse
+
+        sc._pacer().set_backoff("someone", "bot check")
+        cfg = sc.load_config()
+        rise = sc.sun_times(26.1195, -80.1035, date(2026, 10, 6))["sunrise"]
+        opened = []
+
+        class Dvr:
+            def __init__(self, cam):
+                opened.append(cam["id"])
+
+            def open(self):
+                return False
+
+        saved = (sc.STATE_FILE, sc.TOKEN_FILE, sc.DvrSession)
+        sc.STATE_FILE = Path(self.tmp.name) / "state.json"
+        sc.TOKEN_FILE = Path(self.tmp.name) / "token"
+        sc.TOKEN_FILE.write_text("t")
+        sc.DvrSession = Dvr
+        self.addCleanup(lambda: (setattr(sc, "STATE_FILE", saved[0]), setattr(sc, "TOKEN_FILE", saved[1]), setattr(sc, "DvrSession", saved[2])))
+        args = argparse.Namespace(now=sc.iso_z(rise + timedelta(minutes=60)), dry_run=False, force=False, cams=None, json=False, verbose=False)
+        self.assertEqual(sc.run_normal(args, cfg), 0)
+        self.assertEqual(opened, [])  # no session was even started: the run stopped at the backoff
 
 
 if __name__ == "__main__":

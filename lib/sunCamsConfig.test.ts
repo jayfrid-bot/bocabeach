@@ -57,13 +57,15 @@ describe("config/sun-cams.json", () => {
     expect(SUN_CAMS.find((c) => c.id === "fort-myers-beach-cam")?.credit).toMatch(/Visit Fort Myers/);
   });
 
-  it("every cam is a registered cam with the same credit, and its YouTube id matches the courier's", () => {
-    const courier = readFileSync(path.join(process.cwd(), "scripts/cam_courier_local.sh"), "utf8");
+  it("every cam is a registered cam with the same credit, and its YouTube id matches the uw-frame worker's", () => {
+    // The courier shell script no longer holds an id list: scripts/courier_schedule.py reads
+    // the ids from this file. The worker registry is the other copy that must agree.
+    const worker = readFileSync(path.join(process.cwd(), "workers/uw-frame/src/lib/schedule.ts"), "utf8");
     for (const cam of SUN_CAMS) {
       const registered = locationCam(cam.id);
       expect(registered, `${cam.id} is not in config/locations.ts`).toBeDefined();
       expect(cam.credit).toBe(registered?.attribution);
-      expect(courier).toContain(`${cam.id}:${cam.youtube_id}`);
+      expect(worker).toMatch(new RegExp(`id: "${cam.id}",\\s*videoId: "${cam.youtube_id}"`));
       if (registered?.url?.includes("youtube.com")) expect(registered.url).toContain(cam.youtube_id);
       expect(cam.lat).toBeCloseTo(registered?.lat ?? 0, 4);
       expect(cam.lon).toBeCloseTo(registered?.lon ?? 0, 4);

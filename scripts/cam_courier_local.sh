@@ -1,21 +1,30 @@
 #!/bin/bash
-# Multi-cam FRAME COURIER (runs on the owner's Mac via launchd: hourly at :07
-# from scripts/com.isitbeachday.camcourier.plist, plus every 10 minutes in the
-# golden-hour windows from scripts/com.isitbeachday.camcourier.golden.plist,
-# which passes --golden-only). No longer Deerfield-only: it also carries Fort
-# Lauderdale Beach's Elbo Room cam (see the CAMS array below).
+# Multi-cam FRAME COURIER (runs on the always-on home Mac via launchd).
 #
-# GOLDEN-HOUR MODE (--golden-only): the webcam archive keeps a shot every 10
-# minutes around sunrise (-20/+40 min) and sunset (-40/+20 min) — see
-# lib/camFrames/golden.ts — but the hourly run gives these courier cams at
-# most one frame an hour. The golden launchd job fires at :00/:10/:20/:30/:40/:50
-# through every local hour a window can touch (6-8 and 16-20 America/New_York,
-# all seasons, plus 21:00 and 21:10 for Pensacola Beach's summer sunset) and this flag makes the run grab ONLY while
-# `python3 scripts/golden_now.py` says it is inside a window for the courier
-# beaches (Deerfield Beach, Fort Lauderdale, Fort Myers Beach, Pensacola Beach); outside one it logs a line and
-# exits 0. If golden_now.py cannot tell (exit 2) the run logs an ERROR and exits
-# 1 without grabbing; the hourly job still runs. Two runs never overlap: a run
-# that finds another one in progress logs it and exits 0.
+# TWO launchd jobs run this one script (see docs/courier-pacing.md):
+#   scripts/com.isitbeachday.camcourier.plist         every 5 minutes, no flag: ROUTINE run
+#   scripts/com.isitbeachday.camcourier.golden.plist  every 10 minutes, --golden-only: GOLDEN run
+#
+# WHICH CAMS: this script names no cam. scripts/courier_schedule.py builds the
+# list from config/archive-cams.json, config/vision-cams.json,
+# config/sun-cams.json and config/courier-cams.json, and decides which cams are
+# due right now:
+#   routine: a cam whose last good frame is 57+ minutes old (a few cams per run,
+#            so the hour is spread out, not one burst at :07).
+#   golden : a cam whose OWN beach is inside a sunrise (-20/+40 min) or sunset
+#            (-40/+20 min) window. One frame every 10 minutes, or every 20-30 when
+#            many cams are in a window at once (the call budget decides).
+# Add a cam to the config files and it is picked up on the next run.
+#
+# WHY THE PACER: YouTube answers "Sign in to confirm you're not a bot" when one IP
+# makes too many yt-dlp calls (about 150 in 15 minutes). Every yt-dlp call here
+# goes through scripts/yt_pacer.py: at most 60 calls per rolling 15 minutes for
+# ALL jobs on the box, golden work before routine work, 4 s between calls, and a
+# 20-minute stop for every job after a bot check. If the pacer says "backing
+# off" this run stops at once and exits 0; the next run tries again.
+#
+# --force skips the daylight gate and the schedule: it grabs EVERY cam now (use it
+# by hand). --dry-run prints the cams the run would grab and does nothing else.
 #
 # WHY THIS EXISTS: as of 2026-09, YouTube refuses playback to Cloudflare's
 # Browser Rendering fleet entirely for these streams — every grab attempt
@@ -23,7 +32,7 @@
 # error occurred. Please try again later. (Playback ID ...)" overlay
 # (datacenter IPs blocked outright). From this Mac's residential connection,
 # `yt-dlp -g` + `ffmpeg -frames:v 1` still works fine (verified 2026-09-14).
-# So this script grabs a frame for each configured cam and POSTs it straight
+# So this script grabs a frame for each due cam and POSTs it straight
 # into the worker via POST /ingest?cam=<id> — no git branch, no GitHub
 # Actions relay. The worker's own headless-Chrome grab stays running
 # unchanged as a self-healing fallback: if YouTube ever stops blocking
@@ -32,18 +41,16 @@
 # guard, so neither can clobber the other's newer good frame.
 #
 # This SUPERSEDES scripts/uw_frame_local.sh (single-cam, pushed to a git
-# branch instead of POSTing to the worker) — see that file's header. It is
-# left in place, not deleted, but is no longer installed.
+# branch instead of POSTing to the worker) — see that file's header.
 #
-# INSTALL (NOT done by this change — run these yourself when ready):
+# INSTALL (run these yourself when ready; docs/courier-pacing.md has the order):
 #   1. Create the token file whose contents match the worker's INGEST_TOKEN
 #      secret exactly (no trailing newline):
 #        mkdir -p "$HOME/.config/isitbeachday"
 #        printf '%s' '<the same value set via `wrangler secret put INGEST_TOKEN`>' \
 #          > "$HOME/.config/isitbeachday/courier.token"
 #        chmod 600 "$HOME/.config/isitbeachday/courier.token"
-#   2. Install the two launchd jobs (each renders __HOME__ in its plist, then
-#      loads it): the hourly :07 job and the golden-hour every-10-minutes job.
+#   2. Install the two launchd jobs (each renders __HOME__ in its plist, then loads it):
 #        for job in com.isitbeachday.camcourier com.isitbeachday.camcourier.golden; do
 #          sed "s#__HOME__#$HOME#g" "scripts/$job.plist" \
 #            > "$HOME/Library/LaunchAgents/$job.plist"
@@ -51,37 +58,39 @@
 #        done
 #      (To change an already-installed job, `launchctl bootout gui/$(id -u)/<label>`
 #      first, then bootstrap again.)
-#   3. (Optional) run once by hand first, outside daylight hours if needed:
-#        bash scripts/cam_courier_local.sh --force
-#      or see what the golden check says right now (0 = inside a window):
-#        python3 scripts/golden_now.py; echo $?
+#   3. See what a run would do right now, without grabbing:
+#        bash scripts/cam_courier_local.sh --dry-run
+#        bash scripts/cam_courier_local.sh --golden-only --dry-run
 #
 # Logs land at ~/Library/Logs/cam-courier.log (StandardOutPath/ErrorPath in
 # the plist).
 #
-# set -euo pipefail governs this script's OWN control flow (arg parsing,
-# the token-file check). Each cam's grab+upload runs through
-# grab_and_upload, called only as an `if` condition below — a non-zero
-# return from a command tested by `if`/`while`/`||` does NOT trigger -e, so
-# one cam's failure is logged and the loop continues to the next cam
-# (best-effort per cam, per the spec this script was built from).
+# set -euo pipefail governs this script's OWN control flow. Each cam's
+# grab+upload runs through grab_and_upload, called only as an `||` operand
+# below — a non-zero return from a command tested that way does NOT trigger
+# -e, so one cam's failure is logged and the loop continues to the next cam.
 set -euo pipefail
 
 # --- PATH: launchd does NOT load the user's shell profile, so yt-dlp
 # (needs node as its JS runtime), ffmpeg, and curl must be found explicitly
 # here rather than relying on ~/.zshrc / ~/.zprofile having set PATH. ---
-export PATH="$HOME/.hermes/node/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+# COURIER_BIN_DIR (tests only) puts fake yt-dlp/ffmpeg/curl first.
+export PATH="${COURIER_BIN_DIR:+$COURIER_BIN_DIR:}$HOME/.hermes/node/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 COURIER_URL="${COURIER_URL:-https://uw-frame.entwined-app.workers.dev}"
 TOKEN_FILE="${TOKEN_FILE:-$HOME/.config/isitbeachday/courier.token}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACER="$SCRIPT_DIR/yt_pacer.py"
+SCHED="$SCRIPT_DIR/courier_schedule.py"
 FORCE=0
 GOLDEN_ONLY=0
+DRY_RUN=0
 for arg in "$@"; do
   case "$arg" in
     --force) FORCE=1 ;;
     --golden-only) GOLDEN_ONLY=1 ;;
+    --dry-run) DRY_RUN=1 ;;
     --once) : ;; # default behavior already (single pass, no loop); accepted for explicitness
     *) echo "unknown arg: $arg" >&2; exit 1 ;;
   esac
@@ -91,70 +100,56 @@ log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1"
 }
 
-# --golden-only: grab only inside a sunrise/sunset golden window of the courier
-# beaches (computed by scripts/golden_now.py: exit 0 inside, 1 outside, 2 can't
-# tell). --force skips this check, like the daylight gate below. This runs
-# before the token check so the ~40 outside-window launches a day stay quiet.
-if [[ "$GOLDEN_ONLY" -eq 1 && "$FORCE" -ne 1 ]]; then
-  golden_status=0
-  golden_line="$(python3 "$SCRIPT_DIR/golden_now.py" 2>&1)" || golden_status=$?
-  case "$golden_status" in
-    0) log "golden-only: $golden_line" ;;
-    1) log "golden-only: $golden_line — skipping"; exit 0 ;;
-    *) log "ERROR: golden_now.py could not tell (exit $golden_status): $golden_line — skipping this run"; exit 1 ;;
-  esac
+if [[ "$GOLDEN_ONLY" -eq 1 ]]; then MODE=golden; PRIORITY=golden; else MODE=routine; PRIORITY=routine; fi
+[[ "$FORCE" -eq 1 ]] && MODE=all
+
+# Prints the cams this run should grab, one "cam|youtube_id|fallback_page|fallback_title"
+# line each ("-" = none). A scheduler failure is an ERROR, never a silent empty list.
+# COURIER_NOW=<ISO instant> asks "what would run then?" (dry runs, tests).
+due_cams() {
+  python3 "$SCHED" due --mode "$MODE" ${COURIER_NOW:+--now "$COURIER_NOW"}
+}
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  log "dry run: mode=$MODE priority=$PRIORITY (nothing is grabbed, no state is written)"
+  due_cams || { log "ERROR: courier_schedule.py failed"; exit 1; }
+  python3 "$PACER" status || true
+  exit 0
 fi
+
+# The daylight gate (routine runs only, 06:00-20:59 America/New_York) lives in
+# courier_schedule.py, so a night-time run lists no cams and exits quietly. A golden run
+# is decided by the sun alone. --force skips both.
+
+# A bot check set a backoff: every yt-dlp job stays quiet until it ends.
+if until_msg="$(python3 "$PACER" backoff-check 2>/dev/null)"; then
+  log "yt-dlp backoff active ($until_msg) — skipping this run"
+  exit 0
+fi
+
+# One run at a time (scripts/courier_lock.sh says how the lock stays safe). The
+# routine and golden jobs can meet. Taken BEFORE the due list is read, so two runs
+# never pick the same cam.
+LOCK_DIR="${COURIER_LOCK_DIR:-${TMPDIR:-/tmp}/isitbeachday-courier.lock}"
+# shellcheck source=scripts/courier_lock.sh
+source "$SCRIPT_DIR/courier_lock.sh"
+courier_lock_acquire || exit 0
+trap courier_lock_release EXIT # from here on every exit path gives the lock back (if still ours)
+
+if ! DUE="$(due_cams)"; then
+  log "ERROR: courier_schedule.py failed — no cams grabbed"
+  exit 1
+fi
+if [[ -z "$DUE" ]]; then
+  exit 0 # nothing due: stay quiet, this is the common case
+fi
+CAM_COUNT=$(printf '%s\n' "$DUE" | wc -l | tr -d ' ')
 
 if [[ ! -s "$TOKEN_FILE" ]]; then
   log "ERROR: token file missing or empty at $TOKEN_FILE — refusing to run. See this script's header for the install steps."
   exit 1
 fi
 TOKEN="$(cat "$TOKEN_FILE")"
-
-# Daylight-only gate in America/New_York (06:00-20:00), unless --force. The
-# cams are dark/pointless at night; this mirrors the worker's own daylight
-# gating for the surface cams and flag read. --golden-only has already decided
-# by the sun (its windows can touch 16:47-20:37 local), so it skips this gate.
-if [[ "$FORCE" -ne 1 && "$GOLDEN_ONLY" -ne 1 ]]; then
-  eastern_hour=$(TZ="America/New_York" date +%H)
-  eastern_hour=$((10#$eastern_hour)) # 10# guards the octal trap on "08"/"09"
-  if (( eastern_hour < 6 || eastern_hour > 20 )); then
-    log "outside daylight hours in America/New_York ($eastern_hour) — skipping (use --force to override)"
-    exit 0
-  fi
-fi
-
-# id:youtube-video-id pairs — kept in sync with
-# workers/uw-frame/src/lib/schedule.ts CAMERA_REGISTRY.
-#
-# ftl-elbo-beach-cam is Elbo Room's public "Fort Lauderdale Beach LIVE: Surf,
-# Wind & Golden Hour" YouTube stream (owner approved for this use). Elbo Room
-# also runs a patio cam (shows bar patrons) and a "weather station" cam
-# (shows the street) on the same page — neither is a beach/ocean view, so
-# neither is added here, on purpose.
-#
-# fort-myers-beach-cam (Visit Fort Myers) and pensacola-sria-west-cam (Santa Rosa
-# Island Authority) are public tourism-board and public-authority streams that
-# face WEST over the Gulf (added 2026-10-15 for sunset truth; see
-# docs/research/2026-10-15-west-facing-cams.md). Pensacola is on Central time;
-# the daylight gate below is Eastern, which still covers its evening.
-CAMS=(
-  "deerfield-spinner-uw:SHfAtWHr9Ks"
-  "deerfield-beach-cam:rdeoEeJ00xA"
-  "deerfield-surf-cam:hIeFPNHfuoY"
-  "deerfield-pier-cam:H33wtprQqSM"
-  "ftl-elbo-beach-cam:1j1lgppb0PY"
-  "fort-myers-beach-cam:nj9jdOXXhEo"
-  "pensacola-sria-west-cam:HKIc6CYlMzI"
-)
-
-# One run at a time (scripts/courier_lock.sh says how the lock stays safe). The
-# hourly :07 job and the 10-minute golden job can meet.
-LOCK_DIR="${COURIER_LOCK_DIR:-${TMPDIR:-/tmp}/isitbeachday-courier.lock}"
-# shellcheck source=scripts/courier_lock.sh
-source "$SCRIPT_DIR/courier_lock.sh"
-courier_lock_acquire || exit 0
-trap courier_lock_release EXIT # from here on every exit path gives the lock back (if still ours)
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"; courier_lock_release' EXIT
@@ -169,7 +164,9 @@ run_with_timeout() {
   local secs="$1"; shift
   "$@" &
   local pid=$!
-  ( sleep "$secs"; kill -9 "$pid" 2>/dev/null ) &
+  # The watcher traps TERM so that stopping it also stops its `sleep` (a bare
+  # `kill` left the sleep behind, holding the log pipe open for up to $secs).
+  ( trap 'kill "$sp" 2>/dev/null; exit 0' TERM; sleep "$secs" & sp=$!; wait "$sp"; kill -9 "$pid" 2>/dev/null ) &
   local watcher=$!
   local status=0
   wait "$pid" 2>/dev/null || status=$?
@@ -178,89 +175,56 @@ run_with_timeout() {
   return "$status"
 }
 
-# FORT LAUDERDALE (ftl-elbo-beach-cam) ONLY: Elbo Room's stream id changes
-# whenever they restart it, so the id saved in CAMS can go stale. When the
-# saved id fails to play, this re-derives the current one straight from
-# Elbo Room's own beach-cam page: the embedded player's live-chat iframe
-# (youtube.com/live_chat?v=<ID>) is the most reliable place to scrape the
-# CURRENT video id out of plain HTML, no YouTube Data API key needed. Every
-# id found is deduped (first-seen order kept) and tried with `yt-dlp -g`;
-# the first whose title contains "Surf" wins, otherwise the first that
-# simply plays. Prints the winning video id on stdout (nothing else, so a
-# caller can capture it with $(...)); all logging goes to stderr. Prints
-# nothing and returns 1 if no candidate id plays.
-resolve_elbo_fallback_video_id() {
-  local page_html="$TMP/elbo-beach-cam-page.html"
-  local candidate title winner="" winner_reason=""
-
-  if ! run_with_timeout 20 curl -sS -f \
-      -A "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36" \
-      --max-time 15 \
-      "https://www.elboroom.com/beach-cam/" -o "$page_html" 2>"$TMP/elbo-page.err"; then
-    log "ftl-elbo-beach-cam: fallback page fetch failed" >&2
-    return 1
-  fi
-
-  while IFS= read -r candidate; do
-    [[ -z "$candidate" ]] && continue
-    if ! run_with_timeout 20 yt-dlp -g --no-warnings --socket-timeout 15 \
-        -f "best[height<=720]/best" \
-        "https://www.youtube.com/watch?v=$candidate" \
-        > /dev/null 2>"$TMP/elbo-$candidate.ytdlp.err"; then
-      continue # this candidate id doesn't play — try the next one
-    fi
-    # Only the beach view ("... Surf, Wind & Golden Hour") is acceptable. The
-    # same page also lists the weather-station stream, which shows the street,
-    # so a playable-but-wrong stream must never become the fallback.
-    title="$(run_with_timeout 15 yt-dlp --no-warnings --print "%(title)s" \
-        "https://www.youtube.com/watch?v=$candidate" 2>/dev/null || true)"
-    if [[ "$title" == *Surf* ]]; then
-      winner="$candidate"
-      winner_reason="title matched \"Surf\": $title"
-      break
-    fi
-  done < <(grep -oE 'live_chat\?v=[A-Za-z0-9_-]{6,}' "$page_html" \
-      | sed -E 's/^live_chat\?v=//' | awk '!seen[$0]++')
-
-  if [[ -z "$winner" ]]; then
-    log "ftl-elbo-beach-cam: no live beach (\"Surf\") stream found on the beach-cam page — skipping this run" >&2
-    return 1
-  fi
-  log "ftl-elbo-beach-cam: fallback resolved video id -> $winner ($winner_reason)" >&2
-  printf '%s\n' "$winner"
-  return 0
+# Pacer exit codes (scripts/yt_pacer.py): 75 backoff, 76 over budget, 77 bot check.
+# resolve_stream prints the HLS URL to $2; returns the pacer's exit code.
+resolve_stream() {
+  local cam_id="$1" out="$2" video_id="$3" rc=0
+  run_with_timeout 420 python3 "$PACER" resolve --video "$video_id" --cam "$cam_id" \
+    --priority "$PRIORITY" > "$out" 2>"$TMP/$cam_id.ytdlp.err" || rc=$?
+  # the pacer's own lines (a bot check, a refusal) belong in the run log
+  grep ' pacer: ' "$TMP/$cam_id.ytdlp.err" || true
+  return "$rc"
 }
 
-# Grabs and uploads ONE camera; every failure path logs and returns 1
-# rather than aborting the script (see the -euo pipefail note above).
+# Grabs and uploads ONE camera. Returns 0 = uploaded, 1 = this cam failed,
+# 2 = skipped (over the call budget, try again later), 3 = stop the whole run
+# (backoff or bot check). Every failure path logs and returns rather than
+# aborting the script (see the -euo pipefail note above).
 grab_and_upload() {
-  local cam_id="$1" video_id="$2"
+  local cam_id="$1" video_id="$2" fb_page="$3" fb_title="$4"
   local jpg="$TMP/$cam_id.jpg"
   local manifest_file="$TMP/$cam_id.manifest"
-  local grabbed_at
+  local grabbed_at known rc=0
   grabbed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-  if ! run_with_timeout 45 yt-dlp -g --no-warnings --socket-timeout 20 \
-      -f "best[height<=720]/best" \
-      "https://www.youtube.com/watch?v=$video_id" > "$manifest_file" 2>"$TMP/$cam_id.ytdlp.err"; then
-    log "$cam_id: yt-dlp -g failed or timed out for saved video id $video_id"
-    if [[ "$cam_id" == "ftl-elbo-beach-cam" ]]; then
-      local fallback_id
-      if ! fallback_id="$(resolve_elbo_fallback_video_id)"; then
-        return 1
+  # A stream id found earlier by the fallback search (Elbo Room restarts its
+  # stream and the id changes) beats the one in config for the next 12 hours.
+  known="$(python3 "$PACER" cache-get "vid:$cam_id" 2>/dev/null || true)"
+  [[ -n "$known" ]] && video_id="$known"
+
+  resolve_stream "$cam_id" "$manifest_file" "$video_id" || rc=$?
+  if [[ "$rc" -ne 0 && "$rc" -lt 75 || "$rc" -gt 77 ]]; then
+    log "$cam_id: yt-dlp -g failed or timed out for video id $video_id: $(tail -c 200 "$TMP/$cam_id.ytdlp.err" 2>/dev/null | tr '\n' ' ')"
+    if [[ "$fb_page" != "-" ]]; then
+      local fallback_id="" frc=0
+      fallback_id="$(run_with_timeout 420 python3 "$PACER" fallback --cam "$cam_id" --page "$fb_page" \
+          --title-contains "$fb_title" --priority "$PRIORITY" 2>>"$TMP/$cam_id.ytdlp.err")" || frc=$?
+      if [[ "$frc" -eq 0 && -n "$fallback_id" && "$fallback_id" != "$video_id" ]]; then
+        log "$cam_id: retrying with fallback video id $fallback_id"
+        video_id="$fallback_id"
+        rc=0
+        resolve_stream "$cam_id" "$manifest_file" "$video_id" || rc=$?
+      else
+        rc="${frc:-1}"; [[ "$rc" -eq 0 ]] && rc=1
       fi
-      log "$cam_id: retrying with fallback video id $fallback_id"
-      video_id="$fallback_id"
-      if ! run_with_timeout 45 yt-dlp -g --no-warnings --socket-timeout 20 \
-          -f "best[height<=720]/best" \
-          "https://www.youtube.com/watch?v=$video_id" > "$manifest_file" 2>"$TMP/$cam_id.ytdlp.err"; then
-        log "$cam_id: yt-dlp -g failed even with fallback video id $video_id"
-        return 1
-      fi
-    else
-      return 1
     fi
   fi
+  case "$rc" in
+    0) : ;;
+    75|77) log "$cam_id: yt-dlp backoff in force (bot check or pacer) — stopping this run"; return 3 ;;
+    76) log "$cam_id: over the yt-dlp call budget — skipped, a later run will take it"; return 2 ;;
+    *) log "$cam_id: no stream URL from yt-dlp"; return 1 ;;
+  esac
   local manifest
   manifest="$(head -1 "$manifest_file" 2>/dev/null || true)"
   if [[ "$manifest" != http* ]]; then
@@ -281,15 +245,16 @@ grab_and_upload() {
     return 1
   fi
 
-  if ! curl -sS -f -X POST "$COURIER_URL/ingest?cam=$cam_id" \
+  local http_code
+  http_code="$(curl -sS -X POST "$COURIER_URL/ingest?cam=$cam_id" \
       -H "Authorization: Bearer $TOKEN" \
       -H "Content-Type: image/jpeg" \
       -H "X-Grabbed-At: $grabbed_at" \
       --data-binary "@$jpg" \
       --max-time 20 \
-      -o "$TMP/$cam_id.response.json"; then
-    log "$cam_id: upload failed"
-    [[ -s "$TMP/$cam_id.response.json" ]] && cat "$TMP/$cam_id.response.json"
+      -o "$TMP/$cam_id.response.json" -w '%{http_code}' 2>"$TMP/$cam_id.curl.err")" || true
+  if [[ "$http_code" != 2* ]]; then
+    log "$cam_id: upload failed (HTTP ${http_code:-000}) $(head -c 300 "$TMP/$cam_id.response.json" 2>/dev/null) $(head -c 200 "$TMP/$cam_id.curl.err" 2>/dev/null)"
     return 1
   fi
 
@@ -298,14 +263,22 @@ grab_and_upload() {
 }
 
 uploaded=0
-for entry in "${CAMS[@]}"; do
-  cam_id="${entry%%:*}"
-  video_id="${entry#*:}"
-  if grab_and_upload "$cam_id" "$video_id"; then
-    uploaded=$((uploaded + 1))
-  fi
-done
+attempted=0
+while IFS='|' read -r cam_id video_id fb_page fb_title; do
+  [[ -z "$cam_id" ]] && continue
+  attempted=$((attempted + 1))
+  rc=0
+  grab_and_upload "$cam_id" "$video_id" "$fb_page" "$fb_title" || rc=$?
+  case "$rc" in
+    0) uploaded=$((uploaded + 1)); python3 "$SCHED" mark --cam "$cam_id" --ok || true ;;
+    1) python3 "$SCHED" mark --cam "$cam_id" --fail || true ;;
+    2) : ;;
+    3) break ;;
+  esac
+done <<< "$DUE"
 
-log "done: $uploaded/${#CAMS[@]} cams uploaded"
-[[ "$uploaded" -gt 0 ]] && exit 0
+log "done ($MODE): $uploaded/$CAM_COUNT cams uploaded"
+[[ "$uploaded" -gt 0 || "$attempted" -eq 0 ]] && exit 0
+# Nothing uploaded. A pacer stop (rc 2 or 3) is not a failure of the job.
+[[ "$rc" -eq 2 || "$rc" -eq 3 ]] && exit 0
 exit 1

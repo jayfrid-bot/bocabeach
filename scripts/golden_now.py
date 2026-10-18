@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Is it golden hour right now at the courier's beaches?
 
-    python3 scripts/golden_now.py [slug ...]        # default: the courier beaches
+    python3 scripts/golden_now.py [slug ...]        # default: the beaches of every courier cam
     python3 scripts/golden_now.py --now 2026-10-12T22:30:00Z deerfield-beach
 
-Exit status (what scripts/cam_courier_local.sh --golden-only relies on):
+Exit status (a diagnostic now; scripts/courier_schedule.py imports windows_for() and decides per cam,
+so the courier no longer calls this command):
     0   inside a golden window at one of the named beaches (a line says which)
     1   outside every window
     2   could not tell (bad arguments, no manifest, no coordinates, sun maths failed)
@@ -45,7 +46,10 @@ SUNRISE_AFTER_MIN = 40
 SUNSET_BEFORE_MIN = 40
 SUNSET_AFTER_MIN = 20
 
-# The beaches the Mac courier feeds (scripts/cam_courier_local.sh CAMS array).
+# The beaches the Mac courier fed when this file was written. The courier no longer
+# reads this list: scripts/courier_schedule.py decides per cam from the config files.
+# It stays as the command-line default when the registry cannot be read, and as the
+# fixed set the tests walk.
 COURIER_SLUGS = ("deerfield-beach", "fort-lauderdale", "fort-myers-beach", "pensacola-beach")
 
 Window = Tuple[str, datetime, datetime]  # (kind, start, end), UTC, half-open
@@ -102,6 +106,17 @@ def golden_hit(slugs, now: datetime, beaches: Dict[str, dict]) -> Optional[Tuple
     return None
 
 
+def _registry_slugs(beaches: Dict[str, dict]) -> List[str]:
+    """The beaches of every courier cam (config-driven), else COURIER_SLUGS."""
+    try:
+        import courier_schedule  # noqa: PLC0415 - imports this module, so load it late
+
+        slugs = sorted({c.slug for c in courier_schedule.grabbable(courier_schedule.load_registry()) if c.slug in beaches})
+        return slugs or list(COURIER_SLUGS)
+    except Exception:  # noqa: BLE001
+        return list(COURIER_SLUGS)
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Exit 0 when now is inside a golden-hour window.")
     ap.add_argument("slugs", nargs="*", help="beach slugs (default: the courier beaches)")
@@ -113,7 +128,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         if now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
         beaches = load_beaches()
-        hit = golden_hit(args.slugs or COURIER_SLUGS, now, beaches)
+        hit = golden_hit(args.slugs or _registry_slugs(beaches), now, beaches)
     except Exception as e:  # noqa: BLE001 — "can't tell" must be distinguishable from "no"
         print(f"golden_now: {e}", file=sys.stderr)
         return 2

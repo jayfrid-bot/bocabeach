@@ -185,11 +185,22 @@ flowchart LR
     UWFRAME["workers/uw-frame<br/>multi-cam frame courier + Deerfield & Fort Lauderdale flag readers<br/>top of each hour, 10a-11p ET"]
   end
 
-  subgraph mac [Owner's Mac — launchd, not a scheduler above]
-    CAMCOURIER["scripts/cam_courier_local.sh<br/>hourly at :07, plus every 10 min inside the sunrise/sunset golden windows<br/>(--golden-only, scripts/golden_now.py), residential IP"]
+  subgraph mac [Home server Mac — launchd, not a scheduler above]
+    CAMCOURIER["scripts/cam_courier_local.sh — no cam list in the script<br/>routine job: every 5 min (:03, :08 …), a few due cams per run<br/>golden job: every 10 min all day, only cams whose own beach is in a sunrise/sunset window<br/>residential IP"]
+    CSCHED["scripts/courier_schedule.py<br/>builds the cam list from config, picks the due cams, golden stride, cooldowns, daylight gate"]
     SUNCAM["scripts/sun_cam_check.py<br/>every 30 min, residential IP<br/>(YouTube blocks datacenter IPs)"]
+    PACER["scripts/yt_pacer.py — ONE yt-dlp call budget for all three jobs<br/>ledger + backoff + cache in ytpace/state.json under an flock<br/>cap 60 calls / 15 min (golden 60, sun 48, routine 36), 4 s apart,<br/>20-min stop for every job after a bot check"]
+    PLAN["scripts/courier_plan.py<br/>dry run: the day's call timeline, no network"]
   end
 
+  CAMCOURIER -->|"which cams are due"| CSCHED
+  CSCHED -->|"reads"| CAMCFG["config/archive-cams.json + vision-cams.json (direct cams)<br/>config/sun-cams.json (video id, fallback page)<br/>config/courier-cams.json (extra ids, skip list)"]
+  CAMCOURIER -->|"every yt-dlp call, priority golden or routine"| PACER
+  SUNCAM -->|"every yt-dlp call, priority sun"| PACER
+  CSCHED -->|"last good frame + cooldown per cam"| PACER
+  PACER -->|"a paced yt-dlp -g / -J call"| YTAPI[["YouTube player API<br/>(the bot check lives here)"]]
+  PLAN -.->|"runs the real rules"| CSCHED
+  PLAN -.->|"runs the real rules"| PACER
   CAMCOURIER -->|"POST /ingest?cam=&lt;id&gt;<br/>Bearer token, JPEG bytes"| UWFRAME
 
   LGT -->|writes| LDATA[(lightning-data branch)]
@@ -246,7 +257,7 @@ flowchart LR
   IMGAPI -->|"get"| CAMR2
   REMOVE["scripts/cam_archive_remove.ts (by hand; dry run unless --yes)<br/>lists the cam prefix through the R2 S3 API when R2 keys are set,<br/>wrangler r2 object delete + D1 DELETE for one cam"] -->|"erase one cam on a request"| CAMR2
   REMOVE --> D1
-  SUNCAM -->|"yt-dlp -J → HLS playlist (~4 h DVR); one frame every 2.5 min,<br/>event −35 … +25 min, per config/sun-cams.json cam"| YTLIVE[["YouTube livestream DVR<br/>Elbo Room + 3 Deerfield cams (east) and Fort Myers Beach + Pensacola Beach cams (west)"]]
+  SUNCAM -->|"ONE yt-dlp -J per cam-event → HLS playlist (~4 h DVR); all segments downloaded in parallel inside ~22 s,<br/>one frame every 2.5 min, event −35 … +25 min, per config/sun-cams.json cam"| YTLIVE[["YouTube livestream DVR<br/>Elbo Room + 3 Deerfield cams (east) and Fort Myers Beach + Pensacola Beach cams (west)"]]
   SUNCAM -->|"POST /api/sun-observations — Bearer INGEST_TOKEN<br/>robust-peak score + series + scored_at, per beach / event / cam;<br/>incomplete captures are never sent"| SUNOBS["/api/sun-observations<br/>constant-time auth, bounded 32 KB read, strict validation<br/>that recomputes coverage + robust peak (lib/sunObservations.ts)"]
   OWNER["owner's Mac"] -->|"POST /api/push/test — Bearer INGEST_TOKEN, {deviceId}:<br/>one real APNs alert to one device, writes no alert state"| PUSHTEST["/api/push/test"]
   SUNOBS -->|"sun_event_observations (migrations/0015)<br/>upsert only when (score_version, scored_at) is newer —<br/>duplicates and stale replays are no-ops; credit stored"| D1
@@ -281,13 +292,28 @@ keys), `GET /cams` (registry + each cam's last grab), and
 **Fort Lauderdale lifeguard flags.** The City of Fort Lauderdale Fire Rescue posts a plain-text "Beach Conditions" page once a day (flags, sea-pest notes, ocean conditions, water temperature). A plain fetch gets a 403 bot-block, so `uw-frame` opens it in Browser Rendering on the same daylight-gated tick as the Deerfield read, reads `document.body.innerText`, parses it with the pure section parser `workers/uw-frame/src/lib/ftlConditions.ts`, and stores `flags:fort-lauderdale` in the same `{flags, observedAtUtc, ok}` shape `lib/sources/cityOfficial.ts`'s `mapFlagsFeed` expects, plus `pageDate`, `seaPests`, `seaPestsPresent`, `waterTempF`, `oceanConditions`. Because the City posts daily, a page more than 2 calendar days old (America/New_York) is written `ok:false`, which the app shows as "unknown" rather than a stale flag. A failed or stale read never overwrites a good stored one (the attempt lands under `flags-attempt:fort-lauderdale`). `seaPests` is captured but not yet shown in the UI.
 
 As of September 2026, frames arrive from the owner's Mac courier
-(`scripts/cam_courier_local.sh`, hourly at :07, plus every 10 minutes inside the golden-hour windows via the `--golden-only` launchd job, residential IP) via `POST /ingest`;
+(`scripts/cam_courier_local.sh`: a routine launchd job every 5 minutes that takes the few cams whose last frame is 57+ minutes old, plus a `--golden-only` job every 10 minutes that takes the cams whose own beach is inside a sunrise/sunset window; residential IP) via `POST /ingest`;
 the Worker's own headless-Chrome grab remains as a fallback. YouTube now
 blocks video playback from Cloudflare's browser fleet, so the Mac — a normal
 home connection — grabs each frame and sends it to the Worker instead. Both
 paths write through the same guard, so neither can overwrite the other's
 newer good frame; `GET /cams` shows which path supplied each camera's
 current frame in its `source` field ("courier" or "browser").
+
+**One call budget for every yt-dlp call on the home server.** YouTube answers
+"Sign in to confirm you're not a bot" when one IP makes about 150 yt-dlp calls in
+15 minutes, and then every job on that IP fails for about 10 minutes. The courier
+(routine and golden) and the sun-cam check share that IP, so
+`scripts/yt_pacer.py` keeps one ledger for all of them: at most 60 calls in any
+rolling 15 minutes, golden and sun work ahead of routine work, 4 seconds between
+calls, and a 20-minute stop for all jobs after a bot check. The cam list is not in
+the shell script: `scripts/courier_schedule.py` builds it from
+`config/archive-cams.json`, `config/vision-cams.json`, `config/sun-cams.json` and
+`config/courier-cams.json`, and `lib/courierRegistry.test.ts` fails when a courier
+cam has no video id or is missing from the worker's `CAMERA_REGISTRY`. The worker
+(`workers/uw-frame`) is not part of this budget: its headless Chrome runs in
+Cloudflare and makes no yt-dlp call from the home IP. Numbers and rollout:
+`docs/courier-pacing.md`.
 
 **The sun-cam check gives every sunrise and sunset a "what actually happened"
 score.** `scripts/sun_cam_check.py` runs on the owner's Mac every 30 minutes

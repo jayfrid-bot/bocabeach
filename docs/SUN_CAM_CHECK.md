@@ -77,8 +77,16 @@ YouTube keeps about 4 hours of DVR for a live stream.
 Things that went wrong while building it:
 
 - **Segment URLs go stale about 30 seconds after the playlist is issued.** After
-  that, the same URL answers 403. The script asks yt-dlp for a fresh playlist every
-  18 seconds, and again on any 403.
+  that, the same URL answers 403. Measured again on 2026-10-16: segments play up to
+  25 seconds, answer 403 at 31 seconds, and fetching the same playlist URL again
+  does not help, although the URL says it lives 6 hours. So the script downloads the
+  event's segments in parallel right after one `yt-dlp -J` (`DvrSession.prefetch`,
+  about 1 second for 25 segments) and cuts the frames from the local files. One
+  cam-event costs one yt-dlp call. A segment it missed is fetched the old way: a
+  fresh playlist after 18 seconds, and again on any 403.
+- **Every yt-dlp call goes through the shared pacer** (`scripts/yt_pacer.py`,
+  `docs/courier-pacing.md`). The sun-cam check uses the `sun` tier. After a bot check
+  it stops and the next run, 30 minutes later, tries again.
 - A segment from before a stream restart can 403 for good. The script skips it.
   An event needs at least 60% of its 25 frames, or it is retried on the next run
   while the DVR still holds it.

@@ -1,0 +1,12 @@
+{
+  "$comment": [
+    "Read by scripts/courier_schedule.py. The cam courier builds its cam list from config/archive-cams.json and config/vision-cams.json (every cam whose source kind is 'direct' is a courier cam) and config/sun-cams.json (youtube_id, fallback). A cam needs a YouTube video id; sun-cams.json supplies it for sun cams.",
+    "Put a cam here ONLY when it is not in sun-cams.json (so its id is found nowhere else), or when it must be left out. `python3 scripts/courier_schedule.py check` fails when a courier cam has no id, so a missing entry is caught before it reaches the server.",
+    "youtube_ids: {cam id: YouTube video id}. skip: cam ids the courier must not grab."
+  ],
+  "version": 1,
+  "youtube_ids": {
+    "deerfield-spinner-uw": "SHfAtWHr9Ks"
+  },
+  "skip": []
+}
