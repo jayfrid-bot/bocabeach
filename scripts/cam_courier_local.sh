@@ -148,6 +148,30 @@ CAMS=(
   "pensacola-sria-west-cam:HKIc6CYlMzI"
 )
 
+# HOURLY-ONLY cams (added 2026-10-17, Florida Atlantic coast; see
+# docs/research/2026-10-16-atlantic-cams.md). Each is pulled once per HOURLY run
+# (06:00-20:59 Eastern, so 15 pulls a day per cam) and NEVER by a --golden-only run,
+# so the 10-minute golden fires keep pulling only the seven cams above. That holds the
+# YouTube call rate down: these 15 cams add 15 yt-dlp pulls an hour, no more. To re-pace
+# them, change only this array and the loop that reads it below.
+HOURLY_CAMS=(
+  "jax-beach-bw-cam:bZ4uxyLqV-E"
+  "jax-pier-overview-cam:EOTLy91Ycew"
+  "st-augustine-pier-cam:Q6eZVkUKFxo"
+  "st-augustine-surf-cam:H2q_DJc33kg"
+  "vilano-surf-station-cam:o4BJ-eDgYrM"
+  "ormond-cam-180:p1s7EdZgGvU"
+  "dunlawton-cam-180:3hwTkO_5KXo"
+  "new-smyrna-cam-180:550p9smwjPM"
+  "ponce-inlet-cam-180:ZCozdEGwkDI"
+  "hollywood-broadwalk-cam:cmkAbDUEoyA"
+  "dania-pier-cam:o1eTLR7Degs"
+  "jupiter-reef-club-cam:1FYgBpkM7SA"
+  "key-west-southernmost-waterside-cam:UyfDBDRwPeI"
+  "key-west-southernmost-shores-cam:gsDDwA96F6Q"
+  "sombrero-beach-cam:jE4og3o_SXs"
+)
+
 # One run at a time (scripts/courier_lock.sh says how the lock stays safe). The
 # hourly :07 job and the 10-minute golden job can meet.
 LOCK_DIR="${COURIER_LOCK_DIR:-${TMPDIR:-/tmp}/isitbeachday-courier.lock}"
@@ -297,8 +321,14 @@ grab_and_upload() {
   return 0
 }
 
+# The cams this run pulls: the base list always, the hourly-only list except on a golden run.
+RUN_CAMS=("${CAMS[@]}")
+if [[ "$GOLDEN_ONLY" -ne 1 ]]; then
+  RUN_CAMS+=("${HOURLY_CAMS[@]}")
+fi
+
 uploaded=0
-for entry in "${CAMS[@]}"; do
+for entry in "${RUN_CAMS[@]}"; do
   cam_id="${entry%%:*}"
   video_id="${entry#*:}"
   if grab_and_upload "$cam_id" "$video_id"; then
@@ -306,6 +336,6 @@ for entry in "${CAMS[@]}"; do
   fi
 done
 
-log "done: $uploaded/${#CAMS[@]} cams uploaded"
+log "done: $uploaded/${#RUN_CAMS[@]} cams uploaded"
 [[ "$uploaded" -gt 0 ]] && exit 0
 exit 1

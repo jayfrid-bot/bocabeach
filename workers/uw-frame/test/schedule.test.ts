@@ -8,8 +8,11 @@ import {
   isSurfaceCamHour,
 } from "../src/lib/schedule";
 
+/** The 15 Florida Atlantic-coast YouTube cams added 2026-10-17, in registry order. */
+const ATLANTIC_CAMS = ["jax-beach-bw-cam", "jax-pier-overview-cam", "st-augustine-pier-cam", "st-augustine-surf-cam", "vilano-surf-station-cam", "ormond-cam-180", "dunlawton-cam-180", "new-smyrna-cam-180", "ponce-inlet-cam-180", "hollywood-broadwalk-cam", "dania-pier-cam", "jupiter-reef-club-cam", "key-west-southernmost-waterside-cam", "key-west-southernmost-shores-cam", "sombrero-beach-cam"];
+
 describe("registry", () => {
-  it("has exactly the seven documented cameras", () => {
+  it("has exactly the twenty-two documented cameras", () => {
     expect(CAMERA_REGISTRY.map((c) => c.id)).toEqual([
       "deerfield-spinner-uw",
       "deerfield-beach-cam",
@@ -18,7 +21,15 @@ describe("registry", () => {
       "ftl-elbo-beach-cam",
       "fort-myers-beach-cam",
       "pensacola-sria-west-cam",
+      ...ATLANTIC_CAMS,
     ]);
+  });
+
+  it("gives every Atlantic cam the slowest existing cadence (3h-daylight) and a distinct YouTube id", () => {
+    const atlantic = CAMERA_REGISTRY.filter((c) => ATLANTIC_CAMS.includes(c.id));
+    expect(atlantic).toHaveLength(15);
+    for (const c of atlantic) expect(c.cadence).toBe("3h-daylight");
+    expect(new Set(CAMERA_REGISTRY.map((c) => c.videoId)).size).toBe(CAMERA_REGISTRY.length);
   });
 
   it("keeps the Spinner cam's video id and hourly cadence unchanged", () => {
@@ -90,7 +101,7 @@ describe("camsDueAtTick", () => {
     expect(due.map((c) => c.id)).toEqual(["deerfield-spinner-uw"]);
   });
 
-  it("grabs the underwater cam and all six surface cams on a daylight surface hour", () => {
+  it("grabs the underwater cam and all twenty-one surface cams on a daylight surface hour", () => {
     // 13:00 UTC = 9am EDT: daylight AND a surface hour.
     const due = camsDueAtTick(new Date("2026-07-15T13:00:00Z"));
     expect(due.map((c) => c.id).sort()).toEqual(
@@ -102,6 +113,7 @@ describe("camsDueAtTick", () => {
         "ftl-elbo-beach-cam",
         "fort-myers-beach-cam",
         "pensacola-sria-west-cam",
+        ...ATLANTIC_CAMS,
       ].sort()
     );
   });
