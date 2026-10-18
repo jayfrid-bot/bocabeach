@@ -250,12 +250,10 @@ Measured 2026-10-18 on all 18 feed views:
 - **Size header.** `X-Cam-Original-Size: 4352x3264` lets the viewer refuse a picture before it reads the body.
 
 The zoom viewer asks for the original only after the viewer first zooms in (`ZoomableImage` `sharpSrc`). It does nothing when
-`navigator.connection.saveData` is set, or when the original is over 20 megapixels, or when the screen is touch or narrow and it is
-over 12 megapixels (an older iPhone decodes 12 MP into about 48 MB). It downloads once, decodes off screen, and swaps only after the
-decode worked, without resetting the zoom. On any failure the normal picture stays. Measured: every feed original is over 12 MP
-(Boca 14 MP; the 5184x3456 ones 18 MP; Hobe Sound and Sebastian 24 MP, over 20 MP). So a phone gets an
-original from no feed today, and a desktop from all but Hobe Sound and Sebastian. Raise the two constants in `ZoomableImage.tsx`
-if a phone should get the 14 and 18 MP ones.
+`navigator.connection.saveData` is set, or when the original is over 20 megapixels (phones included, by the owner's call on
+2026-10-18; `ORIGINAL_MAX_PIXELS_SMALL_SCREEN` can set a lower phone limit). It downloads once, decodes off screen, and swaps
+only after the decode worked, without resetting the zoom. On any failure the normal picture stays. Measured: Boca 14 MP; the
+5184x3456 ones 18 MP; Hobe Sound and Sebastian 24 MP. So phones and computers get every original except Hobe Sound and Sebastian.
 The cost lands on the county servers only on a cache miss, once per capture and per data center, and never faster than the limit.
 The archive keeps `mr`. Side effect to know: Hobe Sound and Sebastian `mr` frames (0.7 to 1.0 MB) passed the 600 KB cap, so
 the archive skipped all four of those cams before. They now fit by re-encoding, so they start to fill the archive

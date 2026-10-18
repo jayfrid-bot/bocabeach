@@ -20,7 +20,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-10-18",
     title: "Sharper beach camera pictures",
     details:
-      "Many of our beach cameras now show a larger, sharper picture, so you can zoom in further before it turns blocky. On a computer, cameras that publish a full-size photo, such as the Boca Raton and Jupiter ones, load it in when you zoom, and it is several times sharper. Nothing is enhanced or redrawn. It is the real picture the camera took.",
+      "Many of our beach cameras now show a larger, sharper picture, so you can zoom in further before it turns blocky. Cameras that publish a full-size photo, such as the Boca Raton and Jupiter ones, load it in when you zoom, and it is several times sharper. Nothing is enhanced or redrawn. It is the real picture the camera took.",
     tag: "improved",
   },
   {

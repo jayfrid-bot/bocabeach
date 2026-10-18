@@ -105,9 +105,10 @@ describe("originalAllowed: which devices may decode a full-size original", () =>
   it("lets a desktop take up to 20 MP", () => {
     expect(originalAllowed({ ...mid, smallScreen: false, saveData: false })).toBe(true);
   });
-  it("keeps a touch or narrow screen to 12 MP", () => {
-    expect(originalAllowed({ ...mid, smallScreen: true, saveData: false })).toBe(false);
+  it("lets a phone take the 14 and 18 MP originals, but not the 24 MP ones", () => {
+    expect(originalAllowed({ ...mid, smallScreen: true, saveData: false })).toBe(true);
     expect(originalAllowed({ ...small, smallScreen: true, saveData: false })).toBe(true);
+    expect(originalAllowed({ ...big, smallScreen: true, saveData: false })).toBe(false);
   });
   it("never when the visitor asked to save data", () => {
     expect(originalAllowed({ ...small, smallScreen: false, saveData: true })).toBe(false);

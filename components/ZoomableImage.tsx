@@ -77,13 +77,15 @@ export function maxScaleFor(naturalWidth: number | undefined, fittedWidthCss: nu
 
 /** The largest original (in pixels) any device is asked to decode: 20 megapixels. */
 export const ORIGINAL_MAX_PIXELS = 20_000_000;
-/** On a touch or narrow screen the limit is lower, to protect older phones (12 MP is about 48 MB decoded). */
-export const ORIGINAL_MAX_PIXELS_SMALL_SCREEN = 12_000_000;
+/** On a touch or narrow screen. Owner call (2026-10-18): phones are the main audience, so they get the
+ *  14 and 18 MP originals too (about 56–72 MB decoded, fine on any iPhone of the last several years).
+ *  The 24 MP ones stay out under ORIGINAL_MAX_PIXELS everywhere. Lower this if older phones struggle. */
+export const ORIGINAL_MAX_PIXELS_SMALL_SCREEN = 20_000_000;
 
 /**
  * Whether the viewer may swap in an original of `width` x `height`. No when the visitor asked
- * to save data, when the original is over 20 MP, or when the screen is touch or narrow and the
- * original is over 12 MP.
+ * to save data, or when the original is over 20 MP (the same on a touch or narrow screen today;
+ * ORIGINAL_MAX_PIXELS_SMALL_SCREEN can set a lower phone limit).
  */
 export function originalAllowed(o: { width: number; height: number; smallScreen: boolean; saveData: boolean }): boolean {
   if (o.saveData) return false;
