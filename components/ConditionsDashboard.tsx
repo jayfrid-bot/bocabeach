@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import type { ConditionsResponse, LocationPublic } from "@/lib/types";
+import { fromWire, type WireConditions } from "@/lib/clientConditions";
 import { GET_APP_PATH } from "@/lib/appStore";
 import { applyLiveRipCap, consensusCloudPct, currentHourOf, deriveMetrics, DEFAULT_SCORING } from "@/lib/score";
 import { computeStormActivity } from "@/lib/stormActivity";
@@ -83,10 +84,13 @@ import { useOwnerEntryTap } from "@/lib/quality/ownerEntry";
 // Throw on non-OK so an error body (e.g. a 404 `{error}`) never replaces the
 // good snapshot — SWR keeps the last good data and the consumer guard holds.
 const fetcher = (u: string) =>
-  fetch(u).then((r) => {
-    if (!r.ok) throw new Error(String(r.status));
-    return r.json();
-  });
+  fetch(u)
+    .then((r) => {
+      if (!r.ok) throw new Error(String(r.status));
+      return r.json();
+    })
+    // The lean route sends the packed wire form (lib/clientConditions.ts).
+    .then((j) => fromWire(j));
 
 // Stamped into the bundle at build time (see next.config.mjs) for the footer.
 // BUILD_NUM is the git commit count (auto-increments every commit) and GIT_SHA
@@ -134,14 +138,15 @@ function flagshipSlugOf(beaches: LocationPublic[]): string {
 
 export function ConditionsDashboard({
   slug,
-  initial,
+  initial: initialProp,
   preview = false,
   browseHref,
   isNativeApp = false,
   beaches = [],
 }: {
   slug: string;
-  initial: ConditionsResponse;
+  /** The server's snapshot — plain, or the packed wire form the pages send. */
+  initial: ConditionsResponse | WireConditions;
   /**
    * Admin preview: render `initial` only — disable SWR refetch + auto-refresh
    * (there's no `/api/conditions/<slug>` for a not-yet-configured beach).
@@ -161,8 +166,10 @@ export function ConditionsDashboard({
    */
   beaches?: LocationPublic[];
 }) {
+  // Unpack once: every card below keeps reading a plain ConditionsResponse.
+  const initial = useMemo(() => fromWire(initialProp), [initialProp]);
   const { data, mutate, isValidating } = useSWR<ConditionsResponse>(
-    preview ? null : `/api/conditions/${slug}`,
+    preview ? null : `/api/conditions/${slug}/lean`,
     fetcher,
     {
       fallbackData: initial,
@@ -243,9 +250,9 @@ export function ConditionsDashboard({
         // exact URL `s-maxage=20`, and letting the browser/edge share that
         // 20-s entry is the whole point: every client asking "is this fresh
         // yet" in the same window gets the one shared answer, not its own.
-        const r = await fetch(`/api/conditions/${slug}?fresh=1`);
+        const r = await fetch(`/api/conditions/${slug}/lean?fresh=1`);
         if (!r.ok || cancelled) return;
-        const fresh = (await r.json()) as ConditionsResponse;
+        const fresh = fromWire(await r.json());
         if (!fresh?.snapshot?.generatedAt) return;
         // Only replace the displayed data if it's actually NEWER — never
         // let a straggling response overwrite something fresher that
