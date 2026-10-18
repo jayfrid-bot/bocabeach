@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-18",
+    title: "Zoom in on the beach cameras",
+    details:
+      "Tap a beach camera to open it full screen, then pinch or double-tap to zoom in and drag to look around. The + and − buttons do the same. The live video is one more tap away, and the saved shots in the day view zoom the same way.",
+    tag: "new",
+  },
+  {
     date: "2026-10-17",
     title: "17 more Florida beaches on the Atlantic coast, with live cameras",
     details:
