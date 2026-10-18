@@ -62,12 +62,17 @@
  *   POST /ingest?cam=<id>  -> the Mac courier's upload path (see
  *                              scripts/cam_courier_local.sh). Header
  *                              Authorization: Bearer <INGEST_TOKEN>; body is
- *                              raw JPEG bytes, 20 KB-2 MB; optional header
- *                              X-Grabbed-At (ISO UTC, defaults to now).
- *                              503 if INGEST_TOKEN isn't set, 401 if the
- *                              token is wrong, 404 for an unknown cam, 400
- *                              for a bad/wrong-size body. Returns JSON
- *                              {ok, id, grabbedAtUtc, bytes}.
+ *                              raw JPEG bytes, 5 KB-2 MB (config/frame-guard.json);
+ *                              optional header X-Grabbed-At (ISO UTC, defaults
+ *                              to now). 503 if INGEST_TOKEN isn't set, 401 if
+ *                              the token is wrong, 404 for an unknown cam, 400
+ *                              for a body that is not a JPEG or is the wrong
+ *                              size, 422 for a JPEG that is a BLANK frame (a
+ *                              black slate, a loading spinner, an error page;
+ *                              see src/lib/frameQuality.ts). Every refusal is
+ *                              JSON {ok:false, error, reason, message, bytes}
+ *                              and leaves the stored frame as it was. Success:
+ *                              JSON {ok, id, grabbedAtUtc, bytes}.
  *   GET /host?v=<videoId>  -> internal: the iframe host page the headless
  *                              browser loads. Only accepts a videoId that is
  *                              actually in CAMERA_REGISTRY.
@@ -110,9 +115,14 @@
  *   (FLAGS_BUDGET_MS) and always gets attempted even if cam grabs used the
  *   full 90s, since it's cheap and independent of them.
  *
- * QUALITY GUARD: a screenshot smaller than MIN_GOOD_BYTES (likely a
- * black/blank frame) is REJECTED and never overwrites a previously stored
- * good frame for that camera. Public read is fine (they're public cam
+ * QUALITY GUARD: every frame, from either writer, goes through judgeFrame
+ * (src/lib/frameQuality.ts) before it is stored. A frame that is not a JPEG,
+ * is a stub, or is BLANK (YouTube's black slate, the player's loading spinner
+ * on black, an error page) is REJECTED and never overwrites a previously
+ * stored good frame for that camera. The refusal is recorded under
+ * attempt:<id> (shown as "lastAttempt" by /cams). Each cron tick also re-checks
+ * the frames already stored and clears any that are blank (sweepBlankFrames),
+ * so a bad frame stored before this guard existed does not stay "good". Public read is fine (they're public cam
  * frames and a public flag dashboard); no auth on the read paths. POST
  * /ingest is the one write path that needs auth (a bearer token, checked
  * constant-time) since it's an open write into KV; both it and the browser
@@ -120,7 +130,7 @@
  * (src/lib/frameGuard.ts) before writing, so an out-of-order write from
  * either source can never overwrite a newer good frame from the other.
  */
-import puppeteer, { type Browser, type Page } from "@cloudflare/puppeteer";
+import puppeteer, { type Browser, type ElementHandle, type Frame, type Page } from "@cloudflare/puppeteer";
 import {
   CAMERA_REGISTRY,
   camsDueAtTick,
@@ -133,6 +143,7 @@ import { parseVisibleFlags, summarizeVisibleText, type FlagDomEntry, type FlagNa
 import { parseFortLauderdaleConditions, type FortLauderdaleConditions } from "./lib/ftlConditions";
 import { shouldReplaceStoredFrame } from "./lib/frameGuard";
 import { readJpegDimensions } from "./lib/jpeg";
+import { judgeFrame, MAX_FRAME_BYTES, MIN_FRAME_BYTES, RICH_FRAME_BYTES } from "./lib/frameQuality";
 
 export interface Env {
   BROWSER: Fetcher; // Browser Rendering binding
@@ -166,12 +177,21 @@ interface LegacyMeta {
 function frameKey(id: string): string {
   return `frame:${id}`;
 }
-/** The last FAILED browser attempt for a cam that still has a good frame. */
+/** The last FAILED attempt (browser grab or courier upload) for a cam that still has a good frame. */
 function attemptKey(id: string): string {
   return `attempt:${id}`;
 }
 function metaKey(id: string): string {
   return `meta:${id}`;
+}
+
+/** A refused or failed write for a cam that keeps its stored frame; /cams shows it as lastAttempt. */
+async function recordAttempt(
+  env: Env,
+  id: string,
+  attempt: { grabbedAtUtc: string; ms: number; source: FrameSource; error: string }
+): Promise<void> {
+  await env.UW_FRAME.put(attemptKey(id), JSON.stringify({ ...attempt, ok: false }));
 }
 
 // "browser" = the headless-Chrome grab path (this Worker's own cron tick).
@@ -244,15 +264,15 @@ function isFtlPageStale(pageDate: string | null, now: Date): boolean {
   return !Number.isFinite(ageDays) || ageDays > FTL_MAX_PAGE_AGE_DAYS || ageDays < 0;
 }
 
-const MIN_GOOD_BYTES = 15_000; // reject suspiciously-small (likely black) frames
 const PLAY_TIMEOUT_MS = 25_000; // hard cap on waiting for a real playing frame per cam
 const TICK_BUDGET_MS = 90_000; // whole-tick cap across every cam grab, see header
 const FLAGS_BUDGET_MS = 25_000; // separate cap for the lifeguard-flag read
 const VIEWPORT = { width: 1280, height: 720 };
-
-// POST /ingest body-size bounds (raw JPEG bytes from the Mac courier).
-const MIN_INGEST_BYTES = 20_000;
-const MAX_INGEST_BYTES = 2_000_000;
+// A screenshot that judgeFrame calls blank (player still loading) gets this many
+// more tries, a few seconds apart, before the grab gives up. Each try adds
+// BLANK_RETRY_WAIT_MS to a cam's time, inside TICK_BUDGET_MS.
+const BLANK_RETRIES = 2;
+const BLANK_RETRY_WAIT_MS = 4_000;
 
 function hostHtml(videoId: string): string {
   const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&playsinline=1&rel=0`;
@@ -297,6 +317,24 @@ async function readJson<T>(env: Env, key: string): Promise<T | null> {
 }
 
 /**
+ * Screenshot the video region. Prefer the <video> element inside the frame; fall
+ * back to the iframe element.
+ */
+async function screenshotCam(frame: Frame, iframeEl: ElementHandle): Promise<Uint8Array> {
+  let shot: Uint8Array | null = null;
+  try {
+    const vh = await frame.$("video");
+    if (vh) shot = (await vh.screenshot({ type: "jpeg", quality: 80 })) as Uint8Array;
+  } catch {
+    /* fall through */
+  }
+  if (!shot) {
+    shot = (await iframeEl.screenshot({ type: "jpeg", quality: 80 })) as Uint8Array;
+  }
+  return shot;
+}
+
+/**
  * Grab one camera's frame using an already-open page (reused across cams in
  * the same tick). Returns a result object; NEVER throws — the caller treats
  * a bad result as a soft skip so the previous good frame for that cam stands.
@@ -336,15 +374,37 @@ async function grabOneCam(
       /* best-effort */
     }
 
-    // Poll the video INSIDE the iframe until it is decoding a real frame.
+    // Poll the video INSIDE the iframe until it is decoding a real frame AND the
+    // player says it is playing. "readyState >= 2 and currentTime > 0" alone is
+    // not enough: on 2026-10-17 a player that was still buffering (a spinner on
+    // black) passed that test and the screenshot was stored as a good frame.
     let playing = false;
+    let lastState = "no state read";
     while (Date.now() - start < PLAY_TIMEOUT_MS) {
       const state = await frame.evaluate(() => {
         const v = document.querySelector("video") as HTMLVideoElement | null;
         const err = document.querySelector(".ytp-error");
+        const player = document.getElementById("movie_player") as
+          | (HTMLElement & { getPlayerState?: () => number })
+          | null;
+        const spinner = document.querySelector(".ytp-spinner") as HTMLElement | null;
+        let playerState = -2; // -2 = the player API is not there
+        try {
+          if (player && typeof player.getPlayerState === "function") playerState = player.getPlayerState();
+        } catch {
+          /* leave -2 */
+        }
         return {
           ready: v ? v.readyState : 0,
           t: v ? v.currentTime : 0,
+          width: v ? v.videoWidth : 0,
+          paused: v ? v.paused : true,
+          // YouTube marks a loading player with the buffering-mode class, and
+          // shows its spinner element; either one means "not playing yet".
+          buffering:
+            (!!player && player.classList.contains("buffering-mode")) ||
+            (!!spinner && getComputedStyle(spinner).display !== "none") ||
+            playerState === 3,
           unavailable: !!err,
           // The overlay's own words ("Video unavailable", "Sign in to confirm
           // you're not a bot", "Error 153"...) — the only way to tell an
@@ -359,14 +419,21 @@ async function grabOneCam(
           ms: Date.now() - start,
         };
       }
-      if (state.ready >= 2 && state.t > 0) {
+      lastState =
+        `readyState ${state.ready}, t ${state.t.toFixed(1)}, ${state.width}px wide, ` +
+        `${state.paused ? "paused" : "not paused"}, ${state.buffering ? "buffering" : "not buffering"}`;
+      if (state.ready >= 2 && state.t > 0 && state.width > 0 && !state.paused && !state.buffering) {
         playing = true;
         break;
       }
       await new Promise((r) => setTimeout(r, 700));
     }
     if (!playing) {
-      return { ok: false, reason: "timed out waiting for a playing frame", ms: Date.now() - start };
+      return {
+        ok: false,
+        reason: `timed out waiting for a playing frame (last player state: ${lastState})`,
+        ms: Date.now() - start,
+      };
     }
 
     // Clean up the frame so it's mostly water/beach — matching the old
@@ -391,27 +458,22 @@ async function grabOneCam(
     }
     await new Promise((r) => setTimeout(r, 3500));
 
-    // Screenshot the video region. Prefer the <video> element inside the
-    // frame; fall back to the iframe element.
-    let shot: Uint8Array | null = null;
-    try {
-      const vh = await frame.$("video");
-      if (vh) shot = (await vh.screenshot({ type: "jpeg", quality: 80 })) as Uint8Array;
-    } catch {
-      /* fall through */
+    // Screenshot the video region, and judge the picture before it is kept. A
+    // frame that is blank (the player was still loading, or the stream is
+    // showing YouTube's black slate) gets a few more tries; if it is still
+    // blank the grab fails and the last good frame stands.
+    let shot: Uint8Array = new Uint8Array(0);
+    let verdict = judgeFrame(shot);
+    for (let attempt = 0; attempt <= BLANK_RETRIES; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, BLANK_RETRY_WAIT_MS));
+      shot = await screenshotCam(frame, iframeEl);
+      verdict = judgeFrame(shot);
+      if (verdict.ok || verdict.reason !== "blank") break;
     }
-    if (!shot) {
-      shot = (await iframeEl.screenshot({ type: "jpeg", quality: 80 })) as Uint8Array;
-    }
-
-    const isJpeg = shot.length > 2 && shot[0] === 0xff && shot[1] === 0xd8;
-    if (!isJpeg) {
-      return { ok: false, reason: `not a JPEG (${shot.length} bytes)`, ms: Date.now() - start };
-    }
-    if (shot.length < MIN_GOOD_BYTES) {
+    if (!verdict.ok) {
       return {
         ok: false,
-        reason: `frame too small (${shot.length} < ${MIN_GOOD_BYTES}) — likely blank`,
+        reason: verdict.reason === "blank" ? `${verdict.message} (after ${BLANK_RETRIES + 1} tries)` : verdict.message,
         ms: Date.now() - start,
       };
     }
@@ -447,10 +509,12 @@ async function storeCamResult(
   // attempt is recorded under its own key (see /cams "lastAttempt") and
   // the stored frame + meta are left exactly as they were.
   if (!result.ok && stored?.ok) {
-    await env.UW_FRAME.put(
-      attemptKey(cam.id),
-      JSON.stringify({ grabbedAtUtc, ms: result.ms, ok: false, error: result.reason ?? "grab failed" }),
-    );
+    await recordAttempt(env, cam.id, {
+      grabbedAtUtc,
+      ms: result.ms,
+      source: "browser",
+      error: result.reason ?? "grab failed",
+    });
     return;
   }
 
@@ -716,9 +780,52 @@ async function storeFlagsResult(env: Env, slug: string, result: FlagsResult): Pr
 
 interface TickSummary {
   tickAtUtc: string;
+  /** Cams whose stored frame was blank and was cleared this tick (see sweepBlankFrames). */
+  cleared: { id: string; message: string }[];
   cams: { id: string; ok: boolean; ms: number; reason?: string; skipped?: boolean }[];
   flags: { ok: boolean; ms: number; error?: string } | null;
   ftlFlags: { ok: boolean; ms: number; error?: string } | null;
+}
+
+/**
+ * Re-judge the frames already in the store and clear any that are blank.
+ *
+ * Why: before the frame guard existed, the headless browser stored the YouTube
+ * loading spinner as a good frame (ok:true), and every reader kept trusting it
+ * (2026-10-17: pensacola-sria-west-cam and deerfield-surf-cam). New writes are
+ * checked now, but a bad frame that is already stored would stay "good" until a
+ * real frame replaced it. This clears it: the frame bytes go, and meta becomes
+ * ok:false with the reason, so readers skip the cam instead of reading a black
+ * picture. The next good grab or upload fills it again. Runs once per tick
+ * (cron and /grab). Never throws.
+ */
+async function sweepBlankFrames(env: Env): Promise<{ id: string; message: string }[]> {
+  const cleared: { id: string; message: string }[] = [];
+  for (const cam of CAMERA_REGISTRY) {
+    try {
+      const meta = await readJson<CamMeta>(env, metaKey(cam.id));
+      if (!meta?.ok) continue;
+      const b64 = await env.UW_FRAME.get(frameKey(cam.id));
+      if (!b64) continue;
+      // A frame big enough to skip the pixel check anyway: do not decode it.
+      if (RICH_FRAME_BYTES !== null && (b64.length * 3) / 4 >= RICH_FRAME_BYTES) continue;
+      const verdict = judgeFrame(b64ToBytes(b64));
+      if (verdict.ok) continue;
+      await env.UW_FRAME.delete(frameKey(cam.id));
+      await env.UW_FRAME.put(
+        metaKey(cam.id),
+        JSON.stringify({ ...meta, ok: false, error: `stored frame cleared: ${verdict.message}` })
+      );
+      if (cam.id === LEGACY_CAM_ID) {
+        await env.UW_FRAME.delete(LEGACY_KEY_FRAME);
+        await env.UW_FRAME.delete(LEGACY_KEY_META);
+      }
+      cleared.push({ id: cam.id, message: verdict.message });
+    } catch {
+      /* a failed check must never stop the tick */
+    }
+  }
+  return cleared;
 }
 
 /**
@@ -728,7 +835,8 @@ interface TickSummary {
 async function runTick(env: Env, tickDate: Date): Promise<TickSummary> {
   const due = camsDueAtTick(tickDate);
   const doFlags = isDaylightEastern(tickDate);
-  const summary: TickSummary = { tickAtUtc: nowUtc(), cams: [], flags: null, ftlFlags: null };
+  const summary: TickSummary = { tickAtUtc: nowUtc(), cleared: [], cams: [], flags: null, ftlFlags: null };
+  summary.cleared = await sweepBlankFrames(env);
 
   let browser: Browser | null = null;
   try {
@@ -835,7 +943,7 @@ async function handleCams(env: Env): Promise<Response> {
     CAMERA_REGISTRY.map(async (cam) => {
       const [meta, attempt] = await Promise.all([
         readJson<CamMeta>(env, metaKey(cam.id)),
-        readJson<{ grabbedAtUtc: string; ok: false; error: string }>(env, attemptKey(cam.id)),
+        readJson<{ grabbedAtUtc: string; ok: false; error: string; source?: FrameSource }>(env, attemptKey(cam.id)),
       ]);
       return {
         id: cam.id,
@@ -911,14 +1019,30 @@ async function handleIngest(req: Request, env: Env, camParam: string | null): Pr
   }
 
   const bytes = new Uint8Array(await req.arrayBuffer());
-  const looksLikeJpeg = bytes.length > 2 && bytes[0] === 0xff && bytes[1] === 0xd8;
-  if (!looksLikeJpeg || bytes.length < MIN_INGEST_BYTES || bytes.length > MAX_INGEST_BYTES) {
+  const verdict = judgeFrame(bytes);
+  if (!verdict.ok) {
+    // A frame that is not a real picture never reaches the store. Bad body
+    // (not a JPEG, a stub, too big) is 400; a JPEG that is a blank frame is 422.
+    // The stored frame and its meta stay as they were.
+    const reason = verdict.reason ?? "blank";
+    await recordAttempt(env, cam.id, {
+      grabbedAtUtc: nowUtc(),
+      ms: 0,
+      source: "courier",
+      error: verdict.message,
+    });
     return Response.json(
       {
         ok: false,
-        error: `bad body: ${bytes.length} bytes (want ${MIN_INGEST_BYTES}-${MAX_INGEST_BYTES}, JPEG magic ${looksLikeJpeg})`,
+        id: cam.id,
+        error: reason === "blank" ? "blank frame" : "bad body",
+        reason,
+        message: verdict.message,
+        bytes: bytes.length,
+        want: { minBytes: MIN_FRAME_BYTES, maxBytes: MAX_FRAME_BYTES, format: "JPEG", picture: "not blank" },
+        ...(verdict.stats ? { stats: verdict.stats } : {}),
       },
-      { status: 400 }
+      { status: reason === "blank" ? 422 : 400 }
     );
   }
 

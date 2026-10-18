@@ -55,6 +55,11 @@ EXPECTED_IDS = {
 N_CAMS = len(EXPECTED_IDS)
 
 
+def fixture(name):
+    """A real frame saved from the cam pipeline (workers/uw-frame/test/fixtures)."""
+    return (ROOT / "workers" / "uw-frame" / "test" / "fixtures" / name).read_bytes()
+
+
 def jpeg(size=20_000):
     return b"\xff\xd8\xff\xe0" + b"\x00" * (size - 6) + b"\xff\xd9"
 
@@ -350,6 +355,54 @@ class FetchStillTests(unittest.TestCase):
         self.assertEqual(cs._iso_utc_from_unix(1791667472000), "2026-10-10T21:24:32Z")  # milliseconds
 
 
+class BlankFrameTests(unittest.TestCase):
+    """frame_blank_verdict: the same call as workers/uw-frame/src/lib/frameQuality.ts, on the same fixtures."""
+
+    BLANK = ("spinner-pensacola.jpg", "spinner-deerfield-surf.jpg", "black-slate-12815.jpg",
+             "black-noise-20696.jpg", "black-underwater-night.jpg", "video-unavailable.jpg")
+    REAL = ("daylight-pensacola.jpg", "daylight-fortmyers-q30.jpg", "daylight-640-baseline.jpg",
+            "underwater-flat.jpg", "night-pier-lights.jpg", "dim-hazy.jpg", "night-underwater-dark.jpg",
+            "dim-feed-frame.jpg")
+
+    def both_ways(self, name):
+        """The verdict through Pillow and through ffmpeg: they must agree."""
+        out = []
+        for use_pillow in (True, False):
+            with contextlib.redirect_stderr(io.StringIO()):
+                out.append(cs.frame_blank_verdict(fixture(name), use_pillow=use_pillow))
+        return out
+
+    def test_blank_frames_are_rejected(self):
+        for name in self.BLANK:
+            with self.subTest(name):
+                for blank, why in self.both_ways(name):
+                    self.assertTrue(blank, name)
+                    self.assertIn("blank frame", why)
+
+    def test_real_pictures_pass(self):
+        for name in self.REAL:
+            with self.subTest(name):
+                for blank, _ in self.both_ways(name):
+                    self.assertFalse(blank, name)
+
+    def test_a_big_frame_is_not_pixel_checked(self):
+        # richBytes in config/frame-guard.json: a frame this large is never blank.
+        big = fixture("black-slate-12815.jpg") + b"\x00" * 80_000
+        self.assertEqual(cs.frame_blank_verdict(big), (False, ""))
+
+    def test_it_fails_open_on_bytes_it_cannot_read(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(cs.frame_blank_verdict(jpeg()), (False, ""))
+            self.assertEqual(cs.frame_blank_verdict(b"not a jpeg"), (False, ""))
+            self.assertEqual(cs.frame_blank_verdict(fixture("daylight-640-progressive.jpg")), (False, ""))
+
+    def test_it_uses_the_shared_thresholds_file(self):
+        cfg = json.loads((ROOT / "config" / "frame-guard.json").read_text())
+        self.assertEqual(cs._frame_guard_config(), cfg)
+        # the worker reads the same file: a change there moves both
+        self.assertIn("frame-guard.json", (ROOT / "workers" / "uw-frame" / "src" / "lib" / "frameQuality.ts").read_text())
+
+
 class CaptureBeachTests(WithManifest):
     """capture_beach: fetch_still -> archive_frame -> assess, in that order."""
 
@@ -357,7 +410,7 @@ class CaptureBeachTests(WithManifest):
     COURIER_CAM = {"id": "ftl-elbo-beach-cam", "name": "Elbo",
                    "source": {"kind": "direct", "url": "https://u/frame", "meta": "https://u/meta"}}
 
-    def run_capture(self, slug, cams, *, assess=None, frame_at_info="fresh", meta=None, token="tok", attempted=None, archive=None, gap_state=None, prev=None):
+    def run_capture(self, slug, cams, *, assess=None, frame_at_info="fresh", meta=None, token="tok", attempted=None, archive=None, gap_state=None, prev=None, frame=None):
         order = []
         self.out = io.StringIO()
         self.err = io.StringIO()
@@ -369,7 +422,7 @@ class CaptureBeachTests(WithManifest):
             order.append("fetch")
             if info is not None and frame_at_info:
                 info["frameAt"] = frame_at_info
-            return jpeg()
+            return frame or jpeg()
 
         def fake_archive(s, c, img, frame_at=None):
             order.append(("archive", s, c, frame_at))
@@ -402,6 +455,25 @@ class CaptureBeachTests(WithManifest):
         self.assertEqual(order[2][:3], ("archive", "boca-raton", "boca-south"))
         self.assertEqual(len(order), 3)
         self.assertEqual(len(result["cams"]), 1)
+
+    def test_a_courier_frame_that_is_a_loading_spinner_is_neither_read_nor_archived(self):
+        meta = {"ok": True, "grabbedAtUtc": iso_ago(5)}
+        result, order = self.run_capture("fort-lauderdale", [self.COURIER_CAM], meta=meta, frame=fixture("spinner-pensacola.jpg"))
+        self.assertIsNone(result)
+        self.assertEqual(order, ["fetch"])  # no assess, no archive
+        self.assertIn("skipped (blank frame", self.out.getvalue())
+
+    def test_a_courier_frame_that_is_a_real_picture_is_read_and_archived(self):
+        meta = {"ok": True, "grabbedAtUtc": iso_ago(5)}
+        result, order = self.run_capture("fort-lauderdale", [self.COURIER_CAM], meta=meta, frame=fixture("daylight-640-baseline.jpg"))
+        self.assertEqual([c["id"] for c in result["cams"]], ["ftl-elbo-beach-cam"])
+        self.assertIn("assess", order)
+        self.assertEqual(sum(1 for o in order if isinstance(o, tuple)), 1)
+
+    def test_a_feed_cam_is_not_blank_checked(self):
+        # Only courier ("direct") cams can hold a YouTube slate; feed stills keep their own rules.
+        result, order = self.run_capture("boca-raton", [self.FEED_CAM], frame_at_info=iso_ago(5), frame=fixture("black-slate-12815.jpg"))
+        self.assertIn("assess", order)
 
     def test_a_frame_clef_calls_unreadable_is_skipped_and_records_no_frame_sha(self):
         def assess(img):
