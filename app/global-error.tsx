@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { isChunkLoadError, reloadOnceForChunkError } from "@/lib/chunkReload";
 
 /**
  * Global error boundary. Unlike app/error.tsx, this catches errors thrown in the
@@ -18,6 +19,7 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
+    if (isChunkLoadError(error) && reloadOnceForChunkError(error)) return; // lib/chunkReload.ts
     console.error(error);
   }, [error]);
 

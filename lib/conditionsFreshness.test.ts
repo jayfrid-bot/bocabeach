@@ -69,7 +69,9 @@ describe("a stored page (edge cache or service worker) and the mount refetch", (
 
   it("the dashboard feeds the rule the snapshot time from the HTML, not a response time", () => {
     const src = readFileSync(join(__dirname, "..", "components/ConditionsDashboard.tsx"), "utf8");
-    expect(src).toMatch(/shouldRevalidateOnMount\(initial\.snapshot\.generatedAt, Date\.now\(\)\)/);
+    // ...on the server's clock (lib/serverClock.ts), not the phone's.
+    expect(src).toMatch(/shouldRevalidateOnMount\(initial\.snapshot\.generatedAt, serverNow\(\)\)/);
+    expect(src).toMatch(/shouldRefetchForFreshness\(latestGeneratedAtRef\.current, serverNow\(\), attempts\)/);
     expect(src).not.toMatch(/x-edge-age|x-edge-data-age|x-ibd-cached-at/);
   });
 });

@@ -226,6 +226,23 @@ export function serveEntry(e: Entry, method: string, state: "HIT" | "STALE", now
   return new Response(body, { status: e.status, headers });
 }
 
+/** Server-Timing name for the server's clock on an HTML answer (lib/serverClock.ts reads it). */
+export const SERVER_NOW_TIMING = "ibd-now";
+
+/**
+ * Add `Server-Timing: ibd-now;desc=<ms>` to an HTML answer, at the moment it is answered
+ * (a stored copy too: the value is never stored). The page measures data age on the server's
+ * clock with it, so a phone whose clock is off still refreshes old data. Other answers are
+ * returned as they are (the same object).
+ */
+export function stampServerNow(res: Response, nowMs: number): Response {
+  const type = (res.headers.get("content-type") ?? "").toLowerCase();
+  if (!type.startsWith("text/html") || (res as { webSocket?: unknown }).webSocket) return res;
+  const headers = new Headers(res.headers);
+  headers.append("server-timing", `${SERVER_NOW_TIMING};desc=${Math.floor(nowMs)}`);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
+}
+
 // ---------- Workers Cache API (per datacenter) ----------
 
 export interface CacheLike {
@@ -578,7 +595,22 @@ export function createEdgeCache(opts: EdgeCacheOptions = {}) {
     return { pass: false, key, route, entry, state, t };
   }
 
+  /** Every answer this wrapper gives, with the server's time on HTML (see stampServerNow). */
   async function handle<Env extends EdgeEnv, Ctx extends ExecCtx>(
+    inner: WorkerLike<Env, Ctx>,
+    request: Request,
+    env: Env,
+    ctx: Ctx,
+  ): Promise<Response> {
+    const res = await answer(inner, request, env, ctx);
+    try {
+      return stampServerNow(res, now());
+    } catch {
+      return res;
+    }
+  }
+
+  async function answer<Env extends EdgeEnv, Ctx extends ExecCtx>(
     inner: WorkerLike<Env, Ctx>,
     request: Request,
     env: Env,

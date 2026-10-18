@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
+import { ChunkErrorReload } from "@/components/ChunkErrorReload";
 import { NativePushInit } from "@/components/NativePushInit";
 import { ReloadOnNewVersion } from "@/components/ReloadOnNewVersion";
 import { AppOpenPing } from "@/components/AppOpenPing";
@@ -104,6 +105,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body className="min-h-screen text-slate-900 antialiased dark:text-slate-100">
         {children}
         <ServiceWorkerRegister />
+        <ChunkErrorReload />
         <NativePushInit />
         <ReloadOnNewVersion />
         <AppOpenPing />

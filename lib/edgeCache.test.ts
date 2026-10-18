@@ -697,6 +697,24 @@ describe("withEdgeCache", () => {
     expect((await h4.call(req("/api/conditions/jupiter/lean"))).headers.get("x-edge-cache")).toBe("MISS");
   });
 
+  it("every HTML answer carries the server's time (ibd-now) at the moment it is served; JSON does not", async () => {
+    const h = harness();
+    const miss = await h.call(req("/jupiter"));
+    expect(miss.headers.get("server-timing")).toBe(`ibd-now;desc=${T0}`);
+    await miss.text();
+    await h.settle();
+    h.clock.t = T0 + 20_000;
+    const hit = await h.call(req("/jupiter"));
+    expect(hit.headers.get("x-edge-cache")).toBe("HIT");
+    expect(hit.headers.get("server-timing")).toBe(`ibd-now;desc=${T0 + 20_000}`); // now, not when stored
+    const stored = [...h.edge._state().memory.values()][0];
+    expect(stored.headers.some(([k]) => k.toLowerCase() === "server-timing")).toBe(false);
+    const bypass = await h.call(req("/jupiter?ref=x"));
+    expect(bypass.headers.get("server-timing")).toBe(`ibd-now;desc=${T0 + 20_000}`);
+    const json = harness(() => new Response("{}", { headers: { "content-type": "application/json" } }));
+    expect((await json.call(req("/api/conditions/jupiter/lean"))).headers.get("server-timing")).toBeNull();
+  });
+
   it("the miss response still streams the body the route produced", async () => {
     const h = harness(() => {
       const enc = new TextEncoder();

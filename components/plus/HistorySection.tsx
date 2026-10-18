@@ -40,11 +40,12 @@ import { LevelBarChart, type LevelBar } from "@/components/LevelBarChart";
 import dynamic from "next/dynamic";
 import { DAY_VIEW_ENABLED } from "@/lib/plus/flags";
 import { isPickable, stepDate, todayInZone } from "@/lib/plus/dayView";
+import { chunkFailed } from "@/lib/chunkReload";
 
 // The day view is a modal opened by picking a day — its code (and its hourly
 // charts) loads on that tap, not with the section.
 const DayViewSheet = dynamic(
-  () => import("@/components/plus/DayViewSheet").then((m) => m.DayViewSheet),
+  () => import("@/components/plus/DayViewSheet").then((m) => m.DayViewSheet).catch(chunkFailed),
   { ssr: false },
 );
 

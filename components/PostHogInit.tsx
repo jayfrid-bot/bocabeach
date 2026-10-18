@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { POSTHOG_HOST, POSTHOG_KEY, shouldLoadAnalytics } from "@/lib/analytics/posthog";
 import { nativePlatform } from "@/lib/push/native";
+import { chunkFailed } from "@/lib/chunkReload";
 
 /** How long after the page has finished loading we are willing to wait for the
  *  browser to go idle before loading analytics anyway. */
@@ -44,6 +45,7 @@ export function PostHogInit() {
     let cancelled = false;
     const cancelWait = whenIdleAfterLoad(() => {
       import("posthog-js")
+        .catch(chunkFailed)
         .then(({ default: posthog }) => {
           if (cancelled || posthog.__loaded) return;
           posthog.init(POSTHOG_KEY, {

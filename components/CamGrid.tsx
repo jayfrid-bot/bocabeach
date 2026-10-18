@@ -6,14 +6,16 @@ import dynamic from "next/dynamic";
 import { fmtTime } from "@/lib/format";
 import { RelativeTime, useNowMs } from "@/components/RelativeTime";
 import { camFreshness } from "@/lib/camFreshness";
+import { chunkFailed } from "@/lib/chunkReload";
 
 // The full-screen zoom viewer (and the pan/zoom image code under it) is only ever
 // opened by a tap on a cam, so it is fetched then — and warmed the moment a finger
 // or pointer reaches the cam, so the tap that opens it rarely waits.
-const warmLightbox = () => {
+export const warmLightbox = () => {
   void import("@/components/CamLightbox").catch(() => {});
 };
-const CamLightbox = dynamic(() => import("@/components/CamLightbox").then((m) => m.CamLightbox), {
+// A missing chunk (an old page after a deploy) reloads once (lib/chunkReload.ts).
+const CamLightbox = dynamic(() => import("@/components/CamLightbox").then((m) => m.CamLightbox).catch(chunkFailed), {
   ssr: false,
 });
 

@@ -139,6 +139,20 @@ The `_headers` fix plus the app-bound flag is far less code.
 - Storage: about 2 MB of build files plus about 500 KB per saved page (decoded HTML) and 15 KB per beach.
 - Edge crew (`perf-edge-cache`) changes to `Cache-Control` on HTML or conditions do not matter to the worker (it overrides pages and uses its own age rule), but a change to the URL shape of `/api/conditions/<beach>` or the chunk path would.
 
+## Pre-deploy review fixes (2026-10-18)
+
+- First call: the dashboard marks its first data call of a page load with the header
+  `x-ibd-first-call: 1`. Only that call may come from the saved copy. The worker keeps no
+  memory of it, because the browser empties worker memory whenever it stops the worker.
+- App shells: a worker that finds `IsItBeachDayApp/` in its user agent (iOS and Android,
+  `capacitor.config.ts`) deletes every cache and unregisters. The page also removes it there.
+- On activate the worker deletes every cache on the origin that is not its own, whatever
+  its name (also the caches of the very first worker).
+- Old builds: when the worker saves a page, it also saves the build files the page names
+  (tags and flight data), and trimming never drops a file a saved page names. A repeat
+  visitor's page also fetches the browser's lazy pieces once at idle. If a file is still
+  missing, `lib/chunkReload.ts` reloads the page once (guarded in sessionStorage).
+
 ## Integration with the payload and edge-cache work (2026-10-18)
 
 - The dashboard reads `/api/conditions/<beach>/lean`, so that is the worker's data route.

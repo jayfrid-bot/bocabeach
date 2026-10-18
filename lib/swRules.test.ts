@@ -46,7 +46,7 @@ interface Posted {
   [k: string]: unknown;
 }
 
-function makeWorker(version = "v1") {
+function makeWorker(version = "v1", userAgent = "Mozilla/5.0 (iPhone) Safari/604.1") {
   const handlers: Record<string, (e: unknown) => void> = {};
   const caches = new FakeCaches();
   const posted: Posted[] = [];
@@ -68,7 +68,7 @@ function makeWorker(version = "v1") {
   };
   const self = {
     location: { href: `${ORIGIN}/sw.js?v=${version}`, origin: ORIGIN },
-    navigator: {},
+    navigator: { userAgent },
     addEventListener: (n: string, h: (e: unknown) => void) => {
       handlers[n] = h;
     },
@@ -138,6 +138,10 @@ function makeWorker(version = "v1") {
 }
 
 type Rules = {
+  referencedAssets: (h: string) => string[];
+  isShellAgent: (ua: string) => boolean;
+  cachesToDelete: (names: string[], keep: string[]) => string[];
+  FIRST_CALL_HEADER: string;
   LIMITS: Record<string, number>;
   RESERVED_SEGMENTS: string[];
   classify: (r: Record<string, unknown>) => { kind: string; key: string; slug?: string; path?: string } | null;
@@ -336,6 +340,8 @@ const html = (build: string, data = "1") =>
   `<!doctype html><html><head><script src="/_next/static/chunks/main-${build}.js"></script></head><body>score ${data}</body></html>`;
 const cond = (generatedAt: string, extra = "") => JSON.stringify({ snapshot: { generatedAt }, extra });
 const htmlRes = (body: string) => new Response(body, { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store" } });
+/** The header the dashboard sends on its first data call of a page load (lib/swClient.ts). */
+const FIRST = { "x-ibd-first-call": "1" };
 const jsonRes = (body: string) => new Response(body, { status: 200, headers: { "content-type": "application/json" } });
 
 describe("sw.js behaviour", () => {
@@ -474,7 +480,7 @@ describe("sw.js behaviour", () => {
     const w = makeWorker();
     const url = `${ORIGIN}/api/conditions/boca-raton/lean`;
     w.net.routes.set(url, () => jsonRes(cond("2026-10-18T10:00:00Z")));
-    const first = await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "tab1" });
+    const first = await w.dispatch({ url: "/api/conditions/boca-raton/lean", headers: FIRST });
     expect((await first!.json()).snapshot.generatedAt).toBe("2026-10-18T10:00:00Z");
     const mine = () => w.posted.filter((m) => m.type === "ibd-fresh" && !m.toJupiter);
     expect(mine()).toHaveLength(1); // delivered:true, no data
@@ -489,7 +495,7 @@ describe("sw.js behaviour", () => {
     aged.headers.set("x-ibd-cached-at", String(Date.now() - 120_000));
     data.store.set(url, aged);
     w.net.routes.set(url, () => jsonRes(cond("2026-10-18T10:05:00Z")));
-    const second = await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "tab2" });
+    const second = await w.dispatch({ url: "/api/conditions/boca-raton/lean", headers: FIRST });
     expect((await second!.json()).snapshot.generatedAt).toBe("2026-10-18T10:00:00Z"); // instant, old
     const fresh = mine();
     expect(fresh).toHaveLength(1);
@@ -503,7 +509,7 @@ describe("sw.js behaviour", () => {
     const packed = (g: string) =>
       JSON.stringify({ wire: 1, snapshot: { generatedAt: g, hourly: { data: { $packed: 1, n: 0, k: [], c: [] } } } });
     w.net.routes.set(url, () => jsonRes(packed("2026-10-18T10:00:00Z")));
-    await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "p1" });
+    await w.dispatch({ url: "/api/conditions/boca-raton/lean", headers: FIRST });
     const data = await w.caches.open("ibd-data-s1-v1");
     const s = data.store.get(url)!;
     expect(JSON.parse(await s.clone().text()).wire).toBe(1);
@@ -512,7 +518,7 @@ describe("sw.js behaviour", () => {
     data.store.set(url, aged);
     w.posted.length = 0;
     w.net.routes.set(url, () => jsonRes(packed("2026-10-18T10:05:00Z")));
-    await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "p2" });
+    await w.dispatch({ url: "/api/conditions/boca-raton/lean", headers: FIRST });
     const m = w.posted.filter((x) => x.type === "ibd-fresh" && !x.toJupiter);
     expect(m).toHaveLength(1);
     const posted = m[0].data as { wire: number; snapshot: { generatedAt: string; hourly: { data: { $packed: number } } } };
@@ -525,14 +531,14 @@ describe("sw.js behaviour", () => {
     const w = makeWorker();
     const url = `${ORIGIN}/api/conditions/boca-raton/lean`;
     w.net.routes.set(url, () => jsonRes(cond("2026-10-18T10:00:00Z")));
-    await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "u1" });
+    await w.dispatch({ url: "/api/conditions/boca-raton/lean", headers: FIRST });
     const data = await w.caches.open("ibd-data-s1-v1");
     const s = data.store.get(url)!;
     const aged = new Response(await s.clone().text(), { headers: new Headers(s.headers) });
     aged.headers.set("x-ibd-cached-at", String(Date.now() - 120_000));
     data.store.set(url, aged);
     w.posted.length = 0;
-    await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "u2" });
+    await w.dispatch({ url: "/api/conditions/boca-raton/lean", headers: FIRST });
     const m = w.posted.filter((x) => x.type === "ibd-fresh" && !x.toJupiter);
     expect(m).toHaveLength(1);
     expect(m[0].changed).toBe(false);
@@ -544,13 +550,13 @@ describe("sw.js behaviour", () => {
     const url = `${ORIGIN}/api/conditions/boca-raton/lean`;
     let g = "2026-10-18T10:00:00Z";
     w.net.routes.set(url, () => jsonRes(cond(g)));
-    await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "tab1" });
+    await w.dispatch({ url: "/api/conditions/boca-raton/lean", headers: FIRST });
     g = "2026-10-18T10:05:00Z";
-    const poll = await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "tab1" });
+    const poll = await w.dispatch({ url: "/api/conditions/boca-raton/lean" }); // no header: not the first call
     expect((await poll!.json()).snapshot.generatedAt).toBe("2026-10-18T10:05:00Z");
     // offline poll falls back to the last good copy
     w.net.down = true;
-    const off = await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "tab1" });
+    const off = await w.dispatch({ url: "/api/conditions/boca-raton/lean" });
     expect((await off!.json()).snapshot.generatedAt).toBe("2026-10-18T10:05:00Z");
   });
 
@@ -562,7 +568,7 @@ describe("sw.js behaviour", () => {
     const r = await w.dispatch({ url: "/api/conditions/boca-raton/lean" });
     expect(r!.status).toBe(404);
     w.net.routes.set(url, () => jsonRes(JSON.stringify({ hello: "world" })));
-    await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "t2" });
+    await w.dispatch({ url: "/api/conditions/boca-raton/lean", headers: FIRST });
     const data = await w.caches.open("ibd-data-s1-v1");
     expect(data.store.size).toBe(0);
   });
@@ -573,7 +579,7 @@ describe("sw.js behaviour", () => {
     const data = await w.caches.open("ibd-data-s1-v1");
     data.store.set(url, new Response(cond("2026-10-18T01:00:00Z"), { headers: { "content-type": "application/json", "x-ibd-cached-at": String(Date.now() - 8 * 3600_000) } }));
     w.net.routes.set(url, () => jsonRes(cond("2026-10-18T10:00:00Z")));
-    const r = await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "n1" });
+    const r = await w.dispatch({ url: "/api/conditions/boca-raton/lean", headers: FIRST });
     expect((await r!.json()).snapshot.generatedAt).toBe("2026-10-18T10:00:00Z");
   });
 
@@ -583,7 +589,7 @@ describe("sw.js behaviour", () => {
     const data = await w.caches.open("ibd-data-s1-v1");
     data.store.set(url, new Response(cond("2026-10-18T10:00:00Z"), { headers: { "content-type": "application/json", "x-ibd-cached-at": String(Date.now() - 120_000) } }));
     w.net.down = true;
-    const r = await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "f1" });
+    const r = await w.dispatch({ url: "/api/conditions/boca-raton/lean", headers: FIRST });
     expect((await r!.json()).snapshot.generatedAt).toBe("2026-10-18T10:00:00Z");
     expect(w.posted.some((m) => m.type === "ibd-fresh-failed")).toBe(true);
   });
@@ -600,7 +606,8 @@ describe("sw.js behaviour", () => {
     const names = await w.caches.keys();
     expect(names).toContain("ibd-pages-s1-v2");
     expect(names).toContain("ibd-static-s1");
-    expect(names).toContain("other-site-cache");
+    // Not its own, so deleted too: the caches an earlier worker left can have any name.
+    expect(names).not.toContain("other-site-cache");
     expect(names).not.toContain("ibd-pages-s1-v1");
     expect(names).not.toContain("ibd-data-s1-v1");
     expect(w.unregistered.value).toBe(false);
@@ -627,5 +634,110 @@ describe("sw.js behaviour", () => {
     w.net.routes.set(`${ORIGIN}/sw-kill`, () => new Response("kill", { status: 500 }));
     await w.lifecycle("activate");
     expect(w.unregistered.value).toBe(false);
+  });
+});
+
+describe("sw.js: first call, app shells, caches of earlier workers, build files of saved pages", () => {
+  it("the first-call header has the same name as the page's", async () => {
+    const { FIRST_CALL_HEADER } = await import("@/lib/swClient");
+    expect(makeWorker().rules.FIRST_CALL_HEADER).toBe(FIRST_CALL_HEADER);
+    expect(Object.keys(FIRST)).toEqual([FIRST_CALL_HEADER]);
+  });
+
+  it("a call without the header goes to the network even right after the worker woke up (no memory)", async () => {
+    const url = `${ORIGIN}/api/conditions/boca-raton/lean`;
+    const w = makeWorker();
+    const data = await w.caches.open("ibd-data-s1-v1");
+    data.store.set(url, new Response(cond("2026-10-18T10:00:00Z"), { headers: { "content-type": "application/json", "x-ibd-cached-at": String(Date.now() - 60_000) } }));
+    w.net.routes.set(url, () => jsonRes(cond("2026-10-18T10:05:00Z")));
+    // a fresh worker instance = the browser stopped and restarted it: nothing in memory
+    const poll = await w.dispatch({ url: "/api/conditions/boca-raton/lean", clientId: "never-seen" });
+    expect((await poll!.json()).snapshot.generatedAt).toBe("2026-10-18T10:05:00Z");
+    expect(w.posted.filter((m) => m.type === "ibd-fresh")).toHaveLength(0);
+    // with the header it is the saved copy, then the fresh one by message
+    const w2 = makeWorker();
+    const d2 = await w2.caches.open("ibd-data-s1-v1");
+    d2.store.set(url, new Response(cond("2026-10-18T10:00:00Z"), { headers: { "content-type": "application/json", "x-ibd-cached-at": String(Date.now() - 60_000) } }));
+    w2.net.routes.set(url, () => jsonRes(cond("2026-10-18T10:05:00Z")));
+    const first = await w2.dispatch({ url: "/api/conditions/boca-raton/lean", headers: FIRST });
+    expect((await first!.json()).snapshot.generatedAt).toBe("2026-10-18T10:00:00Z");
+    expect(w2.posted.some((m) => m.type === "ibd-fresh")).toBe(true);
+  });
+
+  it("knows both app shells' user agents (capacitor.config.ts)", () => {
+    const { rules } = makeWorker();
+    const cap = readFileSync(path.join(process.cwd(), "capacitor.config.ts"), "utf8");
+    const marks = [...cap.matchAll(/appendUserAgent:\s*"([^"]+)"/g)].map((m) => m[1]);
+    expect(marks.length).toBeGreaterThanOrEqual(2);
+    for (const m of marks) expect(rules.isShellAgent(`Mozilla/5.0 (X) AppleWebKit ${m}`), m).toBe(true);
+    expect(rules.isShellAgent("Mozilla/5.0 (iPhone) Safari/604.1")).toBe(false);
+  });
+
+  it("inside an app shell the worker deletes every cache and unregisters, and answers nothing", async () => {
+    const w = makeWorker("v1", "Mozilla/5.0 (Linux; Android 14) Chrome/130 Mobile IsItBeachDayApp/android");
+    await w.caches.open("ibd-pages-s1-v1");
+    await w.caches.open("something-else");
+    await w.lifecycle("activate");
+    expect(w.unregistered.value).toBe(true);
+    expect(await w.caches.keys()).toEqual([]);
+    const w2 = makeWorker("v1", "Mozilla/5.0 (iPhone) AppleWebKit IsItBeachDayApp/ios");
+    w2.net.routes.set(`${ORIGIN}/`, () => htmlRes(html("A")));
+    expect(await w2.dispatch({ url: "/", mode: "navigate" })).toBeNull();
+    expect(w2.unregistered.value).toBe(true);
+  });
+
+  it("on activate it deletes every cache that is not its own, whatever its name", async () => {
+    const w = makeWorker("v2");
+    for (const n of ["ibd-pages-s1-v1", "ibd-data-s1-v1", "workbox-precache-v2", "app-shell", "next-data", "ibd-static-s1"]) await w.caches.open(n);
+    await w.lifecycle("activate");
+    const left = await w.caches.keys();
+    for (const gone of ["ibd-pages-s1-v1", "ibd-data-s1-v1", "workbox-precache-v2", "app-shell", "next-data"]) expect(left, gone).not.toContain(gone);
+    expect(left).toContain("ibd-static-s1");
+    expect(left.every((n) => ["ibd-static-s1", "ibd-meta-s1", "ibd-pages-s1-v2", "ibd-data-s1-v2"].includes(n))).toBe(true);
+    expect(w.rules.cachesToDelete(["a", "ibd-static-s1", "b"], ["ibd-static-s1"])).toEqual(["a", "b"]);
+  });
+
+  it("finds the build files a page names, in its tags and in its flight data", () => {
+    const page =
+      '<link rel="stylesheet" href="/_next/static/css/68bf.css"/><script src="/_next/static/chunks/main-A.js"></script>' +
+      '<link rel="preload" href="/_next/static/media/font.woff2"/>' +
+      '<script>self.__next_f.push([1,"5:I[\\"123\\",[\\"static/chunks/1004-abc.js\\",\\"static/chunks/app/page-def.js\\"],\\"X\\"]"])</script>';
+    expect(makeWorker().rules.referencedAssets(page).sort()).toEqual(
+      [
+        "/_next/static/chunks/1004-abc.js",
+        "/_next/static/chunks/app/page-def.js",
+        "/_next/static/chunks/main-A.js",
+        "/_next/static/css/68bf.css",
+        "/_next/static/media/font.woff2",
+      ].sort(),
+    );
+  });
+
+  it("saving a page also saves the build files it names, while the server still has them", async () => {
+    const w = makeWorker();
+    const page = html("A").replace("</body>", '<script>self.__next_f.push([1,"[\\"static/chunks/lazy-1.js\\"]"])</script></body>');
+    w.net.routes.set(`${ORIGIN}/`, () => htmlRes(page));
+    const js = () => new Response("code", { status: 200, headers: { "content-type": "text/javascript" } });
+    w.net.routes.set(`${ORIGIN}/_next/static/chunks/main-A.js`, js);
+    w.net.routes.set(`${ORIGIN}/_next/static/chunks/lazy-1.js`, js);
+    await w.dispatch({ url: "/", mode: "navigate" });
+    const statics = await w.caches.open("ibd-static-s1");
+    expect([...statics.store.keys()].sort()).toEqual([`${ORIGIN}/_next/static/chunks/lazy-1.js`, `${ORIGIN}/_next/static/chunks/main-A.js`]);
+    // after a deploy the server no longer has them; the saved page's files still come from the cache
+    w.net.routes.clear();
+    const r = await w.dispatch({ url: "/_next/static/chunks/lazy-1.js" });
+    expect(r!.status).toBe(200);
+  });
+
+  it("trimming the static cache never drops a file a saved page names", async () => {
+    const w = makeWorker();
+    const pages = await w.caches.open("ibd-pages-s1-v1");
+    pages.store.set(`${ORIGIN}/`, new Response(html("OLD"), { headers: { "content-type": "text/html", "x-ibd-cached-at": String(Date.now()) } }));
+    const statics = await w.caches.open("ibd-static-s1");
+    statics.store.set(`${ORIGIN}/_next/static/chunks/main-OLD.js`, new Response("old"));
+    for (let i = 0; i < 230; i++) statics.store.set(`${ORIGIN}/_next/static/chunks/x${i}.js`, new Response("x"));
+    await w.lifecycle("activate"); // trims to 150
+    expect(statics.store.has(`${ORIGIN}/_next/static/chunks/main-OLD.js`)).toBe(true);
+    expect(statics.store.size).toBe(150);
   });
 });

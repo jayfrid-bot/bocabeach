@@ -37,7 +37,7 @@ flowchart TD
   WATCH["Apple Watch app + complications"] -->|"GET, no query; Cache-Control s-maxage hint of 60 s at most (no Workers Cache), payload has validUntil"| WATCHR
   APPUI -->|"WatchSync plugin: home beach + last viewed<br/>lib/watchSync.ts (WatchConnectivity)"| WATCH
 
-  EDGECACHE["Edge cache lib/edgeCache.ts (outermost wrapper in worker.ts):<br/>GET/HEAD /, /&lt;beach&gt;, /api/conditions/&lt;slug&gt; and /api/conditions/&lt;slug&gt;/lean with no query, no Authorization/Range,<br/>no RSC or Next-Router-* headers. Key = Worker version id + path + web/native UA + owner-override fingerprint.<br/>Fresh 60 s (data 5 min) → served; stale up to 10 min → served + ONE background refresh (ctx.waitUntil);<br/>older, or data over 30 min → renders inline. Stores only a 200 with the ibd-edge marker or x-ibd-edge header ok=1 (or the flagship's 308), never Set-Cookie.<br/>No KV, no scheduled pre-builds"]
+  EDGECACHE["Edge cache lib/edgeCache.ts (outermost wrapper in worker.ts):<br/>GET/HEAD /, /&lt;beach&gt;, /api/conditions/&lt;slug&gt; and /api/conditions/&lt;slug&gt;/lean with no query, no Authorization/Range,<br/>no RSC or Next-Router-* headers. Key = Worker version id + path + web/native UA + owner-override fingerprint.<br/>Fresh 60 s (data 5 min) → served; stale up to 10 min → served + ONE background refresh (ctx.waitUntil);<br/>older, or data over 30 min → renders inline. Stores only a 200 with the ibd-edge marker or x-ibd-edge header ok=1 (or the flagship's 308), never Set-Cookie.<br/>No KV, no scheduled pre-builds.<br/>Every HTML answer gets Server-Timing ibd-now (server time when served) for lib/serverClock.ts"]
   EDGEMEM[("In-isolate LRU<br/>8 MB")]
   EDGECOLO[("Workers Cache API caches.default<br/>key https://edge-cache.isitbeachday.internal/f1/&lt;version&gt;/…<br/>per datacenter; no-op on *.workers.dev")]
   EDGECACHE <-->|"1st tier"| EDGEMEM
@@ -169,9 +169,9 @@ its off switch. Design, risks and the iOS plan: `docs/SERVICE_WORKER.md`.
 flowchart TD
   BR[Browser page] -->|"register /sw.js?v=build, idle, production only,<br/>never in the native shells (UA IsItBeachDayApp/)"| SW
   subgraph SWBOX [Service worker public/sw.js, in the browser]
-    SW[fetch handler<br/>lib/swRules.test.ts] --> STATICC[("ibd-static-s1<br/>/_next/static/* cache-first,<br/>kept across builds, trimmed by count")]
+    SW[fetch handler<br/>lib/swRules.test.ts] --> STATICC[("ibd-static-s1<br/>/_next/static/* cache-first, plus the files each saved page names,<br/>kept across builds, trimmed by count (never a file a saved page names)")]
     SW --> PAGEC[("ibd-pages-s1-build<br/>/ and /beach, stale-while-revalidate,<br/>copy over 6 h is not shown as current")]
-    SW --> DATAC[("ibd-data-s1-build<br/>/api/conditions/slug/lean (the dashboard's packed data call),<br/>first call of a page load only; posted to the page packed, unpacked there")]
+    SW --> DATAC[("ibd-data-s1-build<br/>/api/conditions/slug/lean (the dashboard's packed data call),<br/>only the call marked x-ibd-first-call: 1; posted to the page packed, unpacked there")]
   end
   SW -->|"background refresh, no-store"| EDGE2["Worker (worker.ts) + routes in diagram 1"]
   SW -->|"postMessage: fresh snapshot, build changed"| BR

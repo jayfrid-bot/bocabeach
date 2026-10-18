@@ -6,6 +6,8 @@
 // the moment a finger lands on (or a pointer hovers) a card, so by the time the
 // tap finishes and the card starts to spin the chunk is already on its way.
 
+// Only a warm-up: a failure here stays silent; the real load (next/dynamic in the dashboard)
+// reloads the page once if the file is gone (lib/chunkReload.ts).
 export const loadNerdBackFor = () => import("@/components/NerdBackFor");
 
 let warmed = false;

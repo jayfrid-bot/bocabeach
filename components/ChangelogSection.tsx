@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { ChangelogEntry, ChangelogTag } from "@/lib/changelog";
 import type { ChangelogPreview } from "@/lib/changelogPreview";
+import { chunkFailed } from "@/lib/chunkReload";
 
 const TAG_LABEL: Record<ChangelogTag, string> = {
   new: "New",
@@ -40,7 +41,11 @@ function fmtChangelogDate(isoDate: string): string {
   return `${month} ${d}, ${y}`;
 }
 
-const loadChangelog = () => import("@/lib/changelog");
+const loadChangelog = () => import("@/lib/changelog").catch(chunkFailed);
+/** Fetch the full list ahead of a tap. Silent: only the real load reloads for a missing file. */
+export const warmChangelog = () => {
+  void import("@/lib/changelog").catch(() => {});
+};
 
 /**
  * Quiet "What's new" section for the very bottom of the page, next to the
@@ -107,8 +112,8 @@ export function ChangelogSection({ recent, total }: ChangelogPreview) {
           <button
             type="button"
             onClick={toggle}
-            onPointerEnter={() => void loadChangelog().catch(() => {})}
-            onFocus={() => void loadChangelog().catch(() => {})}
+            onPointerEnter={warmChangelog}
+            onFocus={warmChangelog}
             className="text-xs text-ocean-700 hover:underline dark:text-ocean-300"
             aria-expanded={expanded}
           >

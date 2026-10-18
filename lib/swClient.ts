@@ -99,6 +99,13 @@ export function shouldApplyFresh<T extends { snapshot?: { generatedAt?: string }
   return data as T;
 }
 
+/**
+ * Sent by the dashboard on its first data call of a page load only. The worker answers that
+ * one call from its saved copy and refreshes behind it; every call without it (poll, resume,
+ * Refresh button) goes to the network. Same name in public/sw.js (a test checks).
+ */
+export const FIRST_CALL_HEADER = "x-ibd-first-call";
+
 /** The dashboard's data call, which the worker answers and refreshes (public/sw.js). */
 export function leanDataPath(slug: string): string {
   return `/api/conditions/${slug}/lean`;

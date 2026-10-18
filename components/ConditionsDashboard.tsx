@@ -19,6 +19,8 @@ import { PullToRefresh } from "@/components/PullToRefresh";
 import { isPullRefreshing } from "@/lib/refreshInFlight";
 import { isOlderSnapshot, shouldRefetchForFreshness, shouldRevalidateOnMount } from "@/lib/conditionsFreshness";
 import { useSwRevalidate } from "@/lib/useSwRevalidate";
+import { FIRST_CALL_HEADER } from "@/lib/swClient";
+import { learnFromResponse, serverNow } from "@/lib/serverClock";
 import { ScoreWheel } from "@/components/ScoreWheel";
 import { ScoreCapBanner } from "@/components/ScoreCapBanner";
 import { DataCoverageNote } from "@/components/DataCoverageNote";
@@ -46,12 +48,13 @@ import { SunPanel } from "@/components/SunPanel";
 import { SafetyBanner } from "@/components/SafetyBanner";
 import { SandTempPanel } from "@/components/SandTempPanel";
 import { SourceList } from "@/components/SourceBadge";
-import { CamGrid } from "@/components/CamGrid";
+import { CamGrid, warmLightbox } from "@/components/CamGrid";
 import { DayOutlookStrip } from "@/components/DayOutlookStrip";
 import { NotifyButton } from "@/components/NotifyButton";
 import { ShareCardSheet } from "@/components/ShareCardSheet";
 import { AppStoreBand } from "@/components/AppStoreBand";
-import { ChangelogSection } from "@/components/ChangelogSection";
+import { ChangelogSection, warmChangelog } from "@/components/ChangelogSection";
+import { warmNerdBack } from "@/components/nerdBackLoader";
 import type { ChangelogPreview } from "@/lib/changelogPreview";
 import { FeelsLikeCard } from "@/components/FeelsLikeCard";
 import { SunQualityCard } from "@/components/SunQualityCard";
@@ -80,11 +83,14 @@ import { PlusInAppCard } from "@/components/plus/PlusInAppCard";
 import { SafetyLine } from "@/components/plus/SafetyLine";
 import { ScoreToggle } from "@/components/plus/ScoreToggle";
 import { useOwnerEntryTap } from "@/lib/quality/ownerEntry";
+import { chunkFailed } from "@/lib/chunkReload";
 
 // The long "how we compute this" back faces: their own chunk, fetched when a hand
 // reaches a card (see components/nerdBackLoader.ts). Never rendered on the server —
 // a back face only exists once its card has been flipped.
-const NerdBackFor = dynamic(() => import("@/components/NerdBackFor"), { ssr: false });
+// Every lazy piece below reloads the page once if its file is gone (an old page after a
+// deploy), instead of handing the error boundary the whole dashboard: lib/chunkReload.ts.
+const NerdBackFor = dynamic(() => import("@/components/NerdBackFor").catch(chunkFailed), { ssr: false });
 
 // Code only the iPhone/Android app ever runs, or only after a tap, kept out of the
 // first-load bundle (the same ~100 KB of script every web visitor used to download
@@ -95,21 +101,23 @@ const NerdBackFor = dynamic(() => import("@/components/NerdBackFor"), { ssr: fal
 //  - The three Plus sheets are modal and closed until a tap; they are fetched when
 //    the app is idle, or at the tap that opens the first one.
 const BeachModeCard = dynamic(
-  () => import("@/components/plus/BeachModeCard").then((m) => m.BeachModeCard),
+  () => import("@/components/plus/BeachModeCard").then((m) => m.BeachModeCard).catch(chunkFailed),
   { ssr: true },
 );
 const HistorySection = dynamic(
-  () => import("@/components/plus/HistorySection").then((m) => m.HistorySection),
+  () => import("@/components/plus/HistorySection").then((m) => m.HistorySection).catch(chunkFailed),
   { ssr: true },
 );
 const loadPlusSheets = () => import("@/components/plus/PlusSheets");
-const PlusSheets = dynamic(() => import("@/components/plus/PlusSheets"), { ssr: false });
+const PlusSheets = dynamic(() => import("@/components/plus/PlusSheets").catch(chunkFailed), { ssr: false });
 
 // Throw on non-OK so an error body (e.g. a 404 `{error}`) never replaces the
 // good snapshot — SWR keeps the last good data and the consumer guard holds.
-const fetcher = (u: string) =>
-  fetch(u)
+// `first` marks the page load's first data call for the service worker (public/sw.js).
+const fetcher = (u: string, first = false) =>
+  fetch(u, first ? { headers: { [FIRST_CALL_HEADER]: "1" } } : undefined)
     .then((r) => {
+      learnFromResponse(r); // the server's clock, for data age (lib/serverClock.ts)
       if (!r.ok) throw new Error(String(r.status));
       return r.json();
     })
@@ -205,8 +213,12 @@ export function ConditionsDashboard({
   const shownRef = useRef<ConditionsResponse>(initial);
   // A poll, focus or mount answer older than what is shown (a saved copy from the service
   // worker or the edge cache) keeps what is shown; the fresher copy follows by message or poll.
+  // Set only around the mount call below: the one call the worker may answer from its copy.
+  const firstCallRef = useRef(false);
   const fetchNewest = useCallback(async (u: string) => {
-    const fresh = await fetcher(u);
+    const first = firstCallRef.current;
+    firstCallRef.current = false;
+    const fresh = await fetcher(u, first);
     return isOlderSnapshot(fresh, shownRef.current) ? shownRef.current : fresh;
   }, []);
   const { data, mutate, isValidating } = useSWR<ConditionsResponse>(
@@ -225,7 +237,11 @@ export function ConditionsDashboard({
 
   useEffect(() => {
     if (preview) return;
-    if (shouldRevalidateOnMount(initial.snapshot.generatedAt, Date.now())) void mutate();
+    // Age on the server's clock (lib/serverClock.ts), so a phone whose clock is off still refreshes.
+    if (shouldRevalidateOnMount(initial.snapshot.generatedAt, serverNow())) {
+      firstCallRef.current = true;
+      void mutate();
+    }
     // Mount only: later refreshes are the poll, focus/resume and the freshness retry below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -302,7 +318,7 @@ export function ConditionsDashboard({
       // slot is simply skipped, not counted against the attempt budget, so
       // the OTHER scheduled attempt still gets its turn.
       if (isPullRefreshing()) return;
-      if (!shouldRefetchForFreshness(latestGeneratedAtRef.current, Date.now(), attempts)) return;
+      if (!shouldRefetchForFreshness(latestGeneratedAtRef.current, serverNow(), attempts)) return;
       attempts += 1;
       inFlight = true;
       try {
@@ -311,6 +327,7 @@ export function ConditionsDashboard({
         // 20-s entry is the whole point: every client asking "is this fresh
         // yet" in the same window gets the one shared answer, not its own.
         const r = await fetch(`/api/conditions/${slug}/lean?fresh=1`);
+        learnFromResponse(r);
         if (!r.ok || cancelled) return;
         const fresh = fromWire(await r.json());
         if (!fresh?.snapshot?.generatedAt) return;
@@ -466,14 +483,42 @@ export function ConditionsDashboard({
   // during render, the supported pattern for "remember that X ever happened".
   const [sheetsMounted, setSheetsMounted] = useState(false);
   if (sheet && !sheetsMounted) setSheetsMounted(true);
-  // In the app, fetch the sheets quietly once the page has settled, so the first tap on
-  // "Plus" or the gear opens at once. A browser never opens them and never fetches.
+  // Repeat visitors in a browser (the service worker controls this page): fetch the lazy
+  // pieces a browser can open (card backs, the camera viewer, "What's new") once, at idle.
+  // The worker keeps them with this build, so a saved page of this build can still open
+  // them after the next deploy has removed them from the server (public/sw.js). Not on a
+  // first visit, not in the app shells, not with Save-Data.
+  useEffect(() => {
+    if (preview || native || typeof navigator === "undefined" || !navigator.serviceWorker?.controller) return;
+    if ((navigator as unknown as { connection?: { saveData?: boolean } }).connection?.saveData) return;
+    const ric = (window as unknown as {
+      requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number;
+    }).requestIdleCallback;
+    const go = () => {
+      warmNerdBack();
+      warmLightbox();
+      warmChangelog();
+    };
+    const handle = ric ? ric(go, { timeout: 8000 }) : (setTimeout(go, 4000) as unknown as number);
+    return () => {
+      if (ric) (window as unknown as { cancelIdleCallback?: (h: number) => void }).cancelIdleCallback?.(handle);
+      else clearTimeout(handle);
+    };
+  }, [preview, native]);
+
+  // In the app, load the sheets quietly once the page has settled and MOUNT them (closed),
+  // so the first tap on "Plus" or the gear opens at once AND the paywall asks the store for
+  // its prices at idle, as it did when it was always mounted (the paywall's own effect).
+  // A browser never opens them and never fetches.
   useEffect(() => {
     if (!native || !plusOn) return;
     const ric = (window as unknown as {
       requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number;
     }).requestIdleCallback;
-    const go = () => void loadPlusSheets().catch(() => {});
+    const go = () =>
+      void loadPlusSheets()
+        .then(() => setSheetsMounted(true))
+        .catch(() => {});
     const handle = ric ? ric(go, { timeout: 4000 }) : (setTimeout(go, 2000) as unknown as number);
     return () => {
       if (ric) (window as unknown as { cancelIdleCallback?: (h: number) => void }).cancelIdleCallback?.(handle);

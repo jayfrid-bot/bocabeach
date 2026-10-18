@@ -10,10 +10,11 @@
  *                          fresh copy behind it. A copy older than 6 hours is not shown
  *                          as current: the network answers, and the old copy is used
  *                          only if the network is slow (3 s) or down.
- *  - /api/conditions/<b>/lean  the dashboard's data call (the packed form). The first
- *                          call of each page load is stale-while-revalidate. Later calls
- *                          (poll, resume, Refresh button) go to the network. When fresh
- *                          data lands the worker posts it to the page, still packed.
+ *  - /api/conditions/<b>/lean  the dashboard's data call (the packed form). The call the
+ *                          page marks as its first of a page load (header x-ibd-first-call: 1)
+ *                          is stale-while-revalidate. Every other call (poll, resume, Refresh
+ *                          button) goes to the network. When fresh data lands the worker
+ *                          posts it to the page, still packed.
  *  - everything else       untouched. The worker never calls respondWith for it.
  *
  * Never cached: any non-GET, any request with Authorization or Range, any query string
@@ -22,8 +23,15 @@
  * devices, RevenueCat, install-token routes, non-200 and opaque answers.
  *
  * Versioning: the page registers /sw.js?v=<build>. A new build installs a new worker.
- * On activate it deletes every older page and data cache. Hashed files stay in the
- * static cache (an open tab on the old build still needs them) and are trimmed by count.
+ * On activate it deletes EVERY cache on this origin that is not its own (older page and
+ * data caches, and anything an earlier worker left). Hashed files stay in the shared
+ * static cache (an open tab or a saved page on the old build still needs them): when a
+ * page is saved, the build files it names are saved too, and trimming never drops a
+ * file that a saved page names. After a deploy the old files are gone from the server,
+ * so this cache is what lets a saved old page still run.
+ *
+ * Never in the app shells: their user agent carries IsItBeachDayApp/ (capacitor.config.ts,
+ * iOS and Android). A worker that finds itself there deletes its caches and unregisters.
  *
  * Kill switch: GET /sw-kill answering 200 "kill" makes the worker delete its caches and
  * unregister. It checks at activate and at most every 30 minutes. The page also removes
@@ -90,6 +98,10 @@ var RESERVED_SEGMENTS = [
 ];
 
 var SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/** The dashboard sends this on the first data call of a page load only (lib/swClient.ts). */
+var FIRST_CALL_HEADER = "x-ibd-first-call";
+/** The native shells append this to the user agent (capacitor.config.ts, iOS and Android). */
+var SHELL_UA_RE = /IsItBeachDayApp\//i;
 /**
  * The dashboard's data call is the packed /api/conditions/<b>/lean (lib/clientConditions.ts).
  * The public /api/conditions/<b> is left to the network: nothing on a web page calls it, and
@@ -198,9 +210,40 @@ function assetSignature(html) {
 }
 
 /**
+ * The build files a page names: its <script>/<link> tags (/_next/static/...) and the
+ * chunk lists in its React flight data ("static/chunks/..."), as same-origin paths.
+ */
+function referencedAssets(html) {
+  if (typeof html !== "string") return [];
+  var out = [];
+  var seen = {};
+  var add = function (p) {
+    if (!seen[p] && out.length < 120) {
+      seen[p] = 1;
+      out.push(p);
+    }
+  };
+  var a = html.match(/\/_next\/static\/[A-Za-z0-9_\-\/.~%]+\.(?:js|css|woff2)/g) || [];
+  for (var i = 0; i < a.length; i++) add(a[i]);
+  var b = html.match(/(?:^|[^A-Za-z0-9_\/])static\/(?:chunks|css)\/[A-Za-z0-9_\-\/.~%]+\.(?:js|css)/g) || [];
+  for (var j = 0; j < b.length; j++) add("/_next/" + b[j].replace(/^[^s]*/, ""));
+  return out;
+}
+
+/** Is this worker running inside one of the app shells? */
+function isShellAgent(ua) {
+  return typeof ua === "string" && SHELL_UA_RE.test(ua);
+}
+
+/** Which caches to delete on activate: every name that is not one of this worker's own. */
+function cachesToDelete(names, keep) {
+  return (names || []).filter(function (n) { return keep.indexOf(n) === -1; });
+}
+
+/**
  * What to do with a request for a page or for conditions data.
  *  cachedAt: ms the cached copy was stored, or null.
- *  o = { now, saveData, firstForClient }
+ *  o = { now, saveData, firstForClient } (firstForClient: the page marked this call as its first)
  * Returns { action, revalidate } where action is one of:
  *  "cache"           answer from the cache now
  *  "network"         ask the network, no cached copy to fall back on
@@ -253,6 +296,10 @@ self.IBD_SW = {
   bypassesCache: bypassesCache,
   quotaAllows: quotaAllows,
   serverTimingValue: serverTimingValue,
+  referencedAssets: referencedAssets,
+  isShellAgent: isShellAgent,
+  cachesToDelete: cachesToDelete,
+  FIRST_CALL_HEADER: FIRST_CALL_HEADER,
   cacheNames: { STATIC_CACHE: STATIC_CACHE, PAGE_CACHE: PAGE_CACHE, DATA_CACHE: DATA_CACHE, META_CACHE: META_CACHE },
 };
 
@@ -263,8 +310,6 @@ var killed = false;
 var MATCH_OPTS = { ignoreVary: true };
 var lastKillCheckMem = 0;
 var storageMemo = { at: 0, ok: true };
-/** Window clients that already made their first conditions call (resets if the worker sleeps). */
-var seenClients = [];
 var staticPuts = 0;
 
 function hasCaches() {
@@ -353,7 +398,13 @@ async function trimCache(cacheName, max, keep) {
     var keys = await cache.keys(); // insertion order: oldest first
     if (keys.length <= max) return;
     var drop = keys.length - (keep || max);
-    for (var i = 0; i < drop; i++) await cache.delete(keys[i]);
+    // Never drop a build file that a saved page names (its build may be gone from the server).
+    var guard = cacheName === STATIC_CACHE ? await protectedStaticKeys() : {};
+    for (var i = 0; i < keys.length && drop > 0; i++) {
+      if (guard[keys[i].url]) continue;
+      await cache.delete(keys[i]);
+      drop -= 1;
+    }
   } catch (e) {
     /* ignore */
   }
@@ -384,10 +435,9 @@ function pathOf(url) {
 // ---------------------------------------------------------------------------
 async function wipeCaches() {
   try {
+    // Every cache on this origin: this worker's, and anything an earlier worker left.
     var names = await caches.keys();
-    await Promise.all(
-      names.filter(function (n) { return n.indexOf(CACHE_PREFIX) === 0; }).map(function (n) { return caches.delete(n); }),
-    );
+    await Promise.all(names.map(function (n) { return caches.delete(n); }));
   } catch (e) {
     /* ignore */
   }
@@ -432,6 +482,14 @@ async function checkKillSwitch(force) {
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
+function inShell() {
+  try {
+    return isShellAgent(self.navigator && self.navigator.userAgent);
+  } catch (e) {
+    return false;
+  }
+}
+
 self.addEventListener("install", function () {
   self.skipWaiting();
 });
@@ -440,14 +498,11 @@ self.addEventListener("activate", function (event) {
   event.waitUntil(
     (async function () {
       if (killed) return;
+      if (inShell()) return selfDestruct();
       try {
-        var names = await caches.keys();
         var keep = [STATIC_CACHE, PAGE_CACHE, DATA_CACHE, META_CACHE];
-        await Promise.all(
-          names
-            .filter(function (n) { return n.indexOf(CACHE_PREFIX) === 0 && keep.indexOf(n) === -1; })
-            .map(function (n) { return caches.delete(n); }),
-        );
+        var doomed = cachesToDelete(await caches.keys(), keep);
+        await Promise.all(doomed.map(function (n) { return caches.delete(n); }));
       } catch (e) {
         /* ignore */
       }
@@ -463,6 +518,10 @@ self.addEventListener("activate", function (event) {
 // ---------------------------------------------------------------------------
 self.addEventListener("fetch", function (event) {
   if (killed || !hasCaches()) return;
+  if (inShell()) {
+    event.waitUntil(selfDestruct()); // the app shells never run this worker
+    return;
+  }
   var request = event.request;
   var c = classify(describeRequest(request));
   if (!c) return; // the browser handles it as if there were no worker
@@ -542,11 +601,53 @@ async function storePage(c, res, previous) {
     var cache = await caches.open(PAGE_CACHE);
     await cache.put(c.key, stamped(res, text, { assets: sig, timing: true }));
     await trimCache(PAGE_CACHE, LIMITS.maxPages);
+    // The build files this page names, while the server still has them: after a deploy
+    // they are gone, and the saved page cannot run without them.
+    await precacheAssets(referencedAssets(text));
     var oldSig = previous ? previous.headers.get("x-ibd-assets") : null;
     if (oldSig && sig && oldSig !== sig) await notifyBuildChanged(c.path);
   } catch (e) {
     /* ignore */
   }
+}
+
+/** Save the build files a page names that the static cache does not hold yet. */
+async function precacheAssets(paths) {
+  if (killed || !paths.length) return;
+  try {
+    var statics = await caches.open(STATIC_CACHE);
+    var origin = self.location.origin;
+    for (var i = 0; i < paths.length; i++) {
+      if (killed) return;
+      var key = origin + paths[i];
+      if (await statics.match(key, MATCH_OPTS)) continue;
+      try {
+        await putStatic(statics, key, await fetch(key, { cache: "force-cache", credentials: "omit" }));
+      } catch (e) {
+        /* skip this file */
+      }
+    }
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+/** Static keys that a saved page names: trimming must keep them. */
+async function protectedStaticKeys() {
+  var keep = {};
+  try {
+    var pages = await caches.open(PAGE_CACHE);
+    var reqs = await pages.keys();
+    for (var i = 0; i < reqs.length; i++) {
+      var r = await pages.match(reqs[i], MATCH_OPTS);
+      if (!r) continue;
+      var list = referencedAssets(await r.text());
+      for (var j = 0; j < list.length; j++) keep[self.location.origin + list[j]] = 1;
+    }
+  } catch (e) {
+    /* ignore */
+  }
+  return keep;
 }
 
 /** Background refresh of a page that was just served from the cache. */
@@ -573,12 +674,10 @@ function notifyBuildChanged(path) {
 // -- conditions data: the first call of a page load is stale-while-revalidate ---
 async function handleConditions(event, request, c) {
   var cache = await caches.open(DATA_CACHE);
-  var clientId = event.clientId || event.resultingClientId || "";
-  var first = clientId ? seenClients.indexOf(clientId) === -1 : true;
-  if (clientId && first) {
-    seenClients.push(clientId);
-    if (seenClients.length > 40) seenClients.shift();
-  }
+  // The page says which call is its first of a page load. Worker memory cannot: it is
+  // emptied whenever the browser stops the worker, and then a poll or Refresh would be
+  // answered from the saved copy.
+  var first = request.headers.get(FIRST_CALL_HEADER) === "1";
   var existing = await cache.match(c.key, MATCH_OPTS);
   var plan = bypassesCache(request.cache)
     ? { action: existing ? "network-first" : "network", revalidate: false }
