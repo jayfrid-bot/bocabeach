@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-18",
+    title: "Faster when you come back",
+    details:
+      "In a web browser, a beach you have opened before now appears almost at once, with the conditions from your last visit. The newest numbers load quietly behind it and drop in on their own. If the saved page is more than half an hour old, a small note says so until the update arrives. Your first visit is as quick as before.",
+    tag: "improved",
+  },
+  {
+    date: "2026-10-18",
     title: "Sharper beach camera pictures",
     details:
       "Many of our beach cameras now show a larger, sharper picture, so you can zoom in further before it turns blocky. Cameras that publish a full-size photo, such as the Boca Raton and Jupiter ones, load it in when you zoom, and it is several times sharper. Nothing is enhanced or redrawn. It is the real picture the camera took.",
