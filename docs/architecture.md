@@ -43,7 +43,7 @@ flowchart TD
     COND["/api/conditions/[slug]<br/>(public endpoint, full shape, unchanged)"]
     CONDLEAN["/api/conditions/[slug]/lean<br/>(the dashboard's own copy: wire form of lib/clientConditions.ts,<br/>row arrays packed into columns, server-only fields dropped, ~1/3 the bytes;<br/>same cache headers and query rules as the public route)"]
     WATCHR["/api/watch/[slug]<br/>(small ready-to-show view for the Apple Watch app)"]
-    SHARE["/api/share/[slug]<br/>(shareable social card PNG, story/square)"]
+    SHARE["/api/share/[slug]<br/>(shareable social card PNG, story/square; every page view sends HEAD for both formats ~1 s after load to fill the cache without downloading the pictures)"]
     RESOLVE["/api/resolve<br/>(name/zip → nearest served beach)"]
     OG["/opengraph-image, /twitter-image"]
     SITEMAP["/sitemap.xml"]

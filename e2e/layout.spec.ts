@@ -405,3 +405,48 @@ for (const path of PAGES) {
     });
   }
 }
+
+// ---------------------------------------------------------------------------
+// Flip-card back faces
+// ---------------------------------------------------------------------------
+// The "how we compute this" back of each card is built the first time its card is
+// flipped (components/FlipCard.tsx), so it is no longer in the page for the scans
+// above to measure. This test flips every card in turn and runs the same
+// clipped-text scan over the page with that back showing.
+for (const vp of VIEWPORTS.filter((v) => v.width < 1280)) {
+  test(`flip-card backs @ ${vp.name} — every back opens and fits, nothing clipped`, async ({ page }) => {
+    await page.setViewportSize({ width: vp.width, height: vp.height });
+    await page.route("**://static.cloudflareinsights.com/**", (route) =>
+      route.fulfill({ status: 200, contentType: "application/javascript", body: "" }),
+    );
+    await page.route("**://cloudflareinsights.com/**", (route) =>
+      route.fulfill({ status: 200, contentType: "text/plain", body: "" }),
+    );
+    await page.goto("/", { waitUntil: "domcontentloaded" });
+    await waitForReady(page, "/");
+
+    // FlipCard roots only (the score wheel's factor buttons are aria-pressed too). Every card
+    // is unflipped at the top of each pass, so its label is "Flip the … card …".
+    const cards = page.locator('[role="button"][aria-label^="Flip the"]');
+    const count = await cards.count();
+    expect(count, "the dashboard should have a couple of dozen flippable cards").toBeGreaterThan(10);
+
+    for (let i = 0; i < count; i++) {
+      const card = cards.nth(i);
+      const label = (await card.getAttribute("aria-label")) ?? `card ${i}`;
+      await card.scrollIntoViewIfNeeded();
+      await card.click({ position: { x: 6, y: 6 } });
+      const flipped = page.locator(`[role="button"][aria-pressed="true"][aria-label^="Show the"]`);
+      await expect(flipped, `${label} should flip`).toHaveCount(1);
+      await expect(flipped.getByText("How we compute this"), `${label}: back face`).toBeVisible();
+      const clipped = await findClippedText(page);
+      expect(
+        clipped,
+        `clipped text on the back of "${label}" at ${vp.name}:\n` +
+          clipped.map((o) => `  [${o.card}] "${o.text}" (<${o.tag}>)`).join("\n"),
+      ).toEqual([]);
+      await flipped.click({ position: { x: 6, y: 6 } });
+      await expect(flipped).toHaveCount(0);
+    }
+  });
+}

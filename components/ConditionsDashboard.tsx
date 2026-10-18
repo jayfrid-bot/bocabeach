@@ -17,7 +17,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 import { ScoreExplainer } from "@/components/ScoreExplainer";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { isPullRefreshing } from "@/lib/refreshInFlight";
-import { shouldRefetchForFreshness } from "@/lib/conditionsFreshness";
+import { shouldRefetchForFreshness, shouldRevalidateOnMount } from "@/lib/conditionsFreshness";
 import { ScoreWheel } from "@/components/ScoreWheel";
 import { ScoreCapBanner } from "@/components/ScoreCapBanner";
 import { DataCoverageNote } from "@/components/DataCoverageNote";
@@ -194,11 +194,18 @@ export function ConditionsDashboard({
 }) {
   // Unpack once: every card below keeps reading a plain ConditionsResponse.
   const initial = useMemo(() => fromWire(initialProp), [initialProp]);
+  // The HTML already carries a snapshot the server built moments ago; asking the
+  // API for the same thing on mount was a second download of the whole snapshot on
+  // every visit (see shouldRevalidateOnMount). So SWR does not fetch on mount —
+  // the same on the server and the client, which keeps `isValidating` (the Refresh
+  // button's label) identical in both and hydration clean — and the effect below
+  // asks only when the snapshot we were handed is old.
   const { data, mutate, isValidating } = useSWR<ConditionsResponse>(
     preview ? null : `/api/conditions/${slug}/lean`,
     fetcher,
     {
       fallbackData: initial,
+      revalidateOnMount: false,
       refreshInterval: preview ? 0 : 300_000,
       // Stated outright rather than left to the defaults: the whole page is a
       // "right now" claim, so coming back to it must go get fresh data.
@@ -206,6 +213,13 @@ export function ConditionsDashboard({
       revalidateOnReconnect: true,
     },
   );
+
+  useEffect(() => {
+    if (preview) return;
+    if (shouldRevalidateOnMount(initial.snapshot.generatedAt, Date.now())) void mutate();
+    // Mount only: later refreshes are the poll, focus/resume and the freshness retry below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // SWR's own focus revalidation doesn't fire reliably inside the iOS WKWebView
   // shell (the web view is restored without a focus event), so ask for fresh
@@ -226,11 +240,16 @@ export function ConditionsDashboard({
     const onVisible = () => {
       if (document.visibilityState === "visible") refetch();
     };
+    // `pageshow` also fires once on a normal load (persisted = false); that one is
+    // the page we just rendered, not a return to it. Only a restore (bfcache) refetches.
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) refetch();
+    };
     document.addEventListener("visibilitychange", onVisible);
-    window.addEventListener("pageshow", refetch);
+    window.addEventListener("pageshow", onPageShow);
     return () => {
       document.removeEventListener("visibilitychange", onVisible);
-      window.removeEventListener("pageshow", refetch);
+      window.removeEventListener("pageshow", onPageShow);
     };
   }, [preview, mutate]);
 

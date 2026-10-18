@@ -35,7 +35,9 @@ test("a stranger sees only the owner code box, and a try leaves the address and 
   expect(requests[0].url).not.toContain("not-the-code");
   expect(requests[0].body).toContain("not-the-code-0123456789");
   await expect(box).toHaveValue("");
-  await expect(page.getByRole("alert")).toBeVisible();
+  // Next's own (empty) route announcer is also role="alert"; once the page hydrates fast
+  // enough to have it by now, a bare getByRole("alert") matches both. Ask for the one with words.
+  await expect(page.getByRole("alert").filter({ hasText: /\S/ })).toBeVisible();
   expect(page.url()).not.toContain("not-the-code");
   expect(page.url()).toMatch(/\/admin\/review$/);
 });
