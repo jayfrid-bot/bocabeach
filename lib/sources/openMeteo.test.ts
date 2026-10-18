@@ -7,7 +7,9 @@
 // boca-meta.json). "a-merged" is call A (hourly + daily), "b-merged" is call B
 // (15-minute + current + GFS); the rest are the OLD separate calls, captured
 // in the same minute. It was raining, so the 15-minute rain is non-zero.
+// It was night in Boca, so a daytime call-B set (waikiki-*) checks UV too.
 import { readFileSync } from "node:fs";
+import { runWithBudget, SubrequestBudget } from "@/lib/alerts/budget";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseOpenMeteoDaily } from "@/lib/sources/forecast";
 import { parseOpenMeteoHourly } from "@/lib/sources/hourlyForecast";
@@ -120,6 +122,31 @@ describe("call B (15-minute + current + GFS) reproduces the old separate calls",
   it("a stale copy that no longer covers now falls back to its own current.time", () => {
     const s = splitNowPoint(b, Date.parse("2026-10-19T03:00:00Z"));
     expect(parseGfsCurrent(s.gfs!)).toEqual(parseGfsCurrent(fx("b-gfs")));
+  });
+});
+
+describe("call B in DAYTIME (Waikiki, 14:30 local, 2026-10-18 00:43Z capture)", () => {
+  // The Boca capture is at night (UV 0, cloud 100 in every model), so it
+  // cannot tell best-match UV/cloud from GFS. Here best-match cloud is 37 and
+  // GFS cloud is 0, and UV is 5.85.
+  const wk = (name: string) =>
+    JSON.parse(readFileSync(new URL(`../__fixtures__/openMeteo/waikiki-${name}.json`, import.meta.url), "utf8"));
+  const split = splitNowPoint(wk("b-merged") as NowPointJson);
+
+  it("current UV + cloud equal the old best-match call (not GFS)", () => {
+    const old = wk("b-uv").current;
+    expect(old.uv_index).toBeGreaterThan(0);
+    expect(split.current).toEqual({ uv_index: old.uv_index, cloud_cover: old.cloud_cover });
+    expect(split.current!.cloud_cover).not.toBe(wk("b-gfs").current.cloud_cover);
+  });
+
+  it("GFS current equals the old GFS call", () => {
+    expect(parseGfsCurrent(split.gfs!)).toEqual(parseGfsCurrent(wk("b-gfs")));
+  });
+
+  it("15-minute rain equals the old nowcast call", () => {
+    const old = wk("b-minutely");
+    expect(split.minutely.minutely_15).toEqual({ time: old.minutely_15.time, precipitation: old.minutely_15.precipitation });
   });
 });
 
@@ -248,6 +275,66 @@ describe("429 back-off and last-good copies", () => {
     const r = await fetchOpenMeteoJson<{ v: number }>(URL_A, { storeKey: "edge", maxAgeMs: 3600_000 });
     expect(r.ok && r.json).toEqual({ v: 2 });
     expect(r.ok && r.stale).toBeTruthy();
+  });
+
+  it("under a push-run budget: no edge-cache writes, and each read costs 1", async () => {
+    const store = new Map<string, Response>();
+    const fakeCache = {
+      put: vi.fn(async (k: string, r: Response) => void store.set(k, r)),
+      match: vi.fn(async (k: string) => store.get(k)?.clone()),
+    };
+    vi.stubGlobal("caches", { default: fakeCache });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response('{"v":3}', { status: 200 })));
+
+    const b1 = new SubrequestBudget(10);
+    await runWithBudget(b1, () => fetchOpenMeteoJson(URL_A, { storeKey: "bud", maxAgeMs: 3600_000 }));
+    expect(fakeCache.put).not.toHaveBeenCalled();
+    expect(b1.left).toBe(9); // the fetch only
+
+    // Seed an edge copy outside any budget (a page load), then lose the isolate.
+    await fetchOpenMeteoJson(URL_A, { storeKey: "bud2", maxAgeMs: 3600_000 });
+    expect(fakeCache.put).toHaveBeenCalledTimes(1);
+    __resetOpenMeteoStateForTests();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("busy", { status: 429 })));
+
+    const b2 = new SubrequestBudget(10);
+    const r = await runWithBudget(b2, () => fetchOpenMeteoJson<{ v: number }>(URL_A, { storeKey: "bud2", maxAgeMs: 3600_000 }));
+    expect(r.ok && r.json).toEqual({ v: 3 });
+    expect(fakeCache.match).toHaveBeenCalledTimes(1);
+    expect(b2.left).toBe(8); // fetch 1 + cache read 1
+
+    // A budget with nothing left for the read skips it (no uncounted subrequest).
+    __resetOpenMeteoStateForTests();
+    const b3 = new SubrequestBudget(1);
+    const r3 = await runWithBudget(b3, () => fetchOpenMeteoJson(URL_A, { storeKey: "bud2", maxAgeMs: 3600_000 }));
+    expect(r3.ok).toBe(false);
+    expect(fakeCache.match).toHaveBeenCalledTimes(1);
+    expect(b3.left).toBe(0);
+  });
+
+  it("a stale call-A copy made before local midnight starts the outlook on TODAY (7 tiles)", async () => {
+    // Boca: copy made 22:30 local (02:30Z), served at 00:30 local (04:30Z).
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse("2026-10-18T02:30:00Z"));
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(readFileSync(new URL("../__fixtures__/openMeteo/boca-a-merged.json", import.meta.url), "utf8"), {
+        status: 200,
+        headers: { date: new Date().toUTCString() },
+      }),
+    ));
+    const live = await fetchForecastPoint({ lat: 26.3587, lon: -80.0686 });
+    expect(live.ok && parseOpenMeteoDaily(live.split.daily as never)![0].date).toBe("2026-10-17");
+
+    vi.setSystemTime(Date.parse("2026-10-18T04:30:00Z"));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("busy", { status: 429 })));
+    const stale = await fetchForecastPoint({ lat: 26.3587, lon: -80.0686 });
+    expect(stale.ok && stale.stale).toBeTruthy();
+    const days = stale.ok ? parseOpenMeteoDaily(stale.split.daily as never)! : [];
+    expect(days).toHaveLength(7);
+    expect(days[0].date).toBe("2026-10-18");
+    // Every tile still has hourly hours (the old window, cut from now).
+    const hours = stale.ok ? parseOpenMeteoHourly(stale.split.hourly as never)! : [];
+    expect(hours.at(-1)!.time >= "2026-10-24T23:00:00.000Z").toBe(true);
   });
 
   it("fetchForecastPoint never rejects", async () => {

@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { parseGeocode } from "@/lib/resolve/geocode";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { geocodeName, parseGeocode } from "@/lib/resolve/geocode";
+import { __resetOpenMeteoStateForTests, OpenMeteoBackoff } from "@/lib/sources/openMeteo";
 
 // Realistic Open-Meteo /v1/search response for "Boca Raton". Includes a non-US
 // row (filtered out) and a non-PPL place (kind "place") to exercise mapping.
@@ -100,5 +101,29 @@ describe("parseGeocode", () => {
     expect(partial[0].name).toBe("Mystery");
     expect(partial[0].admin1Code).toBeUndefined();
     expect(partial[0].kind).toBe("city");
+  });
+});
+
+describe("geocodeName during an Open-Meteo 429 pause", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    __resetOpenMeteoStateForTests();
+  });
+
+  it("throws on a 429 and while paused, so the caller does not read 'no such place'", async () => {
+    __resetOpenMeteoStateForTests();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => new Response("busy", { status: 429 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(geocodeName("Boca Raton")).rejects.toBeInstanceOf(OpenMeteoBackoff);
+    await expect(geocodeName("Delray Beach")).rejects.toBeInstanceOf(OpenMeteoBackoff);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // the second call never left
+  });
+
+  it("still returns [] for any other failure", async () => {
+    __resetOpenMeteoStateForTests();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("down", { status: 500 })));
+    expect(await geocodeName("Boca Raton")).toEqual([]);
   });
 });

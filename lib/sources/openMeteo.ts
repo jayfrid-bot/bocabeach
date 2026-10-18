@@ -18,6 +18,7 @@
 // customer-*.open-meteo.com hosts with `&apikey=`. The key never appears in a
 // log line or a note (notes carry the host only).
 
+import { currentBudget } from "@/lib/alerts/budget";
 import { fetchedAtOf, fetchWithTimeout, SubrequestBudgetExhausted } from "@/lib/util";
 
 // --- hosts + key -------------------------------------------------------------
@@ -130,6 +131,20 @@ const STORE_ORIGIN = "https://open-meteo-last-good.isitbeachday.internal/";
 const memory = new Map<string, LastGood>();
 const lastEdgeWrite = new Map<string, number>();
 
+/**
+ * Cache API calls share Cloudflare's per-request subrequest quota, but they do
+ * not pass through fetchWithTimeout, so the push run's SubrequestBudget
+ * (lib/alerts/budget.ts) would not see them. Under a budget: never write
+ * (the copy is optional), and charge each read 1, skipping it when the budget
+ * cannot pay. Outside a budget (page loads, the history cron) both run freely.
+ */
+function mayUseEdgeCache(op: "read" | "write"): boolean {
+  const budget = currentBudget();
+  if (!budget) return true;
+  if (op === "write") return false;
+  return budget.take(1);
+}
+
 function edgeCache(): Cache | null {
   try {
     const c = (globalThis as { caches?: { default?: Cache } }).caches?.default;
@@ -153,7 +168,7 @@ async function saveLastGood(key: string, text: string, savedAtMs: number): Promi
     if (oldest !== undefined) memory.delete(oldest);
   }
   const cache = edgeCache();
-  if (!cache) return;
+  if (!cache || !mayUseEdgeCache("write")) return;
   const now = Date.now();
   if (now - (lastEdgeWrite.get(key) ?? 0) < EDGE_WRITE_EVERY_MS) return;
   lastEdgeWrite.set(key, now);
@@ -177,7 +192,7 @@ async function loadLastGood(key: string, maxAgeMs: number, nowMs: number): Promi
   const mem = memory.get(key);
   if (mem && nowMs - mem.savedAtMs <= maxAgeMs) return mem;
   const cache = edgeCache();
-  if (!cache) return null;
+  if (!cache || !mayUseEdgeCache("read")) return null;
   try {
     const hit = await cache.match(storeUrl(key));
     if (!hit) return null;
@@ -565,10 +580,14 @@ export async function fetchForecastPoint(loc: { lat: number; lon: number }): Pro
       revalidate: 3600, // 1 h, as both old calls had
     });
     if (!r.ok) return r;
-    const refMs = Date.parse(r.fetchedAt);
+    // A live answer: cut the windows from when Open-Meteo made it (as the old
+    // calls did). A stale copy: cut them from NOW, or a copy made before local
+    // midnight would start the outlook on yesterday and show 8 tiles.
+    const madeMs = Date.parse(r.fetchedAt);
+    const refMs = r.stale || !Number.isFinite(madeMs) ? Date.now() : madeMs;
     return {
       ok: true,
-      split: splitForecastPoint(r.json, Number.isFinite(refMs) ? refMs : Date.now()),
+      split: splitForecastPoint(r.json, refMs),
       fetchedAt: r.fetchedAt,
       stale: r.stale,
     };

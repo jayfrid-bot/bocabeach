@@ -30,6 +30,18 @@ const MARINE = JSON.stringify({
 const AIR = JSON.stringify({ current: { time: "2026-10-18T16:00", us_aqi: 31, pm2_5: 5, pm10: 9, ozone: 60, us_aqi_pm2_5: 20, us_aqi_pm10: 8, us_aqi_ozone: 31 } });
 const SAT = JSON.stringify({ hourly: { time: ["2026-10-18T14:00", "2026-10-18T15:00"], shortwave_radiation: [230, 590] } });
 
+// The Boca call-B capture is at night (UV 0). Give the live answer a daytime
+// current block so the marine UV path is checked with a real value.
+const B_DAY = (() => {
+  const j = JSON.parse(fx("b-merged"));
+  j.current = { time: "2026-10-18T16:00", interval: 900, uv_index: 3.1, cloud_cover: 40 };
+  return JSON.stringify(j);
+})();
+const B_UV_AT_1615 = (() => {
+  const m = JSON.parse(fx("b-merged")).minutely_15;
+  return m.uv_index_best_match[m.time.indexOf("2026-10-18T16:15")] as number;
+})();
+
 type Mode = "healthy" | "429";
 
 function stubFetch(mode: Mode) {
@@ -48,7 +60,7 @@ function stubFetch(mode: Mode) {
       : host.startsWith("air-quality-api") ? AIR
       : host.startsWith("satellite-api") ? SAT
       : url.includes("&hourly=") ? fx("a-merged")
-      : url.includes("minutely_15=") ? fx("b-merged")
+      : url.includes("minutely_15=") ? B_DAY
       : "{}";
     return new Response(body, { status: 200, headers: { date, "content-type": "application/json" } });
   });
@@ -83,12 +95,15 @@ describe("conditions build when Open-Meteo answers 429 everywhere", () => {
     expect(liveCalls.filter((h) => h === "api.open-meteo.com")).toHaveLength(2);
     expect(liveCalls).toHaveLength(5);
     const liveD = deriveMetrics(live, T_LIVE);
+    expect(live.marine.data?.uvIndex).toBe(3.1);
+    expect(live.marine.data?.cloudCoverPct).toBe(40);
 
     // 2. Twenty minutes later every Open-Meteo host answers 429.
     vi.setSystemTime(T_LIVE + 20 * 60_000);
     const failCalls = stubFetch("429");
     const snap = await getSnapshotForLocation(loc);
-    expect(failCalls.length).toBeLessThanOrEqual(5); // no retries on a 429
+    expect(failCalls.length).toBeGreaterThan(0); // the 429s really were served
+    expect(failCalls.length).toBeLessThanOrEqual(5); // and none was retried
 
     for (const k of OM_SOURCES) {
       expect(snap[k].status, k).toBe("stale");
@@ -106,6 +121,9 @@ describe("conditions build when Open-Meteo answers 429 everywhere", () => {
     expect(d.uvIndex).toBeGreaterThan(0);
     expect(d.sandTempF).toBeTypeOf("number");
     expect(liveD.sandTempF).toBeTypeOf("number");
+    // Marine's UV from the stale call-B copy is read for the 16:15 slot (now).
+    expect(B_UV_AT_1615).toBeGreaterThan(0);
+    expect(snap.marine.data?.uvIndex).toBe(Math.round(B_UV_AT_1615 * 10) / 10);
 
     // 3. 30 s later the pause (45-75 s) is still running: a further build makes
     //    NO Open-Meteo calls at all and still serves the stale copies.

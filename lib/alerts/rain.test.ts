@@ -271,6 +271,23 @@ describe("rainForFix", () => {
     expect(read).toBeNull();
   });
 
+  it("logs one line, without calling Open-Meteo, when a rain check is skipped during a 429 pause", async () => {
+    const { __resetOpenMeteoStateForTests, noteOpenMeteo429 } = await import("@/lib/sources/openMeteo");
+    __resetOpenMeteoStateForTests();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    noteOpenMeteo429("https://api.open-meteo.com/v1/forecast");
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const read = await rainForFix(26.35, -80.07, "boca-raton", NOW, newRainCache(), null);
+    expect(read).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+    const skipped = warn.mock.calls.filter((c) => String(c[0]).startsWith("[rain] rain check skipped"));
+    expect(skipped).toHaveLength(1);
+    expect(String(skipped[0][0])).toContain("paused after a 429");
+    warn.mockRestore();
+    __resetOpenMeteoStateForTests();
+  });
+
   it("returns null on a bad response", async () => {
     vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
     const read = await rainForFix(26.35, -80.07, "boca-raton", NOW, newRainCache(), null);

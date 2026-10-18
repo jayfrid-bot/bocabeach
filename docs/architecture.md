@@ -178,12 +178,12 @@ flowchart TD
   HOURLY2 --> SAT2["satellite-api: GOES radiation (best effort)"]
   AIR2[airQuality.ts, only when AirNow has no reading] --> AQAPI[air-quality-api]
   CAMS2[lib/cams.ts → spotWeather.ts] --> SPOT2["api: current weather per cam point"]
-  RAIN2[lib/alerts/rain.ts] --> FETCH2
-  GEO2[lib/resolve/geocode.ts] --> FETCH2
+  RAIN2["lib/alerts/rain.ts<br/>paused: logs one line per skipped check"] --> FETCH2
+  GEO2["lib/resolve/geocode.ts<br/>paused or 429: throws → GEOCODE_FAILED, never 'no results'"] --> FETCH2
   A & B & MAPI & SAT2 & AQAPI & SPOT2 --> JSON2["fetchOpenMeteoJson<br/>429: no retry; 5xx / bad JSON: one retry; timeout: no retry"]
   JSON2 --> FETCH2["openMeteoFetch<br/>no call while the host is paused;<br/>a 429 pauses that host 45-75 s in this isolate<br/>(Retry-After if longer, max 5 min), logged once"]
   FETCH2 -->|"OPEN_METEO_API_KEY unset: api.open-meteo.com etc.<br/>set: customer-*.open-meteo.com + &apikey="| OM[(Open-Meteo)]
-  JSON2 <-->|"save every good answer; read when a call fails"| LG[("last-good copy per endpoint + point<br/>isolate memory + Workers Cache API caches.default<br/>key https://open-meteo-last-good.isitbeachday.internal/&lt;endpoint:lat,lon&gt;<br/>per datacenter, max-age 3 h, rewritten at most every 10 min per isolate")]
+  JSON2 <-->|"save every good answer; read when a call fails.<br/>Under the push run's SubrequestBudget: no writes, each read costs 1"| LG[("last-good copy per endpoint + point<br/>isolate memory + Workers Cache API caches.default<br/>key https://open-meteo-last-good.isitbeachday.internal/&lt;endpoint:lat,lon&gt;<br/>per datacenter, max-age 3 h, rewritten at most every 10 min per isolate")]
 ```
 
 - **Why two calls, not one.** Asking for `current` or `minutely_15` in the same
@@ -200,9 +200,17 @@ flowchart TD
   raining now). Cam weather: 1 h. A served copy sets the source's status to
   `"stale"`, its `fetchedAt` to when Open-Meteo made it, and a note with its age.
   The score uses stale hourly data as it is (it is a forecast for this hour).
+  A stale call-A copy is trimmed from NOW, not from when it was made, so a copy
+  made before local midnight still starts the outlook on today (7 tiles).
   A stale call-B copy reads GFS and UV for the 15-minute slot of now.
+- **Subrequest budget.** Cache API calls count toward Cloudflare's per-request
+  subrequest limit but do not pass through `fetchWithTimeout`. When a push-run
+  `SubrequestBudget` is active (lib/alerts/budget.ts), the client skips cache
+  writes and charges each cache read 1 (skipping it when the budget cannot pay).
 - **Night UV.** `deriveMetrics` (lib/score.ts) sets UV to 0 between sunset and
   sunrise when no feed has a value, so a night outage does not show "no UV index".
+  It applies only within 23.5 h of the snapshot's sunrise, so an old snapshot
+  scored the next morning cannot read UV 0 in daylight. Engine version 2026-10-17.1.
 - **Calls per cold build.** Before: 5 to api.open-meteo.com + marine + satellite
   (+ air quality when AirNow has nothing, + 1 per cam) = 7-8 plus cams. After:
   2 + marine + satellite (+ air, + cams) = 4-5 plus cams.

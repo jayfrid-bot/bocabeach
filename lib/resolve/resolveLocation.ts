@@ -6,8 +6,9 @@
 // empty/undefined for a human to fill in later.
 //
 // House style mirrors lib/sources/nws.ts: the network/registry-touching helpers
-// (geocodeName, resolveSurfZone, the loaders) never throw and return typed
-// degraded values; resolveBeach orchestrates them and itself never throws.
+// (resolveSurfZone, the loaders) never throw and return typed degraded values
+// (geocodeName throws only during an Open-Meteo 429 pause; `safe` turns that
+// into GEOCODE_FAILED); resolveBeach orchestrates them and itself never throws.
 //
 // Dependency injection: every side-effecting collaborator is reachable through an
 // optional `deps` bag so tests can supply fixture registries and stubbed network

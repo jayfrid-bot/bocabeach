@@ -31,7 +31,13 @@ hourly chart and the 7-day outlook.
    weather. The source then shows status `stale`, the time Open-Meteo made the
    copy, and a note such as
    `live update failed (api.open-meteo.com -> 429: ...); showing the copy from 20 min ago`.
-4. **Night UV.** After sunset the UV index reads 0 even with no forecast.
+4. **Night UV.** After sunset the UV index reads 0 even with no forecast
+   (scoring engine 2026-10-17.1).
+5. **Push runs.** Under the push run's subrequest budget, the Cache API is
+   not written, and each read costs 1 from the budget.
+6. **Rain alerts and place search.** During a pause, a rain check is skipped
+   with one log line (`[rain] rain check skipped for cell ...`). Place search
+   reports a geocoding failure, not "no results".
 
 No new Cloudflare resource is needed. The Cache API needs no binding.
 

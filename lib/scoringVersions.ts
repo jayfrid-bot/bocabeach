@@ -57,6 +57,11 @@ export const SCORING_VERSIONS: readonly ScoringVersion[] = [
     since: "2026-10-12",
     note: "Sand temperature now accounts for the lower autumn and winter sun, so fall sand reads cooler.",
   },
+  {
+    version: "2026-10-17.1",
+    since: "2026-10-17",
+    note: "After sunset the UV index counts as 0 when no forecast is available, instead of missing.",
+  },
 ];
 
 /** Position of `version` in SCORING_VERSIONS, or -1 when it is not listed. */
