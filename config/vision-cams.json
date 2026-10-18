@@ -116,5 +116,288 @@
         "visionHint": "A wide fisheye view along the beach. The Gulf is on the left and the white sand on the right. Pale foam and bright sun glitter on the water are not seaweed."
       }
     ]
+  },
+  "jacksonville-beach": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "jax-beach-bw-cam",
+        "name": "Jacksonville Beach Cam",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=jax-beach-bw-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=jax-beach-bw-cam"
+        },
+        "role": "shore",
+        "visionHint": "A fixed view over the beach, the surf and the Jacksonville Beach Pier at the far left. A burned-in date sits at the top left and hotel text at the bottom right. Sea oats in the foreground are not seaweed."
+      }
+    ]
+  },
+  "st-augustine-beach": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "st-augustine-pier-cam",
+        "name": "St. Augustine Beach Pier Cam",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=st-augustine-pier-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=st-augustine-pier-cam"
+        },
+        "role": "shore",
+        "visionHint": "A wide view of the St. Augustine Beach pier, the beach and the surf. The Surf Station logo and sponsor text are overlays. Dark pier pilings and wet sand are not seaweed."
+      }
+    ]
+  },
+  "vilano-beach": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "vilano-surf-station-cam",
+        "name": "North Vilano — South Ponte Vedra Surf Cam",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=vilano-surf-station-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=vilano-surf-station-cam"
+        },
+        "role": "shore",
+        "visionHint": "A wide, mostly empty dune beach with surf and a flat horizon. Wet sand and shadows in the ripples are not seaweed."
+      }
+    ]
+  },
+  "ormond-beach": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "ormond-cam-180",
+        "name": "Ormond Beach Cam 180",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=ormond-cam-180",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=ormond-cam-180"
+        },
+        "role": "shore",
+        "visionHint": "A fisheye view of the beach, the surf and the sea, with the horizon curved at the top. A small weather badge sits at the top right. Foam and wet sand are not seaweed."
+      }
+    ]
+  },
+  "dunlawton-beach": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "dunlawton-cam-180",
+        "name": "Dunlawton Beach Cam 180",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=dunlawton-cam-180",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=dunlawton-cam-180"
+        },
+        "role": "shore",
+        "visionHint": "A fisheye view of the beach, the surf and the sea, with the horizon curved at the top. A small weather badge sits at the top right. Foam and wet sand are not seaweed."
+      }
+    ]
+  },
+  "new-smyrna-beach": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "new-smyrna-cam-180",
+        "name": "New Smyrna Beach Cam 180",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=new-smyrna-cam-180",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=new-smyrna-cam-180"
+        },
+        "role": "shore",
+        "visionHint": "A fisheye view of the beach, the surf and the sea, with the horizon curved at the top. A small weather badge sits at the top right. Foam and wet sand are not seaweed."
+      }
+    ]
+  },
+  "ponce-inlet": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "ponce-inlet-cam-180",
+        "name": "Ponce Inlet Beach Cam 180",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=ponce-inlet-cam-180",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=ponce-inlet-cam-180"
+        },
+        "role": "shore",
+        "visionHint": "A fisheye view of the beach and the sea. A pole crosses the frame. A small weather badge sits at the top right. Foam and wet sand are not seaweed."
+      }
+    ]
+  },
+  "hollywood-beach": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "hollywood-broadwalk-cam",
+        "name": "Hollywood Beach Broadwalk Cam",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=hollywood-broadwalk-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=hollywood-broadwalk-cam"
+        },
+        "role": "crowd",
+        "visionHint": "A view down the Broadwalk toward the Hollywood Beach Theatre. The sea and sand sit at the edge of the frame; judge the crowd on the Broadwalk and the sand, not water clarity."
+      }
+    ]
+  },
+  "dania-beach": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "dania-pier-cam",
+        "name": "Dania Beach Pier Cam",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=dania-pier-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=dania-pier-cam"
+        },
+        "role": "shore",
+        "visionHint": "A view along the Dania Beach Pier, the beach and the surf. A weather bar is burned in at the top right. Pier pilings and wet sand are not seaweed."
+      }
+    ]
+  },
+  "singer-island": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "lake-worth-inlet-surf",
+        "name": "Lake Worth Inlet — Surf & Beach",
+        "source": {
+          "kind": "feed",
+          "base": "https://video-monitoring.com/beachcams/lakeworthinlet",
+          "view": "s6"
+        },
+        "role": "shore",
+        "visionHint": "A view north along Singer Island from the Lake Worth Inlet jetty. A crane boom crosses the left of the frame. Foam and wet sand are not seaweed."
+      },
+      {
+        "id": "lake-worth-inlet-beach",
+        "name": "Lake Worth Inlet — Beach",
+        "source": {
+          "kind": "feed",
+          "base": "https://video-monitoring.com/beachcams/lakeworthinlet",
+          "view": "s4"
+        },
+        "role": "crowd",
+        "visionHint": "A view north along the beach, with umbrellas, loungers and condos. A crane boom crosses the right of the frame."
+      }
+    ]
+  },
+  "jupiter": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "jupiter-inlet-beach",
+        "name": "Jupiter Inlet — Beach",
+        "source": {
+          "kind": "feed",
+          "base": "https://video-monitoring.com/beachcams/jupiter",
+          "view": "s2"
+        },
+        "role": "shore",
+        "visionHint": "A view from the Jupiter Inlet lighthouse area along a wide beach to the inlet jetty. Dark lines on the sand are the wrack line and tracks; judge seaweed only in the wash and at the tide line."
+      }
+    ]
+  },
+  "jensen-beach": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "jensen-beach-cam",
+        "name": "Jensen Beach Cam",
+        "source": {
+          "kind": "feed",
+          "base": "https://video-monitoring.com/beachcams/jensen",
+          "view": "s1"
+        },
+        "role": "shore",
+        "visionHint": "A view along a wide beach from a dune. Sea grape and dune vegetation in the foreground is not seaweed."
+      }
+    ]
+  },
+  "stuart-bathtub-beach": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "bathtub-beach-cam",
+        "name": "Bathtub Beach Cam",
+        "source": {
+          "kind": "feed",
+          "base": "https://video-monitoring.com/beachcams/bathtub",
+          "view": "s9"
+        },
+        "role": "shore",
+        "visionHint": "A view along a narrow beach beside a dune walkway, with a reef-sheltered shore. Wrack on the sand may be seaweed; judge it only in the wash and at the tide line."
+      }
+    ]
+  },
+  "hobe-sound": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "hobe-sound-beach-cam",
+        "name": "Hobe Sound Beach Cam",
+        "source": {
+          "kind": "feed",
+          "base": "https://video-monitoring.com/beachcams/hobesound",
+          "view": "s20"
+        },
+        "role": "shore",
+        "visionHint": "A view from a dune over a quiet beach with dense sea grape in the foreground. The vegetation is not seaweed."
+      }
+    ]
+  },
+  "sebastian-inlet": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "sebastian-inlet-beach-cam",
+        "name": "Sebastian Inlet — Beach",
+        "source": {
+          "kind": "feed",
+          "base": "https://video-monitoring.com/beachcams/sebastian",
+          "view": "s18"
+        },
+        "role": "shore",
+        "visionHint": "A view along a dune beach from the inlet park. Sea oats and sea grape in the foreground are not seaweed."
+      }
+    ]
+  },
+  "key-west-south": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "key-west-southernmost-waterside-cam",
+        "name": "Key West South Beach — Waterside",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=key-west-southernmost-waterside-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=key-west-southernmost-waterside-cam"
+        },
+        "role": "shore",
+        "visionHint": "A south-facing view of clear shallow water, small waves and a pier at the right. Sargassum washes onto this shore: count it where you see brown clumps or mats in the water or on the sand. A resort logo and a producer mark are overlays."
+      }
+    ]
+  },
+  "sombrero-beach": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "sombrero-beach-cam",
+        "name": "Sombrero Beach Cam",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=sombrero-beach-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=sombrero-beach-cam"
+        },
+        "role": "shore",
+        "visionHint": "A south-facing view of a calm, shallow beach with palms and a path. The water is clear and still; a marathon logo is an overlay. Sargassum shows as brown clumps on the sand or in the shallows."
+      }
+    ]
   }
 }

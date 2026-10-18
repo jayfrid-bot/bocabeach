@@ -183,6 +183,384 @@
         "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=pensacola-sria-west-cam",
         "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=pensacola-sria-west-cam"
       }
+    },
+    {
+      "slug": "jacksonville-beach",
+      "id": "jax-beach-bw-cam",
+      "name": "Jacksonville Beach Cam",
+      "attribution": "Live stream courtesy Best Western Oceanfront Jacksonville Beach and 911 Surf Report",
+      "timezone": "America/New_York",
+      "lat": 30.2934,
+      "lon": -81.389,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=jax-beach-bw-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=jax-beach-bw-cam"
+      }
+    },
+    {
+      "slug": "jacksonville-beach",
+      "id": "jax-pier-overview-cam",
+      "name": "Jacksonville Beach Pier — Overview",
+      "attribution": "Live stream courtesy The Jacksonville Beach Pier, Beach Life Rentals and 911 Surf Report",
+      "timezone": "America/New_York",
+      "lat": 30.2934,
+      "lon": -81.389,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=jax-pier-overview-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=jax-pier-overview-cam"
+      }
+    },
+    {
+      "slug": "st-augustine-beach",
+      "id": "st-augustine-pier-cam",
+      "name": "St. Augustine Beach Pier Cam",
+      "attribution": "Live stream courtesy The Surf Station (surf-station.com)",
+      "timezone": "America/New_York",
+      "lat": 29.8571,
+      "lon": -81.2659,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=st-augustine-pier-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=st-augustine-pier-cam"
+      }
+    },
+    {
+      "slug": "st-augustine-beach",
+      "id": "st-augustine-surf-cam",
+      "name": "St. Augustine Beach Surf Cam",
+      "attribution": "Live stream courtesy The Surf Station (surf-station.com)",
+      "timezone": "America/New_York",
+      "lat": 29.8571,
+      "lon": -81.2659,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=st-augustine-surf-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=st-augustine-surf-cam"
+      }
+    },
+    {
+      "slug": "vilano-beach",
+      "id": "vilano-surf-station-cam",
+      "name": "North Vilano — South Ponte Vedra Surf Cam",
+      "attribution": "Live stream courtesy The Surf Station (surf-station.com)",
+      "timezone": "America/New_York",
+      "lat": 29.9184,
+      "lon": -81.2907,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=vilano-surf-station-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=vilano-surf-station-cam"
+      }
+    },
+    {
+      "slug": "ormond-beach",
+      "id": "ormond-cam-180",
+      "name": "Ormond Beach Cam 180",
+      "attribution": "Live stream courtesy Volusia County Beach Safety",
+      "timezone": "America/New_York",
+      "lat": 29.338,
+      "lon": -81.0612,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=ormond-cam-180",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=ormond-cam-180"
+      }
+    },
+    {
+      "slug": "dunlawton-beach",
+      "id": "dunlawton-cam-180",
+      "name": "Dunlawton Beach Cam 180",
+      "attribution": "Live stream courtesy Volusia County Beach Safety",
+      "timezone": "America/New_York",
+      "lat": 29.1513,
+      "lon": -80.9686,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=dunlawton-cam-180",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=dunlawton-cam-180"
+      }
+    },
+    {
+      "slug": "new-smyrna-beach",
+      "id": "new-smyrna-cam-180",
+      "name": "New Smyrna Beach Cam 180",
+      "attribution": "Live stream courtesy Volusia County Beach Safety",
+      "timezone": "America/New_York",
+      "lat": 29.0383,
+      "lon": -80.8955,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=new-smyrna-cam-180",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=new-smyrna-cam-180"
+      }
+    },
+    {
+      "slug": "ponce-inlet",
+      "id": "ponce-inlet-cam-180",
+      "name": "Ponce Inlet Beach Cam 180",
+      "attribution": "Live stream courtesy Volusia County Beach Safety",
+      "timezone": "America/New_York",
+      "lat": 29.0789,
+      "lon": -80.9198,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=ponce-inlet-cam-180",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=ponce-inlet-cam-180"
+      }
+    },
+    {
+      "slug": "hollywood-beach",
+      "id": "hollywood-broadwalk-cam",
+      "name": "Hollywood Beach Broadwalk Cam",
+      "attribution": "Live stream courtesy City of Hollywood",
+      "timezone": "America/New_York",
+      "lat": 26.016,
+      "lon": -80.1153,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=hollywood-broadwalk-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=hollywood-broadwalk-cam"
+      }
+    },
+    {
+      "slug": "dania-beach",
+      "id": "dania-pier-cam",
+      "name": "Dania Beach Pier Cam",
+      "attribution": "Live stream courtesy City of Dania Beach",
+      "timezone": "America/New_York",
+      "lat": 26.058,
+      "lon": -80.1119,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=dania-pier-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=dania-pier-cam"
+      }
+    },
+    {
+      "slug": "singer-island",
+      "id": "lake-worth-inlet-surf",
+      "name": "Lake Worth Inlet — Surf & Beach",
+      "attribution": "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+      "timezone": "America/New_York",
+      "lat": 26.7823,
+      "lon": -80.0318,
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/lakeworthinlet",
+        "view": "s6"
+      }
+    },
+    {
+      "slug": "singer-island",
+      "id": "lake-worth-inlet-beach",
+      "name": "Lake Worth Inlet — Beach",
+      "attribution": "Live still courtesy Palm Beach County ERM / video-monitoring.com",
+      "timezone": "America/New_York",
+      "lat": 26.7823,
+      "lon": -80.0318,
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/lakeworthinlet",
+        "view": "s4"
+      }
+    },
+    {
+      "slug": "jupiter",
+      "id": "jupiter-inlet-beach",
+      "name": "Jupiter Inlet — Beach",
+      "attribution": "Live still courtesy Jupiter Inlet District / video-monitoring.com",
+      "timezone": "America/New_York",
+      "lat": 26.9401,
+      "lon": -80.0715,
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/jupiter",
+        "view": "s2"
+      }
+    },
+    {
+      "slug": "jupiter",
+      "id": "jupiter-inlet-surf",
+      "name": "Jupiter Inlet — Shoreline & Surf",
+      "attribution": "Live still courtesy Jupiter Inlet District / video-monitoring.com",
+      "timezone": "America/New_York",
+      "lat": 26.9401,
+      "lon": -80.0715,
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/jupiter",
+        "view": "s33"
+      }
+    },
+    {
+      "slug": "jupiter",
+      "id": "jupiter-reef-club-cam",
+      "name": "Jupiter Reef Club Cam",
+      "attribution": "Live stream courtesy Jupiter Reef Club",
+      "timezone": "America/New_York",
+      "lat": 26.9401,
+      "lon": -80.0715,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=jupiter-reef-club-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=jupiter-reef-club-cam"
+      }
+    },
+    {
+      "slug": "jensen-beach",
+      "id": "jensen-beach-cam",
+      "name": "Jensen Beach Cam",
+      "attribution": "Live still courtesy Martin County / video-monitoring.com",
+      "timezone": "America/New_York",
+      "lat": 27.2556,
+      "lon": -80.1969,
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/jensen",
+        "view": "s1"
+      }
+    },
+    {
+      "slug": "jensen-beach",
+      "id": "jensen-beach-surf",
+      "name": "Jensen Beach — Shoreline & Surf",
+      "attribution": "Live still courtesy Martin County / video-monitoring.com",
+      "timezone": "America/New_York",
+      "lat": 27.2556,
+      "lon": -80.1969,
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/jensen",
+        "view": "s3"
+      }
+    },
+    {
+      "slug": "stuart-bathtub-beach",
+      "id": "bathtub-beach-cam",
+      "name": "Bathtub Beach Cam",
+      "attribution": "Live still courtesy Martin County / video-monitoring.com",
+      "timezone": "America/New_York",
+      "lat": 27.1932,
+      "lon": -80.1628,
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/bathtub",
+        "view": "s9"
+      }
+    },
+    {
+      "slug": "stuart-bathtub-beach",
+      "id": "bathtub-beach-surf",
+      "name": "Bathtub Beach — Surf",
+      "attribution": "Live still courtesy Martin County / video-monitoring.com",
+      "timezone": "America/New_York",
+      "lat": 27.1932,
+      "lon": -80.1628,
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/bathtub",
+        "view": "s11"
+      }
+    },
+    {
+      "slug": "hobe-sound",
+      "id": "hobe-sound-beach-cam",
+      "name": "Hobe Sound Beach Cam",
+      "attribution": "Live still courtesy Martin County / video-monitoring.com",
+      "timezone": "America/New_York",
+      "lat": 27.0892,
+      "lon": -80.1268,
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/hobesound",
+        "view": "s20"
+      }
+    },
+    {
+      "slug": "hobe-sound",
+      "id": "hobe-sound-beach-south-cam",
+      "name": "Hobe Sound — South Beach",
+      "attribution": "Live still courtesy Martin County / video-monitoring.com",
+      "timezone": "America/New_York",
+      "lat": 27.0892,
+      "lon": -80.1268,
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/hobesound",
+        "view": "s22"
+      }
+    },
+    {
+      "slug": "sebastian-inlet",
+      "id": "sebastian-inlet-beach-cam",
+      "name": "Sebastian Inlet — Beach",
+      "attribution": "Live still courtesy Sebastian Inlet District / video-monitoring.com",
+      "timezone": "America/New_York",
+      "lat": 27.8589,
+      "lon": -80.4472,
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/sebastian",
+        "view": "s18"
+      }
+    },
+    {
+      "slug": "sebastian-inlet",
+      "id": "sebastian-inlet-south-beach-cam",
+      "name": "Sebastian Inlet — Beach & Jetty",
+      "attribution": "Live still courtesy Sebastian Inlet District / video-monitoring.com",
+      "timezone": "America/New_York",
+      "lat": 27.8589,
+      "lon": -80.4472,
+      "source": {
+        "kind": "feed",
+        "base": "https://video-monitoring.com/beachcams/sebastian",
+        "view": "s22"
+      }
+    },
+    {
+      "slug": "key-west-south",
+      "id": "key-west-southernmost-waterside-cam",
+      "name": "Key West South Beach — Waterside",
+      "attribution": "Live stream courtesy Southernmost Beach Resort, Key West",
+      "timezone": "America/New_York",
+      "lat": 24.5467,
+      "lon": -81.7949,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=key-west-southernmost-waterside-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=key-west-southernmost-waterside-cam"
+      }
+    },
+    {
+      "slug": "key-west-south",
+      "id": "key-west-southernmost-shores-cam",
+      "name": "Key West South Beach — Shores Pool",
+      "attribution": "Live stream courtesy Southernmost Beach Resort, Key West",
+      "timezone": "America/New_York",
+      "lat": 24.5467,
+      "lon": -81.7949,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=key-west-southernmost-shores-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=key-west-southernmost-shores-cam"
+      }
+    },
+    {
+      "slug": "sombrero-beach",
+      "id": "sombrero-beach-cam",
+      "name": "Sombrero Beach Cam",
+      "attribution": "Live stream courtesy Monroe County Tourist Development Council (Florida Keys)",
+      "timezone": "America/New_York",
+      "lat": 24.6918,
+      "lon": -81.0864,
+      "source": {
+        "kind": "direct",
+        "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=sombrero-beach-cam",
+        "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=sombrero-beach-cam"
+      }
     }
   ]
 }

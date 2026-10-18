@@ -119,6 +119,17 @@ export const NDBC_STATION_REPORTS_WAVES: Record<string, boolean> = {
   TRDF1: false, // 8721604 Trident Pier, FL — tide gauge
   VAKF1: false, // 8723214 Virginia Key, FL — tide gauge
   WPTW1: false, // 9441102 Westport, WA — tide gauge
+
+  // --- 2026-10-17 Atlantic coast cams (branch cams-atlantic): stations the new Florida Atlantic beaches use,
+  // probed live with scripts/ndbc_classify.mjs. Wave buoys first, then the wave-less water-temp stations.
+  "41114": true, // Fort Pierce, FL — wave buoy (WVHT live 2026-10-17); Jupiter, Hobe Sound, Jensen Beach, Bathtub Beach, Wabasso fallback
+  "41117": true, // St. Augustine, FL — nearshore wave buoy (WVHT live 2026-10-17); Jacksonville Beach, St. Augustine Beach, Vilano Beach fallback
+  "42095": true, // Satan Shoal, FL — wave buoy (WVHT live 2026-10-17); Key West South Beach and Sombrero Beach fallback
+  "41068": false, // Cape Canaveral, FL — C-MAN, WVHT "MM" 2026-10-17; water temp for Jensen Beach, Bathtub Beach, Sebastian Inlet, Wabasso
+  KYWF1: false, // 8724580 Key West, FL — tide gauge, WVHT "MM" 2026-10-17; Key West South Beach primary
+  LTJF1: false, // Little Talbot Island, FL — WVHT "MM" 2026-10-17; Jacksonville Beach primary
+  SAUF1: false, // St. Augustine, FL — pier station, WVHT "MM" 2026-10-17; St. Augustine Beach and Vilano Beach primary
+  SMKF1: false, // Sombrero Key, FL — C-MAN, WVHT "MM" 2026-10-17; Sombrero Beach primary
 };
 
 /** True if the station reports waves, false if it does not, undefined if it has
