@@ -1,0 +1,67 @@
+http://localhost:3300/  profile=none  runs=9  analytics=on
+ttfb         26
+fcp          104
+lcp          104
+hydratedMs   207
+load         131
+cls          0
+longTaskMs   4
+requests     25
+totalKB      647.1
+jsKB         389.5
+jsFiles      19
+apiKB        158.7
+lcp element  P P P P P P P P P
+share warm   GET,GET
+verdict in server HTML: true
+
+http://localhost:3200/  profile=none  runs=9  analytics=on
+ttfb         35
+fcp          100
+lcp          100
+hydratedMs   178
+load         129
+cls          0
+longTaskMs   0
+requests     24
+totalKB      411.9
+jsKB         337
+jsFiles      19
+apiKB        0
+lcp element  P P P P P P P P P
+share warm   HEAD,HEAD
+verdict in server HTML: true
+
+http://localhost:3300/  profile=phone  runs=9  analytics=on
+ttfb         26
+fcp          728
+lcp          728
+hydratedMs   2401
+load         2178
+cls          0
+longTaskMs   74
+requests     25
+totalKB      647.1
+jsKB         389.5
+jsFiles      19
+apiKB        158.7
+lcp element  P P P P P P P P P
+share warm   GET,GET
+verdict in server HTML: true
+
+http://localhost:3200/  profile=phone  runs=9  analytics=on
+ttfb         35
+fcp          636
+lcp          636
+hydratedMs   2049
+load         1865
+cls          0
+longTaskMs   68
+requests     24
+totalKB      412
+jsKB         337
+jsFiles      19
+apiKB        0
+lcp element  P P P P P P P P P
+share warm   HEAD,HEAD
+verdict in server HTML: true
