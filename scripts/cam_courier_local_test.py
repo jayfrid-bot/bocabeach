@@ -180,7 +180,8 @@ class CourierShellTests(unittest.TestCase):
         self.assertIn('"reason":"blank"', r.stdout)
         self.assertEqual(r.returncode, 1)
         _, fails = self.notes()
-        self.assertEqual(len(fails), 7)  # a stream with no picture is retried later, not every run
+        # every cam the --force run grabbed is cooled down: a stream with no picture is retried later, not every run
+        self.assertEqual(len(fails), len(cs.grabbable(cs.load_registry())))
 
     def test_an_over_budget_run_skips_without_failing_or_cooling_the_cams(self):
         r = self.run_script("--force", YTPACE_CAP_ROUTINE="0")
