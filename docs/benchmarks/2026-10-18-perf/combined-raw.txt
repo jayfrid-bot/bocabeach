@@ -1,0 +1,131 @@
+# Combined perf-integrate preview: raw probe output (2026-10-18)
+# Preview version e7b0e6c4-057d-4251-a585-745c4217eaf7, https://e7b0e6c4-isitbeachday.entwined-app.workers.dev
+# Code = commit 1b524041 (the build stamp says 337a73e9: built from the working tree before the commit).
+# Production at the same time: app.isitbeachday.com, /api/version sha a3e71b34.
+# ping 1.1.1.1 x10 after the curl runs: min/avg/max/stddev = 9.271/23.186/108.906/30.441 ms
+
+# perf_probe.sh https://e7b0e6c4-isitbeachday.entwined-app.workers.dev 10  (run 1, 2026-10-18T22:01:30Z)
+path                             ttfb_p50 ttfb_max total_p50   bytes_br
+/                                    152ms    1106ms     159ms      42438
+/siesta-key                          152ms    1758ms     153ms      36444
+/jupiter                             121ms    2582ms     140ms      39000
+/api/conditions/boca-raton           112ms     221ms     136ms      17789
+/api/conditions/siesta-key           116ms     213ms     122ms      14078
+/api/conditions/jupiter              189ms     486ms     189ms      16063
+/api/conditions/boca-raton/lean      135ms     409ms     137ms      12779
+/api/conditions/jupiter/lean         111ms     438ms     114ms      11388
+
+# perf_probe_edge.sh https://e7b0e6c4-isitbeachday.entwined-app.workers.dev 10  (2026-10-18T22:01:52Z)
+path                           ttfb_p50 ttfb_max setup_p50 after_p50  edge
+/                                  146ms     195ms       39ms      103ms  HIT=10 
+/siesta-key                        120ms     446ms       35ms       81ms  HIT=10 
+/jupiter                           114ms    1308ms       40ms       67ms  HIT=10 
+/boca-raton                        113ms     162ms       42ms       63ms  HIT=9 MISS=1 
+/api/conditions/boca-raton         129ms    1226ms       36ms       96ms  HIT=10 
+/api/conditions/siesta-key         101ms     304ms       35ms       65ms  HIT=10 
+/api/conditions/jupiter             99ms     441ms       40ms       58ms  HIT=10 
+/api/conditions/boca-raton/lean     125ms     236ms       36ms       90ms  HIT=10 
+/api/conditions/jupiter/lean       109ms     171ms       36ms       70ms  HIT=10 
+
+# perf_probe.sh https://e7b0e6c4-isitbeachday.entwined-app.workers.dev 10  (run 2, warm, 2026-10-18T22:02:11Z)
+path                             ttfb_p50 ttfb_max total_p50   bytes_br
+/                                    118ms     241ms     135ms      42438
+/siesta-key                          113ms     341ms     117ms      36444
+/jupiter                             106ms     192ms     125ms      39000
+/api/conditions/boca-raton           105ms     161ms     110ms      17789
+/api/conditions/siesta-key            97ms     205ms     111ms      14012
+/api/conditions/jupiter               95ms     243ms     114ms      16067
+/api/conditions/boca-raton/lean      119ms     217ms     120ms      12788
+/api/conditions/jupiter/lean         100ms     226ms     105ms      11386
+
+# perf_probe_reuse.sh https://e7b0e6c4-isitbeachday.entwined-app.workers.dev 20  (2026-10-18T22:02:24Z)
+path                               min     p25     p50     p90 new_conns
+/icon-192.png                     40ms    56ms    73ms   137ms 0
+/                                 34ms    47ms    63ms   146ms 0
+/siesta-key                       39ms    49ms    58ms   129ms 0
+/jupiter                          36ms    49ms    64ms   159ms 0
+/boca-raton                       30ms    37ms    45ms   119ms 0
+/api/conditions/boca-raton        29ms    40ms    45ms   113ms 0
+/api/conditions/siesta-key        29ms    37ms    60ms   106ms 0
+/api/conditions/jupiter           26ms    36ms    51ms    89ms 0
+
+# perf_page_probe.mjs https://e7b0e6c4-isitbeachday.entwined-app.workers.dev / 9 phone  (2026-10-18T22:03:31Z)
+https://e7b0e6c4-isitbeachday.entwined-app.workers.dev/  profile=phone  runs=9  analytics=on
+ttfb         253
+fcp          720
+lcp          720
+hydratedMs   2241
+load         2064
+cls          0
+longTaskMs   72
+requests     26
+totalKB      421.7
+jsKB         346.9
+jsFiles      20
+apiKB        0
+lcp element  P P P P P P P P P
+share warm   HEAD,HEAD
+verdict in server HTML: true
+
+# perf_page_probe.mjs https://app.isitbeachday.com / 9 phone  (2026-10-18T22:04:29Z)
+https://app.isitbeachday.com/  profile=phone  runs=9  analytics=on
+ttfb         314
+fcp          832
+lcp          832
+hydratedMs   2506
+load         2309
+cls          0
+longTaskMs   68
+requests     26
+totalKB      511.2
+jsKB         394.6
+jsFiles      19
+apiKB        19.8
+lcp element  P P P P P P P P P
+share warm   GET,GET
+verdict in server HTML: true
+
+# perf_page_probe.mjs https://e7b0e6c4-isitbeachday.entwined-app.workers.dev / 9 none  (2026-10-18T22:05:30Z)
+https://e7b0e6c4-isitbeachday.entwined-app.workers.dev/  profile=none  runs=9  analytics=on
+ttfb         142
+fcp          264
+lcp          264
+hydratedMs   497
+load         440
+cls          0
+longTaskMs   0
+requests     25
+totalKB      418.9
+jsKB         344
+jsFiles      19
+apiKB        0
+lcp element  P P P P P P P P P
+share warm   HEAD,HEAD
+verdict in server HTML: true
+
+# perf_page_probe.mjs https://app.isitbeachday.com / 9 none  (2026-10-18T22:06:13Z)
+https://app.isitbeachday.com/  profile=none  runs=9  analytics=on
+ttfb         257
+fcp          404
+lcp          404
+hydratedMs   544
+load         504
+cls          0
+longTaskMs   0
+requests     26
+totalKB      511.2
+jsKB         394.7
+jsFiles      19
+apiKB        19.9
+lcp element  P P P P P P P P P
+share warm   GET,GET
+verdict in server HTML: true
+
+
+# sw-bench.mjs preview 7 / (2026-10-18T22:07:02Z)
+# 2026-10-18T22:07:02.875Z  base=https://e7b0e6c4-isitbeachday.entwined-app.workers.dev  path=/  runs=7  chromium 151.0.7922.34
+no worker, fast network (HTTP cache only)      score-dom    98ms (worst   166ms)  fcp   144ms  rendered   260ms (worst   322ms)  ttfb    89ms  fromWorker 0/7
+no worker, Slow 3G                             score-dom   739ms (worst   978ms)  fcp   780ms  rendered  1209ms (worst  1447ms)  ttfb   162ms  fromWorker 0/7
+service worker, fast network                   score-dom    11ms (worst    15ms)  fcp    60ms  rendered   155ms (worst   172ms)  ttfb     1ms  fromWorker 7/7
+service worker, Slow 3G                        score-dom    11ms (worst    12ms)  fcp    60ms  rendered   152ms (worst   168ms)  ttfb     1ms  fromWorker 7/7
+service worker, offline                        score-dom    11ms (worst    11ms)  fcp    60ms  rendered   150ms (worst   166ms)  ttfb     1ms  fromWorker 7/7
