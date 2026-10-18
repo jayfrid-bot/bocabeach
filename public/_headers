@@ -1,0 +1,6 @@
+# Cloudflare Workers Static Assets reads this file (copied to .open-next/assets/_headers).
+# Build files are named by a hash of their content, so a file never changes under its name.
+# Without this rule they were served "max-age=0, must-revalidate": every open paid one
+# revalidation round trip for each of ~17 files. docs/SERVICE_WORKER.md, "Findings".
+/_next/static/*
+  Cache-Control: public, max-age=31536000, immutable

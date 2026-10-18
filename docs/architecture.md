@@ -158,6 +158,30 @@ data is more than 30 minutes old, the request renders inline. Browsers get the r
 pre-builds. Details and measurements:
 `docs/benchmarks/2026-10-18-perf/edge-cache.md`.
 
+### Repeat-open service worker (2026-10-18)
+
+A service worker in the browser (not in the native app shells) answers repeat opens
+from its own cache and refreshes behind them. It adds one backend part, `/sw-kill`,
+its off switch. Design, risks and the iOS plan: `docs/SERVICE_WORKER.md`.
+
+```mermaid
+flowchart TD
+  BR[Browser page] -->|"register /sw.js?v=build, idle, production only,<br/>never in the native shells (UA IsItBeachDayApp/)"| SW
+  subgraph SWBOX [Service worker public/sw.js, in the browser]
+    SW[fetch handler<br/>lib/swRules.test.ts] --> STATICC[("ibd-static-s1<br/>/_next/static/* cache-first,<br/>kept across builds, trimmed by count")]
+    SW --> PAGEC[("ibd-pages-s1-build<br/>/ and /beach, stale-while-revalidate,<br/>copy over 6 h is not shown as current")]
+    SW --> DATAC[("ibd-data-s1-build<br/>/api/conditions/slug, first call of a page load only")]
+  end
+  SW -->|"background refresh, no-store"| EDGE2["Worker (worker.ts) + routes in diagram 1"]
+  SW -->|"postMessage: fresh snapshot, build changed"| BR
+  SW -->|"at activate, then at most every 30 min"| KILL["/sw-kill (app/sw-kill/route.ts)<br/>200 'kill' only while the Worker variable SW_KILL is on:<br/>the worker deletes its caches and unregisters"]
+  ASSETS["Workers Static Assets: public/_headers<br/>/_next/static/* = immutable, one year"] --> STATICC
+```
+
+Never cached: non-GET, Authorization or Range, any query string on a page, `/admin`, every
+`/api/*` except `/api/conditions/<beach>`, `/mcp`, `/api/v1`, push, history, devices,
+RevenueCat, the install-token routes, non-200 and opaque answers.
+
 On the Plus side, the app also calls the device/presence routes directly
 (see diagram 3). `lib/location/nearest.ts` and its `shoreDistance.ts` helper
 are also what `/api/hazards` and Beach Mode's arrival check (`establishesArrival`,

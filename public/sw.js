@@ -1,41 +1,738 @@
 /*
- * Kill-switch service worker.
+ * Is It Beach Day service worker (2026-10-18, perf-sw).
  *
- * The previous SW cached the app shell (cache-first on hashed chunks,
- * network-first on pages) and ended up serving STALE JavaScript across deploys
- * inside the Capacitor remote-URL shell — a genuine force-quit still ran old
- * code. For an app that loads a live remote URL, fresh-on-every-load matters far
- * more than offline support, so the SW is retired.
+ * Goal: a REPEAT open shows the page with its last data at once (target 50 ms),
+ * then a quiet refresh. Plan and risks: docs/SERVICE_WORKER.md.
  *
- * This worker takes over from any old registration, deletes every cache,
- * unregisters itself, and reloads open windows so they fetch the latest code
- * from the network. After it runs once, the app has no service worker
- * (ServiceWorkerRegister now only unregisters), so future web deploys reach the
- * app on the next load with no caching in the way.
+ * What it does:
+ *  - /_next/static/*       cache-first. Files are hashed, so they never change.
+ *  - / and /<beach>        stale-while-revalidate. Answer from the last copy, fetch a
+ *                          fresh copy behind it. A copy older than 6 hours is not shown
+ *                          as current: the network answers, and the old copy is used
+ *                          only if the network is slow (3 s) or down.
+ *  - /api/conditions/<b>   the first call of each page load is stale-while-revalidate.
+ *                          Later calls (poll, resume, Refresh button) go to the network.
+ *                          When fresh data lands the worker posts it to the page.
+ *  - everything else       untouched. The worker never calls respondWith for it.
+ *
+ * Never cached: any non-GET, any request with Authorization or Range, any query string
+ * on a page, /admin, /api/* other than conditions, /mcp, /api/v1, push, history,
+ * devices, RevenueCat, install-token routes, non-200 and opaque answers.
+ *
+ * Versioning: the page registers /sw.js?v=<build>. A new build installs a new worker.
+ * On activate it deletes every older page and data cache. Hashed files stay in the
+ * static cache (an open tab on the old build still needs them) and are trimmed by count.
+ *
+ * Kill switch: GET /sw-kill answering 200 "kill" makes the worker delete its caches and
+ * unregister. It checks at activate and at most every 30 minutes. The page also removes
+ * it on ?nosw=1 (sticky; ?sw=on undoes it). See docs/SERVICE_WORKER.md.
+ *
+ * The pure rules sit in IBD_SW and are unit-tested (lib/swRules.test.ts).
  */
-self.addEventListener("install", () => {
+"use strict";
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+var SW_SCHEMA = 1;
+var HOUR = 3600 * 1000;
+var MIN = 60 * 1000;
+
+var LIMITS = {
+  /** A cached page or data copy older than this is never shown as current. */
+  maxAgeMs: 6 * HOUR,
+  /** Do not start a background refresh for a copy younger than this. */
+  pageRefreshGapMs: 10 * 1000,
+  dataRefreshGapMs: 20 * 1000,
+  /** With Save-Data on, refresh at most this often. */
+  saveDataGapMs: 30 * MIN,
+  /** An expired copy is used only after the network is silent for this long. */
+  networkTimeoutMs: 3000,
+  maxPages: 12,
+  maxData: 48,
+  maxStaticEntries: 200,
+  trimStaticTo: 150,
+  maxStaticBytes: 1500 * 1024,
+  /** Stop adding to the caches above this share of the origin quota. */
+  quotaShare: 0.8,
+  minQuotaBytes: 50 * 1024 * 1024,
+  killCheckGapMs: 30 * MIN,
+};
+
+var CACHE_PREFIX = "ibd-";
+var VERSION = (function () {
+  try {
+    return new URL(self.location.href).searchParams.get("v") || "0";
+  } catch (e) {
+    return "0";
+  }
+})();
+var STATIC_CACHE = CACHE_PREFIX + "static-s" + SW_SCHEMA;
+var PAGE_CACHE = CACHE_PREFIX + "pages-s" + SW_SCHEMA + "-" + VERSION;
+var DATA_CACHE = CACHE_PREFIX + "data-s" + SW_SCHEMA + "-" + VERSION;
+var META_CACHE = CACHE_PREFIX + "meta-s" + SW_SCHEMA;
+
+/** Single-segment paths that are real routes, not beaches. Drift is tested against app/. */
+var RESERVED_SEGMENTS = [
+  "admin",
+  "api",
+  "find",
+  "get-app",
+  "mcp",
+  "opengraph-image",
+  "privacy",
+  "sticker",
+  "support",
+  "sw-kill",
+  "twitter-image",
+];
+
+var SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+var CONDITIONS_RE = /^\/api\/conditions\/([a-z0-9]+(?:-[a-z0-9]+)*)$/;
+
+// ---------------------------------------------------------------------------
+// Pure rules (no I/O). Exposed as self.IBD_SW for the unit tests.
+// ---------------------------------------------------------------------------
+
+/**
+ * What kind of request is this, if the worker handles it at all?
+ * r = { method, url, origin, mode, hasAuth, hasRange }
+ * Returns { kind: "static" | "page" | "conditions", key, slug? } or null (= hands off).
+ */
+function classify(r) {
+  if (!r || r.method !== "GET") return null;
+  var u;
+  try {
+    u = new URL(r.url);
+  } catch (e) {
+    return null;
+  }
+  if (u.origin !== r.origin) return null;
+  if (u.protocol !== "https:" && u.hostname !== "localhost" && u.hostname !== "127.0.0.1") return null;
+  if (u.username || u.password) return null;
+  if (r.hasAuth || r.hasRange) return null;
+  var p = u.pathname;
+
+  if (p.indexOf("/_next/static/") === 0) {
+    return { kind: "static", key: u.origin + p + u.search };
+  }
+
+  var m = CONDITIONS_RE.exec(p);
+  if (m) {
+    // "?fresh=1" is the dashboard's deliberate freshness check: always the network.
+    if (u.search !== "") return null;
+    return { kind: "conditions", key: u.origin + p, slug: m[1] };
+  }
+
+  if (r.mode === "navigate" && u.search === "") {
+    if (p === "/") return { kind: "page", key: u.origin + "/", path: "/" };
+    var seg = p.slice(1);
+    if (SLUG_RE.test(seg) && RESERVED_SEGMENTS.indexOf(seg) === -1) {
+      return { kind: "page", key: u.origin + p, path: p };
+    }
+  }
+  return null;
+}
+
+/**
+ * May this answer go into the cache?
+ * s = { status, type, redirected, contentType, varyStar, contentLength }
+ */
+function cacheableResponse(kind, s) {
+  if (!s || s.status !== 200) return false;
+  if (s.type !== "basic" && s.type !== "default") return false; // no opaque, no cors
+  if (s.redirected) return false;
+  if (s.varyStar) return false;
+  var ct = (s.contentType || "").toLowerCase();
+  if (kind === "page") return ct.indexOf("text/html") === 0;
+  if (kind === "conditions") return ct.indexOf("application/json") === 0;
+  if (kind === "static") {
+    if (ct.indexOf("text/html") === 0) return false; // a fallback page posing as a file
+    if (s.contentLength != null && s.contentLength > LIMITS.maxStaticBytes) return false;
+    return true;
+  }
+  return false;
+}
+
+/** A complete HTML document ends with </html>. A cut-off stream does not. */
+function looksCompleteHtml(text) {
+  return typeof text === "string" && /<\/html>\s*$/i.test(text);
+}
+
+/** A conditions answer must carry the snapshot the dashboard reads. */
+function looksLikeConditions(text) {
+  try {
+    var j = JSON.parse(text);
+    return !!(j && j.snapshot && j.snapshot.generatedAt);
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Hash of the build files an HTML page points at. Two copies of a page from the same
+ * build give the same value; a new deploy changes it.
+ */
+function assetSignature(html) {
+  var found = html.match(/\/_next\/static\/[A-Za-z0-9_\-\/.]+\.(?:js|css)/g) || [];
+  var seen = {};
+  var list = [];
+  for (var i = 0; i < found.length; i++) {
+    if (!seen[found[i]]) {
+      seen[found[i]] = 1;
+      list.push(found[i]);
+    }
+  }
+  list.sort();
+  var h = 5381;
+  var s = list.join("|");
+  for (var k = 0; k < s.length; k++) h = ((h * 33) ^ s.charCodeAt(k)) >>> 0;
+  return list.length ? h.toString(16) + "." + list.length : "";
+}
+
+/**
+ * What to do with a request for a page or for conditions data.
+ *  cachedAt: ms the cached copy was stored, or null.
+ *  o = { now, saveData, firstForClient }
+ * Returns { action, revalidate } where action is one of:
+ *  "cache"           answer from the cache now
+ *  "network"         ask the network, no cached copy to fall back on
+ *  "network-first"   ask the network; use the cached copy only if it fails
+ *  "stale-fallback"  ask the network; use the cached copy if it is silent for 3 s or fails
+ */
+function servePlan(kind, cachedAt, o) {
+  var now = o.now;
+  if (cachedAt == null || !isFinite(cachedAt)) return { action: "network", revalidate: false };
+  var age = now - cachedAt;
+  var tooOld = age < 0 || age > LIMITS.maxAgeMs; // a clock that moved back is not trusted
+  if (kind === "conditions" && o.firstForClient === false) {
+    return { action: "network-first", revalidate: false };
+  }
+  if (tooOld) return { action: "stale-fallback", revalidate: false };
+  var gap = o.saveData
+    ? LIMITS.saveDataGapMs
+    : kind === "page"
+      ? LIMITS.pageRefreshGapMs
+      : LIMITS.dataRefreshGapMs;
+  return { action: "cache", revalidate: age >= gap };
+}
+
+/** Does the page ask for a fresh copy (reload button, hard reload)? */
+function bypassesCache(cacheMode) {
+  return cacheMode === "reload" || cacheMode === "no-cache" || cacheMode === "no-store";
+}
+
+/** navigator.storage.estimate() result -> may we add more? */
+function quotaAllows(est) {
+  if (!est || !est.quota) return true;
+  if (est.quota < LIMITS.minQuotaBytes) return false;
+  return (est.usage || 0) / est.quota < LIMITS.quotaShare;
+}
+
+/** Server-Timing value the stored page carries: the page reads cachedAt back from it. */
+function serverTimingValue(cachedAt) {
+  return 'ibd-sw;desc="' + cachedAt + '"';
+}
+
+self.IBD_SW = {
+  LIMITS: LIMITS,
+  RESERVED_SEGMENTS: RESERVED_SEGMENTS,
+  classify: classify,
+  cacheableResponse: cacheableResponse,
+  looksCompleteHtml: looksCompleteHtml,
+  looksLikeConditions: looksLikeConditions,
+  assetSignature: assetSignature,
+  servePlan: servePlan,
+  bypassesCache: bypassesCache,
+  quotaAllows: quotaAllows,
+  serverTimingValue: serverTimingValue,
+  cacheNames: { STATIC_CACHE: STATIC_CACHE, PAGE_CACHE: PAGE_CACHE, DATA_CACHE: DATA_CACHE, META_CACHE: META_CACHE },
+};
+
+// ---------------------------------------------------------------------------
+// Worker state and helpers
+// ---------------------------------------------------------------------------
+var killed = false;
+var MATCH_OPTS = { ignoreVary: true };
+var lastKillCheckMem = 0;
+var storageMemo = { at: 0, ok: true };
+/** Window clients that already made their first conditions call (resets if the worker sleeps). */
+var seenClients = [];
+var staticPuts = 0;
+
+function hasCaches() {
+  return typeof caches !== "undefined" && typeof caches.open === "function";
+}
+
+function saveDataOn(request) {
+  try {
+    if (self.navigator && self.navigator.connection && self.navigator.connection.saveData) return true;
+  } catch (e) {
+    /* ignore */
+  }
+  return !!(request && request.headers && /(^|,)\s*on\s*$/i.test(request.headers.get("save-data") || ""));
+}
+
+function describeRequest(request) {
+  return {
+    method: request.method,
+    url: request.url,
+    origin: self.location.origin,
+    mode: request.mode,
+    hasAuth: request.headers.has("authorization"),
+    hasRange: request.headers.has("range"),
+  };
+}
+
+function cachedAtOf(response) {
+  if (!response) return null;
+  var v = Number(response.headers.get("x-ibd-cached-at"));
+  return isFinite(v) && v > 0 ? v : null;
+}
+
+async function storageOk() {
+  if (Date.now() - storageMemo.at < 30 * 1000) return storageMemo.ok;
+  var ok = true;
+  try {
+    if (self.navigator && self.navigator.storage && self.navigator.storage.estimate) {
+      ok = quotaAllows(await self.navigator.storage.estimate());
+    }
+  } catch (e) {
+    /* ignore */
+  }
+  storageMemo = { at: Date.now(), ok: ok };
+  return ok;
+}
+
+function timeoutAfter(ms) {
+  return new Promise(function (resolve) {
+    setTimeout(function () { resolve(null); }, ms);
+  });
+}
+
+function hashText(text) {
+  var h = 5381;
+  for (var i = 0; i < text.length; i++) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
+  return h.toString(16) + "." + text.length;
+}
+
+function responseFacts(res) {
+  return {
+    status: res.status,
+    type: res.type,
+    redirected: res.redirected,
+    contentType: res.headers.get("content-type"),
+    varyStar: (res.headers.get("vary") || "").trim() === "*",
+  };
+}
+
+/** Build the copy that goes into the cache: decoded body, our stamps, no stale length/encoding. */
+function stamped(response, body, extra) {
+  var headers = new Headers(response.headers);
+  headers.delete("content-encoding");
+  headers.delete("content-length");
+  var now = Date.now();
+  headers.set("x-ibd-cached-at", String(now));
+  if (extra && extra.assets) headers.set("x-ibd-assets", extra.assets);
+  if (extra && extra.hash) headers.set("x-ibd-hash", extra.hash);
+  if (extra && extra.timing) headers.append("server-timing", serverTimingValue(now));
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: headers });
+}
+
+async function trimCache(cacheName, max, keep) {
+  if (killed) return;
+  try {
+    var cache = await caches.open(cacheName);
+    var keys = await cache.keys(); // insertion order: oldest first
+    if (keys.length <= max) return;
+    var drop = keys.length - (keep || max);
+    for (var i = 0; i < drop; i++) await cache.delete(keys[i]);
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+async function postToWindows(message, filter) {
+  try {
+    var list = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+    for (var i = 0; i < list.length; i++) {
+      if (filter && !filter(list[i])) continue;
+      list[i].postMessage(message);
+    }
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+function pathOf(url) {
+  try {
+    return new URL(url).pathname;
+  } catch (e) {
+    return "";
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Kill switch
+// ---------------------------------------------------------------------------
+async function wipeCaches() {
+  try {
+    var names = await caches.keys();
+    await Promise.all(
+      names.filter(function (n) { return n.indexOf(CACHE_PREFIX) === 0; }).map(function (n) { return caches.delete(n); }),
+    );
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+async function selfDestruct() {
+  killed = true;
+  await wipeCaches();
+  try {
+    await self.registration.unregister();
+  } catch (e) {
+    /* ignore */
+  }
+  await postToWindows({ type: "ibd-killed" });
+  // A request that was already running may still write once. Sweep again.
+  await new Promise(function (resolve) { setTimeout(resolve, 800); });
+  await wipeCaches();
+}
+
+async function checkKillSwitch(force) {
+  if (killed || !hasCaches()) return;
+  if (!force && Date.now() - lastKillCheckMem < LIMITS.killCheckGapMs && Date.now() >= lastKillCheckMem) return;
+  lastKillCheckMem = Date.now();
+  try {
+    var meta = await caches.open(META_CACHE);
+    var stampReq = new Request(self.location.origin + "/__ibd/kill-check");
+    if (!force) {
+      var last = await meta.match(stampReq);
+      var at = last ? Number(await last.text()) : 0;
+      if (at && Date.now() - at < LIMITS.killCheckGapMs && Date.now() >= at) return;
+    }
+    // Stamp first, so a down network does not turn into a check on every request.
+    if (killed) return;
+    await meta.put(stampReq, new Response(String(Date.now())));
+    var res = await fetch("/sw-kill", { cache: "no-store", credentials: "omit" });
+    if (res.status === 200 && (await res.text()).trim() === "kill") await selfDestruct();
+  } catch (e) {
+    /* a failed check never kills the worker */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+self.addEventListener("install", function () {
   self.skipWaiting();
 });
 
-self.addEventListener("activate", (event) => {
+self.addEventListener("activate", function (event) {
   event.waitUntil(
-    (async () => {
-      // 1. Nuke every cache the old worker created.
-      const keys = await caches.keys();
-      await Promise.all(keys.map((k) => caches.delete(k)));
-      // 2. Remove this worker so nothing intercepts future requests.
-      await self.registration.unregister();
-      // 3. Reload any open windows — now uncontrolled + uncached → fresh code.
-      const clients = await self.clients.matchAll({ type: "window" });
-      for (const client of clients) {
-        try {
-          client.navigate(client.url);
-        } catch {
-          /* ignore */
-        }
+    (async function () {
+      if (killed) return;
+      try {
+        var names = await caches.keys();
+        var keep = [STATIC_CACHE, PAGE_CACHE, DATA_CACHE, META_CACHE];
+        await Promise.all(
+          names
+            .filter(function (n) { return n.indexOf(CACHE_PREFIX) === 0 && keep.indexOf(n) === -1; })
+            .map(function (n) { return caches.delete(n); }),
+        );
+      } catch (e) {
+        /* ignore */
       }
+      await trimCache(STATIC_CACHE, LIMITS.maxStaticEntries, LIMITS.trimStaticTo);
+      await self.clients.claim();
+      await checkKillSwitch(true);
     })(),
   );
 });
 
-// No fetch handler on purpose: requests go straight to the network.
+// ---------------------------------------------------------------------------
+// Fetch
+// ---------------------------------------------------------------------------
+self.addEventListener("fetch", function (event) {
+  if (killed || !hasCaches()) return;
+  var request = event.request;
+  var c = classify(describeRequest(request));
+  if (!c) return; // the browser handles it as if there were no worker
+  event.waitUntil(checkKillSwitch(false));
+  if (c.kind === "static") {
+    event.respondWith(handleStatic(event, request, c));
+  } else if (c.kind === "page") {
+    event.respondWith(handlePage(event, request, c));
+  } else {
+    event.respondWith(handleConditions(event, request, c));
+  }
+});
+
+// -- static: cache first ------------------------------------------------------
+async function handleStatic(event, request, c) {
+  var cache = await caches.open(STATIC_CACHE);
+  var hit = await cache.match(c.key, MATCH_OPTS);
+  if (hit) return hit;
+  var res = await fetch(request);
+  event.waitUntil(putStatic(cache, c.key, res.clone()));
+  return res;
+}
+
+async function putStatic(cache, key, res) {
+  try {
+    var facts = responseFacts(res);
+    var cl = res.headers.get("content-length");
+    facts.contentLength = cl == null ? null : Number(cl);
+    var ok = cacheableResponse("static", facts);
+    if (killed || !ok || !(await storageOk())) return;
+    await cache.put(key, res);
+    staticPuts += 1;
+    if (staticPuts % 25 === 0) await trimCache(STATIC_CACHE, LIMITS.maxStaticEntries, LIMITS.trimStaticTo);
+  } catch (e) {
+    /* quota or a broken body: skip it */
+  }
+}
+
+// -- page: stale while revalidate ---------------------------------------------
+async function handlePage(event, request, c) {
+  var cache = await caches.open(PAGE_CACHE);
+  var existing = await cache.match(c.key, MATCH_OPTS);
+  var plan = bypassesCache(request.cache)
+    ? { action: existing ? "stale-fallback" : "network", revalidate: false }
+    : servePlan("page", cachedAtOf(existing), { now: Date.now(), saveData: saveDataOn(request) });
+
+  if (plan.action === "cache" && existing) {
+    if (plan.revalidate) event.waitUntil(refreshPage(c, existing));
+    return existing;
+  }
+  // No usable copy, an expired one, or an explicit reload: ask the network.
+  var stored = null;
+  var net = fetch(request).then(function (res) {
+    stored = storePage(c, res.clone(), existing);
+    return res;
+  });
+  // One lifetime promise, registered now: the answer may arrive after the page was served
+  // the old copy, and waitUntil cannot be called once the event has settled.
+  event.waitUntil(net.then(function () { return stored; }, function () {}));
+  if (plan.action !== "stale-fallback" || !existing) return net;
+  var winner = null;
+  try {
+    winner = await Promise.race([net, timeoutAfter(LIMITS.networkTimeoutMs)]);
+  } catch (e) {
+    /* the network failed: use the old copy */
+  }
+  return winner || existing;
+}
+
+async function storePage(c, res, previous) {
+  try {
+    var ok = cacheableResponse("page", responseFacts(res));
+    if (!ok) return;
+    var text = await res.text();
+    if (killed || !looksCompleteHtml(text) || !(await storageOk())) return;
+    var sig = assetSignature(text);
+    var cache = await caches.open(PAGE_CACHE);
+    await cache.put(c.key, stamped(res, text, { assets: sig, timing: true }));
+    await trimCache(PAGE_CACHE, LIMITS.maxPages);
+    var oldSig = previous ? previous.headers.get("x-ibd-assets") : null;
+    if (oldSig && sig && oldSig !== sig) await notifyBuildChanged(c.path);
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+/** Background refresh of a page that was just served from the cache. */
+async function refreshPage(c, previous) {
+  try {
+    var res = await fetch(c.key, {
+      cache: "no-store",
+      credentials: "same-origin",
+      redirect: "manual",
+      headers: { Accept: "text/html,application/xhtml+xml" },
+    });
+    await storePage(c, res, previous);
+  } catch (e) {
+    /* offline: the old copy stays */
+  }
+}
+
+function notifyBuildChanged(path) {
+  return postToWindows({ type: "ibd-build-changed", path: path }, function (client) {
+    return pathOf(client.url) === path;
+  });
+}
+
+// -- conditions data: the first call of a page load is stale-while-revalidate ---
+async function handleConditions(event, request, c) {
+  var cache = await caches.open(DATA_CACHE);
+  var clientId = event.clientId || event.resultingClientId || "";
+  var first = clientId ? seenClients.indexOf(clientId) === -1 : true;
+  if (clientId && first) {
+    seenClients.push(clientId);
+    if (seenClients.length > 40) seenClients.shift();
+  }
+  var existing = await cache.match(c.key, MATCH_OPTS);
+  var plan = bypassesCache(request.cache)
+    ? { action: existing ? "network-first" : "network", revalidate: false }
+    : servePlan("conditions", cachedAtOf(existing), {
+        now: Date.now(),
+        saveData: saveDataOn(request),
+        firstForClient: first,
+      });
+
+  if (plan.action === "cache" && existing) {
+    if (plan.revalidate) event.waitUntil(refreshConditions(c, existing));
+    return existing;
+  }
+
+  // The page may be handed the old copy while the network is still busy; then the answer
+  // that arrives later is posted to the page instead of returned.
+  var state = { late: false };
+  var after = null;
+  var net = fetch(request).then(function (res) {
+    if (res.status >= 500 && existing) throw new Error("server " + res.status);
+    after = afterConditionsFetch(c, res.clone(), existing, first, state);
+    return res;
+  });
+  event.waitUntil(
+    net.then(
+      function () { return after; },
+      function () {
+        if (first) return postToWindows({ type: "ibd-fresh-failed", kind: "conditions", slug: c.slug });
+      },
+    ),
+  );
+  if (!existing) return net;
+  if (plan.action === "stale-fallback") {
+    var winner = null;
+    try {
+      winner = await Promise.race([net, timeoutAfter(LIMITS.networkTimeoutMs)]);
+    } catch (e) {
+      /* use the old copy */
+    }
+    if (winner) return winner;
+    state.late = true;
+    return existing;
+  }
+  try {
+    return await net; // network-first: the old copy only if the network fails
+  } catch (e) {
+    return existing;
+  }
+}
+
+async function afterConditionsFetch(c, res, existing, first, state) {
+  var data = await storeConditions(c, res, existing);
+  if (!first || !res.ok) return;
+  await postToWindows({
+    type: "ibd-fresh",
+    kind: "conditions",
+    slug: c.slug,
+    changed: !!data && data.changed,
+    delivered: !state.late,
+    data: state.late && data ? data.json : undefined,
+  });
+}
+
+/** Store a good conditions answer. Returns { changed, json } or null. */
+async function storeConditions(c, res, existing) {
+  try {
+    if (!cacheableResponse("conditions", responseFacts(res))) return null;
+    var text = await res.text();
+    if (killed || !looksLikeConditions(text) || !(await storageOk())) return null;
+    var hash = hashText(text);
+    var cache = await caches.open(DATA_CACHE);
+    await cache.put(c.key, stamped(res, text, { hash: hash }));
+    await trimCache(DATA_CACHE, LIMITS.maxData);
+    var before = existing ? existing.headers.get("x-ibd-hash") : null;
+    return { changed: before !== hash, json: JSON.parse(text) };
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Background refresh of conditions data that was just served from the cache. */
+async function refreshConditions(c, existing) {
+  var failed = { type: "ibd-fresh-failed", kind: "conditions", slug: c.slug };
+  try {
+    var res = await fetch(c.key, { cache: "no-store", credentials: "same-origin" });
+    var data = res.ok ? await storeConditions(c, res, existing) : null;
+    if (!data) return await postToWindows(failed);
+    // Always send the snapshot: the page decides if it is newer than what it shows.
+    await postToWindows({
+      type: "ibd-fresh",
+      kind: "conditions",
+      slug: c.slug,
+      changed: data.changed,
+      delivered: false,
+      data: data.json,
+    });
+  } catch (e) {
+    await postToWindows(failed);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Messages from the page
+// ---------------------------------------------------------------------------
+self.addEventListener("message", function (event) {
+  var msg = event.data;
+  if (!msg || typeof msg !== "object") return;
+  if (msg.type === "ibd-ping" && event.source) {
+    event.source.postMessage({ type: "ibd-pong", version: VERSION, schema: SW_SCHEMA, killed: killed });
+    return;
+  }
+  if (msg.type === "ibd-kill") {
+    // The page asks the worker to stop (?nosw=1). It wipes its own caches, so no late write can bring them back.
+    event.waitUntil(selfDestruct());
+    return;
+  }
+  if (msg.type === "ibd-warm" && !killed && hasCaches()) {
+    event.waitUntil(warm(msg));
+  }
+});
+
+/**
+ * First visit: the page was loaded before the worker took over, so nothing is cached yet.
+ * The page lists the build files and the conditions call it made, and its own path.
+ * Fetching them now (the build files come from the browser's own cache) makes the SECOND
+ * open instant.
+ */
+async function warm(msg) {
+  try {
+    if (!(await storageOk())) return;
+    var origin = self.location.origin;
+    var saveData = saveDataOn(null);
+    var assets = Array.isArray(msg.assets) ? msg.assets.slice(0, 60) : [];
+    var statics = await caches.open(STATIC_CACHE);
+    for (var i = 0; i < assets.length; i++) {
+      if (typeof assets[i] !== "string") continue;
+      var c = classify({ method: "GET", url: assets[i], origin: origin, mode: "no-cors", hasAuth: false, hasRange: false });
+      if (!c) continue;
+      try {
+        if (c.kind === "static") {
+          if (await statics.match(c.key, MATCH_OPTS)) continue;
+          await putStatic(statics, c.key, await fetch(c.key, { cache: "force-cache", credentials: "omit" }));
+        } else if (c.kind === "conditions" && !saveData) {
+          var data = await caches.open(DATA_CACHE);
+          if (await data.match(c.key, MATCH_OPTS)) continue;
+          var res = await fetch(c.key, { cache: "no-store", credentials: "same-origin" });
+          if (res.ok) await storeConditions(c, res, null);
+        }
+      } catch (e) {
+        /* skip this file */
+      }
+    }
+    if (saveData || typeof msg.path !== "string") return;
+    var pc = classify({ method: "GET", url: origin + msg.path, origin: origin, mode: "navigate", hasAuth: false, hasRange: false });
+    if (!pc || pc.kind !== "page") return;
+    var pages = await caches.open(PAGE_CACHE);
+    var have = await pages.match(pc.key, MATCH_OPTS);
+    var at = cachedAtOf(have);
+    if (have && at && Date.now() - at < 60 * 1000) return;
+    await refreshPage(pc, have);
+  } catch (e) {
+    /* ignore */
+  }
+}

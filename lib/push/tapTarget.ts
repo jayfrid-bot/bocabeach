@@ -39,6 +39,7 @@ export const RESERVED_ROUTES: readonly string[] = [
   "sitemap",
   "sticker",
   "support",
+  "sw-kill",
   "twitter-image",
 ];
 const RESERVED = new Set(RESERVED_ROUTES);

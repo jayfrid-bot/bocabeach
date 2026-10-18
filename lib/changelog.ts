@@ -20,7 +20,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-10-18",
     title: "Beach pages open faster",
     details:
-      "A beach page and its numbers now usually arrive in a few hundredths of a second, not a few tenths. We keep a ready copy of each beach page and refresh it in the background while people use it. The page still shows how old each reading is, and it gets newer numbers by itself when they are out of date.",
+      "Beach pages and their numbers now arrive in a fraction of the time, and they still show how old each reading is. In a web browser, a beach you opened before appears almost at once, and the newest numbers drop in behind it.",
     tag: "improved",
   },
   {

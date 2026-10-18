@@ -18,6 +18,7 @@ import { ScoreExplainer } from "@/components/ScoreExplainer";
 import { PullToRefresh } from "@/components/PullToRefresh";
 import { isPullRefreshing } from "@/lib/refreshInFlight";
 import { shouldRefetchForFreshness, shouldRevalidateOnMount } from "@/lib/conditionsFreshness";
+import { useSwRevalidate } from "@/lib/useSwRevalidate";
 import { ScoreWheel } from "@/components/ScoreWheel";
 import { ScoreCapBanner } from "@/components/ScoreCapBanner";
 import { DataCoverageNote } from "@/components/DataCoverageNote";
@@ -275,6 +276,9 @@ export function ConditionsDashboard({
   useEffect(() => {
     latestGeneratedAtRef.current = snap.generatedAt;
   }, [snap.generatedAt]);
+  // Repeat opens: the service worker (public/sw.js) shows the last copy at once and posts the
+  // fresh snapshot here when it lands. Also sets the `ibd:score-rendered` performance mark.
+  useSwRevalidate(slug, preview, latestGeneratedAtRef, (fresh) => void mutate(fresh, { revalidate: false }));
   useEffect(() => {
     if (preview) return;
     let attempts = 0;
