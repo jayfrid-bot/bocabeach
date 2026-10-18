@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { listLocations, toPublicLocation } from "@/config/locations";
-import { getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
+import { getConditions } from "@/lib/conditions";
+import { toWire } from "@/lib/clientConditions";
+import { changelogPreview } from "@/lib/changelogPreview";
 import { LogoMark } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ConditionsDashboard } from "@/components/ConditionsDashboard";
@@ -46,19 +48,20 @@ export default async function Home() {
   const isNativeApp = await isNativeAppRequest();
   const data = await getConditions(primary.slug);
   if (data) {
-    // skyAlertCandidates (Codex round-2 review HIGH #2) is server-only —
-    // strip it before this snapshot crosses into the client component's
-    // props (it'd otherwise reach the client via RSC serialization
-    // regardless of ConditionsDashboard's own narrower prop type).
+    // toWire strips what is server-only (skyAlertCandidates — Codex round-2
+    // review HIGH #2 — and budgetAborted) AND packs the snapshot to a third of
+    // its size, so it crosses into the client component's props once, lean,
+    // instead of as 160 KB of RSC props beside the same data in the markup.
     return (
       <ConditionsDashboard
         slug={primary.slug}
-        initial={stripInternalSnapshotFields(data)}
+        initial={toWire(data)}
         browseHref={browseHref}
         isNativeApp={isNativeApp}
         // The served-beach list powers the location features (nearest beach,
         // home beach, near-you chip) — public fields only.
         beaches={locations.map(toPublicLocation)}
+        changelog={changelogPreview()}
       />
     );
   }

@@ -10,8 +10,14 @@
 // The plugin is resolved the same way as push (lib/push/native.ts): prefer the
 // bridge the WebView injects, fall back to the bundled import. Same rule too:
 // the plugin proxy is never awaited itself, only its method calls.
+//
+// The bundled import is loaded on demand (`await import`), not at the top of the
+// file: this module is reached from the dashboard's first-load bundle (lib/plus/
+// client.ts asks `billingAvailable()`), and RevenueCat's JavaScript is ~16 KB that
+// a web visitor — who can never buy anything here — has no use for. Only the
+// paywall, a purchase or a restore ever call into the plugin.
 
-import { INTRO_ELIGIBILITY_STATUS, Purchases, type PurchasesPackage } from "@revenuecat/purchases-capacitor";
+import type { INTRO_ELIGIBILITY_STATUS as IntroStatus, Purchases, PurchasesPackage } from "@revenuecat/purchases-capacitor";
 import { isNativePlatform } from "@/lib/push/native";
 import { holdReload } from "@/lib/reloadGuard";
 
@@ -44,13 +50,18 @@ export function billingAvailable(): boolean {
   return isNativePlatform() && BILLING_KEY.length > 0;
 }
 
-function getPlugin(): typeof Purchases {
+async function getPlugin(): Promise<typeof Purchases> {
   if (typeof window !== "undefined") {
     const cap = (window as unknown as { Capacitor?: { Plugins?: { Purchases?: typeof Purchases } } })
       .Capacitor;
     if (cap?.Plugins?.Purchases) return cap.Plugins.Purchases;
   }
-  return Purchases;
+  return (await import("@revenuecat/purchases-capacitor")).Purchases;
+}
+
+/** The eligibility status enum, from the same on-demand import. */
+async function introStatus(): Promise<typeof IntroStatus> {
+  return (await import("@revenuecat/purchases-capacitor")).INTRO_ELIGIBILITY_STATUS;
 }
 
 let configuredFor: string | null = null;
@@ -66,7 +77,7 @@ export async function configureBilling(deviceId: string): Promise<boolean> {
   if (!billingAvailable() || !deviceId) return false;
   if (configuredFor === deviceId) return true;
   try {
-    const P = getPlugin();
+    const P = await getPlugin();
     await P.configure({ apiKey: BILLING_KEY, appUserID: deviceId });
     configuredFor = deviceId;
     return true;
@@ -79,7 +90,7 @@ export async function configureBilling(deviceId: string): Promise<boolean> {
 export async function loadOffers(deviceId: string): Promise<PlanOffer[]> {
   if (!(await configureBilling(deviceId))) return [];
   try {
-    const P = getPlugin();
+    const P = await getPlugin();
     const { current } = await P.getOfferings();
     const out: PlanOffer[] = [];
     if (current?.monthly) out.push({ plan: "monthly", price: current.monthly.product.priceString, pkg: current.monthly });
@@ -114,9 +125,10 @@ export async function trialEligibility(
   }
   if (withOffer.length === 0) return out;
   try {
-    const P = getPlugin();
+    const P = await getPlugin();
     const ids = withOffer.map((o) => o.pkg.product.identifier);
     const result = await P.checkTrialOrIntroductoryPriceEligibility({ productIdentifiers: ids });
+    const INTRO_ELIGIBILITY_STATUS = await introStatus();
     for (const o of withOffer) {
       const status = result[o.pkg.product.identifier]?.status;
       if (status === INTRO_ELIGIBILITY_STATUS.INTRO_ELIGIBILITY_STATUS_ELIGIBLE) {
@@ -142,8 +154,8 @@ export async function purchasePlan(deviceId: string, offer: PlanOffer): Promise<
   const release = holdReload();
   try {
     if (!(await configureBilling(deviceId))) return "failed";
-    const P = getPlugin();
     try {
+      const P = await getPlugin();
       await P.purchasePackage({ aPackage: offer.pkg });
       return "purchased";
     } catch (e) {
@@ -186,8 +198,8 @@ export type RestoreOutcome = "active" | "none" | "error";
 /** Ask the store for anything this Apple ID already bought. */
 export async function restoreBilling(deviceId: string): Promise<RestoreOutcome> {
   if (!(await configureBilling(deviceId))) return "error";
-  const P = getPlugin();
   try {
+    const P = await getPlugin();
     const { customerInfo } = await P.restorePurchases();
     return customerInfo.entitlements.active[ENTITLEMENT] != null ? "active" : "none";
   } catch {

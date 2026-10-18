@@ -17,6 +17,7 @@ import { defaultPlan, paywallCopy, PER, type OffersStatus } from "@/lib/plus/pay
 import { ErrorLine, PrimaryButton, SecondaryButton, Sheet } from "@/components/plus/Sheet";
 import { paywallSunBenefit } from "@/lib/plus/sunAlertCopy";
 import { useOwnerEntryTap } from "@/lib/quality/ownerEntry";
+import { supportId } from "@/lib/plus/supportId";
 
 const APP_STORE_URL = "https://apps.apple.com/us/app/id6779072992";
 const TERMS_URL = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
@@ -38,18 +39,9 @@ export function shouldShowCodeEntry(billing: boolean): boolean {
   return !billing;
 }
 
-/** The short, shareable form of a device id shown as "Support ID" (Codex
- *  round 2 #1): our privacy page points people who want their record
- *  deleted at support@ with this, since the full id is otherwise not
- *  visible anywhere in the app. Just the first 12 characters (Codex round 3
- *  #1) — enough for us to find the row without ambiguity, short enough to
- *  read over the phone; the Copy button next to it still copies the FULL
- *  id. Defined here (not in components/plus/PlusSettingsSheet.tsx, which
- *  already imports shouldShowCodeEntry from this file) so the two files
- *  don't import each other both ways. Pure so it is unit-tested directly. */
-export function supportId(deviceId: string): string {
-  return deviceId.slice(0, 12);
-}
+// supportId moved to lib/plus/supportId.ts (the dashboard footer shows it without loading this
+// file); re-exported so existing imports and components/plus/Paywall.test.ts keep working.
+export { supportId };
 
 /**
  * Ask the store for prices, then (only once there is something to ask about)

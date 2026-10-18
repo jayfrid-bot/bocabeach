@@ -580,7 +580,7 @@ export function RipRiskCard({ curve, tz, ripNow, ripNwps, nowMs }: RipRiskCardPr
     <FlipCard
       label="Rip current risk"
       front={front}
-      back={<NerdBack info={buildInfo(curve, ripNwps ?? null, ripNow, tz)} />}
+      back={() => <NerdBack info={buildInfo(curve, ripNwps ?? null, ripNow, tz)} />}
     />
   );
 }

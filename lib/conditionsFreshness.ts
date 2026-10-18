@@ -32,3 +32,20 @@ export function shouldRefetchForFreshness(generatedAtIso: string, nowMs: number,
   if (!Number.isFinite(generatedMs)) return false;
   return nowMs - generatedMs > CONDITIONS_MAX_STALE_MS;
 }
+
+/**
+ * A snapshot the server rendered this recently is as good as anything the API
+ * would answer with, so the page does not ask again the moment it loads. The
+ * HTML is built from the same 120-s cache the API reads, while the API's own
+ * edge copy may be up to 5 minutes old: that mount-time request used to cost a
+ * second download of the whole snapshot on every visit and could even replace
+ * fresh numbers with older ones. Older than this, the page asks as it always did.
+ */
+export const MOUNT_REVALIDATE_AFTER_MS = 3 * 60 * 1000;
+
+/** Pure decision for ConditionsDashboard: refetch right after mounting, or trust the HTML? */
+export function shouldRevalidateOnMount(generatedAtIso: string, nowMs: number): boolean {
+  const generatedMs = Date.parse(generatedAtIso);
+  if (!Number.isFinite(generatedMs)) return true; // cannot tell how old it is: ask
+  return nowMs - generatedMs > MOUNT_REVALIDATE_AFTER_MS;
+}

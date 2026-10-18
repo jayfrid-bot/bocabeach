@@ -25,7 +25,8 @@ import { isRetryableSaveError } from "@/lib/plus/pendingWrites";
 import { alertSaveStatus } from "@/lib/plus/saveStatus";
 import { getHomeBeach, setHomeBeach } from "@/lib/homeBeach";
 import type { LocationPublic } from "@/lib/types";
-import { shouldShowCodeEntry, supportId } from "@/components/plus/Paywall";
+import { shouldShowCodeEntry } from "@/components/plus/Paywall";
+import { supportId } from "@/lib/plus/supportId";
 import { Chip, ErrorLine, PrimaryButton, SecondaryButton, Sheet } from "@/components/plus/Sheet";
 import { useOwnerEntryTap } from "@/lib/quality/ownerEntry";
 

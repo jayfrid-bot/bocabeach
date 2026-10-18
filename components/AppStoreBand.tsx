@@ -62,6 +62,8 @@ export function AppStoreBand() {
             aria-hidden="true"
             width={40}
             height={40}
+            loading="lazy"
+            decoding="async"
             className="h-10 w-10 shrink-0 rounded-xl outline outline-1 outline-black/10 dark:outline-white/10"
           />
           <div className="min-w-0">
@@ -87,6 +89,8 @@ export function AppStoreBand() {
             alt="Download on the App Store"
             width={120}
             height={40}
+            loading="lazy"
+            decoding="async"
           />
         </a>
       </div>

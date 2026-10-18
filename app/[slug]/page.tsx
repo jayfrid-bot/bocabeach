@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { notFound, permanentRedirect } from "next/navigation";
-import { getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
+import { getConditions } from "@/lib/conditions";
+import { toWire } from "@/lib/clientConditions";
+import { changelogPreview } from "@/lib/changelogPreview";
 import { getLocation, listLocations, toPublicLocation } from "@/config/locations";
 import { ConditionsDashboard } from "@/components/ConditionsDashboard";
 import { isNativeAppRequest } from "@/lib/nativeRequest";
@@ -104,18 +106,18 @@ export default async function BeachPage({
           dangerouslySetInnerHTML={{ __html: ldJson(jsonLd) }}
         />
       ) : null}
-      {/* skyAlertCandidates (Codex round-2 review HIGH #2) is server-only —
-          strip it before this snapshot crosses into the client component's
-          props (it'd otherwise reach the client via RSC serialization
-          regardless of ConditionsDashboard's own narrower prop type). */}
+      {/* toWire strips what is server-only (skyAlertCandidates — Codex round-2
+          review HIGH #2 — and budgetAborted) and packs the snapshot to a third
+          of its size before it crosses into the client component's props. */}
       <ConditionsDashboard
         slug={slug}
-        initial={stripInternalSnapshotFields(data)}
+        initial={toWire(data)}
         browseHref={browseHref}
         isNativeApp={isNativeApp}
         // The served-beach list powers the location features (nearest beach,
         // home beach, near-you chip) — public fields only.
         beaches={all.map(toPublicLocation)}
+        changelog={changelogPreview()}
       />
     </>
   );

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import type { ConditionsResponse, Location } from "@/lib/types";
 import { ConditionsDashboard } from "@/components/ConditionsDashboard";
+import { changelogPreview } from "@/lib/changelogPreview";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
 interface Candidate {
@@ -359,7 +360,7 @@ export function AdminConsole() {
             </button>
           </div>
           <div className="rounded-2xl ring-1 ring-slate-900/10 dark:ring-white/10">
-            <ConditionsDashboard slug={loc?.slug ?? "preview"} initial={preview} preview />
+            <ConditionsDashboard slug={loc?.slug ?? "preview"} initial={preview} preview changelog={changelogPreview()} />
           </div>
         </section>
       ) : null}

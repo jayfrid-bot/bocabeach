@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   shouldRefetchForFreshness,
+  shouldRevalidateOnMount,
+  MOUNT_REVALIDATE_AFTER_MS,
   CONDITIONS_MAX_STALE_MS,
   FRESHNESS_MAX_ATTEMPTS,
 } from "@/lib/conditionsFreshness";
@@ -32,5 +34,25 @@ describe("shouldRefetchForFreshness", () => {
 
   it("treats an unparseable timestamp as never worth retrying", () => {
     expect(shouldRefetchForFreshness("not-a-date", NOW, 0)).toBe(false);
+  });
+});
+
+describe("shouldRevalidateOnMount", () => {
+  it("trusts a snapshot the server rendered moments ago", () => {
+    expect(shouldRevalidateOnMount(new Date(NOW - 5_000).toISOString(), NOW)).toBe(false);
+    expect(shouldRevalidateOnMount(new Date(NOW - MOUNT_REVALIDATE_AFTER_MS).toISOString(), NOW)).toBe(false);
+  });
+
+  it("asks again once the snapshot is older than the window", () => {
+    expect(shouldRevalidateOnMount(new Date(NOW - MOUNT_REVALIDATE_AFTER_MS - 1).toISOString(), NOW)).toBe(true);
+    expect(shouldRevalidateOnMount(new Date(NOW - 45 * 60_000).toISOString(), NOW)).toBe(true);
+  });
+
+  it("asks when it cannot tell how old the snapshot is", () => {
+    expect(shouldRevalidateOnMount("not-a-date", NOW)).toBe(true);
+  });
+
+  it("stays well inside the staleness the page already tolerates", () => {
+    expect(MOUNT_REVALIDATE_AFTER_MS).toBeLessThan(CONDITIONS_MAX_STALE_MS);
   });
 });

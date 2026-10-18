@@ -584,7 +584,7 @@ export function SunQualityCard({
           forecast={forecast}
         />
       }
-      back={<NerdBack info={info} />}
+      back={() => <NerdBack info={info} />}
     />
   );
 }

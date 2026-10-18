@@ -191,7 +191,7 @@ export function FeelsLikeCard(props: FeelsLikeCardProps) {
       <FlipCard
         label="Feels like"
         front={<MetricCard icon="🥵" label="Feels like" value="—" sub="not available" />}
-        back={
+        back={() => (
           <NerdBack
             info={{
               title: "Feels-like beach temperature",
@@ -204,7 +204,7 @@ export function FeelsLikeCard(props: FeelsLikeCardProps) {
               sources: ["NOAA/NWS heat index — Rothfusz regression (Weather Prediction Center)"],
             }}
           />
-        }
+        )}
       />
     );
   }
@@ -214,7 +214,7 @@ export function FeelsLikeCard(props: FeelsLikeCardProps) {
     <FlipCard
       label="Feels like"
       front={<FeelsLikeFront tempF={tempF} band={band} drivers={drivers} compact={compact} />}
-      back={<NerdBack info={buildFeelsLikeNerdInfo(input, tempF, band)} />}
+      back={() => <NerdBack info={buildFeelsLikeNerdInfo(input, tempF, band)} />}
     />
   );
 }
