@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getConditions, stripInternalSnapshotFields } from "@/lib/conditions";
+import { EDGE_DATA_HEADER, edgeMarkerContent } from "@/lib/edgeMarker";
 
 // Cached at the edge for 5 min; individual upstream calls have their own revalidate.
 export const revalidate = 300;
@@ -57,6 +58,9 @@ export async function GET(
   // the same data for the same slug.
   return NextResponse.json(publicData, {
     headers: {
+      // For the edge cache (lib/edgeCache.ts): stores the answer only when this says ok=1, so a
+      // partial build (budgetAborted, read from `data` before the strip) is never stored.
+      [EDGE_DATA_HEADER]: edgeMarkerContent(data),
       "Cache-Control": isFreshnessCheck
         ? "public, s-maxage=20"
         : "public, s-maxage=300, stale-while-revalidate=600",
