@@ -16,7 +16,7 @@ import { archiveCams, buildArchiveManifestJson, lookupCam } from "@/lib/camFrame
 describe("archive: false", () => {
   it("drops the cam from the archive set and the generated JSON", () => {
     expect(archiveCams().map((c) => c.camId)).not.toContain("boca-inlet-jetty");
-    expect(archiveCams()).toHaveLength(12);
+    expect(archiveCams()).toHaveLength(22);
     expect(buildArchiveManifestJson().cams.map((c) => c.id)).not.toContain("boca-inlet-jetty");
   });
 

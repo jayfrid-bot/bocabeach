@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-17",
+    title: "Five new Gulf and Keys beaches, with live cameras",
+    details:
+      "Siesta Key, Anna Maria Island, Panama City Beach, Key West and Marathon are now on the list. Fort Myers Beach gains two more cameras. Each camera shows who runs it and links to their page. These cameras look west, so you can watch the sun set over the water. Some beaches have no wave buoy nearby, so their surf comes from a forecast model and says so.",
+    tag: "new",
+  },
+  {
     date: "2026-10-15",
     title: "Two Gulf beaches: Fort Myers Beach and Pensacola Beach",
     details:

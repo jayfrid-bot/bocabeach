@@ -1,5 +1,12 @@
 [
  {
+  "slug": "anna-maria-island",
+  "name": "Anna Maria Island",
+  "region": "Manatee County, FL",
+  "lat": 27.4998,
+  "lon": -82.714
+ },
+ {
   "slug": "asbury-park",
   "name": "Asbury Park",
   "region": "Monmouth County, NJ",
@@ -158,6 +165,13 @@
   "lon": -81.3944
  },
  {
+  "slug": "key-west",
+  "name": "Key West",
+  "region": "Monroe County, FL",
+  "lat": 24.5462,
+  "lon": -81.8104
+ },
+ {
   "slug": "la-jolla",
   "name": "La Jolla",
   "region": "San Diego County, CA",
@@ -170,6 +184,13 @@
   "region": "Los Angeles County, CA",
   "lat": 33.7095,
   "lon": -118.2828
+ },
+ {
+  "slug": "marathon",
+  "name": "Marathon",
+  "region": "Monroe County, FL",
+  "lat": 24.7065,
+  "lon": -81.1239
  },
  {
   "slug": "miami-beach",
@@ -228,6 +249,13 @@
   "lon": -70.3681
  },
  {
+  "slug": "panama-city-beach",
+  "name": "Panama City Beach",
+  "region": "Bay County, FL",
+  "lat": 30.1745,
+  "lon": -85.804
+ },
+ {
   "slug": "pensacola-beach",
   "name": "Pensacola Beach",
   "region": "Escambia County, FL",
@@ -268,6 +296,13 @@
   "region": "Monterey County, CA",
   "lat": 36.6041,
   "lon": -121.8719
+ },
+ {
+  "slug": "siesta-key",
+  "name": "Siesta Key",
+  "region": "Sarasota County, FL",
+  "lat": 27.2648,
+  "lon": -82.5507
  },
  {
   "slug": "south-padre-island",

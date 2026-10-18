@@ -98,6 +98,28 @@
         },
         "role": "shore",
         "visionHint": "The foreground is a beach construction site (piles of sand, pipes, machines and workers). That is not seaweed and not a crowd. Judge only the waterline, the surf and the people on the open sand near the water."
+      },
+      {
+        "id": "margaritaville-fmb-cam",
+        "name": "Fort Myers Beach — License to Chill",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=margaritaville-fmb-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=margaritaville-fmb-cam"
+        },
+        "role": "shore",
+        "visionHint": "A view from a rooftop. A hotel, a bar, a street and a lawn fill most of the frame. The Gulf and a thin strip of beach sit left of centre, and a construction crane stands in the middle. Judge only the waterline and the sand at the left. Bright sun glitter on the water is not foam or seaweed."
+      },
+      {
+        "id": "pink-shell-fmb-cam",
+        "name": "Fort Myers Beach — Pink Shell",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=pink-shell-fmb-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=pink-shell-fmb-cam"
+        },
+        "role": "crowd",
+        "visionHint": "A resort pool deck fills the lower half of the frame, with pink umbrellas and palms behind it. People in the pool are not beach crowd; count only people on the sand and in the Gulf beyond the pool. Pink umbrellas and shade huts are not seaweed."
       }
     ]
   },
@@ -114,6 +136,119 @@
         },
         "role": "shore",
         "visionHint": "A wide fisheye view along the beach. The Gulf is on the left and the white sand on the right. Pale foam and bright sun glitter on the water are not seaweed."
+      }
+    ]
+  },
+  "siesta-key": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "siesta-beach-cam",
+        "name": "Siesta Beach Live",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=siesta-beach-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=siesta-beach-cam"
+        },
+        "role": "shore",
+        "visionHint": "A high view over a very wide, flat beach. Dune palmettos fill the lower right and a rail crosses the lower left. The waterline is a thin strip far from the camera, and bright sun glitter sits on the water at the left. Dark wet patches of sand, tyre tracks and shadows are not seaweed."
+      }
+    ]
+  },
+  "anna-maria-island": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "white-sands-ami-cam",
+        "name": "Anna Maria Island — White Sands",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=white-sands-ami-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=white-sands-ami-cam"
+        },
+        "role": "shore",
+        "visionHint": "A wide fisheye view along the beach with a palm tree close to the lens. The clock and the resort's web address are text added to the picture, not part of the scene. The sun can sit in the frame. Sun glitter on the water and the curve of the horizon are lens effects, not foam or seaweed."
+      },
+      {
+        "id": "holmes-beach-cam",
+        "name": "Holmes Beach",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=holmes-beach-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=holmes-beach-cam"
+        },
+        "role": "shore",
+        "visionHint": "Loungers, umbrellas, shade tents and a small sign stand on the sand in front of the camera, with a palm on each side. They are not crowd. Count people only if they are on the beach or in the water. Bright sun glitter on the water is not foam or seaweed."
+      }
+    ]
+  },
+  "panama-city-beach": {
+    "timezone": "America/Chicago",
+    "cams": [
+      {
+        "id": "enco-sterling-reef-cam",
+        "name": "Panama City Beach — Sterling Reef",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=enco-sterling-reef-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=enco-sterling-reef-cam"
+        },
+        "role": "shore",
+        "visionHint": "A wide view of white sand with tyre tracks, the Gulf in the distance and a long pier on the right. A bright vertical streak is sun glare on the lens, not an object. Pale foam and sun glitter on the water are not seaweed."
+      },
+      {
+        "id": "enco-shores-of-panama-cam",
+        "name": "Panama City Beach — Shores of Panama",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=enco-shores-of-panama-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=enco-shores-of-panama-cam"
+        },
+        "role": "crowd",
+        "visionHint": "The camera looks down a beach walkway. The people in the foreground are walking to the beach and are a small part of the crowd. Count the people on the sand and in the water beyond the walkway too. Beach grass beside the walkway is not seaweed."
+      },
+      {
+        "id": "sharkys-pcb-cam",
+        "name": "Panama City Beach — Sharky's",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=sharkys-pcb-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=sharkys-pcb-cam"
+        },
+        "role": "crowd",
+        "visionHint": "A restaurant deck with diners and umbrellas fills the lower half of the frame, with the beach and the Gulf behind it. Diners and deck chairs are not beach crowd; count only people on the sand and in the water. A thatch roof covers the right edge."
+      }
+    ]
+  },
+  "key-west": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "fort-zachary-taylor-cam",
+        "name": "Key West — Fort Zachary Taylor",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=fort-zachary-taylor-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=fort-zachary-taylor-cam"
+        },
+        "role": "shore",
+        "visionHint": "A close view of a small beach with loungers and teal umbrellas on pale sand. The water is a wedge at the upper left, with a rock breakwater beyond it. The caption at the top is text added to the picture. Count people only if they are on the sand or in the water; loungers and umbrellas are not crowd."
+      }
+    ]
+  },
+  "marathon": {
+    "timezone": "America/New_York",
+    "cams": [
+      {
+        "id": "sunset-grille-marathon-cam",
+        "name": "Marathon — Sunset Grille",
+        "source": {
+          "kind": "direct",
+          "url": "https://uw-frame.entwined-app.workers.dev/frame?cam=sunset-grille-marathon-cam",
+          "meta": "https://uw-frame.entwined-app.workers.dev/meta?cam=sunset-grille-marathon-cam"
+        },
+        "role": "shore",
+        "visionHint": "A restaurant pool deck, tables and red-and-white umbrellas fill the lower half of the frame, with palms and the old Seven Mile Bridge behind them. There is no sandy beach in view. Report the water and sky only. People at the tables or in the pool are not beach crowd. The two logos are text added to the picture."
       }
     ]
   }

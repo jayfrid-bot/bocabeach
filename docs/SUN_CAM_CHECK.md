@@ -101,9 +101,10 @@ Things that went wrong while building it:
 
 ## The cams
 
-Six 24/7 YouTube streams. Four face east over the Atlantic and two face west
-over the Gulf of Mexico (added 2026-10-15; see
-`docs/research/2026-10-15-west-facing-cams.md`). Each cam has a `facing` field
+Sixteen 24/7 YouTube streams. Four face east over the Atlantic and twelve face west
+over the Gulf of Mexico (two public-body cams added 2026-10-15, see
+`docs/research/2026-10-15-west-facing-cams.md`; ten owner-credited cams added
+2026-10-16, see `docs/research/2026-10-16-gulf-cams.md`). Each cam has a `facing` field
 (`"east"` or `"west"`) in `config/sun-cams.json`. When it is absent, the script and
 the server derive it from `facing_azimuth_deg`: below 180 is east, anything else is
 west. The Boca Raton cams (video-monitoring.com) upload only from about 8:00 AM to
@@ -117,6 +118,16 @@ west. The Boca Raton cams (video-monitoring.com) upload only from about 8:00 AM 
 | `deerfield-pier-cam` | deerfield-beach (0.1), boca-raton (2.9) | [0, .08, .27, .13], [.27, 0, .89, .13], [.89, .08, 1, .13] |
 | `fort-myers-beach-cam` (Visit Fort Myers) WEST | fort-myers-beach (0.1 mi) | [0, 0, .5, .20], [.5, 0, 1, .17] |
 | `pensacola-sria-west-cam` (Santa Rosa Island Authority) WEST | pensacola-beach (0.0 mi) | [0, 0, .25, .13], [.25, 0, .5, .10], [.5, 0, .58, .06], [.65, 0, .8, .09], [.8, 0, 1, .15] |
+| `siesta-beach-cam` (Sarasota County / Visit Sarasota County) WEST | siesta-key (0.1 mi) | [0, 0, 1, .28] |
+| `white-sands-ami-cam` (White Sands Beach Resort) WEST | anna-maria-island (1.0 mi) | [.36, 0, 1, .30], [0, .11, .36, .30], [.22, .30, .45, .62] |
+| `holmes-beach-cam` (Beach Live Cams; owner unknown) WEST | anna-maria-island (0.0 mi) | [.37, 0, .59, .40], [0, .27, .14, .41], [.18, .27, .36, .41], [.60, .09, .80, .40], [.88, .14, 1, .40] |
+| `margaritaville-fmb-cam` (Margaritaville Beach Resort) WEST | fort-myers-beach (0.2 mi) | [.17, 0, .88, .46], [0, .21, .17, .46], [.88, .26, 1, .46] |
+| `pink-shell-fmb-cam` (Pink Shell Beach Resort & Marina) WEST | fort-myers-beach (0.7 mi) | [.46, 0, .84, .055], [0, .09, .09, .17] |
+| `enco-sterling-reef-cam` (ENCO Electronic Systems) WEST | panama-city-beach (0.4 mi) | [0, 0, 1, .42] |
+| `enco-shores-of-panama-cam` (ENCO Electronic Systems) WEST | panama-city-beach (0.1 mi) | [0, 0, 1, .44] |
+| `sharkys-pcb-cam` (Sharky's Beachfront Restaurant) WEST | panama-city-beach (4.3 mi) | [0, 0, .85, .34] |
+| `fort-zachary-taylor-cam` (shared by Florida Live) WEST | key-west (0.0 mi) | [0, .04, .2, .15], [.2, .04, .4, .09], [.4, 0, .76, .085] |
+| `sunset-grille-marathon-cam` (Sunset Grille / Seek Florida Keys) WEST | marathon (0.0 mi) | [0, 0, .98, .11], [.15, .11, .235, .42], [.44, .11, .52, .36], [.70, .11, .77, .40] |
 
 The regions keep the sky and drop the flagpole, palms, pier, beach, water, and the
 burned-in text. The Deerfield surf cam is a PTZ camera that pans between presets.
@@ -157,6 +168,18 @@ real event (the DVR holds only 4 hours).
   `scripts/cam_courier_local.sh`, `workers/uw-frame/src/lib/schedule.ts` and the cam's
   `url` in `config/locations.ts` together (a vitest checks the registry, courier and
   locations agree; `schedule.ts` is checked by hand).
+
+**The ten cams added 2026-10-16.** They are business, media or re-streamed cams, used
+on the owner's decision with a credit and a link to the owner's page. If an owner
+objects, the cam comes down the same day (steps in
+`docs/research/2026-10-16-gulf-cams.md`). The sky regions were drawn on afternoon
+frames, not sunset frames. Pink Shell and Fort Zachary Taylor have the thinnest sky:
+watch their first sunsets for incomplete captures. Each cam costs about 3 `yt-dlp -J`
+calls per event here; the courier pulls them only every third hour (the `:slow` tier in
+`scripts/cam_courier_local.sh`). Panama City Beach is on Central time, like Pensacola
+Beach. The Holmes Beach, Fort Zachary Taylor and Sharky's streams are copies on the
+"Beach Live Cams" or "Florida Live" channels, so their video ids may change when the
+re-streamer restarts them.
 
 ## Scoring
 
