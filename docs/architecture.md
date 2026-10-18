@@ -44,7 +44,7 @@ flowchart TD
     RESOLVE["/api/resolve<br/>(name/zip → nearest served beach)"]
     OG["/opengraph-image, /twitter-image"]
     SITEMAP["/sitemap.xml"]
-    CAM["/api/cam/[id]<br/>(proxied still frame; ?res=hr on a feed cam = its full-size original, streamed, not cached by Next)"]
+    CAM["/api/cam/[id]<br/>(proxied still frame; ?res=hr&at= on a feed cam = its full-size original of the frame shown: 404 none, 409 feed moved on,<br/>Workers Cache 10 min by resolved URL, per-IP CAM_ORIGINAL_RATE_LIMITER on a miss)"]
     ADMIN["/api/admin/add, /api/admin/preview<br/>(owner-only, add a beach)"]
     STICKER["/sticker?s=&lt;tag&gt;<br/>(QR landing: count scan, set ref cookie, 307 → /?ref=tag)"]
     GETAPP["/get-app<br/>(count the store tap, 307 → App Store)"]
@@ -378,7 +378,7 @@ flat dark grey: its 95th-percentile block brightness is under 30 and its mean is
 at least 16 (`config/frame-guard.json`). A real night frame is darker than that
 grey and passes. The check reads only the DC coefficient of each 8x8 block
 (`dcLuma.ts`), about 1-3 ms for a 1280x720 frame and about 1-2 ms for a 1080p frame under 60 KB,
-because `/ingest` runs under the free plan's 10 ms CPU limit; frames of 60 KB or more skip it. `/ingest` answers
+because `/ingest` runs under the free plan's 10 ms CPU limit; frames skip it from max(60 KB, 65 KB per megapixel), 135 KB at 1080p (`richBytesPerMegapixel`). `/ingest` answers
 400 for a body that is not a JPEG or is the wrong size and 422 for a blank frame,
 as JSON `{ok:false, error, reason, message, bytes, stats}`, and records the refusal
 under `attempt:<id>` (`/cams` shows it as `lastAttempt`); the stored frame is not
@@ -397,9 +397,9 @@ one (up to 640 KB measured), far under the Worker's 2 MB limit and the 25 MiB KV
 limit. `bytesToB64` in the Worker was the one slow step (8 ms for a 360 KB frame); it now
 takes 1 ms. The archive route's 600 KB cap stays, so `archive_frame` re-encodes a bigger
 frame to fit instead of dropping it. The vision readers keep the size they were tuned on:
-`shrink_for_vision` in `scripts/cam_seaweed.py` cuts a courier frame to 1280 px on the long
+the alert hash is that of the archived bytes. `shrink_for_vision` in `scripts/cam_seaweed.py` cuts a courier frame to 1280 px on the long
 side before any provider sees it (a 720p frame passes through untouched). The numbers are in
-`docs/courier-pacing.md ("Picture size")`.
+the "Picture size" section of `docs/courier-pacing.md`.
 
 **One call budget for every yt-dlp call on the home server.** YouTube answers
 "Sign in to confirm you're not a bot" when one IP makes about 150 yt-dlp calls in

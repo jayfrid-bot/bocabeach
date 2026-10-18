@@ -143,7 +143,7 @@ import { parseVisibleFlags, summarizeVisibleText, type FlagDomEntry, type FlagNa
 import { parseFortLauderdaleConditions, type FortLauderdaleConditions } from "./lib/ftlConditions";
 import { shouldReplaceStoredFrame } from "./lib/frameGuard";
 import { readJpegDimensions } from "./lib/jpeg";
-import { judgeFrame, MAX_FRAME_BYTES, MIN_FRAME_BYTES, RICH_FRAME_BYTES } from "./lib/frameQuality";
+import { judgeFrame, MAX_FRAME_BYTES, MIN_FRAME_BYTES, richThresholdBytes } from "./lib/frameQuality";
 
 export interface Env {
   BROWSER: Fetcher; // Browser Rendering binding
@@ -810,8 +810,10 @@ async function sweepBlankFrames(env: Env): Promise<{ id: string; message: string
       if (!meta?.ok) continue;
       const b64 = await env.UW_FRAME.get(frameKey(cam.id));
       if (!b64) continue;
-      // A frame big enough to skip the pixel check anyway: do not decode it.
-      if (RICH_FRAME_BYTES !== null && (b64.length * 3) / 4 >= RICH_FRAME_BYTES) continue;
+      // A frame big enough to skip the pixel check anyway: do not decode it. The picture size
+      // comes from the first 8 KB (the JPEG header); without it the fixed richBytes line applies.
+      const rich = richThresholdBytes(readJpegDimensions(b64ToBytes(b64.slice(0, 8192))));
+      if (rich !== null && (b64.length * 3) / 4 >= rich) continue;
       const verdict = judgeFrame(b64ToBytes(b64));
       if (verdict.ok) continue;
       await env.UW_FRAME.delete(frameKey(cam.id));

@@ -442,8 +442,13 @@ ARCHIVE_FRAME_MAX_AGE_MIN = float(os.environ.get("ARCHIVE_FRAME_MAX_AGE_MIN", "1
 ARCHIVE_MIN_BYTES = 10 * 1024
 ARCHIVE_MAX_BYTES = 600 * 1024
 # A frame over the cap is re-encoded to fit instead of being dropped (a 1080p courier frame
-# of a busy sky can pass 600 KB). It is tried at these JPEG qualities, then at a smaller size.
-ARCHIVE_FIT_QUALITIES = (82, 72, 62)
+# of a busy sky can pass 600 KB). It is tried at these steps, then at a smaller size. A step is
+# (Pillow JPEG quality, ffmpeg -q:v). The courier's own frames are ffmpeg -q:v 4, so every ffmpeg
+# step is a coarser scale than 4 (a higher number is a smaller file); the generic quality to
+# qscale mapping of _shrink_ffmpeg would give 3 and 4 here, which are NOT smaller.
+ARCHIVE_FIT_STEPS = ((82, 6), (72, 9), (62, 13))
+# "slug/cam" -> sha-256 (hex) of the bytes archive_frame last uploaded for that cam.
+ARCHIVED_SHA: dict[str, str] = {}
 ARCHIVE_FIT_FALLBACK_SIDE = 1280
 ARCHIVE_WORKERS = int(os.environ.get("ARCHIVE_WORKERS", "4"))
 # Wall-time budget for ALL archive work in one tick (pre-check, every upload
@@ -895,7 +900,11 @@ def archive_frame(slug: str, cam_id: str, img: bytes, frame_at: str | None = Non
       "error"           network error, timeout, or an unreadable reply
     `frame_at` is the source's own capture time ('YYYY-MM-DDTHH:MM:SSZ'), or
     None when unknown (the server then uses its receive time).
+    The sha-256 of the bytes actually uploaded goes in ARCHIVED_SHA["slug/cam"] (a frame over the
+    size cap is re-encoded first, so that can differ from `img`). An alert that points at the
+    archived frame must use that hash, not the hash of the frame as fetched.
     """
+    ARCHIVED_SHA.pop(f"{slug}/{cam_id}", None)
     token = os.environ.get("INGEST_TOKEN", "").strip()
     if not token:
         return "no-token"
@@ -917,6 +926,7 @@ def archive_frame(slug: str, cam_id: str, img: bytes, frame_at: str | None = Non
             if age is not None and age > ARCHIVE_FRAME_MAX_AGE_MIN:
                 print(f"  archive [{slug}] {cam_id}: skipped (frame is {age:.0f} min old)")
                 return "skipped"
+        ARCHIVED_SHA[f"{slug}/{cam_id}"] = hashlib.sha256(bytes(img)).hexdigest()
         query = {"slug": slug, "cam": cam_id}
         if frame_at:
             query["frameAt"] = frame_at
@@ -1367,11 +1377,13 @@ def _shrink_pillow(Image, img: bytes, max_side: int, quality: int) -> bytes:
     return out.getvalue()
 
 
-def _shrink_ffmpeg(img: bytes, max_side: int, quality: int) -> bytes:
+def _shrink_ffmpeg(img: bytes, max_side: int, quality: int, qscale: "int | None" = None) -> bytes:
     # ffmpeg's mjpeg quality is a 2 (best) to 31 (worst) scale, not libjpeg's 0-100.
     # 60 -> 6 and 50 -> 8 give file sizes within ~10% of Pillow's quality 60 / 50
     # (measured on three JPEGs 2026-10-12); the match is close, not exact.
-    qscale = max(2, min(31, round((100 - quality) / 6.5)))
+    if qscale is None:
+        qscale = max(2, min(31, round((100 - quality) / 6.5)))
+    qscale = max(2, min(31, qscale))
     scale = f"scale=w='if(gt(iw,ih),min({max_side},iw),-2)':h='if(gt(iw,ih),-2,min({max_side},ih))'"
     proc = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", "pipe:0", "-frames:v", "1", "-vf", scale,
@@ -1458,12 +1470,13 @@ def jpeg_dimensions(img: bytes) -> "tuple[int, int] | None":
     return None
 
 
-def _reencode(img: bytes, max_side: int, quality: int) -> bytes:
-    """Long side to at most max_side (never enlarges), JPEG at `quality`. Pillow, else ffmpeg."""
+def _reencode(img: bytes, max_side: int, quality: int, qscale: "int | None" = None) -> bytes:
+    """Long side to at most max_side (never enlarges), JPEG at `quality` (Pillow) or, without
+    Pillow, ffmpeg at `qscale` when given (else the generic mapping from `quality`)."""
     Image = _pillow_image()
     if Image is not None:
         return _shrink_pillow(Image, img, max_side, quality)
-    return _shrink_ffmpeg(img, max_side, quality)
+    return _shrink_ffmpeg(img, max_side, quality, qscale)
 
 
 def shrink_for_vision(img: bytes, max_side: "int | None" = None) -> bytes:
@@ -1494,12 +1507,13 @@ def fit_for_archive(img: bytes) -> "bytes | None":
         dims = jpeg_dimensions(img)
         if dims is None:
             return None
-        for quality in ARCHIVE_FIT_QUALITIES:
-            out = _reencode(img, max(dims), quality)
-            if ARCHIVE_MIN_BYTES <= len(out) <= ARCHIVE_MAX_BYTES:
+        for quality, qscale in ARCHIVE_FIT_STEPS:
+            out = _reencode(img, max(dims), quality, qscale)
+            if len(out) < len(img) and ARCHIVE_MIN_BYTES <= len(out) <= ARCHIVE_MAX_BYTES:
                 return out
-        out = _reencode(img, ARCHIVE_FIT_FALLBACK_SIDE, ARCHIVE_FIT_QUALITIES[-1])
-        if ARCHIVE_MIN_BYTES <= len(out) <= ARCHIVE_MAX_BYTES:
+        quality, qscale = ARCHIVE_FIT_STEPS[-1]
+        out = _reencode(img, ARCHIVE_FIT_FALLBACK_SIDE, quality, qscale)
+        if len(out) < len(img) and ARCHIVE_MIN_BYTES <= len(out) <= ARCHIVE_MAX_BYTES:
             return out
     except Exception as e:  # noqa: BLE001
         print(f"  warn archive fit: {e}", file=sys.stderr)
@@ -1544,13 +1558,27 @@ def _gray_grid_ffmpeg(img: bytes) -> list[int]:
     return list(proc.stdout)
 
 
+def rich_threshold_bytes(cfg: dict, dims: "tuple[int, int] | None") -> "float | None":
+    """The size at which a frame skips the pixel check: max(richBytes, richBytesPerMegapixel x
+    megapixels). A bigger picture needs more bytes to count as rich, so a noisy black 1080p frame
+    cannot skip the check. richBytes alone when the picture size is unknown; None (always check)
+    when richBytes is null. The same rule as richThresholdBytes in workers/uw-frame frameQuality.ts."""
+    rich = cfg.get("richBytes")
+    if rich is None:
+        return None
+    per_mp = cfg.get("richBytesPerMegapixel")
+    if not dims or not per_mp:
+        return rich
+    return max(rich, round(per_mp * dims[0] * dims[1] / 1_000_000))
+
+
 def frame_blank_verdict(img: bytes, use_pillow: bool = True) -> "tuple[bool, str]":
     """(True, why) when the frame is blank: the middle of it is a flat dark grey, nothing brighter.
     (False, '') for a real picture, and for anything this cannot measure (no Pillow and no
     ffmpeg, a corrupt file): only positive evidence of an empty frame rejects."""
     try:
         cfg = _frame_guard_config()
-        rich = cfg.get("richBytes")
+        rich = rich_threshold_bytes(cfg, jpeg_dimensions(img))
         if rich is not None and len(img) >= rich:
             return False, ""
         if len(img) < 2 or img[:2] != b"\xff\xd8":
@@ -2277,7 +2305,10 @@ def capture_beach(
     disputes = quality_watch.active_disputes(quality_watch.dispute_state(
         prev_eff.get("disputedCams"), owner["events"], now_local))
     readings = []
-    imgs: dict[str, bytes] = {}  # stills of moderate/high reads, kept for a second opinion on a held jump
+    for stale in [k for k in ARCHIVED_SHA if k.startswith(f"{slug}/")]:
+        del ARCHIVED_SHA[stale]  # only this tick's uploads may name an archived frame
+    imgs: dict[str, bytes] = {}  # stills of moderate/high reads, as fetched (and as archived, bar a size re-encode)
+    vimgs: dict[str, bytes] = {}  # the same stills as the vision providers saw them (a second opinion reads these)
     coords = beach_coords(slug)  # for the low-sun gate; None -> gate off
     for cam in cams:
         src = cam.get("source") or {}
@@ -2354,7 +2385,8 @@ def capture_beach(
             r = assess(vimg) if prompt == PROMPT else assess(vimg, prompt)
             reading = {"id": cam["id"], "name": cam["name"], **r}
             if SEAWEED_RANK.get(r.get("level"), -1) >= _MODERATE:
-                imgs[cam["id"]] = vimg
+                imgs[cam["id"]] = img
+                vimgs[cam["id"]] = vimg
             # When the frame was taken (courier: its meta time; feed: latest.json
             # `timestamp`, when it has one) and when we scored it. A later tick
             # may CARRY this reading (see carried_readings) and needs the frame's
@@ -2422,7 +2454,7 @@ def capture_beach(
     for i, after in enumerate(confirmed):
         if not after.get("unconfirmed") or after["id"] not in imgs:
             continue
-        opinion = request_second_opinion(cam_by_id[after["id"]], after, imgs[after["id"]])
+        opinion = request_second_opinion(cam_by_id[after["id"]], after, vimgs[after["id"]])
         if opinion is None:
             continue
         if quality_watch.agrees(opinion.get("level")):
@@ -2458,7 +2490,10 @@ def capture_beach(
     for held, opinion in disagreed:
         body = quality_watch.build_alert(
             slug, held, opinion, quality_watch.other_cams(ordered, held["id"]), worst_seaweed(group),
-            quality_watch.frame_sha256(imgs[held["id"]]),
+            # The hash of the bytes that were ARCHIVED, so the review screen finds that frame. A
+            # frame re-encoded to fit the archive cap hashes differently from the one fetched.
+            (ARCHIVED_SHA.get(f"{slug}/{held['id']}") if (uploads or {}).get(f"{slug}/{held['id']}") == "stored" else None)
+            or quality_watch.frame_sha256(imgs[held["id"]]),
             (uploads or {}).get(f"{slug}/{held['id']}") == "stored",
             shrink_for_alert(imgs[held["id"]]))
         status = quality_watch.post_alert(body)

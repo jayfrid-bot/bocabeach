@@ -201,9 +201,9 @@ Frame size, 23 cams that offer both: 1080p is 1.6 to 2.3 times the bytes of 720p
 |---|---|---|
 | Worker ingest (`config/frame-guard.json`) | 5 KB to 2,000,000 bytes | Largest frame is 0.64 MB. No change needed. |
 | KV value | 25 MiB; base64 adds one third | 0.86 MB at most. Fine. |
-| Blank-frame check (`judgeFrame`) | Skipped at 60 KB or more | A 1080p black slate is 29 KB (720p: 12.8 KB), so it is still checked, in 1.5 ms (720p: 0.6 ms). Forced on a 362 KB frame the check takes 8 ms, but that frame skips it. Thresholds use block averages over fractions of the frame, so they do not depend on size. |
+| Blank-frame check (`judgeFrame`) | Skip line: max(60 KB, 65 KB per megapixel) (`richBytesPerMegapixel` in `config/frame-guard.json`): 60 KB at 720p, 135 KB at 1080p | A fixed 60 KB line would let a noisy black 1080p frame skip the check (a 95 KB sensor-noise frame is a fixture now). A 1080p black slate is 29 KB (720p: 12.8 KB) and is checked in 1.5 ms (720p: 0.6 ms). Real 1080p frames under 135 KB are checked too, about 2 ms, and pass. Forced on a 362 KB frame the check takes 8 ms, but that frame skips it. The statistics are block averages over fractions of the frame, so they do not depend on size. The Worker and `cam_seaweed.py` use the same formula. |
 | `bytesToB64` in the Worker | Free plan 10 ms CPU | It spread 32 KB per call: 8 ms for a 362 KB frame. It now uses 8 KB with `apply`: 1 ms. |
-| Archive upload (`ARCHIVE_MAX_BYTES`, `/api/cam-frames`) | 600 KB | One cam can pass it. `archive_frame` now re-encodes a bigger frame to fit (quality 82, 72, 62, then a 1280 px copy) and no longer drops it. |
+| Archive upload (`ARCHIVE_MAX_BYTES`, `/api/cam-frames`) | 600 KB | One cam can pass it. `archive_frame` now re-encodes a bigger frame to fit (Pillow quality 82, 72, 62; without Pillow ffmpeg `-q:v` 6, 9, 13, all coarser than the courier's own `-q:v 4`; then a 1280 px copy) and no longer drops it. A seaweed alert names the hash of the bytes archived, not of the frame as fetched. |
 | Vision readers | See below | Courier frames are shrunk to 1280 px before any provider sees them. |
 
 ### Vision readers
@@ -234,12 +234,29 @@ Measured 2026-10-18 on all 18 feed views:
 | Hobe Sound | 1920x1280, 1.0 MB | 6000x4000, 7.1 to 7.3 MB |
 | Sebastian | 1920x1280, 0.7 to 0.8 MB | 6000x4000, 5.0 to 5.6 MB |
 
-`/api/cam/[id]?res=hr` now serves the original for a feed cam (streamed, not put in Next's 2 MB data cache,
-cached 60 s at the edge). The zoom viewer asks for it only after the viewer first zooms in, and swaps it in
-without resetting the zoom (`ZoomableImage` `sharpSrc`). If it fails, the normal picture stays.
-A view whose `hr` is a video (`.mp4`, such as Boca `v13`) falls back to `mr`.
-The cost lands on the county servers only when someone zooms; the provider drops request bursts (see `lib/cams.ts`),
-and one original per zoom is far fewer requests than the page's own polling.
+`/api/cam/[id]?res=hr&at=<capture time>` serves the original of a feed cam:
+
+- **Same moment.** `at` is the capture time the viewer shows. If `latest.json` has a newer frame, the answer is 409 and the
+  viewer keeps its picture: a newer picture never sits under an old label. No capture time, no original.
+- **No original.** A view with no `hr`, or one whose `hr` is a video (`.mp4`, such as Boca `v13`), and every courier cam, get 404.
+  The server never sends `mr` as an "original".
+- **Cache.** A Worker response is not cached at the edge by a `Cache-Control` header, and Next's data cache refuses bodies over 2 MB.
+  So the original is kept in the Workers Cache API (`caches.default`, `lib/camOriginalCache.ts`) under its resolved URL for 10 minutes.
+  The file name changes with every capture, so one key is one picture. The browser keeps it 5 minutes (`max-age=300`).
+  Workers Cache stores only on a custom domain; the site is on one. In Node and `next dev` there is no cache and every zoom fetches.
+- **Rate limit.** A cache miss spends one token from a per-IP budget (Workers rate-limit binding `CAM_ORIGINAL_RATE_LIMITER`,
+  namespace 4723, 30 a minute; per-isolate token bucket if the binding is missing). When it is empty the answer is the normal still,
+  without the `X-Cam-Original: 1` header, and the viewer ignores it. A cache hit is free. Check that namespace id 4723 is unused in the account before deploy.
+- **Size header.** `X-Cam-Original-Size: 4352x3264` lets the viewer refuse a picture before it reads the body.
+
+The zoom viewer asks for the original only after the viewer first zooms in (`ZoomableImage` `sharpSrc`). It does nothing when
+`navigator.connection.saveData` is set, or when the original is over 20 megapixels, or when the screen is touch or narrow and it is
+over 12 megapixels (an older iPhone decodes 12 MP into about 48 MB). It downloads once, decodes off screen, and swaps only after the
+decode worked, without resetting the zoom. On any failure the normal picture stays. Measured: every feed original is over 12 MP
+(Boca 14 MP; the 5184x3456 ones 18 MP; Hobe Sound and Sebastian 24 MP, over 20 MP). So a phone gets an
+original from no feed today, and a desktop from all but Hobe Sound and Sebastian. Raise the two constants in `ZoomableImage.tsx`
+if a phone should get the 14 and 18 MP ones.
+The cost lands on the county servers only on a cache miss, once per capture and per data center, and never faster than the limit.
 The archive keeps `mr`. Side effect to know: Hobe Sound and Sebastian `mr` frames (0.7 to 1.0 MB) passed the 600 KB cap, so
 the archive skipped all four of those cams before. They now fit by re-encoding, so they start to fill the archive
 (about 16 GB a year more for those four; the manifest already lists them).
@@ -258,14 +275,15 @@ the archive skipped all four of those cams before. They now fit by re-encoding, 
 Zoom past the real pixels shows blocks. A phone is 390 CSS px wide at 3 device pixels each, 1,170 device pixels.
 Real-pixel zoom at fit is the picture's width divided by 1,170:
 
-| Picture | Width | Real zoom on a phone | Suggested max zoom (2x that, at least 2, at most 5) |
+| Picture | Width | Real zoom on a phone | Max zoom (2x that, at least 2, at most 5) |
 |---|---|---|---|
 | 720p courier cam | 1280 | 1.1x | 2.2x |
 | 1080p courier cam | 1920 | 1.6x | 3.3x |
 | Feed `mr` | 1200 to 1920 | 1.0 to 1.6x | 2.1 to 3.3x |
 | Feed `hr` | 4352 to 6000 | 3.7 to 5.1x | 5x |
 
-The viewer allows 5x for every picture today (`MAX_SCALE` in `ZoomableImage.tsx`). Not changed here.
+The viewer now applies this per picture (`maxScaleFor` in `ZoomableImage.tsx`, from the picture's natural width, its fitted width and the
+device pixel ratio), so the "+" button and a pinch stop where the picture runs out of real pixels. It is 5x until the picture has loaded.
 
 ### Roll out
 
@@ -274,7 +292,8 @@ Each part ships on its own and none needs a data change.
 1. Courier: pull on the server, run the tests, and the next run grabs 1080p. Roll back by restoring the old format string.
 2. Worker: `bytesToB64` fix; deploy `workers/uw-frame` when convenient. It is safe before or after the courier.
 3. Reader and archive fit: runs in `sargassum.yml` once the branch is on main.
-4. App: `?res=hr` and the viewer swap.
+4. App: `?res=hr`, the viewer swap and the per-picture zoom limit. Add the `CAM_ORIGINAL_RATE_LIMITER` binding (`wrangler.jsonc`)
+   by deploying; without it the in-isolate bucket applies.
 
 Do 2 before 1 if the Worker is on the free plan: 8 ms of base64 is most of its 10 ms CPU.
 

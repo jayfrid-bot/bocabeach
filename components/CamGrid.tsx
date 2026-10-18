@@ -58,9 +58,13 @@ function FeaturedCam({ cam, tz, dataAt }: { cam: CamView; tz: string; dataAt?: s
     now != null && cam.capturedAt ? (now - Date.parse(cam.capturedAt)) / 60000 : null;
   const stale = state === "feed-stale" || state === "data-stale";
   const dim = stale;
-  const originalSrc = cam.originalImageUrl
-    ? `${cam.originalImageUrl}&t=${encodeURIComponent(cam.capturedAt ?? cam.weather.fetchedAt)}`
-    : undefined;
+  // The original is of the frame shown under THIS capture time: `at` lets the server refuse
+  // (409) when the feed has moved on, so a newer picture never appears under an old label.
+  // No capture time, no way to say which frame: no original.
+  const originalSrc =
+    cam.originalImageUrl && cam.capturedAt
+      ? `${cam.originalImageUrl}&at=${encodeURIComponent(cam.capturedAt)}`
+      : undefined;
   const [open, setOpen] = useState(false);
   const opener = useRef<HTMLButtonElement | null>(null);
   const stamp = cam.capturedAt ? `\u{1F4F7} ${fmtTime(cam.capturedAt, tz)}` : undefined;

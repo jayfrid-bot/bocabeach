@@ -19,11 +19,24 @@
  * evidence of an empty frame rejects it.
  */
 import { readLumaDc, type LumaGrid } from "./dcLuma";
+import { readJpegDimensions } from "./jpeg";
 import guardConfig from "../../../../config/frame-guard.json";
 
 export const MIN_FRAME_BYTES: number = guardConfig.minBytes;
 export const MAX_FRAME_BYTES: number = guardConfig.maxBytes;
 export const RICH_FRAME_BYTES: number | null = guardConfig.richBytes;
+export const RICH_BYTES_PER_MEGAPIXEL: number = guardConfig.richBytesPerMegapixel;
+
+/**
+ * The size at which a frame skips the pixel check: max(richBytes, richBytesPerMegapixel x
+ * megapixels), so a bigger picture needs more bytes to count as rich. With no readable picture
+ * size it is richBytes. Null (always check) when richBytes is null.
+ */
+export function richThresholdBytes(dims: { width: number; height: number } | null): number | null {
+  if (RICH_FRAME_BYTES === null) return null;
+  if (!dims) return RICH_FRAME_BYTES;
+  return Math.max(RICH_FRAME_BYTES, Math.round((RICH_BYTES_PER_MEGAPIXEL * dims.width * dims.height) / 1_000_000));
+}
 export const BLANK_P95_BELOW: number = guardConfig.blankP95Below;
 export const BLANK_MEAN_AT_LEAST: number = guardConfig.blankMeanAtLeast;
 const REGION = guardConfig.region;
@@ -95,7 +108,7 @@ export function regionStats(grid: LumaGrid): FrameStats | null {
 }
 
 export interface JudgeOptions {
-  /** Override config richBytes (tests). null or Infinity always reads the pixels. */
+  /** Override the skip line with one fixed size (tests). null or Infinity always reads the pixels. */
   richBytes?: number | null;
 }
 
@@ -120,7 +133,7 @@ export function judgeFrame(bytes: Uint8Array, opts: JudgeOptions = {}): FrameVer
       message: `frame too large (${bytes.length} bytes; the most accepted is ${MAX_FRAME_BYTES})`,
     };
   }
-  const rich = opts.richBytes !== undefined ? opts.richBytes : RICH_FRAME_BYTES;
+  const rich = opts.richBytes !== undefined ? opts.richBytes : richThresholdBytes(readJpegDimensions(bytes));
   if (rich !== null && Number.isFinite(rich) && bytes.length >= rich) {
     return { ok: true, checked: false, message: "frame has full detail (not pixel-checked)" };
   }

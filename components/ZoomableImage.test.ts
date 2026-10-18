@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { clampZoom, fittedSize, IDENTITY, MAX_SCALE, zoomAt } from "@/components/ZoomableImage";
+import {
+  clampZoom,
+  fittedSize,
+  IDENTITY,
+  MAX_SCALE,
+  maxScaleFor,
+  originalAllowed,
+  parseSizeHeader,
+  zoomAt,
+} from "@/components/ZoomableImage";
 
 describe("fittedSize", () => {
   it("fits a 16:9 still into a portrait phone box by width", () => {
@@ -54,5 +63,63 @@ describe("zoomAt", () => {
 
   it("zooming at the centre keeps the picture centred", () => {
     expect(zoomAt({ scale: 2, x: 0, y: 0 }, 4, 0, 0)).toEqual({ scale: 4, x: 0, y: 0 });
+  });
+});
+
+describe("maxScaleFor: zoom stops where the picture runs out of real pixels", () => {
+  // A phone: 390 CSS px wide, 3 screen pixels per CSS pixel.
+  it("gives a 720p still 2.2x, a 1080p still 3.3x and a 4352 px original the 5x limit", () => {
+    expect(maxScaleFor(1280, 390, 3)).toBeCloseTo(2.188, 2);
+    expect(maxScaleFor(1920, 390, 3)).toBeCloseTo(3.282, 2);
+    expect(maxScaleFor(4352, 390, 3)).toBe(MAX_SCALE);
+    expect(maxScaleFor(6000, 390, 3)).toBe(MAX_SCALE);
+  });
+  it("a feed still of 1200 px is 2.1x, one of 1920 px is 3.3x", () => {
+    expect(maxScaleFor(1200, 390, 3)).toBeCloseTo(2.051, 2);
+    expect(maxScaleFor(1920, 390, 3)).toBeCloseTo(3.282, 2);
+  });
+  it("never goes under 2x, even for a small picture on a big screen", () => {
+    expect(maxScaleFor(640, 1440, 2)).toBe(2);
+  });
+  it("is the old fixed limit while the picture size is unknown", () => {
+    expect(maxScaleFor(undefined, 390, 3)).toBe(MAX_SCALE);
+    expect(maxScaleFor(0, 390, 3)).toBe(MAX_SCALE);
+    expect(maxScaleFor(1280, 0, 3)).toBe(MAX_SCALE);
+  });
+  it("treats a missing or zero pixel ratio as 1", () => {
+    expect(maxScaleFor(1280, 640, 0)).toBe(maxScaleFor(1280, 640, 1));
+  });
+  it("clampZoom honours a lower limit", () => {
+    expect(clampZoom({ scale: 4, x: 0, y: 0 }, 400, 300, 400, 300, 2.2).scale).toBe(2.2);
+    expect(clampZoom({ scale: 4, x: 0, y: 0 }, 400, 300).scale).toBe(4);
+  });
+});
+
+describe("originalAllowed: which devices may decode a full-size original", () => {
+  const big = { width: 6000, height: 4000 }; // 24 MP: Hobe Sound, Sebastian
+  const mid = { width: 5184, height: 3456 }; // 17.9 MP
+  const small = { width: 4000, height: 3000 }; // 12 MP
+  it("refuses anything over 20 MP everywhere", () => {
+    expect(originalAllowed({ ...big, smallScreen: false, saveData: false })).toBe(false);
+  });
+  it("lets a desktop take up to 20 MP", () => {
+    expect(originalAllowed({ ...mid, smallScreen: false, saveData: false })).toBe(true);
+  });
+  it("keeps a touch or narrow screen to 12 MP", () => {
+    expect(originalAllowed({ ...mid, smallScreen: true, saveData: false })).toBe(false);
+    expect(originalAllowed({ ...small, smallScreen: true, saveData: false })).toBe(true);
+  });
+  it("never when the visitor asked to save data", () => {
+    expect(originalAllowed({ ...small, smallScreen: false, saveData: true })).toBe(false);
+  });
+  it("refuses a size that makes no sense", () => {
+    expect(originalAllowed({ width: 0, height: 0, smallScreen: false, saveData: false })).toBe(false);
+  });
+});
+
+describe("parseSizeHeader", () => {
+  it("reads WxH and nothing else", () => {
+    expect(parseSizeHeader("4352x3264")).toEqual({ width: 4352, height: 3264 });
+    for (const bad of [null, "", "4352", "axb", "4352x3264x1", "1e9x1e9", "123456x1"]) expect(parseSizeHeader(bad)).toBeNull();
   });
 });

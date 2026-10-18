@@ -1,4 +1,5 @@
-// Per-IP rate limits for /api/v1/* (scope "rest") and /mcp (scope "mcp"), as two
+// Per-IP rate limits for /api/v1/* (scope "rest"), /mcp (scope "mcp") and the cam originals
+// (scope "cam", /api/cam/[id]?res=hr), as separate budgets. REST and MCP are two
 // separate budgets: REST 60 per minute per IP, MCP 300 per minute per IP. MCP gets
 // more because hosted connectors (Claude, ChatGPT) share egress addresses, and one
 // connector setup spends several calls (initialize, initialized, tools/list).
@@ -17,11 +18,14 @@
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { clientIp } from "@/lib/plus/rateLimit";
 
-export type LimitScope = "rest" | "mcp";
+export type LimitScope = "rest" | "mcp" | "cam";
 
 const SCOPES: Record<LimitScope, { binding: string; capacity: number; refillPerSec: number; perMinute: number }> = {
   rest: { binding: "AGENT_RATE_LIMITER", capacity: 40, refillPerSec: 1, perMinute: 60 },
   mcp: { binding: "AGENT_MCP_RATE_LIMITER", capacity: 120, refillPerSec: 5, perMinute: 300 },
+  // /api/cam/[id]?res=hr: the full-size cam originals (1.5 to 7 MB each). 30 a minute per IP
+  // is generous for a person (a phone carrier shares one IP across many people) and stops a loop.
+  cam: { binding: "CAM_ORIGINAL_RATE_LIMITER", capacity: 30, refillPerSec: 0.5, perMinute: 30 },
 };
 
 /** Fallback bucket numbers for REST (kept for tests and docs). */

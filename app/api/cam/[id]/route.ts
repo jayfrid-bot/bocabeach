@@ -1,33 +1,28 @@
 import { NextResponse } from "next/server";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { checkAgentRateLimit } from "@/lib/agent/rateLimit";
+import { readOriginal, storeOriginal } from "@/lib/camOriginalCache";
+import { jpegSize } from "@/lib/jpegSize";
 import {
   camSourceForId,
   pickFeedFramePath,
+  pickFeedOriginalPath,
+  pickFeedTimestamp,
   resolveFeedImageUrl,
 } from "@/lib/camSnapshots";
 import { fetchWithTimeout } from "@/lib/util";
 
-// Live cam stills change every ~minute; cache at the edge for 60s.
+// Live cam stills change every ~minute; Next caches the upstream fetch for 60s.
 export const revalidate = 60;
 
-/** The full-size original of a feed frame is a camera JPEG ("o181432k.jpg"). Some views
- *  publish a video there instead ("o181404a.mp4"); those never get served as the picture. */
-const JPEG_PATH = /\.jpe?g$/i;
+/** How long a browser keeps an original it has already fetched. */
+const ORIGINAL_BROWSER_MAX_AGE_SEC = 300;
 
-/**
- * Resolve a cam id to the concrete image URL to fetch right now.
- *
- * `wantOriginal` (the `?res=hr` query) asks a feed cam for its full-size original: the
- * latest.json "hr" frame, 1.5 to 7.3 MB and 4352 to 6000 px wide against the 1200 to 1920 px
- * "mr" frame (measured 2026-10-18, docs/research/2026-10-18-cam-resolution/REPORT.md).
- * A direct cam has no original: its frame is the one the courier grabbed.
- */
-async function resolveImageUrl(
-  id: string,
-  wantOriginal = false,
-): Promise<{ url: string; original: boolean } | null> {
+/** Resolve a cam id to the concrete image URL to fetch right now (the normal still). */
+async function resolveImageUrl(id: string): Promise<string | null> {
   const src = camSourceForId(id);
   if (!src) return null;
-  if (src.kind === "direct") return { url: src.url, original: false };
+  if (src.kind === "direct") return src.url;
 
   // Feed: read the rotating latest.json, then resolve its most-recent frame path.
   const res = await fetchWithTimeout(`${src.base}/latest.json`, {
@@ -35,17 +30,9 @@ async function resolveImageUrl(
     next: { revalidate: 60 },
   });
   if (!res.ok) throw new Error(`cam ${id} feed -> ${res.status}`);
-  const json = await res.json();
-  if (wantOriginal) {
-    const originalPath = pickFeedFramePath(json, src.view, "hr");
-    if (originalPath && JPEG_PATH.test(originalPath)) {
-      return { url: resolveFeedImageUrl(src.base, originalPath), original: true };
-    }
-    // No usable original (missing, or a video): serve the normal frame instead.
-  }
-  const framePath = pickFeedFramePath(json, src.view, src.res);
+  const framePath = pickFeedFramePath(await res.json(), src.view, src.res);
   if (!framePath) throw new Error(`cam ${id} feed has no recent frame`);
-  return { url: resolveFeedImageUrl(src.base, framePath), original: false };
+  return resolveFeedImageUrl(src.base, framePath);
 }
 
 /**
@@ -57,6 +44,80 @@ function grabbedAtHeader(res: Response): string | undefined {
   const value = res.headers.get("X-Grabbed-At");
   if (!value) return undefined;
   return Number.isFinite(Date.parse(value)) ? value : undefined;
+}
+
+const ORIGINAL_HEADER = "X-Cam-Original";
+/** "6000x4000": lets the viewer refuse a picture too big for the device BEFORE it downloads the body. */
+const ORIGINAL_SIZE_HEADER = "X-Cam-Original-Size";
+
+/**
+ * `?res=hr&at=<ISO capture time>`: the full-size original of a feed cam's frame (1.5 to 7.3 MB,
+ * 4352 to 6000 px wide, against 1200 to 1920 px for the normal "mr" still; measured 2026-10-18,
+ * docs/courier-pacing.md "Picture size").
+ *
+ * It answers with the original (header X-Cam-Original: 1) or says plainly why not, so the
+ * viewer keeps the picture it has and never downloads twice:
+ *   404  this cam has no original (a courier cam, or the view has none or publishes a video)
+ *   409  the feed has moved on: the original of the NEWEST frame is not the frame the viewer
+ *        shows under its capture time (`at`), and a mismatched moment is worse than a soft picture
+ *   the normal still, WITHOUT the header, when the per-IP limit is tripped (the viewer ignores it)
+ *
+ * Caching: the original is kept in the Workers Cache API under its resolved URL for 10 minutes
+ * (lib/camOriginalCache.ts); the browser keeps it 5 minutes. A Cache-Control header alone does
+ * not cache a Worker response, and Next's data cache refuses bodies over 2 MB.
+ */
+async function serveOriginal(req: Request, id: string, at: string | null): Promise<Response | null> {
+  const src = camSourceForId(id);
+  if (!src || src.kind !== "feed") {
+    return NextResponse.json({ error: "No original for this cam" }, { status: 404 });
+  }
+  const feedRes = await fetchWithTimeout(`${src.base}/latest.json`, { timeoutMs: 6000, next: { revalidate: 60 } });
+  if (!feedRes.ok) throw new Error(`cam ${id} feed -> ${feedRes.status}`);
+  const json = await feedRes.json();
+
+  const originalPath = pickFeedOriginalPath(json, src.view);
+  if (!originalPath) {
+    return NextResponse.json({ error: "No original for this cam" }, { status: 404 });
+  }
+  const shownAt = at ? Date.parse(at) : NaN;
+  const latestAt = Date.parse(pickFeedTimestamp(json, src.view) ?? "");
+  if (!Number.isFinite(shownAt) || !Number.isFinite(latestAt) || shownAt !== latestAt) {
+    return NextResponse.json({ error: "The feed has a newer frame" }, { status: 409 });
+  }
+  const url = resolveFeedImageUrl(src.base, originalPath);
+
+  const headers = (contentType: string, size: string | null) => ({
+    "Content-Type": contentType,
+    "Cache-Control": `public, max-age=${ORIGINAL_BROWSER_MAX_AGE_SEC}`,
+    [ORIGINAL_HEADER]: "1",
+    ...(size ? { [ORIGINAL_SIZE_HEADER]: size } : {}),
+  });
+
+  const hit = await readOriginal(url);
+  if (hit?.body) {
+    return new NextResponse(hit.body, {
+      status: 200,
+      headers: headers(hit.headers.get("content-type") ?? "image/jpeg", hit.headers.get(ORIGINAL_SIZE_HEADER)),
+    });
+  }
+
+  // A miss goes to the county server: this is what the per-IP limit protects.
+  if ((await checkAgentRateLimit(req, "cam")).limited) return null; // the caller serves the normal still
+
+  const res = await fetchWithTimeout(url, { timeoutMs: 20000, cache: "no-store" });
+  if (!res.ok) throw new Error(`cam ${id} original -> ${res.status}`);
+  const contentType = res.headers.get("content-type") ?? "image/jpeg";
+  if (!contentType.startsWith("image/")) throw new Error(`cam ${id} original returned ${contentType}`);
+  const bytes = await res.arrayBuffer();
+  const dims = jpegSize(new Uint8Array(bytes, 0, Math.min(bytes.byteLength, 262144)));
+  const size = dims ? `${dims.width}x${dims.height}` : null;
+  const stored = storeOriginal(url, bytes, contentType, size);
+  try {
+    (await getCloudflareContext({ async: true })).ctx.waitUntil(stored);
+  } catch {
+    /* no Workers context (Node, tests): the store promise just runs */
+  }
+  return new NextResponse(bytes, { status: 200, headers: headers(contentType, size) });
 }
 
 /**
@@ -71,22 +132,26 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const wantOriginal = new URL(req.url).searchParams.get("res") === "hr";
+  const query = new URL(req.url).searchParams;
 
   try {
+    if (query.get("res") === "hr") {
+      if (!camSourceForId(id)) return NextResponse.json({ error: "Unknown cam" }, { status: 404 });
+      const original = await serveOriginal(req, id, query.get("at"));
+      if (original) return original;
+      // Over the limit: fall through and serve the normal still (no X-Cam-Original header).
+    }
+
     const src = camSourceForId(id);
-    const resolved = await resolveImageUrl(id, wantOriginal);
-    if (!resolved) {
+    const upstream = await resolveImageUrl(id);
+    if (!upstream) {
       return NextResponse.json({ error: "Unknown cam" }, { status: 404 });
     }
-    const { url: upstream, original } = resolved;
 
-    // An original is megabytes. Next's data cache refuses bodies over 2 MB, so it is not
-    // cached there; the response header below lets the edge cache it for a minute instead.
-    const res = await fetchWithTimeout(
-      upstream,
-      original ? { timeoutMs: 20000, cache: "no-store" } : { timeoutMs: 8000, next: { revalidate: 60 } },
-    );
+    const res = await fetchWithTimeout(upstream, {
+      timeoutMs: 8000,
+      next: { revalidate: 60 },
+    });
     if (!res.ok) throw new Error(`cam ${id} upstream -> ${res.status}`);
 
     const contentType = res.headers.get("content-type") ?? "image/jpeg";
@@ -99,7 +164,7 @@ export async function GET(
     // time instead of "unknown".
     const grabbedAt = src?.kind === "direct" ? grabbedAtHeader(res) : undefined;
 
-    const body = original ? res.body : await res.arrayBuffer();
+    const body = await res.arrayBuffer();
     return new NextResponse(body, {
       status: 200,
       headers: {

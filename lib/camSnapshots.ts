@@ -44,6 +44,18 @@ export function pickFeedFramePath(
   return typeof path === "string" && path.length > 0 ? path : undefined;
 }
 
+/**
+ * The full-size original ("hr") of a view's latest frame, and nothing else. Unlike
+ * pickFeedFramePath it never falls back to "mr": a caller that wants the original must
+ * be told there is none. Only a camera JPEG counts; some views publish a video there
+ * ("o181404a.mp4").
+ */
+export function pickFeedOriginalPath(json: unknown, view: string): string | undefined {
+  const entry = (json as Record<string, Record<string, unknown>> | null)?.[view];
+  const path = entry?.hr;
+  return typeof path === "string" && /\.jpe?g$/i.test(path) ? path : undefined;
+}
+
 /** Pull the capture time (unix `timestamp`) for a view out of a latest.json, as ISO. */
 export function pickFeedTimestamp(json: unknown, view: string): string | undefined {
   const entry = (json as Record<string, Record<string, unknown>> | null)?.[view];

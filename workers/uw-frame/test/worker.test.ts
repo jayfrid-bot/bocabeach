@@ -81,6 +81,13 @@ describe("POST /ingest: the frame guard", () => {
     expect(kv.map.has("frame:pensacola-sria-west-cam")).toBe(false);
   });
 
+  it("refuses a noisy black 1080p frame of 95 KB: over the old 60 KB skip line, still pixel-checked", async () => {
+    const res = await ingest("deerfield-surf-cam", fixture("black-noise-1080p-94956.jpg"));
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ ok: false, reason: "blank", bytes: 94956 });
+    expect(kv.map.has("frame:deerfield-surf-cam")).toBe(false);
+  });
+
   it("refuses YouTube's 12,815-byte black slate with a clear 422 and stores nothing", async () => {
     const res = await ingest("deerfield-surf-cam", fixture("black-slate-12815.jpg"));
     expect(res.status).toBe(422);
@@ -162,6 +169,15 @@ describe("the per-tick sweep of stored frames", () => {
     }
     expect(metaOf("deerfield-pier-cam")).toMatchObject({ ok: true, source: "courier" });
     expect(kv.map.has("frame:deerfield-pier-cam")).toBe(true);
+  });
+
+  it("clears a stored noisy black 1080p frame (95 KB) and keeps a stored real 1080p frame", async () => {
+    seed("deerfield-surf-cam", fixture("black-noise-1080p-94956.jpg"));
+    seed("siesta-beach-cam", fixture("daylight-1080p-siesta.jpg"), "courier");
+    const res = await worker.fetch(new Request("https://uw.test/grab"), env);
+    const summary = (await res.json()) as { cleared: { id: string }[] };
+    expect(summary.cleared.map((c) => c.id)).toEqual(["deerfield-surf-cam"]);
+    expect(kv.map.has("frame:siesta-beach-cam")).toBe(true);
   });
 
   it("clears the legacy Spinner-cam keys with the cam", async () => {

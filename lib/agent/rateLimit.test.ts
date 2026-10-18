@@ -114,3 +114,15 @@ describe("Workers Rate Limiting binding", () => {
     expect((await checkAgentRateLimit(reqFrom("6.6.6.6"), "rest", 1)).limited).toBe(false);
   });
 });
+
+describe("the cam-original scope", () => {
+  it("has its own binding and its own bucket, apart from the agent budgets", async () => {
+    expect(SCOPE_LIMITS.cam.binding).toBe("CAM_ORIGINAL_RATE_LIMITER");
+    const limit = vi.fn(async () => ({ success: false }));
+    ctx.env = { CAM_ORIGINAL_RATE_LIMITER: { limit } };
+    const r = await checkAgentRateLimit(reqFrom("3.3.3.3"), "cam");
+    expect(r.limited).toBe(true);
+    expect(limit).toHaveBeenCalledWith({ key: "3.3.3.3" });
+    expect((await checkAgentRateLimit(reqFrom("3.3.3.3"), "rest")).limited).toBe(false);
+  });
+});

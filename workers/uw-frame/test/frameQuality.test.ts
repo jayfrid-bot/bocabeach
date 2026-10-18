@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { BLANK_MEAN_AT_LEAST, BLANK_P95_BELOW, judgeFrame, MAX_FRAME_BYTES, MIN_FRAME_BYTES, RICH_FRAME_BYTES } from "../src/lib/frameQuality";
+import { readJpegDimensions } from "../src/lib/jpeg";
+import { BLANK_MEAN_AT_LEAST, BLANK_P95_BELOW, judgeFrame, MAX_FRAME_BYTES, MIN_FRAME_BYTES, RICH_FRAME_BYTES, richThresholdBytes } from "../src/lib/frameQuality";
 
 const fixture = (name: string): Uint8Array => new Uint8Array(readFileSync(new URL(`./fixtures/${name}`, import.meta.url)));
 // Always read the pixels, whatever the size.
@@ -14,6 +15,7 @@ describe("judgeFrame: frames that are NOT a real picture", () => {
     ["black-noise-20696.jpg", "a black frame with noise, 20 KB: it passed the old 20,000-byte floor"],
     ["black-underwater-night.jpg", "near-black frame stored by the browser grab for the underwater cam"],
     ["video-unavailable.jpg", "the player's 'Video unavailable' page"],
+    ["black-noise-1080p-94956.jpg", "a flat dark grey at 1920x1080 with 95 KB of sensor noise: over the old fixed 60 KB line, under the 1080p line"],
     ["black-slate-1080p-29144.jpg", "YouTube's black slate at 1920x1080: 29,144 bytes, twice the 720p size and still under the 60 KB pixel-check line"],
   ];
   for (const [name, why] of blanks) {
@@ -101,9 +103,28 @@ describe("judgeFrame: size and format", () => {
     expect(v.checked).toBe(false);
   });
 
+  it("the skip line grows with the picture: 60 KB at 720p, about 135 KB at 1080p, never under 60 KB", () => {
+    expect(richThresholdBytes({ width: 1280, height: 720 })).toBe(60_000);
+    expect(richThresholdBytes({ width: 1920, height: 1080 })).toBe(134_784);
+    expect(richThresholdBytes({ width: 640, height: 360 })).toBe(60_000);
+    expect(richThresholdBytes(null)).toBe(60_000);
+  });
+
+  it("a noisy black 1080p frame over 60 KB is pixel-checked by default and refused as blank", () => {
+    const v = judgeFrame(fixture("black-noise-1080p-94956.jpg"));
+    expect(fixture("black-noise-1080p-94956.jpg").length).toBeGreaterThan(RICH_FRAME_BYTES!);
+    expect(v).toMatchObject({ ok: false, reason: "blank", checked: true });
+  });
+
+  it("a real 1080p daylight frame over the 1080p line skips the pixel check, and passes", () => {
+    const f = fixture("daylight-1080p-siesta.jpg");
+    expect(f.length).toBeGreaterThan(richThresholdBytes({ width: 1920, height: 1080 })!);
+    expect(judgeFrame(f)).toMatchObject({ ok: true, checked: false });
+  });
+
   it("no blank frame measured so far is large enough to be waved through by the rich-frame shortcut", () => {
-    for (const n of ["spinner-pensacola.jpg", "spinner-deerfield-surf.jpg", "black-slate-12815.jpg", "black-noise-20696.jpg", "video-unavailable.jpg", "black-underwater-night.jpg", "black-slate-1080p-29144.jpg"]) {
-      expect(fixture(n).length).toBeLessThan(RICH_FRAME_BYTES!);
+    for (const n of ["spinner-pensacola.jpg", "spinner-deerfield-surf.jpg", "black-slate-12815.jpg", "black-noise-20696.jpg", "video-unavailable.jpg", "black-underwater-night.jpg", "black-slate-1080p-29144.jpg", "black-noise-1080p-94956.jpg"]) {
+      expect(fixture(n).length).toBeLessThan(richThresholdBytes(readJpegDimensions(fixture(n)))!);
     }
   });
 

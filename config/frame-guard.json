@@ -5,13 +5,15 @@
     "A real frame that is merely dark is NOT blank. Real night frames measured: underwater cam before dawn mean 8.7 (95th percentile 11), Boca feed cam at night mean 0.1-5.7, a dim feed frame mean 14.5 (95th percentile 26), the floodlit Deerfield pier at night 95th percentile 45 or more. Black is darker than YouTube's grey, so the two groups do not overlap.",
     "blankP95Below: the 95th-percentile brightness of the region's 8x8 blocks must be under this (nothing bright in the picture). blankMeanAtLeast: and the region's mean must be at least this (YouTube's grey, not true black). Both must hold. The two measured groups sit 1.3 apart on the mean (14.5 real vs 17.3 blank), so look at a new cam's frames before moving this.",
     "minBytes: below this the upload is a stub or truncated, whatever it shows. A black 720p frame from ffmpeg is 12,815 bytes, so a size floor cannot separate black from dark: the picture check does that. maxBytes: the biggest upload the worker takes.",
-    "richBytes: a frame this large has detail everywhere; no blank frame measured is over 40,000 bytes, so the worker skips the pixel check (and its CPU cost on the free plan's 10 ms limit). Set it to null to always check. Real dark night frames can be 57,000 bytes because of sensor noise, so the pixel check, not the size, decides.",
+    "richBytes: the pixel check is skipped for a frame this large (its CPU cost counts on the free plan's 10 ms limit), because a frame with detail everywhere is not blank. It is a FLOOR and the answer for a picture whose size cannot be read; no blank 720p frame measured is over 40,000 bytes. Real dark night frames can be 57,000 bytes at 720p because of sensor noise, so the pixel check, not the size, decides. Set it to null to always check.",
+    "richBytesPerMegapixel: a bigger picture needs more bytes to count as rich. The skip line is max(richBytes, richBytesPerMegapixel x megapixels): 60,000 at 1280x720 (0.92 MP, 65,000 per MP) and about 135,000 at 1920x1080. A fixed 60 KB would wave through a noisy black 1080p frame (a 95 KB sensor-noise frame measured 2026-10-18). A 1080p black slate is 29 KB. Real 1080p courier frames measured 64 KB to 642 KB; those under the line are pixel-checked (about 2 ms) and pass. Both readers use the same formula.",
     "region: the part of the frame (fractions of width and height) that the statistics read. It leaves out the YouTube player's top bar (title, mute, settings) and bottom bar (Live badge, progress line, share, More videos), and the cam owner's overlay lines."
   ],
   "version": 1,
   "minBytes": 5000,
   "maxBytes": 2000000,
   "richBytes": 60000,
+  "richBytesPerMegapixel": 65000,
   "region": {
     "top": 0.12,
     "bottom": 0.8,

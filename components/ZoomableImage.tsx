@@ -15,6 +15,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export const MIN_SCALE = 1;
 export const MAX_SCALE = 5;
+/** The least a picture may be allowed to zoom, however small it is. */
+export const MIN_MAX_SCALE = 2;
 const DOUBLE_TAP_SCALE = 2.5;
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_PX = 30;
@@ -40,8 +42,8 @@ export function fittedSize(w: number, h: number, nw?: number, nh?: number): { fw
  *  in a `w`×`h` box) and scaled by z.scale about the box centre, so along each
  *  axis it may slide until its edge meets the box edge, and not at all while
  *  it is still narrower than the box. */
-export function clampZoom(z: ZoomState, w: number, h: number, fw = w, fh = h): ZoomState {
-  const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, z.scale));
+export function clampZoom(z: ZoomState, w: number, h: number, fw = w, fh = h, max = MAX_SCALE): ZoomState {
+  const scale = Math.min(max, Math.max(MIN_SCALE, z.scale));
   if (scale === 1) return IDENTITY;
   const mx = Math.max(0, (fw * scale - w) / 2);
   const my = Math.max(0, (fh * scale - h) / 2);
@@ -59,7 +61,42 @@ export function zoomAt(z: ZoomState, next: number, px: number, py: number): Zoom
   return { scale: next, x: px - (px - z.x) * ratio, y: py - (py - z.y) * ratio };
 }
 
-const clampScale = (s: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
+const clampScale = (s: number, max = MAX_SCALE) => Math.min(max, Math.max(MIN_SCALE, s));
+
+/**
+ * How far this picture may zoom: twice the zoom at which one picture pixel fills one screen
+ * pixel, never under MIN_MAX_SCALE or over MAX_SCALE. Past that the picture only shows blocks.
+ * A 1280 px still on a 390 px phone (3 screen pixels per point) is 1.1x real, so 2.2x; a 1920 px
+ * still 3.3x; a 4352 px original reaches the 5x limit. Unknown picture size: MAX_SCALE.
+ */
+export function maxScaleFor(naturalWidth: number | undefined, fittedWidthCss: number, dpr: number): number {
+  if (!naturalWidth || !fittedWidthCss) return MAX_SCALE;
+  const real = naturalWidth / (fittedWidthCss * Math.max(1, dpr || 1));
+  return Math.min(MAX_SCALE, Math.max(MIN_MAX_SCALE, 2 * real));
+}
+
+/** The largest original (in pixels) any device is asked to decode: 20 megapixels. */
+export const ORIGINAL_MAX_PIXELS = 20_000_000;
+/** On a touch or narrow screen the limit is lower, to protect older phones (12 MP is about 48 MB decoded). */
+export const ORIGINAL_MAX_PIXELS_SMALL_SCREEN = 12_000_000;
+
+/**
+ * Whether the viewer may swap in an original of `width` x `height`. No when the visitor asked
+ * to save data, when the original is over 20 MP, or when the screen is touch or narrow and the
+ * original is over 12 MP.
+ */
+export function originalAllowed(o: { width: number; height: number; smallScreen: boolean; saveData: boolean }): boolean {
+  if (o.saveData) return false;
+  const pixels = o.width * o.height;
+  if (!(pixels > 0) || pixels > ORIGINAL_MAX_PIXELS) return false;
+  return !(o.smallScreen && pixels > ORIGINAL_MAX_PIXELS_SMALL_SCREEN);
+}
+
+/** "6000x4000" to its two numbers; null for anything else. */
+export function parseSizeHeader(v: string | null): { width: number; height: number } | null {
+  const m = /^(\d{1,5})x(\d{1,5})$/.exec(v ?? "");
+  return m ? { width: Number(m[1]), height: Number(m[2]) } : null;
+}
 
 export function ZoomableImage({
   src,
@@ -103,18 +140,28 @@ export function ZoomableImage({
     zoomedCb.current = onZoomedChange;
   });
 
+  /** The most this picture may zoom now (see maxScaleFor); MAX_SCALE until the picture has loaded. */
+  const currentMax = useCallback((): number => {
+    const el = box.current;
+    const nw = img.current?.naturalWidth;
+    if (!el || !nw) return MAX_SCALE;
+    const { fw } = fittedSize(el.clientWidth, el.clientHeight, nw, img.current?.naturalHeight);
+    return maxScaleFor(nw, fw, typeof window === "undefined" ? 1 : window.devicePixelRatio);
+  }, []);
+  const [maxScale, setMaxScale] = useState(MAX_SCALE);
+
   const setZoom = useCallback((next: ZoomState) => {
     const el = box.current;
     let clamped = next;
     if (el) {
       const { fw, fh } = fittedSize(el.clientWidth, el.clientHeight, img.current?.naturalWidth, img.current?.naturalHeight);
-      clamped = clampZoom(next, el.clientWidth, el.clientHeight, fw, fh);
+      clamped = clampZoom(next, el.clientWidth, el.clientHeight, fw, fh, currentMax());
     }
     const wasZoomed = zoomRef.current.scale > 1;
     zoomRef.current = clamped;
     setZoomState(clamped);
     if (wasZoomed !== clamped.scale > 1) zoomedCb.current?.(clamped.scale > 1);
-  }, []);
+  }, [currentMax]);
 
   // A new picture starts at 1×.
   useEffect(() => {
@@ -138,18 +185,37 @@ export function ZoomableImage({
     let live = true;
     let objectUrl: string | null = null;
     const abort = new AbortController();
-    // One download, held as a blob: the browser would fetch a plain <img> a second time when the
-    // response may not be kept in its cache, and an original can be 7 MB.
-    fetch(sharpSrc, { signal: abort.signal })
-      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((blob) => {
-        if (!live || !blob.type.startsWith("image/")) return;
-        objectUrl = URL.createObjectURL(blob);
-        setShown(objectUrl);
-      })
-      .catch(() => {
-        /* the normal picture stays */
-      });
+    const keepNormal = () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+    };
+    (async () => {
+      const nav = navigator as Navigator & { connection?: { saveData?: boolean } };
+      const smallScreen =
+        window.matchMedia?.("(pointer: coarse)").matches === true || window.innerWidth < 768;
+      // Saving data: never ask for the original.
+      if (nav.connection?.saveData) return;
+      // One download, held as a blob (a plain <img> could fetch it a second time).
+      const res = await fetch(sharpSrc, { signal: abort.signal });
+      // Only a real original counts: the server may answer with the normal still (over its
+      // limit), or 404/409 (no original, or a newer frame than the one shown).
+      if (!res.ok || res.headers.get("X-Cam-Original") !== "1") return;
+      // The size comes in a header, so a picture too big for this device is refused before its body is read.
+      const size = parseSizeHeader(res.headers.get("X-Cam-Original-Size"));
+      if (!size || !originalAllowed({ ...size, smallScreen, saveData: false })) {
+        abort.abort();
+        return;
+      }
+      const blob = await res.blob();
+      if (!live || !blob.type.startsWith("image/")) return;
+      objectUrl = URL.createObjectURL(blob);
+      // Decode off screen first. Swap only when it decoded; on any failure the normal picture stays.
+      const probe = new Image();
+      probe.src = objectUrl;
+      await probe.decode();
+      if (!live) return;
+      setShown(objectUrl);
+    })().catch(keepNormal);
     return () => {
       live = false;
       abort.abort();
@@ -191,7 +257,7 @@ export function ZoomableImage({
     if (z.scale > 1) setZoom(IDENTITY);
     else {
       const p = local(clientX, clientY);
-      setZoom(zoomAt(z, DOUBLE_TAP_SCALE, p.x, p.y));
+      setZoom(zoomAt(z, Math.min(DOUBLE_TAP_SCALE, currentMax()), p.x, p.y));
     }
   };
 
@@ -223,7 +289,7 @@ export function ZoomableImage({
       const [a, b] = [...pointers.current.values()];
       const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
       const p = pinch.current;
-      const next = clampScale(p.start.scale * (dist / p.dist));
+      const next = clampScale(p.start.scale * (dist / p.dist), currentMax());
       const mid = local((a.x + b.x) / 2, (a.y + b.y) / 2);
       const z = zoomAt(p.start, next, p.mid.x, p.mid.y);
       // The fingers may also travel together: follow them.
@@ -269,15 +335,15 @@ export function ZoomableImage({
       const z = zoomRef.current;
       const factor = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002));
       const r = el.getBoundingClientRect();
-      setZoom(zoomAt(z, clampScale(z.scale * factor), e.clientX - r.left - r.width / 2, e.clientY - r.top - r.height / 2));
+      setZoom(zoomAt(z, clampScale(z.scale * factor, currentMax()), e.clientX - r.left - r.width / 2, e.clientY - r.top - r.height / 2));
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [setZoom]);
+  }, [setZoom, currentMax]);
 
   const step = (factor: number) => {
     const z = zoomRef.current;
-    setZoom(zoomAt(z, clampScale(z.scale * factor), 0, 0));
+    setZoom(zoomAt(z, clampScale(z.scale * factor, currentMax()), 0, 0));
   };
 
   const zoomed = zoom.scale > 1;
@@ -315,15 +381,16 @@ export function ZoomableImage({
           src={shown}
           alt={alt}
           onError={onError}
+          onLoad={() => setMaxScale(currentMax())}
           draggable={false}
-          className="pointer-events-none max-h-full max-w-full object-contain"
+          className="pointer-events-none h-full w-full object-contain"
         />
       </div>
       <div className="absolute bottom-3 right-3 flex gap-2">
         <button type="button" className={BTN} aria-label="Zoom out" disabled={!zoomed} onClick={() => step(1 / 1.6)}>
           <span aria-hidden>{"−"}</span>
         </button>
-        <button type="button" className={BTN} aria-label="Zoom in" disabled={zoom.scale >= MAX_SCALE} onClick={() => step(1.6)}>
+        <button type="button" className={BTN} aria-label="Zoom in" disabled={zoom.scale >= maxScale - 0.001} onClick={() => step(1.6)}>
           <span aria-hidden>+</span>
         </button>
         {zoomed ? (

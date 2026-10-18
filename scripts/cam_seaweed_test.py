@@ -390,6 +390,24 @@ class BlankFrameTests(unittest.TestCase):
         big = fixture("black-slate-12815.jpg") + b"\x00" * 80_000
         self.assertEqual(cs.frame_blank_verdict(big), (False, ""))
 
+    def test_a_noisy_black_1080p_frame_is_not_waved_through_by_the_size_shortcut(self):
+        # 95 KB of sensor noise on a flat dark grey, 1920x1080. A fixed 60 KB line would skip the
+        # check; the line for 1080p is about 135 KB, so the pixels are read and it is blank.
+        noisy = fixture("black-noise-1080p-94956.jpg")
+        self.assertGreater(len(noisy), 60_000)
+        self.assertEqual(cs.jpeg_dimensions(noisy), (1920, 1080))
+        for blank, why in self.both_ways("black-noise-1080p-94956.jpg"):
+            self.assertTrue(blank)
+            self.assertIn("blank frame", why)
+
+    def test_the_size_shortcut_scales_with_the_picture(self):
+        cfg = json.loads((ROOT / "config" / "frame-guard.json").read_text())
+        self.assertEqual(cs.rich_threshold_bytes(cfg, (1280, 720)), 60_000)  # the old line, unchanged at 720p
+        self.assertEqual(cs.rich_threshold_bytes(cfg, (1920, 1080)), 134_784)
+        self.assertEqual(cs.rich_threshold_bytes(cfg, (640, 360)), 60_000)  # never lower than richBytes
+        self.assertEqual(cs.rich_threshold_bytes(cfg, None), 60_000)  # size unknown: richBytes
+        self.assertIsNone(cs.rich_threshold_bytes({"richBytes": None, "richBytesPerMegapixel": 65000}, (1920, 1080)))
+
     def test_it_fails_open_on_bytes_it_cannot_read(self):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(cs.frame_blank_verdict(jpeg()), (False, ""))
@@ -4239,6 +4257,45 @@ class AlertFrameTests(WithManifest):
         self.assertEqual(alert["frame"]["sha256"], cs.quality_watch.frame_sha256(jpeg() + b"boca-inlet-surf"))
 
 
+    @unittest.skipUnless(cs._pillow_image() is not None, "Pillow not installed")
+    def test_the_alert_names_the_frame_that_was_archived_when_it_had_to_be_re_encoded_to_fit(self):
+        # A frame over the 600 KB cap is re-encoded before the upload, so the archive holds
+        # different bytes (a different hash) from the ones fetched. The alert must carry the
+        # hash of the archived copy, or the review screen cannot find it.
+        alerts, uploaded = [], []
+        cams = JumpConfirmationTests.CAMS
+        rocks = dict(JumpConfirmationTests.FALSE_ROCKS, provider="gemini")
+        nothing = JumpConfirmationTests.NOTHING
+        make = VisionAndArchiveSizeTests.noise_jpeg
+        frames = {"boca-inlet-surf": make(1920, 1080), "boca-south-surf": make(1928, 1080), "boca-south": make(1936, 1080)}
+        by_bytes = {v: k for k, v in frames.items()}
+        self.assertTrue(all(len(v) > cs.ARCHIVE_MAX_BYTES for v in frames.values()))
+        looks = {"boca-inlet-surf": rocks, "boca-south-surf": nothing, "boca-south": nothing}
+        opinion = {"provider": "clef", "model": "m", "level": "none", "coveragePct": 0, "note": None}
+
+        def fake_fetch(cam, info=None, feed_cache=None):
+            info["frameAt"] = iso_ago(2)
+            return frames[cam["id"]]
+
+        def fake_urlopen(req, timeout=None):
+            uploaded.append((dict(urllib.parse.parse_qsl(urllib.parse.urlparse(req.full_url).query))["cam"], req.data))
+            return FakeResponse({"stored": True})
+
+        with env(INGEST_TOKEN="tok"), mock.patch.object(cs, "fetch_still", fake_fetch), \
+                mock.patch.object(cs.urllib.request, "urlopen", fake_urlopen), \
+                mock.patch.object(cs, "assess", lambda img: dict(looks[by_bytes[img]])), \
+                mock.patch.object(cs.time, "sleep", lambda s: None), \
+                mock.patch.object(cs, "request_second_opinion", lambda cam, held, img: opinion), \
+                mock.patch.object(cs.quality_watch, "post_alert", lambda body, **k: alerts.append(body) or "sent"), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            cs.capture_beach("boca-raton", cams, dt.datetime.now(ZONE), {"called": False}, {})
+        (alert,) = alerts
+        sent = dict(uploaded)["boca-inlet-surf"]
+        self.assertLess(len(sent), len(frames["boca-inlet-surf"]), "the archive got the smaller copy")
+        self.assertEqual(alert["frame"]["sha256"], cs.quality_watch.frame_sha256(sent))
+        self.assertNotEqual(alert["frame"]["sha256"], cs.quality_watch.frame_sha256(frames["boca-inlet-surf"]))
+
+
 class FetchPrevTests(unittest.TestCase):
     """A true 404 is a new beach; anything else must never be mistaken for one."""
 
@@ -4318,6 +4375,13 @@ class FetchPrevTests(unittest.TestCase):
         self.assertEqual(archived, [True], "the webcam archive still runs")
 
 
+def _shrink_with_ffmpeg_q4(jpeg_bytes):
+    """The picture as the courier would write it: ffmpeg -q:v 4."""
+    proc = subprocess.run(["ffmpeg", "-v", "error", "-i", "pipe:0", "-frames:v", "1", "-q:v", "4", "-f", "image2pipe", "-c:v", "mjpeg", "pipe:1"],
+                          input=jpeg_bytes, capture_output=True, timeout=30)
+    return proc.stdout
+
+
 class VisionAndArchiveSizeTests(unittest.TestCase):
     """shrink_for_vision, jpeg_dimensions and fit_for_archive (1080p courier frames, 2026-10-18)."""
 
@@ -4373,6 +4437,27 @@ class VisionAndArchiveSizeTests(unittest.TestCase):
         self.assertIsNotNone(fitted)
         self.assertLessEqual(len(fitted), cs.ARCHIVE_MAX_BYTES)
         self.assertEqual(cs.jpeg_dimensions(fitted), (1920, 1080), "quality drops first; the pixels stay")
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and cs._pillow_image() is not None, "needs ffmpeg and Pillow")
+    def test_without_pillow_every_ffmpeg_step_is_smaller_than_the_couriers_own_q4_frame(self):
+        # The courier writes ffmpeg -q:v 4. A "fit" step that is not coarser than that gives back
+        # a file as big as the one it was meant to shrink.
+        pil = self.noise_jpeg(1920, 1080, 95)
+        courier = _shrink_with_ffmpeg_q4(pil)
+        self.assertGreater(len(courier), 0)
+        for quality, qscale in cs.ARCHIVE_FIT_STEPS:
+            self.assertGreater(qscale, 4, f"step {quality}/{qscale} is not coarser than q:v 4")
+            with mock.patch.object(cs, "_pillow_image", lambda: None):
+                out = cs._reencode(courier, 1920, quality, qscale)
+            self.assertLess(len(out), len(courier), f"ffmpeg q:v {qscale} gave {len(out)} from {len(courier)}")
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and cs._pillow_image() is not None, "needs ffmpeg and Pillow")
+    def test_without_pillow_an_oversize_courier_frame_still_fits(self):
+        courier = _shrink_with_ffmpeg_q4(self.noise_jpeg(1920, 1080, 95))
+        with mock.patch.object(cs, "ARCHIVE_MAX_BYTES", int(len(courier) * 0.8)), mock.patch.object(cs, "_pillow_image", lambda: None):
+            fitted = cs.fit_for_archive(courier)
+        self.assertIsNotNone(fitted)
+        self.assertLessEqual(len(fitted), int(len(courier) * 0.8))
 
     @unittest.skipUnless(cs._pillow_image() is not None, "Pillow not installed")
     def test_a_frame_inside_the_cap_is_not_touched_and_a_hopeless_one_gives_none(self):
