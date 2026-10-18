@@ -473,10 +473,14 @@ describe("historyRecords — all-time across scoring formulas, per beach", () =>
     const store = await getStore();
     // An old-formula day that scored high, a new-formula day that scored lower.
     await store.upsertBeachHourly(
-      row({ hour_utc: hourUtcOf(Date.parse("2026-10-07T16:00:00Z")), local_date: "2026-10-07", local_hour: 12, score: 95, engine_version: OLD, sand_temp_f: 140, surf_ft: 4.0, water_temp_f: 88, clarity_pct: 90 }),
+      row({ hour_utc: hourUtcOf(Date.parse("2026-10-07T16:00:00Z")), local_date: "2026-10-07", local_hour: 12, score: 95, engine_version: OLD, sand_temp_f: 140, surf_ft: 4.0, water_temp_f: 88 }),
+    );
+    // A second hour that day, so the 88 degree reading is not a single stray hour.
+    await store.upsertBeachHourly(
+      row({ hour_utc: hourUtcOf(Date.parse("2026-10-07T17:00:00Z")), local_date: "2026-10-07", local_hour: 13, score: null, water_temp_f: 88 }),
     );
     await store.upsertBeachHourly(
-      row({ hour_utc: hourUtcOf(Date.parse("2026-10-10T16:00:00Z")), local_date: "2026-10-10", local_hour: 12, score: 82, engine_version: NEW, sand_temp_f: 100, surf_ft: 1.0, water_temp_f: 80, clarity_pct: 50 }),
+      row({ hour_utc: hourUtcOf(Date.parse("2026-10-10T16:00:00Z")), local_date: "2026-10-10", local_hour: 12, score: 82, engine_version: NEW, sand_temp_f: 100, surf_ft: 1.0, water_temp_f: 80 }),
     );
     return store;
   }
@@ -512,7 +516,6 @@ describe("historyRecords — all-time across scoring formulas, per beach", () =>
     expect(records.find((r) => r.kind === "hottest_sand")).toMatchObject({ value: 140, engine_version: OLD });
     expect(records.find((r) => r.kind === "biggest_surf")).toMatchObject({ value: 4.0, engine_version: OLD });
     expect(records.find((r) => r.kind === "warmest_water")).toMatchObject({ local_date: "2026-10-07", value: 88 });
-    expect(records.find((r) => r.kind === "clearest_water")).toMatchObject({ local_date: "2026-10-07", value: 90 });
   });
 
   it("warmest water and clearest water are absent when the beach has no such reading", async () => {
@@ -525,12 +528,15 @@ describe("historyRecords — all-time across scoring formulas, per beach", () =>
 
   it("records belong to the beach asked about: another beach's higher score never leaks in", async () => {
     const store = await seed();
-    await store.upsertBeachHourly(
-      row({ slug: "gulf-shores", hour_utc: hourUtcOf(Date.parse("2026-10-11T16:00:00Z")), local_date: "2026-10-11", local_hour: 12, score: 100, sand_temp_f: 160, surf_ft: 9, water_temp_f: 95, clarity_pct: 99 }),
-    );
+    for (const [h, utc] of [[12, "16"], [13, "17"]] as const) {
+      await store.upsertBeachHourly(
+        row({ slug: "gulf-shores", hour_utc: hourUtcOf(Date.parse(`2026-10-14T${utc}:00:00Z`)), local_date: "2026-10-14", local_hour: h, score: 100, sand_temp_f: 160, surf_ft: 9, water_temp_f: 95, clarity_pct: 99 }),
+      );
+    }
     const { records } = await store.historyRecords("boca-raton");
     expect(records.find((r) => r.kind === "best")).toMatchObject({ value: 95 });
     expect(records.find((r) => r.kind === "warmest_water")).toMatchObject({ value: 88 });
+    expect(records.find((r) => r.kind === "clearest_water")).toBeUndefined();
     expect((await store.historyRecords("gulf-shores")).records.find((r) => r.kind === "best")).toMatchObject({ value: 100 });
   });
 
@@ -547,6 +553,66 @@ describe("historyRecords — all-time across scoring formulas, per beach", () =>
   });
 });
 
+describe("water records — guards against one bad reading holding a record forever", () => {
+  async function put(store: Awaited<ReturnType<typeof getStore>>, date: string, hour: number, over: Partial<BeachHourlyRow>) {
+    await store.upsertBeachHourly(
+      row({ hour_utc: hourUtcOf(Date.parse(`${date}T${String(hour + 4).padStart(2, "0")}:00:00Z`)), local_date: date, local_hour: hour, score: null, water_temp_f: null, clarity_pct: null, ...over }),
+    );
+  }
+  const kindOf = async (store: Awaited<ReturnType<typeof getStore>>, kind: string) =>
+    (await store.historyRecords("boca-raton")).records.find((r) => r.kind === kind);
+
+  it("warmest water ignores a reading outside 45-95 F, even when it repeats", async () => {
+    const store = await getStore();
+    for (const h of [10, 11]) await put(store, "2026-10-14", h, { water_temp_f: 120 });
+    for (const h of [10, 11]) await put(store, "2026-10-15", h, { water_temp_f: 30 });
+    for (const h of [10, 11]) await put(store, "2026-10-16", h, { water_temp_f: 86 });
+    expect(await kindOf(store, "warmest_water")).toMatchObject({ local_date: "2026-10-16", value: 86 });
+  });
+
+  it("warmest water ignores a single hot hour: the value must be reached in a second hour that day", async () => {
+    const store = await getStore();
+    await put(store, "2026-10-14", 12, { water_temp_f: 93 });
+    for (const h of [10, 11]) await put(store, "2026-10-15", h, { water_temp_f: 85 });
+    expect(await kindOf(store, "warmest_water")).toMatchObject({ local_date: "2026-10-15", value: 85 });
+  });
+
+  it("a hotter hour counts as the second hour for a lower value, never the other way round", async () => {
+    const store = await getStore();
+    // 93 is alone (a stray); 91 is backed by the 93 hour, so 91 is the record.
+    await put(store, "2026-10-14", 12, { water_temp_f: 93 });
+    await put(store, "2026-10-14", 13, { water_temp_f: 91 });
+    expect(await kindOf(store, "warmest_water")).toMatchObject({ local_date: "2026-10-14", local_hour: 13, value: 91 });
+  });
+
+  it("warmest water does not count a second hour on a different day", async () => {
+    const store = await getStore();
+    await put(store, "2026-10-14", 12, { water_temp_f: 90 });
+    await put(store, "2026-10-15", 12, { water_temp_f: 90 });
+    expect(await kindOf(store, "warmest_water")).toBeUndefined();
+  });
+
+  it("clearest water ignores days before the low-sun fix (2026-10-13)", async () => {
+    const store = await getStore();
+    for (const h of [10, 11]) await put(store, "2026-10-12", h, { clarity_pct: 95 });
+    for (const h of [10, 11]) await put(store, "2026-10-13", h, { clarity_pct: 70 });
+    expect(await kindOf(store, "clearest_water")).toMatchObject({ local_date: "2026-10-13", value: 70 });
+  });
+
+  it("clearest water needs the value in two hours of the same day", async () => {
+    const store = await getStore();
+    await put(store, "2026-10-14", 12, { clarity_pct: 100 });
+    for (const h of [10, 11]) await put(store, "2026-10-15", h, { clarity_pct: 80 });
+    expect(await kindOf(store, "clearest_water")).toMatchObject({ local_date: "2026-10-15", value: 80 });
+  });
+
+  it("ties go to the earliest hour", async () => {
+    const store = await getStore();
+    for (const d of ["2026-10-16", "2026-10-14"]) for (const h of [10, 11]) await put(store, d, h, { clarity_pct: 85 });
+    expect(await kindOf(store, "clearest_water")).toMatchObject({ local_date: "2026-10-14", local_hour: 10 });
+  });
+});
+
 describe("historyBestEver is gone — records never span beaches", () => {
   it("the store no longer exposes a cross-beach best-ever read", async () => {
     const store = await getStore();
@@ -554,12 +620,14 @@ describe("historyBestEver is gone — records never span beaches", () => {
   });
 });
 
+const NOW = "2026-10-20T00:00:00.000Z";
+
 describe("historySunRecords — best sunrise and sunset color for one beach", () => {
   const PRE = { snapshot_generated_at: "2026-10-06T11:05:00.000Z", as_of_hour_utc: "2026-10-06T11:00:00.000Z" };
 
   it("returns an empty list for a beach with no predictions", async () => {
     const store = await getStore();
-    expect(await store.historySunRecords("boca-raton")).toEqual([]);
+    expect(await store.historySunRecords("boca-raton", NOW)).toEqual([]);
   });
 
   it("scores each event by its last forecast made at or before the event, then keeps the best per kind", async () => {
@@ -578,10 +646,23 @@ describe("historySunRecords — best sunrise and sunset color for one beach", ()
       predictionRow({ event_iso: "2026-10-08T11:17:00.000Z", as_of_hour_utc: "2026-10-08T11:00:00.000Z", snapshot_generated_at: "2026-10-08T11:05:00.000Z", score: null, band: null }),
       predictionRow({ slug: "gulf-shores", event_iso: "2026-10-09T11:17:00.000Z", as_of_hour_utc: "2026-10-09T11:00:00.000Z", snapshot_generated_at: "2026-10-09T11:05:00.000Z", score: 95 }),
     ]);
-    expect(await store.historySunRecords("boca-raton")).toEqual([
+    expect(await store.historySunRecords("boca-raton", NOW)).toEqual([
       { kind: "best_sunrise", event_iso: "2026-10-06T11:15:09.672Z", score: 70, band: "vivid" },
       { kind: "best_sunset", event_iso: "2026-10-06T23:10:00.000Z", score: 80, band: "epic" },
     ]);
+  });
+
+  it("an event after now is only a forecast and never counts", async () => {
+    const store = await getStore();
+    await store.upsertSunEventPredictions([
+      predictionRow({ as_of_hour_utc: "2026-10-06T11:00:00.000Z", snapshot_generated_at: "2026-10-06T11:05:00.000Z", score: 60 }),
+      // Tomorrow's sunrise, forecast a day ahead: higher, but not yet happened.
+      predictionRow({ event_iso: "2026-10-21T11:20:00.000Z", as_of_hour_utc: "2026-10-21T10:00:00.000Z", snapshot_generated_at: "2026-10-21T10:05:00.000Z", score: 95 }),
+    ]);
+    expect(await store.historySunRecords("boca-raton", "2026-10-20T12:00:00.000Z")).toEqual([
+      { kind: "best_sunrise", event_iso: "2026-10-06T11:15:09.672Z", score: 60, band: "good" },
+    ]);
+    expect((await store.historySunRecords("boca-raton", "2026-10-22T00:00:00.000Z"))[0]).toMatchObject({ score: 95 });
   });
 
   it("ties go to the earliest event", async () => {
@@ -590,7 +671,7 @@ describe("historySunRecords — best sunrise and sunset color for one beach", ()
       predictionRow({ event_iso: "2026-10-07T11:16:00.000Z", as_of_hour_utc: "2026-10-07T11:00:00.000Z", snapshot_generated_at: "2026-10-07T11:05:00.000Z", score: 66 }),
       predictionRow({ ...PRE, score: 66 }),
     ]);
-    expect((await store.historySunRecords("boca-raton"))[0]).toMatchObject({ event_iso: "2026-10-06T11:15:09.672Z" });
+    expect((await store.historySunRecords("boca-raton", NOW))[0]).toMatchObject({ event_iso: "2026-10-06T11:15:09.672Z" });
   });
 });
 

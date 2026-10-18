@@ -166,10 +166,10 @@ describe("recordTiles — every record, this beach only", () => {
     });
   });
 
-  it("Best sunrise and Best sunset show the color score and the day", () => {
+  it("Best sunrise and Best sunset show the color score and the day, and say it is a forecast score", () => {
     const tiles = recordTiles(FULL_RECORDS, null, null);
-    expect(tiles.find((t) => t.key === "sunrise")).toMatchObject({ label: "Best sunrise", value: "78", sub: "Oct 2" });
-    expect(tiles.find((t) => t.key === "sunset")).toMatchObject({ label: "Best sunset", value: "91", sub: "Oct 4" });
+    expect(tiles.find((t) => t.key === "sunrise")).toMatchObject({ label: "Best sunrise", value: "78", sub: "Oct 2", note: "forecast score" });
+    expect(tiles.find((t) => t.key === "sunset")).toMatchObject({ label: "Best sunset", value: "91", sub: "Oct 4", note: "forecast score" });
   });
 
   it("a record the beach has no data for is simply left out", () => {

@@ -349,12 +349,16 @@ describe("POST /api/history/[slug]", () => {
     describe("records are for the beach asked about, never across beaches", () => {
       it("another beach's higher score and readings never appear", async () => {
         const store = await getStore();
-        await store.upsertBeachHourly(
-          row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-28", local_hour: 10, score: 80, water_temp_f: 84 }),
-        );
-        await store.upsertBeachHourly(
-          row({ slug: "gulf-shores", hour_utc: hourUtcOf(Date.now() - DAY), local_date: "2026-09-27", local_hour: 13, score: 98, water_temp_f: 91, clarity_pct: 99 }),
-        );
+        for (const h of [10, 11]) {
+          await store.upsertBeachHourly(
+            row({ hour_utc: hourUtcOf(Date.now() + (h - 10) * HOUR), local_date: "2026-09-28", local_hour: h, score: 80, water_temp_f: 84 }),
+          );
+        }
+        for (const h of [13, 14]) {
+          await store.upsertBeachHourly(
+            row({ slug: "gulf-shores", hour_utc: hourUtcOf(Date.now() - DAY + (h - 13) * HOUR), local_date: "2026-09-27", local_hour: h, score: 98, water_temp_f: 91, clarity_pct: 99 }),
+          );
+        }
         const { POST } = await import("@/app/api/history/[slug]/route");
         const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
         expect(body.records.bestDay).toEqual({ date: "2026-09-28", score: 80, localHour: 10, engineVersion: "test-1" });
@@ -387,29 +391,44 @@ describe("POST /api/history/[slug]", () => {
     describe("water and sun records", () => {
       it("returns warmest water and clearest water from stored readings", async () => {
         const store = await getStore();
-        await store.upsertBeachHourly(
-          row({ hour_utc: hourUtcOf(Date.now() - DAY), local_date: "2026-09-27", local_hour: 15, water_temp_f: 88.2, clarity_pct: 60 }),
-        );
-        await store.upsertBeachHourly(
-          row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-28", local_hour: 11, water_temp_f: 85, clarity_pct: 93 }),
-        );
+        for (const h of [15, 16]) {
+          await store.upsertBeachHourly(
+            row({ hour_utc: hourUtcOf(Date.now() - DAY + h * HOUR), local_date: "2026-09-27", local_hour: h, water_temp_f: 88, clarity_pct: 60 }),
+          );
+        }
+        for (const h of [11, 12]) {
+          await store.upsertBeachHourly(
+            row({ hour_utc: hourUtcOf(Date.now() - 12 * HOUR + h * HOUR), local_date: "2026-10-14", local_hour: h, water_temp_f: 85, clarity_pct: 93 }),
+          );
+        }
         const { POST } = await import("@/app/api/history/[slug]/route");
         const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
-        expect(body.records.warmestWater).toEqual({ date: "2026-09-27", waterTempF: 88.2, localHour: 15 });
-        expect(body.records.clearestWater).toEqual({ date: "2026-09-28", clarityPct: 93, localHour: 11 });
+        expect(body.records.warmestWater).toEqual({ date: "2026-09-27", waterTempF: 88, localHour: 15 });
+        // Clarity only counts from the low-sun fix (2026-10-13).
+        expect(body.records.clearestWater).toEqual({ date: "2026-10-14", clarityPct: 93, localHour: 11 });
+      });
+
+      it("ignores a single stray water reading", async () => {
+        const store = await getStore();
+        await store.upsertBeachHourly(row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-28", local_hour: 11, water_temp_f: 93 }));
+        const { POST } = await import("@/app/api/history/[slug]/route");
+        const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
+        expect(body.records.warmestWater).toBeNull();
       });
 
       it("returns the best sunrise and sunset color, dated by the beach's own local day", async () => {
         const store = await getStore();
         await store.upsertSunEventPredictions([
           predictionRow({ event_iso: "2026-09-27T10:55:00.000Z", as_of_hour_utc: "2026-09-27T10:00:00.000Z", snapshot_generated_at: "2026-09-27T10:30:00.000Z", score: 72, band: "vivid" }),
-          // 00:30 UTC on Sept 29 is 8:30 PM on Sept 28 in Boca Raton.
-          predictionRow({ event_kind: "sunset", event_iso: "2026-09-29T00:30:00.000Z", as_of_hour_utc: "2026-09-29T00:00:00.000Z", snapshot_generated_at: "2026-09-29T00:10:00.000Z", score: 91, band: "epic" }),
+          // 00:30 UTC on Sept 28 is 8:30 PM on Sept 27 in Boca Raton.
+          predictionRow({ event_kind: "sunset", event_iso: "2026-09-28T00:30:00.000Z", as_of_hour_utc: "2026-09-28T00:00:00.000Z", snapshot_generated_at: "2026-09-28T00:10:00.000Z", score: 91, band: "epic" }),
+          // Tonight's sunset is still ahead of the pinned clock: a forecast, never a record.
+          predictionRow({ event_kind: "sunset", event_iso: "2026-09-29T00:30:00.000Z", as_of_hour_utc: "2026-09-28T23:00:00.000Z", snapshot_generated_at: "2026-09-28T23:10:00.000Z", score: 99, band: "epic" }),
         ]);
         const { POST } = await import("@/app/api/history/[slug]/route");
         const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
         expect(body.records.bestSunrise).toEqual({ date: "2026-09-27", score: 72, band: "vivid" });
-        expect(body.records.bestSunset).toEqual({ date: "2026-09-28", score: 91, band: "epic" });
+        expect(body.records.bestSunset).toEqual({ date: "2026-09-27", score: 91, band: "epic" });
       });
 
       it("has no sun records for a beach with no predictions", async () => {

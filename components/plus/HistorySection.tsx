@@ -339,6 +339,7 @@ export function recordTiles(
       label: "Best sunrise",
       value: String(r.bestSunrise.score),
       sub: shortMonthDay(r.bestSunrise.date),
+      note: "forecast score",
     });
   }
   if (r.bestSunset) {
@@ -348,6 +349,7 @@ export function recordTiles(
       label: "Best sunset",
       value: String(r.bestSunset.score),
       sub: shortMonthDay(r.bestSunset.date),
+      note: "forecast score",
     });
   }
   return tiles;

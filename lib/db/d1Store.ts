@@ -55,6 +55,7 @@ import type {
 } from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
 import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
+import { CLARITY_TRUSTED_FROM, WATER_RECORD_MIN_HOURS, WATER_TEMP_MAX_F, WATER_TEMP_MIN_F } from "@/lib/history/recordRules";
 import type {
   LiveActivityRow,
   RegisterLiveActivityInput,
@@ -274,11 +275,14 @@ async function insertOrIgnoreRows<R extends object>(
 
 /** Lifetime records — one UNION ALL of six parenthesized single-row
  *  subqueries (see `historyRecords` below for the tie-break/window
- *  rationale). One numbered parameter: ?1 = slug. Every arm ranks across the
+ *  rationale). One numbered parameter: ?1 = slug. The two water arms carry
+ *  guards (lib/history/recordRules.ts): a plausible range, and the value (or a
+ *  higher one) in at least two hours of the same day; clarity also ignores days
+ *  before the low-sun fix. Every arm ranks across the
  *  beach's WHOLE archive and every scoring formula version: a row keeps the
  *  score it was given, and the best of them stands even after a later formula
  *  change. (`engine_version` is returned for information only.) */
-const HISTORY_RECORDS_UNION = `
+export const HISTORY_RECORDS_UNION = `
 SELECT * FROM (
   SELECT 'best' AS kind, local_date, local_hour, score AS value, engine_version
   FROM beach_hourly
@@ -308,37 +312,49 @@ SELECT * FROM (
 )
 UNION ALL
 SELECT * FROM (
-  SELECT 'warmest_water' AS kind, local_date, local_hour, water_temp_f AS value, engine_version
-  FROM beach_hourly
-  WHERE slug = ?1 AND row_kind = 'snapshot' AND water_temp_f IS NOT NULL
-  ORDER BY water_temp_f DESC, hour_utc ASC LIMIT 1
+  SELECT 'warmest_water' AS kind, b.local_date, b.local_hour, b.water_temp_f AS value, b.engine_version
+  FROM beach_hourly b
+  WHERE b.slug = ?1 AND b.row_kind = 'snapshot'
+    AND b.water_temp_f BETWEEN ${WATER_TEMP_MIN_F} AND ${WATER_TEMP_MAX_F}
+    AND (SELECT COUNT(*) FROM beach_hourly c
+          WHERE c.slug = b.slug AND c.local_date = b.local_date AND c.row_kind = 'snapshot'
+            AND c.water_temp_f >= b.water_temp_f AND c.water_temp_f <= ${WATER_TEMP_MAX_F}) >= ${WATER_RECORD_MIN_HOURS}
+  ORDER BY b.water_temp_f DESC, b.hour_utc ASC LIMIT 1
 )
 UNION ALL
 SELECT * FROM (
-  SELECT 'clearest_water' AS kind, local_date, local_hour, clarity_pct AS value, engine_version
-  FROM beach_hourly
-  WHERE slug = ?1 AND row_kind = 'snapshot' AND clarity_pct IS NOT NULL
-  ORDER BY clarity_pct DESC, hour_utc ASC LIMIT 1
+  SELECT 'clearest_water' AS kind, b.local_date, b.local_hour, b.clarity_pct AS value, b.engine_version
+  FROM beach_hourly b
+  WHERE b.slug = ?1 AND b.row_kind = 'snapshot' AND b.local_date >= '${CLARITY_TRUSTED_FROM}'
+    AND b.clarity_pct BETWEEN 0 AND 100
+    AND (SELECT COUNT(*) FROM beach_hourly c
+          WHERE c.slug = b.slug AND c.local_date = b.local_date AND c.row_kind = 'snapshot'
+            AND c.clarity_pct >= b.clarity_pct AND c.clarity_pct <= 100) >= ${WATER_RECORD_MIN_HOURS}
+  ORDER BY b.clarity_pct DESC, b.hour_utc ASC LIMIT 1
 )
 `;
 
 /** Best sunrise and best sunset color for one beach: per kind, the event whose
  *  LAST forecast made at or before the event scored highest (the score the day
- *  view shows for that event), ties to the earliest event. ?1 = slug. The inner
- *  MAX runs per candidate row but is served by sun_event_predictions_event
- *  (slug, event_iso), so it never leaves this beach's rows. The time compare
- *  is to the second so a stamp with or without milliseconds sorts alike. */
-const SUN_RECORDS_UNION = ["sunrise", "sunset"]
+ *  view shows for that event), ties to the earliest event. ?1 = slug, ?2 = now
+ *  (ISO): an event still in the future is only a forecast and never counts.
+ *  Each arm is one GROUP BY event_iso that picks the row of MAX(
+ *  snapshot_generated_at) (SQLite returns the other columns of that max row),
+ *  served by the primary key (slug, event_kind, event_iso, ...), so cost grows
+ *  linearly with this beach's rows. Times compare to the second so a stamp
+ *  with or without milliseconds sorts alike. */
+export const SUN_RECORDS_UNION = ["sunrise", "sunset"]
   .map(
     (k) => `SELECT * FROM (
-  SELECT 'best_${k}' AS kind, p.event_iso AS event_iso, p.score AS score, p.band AS band
-  FROM sun_event_predictions p
-  WHERE p.slug = ?1 AND p.event_kind = '${k}' AND p.score IS NOT NULL
-    AND substr(p.snapshot_generated_at, 1, 19) <= substr(p.event_iso, 1, 19)
-    AND p.snapshot_generated_at = (SELECT MAX(q.snapshot_generated_at) FROM sun_event_predictions q
-      WHERE q.slug = p.slug AND q.event_kind = p.event_kind AND q.event_iso = p.event_iso
-        AND q.score IS NOT NULL AND substr(q.snapshot_generated_at, 1, 19) <= substr(q.event_iso, 1, 19))
-  ORDER BY p.score DESC, p.event_iso ASC LIMIT 1
+  SELECT 'best_${k}' AS kind, event_iso, score, band FROM (
+    SELECT event_iso, score, band, MAX(snapshot_generated_at) AS last_snapshot
+    FROM sun_event_predictions
+    WHERE slug = ?1 AND event_kind = '${k}' AND score IS NOT NULL
+      AND substr(snapshot_generated_at, 1, 19) <= substr(event_iso, 1, 19)
+      AND substr(event_iso, 1, 19) <= substr(?2, 1, 19)
+    GROUP BY event_iso
+  )
+  ORDER BY score DESC, event_iso ASC LIMIT 1
 )`,
   )
   .join("\nUNION ALL\n");
@@ -1547,8 +1563,8 @@ export function d1Store(db: D1Like): DeviceStore {
     // single-row subqueries (SUN_RECORDS_UNION). Kept apart from
     // `historyRecords` because `sun_event_predictions` has no local-date
     // column: the caller turns `event_iso` into the beach's local date.
-    async historySunRecords(slug: string) {
-      const result = await db.prepare(SUN_RECORDS_UNION).bind(slug).all<HistorySunRecordRow>();
+    async historySunRecords(slug: string, nowIso: string) {
+      const result = await db.prepare(SUN_RECORDS_UNION).bind(slug, nowIso).all<HistorySunRecordRow>();
       return result.results ?? [];
     },
 

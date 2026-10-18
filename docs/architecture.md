@@ -623,7 +623,7 @@ flowchart TD
     HAZ2["/api/hazards<br/>POST — native-only, rate-limited<br/>'where you stand' lightning + rain"]
     LAREG["/api/live-activity/register<br/>POST — native-only, rate-limited<br/>start/rotate a Beach Session token"]
     LAEND["/api/live-activity/end<br/>POST — native-only, rate-limited<br/>Off / dismiss"]
-    HIST2["/api/history/[slug]<br/>POST — native-only, rate-limited<br/>'Last N days': day summaries + records + best day ever"]
+    HIST2["/api/history/[slug]<br/>POST — native-only, rate-limited<br/>'Last N days': day summaries + this beach's all-time records"]
   end
 
   APPSTORE[(App Store<br/>monthly · yearly, 3-day trial)] -->|"purchase via RevenueCat SDK<br/>appUserID = deviceId"| BUY
@@ -1138,7 +1138,9 @@ that gap ("since Sept 28") instead of implying full-archive coverage.
 The fourth statement is `DeviceStore.historySunRecords`: one UNION ALL of two
 single-row subqueries over `sun_event_predictions` (best sunrise, best sunset).
 Each event scores as its LAST forecast made at or before the event (the same
-rule the day view uses); the highest event wins. The table has no local-date
+rule the day view uses), one GROUP BY on the primary key; the highest event
+wins. Events after now are skipped (forecasts are logged about a day ahead). The
+tiles say "forecast score" because the value is the model's, not a measurement. The table has no local-date
 column, so the route turns `event_iso` into the beach's local day.
 
 **Records are per beach and all-time across scoring formulas.** Every archived
@@ -1146,7 +1148,10 @@ row keeps the score it was given, stamped with its `engine_version`, and no
 row is ever re-scored. Each record ranks the beach's whole archive across every
 version, so a `SCORING_ENGINE_VERSION` bump never resets or re-ranks one. The
 records are: best day, hottest sand, biggest surf, quietest time, warmest
-water, clearest water, best sunrise and best sunset. None spans beaches (the
+water, clearest water, best sunrise and best sunset. The two water records are
+guarded (`lib/history/recordRules.ts`): warmest water must be 45-95 F and be
+reached in at least two hours of the same day; clearest water ignores days
+before 2026-10-13 (the low-sun fix) and needs the same two-hour test. None spans beaches (the
 old cross-beach `bestEver` and its query are gone). The list of versions, each
 with a start date and a plain note, still lives in `lib/scoringVersions.ts` (a
 test pins its last entry to `SCORING_ENGINE_VERSION`) as a changelog. Each day

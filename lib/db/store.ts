@@ -469,6 +469,10 @@ export interface DeviceStore {
    * (2026-10-18): a row keeps the score it was given, stamped with its
    * `engine_version`, and a formula bump never resets or re-ranks anything.
    * Each record row carries its `engine_version` for information only.
+   *
+   * Water guards (lib/history/recordRules.ts): warmest water needs 45-95 °F
+   * and the value (or higher) in at least two hours of the same day; clearest
+   * water ignores days before 2026-10-13 and needs the same two-hour test.
    */
   historyRecords(slug: string): Promise<HistoryRecordsResult>;
   /**
@@ -476,9 +480,10 @@ export interface DeviceStore {
    * 'best_sunrise' / 'best_sunset'), from `sun_event_predictions`: per event
    * its last forecast made at or before the event (the score the day view
    * shows), highest wins, ties to the earliest event. Across every model
-   * version. One statement.
+   * version. Only events at or before `nowIso` count: forecasts are logged
+   * about a day ahead, and a future event is not a record. One statement.
    */
-  historySunRecords(slug: string): Promise<HistorySunRecordRow[]>;
+  historySunRecords(slug: string, nowIso: string): Promise<HistorySunRecordRow[]>;
 
   // --- Install token identity (migrations/0008_device_tokens.sql, Codex ----
   // combined-review #1) --------------------------------------------------

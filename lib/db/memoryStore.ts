@@ -51,6 +51,7 @@ import type {
 import { isNewerSunScore, sunCamObservedSource } from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
 import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
+import { CLARITY_TRUSTED_FROM, WATER_RECORD_MIN_HOURS, WATER_TEMP_MAX_F, WATER_TEMP_MIN_F } from "@/lib/history/recordRules";
 import type {
   LiveActivityRow,
   RegisterLiveActivityInput,
@@ -901,9 +902,31 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       if (surf) records.push({ kind: "biggest_surf", ...surf });
       const quiet = pick("crowd_pct", "min", (r) => r.local_hour >= 10 && r.local_hour <= 18);
       if (quiet) records.push({ kind: "quietest", ...quiet });
-      const water = pick("water_temp_f", "max");
+      // Water guards (lib/history/recordRules.ts), mirroring d1Store: a plausible
+      // value that this beach also reached (or beat) in another hour of the same
+      // local day. `hoursAtOrAbove` counts rows of that day at or above `v`.
+      const hoursAtOrAbove = (r: BeachHourlyRow, key: "water_temp_f" | "clarity_pct", v: number, cap: number) =>
+        rowsForSlug.filter(
+          (c) => c.local_date === r.local_date && typeof c[key] === "number" && (c[key] as number) >= v && (c[key] as number) <= cap,
+        ).length;
+      const water = pick(
+        "water_temp_f",
+        "max",
+        (r) =>
+          (r.water_temp_f as number) >= WATER_TEMP_MIN_F &&
+          (r.water_temp_f as number) <= WATER_TEMP_MAX_F &&
+          hoursAtOrAbove(r, "water_temp_f", r.water_temp_f as number, WATER_TEMP_MAX_F) >= WATER_RECORD_MIN_HOURS,
+      );
       if (water) records.push({ kind: "warmest_water", ...water });
-      const clear = pick("clarity_pct", "max");
+      const clear = pick(
+        "clarity_pct",
+        "max",
+        (r) =>
+          r.local_date >= CLARITY_TRUSTED_FROM &&
+          (r.clarity_pct as number) >= 0 &&
+          (r.clarity_pct as number) <= 100 &&
+          hoursAtOrAbove(r, "clarity_pct", r.clarity_pct as number, 100) >= WATER_RECORD_MIN_HOURS,
+      );
       if (clear) records.push({ kind: "clearest_water", ...clear });
 
       let archiveStartedAt: string | null = null;
@@ -921,13 +944,15 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
     // Best sunrise / sunset color — mirrors d1Store's SUN_RECORDS_UNION: per
     // event the LAST scored forecast made at or before the event (compared to
     // the second), then per kind the highest score, ties to the earliest event.
-    async historySunRecords(slug: string): Promise<HistorySunRecordRow[]> {
+    // An event after `nowIso` is a forecast, not a record, and is skipped.
+    async historySunRecords(slug: string, nowIso: string): Promise<HistorySunRecordRow[]> {
       await load();
       const upToSecond = (t: string) => t.slice(0, 19);
       const lastBeforeEvent = new Map<string, SunEventPredictionRow>();
       for (const r of sunPredictions.values()) {
         if (r.slug !== slug || typeof r.score !== "number" || !Number.isFinite(r.score)) continue;
         if (upToSecond(r.snapshot_generated_at) > upToSecond(r.event_iso)) continue;
+        if (upToSecond(r.event_iso) > upToSecond(nowIso)) continue;
         const key = `${r.event_kind}|${r.event_iso}`;
         const prev = lastBeforeEvent.get(key);
         if (!prev || r.snapshot_generated_at > prev.snapshot_generated_at) lastBeforeEvent.set(key, r);

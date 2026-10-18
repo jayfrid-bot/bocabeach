@@ -106,11 +106,11 @@ export async function POST(
     // Three independent reads: the window (bounded, for the day strip), this
     // beach's lifetime records (unbounded — a reading from before this
     // window, or before the archive was even this old, must still be
-    // nameable), and this beach's best sunrise / sunset color.
+    // nameable), and this beach's best sunrise / sunset color (past events only).
     const [rows, recordsResult, sunRows] = await Promise.all([
       store.hourlyHistory(slug, sinceLocalDate, todayLocal),
       store.historyRecords(slug),
-      store.historySunRecords(slug),
+      store.historySunRecords(slug, new Date(now).toISOString()),
     ]);
     const daySummaries = summarizeHistory(rows);
     const records = recordsFromRows(recordsResult.records, sunRows, (iso) => {
