@@ -32,10 +32,12 @@ def mkcam(i, lat=26.3, lon=-80.07, tz="America/New_York"):
 class RegistryTests(unittest.TestCase):
     def test_every_cam_on_main_is_found_with_an_id(self):
         ids = {c.id for c in REAL.cams}
-        self.assertEqual(
-            ids,
+        # every YouTube cam the uw-frame worker registers is a courier cam, and no other
+        self.assertEqual(ids, set(cs.worker_registry_ids()))
+        self.assertLessEqual(
             {"deerfield-beach-cam", "deerfield-surf-cam", "deerfield-pier-cam", "deerfield-spinner-uw",
              "ftl-elbo-beach-cam", "fort-myers-beach-cam", "pensacola-sria-west-cam"},
+            ids,
         )
         self.assertEqual(REAL.problems, [])
         self.assertTrue(all(c.youtube_id for c in REAL.cams))
@@ -44,7 +46,10 @@ class RegistryTests(unittest.TestCase):
         old = {"deerfield-spinner-uw": "SHfAtWHr9Ks", "deerfield-beach-cam": "rdeoEeJ00xA", "deerfield-surf-cam": "hIeFPNHfuoY",
                "deerfield-pier-cam": "H33wtprQqSM", "ftl-elbo-beach-cam": "1j1lgppb0PY", "fort-myers-beach-cam": "nj9jdOXXhEo",
                "pensacola-sria-west-cam": "HKIc6CYlMzI"}
-        self.assertEqual({c.id: c.youtube_id for c in REAL.cams}, old)
+        found = {c.id: c.youtube_id for c in REAL.cams}
+        self.assertEqual({k: found.get(k) for k in old}, old)
+        # every other cam carries the same video id as the worker registry
+        self.assertEqual(found, cs.worker_registry_ids())
 
     def test_elbo_keeps_its_fallback_page(self):
         elbo = next(c for c in REAL.cams if c.id == "ftl-elbo-beach-cam")
@@ -255,7 +260,7 @@ class CommandLineTests(unittest.TestCase):
             with contextlib.redirect_stdout(buf):
                 cs.main(["due", "--mode", "all"])
             rows = [l.split("|") for l in buf.getvalue().splitlines()]
-            self.assertEqual(len(rows), 7)
+            self.assertEqual(len(rows), len(REAL.cams))
             self.assertTrue(all(len(r) == 4 for r in rows))
             elbo = next(r for r in rows if r[0] == "ftl-elbo-beach-cam")
             self.assertEqual(elbo[2:], ["https://www.elboroom.com/beach-cam/", "Surf"])
@@ -274,7 +279,7 @@ class CommandLineTests(unittest.TestCase):
             with contextlib.redirect_stdout(buf):
                 cs.main(["due", "--mode", "routine", "--now", now])
             first = [l.split("|")[0] for l in buf.getvalue().splitlines()]
-            self.assertEqual(len(first), cs.routine_run_cap(7))
+            self.assertEqual(len(first), cs.routine_run_cap(len(REAL.cams)))
             # mark ok with the real clock; "now" in the test is in the past, so the cams look fresh-in-the-future
             for cid in first:
                 cs.main(["mark", "--cam", cid, "--ok"])

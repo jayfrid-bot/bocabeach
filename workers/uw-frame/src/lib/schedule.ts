@@ -24,7 +24,23 @@ export type CameraId =
   | "enco-shores-of-panama-cam"
   | "sharkys-pcb-cam"
   | "fort-zachary-taylor-cam"
-  | "sunset-grille-marathon-cam";
+  | "sunset-grille-marathon-cam"
+  // --- Florida Atlantic coast cams (2026-10-17, branch cams-atlantic). Append-only block. ---
+  | "jax-beach-bw-cam"
+  | "jax-pier-overview-cam"
+  | "st-augustine-pier-cam"
+  | "st-augustine-surf-cam"
+  | "vilano-surf-station-cam"
+  | "ormond-cam-180"
+  | "dunlawton-cam-180"
+  | "new-smyrna-cam-180"
+  | "ponce-inlet-cam-180"
+  | "hollywood-broadwalk-cam"
+  | "dania-pier-cam"
+  | "jupiter-reef-club-cam"
+  | "key-west-southernmost-waterside-cam"
+  | "key-west-southernmost-shores-cam"
+  | "sombrero-beach-cam";
 
 /**
  * "hourly"       — grabbed on every cron tick (today's Spinner behaviour).
@@ -52,12 +68,12 @@ export interface CameraSpec {
  * Lauderdale Beach's cam (Elbo Room's public YouTube live stream, owner
  * approved) is the same shape: no still-image feed, so it's grabbed the
  * same way.
- *
- * The last ten entries (Siesta Key, Anna Maria Island, Fort Myers Beach,
- * Panama City Beach, Key West, Marathon; added 2026-10-16) are owner-credited
- * business and re-streamed cams. All stay on "3h-daylight", the slowest cadence
- * here, and sit at the END of the list so the tick budget (index.ts) cuts them
- * first if a tick runs long.
+ * The Gulf and Keys entries (Siesta Key, Anna Maria Island, Fort Myers Beach,
+ * Panama City Beach, Key West, Marathon; added 2026-10-16) and the Florida
+ * Atlantic entries after them (added 2026-10-17) are owner-credited business,
+ * public-body and re-streamed cams. All stay on "3h-daylight", the slowest
+ * cadence here, and sit at the END of the list so the tick budget (index.ts)
+ * cuts them first if a tick runs long.
  */
 export const CAMERA_REGISTRY: readonly CameraSpec[] = [
   {
@@ -176,6 +192,113 @@ export const CAMERA_REGISTRY: readonly CameraSpec[] = [
     id: "sunset-grille-marathon-cam",
     videoId: "SXMC-MzSncI",
     label: "Marathon Sunset Grille (Sunset Grille & Raw Bar / Seek Florida Keys)",
+    purpose: "shoreline",
+    cadence: "3h-daylight",
+  },
+  // --- Florida Atlantic coast cams (2026-10-17, branch cams-atlantic). Append-only block. All use the
+  // slowest existing cadence (3h-daylight); the home-server courier paces its own grabs (scripts/courier_schedule.py). ---
+  {
+    id: "jax-beach-bw-cam",
+    videoId: "bZ4uxyLqV-E",
+    label: "Jacksonville Beach Cam (Best Western Oceanfront Jacksonville Beach)",
+    purpose: "shoreline",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "jax-pier-overview-cam",
+    videoId: "EOTLy91Ycew",
+    label: "Jacksonville Beach Pier — Overview (The Jacksonville Beach Pier)",
+    purpose: "shoreline",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "st-augustine-pier-cam",
+    videoId: "Q6eZVkUKFxo",
+    label: "St. Augustine Beach Pier Cam (The Surf Station)",
+    purpose: "shoreline",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "st-augustine-surf-cam",
+    videoId: "H2q_DJc33kg",
+    label: "St. Augustine Beach Surf Cam (The Surf Station)",
+    purpose: "shoreline",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "vilano-surf-station-cam",
+    videoId: "o4BJ-eDgYrM",
+    label: "North Vilano — South Ponte Vedra Surf Cam (The Surf Station)",
+    purpose: "shoreline",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "ormond-cam-180",
+    videoId: "p1s7EdZgGvU",
+    label: "Ormond Beach Cam 180 (Volusia County Beach Safety)",
+    purpose: "shoreline",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "dunlawton-cam-180",
+    videoId: "3hwTkO_5KXo",
+    label: "Dunlawton Beach Cam 180 (Volusia County Beach Safety)",
+    purpose: "shoreline",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "new-smyrna-cam-180",
+    videoId: "550p9smwjPM",
+    label: "New Smyrna Beach Cam 180 (Volusia County Beach Safety)",
+    purpose: "shoreline",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "ponce-inlet-cam-180",
+    videoId: "ZCozdEGwkDI",
+    label: "Ponce Inlet Beach Cam 180 (Volusia County Beach Safety)",
+    purpose: "shoreline",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "hollywood-broadwalk-cam",
+    videoId: "cmkAbDUEoyA",
+    label: "Hollywood Beach Broadwalk Cam (City of Hollywood)",
+    purpose: "crowd/sand",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "dania-pier-cam",
+    videoId: "o1eTLR7Degs",
+    label: "Dania Beach Pier Cam (City of Dania Beach)",
+    purpose: "shoreline",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "jupiter-reef-club-cam",
+    videoId: "1FYgBpkM7SA",
+    label: "Jupiter Reef Club Cam (Jupiter Reef Club)",
+    purpose: "shoreline",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "key-west-southernmost-waterside-cam",
+    videoId: "UyfDBDRwPeI",
+    label: "Key West South Beach — Waterside (Southernmost Beach Resort)",
+    purpose: "shoreline",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "key-west-southernmost-shores-cam",
+    videoId: "gsDDwA96F6Q",
+    label: "Key West South Beach — Shores Pool (Southernmost Beach Resort)",
+    purpose: "crowd/sand",
+    cadence: "3h-daylight",
+  },
+  {
+    id: "sombrero-beach-cam",
+    videoId: "jE4og3o_SXs",
+    label: "Sombrero Beach Cam (Monroe County Tourist Development Council (Florida Keys))",
     purpose: "shoreline",
     cadence: "3h-daylight",
   },

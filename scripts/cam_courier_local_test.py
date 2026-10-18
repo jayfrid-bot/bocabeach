@@ -19,7 +19,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import courier_schedule as cs  # noqa: E402
 import yt_pacer as yp  # noqa: E402
+
+N_CAMS = len(cs.grabbable(cs.load_registry()))  # every courier cam in config
 
 SCRIPT = HERE / "cam_courier_local.sh"
 NOON = "2026-10-17T16:03:00Z"  # 12:03 EDT, outside every golden window
@@ -85,21 +88,22 @@ class CourierShellTests(unittest.TestCase):
     def test_a_forced_run_grabs_every_cam_in_config_and_uploads_each(self):
         r = self.run_script("--force")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(len(self.calls("yt-dlp")), 7)
+        self.assertEqual(len(self.calls("yt-dlp")), N_CAMS)
         ups = self.calls("curl")
-        self.assertEqual(len(ups), 7)
+        self.assertEqual(len(ups), N_CAMS)
         self.assertTrue(any("cam=pensacola-sria-west-cam" in u for u in ups))
         self.assertTrue(any("cam=deerfield-spinner-uw" in u for u in ups))
-        self.assertIn("done (all): 7/7 cams uploaded", r.stdout)
+        self.assertIn(f"done (all): {N_CAMS}/{N_CAMS} cams uploaded", r.stdout)
         last, fails = self.notes()
-        self.assertEqual(len(last), 7)
+        self.assertEqual(len(last), N_CAMS)
         self.assertEqual(fails, {})
 
     def test_a_routine_run_takes_only_a_few_due_cams_and_names_no_cam_itself(self):
         r = self.run_script(COURIER_NOW=NOON)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(len(self.calls("yt-dlp")), 2)  # run cap for 7 cams
-        self.assertEqual(len(self.calls("curl")), 2)
+        self.assertEqual(len(self.calls("yt-dlp")), cs.routine_run_cap(N_CAMS))  # the run cap, not every cam
+        self.assertLess(cs.routine_run_cap(N_CAMS), N_CAMS)
+        self.assertEqual(len(self.calls("curl")), cs.routine_run_cap(N_CAMS))
         text = SCRIPT.read_text()
         for needle in ("deerfield-beach-cam", "rdeoEeJ00xA", "HKIc6CYlMzI", "ftl-elbo-beach-cam", "pensacola-sria-west-cam"):
             self.assertNotIn(needle, text)  # the cam list lives in config, not in the shell
@@ -143,11 +147,11 @@ class CourierShellTests(unittest.TestCase):
     def test_a_failing_cam_gets_a_cooldown_and_the_other_cams_still_run(self):
         r = self.run_script("--force", FAKE_FAIL="H33wtprQqSM")  # the pier cam
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(len(self.calls("curl")), 6)
+        self.assertEqual(len(self.calls("curl")), N_CAMS - 1)
         last, fails = self.notes()
         self.assertEqual(list(fails), ["deerfield-pier-cam"])
         self.assertNotIn("deerfield-pier-cam", last)
-        self.assertIn("6/7 cams uploaded", r.stdout)
+        self.assertIn(f"{N_CAMS - 1}/{N_CAMS} cams uploaded", r.stdout)
 
     def test_a_remembered_stream_id_replaces_the_one_in_config(self):
         yp.Pacer(self.state, quiet=True).cache_put("vid:deerfield-pier-cam", "REDISCOVERED1", 3600)
@@ -160,7 +164,7 @@ class CourierShellTests(unittest.TestCase):
         self.assertIn("upload failed (HTTP 400)", r.stdout)
         self.assertEqual(r.returncode, 1)
         _, fails = self.notes()
-        self.assertEqual(len(fails), 7)
+        self.assertEqual(len(fails), N_CAMS)
 
     def test_an_over_budget_run_skips_without_failing_or_cooling_the_cams(self):
         r = self.run_script("--force", YTPACE_CAP_ROUTINE="0")

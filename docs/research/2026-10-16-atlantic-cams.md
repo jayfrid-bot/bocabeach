@@ -194,3 +194,37 @@ Usable-tier pins, if those asks succeed: `hollywood-beach` 26.0095, -80.1165; `d
 - **Thumbnails are not always live.** Some channels use a custom thumbnail (Surf Station St. Augustine cams, Hollywood, I Love Cocoa Beach). I marked the ones I judged from a thumbnail only.
 - **Sky regions.** The Volusia fisheyes and the Jacksonville Beach cam have a thin or curved sky strip. Draw regions on a real frame, as the Gulf sweep did.
 - **Bot check:** none seen. If it returns, stop all yt-dlp calls.
+
+## What was added (2026-10-17, branch `cams-atlantic`)
+
+The owner decided on 2026-10-16 to add every usable Florida cam now, with the owner credited and linked. If an owner objects, the cam comes down the same day (see "Taking a cam down").
+
+**Beaches.** 17 new curated beaches, and `jacksonville-beach` moved from the auto-resolved pin (near Mayport) to the pier. Slugs: `jacksonville-beach`, `st-augustine-beach`, `vilano-beach`, `ormond-beach`, `dunlawton-beach`, `new-smyrna-beach`, `ponce-inlet`, `hollywood-beach`, `dania-beach`, `singer-island`, `jupiter`, `jensen-beach`, `stuart-bathtub-beach`, `hobe-sound`, `sebastian-inlet`, `wabasso-beach`, `key-west-south`, `sombrero-beach`. The Gulf branch holds `key-west` (Fort Zachary Taylor) and `marathon` (Sunset Grille). The Southernmost cams sit on `key-west-south`, on the Atlantic shore about 1 mi east of Fort Zachary Taylor. Sombrero Beach is a separate beach from the Gulf-side Marathon pin.
+
+**Cams.** 27 cams with a still, plus one link-out. 15 are YouTube streams pulled by the home courier. 12 are `video-monitoring.com` stills (Jupiter Inlet District, Martin County, Sebastian Inlet District, Palm Beach County ERM), which need no YouTube pull. The Wabasso Beach cam is a link to Indian River County's own page: its embed allows only `indianriver.gov` to frame it.
+
+**Pins.** Each pin is a public-access point from the FL Healthy Beaches feed or an OpenStreetMap place, moved about 50 m inland from the OSM coastline. The Vilano Beach, Ponce Inlet and Hollywood Beach pins and the two Keys pins are good to a few hundred metres. The Surf Station and Ponce Inlet cams carry no coordinates of their own because their exact spots are unconfirmed.
+
+**Skipped, and why.**
+
+| Cam | Why |
+| --- | --- |
+| P16, P17, P18 | Excluded by the owner: out of service, EarthCam-hosted, no stream found |
+| B6, B7, B12 | Weak: crane and cars, a Volusia duplicate, no sand |
+| B11, B13 | Weak: people and signs dominate, the pose changes with zoom |
+| P8 Boynton Inlet | Weak: mostly jetty and channel |
+| P13 Ormond-By-The-Sea (`-grSyQa817o`) | A live second Volusia cam at the same beach as P9. It adds no beach. It would cost one more pull an hour |
+| B2 North and South views, B5 "3rd St" | Same beaches as B1 and B5. They would cost three more pulls an hour |
+| Commercial networks | Surfline, EarthCam, HDOnTap, Skyline, Ozolio, Coastal Camera Network, PTZtv: excluded by the owner |
+
+**YouTube load.** The 15 new streams add 15 `yt-dlp` pulls an hour (06:00 to 20:59 Eastern, 225 a day). Update (merge with the paced courier, 2026-10-17): the courier no longer keeps a cam list. `scripts/courier_schedule.py` builds it from config and paces every pull with the shared budget (`docs/courier-pacing.md`). The 14 new YouTube cams that are not sun cams have their video ids in `config/courier-cams.json`; `jax-beach-bw-cam` gets its id from `config/sun-cams.json`. The worker registry gives them the slowest cadence (`3h-daylight`). The sun-cam check adds about two `yt-dlp -J` calls a day for `jax-beach-bw-cam`, the only new sun cam. Of the new YouTube streams, only B1, B2, B4, B5, B9, B10, P9, P10, P14 and P19 keep a DVR; the other five cannot feed a sun cam.
+
+**Owner to-dos.**
+
+1. Install the courier change on the home server (the paced courier reads the new cams from config). Nothing was deployed or touched on the server.
+2. Send the short courtesy notes. Each owner's contact is in the tables above.
+3. Review `coastNormalDeg` and `coast` for the new beaches (left unset on purpose, as for the Gulf beaches).
+4. Register sky regions for the other east-facing DVR cams (Ormond, Dunlawton, the Jacksonville Beach Pier) from a daytime frame.
+5. Add the new beaches to the FamilyHub tablet list if wanted.
+
+**Taking a cam down.** Set `archive: false` on the cam in `config/locations.ts` (it blocks archive ingest at once), then remove the cam from `config/locations.ts`, `config/vision-cams.json`, `config/archive-cams.json` (run `scripts/gen_archive_cams.ts`), `config/courier-cams.json` (or `config/sun-cams.json`) and the worker registry. Run `scripts/cam_archive_remove.ts` to erase stored frames.

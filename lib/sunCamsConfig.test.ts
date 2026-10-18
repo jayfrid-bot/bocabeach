@@ -16,7 +16,7 @@ function miles(lat1: number, lon1: number, lat2: number, lon2: number): number {
 }
 
 function locationCam(camId: string) {
-  for (const slug of ["boca-raton", "deerfield-beach", "fort-lauderdale", "fort-myers-beach", "pensacola-beach", "siesta-key", "anna-maria-island", "panama-city-beach", "key-west", "marathon"]) {
+  for (const slug of ["boca-raton", "deerfield-beach", "fort-lauderdale", "fort-myers-beach", "pensacola-beach", "siesta-key", "anna-maria-island", "panama-city-beach", "key-west", "marathon", "jacksonville-beach"]) {
     const cam = getLocation(slug)?.cams?.find((c) => c.id === camId);
     if (cam) return cam;
   }
@@ -24,7 +24,7 @@ function locationCam(camId: string) {
 }
 
 describe("config/sun-cams.json", () => {
-  it("lists the sixteen 24/7 livestream cams", () => {
+  it("lists the seventeen 24/7 livestream cams", () => {
     expect(SUN_CAMS.map((c) => c.id).sort()).toEqual([
       "deerfield-beach-cam",
       "deerfield-pier-cam",
@@ -35,6 +35,7 @@ describe("config/sun-cams.json", () => {
       "fort-zachary-taylor-cam",
       "ftl-elbo-beach-cam",
       "holmes-beach-cam",
+      "jax-beach-bw-cam",
       "margaritaville-fmb-cam",
       "pensacola-sria-west-cam",
       "pink-shell-fmb-cam",
@@ -67,6 +68,15 @@ describe("config/sun-cams.json", () => {
       expect(expectedView("sunset", camFacing(cam))).toBe("solar");
       expect(expectedView("sunrise", camFacing(cam))).toBe("antisolar");
     }
+  });
+
+  it("the Jacksonville Beach cam looks east-north-east: its sunrise is the solar view, with the owners credited", () => {
+    const cam = SUN_CAMS.find((c) => c.id === "jax-beach-bw-cam");
+    expect(cam).toBeDefined();
+    expect(cam?.facing_azimuth_deg).toBe(70);
+    expect(expectedView("sunrise", camFacing(cam!))).toBe("solar");
+    expect(expectedView("sunset", camFacing(cam!))).toBe("antisolar");
+    expect(cam?.credit).toMatch(/Best Western Oceanfront Jacksonville Beach and 911 Surf Report/);
   });
 
   it("every cam without a facing label looks east (the Atlantic cams)", () => {
@@ -142,6 +152,7 @@ describe("config/sun-cams.json", () => {
       "sharkys-pcb-cam": "panama-city-beach",
       "fort-zachary-taylor-cam": "key-west",
       "sunset-grille-marathon-cam": "marathon",
+      "jax-beach-bw-cam": "jacksonville-beach",
     };
     for (const cam of SUN_CAMS) {
       const slugs = cam.beaches.map((b) => b.slug).sort();

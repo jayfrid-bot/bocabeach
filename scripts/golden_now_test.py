@@ -8,6 +8,7 @@ No network. The windows are checked against the NOAA solver in sun_cam_check.py.
 import contextlib
 import io
 import plistlib
+import re
 import sys
 import unittest
 from datetime import date, datetime, timedelta, timezone
@@ -15,6 +16,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import courier_schedule  # noqa: E402
 import golden_now as gn  # noqa: E402
 import sun_cam_check as sc  # noqa: E402
 
@@ -178,7 +180,11 @@ class CliTests(unittest.TestCase):
     def test_exit_0_inside_with_a_line_saying_which(self):
         code, out, _ = self.run_main("--now", "2026-10-12T22:40:00Z")
         self.assertEqual(code, 0)
-        self.assertRegex(out, r"inside (deerfield-beach|fort-lauderdale) sunset window 22:\d\dZ-23:\d\dZ")
+        m = re.search(r"inside ([a-z-]+) sunset window 22:\d\dZ-23:\d\dZ", out)
+        self.assertIsNotNone(m, out)
+        # the beach named is one the courier grabs (the first, A to Z, of those in a window)
+        courier_beaches = {c.slug for c in courier_schedule.grabbable(courier_schedule.load_registry())}
+        self.assertIn(m.group(1), courier_beaches)
 
     def test_exit_1_outside(self):
         code, out, _ = self.run_main("--now", "2026-10-12T16:00:00Z")

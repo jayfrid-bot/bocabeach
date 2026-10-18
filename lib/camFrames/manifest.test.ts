@@ -6,7 +6,7 @@ import visionCams from "@/config/vision-cams.json";
 import { archiveCams, buildArchiveManifestJson, lookupCam } from "@/lib/camFrames/manifest";
 
 /** The cams the archive keeps, by id: the eleven the owner chose (2026-10-11) plus the two west-facing Gulf cams (2026-10-15) and the ten Gulf and Keys cams (2026-10-16). */
-const EXPECTED_IDS = [
+const BASE_IDS = [
   "boca-inlet",
   "boca-inlet-jetty",
   "boca-inlet-north",
@@ -32,11 +32,15 @@ const EXPECTED_IDS = [
   "white-sands-ami-cam",
 ];
 
+
+/** The 27 Florida Atlantic-coast cams added 2026-10-17 (docs/research/2026-10-16-atlantic-cams.md). */
+const ATLANTIC_IDS = ["bathtub-beach-cam", "bathtub-beach-surf", "dania-pier-cam", "dunlawton-cam-180", "hobe-sound-beach-cam", "hobe-sound-beach-south-cam", "hollywood-broadwalk-cam", "jax-beach-bw-cam", "jax-pier-overview-cam", "jensen-beach-cam", "jensen-beach-surf", "jupiter-inlet-beach", "jupiter-inlet-surf", "jupiter-reef-club-cam", "key-west-southernmost-shores-cam", "key-west-southernmost-waterside-cam", "lake-worth-inlet-beach", "lake-worth-inlet-surf", "new-smyrna-cam-180", "ormond-cam-180", "ponce-inlet-cam-180", "sebastian-inlet-beach-cam", "sebastian-inlet-south-beach-cam", "sombrero-beach-cam", "st-augustine-pier-cam", "st-augustine-surf-cam", "vilano-surf-station-cam"];
+
 describe("archive manifest", () => {
-  it("is exactly the 23 configured cams", () => {
+  it("is exactly the 50 configured cams", () => {
     const ids = archiveCams().map((c) => c.camId).sort();
-    expect(ids).toEqual(EXPECTED_IDS);
-    expect(ids).toHaveLength(23);
+    expect(ids).toEqual([...BASE_IDS, ...ATLANTIC_IDS].sort());
+    expect(ids).toHaveLength(50);
   });
 
   it("covers every cam in locations.ts that has a proxied still", () => {
@@ -52,7 +56,9 @@ describe("archive manifest", () => {
       Object.values(visionCams as Record<string, { cams: { id: string }[] }>).flatMap((e) => e.cams.map((c) => c.id)),
     );
     const archiveOnly = archiveCams().map((c) => c.camId).filter((id) => !visionIds.has(id)).sort();
-    expect(archiveOnly).toEqual(["boca-inlet", "boca-inlet-jetty", "boca-inlet-north", "deerfield-spinner-uw"]);
+    expect(archiveOnly).toEqual(
+      ["boca-inlet", "boca-inlet-jetty", "boca-inlet-north", "deerfield-spinner-uw", ...["bathtub-beach-surf", "hobe-sound-beach-south-cam", "jax-pier-overview-cam", "jensen-beach-surf", "jupiter-inlet-surf", "jupiter-reef-club-cam", "key-west-southernmost-shores-cam", "sebastian-inlet-south-beach-cam", "st-augustine-surf-cam"]].sort(),
+    );
   });
 
   it("carries the attribution, timezone and source kind each row will store", () => {
@@ -93,7 +99,7 @@ describe("config/archive-cams.json (read by scripts/cam_seaweed.py)", () => {
     expect(onDisk).toEqual(buildArchiveManifestJson());
   });
 
-  it("lists the same 11 ids as the manifest, in the same order", () => {
+  it("lists the same ids as the manifest, in the same order", () => {
     const onDisk = JSON.parse(readFileSync(path.join(process.cwd(), "config", "archive-cams.json"), "utf8"));
     expect(onDisk.cams.map((c: { id: string }) => c.id)).toEqual(archiveCams().map((c) => c.camId));
   });

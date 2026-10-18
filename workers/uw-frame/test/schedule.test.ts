@@ -8,8 +8,11 @@ import {
   isSurfaceCamHour,
 } from "../src/lib/schedule";
 
+/** The 15 Florida Atlantic-coast YouTube cams added 2026-10-17, in registry order. */
+const ATLANTIC_CAMS = ["jax-beach-bw-cam", "jax-pier-overview-cam", "st-augustine-pier-cam", "st-augustine-surf-cam", "vilano-surf-station-cam", "ormond-cam-180", "dunlawton-cam-180", "new-smyrna-cam-180", "ponce-inlet-cam-180", "hollywood-broadwalk-cam", "dania-pier-cam", "jupiter-reef-club-cam", "key-west-southernmost-waterside-cam", "key-west-southernmost-shores-cam", "sombrero-beach-cam"];
+
 describe("registry", () => {
-  it("has exactly the seventeen documented cameras", () => {
+  it("has exactly the thirty-two documented cameras", () => {
     expect(CAMERA_REGISTRY.map((c) => c.id)).toEqual([
       "deerfield-spinner-uw",
       "deerfield-beach-cam",
@@ -28,7 +31,15 @@ describe("registry", () => {
       "sharkys-pcb-cam",
       "fort-zachary-taylor-cam",
       "sunset-grille-marathon-cam",
+      ...ATLANTIC_CAMS,
     ]);
+  });
+
+  it("gives every Atlantic cam the slowest existing cadence (3h-daylight) and a distinct YouTube id", () => {
+    const atlantic = CAMERA_REGISTRY.filter((c) => ATLANTIC_CAMS.includes(c.id));
+    expect(atlantic).toHaveLength(15);
+    for (const c of atlantic) expect(c.cadence).toBe("3h-daylight");
+    expect(new Set(CAMERA_REGISTRY.map((c) => c.videoId)).size).toBe(CAMERA_REGISTRY.length);
   });
 
   it("keeps the Spinner cam's video id and hourly cadence unchanged", () => {
@@ -50,8 +61,9 @@ describe("registry", () => {
     expect(findCamera("pensacola-sria-west-cam")?.cadence).toBe("3h-daylight");
   });
 
-  it("registers the ten Gulf and Keys cams on the slowest cadence, after the older cams", () => {
-    const tail = CAMERA_REGISTRY.slice(-10);
+  it("registers the ten Gulf and Keys cams on the slowest cadence, after the older cams and before the Atlantic cams", () => {
+    expect(CAMERA_REGISTRY.slice(-ATLANTIC_CAMS.length).map((c) => c.id)).toEqual(ATLANTIC_CAMS);
+    const tail = CAMERA_REGISTRY.slice(-(10 + ATLANTIC_CAMS.length), -ATLANTIC_CAMS.length);
     expect(tail.map((c) => c.id)).toEqual([
       "siesta-beach-cam",
       "white-sands-ami-cam",
@@ -118,7 +130,7 @@ describe("camsDueAtTick", () => {
     expect(due.map((c) => c.id)).toEqual(["deerfield-spinner-uw"]);
   });
 
-  it("grabs the underwater cam and all sixteen surface cams on a daylight surface hour", () => {
+  it("grabs the underwater cam and all thirty-one surface cams on a daylight surface hour", () => {
     // 13:00 UTC = 9am EDT: daylight AND a surface hour.
     const due = camsDueAtTick(new Date("2026-07-15T13:00:00Z"));
     expect(due.map((c) => c.id).sort()).toEqual(
@@ -140,6 +152,7 @@ describe("camsDueAtTick", () => {
         "sharkys-pcb-cam",
         "fort-zachary-taylor-cam",
         "sunset-grille-marathon-cam",
+        ...ATLANTIC_CAMS,
       ].sort()
     );
   });

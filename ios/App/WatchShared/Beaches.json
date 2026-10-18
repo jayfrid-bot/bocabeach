@@ -14,6 +14,13 @@
   "lon": -74.0335
  },
  {
+  "slug": "stuart-bathtub-beach",
+  "name": "Bathtub Beach",
+  "region": "Martin County, FL",
+  "lat": 27.1932,
+  "lon": -80.1628
+ },
+ {
   "slug": "biloxi",
   "name": "Biloxi",
   "region": "Harrison County, MS",
@@ -81,6 +88,13 @@
   "lon": -118.5131
  },
  {
+  "slug": "dania-beach",
+  "name": "Dania Beach",
+  "region": "Broward County, FL",
+  "lat": 26.058,
+  "lon": -80.1119
+ },
+ {
   "slug": "daytona-beach",
   "name": "Daytona Beach",
   "region": "Volusia County, FL",
@@ -93,6 +107,13 @@
   "region": "Broward County, FL",
   "lat": 26.3165,
   "lon": -80.0742
+ },
+ {
+  "slug": "dunlawton-beach",
+  "name": "Dunlawton Beach",
+  "region": "Volusia County, FL",
+  "lat": 29.1513,
+  "lon": -80.9686
  },
  {
   "slug": "folly-beach",
@@ -151,6 +172,20 @@
   "lon": -70.8162
  },
  {
+  "slug": "hobe-sound",
+  "name": "Hobe Sound",
+  "region": "Martin County, FL",
+  "lat": 27.0892,
+  "lon": -80.1268
+ },
+ {
+  "slug": "hollywood-beach",
+  "name": "Hollywood Beach",
+  "region": "Broward County, FL",
+  "lat": 26.016,
+  "lon": -80.1153
+ },
+ {
   "slug": "huntington-beach",
   "name": "Huntington Beach",
   "region": "Orange County, CA",
@@ -161,8 +196,22 @@
   "slug": "jacksonville-beach",
   "name": "Jacksonville Beach",
   "region": "Duval County, FL",
-  "lat": 30.3902,
-  "lon": -81.3944
+  "lat": 30.2934,
+  "lon": -81.389
+ },
+ {
+  "slug": "jensen-beach",
+  "name": "Jensen Beach",
+  "region": "Martin County, FL",
+  "lat": 27.2556,
+  "lon": -80.1969
+ },
+ {
+  "slug": "jupiter",
+  "name": "Jupiter",
+  "region": "Palm Beach County, FL",
+  "lat": 26.9401,
+  "lon": -80.0715
  },
  {
   "slug": "key-west",
@@ -170,6 +219,13 @@
   "region": "Monroe County, FL",
   "lat": 24.5462,
   "lon": -81.8104
+ },
+ {
+  "slug": "key-west-south",
+  "name": "Key West — South Beach",
+  "region": "Monroe County, FL",
+  "lat": 24.5467,
+  "lon": -81.7949
  },
  {
   "slug": "la-jolla",
@@ -235,6 +291,13 @@
   "lon": -81.796
  },
  {
+  "slug": "new-smyrna-beach",
+  "name": "New Smyrna Beach",
+  "region": "Volusia County, FL",
+  "lat": 29.0383,
+  "lon": -80.8955
+ },
+ {
   "slug": "ocean-shores",
   "name": "Ocean Shores",
   "region": "Grays Harbor County, WA",
@@ -247,6 +310,13 @@
   "region": "York County, ME",
   "lat": 43.5206,
   "lon": -70.3681
+ },
+ {
+  "slug": "ormond-beach",
+  "name": "Ormond Beach",
+  "region": "Volusia County, FL",
+  "lat": 29.338,
+  "lon": -81.0612
  },
  {
   "slug": "panama-city-beach",
@@ -268,6 +338,13 @@
   "region": "San Luis Obispo County, CA",
   "lat": 35.1428,
   "lon": -120.6413
+ },
+ {
+  "slug": "ponce-inlet",
+  "name": "Ponce Inlet",
+  "region": "Volusia County, FL",
+  "lat": 29.0789,
+  "lon": -80.9198
  },
  {
   "slug": "rehoboth-beach",
@@ -298,11 +375,32 @@
   "lon": -121.8719
  },
  {
+  "slug": "sebastian-inlet",
+  "name": "Sebastian Inlet",
+  "region": "Indian River County, FL",
+  "lat": 27.8589,
+  "lon": -80.4472
+ },
+ {
   "slug": "siesta-key",
   "name": "Siesta Key",
   "region": "Sarasota County, FL",
   "lat": 27.2648,
   "lon": -82.5507
+ },
+ {
+  "slug": "singer-island",
+  "name": "Singer Island",
+  "region": "Palm Beach County, FL",
+  "lat": 26.7823,
+  "lon": -80.0318
+ },
+ {
+  "slug": "sombrero-beach",
+  "name": "Sombrero Beach",
+  "region": "Monroe County, FL",
+  "lat": 24.6918,
+  "lon": -81.0864
  },
  {
   "slug": "south-padre-island",
@@ -312,6 +410,13 @@
   "lon": -97.1527
  },
  {
+  "slug": "st-augustine-beach",
+  "name": "St. Augustine Beach",
+  "region": "St. Johns County, FL",
+  "lat": 29.8571,
+  "lon": -81.2659
+ },
+ {
   "slug": "tybee-island",
   "name": "Tybee Island",
   "region": "Chatham County, GA",
@@ -319,11 +424,25 @@
   "lon": -80.8457
  },
  {
+  "slug": "vilano-beach",
+  "name": "Vilano Beach",
+  "region": "St. Johns County, FL",
+  "lat": 29.9184,
+  "lon": -81.2907
+ },
+ {
   "slug": "virginia-beach",
   "name": "Virginia Beach",
   "region": "Virginia Beach, VA",
   "lat": 36.8529,
   "lon": -75.978
+ },
+ {
+  "slug": "wabasso-beach",
+  "name": "Wabasso Beach",
+  "region": "Indian River County, FL",
+  "lat": 27.7635,
+  "lon": -80.3971
  },
  {
   "slug": "waikiki",

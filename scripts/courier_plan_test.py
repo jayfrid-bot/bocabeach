@@ -22,6 +22,11 @@ REG = cs.load_registry()
 BASE = cs.grabbable(REG)
 SUN_BASE = [c for c in BASE if c.sun]
 BEACHES = golden_now.load_beaches()
+# The seven cams the courier held before the Gulf and Atlantic additions (2026-10-16/17).
+ORIGINAL_IDS = {"deerfield-beach-cam", "deerfield-surf-cam", "deerfield-pier-cam", "deerfield-spinner-uw",
+                "ftl-elbo-beach-cam", "fort-myers-beach-cam", "pensacola-sria-west-cam"}
+# The planning envelope the pacer was sized for: those seven plus 35 planned cams.
+PLANNED_TOTAL = 7 + 35
 DAYS = [date(2026, 3, 20), date(2026, 6, 21), date(2026, 9, 22), date(2026, 10, 16), date(2026, 12, 21)]
 
 
@@ -36,9 +41,16 @@ class PlanTests(unittest.TestCase):
             s = cp.summarize(run("new", day, 35))
             self.assertLessEqual(s["peak_15min"], cp.TARGET_15MIN, f"{day}: {s}")
 
-    def test_the_new_model_with_todays_cams_is_well_under_the_target(self):
+    def test_the_new_model_with_todays_cams_stays_under_the_target_all_year(self):
         for day in DAYS:
-            self.assertLessEqual(cp.summarize(run("new", day))["peak_15min"], 30)
+            self.assertLessEqual(cp.summarize(run("new", day))["peak_15min"], cp.TARGET_15MIN, day)
+
+    def test_the_new_model_with_the_original_seven_cams_is_well_under_the_target(self):
+        orig = [c for c in BASE if c.id in ORIGINAL_IDS]
+        self.assertEqual({c.id for c in orig}, ORIGINAL_IDS)
+        for day in DAYS:
+            res = cp.simulate("new", day, orig, [c for c in orig if c.sun], BEACHES)
+            self.assertLessEqual(cp.summarize(res)["peak_15min"], 30)
 
     def test_the_legacy_model_at_plus_35_is_far_over_the_target(self):
         for day in DAYS:
@@ -68,29 +80,35 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(n_old, 3 * old.sun_events)
 
     def test_every_sun_event_is_still_served(self):
-        # 6 cams x sunrise + sunset = 12 cam-events on a normal day, with or without the pacer
-        self.assertEqual(run("new", date(2026, 10, 16)).sun_events, 12)
+        # every sun cam x sunrise + sunset on a normal day, with or without the pacer
+        self.assertEqual(run("new", date(2026, 10, 16)).sun_events, 2 * len(SUN_BASE))
 
     def test_the_today_model_has_no_golden_calls(self):
         s = cp.summarize(run("today", date(2026, 10, 16)))
         self.assertNotIn("courier-golden", s["by_job"])
 
     def test_todays_server_load_matches_what_the_log_shows(self):
-        # the server's logs: 7 cams x 15 daylight hours of -g, plus ~3 -J per working cam-event
+        # the server's logs (7 cams then): every cam x 15 daylight hours of -g, plus ~3 -J per
+        # working cam-event (2 events per sun cam)
         s = cp.summarize(run("today", date(2026, 10, 16)))
-        self.assertEqual(s["by_job"]["courier-routine"], 7 * 15)
-        self.assertEqual(s["by_job"]["suncam"], 36)
+        self.assertEqual(s["by_job"]["courier-routine"], len(BASE) * 15)
+        self.assertEqual(s["by_job"]["suncam"], 3 * 2 * len(SUN_BASE))
 
     def test_golden_only_grabs_cams_in_a_window(self):
         res = run("new", date(2026, 10, 16))
         golden = [c for c in res.calls if c.job == "courier-golden"]
         self.assertTrue(golden)
-        self.assertLess(len(golden), 7 * 6 * 4)  # far below "every cam, every 10 min, all four hours"
+        self.assertLess(len(golden), len(BASE) * 6 * 4)  # far below "every cam, every 10 min, all four hours"
 
     def test_a_larger_set_never_starves_sunrise_work_for_routine_work(self):
-        res = run("new", date(2026, 10, 16), 35)
-        self.assertEqual(res.sun_events, 82)
+        # at the planned envelope, every sun event is served and hardly a call is refused
+        extra = max(0, PLANNED_TOTAL - len(BASE))
+        res = run("new", date(2026, 10, 16), extra)
+        self.assertEqual(res.sun_events, 2 * (len(SUN_BASE) + extra))
         self.assertLessEqual(res.dropped, 6)
+        # 35 cams past today's set: routine calls may be refused, sun events still all served
+        res = run("new", date(2026, 10, 16), 35)
+        self.assertEqual(res.sun_events, 2 * (len(SUN_BASE) + 35))
 
     def test_synthetic_cams_are_split_between_the_coasts(self):
         cams = cp.synthetic_cams(35)
@@ -105,7 +123,7 @@ class CliTests(unittest.TestCase):
         with contextlib.redirect_stdout(buf):
             cp.main(["--date", "2026-10-16", "--extra", "35", "--model", "new", "--timeline"])
         out = buf.getvalue()
-        self.assertIn("42 courier cams (7 real + 35 planned)", out)
+        self.assertIn(f"{len(BASE) + 35} courier cams ({len(BASE)} real + 35 planned)", out)
         self.assertIn("busiest 15 minutes", out)
         self.assertIn("within the 60 target", out)
         self.assertIn("yt-dlp -g", out)

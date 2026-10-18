@@ -101,7 +101,8 @@ Things that went wrong while building it:
 
 ## The cams
 
-Sixteen 24/7 YouTube streams. Four face east over the Atlantic and twelve face west
+Seventeen 24/7 YouTube streams. Five face east over the Atlantic (the Jacksonville
+Beach cam was added 2026-10-17) and twelve face west
 over the Gulf of Mexico (two public-body cams added 2026-10-15, see
 `docs/research/2026-10-15-west-facing-cams.md`; ten owner-credited cams added
 2026-10-16, see `docs/research/2026-10-16-gulf-cams.md`). Each cam has a `facing` field
@@ -128,11 +129,14 @@ west. The Boca Raton cams (video-monitoring.com) upload only from about 8:00 AM 
 | `sharkys-pcb-cam` (Sharky's Beachfront Restaurant) WEST | panama-city-beach (4.3 mi) | [0, 0, .85, .34] |
 | `fort-zachary-taylor-cam` (shared by Florida Live) WEST | key-west (0.0 mi) | [0, .04, .2, .15], [.2, .04, .4, .09], [.4, 0, .76, .085] |
 | `sunset-grille-marathon-cam` (Sunset Grille / Seek Florida Keys) WEST | marathon (0.0 mi) | [0, 0, .98, .11], [.15, .11, .235, .42], [.44, .11, .52, .36], [.70, .11, .77, .40] |
+| `jax-beach-bw-cam` (Best Western Oceanfront Jacksonville Beach and 911 Surf Report), east-north-east (70 deg) | jacksonville-beach (0.0 mi) | [.33, 0, 1, .075] |
 
 The regions keep the sky and drop the flagpole, palms, pier, beach, water, and the
 burned-in text. The Deerfield surf cam is a PTZ camera that pans between presets.
 Its horizon sits anywhere from 27% to 46% down the frame, so its region is only
 the top slice that is sky in every pose.
+
+The Jacksonville Beach cam (added 2026-10-17) has a thin sky strip: about 8% of the frame above a sharp horizon, with a burned-in date across its left third. Its region is that strip to the right of the date, drawn on the 2026-10-16 daytime frame in `docs/research/2026-10-16-atlantic-cams/jax-beach-bw-oceanfront.jpg`. The other Atlantic cams in `docs/research/2026-10-16-atlantic-cams.md` with a 4-hour DVR (Volusia's Ormond and Dunlawton fisheyes, the Jacksonville Beach Pier cam, the St. Augustine Beach cams) are not registered here yet: their sky regions need a daytime frame, and the first pass ran after dark.
 
 **View.** The view depends on the event and the cam's facing.
 

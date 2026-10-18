@@ -53,7 +53,7 @@ export const NDBC_STATION_REPORTS_WAVES: Record<string, boolean> = {
   "41113": true, // Cape Canaveral Nearshore, FL (143) — wave buoy
   "42012": true, // Orange Beach, AL — 44 NM SE of Mobile, AL — wave buoy
   "42098": true, // Egmont Channel Entrance, FL (214) — wave buoy (WVHT live 2026-10-15); Fort Myers Beach fallback, ~99 mi north
-  "42095": true, // Satan Shoal, FL (244) — wave buoy (WVHT live 2026-10-16); Key West fallback (~14 mi), Marathon fallback (~60 mi)
+  "42095": true, // Satan Shoal, FL (244) — wave buoy (WVHT live 2026-10-16); Key West fallback (~14 mi), Marathon fallback (~60 mi); also Key West South Beach and Sombrero Beach fallback (2026-10-17)
   "42035": true, // Galveston, TX — 22 NM East of Galveston, TX — wave buoy
   "42084": true, // Southwest Pass Entrance W, LA (256) — nearshore wave buoy
   "42092": true, // Aransas Pass Channel Entrance S, TX (252), Waverider buoy —
@@ -98,7 +98,7 @@ export const NDBC_STATION_REPORTS_WAVES: Record<string, boolean> = {
   GTOT2: false, // 8771450 Galveston Pier 21, TX — tide gauge
   ICAC1: false, // 9410840 Santa Monica Pier, CA — tide gauge
   JMPN7: false, // 8658163 Wrightsville Beach, NC — tide gauge
-  KYWF1: false, // 8724580 Key West, FL — tide gauge (WVHT "MM" 2026-10-16); Key West primary
+  KYWF1: false, // 8724580 Key West, FL — tide gauge (WVHT "MM" 2026-10-16); Key West primary; also Key West South Beach primary (2026-10-17)
   LJAC1: false, // 9410230 La Jolla, CA — tide gauge
   LJPC1: true, // La Jolla, CA (073) — nearshore wave buoy (reports live)
   LWSD1: false, // 8557380 Lewes, DE — tide gauge
@@ -123,6 +123,16 @@ export const NDBC_STATION_REPORTS_WAVES: Record<string, boolean> = {
   VAKF1: false, // 8723214 Virginia Key, FL — tide gauge
   VCAF1: false, // 8723970 Vaca Key, FL — tide gauge (WVHT "MM" 2026-10-16); Marathon primary
   WPTW1: false, // 9441102 Westport, WA — tide gauge
+
+  // --- 2026-10-17 Atlantic coast cams (branch cams-atlantic): stations the new Florida Atlantic beaches use,
+  // probed live with scripts/ndbc_classify.mjs. Wave buoys first, then the wave-less water-temp stations.
+  // 42095 and KYWF1 are listed once, above, with the Gulf and Keys stations.
+  "41114": true, // Fort Pierce, FL — wave buoy (WVHT live 2026-10-17); Jupiter, Hobe Sound, Jensen Beach, Bathtub Beach, Wabasso fallback
+  "41117": true, // St. Augustine, FL — nearshore wave buoy (WVHT live 2026-10-17); Jacksonville Beach, St. Augustine Beach, Vilano Beach fallback
+  "41068": false, // Cape Canaveral, FL — C-MAN, WVHT "MM" 2026-10-17; water temp for Jensen Beach, Bathtub Beach, Sebastian Inlet, Wabasso
+  LTJF1: false, // Little Talbot Island, FL — WVHT "MM" 2026-10-17; Jacksonville Beach primary
+  SAUF1: false, // St. Augustine, FL — pier station, WVHT "MM" 2026-10-17; St. Augustine Beach and Vilano Beach primary
+  SMKF1: false, // Sombrero Key, FL — C-MAN, WVHT "MM" 2026-10-17; Sombrero Beach primary
 };
 
 /** True if the station reports waves, false if it does not, undefined if it has

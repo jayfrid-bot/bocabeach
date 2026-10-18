@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-17",
+    title: "17 more Florida beaches on the Atlantic coast, with live cameras",
+    details:
+      "Seventeen beaches along Florida's Atlantic coast are now on the list: St. Augustine Beach, Vilano Beach, Ormond Beach, Dunlawton Beach, New Smyrna Beach, Ponce Inlet, Hollywood Beach, Dania Beach, Singer Island, Jupiter, Jensen Beach, Bathtub Beach, Hobe Sound, Sebastian Inlet, Wabasso Beach, Key West South Beach and Sombrero Beach. Each one has a live beach camera or a link to one, and each camera names its owner: counties, cities, inlet districts, the Florida Keys tourism board and a few local businesses. Jacksonville Beach now sits at its pier, with two new cameras, and its sunrise gets a camera check too.",
+    tag: "new",
+  },
+  {
+    date: "2026-10-17",
     title: "Five new Gulf and Keys beaches, with live cameras",
     details:
       "Siesta Key, Anna Maria Island, Panama City Beach, Key West and Marathon are now on the list. Fort Myers Beach gains two more cameras. Each camera shows who runs it and links to their page. These cameras look west, so you can watch the sun set over the water. Some beaches have no wave buoy nearby, so their surf comes from a forecast model and says so.",

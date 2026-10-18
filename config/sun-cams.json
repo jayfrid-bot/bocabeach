@@ -1,7 +1,7 @@
 {
   "$comment": [
     "Registry for scripts/sun_cam_check.py and POST /api/sun-observations (docs/SUN_CAM_CHECK.md).",
-    "Every cam here is a 24/7 YouTube livestream. The four Atlantic cams face EAST; the two public-body Gulf cams (Fort Myers Beach, Pensacola Beach, added 2026-10-15, see docs/research/2026-10-15-west-facing-cams.md) and the ten owner-credited Gulf and Keys cams after them (added 2026-10-16, see docs/research/2026-10-16-gulf-cams.md) face WEST. `facing` is 'east' or 'west' (derived from facing_azimuth_deg when absent: below 180 = east, else west). An east cam sees a sunrise as a 'solar' view and a sunset as 'antisolar'; a west cam is the reverse. Only a 'solar' view is the truth for an event's color; an 'antisolar' view is the afterglow behind the cam, stored but never used as truth.",
+    "Every cam here is a 24/7 YouTube livestream. The four Atlantic cams (plus jax-beach-bw-cam, added 2026-10-17, which faces east-north-east at 70 degrees) face EAST; the two public-body Gulf cams (Fort Myers Beach, Pensacola Beach, added 2026-10-15, see docs/research/2026-10-15-west-facing-cams.md) and the ten owner-credited Gulf and Keys cams after them (added 2026-10-16, see docs/research/2026-10-16-gulf-cams.md) face WEST. `facing` is 'east' or 'west' (derived from facing_azimuth_deg when absent: below 180 = east, else west). An east cam sees a sunrise as a 'solar' view and a sunset as 'antisolar'; a west cam is the reverse. Only a 'solar' view is the truth for an event's color; an 'antisolar' view is the afterglow behind the cam, stored but never used as truth.",
     "sky_regions are [x0, y0, x1, y1] as fractions of the frame (0,0 = top-left). They keep the sky and drop the flagpole, palms, pier, beach, water and the burned-in text overlays. They were drawn from real 1280x720 frames (Elbo: the 2026-10-06 sunrise frames; Deerfield: live frames pulled from the uw-frame worker on 2026-10-06).",
     "beaches[].lat/lon repeat config/locations.ts; distance_mi is the great-circle distance from that beach's pin to the cam, rounded to 0.1 mi. lib/sunCamsConfig.test.ts keeps both in lockstep with locations.ts.",
     "credit is stored with every observation and the ingest route rejects any other string. Elbo Room gave the owner permission to use its stream as long as it is credited. The ten cams added 2026-10-16 are used on the owner's decision, each with a credit and a link to the owner's page; if an owner objects, that cam is removed the same day."
@@ -309,6 +309,23 @@
         [0.15, 0.11, 0.235, 0.42],
         [0.44, 0.11, 0.52, 0.36],
         [0.7, 0.11, 0.77, 0.4]
+      ]
+    },
+    {
+      "id": "jax-beach-bw-cam",
+      "name": "Jacksonville Beach Cam (Best Western Oceanfront Jacksonville Beach)",
+      "note": "A fixed camera at the Best Western oceanfront looking east-north-east over the beach and the sea. The sky is only a thin strip (about 8% of the frame) above a sharp horizon, and the burned-in date sits across its left third, so the region starts to the right of it.",
+      "youtube_id": "bZ4uxyLqV-E",
+      "facing": "east",
+      "facing_azimuth_deg": 70,
+      "lat": 30.2934,
+      "lon": -81.389,
+      "credit": "Live stream courtesy Best Western Oceanfront Jacksonville Beach and 911 Surf Report",
+      "beaches": [
+        { "slug": "jacksonville-beach", "lat": 30.2934, "lon": -81.389, "distance_mi": 0.0 }
+      ],
+      "sky_regions": [
+        [0.33, 0.0, 1.0, 0.075]
       ]
     }
   ]
