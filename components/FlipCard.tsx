@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import type { NerdInfo } from "@/lib/nerdInfo";
+import { warmNerdBack } from "@/components/nerdBackLoader";
 
 /**
  * Tracks the OS "reduce motion" setting on the client. Defaults to `false` on
@@ -77,13 +78,26 @@ export function FlipCard({
   /** Short name of the metric, woven into the aria-label. */
   label: string;
   front: ReactNode;
-  back: ReactNode;
+  /**
+   * The back face. Pass a function to have it built only when the card is first
+   * flipped: the back is the long "data nerd" story, never visible on first
+   * paint, and building + serializing it for every card on every load was about
+   * a third of the page's HTML. Once flipped it stays mounted, so flipping back
+   * and forth keeps its state and the spin keeps its shape.
+   */
+  back: ReactNode | (() => ReactNode);
 }) {
   const [flipped, setFlipped] = useState(false);
+  // True from the first flip on. A flip is a user click, so the back always
+  // exists by the time anyone can see it.
+  const [everFlipped, setEverFlipped] = useState(false);
   const reduced = usePrefersReducedMotion();
   const spin = !reduced;
 
-  const toggle = () => setFlipped((f) => !f);
+  const toggle = () => {
+    setEverFlipped(true);
+    setFlipped((f) => !f);
+  };
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
       e.preventDefault();
@@ -103,6 +117,10 @@ export function FlipCard({
       }
       onClick={toggle}
       onKeyDown={onKeyDown}
+      // A hand is on its way to flipping this card: start fetching the back-face code now.
+      onPointerEnter={warmNerdBack}
+      onPointerDown={warmNerdBack}
+      onFocus={warmNerdBack}
       // col-span-full when flipped: the card expands to the whole grid width so
       // the back has room to breathe (a no-op for the full-width flagship
       // sections). h-full otherwise, so unflipped it stretches to its band row.
@@ -151,7 +169,7 @@ export function FlipCard({
                 (flipped ? "opacity-100" : "opacity-0 pointer-events-none"))
           }
         >
-          {back}
+          {typeof back === "function" ? (everFlipped ? back() : null) : back}
           <FlipGlyph back />
         </div>
       </div>

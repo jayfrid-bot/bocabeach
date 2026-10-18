@@ -37,9 +37,16 @@ import {
 import { bootstrapInstallToken } from "@/lib/plus/client";
 import { MetricCard } from "@/components/MetricCard";
 import { LevelBarChart, type LevelBar } from "@/components/LevelBarChart";
-import { DayViewSheet } from "@/components/plus/DayViewSheet";
+import dynamic from "next/dynamic";
 import { DAY_VIEW_ENABLED } from "@/lib/plus/flags";
 import { isPickable, stepDate, todayInZone } from "@/lib/plus/dayView";
+
+// The day view is a modal opened by picking a day — its code (and its hourly
+// charts) loads on that tap, not with the section.
+const DayViewSheet = dynamic(
+  () => import("@/components/plus/DayViewSheet").then((m) => m.DayViewSheet),
+  { ssr: false },
+);
 
 type DaysWindow = 7 | 14 | 30;
 

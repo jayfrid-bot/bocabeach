@@ -26,6 +26,7 @@ import { ConditionsDashboard } from "@/components/ConditionsDashboard";
 import { listLocations, toPublicLocation } from "@/config/locations";
 import { fromWire, isWire, packRows, toWire, unpackRows } from "@/lib/clientConditions";
 import { computePersonalScore } from "@/lib/plus/personalScore";
+import { changelogPreview } from "@/lib/changelogPreview";
 import { PROFILE_IDS } from "@/lib/profile/presets";
 import { resolveScoring } from "@/lib/profile/resolve";
 import { deriveMetrics } from "@/lib/score";
@@ -155,6 +156,7 @@ describe("toWire / fromWire", () => {
               browseHref: "/find",
               isNativeApp: false,
               beaches: listLocations().map(toPublicLocation),
+              changelog: changelogPreview(),
             }),
           );
         const fromFull = render(full);

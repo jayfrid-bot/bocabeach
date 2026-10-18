@@ -2,10 +2,20 @@
 
 import { useRef, useState } from "react";
 import type { CamView } from "@/lib/types";
-import { CamLightbox } from "@/components/CamLightbox";
+import dynamic from "next/dynamic";
 import { fmtTime } from "@/lib/format";
 import { RelativeTime, useNowMs } from "@/components/RelativeTime";
 import { camFreshness } from "@/lib/camFreshness";
+
+// The full-screen zoom viewer (and the pan/zoom image code under it) is only ever
+// opened by a tap on a cam, so it is fetched then — and warmed the moment a finger
+// or pointer reaches the cam, so the tap that opens it rarely waits.
+const warmLightbox = () => {
+  void import("@/components/CamLightbox").catch(() => {});
+};
+const CamLightbox = dynamic(() => import("@/components/CamLightbox").then((m) => m.CamLightbox), {
+  ssr: false,
+});
 
 /** Above this, a frozen provider feed reads as "paused", not just "a bit late". */
 const FEED_PAUSED_MIN = 30;
@@ -74,6 +84,8 @@ function FeaturedCam({ cam, tz, dataAt }: { cam: CamView; tz: string; dataAt?: s
       ref={opener}
       type="button"
       onClick={() => setOpen(true)}
+      onPointerEnter={warmLightbox}
+      onPointerDown={warmLightbox}
       className="group block w-full overflow-hidden rounded-2xl bg-slate-900 text-left ring-1 ring-slate-900/10 dark:ring-white/10 transition hover:ring-ocean-500/50"
     >
       <div className="relative aspect-video w-full overflow-hidden">

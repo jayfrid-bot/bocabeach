@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { listLocations, toPublicLocation } from "@/config/locations";
 import { getConditions } from "@/lib/conditions";
 import { toWire } from "@/lib/clientConditions";
+import { changelogPreview } from "@/lib/changelogPreview";
 import { LogoMark } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ConditionsDashboard } from "@/components/ConditionsDashboard";
@@ -60,6 +61,7 @@ export default async function Home() {
         // The served-beach list powers the location features (nearest beach,
         // home beach, near-you chip) — public fields only.
         beaches={locations.map(toPublicLocation)}
+        changelog={changelogPreview()}
       />
     );
   }

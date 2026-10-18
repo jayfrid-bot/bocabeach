@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
@@ -37,8 +38,8 @@ import { UvCard } from "@/components/UvCard";
 import { BusynessCard } from "@/components/BusynessCard";
 import { WindCompass } from "@/components/WindCompass";
 import { WaveHeightCard } from "@/components/WaveHeightCard";
-import { FlipCard, NerdBack } from "@/components/FlipCard";
-import { buildNerdInfo, type NerdContext } from "@/lib/nerdInfo";
+import { FlipCard } from "@/components/FlipCard";
+import type { buildNerdInfo, NerdContext } from "@/lib/nerdInfo";
 import { TidePanel } from "@/components/TidePanel";
 import { SunPanel } from "@/components/SunPanel";
 import { SafetyBanner } from "@/components/SafetyBanner";
@@ -50,6 +51,7 @@ import { NotifyButton } from "@/components/NotifyButton";
 import { ShareCardSheet } from "@/components/ShareCardSheet";
 import { AppStoreBand } from "@/components/AppStoreBand";
 import { ChangelogSection } from "@/components/ChangelogSection";
+import type { ChangelogPreview } from "@/lib/changelogPreview";
 import { FeelsLikeCard } from "@/components/FeelsLikeCard";
 import { SunQualityCard } from "@/components/SunQualityCard";
 import { WaterTrendCard } from "@/components/WaterTrendCard";
@@ -66,20 +68,41 @@ import { ripCapFor } from "@/lib/ripRisk";
 import { profileLabel, resolveScoring } from "@/lib/profile/resolve";
 import { usePersonalScore, usePlus } from "@/lib/plus/client";
 import { isNativePlatform } from "@/lib/push/native";
-import { BeachModeCard } from "@/components/plus/BeachModeCard";
 import { FirstRunBanner } from "@/components/plus/FirstRunBanner";
 import { HeaderSubtitle } from "@/components/plus/HeaderSubtitle";
 import { HomeBeachRedirect } from "@/components/plus/HomeBeachRedirect";
 import { useRecordLastViewedBeach } from "@/lib/useWatchSync";
-import { Paywall, supportId } from "@/components/plus/Paywall";
+import { supportId } from "@/lib/plus/supportId";
+import type { PlusSheetName } from "@/components/plus/PlusSheets";
 import { PersonalizeCard } from "@/components/plus/PersonalizeCard";
-import { HistorySection } from "@/components/plus/HistorySection";
 import { PlusInAppCard } from "@/components/plus/PlusInAppCard";
-import { PlusOnboarding } from "@/components/plus/PlusOnboarding";
-import { PlusSettingsSheet } from "@/components/plus/PlusSettingsSheet";
 import { SafetyLine } from "@/components/plus/SafetyLine";
 import { ScoreToggle } from "@/components/plus/ScoreToggle";
 import { useOwnerEntryTap } from "@/lib/quality/ownerEntry";
+
+// The long "how we compute this" back faces: their own chunk, fetched when a hand
+// reaches a card (see components/nerdBackLoader.ts). Never rendered on the server —
+// a back face only exists once its card has been flipped.
+const NerdBackFor = dynamic(() => import("@/components/NerdBackFor"), { ssr: false });
+
+// Code only the iPhone/Android app ever runs, or only after a tap, kept out of the
+// first-load bundle (the same ~100 KB of script every web visitor used to download
+// for screens they never see):
+//  - Beach Mode and the "Last N days" look-back render nothing outside the app
+//    shell (`native`), so a browser never loads them. In the app the server knows
+//    (request User-Agent) and renders them into the HTML as before.
+//  - The three Plus sheets are modal and closed until a tap; they are fetched when
+//    the app is idle, or at the tap that opens the first one.
+const BeachModeCard = dynamic(
+  () => import("@/components/plus/BeachModeCard").then((m) => m.BeachModeCard),
+  { ssr: true },
+);
+const HistorySection = dynamic(
+  () => import("@/components/plus/HistorySection").then((m) => m.HistorySection),
+  { ssr: true },
+);
+const loadPlusSheets = () => import("@/components/plus/PlusSheets");
+const PlusSheets = dynamic(() => import("@/components/plus/PlusSheets"), { ssr: false });
 
 // Throw on non-OK so an error body (e.g. a 404 `{error}`) never replaces the
 // good snapshot — SWR keeps the last good data and the consumer guard holds.
@@ -143,6 +166,7 @@ export function ConditionsDashboard({
   browseHref,
   isNativeApp = false,
   beaches = [],
+  changelog,
 }: {
   slug: string;
   /** The server's snapshot — plain, or the packed wire form the pages send. */
@@ -165,6 +189,8 @@ export function ConditionsDashboard({
    * picker, the near-you chip). Empty in the admin preview, which disables them.
    */
   beaches?: LocationPublic[];
+  /** The newest "What's new" entries + the total (see components/ChangelogSection.tsx). */
+  changelog?: ChangelogPreview;
 }) {
   // Unpack once: every card below keeps reading a plain ConditionsResponse.
   const initial = useMemo(() => fromWire(initialProp), [initialProp]);
@@ -342,13 +368,20 @@ export function ConditionsDashboard({
   // is a multi-second satori render; kicking both formats off now (into the
   // route's edge cache) means that tapping Share a moment later is an instant
   // cache hit instead of a cold wait. Fire once, low priority, ignore results.
+  //
+  // HEAD, not GET: the route runs the same handler and fills the same cache entry,
+  // but no picture comes back. A GET here downloaded both cards (~250 KB of PNG)
+  // on every page view just to throw them away. Skipped on Data Saver, where
+  // even the server-side work is not worth a guess that someone will share.
   const warmedRef = useRef(false);
   useEffect(() => {
     if (preview || warmedRef.current || !slug) return;
+    if ((navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData) return;
     warmedRef.current = true;
     const t = setTimeout(() => {
       for (const format of ["story", "square"] as const) {
         fetch(`/api/share/${slug}?format=${format}`, {
+          method: "HEAD",
           priority: "low",
         } as RequestInit).catch(() => {});
       }
@@ -393,7 +426,26 @@ export function ConditionsDashboard({
   // against an hour that has not happened yet. Re-taken on every SWR refresh.
   const personal = usePersonalScore(res, plusEntitled ? plus.profile : null, nowMs);
   const [showEveryone, setShowEveryone] = useState(false);
-  const [sheet, setSheet] = useState<"onboarding" | "paywall" | "settings" | null>(null);
+  const [sheet, setSheet] = useState<PlusSheetName | null>(null);
+  // The sheets' code is fetched on the first open and the sheets then stay mounted
+  // (their drafts and in-flight saves must survive a close). Derived state: set
+  // during render, the supported pattern for "remember that X ever happened".
+  const [sheetsMounted, setSheetsMounted] = useState(false);
+  if (sheet && !sheetsMounted) setSheetsMounted(true);
+  // In the app, fetch the sheets quietly once the page has settled, so the first tap on
+  // "Plus" or the gear opens at once. A browser never opens them and never fetches.
+  useEffect(() => {
+    if (!native || !plusOn) return;
+    const ric = (window as unknown as {
+      requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number;
+    }).requestIdleCallback;
+    const go = () => void loadPlusSheets().catch(() => {});
+    const handle = ric ? ric(go, { timeout: 4000 }) : (setTimeout(go, 2000) as unknown as number);
+    return () => {
+      if (ric) (window as unknown as { cancelIdleCallback?: (h: number) => void }).cancelIdleCallback?.(handle);
+      else clearTimeout(handle);
+    };
+  }, [native, plusOn]);
 
   // The personal number leads when there is one and the toggle isn't flipped.
   const personalActive = plusOn && !!personal && !showEveryone;
@@ -437,7 +489,7 @@ export function ConditionsDashboard({
   // fronts render, so a back always matches its front. See lib/nerdInfo.ts.
   const nerd: NerdContext = { d, snap };
   const nerdBack = (key: Parameters<typeof buildNerdInfo>[0]) => (
-    <NerdBack info={buildNerdInfo(key, nerd)} />
+    <NerdBackFor k={key} nerd={nerd} />
   );
   // Busyness front hides itself (returns null) at night / with no note — mirror
   // that here so we never render a blank flippable card.
@@ -741,14 +793,16 @@ export function ConditionsDashboard({
             currentSlug={slug}
             flagshipSlug={flagshipSlug}
           />
-          <BeachModeCard
-            plus={plus}
-            native={native}
-            slug={slug}
-            beaches={beaches}
-            tz={tz}
-            onDoor={() => setSheet(plus.previewSeen ? "paywall" : "onboarding")}
-          />
+          {native ? (
+            <BeachModeCard
+              plus={plus}
+              native={native}
+              slug={slug}
+              beaches={beaches}
+              tz={tz}
+              onDoor={() => setSheet(plus.previewSeen ? "paywall" : "onboarding")}
+            />
+          ) : null}
         </>
       ) : null}
 
@@ -818,7 +872,7 @@ export function ConditionsDashboard({
       <section className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <FlipCard
           label="Wind"
-          back={nerdBack("wind")}
+          back={() => nerdBack("wind")}
           front={
             <div className="flex h-full flex-col rounded-2xl bg-white/80 dark:bg-slate-900/70 p-4 ring-1 ring-slate-900/10 dark:ring-white/10">
               <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
@@ -834,7 +888,7 @@ export function ConditionsDashboard({
         {d.waveHeightFt != null ? (
           <FlipCard
             label="Waves"
-            back={nerdBack("waves")}
+            back={() => nerdBack("waves")}
             front={
               <WaveHeightCard
                 waveHeightFt={d.waveHeightFt}
@@ -846,7 +900,7 @@ export function ConditionsDashboard({
         ) : null}
         <FlipCard
           label="UV index"
-          back={nerdBack("uv")}
+          back={() => nerdBack("uv")}
           front={
             d.uvIndex != null ? (
               <UvCard uvIndex={d.uvIndex} />
@@ -913,7 +967,7 @@ export function ConditionsDashboard({
         {showBusyness ? (
           <FlipCard
             label="Busyness"
-            back={nerdBack("busyness")}
+            back={() => nerdBack("busyness")}
             front={<BusynessCard busy={busy} tz={tz} nowMs={nowMs} />}
           />
         ) : null}
@@ -923,7 +977,7 @@ export function ConditionsDashboard({
         {clarity ? (
           <FlipCard
             label="Water clarity"
-            back={nerdBack("clarity")}
+            back={() => nerdBack("clarity")}
             front={
               // MetricCard's own layout, plus the water-column scene (see
               // components/ClarityScene.tsx) in the value block's dead space.
@@ -935,7 +989,7 @@ export function ConditionsDashboard({
         ) : null}
         <FlipCard
           label="Water quality"
-          back={nerdBack("waterQuality")}
+          back={() => nerdBack("waterQuality")}
           front={
             <MetricCard
               icon="🧫"
@@ -957,7 +1011,7 @@ export function ConditionsDashboard({
         />
         <FlipCard
           label="Air temp"
-          back={nerdBack("airTemp")}
+          back={() => nerdBack("airTemp")}
           front={
             <MetricCard
               icon="☀️"
@@ -969,7 +1023,7 @@ export function ConditionsDashboard({
         />
         <FlipCard
           label="Water temp"
-          back={nerdBack("waterTemp")}
+          back={() => nerdBack("waterTemp")}
           front={
             // Inline MetricCard markup so the water-"feel"-trend pill can sit in
             // the reserved sub-line area. The pill self-hides on a "steady" (or
@@ -997,7 +1051,7 @@ export function ConditionsDashboard({
         />
         <FlipCard
           label="Humidity"
-          back={nerdBack("humidity")}
+          back={() => nerdBack("humidity")}
           front={
             <MetricCard
               icon="💧"
@@ -1009,7 +1063,7 @@ export function ConditionsDashboard({
         />
         <FlipCard
           label="Dew point"
-          back={nerdBack("dewPoint")}
+          back={() => nerdBack("dewPoint")}
           front={
             <MetricCard
               icon="🌫️"
@@ -1021,7 +1075,7 @@ export function ConditionsDashboard({
         />
         <FlipCard
           label="Cloud cover"
-          back={nerdBack("cloudCover")}
+          back={() => nerdBack("cloudCover")}
           front={
             <MetricCard
               icon="☁️"
@@ -1042,14 +1096,14 @@ export function ConditionsDashboard({
         {d.precipProbability != null ? (
           <FlipCard
             label="Rain chance"
-            back={nerdBack("rainChance")}
+            back={() => nerdBack("rainChance")}
             front={<MetricCard icon="🌧️" label="Rain chance" value={`${d.precipProbability}%`} />}
           />
         ) : null}
         {sg && sg.level !== "unknown" ? (
           <FlipCard
             label="Seaweed"
-            back={nerdBack("seaweed")}
+            back={() => nerdBack("seaweed")}
             front={
               <MetricCard
                 icon="🪸"
@@ -1074,7 +1128,7 @@ export function ConditionsDashboard({
         {traffic && traffic.level !== "unknown" ? (
           <FlipCard
             label="Traffic"
-            back={nerdBack("traffic")}
+            back={() => nerdBack("traffic")}
             front={
               <MetricCard
                 icon="🚗"
@@ -1098,7 +1152,7 @@ export function ConditionsDashboard({
               scrolls internally for the long story. */}
           <FlipCard
             label="Sand temperature"
-            back={nerdBack("sandTemp")}
+            back={() => nerdBack("sandTemp")}
             front={
               <SandTempPanel
                 hours={snap.hourly.data}
@@ -1117,7 +1171,7 @@ export function ConditionsDashboard({
       <section className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <FlipCard
           label="Air quality"
-          back={nerdBack("airQuality")}
+          back={() => nerdBack("airQuality")}
           front={
             <div className={SAFETY_CARD_WRAP}>
               <AirQualityMeter air={snap.airQuality} />
@@ -1132,7 +1186,7 @@ export function ConditionsDashboard({
         {storm ? (
           <FlipCard
             label="Storm activity"
-            back={nerdBack("storm")}
+            back={() => nerdBack("storm")}
             front={
               <div className={SAFETY_CARD_WRAP}>
                 <StormActivityMeter storm={storm} rain={radarRain} />
@@ -1142,7 +1196,7 @@ export function ConditionsDashboard({
         ) : null}
         <FlipCard
           label="Lightning"
-          back={nerdBack("lightning")}
+          back={() => nerdBack("lightning")}
           front={
             <div className={SAFETY_CARD_WRAP}>
               <LightningCard lightning={snap.lightning} />
@@ -1188,7 +1242,7 @@ export function ConditionsDashboard({
       <section className="mb-6 grid gap-4 sm:grid-cols-2">
         <FlipCard
           label="Tides"
-          back={nerdBack("tides")}
+          back={() => nerdBack("tides")}
           front={
             <div className="h-full [&>div]:h-full">
               <TidePanel tides={snap.tides} tz={tz} />
@@ -1197,7 +1251,7 @@ export function ConditionsDashboard({
         />
         <FlipCard
           label="Sun & moon"
-          back={nerdBack("sun")}
+          back={() => nerdBack("sun")}
           front={
             <div className="h-full [&>div]:h-full">
               <SunPanel sun={snap.sun} tz={tz} />
@@ -1254,14 +1308,16 @@ export function ConditionsDashboard({
           app shell (the API route is app-only). */}
       {plusOn ? (
         <section className="mb-6">
-          <HistorySection
-            slug={slug}
-            native={native}
-            entitled={plusEntitled}
-            deviceId={plus.deviceId}
-            timezone={tz}
-            onDoor={() => setSheet(plus.previewSeen ? "paywall" : "onboarding")}
-          />
+          {native ? (
+            <HistorySection
+              slug={slug}
+              native={native}
+              entitled={plusEntitled}
+              deviceId={plus.deviceId}
+              timezone={tz}
+              onDoor={() => setSheet(plus.previewSeen ? "paywall" : "onboarding")}
+            />
+          ) : null}
         </section>
       ) : null}
 
@@ -1334,7 +1390,7 @@ export function ConditionsDashboard({
             {isValidating ? "Refreshing…" : "Refresh"}
           </button>
         </div>
-        <ChangelogSection />
+        {changelog ? <ChangelogSection {...changelog} /> : null}
         {/* Codex round 2 #1: the only reliable, always-reachable place for a
             free user who never opens the (subscriber-only) Settings gear or
             the Paywall to find their Support ID. `native` is already
@@ -1356,33 +1412,20 @@ export function ConditionsDashboard({
         ) : null}
       </footer>
 
-      {/* The Plus screens. All three are modal, all three are opened by a tap,
-          and none of them render anything until then. */}
-      {plusOn ? (
-        <>
-          <PlusOnboarding
-            open={sheet === "onboarding"}
-            onClose={() => setSheet(null)}
-            plus={plus}
-            res={res}
-            nowMs={nowMs}
-            native={native}
-          />
-          <Paywall
-            open={sheet === "paywall"}
-            onClose={() => setSheet(null)}
-            plus={plus}
-            native={native}
-          />
-          <PlusSettingsSheet
-            open={sheet === "settings"}
-            onClose={() => setSheet(null)}
-            plus={plus}
-            beaches={beaches}
-            native={native}
-            personalScore={personal ? personal.score.score : null}
-          />
-        </>
+      {/* The Plus screens. All three are modal, all three are opened by a tap, and
+          none of them render anything until then — so their code loads on the first
+          tap (or at idle time inside the app) and stays mounted afterwards. */}
+      {plusOn && sheetsMounted ? (
+        <PlusSheets
+          sheet={sheet}
+          onClose={() => setSheet(null)}
+          plus={plus}
+          res={res}
+          nowMs={nowMs}
+          native={native}
+          beaches={beaches}
+          personalScore={personal ? personal.score.score : null}
+        />
       ) : null}
     </main>
     </PullToRefresh>

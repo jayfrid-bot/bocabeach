@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { CHANGELOG, type ChangelogTag } from "@/lib/changelog";
+import type { ChangelogEntry, ChangelogTag } from "@/lib/changelog";
+import type { ChangelogPreview } from "@/lib/changelogPreview";
 
 const TAG_LABEL: Record<ChangelogTag, string> = {
   new: "New",
@@ -39,17 +40,37 @@ function fmtChangelogDate(isoDate: string): string {
   return `${month} ${d}, ${y}`;
 }
 
-const PREVIEW_COUNT = 3;
+const loadChangelog = () => import("@/lib/changelog");
 
 /**
  * Quiet "What's new" section for the very bottom of the page, next to the
  * footer's build-identity line. Collapsed by default: shows the 3 most
  * recent changelog entries, with a "Show all" expander for the rest.
  */
-export function ChangelogSection() {
+export function ChangelogSection({ recent, total }: ChangelogPreview) {
   const [expanded, setExpanded] = useState(false);
-  const visible = expanded ? CHANGELOG : CHANGELOG.slice(0, PREVIEW_COUNT);
-  const hiddenCount = CHANGELOG.length - PREVIEW_COUNT;
+  const [all, setAll] = useState<ChangelogEntry[] | null>(null);
+  const visible = expanded && all ? all : recent;
+  const hiddenCount = total - recent.length;
+
+  const toggle = () => {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    if (all) {
+      setExpanded(true);
+      return;
+    }
+    loadChangelog()
+      .then((m) => {
+        setAll(m.CHANGELOG);
+        setExpanded(true);
+      })
+      .catch(() => {
+        /* offline: the button simply does nothing; the next tap tries again */
+      });
+  };
 
   return (
     <section className="mx-auto mt-2 max-w-md text-left">
@@ -85,11 +106,13 @@ export function ChangelogSection() {
         <div className="mt-2.5 flex justify-center">
           <button
             type="button"
-            onClick={() => setExpanded((v) => !v)}
+            onClick={toggle}
+            onPointerEnter={() => void loadChangelog().catch(() => {})}
+            onFocus={() => void loadChangelog().catch(() => {})}
             className="text-xs text-ocean-700 hover:underline dark:text-ocean-300"
             aria-expanded={expanded}
           >
-            {expanded ? "Show less" : `Show all (${CHANGELOG.length})`}
+            {expanded ? "Show less" : `Show all (${total})`}
           </button>
         </div>
       ) : null}
