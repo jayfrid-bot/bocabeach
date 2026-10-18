@@ -44,7 +44,7 @@ flowchart TD
     RESOLVE["/api/resolve<br/>(name/zip → nearest served beach)"]
     OG["/opengraph-image, /twitter-image"]
     SITEMAP["/sitemap.xml"]
-    CAM["/api/cam/[id]<br/>(proxied still frame)"]
+    CAM["/api/cam/[id]<br/>(proxied still frame; ?res=hr on a feed cam = its full-size original, streamed, not cached by Next)"]
     ADMIN["/api/admin/add, /api/admin/preview<br/>(owner-only, add a beach)"]
     STICKER["/sticker?s=&lt;tag&gt;<br/>(QR landing: count scan, set ref cookie, 307 → /?ref=tag)"]
     GETAPP["/get-app<br/>(count the store tap, 307 → App Store)"]
@@ -242,7 +242,7 @@ flowchart LR
   end
 
   subgraph mac [Home server Mac — launchd, not a scheduler above]
-    CAMCOURIER["scripts/cam_courier_local.sh — no cam list in the script<br/>routine job: every 5 min (:03, :08 …), a few due cams per run<br/>golden job: every 10 min all day, only cams whose own beach is in a sunrise/sunset window<br/>residential IP"]
+    CAMCOURIER["scripts/cam_courier_local.sh — no cam list in the script<br/>routine job: every 5 min (:03, :08 …), a few due cams per run<br/>stream size: 1080p if the stream has it, else 720p (STREAM_FORMAT in yt_pacer.py), ffmpeg -q:v 4<br/>golden job: every 10 min all day, only cams whose own beach is in a sunrise/sunset window<br/>residential IP"]
     CSCHED["scripts/courier_schedule.py<br/>builds the cam list from config, picks the due cams, golden stride, cooldowns, daylight gate"]
     SUNCAM["scripts/sun_cam_check.py<br/>every 30 min, residential IP<br/>(YouTube blocks datacenter IPs)"]
     PACER["scripts/yt_pacer.py — ONE yt-dlp call budget for all three jobs<br/>ledger + backoff + cache in ytpace/state.json under an flock<br/>cap 60 calls / 15 min (golden 60, sun 48, routine 36), 4 s apart,<br/>20-min stop for every job after a bot check"]
@@ -259,6 +259,7 @@ flowchart LR
   PLAN -.->|"runs the real rules"| PACER
   CAMCOURIER -->|"POST /ingest?cam=&lt;id&gt;<br/>Bearer token, JPEG bytes<br/>answers 400 bad body, 422 blank frame (logged with the reply body)"| UWFRAME
   UWFRAME -->|"judgeFrame on every frame, browser grab or courier upload<br/>(src/lib/frameQuality.ts + dcLuma.ts: block brightness of the middle of the frame);<br/>each tick also clears stored frames that are blank"| FRAMEGUARD["config/frame-guard.json<br/>blank-frame thresholds,<br/>shared by the worker and cam_seaweed.py"]
+  SARG -->|"direct (courier) cams only: the full frame goes to the archive (re-encoded to fit 600 KB if over), the vision providers get it shrunk to 1280 px on the long side (shrink_for_vision; feed cams keep their own size)"| UWFRAME
   SARG -->|"direct (courier) cams only: a blank frame is not read and not archived<br/>(frame_blank_verdict, Pillow or ffmpeg, fails open)"| FRAMEGUARD
 
   LGT -->|writes| LDATA[(lightning-data branch)]
@@ -376,8 +377,8 @@ the middle of the picture (the player's top and bottom bars are left out) is a
 flat dark grey: its 95th-percentile block brightness is under 30 and its mean is
 at least 16 (`config/frame-guard.json`). A real night frame is darker than that
 grey and passes. The check reads only the DC coefficient of each 8x8 block
-(`dcLuma.ts`), about 1-3 ms for a 1280x720 frame, because `/ingest` runs under the
-free plan's 10 ms CPU limit; frames of 60 KB or more skip it. `/ingest` answers
+(`dcLuma.ts`), about 1-3 ms for a 1280x720 frame and about 1-2 ms for a 1080p frame under 60 KB,
+because `/ingest` runs under the free plan's 10 ms CPU limit; frames of 60 KB or more skip it. `/ingest` answers
 400 for a body that is not a JPEG or is the wrong size and 422 for a blank frame,
 as JSON `{ok:false, error, reason, message, bytes, stats}`, and records the refusal
 under `attempt:<id>` (`/cams` shows it as `lastAttempt`); the stored frame is not
@@ -388,6 +389,17 @@ bad frame stored before the guard existed does not stay "good". On the reading s
 `scripts/cam_seaweed.py` runs the same check (same JSON file) on courier cams before
 it archives or reads a frame, so a black picture is never read as "no seaweed, empty
 beach" and never takes an archive hour slot from the real frame.
+
+**Picture size (2026-10-18).** The courier asks yt-dlp for the best stream up to 1080p
+(`best[height<=1080]/best[height<=720]/best`, `STREAM_FORMAT` in `scripts/yt_pacer.py`).
+The ask costs no extra yt-dlp call. A 1080p JPEG is about 2 times the bytes of a 720p
+one (up to 640 KB measured), far under the Worker's 2 MB limit and the 25 MiB KV value
+limit. `bytesToB64` in the Worker was the one slow step (8 ms for a 360 KB frame); it now
+takes 1 ms. The archive route's 600 KB cap stays, so `archive_frame` re-encodes a bigger
+frame to fit instead of dropping it. The vision readers keep the size they were tuned on:
+`shrink_for_vision` in `scripts/cam_seaweed.py` cuts a courier frame to 1280 px on the long
+side before any provider sees it (a 720p frame passes through untouched). The numbers are in
+`docs/courier-pacing.md ("Picture size")`.
 
 **One call budget for every yt-dlp call on the home server.** YouTube answers
 "Sign in to confirm you're not a bot" when one IP makes about 150 yt-dlp calls in

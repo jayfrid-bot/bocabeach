@@ -14,6 +14,7 @@ describe("judgeFrame: frames that are NOT a real picture", () => {
     ["black-noise-20696.jpg", "a black frame with noise, 20 KB: it passed the old 20,000-byte floor"],
     ["black-underwater-night.jpg", "near-black frame stored by the browser grab for the underwater cam"],
     ["video-unavailable.jpg", "the player's 'Video unavailable' page"],
+    ["black-slate-1080p-29144.jpg", "YouTube's black slate at 1920x1080: 29,144 bytes, twice the 720p size and still under the 60 KB pixel-check line"],
   ];
   for (const [name, why] of blanks) {
     it(`rejects ${name} (${why})`, () => {
@@ -38,6 +39,7 @@ describe("judgeFrame: frames that ARE a real picture", () => {
     ["dim-hazy.jpg", "dim grey frame before dawn"],
     ["night-underwater-dark.jpg", "real underwater frame before dawn: near black, City overlay text, 58 KB of sensor noise"],
     ["dim-feed-frame.jpg", "dim real frame from a still-image feed cam (mean 14.5)"],
+    ["daylight-1080p-siesta.jpg", "daylight beach at 1920x1080 (the courier asks for 1080p since 2026-10-18)"],
   ];
   for (const [name, why] of goods) {
     it(`accepts ${name} (${why})`, () => {
@@ -50,7 +52,7 @@ describe("judgeFrame: frames that ARE a real picture", () => {
   it("a real night frame is darker than YouTube's grey: black passes, grey is blank", () => {
     // Real dark frames measured 0-14.5 on the mean; every YouTube non-picture frame measured 17.3-20.9.
     const darkReal = ["night-underwater-dark.jpg", "dim-feed-frame.jpg"].map((n) => judgeFrame(fixture(n), CHECK_ALL).stats!.mean);
-    const blanks = ["spinner-pensacola.jpg", "spinner-deerfield-surf.jpg", "black-slate-12815.jpg", "black-noise-20696.jpg", "video-unavailable.jpg", "black-underwater-night.jpg"].map(
+    const blanks = ["spinner-pensacola.jpg", "spinner-deerfield-surf.jpg", "black-slate-12815.jpg", "black-slate-1080p-29144.jpg", "black-noise-20696.jpg", "video-unavailable.jpg", "black-underwater-night.jpg"].map(
       (n) => judgeFrame(fixture(n), CHECK_ALL).stats!.mean
     );
     expect(Math.max(...darkReal)).toBeLessThan(BLANK_MEAN_AT_LEAST);
@@ -100,7 +102,7 @@ describe("judgeFrame: size and format", () => {
   });
 
   it("no blank frame measured so far is large enough to be waved through by the rich-frame shortcut", () => {
-    for (const n of ["spinner-pensacola.jpg", "spinner-deerfield-surf.jpg", "black-slate-12815.jpg", "black-noise-20696.jpg", "video-unavailable.jpg", "black-underwater-night.jpg"]) {
+    for (const n of ["spinner-pensacola.jpg", "spinner-deerfield-surf.jpg", "black-slate-12815.jpg", "black-noise-20696.jpg", "video-unavailable.jpg", "black-underwater-night.jpg", "black-slate-1080p-29144.jpg"]) {
       expect(fixture(n).length).toBeLessThan(RICH_FRAME_BYTES!);
     }
   });

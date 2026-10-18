@@ -441,6 +441,10 @@ ARCHIVE_FRAME_MAX_AGE_MIN = float(os.environ.get("ARCHIVE_FRAME_MAX_AGE_MIN", "1
 # saves a pointless upload.
 ARCHIVE_MIN_BYTES = 10 * 1024
 ARCHIVE_MAX_BYTES = 600 * 1024
+# A frame over the cap is re-encoded to fit instead of being dropped (a 1080p courier frame
+# of a busy sky can pass 600 KB). It is tried at these JPEG qualities, then at a smaller size.
+ARCHIVE_FIT_QUALITIES = (82, 72, 62)
+ARCHIVE_FIT_FALLBACK_SIDE = 1280
 ARCHIVE_WORKERS = int(os.environ.get("ARCHIVE_WORKERS", "4"))
 # Wall-time budget for ALL archive work in one tick (pre-check, every upload
 # flush, archive_pass). Unfinished work at the deadline is dropped.
@@ -899,6 +903,11 @@ def archive_frame(slug: str, cam_id: str, img: bytes, frame_at: str | None = Non
         if not isinstance(img, (bytes, bytearray)) or bytes(img[:3]) != b"\xff\xd8\xff":
             print(f"  archive [{slug}] {cam_id}: skipped (not a JPEG)", file=sys.stderr)
             return "skipped"
+        if len(img) > ARCHIVE_MAX_BYTES:
+            fitted = fit_for_archive(bytes(img))
+            if fitted is not None:
+                print(f"  archive [{slug}] {cam_id}: {len(img)} bytes re-encoded to {len(fitted)} to fit the cap")
+                img = fitted
         if not ARCHIVE_MIN_BYTES <= len(img) <= ARCHIVE_MAX_BYTES:
             print(f"  archive [{slug}] {cam_id}: skipped ({len(img)} bytes is outside "
                   f"{ARCHIVE_MIN_BYTES}-{ARCHIVE_MAX_BYTES})", file=sys.stderr)
@@ -1409,6 +1418,94 @@ def shrink_for_alert(img: bytes) -> bytes | None:
     return None
 
 
+# --- Picture size for the vision readers and the archive -------------------------------------
+# The courier may now grab 1080p (docs/courier-pacing.md). The readers were tuned on 720p
+# frames, so a courier frame is shrunk to VISION_MAX_SIDE on its long side before any vision
+# provider sees it. Gemini bills a 1080p frame and a 720p frame the same (see the tiling
+# note in docs/courier-pacing.md ("Picture size")), but Groq and OpenRouter bill
+# per pixel, so the fallback providers would cost about 2.3 times more at 1080p. The archive
+# and the app keep the full frame.
+VISION_MAX_SIDE = int(os.environ.get("VISION_MAX_SIDE", "1280"))
+VISION_SHRINK_QUALITY = 88  # about what ffmpeg -q:v 4 gives; the courier's own setting
+
+
+def jpeg_dimensions(img: bytes) -> "tuple[int, int] | None":
+    """(width, height) read from the JPEG's start-of-frame marker. None when it is not a
+    JPEG this can read. Reads headers only, no decoding."""
+    try:
+        if len(img) < 4 or img[:2] != b"\xff\xd8":
+            return None
+        i = 2
+        while i + 9 < len(img):
+            if img[i] != 0xFF:
+                i += 1
+                continue
+            marker = img[i + 1]
+            if marker == 0xFF:
+                i += 1
+                continue
+            if marker in (0x01,) or 0xD0 <= marker <= 0xD9:  # markers without a length
+                i += 2
+                continue
+            seg_len = (img[i + 2] << 8) | img[i + 3]
+            if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                height = (img[i + 5] << 8) | img[i + 6]
+                width = (img[i + 7] << 8) | img[i + 8]
+                return (width, height) if width and height else None
+            i += 2 + seg_len
+    except Exception:  # noqa: BLE001 - an unreadable header is simply "unknown"
+        pass
+    return None
+
+
+def _reencode(img: bytes, max_side: int, quality: int) -> bytes:
+    """Long side to at most max_side (never enlarges), JPEG at `quality`. Pillow, else ffmpeg."""
+    Image = _pillow_image()
+    if Image is not None:
+        return _shrink_pillow(Image, img, max_side, quality)
+    return _shrink_ffmpeg(img, max_side, quality)
+
+
+def shrink_for_vision(img: bytes, max_side: "int | None" = None) -> bytes:
+    """The frame as a vision provider should see it: long side at most VISION_MAX_SIDE.
+
+    A frame already that small comes back as the SAME bytes (no re-encode), so a 720p frame
+    is read exactly as before. Never raises: if the frame cannot be shrunk, the full frame
+    goes on (a bigger picture is slower and dearer, not wrong)."""
+    limit = max_side or VISION_MAX_SIDE
+    try:
+        dims = jpeg_dimensions(img)
+        if dims is None or max(dims) <= limit:
+            return img
+        small = _reencode(img, limit, VISION_SHRINK_QUALITY)
+        return small if small else img
+    except Exception as e:  # noqa: BLE001
+        print(f"  warn vision shrink: {e}", file=sys.stderr)
+        return img
+
+
+def fit_for_archive(img: bytes) -> "bytes | None":
+    """A frame over ARCHIVE_MAX_BYTES, re-encoded to fit under it: lower JPEG quality first
+    (same pixels), then a smaller picture. None when nothing fits or the frame cannot be
+    re-encoded. A frame already inside the cap comes back unchanged."""
+    if len(img) <= ARCHIVE_MAX_BYTES:
+        return img
+    try:
+        dims = jpeg_dimensions(img)
+        if dims is None:
+            return None
+        for quality in ARCHIVE_FIT_QUALITIES:
+            out = _reencode(img, max(dims), quality)
+            if ARCHIVE_MIN_BYTES <= len(out) <= ARCHIVE_MAX_BYTES:
+                return out
+        out = _reencode(img, ARCHIVE_FIT_FALLBACK_SIDE, ARCHIVE_FIT_QUALITIES[-1])
+        if ARCHIVE_MIN_BYTES <= len(out) <= ARCHIVE_MAX_BYTES:
+            return out
+    except Exception as e:  # noqa: BLE001
+        print(f"  warn archive fit: {e}", file=sys.stderr)
+    return None
+
+
 # --- Blank-frame guard (shared thresholds: config/frame-guard.json) -----------------------
 # A courier cam can hold a frame that is not a picture: YouTube's black slate (what a live
 # stream shows while it sends no video), the player's loading spinner on black, an error page.
@@ -1667,7 +1764,7 @@ def capture_uw(now_local: dt.datetime, attempted: set | None = None,
             print(f"  underwater: skipped ({why})")
             return None
         run.enqueue(UW_ARCHIVE_SLUG, UW_ARCHIVE_CAM_ID, frame, frame_at)
-        r = assess_uw(frame)
+        r = assess_uw(shrink_for_vision(frame))
     except UnreadableFrame:
         print("  underwater: skipped (unreadable per clef)")
         return None
@@ -2252,10 +2349,12 @@ def capture_beach(
             # A cam may carry a short hint about what it sees (visionHint); with
             # none, the call is exactly the plain assess(img) it always was.
             prompt = prompt_for_cam(cam)
-            r = assess(img) if prompt == PROMPT else assess(img, prompt)
+            # The archive got the full frame above. The readers get the size they were tuned on.
+            vimg = shrink_for_vision(img) if src.get("kind") == "direct" else img
+            r = assess(vimg) if prompt == PROMPT else assess(vimg, prompt)
             reading = {"id": cam["id"], "name": cam["name"], **r}
             if SEAWEED_RANK.get(r.get("level"), -1) >= _MODERATE:
-                imgs[cam["id"]] = img
+                imgs[cam["id"]] = vimg
             # When the frame was taken (courier: its meta time; feed: latest.json
             # `timestamp`, when it has one) and when we scored it. A later tick
             # may CARRY this reading (see carried_readings) and needs the frame's

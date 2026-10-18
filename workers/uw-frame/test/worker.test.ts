@@ -62,6 +62,25 @@ describe("POST /ingest: the frame guard", () => {
     expect((await ingest("deerfield-spinner-uw", fixture("night-underwater-dark.jpg"))).status).toBe(200);
   });
 
+  it("takes a 1080p courier frame whole and serves back the same bytes (the courier moved to 1080p, 2026-10-18)", async () => {
+    const frame = fixture("daylight-1080p-siesta.jpg");
+    expect(frame.length).toBeGreaterThan(150_000);
+    const res = await ingest("siesta-beach-cam", frame);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, bytes: frame.length });
+    const back = new Uint8Array(await (await worker.fetch(new Request("https://uw.test/frame?cam=siesta-beach-cam"), env)).arrayBuffer());
+    expect(back.length).toBe(frame.length);
+    expect(back.every((b, i) => b === frame[i])).toBe(true);
+  });
+
+  it("refuses a 1080p black slate too: 29,144 bytes, still under the 60 KB line that skips the pixel check", async () => {
+    const slate = fixture("black-slate-1080p-29144.jpg");
+    const res = await ingest("pensacola-sria-west-cam", slate);
+    expect(res.status).toBe(422);
+    expect(await res.json()).toMatchObject({ ok: false, reason: "blank", bytes: 29144 });
+    expect(kv.map.has("frame:pensacola-sria-west-cam")).toBe(false);
+  });
+
   it("refuses YouTube's 12,815-byte black slate with a clear 422 and stores nothing", async () => {
     const res = await ingest("deerfield-surf-cam", fixture("black-slate-12815.jpg"));
     expect(res.status).toBe(422);

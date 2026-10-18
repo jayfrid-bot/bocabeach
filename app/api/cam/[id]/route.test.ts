@@ -108,3 +108,76 @@ describe("GET /api/cam/[id] — unchanged behavior", () => {
     expect(res.status).toBe(502);
   });
 });
+
+
+describe("GET /api/cam/[id]?res=hr — the full-size original of a feed frame", () => {
+  // boca-inlet is a `feed` cam on bocainlet view s4 (config/locations.ts).
+  const ID = "boca-inlet";
+  const FEED = {
+    s4: {
+      mr: "pics/s4/oct1226d/o181403_.jpg",
+      hr: "pics/s4/oct1226d/o181403h.jpg",
+      timestamp: 1780361972,
+    },
+  };
+
+  function stubFeed(feed: unknown = FEED) {
+    const fetched: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        fetched.push(url);
+        if (url.includes("latest.json")) {
+          return new Response(JSON.stringify(feed), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        return imageResponse();
+      }),
+    );
+    return fetched;
+  }
+
+  function reqHr(id: string): [Request, { params: Promise<{ id: string }> }] {
+    return [new Request(`https://x/api/cam/${id}?res=hr`), { params: Promise.resolve({ id }) }];
+  }
+
+  it("fetches the hr original when asked", async () => {
+    const fetched = stubFeed();
+    const res = await GET(...reqHr(ID));
+    expect(res.status).toBe(200);
+    expect(fetched.at(-1)).toBe("https://video-monitoring.com/beachcams/bocainlet/pics/s4/oct1226d/o181403h.jpg");
+    expect(res.headers.get("content-type")).toBe("image/jpeg");
+    expect(res.headers.get("cache-control")).toContain("s-maxage=60");
+  });
+
+  it("serves the usual mr frame without the query", async () => {
+    const fetched = stubFeed();
+    await GET(...req(ID));
+    expect(fetched.at(-1)).toBe("https://video-monitoring.com/beachcams/bocainlet/pics/s4/oct1226d/o181403_.jpg");
+  });
+
+  it("falls back to the mr frame when the original is a video or missing", async () => {
+    for (const feed of [
+      { s4: { ...FEED.s4, hr: "pics/s4/oct1226d/o181403a.mp4" } },
+      { s4: { mr: FEED.s4.mr, timestamp: 1780361972 } },
+    ]) {
+      const fetched = stubFeed(feed);
+      const res = await GET(...reqHr(ID));
+      expect(res.status).toBe(200);
+      expect(fetched.at(-1)).toBe("https://video-monitoring.com/beachcams/bocainlet/pics/s4/oct1226d/o181403_.jpg");
+    }
+  });
+
+  it("ignores ?res=hr for a direct cam: its frame is the one the courier grabbed", async () => {
+    const fetched = stubFeed();
+    const res = await GET(...reqHr("deerfield-beach-cam"));
+    expect(res.status).toBe(200);
+    expect(fetched).toHaveLength(1);
+    expect(fetched[0]).toContain("uw-frame");
+  });
+
+  it("will not follow an original path that leaves the cam's folder", async () => {
+    stubFeed({ s4: { mr: FEED.s4.mr, hr: "../../elsewhere/x.jpg", timestamp: 1780361972 } });
+    const res = await GET(...reqHr(ID));
+    expect(res.status).toBe(502);
+  });
+});

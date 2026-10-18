@@ -127,6 +127,8 @@ describe("buildCamViews — resolving each cam's capture time", () => {
     expect(cams[1].capturedAt).toBeUndefined();
     // The card still renders: the proxied still and the cam's identity survive.
     expect(cams[0].imageUrl).toBe("/api/cam/cam-s4");
+    // A feed cam also offers its full-size original; a courier cam does not.
+    expect(cams[0].originalImageUrl).toBe("/api/cam/cam-s4?res=hr");
   });
 });
 
@@ -240,5 +242,6 @@ describe("buildCamViews — resolving a courier cam's capture time (snapshotMeta
     expect(cams[0].capturedAt).toBeUndefined();
     // The card still renders: the proxied still and the cam's identity survive.
     expect(cams[0].imageUrl).toBe("/api/cam/deerfield-beach-cam");
+    expect(cams[0].originalImageUrl).toBeUndefined();
   });
 });

@@ -1,0 +1,722 @@
+{
+ "measuredAt": "2026-10-18T18:42-18:55Z (14:42-14:55 EDT, daylight)",
+ "tool": "yt-dlp 2026.07.04 -J, ffmpeg -frames:v 1 -q:v 4 (the courier's own setting)",
+ "youtube": [
+  {
+   "cam": "deerfield-beach-cam",
+   "videoId": "rdeoEeJ00xA",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 115981,
+   "bytes1080": 202936
+  },
+  {
+   "cam": "deerfield-surf-cam",
+   "videoId": "hIeFPNHfuoY",
+   "maxHeight": 720,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720
+   ],
+   "bytes720": 24270,
+   "bytes1080": null
+  },
+  {
+   "cam": "deerfield-pier-cam",
+   "videoId": "H33wtprQqSM",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 165241,
+   "bytes1080": 316864
+  },
+  {
+   "cam": "deerfield-spinner-uw",
+   "videoId": "SHfAtWHr9Ks",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 21910,
+   "bytes1080": 43349
+  },
+  {
+   "cam": "ftl-elbo-beach-cam",
+   "videoId": "1j1lgppb0PY",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 116756,
+   "bytes1080": 229373
+  },
+  {
+   "cam": "fort-myers-beach-cam",
+   "videoId": "nj9jdOXXhEo",
+   "maxHeight": 720,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720
+   ],
+   "bytes720": 188982,
+   "bytes1080": null
+  },
+  {
+   "cam": "margaritaville-fmb-cam",
+   "videoId": "2qd9j2CbIpg",
+   "maxHeight": 1080,
+   "fpsAtMax": 60.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 175379,
+   "bytes1080": 362099
+  },
+  {
+   "cam": "pink-shell-fmb-cam",
+   "videoId": "uK-eZz0w-go",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 181479,
+   "bytes1080": 354937
+  },
+  {
+   "cam": "pensacola-sria-west-cam",
+   "videoId": "HKIc6CYlMzI",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 12815,
+   "bytes1080": 29144
+  },
+  {
+   "cam": "siesta-beach-cam",
+   "videoId": "NLhxcyzXQxM",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 108296,
+   "bytes1080": 189729
+  },
+  {
+   "cam": "white-sands-ami-cam",
+   "videoId": "ecD9ZDXLE6A",
+   "maxHeight": 720,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720
+   ],
+   "bytes720": 99521,
+   "bytes1080": null
+  },
+  {
+   "cam": "holmes-beach-cam",
+   "videoId": "_W0Gf1Le2qc",
+   "maxHeight": 1080,
+   "fpsAtMax": 60.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 167979,
+   "bytes1080": 343938
+  },
+  {
+   "cam": "enco-sterling-reef-cam",
+   "videoId": "Y82E6_IVEdY",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 71940,
+   "bytes1080": 143085
+  },
+  {
+   "cam": "enco-shores-of-panama-cam",
+   "videoId": "GFsRPlw81W8",
+   "maxHeight": 1080,
+   "fpsAtMax": 60.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 82288,
+   "bytes1080": 153315
+  },
+  {
+   "cam": "sharkys-pcb-cam",
+   "videoId": "EYs8y8gOwf0",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 193359,
+   "bytes1080": 359284
+  },
+  {
+   "cam": "fort-zachary-taylor-cam",
+   "videoId": "sDXwrYQPeOQ",
+   "maxHeight": 1080,
+   "fpsAtMax": 60.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 285777,
+   "bytes1080": 642455
+  },
+  {
+   "cam": "sunset-grille-marathon-cam",
+   "videoId": "SXMC-MzSncI",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 146197,
+   "bytes1080": 244194
+  },
+  {
+   "cam": "jax-beach-bw-cam",
+   "videoId": "bZ4uxyLqV-E",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 77746,
+   "bytes1080": 150305
+  },
+  {
+   "cam": "jax-pier-overview-cam",
+   "videoId": "EOTLy91Ycew",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 33115,
+   "bytes1080": 63870
+  },
+  {
+   "cam": "st-augustine-pier-cam",
+   "videoId": "Q6eZVkUKFxo",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 116084,
+   "bytes1080": 215535
+  },
+  {
+   "cam": "st-augustine-surf-cam",
+   "videoId": "H2q_DJc33kg",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 97376,
+   "bytes1080": 180387
+  },
+  {
+   "cam": "vilano-surf-station-cam",
+   "videoId": "o4BJ-eDgYrM",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 41978,
+   "bytes1080": 78503
+  },
+  {
+   "cam": "ormond-cam-180",
+   "videoId": "p1s7EdZgGvU",
+   "error": "p1s7EdZgGvU: This video is not available"
+  },
+  {
+   "cam": "dunlawton-cam-180",
+   "videoId": "3hwTkO_5KXo",
+   "error": "3hwTkO_5KXo: This video is not available"
+  },
+  {
+   "cam": "new-smyrna-cam-180",
+   "videoId": "550p9smwjPM",
+   "error": "550p9smwjPM: This video is not available"
+  },
+  {
+   "cam": "ponce-inlet-cam-180",
+   "videoId": "ZCozdEGwkDI",
+   "error": "ZCozdEGwkDI: This video is not available"
+  },
+  {
+   "cam": "hollywood-broadwalk-cam",
+   "videoId": "cmkAbDUEoyA",
+   "error": "cmkAbDUEoyA: This video is not available"
+  },
+  {
+   "cam": "dania-pier-cam",
+   "videoId": "o1eTLR7Degs",
+   "error": "o1eTLR7Degs: This video is not available"
+  },
+  {
+   "cam": "jupiter-reef-club-cam",
+   "videoId": "1FYgBpkM7SA",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 126459,
+   "bytes1080": 245553
+  },
+  {
+   "cam": "key-west-southernmost-waterside-cam",
+   "videoId": "UyfDBDRwPeI",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 127601,
+   "bytes1080": 200255
+  },
+  {
+   "cam": "key-west-southernmost-shores-cam",
+   "videoId": "gsDDwA96F6Q",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 185058,
+   "bytes1080": 306245
+  },
+  {
+   "cam": "sombrero-beach-cam",
+   "videoId": "jE4og3o_SXs",
+   "maxHeight": 1080,
+   "fpsAtMax": 30.0,
+   "heights": [
+    144,
+    240,
+    360,
+    480,
+    720,
+    1080
+   ],
+   "bytes720": 203539,
+   "bytes1080": 381019
+  }
+ ],
+ "videoMonitoring": [
+  {
+   "feed": "bathtub",
+   "view": "s11",
+   "mr": {
+    "w": 1200,
+    "h": 800,
+    "bytes": 190165
+   },
+   "hr": {
+    "w": 5184,
+    "h": 3456,
+    "bytes": 2508421
+   },
+   "linearGain": 4.32
+  },
+  {
+   "feed": "bathtub",
+   "view": "s9",
+   "mr": {
+    "w": 1200,
+    "h": 800,
+    "bytes": 204890
+   },
+   "hr": {
+    "w": 5184,
+    "h": 3456,
+    "bytes": 2628740
+   },
+   "linearGain": 4.32
+  },
+  {
+   "feed": "boca",
+   "view": "s11",
+   "mr": {
+    "w": 1200,
+    "h": 900,
+    "bytes": 152936
+   },
+   "hr": {
+    "w": 4352,
+    "h": 3264,
+    "bytes": 1814889
+   },
+   "linearGain": 3.63
+  },
+  {
+   "feed": "boca",
+   "view": "s4",
+   "mr": {
+    "w": 1200,
+    "h": 900,
+    "bytes": 152530
+   },
+   "hr": {
+    "w": 4352,
+    "h": 3264,
+    "bytes": 1574547
+   },
+   "linearGain": 3.63
+  },
+  {
+   "feed": "bocainlet",
+   "view": "s12",
+   "mr": {
+    "w": 1920,
+    "h": 1280,
+    "bytes": 442295
+   },
+   "hr": {
+    "w": 5184,
+    "h": 3456,
+    "bytes": 2312642
+   },
+   "linearGain": 2.7
+  },
+  {
+   "feed": "bocainlet",
+   "view": "s16",
+   "mr": {
+    "w": 1920,
+    "h": 1280,
+    "bytes": 408410
+   },
+   "hr": {
+    "w": 5184,
+    "h": 3456,
+    "bytes": 2123730
+   },
+   "linearGain": 2.7
+  },
+  {
+   "feed": "bocainlet",
+   "view": "s4",
+   "mr": {
+    "w": 1920,
+    "h": 1280,
+    "bytes": 403597
+   },
+   "hr": {
+    "w": 5184,
+    "h": 3456,
+    "bytes": 2102725
+   },
+   "linearGain": 2.7
+  },
+  {
+   "feed": "bocainlet",
+   "view": "s8",
+   "mr": {
+    "w": 1920,
+    "h": 1280,
+    "bytes": 379866
+   },
+   "hr": {
+    "w": 5184,
+    "h": 3456,
+    "bytes": 1997778
+   },
+   "linearGain": 2.7
+  },
+  {
+   "feed": "hobesound",
+   "view": "s20",
+   "mr": {
+    "w": 1920,
+    "h": 1280,
+    "bytes": 1037340
+   },
+   "hr": {
+    "w": 6000,
+    "h": 4000,
+    "bytes": 7270088
+   },
+   "linearGain": 3.12
+  },
+  {
+   "feed": "hobesound",
+   "view": "s22",
+   "mr": {
+    "w": 1920,
+    "h": 1280,
+    "bytes": 1011497
+   },
+   "hr": {
+    "w": 6000,
+    "h": 4000,
+    "bytes": 7102639
+   },
+   "linearGain": 3.12
+  },
+  {
+   "feed": "jensen",
+   "view": "s1",
+   "mr": {
+    "w": 1200,
+    "h": 800,
+    "bytes": 167723
+   },
+   "hr": {
+    "w": 5184,
+    "h": 3456,
+    "bytes": 2563709
+   },
+   "linearGain": 4.32
+  },
+  {
+   "feed": "jensen",
+   "view": "s3",
+   "mr": {
+    "w": 1200,
+    "h": 800,
+    "bytes": 141981
+   },
+   "hr": {
+    "w": 5184,
+    "h": 3456,
+    "bytes": 2248675
+   },
+   "linearGain": 4.32
+  },
+  {
+   "feed": "jupiter",
+   "view": "s2",
+   "mr": {
+    "w": 1920,
+    "h": 1280,
+    "bytes": 290436
+   },
+   "hr": {
+    "w": 5184,
+    "h": 3456,
+    "bytes": 1501939
+   },
+   "linearGain": 2.7
+  },
+  {
+   "feed": "jupiter",
+   "view": "s33",
+   "mr": {
+    "w": 1620,
+    "h": 1080,
+    "bytes": 158444
+   },
+   "hr": {
+    "w": 5184,
+    "h": 3456,
+    "bytes": 1149643
+   },
+   "linearGain": 3.2
+  },
+  {
+   "feed": "lakeworthinlet",
+   "view": "s4",
+   "mr": {
+    "w": 1920,
+    "h": 1280,
+    "bytes": 389501
+   },
+   "hr": {
+    "w": 5184,
+    "h": 3456,
+    "bytes": 2200680
+   },
+   "linearGain": 2.7
+  },
+  {
+   "feed": "lakeworthinlet",
+   "view": "s6",
+   "mr": {
+    "w": 1920,
+    "h": 1280,
+    "bytes": 380107
+   },
+   "hr": {
+    "w": 5184,
+    "h": 3456,
+    "bytes": 2184113
+   },
+   "linearGain": 2.7
+  },
+  {
+   "feed": "sebastian",
+   "view": "s18",
+   "mr": {
+    "w": 1920,
+    "h": 1280,
+    "bytes": 772526
+   },
+   "hr": {
+    "w": 6000,
+    "h": 4000,
+    "bytes": 5564393
+   },
+   "linearGain": 3.12
+  },
+  {
+   "feed": "sebastian",
+   "view": "s22",
+   "mr": {
+    "w": 1920,
+    "h": 1280,
+    "bytes": 707832
+   },
+   "hr": {
+    "w": 6000,
+    "h": 4000,
+    "bytes": 5024038
+   },
+   "linearGain": 3.12
+  }
+ ],
+ "ytdlpCallsUsed": 34
+}

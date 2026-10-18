@@ -115,6 +115,9 @@ export async function buildCamViews(loc: Location): Promise<CamView[]> {
           cam.id && (cam.snapshotUrl || cam.snapshotFeed)
             ? `/api/cam/${cam.id}`
             : undefined,
+        // A feed cam also has a full-size original, fetched only when the viewer zooms in.
+        originalImageUrl:
+          cam.id && cam.snapshotFeed ? `/api/cam/${cam.id}?res=hr` : undefined,
         capturedAt,
         attribution: cam.attribution,
         weather,

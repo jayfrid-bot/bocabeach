@@ -63,12 +63,17 @@ const clampScale = (s: number) => Math.min(MAX_SCALE, Math.max(MIN_SCALE, s));
 
 export function ZoomableImage({
   src,
+  sharpSrc,
   alt,
   onError,
   onZoomedChange,
   className = "",
 }: {
   src: string;
+  /** A sharper copy of the same picture (same shape, more pixels). It is fetched only once the
+   *  viewer first zooms in, and swapped in without resetting the zoom when it has loaded. If it
+   *  fails to load, the normal picture stays. */
+  sharpSrc?: string;
   alt: string;
   onError?: () => void;
   /** Tells the parent when the picture leaves or returns to 1×, e.g. to pause
@@ -115,6 +120,42 @@ export function ZoomableImage({
   useEffect(() => {
     setZoom(IDENTITY);
   }, [src, setZoom]);
+
+  // The sharp copy: wanted from the first zoom on, shown once it has fully loaded. `src` is
+  // not changed, so the zoom the viewer set stays where it is.
+  const [shown, setShown] = useState(src);
+  const [wantSharp, setWantSharp] = useState(false);
+  useEffect(() => {
+    setShown(src);
+    setWantSharp(false);
+  }, [src]);
+  const zoomedIn = zoom.scale > 1;
+  useEffect(() => {
+    if (zoomedIn) setWantSharp(true);
+  }, [zoomedIn]);
+  useEffect(() => {
+    if (!sharpSrc || !wantSharp) return;
+    let live = true;
+    let objectUrl: string | null = null;
+    const abort = new AbortController();
+    // One download, held as a blob: the browser would fetch a plain <img> a second time when the
+    // response may not be kept in its cache, and an original can be 7 MB.
+    fetch(sharpSrc, { signal: abort.signal })
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((blob) => {
+        if (!live || !blob.type.startsWith("image/")) return;
+        objectUrl = URL.createObjectURL(blob);
+        setShown(objectUrl);
+      })
+      .catch(() => {
+        /* the normal picture stays */
+      });
+    return () => {
+      live = false;
+      abort.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [sharpSrc, wantSharp]);
 
   /** A point relative to the box centre. */
   const local = (clientX: number, clientY: number) => {
@@ -271,7 +312,7 @@ export function ZoomableImage({
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           ref={img}
-          src={src}
+          src={shown}
           alt={alt}
           onError={onError}
           draggable={false}

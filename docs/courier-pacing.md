@@ -170,6 +170,114 @@ The worker answers 404 for an unknown cam.
 - The daylight gate (06:00 to 20:59 Eastern) moved into the scheduler.
 - `--dry-run` shows what a run would grab. `COURIER_NOW=<ISO time>` asks "what would run then?".
 
+## Picture size (1080p, 2026-10-18)
+
+The courier used to ask for 720p (`best[height<=720]/best`). It now asks for
+`best[height<=1080]/best[height<=720]/best` (`STREAM_FORMAT` in `scripts/yt_pacer.py`).
+The size is part of the same `yt-dlp -g` call, so it adds no call to the budget above.
+No AI upscaling is involved: the picture is the one the stream carries.
+
+Measured 2026-10-18 on the laptop, in daylight, with `yt-dlp -J` (one call per cam, 34 calls in all)
+and `ffmpeg -frames:v 1 -q:v 4`. The raw numbers and four cams' sample frames are in
+`docs/research/2026-10-18-cam-resolution/` (`measurements.json`).
+
+| Result | Cams |
+|---|---|
+| 1080p at 30 fps | 23 of 32 |
+| 720p at 30 fps (the stream offers nothing higher) | `deerfield-surf-cam`, `fort-myers-beach-cam`, `white-sands-ami-cam` |
+| "This video is not available" to yt-dlp, with and without node | `ormond-cam-180`, `dunlawton-cam-180`, `new-smyrna-cam-180`, `ponce-inlet-cam-180`, `hollywood-broadwalk-cam`, `dania-pier-cam` |
+
+The six unavailable cams are a separate problem. YouTube's oEmbed still answers 200 for their ids.
+They need a look at the server log (`~/Library/Logs/cam-courier.log`), not a size change.
+A check of detail above the 1280 px scale showed real 1080p detail in every 1080p cam, not an upscaled 720p stream.
+
+Frame size, 23 cams that offer both: 1080p is 1.6 to 2.3 times the bytes of 720p
+(mean 1.9; mean 124 KB at 720p, 236 KB at 1080p). The biggest 1080p frame is 642 KB
+(`fort-zachary-taylor-cam`; its 720p frame is 286 KB).
+
+### What a bigger frame touches
+
+| Place | Limit | Effect of 1080p |
+|---|---|---|
+| Worker ingest (`config/frame-guard.json`) | 5 KB to 2,000,000 bytes | Largest frame is 0.64 MB. No change needed. |
+| KV value | 25 MiB; base64 adds one third | 0.86 MB at most. Fine. |
+| Blank-frame check (`judgeFrame`) | Skipped at 60 KB or more | A 1080p black slate is 29 KB (720p: 12.8 KB), so it is still checked, in 1.5 ms (720p: 0.6 ms). Forced on a 362 KB frame the check takes 8 ms, but that frame skips it. Thresholds use block averages over fractions of the frame, so they do not depend on size. |
+| `bytesToB64` in the Worker | Free plan 10 ms CPU | It spread 32 KB per call: 8 ms for a 362 KB frame. It now uses 8 KB with `apply`: 1 ms. |
+| Archive upload (`ARCHIVE_MAX_BYTES`, `/api/cam-frames`) | 600 KB | One cam can pass it. `archive_frame` now re-encodes a bigger frame to fit (quality 82, 72, 62, then a 1280 px copy) and no longer drops it. |
+| Vision readers | See below | Courier frames are shrunk to 1280 px before any provider sees them. |
+
+### Vision readers
+
+`scripts/cam_seaweed.py` sent the whole frame to the provider: `gemini-2.5-flash` first, then Groq,
+OpenRouter or Clef. Clef already shrinks to 768 px. For the rest:
+
+- **Gemini** bills images in tiles, sized by the short side. 1280x720 and 1920x1080 are both 6 tiles, 1,548 tokens.
+  So 1080p would cost the same, by the published rule (measure with `countTokens` before relying on it).
+- **Groq and OpenRouter** bill by pixels. 1080p is 2.25 times the tokens of 720p.
+- The prompts and the confirm rules were tuned on 720p frames.
+
+So `shrink_for_vision` cuts a courier (`direct`) frame to 1280 px on the long side (`VISION_MAX_SIDE`).
+A frame already that small passes through as the same bytes. The archive still gets the full frame.
+Feed cams (video-monitoring.com) are not touched: they already send 1200 to 1920 px and keep doing so.
+
+### Feed cams: the full-size original exists
+
+Each `latest.json` entry has `mr` (what we serve) and `hr` (the full-size original, the same capture time).
+Measured 2026-10-18 on all 18 feed views:
+
+| Feed | `mr` now | `hr` original |
+|---|---|---|
+| Boca (s4, s11) | 1200x900, 153 KB | 4352x3264, 1.6 to 1.8 MB |
+| Boca Inlet, Lake Worth Inlet, Jupiter s2 | 1920x1280, 0.3 to 0.4 MB | 5184x3456, 1.5 to 2.3 MB |
+| Jupiter s33 | 1620x1080, 158 KB | 5184x3456, 1.1 MB |
+| Jensen, Bathtub | 1200x800, 0.14 to 0.2 MB | 5184x3456, 2.2 to 2.6 MB |
+| Hobe Sound | 1920x1280, 1.0 MB | 6000x4000, 7.1 to 7.3 MB |
+| Sebastian | 1920x1280, 0.7 to 0.8 MB | 6000x4000, 5.0 to 5.6 MB |
+
+`/api/cam/[id]?res=hr` now serves the original for a feed cam (streamed, not put in Next's 2 MB data cache,
+cached 60 s at the edge). The zoom viewer asks for it only after the viewer first zooms in, and swaps it in
+without resetting the zoom (`ZoomableImage` `sharpSrc`). If it fails, the normal picture stays.
+A view whose `hr` is a video (`.mp4`, such as Boca `v13`) falls back to `mr`.
+The cost lands on the county servers only when someone zooms; the provider drops request bursts (see `lib/cams.ts`),
+and one original per zoom is far fewer requests than the page's own polling.
+The archive keeps `mr`. Side effect to know: Hobe Sound and Sebastian `mr` frames (0.7 to 1.0 MB) passed the 600 KB cap, so
+the archive skipped all four of those cams before. They now fit by re-encoding, so they start to fill the archive
+(about 16 GB a year more for those four; the manifest already lists them).
+
+### Storage and bandwidth
+
+- yt-dlp calls: no change. Courier upload: about 110 KB more per frame, roughly 80 MB a day.
+- KV: one value per cam, overwritten. About 10 MB held, against 5 MB.
+- R2 archive (367-day lifecycle): about 22 frames per courier cam per day. 32 courier cams hold roughly
+  32 GB a year at 720p and 61 GB at 1080p. R2 has no egress fee, and the extra is near 0.5 USD a month beyond the 10 GB free tier.
+  The Day View loads archived frames, so those open with about twice the bytes.
+- Phone data: a live still is about 240 KB, was 124 KB. An original is 1.5 to 7 MB, only on zoom.
+
+### Zoom limits
+
+Zoom past the real pixels shows blocks. A phone is 390 CSS px wide at 3 device pixels each, 1,170 device pixels.
+Real-pixel zoom at fit is the picture's width divided by 1,170:
+
+| Picture | Width | Real zoom on a phone | Suggested max zoom (2x that, at least 2, at most 5) |
+|---|---|---|---|
+| 720p courier cam | 1280 | 1.1x | 2.2x |
+| 1080p courier cam | 1920 | 1.6x | 3.3x |
+| Feed `mr` | 1200 to 1920 | 1.0 to 1.6x | 2.1 to 3.3x |
+| Feed `hr` | 4352 to 6000 | 3.7 to 5.1x | 5x |
+
+The viewer allows 5x for every picture today (`MAX_SCALE` in `ZoomableImage.tsx`). Not changed here.
+
+### Roll out
+
+Each part ships on its own and none needs a data change.
+
+1. Courier: pull on the server, run the tests, and the next run grabs 1080p. Roll back by restoring the old format string.
+2. Worker: `bytesToB64` fix; deploy `workers/uw-frame` when convenient. It is safe before or after the courier.
+3. Reader and archive fit: runs in `sargassum.yml` once the branch is on main.
+4. App: `?res=hr` and the viewer swap.
+
+Do 2 before 1 if the Worker is on the free plan: 8 ms of base64 is most of its 10 ms CPU.
+
 ## Dry run
 
 ```
@@ -192,7 +300,7 @@ python3 -m unittest discover -s scripts -p "*_test.py"
 npx vitest run lib/courierRegistry.test.ts
 ```
 
-- `scripts/yt_pacer_test.py`: the cap, the tiers, the spacing, the backoff, the cache, the Elbo fallback.
+- `scripts/yt_pacer_test.py`: the cap, the tiers, the spacing, the backoff, the cache, the Elbo fallback, the 1080p stream format.
 - `scripts/courier_schedule_test.py`: the registry, a new cam picked up from config, the routine spread, the golden stride.
 - `scripts/courier_plan_test.py`: the new design stays at 60 or less at +35 cams in five seasons.
 - `scripts/cam_courier_local_test.py`: the real shell script with fake `yt-dlp`, `ffmpeg` and `curl`.

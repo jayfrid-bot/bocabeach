@@ -424,8 +424,11 @@ class CaptureBeachTests(WithManifest):
                 info["frameAt"] = frame_at_info
             return frame or jpeg()
 
+        self.archived_imgs = []
+
         def fake_archive(s, c, img, frame_at=None):
             order.append(("archive", s, c, frame_at))
+            self.archived_imgs.append(img)
             return "stored"
 
         def fake_assess(img):
@@ -462,6 +465,54 @@ class CaptureBeachTests(WithManifest):
         self.assertIsNone(result)
         self.assertEqual(order, ["fetch"])  # no assess, no archive
         self.assertIn("skipped (blank frame", self.out.getvalue())
+
+    @staticmethod
+    def real_jpeg(w, h):
+        from PIL import Image  # the tests below are skipped when Pillow is missing
+        im = Image.linear_gradient("L").resize((w, h)).convert("RGB")
+        out = io.BytesIO()
+        im.save(out, format="JPEG", quality=85)
+        return out.getvalue()
+
+    @unittest.skipUnless(cs._pillow_image() is not None, "Pillow not installed")
+    def test_a_1080p_courier_frame_is_archived_whole_but_read_at_720p(self):
+        meta = {"ok": True, "grabbedAtUtc": iso_ago(5)}
+        big = self.real_jpeg(1920, 1080)
+        seen = []
+
+        def spy_assess(img, *a, **k):
+            seen.append(img)
+            return {"level": "none", "coveragePct": 0, "crowd": "quiet", "crowdPct": 5, "people": 2, "provider": "t"}
+
+        result, _ = self.run_capture("fort-lauderdale", [self.COURIER_CAM], meta=meta, frame=big, assess=spy_assess)
+        self.assertEqual([c["id"] for c in result["cams"]], ["ftl-elbo-beach-cam"])
+        self.assertEqual(self.archived_imgs, [big], "the archive keeps the full frame")
+        self.assertEqual(cs.jpeg_dimensions(seen[0]), (1280, 720), "the vision provider gets 720p")
+
+    @unittest.skipUnless(cs._pillow_image() is not None, "Pillow not installed")
+    def test_a_720p_courier_frame_reaches_the_reader_byte_for_byte(self):
+        meta = {"ok": True, "grabbedAtUtc": iso_ago(5)}
+        small = self.real_jpeg(1280, 720)
+        seen = []
+
+        def spy_assess(img, *a, **k):
+            seen.append(img)
+            return {"level": "none", "coveragePct": 0, "crowd": "quiet", "crowdPct": 5, "people": 2, "provider": "t"}
+
+        self.run_capture("fort-lauderdale", [self.COURIER_CAM], meta=meta, frame=small, assess=spy_assess)
+        self.assertEqual(seen, [small])
+
+    @unittest.skipUnless(cs._pillow_image() is not None, "Pillow not installed")
+    def test_a_feed_frame_is_never_shrunk_for_the_reader(self):
+        big = self.real_jpeg(1920, 1280)
+        seen = []
+
+        def spy_assess(img, *a, **k):
+            seen.append(img)
+            return {"level": "none", "coveragePct": 0, "crowd": "quiet", "crowdPct": 5, "people": 2, "provider": "t"}
+
+        self.run_capture("boca-raton", [self.FEED_CAM], frame=big, assess=spy_assess)
+        self.assertEqual(seen, [big], "feed cams were tuned on their own size; they keep it")
 
     def test_a_courier_frame_that_is_a_real_picture_is_read_and_archived(self):
         meta = {"ok": True, "grabbedAtUtc": iso_ago(5)}
@@ -4265,6 +4316,82 @@ class FetchPrevTests(unittest.TestCase):
         self.assertEqual(wrote, [], "no beach is read or built from a missing start")
         self.assertEqual(files, [], "nothing is written")
         self.assertEqual(archived, [True], "the webcam archive still runs")
+
+
+class VisionAndArchiveSizeTests(unittest.TestCase):
+    """shrink_for_vision, jpeg_dimensions and fit_for_archive (1080p courier frames, 2026-10-18)."""
+
+    @staticmethod
+    def noise_jpeg(w, h, quality=95):
+        """A gradient with mild sensor noise: 1.0 MB at 1920x1080 and quality 95, 0.5 MB at 82."""
+        from PIL import Image, ImageChops
+        noise = Image.effect_noise((w, h), 20).convert("RGB")
+        sky = Image.linear_gradient("L").resize((w, h)).convert("RGB")
+        im = ImageChops.add(ImageChops.multiply(sky, Image.new("RGB", (w, h), (200, 200, 200))), noise, scale=2)
+        out = io.BytesIO()
+        im.save(out, format="JPEG", quality=quality)
+        return out.getvalue()
+
+    def test_jpeg_dimensions_reads_the_header_only(self):
+        self.assertIsNone(cs.jpeg_dimensions(b""))
+        self.assertIsNone(cs.jpeg_dimensions(b"<html>" * 100))
+        self.assertIsNone(cs.jpeg_dimensions(jpeg(100)))  # a JPEG-looking blob with no frame header
+        if cs._pillow_image() is not None:
+            self.assertEqual(cs.jpeg_dimensions(self.noise_jpeg(640, 360)), (640, 360))
+            self.assertEqual(cs.jpeg_dimensions(self.noise_jpeg(360, 640)), (360, 640))
+
+    @unittest.skipUnless(cs._pillow_image() is not None, "Pillow not installed")
+    def test_a_frame_within_the_limit_comes_back_as_the_same_bytes(self):
+        for w, h in ((1280, 720), (640, 360), (1200, 900)):
+            img = self.noise_jpeg(w, h)
+            self.assertIs(cs.shrink_for_vision(img), img)
+
+    @unittest.skipUnless(cs._pillow_image() is not None, "Pillow not installed")
+    def test_a_1080p_frame_is_shrunk_to_1280_by_720_and_keeps_its_shape(self):
+        out = cs.shrink_for_vision(self.noise_jpeg(1920, 1080))
+        self.assertEqual(cs.jpeg_dimensions(out), (1280, 720))
+        self.assertEqual(cs.jpeg_dimensions(cs.shrink_for_vision(self.noise_jpeg(1080, 1920))), (720, 1280))
+
+    @unittest.skipUnless(cs._pillow_image() is not None, "Pillow not installed")
+    def test_the_limit_can_be_set(self):
+        out = cs.shrink_for_vision(self.noise_jpeg(1920, 1080), max_side=960)
+        self.assertEqual(cs.jpeg_dimensions(out), (960, 540))
+
+    def test_a_frame_that_cannot_be_shrunk_goes_on_whole(self):
+        img = jpeg(30_000)  # no frame header: size unknown
+        self.assertIs(cs.shrink_for_vision(img), img)
+        with mock.patch.object(cs, "jpeg_dimensions", return_value=(1920, 1080)), \
+                mock.patch.object(cs, "_reencode", side_effect=RuntimeError("no ffmpeg")), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertIs(cs.shrink_for_vision(img), img)
+
+    @unittest.skipUnless(cs._pillow_image() is not None, "Pillow not installed")
+    def test_an_oversize_frame_is_re_encoded_to_fit_the_archive_cap(self):
+        big = self.noise_jpeg(1920, 1080)
+        self.assertGreater(len(big), cs.ARCHIVE_MAX_BYTES)
+        fitted = cs.fit_for_archive(big)
+        self.assertIsNotNone(fitted)
+        self.assertLessEqual(len(fitted), cs.ARCHIVE_MAX_BYTES)
+        self.assertEqual(cs.jpeg_dimensions(fitted), (1920, 1080), "quality drops first; the pixels stay")
+
+    @unittest.skipUnless(cs._pillow_image() is not None, "Pillow not installed")
+    def test_a_frame_inside_the_cap_is_not_touched_and_a_hopeless_one_gives_none(self):
+        ok = self.noise_jpeg(640, 360)
+        self.assertIs(cs.fit_for_archive(ok), ok)
+        with mock.patch.object(cs, "ARCHIVE_MAX_BYTES", 2_000):
+            self.assertIsNone(cs.fit_for_archive(self.noise_jpeg(1920, 1080)))
+
+    @unittest.skipUnless(cs._pillow_image() is not None, "Pillow not installed")
+    def test_archive_frame_sends_the_fitted_copy_of_an_oversize_frame(self):
+        big = self.noise_jpeg(1920, 1080)
+        urlopen = mock.Mock(return_value=FakeResponse({"stored": True}))
+        with env(INGEST_TOKEN="tok"), mock.patch.object(cs.urllib.request, "urlopen", urlopen), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            status = cs.archive_frame("boca-raton", "boca-south", big, iso_ago(5))
+        self.assertEqual(status, "stored")
+        sent = urlopen.call_args[0][0].data
+        self.assertLessEqual(len(sent), cs.ARCHIVE_MAX_BYTES)
+        self.assertLess(len(sent), len(big))
 
 
 ZONE = __import__("zoneinfo").ZoneInfo("America/New_York")

@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-18",
+    title: "Sharper beach camera pictures",
+    details:
+      "Many of our beach cameras now show a larger, sharper picture, so you can zoom in further before it turns blocky. Cameras that publish a full-size photo, such as the Boca Raton, Jupiter and Sebastian Inlet ones, load it in when you zoom, and it is several times sharper. Nothing is enhanced or redrawn. It is the real picture the camera took.",
+    tag: "improved",
+  },
+  {
+    date: "2026-10-18",
     title: "Records now keep your best days for good",
     details:
       "Records in Plus look-back no longer start over when we tune the score. Best day now shows the highest score this beach ever had, whichever version of the score gave it. The notes about earlier scoring and the dotted marks on old days are gone. Each beach also has new records: warmest water, clearest water, best sunrise and best sunset. Every record is for the beach you are looking at.",

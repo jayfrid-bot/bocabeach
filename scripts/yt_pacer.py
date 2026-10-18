@@ -418,10 +418,17 @@ class Pacer:
 # ===========================================================================
 
 
+# The picture size the courier asks for: the best stream up to 1080p, else up to 720p,
+# else whatever the stream has. Measured 2026-10-18: most cams offer 1080p; a 1080p
+# JPEG is 2 times the bytes of a 720p one (see docs/research/2026-10-18-cam-resolution/).
+# Asking for a size costs no extra yt-dlp call.
+STREAM_FORMAT = "best[height<=1080]/best[height<=720]/best"
+
+
 def ytdlp_get_url_cmd(video_id: str) -> List[str]:
     return [
         "yt-dlp", "-g", "--no-warnings", "--socket-timeout", "20",
-        "-f", "best[height<=720]/best",
+        "-f", STREAM_FORMAT,
         f"https://www.youtube.com/watch?v={video_id}",
     ]
 

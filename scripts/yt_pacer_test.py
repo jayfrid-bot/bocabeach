@@ -89,6 +89,14 @@ class EarliestAllowedTests(unittest.TestCase):
         self.assertGreater(t, 300.0)
 
 
+class StreamFormatTests(unittest.TestCase):
+    def test_the_courier_asks_for_1080p_then_720p_then_anything(self):
+        cmd = yp.ytdlp_get_url_cmd("abc123")
+        self.assertEqual(cmd[cmd.index("-f") + 1], "best[height<=1080]/best[height<=720]/best")
+        self.assertEqual(cmd[-1], "https://www.youtube.com/watch?v=abc123")
+        self.assertIn("-g", cmd)  # still ONE yt-dlp call per frame: the size costs no extra call
+
+
 class BotCheckTextTests(unittest.TestCase):
     def test_the_real_message_with_a_curly_apostrophe(self):
         self.assertTrue(yp.detect_bot_check("ERROR: [youtube] abc: Sign in to confirm you’re not a bot. Use --cookies"))

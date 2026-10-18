@@ -17,6 +17,7 @@ import { ZoomableImage } from "@/components/ZoomableImage";
  */
 export function CamLightbox({
   src,
+  originalSrc,
   name,
   credit,
   liveUrl,
@@ -25,6 +26,8 @@ export function CamLightbox({
   onClose,
 }: {
   src: string;
+  /** The full-size original of the same still. Loaded only once the viewer zooms in. */
+  originalSrc?: string;
   name: string;
   credit?: string;
   liveUrl?: string;
@@ -40,6 +43,7 @@ export function CamLightbox({
   // minutes and that changes the cam URL; following it would reload the
   // picture and throw away the viewer's zoom.
   const [frozenSrc] = useState(src);
+  const [frozenOriginal] = useState(originalSrc);
   const close = useRef(onClose);
   useEffect(() => {
     close.current = onClose;
@@ -114,7 +118,7 @@ export function CamLightbox({
         </button>
       </div>
       <div className="min-h-0 flex-1">
-        <ZoomableImage src={frozenSrc} alt={`${name}, live still`} />
+        <ZoomableImage src={frozenSrc} sharpSrc={frozenOriginal} alt={`${name}, live still`} />
       </div>
       <div className="flex items-center justify-between gap-3 px-4 py-3 text-white">
         <p className="min-w-0 flex-1 text-[11px] leading-snug text-white/70">
