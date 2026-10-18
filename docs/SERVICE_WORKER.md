@@ -150,8 +150,13 @@ The `_headers` fix plus the app-bound flag is far less code.
   its name (also the caches of the very first worker).
 - Old builds: when the worker saves a page, it also saves the build files the page names
   (tags and flight data), and trimming never drops a file a saved page names. A repeat
-  visitor's page also fetches the browser's lazy pieces once at idle. If a file is still
-  missing, `lib/chunkReload.ts` reloads the page once (guarded in sessionStorage).
+  visitor's page also fetches the browser's lazy pieces once at idle (not with Save-Data or
+  on 2g / slow-2g). Saving a page's build files waits 5 seconds, so the page's own loads
+  come first, and is skipped with Save-Data or on 2g / slow-2g. If a file is still missing,
+  `lib/chunkReload.ts` reloads the page once (guarded in sessionStorage), but only when the
+  browser is online and `HEAD <file>` (no cache) answers 404 or 410. Offline or on a failed
+  probe the error goes on as before. Only pieces a person opened reload; background loads
+  (analytics, billing, push) keep their soft fallbacks.
 
 ## Integration with the payload and edge-cache work (2026-10-18)
 

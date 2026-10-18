@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { isChunkLoadError, reloadOnceForChunkError } from "@/lib/chunkReload";
+import { isChunkLoadError, reloadIfChunkGone } from "@/lib/chunkReload";
 
 /**
  * Route-level error boundary. Catches render/data errors below the layout and
@@ -18,8 +18,9 @@ export default function Error({
 }) {
   useEffect(() => {
     // A build file that is gone (an old page after a deploy): one guarded reload gets the
-    // new build instead of this screen (lib/chunkReload.ts).
-    if (isChunkLoadError(error) && reloadOnceForChunkError(error)) return;
+    // new build instead of this screen, only when online and the server says the file is
+    // gone (lib/chunkReload.ts). Offline, this screen and its retry button stay.
+    if (isChunkLoadError(error)) void reloadIfChunkGone(error);
     // Surface for Cloudflare/console; the digest links to the server log.
     console.error(error);
   }, [error]);

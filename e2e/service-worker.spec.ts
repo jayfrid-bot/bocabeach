@@ -199,6 +199,28 @@ test("a lazy file that is gone after a deploy reloads the page once, not the err
   await context.close();
 });
 
+test("offline, a lazy file that fails to load never reloads the page", async ({ browser }) => {
+  // Weak beach signal: the same load error, but a reload would only bring the browser's
+  // offline page. lib/chunkReload.ts reloads only when online and the server says 404.
+  const context = await browser.newContext({ baseURL: BASE, serviceWorkers: "block" });
+  const page = await context.newPage();
+  let loads = 0;
+  page.on("load", () => {
+    loads += 1;
+  });
+  await page.goto("/");
+  await expect(page.locator(SCORE)).toBeVisible();
+  await context.setOffline(true);
+  const card = page.locator('[role="button"][aria-label^="Flip the"]').first();
+  await card.scrollIntoViewIfNeeded();
+  await card.click({ position: { x: 6, y: 6 } });
+  await page.waitForTimeout(3000);
+  expect(loads).toBe(1);
+  expect(await page.evaluate(() => sessionStorage.getItem("ibd:chunk-reload-at"))).toBeNull();
+  await context.setOffline(false);
+  await context.close();
+});
+
 // Needs a second production server started with the kill switch on:
 //   npx wrangler dev --port 8789 --var SW_KILL:on     then  PW_SW_KILL_URL=http://localhost:8789
 test("kill switch: with SW_KILL on, the worker removes itself and its caches", async ({ browser }) => {

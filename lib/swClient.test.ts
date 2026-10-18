@@ -10,6 +10,7 @@ import {
   freshConditionsFromMessage,
   leanDataPath,
   optOutState,
+  skipOptionalDownloads,
   savedAtFromServerTiming,
   shouldApplyFresh,
   shouldReloadForNewBuild,
@@ -135,5 +136,20 @@ describe("freshConditionsFromMessage (the worker posts the lean route's packed f
 
   it("still accepts a plain snapshot", () => {
     expect(freshConditionsFromMessage(msg(full), "boca-raton", gen)?.snapshot.generatedAt).toBe(gen);
+  });
+});
+
+describe("skipOptionalDownloads (the idle fetch of lazy pieces)", () => {
+  it("skips with Save-Data and on 2g / slow-2g, not otherwise", () => {
+    expect(skipOptionalDownloads({ saveData: true, effectiveType: "4g" })).toBe(true);
+    expect(skipOptionalDownloads({ effectiveType: "2g" })).toBe(true);
+    expect(skipOptionalDownloads({ effectiveType: "slow-2g" })).toBe(true);
+    expect(skipOptionalDownloads({ effectiveType: "3g" })).toBe(false);
+    expect(skipOptionalDownloads({ effectiveType: "4g", saveData: false })).toBe(false);
+    expect(skipOptionalDownloads(undefined)).toBe(false); // Safari has no navigator.connection
+  });
+  it("the dashboard's idle fetch uses it", () => {
+    const src = readFileSync("components/ConditionsDashboard.tsx", "utf8");
+    expect(src).toMatch(/if \(skipOptionalDownloads\(conn\)\) return;/);
   });
 });

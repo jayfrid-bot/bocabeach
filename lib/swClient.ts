@@ -106,6 +106,15 @@ export function shouldApplyFresh<T extends { snapshot?: { generatedAt?: string }
  */
 export const FIRST_CALL_HEADER = "x-ibd-first-call";
 
+/**
+ * Skip optional downloads (the idle fetch of lazy pieces): Save-Data on, or a 2g / slow-2g
+ * connection. `conn` is navigator.connection, which only some browsers have.
+ */
+export function skipOptionalDownloads(conn: { saveData?: boolean; effectiveType?: string } | null | undefined): boolean {
+  if (!conn) return false;
+  return conn.saveData === true || conn.effectiveType === "2g" || conn.effectiveType === "slow-2g";
+}
+
 /** The dashboard's data call, which the worker answers and refreshes (public/sw.js). */
 export function leanDataPath(slug: string): string {
   return `/api/conditions/${slug}/lean`;

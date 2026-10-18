@@ -13,13 +13,22 @@
 //      the service worker answered from its saved copy (that copy also carries `ibd-sw`),
 //      because then the value is as old as the copy.
 //   2. Every data answer that came from the network: its `Date` header (1 s steps).
-//   3. The last offset this browser learned (localStorage), for a page from the worker.
+//   3. The last offset this browser learned (localStorage, for at most a day), for a page
+//      from the worker.
+// An offset over a day either way is a bad reading and is ignored.
 // With none of these the offset is 0: the phone's own clock, as before.
 
 export const SERVER_NOW_TIMING = "ibd-now";
 const STORE_KEY = "ibd:clock-offset";
-/** A learned offset is trusted for this long (clocks get corrected; travel changes nothing). */
-export const OFFSET_MAX_AGE_MS = 7 * 24 * 3600_000;
+/** A learned offset is trusted for this long (a phone's clock gets corrected). */
+export const OFFSET_MAX_AGE_MS = 24 * 3600_000;
+/** An offset bigger than this is not a clock that is off: it is a bad reading. Ignored. */
+export const MAX_OFFSET_MS = 24 * 3600_000;
+
+/** A usable offset: a finite number no bigger than MAX_OFFSET_MS either way. */
+export function plausibleOffset(v: number | null | undefined): v is number {
+  return typeof v === "number" && Number.isFinite(v) && Math.abs(v) <= MAX_OFFSET_MS;
+}
 
 type TimingEntry = { name: string; description?: string };
 
@@ -47,7 +56,7 @@ export function parseStoredOffset(raw: string | null, now: number): number | nul
   if (!raw) return null;
   try {
     const j = JSON.parse(raw) as { offset?: unknown; at?: unknown };
-    if (typeof j.offset !== "number" || typeof j.at !== "number" || !Number.isFinite(j.offset)) return null;
+    if (typeof j.offset !== "number" || typeof j.at !== "number" || !plausibleOffset(j.offset)) return null;
     if (now - j.at > OFFSET_MAX_AGE_MS || j.at > now + OFFSET_MAX_AGE_MS) return null;
     return j.offset;
   } catch {
@@ -60,7 +69,7 @@ let initialised = false;
 
 /** Record a measured offset (server − device) for this page and later ones. */
 export function learnOffset(value: number | null, deviceNow = Date.now()): void {
-  if (value == null || !Number.isFinite(value)) return;
+  if (!plausibleOffset(value)) return; // over a day off: a bad reading, not a clock
   offset = value;
   initialised = true;
   try {

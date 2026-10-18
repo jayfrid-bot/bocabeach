@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  MAX_OFFSET_MS,
   OFFSET_MAX_AGE_MS,
   SERVER_NOW_TIMING,
   _resetServerClockForTests,
@@ -67,7 +68,19 @@ describe("a phone whose clock is off still refreshes old data", () => {
 });
 
 describe("stored offset", () => {
-  it("is kept for a week and then dropped", () => {
+  it("an offset over a day either way is a bad reading: never learned, never read back", () => {
+    learnOffset(25 * 3600_000, SERVER);
+    expect(serverNow(SERVER)).toBe(SERVER);
+    learnOffset(-25 * 3600_000, SERVER);
+    expect(serverNow(SERVER)).toBe(SERVER);
+    learnOffset(23 * 3600_000, SERVER);
+    expect(serverNow(SERVER)).toBe(SERVER + 23 * 3600_000);
+    expect(parseStoredOffset(JSON.stringify({ offset: 2 * 24 * 3600_000, at: SERVER }), SERVER)).toBeNull();
+    expect(MAX_OFFSET_MS).toBe(24 * 3600_000);
+  });
+
+  it("is kept for a day and then dropped", () => {
+    expect(OFFSET_MAX_AGE_MS).toBe(24 * 3600_000);
     expect(parseStoredOffset(JSON.stringify({ offset: 1234, at: SERVER }), SERVER + 1000)).toBe(1234);
     expect(parseStoredOffset(JSON.stringify({ offset: 1234, at: SERVER }), SERVER + OFFSET_MAX_AGE_MS + 1)).toBeNull();
     expect(parseStoredOffset("{bad", SERVER)).toBeNull();

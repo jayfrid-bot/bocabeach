@@ -20,7 +20,6 @@
 import type { INTRO_ELIGIBILITY_STATUS as IntroStatus, Purchases, PurchasesPackage } from "@revenuecat/purchases-capacitor";
 import { isNativePlatform } from "@/lib/push/native";
 import { holdReload } from "@/lib/reloadGuard";
-import { chunkFailed } from "@/lib/chunkReload";
 
 /** Public SDK key (appl_…). Public by design; baked in at build time. */
 export const BILLING_KEY = process.env.NEXT_PUBLIC_REVENUECAT_IOS_KEY ?? "";
@@ -75,13 +74,15 @@ function bridgePlugin(): Boxed | null {
 async function getPlugin(): Promise<Boxed> {
   const bridged = bridgePlugin();
   if (bridged) return bridged;
-  const mod = await import("@revenuecat/purchases-capacitor").catch(chunkFailed);
+  // soft-fallback: a failed load rejects into each caller's catch ("not available", "failed").
+  const mod = await import("@revenuecat/purchases-capacitor");
   return { P: mod.Purchases };
 }
 
 /** The eligibility status enum, from the same on-demand import. */
 async function introStatus(): Promise<typeof IntroStatus> {
-  return (await import("@revenuecat/purchases-capacitor").catch(chunkFailed)).INTRO_ELIGIBILITY_STATUS;
+  // soft-fallback: a failed load leaves eligibility "unknown" (trialEligibility's catch).
+  return (await import("@revenuecat/purchases-capacitor")).INTRO_ELIGIBILITY_STATUS;
 }
 
 let configuredFor: string | null = null;

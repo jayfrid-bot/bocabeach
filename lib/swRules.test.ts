@@ -46,7 +46,7 @@ interface Posted {
   [k: string]: unknown;
 }
 
-function makeWorker(version = "v1", userAgent = "Mozilla/5.0 (iPhone) Safari/604.1") {
+function makeWorker(version = "v1", userAgent = "Mozilla/5.0 (iPhone) Safari/604.1", nav: Record<string, unknown> = {}) {
   const handlers: Record<string, (e: unknown) => void> = {};
   const caches = new FakeCaches();
   const posted: Posted[] = [];
@@ -68,7 +68,7 @@ function makeWorker(version = "v1", userAgent = "Mozilla/5.0 (iPhone) Safari/604
   };
   const self = {
     location: { href: `${ORIGIN}/sw.js?v=${version}`, origin: ORIGIN },
-    navigator: { userAgent },
+    navigator: { userAgent, ...nav },
     addEventListener: (n: string, h: (e: unknown) => void) => {
       handlers[n] = h;
     },
@@ -95,6 +95,8 @@ function makeWorker(version = "v1", userAgent = "Mozilla/5.0 (iPhone) Safari/604
     setTimeout,
   );
   const rules = self.IBD_SW as Rules;
+  // No wait before saving a page's build files in these tests (one test sets it back).
+  rules.LIMITS.precacheDelayMs = 0;
 
   /** Fire a fetch event; returns the response (or null when the worker stayed out of it). */
   async function dispatch(req: {
@@ -715,6 +717,7 @@ describe("sw.js: first call, app shells, caches of earlier workers, build files 
 
   it("saving a page also saves the build files it names, while the server still has them", async () => {
     const w = makeWorker();
+    w.rules.LIMITS.precacheDelayMs = 0;
     const page = html("A").replace("</body>", '<script>self.__next_f.push([1,"[\\"static/chunks/lazy-1.js\\"]"])</script></body>');
     w.net.routes.set(`${ORIGIN}/`, () => htmlRes(page));
     const js = () => new Response("code", { status: 200, headers: { "content-type": "text/javascript" } });
@@ -739,5 +742,47 @@ describe("sw.js: first call, app shells, caches of earlier workers, build files 
     await w.lifecycle("activate"); // trims to 150
     expect(statics.store.has(`${ORIGIN}/_next/static/chunks/main-OLD.js`)).toBe(true);
     expect(statics.store.size).toBe(150);
+  });
+});
+
+describe("sw.js: saving a saved page's build files costs nothing extra on a slow or saving connection", () => {
+  const js = () => new Response("code", { status: 200, headers: { "content-type": "text/javascript" } });
+  const setup = (w: ReturnType<typeof makeWorker>) => {
+    w.net.routes.set(`${ORIGIN}/`, () => htmlRes(html("A")));
+    w.net.routes.set(`${ORIGIN}/_next/static/chunks/main-A.js`, js);
+  };
+  const fileCalls = (w: ReturnType<typeof makeWorker>) => w.net.calls.filter((u) => u.includes("/_next/static/")).length;
+
+  it("skips it with Save-Data on (header or connection) and on 2g / slow-2g", async () => {
+    for (const [nav, headers] of [
+      [{}, { "save-data": "on" }],
+      [{ connection: { saveData: true } }, {}],
+      [{ connection: { effectiveType: "2g" } }, {}],
+      [{ connection: { effectiveType: "slow-2g" } }, {}],
+    ] as const) {
+      const w = makeWorker("v1", undefined, nav as Record<string, unknown>);
+      w.rules.LIMITS.precacheDelayMs = 0;
+      setup(w);
+      await w.dispatch({ url: "/", mode: "navigate", headers: headers as Record<string, string> });
+      expect(fileCalls(w), JSON.stringify(nav) + JSON.stringify(headers)).toBe(0);
+    }
+    const fast = makeWorker("v1", undefined, { connection: { effectiveType: "4g" } });
+    fast.rules.LIMITS.precacheDelayMs = 0;
+    setup(fast);
+    await fast.dispatch({ url: "/", mode: "navigate" });
+    expect(fileCalls(fast)).toBe(1);
+  });
+
+  it("waits for the page's own loads first, so a file is never downloaded twice", async () => {
+    const w = makeWorker();
+    w.rules.LIMITS.precacheDelayMs = 80;
+    setup(w);
+    const nav = w.dispatch({ url: "/", mode: "navigate" });
+    // the page loads its own script through the worker while the save waits
+    await new Promise((r) => setTimeout(r, 10));
+    await w.dispatch({ url: "/_next/static/chunks/main-A.js" });
+    await nav;
+    expect(fileCalls(w)).toBe(1);
+    expect(w.rules.LIMITS.precacheDelayMs).toBeGreaterThan(0);
   });
 });

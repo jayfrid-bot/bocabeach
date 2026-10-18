@@ -2,7 +2,9 @@
 // asks for the same path and web/native variant. That is safe only while nothing that
 // renders those pages reads another request input. This test walks the static import graph
 // of everything that renders them (the root layout, the home page and app/[slug]/*, and
-// every module they import, server and client) and fails on any such read:
+// every module they import, server and client, static `import … from` AND dynamic
+// `import("…")`: next/dynamic pieces with ssr on render into the stored HTML) and fails
+// on any such read:
 //   - next/headers (headers(), cookies(), draftMode()) anywhere in the server graph, except
 //     lib/nativeRequest.ts, which may read the User-Agent only (the key's web/native variant);
 //   - `connection()` from next/server (an opt-in to per-request rendering);
@@ -48,8 +50,10 @@ function graph(): { server: Set<string>; client: Set<string>; packagesByFile: Ma
     if (seen.has(f)) continue;
     seen.add(f);
     const pkgs: string[] = [];
-    for (const m of src.matchAll(re)) {
-      const spec = m[1];
+    const specs = [...src.matchAll(re)].map((m) => m[1]);
+    // Dynamic imports too (next/dynamic, `await import`): they run in the same render.
+    for (const m of src.matchAll(/\bimport\(\s*["']([^"']+)["']\s*\)/g)) specs.push(m[1]);
+    for (const spec of specs) {
       if (spec.startsWith("@/") || spec.startsWith(".")) {
         const t = resolveLocal(spec, f);
         if (t) stack.push({ f: t, inClient: isClient });
@@ -69,6 +73,12 @@ describe("the edge-cached pages read no per-user request input", () => {
     expect(server.has("lib/conditions.ts")).toBe(true);
     expect(server.has(ALLOWED_HEADERS_READER)).toBe(true);
     expect(client.has("components/ConditionsDashboard.tsx")).toBe(true);
+    // next/dynamic pieces that render on the server into the stored HTML (ssr: true)
+    expect(client.has("components/plus/BeachModeCard.tsx")).toBe(true);
+    expect(client.has("components/plus/HistorySection.tsx")).toBe(true);
+    // ...and the lazy ones they and the dashboard load
+    expect(client.has("components/plus/PlusSheets.tsx")).toBe(true);
+    expect(client.has("components/NerdBackFor.tsx")).toBe(true);
     expect(server.size + client.size).toBeGreaterThan(80);
   });
 

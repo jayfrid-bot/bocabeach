@@ -17,7 +17,6 @@ import {
   writeInstallClaimed,
 } from "@/lib/plus/storage";
 import { clientCapHeaders } from "@/lib/plus/clientCap";
-import { chunkFailed } from "@/lib/chunkReload";
 
 /**
  * Resolve the runtime platform robustly. We load the live site inside the
@@ -222,7 +221,8 @@ export async function nativePushTokenForOwner(): Promise<string | null> {
  */
 async function claimedInstallToken(): Promise<string | null> {
   try {
-    const { claimInstallToken } = await import("@/lib/plus/installToken").catch(chunkFailed);
+    // soft-fallback: a failed load returns null, and the caller falls back to readInstallToken().
+    const { claimInstallToken } = await import("@/lib/plus/installToken");
     return (await claimInstallToken()).token;
   } catch {
     return null;
@@ -465,7 +465,8 @@ export async function disableNative(slug: string): Promise<void> {
 /** Loads `getLocation` on demand. A separate function so a test can hand in its own. */
 export type BeachLookupLoader = () => Promise<(slug: string) => boolean>;
 const loadBeachLookup: BeachLookupLoader = async () => {
-  const { getLocation } = await import("@/config/locations").catch(chunkFailed);
+  // soft-fallback: a failed load rejects, and the notification tap opens "/" instead.
+  const { getLocation } = await import("@/config/locations");
   return (slug) => !!getLocation(slug);
 };
 

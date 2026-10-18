@@ -19,7 +19,7 @@ import { PullToRefresh } from "@/components/PullToRefresh";
 import { isPullRefreshing } from "@/lib/refreshInFlight";
 import { isOlderSnapshot, shouldRefetchForFreshness, shouldRevalidateOnMount } from "@/lib/conditionsFreshness";
 import { useSwRevalidate } from "@/lib/useSwRevalidate";
-import { FIRST_CALL_HEADER } from "@/lib/swClient";
+import { FIRST_CALL_HEADER, skipOptionalDownloads } from "@/lib/swClient";
 import { learnFromResponse, serverNow } from "@/lib/serverClock";
 import { ScoreWheel } from "@/components/ScoreWheel";
 import { ScoreCapBanner } from "@/components/ScoreCapBanner";
@@ -487,10 +487,11 @@ export function ConditionsDashboard({
   // pieces a browser can open (card backs, the camera viewer, "What's new") once, at idle.
   // The worker keeps them with this build, so a saved page of this build can still open
   // them after the next deploy has removed them from the server (public/sw.js). Not on a
-  // first visit, not in the app shells, not with Save-Data.
+  // first visit, not in the app shells, not with Save-Data or on 2g / slow-2g.
   useEffect(() => {
     if (preview || native || typeof navigator === "undefined" || !navigator.serviceWorker?.controller) return;
-    if ((navigator as unknown as { connection?: { saveData?: boolean } }).connection?.saveData) return;
+    const conn = (navigator as unknown as { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+    if (skipOptionalDownloads(conn)) return;
     const ric = (window as unknown as {
       requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number;
     }).requestIdleCallback;

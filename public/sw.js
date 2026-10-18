@@ -58,6 +58,8 @@ var LIMITS = {
   saveDataGapMs: 30 * MIN,
   /** An expired copy is used only after the network is silent for this long. */
   networkTimeoutMs: 3000,
+  /** Saving a page's build files waits this long, so the page's own loads come first. */
+  precacheDelayMs: 5000,
   maxPages: 12,
   maxData: 48,
   maxStaticEntries: 200,
@@ -314,6 +316,17 @@ var staticPuts = 0;
 
 function hasCaches() {
   return typeof caches !== "undefined" && typeof caches.open === "function";
+}
+
+/** Save-Data on, or a 2g / slow-2g connection: no extra downloads. */
+function slowOrSaveData(request) {
+  if (saveDataOn(request)) return true;
+  try {
+    var t = self.navigator && self.navigator.connection && self.navigator.connection.effectiveType;
+    return t === "2g" || t === "slow-2g";
+  } catch (e) {
+    return false;
+  }
 }
 
 function saveDataOn(request) {
@@ -575,7 +588,7 @@ async function handlePage(event, request, c) {
   // No usable copy, an expired one, or an explicit reload: ask the network.
   var stored = null;
   var net = fetch(request).then(function (res) {
-    stored = storePage(c, res.clone(), existing);
+    stored = storePage(c, res.clone(), existing, request);
     return res;
   });
   // One lifetime promise, registered now: the answer may arrive after the page was served
@@ -591,7 +604,7 @@ async function handlePage(event, request, c) {
   return winner || existing;
 }
 
-async function storePage(c, res, previous) {
+async function storePage(c, res, previous, request) {
   try {
     var ok = cacheableResponse("page", responseFacts(res));
     if (!ok) return;
@@ -601,19 +614,24 @@ async function storePage(c, res, previous) {
     var cache = await caches.open(PAGE_CACHE);
     await cache.put(c.key, stamped(res, text, { assets: sig, timing: true }));
     await trimCache(PAGE_CACHE, LIMITS.maxPages);
-    // The build files this page names, while the server still has them: after a deploy
-    // they are gone, and the saved page cannot run without them.
-    await precacheAssets(referencedAssets(text));
     var oldSig = previous ? previous.headers.get("x-ibd-assets") : null;
     if (oldSig && sig && oldSig !== sig) await notifyBuildChanged(c.path);
+    // The build files this page names, while the server still has them: after a deploy
+    // they are gone, and the saved page cannot run without them.
+    await precacheAssets(referencedAssets(text), request);
   } catch (e) {
     /* ignore */
   }
 }
 
-/** Save the build files a page names that the static cache does not hold yet. */
-async function precacheAssets(paths) {
-  if (killed || !paths.length) return;
+/**
+ * Save the build files a page names that the static cache does not hold yet. Not with
+ * Save-Data or on 2g / slow-2g, and only after LIMITS.precacheDelayMs: by then the page has
+ * loaded its own files through this worker (cached on the way), so nothing is fetched twice.
+ */
+async function precacheAssets(paths, request) {
+  if (killed || !paths.length || slowOrSaveData(request)) return;
+  if (LIMITS.precacheDelayMs > 0) await new Promise(function (r) { setTimeout(r, LIMITS.precacheDelayMs); });
   try {
     var statics = await caches.open(STATIC_CACHE);
     var origin = self.location.origin;
