@@ -20,6 +20,7 @@
 import type { INTRO_ELIGIBILITY_STATUS as IntroStatus, Purchases, PurchasesPackage } from "@revenuecat/purchases-capacitor";
 import { isNativePlatform } from "@/lib/push/native";
 import { holdReload } from "@/lib/reloadGuard";
+import { chunkFailed } from "@/lib/chunkReload";
 
 /** Public SDK key (appl_…). Public by design; baked in at build time. */
 export const BILLING_KEY = process.env.NEXT_PUBLIC_REVENUECAT_IOS_KEY ?? "";
@@ -50,18 +51,37 @@ export function billingAvailable(): boolean {
   return isNativePlatform() && BILLING_KEY.length > 0;
 }
 
-async function getPlugin(): Promise<typeof Purchases> {
-  if (typeof window !== "undefined") {
-    const cap = (window as unknown as { Capacitor?: { Plugins?: { Purchases?: typeof Purchases } } })
-      .Capacitor;
-    if (cap?.Plugins?.Purchases) return cap.Plugins.Purchases;
-  }
-  return (await import("@revenuecat/purchases-capacitor")).Purchases;
+/** The plugin, boxed. Never the bare proxy: see getPlugin. */
+type Boxed = { P: typeof Purchases };
+
+/** The bridge the WebView injects, or null. Synchronous, and boxed. */
+function bridgePlugin(): Boxed | null {
+  if (typeof window === "undefined") return null;
+  const cap = (window as unknown as { Capacitor?: { Plugins?: { Purchases?: typeof Purchases } } }).Capacitor;
+  const P = cap?.Plugins?.Purchases;
+  return P ? { P } : null;
+}
+
+/**
+ * Resolve the plugin as `{ P }`. CRITICAL (the same bug as lib/push/native.ts, getPlugin):
+ * Capacitor's plugin proxy answers EVERY property as a native call, `.then` included. A
+ * proxy that reaches promise resolution (returned from an async function, or awaited)
+ * looks like a thenable, its `.then` goes to a native method that never calls back, and
+ * the await hangs for ever: a paywall that never loads, a purchase that never ends, a
+ * reload hold that is never released. So the proxy only ever travels inside this box,
+ * and only its real method calls are awaited. The bridge path stays synchronous; the
+ * bundled import (the module namespace, not a proxy) is loaded on demand.
+ */
+async function getPlugin(): Promise<Boxed> {
+  const bridged = bridgePlugin();
+  if (bridged) return bridged;
+  const mod = await import("@revenuecat/purchases-capacitor").catch(chunkFailed);
+  return { P: mod.Purchases };
 }
 
 /** The eligibility status enum, from the same on-demand import. */
 async function introStatus(): Promise<typeof IntroStatus> {
-  return (await import("@revenuecat/purchases-capacitor")).INTRO_ELIGIBILITY_STATUS;
+  return (await import("@revenuecat/purchases-capacitor").catch(chunkFailed)).INTRO_ELIGIBILITY_STATUS;
 }
 
 let configuredFor: string | null = null;
@@ -77,7 +97,7 @@ export async function configureBilling(deviceId: string): Promise<boolean> {
   if (!billingAvailable() || !deviceId) return false;
   if (configuredFor === deviceId) return true;
   try {
-    const P = await getPlugin();
+    const { P } = await getPlugin();
     await P.configure({ apiKey: BILLING_KEY, appUserID: deviceId });
     configuredFor = deviceId;
     return true;
@@ -90,7 +110,7 @@ export async function configureBilling(deviceId: string): Promise<boolean> {
 export async function loadOffers(deviceId: string): Promise<PlanOffer[]> {
   if (!(await configureBilling(deviceId))) return [];
   try {
-    const P = await getPlugin();
+    const { P } = await getPlugin();
     const { current } = await P.getOfferings();
     const out: PlanOffer[] = [];
     if (current?.monthly) out.push({ plan: "monthly", price: current.monthly.product.priceString, pkg: current.monthly });
@@ -125,7 +145,7 @@ export async function trialEligibility(
   }
   if (withOffer.length === 0) return out;
   try {
-    const P = await getPlugin();
+    const { P } = await getPlugin();
     const ids = withOffer.map((o) => o.pkg.product.identifier);
     const result = await P.checkTrialOrIntroductoryPriceEligibility({ productIdentifiers: ids });
     const INTRO_ELIGIBILITY_STATUS = await introStatus();
@@ -155,7 +175,7 @@ export async function purchasePlan(deviceId: string, offer: PlanOffer): Promise<
   try {
     if (!(await configureBilling(deviceId))) return "failed";
     try {
-      const P = await getPlugin();
+      const { P } = await getPlugin();
       await P.purchasePackage({ aPackage: offer.pkg });
       return "purchased";
     } catch (e) {
@@ -199,7 +219,7 @@ export type RestoreOutcome = "active" | "none" | "error";
 export async function restoreBilling(deviceId: string): Promise<RestoreOutcome> {
   if (!(await configureBilling(deviceId))) return "error";
   try {
-    const P = await getPlugin();
+    const { P } = await getPlugin();
     const { customerInfo } = await P.restorePurchases();
     return customerInfo.entitlements.active[ENTITLEMENT] != null ? "active" : "none";
   } catch {
