@@ -52,6 +52,7 @@ import {
   zoneAbbr,
 } from "@/lib/plus/dayView";
 import type { DayCam, DayFrame, DayViewPayload } from "@/lib/history/dayView";
+import { ZoomableImage } from "@/components/ZoomableImage";
 
 /** "Try this shot again" refetches the day (fresh picture links) at most this often. */
 const REFETCH_GAP_MS = 30_000;
@@ -655,7 +656,7 @@ function FullScreenFrame({
           <span aria-hidden>{"\u2715"}</span>
         </button>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-2">
+      <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-center gap-3 px-2">
         {failed ? (
           <>
             <p className="text-sm text-white/80">This shot isn&apos;t available right now.</p>
@@ -668,13 +669,11 @@ function FullScreenFrame({
             </button>
           </>
         ) : (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <ZoomableImage
             key={`${frame.url}#${retryKey}`}
             src={frame.url}
             alt={`${camName}, ${frame.displayAtLocal}`}
             onError={onImgError}
-            className="max-h-full max-w-full object-contain"
           />
         )}
       </div>

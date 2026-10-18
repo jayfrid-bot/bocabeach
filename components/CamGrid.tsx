@@ -1,4 +1,8 @@
+"use client";
+
+import { useRef, useState } from "react";
 import type { CamView } from "@/lib/types";
+import { CamLightbox } from "@/components/CamLightbox";
 import { fmtTime } from "@/lib/format";
 import { RelativeTime, useNowMs } from "@/components/RelativeTime";
 import { camFreshness } from "@/lib/camFreshness";
@@ -31,7 +35,9 @@ function CamStamp({ cam, tz }: { cam: CamView; tz: string }) {
   );
 }
 
-/** Big "headline" still-image cam (live JPEG via the same-origin proxy). */
+/** Big "headline" still-image cam (live JPEG via the same-origin proxy).
+ *  Tap opens it full screen, zoomable (CamLightbox); the live video is one
+ *  more tap from there. */
 function FeaturedCam({ cam, tz, dataAt }: { cam: CamView; tz: string; dataAt?: string }) {
   // Cache-bust on a new capture (feed cams) or each poll, AND on every data
   // refresh: a refetched snapshot must produce a new image URL even when the
@@ -52,12 +58,16 @@ function FeaturedCam({ cam, tz, dataAt }: { cam: CamView; tz: string; dataAt?: s
     now != null && cam.capturedAt ? (now - Date.parse(cam.capturedAt)) / 60000 : null;
   const stale = state === "feed-stale" || state === "data-stale";
   const dim = stale;
+  const [open, setOpen] = useState(false);
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const stamp = cam.capturedAt ? `\u{1F4F7} ${fmtTime(cam.capturedAt, tz)}` : undefined;
   return (
-    <a
-      href={cam.url}
-      target="_blank"
-      rel="noreferrer"
-      className="group block overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-slate-900/10 dark:ring-white/10 transition hover:ring-ocean-500/50"
+    <>
+    <button
+      ref={opener}
+      type="button"
+      onClick={() => setOpen(true)}
+      className="group block w-full overflow-hidden rounded-2xl bg-slate-900 text-left ring-1 ring-slate-900/10 dark:ring-white/10 transition hover:ring-ocean-500/50"
     >
       <div className="relative aspect-video w-full overflow-hidden">
         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -92,7 +102,7 @@ function FeaturedCam({ cam, tz, dataAt }: { cam: CamView; tz: string; dataAt?: s
           {stale ? (
             <span
               className="shrink-0 rounded-full bg-slate-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-200"
-              title="Time since the still image was last captured — tap for live video."
+              title="Time since the still image was last captured. Tap to zoom; the live video is one tap further."
             >
               📷 <RelativeTime iso={cam.capturedAt as string} />
             </span>
@@ -103,18 +113,31 @@ function FeaturedCam({ cam, tz, dataAt }: { cam: CamView; tz: string; dataAt?: s
           ) : (
             <span
               className="shrink-0 rounded-full bg-slate-500/20 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-300"
-              title="This cam publishes no capture time, so we can't confirm the still is current — tap for the live video."
+              title="This cam publishes no capture time, so we can't confirm the still is current. Tap to zoom; the live video is one tap further."
             >
               📷 Snapshot
             </span>
           )}
         </div>
         <CamStamp cam={cam} tz={tz} />
+        <span className="sr-only">Open full screen to zoom.</span>
         {cam.attribution ? (
           <div className="mt-0.5 truncate text-[11px] text-slate-500">{cam.attribution}</div>
         ) : null}
       </div>
-    </a>
+    </button>
+    {open ? (
+      <CamLightbox
+        src={src}
+        name={cam.name}
+        credit={cam.attribution}
+        liveUrl={cam.url}
+        stamp={stamp}
+        openerRef={opener}
+        onClose={() => setOpen(false)}
+      />
+    ) : null}
+    </>
   );
 }
 
