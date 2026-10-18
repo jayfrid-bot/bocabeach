@@ -164,6 +164,41 @@ test("?nosw=1 removes the worker and its caches, and it stays off", async ({ con
   await expect.poll(() => page.evaluate(async () => (await navigator.serviceWorker.getRegistrations()).length), { timeout: 20_000 }).toBe(1);
 });
 
+test("a lazy file that is gone after a deploy reloads the page once, not the error screen", async ({ browser }) => {
+  // No worker here: this is the page's own guard (lib/chunkReload.ts), as in an app shell or a tab
+  // left open across a deploy. Every lazy chunk ("<id>.<hash>.js") is a 404 until the page reloads.
+  const context = await browser.newContext({ baseURL: BASE, serviceWorkers: "block" });
+  const page = await context.newPage();
+  let navigations = 0;
+  let missing = 0;
+  // Full document loads only (the router's same-document URL updates are not loads).
+  page.on("load", () => {
+    navigations += 1;
+  });
+  await page.route(/\/_next\/static\/chunks\/[0-9a-f]+\.[0-9a-f]{16}\.js(\?.*)?$/, (route) => {
+    if (navigations >= 2) return route.continue(); // the reloaded page is on a build that has them
+    missing += 1;
+    return route.fulfill({ status: 404, contentType: "text/plain", body: "gone" });
+  });
+  await page.goto("/");
+  await expect(page.locator(SCORE)).toBeVisible();
+  const card = page.locator('[role="button"][aria-label^="Flip the"]').first();
+  await card.scrollIntoViewIfNeeded();
+  await card.click({ position: { x: 6, y: 6 } }); // the card back's code is a lazy chunk: 404
+  await expect.poll(() => navigations, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
+  expect(missing).toBeGreaterThan(0);
+  await expect(page.locator(SCORE)).toBeVisible();
+  await expect(page.getByText("Something went sideways")).toHaveCount(0);
+  expect(await page.evaluate(() => sessionStorage.getItem("ibd:chunk-reload-at"))).not.toBeNull();
+  // and the reloaded page works: the same card now opens its back
+  const again = page.locator('[role="button"][aria-label^="Flip the"]').first();
+  await again.scrollIntoViewIfNeeded();
+  await again.click({ position: { x: 6, y: 6 } });
+  await expect(page.getByText("How we compute this").first()).toBeVisible();
+  expect(navigations).toBe(2); // exactly one reload
+  await context.close();
+});
+
 // Needs a second production server started with the kill switch on:
 //   npx wrangler dev --port 8789 --var SW_KILL:on     then  PW_SW_KILL_URL=http://localhost:8789
 test("kill switch: with SW_KILL on, the worker removes itself and its caches", async ({ browser }) => {
