@@ -44,7 +44,8 @@ for a in "$@"; do
   [[ "$prev" == "-o" ]] && out="$a"
   prev="$a"
 done
-echo '{"ok":true}' > "$out"
+body="${FAKE_BODY:-}"; [[ -z "$body" ]] && body='{"ok":true}'
+echo "$body" > "$out"
 printf '%s' "${FAKE_HTTP:-200}"
 """
 
@@ -161,6 +162,21 @@ class CourierShellTests(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         _, fails = self.notes()
         self.assertEqual(len(fails), 7)
+
+    def test_a_refusal_is_logged_with_the_workers_reply_body(self):
+        body = '{"ok":false,"error":"bad body","reason":"too-small","bytes":3000}'
+        r = self.run_script("--force", FAKE_HTTP="400", FAKE_BODY=body)
+        self.assertIn("upload failed (HTTP 400)", r.stdout)
+        self.assertIn('"reason":"too-small"', r.stdout)
+
+    def test_a_blank_frame_refusal_says_so_and_cools_the_cam_down(self):
+        body = '{"ok":false,"error":"blank frame","reason":"blank","bytes":30000}'
+        r = self.run_script("--force", FAKE_HTTP="422", FAKE_BODY=body)
+        self.assertIn("refused the frame as blank (HTTP 422", r.stdout)
+        self.assertIn('"reason":"blank"', r.stdout)
+        self.assertEqual(r.returncode, 1)
+        _, fails = self.notes()
+        self.assertEqual(len(fails), 7)  # a stream with no picture is retried later, not every run
 
     def test_an_over_budget_run_skips_without_failing_or_cooling_the_cams(self):
         r = self.run_script("--force", YTPACE_CAP_ROUTINE="0")

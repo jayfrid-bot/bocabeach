@@ -31,9 +31,14 @@ Read from the server on 2026-10-16 (`ssh server`, read only).
   (A playlist works for about 9 frames. That is the "9 frames" in the brief.)
 - `deerfield-surf-cam` returns 0 of 25 frames at every run. Its DVR playlist is stale.
   It costs one call per run, about 12 calls a day.
-- `deerfield-surf-cam` and `pensacola-sria-west-cam` get HTTP 400 on upload every hour.
+- `deerfield-surf-cam` and `pensacola-sria-west-cam` got HTTP 400 on upload every hour.
   The old script hid the reason. The new script logs the code and the reply.
-  That is a worker question. This change does not fix it.
+  Cause (found 2026-10-17): the stream was live but sending no video, so YouTube served its
+  black slate. ffmpeg turns that slate into a 12,815-byte JPEG, and the worker refused anything
+  under 20,000 bytes. The stream is not dead: `yt-dlp -g` returns a live manifest, and the
+  archive holds real `deerfield-surf-cam` daylight frames from the same day. The worker now
+  judges the picture, not the size (see "Frame guard" in `docs/architecture.md`): a blank frame
+  gets HTTP 422 with `reason: "blank"`, and the courier logs it and cools that cam down.
 
 The worker `workers/uw-frame` does not count. Its headless Chrome runs in
 Cloudflare. It makes no `yt-dlp` call from the home IP.

@@ -201,7 +201,9 @@ flowchart LR
   PACER -->|"a paced yt-dlp -g / -J call"| YTAPI[["YouTube player API<br/>(the bot check lives here)"]]
   PLAN -.->|"runs the real rules"| CSCHED
   PLAN -.->|"runs the real rules"| PACER
-  CAMCOURIER -->|"POST /ingest?cam=&lt;id&gt;<br/>Bearer token, JPEG bytes"| UWFRAME
+  CAMCOURIER -->|"POST /ingest?cam=&lt;id&gt;<br/>Bearer token, JPEG bytes<br/>answers 400 bad body, 422 blank frame (logged with the reply body)"| UWFRAME
+  UWFRAME -->|"judgeFrame on every frame, browser grab or courier upload<br/>(src/lib/frameQuality.ts + dcLuma.ts: block brightness of the middle of the frame);<br/>each tick also clears stored frames that are blank"| FRAMEGUARD["config/frame-guard.json<br/>blank-frame thresholds,<br/>shared by the worker and cam_seaweed.py"]
+  SARG -->|"direct (courier) cams only: a blank frame is not read and not archived<br/>(frame_blank_verdict, Pillow or ffmpeg, fails open)"| FRAMEGUARD
 
   LGT -->|writes| LDATA[(lightning-data branch)]
   SARG -->|reads| VCAMS[config/vision-cams.json<br/>per-beach cam registry]
@@ -265,7 +267,7 @@ flowchart LR
   SCORECARD["scripts/scorecard.ts — by hand or a weekly Claude scheduled task<br/>read-only wrangler SELECTs, then lib/scorecard/metrics.ts (pure maths)<br/>and report.ts (Markdown); never writes to D1"]
   D1 -->|"beach_hourly (extra_json blocks), sun_event_predictions,<br/>sun_event_observations, cam_observations"| SCORECARD
   SCORECARD -->|"docs/scorecards/YYYY-MM-DD.md + latest.md<br/>predicted vs what happened: sun color, rain, best window,<br/>safety vs flags, data health"| SCARDS[(docs/scorecards)]
-  UWFRAME -->|one headless-Chrome launch/tick,<br/>reused across every cam + the flag read| UWKV[(UW_FRAME KV<br/>frame:&lt;id&gt;, meta:&lt;id&gt;,<br/>flags:deerfield-beach, flags:fort-lauderdale)]
+  UWFRAME -->|one headless-Chrome launch/tick,<br/>reused across every cam + the flag read| UWKV[(UW_FRAME KV<br/>frame:&lt;id&gt;, meta:&lt;id&gt;, attempt:&lt;id&gt;,<br/>flags:deerfield-beach, flags:fort-lauderdale)]
 ```
 
 **`workers/uw-frame` is a multi-cam courier, not a single grab.** Deerfield
@@ -299,6 +301,30 @@ home connection — grabs each frame and sends it to the Worker instead. Both
 paths write through the same guard, so neither can overwrite the other's
 newer good frame; `GET /cams` shows which path supplied each camera's
 current frame in its `source` field ("courier" or "browser").
+
+**Frame guard (2026-10-17).** A frame is only a good frame if it is a picture.
+YouTube shows a black slate (a flat dark grey, 12,815 bytes from ffmpeg) while a live
+stream sends no video, and the player shows a loading spinner on black while it
+buffers; before this guard the browser grab stored the spinner as `ok:true` and
+the courier's 12.8 KB slate was refused only because the byte floor happened to be
+20,000. Now `judgeFrame` (`workers/uw-frame/src/lib/frameQuality.ts`) checks every
+frame from either writer: JPEG, between 5 KB and 2 MB, and not blank. Blank means
+the middle of the picture (the player's top and bottom bars are left out) is a
+flat dark grey: its 95th-percentile block brightness is under 30 and its mean is
+at least 16 (`config/frame-guard.json`). A real night frame is darker than that
+grey and passes. The check reads only the DC coefficient of each 8x8 block
+(`dcLuma.ts`), about 1-3 ms for a 1280x720 frame, because `/ingest` runs under the
+free plan's 10 ms CPU limit; frames of 60 KB or more skip it. `/ingest` answers
+400 for a body that is not a JPEG or is the wrong size and 422 for a blank frame,
+as JSON `{ok:false, error, reason, message, bytes, stats}`, and records the refusal
+under `attempt:<id>` (`/cams` shows it as `lastAttempt`); the stored frame is not
+touched. The browser grab also waits for the player to say it is playing (not
+buffering) and retries a blank screenshot twice before it gives up. Each cron tick
+first clears any stored frame that is blank (frame deleted, meta `ok:false`), so a
+bad frame stored before the guard existed does not stay "good". On the reading side,
+`scripts/cam_seaweed.py` runs the same check (same JSON file) on courier cams before
+it archives or reads a frame, so a black picture is never read as "no seaweed, empty
+beach" and never takes an archive hour slot from the real frame.
 
 **One call budget for every yt-dlp call on the home server.** YouTube answers
 "Sign in to confirm you're not a bot" when one IP makes about 150 yt-dlp calls in

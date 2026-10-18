@@ -62,6 +62,7 @@
 #        bash scripts/cam_courier_local.sh --dry-run
 #        bash scripts/cam_courier_local.sh --golden-only --dry-run
 #
+# Upload failures are logged with the HTTP status and the worker's JSON reply (never hidden by curl -f).
 # Logs land at ~/Library/Logs/cam-courier.log (StandardOutPath/ErrorPath in
 # the plist).
 #
@@ -254,7 +255,14 @@ grab_and_upload() {
       --max-time 20 \
       -o "$TMP/$cam_id.response.json" -w '%{http_code}' 2>"$TMP/$cam_id.curl.err")" || true
   if [[ "$http_code" != 2* ]]; then
-    log "$cam_id: upload failed (HTTP ${http_code:-000}) $(head -c 300 "$TMP/$cam_id.response.json" 2>/dev/null) $(head -c 200 "$TMP/$cam_id.curl.err" 2>/dev/null)"
+    # The worker answers with a JSON reason (see workers/uw-frame/src/index.ts, POST /ingest);
+    # it goes in the log whole, so a refusal is never a mystery again. 422 = the picture is
+    # BLANK (YouTube's black slate, a loading screen): the stream sends no video right now.
+    if [[ "$http_code" == 422 ]]; then
+      log "$cam_id: worker refused the frame as blank (HTTP 422, $(wc -c < "$jpg" | tr -d ' ') bytes) — the stream shows no picture right now: $(head -c 400 "$TMP/$cam_id.response.json" 2>/dev/null)"
+    else
+      log "$cam_id: upload failed (HTTP ${http_code:-000}) $(head -c 400 "$TMP/$cam_id.response.json" 2>/dev/null) $(head -c 200 "$TMP/$cam_id.curl.err" 2>/dev/null)"
+    fi
     return 1
   fi
 

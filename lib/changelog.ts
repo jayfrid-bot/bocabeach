@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-17",
+    title: "No more black or loading-circle camera pictures",
+    details:
+      "Some of our live beach cameras were showing a plain black picture, or a video player's spinning loading circle, in place of the beach. Those pictures are now thrown out. A camera keeps its last good picture, or shows as unavailable, until a real one comes in. A black or loading picture also no longer counts as an empty beach in the crowd reading.",
+    tag: "fixed",
+  },
+  {
     date: "2026-10-15",
     title: "Two Gulf beaches: Fort Myers Beach and Pensacola Beach",
     details:

@@ -1409,6 +1409,74 @@ def shrink_for_alert(img: bytes) -> bytes | None:
     return None
 
 
+# --- Blank-frame guard (shared thresholds: config/frame-guard.json) -----------------------
+# A courier cam can hold a frame that is not a picture: YouTube's black slate (what a live
+# stream shows while it sends no video), the player's loading spinner on black, an error page.
+# A model asked about a black frame answers "no seaweed, empty beach", a false answer that
+# would publish as a reading. workers/uw-frame refuses such frames and clears ones already
+# stored; this is the reader's own second check (a frame stored before that guard, or a
+# worker that is behind). The statistic and thresholds are the worker's (frameQuality.ts):
+# brightness of the 8x8 blocks over the middle of the frame; blank when that middle is a flat
+# dark GREY: 95th percentile under blankP95Below and mean at least blankMeanAtLeast. A frame that
+# is merely dark (a night shot, mean under the grey) is NOT blank. FAIL OPEN: a frame this code
+# cannot measure is read as before.
+FRAME_GUARD_PATH = os.environ.get(
+    "FRAME_GUARD", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config", "frame-guard.json"))
+_FRAME_GRID = (160, 90)  # a 1280x720 frame is exactly 160x90 blocks of 8x8
+
+
+def _frame_guard_config() -> dict:
+    with open(FRAME_GUARD_PATH, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _gray_grid_pillow(Image, img: bytes) -> list[int]:
+    im = Image.open(io.BytesIO(img)).convert("L").resize(_FRAME_GRID, Image.BOX)
+    return list(im.tobytes())
+
+
+def _gray_grid_ffmpeg(img: bytes) -> list[int]:
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", "pipe:0", "-frames:v", "1",
+         "-vf", f"scale={_FRAME_GRID[0]}:{_FRAME_GRID[1]}:flags=area,format=gray",
+         "-f", "rawvideo", "-pix_fmt", "gray", "pipe:1"],
+        input=img, capture_output=True, timeout=20,
+    )
+    if proc.returncode != 0 or len(proc.stdout) != _FRAME_GRID[0] * _FRAME_GRID[1]:
+        raise RuntimeError(f"ffmpeg gray grid failed: {proc.stderr.decode('utf-8', 'replace')[:120]}")
+    return list(proc.stdout)
+
+
+def frame_blank_verdict(img: bytes, use_pillow: bool = True) -> "tuple[bool, str]":
+    """(True, why) when the frame is blank: the middle of it is a flat dark grey, nothing brighter.
+    (False, '') for a real picture, and for anything this cannot measure (no Pillow and no
+    ffmpeg, a corrupt file): only positive evidence of an empty frame rejects."""
+    try:
+        cfg = _frame_guard_config()
+        rich = cfg.get("richBytes")
+        if rich is not None and len(img) >= rich:
+            return False, ""
+        if len(img) < 2 or img[:2] != b"\xff\xd8":
+            return False, ""  # not a JPEG: the fetch step's own checks judge that
+        Image = _pillow_image() if use_pillow else None
+        grid = _gray_grid_pillow(Image, img) if Image is not None else _gray_grid_ffmpeg(img)
+        cols, rows = _FRAME_GRID
+        reg = cfg["region"]
+        r0, r1 = math.floor(rows * reg["top"]), math.ceil(rows * reg["bottom"])
+        c0, c1 = math.floor(cols * reg["left"]), math.ceil(cols * reg["right"])
+        vals = sorted(grid[r * cols + c] for r in range(r0, r1) for c in range(c0, c1))
+        if not vals:
+            return False, ""
+        p95 = vals[max(0, math.ceil(len(vals) * 0.95) - 1)]
+        mean = sum(vals) / len(vals)
+        if p95 < cfg["blankP95Below"] and mean >= cfg["blankMeanAtLeast"]:
+            return True, (f"blank frame: a flat dark grey, 95% of it darker than {cfg['blankP95Below']} of 255 "
+                          f"(p95 {p95}, mean {mean:.1f}) - YouTube's black slate, a player still loading, or an error page")
+    except Exception as e:  # noqa: BLE001 - fail open: an unmeasurable frame is read as before
+        print(f"  warn frame check: {e}", file=sys.stderr)
+    return False, ""
+
+
 def _clef_raw(reply: object, kind: str) -> dict:
     """Turn the route's reading into the raw-model dict that _parse_out/_parse_uw take.
 
@@ -1594,6 +1662,10 @@ def capture_uw(now_local: dt.datetime, attempted: set | None = None,
         if attempted is not None:
             attempted.add((UW_ARCHIVE_SLUG, UW_ARCHIVE_CAM_ID))
         frame, frame_at = fetch_uw_frame_timed()
+        blank, why = frame_blank_verdict(frame)
+        if blank:
+            print(f"  underwater: skipped ({why})")
+            return None
         run.enqueue(UW_ARCHIVE_SLUG, UW_ARCHIVE_CAM_ID, frame, frame_at)
         r = assess_uw(frame)
     except UnreadableFrame:
@@ -2135,6 +2207,13 @@ def capture_beach(
                 attempted.add((slug, cam["id"]))
             info: dict = {}
             img = fetch_still(cam, info)
+            if src.get("kind") == "direct":
+                # A courier cam can hold a black slate or a loading screen. Not read, and not
+                # archived either: it would take the hour's archive slot from the real frame.
+                blank, why = frame_blank_verdict(img)
+                if blank:
+                    print(f"  [{slug}] {cam['id']}: skipped ({why})")
+                    continue
             run.enqueue(slug, cam["id"], img, frame_at or info.get("frameAt"))
             # A FEED frame is scored only when its own timestamp says it is live
             # (see vision_frame_verdict). Otherwise: no assess() call and no
