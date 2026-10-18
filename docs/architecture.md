@@ -91,6 +91,7 @@ flowchart TD
   WATCHR -->|"lib/watchView.ts: score + best window as the dashboard;<br/>safety lines from lib/safetyBanner.ts, the module SafetyBanner renders"| SCORE
   SHARE --> PIPE
   PIPE --> SOURCES[lib/sources/*<br/>one adapter per external source<br/>each returns Wrapped&lt;T&gt;, never throws]
+  SOURCES -->|"hourly, 7-day, nowcast, GFS, marine, air, satellite, cam weather"| OMCLIENT["lib/sources/openMeteo.ts<br/>2 calls to /v1/forecast per beach, not 5;<br/>429 → ~60 s pause per host; last-good copy served as stale"]
   PIPE --> SCORE[lib/score.ts<br/>deriveMetrics + computeScore<br/>hourly + multi-day windows]
   SOURCES -->|"NWS alerts (onset/effective/ends)<br/>+ per-period SRF words +<br/>NOAA rip model (rip-data branch)"| RIPRISK["lib/ripRisk/*<br/>resolveRipNow: alert-in-effect (always High) &gt;<br/>fresh NOAA model (softened vs. a disagreeing<br/>SRF word, or upgrade-only once aging) &gt;<br/>current SRF period &gt; unknown — pure, now-passed"]
   RIPRISK -->|"rip cap (85/92)"| SCORE
@@ -158,6 +159,61 @@ again with the live clock right before any score is served or ranked; an
 expired reading is never served (503 for a single beach). No KV writes; the
 store is per datacenter and does nothing where `caches` does not exist.
 Setup and examples: `docs/AGENT_API.md`.
+
+### Open-Meteo client (2026-10-17)
+
+Open-Meteo's free API limits concurrent requests per IP, and Workers share
+outbound IPs with other customers. On 2026-10-17 it answered `429 Too many
+concurrent requests` to a cold build, and the page lost UV, sand temperature,
+the hourly chart and the 7-day outlook. Every Open-Meteo call now goes through
+`lib/sources/openMeteo.ts`. Setup and the paid-plan switch: `docs/open-meteo.md`.
+
+```mermaid
+flowchart TD
+  PIPE2[lib/conditions.ts<br/>one build per beach] -->|"one shared promise each"| A["call A: hourly + daily<br/>fetchForecastPoint, revalidate 1 h"]
+  PIPE2 --> B["call B: 15-min rain + current UV/cloud + GFS<br/>models=best_match,gfs_seamless<br/>fetchNowPoint, revalidate 15 min"]
+  A --> HOURLY2[hourlyForecast.ts] & DAILY2[forecast.ts]
+  B --> NOWCAST2[nowcast.ts] & GFS2[modelEnsemble.ts] & MARINE2[marine.ts]
+  MARINE2 --> MAPI["marine-api: waves, swell, sea temp"]
+  HOURLY2 --> SAT2["satellite-api: GOES radiation (best effort)"]
+  AIR2[airQuality.ts, only when AirNow has no reading] --> AQAPI[air-quality-api]
+  CAMS2[lib/cams.ts → spotWeather.ts] --> SPOT2["api: current weather per cam point"]
+  RAIN2["lib/alerts/rain.ts<br/>paused: logs one line per skipped check"] --> FETCH2
+  GEO2["lib/resolve/geocode.ts<br/>paused or 429: throws → GEOCODE_FAILED, never 'no results'"] --> FETCH2
+  A & B & MAPI & SAT2 & AQAPI & SPOT2 --> JSON2["fetchOpenMeteoJson<br/>429: no retry; 5xx / bad JSON: one retry; timeout: no retry"]
+  JSON2 --> FETCH2["openMeteoFetch<br/>no call while the host is paused;<br/>a 429 pauses that host 45-75 s in this isolate<br/>(Retry-After if longer, max 5 min), logged once"]
+  FETCH2 -->|"OPEN_METEO_API_KEY unset: api.open-meteo.com etc.<br/>set: customer-*.open-meteo.com + &apikey="| OM[(Open-Meteo)]
+  JSON2 <-->|"save every good answer; read when a call fails.<br/>Under the push run's SubrequestBudget: no writes, each read costs 1"| LG[("last-good copy per endpoint + point<br/>isolate memory + Workers Cache API caches.default<br/>key https://open-meteo-last-good.isitbeachday.internal/&lt;endpoint:lat,lon&gt;<br/>per datacenter, max-age 3 h, rewritten at most every 10 min per isolate")]
+```
+
+- **Why two calls, not one.** Asking for `current` or `minutely_15` in the same
+  request as `hourly` changes the hourly numbers (Open-Meteo then builds the
+  near-term hours from 15-minute data). So call A has only hourly + daily and
+  call B has the rest. Both were checked value for value against the old
+  separate calls (`lib/sources/openMeteo.test.ts`, real fixtures in
+  `lib/__fixtures__/openMeteo/`). Call A asks in the beach's time zone with unix
+  times and one extra day each side, then trims back to the old GMT hourly
+  window and the old 7 local days. Never add `current` or `minutely_15` to
+  call A; a test fails if you do.
+- **Max age of a last-good copy.** Hourly, 7-day, GFS, marine, air quality and
+  satellite: 3 h. Nowcast: 30 min (an older copy cannot say whether it is
+  raining now). Cam weather: 1 h. A served copy sets the source's status to
+  `"stale"`, its `fetchedAt` to when Open-Meteo made it, and a note with its age.
+  The score uses stale hourly data as it is (it is a forecast for this hour).
+  A stale call-A copy is trimmed from NOW, not from when it was made, so a copy
+  made before local midnight still starts the outlook on today (7 tiles).
+  A stale call-B copy reads GFS and UV for the 15-minute slot of now.
+- **Subrequest budget.** Cache API calls count toward Cloudflare's per-request
+  subrequest limit but do not pass through `fetchWithTimeout`. When a push-run
+  `SubrequestBudget` is active (lib/alerts/budget.ts), the client skips cache
+  writes and charges each cache read 1 (skipping it when the budget cannot pay).
+- **Night UV.** `deriveMetrics` (lib/score.ts) sets UV to 0 between sunset and
+  sunrise when no feed has a value, so a night outage does not show "no UV index".
+  It applies only within 23.5 h of the snapshot's sunrise, so an old snapshot
+  scored the next morning cannot read UV 0 in daylight. Engine version 2026-10-17.1.
+- **Calls per cold build.** Before: 5 to api.open-meteo.com + marine + satellite
+  (+ air quality when AirNow has nothing, + 1 per cam) = 7-8 plus cams. After:
+  2 + marine + satellite (+ air, + cams) = 4-5 plus cams.
 
 ## 2. Scheduled jobs — keeping the feeds current
 
@@ -1277,7 +1333,7 @@ also erases a cam's `quality/` prefix.
 | Source | Used for |
 |---|---|
 | RevenueCat | Beach Day Plus billing: the app buys through its SDK; the server confirms with its REST API (`/api/devices/purchase`), and `/api/revenuecat/webhook` re-asks that same REST API for the live subscriber state on any renewal/expiration/pause/cancellation ping rather than trusting the event itself (see docs/BILLING_SETUP.md) |
-| Open-Meteo | Forecast, hourly forecast, nowcast, minutely rain (Plus alert fallback) |
+| Open-Meteo | Forecast, hourly forecast, nowcast, GFS, marine, air quality (AirNow fallback), GOES radiation, cam weather, geocoding, minutely rain (Plus alert fallback). All calls go through `lib/sources/openMeteo.ts` (pause after a 429, last-good copies). Free API by default; the `OPEN_METEO_API_KEY` secret switches to the paid customer hosts (docs/open-meteo.md) |
 | National Weather Service (NWS) | Alerts, forecast |
 | NOAA CO-OPS | Tide predictions, real water level, and flood levels (king tide feed) |
 | Launch Library 2 (LL2) | Upcoming rocket launches across 4 US ranges (Coming up card) |

@@ -1,4 +1,5 @@
 import type { AirQualityData, Location, Wrapped } from "@/lib/types";
+import { fetchOpenMeteoJson, MAX_AGE_MS, openMeteoUrl, staleNote } from "@/lib/sources/openMeteo";
 import { fetchedAtOf, fetchWithTimeout, nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo Air Quality (open-meteo.com)";
@@ -111,35 +112,36 @@ export async function fetchAirQuality(
     const observed = await fetchAirNow(loc, airNowKey);
     if (observed) return observed;
   }
-  let fetchedAt = nowIso();
-  const url =
-    `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${loc.lat}` +
-    `&longitude=${loc.lon}` +
-    `&current=us_aqi,pm2_5,pm10,ozone,us_aqi_pm2_5,us_aqi_pm10,us_aqi_ozone,aerosol_optical_depth`;
-  try {
-    const res = await fetchWithTimeout(url, {
-      timeoutMs: 7000,
-      next: { revalidate: 3600 }, // 1h — the model updates hourly
-    });
-    fetchedAt = fetchedAtOf(res);
-    if (!res.ok) throw new Error(`Open-Meteo air-quality -> ${res.status}`);
-    const data = parseAirQuality(await res.json());
-    return {
-      source: "Open-Meteo (air quality)",
-      status: data ? "ok" : "error",
-      fetchedAt,
-      attribution: ATTRIBUTION,
-      data,
-      note: data ? undefined : "no air-quality reading returned",
-    };
-  } catch (e) {
+  const url = openMeteoUrl(
+    "air-quality-api",
+    `/v1/air-quality?latitude=${loc.lat}&longitude=${loc.lon}` +
+      `&current=us_aqi,pm2_5,pm10,ozone,us_aqi_pm2_5,us_aqi_pm10,us_aqi_ozone,aerosol_optical_depth`,
+  );
+  // Back-off, retry and the last good copy (up to 3 h, "stale") live in
+  // lib/sources/openMeteo.ts.
+  const r = await fetchOpenMeteoJson<OpenMeteoAir>(url, {
+    storeKey: `air:${loc.lat},${loc.lon}`,
+    maxAgeMs: MAX_AGE_MS.air,
+    timeoutMs: 7000,
+    revalidate: 3600, // 1h — the model updates hourly
+  });
+  if (!r.ok) {
     return {
       source: "Open-Meteo (air quality)",
       status: "error",
-      fetchedAt,
+      fetchedAt: nowIso(),
       attribution: ATTRIBUTION,
       data: null,
-      note: String(e),
+      note: r.error,
     };
   }
+  const data = parseAirQuality(r.json);
+  return {
+    source: "Open-Meteo (air quality)",
+    status: !data ? "error" : r.stale ? "stale" : "ok",
+    fetchedAt: r.fetchedAt,
+    attribution: ATTRIBUTION,
+    data,
+    note: !data ? "no air-quality reading returned" : r.stale ? staleNote(r.stale) : undefined,
+  };
 }

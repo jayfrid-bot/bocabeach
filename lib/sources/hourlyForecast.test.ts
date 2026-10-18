@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { FORECAST_DAYS, forecastPointUrl } from "@/lib/sources/openMeteo";
 import { parseOpenMeteoHourly } from "@/lib/sources/hourlyForecast";
 
 // Mirrors an Open-Meteo /v1/forecast `hourly` payload (imperial, GMT times).
@@ -99,15 +99,14 @@ describe("overlaySatelliteRadiation", () => {
 });
 
 describe("fetch window (regression: 2026-07-17 'no good window' bug)", () => {
-  it("requests the same number of forecast days as the DAILY forecast source", () => {
+  it("hourly and daily cover the same number of forecast days", () => {
     // The outlook strip renders one tile per DAILY day, but each tile's peak
     // score + best window come from the HOURLY hours. When these drifted apart
     // (daily 7, hourly 6) the last tile had no hours to score, so it showed
-    // "no good window" for a day we had never actually looked at.
-    const hourlySrc = readFileSync(new URL("./hourlyForecast.ts", import.meta.url), "utf8");
-    const dailySrc = readFileSync(new URL("./forecast.ts", import.meta.url), "utf8");
-    const days = (src: string) => src.match(/forecast_days=(\d+)/)?.[1];
-    expect(days(hourlySrc)).toBeDefined();
-    expect(days(hourlySrc)).toBe(days(dailySrc));
+    // "no good window" for a day we had never actually looked at. Both now come
+    // from one request (lib/sources/openMeteo.ts) trimmed by FORECAST_DAYS;
+    // lib/sources/openMeteo.test.ts checks every daily tile has daylight hours.
+    expect(FORECAST_DAYS).toBe(7);
+    expect(forecastPointUrl(1, 2)).toContain(`forecast_days=${FORECAST_DAYS + 1}`);
   });
 });

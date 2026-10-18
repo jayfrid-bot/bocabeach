@@ -1,5 +1,6 @@
 import type { SpotWeatherData, Wrapped } from "@/lib/types";
-import { fetchedAtOf, degToCardinal, fetchWithTimeout, nowIso, round } from "@/lib/util";
+import { fetchOpenMeteoJson, MAX_AGE_MS, openMeteoUrl, staleNote } from "@/lib/sources/openMeteo";
+import { degToCardinal, nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo (open-meteo.com)";
 
@@ -78,39 +79,41 @@ export async function fetchSpotWeather(
   lat: number,
   lon: number,
 ): Promise<Wrapped<SpotWeatherData>> {
-  let fetchedAt = nowIso();
   // Round to ~1km so nearby cams share a cached request.
   const la = round(lat, 2);
   const lo = round(lon, 2);
-  const url =
-    `https://api.open-meteo.com/v1/forecast?latitude=${la}&longitude=${lo}` +
-    `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,` +
-    `dew_point_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m` +
-    `&temperature_unit=fahrenheit&wind_speed_unit=mph`;
-  try {
-    const res = await fetchWithTimeout(url, {
-      timeoutMs: 6000,
-      next: { revalidate: 900 }, // 15 min
-    });
-    fetchedAt = fetchedAtOf(res);
-    if (!res.ok) throw new Error(`Open-Meteo current -> ${res.status}`);
-    const data = parseOpenMeteoCurrent(await res.json());
-    return {
-      source: "Open-Meteo (current)",
-      status: data ? "ok" : "error",
-      fetchedAt,
-      attribution: ATTRIBUTION,
-      data,
-      note: data ? undefined : "no current weather returned",
-    };
-  } catch (e) {
+  const url = openMeteoUrl(
+    "api",
+    `/v1/forecast?latitude=${la}&longitude=${lo}` +
+      `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,` +
+      `dew_point_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m` +
+      `&temperature_unit=fahrenheit&wind_speed_unit=mph`,
+  );
+  // Back-off and the last good copy (up to 1 h, "stale") live in
+  // lib/sources/openMeteo.ts.
+  const r = await fetchOpenMeteoJson<OpenMeteoCurrent>(url, {
+    storeKey: `spot:${la},${lo}`,
+    maxAgeMs: MAX_AGE_MS.spot,
+    timeoutMs: 6000,
+    revalidate: 900, // 15 min
+  });
+  if (!r.ok) {
     return {
       source: "Open-Meteo (current)",
       status: "error",
-      fetchedAt,
+      fetchedAt: nowIso(),
       attribution: ATTRIBUTION,
       data: null,
-      note: String(e),
+      note: r.error,
     };
   }
+  const data = parseOpenMeteoCurrent(r.json);
+  return {
+    source: "Open-Meteo (current)",
+    status: !data ? "error" : r.stale ? "stale" : "ok",
+    fetchedAt: r.fetchedAt,
+    attribution: ATTRIBUTION,
+    data,
+    note: !data ? "no current weather returned" : r.stale ? staleNote(r.stale) : undefined,
+  };
 }

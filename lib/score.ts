@@ -427,6 +427,22 @@ function metricSource(
   return undefined;
 }
 
+/** Night-UV rule only trusts the snapshot's sun times this close to its
+ *  sunrise. Sunrise moves a few minutes a day, so 23.5 h keeps an old snapshot
+ *  scored the next morning from reading "night" in daylight. */
+const SUN_TIMES_VALID_MS = 23.5 * 3600_000;
+
+/** True when `nowMs` is before the snapshot's sunrise or at/after its sunset,
+ *  and within {@link SUN_TIMES_VALID_MS} of that sunrise. False when either
+ *  time is unknown or the sun times are for another day (never guess night). */
+export function sunIsDown(sun: { sunrise?: string; sunset?: string } | null | undefined, nowMs: number): boolean {
+  const rise = sun?.sunrise ? Date.parse(sun.sunrise) : NaN;
+  const set = sun?.sunset ? Date.parse(sun.sunset) : NaN;
+  if (!Number.isFinite(rise) || !Number.isFinite(set)) return false;
+  if (Math.abs(nowMs - rise) >= SUN_TIMES_VALID_MS) return false;
+  return nowMs < rise || nowMs >= set;
+}
+
 // `nowMs` only feeds the sand model's "current hour" pick. Callers that already
 // hold a clock (the hourly/personal scorers, SSR vs hydration) pass it in so the
 // same snapshot scores the same way regardless of wall time; the default keeps
@@ -490,6 +506,10 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
     const satUv = round(om.uvClearSkyIndex * transmission, 1);
     uvIndex = uvForecast != null ? Math.min(uvForecast, satUv) : satUv;
   }
+  // Between sunset and sunrise the UV index is 0 whatever the feeds say, so a
+  // night with no forecast (Open-Meteo down, no last-good copy) reads UV 0,
+  // not "no UV index". The sun times are computed locally (lib/sources/sun.ts).
+  if (uvIndex == null && sunIsDown(s.sun?.data, nowMs)) uvIndex = 0;
   const nowcastSaysRain = s.nowcast.data?.state === "raining";
   const rainishCode =
     om?.weatherCode != null &&
@@ -822,7 +842,10 @@ function waveScore(ft: number, mode: WaveMode): number {
 // score at 70 (were 85); a coastal-flood advisory / Beach Hazards Statement
 // keeps its 85 cap under its own name. Red-flag days read "Decent", not
 // "Yes — good beach day".
-export const SCORING_ENGINE_VERSION = "2026-10-12.1";
+// 2026-10-17.1: between sunset and sunrise, UV reads 0 when no feed has a
+// value (Open-Meteo outage at night). UV then counts as present, so it leaves
+// missingFactors and can lift the thin-data cap on such nights.
+export const SCORING_ENGINE_VERSION = "2026-10-17.1";
 
 /** Comfort curve (see comfortScore): dew point up to this is a perfect 100… */
 export const COMFORT_FREE_DEW_F = 65;

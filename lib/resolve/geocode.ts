@@ -5,7 +5,12 @@
 // thin async fetcher (geocodeName). The fetcher never throws — on any error it
 // returns an empty list, the typed "no results" value for a geocoder.
 
-import { fetchWithTimeout } from "@/lib/util";
+import {
+  OpenMeteoBackoff,
+  openMeteoBackoffRemainingMs,
+  openMeteoFetch,
+  openMeteoUrl,
+} from "@/lib/sources/openMeteo";
 import type { GeoPoint } from "./types";
 
 const USER_AGENT = "isitbeachday.com (hello@isitbeachday.com)";
@@ -135,22 +140,28 @@ export function parseGeocode(json: unknown): GeoPoint[] {
 }
 
 /**
- * Geocode a free-text place query via Open-Meteo (keyless). Returns US GeoPoints,
- * or [] on any error/non-OK response — the geocoder never throws.
+ * Geocode a free-text place query via Open-Meteo. Returns US GeoPoints, or []
+ * on an error/non-OK response. One exception: while Open-Meteo has us paused
+ * after a 429 (or on the 429 itself) it THROWS OpenMeteoBackoff, because []
+ * would read as "no such place". resolveLocation's callers already turn a
+ * throw into a GEOCODE_FAILED warning.
  */
 export async function geocodeName(query: string, count = 5): Promise<GeoPoint[]> {
   try {
-    const url =
-      `https://geocoding-api.open-meteo.com/v1/search` +
-      `?name=${encodeURIComponent(query)}&count=${count}&country_code=US`;
-    const res = await fetchWithTimeout(url, {
+    const url = openMeteoUrl(
+      "geocoding-api",
+      `/v1/search?name=${encodeURIComponent(query)}&count=${count}&country_code=US`,
+    );
+    const res = await openMeteoFetch(url, {
       timeoutMs: 7000,
       headers: { "User-Agent": process.env.CONDITIONS_USER_AGENT ?? USER_AGENT },
       next: { revalidate: 86400 }, // 1d — place coordinates are effectively static
     });
+    if (res.status === 429) throw new OpenMeteoBackoff(url, openMeteoBackoffRemainingMs(url));
     if (!res.ok) return [];
     return parseGeocode(await res.json());
-  } catch {
+  } catch (e) {
+    if (e instanceof OpenMeteoBackoff) throw e;
     return [];
   }
 }

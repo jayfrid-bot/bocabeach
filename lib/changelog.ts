@@ -35,6 +35,12 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "No more black or loading-circle camera pictures",
     details:
       "Some of our live beach cameras were showing a plain black picture, or a video player's spinning loading circle, in place of the beach. Those pictures are now thrown out. A camera keeps its last good picture, or shows as unavailable, until a real one comes in. A black or loading picture also no longer counts as an empty beach in the crowd reading.",
+  },
+  {
+    date: "2026-10-17",
+    title: "UV and sand temperature stay up when a weather feed is busy",
+    details:
+      "When our main weather forecast provider was too busy to answer, some beaches showed \"Partial data: no UV index and sand temperature\" and lost the hourly chart and 7-day outlook. Now we ask that provider less often, wait a minute before asking again when it is busy, and keep showing the last forecast it sent (up to 3 hours old, marked as older data in the sources list). After sunset the UV index now reads 0 instead of missing.",
     tag: "fixed",
   },
   {

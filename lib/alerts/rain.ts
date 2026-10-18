@@ -19,7 +19,7 @@
 import { cellCenter, cellKey } from "@/lib/location/cell";
 import { PRECIP_RADAR_STALE_MINUTES } from "@/lib/sources/precipRadar";
 import type { PrecipRadarData, Wrapped } from "@/lib/types";
-import { fetchWithTimeout } from "@/lib/util";
+import { OpenMeteoBackoff, openMeteoFetch, openMeteoUrl } from "@/lib/sources/openMeteo";
 import { assessRain, RAIN_WET_MM_HR, type HazardAnchor } from "@/lib/hazards/assess";
 // RAIN_WET_MM_HR is the one shared "is it raining" threshold (also used by
 // lib/hazards/assess.ts's radar-wet check) — see its doc comment there.
@@ -282,15 +282,20 @@ async function fetchMinutely(
   // floating point out of the URL (and out of the fetch cache key).
   const lat = Number(rawLat.toFixed(4));
   const lon = Number(rawLon.toFixed(4));
-  const url =
-    `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-    `&minutely_15=precipitation,precipitation_probability` +
-    // Two days, not one: a run late in the UTC day would otherwise see its
-    // 60-minute horizon cut off at midnight and could never say "clearing"
-    // (LOC-11), or worse, mistake the truncation for a dry hour.
-    `&precipitation_unit=inch&forecast_days=2`;
+  const url = openMeteoUrl(
+    "api",
+    `/v1/forecast?latitude=${lat}&longitude=${lon}` +
+      `&minutely_15=precipitation,precipitation_probability` +
+      // Two days, not one: a run late in the UTC day would otherwise see its
+      // 60-minute horizon cut off at midnight and could never say "clearing"
+      // (LOC-11), or worse, mistake the truncation for a dry hour.
+      `&precipitation_unit=inch&forecast_days=2`,
+  );
   try {
-    const res = await fetchWithTimeout(url, {
+    // openMeteoFetch: no call while Open-Meteo has us paused after a 429
+    // (it throws OpenMeteoBackoff; logged below, then null), and a 429 here
+    // starts one.
+    const res = await openMeteoFetch(url, {
       timeoutMs: 7000,
       next: { revalidate: 300 }, // 5 min — the cron cadence, not per-device
     });
@@ -300,7 +305,11 @@ async function fetchMinutely(
     if (!base) return null;
     const { state, corroborated } = nowcastFromPayload(json, nowMs);
     return { base, nowcastState: state, corroborated };
-  } catch {
+  } catch (e) {
+    if (e instanceof OpenMeteoBackoff) {
+      // Not silent: a skipped check means no rain alert for this cell this run.
+      console.warn(`[rain] rain check skipped for cell ${lat},${lon}: ${e.message}`);
+    }
     return null; // a rain alert is never worth an exception
   }
 }

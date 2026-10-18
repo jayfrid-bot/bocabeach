@@ -1,5 +1,6 @@
 import type { Location, NowcastData, Wrapped } from "@/lib/types";
-import { fetchedAtOf, fetchWithTimeout, nowIso } from "@/lib/util";
+import { fetchNowPoint, MAX_AGE_MS, staleNote, type PointResult, type SplitNow } from "@/lib/sources/openMeteo";
+import { nowIso } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo (open-meteo.com)";
 const WET_MM = 0.1; // precipitation at/above this (per 15 min) counts as "raining"
@@ -61,35 +62,37 @@ export function parseNowcast(
   return { state, changeInMin, text };
 }
 
-export async function fetchNowcast(loc: Location): Promise<Wrapped<NowcastData>> {
-  let fetchedAt = nowIso();
-  const url =
-    `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
-    `&minutely_15=precipitation&forecast_days=1`;
-  try {
-    const res = await fetchWithTimeout(url, {
-      timeoutMs: 7000,
-      next: { revalidate: 900 }, // 15m — nowcast is short-term
-    });
-    fetchedAt = fetchedAtOf(res);
-    if (!res.ok) throw new Error(`Open-Meteo minutely -> ${res.status}`);
-    const data = parseNowcast(await res.json(), Date.now());
-    return {
-      source: "Open-Meteo (nowcast)",
-      status: data ? "ok" : "best-effort",
-      fetchedAt,
-      attribution: ATTRIBUTION,
-      data,
-      note: data ? undefined : "no minutely precipitation returned",
-    };
-  } catch (e) {
+/**
+ * Short-term rain nowcast, from the shared call B (lib/sources/openMeteo.ts:
+ * today's GMT day of 15-minute rain in mm, as before). A failed call falls back
+ * to the last good copy only while it is at most 30 min old ("stale"); an older
+ * copy is too old to say whether it is raining now.
+ */
+export async function fetchNowcast(
+  loc: Location,
+  point?: Promise<PointResult<SplitNow>>,
+): Promise<Wrapped<NowcastData>> {
+  const p = await (point ?? fetchNowPoint(loc));
+  const tooOld = p.ok && p.stale != null && p.stale.ageMs > MAX_AGE_MS.nowcast;
+  if (!p.ok || tooOld) {
     return {
       source: "Open-Meteo (nowcast)",
       status: "error",
-      fetchedAt,
+      fetchedAt: p.ok ? p.fetchedAt : nowIso(),
       attribution: ATTRIBUTION,
       data: null,
-      note: String(e),
+      note: !p.ok
+        ? p.error
+        : `live update failed (${p.stale!.reason}); the last copy is ${Math.round(p.stale!.ageMs / 60_000)} min old, too old for a nowcast`,
     };
   }
+  const data = parseNowcast(p.split.minutely as MinutelyJson, Date.now());
+  return {
+    source: "Open-Meteo (nowcast)",
+    status: !data ? "best-effort" : p.stale ? "stale" : "ok",
+    fetchedAt: p.fetchedAt,
+    attribution: ATTRIBUTION,
+    data,
+    note: !data ? "no minutely precipitation returned" : p.stale ? staleNote(p.stale) : undefined,
+  };
 }
