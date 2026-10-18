@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-18",
+    title: "Records now keep your best days for good",
+    details:
+      "Records in Plus look-back no longer start over when we tune the score. Best day now shows the highest score this beach ever had, whichever version of the score gave it. The notes about earlier scoring and the dotted marks on old days are gone. Each beach also has new records: warmest water, clearest water, best sunrise and best sunset. Every record is for the beach you are looking at.",
+    tag: "improved",
+  },
+  {
     date: "2026-10-17",
     title: "17 more Florida beaches on the Atlantic coast, with live cameras",
     details:

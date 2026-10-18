@@ -5,26 +5,19 @@
 
 import { describe, it, expect, vi } from "vitest";
 import {
-  dayFormulaState,
-  formulaAriaPhrase,
-  formulaChangeNotice,
-  recordFormulaNote,
   recordTiles,
   resolveHistoryViewState,
   retryHistoryFetch,
 } from "@/components/plus/HistorySection";
 import type { HistoryResult } from "@/lib/plus/api";
-import type { DaySummary, HistoryBestEver, HistoryRecords, HistoryVersions } from "@/lib/history/summary";
+import type { HistoryRecords } from "@/lib/history/summary";
 
 const OK_RESULT: HistoryResult & { ok: true } = {
   ok: true,
   since: "2026-09-22",
   days: [],
   records: null,
-  bestEver: null,
   versions: null,
-  recordsSince: null,
-  recordsFromEarlierFormula: false,
   archiveStartedAt: null,
   dayCount: 0,
   surfSince: null,
@@ -37,10 +30,7 @@ const FAILED_RESULT: HistoryResult = {
   since: null,
   days: [],
   records: null,
-  bestEver: null,
   versions: null,
-  recordsSince: null,
-  recordsFromEarlierFormula: false,
   archiveStartedAt: null,
   dayCount: 0,
   surfSince: null,
@@ -105,81 +95,103 @@ describe("resolveHistoryViewState", () => {
 
 const CURRENT = "2026-10-09.1";
 
+const NO_RECORDS: HistoryRecords = {
+  bestDay: null,
+  hottestSand: null,
+  biggestSurf: null,
+  quietestDay: null,
+  warmestWater: null,
+  clearestWater: null,
+  bestSunrise: null,
+  bestSunset: null,
+};
+
 const FULL_RECORDS: HistoryRecords = {
   bestDay: { date: "2026-09-26", score: 93, localHour: 8, engineVersion: CURRENT },
   hottestSand: { date: "2026-09-26", sandTempF: 141, localHour: 14 },
   biggestSurf: { date: "2026-09-21", surfFt: 3.4, localHour: 13 },
   quietestDay: { date: "2026-09-28", crowdPct: 15, localHour: 15 },
+  warmestWater: { date: "2026-09-24", waterTempF: 87.4, localHour: 16 },
+  clearestWater: { date: "2026-09-30", clarityPct: 91.6, localHour: 11 },
+  bestSunrise: { date: "2026-10-02", score: 78, band: "vivid" },
+  bestSunset: { date: "2026-10-04", score: 91, band: "epic" },
 };
 
-const BEST_EVER: HistoryBestEver = {
-  slug: "gulf-shores",
-  name: "Gulf Shores",
-  date: "2026-09-29",
-  score: 98,
-  localHour: 13,
-  isThisBeach: false,
-  engineVersion: CURRENT,
-};
-
-// The cross-beach "Best day ever" tile: first in the list, names the beach,
-// and says "This beach!" instead when the record belongs to the beach shown.
-describe("recordTiles — Best day ever", () => {
-  it("leads the list, with this beach's own Best day right after it", () => {
-    const tiles = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14", BEST_EVER);
-    expect(tiles.map((t) => t.key)).toEqual(["best-ever", "best", "sand", "surf", "quiet"]);
+// Records are for THIS beach and all-time across formulas: no cross-beach
+// "Best day ever" tile, and no formula wording on any tile.
+describe("recordTiles — every record, this beach only", () => {
+  it("lists every record in order", () => {
+    const tiles = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14");
+    expect(tiles.map((t) => t.key)).toEqual(["best", "sand", "surf", "quiet", "water", "clear", "sunrise", "sunset"]);
   });
 
-  it("shows the score, the beach name, and the local date and hour", () => {
-    const [first] = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14", BEST_EVER);
-    expect(first).toMatchObject({
-      icon: "\u{1f947}",
-      label: "Best day ever",
-      value: "98",
-      sub: "Gulf Shores \u00b7 Sept 29, 1 PM",
+  it("has no cross-beach 'Best day ever' tile", () => {
+    const tiles = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14");
+    expect(tiles.some((t) => t.key === "best-ever" || /ever/i.test(t.label))).toBe(false);
+  });
+
+  it("Best day shows the score with its day and hour, and no formula note", () => {
+    const best = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14")[0];
+    expect(best).toMatchObject({ label: "Best day", value: "93", sub: "Sept 26, 8 AM" });
+    expect(best.note).toBeUndefined();
+  });
+
+  it("an old-formula record reads exactly like a current one: nothing marks it", () => {
+    const old = recordTiles(
+      { ...FULL_RECORDS, bestDay: { ...FULL_RECORDS.bestDay!, engineVersion: "2026-10-06.1" } },
+      "2026-09-14",
+      "2026-09-14",
+    );
+    const current = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14");
+    expect(old).toEqual(current);
+  });
+
+  it("no tile or note anywhere mentions a formula or 'since' a formula date", () => {
+    for (const t of recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14")) {
+      expect(`${t.label} ${t.sub} ${t.note ?? ""}`).not.toMatch(/formula/i);
+    }
+  });
+
+  it("Warmest water rounds to whole degrees, Clearest water to a whole percent", () => {
+    const tiles = recordTiles(FULL_RECORDS, null, null);
+    expect(tiles.find((t) => t.key === "water")).toMatchObject({
+      label: "Warmest water",
+      value: "87°",
+      sub: "Sept 24, 4 PM",
+    });
+    expect(tiles.find((t) => t.key === "clear")).toMatchObject({
+      label: "Clearest water",
+      value: "92%",
+      sub: "Sept 30, 11 AM",
     });
   });
 
-  it("says 'This beach!' instead of the name when the record is at this beach", () => {
-    const [first] = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14", { ...BEST_EVER, isThisBeach: true });
-    expect(first.sub).toBe("This beach! Sept 29, 1 PM");
-    expect(first.sub).not.toContain("Gulf Shores");
+  it("Best sunrise and Best sunset show the color score and the day", () => {
+    const tiles = recordTiles(FULL_RECORDS, null, null);
+    expect(tiles.find((t) => t.key === "sunrise")).toMatchObject({ label: "Best sunrise", value: "78", sub: "Oct 2" });
+    expect(tiles.find((t) => t.key === "sunset")).toMatchObject({ label: "Best sunset", value: "91", sub: "Oct 4" });
+  });
+
+  it("a record the beach has no data for is simply left out", () => {
+    const tiles = recordTiles({ ...NO_RECORDS, bestDay: FULL_RECORDS.bestDay, bestSunset: FULL_RECORDS.bestSunset }, null, null);
+    expect(tiles.map((t) => t.key)).toEqual(["best", "sunset"]);
+  });
+
+  it("an older server that sends none of the new fields still renders the original four", () => {
+    const old = {
+      bestDay: FULL_RECORDS.bestDay,
+      hottestSand: FULL_RECORDS.hottestSand,
+      biggestSurf: FULL_RECORDS.biggestSurf,
+      quietestDay: FULL_RECORDS.quietestDay,
+    } as HistoryRecords;
+    expect(recordTiles(old, null, null).map((t) => t.key)).toEqual(["best", "sand", "surf", "quiet"]);
   });
 
   it("formats midnight and noon hours as 12 AM and 12 PM", () => {
-    const [mid] = recordTiles(FULL_RECORDS, null, null, { ...BEST_EVER, localHour: 0 });
-    const [noon] = recordTiles(FULL_RECORDS, null, null, { ...BEST_EVER, localHour: 12 });
-    expect(mid.sub).toBe("Gulf Shores \u00b7 Sept 29, 12 AM");
-    expect(noon.sub).toBe("Gulf Shores \u00b7 Sept 29, 12 PM");
-  });
-
-  it("is absent when no best-ever record exists — the other four tiles are unchanged", () => {
-    const withNull = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14", null);
-    const withDefault = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14");
-    expect(withNull.map((t) => t.key)).toEqual(["best", "sand", "surf", "quiet"]);
-    expect(withDefault).toEqual(withNull);
-  });
-
-  it("still shows alone for a beach with no records of its own yet", () => {
-    const tiles = recordTiles(
-      { bestDay: null, hottestSand: null, biggestSurf: null, quietestDay: null },
-      null,
-      null,
-      BEST_EVER,
-    );
-    expect(tiles.map((t) => t.key)).toEqual(["best-ever"]);
-  });
-
-  it("keeps the sub line short enough to wrap inside MetricCard's 3-line clamp on a phone", () => {
-    // A 2-column tile at 390px has ~138px of text width, about 22 characters
-    // of 12px type a line, so 3 lines hold ~66. The longest beach name today
-    // is 18 characters; this pads it to 21 and still keeps well under that.
-    const [first] = recordTiles(FULL_RECORDS, null, null, {
-      ...BEST_EVER,
-      name: "Fort Lauderdale Beach",
-      localHour: 12,
-    });
-    expect(first.sub.length).toBeLessThanOrEqual(45);
+    const mid = recordTiles({ ...FULL_RECORDS, bestDay: { ...FULL_RECORDS.bestDay!, localHour: 0 } }, null, null)[0];
+    const noon = recordTiles({ ...FULL_RECORDS, bestDay: { ...FULL_RECORDS.bestDay!, localHour: 12 } }, null, null)[0];
+    expect(mid.sub).toBe("Sept 26, 12 AM");
+    expect(noon.sub).toBe("Sept 26, 12 PM");
   });
 });
 
@@ -219,14 +231,8 @@ describe("recordTiles", () => {
     expect(tiles.find((t) => t.key === "surf")).toBeUndefined();
   });
 
-  it("skips a tile entirely for any record that's null, and returns [] when all four are", () => {
-    expect(
-      recordTiles(
-        { bestDay: null, hottestSand: null, biggestSurf: null, quietestDay: null },
-        null,
-        null,
-      ),
-    ).toEqual([]);
+  it("skips a tile entirely for any record that's null, and returns [] when all are", () => {
+    expect(recordTiles(NO_RECORDS, null, null)).toEqual([]);
   });
 });
 
@@ -278,169 +284,5 @@ describe("retryHistoryFetch", () => {
     const bootstrap = vi.fn().mockResolvedValue({ token: null });
     const result = await retryHistoryFetch("no-token-error", { bootstrap, mutate: vi.fn() });
     expect(result).toEqual({ token: null });
-  });
-});
-
-// --- Scoring-formula notices ------------------------------------------------
-const EARLIER = "2026-10-06.1";
-const SINGLE: HistoryVersions = {
-  current: CURRENT,
-  inRange: [EARLIER, CURRENT],
-  mixed: true,
-  boundaries: [{ date: "2026-10-09", version: CURRENT, note: "Strong wind costs more." }],
-};
-
-describe("formulaChangeNotice", () => {
-  it("names the one change in range", () => {
-    expect(formulaChangeNotice(SINGLE)).toBe(
-      "Scoring changed on Oct 9 \u2014 days before that were scored by an earlier formula.",
-    );
-  });
-
-  it("names the most recent change and says 'and earlier' when there are more", () => {
-    const many: HistoryVersions = {
-      ...SINGLE,
-      inRange: ["2026-09-22.1", EARLIER, CURRENT],
-      boundaries: [
-        { date: "2026-09-28", version: "2026-09-28.1", note: "a" },
-        { date: "2026-10-06", version: EARLIER, note: "b" },
-        { date: "2026-10-09", version: CURRENT, note: "c" },
-      ],
-    };
-    expect(formulaChangeNotice(many)).toBe(
-      "Scoring changed on Oct 9 and earlier \u2014 days before that were scored by earlier formulas.",
-    );
-  });
-
-  it("two changes on the same date count as one date", () => {
-    const sameDay: HistoryVersions = {
-      ...SINGLE,
-      boundaries: [
-        { date: "2026-09-28", version: "2026-09-28.1", note: "a" },
-        { date: "2026-09-28", version: "2026-09-28.2", note: "b" },
-      ],
-    };
-    expect(formulaChangeNotice(sameDay)).toBe(
-      "Scoring changed on Sept 28 \u2014 days before that were scored by an earlier formula.",
-    );
-  });
-
-  it("is null when the range holds no change, or there is no versions block", () => {
-    expect(formulaChangeNotice({ current: CURRENT, inRange: [CURRENT], mixed: false, boundaries: [] })).toBeNull();
-    expect(formulaChangeNotice({ current: CURRENT, inRange: [], mixed: false, boundaries: [] })).toBeNull();
-    expect(formulaChangeNotice(null)).toBeNull();
-  });
-
-  it("says the change date when every shown day predates the current formula", () => {
-    const allOld: HistoryVersions = { current: CURRENT, inRange: [EARLIER], mixed: false, boundaries: [] };
-    expect(formulaChangeNotice(allOld)).toBe(
-      "Scoring changed on Oct 9 \u2014 these days were scored by an earlier formula.",
-    );
-  });
-
-  it("never uses the word AI", () => {
-    expect(formulaChangeNotice(SINGLE)).not.toMatch(/\bAI\b/);
-  });
-});
-
-function day(engineVersions: string[]): DaySummary {
-  return {
-    date: "2026-10-09",
-    weekday: "Fri",
-    hours: 8,
-    best: { score: 80, localHour: 12 },
-    worst: { score: 60, localHour: 8 },
-    avg: 70,
-    airHighF: 85,
-    waterF: 84,
-    sandMaxF: 120,
-    surfMaxFt: 2,
-    crowdPeakPct: null,
-    seaweedMaxPct: null,
-    caps: [],
-    partial: false,
-    hourly: [],
-    engineVersions,
-    mixedVersions: engineVersions.length > 1,
-  };
-}
-
-describe("dayFormulaState", () => {
-  it("is 'current' when every row used the current formula", () => {
-    expect(dayFormulaState(day([CURRENT]), CURRENT)).toBe("current");
-  });
-  it("is 'earlier' when no row did", () => {
-    expect(dayFormulaState(day([EARLIER]), CURRENT)).toBe("earlier");
-  });
-  it("is 'mixed' on a day a change landed", () => {
-    expect(dayFormulaState(day([EARLIER, CURRENT]), CURRENT)).toBe("mixed");
-  });
-  it("is 'mixed' on a day two EARLIER formulas shared, even with no current-version row", () => {
-    expect(dayFormulaState(day(["2026-09-28.1", "2026-09-28.2"]), CURRENT)).toBe("mixed");
-  });
-  it("marks nothing when the server sent no current version or no versions", () => {
-    expect(dayFormulaState(day([EARLIER]), null)).toBe("current");
-    expect(dayFormulaState(day([]), CURRENT)).toBe("current");
-    expect(dayFormulaState({ ...day([]), engineVersions: undefined as unknown as string[] }, CURRENT)).toBe("current");
-  });
-});
-
-describe("recordFormulaNote / score tiles", () => {
-  const FORMULA = { current: CURRENT, recordsSince: "2026-10-09" };
-
-  it("says when the current formula's count started", () => {
-    expect(recordFormulaNote(CURRENT, FORMULA)).toBe("since Oct 9 (current\u00a0formula)");
-  });
-  it("says 'earlier formula' when the record comes from one", () => {
-    expect(recordFormulaNote(EARLIER, FORMULA)).toBe("earlier formula");
-  });
-  it("says nothing without a formula or a start date", () => {
-    expect(recordFormulaNote(CURRENT, undefined)).toBeUndefined();
-    expect(recordFormulaNote(CURRENT, { current: CURRENT, recordsSince: null })).toBeUndefined();
-  });
-
-  it("puts the note on Best day ever and Best day only", () => {
-    const tiles = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14", BEST_EVER, FORMULA);
-    const byKey = Object.fromEntries(tiles.map((t) => [t.key, t]));
-    expect(byKey["best-ever"].note).toBe("since Oct 9 (current\u00a0formula)");
-    expect(byKey.best.note).toBe("since Oct 9 (current\u00a0formula)");
-    expect(byKey.sand.note).toBeUndefined();
-    expect(byKey.quiet.note).toBeUndefined();
-  });
-
-  it("labels each score tile by its own record's formula", () => {
-    const tiles = recordTiles(
-      { ...FULL_RECORDS, bestDay: { ...FULL_RECORDS.bestDay!, engineVersion: EARLIER } },
-      "2026-09-14",
-      "2026-09-14",
-      BEST_EVER,
-      FORMULA,
-    );
-    const byKey = Object.fromEntries(tiles.map((t) => [t.key, t]));
-    expect(byKey.best.note).toBe("earlier formula");
-    expect(byKey["best-ever"].note).toBe("since Oct 9 (current\u00a0formula)");
-  });
-
-  it("leaves the tiles bare when no formula is passed (older server)", () => {
-    const tiles = recordTiles(FULL_RECORDS, "2026-09-14", "2026-09-14", BEST_EVER);
-    expect(tiles.find((t) => t.key === "best")?.note).toBeUndefined();
-    expect(tiles.find((t) => t.key === "best-ever")?.note).toBeUndefined();
-  });
-});
-
-describe("formulaAriaPhrase", () => {
-  it("is null for a current-formula day", () => {
-    expect(formulaAriaPhrase(day([CURRENT]), "current", CURRENT)).toBeNull();
-  });
-  it("says 'scored by an earlier formula' for an earlier day", () => {
-    expect(formulaAriaPhrase(day([EARLIER]), "earlier", CURRENT)).toBe("scored by an earlier formula");
-  });
-  it("says 'partly scored by an earlier formula' on a change day that includes the current formula", () => {
-    expect(formulaAriaPhrase(day([EARLIER, CURRENT]), "mixed", CURRENT)).toBe("partly scored by an earlier formula");
-  });
-  it("says 'scored using more than one formula' on a change day of two older formulas", () => {
-    expect(formulaAriaPhrase(day(["2026-09-28.1", "2026-09-28.2"]), "mixed", CURRENT)).toBe(
-      "scored using more than one formula",
-    );
   });
 });

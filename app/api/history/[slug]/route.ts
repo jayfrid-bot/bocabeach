@@ -4,18 +4,17 @@
 // collecting hourly since 2026-09-22 (migrations/0006_history.sql,
 // lib/history/archive.ts) and turns it into day-by-day summaries
 // (lib/history/summary.ts `summarizeHistory`, bounded by `days`) plus a
-// handful of LIFETIME records (`summary.ts` `recordsFromRows`, fed by
-// `DeviceStore.historyRecords`, never bounded by `days`, so switching the
-// 7/14/30 chip can never make a record vanish or regress), plus one
-// cross-beach record, `bestEver` (the highest hourly score in the whole
-// archive, `DeviceStore.historyBestEver`). Score-ranked records (best day,
-// best ever) compete within ONE scoring formula, the current
-// SCORING_ENGINE_VERSION; the response also names which formulas scored the
-// shown days (`versions`, lib/scoringVersions.ts) so the UI can tell a
-// formula change from a weather change. Four D1 statements total, all
-// reads: the window SELECT (`hourlyHistory`), the UNION ALL of four
-// single-row subqueries and one small meta aggregate (both inside
-// `historyRecords`), and the one bounded best-ever SELECT.
+// handful of LIFETIME records for THIS beach only (`summary.ts`
+// `recordsFromRows`, fed by `DeviceStore.historyRecords` and
+// `historySunRecords`, never bounded by `days`, so switching the 7/14/30 chip
+// can never make a record vanish or regress). Records are all-time across
+// every scoring formula: a row keeps the score it was given, and a formula
+// bump resets nothing. They never compare one beach with another. The
+// response still names which formulas scored the shown days (`versions`,
+// lib/scoringVersions.ts) as plain information; the UI draws no formula marks.
+// Four D1 statements total, all reads: the window SELECT (`hourlyHistory`),
+// the UNION ALL of single-row subqueries and one small meta aggregate (both
+// inside `historyRecords`), and the sunrise/sunset UNION (`historySunRecords`).
 //
 // Gate: the same shape live-activity/register and hazards use, combined —
 // app-only (Plus is sold and delivered only inside the phone app), a valid
@@ -39,14 +38,7 @@ import { isNativeRequest } from "@/lib/nativeRequest";
 import { checkRateLimit, clientIp } from "@/lib/plus/rateLimit";
 import { localHourParts } from "@/lib/history/archive";
 import { SCORING_ENGINE_VERSION } from "@/lib/score";
-import {
-  recordsFormulaInfo,
-  recordsFromRows,
-  shiftLocalDate,
-  summarizeHistory,
-  summarizeVersions,
-  type HistoryBestEver,
-} from "@/lib/history/summary";
+import { recordsFromRows, shiftLocalDate, summarizeHistory, summarizeVersions } from "@/lib/history/summary";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -114,33 +106,18 @@ export async function POST(
     // Three independent reads: the window (bounded, for the day strip), this
     // beach's lifetime records (unbounded — a reading from before this
     // window, or before the archive was even this old, must still be
-    // nameable), and the best score ever recorded at ANY beach.
-    const [rows, recordsResult, bestEverRow] = await Promise.all([
+    // nameable), and this beach's best sunrise / sunset color.
+    const [rows, recordsResult, sunRows] = await Promise.all([
       store.hourlyHistory(slug, sinceLocalDate, todayLocal),
-      store.historyRecords(slug, SCORING_ENGINE_VERSION),
-      store.historyBestEver(SCORING_ENGINE_VERSION),
+      store.historyRecords(slug),
+      store.historySunRecords(slug),
     ]);
     const daySummaries = summarizeHistory(rows);
-    const records = recordsFromRows(recordsResult.records);
-
-    // A record at a beach we no longer serve can't be named, so it is left
-    // out rather than shown with a made-up name.
-    const bestEverLoc = bestEverRow ? getLocation(bestEverRow.slug) : undefined;
-    const bestEver: HistoryBestEver | null =
-      bestEverRow && bestEverLoc
-        ? {
-            slug: bestEverRow.slug,
-            name: bestEverLoc.name,
-            date: bestEverRow.local_date,
-            score: bestEverRow.score,
-            localHour: bestEverRow.local_hour,
-            isThisBeach: bestEverRow.slug === slug,
-            engineVersion: bestEverRow.engine_version,
-          }
-        : null;
-
+    const records = recordsFromRows(recordsResult.records, sunRows, (iso) => {
+      const t = Date.parse(iso);
+      return Number.isFinite(t) ? localHourParts(loc.timezone, t).date : null;
+    });
     const versions = summarizeVersions(daySummaries, SCORING_ENGINE_VERSION);
-    const { recordsSince, recordsFromEarlierFormula } = recordsFormulaInfo(records, bestEver, SCORING_ENGINE_VERSION);
 
     return Response.json(
       {
@@ -148,10 +125,7 @@ export async function POST(
         since: sinceLocalDate,
         days: daySummaries,
         records,
-        bestEver,
         versions,
-        recordsSince,
-        recordsFromEarlierFormula,
         archiveStartedAt: recordsResult.archiveStartedAt,
         dayCount: recordsResult.dayCount,
         surfSince: recordsResult.surfSince,

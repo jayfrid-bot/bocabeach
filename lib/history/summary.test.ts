@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   daysBetweenLocalDates,
-  recordsFormulaInfo,
   recordsFromRows,
   shiftLocalDate,
   shortMonthDay,
@@ -308,17 +307,58 @@ describe("recordsFromRows", () => {
     expect(out.quietestDay).toEqual({ date: "2026-09-28", crowdPct: 15, localHour: 10 });
   });
 
+  it("maps warmest water and clearest water", () => {
+    const out = recordsFromRows([
+      recordRow({ kind: "warmest_water", local_date: "2026-10-01", local_hour: 15, value: 86.4 }),
+      recordRow({ kind: "clearest_water", local_date: "2026-10-02", local_hour: 11, value: 92 }),
+    ]);
+    expect(out.warmestWater).toEqual({ date: "2026-10-01", waterTempF: 86.4, localHour: 15 });
+    expect(out.clearestWater).toEqual({ date: "2026-10-02", clarityPct: 92, localHour: 11 });
+  });
+
+  it("maps sunrise and sunset records to the beach's local day, rounding the score", () => {
+    // 2026-10-06T23:10Z is still Oct 6 in Florida (7:10 PM), but a UTC clock would read the next day for a late sunset.
+    const out = recordsFromRows(
+      [],
+      [
+        { kind: "best_sunrise", event_iso: "2026-10-06T11:15:09.672Z", score: 70.4, band: "vivid" },
+        { kind: "best_sunset", event_iso: "2026-10-07T00:10:00.000Z", score: 81, band: "epic" },
+      ],
+      (iso) => (iso.startsWith("2026-10-07") ? "2026-10-06" : iso.slice(0, 10)),
+    );
+    expect(out.bestSunrise).toEqual({ date: "2026-10-06", score: 70, band: "vivid" });
+    expect(out.bestSunset).toEqual({ date: "2026-10-06", score: 81, band: "epic" });
+  });
+
+  it("a sun record whose time cannot be read is left out, never a made-up date", () => {
+    const out = recordsFromRows([], [{ kind: "best_sunset", event_iso: "garbage", score: 80, band: null }], () => null);
+    expect(out.bestSunset).toBeNull();
+  });
+
   it("a kind that's absent from the rows maps to null, never a fabricated value", () => {
     const out = recordsFromRows([recordRow({ kind: "best", value: 80 })]);
     expect(out.bestDay).not.toBeNull();
     expect(out.hottestSand).toBeNull();
     expect(out.biggestSurf).toBeNull();
     expect(out.quietestDay).toBeNull();
+    expect(out.warmestWater).toBeNull();
+    expect(out.clearestWater).toBeNull();
+    expect(out.bestSunrise).toBeNull();
+    expect(out.bestSunset).toBeNull();
   });
 
   it("an empty row list maps to every field null", () => {
     const out = recordsFromRows([]);
-    expect(out).toEqual({ bestDay: null, hottestSand: null, biggestSurf: null, quietestDay: null });
+    expect(out).toEqual({
+      bestDay: null,
+      hottestSand: null,
+      biggestSurf: null,
+      quietestDay: null,
+      warmestWater: null,
+      clearestWater: null,
+      bestSunrise: null,
+      bestSunset: null,
+    });
   });
 });
 
@@ -413,43 +453,5 @@ describe("recordsFromRows — engine version", () => {
   it("carries the best row's version into bestDay", () => {
     const out = recordsFromRows([recordRow({ kind: "best", value: 90, engine_version: "2026-10-09.1" })]);
     expect(out.bestDay?.engineVersion).toBe("2026-10-09.1");
-  });
-});
-
-describe("recordsFormulaInfo", () => {
-  const CUR = "2026-10-09.1";
-  const bestEver = (engineVersion: string) => ({
-    slug: "boca-raton",
-    name: "Boca Raton",
-    date: "2026-10-09",
-    score: 95,
-    localHour: 11,
-    isThisBeach: true,
-    engineVersion,
-  });
-  const records = (engineVersion: string | null) =>
-    recordsFromRows(engineVersion ? [recordRow({ kind: "best", value: 90, engine_version: engineVersion })] : []);
-
-  it("reports the day the current formula began", () => {
-    expect(recordsFormulaInfo(records(CUR), bestEver(CUR), CUR)).toEqual({
-      recordsSince: "2026-10-09",
-      recordsFromEarlierFormula: false,
-    });
-  });
-
-  it("flags an earlier formula when the best day comes from one", () => {
-    expect(recordsFormulaInfo(records("2026-10-06.1"), bestEver(CUR), CUR).recordsFromEarlierFormula).toBe(true);
-  });
-
-  it("flags an earlier formula when only best-ever comes from one", () => {
-    expect(recordsFormulaInfo(records(CUR), bestEver("2026-10-06.1"), CUR).recordsFromEarlierFormula).toBe(true);
-  });
-
-  it("no records at all is not 'earlier'", () => {
-    expect(recordsFormulaInfo(records(null), null, CUR).recordsFromEarlierFormula).toBe(false);
-  });
-
-  it("recordsSince is null for a version the list does not know", () => {
-    expect(recordsFormulaInfo(records(null), null, "unlisted").recordsSince).toBeNull();
   });
 });

@@ -642,8 +642,8 @@ flowchart TD
   STORE -->|production| D1[(D1: isitbeachday-plus<br/>devices · presence · alert_log · send_claims<br/>scan_log · scan_tap · scan_claim · install_attrib<br/>live_activities · app_opens)]
   LAREG -->|"entitled + armed at slug (listArmed gate)<br/>one active session/device, token rotation"| STORE
   LAEND -->|markLiveActivityEnded 'user'| STORE
-  HIST2 -->|"hourlyHistory + historyRecords + historyBestEver (all beaches): read-only beach_hourly<br/>(same D1, written by the archiver — diagram 2)<br/>score records bound to SCORING_ENGINE_VERSION"| STORE
-  SCOREVER["lib/scoringVersions.ts<br/>every engine version + start date + plain note<br/>(a test pins the last entry to SCORING_ENGINE_VERSION)"] -->|"versions block (formula changes in range),<br/>recordsSince"| HIST2
+  HIST2 -->|"hourlyHistory + historyRecords + historySunRecords (this beach only): read-only beach_hourly + sun_event_predictions<br/>(same D1, written by the archiver — diagram 2)<br/>records are all-time across every scoring formula"| STORE
+  SCOREVER["lib/scoringVersions.ts<br/>every engine version + start date + plain note<br/>(a test pins the last entry to SCORING_ENGINE_VERSION)"] -->|"versions block (formula changes in range,<br/>information only, no UI marks)"| HIST2
   STICKER -->|"count scan (bot-filtered), fail-soft"| D1
   GETAPP -->|"count store tap, fail-soft"| D1
   DEV -->|"after the upsert: credit a fresh native install<br/>to a recent scan on the same network (probable)"| ATTRIB[lib/db/scanFunnel.ts<br/>attributeInstall]
@@ -1122,8 +1122,8 @@ four archive reads (auth and device hydration add their own D1 calls):
 `DeviceStore.hourlyHistory` (`WHERE slug = ? AND row_kind = 'snapshot' AND
 local_date BETWEEN ? AND ?`, capped at 31 days, for the on-screen 7/14/30-day
 strip) plus `DeviceStore.historyRecords`'s own two statements — one UNION
-ALL of four single-row subqueries (best score, hottest sand, biggest surf,
-quietest 10 AM-6 PM reading) and one small meta aggregate
+ALL of six single-row subqueries (best score, hottest sand, biggest surf,
+quietest 10 AM-6 PM reading, warmest water, clearest water) and one small meta aggregate
 (`MIN(local_date)`, `COUNT(DISTINCT local_date)`, and `MIN(CASE WHEN
 surf_ft IS NOT NULL THEN local_date END)` as `surfSince`, folded into the
 SAME statement rather than a 4th) — fed through the pure summarizer
@@ -1135,22 +1135,24 @@ record reads the `surf_ft` column only (the breaking-surf estimate), never
 `surf_ft` postdates the archive itself (migration 0010), `surfSince` is
 normally later than `archiveStartedAt`; the "Biggest surf" tile captions
 that gap ("since Sept 28") instead of implying full-archive coverage.
-The fourth statement is `DeviceStore.historyBestEver`: the highest score at ANY beach (`ORDER BY score DESC, hour_utc ASC LIMIT 1`), returned as `bestEver` with the beach named via `getLocation` — the first "Best day ever" tile.
+The fourth statement is `DeviceStore.historySunRecords`: one UNION ALL of two
+single-row subqueries over `sun_event_predictions` (best sunrise, best sunset).
+Each event scores as its LAST forecast made at or before the event (the same
+rule the day view uses); the highest event wins. The table has no local-date
+column, so the route turns `event_iso` into the beach's local day.
 
-**Scoring-formula versions.** Every archived row carries the
-`engine_version` that scored it, and the formula changes over time. The list
-of versions, each with a start date and a plain note, lives in
-`lib/scoringVersions.ts` (light enough for the client; a test pins its last
-entry to `SCORING_ENGINE_VERSION`). Each day summary lists the versions of its
-rows (`engineVersions`, `mixedVersions`), and the response adds a `versions`
-block: the versions in the shown range and the formula changes inside it. The
-two score-ranked records, `bestDay` and `bestEver`, compete only among rows of
-the CURRENT version (`engine_version = ?` bound to `SCORING_ENGINE_VERSION`);
-each carries its `engineVersion`. Right after a bump, when no row has the
-current version yet, the SQL falls back to the version of the latest scored
-row, and the response sets `recordsFromEarlierFormula`. `recordsSince` is the
-current version's start date. Measurements (sand, surf, quietest) stay across
-all versions.
+**Records are per beach and all-time across scoring formulas.** Every archived
+row keeps the score it was given, stamped with its `engine_version`, and no
+row is ever re-scored. Each record ranks the beach's whole archive across every
+version, so a `SCORING_ENGINE_VERSION` bump never resets or re-ranks one. The
+records are: best day, hottest sand, biggest surf, quietest time, warmest
+water, clearest water, best sunrise and best sunset. None spans beaches (the
+old cross-beach `bestEver` and its query are gone). The list of versions, each
+with a start date and a plain note, still lives in `lib/scoringVersions.ts` (a
+test pins its last entry to `SCORING_ENGINE_VERSION`) as a changelog. Each day
+summary lists the versions of its rows (`engineVersions`, `mixedVersions`) and
+the response keeps a `versions` block, as information only: the UI draws no
+formula marks, notices or "since <date>" labels.
 
 **Live Activity register: rotation + one-active-per-device.** The native
 plugin sends a monotonic `rotation` counter with each token; `registerLiveActivity`

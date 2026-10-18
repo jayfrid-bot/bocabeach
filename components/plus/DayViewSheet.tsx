@@ -4,7 +4,7 @@
  * The Plus day view: pick a past day and see how it looked. A tall bottom
  * sheet (docs/CAM_ARCHIVE_PLAN.md R11), webcams first:
  *
- *   1. the day's best score, the formula note when one is needed;
+ *   1. the day's best score;
  *   2. one camera at a time: camera chips, ONE picture, a slider over that
  *      camera's saved shots for the day, the credit line, tap for full screen;
  *   3. the hour-by-hour score strip (same colors as the hourly chart);
@@ -29,7 +29,6 @@ import { Sheet } from "@/components/plus/Sheet";
 import { scoreColor } from "@/lib/format";
 import { plusApi, plusErrorMessage, type HistoryDayResult } from "@/lib/plus/api";
 import { bootstrapInstallToken } from "@/lib/plus/client";
-import { formulaChangeNotice } from "@/lib/plus/formulaNotice";
 import {
   bestLine,
   closestShotText,
@@ -187,7 +186,6 @@ function DayBody({
   const camId = day.cams.some((c) => c.id === camPref) ? camPref : defaultCamId(day);
   const cam = day.cams.find((c) => c.id === camId) ?? null;
 
-  const formulaNotice = formulaChangeNotice(day.versions);
   const sunLine = sunDayLine(day.sun);
   // A golden-hour shot's slot is 10 minutes wide; its HOUR is what the strip and readings key on.
   const hourKey = hourUtc ? hourOfSlot(hourUtc) : null;
@@ -203,7 +201,6 @@ function DayBody({
           {sunLine}
         </p>
       ) : null}
-      {formulaNotice ? <p className="text-xs text-slate-500 dark:text-slate-400">{formulaNotice}</p> : null}
       {day.summary.partial && day.summary.hours > 0 ? (
         <p className="text-xs text-amber-700 dark:text-amber-400">Partial day: we saved only a few hours of scores.</p>
       ) : null}

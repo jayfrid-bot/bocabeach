@@ -47,7 +47,7 @@ import type {
   BeachHourlyRow,
   CamObservationRow,
   CamReadRow,
-  HistoryBestEverRow,
+  HistorySunRecordRow,
   HistoryRecordRow,
   HistoryRecordsResult,
   SunEventObservationRow,
@@ -272,25 +272,17 @@ async function insertOrIgnoreRows<R extends object>(
   return { written: results.reduce((n, r) => n + Number(r?.meta?.changes ?? 0), 0) };
 }
 
-/** Lifetime records — one UNION ALL of four parenthesized single-row
+/** Lifetime records — one UNION ALL of six parenthesized single-row
  *  subqueries (see `historyRecords` below for the tie-break/window
- *  rationale). Two numbered parameters: ?1 = slug, ?2 = the current engine
- *  version. Only the 'best' arm is a formula output, so only it is limited
- *  to ONE version: ?2 when any scored row has it, else the version of the
- *  beach's latest scored row (the fallback right after a version bump). The
- *  other arms are measurements and rank across every version. */
+ *  rationale). One numbered parameter: ?1 = slug. Every arm ranks across the
+ *  beach's WHOLE archive and every scoring formula version: a row keeps the
+ *  score it was given, and the best of them stands even after a later formula
+ *  change. (`engine_version` is returned for information only.) */
 const HISTORY_RECORDS_UNION = `
 SELECT * FROM (
   SELECT 'best' AS kind, local_date, local_hour, score AS value, engine_version
   FROM beach_hourly
   WHERE slug = ?1 AND row_kind = 'snapshot' AND score IS NOT NULL
-    AND engine_version = COALESCE(
-      (SELECT engine_version FROM beach_hourly
-        WHERE slug = ?1 AND row_kind = 'snapshot' AND score IS NOT NULL AND engine_version = ?2 LIMIT 1),
-      (SELECT engine_version FROM beach_hourly
-        WHERE slug = ?1 AND row_kind = 'snapshot' AND score IS NOT NULL
-        ORDER BY hour_utc DESC, snapshot_generated_at DESC, archived_at DESC, slug ASC LIMIT 1)
-    )
   ORDER BY score DESC, hour_utc ASC LIMIT 1
 )
 UNION ALL
@@ -314,7 +306,42 @@ SELECT * FROM (
   WHERE slug = ?1 AND row_kind = 'snapshot' AND crowd_pct IS NOT NULL AND local_hour BETWEEN 10 AND 18
   ORDER BY crowd_pct ASC, hour_utc ASC LIMIT 1
 )
+UNION ALL
+SELECT * FROM (
+  SELECT 'warmest_water' AS kind, local_date, local_hour, water_temp_f AS value, engine_version
+  FROM beach_hourly
+  WHERE slug = ?1 AND row_kind = 'snapshot' AND water_temp_f IS NOT NULL
+  ORDER BY water_temp_f DESC, hour_utc ASC LIMIT 1
+)
+UNION ALL
+SELECT * FROM (
+  SELECT 'clearest_water' AS kind, local_date, local_hour, clarity_pct AS value, engine_version
+  FROM beach_hourly
+  WHERE slug = ?1 AND row_kind = 'snapshot' AND clarity_pct IS NOT NULL
+  ORDER BY clarity_pct DESC, hour_utc ASC LIMIT 1
+)
 `;
+
+/** Best sunrise and best sunset color for one beach: per kind, the event whose
+ *  LAST forecast made at or before the event scored highest (the score the day
+ *  view shows for that event), ties to the earliest event. ?1 = slug. The inner
+ *  MAX runs per candidate row but is served by sun_event_predictions_event
+ *  (slug, event_iso), so it never leaves this beach's rows. The time compare
+ *  is to the second so a stamp with or without milliseconds sorts alike. */
+const SUN_RECORDS_UNION = ["sunrise", "sunset"]
+  .map(
+    (k) => `SELECT * FROM (
+  SELECT 'best_${k}' AS kind, p.event_iso AS event_iso, p.score AS score, p.band AS band
+  FROM sun_event_predictions p
+  WHERE p.slug = ?1 AND p.event_kind = '${k}' AND p.score IS NOT NULL
+    AND substr(p.snapshot_generated_at, 1, 19) <= substr(p.event_iso, 1, 19)
+    AND p.snapshot_generated_at = (SELECT MAX(q.snapshot_generated_at) FROM sun_event_predictions q
+      WHERE q.slug = p.slug AND q.event_kind = p.event_kind AND q.event_iso = p.event_iso
+        AND q.score IS NOT NULL AND substr(q.snapshot_generated_at, 1, 19) <= substr(q.event_iso, 1, 19))
+  ORDER BY p.score DESC, p.event_iso ASC LIMIT 1
+)`,
+  )
+  .join("\nUNION ALL\n");
 
 /** A device with never-touched prefs stores no row at all for them — this is
  *  the merge base `json_patch` starts from, so a bare "all alerts on" device
@@ -1494,8 +1521,8 @@ export function d1Store(db: D1Like): DeviceStore {
     // feature. `quietest` only considers local_hour 10-18 (Codex review: a
     // 3 AM near-zero reading would otherwise "win" quietest for a reason
     // that has nothing to do with the beach being pleasant then).
-    async historyRecords(slug: string, engineVersion: string) {
-      const recordsResult = await db.prepare(HISTORY_RECORDS_UNION).bind(slug, engineVersion).all<HistoryRecordRow>();
+    async historyRecords(slug: string) {
+      const recordsResult = await db.prepare(HISTORY_RECORDS_UNION).bind(slug).all<HistoryRecordRow>();
       // Same meta query as before, plus `surf_since` — the earliest
       // local_date with a non-null surf_ft, folded into this ONE aggregate
       // (via a CASE inside MIN) rather than a 4th statement, so the route
@@ -1516,29 +1543,13 @@ export function d1Store(db: D1Like): DeviceStore {
       };
     },
 
-    // "Best day ever" — ONE bounded statement over the whole archive, every
-    // beach. Same ORDER BY/tie-break rule as the per-beach `best` arm above:
-    // highest score, earliest hour_utc wins. Same one-formula rule too: only
-    // rows with `engineVersion` compete, or — when none has it yet — rows of
-    // the version that scored the archive's latest row. "Latest" is a total
-    // order (hour_utc, then snapshot_generated_at, archived_at, slug): every
-    // beach archived in one hourly run shares hour_utc, so hour_utc alone
-    // could pick either version when a run straddles a bump. No index serves a
-    // cross-beach score sort, so this scans `beach_hourly` (about 40 beaches
-    // x <= 24 rows a day); fine at today's size, and the reason it is
-    // exactly one LIMIT 1 statement rather than anything chattier.
-    async historyBestEver(engineVersion: string) {
-      const row = await db
-        .prepare(
-          "SELECT slug, local_date, local_hour, score, engine_version FROM beach_hourly " +
-            "WHERE row_kind = 'snapshot' AND score IS NOT NULL AND engine_version = COALESCE(" +
-            "(SELECT engine_version FROM beach_hourly WHERE row_kind = 'snapshot' AND score IS NOT NULL AND engine_version = ?1 LIMIT 1), " +
-            "(SELECT engine_version FROM beach_hourly WHERE row_kind = 'snapshot' AND score IS NOT NULL ORDER BY hour_utc DESC, snapshot_generated_at DESC, archived_at DESC, slug ASC LIMIT 1)) " +
-            "ORDER BY score DESC, hour_utc ASC LIMIT 1",
-        )
-        .bind(engineVersion)
-        .first<HistoryBestEverRow>();
-      return row ?? null;
+    // Best sunrise / best sunset color for this beach — ONE UNION ALL of two
+    // single-row subqueries (SUN_RECORDS_UNION). Kept apart from
+    // `historyRecords` because `sun_event_predictions` has no local-date
+    // column: the caller turns `event_iso` into the beach's local date.
+    async historySunRecords(slug: string) {
+      const result = await db.prepare(SUN_RECORDS_UNION).bind(slug).all<HistorySunRecordRow>();
+      return result.results ?? [];
     },
 
     // --- Beach Session Live Activity (migrations/0007_live_activities.sql) -

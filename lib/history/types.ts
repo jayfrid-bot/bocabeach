@@ -317,38 +317,43 @@ export interface ArchiveCandidate {
 // --- Lifetime records (Plus "Last N days" history feature) -----------------
 // One row per kind, straight off `DeviceStore.historyRecords`'s UNION ALL
 // query (d1Store.ts) — each kind is the single (slug, hour) reading that
-// wins its own ORDER BY/LIMIT 1, across the WHOLE archive for this beach,
-// never bounded by whatever `days` window a caller asked hourlyHistory for.
+// wins its own ORDER BY/LIMIT 1, across the WHOLE archive for this beach and
+// EVERY scoring formula version, never bounded by whatever `days` window a
+// caller asked hourlyHistory for. A record belongs to the beach being viewed;
+// nothing here ranks one beach against another.
 
-export type HistoryRecordKind = "best" | "hottest_sand" | "biggest_surf" | "quietest";
+export type HistoryRecordKind =
+  | "best"
+  | "hottest_sand"
+  | "biggest_surf"
+  | "quietest"
+  | "warmest_water"
+  | "clearest_water";
 
 export interface HistoryRecordRow {
   kind: HistoryRecordKind;
   local_date: string;
   local_hour: number;
   value: number;
-  /** SCORING_ENGINE_VERSION the winning row was scored with. Only the 'best'
-   *  kind is ranked by a formula output, so only it is limited to one
-   *  version; the other kinds are measurements and rank across all versions. */
+  /** SCORING_ENGINE_VERSION the winning row was stamped with. Informational
+   *  only: records rank across every version, so an old score can hold one. */
   engine_version: string;
 }
 
-/** The single highest hourly Beach Day score in the archive, across every
- *  beach, among rows of ONE formula version — straight off
- *  `DeviceStore.historyBestEver`'s one bounded statement. Ties go to the
- *  earliest `hour_utc`. */
-export interface HistoryBestEverRow {
-  slug: string;
-  local_date: string;
-  local_hour: number;
+/** One sunrise or sunset color record for a beach, off
+ *  `DeviceStore.historySunRecords`. `event_iso` is the sun event's own UTC
+ *  instant; the caller turns it into the beach's local date. `score` is the
+ *  event's last forecast made at or before the event, the same one the day
+ *  view shows (see SUN_DAY_SQL in app/api/history/[slug]/day/route.ts). */
+export interface HistorySunRecordRow {
+  kind: "best_sunrise" | "best_sunset";
+  event_iso: string;
   score: number;
-  /** The formula that scored this row. It is the current version unless no
-   *  row has that version yet (then the latest version that has rows). */
-  engine_version: string;
+  band: string | null;
 }
 
 export interface HistoryRecordsResult {
-  /** 0-4 rows — a kind is simply absent when this beach has no row with a
+  /** 0-6 rows — a kind is simply absent when this beach has no row with a
    *  non-null value for that column yet (e.g. a beach with no cams has no
    *  'quietest' row, ever). */
   records: HistoryRecordRow[];

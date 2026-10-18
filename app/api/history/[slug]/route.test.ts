@@ -11,6 +11,7 @@ import { resetMemoryStore } from "@/lib/db/memoryStore";
 import { hourUtcOf } from "@/lib/history/archive";
 import type { BeachHourlyRow } from "@/lib/history/types";
 import { SCORING_ENGINE_VERSION } from "@/lib/score";
+import { predictionRow } from "@/lib/sunObservations.fixtures";
 import { LATEST_SCORING_VERSION } from "@/lib/scoringVersions";
 
 const APP_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) IsItBeachDayApp/ios";
@@ -202,8 +203,12 @@ describe("POST /api/history/[slug]", () => {
         hottestSand: null,
         biggestSurf: null,
         quietestDay: null,
+        warmestWater: null,
+        clearestWater: null,
+        bestSunrise: null,
+        bestSunset: null,
       });
-      expect(body.bestEver).toBeNull();
+      expect(body).not.toHaveProperty("bestEver");
       expect(body.archiveStartedAt).toBeNull();
       expect(body.dayCount).toBe(0);
       expect(body.surfSince).toBeNull();
@@ -278,8 +283,6 @@ describe("POST /api/history/[slug]", () => {
         const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
         expect(body.versions).toEqual({ current: CURRENT, inRange: [CURRENT], mixed: false, boundaries: [] });
         expect(body.days[0]).toMatchObject({ engineVersions: [CURRENT], mixedVersions: false });
-        expect(body.recordsSince).toBe(LATEST_SCORING_VERSION.since);
-        expect(body.recordsFromEarlierFormula).toBe(false);
         expect(body.records.bestDay.engineVersion).toBe(CURRENT);
       });
 
@@ -300,7 +303,7 @@ describe("POST /api/history/[slug]", () => {
         expect(body.versions.boundaries[0].note).toBe(LATEST_SCORING_VERSION.note);
       });
 
-      it("records count only the current formula: an older, higher score does not win", async () => {
+      it("records are all-time: an older formula's higher score still holds the record", async () => {
         const store = await getStore();
         await store.upsertBeachHourly(
           row({ hour_utc: hourUtcOf(Date.now() - 20 * DAY), local_date: "2026-09-02", score: 99, engine_version: OLD }),
@@ -310,12 +313,10 @@ describe("POST /api/history/[slug]", () => {
         );
         const { POST } = await import("@/app/api/history/[slug]/route");
         const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
-        expect(body.records.bestDay).toMatchObject({ score: 80, engineVersion: CURRENT });
-        expect(body.bestEver).toMatchObject({ score: 80, engineVersion: CURRENT });
-        expect(body.recordsFromEarlierFormula).toBe(false);
+        expect(body.records.bestDay).toMatchObject({ date: "2026-09-02", score: 99, engineVersion: OLD });
       });
 
-      it("falls back to the latest formula that has rows, and flags it, right after a bump", async () => {
+      it("a version bump resets nothing: with only older-formula rows the record is still shown", async () => {
         const store = await getStore();
         // Nothing carries the current version yet.
         await store.upsertBeachHourly(
@@ -324,99 +325,98 @@ describe("POST /api/history/[slug]", () => {
         const { POST } = await import("@/app/api/history/[slug]/route");
         const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
         expect(body.records.bestDay).toMatchObject({ score: 77, engineVersion: OLD });
-        expect(body.bestEver).toMatchObject({ score: 77, engineVersion: OLD });
-        expect(body.recordsFromEarlierFormula).toBe(true);
-        expect(body.recordsSince).toBe(LATEST_SCORING_VERSION.since);
       });
 
-      it("an empty archive says the records are not from an earlier formula", async () => {
+      it("an empty archive still returns the versions block", async () => {
         const { POST } = await import("@/app/api/history/[slug]/route");
         const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
         expect(body.versions).toEqual({ current: CURRENT, inRange: [], mixed: false, boundaries: [] });
-        expect(body.recordsFromEarlierFormula).toBe(false);
+      });
+
+      it("no longer sends the formula-label fields or a cross-beach record", async () => {
+        const store = await getStore();
+        await store.upsertBeachHourly(
+          row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-22", score: 77, engine_version: OLD }),
+        );
+        const { POST } = await import("@/app/api/history/[slug]/route");
+        const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
+        expect(body).not.toHaveProperty("recordsSince");
+        expect(body).not.toHaveProperty("recordsFromEarlierFormula");
+        expect(body).not.toHaveProperty("bestEver");
       });
     });
 
-    describe("bestEver — the highest score at ANY beach", () => {
-      it("names the other beach, with its local date and hour, when the record is elsewhere", async () => {
+    describe("records are for the beach asked about, never across beaches", () => {
+      it("another beach's higher score and readings never appear", async () => {
         const store = await getStore();
         await store.upsertBeachHourly(
-          row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-28", local_hour: 10, score: 80 }),
+          row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-28", local_hour: 10, score: 80, water_temp_f: 84 }),
         );
         await store.upsertBeachHourly(
-          row({ slug: "gulf-shores", hour_utc: hourUtcOf(Date.now() - DAY), local_date: "2026-09-27", local_hour: 13, score: 98 }),
+          row({ slug: "gulf-shores", hour_utc: hourUtcOf(Date.now() - DAY), local_date: "2026-09-27", local_hour: 13, score: 98, water_temp_f: 91, clarity_pct: 99 }),
         );
         const { POST } = await import("@/app/api/history/[slug]/route");
-        const res = await POST(post(SLUG, { deviceId: DEV }), params(SLUG));
-        const body = await res.json();
-        expect(body.bestEver).toEqual({
-          slug: "gulf-shores",
-          name: "Gulf Shores",
-          date: "2026-09-27",
-          score: 98,
-          localHour: 13,
-          isThisBeach: false,
-          engineVersion: "test-1",
-        });
-        // This beach's own record is unchanged by the cross-beach one.
+        const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
         expect(body.records.bestDay).toEqual({ date: "2026-09-28", score: 80, localHour: 10, engineVersion: "test-1" });
+        expect(body.records.warmestWater).toEqual({ date: "2026-09-28", waterTempF: 84, localHour: 10 });
+        expect(body.records.clearestWater).toBeNull();
       });
 
-      it("sets isThisBeach when the all-beach record is at the requested beach", async () => {
-        const store = await getStore();
-        await store.upsertBeachHourly(
-          row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-28", local_hour: 10, score: 99 }),
-        );
-        await store.upsertBeachHourly(
-          row({ slug: "gulf-shores", hour_utc: hourUtcOf(Date.now() - DAY), local_date: "2026-09-27", local_hour: 13, score: 90 }),
-        );
-        const { POST } = await import("@/app/api/history/[slug]/route");
-        const res = await POST(post(SLUG, { deviceId: DEV }), params(SLUG));
-        const body = await res.json();
-        expect(body.bestEver).toEqual({
-          slug: SLUG,
-          name: "Boca Raton",
-          date: "2026-09-28",
-          score: 99,
-          localHour: 10,
-          isThisBeach: true,
-          engineVersion: "test-1",
-        });
-      });
-
-      it("is present even when the requested beach has no rows of its own", async () => {
+      it("a beach with no rows of its own has no records, even when other beaches do", async () => {
         const store = await getStore();
         await store.upsertBeachHourly(
           row({ slug: "deerfield-beach", hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-28", local_hour: 11, score: 91 }),
         );
         const { POST } = await import("@/app/api/history/[slug]/route");
-        const res = await POST(post(SLUG, { deviceId: DEV }), params(SLUG));
-        const body = await res.json();
+        const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
         expect(body.days).toEqual([]);
-        expect(body.bestEver).toMatchObject({ slug: "deerfield-beach", name: "Deerfield Beach", score: 91, isThisBeach: false });
+        expect(body.records.bestDay).toBeNull();
       });
 
       it("is lifetime — a record from outside the requested window still counts", async () => {
         const store = await getStore();
         await store.upsertBeachHourly(
-          row({ slug: "gulf-shores", hour_utc: hourUtcOf(Date.now() - 40 * DAY), local_date: "2026-08-19", local_hour: 12, score: 99 }),
+          row({ hour_utc: hourUtcOf(Date.now() - 40 * DAY), local_date: "2026-08-19", local_hour: 12, score: 99 }),
         );
         const { POST } = await import("@/app/api/history/[slug]/route");
-        const res = await POST(post(SLUG, { deviceId: DEV, days: 7 }), params(SLUG));
-        const body = await res.json();
-        expect(body.bestEver).toMatchObject({ slug: "gulf-shores", date: "2026-08-19", score: 99 });
+        const body = await (await POST(post(SLUG, { deviceId: DEV, days: 7 }), params(SLUG))).json();
+        expect(body.records.bestDay).toMatchObject({ date: "2026-08-19", score: 99 });
       });
+    });
 
-      it("is null, not a nameless record, when the winning beach is no longer one we serve", async () => {
+    describe("water and sun records", () => {
+      it("returns warmest water and clearest water from stored readings", async () => {
         const store = await getStore();
         await store.upsertBeachHourly(
-          row({ slug: "retired-beach", hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-28", score: 99 }),
+          row({ hour_utc: hourUtcOf(Date.now() - DAY), local_date: "2026-09-27", local_hour: 15, water_temp_f: 88.2, clarity_pct: 60 }),
+        );
+        await store.upsertBeachHourly(
+          row({ hour_utc: hourUtcOf(Date.now()), local_date: "2026-09-28", local_hour: 11, water_temp_f: 85, clarity_pct: 93 }),
         );
         const { POST } = await import("@/app/api/history/[slug]/route");
-        const res = await POST(post(SLUG, { deviceId: DEV }), params(SLUG));
-        const body = await res.json();
-        expect(res.status).toBe(200);
-        expect(body.bestEver).toBeNull();
+        const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
+        expect(body.records.warmestWater).toEqual({ date: "2026-09-27", waterTempF: 88.2, localHour: 15 });
+        expect(body.records.clearestWater).toEqual({ date: "2026-09-28", clarityPct: 93, localHour: 11 });
+      });
+
+      it("returns the best sunrise and sunset color, dated by the beach's own local day", async () => {
+        const store = await getStore();
+        await store.upsertSunEventPredictions([
+          predictionRow({ event_iso: "2026-09-27T10:55:00.000Z", as_of_hour_utc: "2026-09-27T10:00:00.000Z", snapshot_generated_at: "2026-09-27T10:30:00.000Z", score: 72, band: "vivid" }),
+          // 00:30 UTC on Sept 29 is 8:30 PM on Sept 28 in Boca Raton.
+          predictionRow({ event_kind: "sunset", event_iso: "2026-09-29T00:30:00.000Z", as_of_hour_utc: "2026-09-29T00:00:00.000Z", snapshot_generated_at: "2026-09-29T00:10:00.000Z", score: 91, band: "epic" }),
+        ]);
+        const { POST } = await import("@/app/api/history/[slug]/route");
+        const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
+        expect(body.records.bestSunrise).toEqual({ date: "2026-09-27", score: 72, band: "vivid" });
+        expect(body.records.bestSunset).toEqual({ date: "2026-09-28", score: 91, band: "epic" });
+      });
+
+      it("has no sun records for a beach with no predictions", async () => {
+        const { POST } = await import("@/app/api/history/[slug]/route");
+        const body = await (await POST(post(SLUG, { deviceId: DEV }), params(SLUG))).json();
+        expect(body.records.bestSunrise).toBeNull();
+        expect(body.records.bestSunset).toBeNull();
       });
     });
 

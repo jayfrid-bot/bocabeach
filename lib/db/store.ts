@@ -21,7 +21,7 @@ import type {
   BeachHourlyRow,
   CamObservationRow,
   CamReadRow,
-  HistoryBestEverRow,
+  HistorySunRecordRow,
   HistoryRecordsResult,
   SunEventObservationRow,
   SunEventPredictionRow,
@@ -453,37 +453,32 @@ export interface DeviceStore {
   hourlyHistory(slug: string, sinceLocalDate: string, untilLocalDate: string): Promise<BeachHourlyRow[]>;
   /**
    * Lifetime records for `slug` — best score, hottest sand, biggest surf,
-   * quietest midday reading — each the single (slug, hour) row that wins
-   * its own ORDER BY/LIMIT 1 across the WHOLE `beach_hourly` archive for
-   * this beach, never bounded by any `days` window (Codex review: records
-   * must survive switching the 7/14/30 chip, and must not silently regress
-   * as a beach accumulates more history than the widest window shows).
-   * `archiveStartedAt` (MIN(local_date)) and `dayCount`
-   * (COUNT(DISTINCT local_date)) describe the same lifetime archive — the
-   * UI's "Records since <archiveStartedAt>" caption and its 30-day chip gate
-   * both read off `archiveStartedAt`, never a hardcoded date. A beach with
-   * no snapshot rows at all returns `{ records: [], archiveStartedAt: null,
-   * dayCount: 0 }`.
+   * quietest midday reading, warmest water, clearest water — each the single
+   * (slug, hour) row that wins its own ORDER BY/LIMIT 1 across the WHOLE
+   * `beach_hourly` archive for this beach, never bounded by any `days`
+   * window (Codex review: records must survive switching the 7/14/30 chip,
+   * and must not silently regress as a beach accumulates more history than
+   * the widest window shows). `archiveStartedAt` (MIN(local_date)) and
+   * `dayCount` (COUNT(DISTINCT local_date)) describe the same lifetime
+   * archive — the UI's "Records since <archiveStartedAt>" caption and its
+   * 30-day chip gate both read off `archiveStartedAt`, never a hardcoded
+   * date. A beach with no snapshot rows at all returns `{ records: [],
+   * archiveStartedAt: null, dayCount: 0 }`.
    *
-   * The 'best' score record is ranked among rows with `engineVersion` ONLY
-   * (a score is a formula output, so scores from different formulas are not
-   * comparable). If no row has that version yet, it falls back to the
-   * version of this beach's latest scored row. Each record row carries its
-   * own `engine_version`. The other kinds are measurements and rank across
-   * every version.
+   * Records are per beach and ALL-TIME across every scoring formula version
+   * (2026-10-18): a row keeps the score it was given, stamped with its
+   * `engine_version`, and a formula bump never resets or re-ranks anything.
+   * Each record row carries its `engine_version` for information only.
    */
-  historyRecords(slug: string, engineVersion: string): Promise<HistoryRecordsResult>;
+  historyRecords(slug: string): Promise<HistoryRecordsResult>;
   /**
-   * The single highest hourly Beach Day score in the whole `beach_hourly`
-   * archive, across EVERY beach (`row_kind = 'snapshot'`, `score IS NOT
-   * NULL`) — the "Best day ever" record. One bounded statement (ORDER BY
-   * score DESC, hour_utc ASC LIMIT 1), so ties go to the earliest hour.
-   * Only rows with `engineVersion` compete (same rule as the 'best' record
-   * above); with none yet, it falls back to the version of the archive's
-   * latest scored row. The result carries its `engine_version`.
-   * `null` when nothing has been archived with a score yet.
+   * Best sunrise and best sunset color for `slug` (0-2 rows, kind
+   * 'best_sunrise' / 'best_sunset'), from `sun_event_predictions`: per event
+   * its last forecast made at or before the event (the score the day view
+   * shows), highest wins, ties to the earliest event. Across every model
+   * version. One statement.
    */
-  historyBestEver(engineVersion: string): Promise<HistoryBestEverRow | null>;
+  historySunRecords(slug: string): Promise<HistorySunRecordRow[]>;
 
   // --- Install token identity (migrations/0008_device_tokens.sql, Codex ----
   // combined-review #1) --------------------------------------------------

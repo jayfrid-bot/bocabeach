@@ -736,7 +736,7 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
         hourlyRow({ hour_utc: "2026-09-28T14:00:00.000Z", local_date: "2026-09-28", local_hour: 10, score: 77, sand_temp_f: 98, surf_ft: 1.2, crowd_pct: 15 }),
       );
 
-      const result = await store.historyRecords("boca-raton", "test-1");
+      const result = await store.historyRecords("boca-raton");
       const byKind = Object.fromEntries(result.records.map((r) => [r.kind, r]));
       expect(byKind.best).toMatchObject({ local_date: "2026-09-26", local_hour: 14, value: 88 });
       expect(byKind.hottest_sand).toMatchObject({ local_date: "2026-09-26", local_hour: 14, value: 137 });
@@ -758,7 +758,7 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       await store.upsertBeachHourly(
         hourlyRow({ hour_utc: "2026-09-22T14:00:00.000Z", local_date: "2026-09-22", surf_ft: 2.5 }),
       );
-      const result = await store.historyRecords("boca-raton", "test-1");
+      const result = await store.historyRecords("boca-raton");
       expect(result.archiveStartedAt).toBe("2026-09-20");
       expect(result.surfSince).toBe("2026-09-22");
     });
@@ -767,7 +767,7 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       await store.upsertBeachHourly(
         hourlyRow({ hour_utc: "2026-09-22T14:00:00.000Z", local_date: "2026-09-22", surf_ft: null }),
       );
-      const result = await store.historyRecords("boca-raton", "test-1");
+      const result = await store.historyRecords("boca-raton");
       expect(result.surfSince).toBeNull();
       expect(result.records.find((r) => r.kind === "biggest_surf")).toBeUndefined();
     });
@@ -779,7 +779,7 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       await store.upsertBeachHourly(
         hourlyRow({ hour_utc: "2026-09-22T14:00:00.000Z", local_date: "2026-09-22", local_hour: 10, crowd_pct: 20 }),
       );
-      const result = await store.historyRecords("boca-raton", "test-1");
+      const result = await store.historyRecords("boca-raton");
       const quiet = result.records.find((r) => r.kind === "quietest");
       expect(quiet).toMatchObject({ local_hour: 10, value: 20 });
     });
@@ -791,7 +791,7 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       await store.upsertBeachHourly(
         hourlyRow({ hour_utc: "2026-09-22T14:00:00.000Z", local_date: "2026-09-22", local_hour: 10, score: 90 }),
       );
-      const result = await store.historyRecords("boca-raton", "test-1");
+      const result = await store.historyRecords("boca-raton");
       const best = result.records.find((r) => r.kind === "best");
       expect(best).toMatchObject({ local_date: "2026-09-22" });
     });
@@ -803,168 +803,115 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       await store.upsertBeachHourly(
         hourlyRow({ hour_utc: "2026-09-28T14:00:00.000Z", local_date: "2026-09-28", local_hour: 10, score: 70 }),
       );
-      const result = await store.historyRecords("boca-raton", "test-1");
+      const result = await store.historyRecords("boca-raton");
       const best = result.records.find((r) => r.kind === "best");
       expect(best).toMatchObject({ local_date: "2026-08-19", value: 99 });
     });
 
     it("a beach with no rows at all returns no records and a null archiveStartedAt", async () => {
-      const result = await store.historyRecords("nowhere-beach", "test-1");
+      const result = await store.historyRecords("nowhere-beach");
       expect(result).toEqual({ records: [], archiveStartedAt: null, dayCount: 0, surfSince: null });
     });
 
-    // Score-ranked records compete within ONE formula version (a score is a
-    // formula output). Measurements rank across every version.
-    describe("one formula per score record — the version-bound SQL", () => {
+    // Records are per beach and all-time: every kind ranks across every
+    // scoring formula version. A bump resets nothing.
+    describe("all-time across formulas — the real SQL has no version filter", () => {
       const OLD = "2026-10-06.1";
       const NEW = "2026-10-09.1";
       async function seed() {
         await store.upsertBeachHourly(
-          hourlyRow({ hour_utc: "2026-10-07T16:00:00.000Z", local_date: "2026-10-07", local_hour: 12, score: 95, engine_version: OLD, sand_temp_f: 140, surf_ft: 4.0 }),
+          hourlyRow({ hour_utc: "2026-10-07T16:00:00.000Z", local_date: "2026-10-07", local_hour: 12, score: 95, engine_version: OLD, sand_temp_f: 140, surf_ft: 4.0, water_temp_f: 88, clarity_pct: 90 }),
         );
         await store.upsertBeachHourly(
-          hourlyRow({ hour_utc: "2026-10-10T16:00:00.000Z", local_date: "2026-10-10", local_hour: 12, score: 82, engine_version: NEW, sand_temp_f: 100, surf_ft: 1.0 }),
+          hourlyRow({ hour_utc: "2026-10-10T16:00:00.000Z", local_date: "2026-10-10", local_hour: 12, score: 82, engine_version: NEW, sand_temp_f: 100, surf_ft: 1.0, water_temp_f: 80, clarity_pct: 50 }),
         );
       }
 
-      it("'best' ranks only rows of the bound version and returns that row's version", async () => {
+      it("a record set under an older engine_version still wins when its score is the highest", async () => {
         await seed();
-        const best = (await store.historyRecords("boca-raton", NEW)).records.find((r) => r.kind === "best");
-        expect(best).toMatchObject({ local_date: "2026-10-10", value: 82, engine_version: NEW });
-        const old = (await store.historyRecords("boca-raton", OLD)).records.find((r) => r.kind === "best");
-        expect(old).toMatchObject({ local_date: "2026-10-07", value: 95, engine_version: OLD });
+        const best = (await store.historyRecords("boca-raton")).records.find((r) => r.kind === "best");
+        expect(best).toMatchObject({ local_date: "2026-10-07", value: 95, engine_version: OLD });
       });
 
-      it("measurements still rank across every version", async () => {
+      it("a version bump does not reset records: a lower score under a newer version never replaces it", async () => {
         await seed();
-        const { records } = await store.historyRecords("boca-raton", NEW);
+        await store.upsertBeachHourly(
+          hourlyRow({ hour_utc: "2026-10-18T16:00:00.000Z", local_date: "2026-10-18", local_hour: 12, score: 60, engine_version: "2026-10-17.1" }),
+        );
+        const best = (await store.historyRecords("boca-raton")).records.find((r) => r.kind === "best");
+        expect(best).toMatchObject({ value: 95, engine_version: OLD });
+      });
+
+      it("a higher score under a newer version takes the record over", async () => {
+        await seed();
+        await store.upsertBeachHourly(
+          hourlyRow({ hour_utc: "2026-10-18T16:00:00.000Z", local_date: "2026-10-18", local_hour: 12, score: 97, engine_version: "2026-10-17.1" }),
+        );
+        const best = (await store.historyRecords("boca-raton")).records.find((r) => r.kind === "best");
+        expect(best).toMatchObject({ local_date: "2026-10-18", value: 97 });
+      });
+
+      it("every measurement record ranks across every version too", async () => {
+        await seed();
+        const { records } = await store.historyRecords("boca-raton");
         expect(records.find((r) => r.kind === "hottest_sand")).toMatchObject({ value: 140, engine_version: OLD });
         expect(records.find((r) => r.kind === "biggest_surf")).toMatchObject({ value: 4.0, engine_version: OLD });
+        expect(records.find((r) => r.kind === "warmest_water")).toMatchObject({ local_date: "2026-10-07", value: 88 });
+        expect(records.find((r) => r.kind === "clearest_water")).toMatchObject({ local_date: "2026-10-07", value: 90 });
       });
 
-      it("falls back to the latest scored row's version when no row has the bound version", async () => {
-        await seed();
-        const best = (await store.historyRecords("boca-raton", "2026-12-01.1")).records.find((r) => r.kind === "best");
-        expect(best).toMatchObject({ value: 82, engine_version: NEW });
-      });
-
-      it("the fallback is deterministic when two beaches share the latest hour_utc under two versions", async () => {
-        const same = { hour_utc: "2026-10-10T16:00:00.000Z", local_date: "2026-10-10" };
-        await store.upsertBeachHourly(
-          hourlyRow({ ...same, slug: "gulf-shores", score: 70, engine_version: OLD, snapshot_generated_at: "2026-10-10T16:05:00.000Z", archived_at: "2026-10-10T16:05:01.000Z" }),
-        );
-        await store.upsertBeachHourly(
-          hourlyRow({ ...same, slug: "boca-raton", score: 60, engine_version: NEW, snapshot_generated_at: "2026-10-10T16:06:00.000Z", archived_at: "2026-10-10T16:06:01.000Z" }),
-        );
-        // The later snapshot clock wins the tie on hour_utc.
-        expect(await store.historyBestEver("2026-12-01.1")).toMatchObject({ score: 60, engine_version: NEW });
-      });
-
-      it("with equal clocks too, the tie breaks on slug ascending, whatever the insert order", async () => {
-        const same = { hour_utc: "2026-10-10T16:00:00.000Z", local_date: "2026-10-10", snapshot_generated_at: "2026-10-10T16:05:00.000Z", archived_at: "2026-10-10T16:05:01.000Z" };
-        await store.upsertBeachHourly(hourlyRow({ ...same, slug: "gulf-shores", score: 50, engine_version: NEW }));
-        await store.upsertBeachHourly(hourlyRow({ ...same, slug: "boca-raton", score: 50, engine_version: OLD }));
-        // "boca-raton" sorts first, so its version (OLD) is the fallback.
-        expect(await store.historyBestEver("2026-12-01.1")).toMatchObject({ engine_version: OLD });
-      });
-
-      it("the fallback ignores a row with a null score and other beaches' rows", async () => {
+      it("records belong to the beach asked about: another beach's higher score never leaks in", async () => {
         await seed();
         await store.upsertBeachHourly(
-          hourlyRow({ hour_utc: "2026-10-12T16:00:00.000Z", local_date: "2026-10-12", score: null, engine_version: "2026-12-01.1" }),
+          hourlyRow({ slug: "gulf-shores", hour_utc: "2026-10-11T16:00:00.000Z", local_date: "2026-10-11", score: 100, water_temp_f: 95, clarity_pct: 99 }),
         );
-        await store.upsertBeachHourly(
-          hourlyRow({ slug: "gulf-shores", hour_utc: "2026-10-13T16:00:00.000Z", local_date: "2026-10-13", score: 99, engine_version: "2026-12-01.1" }),
-        );
-        const best = (await store.historyRecords("boca-raton", "2026-12-05.1")).records.find((r) => r.kind === "best");
-        expect(best).toMatchObject({ value: 82, engine_version: NEW });
+        const { records } = await store.historyRecords("boca-raton");
+        expect(records.find((r) => r.kind === "best")).toMatchObject({ value: 95 });
+        expect(records.find((r) => r.kind === "warmest_water")).toMatchObject({ value: 88 });
       });
 
-      it("a beach with rows of no version at all still returns no best record", async () => {
-        const result = await store.historyRecords("nowhere-beach", NEW);
-        expect(result.records).toEqual([]);
-      });
-
-      it("historyBestEver ranks only the bound version across every beach", async () => {
+      it("a null-score row and a cam-backfill row never hold the best record", async () => {
         await seed();
+        await store.upsertBeachHourly(hourlyRow({ hour_utc: "2026-10-12T16:00:00.000Z", local_date: "2026-10-12", score: null }));
         await store.upsertBeachHourly(
-          hourlyRow({ slug: "gulf-shores", hour_utc: "2026-10-11T16:00:00.000Z", local_date: "2026-10-11", score: 90, engine_version: NEW }),
+          hourlyRow({ hour_utc: "2026-10-13T16:00:00.000Z", local_date: "2026-10-13", row_kind: "cam-backfill", score: 100 }),
         );
-        expect(await store.historyBestEver(NEW)).toMatchObject({ slug: "gulf-shores", score: 90, engine_version: NEW });
-        expect(await store.historyBestEver(OLD)).toMatchObject({ slug: "boca-raton", score: 95, engine_version: OLD });
+        expect((await store.historyRecords("boca-raton")).records.find((r) => r.kind === "best")).toMatchObject({ value: 95 });
       });
 
-      it("historyBestEver falls back to the latest scored row's version when none has the bound one", async () => {
-        await seed();
-        expect(await store.historyBestEver("2026-12-01.1")).toMatchObject({ score: 82, engine_version: NEW });
+      it("the store has no cross-beach best-ever read any more", () => {
+        expect("historyBestEver" in store).toBe(false);
       });
     });
 
-    // "Best day ever" — the ONE statement that spans every beach.
-    describe("historyBestEver — one real statement across every beach", () => {
-      it("returns null on an empty archive", async () => {
-        expect(await store.historyBestEver("test-1")).toBeNull();
+    // Best sunrise / sunset color — the real SUN_RECORDS_UNION against SQLite.
+    describe("historySunRecords — real UNION ALL against sun_event_predictions", () => {
+      it("is empty for a beach with no predictions", async () => {
+        expect(await store.historySunRecords("boca-raton")).toEqual([]);
       });
 
-      it("picks the highest score across ALL beaches, with its beach, local date and local hour", async () => {
-        await store.upsertBeachHourly(
-          hourlyRow({ hour_utc: "2026-09-26T18:00:00.000Z", local_date: "2026-09-26", local_hour: 14, score: 88 }),
-        );
-        await store.upsertBeachHourly(
-          hourlyRow({
-            slug: "gulf-shores",
-            hour_utc: "2026-09-29T18:00:00.000Z",
-            local_date: "2026-09-29",
-            local_hour: 13,
-            timezone: "America/Chicago",
-            score: 98,
-          }),
-        );
-        await store.upsertBeachHourly(
-          hourlyRow({ slug: "deerfield-beach", hour_utc: "2026-09-27T16:00:00.000Z", local_date: "2026-09-27", local_hour: 12, score: 91 }),
-        );
-        expect(await store.historyBestEver("test-1")).toEqual({
-          slug: "gulf-shores",
-          local_date: "2026-09-29",
-          local_hour: 13,
-          score: 98,
-          engine_version: "test-1",
-        });
+      it("scores each event by its last forecast at or before the event, then keeps the best per kind", async () => {
+        await store.upsertSunEventPredictions([
+          predictionRow({ as_of_hour_utc: "2026-10-06T10:00:00.000Z", snapshot_generated_at: "2026-10-06T10:05:00.000Z", score: 58 }),
+          predictionRow({ as_of_hour_utc: "2026-10-06T11:00:00.000Z", snapshot_generated_at: "2026-10-06T11:05:00.000Z", score: 70, band: "vivid" }),
+          // After the event: never counts.
+          predictionRow({ as_of_hour_utc: "2026-10-06T12:00:00.000Z", snapshot_generated_at: "2026-10-06T12:05:00.000Z", score: 99 }),
+          predictionRow({ event_iso: "2026-10-07T11:16:00.000Z", as_of_hour_utc: "2026-10-07T11:00:00.000Z", snapshot_generated_at: "2026-10-07T11:05:00.000Z", score: 65 }),
+          predictionRow({ event_kind: "sunset", event_iso: "2026-10-06T23:10:00.000Z", as_of_hour_utc: "2026-10-06T23:00:00.000Z", snapshot_generated_at: "2026-10-06T23:05:00.000Z", score: 80, band: "epic" }),
+          predictionRow({ slug: "gulf-shores", event_iso: "2026-10-09T11:17:00.000Z", as_of_hour_utc: "2026-10-09T11:00:00.000Z", snapshot_generated_at: "2026-10-09T11:05:00.000Z", score: 95 }),
+        ]);
+        expect(await store.historySunRecords("boca-raton")).toEqual([
+          { kind: "best_sunrise", event_iso: "2026-10-06T11:15:09.672Z", score: 70, band: "vivid" },
+          { kind: "best_sunset", event_iso: "2026-10-06T23:10:00.000Z", score: 80, band: "epic" },
+        ]);
       });
 
-      it("ties break to the earliest hour_utc, whichever beach it is", async () => {
-        await store.upsertBeachHourly(
-          hourlyRow({ slug: "gulf-shores", hour_utc: "2026-09-29T18:00:00.000Z", local_date: "2026-09-29", local_hour: 13, score: 95 }),
-        );
-        await store.upsertBeachHourly(
-          hourlyRow({ slug: "boca-raton", hour_utc: "2026-09-25T15:00:00.000Z", local_date: "2026-09-25", local_hour: 11, score: 95 }),
-        );
-        const best = await store.historyBestEver("test-1");
-        expect(best).toMatchObject({ slug: "boca-raton", local_date: "2026-09-25", local_hour: 11, score: 95 });
-      });
-
-      it("ignores rows with a null score and any non-snapshot row", async () => {
-        await store.upsertBeachHourly(
-          hourlyRow({ hour_utc: "2026-09-22T14:00:00.000Z", local_date: "2026-09-22", score: 70 }),
-        );
-        await store.upsertBeachHourly(
-          hourlyRow({ hour_utc: "2026-09-22T15:00:00.000Z", local_date: "2026-09-22", row_kind: "snapshot", score: null }),
-        );
-        // A cam-backfill row carrying a (hypothetical) 100 must never win.
-        await store.upsertBeachHourly(
-          hourlyRow({ hour_utc: "2026-09-22T16:00:00.000Z", local_date: "2026-09-22", row_kind: "cam-backfill", score: 100 }),
-        );
-        expect(await store.historyBestEver("test-1")).toMatchObject({ local_date: "2026-09-22", score: 70 });
-      });
-
-      it("is not bounded by any window — the oldest row can be the record", async () => {
-        await store.upsertBeachHourly(
-          hourlyRow({ hour_utc: "2026-08-19T14:00:00.000Z", local_date: "2026-08-19", score: 99 }),
-        );
-        await store.upsertBeachHourly(
-          hourlyRow({ hour_utc: "2026-09-28T14:00:00.000Z", local_date: "2026-09-28", score: 70 }),
-        );
-        expect(await store.historyBestEver("test-1")).toMatchObject({ local_date: "2026-08-19", score: 99 });
+      it("ties go to the earliest event", async () => {
+        await store.upsertSunEventPredictions([
+          predictionRow({ event_iso: "2026-10-07T11:16:00.000Z", as_of_hour_utc: "2026-10-07T11:00:00.000Z", snapshot_generated_at: "2026-10-07T11:05:00.000Z", score: 66 }),
+          predictionRow({ as_of_hour_utc: "2026-10-06T11:00:00.000Z", snapshot_generated_at: "2026-10-06T11:05:00.000Z", score: 66 }),
+        ]);
+        expect((await store.historySunRecords("boca-raton"))[0]).toMatchObject({ event_iso: "2026-10-06T11:15:09.672Z" });
       });
     });
   });

@@ -7,15 +7,16 @@
 // across a DST boundary the row's own fields already resolved correctly at
 // write time — see lib/history/archive.ts `localHourParts`).
 //
-// Records (best day, hottest sand, biggest surf, quietest) are NOT computed
+// Records (best day, hottest sand, biggest surf, quietest, warmest water,
+// clearest water, best sunrise and sunset color) are NOT computed
 // here — they are a LIFETIME read across the whole archive, independent of
 // whatever `days` window a caller asked `hourlyHistory` for, so they come
 // from a separate store method (`DeviceStore.historyRecords`, one UNION ALL
 // SQL query in d1Store.ts). `recordsFromRows` below only maps that store
 // row shape into the API's friendlier shape — still pure, still no I/O.
 
-import type { BeachHourlyRow, HistoryRecordRow } from "@/lib/history/types";
-import { compareEngineVersions, findScoringVersion, SCORING_VERSIONS } from "@/lib/scoringVersions";
+import type { BeachHourlyRow, HistoryRecordRow, HistorySunRecordRow } from "@/lib/history/types";
+import { compareEngineVersions, SCORING_VERSIONS } from "@/lib/scoringVersions";
 
 /** A day needs at least this many SCORED hours to count as a full day —
  *  fewer and `partial: true` warns the UI the number is thin (e.g. the
@@ -157,33 +158,34 @@ export interface HistoryVersions {
   boundaries: HistoryVersionBoundary[];
 }
 
-/** The API's friendly shape for one lifetime record — `recordsFromRows`
- *  below maps `DeviceStore.historyRecords`'s raw kind-tagged rows into this. */
+/** A record's day and hour, plus its value. */
+type Stamp = { date: string; localHour: number };
+
+/** The API's friendly shape for the lifetime records of ONE beach —
+ *  `recordsFromRows` below maps `DeviceStore.historyRecords`'s raw kind-tagged
+ *  rows into this. Every record is all-time: it ranks across the beach's whole
+ *  archive and every scoring formula version. A row keeps the score it was
+ *  given, so an old score can still hold a record. */
 export interface HistoryRecords {
-  /** Ranked within ONE formula version (`engineVersion`) — scores from
-   *  different formulas are not comparable. */
+  /** The highest hourly Beach Day score ever archived at this beach.
+   *  `engineVersion` names the formula that scored it (informational). */
   bestDay: { date: string; score: number; localHour: number; engineVersion: string } | null;
-  hottestSand: { date: string; sandTempF: number; localHour: number } | null;
-  biggestSurf: { date: string; surfFt: number; localHour: number } | null;
+  hottestSand: (Stamp & { sandTempF: number }) | null;
+  biggestSurf: (Stamp & { surfFt: number }) | null;
   /** The single least-crowded midday (10 AM-6 PM local) reading on file —
    *  not a per-day peak-crowd minimum (see docs/HISTORY_AND_IMAGERY_PLAN.md
    *  Part A / the Codex review that set this rule: a day-level aggregate
    *  can't be expressed as one row in the UNION ALL query this comes from). */
-  quietestDay: { date: string; crowdPct: number; localHour: number } | null;
-}
-
-/** The API's shape for the cross-beach "Best day ever" record
- *  (`DeviceStore.historyBestEver`) — the one record that is NOT about the
- *  beach the request is for. `isThisBeach` lets the UI say "This beach!". */
-export interface HistoryBestEver {
-  slug: string;
-  name: string;
-  date: string;
-  score: number;
-  localHour: number;
-  isThisBeach: boolean;
-  /** The formula that scored it — same one-version rule as `bestDay`. */
-  engineVersion: string;
+  quietestDay: (Stamp & { crowdPct: number }) | null;
+  /** The warmest water reading on file. */
+  warmestWater: (Stamp & { waterTempF: number }) | null;
+  /** The clearest water reading on file (cam-read clarity, 0-100). */
+  clearestWater: (Stamp & { clarityPct: number }) | null;
+  /** The best sunrise color score (0-100) any sunrise here was forecast at
+   *  by the time it happened. `date` is the beach-local day. */
+  bestSunrise: { date: string; score: number; band: string | null } | null;
+  /** Same, for sunsets. */
+  bestSunset: { date: string; score: number; band: string | null } | null;
 }
 
 function round(v: number): number {
@@ -294,12 +296,25 @@ export function summarizeHistory(rows: BeachHourlyRow[]): DaySummary[] {
  * has ever had a 'quietest' reading if it has no cam) maps to `null`, never
  * a fabricated zero.
  */
-export function recordsFromRows(rows: HistoryRecordRow[]): HistoryRecords {
+export function recordsFromRows(
+  rows: HistoryRecordRow[],
+  sunRows: HistorySunRecordRow[] = [],
+  /** Beach-local calendar day of a UTC instant; null when unreadable. */
+  localDateOf: (iso: string) => string | null = () => null,
+): HistoryRecords {
   const byKind = new Map(rows.map((r) => [r.kind, r]));
   const best = byKind.get("best");
   const sand = byKind.get("hottest_sand");
   const surf = byKind.get("biggest_surf");
   const quiet = byKind.get("quietest");
+  const water = byKind.get("warmest_water");
+  const clear = byKind.get("clearest_water");
+  const sunBy = new Map(sunRows.map((r) => [r.kind, r]));
+  const sun = (kind: "best_sunrise" | "best_sunset") => {
+    const r = sunBy.get(kind);
+    const date = r ? localDateOf(r.event_iso) : null;
+    return r && date ? { date, score: Math.round(r.score), band: r.band } : null;
+  };
   return {
     bestDay: best
       ? { date: best.local_date, score: best.value, localHour: best.local_hour, engineVersion: best.engine_version }
@@ -307,6 +322,10 @@ export function recordsFromRows(rows: HistoryRecordRow[]): HistoryRecords {
     hottestSand: sand ? { date: sand.local_date, sandTempF: sand.value, localHour: sand.local_hour } : null,
     biggestSurf: surf ? { date: surf.local_date, surfFt: surf.value, localHour: surf.local_hour } : null,
     quietestDay: quiet ? { date: quiet.local_date, crowdPct: quiet.value, localHour: quiet.local_hour } : null,
+    warmestWater: water ? { date: water.local_date, waterTempF: water.value, localHour: water.local_hour } : null,
+    clearestWater: clear ? { date: clear.local_date, clarityPct: clear.value, localHour: clear.local_hour } : null,
+    bestSunrise: sun("best_sunrise"),
+    bestSunset: sun("best_sunset"),
   };
 }
 
@@ -327,21 +346,4 @@ export function summarizeVersions(days: DaySummary[], current: string): HistoryV
     if (hasOlder && hasSame) boundaries.push({ date: entry.since, version: entry.version, note: entry.note });
   });
   return { current, inRange, mixed: inRange.length > 1, boundaries };
-}
-
-/**
- * What the record tiles need to label themselves: the day the CURRENT formula
- * started (`recordsSince`, null when the version is not listed) and whether a
- * score record had to come from an earlier formula because no row carries the
- * current one yet (`recordsFromEarlierFormula`, right after a version bump).
- */
-export function recordsFormulaInfo(
-  records: HistoryRecords,
-  bestEver: HistoryBestEver | null,
-  current: string,
-): { recordsSince: string | null; recordsFromEarlierFormula: boolean } {
-  const earlier =
-    (records.bestDay !== null && records.bestDay.engineVersion !== current) ||
-    (bestEver !== null && bestEver.engineVersion !== current);
-  return { recordsSince: findScoringVersion(current)?.since ?? null, recordsFromEarlierFormula: earlier };
 }

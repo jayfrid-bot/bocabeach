@@ -6,7 +6,7 @@
 
 import type { AlertPrefs, DeviceRecord, SunColorMinBand } from "@/lib/db/types";
 import type { ScoreProfile } from "@/lib/profile/types";
-import type { DaySummary, HistoryBestEver, HistoryRecords, HistoryVersions } from "@/lib/history/summary";
+import type { DaySummary, HistoryRecords, HistoryVersions } from "@/lib/history/summary";
 import type { DayViewPayload } from "@/lib/history/dayView";
 import { readInstallToken } from "@/lib/plus/storage";
 import { claimBeforeWrite } from "@/lib/plus/installToken";
@@ -115,25 +115,16 @@ function postJson(url: string, body: unknown): Promise<PlusResult> {
 
 /** POST /api/history/<slug>'s answer — a different shape than `PlusResult`
  *  (no `device`), so it isn't folded into `request()` above. `records` and
- *  `archiveStartedAt`/`dayCount` are LIFETIME (never bounded by `days`) —
+ *  `archiveStartedAt`/`dayCount` are LIFETIME, for this beach only (never bounded by `days`) —
  *  see lib/history/summary.ts. */
 export interface HistoryResult {
   ok: boolean;
   since: string | null;
   days: DaySummary[];
   records: HistoryRecords | null;
-  /** The highest Beach Day score ever recorded at ANY beach (not just this
-   *  one), or null when none is on file — the "Best day ever" tile. */
-  bestEver: HistoryBestEver | null;
-  /** Which scoring formulas scored the returned days and where the formula
-   *  changed inside them; null from a server that predates this field. */
+  /** Which scoring formulas scored the returned days. Information only: the
+   *  UI draws no formula marks, and records are all-time across formulas. */
   versions: HistoryVersions | null;
-  /** First day of the CURRENT scoring formula — "Best day" and "Best day
-   *  ever" count from here. Null when unknown. */
-  recordsSince: string | null;
-  /** The score records had to come from an earlier formula because no row
-   *  carries the current one yet (right after a version bump). */
-  recordsFromEarlierFormula: boolean;
   archiveStartedAt: string | null;
   dayCount: number;
   /** MIN(local_date) among rows with a non-null surf_ft — normally later
@@ -149,10 +140,7 @@ function emptyHistoryResult(): Pick<
   | "since"
   | "days"
   | "records"
-  | "bestEver"
   | "versions"
-  | "recordsSince"
-  | "recordsFromEarlierFormula"
   | "archiveStartedAt"
   | "dayCount"
   | "surfSince"
@@ -161,10 +149,7 @@ function emptyHistoryResult(): Pick<
     since: null,
     days: [],
     records: null,
-    bestEver: null,
     versions: null,
-    recordsSince: null,
-    recordsFromEarlierFormula: false,
     archiveStartedAt: null,
     dayCount: 0,
     surfSince: null,
@@ -207,10 +192,7 @@ async function fetchHistory(deviceId: string, slug: string, days: 7 | 14 | 30): 
     since?: unknown;
     days?: unknown;
     records?: unknown;
-    bestEver?: unknown;
     versions?: unknown;
-    recordsSince?: unknown;
-    recordsFromEarlierFormula?: unknown;
     archiveStartedAt?: unknown;
     dayCount?: unknown;
     surfSince?: unknown;
@@ -222,10 +204,7 @@ async function fetchHistory(deviceId: string, slug: string, days: 7 | 14 | 30): 
       since: typeof obj.since === "string" ? obj.since : null,
       days: Array.isArray(obj.days) ? (obj.days as DaySummary[]) : [],
       records: (obj.records as HistoryRecords | undefined) ?? null,
-      bestEver: (obj.bestEver as HistoryBestEver | null | undefined) ?? null,
       versions: (obj.versions as HistoryVersions | null | undefined) ?? null,
-      recordsSince: typeof obj.recordsSince === "string" ? obj.recordsSince : null,
-      recordsFromEarlierFormula: obj.recordsFromEarlierFormula === true,
       archiveStartedAt: typeof obj.archiveStartedAt === "string" ? obj.archiveStartedAt : null,
       dayCount: typeof obj.dayCount === "number" ? obj.dayCount : 0,
       surfSince: typeof obj.surfSince === "string" ? obj.surfSince : null,

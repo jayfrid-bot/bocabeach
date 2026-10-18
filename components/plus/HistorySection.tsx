@@ -16,10 +16,10 @@
  * caps. Below the strip, a handful of LIFETIME records — never bounded by
  * the 7/14/30 window on screen (lib/history/summary.ts `recordsFromRows`).
  *
- * The scoring formula changes over time (lib/scoringVersions.ts). So the
- * strip marks days an earlier formula scored, one quiet line names the most
- * recent change in range, and the score records say which formula they count
- * under. A drop in the chart can then be a formula change, not weather.
+ * Records are for THIS beach only and are all-time: they rank every archived
+ * hour by the score it was given, whatever formula version scored it. The
+ * section draws no formula marks (the scoring formula still changes now and
+ * then; see lib/scoringVersions.ts, which is only a changelog).
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -33,19 +33,13 @@ import {
   weekdayLongOf,
   weekdayOf,
   type DaySummary,
-  type HistoryBestEver,
-  type HistoryVersions,
 } from "@/lib/history/summary";
-import { formulaChangeNotice } from "@/lib/plus/formulaNotice";
 import { bootstrapInstallToken } from "@/lib/plus/client";
 import { MetricCard } from "@/components/MetricCard";
 import { LevelBarChart, type LevelBar } from "@/components/LevelBarChart";
 import { DayViewSheet } from "@/components/plus/DayViewSheet";
 import { DAY_VIEW_ENABLED } from "@/lib/plus/flags";
 import { isPickable, stepDate, todayInZone } from "@/lib/plus/dayView";
-
-// Kept importable from here: the section's tests and callers know it by this path.
-export { formulaChangeNotice };
 
 type DaysWindow = 7 | 14 | 30;
 
@@ -76,62 +70,14 @@ function statsLine(d: DaySummary): string {
   return parts.join(" · ");
 }
 
-/** Which scoring formula a day was scored by, next to the current one:
- *  "current" (all rows), "earlier" (one older formula), or "mixed" (more than
- *  one formula scored its rows, so a change landed that day). With no
- *  `current` (an older server) or no version list, every day reads
- *  "current" — nothing to compare, so nothing is marked. */
-export type DayFormulaState = "current" | "earlier" | "mixed";
-
-export function dayFormulaState(day: DaySummary, current: string | null): DayFormulaState {
-  const versions = day.engineVersions ?? [];
-  if (!current || versions.length === 0) return "current";
-  if (versions.length > 1) return "mixed";
-  return versions[0] === current ? "current" : "earlier";
-}
-
-/** The small line under a score-record tile: when its count started, or that
- *  it comes from an earlier formula (right after a change, before any row has
- *  the current one). Undefined with no `current` to compare. The non-breaking
- *  space keeps "(current formula)" together on the ~170px phone tile, so it
- *  wraps as "since Oct 9" over "(current formula)". */
-export function recordFormulaNote(
-  engineVersion: string,
-  formula: { current: string; recordsSince: string | null } | undefined,
-): string | undefined {
-  if (!formula) return undefined;
-  if (engineVersion !== formula.current) return "earlier formula";
-  return formula.recordsSince ? `since ${shortMonthDay(formula.recordsSince)} (current\u00a0formula)` : undefined;
-}
-
-/** The accessible-name phrase for a day's formula state, or null for a day
- *  the current formula scored. A change day that includes the current formula
- *  is "partly" earlier; one with only older formulas used more than one. */
-export function formulaAriaPhrase(day: DaySummary, state: DayFormulaState, current: string | null): string | null {
-  if (state === "earlier") return "scored by an earlier formula";
-  if (state === "mixed") {
-    return current && day.engineVersions.includes(current)
-      ? "partly scored by an earlier formula"
-      : "scored using more than one formula";
-  }
-  return null;
-}
-
 /** Full weekday + date + best score, for the day cell's accessible name —
  *  the visible cell only has room for the 3-letter weekday. */
-function dayCellAriaLabel(day: DaySummary, formula: DayFormulaState = "current", current: string | null = null): string {
+function dayCellAriaLabel(day: DaySummary): string {
   const bits = [`${weekdayLongOf(day.date)} ${shortMonthDay(day.date)}`];
   bits.push(day.best ? `best ${day.best.score} at ${hour12Label(day.best.localHour)}` : "no score available");
   if (day.partial) bits.push("partial day");
-  const phrase = formulaAriaPhrase(day, formula, current);
-  if (phrase) bits.push(phrase);
   return bits.join(", ");
 }
-
-/** The subtle mark on a score chip an earlier formula scored: a dotted ring
- *  and a little less opacity. The border sits inside the chip (border-box),
- *  so the chip keeps its size and the cell does not reflow. */
-const EARLIER_FORMULA_CHIP = "border border-dotted border-slate-900/70 opacity-70 dark:border-white/80";
 
 const CHIP_BASE =
   "inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-full px-3 text-sm font-medium transition disabled:cursor-not-allowed";
@@ -175,15 +121,11 @@ function DaysChip({
 
 function DayCell({
   day,
-  formula,
-  current,
   isOpen,
   onToggle,
   opensSheet = false,
 }: {
   day: DaySummary;
-  formula: DayFormulaState;
-  current: string | null;
   isOpen: boolean;
   onToggle: () => void;
   /** The day view is on: a tap opens the day sheet (a dialog) instead of an inline panel. */
@@ -198,7 +140,7 @@ function DayCell({
       aria-expanded={expandable && !opensSheet ? isOpen : undefined}
       aria-controls={expandable && !opensSheet ? panelId : undefined}
       aria-haspopup={expandable && opensSheet ? "dialog" : undefined}
-      aria-label={dayCellAriaLabel(day, formula, current)}
+      aria-label={dayCellAriaLabel(day)}
       onClick={() => expandable && onToggle()}
       className={`min-h-[64px] w-16 shrink-0 rounded-xl bg-white/80 p-1.5 text-center ring-1 ring-slate-900/10 transition dark:bg-slate-900/70 dark:ring-white/10 sm:w-20 sm:rounded-2xl sm:p-2 ${
         expandable
@@ -214,9 +156,7 @@ function DayCell({
       </div>
       {day.best ? (
         <div
-          className={`mx-auto mt-1 flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold tabular-nums text-slate-950 sm:h-9 sm:w-9 sm:text-sm ${
-            formula === "current" ? "" : EARLIER_FORMULA_CHIP
-          }`}
+          className="mx-auto mt-1 flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold tabular-nums text-slate-950 sm:h-9 sm:w-9 sm:text-sm"
           style={{ background: scoreColor(day.best.score) }}
           aria-hidden
         >
@@ -242,7 +182,7 @@ function DayCell({
   );
 }
 
-function DayDetail({ day, formula }: { day: DaySummary; formula: DayFormulaState }) {
+function DayDetail({ day }: { day: DaySummary }) {
   // Every hour is a bar; only every 3rd hour gets an x-axis label ("6a 9a
   // 12p 3p 6p" style) so a full day's worth of bars doesn't crowd into
   // unreadable text at 390px (Codex review). Keyed by hourUtc, not
@@ -290,14 +230,6 @@ function DayDetail({ day, formula }: { day: DaySummary; formula: DayFormulaState
 
       {line ? <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">{line}</p> : null}
 
-      {formula !== "current" ? (
-        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-          {formula === "mixed"
-            ? "The scoring formula changed this day, so earlier hours used the old one."
-            : "These hours were scored by an earlier formula."}
-        </p>
-      ) : null}
-
       {day.caps.length > 0 ? (
         <ul className="mt-2 flex flex-wrap gap-1.5">
           {day.caps.map((c) => (
@@ -322,37 +254,19 @@ export interface RecordTile {
   sub: string;
   /** A small quiet second line (MetricCard's own `extra`). "Biggest surf"
    *  uses it to caption itself honestly when the surf estimate doesn't cover
-   *  the whole archive (Codex review #2). The two score tiles use it to name
-   *  the scoring formula they count under. */
+   *  the whole archive (Codex review #2). */
   note?: string;
 }
 
-/** `formula` (the current engine version and the day it began) lets the two
- *  score tiles say which formula they count under. Left out, they stay bare. */
+/** The record tiles for THIS beach. Every one is all-time: it ranks the
+ *  beach's whole archive, across every scoring formula, and carries no
+ *  formula mark. A record the beach has no data for is simply left out. */
 export function recordTiles(
   r: NonNullable<HistoryResult["records"]>,
   archiveStartedAt: string | null,
   surfSince: string | null,
-  bestEver: HistoryBestEver | null = null,
-  formula?: { current: string; recordsSince: string | null },
 ): RecordTile[] {
   const tiles: RecordTile[] = [];
-  if (bestEver) {
-    // The one record that spans every beach, so it leads the list. The sub
-    // line names the beach — or, when it is THIS beach, says so instead of
-    // repeating a name the reader is already looking at. The phone's tile
-    // is ~170px wide: MetricCard wraps (never truncates) `sub`, and the
-    // longest beach name plus date still fits its 3-line clamp.
-    const when = `${shortMonthDay(bestEver.date)}, ${hour12Label(bestEver.localHour)}`;
-    tiles.push({
-      key: "best-ever",
-      icon: "\u{1f947}",
-      label: "Best day ever",
-      value: String(bestEver.score),
-      sub: bestEver.isThisBeach ? `This beach! ${when}` : `${bestEver.name} \u00b7 ${when}`,
-      note: recordFormulaNote(bestEver.engineVersion, formula),
-    });
-  }
   if (r.bestDay) {
     tiles.push({
       key: "best",
@@ -360,7 +274,6 @@ export function recordTiles(
       label: "Best day",
       value: String(r.bestDay.score),
       sub: `${shortMonthDay(r.bestDay.date)}, ${hour12Label(r.bestDay.localHour)}`,
-      note: recordFormulaNote(r.bestDay.engineVersion, formula),
     });
   }
   if (r.hottestSand) {
@@ -399,6 +312,42 @@ export function recordTiles(
       label: "Quietest time",
       value: `${Math.round(r.quietestDay.crowdPct)}%`,
       sub: `${weekdayOf(r.quietestDay.date)} ${shortMonthDay(r.quietestDay.date)}, ${hour12Label(r.quietestDay.localHour)}`,
+    });
+  }
+  if (r.warmestWater) {
+    tiles.push({
+      key: "water",
+      icon: "\u{1f321}\ufe0f",
+      label: "Warmest water",
+      value: `${Math.round(r.warmestWater.waterTempF)}°`,
+      sub: `${shortMonthDay(r.warmestWater.date)}, ${hour12Label(r.warmestWater.localHour)}`,
+    });
+  }
+  if (r.clearestWater) {
+    tiles.push({
+      key: "clear",
+      icon: "\u{1f93f}",
+      label: "Clearest water",
+      value: `${Math.round(r.clearestWater.clarityPct)}%`,
+      sub: `${shortMonthDay(r.clearestWater.date)}, ${hour12Label(r.clearestWater.localHour)}`,
+    });
+  }
+  if (r.bestSunrise) {
+    tiles.push({
+      key: "sunrise",
+      icon: "\u{1f305}",
+      label: "Best sunrise",
+      value: String(r.bestSunrise.score),
+      sub: shortMonthDay(r.bestSunrise.date),
+    });
+  }
+  if (r.bestSunset) {
+    tiles.push({
+      key: "sunset",
+      icon: "\u{1f307}",
+      label: "Best sunset",
+      value: String(r.bestSunset.score),
+      sub: shortMonthDay(r.bestSunset.date),
     });
   }
   return tiles;
@@ -593,18 +542,10 @@ export function HistorySection({
 
   const heading = entitled ? `Last ${days} days` : "Last 7 days";
   const newestFirst = view?.kind === "data" ? [...view.data.days].reverse() : [];
-  const currentVersion = view?.kind === "data" ? (view.data.versions?.current ?? null) : null;
   const tiles =
     view?.kind === "data" && view.data.records
-      ? recordTiles(
-          view.data.records,
-          view.data.archiveStartedAt,
-          view.data.surfSince,
-          view.data.bestEver,
-          currentVersion ? { current: currentVersion, recordsSince: view.data.recordsSince } : undefined,
-        )
+      ? recordTiles(view.data.records, view.data.archiveStartedAt, view.data.surfSince)
       : [];
-  const formulaNotice = view?.kind === "data" ? formulaChangeNotice(view.data.versions) : null;
 
   return (
     <section aria-labelledby="history-heading">
@@ -686,8 +627,6 @@ export function HistorySection({
                     <DayCell
                       key={d.date}
                       day={d}
-                      formula={dayFormulaState(d, currentVersion)}
-                      current={currentVersion}
                       isOpen={DAY_VIEW_ENABLED ? daySheetOpen && dayDate === d.date : openDate === d.date}
                       onToggle={() =>
                         DAY_VIEW_ENABLED ? openDay(d.date) : setOpenDate((cur) => (cur === d.date ? null : d.date))
@@ -696,13 +635,10 @@ export function HistorySection({
                     />
                   ))}
                 </div>
-                {formulaNotice ? (
-                  <p className="text-xs text-slate-500 dark:text-slate-400">{formulaNotice}</p>
-                ) : null}
                 {!DAY_VIEW_ENABLED && openDate
                   ? (() => {
                       const day = view.data.days.find((d) => d.date === openDate);
-                      return day ? <DayDetail day={day} formula={dayFormulaState(day, currentVersion)} /> : null;
+                      return day ? <DayDetail day={day} /> : null;
                     })()
                   : null}
               </div>

@@ -42,7 +42,7 @@ import type {
   BeachHourlyRow,
   CamObservationRow,
   CamReadRow,
-  HistoryBestEverRow,
+  HistorySunRecordRow,
   HistoryRecordRow,
   HistoryRecordsResult,
   SunEventObservationRow,
@@ -107,30 +107,6 @@ const compareSunObservations = (a: SunEventObservationRow, b: SunEventObservatio
   a.distance_mi - b.distance_mi ||
   (a.cam_id < b.cam_id ? -1 : a.cam_id > b.cam_id ? 1 : 0);
 const SUN_OBS_MATCH_WINDOW_MS = 15 * 60_000;
-/** The engine version a score-ranked history record competes within: `wanted`
- *  when any scored row has it, else the version of the latest scored row (the
- *  fallback right after a version bump), else `wanted` (no scored rows). Mirrors
- *  the COALESCE in d1Store's HISTORY_RECORDS_UNION. "Latest" is a total order,
- *  the same as the SQL's: hour_utc DESC, snapshot_generated_at DESC,
- *  archived_at DESC, slug ASC. Beaches archived in one hourly run share
- *  hour_utc, so the tie-breaks keep the pick independent of Map order. */
-function isMoreRecent(a: BeachHourlyRow, b: BeachHourlyRow): boolean {
-  if (a.hour_utc !== b.hour_utc) return a.hour_utc > b.hour_utc;
-  if (a.snapshot_generated_at !== b.snapshot_generated_at) return a.snapshot_generated_at > b.snapshot_generated_at;
-  if (a.archived_at !== b.archived_at) return a.archived_at > b.archived_at;
-  return a.slug < b.slug;
-}
-
-function scoreRankingVersion(rows: BeachHourlyRow[], wanted: string): string {
-  let latest: BeachHourlyRow | null = null;
-  for (const r of rows) {
-    if (typeof r.score !== "number" || !Number.isFinite(r.score)) continue;
-    if (r.engine_version === wanted) return wanted;
-    if (!latest || isMoreRecent(r, latest)) latest = r;
-  }
-  return latest ? latest.engine_version : wanted;
-}
-
 const alertKey = (deviceId: string, key: string) => `${deviceId}${key}`;
 const comingUpKey = (deviceId: string, eventKey: string) => `${deviceId}|${eventKey}`;
 
@@ -879,16 +855,13 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
     },
 
     // Lifetime records — mirrors d1Store's UNION ALL: for each kind, the
-    // single row that wins (max for best/hottest_sand/biggest_surf, min for
+    // single row that wins (max for everything but quietest, min for
     // quietest), ties broken by the earliest hour_utc, same rule the SQL's
-    // own `ORDER BY value [ASC|DESC], hour_utc ASC LIMIT 1` encodes.
-    async historyRecords(slug: string, engineVersion: string): Promise<HistoryRecordsResult> {
+    // own `ORDER BY value [ASC|DESC], hour_utc ASC LIMIT 1` encodes. Every
+    // kind ranks across ALL engine versions: a bump resets nothing.
+    async historyRecords(slug: string): Promise<HistoryRecordsResult> {
       await load();
       const rowsForSlug = [...beachHourly.values()].filter((r) => r.slug === slug && r.row_kind === "snapshot");
-      // The 'best' score is a formula output, so it ranks within ONE version:
-      // `engineVersion` if any scored row has it, else the version of the
-      // latest scored row (right after a bump). Measurements ignore this.
-      const bestVersion = scoreRankingVersion(rowsForSlug, engineVersion);
 
       function pick(
         key: keyof BeachHourlyRow,
@@ -920,7 +893,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       }
 
       const records: HistoryRecordRow[] = [];
-      const best = pick("score", "max", (r) => r.engine_version === bestVersion);
+      const best = pick("score", "max");
       if (best) records.push({ kind: "best", ...best });
       const sand = pick("sand_temp_f", "max");
       if (sand) records.push({ kind: "hottest_sand", ...sand });
@@ -928,6 +901,10 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       if (surf) records.push({ kind: "biggest_surf", ...surf });
       const quiet = pick("crowd_pct", "min", (r) => r.local_hour >= 10 && r.local_hour <= 18);
       if (quiet) records.push({ kind: "quietest", ...quiet });
+      const water = pick("water_temp_f", "max");
+      if (water) records.push({ kind: "warmest_water", ...water });
+      const clear = pick("clarity_pct", "max");
+      if (clear) records.push({ kind: "clearest_water", ...clear });
 
       let archiveStartedAt: string | null = null;
       let surfSince: string | null = null;
@@ -941,37 +918,36 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       return { records, archiveStartedAt, dayCount: dates.size, surfSince };
     },
 
-    // "Best day ever" — mirrors d1Store's one statement: across every beach,
-    // snapshot rows with a score AND the ranking version (`engineVersion`, or
-    // the latest scored row's version when none has it yet), highest score
-    // wins, ties to the earliest hour_utc (same rule as `ORDER BY score DESC,
-    // hour_utc ASC LIMIT 1`).
-    async historyBestEver(engineVersion: string): Promise<HistoryBestEverRow | null> {
+    // Best sunrise / sunset color — mirrors d1Store's SUN_RECORDS_UNION: per
+    // event the LAST scored forecast made at or before the event (compared to
+    // the second), then per kind the highest score, ties to the earliest event.
+    async historySunRecords(slug: string): Promise<HistorySunRecordRow[]> {
       await load();
-      const scored = [...beachHourly.values()].filter(
-        (r) => r.row_kind === "snapshot" && typeof r.score === "number" && Number.isFinite(r.score),
-      );
-      const version = scoreRankingVersion(scored, engineVersion);
-      let winner: BeachHourlyRow | null = null;
-      for (const r of scored) {
-        if (r.engine_version !== version) continue;
-        if (
-          !winner ||
-          (r.score as number) > (winner.score as number) ||
-          (r.score === winner.score && r.hour_utc < winner.hour_utc)
-        ) {
-          winner = r;
-        }
+      const upToSecond = (t: string) => t.slice(0, 19);
+      const lastBeforeEvent = new Map<string, SunEventPredictionRow>();
+      for (const r of sunPredictions.values()) {
+        if (r.slug !== slug || typeof r.score !== "number" || !Number.isFinite(r.score)) continue;
+        if (upToSecond(r.snapshot_generated_at) > upToSecond(r.event_iso)) continue;
+        const key = `${r.event_kind}|${r.event_iso}`;
+        const prev = lastBeforeEvent.get(key);
+        if (!prev || r.snapshot_generated_at > prev.snapshot_generated_at) lastBeforeEvent.set(key, r);
       }
-      return winner
-        ? {
-            slug: winner.slug,
-            local_date: winner.local_date,
-            local_hour: winner.local_hour,
-            score: winner.score as number,
-            engine_version: winner.engine_version,
+      const out: HistorySunRecordRow[] = [];
+      for (const kind of ["sunrise", "sunset"] as const) {
+        let win: SunEventPredictionRow | null = null;
+        for (const r of lastBeforeEvent.values()) {
+          if (r.event_kind !== kind) continue;
+          if (
+            !win ||
+            (r.score as number) > (win.score as number) ||
+            (r.score === win.score && r.event_iso < win.event_iso)
+          ) {
+            win = r;
           }
-        : null;
+        }
+        if (win) out.push({ kind: `best_${kind}`, event_iso: win.event_iso, score: win.score as number, band: win.band });
+      }
+      return out;
     },
 
     // --- Beach Session Live Activity (migrations/0007_live_activities.sql) -
