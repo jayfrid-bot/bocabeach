@@ -1,5 +1,6 @@
 import type { Location, MetnoCurrent, Wrapped } from "@/lib/types";
-import { fetchJsonWithRetry, fetchedAtOf, nowIso, round } from "@/lib/util";
+import { fetchNowPoint, staleNote, type PointResult, type SplitNow } from "@/lib/sources/openMeteo";
+import { nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo — NOAA GFS model (open-meteo.com)";
 
@@ -36,36 +37,35 @@ export function parseGfsCurrent(json: OmCurrent): MetnoCurrent | null {
   return Object.keys(out).length ? out : null;
 }
 
-export async function fetchGfs(loc: Location): Promise<Wrapped<MetnoCurrent>> {
-  let fetchedAt = nowIso();
-  const url =
-    `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
-    `&current=temperature_2m,relative_humidity_2m,dew_point_2m,wind_speed_10m,` +
-    `wind_direction_10m,cloud_cover` +
-    `&temperature_unit=fahrenheit&wind_speed_unit=mph&models=gfs_seamless`;
-  try {
-    const { json, res } = await fetchJsonWithRetry<OmCurrent>(url, {
-      timeoutMs: 7000,
-      next: { revalidate: 1800 }, // 30m
-    });
-    fetchedAt = fetchedAtOf(res);
-    const data = parseGfsCurrent(json);
-    return {
-      source: "NOAA GFS (via Open-Meteo)",
-      status: data ? "ok" : "error",
-      fetchedAt,
-      attribution: ATTRIBUTION,
-      data,
-      note: data ? undefined : "no GFS current conditions returned",
-    };
-  } catch (e) {
+/**
+ * GFS "current" for a beach, from the shared call B (lib/sources/openMeteo.ts:
+ * `models=best_match,gfs_seamless`; GFS current = the gfs_seamless 15-minute
+ * slot at current.time, the same numbers the old `models=gfs_seamless&current=`
+ * call returned). A failed call falls back to the last good copy (up to 3 h,
+ * "stale"), read for the 15-minute slot of now.
+ */
+export async function fetchGfs(
+  loc: Location,
+  point?: Promise<PointResult<SplitNow>>,
+): Promise<Wrapped<MetnoCurrent>> {
+  const p = await (point ?? fetchNowPoint(loc));
+  if (!p.ok) {
     return {
       source: "NOAA GFS (via Open-Meteo)",
       status: "error",
-      fetchedAt,
+      fetchedAt: nowIso(),
       attribution: ATTRIBUTION,
       data: null,
-      note: String(e),
+      note: p.error,
     };
   }
+  const data = p.split.gfs ? parseGfsCurrent(p.split.gfs as OmCurrent) : null;
+  return {
+    source: "NOAA GFS (via Open-Meteo)",
+    status: !data ? "error" : p.stale ? "stale" : "ok",
+    fetchedAt: p.fetchedAt,
+    attribution: ATTRIBUTION,
+    data,
+    note: !data ? "no GFS current conditions returned" : p.stale ? staleNote(p.stale) : undefined,
+  };
 }

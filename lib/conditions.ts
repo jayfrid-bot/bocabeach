@@ -16,6 +16,7 @@ import { fetchGoesCloud } from "@/lib/sources/goesCloud";
 import { fetchPrecipRadar } from "@/lib/sources/precipRadar";
 import { fetchGfs } from "@/lib/sources/modelEnsemble";
 import { fetchNowcast } from "@/lib/sources/nowcast";
+import { fetchForecastPoint, fetchNowPoint } from "@/lib/sources/openMeteo";
 import { fetchNws } from "@/lib/sources/nws";
 import { fetchSargassum } from "@/lib/sources/sargassum";
 import { loadSeaweedOverrides, overridesFingerprint } from "@/lib/quality/overrides";
@@ -176,6 +177,13 @@ export async function getSnapshotForLocation(
   // shoreline orientation — only then do we bother iNaturalist for sightings.
   const atlanticOriented = loc.coast === "atlantic" && typeof loc.coastNormalDeg === "number";
 
+  // Open-Meteo limits concurrent calls per IP, so this build makes TWO calls to
+  // its /v1/forecast for the beach, not five (lib/sources/openMeteo.ts):
+  // A = hourly + 7-day, B = nowcast + current UV + GFS. Each promise is shared
+  // by the sources that read it. Neither ever rejects.
+  const omForecast = fetchForecastPoint(loc);
+  const omNow = fetchNowPoint(loc);
+
   const [
     tides,
     buoy,
@@ -203,14 +211,14 @@ export async function getSnapshotForLocation(
     fetchTides(loc),
     fetchBuoy(loc),
     fetchWeather(loc),
-    fetchMarine(loc),
+    fetchMarine(loc, omNow),
     fetchCityOfficial(loc),
     fetchWaterQuality(loc),
-    fetchNowcast(loc),
+    fetchNowcast(loc, omNow),
     fetchNws(loc),
     fetchAirQuality(loc),
     fetchMetno(loc),
-    fetchGfs(loc),
+    fetchGfs(loc, omNow),
     fetchLightning(loc),
     fetchGoesCloud(loc),
     fetchPrecipRadar(loc),
@@ -219,8 +227,8 @@ export async function getSnapshotForLocation(
     fetchBusyness(loc),
     fetchClarity(loc),
     fetchTraffic(loc),
-    fetchForecast(loc),
-    fetchHourlyForecast(loc),
+    fetchForecast(loc, omForecast),
+    fetchHourlyForecast(loc, omForecast),
     // Fail-soft: fetchStingerSightings already returns null on any failure, but
     // guard the promise too so nothing here can reject the Promise.all.
     atlanticOriented

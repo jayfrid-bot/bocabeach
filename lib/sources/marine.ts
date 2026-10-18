@@ -1,5 +1,15 @@
 import type { Location, MarineData, Wrapped } from "@/lib/types";
-import { cToF, fetchJsonWithRetry, fetchedAtOf, mToFt, nowIso, oldestIso, round } from "@/lib/util";
+import {
+  fetchNowPoint,
+  fetchOpenMeteoJson,
+  MAX_AGE_MS,
+  openMeteoUrl,
+  staleNote,
+  type OpenMeteoStale,
+  type PointResult,
+  type SplitNow,
+} from "@/lib/sources/openMeteo";
+import { cToF, mToFt, oldestIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo (open-meteo.com) — marine & weather models";
 
@@ -13,27 +23,6 @@ interface MarineHourly {
   swell_wave_height?: NumArr;
   swell_wave_period?: NumArr;
   swell_wave_direction?: NumArr;
-}
-
-async function getMarine(
-  url: string,
-  revalidate: number,
-): Promise<{ current: Current | null; hourly: MarineHourly | null; at: string }> {
-  const { json, res } = await fetchJsonWithRetry<{ current?: Current; hourly?: MarineHourly }>(
-    url,
-    { next: { revalidate } },
-  );
-  return { current: json.current ?? null, hourly: json.hourly ?? null, at: fetchedAtOf(res) };
-}
-
-async function getCurrent(
-  url: string,
-  revalidate: number,
-): Promise<{ current: Current | null; at: string }> {
-  const { json, res } = await fetchJsonWithRetry<{ current?: Current }>(url, {
-    next: { revalidate },
-  });
-  return { current: json.current ?? null, at: fetchedAtOf(res) };
 }
 
 /**
@@ -82,77 +71,86 @@ export function parseMarineHourly(
   return out.length ? out : undefined;
 }
 
-export async function fetchMarine(loc: Location): Promise<Wrapped<MarineData>> {
-  let fetchedAt = nowIso();
-  const marineUrl =
-    `https://marine-api.open-meteo.com/v1/marine?latitude=${loc.lat}&longitude=${loc.lon}` +
-    `&current=wave_height,wave_direction,wave_period,swell_wave_height,swell_wave_period,` +
-    `swell_wave_direction,sea_surface_temperature` +
-    // Hourly waves feed the hourly rip-current risk curve (lib/ripRiskCurve.ts).
-    // `wave_direction` (+ its swell fallback) drives that curve's shore-incidence
-    // multiplier — square-on swell makes rips, oblique swell makes longshore drift.
-    `&hourly=wave_height,wave_period,wave_direction,swell_wave_height,swell_wave_period,` +
-    `swell_wave_direction&forecast_days=7`;
-  const uvUrl =
-    `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
-    `&current=uv_index,cloud_cover`;
+/**
+ * Waves, swell and sea temperature from Open-Meteo Marine, plus the current UV
+ * and cloud cover from the shared call B (lib/sources/openMeteo.ts; the same
+ * best-match numbers the old separate `current=uv_index,cloud_cover` call
+ * returned). Either part falls back to its last good copy (up to 3 h); the
+ * source is then "stale" and fetchedAt is the oldest part's time.
+ */
+export async function fetchMarine(
+  loc: Location,
+  point?: Promise<PointResult<SplitNow>>,
+): Promise<Wrapped<MarineData>> {
+  const marineUrl = openMeteoUrl(
+    "marine-api",
+    `/v1/marine?latitude=${loc.lat}&longitude=${loc.lon}` +
+      `&current=wave_height,wave_direction,wave_period,swell_wave_height,swell_wave_period,` +
+      `swell_wave_direction,sea_surface_temperature` +
+      // Hourly waves feed the hourly rip-current risk curve (lib/ripRiskCurve.ts).
+      // `wave_direction` (+ its swell fallback) drives that curve's shore-incidence
+      // multiplier — square-on swell makes rips, oblique swell makes longshore drift.
+      `&hourly=wave_height,wave_period,wave_direction,swell_wave_height,swell_wave_period,` +
+      `swell_wave_direction&forecast_days=7`,
+  );
 
-  try {
-    const [marineRes, uvRes] = await Promise.allSettled([
-      getMarine(marineUrl, 3600),
-      getCurrent(uvUrl, 3600),
-    ]);
+  const [marineRes, uvRes] = await Promise.all([
+    fetchOpenMeteoJson<{ current?: Current; hourly?: MarineHourly }>(marineUrl, {
+      storeKey: `marine:${loc.lat},${loc.lon}`,
+      maxAgeMs: MAX_AGE_MS.marine,
+      revalidate: 3600,
+    }),
+    point ?? fetchNowPoint(loc),
+  ]);
+  // The UV part has its own 3 h limit (the shared copy may be kept for other uses).
+  const uvOk = uvRes.ok && (uvRes.stale == null || uvRes.stale.ageMs <= MAX_AGE_MS.marine);
 
-    fetchedAt = oldestIso(
-      marineRes.status === "fulfilled" ? marineRes.value.at : undefined,
-      uvRes.status === "fulfilled" ? uvRes.value.at : undefined,
-    );
+  const fetchedAt = oldestIso(
+    marineRes.ok ? marineRes.fetchedAt : undefined,
+    uvOk && uvRes.ok ? uvRes.fetchedAt : undefined,
+  );
 
-    const data: MarineData = {};
-    if (marineRes.status === "fulfilled" && marineRes.value.current) {
-      const m = marineRes.value.current;
-      const n = (k: string): number | undefined =>
-        typeof m[k] === "number" ? (m[k] as number) : undefined;
-      const waveM = n("wave_height");
-      const swellM = n("swell_wave_height");
-      const sstC = n("sea_surface_temperature");
-      if (waveM !== undefined) data.waveHeightFt = round(mToFt(waveM), 1);
-      if (n("wave_direction") !== undefined) data.waveDirDeg = n("wave_direction");
-      if (n("wave_period") !== undefined) data.wavePeriodS = round(n("wave_period") as number, 1);
-      if (swellM !== undefined) data.swellHeightFt = round(mToFt(swellM), 1);
-      if (n("swell_wave_period") !== undefined)
-        data.swellPeriodS = round(n("swell_wave_period") as number, 1);
-      if (n("swell_wave_direction") !== undefined)
-        data.swellDirDeg = n("swell_wave_direction");
-      if (sstC !== undefined) data.seaSurfaceTempF = round(cToF(sstC));
-    }
-    if (marineRes.status === "fulfilled" && marineRes.value.hourly) {
-      const hourlyWaves = parseMarineHourly(marineRes.value.hourly);
-      if (hourlyWaves) data.hourlyWaves = hourlyWaves;
-    }
-    if (uvRes.status === "fulfilled" && uvRes.value.current) {
-      const uv = uvRes.value.current["uv_index"];
-      if (typeof uv === "number") data.uvIndex = round(uv, 1);
-      const cloud = uvRes.value.current["cloud_cover"];
-      if (typeof cloud === "number") data.cloudCoverPct = round(cloud);
-    }
-
-    const hasAny = Object.keys(data).length > 0;
-    return {
-      source: "Open-Meteo Marine",
-      status: hasAny ? "ok" : "error",
-      fetchedAt,
-      attribution: ATTRIBUTION,
-      data: hasAny ? data : null,
-    };
-  } catch (e) {
-    return {
-      source: "Open-Meteo Marine",
-      status: "error",
-      fetchedAt,
-      attribution: ATTRIBUTION,
-      data: null,
-      note: String(e),
-    };
+  const data: MarineData = {};
+  const marineCurrent = marineRes.ok ? (marineRes.json.current ?? null) : null;
+  if (marineCurrent) {
+    const m = marineCurrent;
+    const n = (k: string): number | undefined =>
+      typeof m[k] === "number" ? (m[k] as number) : undefined;
+    const waveM = n("wave_height");
+    const swellM = n("swell_wave_height");
+    const sstC = n("sea_surface_temperature");
+    if (waveM !== undefined) data.waveHeightFt = round(mToFt(waveM), 1);
+    if (n("wave_direction") !== undefined) data.waveDirDeg = n("wave_direction");
+    if (n("wave_period") !== undefined) data.wavePeriodS = round(n("wave_period") as number, 1);
+    if (swellM !== undefined) data.swellHeightFt = round(mToFt(swellM), 1);
+    if (n("swell_wave_period") !== undefined)
+      data.swellPeriodS = round(n("swell_wave_period") as number, 1);
+    if (n("swell_wave_direction") !== undefined)
+      data.swellDirDeg = n("swell_wave_direction");
+    if (sstC !== undefined) data.seaSurfaceTempF = round(cToF(sstC));
   }
+  if (marineRes.ok && marineRes.json.hourly) {
+    const hourlyWaves = parseMarineHourly(marineRes.json.hourly);
+    if (hourlyWaves) data.hourlyWaves = hourlyWaves;
+  }
+  if (uvOk && uvRes.ok && uvRes.split.current) {
+    const uv = uvRes.split.current.uv_index;
+    if (typeof uv === "number") data.uvIndex = round(uv, 1);
+    const cloud = uvRes.split.current.cloud_cover;
+    if (typeof cloud === "number") data.cloudCoverPct = round(cloud);
+  }
+
+  const hasAny = Object.keys(data).length > 0;
+  const stale = [marineRes.ok ? marineRes.stale : undefined, uvOk && uvRes.ok ? uvRes.stale : undefined]
+    .filter((x): x is OpenMeteoStale => x != null)
+    .sort((x, y) => y.ageMs - x.ageMs)[0];
+  const errors = [marineRes.ok ? null : marineRes.error, uvRes.ok ? null : uvRes.error].filter(Boolean);
+  return {
+    source: "Open-Meteo Marine",
+    status: !hasAny ? "error" : stale ? "stale" : "ok",
+    fetchedAt,
+    attribution: ATTRIBUTION,
+    data: hasAny ? data : null,
+    note: !hasAny ? errors.join("; ") || undefined : stale ? staleNote(stale) : undefined,
+  };
 }

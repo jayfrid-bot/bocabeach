@@ -5,7 +5,7 @@
 // thin async fetcher (geocodeName). The fetcher never throws — on any error it
 // returns an empty list, the typed "no results" value for a geocoder.
 
-import { fetchWithTimeout } from "@/lib/util";
+import { openMeteoFetch, openMeteoUrl } from "@/lib/sources/openMeteo";
 import type { GeoPoint } from "./types";
 
 const USER_AGENT = "isitbeachday.com (hello@isitbeachday.com)";
@@ -140,10 +140,11 @@ export function parseGeocode(json: unknown): GeoPoint[] {
  */
 export async function geocodeName(query: string, count = 5): Promise<GeoPoint[]> {
   try {
-    const url =
-      `https://geocoding-api.open-meteo.com/v1/search` +
-      `?name=${encodeURIComponent(query)}&count=${count}&country_code=US`;
-    const res = await fetchWithTimeout(url, {
+    const url = openMeteoUrl(
+      "geocoding-api",
+      `/v1/search?name=${encodeURIComponent(query)}&count=${count}&country_code=US`,
+    );
+    const res = await openMeteoFetch(url, {
       timeoutMs: 7000,
       headers: { "User-Agent": process.env.CONDITIONS_USER_AGENT ?? USER_AGENT },
       next: { revalidate: 86400 }, // 1d — place coordinates are effectively static

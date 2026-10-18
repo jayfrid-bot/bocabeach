@@ -1,6 +1,12 @@
 import type { ForecastDay, Location, Wrapped } from "@/lib/types";
 import { wmoText } from "@/lib/sources/spotWeather";
-import { fetchJsonWithRetry, fetchedAtOf, nowIso, round } from "@/lib/util";
+import {
+  fetchForecastPoint,
+  staleNote,
+  type PointResult,
+  type SplitForecast,
+} from "@/lib/sources/openMeteo";
+import { nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo (open-meteo.com)";
 
@@ -74,38 +80,33 @@ export function parseOpenMeteoDaily(json: OpenMeteoDaily): ForecastDay[] | null 
   return out.length ? out : null;
 }
 
+/**
+ * The 7-day outlook. Its numbers come from the shared call A
+ * (lib/sources/openMeteo.ts: hourly + daily in one request, 7 local days from
+ * today). A failed call falls back to the last good copy (up to 3 h, "stale").
+ */
 export async function fetchForecast(
   loc: Location,
+  point?: Promise<PointResult<SplitForecast>>,
 ): Promise<Wrapped<ForecastDay[]>> {
-  let fetchedAt = nowIso();
-  const url =
-    `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
-    `&daily=temperature_2m_max,temperature_2m_min,precipitation_probability_max,` +
-    `weathercode,wind_speed_10m_max` +
-    `&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto&forecast_days=7`;
-  try {
-    const { json, res } = await fetchJsonWithRetry<OpenMeteoDaily>(url, {
-      timeoutMs: 7000,
-      next: { revalidate: 3600 }, // 1h
-    });
-    fetchedAt = fetchedAtOf(res);
-    const data = parseOpenMeteoDaily(json);
-    return {
-      source: "Open-Meteo (7-day)",
-      status: data ? "ok" : "error",
-      fetchedAt,
-      attribution: ATTRIBUTION,
-      data,
-      note: data ? undefined : "no daily forecast returned",
-    };
-  } catch (e) {
+  const p = await (point ?? fetchForecastPoint(loc));
+  if (!p.ok) {
     return {
       source: "Open-Meteo (7-day)",
       status: "error",
-      fetchedAt,
+      fetchedAt: nowIso(),
       attribution: ATTRIBUTION,
       data: null,
-      note: String(e),
+      note: p.error,
     };
   }
+  const data = parseOpenMeteoDaily(p.split.daily as OpenMeteoDaily);
+  return {
+    source: "Open-Meteo (7-day)",
+    status: !data ? "error" : p.stale ? "stale" : "ok",
+    fetchedAt: p.fetchedAt,
+    attribution: ATTRIBUTION,
+    data,
+    note: !data ? "no daily forecast returned" : p.stale ? staleNote(p.stale) : undefined,
+  };
 }

@@ -1,7 +1,16 @@
 import type { HourlyMetrics, Location, Wrapped } from "@/lib/types";
 import { wmoEmoji } from "@/lib/sources/forecast";
 import { wmoText } from "@/lib/sources/spotWeather";
-import { fetchJsonWithRetry, fetchedAtOf, nowIso, round } from "@/lib/util";
+import {
+  fetchForecastPoint,
+  fetchOpenMeteoJson,
+  MAX_AGE_MS,
+  openMeteoUrl,
+  staleNote,
+  type PointResult,
+  type SplitForecast,
+} from "@/lib/sources/openMeteo";
+import { nowIso, round } from "@/lib/util";
 
 const ATTRIBUTION = "Open-Meteo (open-meteo.com)";
 
@@ -126,70 +135,62 @@ export function overlaySatelliteRadiation(
   return hours;
 }
 
+/**
+ * Hourly forecast for a beach. The hourly numbers come from the shared call A
+ * (lib/sources/openMeteo.ts: hourly + daily in one request; lib/conditions.ts
+ * passes the same promise to fetchForecast). GOES satellite-observed radiation
+ * is a separate best-effort call that overlays elapsed hours.
+ *
+ * Window (set in openMeteo.ts, unchanged from the old call): 2 GMT days back
+ * (the man-o'-war advisory needs >=24 h of trailing wind) and 7 GMT days on,
+ * which MUST match the daily FORECAST_DAYS so every outlook tile has hours to
+ * score (2026-07-17 bug). Times are GMT, pinned to UTC by the parser.
+ *
+ * When Open-Meteo fails (a 429, say), the last good copy (up to 3 h old) is
+ * served with status "stale", so UV and sand temperature keep working.
+ */
 export async function fetchHourlyForecast(
   loc: Location,
+  point?: Promise<PointResult<SplitForecast>>,
 ): Promise<Wrapped<HourlyMetrics[]>> {
-  let fetchedAt = nowIso();
-  // No `timezone=auto`: times come back in GMT, which we pin to UTC in the parser
-  // so they line up with the (UTC) sun times and `fmtTime`.
-  // `past_days=1` so the window always spans the beach's LOCAL day even in the
-  // evening (US is behind UTC, so the local morning falls in the previous GMT
-  // day). `forecast_days=7` MUST match forecast.ts's daily `forecast_days=7`:
-  // the outlook strip renders one tile per DAILY day, but each tile's score +
-  // best window come from these HOURLY hours. At 6 the last daily tile had no
-  // hours to score, so it fell through to a null window and the strip claimed
-  // "no good window" for a day we had simply never looked at. Keep these two in
-  // step. Today's hourly chart still shows only today — its daylight filter
-  // (today's sunrise/sunset) drops the extra days.
-  const url =
-    `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}` +
-    `&hourly=temperature_2m,cloud_cover,cloud_cover_low,cloud_cover_mid,cloud_cover_high,` +
-    `precipitation_probability,weather_code,` +
-    `wind_speed_10m,wind_direction_10m,uv_index,uv_index_clear_sky,relative_humidity_2m,dew_point_2m,` +
-    `soil_temperature_0cm,shortwave_radiation,precipitation` +
-    `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch` +
-    // `past_days=2` (was 1) gives the marine-stinger man-o'-war advisory a safe
-    // >=24h trailing-wind margin regardless of local time-of-day; cloud_cover_low/
-    // mid/high feed the sunrise/sunset color score's color-canvas model.
-    `&past_days=2&forecast_days=7`; // keep in step with forecast.ts's daily forecast_days
   // GOES satellite-observed radiation for elapsed hours (best effort; the
   // forecast model's values stand wherever this is missing or fails).
-  const satUrl =
-    `https://satellite-api.open-meteo.com/v1/archive?latitude=${loc.lat}` +
-    `&longitude=${loc.lon}&hourly=shortwave_radiation&past_days=1&forecast_days=1`;
-  try {
-    const [res, satRes] = await Promise.allSettled([
-      fetchJsonWithRetry<OpenMeteoHourly>(url, { timeoutMs: 7000, next: { revalidate: 3600 } }), // 1h
-      fetchJsonWithRetry<{ hourly?: { time?: string[]; shortwave_radiation?: (number | null)[] } }>(
-        satUrl,
-        { timeoutMs: 7000, next: { revalidate: 1800 } }, // 30m
-      ),
-    ]);
-    if (res.status === "rejected") throw res.reason;
-    fetchedAt = fetchedAtOf(res.value.res);
-    const data = parseOpenMeteoHourly(res.value.json);
-
-    let satOk = false;
-    if (data && satRes.status === "fulfilled" && satRes.value.json.hourly) {
-      overlaySatelliteRadiation(data, satRes.value.json.hourly, Date.now());
-      satOk = true;
-    }
-    return {
-      source: satOk ? "Open-Meteo (hourly + GOES radiation)" : "Open-Meteo (hourly)",
-      status: data ? "ok" : "error",
-      fetchedAt,
-      attribution: ATTRIBUTION,
-      data,
-      note: data ? undefined : "no hourly forecast returned",
-    };
-  } catch (e) {
+  const satUrl = openMeteoUrl(
+    "satellite-api",
+    `/v1/archive?latitude=${loc.lat}&longitude=${loc.lon}` +
+      `&hourly=shortwave_radiation&past_days=1&forecast_days=1`,
+  );
+  const [p, sat] = await Promise.all([
+    point ?? fetchForecastPoint(loc),
+    fetchOpenMeteoJson<{ hourly?: { time?: string[]; shortwave_radiation?: (number | null)[] } }>(satUrl, {
+      storeKey: `satellite:${loc.lat},${loc.lon}`,
+      maxAgeMs: MAX_AGE_MS.satellite,
+      timeoutMs: 7000,
+      revalidate: 1800, // 30m
+    }),
+  ]);
+  if (!p.ok) {
     return {
       source: "Open-Meteo (hourly)",
       status: "error",
-      fetchedAt,
+      fetchedAt: nowIso(),
       attribution: ATTRIBUTION,
       data: null,
-      note: String(e),
+      note: p.error,
     };
   }
+  const data = parseOpenMeteoHourly(p.split.hourly as OpenMeteoHourly);
+  let satOk = false;
+  if (data && sat.ok && sat.json.hourly) {
+    overlaySatelliteRadiation(data, sat.json.hourly, Date.now());
+    satOk = true;
+  }
+  return {
+    source: satOk ? "Open-Meteo (hourly + GOES radiation)" : "Open-Meteo (hourly)",
+    status: !data ? "error" : p.stale ? "stale" : "ok",
+    fetchedAt: p.fetchedAt,
+    attribution: ATTRIBUTION,
+    data,
+    note: !data ? "no hourly forecast returned" : p.stale ? staleNote(p.stale) : undefined,
+  };
 }

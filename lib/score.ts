@@ -427,6 +427,15 @@ function metricSource(
   return undefined;
 }
 
+/** True when `nowMs` is before today's sunrise or at/after today's sunset.
+ *  False when either time is unknown (never guess night). */
+function sunIsDown(sun: { sunrise?: string; sunset?: string } | null | undefined, nowMs: number): boolean {
+  const rise = sun?.sunrise ? Date.parse(sun.sunrise) : NaN;
+  const set = sun?.sunset ? Date.parse(sun.sunset) : NaN;
+  if (!Number.isFinite(rise) || !Number.isFinite(set)) return false;
+  return nowMs < rise || nowMs >= set;
+}
+
 // `nowMs` only feeds the sand model's "current hour" pick. Callers that already
 // hold a clock (the hourly/personal scorers, SSR vs hydration) pass it in so the
 // same snapshot scores the same way regardless of wall time; the default keeps
@@ -490,6 +499,10 @@ export function deriveMetrics(s: ConditionsSnapshot, nowMs: number = Date.now())
     const satUv = round(om.uvClearSkyIndex * transmission, 1);
     uvIndex = uvForecast != null ? Math.min(uvForecast, satUv) : satUv;
   }
+  // Between sunset and sunrise the UV index is 0 whatever the feeds say, so a
+  // night with no forecast (Open-Meteo down, no last-good copy) reads UV 0,
+  // not "no UV index". The sun times are computed locally (lib/sources/sun.ts).
+  if (uvIndex == null && sunIsDown(s.sun?.data, nowMs)) uvIndex = 0;
   const nowcastSaysRain = s.nowcast.data?.state === "raining";
   const rainishCode =
     om?.weatherCode != null &&
