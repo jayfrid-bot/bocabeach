@@ -291,7 +291,7 @@ describe("sun forecast window", () => {
       state: "pending",
       availableAt: "2026-09-04T22:36:55.497Z",
       eventAt: "2026-09-04T23:36:55.497Z",
-      text: "Sunset color forecast ready at 6:36 PM",
+      text: "Sunset forecast ready at 6:36 PM",
     });
     expect(JSON.stringify(v)).not.toMatch(/"sun(Score|Color)|color ·|\/100/);
   });
@@ -304,7 +304,7 @@ describe("sun forecast window", () => {
 
   it("rolls to tomorrow's sunrise once the sunset has passed", () => {
     const v = buildWatchView(res(), Date.parse("2026-09-05T00:30:00.000Z"));
-    expect(v.sunForecast).toMatchObject({ kind: "sunrise", state: "pending", text: "Sunrise color forecast ready at 6:01 AM" });
+    expect(v.sunForecast).toMatchObject({ kind: "sunrise", state: "pending", text: "Sunrise forecast ready at 6:01 AM" });
   });
 
   it("is null when the beach has no sun times", () => {

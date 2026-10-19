@@ -395,7 +395,7 @@ describe("shareCardModel", () => {
         key: "sun",
         label: "Sunset tonight",
         value: "7:30 PM",
-        note: "Color forecast ready at 6:30 PM",
+        note: "Forecast ready at 6:30 PM",
       });
       const note = m.tiles.find((t) => t.key === "sun")?.note ?? "";
       expect(note).not.toMatch(/\/100|color|Poor|Fair|Good|Great|Amazing|\d{2}\/|\bAI\b/);
@@ -403,7 +403,7 @@ describe("shareCardModel", () => {
 
     it("says it even with no hourly forecast yet: the line is about timing, not data", () => {
       const m = shareCardModel(response({ sun: wrap({ sunset: SUNSET }) as ConditionsSnapshot["sun"] }), NOW_MS);
-      expect(m.tiles.find((t) => t.key === "sun")).toMatchObject({ note: "Color forecast ready at 6:30 PM" });
+      expect(m.tiles.find((t) => t.key === "sun")).toMatchObject({ note: "Forecast ready at 6:30 PM" });
     });
 
     it("inside the window, adds the sunset color score and word as the tile's note", () => {
@@ -420,7 +420,7 @@ describe("shareCardModel", () => {
 
     it("the score appears at the exact minute the window opens, not before", () => {
       const res = response({ sun: wrap({ sunset: SUNSET }) as ConditionsSnapshot["sun"], hourly: hourly() });
-      expect(shareCardModel(res, WINDOW_OPEN_MS - 1).tiles.find((t) => t.key === "sun")?.note).toBe("Color forecast ready at 6:30 PM");
+      expect(shareCardModel(res, WINDOW_OPEN_MS - 1).tiles.find((t) => t.key === "sun")?.note).toBe("Forecast ready at 6:30 PM");
       expect(shareCardModel(res, WINDOW_OPEN_MS).tiles.find((t) => t.key === "sun")?.note).toMatch(/ color · \d{1,3}\/100$/);
     });
 
@@ -438,7 +438,7 @@ describe("shareCardModel", () => {
         NOW_MS,
       );
       const tile = m.tiles.find((t) => t.key === "sun");
-      expect(tile).toMatchObject({ label: "Sunrise tomorrow", value: "6:55 AM", note: "Color forecast ready at 5:55 AM" });
+      expect(tile).toMatchObject({ label: "Sunrise tomorrow", value: "6:55 AM", note: "Forecast ready at 5:55 AM" });
     });
 
     it("a sunrise inside its window carries ITS color forecast", () => {

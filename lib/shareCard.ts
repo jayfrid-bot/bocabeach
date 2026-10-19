@@ -466,7 +466,7 @@ function sunTileChangeAt(eventMs: number, nowMs: number): number {
 /** The tile's small line for one sunrise/sunset.
  *
  *  - Before the forecast window opens (60 minutes ahead of the event): no
- *    score at all, only when it will be ready: "Color forecast ready at 5:52 PM".
+ *    score at all, only when it will be ready: "Forecast ready at 5:52 PM" (the tile label names the event).
  *    The score must never look like a prediction before we can see the sky.
  *  - Inside the window: the sky-color forecast, "Good color · 78/100". The word
  *    says what kind of rating it is (the colors of the sky), so a bare "78 Good"

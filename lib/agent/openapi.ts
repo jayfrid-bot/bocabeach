@@ -65,9 +65,9 @@ const schemas: Record<string, JsonSchema> = {
     properties: {
       kind: { type: "string", enum: ["sunrise", "sunset"] },
       state: { type: "string", enum: ["pending", "available"], description: "pending until 60 minutes before the event, then available." },
-      availableAt: { type: "string", description: "When the color forecast opens (ISO 8601)." },
+      availableAt: { type: "string", description: "When the sunrise or sunset forecast is ready (ISO 8601)." },
       eventAt: { type: "string", description: "The sunrise or sunset itself (ISO 8601)." },
-      text: { ...nullable("string"), description: 'While pending, e.g. "Sunset color forecast ready at 5:52 PM" (beach-local time). Null once available.' },
+      text: { ...nullable("string"), description: 'While pending, e.g. "Sunset forecast ready at 5:52 PM" (beach-local time). Null once available.' },
     },
   },
   BeachConditions: {

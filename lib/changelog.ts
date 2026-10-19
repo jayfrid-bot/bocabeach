@@ -20,7 +20,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     date: "2026-10-18",
     title: "Clearer sunrise and sunset forecast times",
     details:
-      "Before the color forecast is out, the card now says when it will be ready, for example \"Color forecast ready at 5:52 PM\", and that this is 1 hour before sunset. It used to read \"Sunset forecast at 5:52 PM\", which looked like the time of the sunset.",
+      "Before the sunset or sunrise forecast is out, the card now says when it will be ready, for example \"Sunset forecast ready at 5:52 PM\", and that this is 1 hour before sunset. It used to read \"Sunset forecast at 5:52 PM\", which looked like the time of the sunset.",
     tag: "improved",
   },
   {

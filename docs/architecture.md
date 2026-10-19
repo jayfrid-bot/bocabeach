@@ -768,7 +768,7 @@ flowchart TD
   %% coalescing with the digest or "turned Excellent": its own short
   %% lead-time window, not the 8 AM run those two share).
   PIPE2 -.->|"same res already fetched<br/>for the digest/Excellent check, no extra call"| SUNCOLOR["lib/alerts/sunColor.ts<br/>sunColorDecision over lib/sunAlert.ts's predictNextSunEvent:<br/>score &ge; device's cutoff (Great 70 / Amazing 90) AND<br/>now in [event&minus;lead, event&minus;lead+10min), lead capped at 60 min,<br/>AND the forecast window is open (event &le;60 min away).<br/>Behind SUN_ALERTS_ENABLED (default OFF): the route never selects,<br/>fetches for, evaluates or logs this alert while it is off"]
-  SUNWIN["lib/sunForecastWindow.ts<br/>the sunrise/sunset color score exists only from event&minus;60 min;<br/>before that every surface says 'Sunset color forecast ready at 5:52 PM' and shows no number"]
+  SUNWIN["lib/sunForecastWindow.ts<br/>the sunrise/sunset color score exists only from event&minus;60 min;<br/>before that every surface says 'Sunset forecast ready at 5:52 PM' and shows no number"]
   SUNWIN -->|"window gate + 60-min lead cap"| SUNCOLOR
   SUNWIN -.->|"same gate: sun card, share card tile (lib/shareCard.ts),<br/>watch view + agent payloads (sunForecast field, never a score),<br/>Plus day view (still-to-come events only; past events keep their archived score)"| SUNSURF["user-facing sun surfaces"]
   SUNCOLOR --> CLAIM

@@ -25,7 +25,7 @@ import { FlipCard, NerdBack } from "@/components/FlipCard";
 import { assembleSunEventQuality } from "@/lib/sunAlert";
 import {
   SUN_FORECAST_WINDOW_MINUTES,
-  sunForecastPendingShort, sunForecastPendingText, sunForecastPendingWhy,
+  sunForecastPendingText, sunForecastPendingWhy,
   sunForecastWindow,
   type SunForecastWindow,
 } from "@/lib/sunForecastWindow";
@@ -111,7 +111,7 @@ function buildSunQualityNerdInfo(args: {
   result: SunEventQuality;
   peakLine: string | null;
   goldenLine: string;
-  /** "Color forecast ready at 5:52 PM" (card) or "Sunset color forecast ready at 5:52 PM" while the forecast window is closed (the
+  /** "Sunset forecast ready at 5:52 PM" while the forecast window is closed (the
    *  color number is withheld everywhere, back included); null once open. */
   pendingText: string | null;
 }): NerdInfo {
@@ -125,7 +125,7 @@ function buildSunQualityNerdInfo(args: {
   const computation: string[] = pendingText
     ? [
         pendingText,
-        `The color forecast opens ${SUN_FORECAST_WINDOW_MINUTES} minutes before the ${event}. Until then any number would be a guess.`,
+        `The ${event} forecast is ready ${SUN_FORECAST_WINDOW_MINUTES} minutes before the ${event}. Until then any number would be a guess.`,
         goldenLine,
       ]
     : result.score == null
@@ -389,8 +389,7 @@ export function SunForecastPendingHeadline({
   eventIso?: string;
   tz: string;
 }) {
-  // The card title already says sunrise or sunset, so the headline is the short form.
-  const text = sunForecastPendingShort(availableAtIso, tz);
+  const text = sunForecastPendingText(kind, availableAtIso, tz);
   return (
     <div className="mt-1">
       <span className="block text-base font-semibold leading-tight text-slate-700 dark:text-slate-200">{text}</span>
