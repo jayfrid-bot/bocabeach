@@ -19,7 +19,7 @@ const view = (over: Partial<WatchView> = {}): WatchView => ({
     state: "pending",
     availableAt: "2026-10-14T21:52:00.000Z",
     eventAt: "2026-10-14T22:52:00.000Z",
-    text: "Sunset forecast at 5:52 PM",
+    text: "Sunset color forecast ready at 5:52 PM",
   },
   generatedAt: "2026-10-14T14:59:00.000Z",
   capturedAt: "2026-10-14T15:00:00.000Z",

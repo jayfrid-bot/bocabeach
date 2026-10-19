@@ -78,17 +78,17 @@ describe("forecast window on the card (no score before an hour out)", () => {
       }),
     );
 
-  it("pending headline: 'Sunset forecast at 5:30 PM', no number, no band word, no /100", () => {
+  it("pending headline: 'Color forecast ready at 5:30 PM', no number, no band word, no /100", () => {
     const out = renderToStaticMarkup(
       createElement(SunForecastPendingHeadline, { kind: "sunset", availableAtIso: "2026-10-15T21:30:00.000Z", tz: "America/New_York" }),
     );
-    expect(out).toContain("Sunset forecast at 5:30 PM");
+    expect(out).toContain("Color forecast ready at 5:30 PM");
     expect(out).not.toMatch(/out of 100|\/100|Poor|Fair|Good|Great|Amazing/);
   });
 
   it("midday: the card says when the sunset forecast opens and shows no score anywhere, front or back", () => {
     const html = render("2026-10-15T17:00:00.000Z"); // 1 PM EDT
-    expect(html).toContain("Sunset forecast at 5:30 PM");
+    expect(html).toContain("Color forecast ready at 5:30 PM");
     expect(html).not.toMatch(/out of 100|\/100|No forecast yet/);
     expect(html).not.toMatch(/→ \d+/); // the back's arrow line with the score
     expect(html).not.toMatch(/Peak color ~/);
@@ -96,7 +96,7 @@ describe("forecast window on the card (no score before an hour out)", () => {
 
   it("before dawn: the sunrise line", () => {
     const html = render("2026-10-15T07:00:00.000Z"); // 3 AM EDT
-    expect(html).toContain("Sunrise forecast at 6:09 AM");
+    expect(html).toContain("Color forecast ready at 6:09 AM");
     expect(html).not.toMatch(/out of 100|\/100/);
   });
 
@@ -107,7 +107,7 @@ describe("forecast window on the card (no score before an hour out)", () => {
   });
 
   it("right at the window's first minute the score shows; one minute before it does not", () => {
-    expect(render("2026-10-15T21:29:00.000Z")).toContain("Sunset forecast at 5:30 PM");
+    expect(render("2026-10-15T21:29:00.000Z")).toContain("Color forecast ready at 5:30 PM");
     expect(render("2026-10-15T21:30:00.000Z")).toMatch(/out of 100/);
   });
 

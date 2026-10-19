@@ -25,7 +25,7 @@ import { FlipCard, NerdBack } from "@/components/FlipCard";
 import { assembleSunEventQuality } from "@/lib/sunAlert";
 import {
   SUN_FORECAST_WINDOW_MINUTES,
-  sunForecastPendingText,
+  sunForecastPendingShort, sunForecastPendingText, sunForecastPendingWhy,
   sunForecastWindow,
   type SunForecastWindow,
 } from "@/lib/sunForecastWindow";
@@ -111,7 +111,7 @@ function buildSunQualityNerdInfo(args: {
   result: SunEventQuality;
   peakLine: string | null;
   goldenLine: string;
-  /** "Sunset forecast at 5:52 PM" while the forecast window is closed (the
+  /** "Color forecast ready at 5:52 PM" (card) or "Sunset color forecast ready at 5:52 PM" while the forecast window is closed (the
    *  color number is withheld everywhere, back included); null once open. */
   pendingText: string | null;
 }): NerdInfo {
@@ -377,11 +377,26 @@ export function SunScoreHeadline({
 /** The card headline while the forecast window is closed: when the forecast
  *  will be ready, in plain words. No number, no band word, no "/100".
  *  Exported for tests. */
-export function SunForecastPendingHeadline({ kind, availableAtIso, tz }: { kind: SunEventKind; availableAtIso: string; tz: string }) {
-  const text = sunForecastPendingText(kind, availableAtIso, tz);
+export function SunForecastPendingHeadline({
+  kind,
+  availableAtIso,
+  eventIso,
+  tz,
+}: {
+  kind: SunEventKind;
+  availableAtIso: string;
+  /** The event itself, for the "1 hour before sunset at 6:52 PM" line. */
+  eventIso?: string;
+  tz: string;
+}) {
+  // The card title already says sunrise or sunset, so the headline is the short form.
+  const text = sunForecastPendingShort(availableAtIso, tz);
   return (
-    <div className="mt-1 flex items-center gap-2">
-      <span className="text-base font-semibold leading-tight text-slate-700 dark:text-slate-200">{text}</span>
+    <div className="mt-1">
+      <span className="block text-base font-semibold leading-tight text-slate-700 dark:text-slate-200">{text}</span>
+      {eventIso ? (
+        <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">{sunForecastPendingWhy(kind, eventIso, tz)}</span>
+      ) : null}
     </div>
   );
 }
@@ -437,7 +452,7 @@ function SunQualityFront({
       <div className="flex flex-1 flex-col justify-center">
         {/* The rating IS the headline — the 0-100 number with its plain word. */}
         {forecast?.state === "pending" && scored ? (
-          <SunForecastPendingHeadline kind={scored.event} availableAtIso={forecast.availableAtIso} tz={tz} />
+          <SunForecastPendingHeadline kind={scored.event} availableAtIso={forecast.availableAtIso} eventIso={scored.timeIso} tz={tz} />
         ) : (
           <SunScoreHeadline kind={kind} result={result} />
         )}

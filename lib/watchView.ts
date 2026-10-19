@@ -52,7 +52,7 @@ export interface WatchView {
   waterTempF: number | null;
   /** The next sunrise or sunset and when its color forecast opens (60 minutes
    *  before the event). While `state` is "pending", `text` is the one line to
-   *  show, e.g. "Sunset forecast at 5:52 PM". There is never a color score in
+   *  show, e.g. "Sunset color forecast ready at 5:52 PM". There is never a color score in
    *  this field, pending or not: the number lives only in the app. Null when
    *  the beach has no usable sun times. */
   sunForecast: SunForecastField | null;

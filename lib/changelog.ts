@@ -18,9 +18,16 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-18",
-    title: "Full detail, only when you ask for it",
+    title: "Clearer sunrise and sunset forecast times",
     details:
-      "Some beach cameras, such as the Boca Raton, Jupiter and Martin County ones, publish a full-size photo several times sharper than the normal picture. Open one of those cameras and tap Full detail to load it, then zoom in much further. Nothing large downloads unless you tap, so the page and the camera viewer stay quick on a weak signal.",
+      "Before the color forecast is out, the card now says when it will be ready, for example \"Color forecast ready at 5:52 PM\", and that this is 1 hour before sunset. It used to read \"Sunset forecast at 5:52 PM\", which looked like the time of the sunset.",
+    tag: "improved",
+  },
+  {
+    date: "2026-10-18",
+    title: "View cameras in HD, only when you ask",
+    details:
+      "Some beach cameras, such as the Boca Raton, Jupiter and Martin County ones, publish a full-size photo several times sharper than the normal picture. Open one of those cameras and tap View in HD to load it, then zoom in much further. Nothing large downloads unless you tap, so the page and the camera viewer stay quick on a weak signal.",
     tag: "improved",
   },
   {

@@ -21,7 +21,7 @@ import { fmtTime } from "@/lib/format";
 import { assembleSunEventQuality, sunQualityHourlyPoints } from "@/lib/sunAlert";
 import { nextSunEventsBoth } from "@/lib/history/sunPredictions";
 import { sunQualityBandMeta } from "@/lib/sunQuality";
-import { SUN_FORECAST_WINDOW_MS, sunForecastPendingText, sunForecastWindow } from "@/lib/sunForecastWindow";
+import { SUN_FORECAST_WINDOW_MS, sunForecastPendingShort, sunForecastWindow } from "@/lib/sunForecastWindow";
 import { CONDITIONS_MAX_STALE_MS } from "@/lib/conditionsFreshness";
 
 export interface ShareCardTile {
@@ -466,7 +466,7 @@ function sunTileChangeAt(eventMs: number, nowMs: number): number {
 /** The tile's small line for one sunrise/sunset.
  *
  *  - Before the forecast window opens (60 minutes ahead of the event): no
- *    score at all, only when it will be ready: "Sunset forecast at 5:52 PM".
+ *    score at all, only when it will be ready: "Color forecast ready at 5:52 PM".
  *    The score must never look like a prediction before we can see the sky.
  *  - Inside the window: the sky-color forecast, "Good color · 78/100". The word
  *    says what kind of rating it is (the colors of the sky), so a bare "78 Good"
@@ -485,7 +485,7 @@ function sunColorNote(
 ): string | undefined {
   const window = sunForecastWindow(eventIso, nowMs);
   if (!window) return undefined;
-  if (window.state === "pending") return sunForecastPendingText(kind, window.availableAtIso, tz);
+  if (window.state === "pending") return sunForecastPendingShort(window.availableAtIso, tz);
   try {
     const snap = res?.snapshot;
     const loc = snap?.location;

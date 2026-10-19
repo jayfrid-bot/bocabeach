@@ -132,11 +132,11 @@ export function ZoomableImage({
 }: {
   src: string;
   /** A sharper copy of the same picture (same shape, more pixels). Never fetched on its own:
-   *  only once the parent sets `loadSharp` (owner call, 2026-10-18: full detail only when the
+   *  only once the parent sets `loadSharp` (owner call, 2026-10-18: HD only when the
    *  viewer asks for it). It is swapped in without resetting the zoom; if it fails, the normal
    *  picture stays. */
   sharpSrc?: string;
-  /** Set by the parent when the viewer taps "Full detail". */
+  /** Set by the parent when the viewer taps "View in HD". */
   loadSharp?: boolean;
   onSharpState?: (state: SharpState, result?: SharpResult) => void;
   /** Called when a zoom is held back by this picture's own limit (the sharper copy would allow

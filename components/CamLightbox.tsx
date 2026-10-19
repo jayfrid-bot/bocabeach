@@ -28,7 +28,7 @@ export function CamLightbox({
   onClose,
 }: {
   src: string;
-  /** The full-size original of the same still. Loaded only when the viewer taps "Full detail". */
+  /** The full-size original of the same still. Loaded only when the viewer taps "View in HD". */
   originalSrc?: string;
   name: string;
   credit?: string;
@@ -48,7 +48,7 @@ export function CamLightbox({
   // picture and throw away the viewer's zoom.
   const [frozenSrc] = useState(src);
   const [frozenOriginal] = useState(originalSrc);
-  // Full detail: only on the viewer's tap (owner call, 2026-10-18). Never on open, never on zoom.
+  // HD: only on the viewer's tap (owner call, 2026-10-18). Never on open, never on zoom.
   const [loadSharp, setLoadSharp] = useState(false);
   const [sharp, setSharp] = useState<SharpState>("idle");
   const [note, setNote] = useState<string | null>(null);
@@ -99,7 +99,7 @@ export function CamLightbox({
     }
     if (state === "failed") {
       setLoadSharp(false); // a later tap tries again
-      showNote("Full detail isn't available for this picture right now.");
+      showNote("HD isn't available for this picture right now.");
     }
   };
   const requestFullDetail = () => {
@@ -108,7 +108,7 @@ export function CamLightbox({
     setLoadSharp(true);
   };
   const onZoomLimit = () => {
-    if (frozenOriginal && (sharp === "idle" || sharp === "failed")) showNote("Tap Full detail to zoom in further.");
+    if (frozenOriginal && (sharp === "idle" || sharp === "failed")) showNote("Tap View in HD to zoom in further.");
   };
   const close = useRef(onClose);
   useEffect(() => {
@@ -195,7 +195,7 @@ export function CamLightbox({
         />
       </div>
       <p aria-live="polite" className="min-h-[1.25rem] px-4 pt-2 text-center text-xs text-white/80">
-        {note ?? (sharp === "ready" ? "Showing the full-size picture." : "")}
+        {note ?? (sharp === "ready" ? "Viewing in HD." : "")}
       </p>
       <div className="flex items-center justify-between gap-3 px-4 py-3 text-white">
         <p className="min-w-0 flex-1 text-[11px] leading-snug text-white/70">
@@ -213,12 +213,12 @@ export function CamLightbox({
             {sharp === "loading" ? (
               <>
                 <span aria-hidden className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                Loading…
+                Loading HD…
               </>
             ) : sharp === "ready" ? (
-              <>Full detail {"\u2713"}</>
+              <>HD {"\u2713"}</>
             ) : (
-              "Full detail"
+              "View in HD"
             )}
           </button>
         ) : null}

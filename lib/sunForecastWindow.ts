@@ -69,12 +69,25 @@ function eventWord(kind: SunEventKind): string {
 }
 
 /**
- * The pending copy: "Sunset forecast at 5:52 PM" / "Sunrise forecast at 6:19 AM".
+ * The pending copy: "Sunset color forecast ready at 5:52 PM" / "Sunrise color forecast ready at 6:19 AM".
  * The time is when the forecast becomes available (event minus the window), in
  * the beach's own time zone, h:mm AM/PM. No score, no band word, no "/100".
+ * Owner, 2026-10-18: the old "Sunset forecast at 5:52 PM" read like sunset was at 5:52, so the
+ * line says what is coming (the color forecast) and that the time is when it is ready.
  */
 export function sunForecastPendingText(kind: SunEventKind, availableAtIso: string, tz: string): string {
-  return `${eventWord(kind)} forecast at ${fmtTime(availableAtIso, tz)}`;
+  return `${eventWord(kind)} color forecast ready at ${fmtTime(availableAtIso, tz)}`;
+}
+
+/** The short form for tight spots whose label already names the event (the share card tile,
+ *  the card headline under its "Sunset" title): "Color forecast ready at 5:52 PM". */
+export function sunForecastPendingShort(availableAtIso: string, tz: string): string {
+  return `Color forecast ready at ${fmtTime(availableAtIso, tz)}`;
+}
+
+/** The second line under the short form: "1 hour before sunset at 6:52 PM". */
+export function sunForecastPendingWhy(kind: SunEventKind, eventIso: string, tz: string): string {
+  return `${SUN_FORECAST_WINDOW_MINUTES / 60 === 1 ? "1 hour" : `${SUN_FORECAST_WINDOW_MINUTES} minutes`} before ${kind} at ${fmtTime(eventIso, tz)}`;
 }
 
 /** What the watch and agent payloads carry. `score` is never part of it: those
@@ -86,7 +99,7 @@ export interface SunForecastField {
   availableAt: string;
   /** The event the field is about (ISO, UTC). */
   eventAt: string;
-  /** "Sunset forecast at 5:52 PM" while pending, null once available. */
+  /** "Sunset color forecast ready at 5:52 PM" while pending, null once available. */
   text: string | null;
 }
 

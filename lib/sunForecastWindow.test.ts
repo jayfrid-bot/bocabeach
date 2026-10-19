@@ -56,7 +56,7 @@ describe("sunForecastWindow", () => {
     const w = sunForecastWindow(ev, Date.parse("2026-10-15T03:29:59.000Z"));
     expect(w?.state).toBe("pending");
     expect(w?.availableAtIso).toBe("2026-10-15T03:30:00.000Z"); // 11:30 PM EDT Oct 14
-    expect(sunForecastPendingText("sunrise", w!.availableAtIso, NY)).toBe("Sunrise forecast at 11:30 PM");
+    expect(sunForecastPendingText("sunrise", w!.availableAtIso, NY)).toBe("Sunrise color forecast ready at 11:30 PM");
     expect(sunForecastWindow(ev, Date.parse("2026-10-15T03:30:00.000Z"))?.state).toBe("available");
   });
 
@@ -66,7 +66,7 @@ describe("sunForecastWindow", () => {
     const w = sunForecastWindow(ev, Date.parse("2027-03-14T06:00:00.000Z"));
     expect(w?.availableAtIso).toBe("2027-03-14T06:30:00.000Z"); // 1:30 AM EST
     expect(w?.state).toBe("pending");
-    expect(sunForecastPendingText("sunrise", w!.availableAtIso, NY)).toBe("Sunrise forecast at 1:30 AM");
+    expect(sunForecastPendingText("sunrise", w!.availableAtIso, NY)).toBe("Sunrise color forecast ready at 1:30 AM");
     expect(sunForecastWindow(ev, Date.parse("2027-03-14T06:30:00.000Z"))?.state).toBe("available");
   });
 
@@ -82,13 +82,13 @@ describe("sunForecastWindow", () => {
 
 describe("sunForecastPendingText", () => {
   it("words the sunset and sunrise lines with h:mm AM/PM in the beach's zone", () => {
-    expect(sunForecastPendingText("sunset", "2026-10-15T21:52:00.000Z", NY)).toBe("Sunset forecast at 5:52 PM");
-    expect(sunForecastPendingText("sunrise", "2026-10-16T10:19:00.000Z", NY)).toBe("Sunrise forecast at 6:19 AM");
+    expect(sunForecastPendingText("sunset", "2026-10-15T21:52:00.000Z", NY)).toBe("Sunset color forecast ready at 5:52 PM");
+    expect(sunForecastPendingText("sunrise", "2026-10-16T10:19:00.000Z", NY)).toBe("Sunrise color forecast ready at 6:19 AM");
   });
 
   it("uses the beach's own zone, not the server's", () => {
     expect(sunForecastPendingText("sunset", "2026-10-15T21:52:00.000Z", "America/Los_Angeles")).toBe(
-      "Sunset forecast at 2:52 PM",
+      "Sunset color forecast ready at 2:52 PM",
     );
   });
 
@@ -109,7 +109,7 @@ describe("sunForecastField (watch / agent payloads)", () => {
       state: "pending",
       availableAt: "2026-10-15T21:52:00.000Z",
       eventAt: SUNSET,
-      text: "Sunset forecast at 5:52 PM",
+      text: "Sunset color forecast ready at 5:52 PM",
     });
     expect(f).not.toHaveProperty("score");
   });
@@ -135,12 +135,12 @@ describe("nextSunForecastField", () => {
 
   it("before sunrise: the sunrise, pending until an hour before", () => {
     const f = nextSunForecastField(sun, Date.parse("2026-10-15T08:00:00.000Z"), NY);
-    expect(f).toMatchObject({ kind: "sunrise", state: "pending", text: "Sunrise forecast at 6:09 AM" });
+    expect(f).toMatchObject({ kind: "sunrise", state: "pending", text: "Sunrise color forecast ready at 6:09 AM" });
   });
 
   it("midday: the sunset, pending", () => {
     const f = nextSunForecastField(sun, Date.parse("2026-10-15T17:00:00.000Z"), NY);
-    expect(f).toMatchObject({ kind: "sunset", state: "pending", text: "Sunset forecast at 5:28 PM" });
+    expect(f).toMatchObject({ kind: "sunset", state: "pending", text: "Sunset color forecast ready at 5:28 PM" });
   });
 
   it("inside the hour before sunset: available", () => {
@@ -150,7 +150,7 @@ describe("nextSunForecastField", () => {
 
   it("after the sunset passes it rolls to tomorrow's sunrise, pending", () => {
     const f = nextSunForecastField(sun, Date.parse("2026-10-15T23:00:00.000Z"), NY);
-    expect(f).toMatchObject({ kind: "sunrise", state: "pending", eventAt: "2026-10-16T11:10:00.000Z", text: "Sunrise forecast at 6:10 AM" });
+    expect(f).toMatchObject({ kind: "sunrise", state: "pending", eventAt: "2026-10-16T11:10:00.000Z", text: "Sunrise color forecast ready at 6:10 AM" });
   });
 
   it("null with no sun times", () => {
