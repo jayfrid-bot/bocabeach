@@ -1,0 +1,9 @@
+path                             ttfb_p50 ttfb_max total_p50   bytes_br
+/                                    179ms     881ms     190ms      42218
+/siesta-key                          164ms     729ms     176ms      35962
+/jupiter                             146ms     464ms     171ms      38417
+/api/conditions/boca-raton           134ms     279ms     145ms      17864
+/api/conditions/siesta-key           140ms     316ms     149ms      13512
+/api/conditions/jupiter              164ms     348ms     171ms      15664
+/api/conditions/boca-raton/lean      143ms     619ms     151ms      12954
+/api/conditions/jupiter/lean         145ms     319ms     158ms      11312

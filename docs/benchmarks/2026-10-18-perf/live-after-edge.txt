@@ -1,0 +1,10 @@
+path                           ttfb_p50 ttfb_max setup_p50 after_p50  edge
+/                                  164ms     562ms       87ms       75ms  HIT=8 STALE=2 
+/siesta-key                        159ms     431ms       80ms       75ms  HIT=8 STALE=2 
+/jupiter                           151ms     203ms       75ms       76ms  HIT=9 STALE=1 
+/boca-raton                        138ms     192ms       83ms       55ms  HIT=10 
+/api/conditions/boca-raton         145ms     175ms       82ms       62ms  HIT=9 STALE=1 
+/api/conditions/siesta-key         137ms     175ms       84ms       55ms  HIT=9 STALE=1 
+/api/conditions/jupiter            165ms     256ms       80ms       81ms  HIT=9 STALE=1 
+/api/conditions/boca-raton/lean     162ms     213ms       87ms       73ms  HIT=9 STALE=1 
+/api/conditions/jupiter/lean       142ms     178ms       80ms       53ms  HIT=9 STALE=1 
