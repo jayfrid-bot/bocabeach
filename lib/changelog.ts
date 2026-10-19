@@ -18,6 +18,13 @@ export interface ChangelogEntry {
 export const CHANGELOG: ChangelogEntry[] = [
   {
     date: "2026-10-18",
+    title: "Full detail, only when you ask for it",
+    details:
+      "Some beach cameras, such as the Boca Raton, Jupiter and Martin County ones, publish a full-size photo several times sharper than the normal picture. Open one of those cameras and tap Full detail to load it, then zoom in much further. Nothing large downloads unless you tap, so the page and the camera viewer stay quick on a weak signal.",
+    tag: "improved",
+  },
+  {
+    date: "2026-10-18",
     title: "Beach pages open faster",
     details:
       "Beach pages and their numbers now arrive in a fraction of the time, and they still show how old each reading is. In a web browser, a beach you opened before appears almost at once, and the newest numbers drop in behind it.",

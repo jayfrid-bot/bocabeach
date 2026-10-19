@@ -156,6 +156,7 @@ function FeaturedCam({ cam, tz, dataAt }: { cam: CamView; tz: string; dataAt?: s
         liveUrl={cam.url}
         stamp={stamp}
         openerRef={opener}
+        camId={cam.id}
         onClose={() => setOpen(false)}
       />
     ) : null}

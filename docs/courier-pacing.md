@@ -249,7 +249,9 @@ Measured 2026-10-18 on all 18 feed views:
   without the `X-Cam-Original: 1` header, and the viewer ignores it. A cache hit is free. Check that namespace id 4723 is unused in the account before deploy.
 - **Size header.** `X-Cam-Original-Size: 4352x3264` lets the viewer refuse a picture before it reads the body.
 
-The zoom viewer asks for the original only after the viewer first zooms in (`ZoomableImage` `sharpSrc`). It does nothing when
+The zoom viewer asks for the original only when the viewer taps **Full detail** (owner call, 2026-10-18: nothing large
+downloads unless asked; `CamLightbox` sets `loadSharp` on `ZoomableImage`). A pinch that hits the normal picture's zoom limit
+shows a hint pointing at the button. Analytics events (anonymous): `cam_open`, `cam_zoom`, `cam_full_detail`, `cam_close`. It does nothing when
 `navigator.connection.saveData` is set, or when the original is over 20 megapixels (phones included, by the owner's call on
 2026-10-18; `ORIGINAL_MAX_PIXELS_SMALL_SCREEN` can set a lower phone limit). It downloads once, decodes off screen, and swaps
 only after the decode worked, without resetting the zoom. On any failure the normal picture stays. Measured: Boca 14 MP; the

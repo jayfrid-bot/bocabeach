@@ -1201,8 +1201,8 @@ export interface CamView {
   url: string;
   /** Local proxy path for the live still (image cams only), e.g. /api/cam/boca-south. */
   imageUrl?: string;
-  /** Full-size original of the same still, for the zoom viewer to fetch once the viewer
-   *  zooms in. Only cams fed by a video-monitoring.com feed have one (1.5 to 7 MB). */
+  /** Full-size original of the same still. The zoom viewer fetches it only when the viewer
+   *  taps "Full detail". Only cams fed by a video-monitoring.com feed have one (1.5 to 7 MB). */
   originalImageUrl?: string;
   /** Capture time of the displayed still (ISO), when the source publishes one. */
   capturedAt?: string;

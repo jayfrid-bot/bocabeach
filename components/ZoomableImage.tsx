@@ -17,6 +17,8 @@ export const MIN_SCALE = 1;
 export const MAX_SCALE = 5;
 /** The least a picture may be allowed to zoom, however small it is. */
 export const MIN_MAX_SCALE = 2;
+/** How long the full-size copy may spend in decode() before it is swapped in anyway. */
+const DECODE_WAIT_MS = 2500;
 const DOUBLE_TAP_SCALE = 2.5;
 const DOUBLE_TAP_MS = 300;
 const DOUBLE_TAP_PX = 30;
@@ -100,19 +102,48 @@ export function parseSizeHeader(v: string | null): { width: number; height: numb
   return m ? { width: Number(m[1]), height: Number(m[2]) } : null;
 }
 
+/** Where the full-size copy stands. "idle": not asked for. "loading": asked for, downloading or
+ *  decoding. "ready": on screen. "failed": no full-size copy for this picture right now (none,
+ *  a newer capture, too big, rate-limited or a network error); the normal picture stays. */
+export type SharpState = "idle" | "loading" | "ready" | "failed";
+
+/** What the full-size copy cost and why it ended: one record per request, for analytics. */
+export interface SharpResult {
+  state: "ready" | "failed";
+  /** Why it failed: http-404, http-409, not-original, too-big, save-data, network, decode. */
+  reason?: string;
+  ms: number;
+  bytes?: number;
+  width?: number;
+  height?: number;
+}
+
 export function ZoomableImage({
   src,
   sharpSrc,
+  loadSharp = false,
+  onSharpState,
+  onZoomLimit,
+  onZoomScale,
   alt,
   onError,
   onZoomedChange,
   className = "",
 }: {
   src: string;
-  /** A sharper copy of the same picture (same shape, more pixels). It is fetched only once the
-   *  viewer first zooms in, and swapped in without resetting the zoom when it has loaded. If it
-   *  fails to load, the normal picture stays. */
+  /** A sharper copy of the same picture (same shape, more pixels). Never fetched on its own:
+   *  only once the parent sets `loadSharp` (owner call, 2026-10-18: full detail only when the
+   *  viewer asks for it). It is swapped in without resetting the zoom; if it fails, the normal
+   *  picture stays. */
   sharpSrc?: string;
+  /** Set by the parent when the viewer taps "Full detail". */
+  loadSharp?: boolean;
+  onSharpState?: (state: SharpState, result?: SharpResult) => void;
+  /** Called when a zoom is held back by this picture's own limit (the sharper copy would allow
+   *  more). At most once per second. */
+  onZoomLimit?: () => void;
+  /** Called with each new zoom scale (for the largest-zoom analytics). */
+  onZoomScale?: (scale: number) => void;
   alt: string;
   onError?: () => void;
   /** Tells the parent when the picture leaves or returns to 1×, e.g. to pause
@@ -138,8 +169,15 @@ export function ZoomableImage({
   /** The browser's dblclick carries no pointer type, so remember the last one. */
   const lastPointerType = useRef<string>("mouse");
   const zoomedCb = useRef(onZoomedChange);
+  const sharpCb = useRef(onSharpState);
+  const limitCb = useRef(onZoomLimit);
+  const scaleCb = useRef(onZoomScale);
+  const lastLimitAt = useRef(0);
   useEffect(() => {
     zoomedCb.current = onZoomedChange;
+    sharpCb.current = onSharpState;
+    limitCb.current = onZoomLimit;
+    scaleCb.current = onZoomScale;
   });
 
   /** The most this picture may zoom now (see maxScaleFor); MAX_SCALE until the picture has loaded. */
@@ -152,6 +190,24 @@ export function ZoomableImage({
   }, []);
   const [maxScale, setMaxScale] = useState(MAX_SCALE);
 
+  /** The scale a gesture may reach now, and a note to the parent when this picture's own limit
+   *  (below the viewer's 5x) held it back: a sharper copy would allow more. Once a second at most. */
+  const capScale = useCallback(
+    (wanted: number): number => {
+      const max = currentMax();
+      const capped = clampScale(wanted, max);
+      if (wanted > capped + 0.01 && capped < MAX_SCALE - 0.01) {
+        const now = Date.now();
+        if (now - lastLimitAt.current > 1000) {
+          lastLimitAt.current = now;
+          limitCb.current?.();
+        }
+      }
+      return capped;
+    },
+    [currentMax],
+  );
+
   const setZoom = useCallback((next: ZoomState) => {
     const el = box.current;
     let clamped = next;
@@ -162,6 +218,7 @@ export function ZoomableImage({
     const wasZoomed = zoomRef.current.scale > 1;
     zoomRef.current = clamped;
     setZoomState(clamped);
+    if (clamped.scale !== 1) scaleCb.current?.(clamped.scale);
     if (wasZoomed !== clamped.scale > 1) zoomedCb.current?.(clamped.scale > 1);
   }, [currentMax]);
 
@@ -170,60 +227,79 @@ export function ZoomableImage({
     setZoom(IDENTITY);
   }, [src, setZoom]);
 
-  // The sharp copy: wanted from the first zoom on, shown once it has fully loaded. `src` is
-  // not changed, so the zoom the viewer set stays where it is.
+  // The sharp copy: fetched only after the viewer asked for it (`loadSharp`), shown once it has
+  // fully loaded and decoded. `src` is not changed, so the zoom the viewer set stays put.
   const [shown, setShown] = useState(src);
-  const [wantSharp, setWantSharp] = useState(false);
   useEffect(() => {
     setShown(src);
-    setWantSharp(false);
   }, [src]);
-  const zoomedIn = zoom.scale > 1;
   useEffect(() => {
-    if (zoomedIn) setWantSharp(true);
-  }, [zoomedIn]);
-  useEffect(() => {
-    if (!sharpSrc || !wantSharp) return;
+    if (!sharpSrc || !loadSharp) return;
     let live = true;
     let objectUrl: string | null = null;
     const abort = new AbortController();
-    const keepNormal = () => {
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-      objectUrl = null;
+    const started = Date.now();
+    const report = (state: SharpState, result?: Omit<SharpResult, "ms" | "state">) => {
+      if (!live) return;
+      sharpCb.current?.(
+        state,
+        state === "ready" || state === "failed" ? { state, ms: Date.now() - started, ...result } : undefined,
+      );
     };
+    report("loading");
     (async () => {
       const nav = navigator as Navigator & { connection?: { saveData?: boolean } };
       const smallScreen =
         window.matchMedia?.("(pointer: coarse)").matches === true || window.innerWidth < 768;
-      // Saving data: never ask for the original.
-      if (nav.connection?.saveData) return;
+      // Saving data is respected even after a tap: the browser asked us to.
+      if (nav.connection?.saveData) return report("failed", { reason: "save-data" });
       // One download, held as a blob (a plain <img> could fetch it a second time).
       const res = await fetch(sharpSrc, { signal: abort.signal });
       // Only a real original counts: the server may answer with the normal still (over its
       // limit), or 404/409 (no original, or a newer frame than the one shown).
-      if (!res.ok || res.headers.get("X-Cam-Original") !== "1") return;
+      if (!res.ok) return report("failed", { reason: `http-${res.status}` });
+      if (res.headers.get("X-Cam-Original") !== "1") return report("failed", { reason: "not-original" });
       // The size comes in a header, so a picture too big for this device is refused before its body is read.
       const size = parseSizeHeader(res.headers.get("X-Cam-Original-Size"));
       if (!size || !originalAllowed({ ...size, smallScreen, saveData: false })) {
         abort.abort();
-        return;
+        return report("failed", { reason: "too-big" });
       }
       const blob = await res.blob();
-      if (!live || !blob.type.startsWith("image/")) return;
+      if (!live) return;
+      if (!blob.type.startsWith("image/")) return report("failed", { reason: "not-original" });
       objectUrl = URL.createObjectURL(blob);
-      // Decode off screen first. Swap only when it decoded; on any failure the normal picture stays.
+      // Load it off screen first. Swap only when it loaded; on any failure the normal picture stays.
+      // decode() is then given a short head start so the swap doesn't stutter, but it is not
+      // waited on for long: on some browsers it never settles for very large pictures (seen with
+      // an 18 MP JPEG in Chromium, 2026-10-18) even though the picture itself loaded fine.
       const probe = new Image();
-      probe.src = objectUrl;
-      await probe.decode();
+      try {
+        await new Promise<void>((resolve, reject) => {
+          probe.onload = () => resolve();
+          probe.onerror = () => reject(new Error("load"));
+          probe.src = objectUrl as string;
+        });
+        await Promise.race([probe.decode().catch(() => undefined), new Promise((r) => setTimeout(r, DECODE_WAIT_MS))]);
+      } catch {
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        objectUrl = null;
+        return report("failed", { reason: "decode" });
+      }
       if (!live) return;
       setShown(objectUrl);
-    })().catch(keepNormal);
+      report("ready", { bytes: blob.size, width: size.width, height: size.height });
+    })().catch(() => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+      report("failed", { reason: "network" });
+    });
     return () => {
       live = false;
       abort.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [sharpSrc, wantSharp]);
+  }, [sharpSrc, loadSharp]);
 
   /** A point relative to the box centre. */
   const local = (clientX: number, clientY: number) => {
@@ -291,7 +367,7 @@ export function ZoomableImage({
       const [a, b] = [...pointers.current.values()];
       const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
       const p = pinch.current;
-      const next = clampScale(p.start.scale * (dist / p.dist), currentMax());
+      const next = capScale(p.start.scale * (dist / p.dist));
       const mid = local((a.x + b.x) / 2, (a.y + b.y) / 2);
       const z = zoomAt(p.start, next, p.mid.x, p.mid.y);
       // The fingers may also travel together: follow them.
@@ -337,15 +413,15 @@ export function ZoomableImage({
       const z = zoomRef.current;
       const factor = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.002));
       const r = el.getBoundingClientRect();
-      setZoom(zoomAt(z, clampScale(z.scale * factor, currentMax()), e.clientX - r.left - r.width / 2, e.clientY - r.top - r.height / 2));
+      setZoom(zoomAt(z, capScale(z.scale * factor), e.clientX - r.left - r.width / 2, e.clientY - r.top - r.height / 2));
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [setZoom, currentMax]);
+  }, [setZoom, capScale]);
 
   const step = (factor: number) => {
     const z = zoomRef.current;
-    setZoom(zoomAt(z, clampScale(z.scale * factor, currentMax()), 0, 0));
+    setZoom(zoomAt(z, capScale(z.scale * factor), 0, 0));
   };
 
   const zoomed = zoom.scale > 1;
@@ -392,7 +468,7 @@ export function ZoomableImage({
         <button type="button" className={BTN} aria-label="Zoom out" disabled={!zoomed} onClick={() => step(1 / 1.6)}>
           <span aria-hidden>{"−"}</span>
         </button>
-        <button type="button" className={BTN} aria-label="Zoom in" disabled={zoom.scale >= maxScale - 0.001} onClick={() => step(1.6)}>
+        <button type="button" className={BTN} aria-label="Zoom in" disabled={zoom.scale >= maxScale - 0.001 && !(sharpSrc && !loadSharp)} onClick={() => step(1.6)}>
           <span aria-hidden>+</span>
         </button>
         {zoomed ? (
