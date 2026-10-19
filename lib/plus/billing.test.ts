@@ -27,10 +27,13 @@ vi.mock("@revenuecat/purchases-capacitor", () => ({
   },
 }));
 
+const platform = vi.hoisted(() => ({ now: "ios" as "ios" | "android" | "web" }));
+
 vi.mock("@/lib/push/native", () => ({
   // Every test here wants billingAvailable() true; the "billing off" cases
   // (no key, or a browser) are exercised in the paywall's own tests instead.
   isNativePlatform: () => true,
+  nativePlatform: () => platform.now,
 }));
 
 const DEVICE_ID = "11111111-2222-4333-8444-555555555555";
@@ -270,5 +273,17 @@ describe("trialEligibility", () => {
       yearly: "unknown",
     });
     expect(mocks.checkTrialOrIntroductoryPriceEligibility).not.toHaveBeenCalled();
+  });
+});
+
+describe("billingAvailable on Android", () => {
+  it("is off: the App Store key must never start RevenueCat on Android", async () => {
+    const { billingAvailable } = await import("./billing");
+    platform.now = "android";
+    try {
+      expect(billingAvailable()).toBe(false);
+    } finally {
+      platform.now = "ios";
+    }
   });
 });

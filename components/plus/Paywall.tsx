@@ -18,6 +18,7 @@ import { ErrorLine, PrimaryButton, SecondaryButton, Sheet } from "@/components/p
 import { paywallSunBenefit } from "@/lib/plus/sunAlertCopy";
 import { useOwnerEntryTap } from "@/lib/quality/ownerEntry";
 import { supportId } from "@/lib/plus/supportId";
+import { nativePlatform } from "@/lib/push/native";
 
 const APP_STORE_URL = "https://apps.apple.com/us/app/id6779072992";
 const TERMS_URL = "https://www.apple.com/legal/internet-services/itunes/dev/stdeula/";
@@ -394,7 +395,9 @@ export function PaywallBody({
         ) : trialUsed || serverTrialOff || billingUnavailableInApp ? (
           billingUnavailableInApp ? (
             <p className="text-center text-xs leading-snug text-slate-500 dark:text-slate-400">
-              Billing isn&apos;t available in this build. Use a code below, or check back once it is.
+              {nativePlatform() === "android"
+                ? "Subscriptions aren't available on Android yet. Use a code below, or check back soon."
+                : "Billing isn't available in this build. Use a code below, or check back once it is."}
             </p>
           ) : (
             <PrimaryButton onClick={subscribe} disabled={busy}>

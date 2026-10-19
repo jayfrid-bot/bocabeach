@@ -18,7 +18,7 @@
 // paywall, a purchase or a restore ever call into the plugin.
 
 import type { INTRO_ELIGIBILITY_STATUS as IntroStatus, Purchases, PurchasesPackage } from "@revenuecat/purchases-capacitor";
-import { isNativePlatform } from "@/lib/push/native";
+import { nativePlatform } from "@/lib/push/native";
 import { holdReload } from "@/lib/reloadGuard";
 
 /** Public SDK key (appl_…). Public by design; baked in at build time. */
@@ -45,9 +45,11 @@ export type PurchaseOutcome = "purchased" | "cancelled" | "pending" | "failed";
  */
 export type Eligibility = "eligible" | "ineligible" | "unknown";
 
-/** True only inside the app AND with a key to talk to RevenueCat. */
+/** True only inside the iPhone app AND with a key to talk to RevenueCat. The key is the
+ *  App Store (iOS) key: on Android it would start RevenueCat with the wrong store's key and
+ *  every purchase would fail, so Android shows the code path until Play billing is set up. */
 export function billingAvailable(): boolean {
-  return isNativePlatform() && BILLING_KEY.length > 0;
+  return nativePlatform() === "ios" && BILLING_KEY.length > 0;
 }
 
 /** The plugin, boxed. Never the bare proxy: see getPlugin. */

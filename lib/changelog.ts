@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-10-19",
+    title: "Android app 1.3",
+    details:
+      "The Android app catches up with the iPhone app: version 1.3, with the latest plugins. On Android, Plus is unlocked with a code for now; subscriptions there are coming later.",
+    tag: "improved",
+  },
+  {
     date: "2026-10-18",
     title: "Clearer sunrise and sunset forecast times",
     details:

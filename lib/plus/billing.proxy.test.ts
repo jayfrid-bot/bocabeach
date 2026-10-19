@@ -51,7 +51,7 @@ vi.mock("@revenuecat/purchases-capacitor", () => ({
     INTRO_ELIGIBILITY_STATUS_NO_INTRO_OFFER_EXISTS: 3,
   },
 }));
-vi.mock("@/lib/push/native", () => ({ isNativePlatform: () => true }));
+vi.mock("@/lib/push/native", () => ({ isNativePlatform: () => true, nativePlatform: () => "ios" }));
 
 const DEVICE = "11111111-2222-4333-8444-555555555555";
 const HANG = Symbol("hang");
