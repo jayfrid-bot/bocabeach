@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Is It Beach Day mark, tattoo / stencil version: one ink colour, no gradients,
+       bold lines (min ~14 px at 512 px = ~1 mm at a 4 cm tattoo). Sun rising over waves. -->
+  <defs>
+    <clipPath id="disc"><circle cx="256" cy="256" r="232"/></clipPath>
+  </defs>
+  <g fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round">
+    <!-- rays -->
+    <g stroke-width="20">
+      <line x1="256" y1="62" x2="256" y2="100"/>
+      <line x1="150" y1="106" x2="177" y2="133"/>
+      <line x1="362" y1="106" x2="335" y2="133"/>
+      <line x1="104" y1="214" x2="142" y2="214"/>
+      <line x1="408" y1="214" x2="370" y2="214"/>
+    </g>
+  </g>
+  <!-- sun, solid -->
+  <circle cx="256" cy="226" r="80" fill="#000"/>
+  <g clip-path="url(#disc)">
+    <!-- knock the waves out of the sun so it reads as rising behind them -->
+    <path d="M0 300 Q 64 268 128 300 T 256 300 T 384 300 T 512 300 V 512 H 0 Z" fill="#fff"/>
+    <g fill="none" stroke="#000" stroke-width="18" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M0 300 Q 64 268 128 300 T 256 300 T 384 300 T 512 300"/>
+      <path d="M0 360 Q 64 328 128 360 T 256 360 T 384 360 T 512 360"/>
+      <path d="M0 420 Q 64 390 128 420 T 256 420 T 384 420 T 512 420"/>
+    </g>
+  </g>
+  <!-- frame -->
+  <circle cx="256" cy="256" r="232" fill="none" stroke="#000" stroke-width="20"/>
+</svg>

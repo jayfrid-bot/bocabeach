@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Is It Beach Day mark, tattoo colour version: flat ink colours (no gradients),
+       black outlines, same shapes as tattoo-black.svg. -->
+  <defs>
+    <clipPath id="disc"><circle cx="256" cy="256" r="232"/></clipPath>
+  </defs>
+  <g clip-path="url(#disc)">
+    <rect width="512" height="512" fill="#142f57"/>
+    <circle cx="256" cy="226" r="80" fill="#fbbf24" stroke="#000" stroke-width="12"/>
+    <path d="M0 300 Q 64 268 128 300 T 256 300 T 384 300 T 512 300 V 512 H 0 Z" fill="#59c1ff" stroke="#000" stroke-width="12" stroke-linejoin="round"/>
+    <path d="M0 360 Q 64 328 128 360 T 256 360 T 384 360 T 512 360 V 512 H 0 Z" fill="#1b85f5" stroke="#000" stroke-width="12" stroke-linejoin="round"/>
+    <path d="M0 420 Q 64 390 128 420 T 256 420 T 384 420 T 512 420 V 512 H 0 Z" fill="#0f4fa8" stroke="#000" stroke-width="12" stroke-linejoin="round"/>
+  </g>
+  <g stroke="#fbbf24" stroke-width="20" stroke-linecap="round">
+    <line x1="256" y1="62" x2="256" y2="100"/>
+    <line x1="150" y1="106" x2="177" y2="133"/>
+    <line x1="362" y1="106" x2="335" y2="133"/>
+    <line x1="104" y1="214" x2="142" y2="214"/>
+    <line x1="408" y1="214" x2="370" y2="214"/>
+  </g>
+  <circle cx="256" cy="256" r="232" fill="none" stroke="#000" stroke-width="20"/>
+</svg>
