@@ -84,6 +84,7 @@ import { SafetyLine } from "@/components/plus/SafetyLine";
 import { ScoreToggle } from "@/components/plus/ScoreToggle";
 import { useOwnerEntryTap } from "@/lib/quality/ownerEntry";
 import { chunkFailed } from "@/lib/chunkReload";
+import { CampaignBanner } from "@/components/CampaignBanner";
 
 // The long "how we compute this" back faces: their own chunk, fetched when a hand
 // reaches a card (see components/nerdBackLoader.ts). Never rendered on the server —
@@ -684,6 +685,7 @@ export function ConditionsDashboard({
   return (
     <PullToRefresh onRefresh={onRefresh}>
     <main className="mx-auto max-w-5xl px-4 pb-6 pt-3 sm:px-6 sm:py-8">
+      <CampaignBanner slug={slug} native={native} />
       {/* ONE header row: logo mark + beach name/picker on the left, three
           icon-only doors (share / alerts / theme) on the right. The old
           wordmark line, the big name line and the pills row below it (incl.
