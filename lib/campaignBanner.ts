@@ -2,8 +2,8 @@
 //
 // Who sees it: only people who can vote in Palm Beach County Commission District 4 —
 // visitors viewing a beach inside the district, or visitors whose connection Cloudflare places
-// in a District 4 ZIP code (approximate near the district line). Website only for now: the
-// iPhone app is in App Review, so the apps skip it (see CampaignBanner).
+// in a District 4 ZIP code (approximate near the district line). Website and the apps
+// (owner, 2026-10-22: "Yes I want it in the app").
 //
 // It switches itself off when the polls close (7:00 PM Eastern, election day). The server
 // check and the page both test the time, so a page saved on a phone never shows it late.

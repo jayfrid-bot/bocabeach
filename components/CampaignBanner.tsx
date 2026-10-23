@@ -5,13 +5,12 @@ import { CAMPAIGN, campaignForBeach, campaignLive } from "@/lib/campaignBanner";
 
 const DISMISS_KEY = `campaign-dismissed:${CAMPAIGN.id}`;
 
-/** The slim "Re-elect Marci Woodward" strip (lib/campaignBanner.ts). Website only, District 4
- *  only, gone at poll close, and closable. Decided after mount, so cached pages stay shared. */
-export function CampaignBanner({ slug, native }: { slug: string; native: boolean }) {
+/** The slim "Re-elect Marci Woodward" strip (lib/campaignBanner.ts). District 4
+ *  only, website and apps, gone at poll close, and closable. Decided after mount, so cached pages stay shared. */
+export function CampaignBanner({ slug }: { slug: string }) {
   const [show, setShow] = useState(false);
 
   useEffect(() => {
-    if (native) return;
     const now = Date.now();
     if (!campaignLive(now)) return;
     try {
@@ -33,7 +32,7 @@ export function CampaignBanner({ slug, native }: { slug: string; native: boolean
     return () => {
       alive = false;
     };
-  }, [slug, native]);
+  }, [slug]);
 
   if (!show) return null;
   const close = () => {

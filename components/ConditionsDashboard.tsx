@@ -685,7 +685,7 @@ export function ConditionsDashboard({
   return (
     <PullToRefresh onRefresh={onRefresh}>
     <main className="mx-auto max-w-5xl px-4 pb-6 pt-3 sm:px-6 sm:py-8">
-      <CampaignBanner slug={slug} native={native} />
+      <CampaignBanner slug={slug} />
       {/* ONE header row: logo mark + beach name/picker on the left, three
           icon-only doors (share / alerts / theme) on the right. The old
           wordmark line, the big name line and the pills row below it (incl.
