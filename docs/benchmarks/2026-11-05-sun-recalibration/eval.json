@@ -1,0 +1,411 @@
+{
+ "fit_set_old": {
+  "n": 148,
+  "corr": -0.51,
+  "mae": 45.0,
+  "epic_calls": 35,
+  "epic_hit": 0.14,
+  "great_calls": 42,
+  "great_hit": 0.17,
+  "low_calls": 101,
+  "low_mean_truth": 67
+ },
+ "fit_set_new": {
+  "n": 148,
+  "corr": 0.49,
+  "mae": 20.9,
+  "epic_calls": 5,
+  "epic_hit": 0.6,
+  "great_calls": 20,
+  "great_hit": 0.5,
+  "low_calls": 38,
+  "low_mean_truth": 35
+ },
+ "fit_set_new_lodo_refit": {
+  "n": 148,
+  "corr": 0.44,
+  "mae": 22.6,
+  "epic_calls": 3,
+  "epic_hit": 0.67,
+  "great_calls": 77,
+  "great_hit": 0.51,
+  "low_calls": 44,
+  "low_mean_truth": 35
+ },
+ "time_split_late_old": {
+  "n": 64,
+  "corr": -0.46,
+  "mae": 44.7,
+  "epic_calls": 20,
+  "epic_hit": 0.15,
+  "great_calls": 25,
+  "great_hit": 0.16,
+  "low_calls": 37,
+  "low_mean_truth": 60
+ },
+ "time_split_late_new_fit_on_early": {
+  "n": 64,
+  "corr": 0.48,
+  "mae": 24.3,
+  "epic_calls": 5,
+  "epic_hit": 0.6,
+  "great_calls": 36,
+  "great_hit": 0.42,
+  "low_calls": 23,
+  "low_mean_truth": 31
+ },
+ "time_split_params_fit_on_early": {
+  "clear": 72.88,
+  "ovc_start": 60.67,
+  "ovc_floor": 0.45,
+  "beam_floor": 0.74
+ },
+ "sunrise_old": {
+  "n": 44,
+  "corr": -0.24,
+  "mae": 37.2,
+  "epic_calls": 14,
+  "epic_hit": 0.07,
+  "great_calls": 18,
+  "great_hit": 0.11,
+  "low_calls": 26,
+  "low_mean_truth": 46
+ },
+ "sunrise_new": {
+  "n": 44,
+  "corr": 0.37,
+  "mae": 22.0,
+  "epic_calls": 0,
+  "epic_hit": null,
+  "great_calls": 3,
+  "great_hit": 0.0,
+  "low_calls": 18,
+  "low_mean_truth": 32
+ },
+ "sunset_old": {
+  "n": 104,
+  "corr": -0.62,
+  "mae": 48.4,
+  "epic_calls": 21,
+  "epic_hit": 0.19,
+  "great_calls": 24,
+  "great_hit": 0.21,
+  "low_calls": 75,
+  "low_mean_truth": 75
+ },
+ "sunset_new": {
+  "n": 104,
+  "corr": 0.48,
+  "mae": 20.4,
+  "epic_calls": 5,
+  "epic_hit": 0.6,
+  "great_calls": 17,
+  "great_hit": 0.59,
+  "low_calls": 20,
+  "low_mean_truth": 37
+ },
+ "live_boca-raton_archived": {
+  "n": 20,
+  "corr": -0.43,
+  "mae": 43.4,
+  "epic_calls": 5,
+  "epic_hit": 0.2,
+  "great_calls": 7,
+  "great_hit": 0.14,
+  "low_calls": 12,
+  "low_mean_truth": 53
+ },
+ "live_boca-raton_new_same_inputs": {
+  "n": 20,
+  "corr": 0.46,
+  "mae": 21.6,
+  "epic_calls": 0,
+  "epic_hit": null,
+  "great_calls": 1,
+  "great_hit": 0.0,
+  "low_calls": 10,
+  "low_mean_truth": 26
+ },
+ "live_deerfield-beach_archived": {
+  "n": 22,
+  "corr": -0.37,
+  "mae": 42.8,
+  "epic_calls": 6,
+  "epic_hit": 0.17,
+  "great_calls": 9,
+  "great_hit": 0.22,
+  "low_calls": 13,
+  "low_mean_truth": 52
+ },
+ "live_deerfield-beach_new_same_inputs": {
+  "n": 22,
+  "corr": 0.43,
+  "mae": 21.9,
+  "epic_calls": 0,
+  "epic_hit": null,
+  "great_calls": 2,
+  "great_hit": 0.0,
+  "low_calls": 9,
+  "low_mean_truth": 28
+ },
+ "live_fort-lauderdale_archived": {
+  "n": 21,
+  "corr": -0.09,
+  "mae": 31.5,
+  "epic_calls": 8,
+  "epic_hit": 0.0,
+  "great_calls": 9,
+  "great_hit": 0.0,
+  "low_calls": 11,
+  "low_mean_truth": 39
+ },
+ "live_fort-lauderdale_new_same_inputs": {
+  "n": 21,
+  "corr": 0.36,
+  "mae": 22.0,
+  "epic_calls": 0,
+  "epic_hit": null,
+  "great_calls": 2,
+  "great_hit": 0.0,
+  "low_calls": 8,
+  "low_mean_truth": 31
+ },
+ "live_fort-myers-beach_archived": {
+  "n": 2,
+  "corr": null,
+  "mae": 87.0,
+  "epic_calls": 2,
+  "epic_hit": 0.0,
+  "great_calls": 2,
+  "great_hit": 0.0,
+  "low_calls": 0,
+  "low_mean_truth": null
+ },
+ "live_fort-myers-beach_new_same_inputs": {
+  "n": 2,
+  "corr": 1.0,
+  "mae": 18.9,
+  "epic_calls": 0,
+  "epic_hit": null,
+  "great_calls": 0,
+  "great_hit": null,
+  "low_calls": 2,
+  "low_mean_truth": 11
+ },
+ "live_all_archived": {
+  "n": 65,
+  "corr": -0.34,
+  "mae": 40.7,
+  "epic_calls": 21,
+  "epic_hit": 0.1,
+  "great_calls": 27,
+  "great_hit": 0.11,
+  "low_calls": 36,
+  "low_mean_truth": 48
+ },
+ "live_all_new_same_inputs": {
+  "n": 65,
+  "corr": 0.44,
+  "mae": 21.7,
+  "epic_calls": 0,
+  "epic_hit": null,
+  "great_calls": 5,
+  "great_hit": 0.0,
+  "low_calls": 29,
+  "low_mean_truth": 27
+ },
+ "per_cam": {
+  "deerfield-beach-cam": {
+   "n": 22,
+   "trusted": true,
+   "obs_mean": 42,
+   "obs_sd": 31,
+   "spearman_old": -0.39,
+   "spearman_new": 0.46
+  },
+  "deerfield-pier-cam": {
+   "n": 22,
+   "trusted": true,
+   "obs_mean": 45,
+   "obs_sd": 29,
+   "spearman_old": -0.11,
+   "spearman_new": 0.13
+  },
+  "enco-shores-of-panama-cam": {
+   "n": 19,
+   "trusted": true,
+   "obs_mean": 38,
+   "obs_sd": 13,
+   "spearman_old": -0.45,
+   "spearman_new": 0.49
+  },
+  "enco-sterling-reef-cam": {
+   "n": 19,
+   "trusted": false,
+   "obs_mean": 28,
+   "obs_sd": 7,
+   "spearman_old": -0.13,
+   "spearman_new": 0.55
+  },
+  "fort-myers-beach-cam": {
+   "n": 21,
+   "trusted": true,
+   "obs_mean": 63,
+   "obs_sd": 26,
+   "spearman_old": -0.59,
+   "spearman_new": 0.39
+  },
+  "fort-zachary-taylor-cam": {
+   "n": 18,
+   "trusted": true,
+   "obs_mean": 77,
+   "obs_sd": 25,
+   "spearman_old": -0.76,
+   "spearman_new": 0.45
+  },
+  "ftl-elbo-beach-cam": {
+   "n": 22,
+   "trusted": true,
+   "obs_mean": 39,
+   "obs_sd": 19,
+   "spearman_old": 0.17,
+   "spearman_new": 0.21
+  },
+  "holmes-beach-cam": {
+   "n": 18,
+   "trusted": true,
+   "obs_mean": 74,
+   "obs_sd": 34,
+   "spearman_old": -0.5,
+   "spearman_new": 0.22
+  },
+  "jax-beach-bw-cam": {
+   "n": 19,
+   "trusted": false,
+   "obs_mean": 24,
+   "obs_sd": 37,
+   "spearman_old": 0.17,
+   "spearman_new": 0.34
+  },
+  "margaritaville-fmb-cam": {
+   "n": 19,
+   "trusted": true,
+   "obs_mean": 28,
+   "obs_sd": 17,
+   "spearman_old": -0.18,
+   "spearman_new": 0.33
+  },
+  "pensacola-sria-west-cam": {
+   "n": 9,
+   "trusted": true,
+   "obs_mean": 77,
+   "obs_sd": 7,
+   "spearman_old": -0.38,
+   "spearman_new": -0.32
+  },
+  "pink-shell-fmb-cam": {
+   "n": 18,
+   "trusted": true,
+   "obs_mean": 35,
+   "obs_sd": 32,
+   "spearman_old": -0.33,
+   "spearman_new": 0.31
+  },
+  "sharkys-pcb-cam": {
+   "n": 19,
+   "trusted": true,
+   "obs_mean": 78,
+   "obs_sd": 21,
+   "spearman_old": -0.22,
+   "spearman_new": 0.38
+  },
+  "siesta-beach-cam": {
+   "n": 19,
+   "trusted": true,
+   "obs_mean": 67,
+   "obs_sd": 31,
+   "spearman_old": -0.46,
+   "spearman_new": 0.23
+  },
+  "sunset-grille-marathon-cam": {
+   "n": 19,
+   "trusted": false,
+   "obs_mean": 18,
+   "obs_sd": 10,
+   "spearman_old": -0.08,
+   "spearman_new": 0.37
+  },
+  "white-sands-ami-cam": {
+   "n": 19,
+   "trusted": false,
+   "obs_mean": 5,
+   "obs_sd": 9,
+   "spearman_old": -0.01,
+   "spearman_new": 0.25
+  }
+ },
+ "categories": {
+  "A solid mid/high deck (total >= 90%)": {
+   "n": 38,
+   "cam_mean": 34,
+   "cam_median": 24,
+   "old_mean": 90,
+   "new_mean": 32
+  },
+  "B overcast, mostly low cloud": {
+   "n": 4,
+   "cam_mean": 40,
+   "cam_median": 37,
+   "old_mean": 42,
+   "new_mean": 47
+  },
+  "C low cloud in the sun path (>= 50%)": {
+   "n": 3,
+   "cam_mean": 43,
+   "cam_median": 57,
+   "old_mean": 18,
+   "new_mean": 46
+  },
+  "D partial mid/high (20-85%), path clear": {
+   "n": 11,
+   "cam_mean": 56,
+   "cam_median": 58,
+   "old_mean": 70,
+   "new_mean": 76
+  },
+  "E clear (total < 15%)": {
+   "n": 58,
+   "cam_mean": 72,
+   "cam_median": 76,
+   "old_mean": 28,
+   "new_mean": 65
+  },
+  "F scattered low cloud only": {
+   "n": 34,
+   "cam_mean": 63,
+   "cam_median": 63,
+   "old_mean": 27,
+   "new_mean": 68
+  }
+ },
+ "bands_old": {
+  "Fair 20-44": 97,
+  "Amazing 90+": 33,
+  "Great 70-89": 9,
+  "Good 45-69": 5,
+  "Poor <20": 4
+ },
+ "bands_new": {
+  "Good 45-69": 90,
+  "Great 70-89": 18,
+  "Fair 20-44": 38,
+  "Amazing 90+": 2
+ },
+ "bands_truth": {
+  "Good 45-69": 48,
+  "Great 70-89": 39,
+  "Fair 20-44": 20,
+  "Poor <20": 22,
+  "Amazing 90+": 19
+ }
+}

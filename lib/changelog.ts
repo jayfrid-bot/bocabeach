@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-11-05",
+    title: "More honest sunrise and sunset forecasts",
+    details:
+      "We checked three weeks of sunrise and sunset forecasts against what the beach cameras saw, and the forecast had it backwards. A sky full of thick cloud was called Amazing, but it usually looked gray. A clear sky was called Fair, but it usually looked good. The forecast now rates a clear sky as Good, a sky that fills up with cloud lower and lower, and saves Great and Amazing for some cloud with open sky around it and a clear view of the sun.",
+    tag: "fixed",
+  },
+  {
     date: "2026-10-19",
     title: "Android app 1.3",
     details:

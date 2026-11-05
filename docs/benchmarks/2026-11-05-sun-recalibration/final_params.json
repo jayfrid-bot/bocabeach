@@ -1,0 +1,13 @@
+{
+ "clear": 62,
+ "peak": 86,
+ "rise_end": 20,
+ "plateau_end": 70,
+ "full": 60,
+ "ovc_start": 60,
+ "ovc_floor": 0.45,
+ "beam_free": 20,
+ "beam_zero": 90,
+ "beam_floor": 0.75,
+ "aero_k": 1.0
+}

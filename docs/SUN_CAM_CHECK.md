@@ -459,3 +459,17 @@ python3 scripts/sun_cam_check.py \
   never uploaded (see "Usable frames and coverage").
 - The score version must be bumped when the formula changes. Old rows keep their
   own version so they can be re-scored from the saved frames.
+- Found in the 2026-11-05 recalibration (docs/benchmarks/2026-11-05-sun-recalibration):
+  - Pre-dawn lamps. In a dark frame at −35 minutes, the Deerfield pier cam's sodium
+    lights and the Elbo Room cam's red lights count as warm sky. Eight pier-cam
+    sunrises and one Elbo sunrise took their peak from such a frame (10/18 pier: 80
+    stored, about 18 without the dark frames). A fix: drop frames whose sky is still
+    dark (median V under 0.30) 15 or more minutes from the event, and bump
+    `SUN_CAM_SCORE_VERSION`. Not done yet: the server recomputes the peak from the
+    series, so the series needs a sky-brightness field first.
+  - The Deerfield beach cam switches to black and white on dim mornings, for up to
+    half the window. Those frames score 0.
+  - Each cam has its own scale. On the same sunsets Holmes Beach averages 74 and
+    White Sands 5. A thin sky strip near the horizon scores the warm band of a clear
+    sky at 70–97. Compare cams by rank, not by raw score. White Sands, Sterling Reef,
+    Marathon and Jacksonville Beach were left out of the fit for this reason.

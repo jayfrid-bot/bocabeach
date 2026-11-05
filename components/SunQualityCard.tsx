@@ -135,6 +135,7 @@ function buildSunQualityNerdInfo(args: {
             // Transparent factor-by-factor breakdown — each shown plainly.
             `Horizon path: ${b.horizonPath}`,
             `Cloud canvas: ${b.cloudCanvas}`,
+            ...(b.cover ? [`Cloud cover: ${b.cover}`] : []),
             ...(b.airClarity ? [`Air clarity: ${b.airClarity}`] : []),
             ...(b.humidity ? [`Humidity: ${b.humidity}`] : []),
             `→ ${result.score}/100 (${result.band})`,
@@ -176,9 +177,9 @@ function buildSunQualityNerdInfo(args: {
       </div>
     ),
     explainer:
-      "How colorful will this sunrise or sunset be — rich color, or clear but plain? The best ones aren't the clearest ones — they need a mid/high cloud DECK to act as a canvas the low sun's red and orange light can paint onto, AND a clear enough horizon for that low beam to reach it. Golden hour here runs while the sun is between 6° above and 4° below the horizon (about 20 minutes either side when that can't be computed). Anything from a moderate to a near-full mid/high deck can light up, as long as the horizon is clear; a perfectly clear sky is clean but plain; a solid gray mid-level lid usually stays gray; and a heavy LOW cloud deck sitting on the horizon blocks the beam before it reaches whatever's above. We're starting to check the model against what the beach cams see.",
+      "How colorful will this sunrise or sunset be? The best ones have some mid or high cloud (about 20-70% of the sky) with open sky around it and a clear path to the sun: the low sun lights the cloud red and orange. A clear sky is still a good one, with clean warm light at the horizon. As the sky fills toward overcast the show fades: a solid deck at any height mutes the sun to gray. Low cloud in the sun's path costs a little, but lit low cloud can glow too. Golden hour here runs while the sun is between 6° above and 4° below the horizon (about 20 minutes either side when that can't be computed). We check every sunrise and sunset against what the beach cams see.",
     formula:
-      "score = 0.85·canvas·(clearPath ÷ 100) + 0.15·seasonalPrior, × aerosol × humidity modifiers — the clear path scales the canvas, so a cloudless sky earns little. clearPath = 100 for low cloud ≤20%, then falls to 0 at 90% (forecast low cloud). canvas = 100 − 2.2·(distance of 0.5·mid + 0.7·high outside 35–80), × a solid-mid-deck factor (1.0 at ≤80% mid down to 0.35 at 100%). Modifiers: clean air (AOD<0.15) small bonus, haze/PM2.5 penalties (−25%/−35% caps); humidity only when there's no aerosol reading, and only above 92% (−8% cap). Calibrated on Jul–Oct 2026 Boca history so ~20% of events score Great or better and ~10% Amazing. Peak color lags to the sun's −2°→−4° window when there's a high-cloud deck. Every constant is a tuned heuristic except the low-cloud clear-path blocker (Corfidi/NOAA). Without the low/mid/high split, a flatter total-cloud curve is used instead. Golden hour is the sun between +6° and −4° (a ±20-min window only as a fallback); blue hour comes from a solar-elevation solve (sun at −6°) out to the golden window's edge.",
+      "score = canvas × overcast × path × aerosol × humidity. canvas comes from the mid/high cloud cover (a screen blend of the two): 62 for a clear sky, rising to 86 from 20% to 70%, then down to 60 at 100%. overcast = 1.0 while total cover is 60% or less, then falls in a straight line to 0.45 at 100%. path = 0.75 + 0.25 × clearPath ÷ 100, where clearPath = 100 for low cloud toward the sun of 20% or less, falling to 0 at 90% (the satellite's read along the sun's path when fresh, else the overhead low cloud). Modifiers: clean air (AOD < 0.15) +5%, haze and PM2.5 penalties (−25%/−35% caps); humidity only when there's no aerosol reading, and only above 92% (−8% cap). Fitted in November 2026 on 148 sunrises and sunsets at 8 beaches, scored against the beach cams (leave-one-day-out checked). Peak color lags to the sun's −2°→−4° window when there's a high-cloud deck. Without the low/mid/high split, a flatter total-cloud curve is used instead. Golden hour is the sun between +6° and −4° (a ±20-min window only as a fallback); blue hour comes from a solar-elevation solve (sun at −6°) out to the golden window's edge.",
     computation,
     sources: [
       ...(fromSatellite
@@ -202,7 +203,7 @@ function buildSunQualityNerdInfo(args: {
       ? "Cloud-by-level wasn't available for this hour, so this falls back to total cloud cover on a flatter, more conservative curve — the real color potential could be higher or lower."
       : b && b.horizonPath.startsWith("~")
         ? "The horizon path is estimated from the forecast's low cloud. The satellite can't tell a low deck on the horizon from the high deck that lights up, so it isn't used here."
-        : "Needs BOTH a moderate mid/high deck AND a low deck that stays out of the way. Peak-color timing and the modifiers are research-informed heuristics, not guarantees.",
+        : "Best with some mid/high cloud, open sky around it, and a clear path to the sun. Peak-color timing and the modifiers are research-informed heuristics, not guarantees.",
   };
 }
 

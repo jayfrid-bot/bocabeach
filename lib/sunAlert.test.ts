@@ -24,9 +24,9 @@ import type { ConditionsResponse, GoesIrData } from "@/lib/types";
 const NOW_MS = Date.parse("2026-09-02T18:00:00Z");
 
 /** A vivid-but-not-epic cloud mix at the exact sunset hour: low 10% (under
- *  the 20% "costs nothing" bar), mid 35% + high 10% — a deck a little under
- *  the canvas plateau, landing in the factor model's 70-89 ("vivid"/"Great")
- *  range, short of 90 ("epic"). */
+ *  the 20% "costs nothing" bar), mid 35% + high 10% — a partial deck in the
+ *  canvas sweet spot, landing in the factor model's 70-89 ("vivid"/"Great")
+ *  range; with no clean-air reading it stays short of 90 ("epic"). */
 function withVividHourly(over: Partial<ConditionsResponse["snapshot"]> = {}): ConditionsResponse {
   const base = scorableResponse();
   return {
@@ -105,14 +105,21 @@ describe("predictNextSunEvent", () => {
     expect(pred?.band).toBeNull();
   });
 
-  it("a heavier mid/high deck (still under the low-cloud bar) scores into the epic/Amazing range", () => {
-    const res = withVividHourly();
+  it("a partial deck in clean air scores Amazing; a solid deck over the same clear path does not", () => {
+    const res = withVividHourly({
+      airQuality: { status: "ok", data: { aod: 0.08 } } as unknown as ConditionsResponse["snapshot"]["airQuality"],
+    });
     res.snapshot.hourly.data = [
-      { time: FIXTURE_SUNSET, cloudCoverLowPct: 10, cloudCoverMidPct: 50, cloudCoverHighPct: 40 },
+      { time: FIXTURE_SUNSET, cloudCoverLowPct: 5, cloudCoverMidPct: 30, cloudCoverHighPct: 20, cloudCoverPct: 45 },
     ];
     const pred = predictNextSunEvent(res, NOW_MS);
     expect(pred?.score).toBeGreaterThanOrEqual(90);
     expect(pred?.band).toBe("epic");
+    res.snapshot.hourly.data = [
+      { time: FIXTURE_SUNSET, cloudCoverLowPct: 0, cloudCoverMidPct: 10, cloudCoverHighPct: 100, cloudCoverPct: 100 },
+    ];
+    const solid = predictNextSunEvent(res, NOW_MS);
+    expect(solid?.score!).toBeLessThan(45);
   });
 });
 
@@ -281,7 +288,7 @@ describe("assembleSunEventQuality — source selection", () => {
     expect(without.cloud).toEqual({ lowPct: 0, midPct: 0, highPct: 0, totalPct: 0 });
     expect(withIr.result.score!).toBeGreaterThan(without.result.score! + 20);
     expect(withIr.result.band).toBe("vivid");
-    expect(without.result.band).toBe("plain");
+    expect(without.result.band).toBe("good"); // a clear sky is a clean Good since 2026-11-05.1
     // verified horizon, and the source is in the breakdown the archive stores
     expect(withIr.result.breakdown!.horizonPath).toMatch(/satellite/);
     expect(withIr.result.breakdown!.source).toBe("satellite-ir");
@@ -295,7 +302,9 @@ describe("assembleSunEventQuality — source selection", () => {
     const blocked = ir({ events: { sunset: { eventIso: EVENT_ISO, azDeg: 260, beamLowPct: 90, beamMidHighPct: 5, antiMidHighPct: 5, beamSamples: 7 } } });
     const open = assembleSunEventQuality(sunset, { hourly: EMPTY_FORECAST, goesCloud: { ir: ir() }, nowMs: NOW });
     const shut = assembleSunEventQuality(sunset, { hourly: EMPTY_FORECAST, goesCloud: { ir: blocked }, nowMs: NOW });
-    expect(shut.result.score!).toBeLessThan(open.result.score! / 2);
+    // Low cloud in the path costs at most a quarter since 2026-11-05.1: lit low cloud can glow.
+    expect(shut.result.score!).toBeLessThan(open.result.score!);
+    expect(shut.result.score!).toBeGreaterThanOrEqual(Math.round(open.result.score! * 0.75) - 1);
   });
 
   it("falls back to the forecast when the IR read is stale, far from the event, or low quality", () => {
@@ -345,7 +354,7 @@ describe("assembleSunEventQuality — source selection", () => {
     expect(pred.kind).toBe("sunset");
     expect(pred.band).toBe("vivid");
     const noIr = { ...res, snapshot: { ...res.snapshot, goesCloud: { ...res.snapshot.goesCloud, data: { ...res.snapshot.goesCloud.data!, ir: null } } } } as ConditionsResponse;
-    expect(predictNextSunEvent(noIr, NOW)!.band).toBe("plain");
+    expect(predictNextSunEvent(noIr, NOW)!.band).toBe("good"); // the forecast's clear sky
   });
 });
 

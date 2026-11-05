@@ -2,15 +2,18 @@
 // Sunrise / sunset color quality — how colorful the sky should be at
 // the next sun event, or is it a bust?
 //
-// The recipe (meteorology, not vibes): a vivid sunrise/sunset needs a mid/high
-// cloud DECK to act as a canvas the low sun's red/orange light can paint onto.
-//   - Mid/high cloud ~30-60% = the sweet spot: enough surface up there to
-//     catch color, not so much it blocks the sun outright.
-//   - Near-0% cloud = clean but plain — nothing up there to paint color onto.
-//   - Heavy LOW cloud (near-total, ~85%+) is the opposite of magic: it sits
-//     right at the horizon and blocks the direct beam before it ever reaches
-//     whatever's above, so it kills the show independent of the mid/high deck.
-//   - Crisp, dry air (humidity <60%) helps a little — haze muddies color.
+// The recipe, recalibrated 2026-11-05 against three weeks of beach-cam truth
+// (docs/benchmarks/2026-11-05-sun-recalibration/REPORT.md):
+//   - Partial mid/high cloud (~20-60% of the sky) over a clear path to the sun
+//     = the best setup: open sky lets the low sun in, the cloud catches color.
+//   - A clear sky is GOOD, not plain: the cams rate clear sunrises and sunsets
+//     well (a clean warm band at the horizon), so it no longer scores "Fair".
+//   - Cover that approaches overcast mutes the show, whatever the cloud height:
+//     a solid deck (90-100%) dims the sun to gray. The old model called a 100%
+//     high deck "Amazing"; the cams saw a dull sky almost every time.
+//   - Low cloud in the sun's path still costs points, but less than we thought:
+//     lit low cloud often glows.
+//   - Clean air helps a little; haze and smoke cost a little.
 //
 // ISOLATED MODULE: built stand-alone per an integration agent's plan. Nothing
 // here imports from lib/types.ts or any live data source on purpose — the
@@ -30,7 +33,13 @@
  * tell which formula produced which score. BUMP IT whenever a curve, weight,
  * threshold, or band cutoff in this module changes.
  */
-export const SUN_QUALITY_VERSION = "2026-10-15.1";
+export const SUN_QUALITY_VERSION = "2026-11-05.1";
+// 2026-11-05.1: recalibrated on the sun cams (docs/benchmarks/
+// 2026-11-05-sun-recalibration). Score = canvas(mid/high cover) x overcast(total
+// cover) x path(low cloud toward the sun) x air. A clear sky starts at 62
+// (was ~29), a solid deck drops to ~20 (a 100% high deck was 98), the sweet spot
+// is 20-70% mid/high with total cover at most 60%. The seasonal prior is no
+// longer scored (it is still archived). The total-only curve moved to match.
 // 2026-10-15.1: the cloud mix and the horizon come from a fresh satellite
 // cloud-top read (GOES ACHA, lib/sunAlert.ts resolveIrObservation) when one
 // speaks for the event; the forecast layers are the fallback. The curves, the
@@ -56,7 +65,8 @@ export interface CloudMix {
   midPct?: number;
   /** High (cirrus) cloud cover, 0-100 — thin and high, also catches color well. */
   highPct?: number;
-  /** Total cloud cover, 0-100 — the fallback when the level split isn't available. */
+  /** Total cloud cover, 0-100 — the fallback when the level split is not available,
+   *  and the cover the factor model fades toward overcast. */
   totalPct?: number;
 }
 
@@ -92,8 +102,8 @@ export interface SunEventQualityInput {
    *  richer factor model engages; when a `fresh` sample is present it drives the
    *  highest-weighted clear-path factor directly. */
   horizon?: HorizonPath;
-  /** Seasonal color-climatology prior, 0-100. Small and near-flat at low
-   *  latitudes (26°N). Defaults to a neutral 55 when the caller has none. */
+  /** Seasonal color-climatology prior, 0-100. Accepted for compatibility but
+   *  NOT scored since 2026-11-05.1 (the archive still records the default). */
   seasonalPrior?: number;
 }
 
@@ -109,6 +119,9 @@ export interface SunFactorBreakdown {
   horizonPath: string;
   /** e.g. "55% mid-high". */
   cloudCanvas: string;
+  /** Total cover and the overcast cost, e.g. "95% total, near overcast −48%".
+   *  Added 2026-11-05.1 (optional: older archived rows lack it). */
+  cover?: string;
   /** e.g. "good (AOD 0.09)". Omitted when no aerosol reading. */
   airClarity?: string;
   /** e.g. "muggy −10%". Omitted when humidity isn't a factor. */
@@ -187,18 +200,18 @@ function lerpCurve(x: number, anchors: readonly (readonly [number, number])[]): 
 
 /**
  * Score vs. TOTAL cloud %, used only when we don't know the level split.
- * Deliberately flat and low-ceilinged: a 45% total reading could be a perfect
- * mid/high canvas OR a mediocre low deck — we can't tell, so we refuse to
- * promise the "Great"/"Amazing" the factor model can reach. Agrees with the
- * factor model at 0% (a cloudless sky is clean but plain, ~30).
+ * Deliberately flat and below "Great": a 45% total reading could be a perfect
+ * mid/high canvas OR a low deck — we can't tell, so we refuse to promise the
+ * "Great"/"Amazing" the factor model can reach. Agrees with the factor model
+ * at 0% (a clear sky is a clean "Good", 62) and falls the same way toward
+ * overcast. Recalibrated 2026-11-05 with the factor model.
  */
 const TOTAL_ONLY_CURVE: readonly (readonly [number, number])[] = [
-  [0, 30],
-  [20, 50],
-  [40, 68],
-  [60, 63],
-  [80, 42],
-  [100, 18],
+  [0, 62],
+  [30, 68],
+  [60, 64],
+  [80, 46],
+  [100, 22],
 ];
 
 /**
@@ -215,63 +228,76 @@ function combineMidHigh(midPct: number, highPct: number): number {
 // --- FACTOR MODEL (engaged whenever the complete low/mid/high split is
 // available; aerosol, PM2.5 and humidity only adjust it) ---------------------
 //
-// Composite = 0.85·canvas·(clearPath/100) + 0.15·seasonalPrior, then scaled by
-// multiplicative aerosol × humidity modifiers. Every constant below is a tuned
-// HEURISTIC unless flagged otherwise — the low-cloud clear-path blocker is the
-// well-supported physics (Corfidi/NOAA); the exact slopes are judgement calls.
+// score = canvas(mid/high cover) × overcast(total cover) × path(low cloud
+// toward the sun) × aerosol × humidity.
+//
+// Fitted 2026-11-05 on 148 sunrises and sunsets at 8 beaches (Oct 15 – Nov 5),
+// scored against the sun cams, with leave-one-day-out and time-split checks
+// (docs/benchmarks/2026-11-05-sun-recalibration/REPORT.md). Free parameters:
+// the clear-sky value, where the overcast fade starts, how far it falls, and
+// how much low cloud in the path costs. The sweet-spot edges (20/70) and the
+// peak (86) are set by the physics, not fitted: the archive holds only ~11
+// partial-cloud events, too few to fit them.
 
-/** The high-weighted cloud amount (0.5·mid + 0.7·high) over which the canvas
- *  scores full marks. Was a single 50 peak; a near-full mid/high deck over a
- *  clear horizon is the classic vivid sunrise (it is all lit from below), so
- *  the top is a plateau, falling off only once the deck is thick enough to
- *  read as overcast. HEURISTIC, calibrated on docs/benchmarks/2026-10-06-sun-model. */
-const CANVAS_PLATEAU: readonly [number, number] = [35, 80];
+/** CANVAS: score by mid/high cover (screen blend), before overcast and path.
+ *  A clear sky is a clean "Good" (62); 20-70% mid/high is the sweet spot (86);
+ *  past 70% the deck starts to read as a lid, down to 60 at 100% (the overcast
+ *  factor then takes a solid deck much lower). The cams cannot tell the tail's
+ *  shape apart (MAE moves by 0.1), so it keeps the 2026-10-06 Boca sunrise
+ *  (forecast 67% mid, 48% high, a ~95 on the Elbo Room cam) at "Great". */
+export const SUN_CANVAS_CURVE: readonly (readonly [number, number])[] = [
+  [0, 62],
+  [20, 86],
+  [70, 86],
+  [100, 60],
+];
 
-/**
- * CANVAS: how good the cloud "screen" overhead is at catching color. Full
- * marks while the high-weighted cloud amount (0.5·mid + 0.7·high) sits on
- * CANVAS_PLATEAU — HIGH cloud is weighted above mid because thin cirrus
- * catches the reddened light best (RESEARCH-BACKED direction); the 2.2
- * falloff off the plateau is a HEURISTIC slope. Clamped 0-100.
- */
-function canvasScore(midPct: number, highPct: number): number {
-  const amount = 0.5 * midPct + 0.7 * highPct;
-  const offPlateau = amount < CANVAS_PLATEAU[0] ? CANVAS_PLATEAU[0] - amount : amount > CANVAS_PLATEAU[1] ? amount - CANVAS_PLATEAU[1] : 0;
-  // Low cloud is the clear path's job (it scales the whole canvas), so it is
-  // not docked here too — counting it twice turned a typical Florida morning
-  // with scattered trade-wind cumulus into a "Fair".
-  return clamp((100 - offPlateau * 2.2) * solidMidDeckFactor(midPct), 0, 100);
+/** OVERCAST: total cover (low + mid + high) at or under 60% costs nothing;
+ *  from there the factor falls in a straight line to 0.45 at 100%. A solid
+ *  deck at ANY height dims the low sun: the cams rated the 90-100% decks of
+ *  Oct-Nov 2026 a median 24, while the old model rated them ~90. Fitted. */
+export const SUN_OVERCAST_START_PCT = 60;
+export const SUN_OVERCAST_FLOOR = 0.45;
+
+/** PATH: low cloud toward the sun costs at most 25% (factor 0.75 at a fully
+ *  blocked path). It was a near-total blocker; the cams show lit low cloud
+ *  often glows (the 2026-10-14 sunrise), so the fit settled on a mild cost. */
+export const SUN_PATH_FLOOR = 0.75;
+
+function canvasScore(midHighPct: number): number {
+  return lerpCurve(clamp(midHighPct, 0, 100), SUN_CANVAS_CURVE);
 }
 
-/** A near-solid MID deck (altostratus, > 80%) is usually a gray lid that
- *  blocks the low sun; a full HIGH veil (thin cirrostratus) still lights up,
- *  so only mid cover is penalized: 1.0 at 80% down to 0.35 at 100%. HEURISTIC. */
-function solidMidDeckFactor(midPct: number): number {
-  return midPct <= 80 ? 1 : clamp(1 - ((midPct - 80) / 20) * 0.65, 0.35, 1);
+function overcastFactor(totalPct: number): number {
+  const t = clamp(totalPct, 0, 100);
+  if (t <= SUN_OVERCAST_START_PCT) return 1;
+  return 1 - (1 - SUN_OVERCAST_FLOOR) * ((t - SUN_OVERCAST_START_PCT) / (100 - SUN_OVERCAST_START_PCT));
+}
+
+function pathFactor(clearPath: number): number {
+  return SUN_PATH_FLOOR + (1 - SUN_PATH_FLOOR) * (clamp(clearPath, 0, 100) / 100);
 }
 
 /**
- * CLEAR-PATH (highest-weighted, most science-backed): can the low sun's beam
- * actually reach the canvas, or is the horizon socked in? A FRESH satellite
- * satellite horizon sample is used directly (100 − low-cloud%) when a caller
- * passes one (lib/sunAlert.ts does, from the GOES cloud-top read, when it is
- * fresh); otherwise this is the forecast low-cloud estimate (lowCloudClearPath)
- * flagged as unverified.
+ * CLEAR-PATH: can the low sun's beam reach the sky, or is the horizon socked
+ * in? 0-100. A FRESH satellite sample of the low cloud along the sun's path is
+ * used when a caller passes one (lib/sunAlert.ts does, from the GOES cloud-top
+ * read); otherwise this is the overhead low-cloud estimate, flagged unverified.
+ * Both go through the same lowCloudClearPath curve.
  */
 function clearPathScore(
   lowPct: number,
   horizon: HorizonPath | undefined,
 ): { score: number; verified: boolean } {
   if (horizon && horizon.fresh) {
-    return { score: clamp(100 - clamp(horizon.cloudPct, 0, 100), 0, 100), verified: true };
+    return { score: lowCloudClearPath(horizon.cloudPct), verified: true };
   }
   return { score: lowCloudClearPath(lowPct), verified: false };
 }
 
-/** Forecast-based clear path: the first 20% of low cloud (scattered cumulus,
- *  usually not sitting on the horizon) costs nothing; past that it closes the
- *  path, reaching 0 at 90% (a low deck on the horizon blocks the beam —
- *  Corfidi/NOAA). HEURISTIC slope. */
+/** Clear path from low cloud: the first 20% (scattered cumulus, usually not
+ *  sitting on the horizon) costs nothing; past that it closes the path,
+ *  reaching 0 at 90%. 0-100. HEURISTIC slope (Corfidi/NOAA direction). */
 export function lowCloudClearPath(lowPct: number): number {
   return clamp(100 - Math.max(0, clamp(lowPct, 0, 100) - 20) * (100 / 70), 0, 100);
 }
@@ -279,10 +305,11 @@ export function lowCloudClearPath(lowPct: number): number {
 /**
  * AEROSOL modifier (multiplicative). Mild bonus for very clean air (AOD < 0.15);
  * above that a penalty ramps, capped at −25%. An elevated PM2.5 adds a separate
- * boundary-layer-smoke penalty capped at −35%. All thresholds/slopes HEURISTIC.
- * NOTE (flagged future enhancement, v1 skips it): a STRATOSPHERIC-aerosol branch
- * (volcanic/wildfire-smoke plumes aloft, which enhance rather than mute color)
- * is deliberately out of scope here.
+ * boundary-layer-smoke penalty capped at −35%. All thresholds/slopes HEURISTIC
+ * (unchanged in the 2026-11-05 recalibration: the archive has too few hazy days
+ * to tune them).
+ * NOTE (flagged future enhancement): a STRATOSPHERIC-aerosol branch (volcanic
+ * or wildfire smoke aloft, which can enhance color) is out of scope here.
  */
 function aerosolModifier(aod: number | undefined, pm2_5: number | undefined): number {
   let m = 1;
@@ -308,7 +335,8 @@ function humidityModifier(humidityPct: number | undefined, hasAerosol: boolean):
   return clamp(1 - (humidityPct - 92) * 0.01, 0.92, 1);
 }
 
-/** Neutral, near-flat seasonal color prior (26°N has little seasonal swing). */
+/** Neutral seasonal color prior. Since 2026-11-05.1 it is NOT scored (the cams
+ *  showed no use for it); the archive still records it for continuity. */
 export const DEFAULT_SEASONAL_PRIOR = 55; // HEURISTIC
 
 function airClarityWord(aod: number): string {
@@ -328,18 +356,19 @@ function factorModelQuality(
   const midPct = clamp(cloud.midPct ?? 0, 0, 100);
   const highPct = clamp(cloud.highPct ?? 0, 0, 100);
   const midHigh = combineMidHigh(midPct, highPct);
+  // Total cover: the reading when there is one (the satellite's cloudy share,
+  // or the forecast's total), else the screen blend of the three levels.
+  const totalPct =
+    cloud.totalPct != null ? clamp(cloud.totalPct, 0, 100) : combineMidHigh(combineMidHigh(lowPct, midPct), highPct);
 
-  const canvas = canvasScore(midPct, highPct);
+  const canvas = canvasScore(midHigh);
+  const ovc = overcastFactor(totalPct);
   const { score: clearPath, verified } = clearPathScore(lowPct, input.horizon);
-  const prior = clamp(input.seasonalPrior ?? DEFAULT_SEASONAL_PRIOR, 0, 100);
+  const path = pathFactor(clearPath);
 
-  // Color needs a canvas AND a beam that reaches it: the clear path scales
-  // the canvas rather than adding to it, so a cloudless sky (perfect path,
-  // nothing to paint) stays "Fair" instead of collecting free points.
-  const base = 0.85 * canvas * (clearPath / 100) + 0.15 * prior;
   const aeroMod = aerosolModifier(input.aod, input.pm2_5);
   const humidMod = humidityModifier(input.humidityPct, input.aod != null);
-  const score = Math.round(clamp(base * aeroMod * humidMod, 0, 100));
+  const score = Math.round(clamp(canvas * ovc * path * aeroMod * humidMod, 0, 100));
   const band = bandFor(score);
 
   const breakdown: SunFactorBreakdown = {
@@ -347,6 +376,7 @@ function factorModelQuality(
       ? `clear ${Math.round(clearPath)}/100 (satellite)`
       : `~${Math.round(clearPath)}/100 — unverified, est. from ${Math.round(lowPct)}% low cloud`,
     cloudCanvas: `${Math.round(midHigh)}% mid-high`,
+    cover: ovc < 1 ? `${Math.round(totalPct)}% total, near overcast ${Math.round((ovc - 1) * 100)}%` : `${Math.round(totalPct)}% total`,
   };
   if (input.aod != null) {
     breakdown.airClarity = `${airClarityWord(input.aod)} (AOD ${input.aod.toFixed(2)})`;
@@ -357,35 +387,39 @@ function factorModelQuality(
     breakdown.humidity = `muggy ${Math.round((humidMod - 1) * 100)}%`;
   }
 
-  const note = factorNote({ band, midHigh, lowPct, verified, aeroMod, humidMod });
+  const note = factorNote({ band, midHigh, totalPct, lowPct, clearPath, verified, aeroMod, humidMod });
   return { score, band, note, breakdown };
 }
 
 function factorNote(opts: {
   band: SunQualityBand;
   midHigh: number;
+  totalPct: number;
   lowPct: number;
+  clearPath: number;
   verified: boolean;
   aeroMod: number;
   humidMod: number;
 }): string {
-  const { band, midHigh, lowPct, verified, aeroMod, humidMod } = opts;
-  if (lowPct >= 85) {
-    return `Low cloud is blanketing the horizon (~${Math.round(lowPct)}%) — it blocks the beam before it reaches the color canvas above.`;
-  }
-  const horizon = verified ? " (horizon confirmed clear by satellite)" : "";
+  const { band, midHigh, totalPct, lowPct, clearPath, verified, aeroMod, humidMod } = opts;
   const air = aeroMod > 1 ? " Clean, crisp air helps." : aeroMod < 0.9 ? " Hazy air is muting it." : "";
   const muggy = humidMod < 0.95 ? " Muggy air takes the edge off." : "";
-  if (band === "epic" || band === "vivid") {
-    return `~${Math.round(midHigh)}% mid/high cloud with a clear enough path — expect a real show${horizon}.${air}${muggy}`;
+  if (totalPct >= 85) {
+    return lowPct >= 85
+      ? `Low cloud covers the sky (~${Math.round(lowPct)}%) — expect a gray sky, with little color getting through.`
+      : `A near-solid cloud deck (~${Math.round(totalPct)}% cover) — it usually mutes the sun, so expect little color.`;
   }
-  if (band === "good") {
-    return `~${Math.round(midHigh)}% mid/high cloud — some color potential${horizon}.${air}${muggy}`;
+  const horizon = verified && clearPath >= 70 ? " (clear path to the sun, by satellite)" : "";
+  if (band === "epic" || band === "vivid") {
+    return `~${Math.round(midHigh)}% mid/high cloud with open sky around it — the best setup for color${horizon}.${air}${muggy}`;
   }
   if (midHigh <= 12) {
-    return `Near-clear sky (~${Math.round(midHigh)}% mid/high) — clean light, but little up there to catch color.${air}`;
+    return `Near-clear sky — clean, warm light at the horizon, but little cloud up high to catch color.${air}${muggy}`;
   }
-  return `~${Math.round(midHigh)}% mid/high cloud — not the right mix for strong color${horizon}.${air}${muggy}`;
+  if (band === "good") {
+    return `~${Math.round(midHigh)}% mid/high cloud — some color likely${horizon}.${air}${muggy}`;
+  }
+  return `~${Math.round(totalPct)}% cloud cover — too much for strong color.${air}${muggy}`;
 }
 
 const BAND_CUTOFFS: readonly { min: number; band: SunQualityBand }[] = [
@@ -418,9 +452,9 @@ function totalOnlyNote(band: SunQualityBand): string {
  * Score how likely the NEXT sunrise/sunset is to be colorful, 0-100.
  * Pure: no network, no clock reads (`humidityPct`/`cloud` are handed in).
  *
- * - With the complete low/mid/high split: the factor model (canvas scaled by
- *   the low-cloud clear path, plus a small seasonal prior, × aerosol/humidity
- *   modifiers — see factorModelQuality). It runs with or without an aerosol
+ * - With the complete low/mid/high split: the factor model (mid/high canvas ×
+ *   overcast × low-cloud path × aerosol/humidity modifiers — see
+ *   factorModelQuality). It runs with or without an aerosol
  *   reading: AirNow-backed snapshots carry AQI but no AOD, and they must get
  *   the same calibrated model (docs/benchmarks/2026-10-06-sun-model).
  * - With only `totalPct`: a flatter, lower-ceiling curve, since we can't tell
@@ -694,7 +728,7 @@ export function nearestHourlyPoint(
 // through the card's `sunQualityHourly` map — the level-based path is the norm,
 // with the flatter total-only curve remaining the honest fallback.
 //
-// The richer FACTOR model (clearPath + canvas + prior × aerosol/humidity
+// The richer FACTOR model (canvas × overcast × path × aerosol/humidity
 // modifiers) engages when the level split is joined by at least one atmospheric
 // or satellite signal:
 //   - AEROSOL: lib/sources/airQuality.ts now also fetches CAMS

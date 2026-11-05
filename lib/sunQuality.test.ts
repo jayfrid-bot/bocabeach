@@ -23,23 +23,25 @@ describe("sunEventQuality", () => {
     expect(withAod.score).toBe(bare.score);
   });
 
-  it("0% cloud (clear sky, total only) is clean but plain", () => {
+  it("0% cloud (clear sky, total only) is a clean Good, not Fair (cams, 2026-11-05)", () => {
     const r = sunEventQuality({ cloud: { totalPct: 0 } });
-    expect(r.score).toBe(30);
-    expect(r.band).toBe("plain");
+    expect(r.score).toBe(62);
+    expect(r.band).toBe("good");
   });
 
-  it("0% cloud via a full level split (all zero) is also plain", () => {
+  it("0% cloud via a full level split (all zero) is also Good, and agrees with the total-only curve", () => {
     const r = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 0 } });
-    expect(r.band).toBe("plain");
-    expect(r.score!).toBeLessThan(35);
+    expect(r.band).toBe("good");
+    expect(r.score).toBe(62);
+    expect(r.note.toLowerCase()).toContain("near-clear");
   });
 
-  it("90% low cloud is a dud, even with a great mid/high reading underneath it", () => {
+  it("a sky socked in by 90% low cloud is Fair at best, even with a mid deck above it", () => {
     const r = sunEventQuality({ cloud: { lowPct: 90, midPct: 45, highPct: 0 } });
     expect(r.score).not.toBeNull();
-    expect(r.score!).toBeLessThanOrEqual(15);
-    expect(r.band).toBe("dud");
+    expect(r.score!).toBeLessThanOrEqual(40);
+    expect(r.score!).toBeLessThan(sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 0 } }).score!);
+    expect(r.note.toLowerCase()).toContain("gray");
   });
 
   it("a PARTIAL level split (e.g. only low cloud, no mid/high, no total) is honest-null — never a fabricated clear-sky read", () => {
@@ -96,8 +98,8 @@ describe("sunEventQuality", () => {
   });
 
   it("adding a high deck to a thin mid deck adds canvas", () => {
-    const midOnly = sunEventQuality({ cloud: { midPct: 30, highPct: 0, lowPct: 0 } });
-    const midAndHigh = sunEventQuality({ cloud: { midPct: 30, highPct: 30, lowPct: 0 } });
+    const midOnly = sunEventQuality({ cloud: { midPct: 8, highPct: 0, lowPct: 0 } });
+    const midAndHigh = sunEventQuality({ cloud: { midPct: 8, highPct: 8, lowPct: 0 } });
     expect(midAndHigh.score!).toBeGreaterThan(midOnly.score!);
   });
 
@@ -291,38 +293,83 @@ describe("sunEventQuality — factor model", () => {
     expect(stale.breakdown!.horizonPath).toMatch(/unverified/i);
   });
 
-  it("CANVAS: a plateau from a moderate to a near-full deck; HIGH cloud counts more than mid below it", () => {
-    const balanced = sunEventQuality({ cloud: { lowPct: 0, midPct: 40, highPct: 43 }, aod: 0.1 });
-    const tooClear = sunEventQuality({ cloud: { lowPct: 0, midPct: 10, highPct: 5 }, aod: 0.1 });
-    expect(balanced.score!).toBeGreaterThan(tooClear.score!);
-    // A big, lit deck over a clear horizon scores as well as a moderate one
-    // (2026-10-06: low 0 / mid 67 / high 48 was a top sunrise).
-    const bigDeck = sunEventQuality({ cloud: { lowPct: 0, midPct: 67, highPct: 48 }, aod: 0.1 });
-    expect(bigDeck.score!).toBe(balanced.score!);
-    // Below the plateau, the same cover as high cloud beats it as mid cloud.
-    const thinHigh = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 30 }, aod: 0.1 });
-    const thinMid = sunEventQuality({ cloud: { lowPct: 0, midPct: 30, highPct: 0 }, aod: 0.1 });
-    expect(thinHigh.score!).toBeGreaterThan(thinMid.score!);
+  // --- the 2026-11-05 recalibration (docs/benchmarks/2026-11-05-sun-recalibration) ---
+
+  it("a 100% HIGH deck is not Amazing or Great: a solid deck mutes the sun (11/01-11/04 Boca: predicted 92-98, cams 6-30)", () => {
+    // The exact satellite reads behind the worst misses.
+    for (const cloud of [
+      { lowPct: 0.9, midPct: 4.4, highPct: 94.2, totalPct: 99.6 }, // 2026-11-04 Deerfield, old 98
+      { lowPct: 0, midPct: 0, highPct: 100, totalPct: 100 },
+      { lowPct: 0, midPct: 0, highPct: 100 }, // no total on file: the blend says 100%
+    ]) {
+      const r = sunEventQuality({ cloud, aod: 0.1, horizon: { cloudPct: 0, fresh: true } });
+      expect(r.score!).toBeLessThan(45);
+      expect(r.band === "dud" || r.band === "plain").toBe(true);
+      expect(r.note.toLowerCase()).toContain("mutes the sun");
+    }
   });
 
-  it("CANVAS: a near-solid MID deck is a gray lid, a full HIGH veil is not", () => {
+  it("a solid MID deck is just as gray as a solid high one", () => {
     const solidMid = sunEventQuality({ cloud: { lowPct: 0, midPct: 100, highPct: 0 }, aod: 0.1 });
-    const fullHigh = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 72 }, aod: 0.1 });
-    expect(fullHigh.score!).toBeGreaterThan(solidMid.score! + 20);
+    const solidHigh = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 100 }, aod: 0.1 });
+    expect(solidMid.score).toBe(solidHigh.score);
+    expect(solidMid.score!).toBeLessThan(30);
   });
 
-  it("a cloudless sky is clean but plain — the clear path alone earns nothing", () => {
-    const clear = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 0 }, aod: 0.1, humidityPct: 76 });
-    expect(clear.band).toBe("plain");
+  it("a clear sky is decent: Good, never Fair (11/05 Boca: predicted 29, cams 82)", () => {
+    const clear = sunEventQuality({ cloud: { lowPct: 6.7, midPct: 0, highPct: 0, totalPct: 6.7 }, aod: 0.2, horizon: { cloudPct: 5, fresh: true } });
+    expect(clear.band).toBe("good");
+    expect(clear.score!).toBeGreaterThanOrEqual(55);
+    expect(clear.score!).toBeLessThan(70);
   });
 
-  it("LOW cloud imposes a near-linear canvas + clear-path penalty", () => {
-    const lowClean = sunEventQuality({ cloud: { lowPct: 0, midPct: 40, highPct: 30 }, aod: 0.1 });
-    const lowSome = sunEventQuality({ cloud: { lowPct: 40, midPct: 40, highPct: 30 }, aod: 0.1 });
-    const lowHeavy = sunEventQuality({ cloud: { lowPct: 90, midPct: 40, highPct: 30 }, aod: 0.1 });
+  it("partial mid/high cloud with a clear path to the sun scores best", () => {
+    const partial = sunEventQuality({ cloud: { lowPct: 0, midPct: 25, highPct: 25, totalPct: 45 }, aod: 0.1, horizon: { cloudPct: 0, fresh: true } });
+    const clear = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 0, totalPct: 0 }, aod: 0.1, horizon: { cloudPct: 0, fresh: true } });
+    const solid = sunEventQuality({ cloud: { lowPct: 0, midPct: 20, highPct: 100, totalPct: 100 }, aod: 0.1, horizon: { cloudPct: 0, fresh: true } });
+    const blocked = sunEventQuality({ cloud: { lowPct: 0, midPct: 25, highPct: 25, totalPct: 45 }, aod: 0.1, horizon: { cloudPct: 90, fresh: true } });
+    expect(partial.score).toBe(90); // the sweet spot, clean air: the only road to Amazing
+    expect(partial.band).toBe("epic");
+    expect(partial.score!).toBeGreaterThan(clear.score!);
+    expect(clear.score!).toBeGreaterThan(solid.score!);
+    expect(partial.score!).toBeGreaterThan(blocked.score!);
+    expect(partial.note).toMatch(/best setup/);
+  });
+
+  it("CANVAS: the sweet spot is 20-70% mid/high; past it the deck reads as a lid", () => {
+    // totalPct 50 keeps the overcast fade out of it: this pins the canvas alone.
+    const at = (m: number) => sunEventQuality({ cloud: { lowPct: 0, midPct: m, highPct: 0, totalPct: 50 } }).score!;
+    expect(at(0)).toBe(62);
+    expect(at(20)).toBe(86);
+    expect(at(45)).toBe(86);
+    expect(at(70)).toBe(86);
+    expect(at(80)).toBeLessThan(at(70));
+    expect(at(100)).toBeLessThan(at(80));
+    expect(at(100)).toBeLessThan(at(0));
+  });
+
+  it("OVERCAST: total cover over 60% fades the score, whatever the cloud height", () => {
+    const at = (total: number) => sunEventQuality({ cloud: { lowPct: 0, midPct: 40, highPct: 0, totalPct: total } }).score!;
+    expect(at(60)).toBe(at(40));
+    expect(at(80)).toBeLessThan(at(60));
+    expect(at(100)).toBeLessThan(at(80));
+    const r = sunEventQuality({ cloud: { lowPct: 0, midPct: 40, highPct: 0, totalPct: 95 } });
+    expect(r.breakdown!.cover).toMatch(/95% total, near overcast/);
+  });
+
+  it("LOW cloud in the sun's path costs points, but at most a quarter: lit low cloud can glow", () => {
+    const lowClean = sunEventQuality({ cloud: { lowPct: 0, midPct: 40, highPct: 0, totalPct: 40 }, aod: 0.1 });
+    const lowSome = sunEventQuality({ cloud: { lowPct: 40, midPct: 40, highPct: 0, totalPct: 50 }, aod: 0.1 });
+    const lowHeavy = sunEventQuality({ cloud: { lowPct: 90, midPct: 40, highPct: 0, totalPct: 60 }, aod: 0.1 });
     expect(lowClean.score!).toBeGreaterThan(lowSome.score!);
     expect(lowSome.score!).toBeGreaterThan(lowHeavy.score!);
-    expect(lowHeavy.band).toBe("dud");
+    expect(lowHeavy.score!).toBeGreaterThanOrEqual(Math.round(lowClean.score! * 0.75) - 1);
+  });
+
+  it("the seasonal prior is no longer scored", () => {
+    const a = sunEventQuality({ cloud: split, seasonalPrior: 0 });
+    const b = sunEventQuality({ cloud: split, seasonalPrior: 100 });
+    expect(a.score).toBe(b.score);
   });
 
   it("AEROSOL modifier: very clean air (AOD<0.15) beats hazy air; penalty is capped at −25%", () => {

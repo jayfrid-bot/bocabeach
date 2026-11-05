@@ -303,7 +303,7 @@ export function assembleSunEventQuality(
   // Same rough clear-path estimate the factor model uses, purely for the
   // peak-color "reasonably clear" gate.
   const clearPathEstimate = ir
-    ? Math.max(0, Math.min(100, 100 - ir.horizon.cloudPct))
+    ? lowCloudClearPath(ir.horizon.cloudPct)
     : cloud?.lowPct != null
       ? lowCloudClearPath(cloud.lowPct)
       : undefined;
