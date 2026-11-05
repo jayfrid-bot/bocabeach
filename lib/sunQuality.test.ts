@@ -337,7 +337,7 @@ describe("sunEventQuality — factor model", () => {
   });
 
   it("CANVAS: the sweet spot is 20-70% mid/high; past it the deck reads as a lid", () => {
-    // Total cover is never below the layer blend, so past 60% mid/high the
+    // Total cover is never below the largest layer, so past 60% mid/high the
     // overcast fade joins in; up to 60% this pins the canvas alone.
     const at = (m: number) => sunEventQuality({ cloud: { lowPct: 0, midPct: m, highPct: 0, totalPct: 50 } }).score!;
     expect(at(0)).toBe(62);
@@ -377,10 +377,28 @@ describe("sunEventQuality — factor model", () => {
     expect(clear.note).toMatch(/Near-clear/);
   });
 
-  it("a forecast total below its own layers is raised to the layer blend", () => {
+  it("a forecast total below its largest layer is raised to that layer (and no further)", () => {
     const low = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 100, totalPct: 30 } });
     const honest = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 100, totalPct: 100 } });
     expect(low.score).toBe(honest.score);
+    // Two layers that could overlap fully: the reported total stands.
+    const a = sunEventQuality({ cloud: { lowPct: 0, midPct: 67, highPct: 48, totalPct: 67 } });
+    const b = sunEventQuality({ cloud: { lowPct: 0, midPct: 67, highPct: 48, totalPct: 80 } });
+    expect(a.score!).toBeGreaterThan(b.score!);
+  });
+
+  it("no non-finite input can produce a NaN score or note", () => {
+    const cloud = { lowPct: 10, midPct: 40, highPct: 20, totalPct: 50 };
+    const cases = [
+      { cloud, aod: NaN }, { cloud, aod: Infinity }, { cloud, humidityPct: NaN },
+      { cloud, pm2_5: NaN }, { cloud, horizon: { cloudPct: NaN, fresh: true } },
+      { cloud, aod: NaN, humidityPct: NaN, pm2_5: NaN },
+    ];
+    for (const c of cases) {
+      const r = sunEventQuality(c as never);
+      expect(Number.isFinite(r.score!)).toBe(true);
+      expect(JSON.stringify(r)).not.toMatch(/NaN|Infinity/);
+    }
   });
 
   it("a Good score under a heavy deck does not say to expect little color", () => {

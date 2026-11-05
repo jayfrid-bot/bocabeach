@@ -198,7 +198,9 @@ cd <dir> && python3 scripts/evaluate.py        # -> eval.json, final_params.json
 
 An independent review found these problems. All are fixed in the same `SUN_QUALITY_VERSION`.
 
-- **Forecast total below its layers.** Open-Meteo can report a total cover below the blend of its own layers. The model now uses the larger of the two. None of the 346 fit rows is affected (satellite totals are always at or above the blend), so every number above stands. The 10/06 Boca forecast-only sunrise now reads Good (54), not Great (71). That is a known miss of the forecast-only fallback.
+- **Forecast total below its layers.** Open-Meteo can report a total cover below its own layers. The model now raises the total to the largest single layer, which is the only hard physical floor (fully overlapping decks). A first fix raised it to the screen blend of the layers. A second review showed that blend is not a true bound, since layers can overlap, and it was never validated on forecast data. It was dropped. No fit row is affected, so every number above stands. The 10/06 Boca forecast-only sunrise still reads Great (71). The cams saw about 95.
+- **Non-finite input.** Every optional number (aerosol, PM2.5, humidity, the sun-path read) is now cleaned at the entry point, not only the cloud fields.
+- **Copy.** The card no longer claims "about 1 in 5" score 70 or more. This sample gives about 1 in 7 and is not a population estimate. The "color forecast" wording is gone from the agent schema and an older changelog entry.
 - **Notes.** Heavy low cloud with nothing up high no longer says "Near-clear sky". The total-only notes now follow the cover, not the band (they were reversed after the curve changed). A Good score under a heavy deck no longer says "expect little color".
 - **Copy.** The card no longer says we check every sunrise and sunset against the cams. Many beaches have no cam, and the archive budget runs out before sunset. It also no longer says "leave-one-day-out checked".
 - **NaN.** A non-finite reading now counts as missing.

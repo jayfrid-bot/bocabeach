@@ -96,7 +96,7 @@ const schemas: Record<string, JsonSchema> = {
       bestTime: { ...nullable("string"), description: 'Best window today in the beach\'s own time zone, e.g. "4–6 PM".' },
       sunForecast: {
         description:
-          "The next sunrise or sunset and when its color forecast opens, 60 minutes before the event. While state is pending, text is the line to say. Never carries a color score. Null without sun times.",
+          "The next sunrise or sunset and when its forecast opens, 60 minutes before the event. While state is pending, text is the line to say. Never carries a color score. Null without sun times.",
         oneOf: [ref("SunForecast"), { type: "null" }],
       },
       generatedAt: nullable("string"),

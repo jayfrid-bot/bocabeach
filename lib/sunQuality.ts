@@ -357,13 +357,16 @@ function factorModelQuality(
   const highPct = clamp(cloud.highPct ?? 0, 0, 100);
   const midHigh = combineMidHigh(midPct, highPct);
   // Total cover: the reading when there is one (the satellite's cloudy share,
-  // or the forecast's total), but never less than the screen blend of the
-  // three levels. Open-Meteo often reports a total below its own layers
-  // (e.g. mid 67 + high 48 → blend 83, total 67); taken as-is, that kept a
-  // near-overcast sky out of the overcast fade. Satellite totals are always
-  // at or above the blend, so the fitted (satellite) cases do not change.
+  // or the forecast's total), else the screen blend of the three levels.
+  // Total can never be below the largest single layer (fully overlapping decks
+  // are the least cover possible), so that is the only floor applied. A
+  // stronger floor (the screen blend) was tried and dropped: layers can
+  // overlap, and it was never validated on forecast data.
   const layerBlend = combineMidHigh(combineMidHigh(lowPct, midPct), highPct);
-  const totalPct = cloud.totalPct != null && Number.isFinite(cloud.totalPct) ? Math.max(clamp(cloud.totalPct, 0, 100), layerBlend) : layerBlend;
+  const totalPct =
+    cloud.totalPct != null && Number.isFinite(cloud.totalPct)
+      ? Math.max(clamp(cloud.totalPct, 0, 100), lowPct, midPct, highPct)
+      : layerBlend;
 
   const canvas = canvasScore(midHigh);
   const ovc = overcastFactor(totalPct);
@@ -447,6 +450,26 @@ function bandFor(score: number): SunQualityBand {
   return "dud";
 }
 
+/** A NaN or Infinity reading is treated as missing, so no input can turn the
+ *  score into NaN. Applies to every optional number, not only the cloud. */
+function sanitizeInput(input: SunEventQualityInput): SunEventQualityInput {
+  const fin = (v: number | null | undefined): number | undefined =>
+    v != null && Number.isFinite(v) ? v : undefined;
+  const c = input.cloud;
+  const horizon =
+    input.horizon && Number.isFinite(input.horizon.cloudPct) ? input.horizon : undefined;
+  return {
+    ...input,
+    cloud: c
+      ? { ...c, lowPct: fin(c.lowPct), midPct: fin(c.midPct), highPct: fin(c.highPct), totalPct: fin(c.totalPct) }
+      : undefined,
+    humidityPct: fin(input.humidityPct),
+    aod: fin(input.aod),
+    pm2_5: fin(input.pm2_5),
+    horizon,
+  };
+}
+
 /** Note for the total-cloud-only fallback (no low/mid/high split on file). */
 function totalOnlyNote(totalPct: number): string {
   const phrase =
@@ -474,7 +497,8 @@ function totalOnlyNote(totalPct: number): string {
  * - With neither: honest-null (`score`/`band` are `null`) rather than a
  *   fabricated number.
  */
-export function sunEventQuality(input: SunEventQualityInput): SunEventQuality {
+export function sunEventQuality(rawInput: SunEventQualityInput): SunEventQuality {
+  const input = sanitizeInput(rawInput);
   const path = sunModelPath(input);
   if (path === null) {
     return {

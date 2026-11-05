@@ -33,7 +33,7 @@ import {
 /** One plain sentence on what the number means, first line on the flip side.
  *  Great starts at 70 and Amazing at 90 (lib/sunQuality.ts BAND_CUTOFFS). */
 export const SUN_SCORE_HINT =
-  "0–100. About 1 in 5 sunrises and sunsets score 70 or more (Great); 90 or more is Amazing.";
+  "0–100. 70 or more is Great; 90 or more is Amazing.";
 
 // Gradient stops line up with lib/sunQuality.ts's BAND_CUTOFFS (dud <20,
 // plain <45, good <70, vivid <90, epic >=90) — same idiom as

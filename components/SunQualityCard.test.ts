@@ -47,7 +47,7 @@ describe("sun color score on the card front", () => {
   });
 
   it("explains the 0-100 scale in one plain sentence, never 'AI'", () => {
-    expect(SUN_SCORE_HINT).toMatch(/^0–100\. About 1 in 5 .* 70 or more \(Great\)/);
+    expect(SUN_SCORE_HINT).toMatch(/^0–100\. 70 or more is Great/);
     expect(SUN_SCORE_HINT).not.toMatch(/\bAI\b/);
   });
 });
