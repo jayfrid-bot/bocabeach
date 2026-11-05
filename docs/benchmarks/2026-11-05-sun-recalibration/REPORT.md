@@ -193,3 +193,18 @@ cd <dir> && python3 scripts/evaluate.py        # -> eval.json, final_params.json
 
 `scripts/models.py` holds the Python ports of both models.
 `final_params.json` is the shipped parameter set.
+
+## 7. Review fixes (2026-11-05, same version)
+
+An independent review found these problems. All are fixed in the same `SUN_QUALITY_VERSION`.
+
+- **Forecast total below its layers.** Open-Meteo can report a total cover below the blend of its own layers. The model now uses the larger of the two. None of the 346 fit rows is affected (satellite totals are always at or above the blend), so every number above stands. The 10/06 Boca forecast-only sunrise now reads Good (54), not Great (71). That is a known miss of the forecast-only fallback.
+- **Notes.** Heavy low cloud with nothing up high no longer says "Near-clear sky". The total-only notes now follow the cover, not the band (they were reversed after the curve changed). A Good score under a heavy deck no longer says "expect little color".
+- **Copy.** The card no longer says we check every sunrise and sunset against the cams. Many beaches have no cam, and the archive budget runs out before sunset. It also no longer says "leave-one-day-out checked".
+- **NaN.** A non-finite reading now counts as missing.
+
+Open, and not fixed by this change:
+
+- **The shipped values were tuned by hand on all the data.** The leave-one-day-out and time-split refits move clear sky to about 73, and they start their search from the final values. So no clean out-of-sample number exists for the shipped model. The Deerfield and Boca cams see nearly the same sky, so Boca is not a true hold-out. The 148 events fall on 22 days, so the effective sample is about 40 to 60.
+- **The partial-cloud sweet spot is a prior, not a finding.** In this data, partial-cloud events average 56 on the cams and clear skies average 72, which is the reverse of the model's order. East-coast Great calls hit 0 of 8. **Do not turn on sun alerts (`SUN_ALERTS_ENABLED`) with this model until the weekly scorecard backs the sweet spot.**
+- The live sun-cam scorer still counts pre-dawn lamp frames (`docs/SUN_CAM_CHECK.md`), and the archive budget leaves almost no sunsets for the scorecard.

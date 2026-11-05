@@ -57,7 +57,7 @@ describe("sunEventQuality", () => {
   it("an incomplete level split falls back to the flatter total-cloud curve when total cover is available", () => {
     const r = sunEventQuality({ cloud: { lowPct: 90, totalPct: 90 } });
     expect(r.score).not.toBeNull();
-    expect(r.note.toLowerCase()).toContain("cloud mix unknown");
+    expect(r.note.toLowerCase()).toContain("only total cloud cover");
     // Same flatter total-only curve a bare totalPct would use.
     const totalOnly = sunEventQuality({ cloud: { totalPct: 90 } });
     expect(r.score).toBe(totalOnly.score);
@@ -70,7 +70,7 @@ describe("sunEventQuality", () => {
     // Flatter/lower-ceiling than the level-based reading of the "same" 45%.
     expect(totalOnly.score!).toBeLessThan(levelBased.score!);
     expect(totalOnly.score!).toBeLessThan(80);
-    expect(totalOnly.note.toLowerCase()).toContain("cloud mix unknown");
+    expect(totalOnly.note.toLowerCase()).toContain("only total cloud cover");
   });
 
   it("honest-null: no cloud object at all", () => {
@@ -337,12 +337,14 @@ describe("sunEventQuality — factor model", () => {
   });
 
   it("CANVAS: the sweet spot is 20-70% mid/high; past it the deck reads as a lid", () => {
-    // totalPct 50 keeps the overcast fade out of it: this pins the canvas alone.
+    // Total cover is never below the layer blend, so past 60% mid/high the
+    // overcast fade joins in; up to 60% this pins the canvas alone.
     const at = (m: number) => sunEventQuality({ cloud: { lowPct: 0, midPct: m, highPct: 0, totalPct: 50 } }).score!;
     expect(at(0)).toBe(62);
     expect(at(20)).toBe(86);
     expect(at(45)).toBe(86);
-    expect(at(70)).toBe(86);
+    expect(at(60)).toBe(86);
+    expect(at(70)).toBeLessThan(at(60));
     expect(at(80)).toBeLessThan(at(70));
     expect(at(100)).toBeLessThan(at(80));
     expect(at(100)).toBeLessThan(at(0));
@@ -358,12 +360,46 @@ describe("sunEventQuality — factor model", () => {
   });
 
   it("LOW cloud in the sun's path costs points, but at most a quarter: lit low cloud can glow", () => {
-    const lowClean = sunEventQuality({ cloud: { lowPct: 0, midPct: 40, highPct: 0, totalPct: 40 }, aod: 0.1 });
-    const lowSome = sunEventQuality({ cloud: { lowPct: 40, midPct: 40, highPct: 0, totalPct: 50 }, aod: 0.1 });
-    const lowHeavy = sunEventQuality({ cloud: { lowPct: 90, midPct: 40, highPct: 0, totalPct: 60 }, aod: 0.1 });
+    // Same total cover on all three (94%), so only the path to the sun changes.
+    const lowClean = sunEventQuality({ cloud: { lowPct: 0, midPct: 40, highPct: 0, totalPct: 94 }, aod: 0.1 });
+    const lowSome = sunEventQuality({ cloud: { lowPct: 40, midPct: 40, highPct: 0, totalPct: 94 }, aod: 0.1 });
+    const lowHeavy = sunEventQuality({ cloud: { lowPct: 90, midPct: 40, highPct: 0, totalPct: 94 }, aod: 0.1 });
     expect(lowClean.score!).toBeGreaterThan(lowSome.score!);
     expect(lowSome.score!).toBeGreaterThan(lowHeavy.score!);
     expect(lowHeavy.score!).toBeGreaterThanOrEqual(Math.round(lowClean.score! * 0.75) - 1);
+  });
+
+  it("heavy LOW cloud with nothing up high is not called a near-clear sky", () => {
+    const r = sunEventQuality({ cloud: { lowPct: 70, midPct: 0, highPct: 0, totalPct: 70 } });
+    expect(r.note).not.toMatch(/Near-clear/);
+    expect(r.note).toMatch(/low cloud/i);
+    const clear = sunEventQuality({ cloud: { lowPct: 5, midPct: 0, highPct: 0, totalPct: 5 } });
+    expect(clear.note).toMatch(/Near-clear/);
+  });
+
+  it("a forecast total below its own layers is raised to the layer blend", () => {
+    const low = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 100, totalPct: 30 } });
+    const honest = sunEventQuality({ cloud: { lowPct: 0, midPct: 0, highPct: 100, totalPct: 100 } });
+    expect(low.score).toBe(honest.score);
+  });
+
+  it("a Good score under a heavy deck does not say to expect little color", () => {
+    const r = sunEventQuality({ cloud: { lowPct: 0, midPct: 50, highPct: 0, totalPct: 85 }, aod: 0.05 });
+    if (r.band === "good") expect(r.note).not.toMatch(/little color/);
+  });
+
+  it("NaN readings count as missing, never as a score", () => {
+    expect(sunEventQuality({ cloud: { totalPct: NaN } }).score).toBeNull();
+    const r = sunEventQuality({ cloud: { lowPct: 0, midPct: NaN, highPct: 0, totalPct: 40 } });
+    expect(Number.isFinite(r.score!)).toBe(true);
+    expect(r.note).not.toMatch(/NaN/);
+    const t = sunEventQuality({ cloud: { lowPct: 0, midPct: 40, highPct: 0, totalPct: NaN } });
+    expect(Number.isFinite(t.score!)).toBe(true);
+  });
+
+  it("TOTAL-ONLY notes follow the cover: clear is clean light, overcast is in the way", () => {
+    expect(sunEventQuality({ cloud: { totalPct: 0 } }).note).toMatch(/mostly clear/);
+    expect(sunEventQuality({ cloud: { totalPct: 100 } }).note).toMatch(/heavy cloud/);
   });
 
   it("the seasonal prior is no longer scored", () => {
@@ -420,7 +456,7 @@ describe("sunEventQuality — factor model", () => {
     // Only total cover known → stays on the flatter total-only fallback curve.
     const r = sunEventQuality({ cloud: { totalPct: 45 }, aod: 0.1 });
     expect(r.breakdown).toBeUndefined();
-    expect(r.note.toLowerCase()).toContain("cloud mix unknown");
+    expect(r.note.toLowerCase()).toContain("only total cloud cover");
   });
 
   it("factor-model scores never leave 0-100", () => {

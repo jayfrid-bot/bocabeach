@@ -357,9 +357,13 @@ function factorModelQuality(
   const highPct = clamp(cloud.highPct ?? 0, 0, 100);
   const midHigh = combineMidHigh(midPct, highPct);
   // Total cover: the reading when there is one (the satellite's cloudy share,
-  // or the forecast's total), else the screen blend of the three levels.
-  const totalPct =
-    cloud.totalPct != null ? clamp(cloud.totalPct, 0, 100) : combineMidHigh(combineMidHigh(lowPct, midPct), highPct);
+  // or the forecast's total), but never less than the screen blend of the
+  // three levels. Open-Meteo often reports a total below its own layers
+  // (e.g. mid 67 + high 48 → blend 83, total 67); taken as-is, that kept a
+  // near-overcast sky out of the overcast fade. Satellite totals are always
+  // at or above the blend, so the fitted (satellite) cases do not change.
+  const layerBlend = combineMidHigh(combineMidHigh(lowPct, midPct), highPct);
+  const totalPct = cloud.totalPct != null && Number.isFinite(cloud.totalPct) ? Math.max(clamp(cloud.totalPct, 0, 100), layerBlend) : layerBlend;
 
   const canvas = canvasScore(midHigh);
   const ovc = overcastFactor(totalPct);
@@ -376,7 +380,10 @@ function factorModelQuality(
       ? `clear ${Math.round(clearPath)}/100 (satellite)`
       : `~${Math.round(clearPath)}/100 — unverified, est. from ${Math.round(lowPct)}% low cloud`,
     cloudCanvas: `${Math.round(midHigh)}% mid-high`,
-    cover: ovc < 1 ? `${Math.round(totalPct)}% total, near overcast ${Math.round((ovc - 1) * 100)}%` : `${Math.round(totalPct)}% total`,
+    cover:
+      Math.round((ovc - 1) * 100) < 0
+        ? `${Math.round(totalPct)}% total, near overcast \u2212${Math.abs(Math.round((ovc - 1) * 100))}%`
+        : `${Math.round(totalPct)}% total`,
   };
   if (input.aod != null) {
     breakdown.airClarity = `${airClarityWord(input.aod)} (AOD ${input.aod.toFixed(2)})`;
@@ -404,7 +411,7 @@ function factorNote(opts: {
   const { band, midHigh, totalPct, lowPct, clearPath, verified, aeroMod, humidMod } = opts;
   const air = aeroMod > 1 ? " Clean, crisp air helps." : aeroMod < 0.9 ? " Hazy air is muting it." : "";
   const muggy = humidMod < 0.95 ? " Muggy air takes the edge off." : "";
-  if (totalPct >= 85) {
+  if (totalPct >= 85 && band !== "epic" && band !== "vivid" && band !== "good") {
     return lowPct >= 85
       ? `Low cloud covers the sky (~${Math.round(lowPct)}%) — expect a gray sky, with little color getting through.`
       : `A near-solid cloud deck (~${Math.round(totalPct)}% cover) — it usually mutes the sun, so expect little color.`;
@@ -413,11 +420,16 @@ function factorNote(opts: {
   if (band === "epic" || band === "vivid") {
     return `~${Math.round(midHigh)}% mid/high cloud with open sky around it — the best setup for color${horizon}.${air}${muggy}`;
   }
+  if (midHigh <= 12 && lowPct >= 30) {
+    return `Mostly low cloud (~${Math.round(lowPct)}%) and little up high to catch color — expect softer, muted light.${air}${muggy}`;
+  }
   if (midHigh <= 12) {
     return `Near-clear sky — clean, warm light at the horizon, but little cloud up high to catch color.${air}${muggy}`;
   }
   if (band === "good") {
-    return `~${Math.round(midHigh)}% mid/high cloud — some color likely${horizon}.${air}${muggy}`;
+    return totalPct >= 85
+      ? `A heavy cloud deck (~${Math.round(totalPct)}% cover), but the sun may light its edges — some color possible${horizon}.${air}${muggy}`
+      : `~${Math.round(midHigh)}% mid/high cloud — some color likely${horizon}.${air}${muggy}`;
   }
   return `~${Math.round(totalPct)}% cloud cover — too much for strong color.${air}${muggy}`;
 }
@@ -436,16 +448,16 @@ function bandFor(score: number): SunQualityBand {
 }
 
 /** Note for the total-cloud-only fallback (no low/mid/high split on file). */
-function totalOnlyNote(band: SunQualityBand): string {
+function totalOnlyNote(totalPct: number): string {
   const phrase =
-    band === "epic" || band === "vivid"
-      ? "there's likely a decent deck up there"
-      : band === "good"
-        ? "there's a moderate deck up there"
-        : band === "plain"
-          ? "not much is up there to catch the light"
+    totalPct <= 15
+      ? "the sky looks mostly clear, so expect clean, warm light"
+      : totalPct <= 65
+        ? "some cloud is up there that could catch the light"
+        : totalPct < 85
+          ? "a lot of cloud is up there, which tends to mute the color"
           : "heavy cloud is likely in the way";
-  return `Cloud mix unknown (only total cover on file) — ${phrase}, so this is a rougher guess.`;
+  return `Only total cloud cover is on file, so this is a rougher guess: ${phrase}.`;
 }
 
 /**
@@ -476,7 +488,7 @@ export function sunEventQuality(input: SunEventQualityInput): SunEventQuality {
   const total = clamp(input.cloud!.totalPct ?? 0, 0, 100);
   const score = Math.round(clamp(lerpCurve(total, TOTAL_ONLY_CURVE), 0, 100));
   const band = bandFor(score);
-  return { score, band, note: totalOnlyNote(band) };
+  return { score, band, note: totalOnlyNote(total) };
 }
 
 /** Which branch of `sunEventQuality` scores a given input: the factor model
@@ -489,10 +501,11 @@ export type SunModelPath = "factor" | "total-only" | null;
 
 export function sunModelPath(input: SunEventQualityInput): SunModelPath {
   const cloud = input.cloud;
-  const hasLevelSplit =
-    !!cloud && cloud.lowPct != null && cloud.midPct != null && cloud.highPct != null;
+  // A NaN or Infinity reading counts as missing, so it can never become a score.
+  const ok = (v: number | null | undefined): v is number => v != null && Number.isFinite(v);
+  const hasLevelSplit = !!cloud && ok(cloud.lowPct) && ok(cloud.midPct) && ok(cloud.highPct);
   if (hasLevelSplit) return "factor";
-  return cloud && cloud.totalPct != null ? "total-only" : null;
+  return cloud && ok(cloud.totalPct) ? "total-only" : null;
 }
 
 // --- event selection ----------------------------------------------------------
