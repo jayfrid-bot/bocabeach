@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd job for scripts/scorecard_daily.sh: the daily prediction scorecard.
+  Runs on the owner's laptop (it has node and the wrangler login; the home
+  server has neither). See that script's header.
+
+  To install (replace __HOME__ first):
+    sed "s#__HOME__#$HOME#g" scripts/com.isitbeachday.scorecard.plist \
+      > "$HOME/Library/LaunchAgents/com.isitbeachday.scorecard.plist"
+    launchctl bootstrap gui/$(id -u) \
+      "$HOME/Library/LaunchAgents/com.isitbeachday.scorecard.plist"
+
+  To uninstall:
+    launchctl bootout gui/$(id -u)/com.isitbeachday.scorecard
+    mv "$HOME/Library/LaunchAgents/com.isitbeachday.scorecard.plist" /tmp/
+
+  To check status / force a run:
+    launchctl print gui/$(id -u)/com.isitbeachday.scorecard
+    launchctl kickstart -k gui/$(id -u)/com.isitbeachday.scorecard
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.isitbeachday.scorecard</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__HOME__/Projects/bocabeach/scripts/scorecard_daily.sh</string>
+  </array>
+
+  <!-- 10:30 AM every day: this morning's sunrises and last night's sunsets
+       are in by then (the sun-cam check uploads within 3.5 hours). If the Mac
+       is asleep at 10:30, launchd runs it on the next wake. -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>10</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/beachday-scorecard.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/beachday-scorecard.log</string>
+</dict>
+</plist>

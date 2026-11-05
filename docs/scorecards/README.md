@@ -6,6 +6,13 @@ recalibrate.
 
 A report goes here as `YYYY-MM-DD.md`. The newest copy is always `latest.md`.
 
+A new report is written every day at 10:30 AM by a launchd job on the owner's
+laptop (`scripts/scorecard_daily.sh`; install steps in
+`scripts/com.isitbeachday.scorecard.plist`). Log:
+`~/Library/Logs/beachday-scorecard.log`. If a run fails, the Mac shows a
+notification and the job's worktree gets a `docs/scorecards/FAILED` file with
+the error.
+
 ## Run it
 
 Run it from the repo root:
