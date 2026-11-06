@@ -1914,17 +1914,21 @@ def median_water(group: dict | None) -> dict | None:
 # It must never hurt the main read:
 #  - it runs AFTER every main read, the underwater read and the archive pass of the
 #    tick (main() -> nearshore_pass), so it cannot delay or reorder them;
-#  - one provider only: Gemini, model NEAR_MODEL (default gemini-2.5-flash-lite, a
-#    separate daily bucket from the main read's gemini-2.5-flash), ONE attempt, no
-#    retry, no fall-through to Clef/Groq (those are the main read's fallbacks);
-#  - skipped for the whole tick on any quota sign: a vision call that failed this
-#    tick, or a main read of the cam that was NOT served by the first provider and
-#    model of the chain (a fallback means a quota is spent somewhere); and a 429 or
-#    any error on a shadow call stops the rest of the pass;
+#  - one provider only: Gemini, model NEAR_MODEL, ONE attempt, no retry, no
+#    fall-through to Clef/Groq (those are the main read's fallbacks). The default,
+#    gemini-3.5-flash-lite, is NOT one of the main chain's GEMINI_MODELS, so it has
+#    its own daily free bucket and cannot spend the main read's quota (Google meters
+#    per model). Picked by the 2026-11-06 test runs: both 2.5 buckets were already
+#    spent by 7 AM (429, so the live read ran on Clef all day) and 3.8-flash
+#    answered 503 or timed out;
+#  - a 429 or any other error on a shadow call stops the rest of the pass;
+#  - if NEARSHORE_MODEL is set to one of GEMINI_MODELS (a SHARED bucket), the strict
+#    rule applies too: no shadow call after any failed vision call this tick, and
+#    only for a cam whose main read came from the chain's first provider/model;
 #  - at most once per NEAR_MIN_GAP_MIN per cam, only on a fresh main read, never at
 #    low sun; every error is caught and printed, never raised.
 NEAR_BOXES_PATH = os.environ.get("NEARSHORE_BOXES", "config/nearshore-boxes.json")
-NEAR_MODEL = os.environ.get("NEARSHORE_MODEL", "gemini-2.5-flash-lite")
+NEAR_MODEL = os.environ.get("NEARSHORE_MODEL", "gemini-3.5-flash-lite")
 NEAR_MIN_GAP_MIN = float(os.environ.get("NEARSHORE_MIN_GAP_MIN", "30"))
 # A cam's last shadow read stays on its reading (marked carried) for this long, so
 # `nearMedian` on a tick between two shadow reads still covers the cams.
@@ -2188,7 +2192,7 @@ def nearshore_pass(groups: dict, prevs: dict, now: dt.datetime, boxes: "dict | N
 def shadow_test_main(argv: list) -> int:
     """`--shadow-test <dir>`: read every <cam id>-full.jpg in <dir> whose cam has a box in
     NEAR_BOXES_PATH, crop it, and print what each model in NEARSHORE_TEST_MODELS
-    (default gemini-2.5-flash,gemini-2.5-flash-lite) says through NEAR_PROMPT, plus the
+    (default NEAR_MODEL and the main MODEL) says through NEAR_PROMPT, plus the
     OLD full-frame water grade (the live PROMPT, same model) for comparison. Writes NO feed and
     touches no archive. Exit 1 only when no read at all succeeded."""
     try:
@@ -2197,7 +2201,7 @@ def shadow_test_main(argv: list) -> int:
         print("usage: cam_seaweed.py --shadow-test <dir of <cam id>-full.jpg>", file=sys.stderr)
         return 2
     models = [m.strip() for m in os.environ.get(
-        "NEARSHORE_TEST_MODELS", "gemini-2.5-flash,gemini-2.5-flash-lite").split(",") if m.strip()]
+        "NEARSHORE_TEST_MODELS", f"{NEAR_MODEL},{MODEL}").split(",") if m.strip()]
     boxes = {cid: cfg for beach in load_near_boxes().values() for cid, cfg in beach.items()}
     print(f"near-shore shadow test: dir={d} models={models} boxes={NEAR_BOXES_PATH}")
     print(f"NEAR_PROMPT: {NEAR_PROMPT}")

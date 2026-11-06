@@ -329,6 +329,8 @@ flowchart LR
 
   LGT -->|writes| LDATA[(lightning-data branch)]
   SARG -->|reads| VCAMS[config/vision-cams.json<br/>per-beach cam registry]
+  SARG -->|reads| NEARBOX[config/nearshore-boxes.json<br/>near-shore strip per cam, SHADOW read only]
+  SARG -->|"SHADOW near-shore water read, LAST step of a tick, after every main read:<br/>crop of the strip by the water line, NEAR_PROMPT, Gemini NEARSHORE_MODEL only,<br/>one attempt, at most once per 30 min per cam; skipped on any quota sign, never fails the run"| GEMNEAR[["Gemini API<br/>(own model bucket)"]]
   SARG -->|writes| SDATA[(sargassum-data branch<br/>cam_seaweed.&lt;slug&gt;.json, one per beach)]
   RIPNWPS -->|reads| NWPSMAP[config/nwpsRip.ts<br/>beach → NWS office + nearest model grid point,<br/>built by scripts/nwps_rip_map.mjs]
   RIPNWPS -->|"downloads each mapped office's<br/>NOAA NWPS CG1 ripprob file ONCE"| NOMADS[["nomads.ncep.noaa.gov<br/>NWPS rip current model (Dusek &amp; Seim 2013)"]]
@@ -582,6 +584,25 @@ feed's `pendingClaims`, whatever group the card shows, and a first-ever held
 observation still returns an "unknown" reading so the flag reaches the alerts; it stops the
 push copy saying "no seaweed" and holds back the "turned Excellent" alert until the
 claim resolves.
+
+**Near-shore water read (SHADOW, 2026-11-06).** The live water grade reads the
+full frame, and the high Boca cams mostly show deep offshore water that mirrors
+the sky, so it says "clear ~74" on most days (owner truth on 2026-11-06: "a bit
+sandy"; see `docs/research/clarity-truth/`). `cam_seaweed.py` now also reads a
+crop of the strip by the water line (`config/nearshore-boxes.json`) with its own
+prompt (`NEAR_PROMPT`: colour, suspended sand, bottom visible, foam, then one of
+`clear | a_bit_sandy | murky | churned | cant_tell`). The model is
+`gemini-3.5-flash-lite`, which is not in the main chain, so it has its own
+free-tier bucket; one attempt, no fallback, the pass stops at its first error. It writes extra fields only:
+`waterNear` on a cam reading (`carried: true` when it is the last read, up to 60
+min old), `nearMedian` `{level, n, fresh, cams}` on a capture group (cams with
+`inMedian: false`, now `boca-south`, are left out; with two cams, the murkier),
+a sparse `near` on a history entry (ticks with a fresh shadow read only), and a
+top-level `nearScoredAt` map (the 30-minute gate). No app reader uses them:
+`clarity.ts` and `busyness.ts` pick fields by name, and `sargassum.ts` drops
+`waterNear` from the cams it passes on. The hourly archiver keeps them inside
+`raw_json` in D1. `sargassum.yml` has a read-only `shadow_test` dispatch mode
+(its own concurrency group, no feed write, no push, no handoff).
 
 **The webcam archive keeps one shot per cam per slot: one per hour, about one per 10 minutes in golden hour.** `scripts/cam_seaweed.py`
 POSTs each cam's still to `/api/cam-frames` on every `sargassum.yml` tick, with
