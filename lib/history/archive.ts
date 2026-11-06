@@ -6,6 +6,7 @@
 import type { ConditionsResponse, Location } from "@/lib/types";
 import { deriveMetrics, SCORING_CONFIG_VERSION, SCORING_ENGINE_VERSION } from "@/lib/score";
 import { computeSunTimes } from "@/lib/sources/sun";
+import { SUN_FORECAST_WINDOW_MS } from "@/lib/sunForecastWindow";
 import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
 import { extraJsonFor } from "@/lib/history/extra";
 
@@ -233,6 +234,70 @@ export function shouldArchiveNow(candidate: ArchiveCandidate, nowMs: number): bo
   if (candidate.tier === "curated") return true;
   const { date } = localHourParts(candidate.timezone, nowMs);
   return isDaylightAt(candidate, nowMs, date);
+}
+
+const HOUR_MS = 3_600_000;
+
+/**
+ * Is this the clock hour in which one of the beach's sun forecasts OPENS?
+ *
+ * The sunrise/sunset color score shows from `event − SUN_FORECAST_WINDOW_MS`
+ * (60 min, lib/sunForecastWindow.ts). To grade that forecast, every beach needs
+ * an archived build (and so a `sun_event_predictions` row) in the UTC clock
+ * hour that contains that instant. This returns true for exactly that hour, so
+ * the archiver can build the beach first and from its sun reserve
+ * (app/api/history/archive/route.ts).
+ *
+ * In that hour the event is always 0–120 min ahead. The answer stays the same
+ * for the whole hour, so a beach never switches class in the middle of one.
+ *
+ * Events come from `computeSunTimes` for the beach's local date and the days
+ * either side, so an event on the next local day (or one that falls on the next
+ * UTC day, such as a West Coast sunset) is found too. A day with no sunrise or
+ * sunset (polar day or night) gives false.
+ */
+export function sunWindowPriority(
+  candidate: Pick<ArchiveCandidate, "lat" | "lon" | "timezone">,
+  nowMs: number,
+): boolean {
+  if (!Number.isFinite(nowMs)) return false;
+  const hour = Math.floor(nowMs / HOUR_MS);
+  const [y, m, d] = localHourParts(candidate.timezone, nowMs).date.split("-").map(Number);
+  if (!y || !m || !d) return false;
+  for (const offset of [-1, 0, 1]) {
+    const day = new Date(Date.UTC(y, m - 1, d + offset));
+    const t = computeSunTimes(candidate.lat, candidate.lon, day.getUTCFullYear(), day.getUTCMonth() + 1, day.getUTCDate());
+    for (const event of [t.sunrise, t.sunset]) {
+      if (!event) continue;
+      if (Math.floor((event.getTime() - SUN_FORECAST_WINDOW_MS) / HOUR_MS) === hour) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The archiver's candidate list, shared by both stores so they cannot drift:
+ * drop beaches that already have a row this UTC hour; keep beaches the
+ * daylight rule allows OR that are in their sun-forecast hour
+ * (`sunWindowPriority` — the hour before sunrise is still dark for an auto
+ * beach); then put sun-window beaches first and order each group fairly
+ * (`compareByLastHourThenSlug`).
+ */
+export function orderArchiveCandidates(
+  all: ArchiveCandidate[],
+  archivedThisHour: Set<string>,
+  lastHourBySlug: Map<string, string>,
+  nowMs: number,
+): ArchiveCandidate[] {
+  return all
+    .filter((c) => !archivedThisHour.has(c.slug))
+    .map((c) => ({ c, sun: sunWindowPriority(c, nowMs) }))
+    .filter(({ c, sun }) => sun || shouldArchiveNow(c, nowMs))
+    .sort((a, b) => {
+      if (a.sun !== b.sun) return a.sun ? -1 : 1;
+      return compareByLastHourThenSlug(lastHourBySlug.get(a.c.slug), a.c.slug, lastHourBySlug.get(b.c.slug), b.c.slug);
+    })
+    .map(({ c }) => c);
 }
 
 /**

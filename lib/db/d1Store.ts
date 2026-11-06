@@ -54,7 +54,7 @@ import type {
   SunEventPredictionRow,
 } from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
-import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
+import { hourUtcOf, orderArchiveCandidates } from "@/lib/history/archive";
 import { CLARITY_TRUSTED_FROM, WATER_RECORD_MIN_HOURS, WATER_TEMP_MAX_F, WATER_TEMP_MIN_F } from "@/lib/history/recordRules";
 import type {
   LiveActivityRow,
@@ -1423,6 +1423,9 @@ export function d1Store(db: D1Like): DeviceStore {
     // equivalent to a correlated-subquery LEFT JOIN per candidate, cheaper
     // to express as one aggregate query plus an in-memory merge since the
     // candidate set itself (config `listLocations()`) isn't a DB table.
+    // Ahead of that order come the beaches in their sun-forecast hour
+    // (lib/history/archive.ts `sunWindowPriority`); the filter and sort live
+    // in `orderArchiveCandidates`, shared with memoryStore.
     async listArchiveCandidates(nowMs: number) {
       const hourUtc = hourUtcOf(nowMs);
       const currentHourRows =
@@ -1442,16 +1445,14 @@ export function d1Store(db: D1Like): DeviceStore {
         ).results ?? [];
       const lastHourBySlug = new Map(lastHourRows.map((r) => [r.slug, r.last_hour]));
 
-      return listLocations()
-        .map((l): ArchiveCandidate => ({
-          slug: l.slug,
-          lat: l.lat,
-          lon: l.lon,
-          timezone: l.timezone,
-          tier: l.tier ?? "curated",
-        }))
-        .filter((c) => !archivedThisHour.has(c.slug) && shouldArchiveNow(c, nowMs))
-        .sort((a, b) => compareByLastHourThenSlug(lastHourBySlug.get(a.slug), a.slug, lastHourBySlug.get(b.slug), b.slug));
+      const all = listLocations().map((l): ArchiveCandidate => ({
+        slug: l.slug,
+        lat: l.lat,
+        lon: l.lon,
+        timezone: l.timezone,
+        tier: l.tier ?? "curated",
+      }));
+      return orderArchiveCandidates(all, archivedThisHour, lastHourBySlug, nowMs);
     },
 
     async getHistoryBudget(day: string) {

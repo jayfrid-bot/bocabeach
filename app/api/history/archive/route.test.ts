@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { scorableResponse } from "@/lib/alerts/fixtures";
-import { hourUtcOf, rowFromConditions } from "@/lib/history/archive";
+import { hourUtcOf, rowFromConditions, sunWindowPriority } from "@/lib/history/archive";
 import { getLocation } from "@/config/locations";
 
 const ctl = vi.hoisted(() => ({
@@ -70,11 +70,13 @@ beforeEach(() => {
   ctl.exhaust = new Set();
   process.env.CRON_SECRET = SECRET;
   delete process.env.HISTORY_MAX_BUILDS_PER_DAY;
+  delete process.env.HISTORY_SUN_RESERVE;
   delete process.env.HISTORY_ENABLED;
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("auth", () => {
@@ -296,10 +298,86 @@ describe("head-of-line blocking (Codex round-3 finding #2)", () => {
 describe("budget reporting shape", () => {
   it("reports a single day/used/max when the run never crosses a UTC day boundary", async () => {
     const res = await post();
-    const json = (await res.json()) as { budget: { day: string; used: number; max: number; alsoDay?: string } };
+    const json = (await res.json()) as {
+      budget: { day: string; used: number; max: number; sunReserve: number; alsoDay?: string };
+    };
     expect(json.budget.day).toBe(new Date().toISOString().slice(0, 10));
     expect(json.budget.max).toBe(600);
+    expect(json.budget.sunReserve).toBe(140);
     expect(json.budget.alsoDay).toBeUndefined();
+  });
+
+  it("clamps the sun reserve to the daily max", async () => {
+    process.env.HISTORY_MAX_BUILDS_PER_DAY = "50";
+    process.env.HISTORY_SUN_RESERVE = "500";
+    const json = (await (await post()).json()) as { budget: { max: number; sunReserve: number } };
+    expect(json.budget).toMatchObject({ max: 50, sunReserve: 50 });
+  });
+});
+
+// Sun reserve (see the route header): ordinary builds stop at max − reserve,
+// sun-forecast builds may go on to max. The clock is pinned to Boca Raton's
+// sunset forecast hour (sunset 22:35Z, forecast opens 21:35Z on 2026-11-05).
+describe("sun reserve — the budget split", () => {
+  const NOW = "2026-11-05T21:10:00Z";
+  const DAY = "2026-11-05";
+
+  async function spend(n: number): Promise<void> {
+    const store = await getStore();
+    for (let i = 0; i < n; i++) expect(await store.reserveHistoryBuild(DAY, n)).toBe(true);
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(NOW));
+    process.env.HISTORY_MAX_BUILDS_PER_DAY = "10";
+    process.env.HISTORY_SUN_RESERVE = "4";
+  });
+
+  it("refuses an ordinary build once max − reserve is spent", async () => {
+    const store = await getStore();
+    const ordinary = (await store.listArchiveCandidates(Date.now())).find((c) => !sunWindowPriority(c, Date.now()));
+    expect(ordinary).toBeDefined();
+    await onlyCandidate(ordinary!.slug);
+    await spend(6);
+    const json = (await (await post()).json()) as { archived: number; sunWindowBuilds: number; note?: string };
+    expect(json.archived).toBe(0);
+    expect(json.sunWindowBuilds).toBe(0);
+    expect(json.note).toMatch(/ordinary build budget/);
+    expect(ctl.conditionsCalls).toEqual([]);
+    expect(await store.getHistoryBudget(DAY)).toBe(6);
+  });
+
+  it("still builds a sun-forecast beach from the reserve, up to max", async () => {
+    const store = await getStore();
+    expect(sunWindowPriority(getLocation("boca-raton")!, Date.now())).toBe(true);
+    await onlyCandidate("boca-raton");
+    await spend(6);
+    const json = (await (await post()).json()) as { archived: number; sunWindowBuilds: number; note?: string };
+    expect(json.archived).toBe(1);
+    expect(json.sunWindowBuilds).toBe(1);
+    expect(json.note).toBeUndefined();
+    expect(ctl.conditionsCalls).toEqual(["boca-raton"]);
+    expect(await store.getHistoryBudget(DAY)).toBe(7);
+  });
+
+  it("refuses a sun-forecast build too once the whole max is spent", async () => {
+    const store = await getStore();
+    await onlyCandidate("boca-raton");
+    await spend(10);
+    const json = (await (await post()).json()) as { archived: number; note?: string };
+    expect(json.archived).toBe(0);
+    expect(json.note).toBe("daily build budget reached");
+    expect(ctl.conditionsCalls).toEqual([]);
+    expect(await store.getHistoryBudget(DAY)).toBe(10);
+  });
+
+  it("picks the sun-forecast beach first even when ordinary beaches are also waiting", async () => {
+    await spend(6);
+    const json = (await (await post()).json()) as { archived: number; sunWindowBuilds: number };
+    expect(json.archived).toBe(1);
+    expect(json.sunWindowBuilds).toBe(1);
+    expect(sunWindowPriority(getLocation(ctl.conditionsCalls[0])!, Date.now())).toBe(true);
   });
 });
 

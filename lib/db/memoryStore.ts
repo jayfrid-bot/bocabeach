@@ -50,7 +50,7 @@ import type {
 } from "@/lib/history/types";
 import { isNewerSunScore, sunCamObservedSource } from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
-import { compareByLastHourThenSlug, hourUtcOf, shouldArchiveNow } from "@/lib/history/archive";
+import { hourUtcOf, orderArchiveCandidates } from "@/lib/history/archive";
 import { CLARITY_TRUSTED_FROM, WATER_RECORD_MIN_HOURS, WATER_TEMP_MAX_F, WATER_TEMP_MIN_F } from "@/lib/history/recordRules";
 import type {
   LiveActivityRow,
@@ -760,7 +760,8 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
 
     // Fair ordering, mirroring d1Store (Codex round-3 finding #1): compute
     // each slug's most recent beach_hourly row from the in-memory map, then
-    // sort never-archived-first, then oldest-last-row-first, ties by slug.
+    // let the shared `orderArchiveCandidates` filter and sort (sun-forecast
+    // beaches first, then never-archived-first, oldest-last-row-first, slug).
     async listArchiveCandidates(nowMs: number) {
       await load();
       const hourUtc = hourUtcOf(nowMs);
@@ -772,16 +773,14 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
         const cur = lastHourBySlug.get(r.slug);
         if (cur === undefined || r.hour_utc > cur) lastHourBySlug.set(r.slug, r.hour_utc);
       }
-      return listLocations()
-        .map((l): ArchiveCandidate => ({
-          slug: l.slug,
-          lat: l.lat,
-          lon: l.lon,
-          timezone: l.timezone,
-          tier: l.tier ?? "curated",
-        }))
-        .filter((c) => !archivedThisHour.has(c.slug) && shouldArchiveNow(c, nowMs))
-        .sort((a, b) => compareByLastHourThenSlug(lastHourBySlug.get(a.slug), a.slug, lastHourBySlug.get(b.slug), b.slug));
+      const all = listLocations().map((l): ArchiveCandidate => ({
+        slug: l.slug,
+        lat: l.lat,
+        lon: l.lon,
+        timezone: l.timezone,
+        tier: l.tier ?? "curated",
+      }));
+      return orderArchiveCandidates(all, archivedThisHour, lastHourBySlug, nowMs);
     },
 
     async getHistoryBudget(day: string) {

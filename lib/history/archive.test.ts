@@ -7,8 +7,10 @@ import {
   hourUtcOf,
   isDaylightAt,
   localHourParts,
+  orderArchiveCandidates,
   rowFromConditions,
   shouldArchiveNow,
+  sunWindowPriority,
 } from "@/lib/history/archive";
 
 describe("hourUtcOf", () => {
@@ -239,5 +241,112 @@ describe("shouldArchiveNow — daylight rule", () => {
     const noonUtc = Date.parse("2026-09-20T17:00:00Z");
     const { date } = localHourParts(auto.timezone, noonUtc);
     expect(isDaylightAt(auto, noonUtc, date)).toBe(shouldArchiveNow(auto, noonUtc));
+  });
+});
+
+// The archiver builds each beach first in the UTC hour that contains
+// (event − 60 min), when the app's sun-color score opens
+// (lib/sunForecastWindow.ts). Sun times below come from lib/sources/sun.ts:
+// Boca Raton on 2026-11-05 rises 11:32Z and sets 22:35Z, so the forecasts
+// open 10:32Z and 21:35Z (hours 10Z and 21Z).
+describe("sunWindowPriority — the hour the sun forecast opens", () => {
+  const boca = { lat: 26.3587, lon: -80.0686, timezone: "America/New_York" };
+  const at = (iso: string) => Date.parse(iso);
+
+  it("is true in the sunset forecast hour, and only that hour", () => {
+    expect(sunWindowPriority(boca, at("2026-11-05T21:05:00Z"))).toBe(true); // sunset 90 min ahead
+    expect(sunWindowPriority(boca, at("2026-11-05T21:59:00Z"))).toBe(true); // 36 min ahead
+    expect(sunWindowPriority(boca, at("2026-11-05T20:59:00Z"))).toBe(false); // the hour before
+    expect(sunWindowPriority(boca, at("2026-11-05T22:00:00Z"))).toBe(false); // the hour after
+  });
+
+  it("is true in the sunrise forecast hour, still before dawn", () => {
+    expect(sunWindowPriority(boca, at("2026-11-05T10:10:00Z"))).toBe(true); // 5:10 AM EST
+    expect(sunWindowPriority(boca, at("2026-11-05T11:10:00Z"))).toBe(false);
+  });
+
+  it("is false at midday and in the middle of the night", () => {
+    expect(sunWindowPriority(boca, at("2026-11-05T17:00:00Z"))).toBe(false);
+    expect(sunWindowPriority(boca, at("2026-11-05T05:00:00Z"))).toBe(false);
+  });
+
+  it("keeps the same answer for every minute of the hour", () => {
+    const start = at("2026-11-05T21:00:00Z");
+    for (let min = 0; min < 60; min++) {
+      expect(sunWindowPriority(boca, start + min * 60_000)).toBe(true);
+    }
+  });
+
+  it("uses the beach's local date: Honolulu's sunset falls on the next UTC day", () => {
+    // Waikiki, local 2026-11-05: sunset 03:53Z on 11-06, forecast opens 02:53Z.
+    // The UTC date (11-06) would give the NEXT evening's sunset instead.
+    const waikiki = { lat: 21.27, lon: -157.82, timezone: "Pacific/Honolulu" };
+    expect(sunWindowPriority(waikiki, at("2026-11-06T02:10:00Z"))).toBe(true);
+    expect(sunWindowPriority(waikiki, at("2026-11-06T03:10:00Z"))).toBe(false);
+  });
+
+  it("puts a West Coast sunset forecast in the hour before UTC midnight", () => {
+    // Los Angeles, local 2026-11-05: sunset 00:57Z on 11-06, forecast opens 23:57Z on 11-05.
+    const la = { lat: 33.9, lon: -118.4, timezone: "America/Los_Angeles" };
+    expect(sunWindowPriority(la, at("2026-11-05T23:30:00Z"))).toBe(true);
+    expect(sunWindowPriority(la, at("2026-11-06T00:10:00Z"))).toBe(false);
+  });
+
+  it("finds an event that belongs to the previous local day's sun", () => {
+    // Nome, 2026-06-01: that day's sunset is 09:11Z = 01:11 AM local on 06-02.
+    // At 08:30Z (00:30 local, 06-02) it is the forecast hour, but only the
+    // 06-01 sun times hold that sunset.
+    const nome = { lat: 64.5, lon: -165.4, timezone: "America/Nome" };
+    expect(sunWindowPriority(nome, at("2026-06-02T08:30:00Z"))).toBe(true);
+  });
+
+  it("is false all day when the sun neither rises nor sets (polar night)", () => {
+    const svalbard = { lat: 80, lon: 15, timezone: "Arctic/Longyearbyen" };
+    const start = at("2026-12-21T00:00:00Z");
+    for (let h = 0; h < 24; h++) {
+      expect(sunWindowPriority(svalbard, start + h * 3_600_000)).toBe(false);
+    }
+  });
+
+  it("is false for an invalid instant", () => {
+    expect(sunWindowPriority(boca, NaN)).toBe(false);
+  });
+});
+
+describe("orderArchiveCandidates — sun-forecast beaches first", () => {
+  const ny = { lat: 26.3587, lon: -80.0686, timezone: "America/New_York" };
+  const la = { lat: 33.9, lon: -118.4, timezone: "America/Los_Angeles" };
+  const c = (slug: string, loc: typeof ny, tier: "curated" | "auto") => ({ slug, ...loc, tier });
+
+  it("admits an auto beach before dawn in its sunrise forecast hour, and puts it first", () => {
+    const nowMs = Date.parse("2026-11-05T10:10:00Z"); // 5:10 AM EST — dark in Florida
+    const all = [c("a-curated-west", la, "curated"), c("z-auto-east", ny, "auto"), c("b-auto-west", la, "auto")];
+    expect(shouldArchiveNow(all[1], nowMs)).toBe(false);
+    const out = orderArchiveCandidates(all, new Set(), new Map(), nowMs).map((x) => x.slug);
+    // The west-coast auto beach is dark and not in its forecast hour: left out.
+    expect(out).toEqual(["z-auto-east", "a-curated-west"]);
+  });
+
+  it("sorts sun-forecast beaches ahead of never-archived ones, then keeps the fair order in each group", () => {
+    const nowMs = Date.parse("2026-11-05T21:10:00Z"); // Florida sunset forecast hour
+    const all = [
+      c("never-west", la, "curated"),
+      c("old-west", la, "curated"),
+      c("new-east", ny, "curated"),
+      c("older-east", ny, "curated"),
+    ];
+    const lastHour = new Map([
+      ["old-west", "2026-11-05T10:00:00.000Z"],
+      ["new-east", "2026-11-05T20:00:00.000Z"],
+      ["older-east", "2026-11-05T15:00:00.000Z"],
+    ]);
+    const out = orderArchiveCandidates(all, new Set(), lastHour, nowMs).map((x) => x.slug);
+    expect(out).toEqual(["older-east", "new-east", "never-west", "old-west"]);
+  });
+
+  it("still drops a sun-forecast beach that already has a row this hour", () => {
+    const nowMs = Date.parse("2026-11-05T21:10:00Z");
+    const out = orderArchiveCandidates([c("east", ny, "curated")], new Set(["east"]), new Map(), nowMs);
+    expect(out).toEqual([]);
   });
 });

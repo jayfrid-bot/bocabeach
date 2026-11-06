@@ -14,7 +14,11 @@
 // ordered fairly (never-archived-at-all first, then oldest-last-row-first,
 // ties by slug — `listArchiveCandidates`) so a 2-minute-cadence worst case
 // no longer starves the beaches at the end of a fixed config order (Codex
-// round-3 finding #1).
+// round-3 finding #1). Ahead of that fair order come the beaches in their
+// SUN-FORECAST HOUR (`sunWindowPriority`): the UTC clock hour that contains
+// sunrise or sunset minus 60 min, when the app's sun-color score opens
+// (lib/sunForecastWindow.ts). Such a beach is a candidate even before
+// daylight, so the sunrise forecast of an auto beach gets archived too.
 //
 // SCANNING vs BUILDING (Codex round-3 finding #2 — head-of-line blocking):
 // a beach whose claim is still live from an in-flight or recently-failed
@@ -80,11 +84,28 @@
 // FREE-TIER BUDGET GUARD: one `getConditions` build ≈ 10 Open-Meteo calls.
 // `HISTORY_MAX_BUILDS_PER_DAY` (default 600) caps how many builds this route
 // will run per UTC calendar day, tracked in the `history_budget` D1 table.
-// 600 leaves headroom under Open-Meteo's free 10,000/day: the 39 served
-// beaches need roughly 3 curated * 24h + 36 auto * ~13 daylight hours ≈ 540
-// builds/day, and 600 builds ≈ 6,000 calls still leaves ~4,000/day for real
-// visitor traffic. Once the budget is spent, the route stops archiving for
-// the day and reports it — it never errors.
+// 600 builds ≈ 6,000 calls, which leaves ~4,000/day of Open-Meteo's free
+// 10,000 for real visitor traffic. It no longer covers every beach-hour: the
+// 63 served beaches want about 28 curated * 24h + 35 auto * ~12 daylight
+// hours ≈ 1,090 builds/day, so the budget runs out during the UTC day.
+//
+// SUN RESERVE: when the budget ran out mid-afternoon Eastern, most beaches
+// lost their sunset forecast hour, and the sunset forecast could not be
+// graded (2026-11: sunset rows for ~11 of 63 beaches a day). So part of the
+// budget is kept back. `HISTORY_SUN_RESERVE` (default 140, clamped to
+// [0, max]) splits the ONE daily counter into two caps:
+//   - an ordinary build may reserve only while builds < max − reserve
+//     (default 460);
+//   - a sun-forecast build (`sunWindowPriority` at claim time) may reserve
+//     while builds < max (600).
+// Both use the same atomic `reserveHistoryBuild` statement, only with a
+// different cap, so the daily total can never pass max. Each beach has at
+// most one sun-forecast hour per event, so a day needs at most 63 * 2 = 126
+// sun builds, and only those after the ordinary cap is hit draw on the
+// reserve — 140 covers them with slack. Reserve left unused at the end of
+// the UTC day is not built. Once a cap is spent, the route skips that class
+// for the day and reports it — it never errors. The response's
+// `sunWindowBuilds` counts the sun-forecast builds this call ran.
 //
 // `HISTORY_ENABLED` (default "on") lets the owner pause archiving instantly
 // if the free tier gets tight: "off" makes the route return
@@ -96,7 +117,7 @@ import { SubrequestBudget, runWithBudget } from "@/lib/alerts/budget";
 import { getLocation } from "@/config/locations";
 import { getStore } from "@/lib/db/store";
 import { getD1 } from "@/lib/db/d1Store";
-import { hourUtcOf, rowFromConditions } from "@/lib/history/archive";
+import { hourUtcOf, rowFromConditions, sunWindowPriority } from "@/lib/history/archive";
 import { sunEventRowsFromConditions } from "@/lib/history/sunPredictions";
 import { archiveCamObservations, hasVisionCamFeed } from "@/lib/history/camObservations";
 import { runHourlyWatchdog } from "@/lib/quality/watchdog";
@@ -118,6 +139,9 @@ const ARCHIVE_BUILD_SUBREQUESTS = 44;
 // candidate's claim is free, however many beaches ahead of it are currently
 // held by another in-flight/abandoned-but-not-yet-expired claim.
 const ARCHIVE_SCAN_CAP = 40;
+
+/** Default share of the daily budget kept for sun-forecast builds (see header). */
+const DEFAULT_SUN_RESERVE = 140;
 
 function secretEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);
@@ -153,6 +177,15 @@ export async function POST(req: Request): Promise<Response> {
 
   const maxPerDayEnv = Number(process.env.HISTORY_MAX_BUILDS_PER_DAY);
   const maxPerDay = Number.isFinite(maxPerDayEnv) && maxPerDayEnv >= 0 ? maxPerDayEnv : 600;
+  // Sun reserve (see the file header): ordinary builds stop at
+  // max − reserve; sun-forecast builds may go on up to max. Clamped to
+  // [0, max], so the reserve can never raise the daily total.
+  const sunReserveEnv = Number(process.env.HISTORY_SUN_RESERVE);
+  const sunReserve = Math.min(
+    maxPerDay,
+    Number.isFinite(sunReserveEnv) && sunReserveEnv >= 0 ? Math.floor(sunReserveEnv) : DEFAULT_SUN_RESERVE,
+  );
+  const ordinaryCap = maxPerDay - sunReserve;
   const nowMs = Date.now();
   const startDay = utcDay(nowMs);
 
@@ -165,6 +198,10 @@ export async function POST(req: Request): Promise<Response> {
   let deduped = 0;
   let skipped = 0;
   let claimed = 0;
+  let sunWindowBuilds = 0;
+  // Two caps, so two flags: once the ordinary share is spent, a sun-forecast
+  // winner may still reserve; once the whole budget is spent, nothing may.
+  let ordinaryExhausted = false;
   let budgetExhausted = false;
   // The UTC day of the LAST successful budget reservation this run, and
   // whether a second (earlier) day was also touched — a run straddling UTC
@@ -180,7 +217,12 @@ export async function POST(req: Request): Promise<Response> {
   // claimable at all. Every candidate whose claim attempt loses (or which
   // has no config entry) here is counted `skipped` — a beach that's held by
   // an earlier, still-live claim no longer blocks every beach behind it.
-  const winners: Array<{ slug: string; loc: NonNullable<ReturnType<typeof getLocation>>; hourUtc: string }> = [];
+  const winners: Array<{
+    slug: string;
+    loc: NonNullable<ReturnType<typeof getLocation>>;
+    hourUtc: string;
+    sunWindow: boolean;
+  }> = [];
   for (const c of scanned) {
     if (winners.length >= batch) break;
     const loc = getLocation(c.slug);
@@ -201,7 +243,9 @@ export async function POST(req: Request): Promise<Response> {
       continue;
     }
     claimed += 1;
-    winners.push({ slug: c.slug, loc, hourUtc: claimedHourUtc });
+    // Sun-forecast class is judged at the CLAIM instant, the same instant the
+    // row's hour is keyed by, so the two always agree.
+    winners.push({ slug: c.slug, loc, hourUtc: claimedHourUtc, sunWindow: sunWindowPriority(c, claimNowMs) });
   }
 
   const remaining = candidates.length - winners.length;
@@ -209,8 +253,8 @@ export async function POST(req: Request): Promise<Response> {
   // --- Build phase: only a WON claim ever reaches a budget reservation or a
   // getConditions call. If no candidate's claim was won, this loop simply
   // doesn't run and the response below reports `{ archived: 0, claimed: 0 }`.
-  for (const { slug, loc, hourUtc: claimedHourUtc } of winners) {
-    if (budgetExhausted) {
+  for (const { slug, loc, hourUtc: claimedHourUtc, sunWindow } of winners) {
+    if (budgetExhausted || (ordinaryExhausted && !sunWindow)) {
       // Budget already ran out earlier in this same loop — the claim above
       // is deliberately kept (its abandonment window still applies), this
       // slug just won't be built this hour by this run.
@@ -219,11 +263,13 @@ export async function POST(req: Request): Promise<Response> {
     }
 
     // Reserve one budget unit for the day AT reservation time, so a run
-    // that crosses UTC midnight charges each build to its own day.
+    // that crosses UTC midnight charges each build to its own day. Same
+    // atomic statement for both classes; only the cap differs.
     const day = utcDay(Date.now());
-    const reserved = await store.reserveHistoryBuild(day, maxPerDay);
+    const reserved = await store.reserveHistoryBuild(day, sunWindow ? maxPerDay : ordinaryCap);
     if (!reserved) {
-      budgetExhausted = true;
+      if (sunWindow) budgetExhausted = true;
+      else ordinaryExhausted = true;
       skipped += 1;
       continue;
     }
@@ -306,6 +352,7 @@ export async function POST(req: Request): Promise<Response> {
       await store.completeHistoryClaim(slug, claimedHourUtc, Date.now());
       if (written) archived += 1;
       else deduped += 1;
+      if (sunWindow) sunWindowBuilds += 1;
     } catch (e) {
       console.error("history: archive failed", slug, e);
       skipped += 1;
@@ -321,10 +368,11 @@ export async function POST(req: Request): Promise<Response> {
           day: lastReservedDay,
           used: lastReservedDay === startDay ? usedStartDay : await store.getHistoryBudget(lastReservedDay),
           max: maxPerDay,
+          sunReserve,
           alsoDay: startDay,
           alsoUsed: usedStartDay,
         }
-      : { day: startDay, used: usedStartDay, max: maxPerDay };
+      : { day: startDay, used: usedStartDay, max: maxPerDay, sunReserve };
 
   return Response.json({
     archived,
@@ -332,7 +380,12 @@ export async function POST(req: Request): Promise<Response> {
     skipped,
     claimed,
     remaining,
+    sunWindowBuilds,
     budget,
-    ...(budgetExhausted ? { note: "daily build budget reached" } : {}),
+    ...(budgetExhausted
+      ? { note: "daily build budget reached" }
+      : ordinaryExhausted
+        ? { note: "ordinary build budget reached; sun reserve kept for sun-forecast builds" }
+        : {}),
   });
 }

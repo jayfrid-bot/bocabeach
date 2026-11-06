@@ -390,7 +390,9 @@ export interface DeviceStore {
   /**
    * Every served beach (curated + generated) that has no `beach_hourly` row
    * for the CURRENT UTC hour yet, filtered by the daylight rule for
-   * `tier: "auto"` beaches (curated beaches are candidates every hour).
+   * `tier: "auto"` beaches (curated beaches are candidates every hour). A
+   * beach in its sun-forecast hour (`sunWindowPriority`) is a candidate even
+   * in the dark, and sorts first. Both stores use `orderArchiveCandidates`.
    */
   listArchiveCandidates(nowMs: number): Promise<ArchiveCandidate[]>;
   /** Open-Meteo call-budget guard (docs/HISTORY_AND_IMAGERY_PLAN.md): builds

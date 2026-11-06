@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { getStore } from "@/lib/db/store";
 import { resetMemoryStore } from "@/lib/db/memoryStore";
-import { hourUtcOf } from "@/lib/history/archive";
+import { hourUtcOf, shouldArchiveNow, sunWindowPriority } from "@/lib/history/archive";
 import type { BeachHourlyRow } from "@/lib/history/types";
 import { predictionRow } from "@/lib/sunObservations.fixtures";
 
@@ -149,6 +149,44 @@ describe("listArchiveCandidates — fair ordering (Codex round-3 finding #1)", (
     const neverArchived = candidates.filter((c) => ["boca-raton", "deerfield-beach", "fort-lauderdale"].includes(c.slug));
     const slugs = neverArchived.map((c) => c.slug);
     expect(slugs).toEqual([...slugs].sort());
+  });
+});
+
+describe("listArchiveCandidates — sun-forecast beaches first", () => {
+  it("puts every beach in its sunset forecast hour ahead of every other beach", async () => {
+    const store = await getStore();
+    const nowMs = Date.parse("2026-11-05T21:10:00Z"); // Boca's sunset forecast opens 21:35Z
+    // boca-raton has a recent row, so the fair order alone would put it late.
+    await store.upsertBeachHourly(row({ slug: "boca-raton", hour_utc: hourUtcOf(Date.parse("2026-11-05T20:00:00Z")) }));
+    const candidates = await store.listArchiveCandidates(nowMs);
+    const flags = candidates.map((c) => sunWindowPriority(c, nowMs));
+    expect(sunWindowPriority(candidates.find((c) => c.slug === "boca-raton")!, nowMs)).toBe(true);
+    expect(flags.some((f) => !f)).toBe(true);
+    // No ordinary beach before a sun-forecast one.
+    expect(flags.indexOf(false)).toBeGreaterThan(flags.lastIndexOf(true));
+  });
+
+  it("includes an auto beach before dawn when it is in its sunrise forecast hour", async () => {
+    const store = await getStore();
+    const nowMs = Date.parse("2026-11-05T10:40:00Z"); // ~5:40 AM EST, still dark in Florida
+    const candidates = await store.listArchiveCandidates(nowMs);
+    const darkButIn = candidates.filter((c) => c.tier === "auto" && !shouldArchiveNow(c, nowMs));
+    expect(darkButIn.length).toBeGreaterThan(0);
+    for (const c of darkButIn) expect(sunWindowPriority(c, nowMs)).toBe(true);
+  });
+});
+
+describe("reserveHistoryBuild — sun reserve split (two caps, one counter)", () => {
+  it("refuses an ordinary build at max − reserve while a sun-forecast build still succeeds up to max", async () => {
+    const store = await getStore();
+    const max = 5;
+    const ordinaryCap = max - 2; // reserve 2
+    for (let i = 0; i < ordinaryCap; i++) expect(await store.reserveHistoryBuild("2026-11-05", ordinaryCap)).toBe(true);
+    expect(await store.reserveHistoryBuild("2026-11-05", ordinaryCap)).toBe(false); // ordinary refused
+    expect(await store.reserveHistoryBuild("2026-11-05", max)).toBe(true); // sun build
+    expect(await store.reserveHistoryBuild("2026-11-05", max)).toBe(true); // sun build
+    expect(await store.reserveHistoryBuild("2026-11-05", max)).toBe(false); // total spent
+    expect(await store.getHistoryBudget("2026-11-05")).toBe(max);
   });
 });
 

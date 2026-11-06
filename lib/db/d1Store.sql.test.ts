@@ -35,6 +35,8 @@ import {
 } from "@/lib/db/comingUpClaims";
 import { ABANDONED_CLAIM_MS } from "@/lib/db/sendClaims";
 import { observationRow, predictionRow } from "@/lib/sunObservations.fixtures";
+import { sunWindowPriority } from "@/lib/history/archive";
+import { getLocation } from "@/config/locations";
 
 let DatabaseSyncCtor: (new (path: string) => {
   exec(sql: string): void;
@@ -537,6 +539,15 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       expect(await store.getHistoryBudget("2026-09-20")).toBe(2);
     });
 
+    it("sun reserve split: an ordinary cap of max − reserve refuses while the full max still admits", async () => {
+      expect(await store.reserveHistoryBuild("2026-11-05", 1)).toBe(true); // ordinary, cap 3 − 2
+      expect(await store.reserveHistoryBuild("2026-11-05", 1)).toBe(false); // ordinary refused
+      expect(await store.reserveHistoryBuild("2026-11-05", 3)).toBe(true); // sun build
+      expect(await store.reserveHistoryBuild("2026-11-05", 3)).toBe(true); // sun build
+      expect(await store.reserveHistoryBuild("2026-11-05", 3)).toBe(false); // total spent
+      expect(await store.getHistoryBudget("2026-11-05")).toBe(3);
+    });
+
     it("a day-boundary split: each day gets its own independent budget", async () => {
       expect(await store.reserveHistoryBuild("2026-09-20", 1)).toBe(true);
       expect(await store.reserveHistoryBuild("2026-09-20", 1)).toBe(false); // day 1 exhausted
@@ -674,6 +685,21 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
 
     it("an unknown slug with no rows returns an empty array", async () => {
       expect(await store.hourlyHistory("nowhere", "2026-09-01", "2026-09-30")).toEqual([]);
+    });
+
+    it("listArchiveCandidates: real SQL inputs, sun-forecast beach first, this hour's row excluded", async () => {
+      const nowMs = Date.parse("2026-11-05T21:10:00Z"); // Boca's sunset forecast hour
+      // boca-raton's last row is recent, deerfield-beach already has this hour.
+      await store.upsertBeachHourly(hourlyRow({ hour_utc: "2026-11-05T20:00:00.000Z" }));
+      await store.upsertBeachHourly(hourlyRow({ slug: "deerfield-beach", hour_utc: "2026-11-05T21:00:00.000Z" }));
+      const slugs = (await store.listArchiveCandidates(nowMs)).map((c) => c.slug);
+      expect(slugs).not.toContain("deerfield-beach");
+      expect(sunWindowPriority(getLocation("boca-raton")!, nowMs)).toBe(true);
+      // Every sun-forecast beach sorts ahead of every other beach.
+      const flags = slugs.map((slug) => sunWindowPriority(getLocation(slug)!, nowMs));
+      expect(flags.indexOf(true)).toBe(0);
+      expect(flags.indexOf(false)).toBeGreaterThan(flags.lastIndexOf(true));
+      expect(flags.indexOf(false)).toBeGreaterThan(slugs.indexOf("boca-raton"));
     });
   });
 
