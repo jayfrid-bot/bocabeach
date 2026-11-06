@@ -13,12 +13,20 @@ import {
   CAM_STALE_HOURS,
   FLAG_ORDER,
   SWIM_LEVELS,
+  HEADLINE_LEAD_MAX,
+  HEADLINE_LEAD_MIN,
+  afterglowMetrics,
   dataHealth,
+  sunFairMetrics,
+  sunFixList,
   rainMetrics,
   safetyMetrics,
   sunColorMetrics,
   windowMetrics,
+  type AfterglowSide,
+  type CallCell,
   type DaylightFn,
+  type FairVersion,
   type ErrorGroup,
   type HealthResult,
   type HourlyRow,
@@ -26,6 +34,7 @@ import {
   type RainResult,
   type SafetyResult,
   type SunColorResult,
+  type SunFairResult,
   type SunPredictionRow,
   type WindowResult,
 } from "@/lib/scorecard/metrics";
@@ -82,6 +91,11 @@ export interface BuildOptions {
   daylight?: DaylightFn;
   tierOf?: (slug: string) => "curated" | "auto" | undefined;
   expectedPerDay?: (slug: string) => number | undefined;
+  /** The sun-color model version live in the app now (lib/sunQuality.ts SUN_QUALITY_VERSION),
+   *  so it shows as "collecting" even before it has a row. */
+  currentSunVersion?: string;
+  /** A sun cam's facing from config/sun-cams.json (east or west). */
+  camFacing?: (camId: string) => "east" | "west" | undefined;
 }
 
 // --- Output -----------------------------------------------------------------
@@ -99,6 +113,12 @@ export interface SunSection extends SunColorResult {
   forecastRows: number;
   windowDays: number | null;
   lifetime: SunLifetime | null;
+  /** The fair grade: per-cam rank and top tier, per model version, on the forecast people see. */
+  fair: SunFairResult;
+  /** Afterglow readings graded by rank (null when the camera readings did not load). */
+  afterglow: { sunset: AfterglowSide; sunrise: AfterglowSide } | null;
+  /** "What to fix next", from the numbers above by fixed rules. */
+  fixes: string[];
 }
 
 export interface Scorecard {
@@ -205,8 +225,19 @@ export function buildScorecard(raw: RawData, opts: BuildOptions = {}): Scorecard
         const m = sunColorMetrics(raw.sunPredictions as SunPredictionRow[], { nowMs });
         const pairedRows = (raw.sunPredictions as SunPredictionRow[]).filter((r) => r.observed_score != null);
         const obs = raw.sunObservations;
+        const fair = sunFairMetrics(raw.sunPredictions as SunPredictionRow[], { nowMs, currentVersion: opts.currentSunVersion });
+        const afterglow = obs
+          ? afterglowMetrics(
+              raw.sunPredictions as SunPredictionRow[],
+              obs.filter((o) => o.view === "antisolar"),
+              { nowMs, facingOf: opts.camFacing },
+            )
+          : null;
         return {
           ...m,
+          fair,
+          afterglow,
+          fixes: sunFixList(fair, afterglow),
           forecastRows: (raw.sunPredictions as SunPredictionRow[]).length,
           windowDays: raw.sunWindowDays ?? null,
           lifetime: raw.sunLifetime ?? null,
@@ -278,21 +309,29 @@ const na = (s: Section<unknown>): string | null => (s.ok ? null : `Not available
 function sunHeadline(s: Section<SunSection>): string {
   if (!s.ok) return na(s) as string;
   const r = s.result;
-  if (!r.ready) {
+  const f = r.fair;
+  if (f.versions.length === 0) {
     const cams = r.observations == null ? "camera readings unknown" : plural(r.observations, "camera reading");
-    return `${r.collecting}. (${plural(r.events, "event")} forecast, ${cams} so far.)`;
+    return `${r.collecting ?? "No forecasts yet"}. (${plural(r.events, "event")} forecast, ${cams} so far.)`;
   }
-  const g = r.calls.great;
-  const parts = [
-    `${plural(r.pairedEvents, "pair")}. Typical miss ${num(r.overall.mae)} points; bias ${signed(r.overall.bias)} (plus means we run high).`,
-  ];
-  if (r.calls.ready) {
-    parts.push(
-      `Great-or-better calls: ${g.hits} of ${g.calls} were right; ${g.misses} of ${g.observedAtOrAbove} real ones were missed.`,
-    );
-  } else {
-    parts.push(`Calls: ${r.calls.collecting}.`);
-  }
+  const parts = f.versions.map((v) => {
+    const label = `Model ${v.version}${v.current ? " (live now)" : ""}`;
+    if (!v.ready) return `${label}: ${v.collecting} (${plural(v.events, "event")} with a forecast 30–120 min out).`;
+    const rank =
+      v.rank.rho != null
+        ? `fair rank correlation ${signed(v.rank.rho, 2)} (${plural(v.rank.events, "event")} on ${plural(v.rank.cams, "cam")})`
+        : `fair rank correlation ${v.rank.collecting}`;
+    const g = v.tiers.great;
+    const tier =
+      g.hitRate.value != null
+        ? `Great calls in the cam's own top 25%: ${g.hits} of ${g.calls}`
+        : `Great calls in the cam's own top 25%: ${g.hitRate.collecting}`;
+    return `${label}: ${plural(v.pairs, "pair")}; ${rank}; ${tier}.`;
+  });
+  const cov = f.coverage
+    .filter((c) => c.pastEvents > 0)
+    .map((c) => `${c.withHeadline} of ${c.pastEvents} past ${c.kind}s (${pct(c.share)})`);
+  if (cov.length) parts.push(`A forecast 30–120 min out exists for ${cov.join(" and ")}.`);
   return parts.join(" ");
 }
 
@@ -362,7 +401,7 @@ function sunSection(s: Section<SunSection>): string {
     "We forecast the color of each sunrise and sunset. Then we compare with what the beach cameras saw. " +
       "One pair is one event (one beach, one sunrise or sunset) that has both a forecast and a camera reading.",
     "",
-    `- Events loaded (a forecast made ${CALL_MIN_LEAD_MIN}+ minutes ahead, or a camera reading)` +
+    `- Events loaded (with a scored forecast row or a camera reading)` +
       (r.windowDays != null ? `, last ${r.windowDays} days` : "") +
       `: ${r.events}.`,
     `- Pairs: ${r.pairedEvents} (${r.pairedRows} forecast rows). ${r.ready ? "Enough to score." : `Status: ${r.collecting}.`}`,
@@ -385,12 +424,15 @@ function sunSection(s: Section<SunSection>): string {
     out.push(`- Camera readings in the window: ${r.observations}` + (notes.length ? `; ${notes.join("; ")}.` : "."));
   }
 
+  out.push(...fairBlocks(r));
+
   if (r.pairedEvents > 0) {
     out.push(
       "",
-      "Bias is forecast minus camera, so a plus means we ran high. Typical miss is the average size of the error.",
+      "### Error overall and by group (raw camera scale)",
       "",
-      "### Error overall and by group",
+      "These tables use each cam's raw score, every lead time and every model version mixed. Raw scales differ by cam, so read them as a rough guide, not a grade. " +
+        "Bias is forecast minus camera, so a plus means we ran high. Typical miss is the average size of the error.",
       "",
       table(ERR_HEADERS, [
         ...errorRows([r.overall], () => "All pairs"),
@@ -407,10 +449,11 @@ function sunSection(s: Section<SunSection>): string {
   if (c.events > 0) {
     out.push(
       "",
-      "### Our call versus what happened",
+      "### Our call versus what happened (raw camera scale)",
       "",
       `The call is our last forecast made at least ${CALL_MIN_LEAD_MIN} minutes before the event. ` +
-        `Great means ${GREAT_CUTOFF} or more. Amazing means ${AMAZING_CUTOFF} or more. ` +
+        `Great means ${GREAT_CUTOFF} or more, on the forecast and on the RAW camera score. Amazing means ${AMAZING_CUTOFF} or more. ` +
+        "Some cams give 70+ to most clear skies, so the raw \"it happened\" and \"miss\" counts here are mostly a property of the cam. The fair top-tier table above is the grade. " +
         `Each rate needs 10 cases in its own denominator; until then it shows "n=<count>, collecting". ` +
         (c.ready ? "" : `Pairs: ${c.collecting}. Counts so far:`),
       "",
@@ -438,7 +481,7 @@ function sunSection(s: Section<SunSection>): string {
   if (d.overall.allEvents > 0) {
     out.push(
       "",
-      "### How often we say Great or Amazing",
+      "### How often we say Great or Amazing (camera columns on the raw scale)",
       "",
       `The model is built so about ${pct(d.target.great)} of events are Great or better, and about ${pct(d.target.amazing)} are Amazing. ` +
         "Shares wait for 10 events in a row.",
@@ -461,7 +504,208 @@ function sunSection(s: Section<SunSection>): string {
       ),
     );
   }
+
+  out.push(...afterglowBlocks(r));
+  out.push("", "### What to fix next", "", "Made from the numbers above by fixed rules (see docs/scorecards/README.md).", "");
+  out.push(...(r.fixes.length ? r.fixes.map((x) => `- ${x}`) : ["- Nothing crosses a rule this week."]));
   return out.join("\n");
+}
+
+const versionLabel = (v: FairVersion): string => `${v.version}${v.current ? " (live now)" : ""}`;
+const rho2 = (v: number | null | undefined): string => (v == null ? DASH : signed(v, 2));
+const kindName = (k: string): string => (k === "sunrise" ? "Sunrise" : k === "sunset" ? "Sunset" : k);
+
+function tierCell(c: CallCell): string {
+  const rate = c.hitRate.value != null ? pct(c.hitRate.value) : (c.hitRate.collecting ?? DASH);
+  return `${c.hits} of ${c.calls} (${rate})`;
+}
+
+/** The fair grade, coverage, per-cam ranks, top-tier calls and the raw band table, per model version. */
+function fairBlocks(r: SunSection): string[] {
+  const f = r.fair;
+  if (f.versions.length === 0) return [];
+  const out: string[] = [
+    "",
+    "### The fair grade, by model version",
+    "",
+    "Each camera has its own raw scale. On the same sunsets Holmes Beach averages 74 and White Sands 5, so a raw 70 means different skies on different cams. " +
+      "The fair grade asks only about order inside one cam. " +
+      `It uses the forecast people see: the one closest to 60 minutes before the event, made ${HEADLINE_LEAD_MIN} to ${HEADLINE_LEAD_MAX} minutes ahead. ` +
+      "Each event has one truth cam, the one the server picked: a cam that looks at the sun, the nearest one, then by cam id. " +
+      "Rank correlation runs from −1 to +1. 0 means no skill; a plus means our higher forecasts went with better skies on that cam. " +
+      `A cam counts once it has ${f.camMin} pairs. The pooled number is the average over cams, weighted by each cam's pairs. ` +
+      `A real Great is in that cam's own top 25% for that event kind, and a real Amazing in its top 10%. ` +
+      `A version needs ${f.min} pairs before it shows any number. Newest version first.`,
+    "",
+    table(
+      [
+        "Model version",
+        "Forecast rows loaded",
+        "Past events with a 30–120 min forecast",
+        "Pairs",
+        "Fair rank correlation",
+        "Sunrises",
+        "Sunsets",
+        "Great calls in the cam's top 25%",
+        "Amazing calls in the cam's top 10%",
+        "Raw typical miss (pts)",
+        "Raw bias (pts)",
+      ],
+      f.versions.map((v) => [
+        versionLabel(v),
+        v.rows,
+        v.events,
+        v.pairs,
+        v.rank.rho != null
+          ? `${rho2(v.rank.rho)} (${plural(v.rank.events, "event")}, ${plural(v.rank.cams, "cam")})`
+          : (v.rank.collecting ?? DASH),
+        v.rank.byKind.sunrise.rho != null ? `${rho2(v.rank.byKind.sunrise.rho)} (n=${v.rank.byKind.sunrise.events})` : DASH,
+        v.rank.byKind.sunset.rho != null ? `${rho2(v.rank.byKind.sunset.rho)} (n=${v.rank.byKind.sunset.events})` : DASH,
+        tierCell(v.tiers.great),
+        tierCell(v.tiers.amazing),
+        v.raw.mae == null ? (v.raw.collecting ?? DASH) : num(v.raw.mae),
+        signed(v.raw.bias),
+      ]),
+    ),
+    "",
+    "In the top-tier columns, \"3 of 8\" means 3 of our 8 Great calls landed in the cam's top 25%. Chance alone gives 25% (Amazing: 10%). " +
+      `A rate needs 10 calls; until then it shows "n=<count>, collecting". Only cams with ${f.camMin}+ events of their own have a scale.`,
+  ];
+  const thin = f.camScales.filter((c) => !c.counted);
+  if (thin.length) {
+    out.push(
+      "",
+      `Cams with fewer than ${f.camMin} events of their own, so no scale yet (left out of the top-tier counts): ` +
+        thin.map((c) => `${c.cam} (${c.kind}, ${c.events})`).join(", ") +
+        ".",
+    );
+  }
+
+  out.push(
+    "",
+    "### Coverage of the forecast people see",
+    "",
+    `How many past events have a forecast made ${HEADLINE_LEAD_MIN} to ${HEADLINE_LEAD_MAX} minutes before them. An event without one cannot enter the fair grade.`,
+    "",
+    table(
+      ["Event", "Past events", "With a 30–120 min forecast", "Share", "With a camera reading", "Of those, with the forecast", "Share"],
+      f.coverage.map((c) => [
+        kindName(c.kind),
+        c.pastEvents,
+        c.withHeadline,
+        pct(c.share),
+        c.pairedEvents,
+        c.pairedWithHeadline,
+        pct(c.pairedShare),
+      ]),
+    ),
+  );
+
+  const camRows = f.versions.flatMap((v) =>
+    v.cams.map((c) => [versionLabel(v), c.cam, kindName(c.kind), c.pairs, c.rho != null && v.ready ? rho2(c.rho) : (v.ready ? c.collecting : v.collecting) ?? DASH]),
+  );
+  if (camRows.length) {
+    out.push(
+      "",
+      "### Rank correlation per cam",
+      "",
+      `Our forecast (30–120 min out) against the cam's own score, by rank. Each cam needs ${f.camMin} pairs. ` +
+        "Boca Raton and Deerfield Beach share the Deerfield cams, so those cams count both beaches.",
+      "",
+      table(["Model version", "Cam", "Event", "Pairs", "Rank correlation"], camRows),
+    );
+  }
+
+  const bandRows = f.versions.flatMap((v) =>
+    v.rawByBand.map((g) => [
+      versionLabel(v),
+      BAND_LABEL[g.key] ?? g.key,
+      g.events,
+      g.mae == null ? (g.collecting ?? DASH) : num(g.mae),
+      signed(g.bias),
+    ]),
+  );
+  if (bandRows.length) {
+    out.push(
+      "",
+      "### The forecast people see, by band (raw camera scale)",
+      "",
+      "Each band needs 10 events. Bias is forecast minus the raw camera score.",
+      "",
+      table(["Model version", "We said", "Events", "Typical miss (pts)", "Bias (pts)"], bandRows),
+    );
+  }
+  return out;
+}
+
+function afterglowTable(side: AfterglowSide): string[] {
+  if (side.cams.length === 0) return ["No afterglow readings in the window."];
+  const rows: (string | number)[][] = [];
+  for (const c of side.cams) {
+    const versions = [...new Set([...c.headline.map((x) => x.version), ...c.call.map((x) => x.version)])];
+    const cellText = (x: { n: number; rho: number | null; collecting: string | null } | undefined) =>
+      x == null ? "n=0" : x.rho != null ? `${rho2(x.rho)} (n=${x.n})` : `${x.collecting ?? DASH}`;
+    const sat = c.cloud.rho != null ? `${rho2(c.cloud.rho)} (n=${c.cloud.n})` : (c.cloud.collecting ?? DASH);
+    if (versions.length === 0) {
+      rows.push([c.cam, c.readings, c.matched, DASH, "n=0", "n=0", sat]);
+      continue;
+    }
+    versions.forEach((v, i) => {
+      rows.push([
+        i === 0 ? c.cam : "",
+        i === 0 ? c.readings : "",
+        i === 0 ? c.matched : "",
+        v,
+        cellText(c.headline.find((x) => x.version === v)),
+        cellText(c.call.find((x) => x.version === v)),
+        i === 0 ? sat : "",
+      ]);
+    });
+  }
+  const out = [
+    table(
+      [
+        "Cam",
+        "Afterglow readings",
+        "Matched to a forecast event",
+        "Model version",
+        "Forecast 30–120 min out vs afterglow",
+        "Call (60+ min out) vs afterglow",
+        "Satellite cloud away from the sun vs afterglow",
+      ],
+      rows,
+    ),
+  ];
+  const notes: string[] = [];
+  if (side.unmatched) notes.push(`${side.unmatched} readings matched no forecast event`);
+  if (side.wrongFacing) notes.push(`${side.wrongFacing} came from a cam whose registry facing does not fit, and were left out`);
+  if (notes.length) out.push("", `${notes.join("; ")}.`);
+  return out;
+}
+
+/** Afterglow (antisolar) readings, graded by rank per cam. Never part of the solar numbers. */
+function afterglowBlocks(r: SunSection): string[] {
+  const a = r.afterglow;
+  if (!a) return ["", "### East-coast sunsets: the afterglow over the ocean", "", "Not available — the camera readings did not load."];
+  return [
+    "",
+    "### East-coast sunsets: the afterglow over the ocean",
+    "",
+    "An east-facing cam looks away from the sun at sunset. It sees the afterglow on the clouds over the ocean. " +
+      "On an east-coast beach that afterglow is what a beachgoer sees at sunset. " +
+      "These readings are never the truth for the sunset's color, and they are not in any number above. " +
+      `Here each cam is graded by rank only (Spearman, ${r.fair.camMin}+ events per cell). ` +
+      "The satellite column is the mid and high cloud along the path away from the sun (breakdown_json.satellite.antiMidHighPct). " +
+      "The satellite is read only within 60 minutes of the event, so only some events have it. It is evidence for a future afterglow forecast, not a grade.",
+    "",
+    ...afterglowTable(a.sunset),
+    "",
+    "### Gulf sunrises: the afterglow over the Gulf",
+    "",
+    "The same check for west-facing Gulf cams at sunrise. The sun rises behind them, over the land, and they see the afterglow on the clouds over the Gulf.",
+    "",
+    ...afterglowTable(a.sunrise),
+  ];
 }
 
 function confusionTable(label: string, c: RainResult["next1h"]): string {

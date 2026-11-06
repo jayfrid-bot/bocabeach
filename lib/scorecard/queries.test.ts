@@ -5,6 +5,7 @@ import {
   sqlStr,
   sunCallsQuery,
   sunLifetimeQuery,
+  sunNearQuery,
   sunObservationsQuery,
   sunPairedQuery,
 } from "@/lib/scorecard/queries";
@@ -30,7 +31,7 @@ describe("sqlStr", () => {
 
 describe("query text", () => {
   it("sun queries order newest events first BEFORE the limit, so a cap drops the oldest", () => {
-    for (const q of [sunPairedQuery(SINCE, 500), sunCallsQuery(SINCE, 500)]) {
+    for (const q of [sunPairedQuery(SINCE, 500), sunCallsQuery(SINCE, 500), sunNearQuery(SINCE, 500)]) {
       expect(q).toMatch(/ORDER BY (p\.)?event_iso DESC/);
       expect(q.indexOf("ORDER BY")).toBeLessThan(q.indexOf("LIMIT 500"));
       expect(q).toContain(`event_iso >= '${SINCE}'`);
@@ -62,7 +63,8 @@ describe.skipIf(!makeDb)("query behaviour on real SQL", () => {
     const db = (makeDb as () => Db)();
     db.exec(`CREATE TABLE sun_event_predictions (
       slug TEXT, event_kind TEXT, event_iso TEXT, as_of_hour_utc TEXT, lead_minutes INTEGER,
-      score INTEGER, band TEXT, algo_version TEXT, observed_score REAL, observed_source TEXT, archived_at TEXT);
+      score INTEGER, band TEXT, algo_version TEXT, observed_score REAL, observed_source TEXT, archived_at TEXT,
+      breakdown_json TEXT);
       CREATE TABLE sun_event_observations (slug TEXT, event_kind TEXT, event_date_local TEXT, cam_id TEXT,
       event_iso TEXT, view TEXT, observed_score REAL, scored_at TEXT);`);
     return db;
@@ -76,7 +78,7 @@ describe.skipIf(!makeDb)("query behaviour on real SQL", () => {
     slug = "boca-raton",
   ) =>
     `INSERT INTO sun_event_predictions VALUES ('${slug}', 'sunrise', '${event}', '${asOf}', ${lead}, ${score ?? "NULL"},
-      NULL, 'v1', ${observed ?? "NULL"}, ${observed == null ? "NULL" : "'sun-cam:c:solar'"}, '${asOf}')`;
+      NULL, 'v1', ${observed ?? "NULL"}, ${observed == null ? "NULL" : "'sun-cam:c:solar'"}, '${asOf}', NULL)`;
 
   it("the call is the latest SCORED forecast made 60+ minutes ahead; a later unscored row cannot hide it", () => {
     const db = seed();
@@ -118,5 +120,34 @@ describe.skipIf(!makeDb)("query behaviour on real SQL", () => {
     for (const slug of ["zeta", "alpha", "mid"]) db.exec(row(e, "2026-10-06T06:00:00.000Z", 300, 50, null, slug));
     const rows = db.prepare(sunCallsQuery(SINCE, 100)).all();
     expect(rows.map((r) => r.slug)).toEqual(["alpha", "mid", "zeta"]);
+  });
+
+  it("the near query keeps scored rows from 60 min after to 120 min before the event", () => {
+    const db = seed();
+    const e = "2026-10-06T11:15:00.000Z";
+    db.exec(row(e, "2026-10-06T07:00:00.000Z", 255, 40)); // too early
+    db.exec(row(e, "2026-10-06T09:00:00.000Z", 120, 55)); // the 120-min edge counts
+    db.exec(row(e, "2026-10-06T10:00:00.000Z", 75, null)); // unscored
+    db.exec(row(e, "2026-10-06T11:00:00.000Z", 15, 70));
+    db.exec(row(e, "2026-10-06T12:00:00.000Z", -60, 65)); // the -60 edge counts
+    db.exec(row(e, "2026-10-06T13:00:00.000Z", -61, 60)); // too late
+    const rows = db.prepare(sunNearQuery(SINCE, 100)).all();
+    expect(rows.map((r) => r.lead_minutes)).toEqual([-60, 15, 120]);
+  });
+
+  it("reads the satellite's anti-solar mid/high cloud out of breakdown_json", () => {
+    const db = seed();
+    db.exec(row("2026-10-06T11:15:00.000Z", "2026-10-06T11:00:00.000Z", 15, 70));
+    db.exec(
+      `UPDATE sun_event_predictions SET breakdown_json = '{"source":"satellite-ir","satellite":{"antiMidHighPct":42.5,"sunwardMidHighPct":10}}'`,
+    );
+    db.exec(row("2026-10-07T11:15:00.000Z", "2026-10-07T11:00:00.000Z", 15, 70)); // no breakdown
+    const rows = db.prepare(sunNearQuery(SINCE, 100)).all();
+    expect(rows.map((r) => r.anti_mid_high_pct)).toEqual([null, 42.5]);
+    // The call query reads it through its table alias too.
+    db.exec(row("2026-10-08T11:15:00.000Z", "2026-10-08T10:00:00.000Z", 75, 50, 40));
+    db.exec(`UPDATE sun_event_predictions SET breakdown_json = '{"satellite":{"antiMidHighPct":7}}' WHERE lead_minutes = 75`);
+    expect(db.prepare(sunCallsQuery(SINCE, 100)).all()).toMatchObject([{ anti_mid_high_pct: 7 }]);
+    expect(db.prepare(sunPairedQuery(SINCE, 100)).all()).toMatchObject([{ anti_mid_high_pct: 7 }]);
   });
 });

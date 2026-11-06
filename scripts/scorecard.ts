@@ -33,14 +33,19 @@ import {
   sqlStr,
   sunCallsQuery,
   sunLifetimeQuery,
+  sunNearQuery,
   sunObservationsQuery,
   sunPairedQuery,
 } from "@/lib/scorecard/queries";
+import { SUN_CAMS, camFacing } from "@/lib/sunObservations";
+import { SUN_QUALITY_VERSION } from "@/lib/sunQuality";
 import type { DaylightFn, HourlyRow, SunPredictionRow } from "@/lib/scorecard/metrics";
 
 const DB_NAME = "isitbeachday-plus";
 const HOURLY_CHUNK_DAYS = 3;
 const SUN_ROW_LIMIT = 20_000;
+/** Rows made close to the event (about 3 an event). */
+const SUN_NEAR_ROW_LIMIT = 40_000;
 /** Sun-color events newer than this many days are scored; lifetime counts are kept apart. */
 const SUN_WINDOW_DAYS = 90;
 const DAY_MS = 86_400_000;
@@ -186,16 +191,19 @@ function fetchRaw(days: number, now: Date): RawData {
   // Sun-color forecasts for events in the last SUN_WINDOW_DAYS days: every
   // paired row (all leads), plus each event's call row (latest scored forecast
   // made >= 60 min ahead) so unpaired events still feed the predicted-
-  // distribution check. Newest events first, so a row cap drops the OLDEST.
+  // distribution check, plus every row made -60 to 120 min before an event
+  // (the forecast people see, its coverage, and the satellite reads the
+  // afterglow check uses). Newest events first, so a row cap drops the OLDEST.
   log(`Reading sun-color forecasts (events in the last ${SUN_WINDOW_DAYS} days)...`);
   const sunSince = new Date(now.getTime() - SUN_WINDOW_DAYS * DAY_MS).toISOString();
   raw.sunWindowDays = SUN_WINDOW_DAYS;
   try {
     const paired = d1(sunPairedQuery(sunSince, SUN_ROW_LIMIT));
     const calls = d1(sunCallsQuery(sunSince, SUN_ROW_LIMIT));
+    const near = d1(sunNearQuery(sunSince, SUN_NEAR_ROW_LIMIT));
     const seen = new Set<string>();
     const merged: SunPredictionRow[] = [];
-    for (const r of [...paired, ...calls]) {
+    for (const r of [...paired, ...calls, ...near]) {
       const k = `${r.slug}|${r.event_kind}|${r.event_iso}|${r.as_of_hour_utc}`;
       if (seen.has(k)) continue;
       seen.add(k);
@@ -209,10 +217,10 @@ function fetchRaw(days: number, now: Date): RawData {
         (a.as_of_hour_utc < b.as_of_hour_utc ? -1 : a.as_of_hour_utc > b.as_of_hour_utc ? 1 : 0),
     );
     raw.sunPredictions = merged;
-    if (paired.length >= SUN_ROW_LIMIT || calls.length >= SUN_ROW_LIMIT) {
+    if (paired.length >= SUN_ROW_LIMIT || calls.length >= SUN_ROW_LIMIT || near.length >= SUN_NEAR_ROW_LIMIT) {
       raw.errors.sunPredictions = `Row limit of ${SUN_ROW_LIMIT} reached; the oldest events in the last ${SUN_WINDOW_DAYS} days may be missing.`;
     }
-    log(`  sunPredictions: ${merged.length} rows (${paired.length} paired)`);
+    log(`  sunPredictions: ${merged.length} rows (${paired.length} paired, ${near.length} near the event)`);
   } catch (e) {
     fail("sunPredictions", e);
   }
@@ -309,7 +317,14 @@ function main(): void {
     log(`Saved query results to ${args.saveRaw}`);
   }
 
-  const card = buildScorecard(raw, { daylight, tierOf, expectedPerDay: expectedPerDayAt(raw.asOf) });
+  const facing = new Map(SUN_CAMS.map((c) => [c.id, camFacing(c)]));
+  const card = buildScorecard(raw, {
+    daylight,
+    tierOf,
+    expectedPerDay: expectedPerDayAt(raw.asOf),
+    currentSunVersion: SUN_QUALITY_VERSION,
+    camFacing: (id) => facing.get(id),
+  });
   const md = renderMarkdown(card);
 
   // If the two main datasets both failed to load, this report says nothing:
