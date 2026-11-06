@@ -12,11 +12,11 @@
   // route's own D1 reads/writes — no headroom left for a second beach's
   // BUILD in the same call (it may still scan/claim several candidates
   // before finding one to build — see route.ts). Codex round-3 finding #1:
-  // up to 39 beaches are eligible each hour, candidates came back in fixed
+  // up to 63 beaches are eligible each hour, candidates came back in fixed
   // config order and reset every UTC hour, and a 2-minute cadence (only 30
   // builds/hour) meant the beaches at the end of that order systematically
-  // never got archived. Running every minute gives 60 ticks/hour — enough
-  // for all 39 to get a turn even in the worst case — while the daily
+  // never got archived. Running every minute gives 60 ticks/hour — close to
+  // one per beach, and the fair order spreads any shortfall — while the daily
   // HISTORY_MAX_BUILDS_PER_DAY budget (default 600, upstream of this Worker)
   // still caps total upstream load; a tick with nothing eligible just exits
   // fast. The archive route itself decides whether a tick has anything due:

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getLocation } from "@/config/locations";
+import { getLocation, listLocations } from "@/config/locations";
 import { scorableResponse } from "@/lib/alerts/fixtures";
 import { estimateSurfHeightFt } from "@/lib/surfHeight";
 import {
@@ -10,6 +10,8 @@ import {
   orderArchiveCandidates,
   rowFromConditions,
   shouldArchiveNow,
+  sunBuildsDueToday,
+  sunWindowEventMs,
   sunWindowPriority,
 } from "@/lib/history/archive";
 
@@ -344,9 +346,105 @@ describe("orderArchiveCandidates — sun-forecast beaches first", () => {
     expect(out).toEqual(["older-east", "new-east", "never-west", "old-west"]);
   });
 
+  it("orders the sun group by event time, earliest first, ahead of the fair order", () => {
+    const nowMs = Date.parse("2026-11-05T21:10:00Z");
+    // Nags Head sets 22:02Z, Boca Raton 22:35Z: both forecasts open in hour 21Z.
+    const nags = getLocation("nags-head")!;
+    const boca = getLocation("boca-raton")!;
+    const all = [c("boca-raton", boca, "curated"), c("nags-head", nags, "curated")];
+    // Boca has never been archived, so the fair order alone would put it first.
+    const lastHour = new Map([["nags-head", "2026-11-05T20:00:00.000Z"]]);
+    const out = orderArchiveCandidates(all, new Set(), lastHour, nowMs);
+    expect(out.map((x) => x.slug)).toEqual(["nags-head", "boca-raton"]);
+    expect(out[0].sunEventMs).toBe(sunWindowEventMs(nags, nowMs));
+    expect(out[0].sunEventMs!).toBeLessThan(out[1].sunEventMs!);
+  });
+
+  it("marks only sun-forecast candidates with sunEventMs", () => {
+    const nowMs = Date.parse("2026-11-05T21:10:00Z");
+    const out = orderArchiveCandidates([c("east", ny, "curated"), c("west", la, "curated")], new Set(), new Map(), nowMs);
+    expect(out.find((x) => x.slug === "east")!.sunEventMs).toBe(Date.parse("2026-11-05T22:35:24.599Z"));
+    expect("sunEventMs" in out.find((x) => x.slug === "west")!).toBe(false);
+  });
+
   it("still drops a sun-forecast beach that already has a row this hour", () => {
     const nowMs = Date.parse("2026-11-05T21:10:00Z");
     const out = orderArchiveCandidates([c("east", ny, "curated")], new Set(["east"]), new Map(), nowMs);
     expect(out).toEqual([]);
+  });
+});
+
+// The archiver keeps back budget for the sun builds still due today
+// (app/api/history/archive/route.ts). The count must follow the same rule as
+// sunWindowPriority, so these tests check it against that function hour by hour.
+describe("sunBuildsDueToday — sun builds left in the UTC day", () => {
+  const HOUR = 3_600_000;
+  const locs = listLocations();
+  const at = (iso: string) => Date.parse(iso);
+
+  /** Brute force: for each remaining hour of the UTC day, the beaches in their forecast hour. */
+  function bruteForce(list: typeof locs, nowMs: number): number {
+    const first = Math.floor(nowMs / HOUR);
+    const dayEnd = Date.UTC(new Date(nowMs).getUTCFullYear(), new Date(nowMs).getUTCMonth(), new Date(nowMs).getUTCDate() + 1) / HOUR;
+    let n = 0;
+    for (let h = first; h < dayEnd; h++) for (const l of list) if (sunWindowPriority(l, h * HOUR + 30 * 60_000)) n++;
+    return n;
+  }
+
+  it("is two per beach (126 for 63 beaches) at the start of an ordinary UTC day", () => {
+    expect(locs.length).toBe(63);
+    expect(sunBuildsDueToday(locs, at("2026-11-05T00:00:00Z"), null)).toBe(126);
+    expect(sunBuildsDueToday(locs, at("2026-11-05T00:00:00Z"), null)).toBe(bruteForce(locs, at("2026-11-05T00:00:00Z")));
+  });
+
+  it("is small late in the day: only the West Coast and Hawaii sunsets are left", () => {
+    const n = sunBuildsDueToday(locs, at("2026-11-05T23:10:00Z"), null);
+    expect(n).toBeGreaterThan(0);
+    expect(n).toBeLessThan(15);
+    expect(n).toBe(bruteForce(locs, at("2026-11-05T23:10:00Z")));
+  });
+
+  it("matches sunWindowPriority hour by hour through the day", () => {
+    for (const iso of ["2026-11-05T05:00:00Z", "2026-11-05T12:00:00Z", "2026-11-05T21:10:00Z"]) {
+      expect(sunBuildsDueToday(locs, at(iso), null)).toBe(bruteForce(locs, at(iso)));
+    }
+  });
+
+  it("counts a current-hour beach only while it has no row yet", () => {
+    const nowMs = at("2026-11-05T21:10:00Z");
+    const inWindow = locs.filter((l) => sunWindowPriority(l, nowMs)).map((l) => l.slug);
+    expect(inWindow.length).toBeGreaterThan(1);
+    const all = sunBuildsDueToday(locs, nowMs, null);
+    // Every beach in its forecast hour already archived: none of them count.
+    expect(sunBuildsDueToday(locs, nowMs, new Set())).toBe(all - inWindow.length);
+    // One of them still pending: it counts.
+    expect(sunBuildsDueToday(locs, nowMs, new Set([inWindow[0]]))).toBe(all - inWindow.length + 1);
+  });
+
+  it("gives Huntington Beach three sun builds on 2026-11-01 (DST ends), two the day after", () => {
+    // UTC 11-01 holds the 10-31 sunset (forecast 00Z), the sunrise (13Z) and
+    // the 11-01 sunset at 00:5xZ on 11-02, whose forecast opens at 23:5xZ.
+    const hb = getLocation("huntington-beach")!;
+    expect(sunBuildsDueToday([hb], at("2026-11-01T00:00:00Z"), null)).toBe(3);
+    expect(sunBuildsDueToday([hb], at("2026-11-02T00:00:00Z"), null)).toBe(2);
+    expect(sunBuildsDueToday([hb], at("2026-11-01T00:00:00Z"), null)).toBe(bruteForce([hb], at("2026-11-01T00:00:00Z")));
+  });
+
+  it("follows the same rule on both DST days for every beach", () => {
+    for (const iso of ["2026-11-01T00:00:00Z", "2026-11-01T09:30:00Z", "2026-03-08T00:00:00Z", "2026-03-08T07:30:00Z"]) {
+      expect(sunBuildsDueToday(locs, at(iso), null)).toBe(bruteForce(locs, at(iso)));
+    }
+    expect(sunBuildsDueToday(locs, at("2026-11-01T00:00:00Z"), null)).toBe(127); // 126 + Huntington's extra
+  });
+
+  it("is zero for an invalid instant and with no beaches", () => {
+    expect(sunBuildsDueToday(locs, NaN, null)).toBe(0);
+    expect(sunBuildsDueToday([], at("2026-11-05T00:00:00Z"), null)).toBe(0);
+  });
+
+  it("stays cheap: well under 10 ms for all 63 beaches", () => {
+    const t0 = performance.now();
+    sunBuildsDueToday(locs, at("2027-01-15T00:00:00Z"), null); // cold dates
+    expect(performance.now() - t0).toBeLessThan(10);
   });
 });

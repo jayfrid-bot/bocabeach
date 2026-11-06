@@ -5,7 +5,7 @@
 
 import type { ConditionsResponse, Location } from "@/lib/types";
 import { deriveMetrics, SCORING_CONFIG_VERSION, SCORING_ENGINE_VERSION } from "@/lib/score";
-import { computeSunTimes } from "@/lib/sources/sun";
+import { computeSunTimes, type SunTimes } from "@/lib/sources/sun";
 import { SUN_FORECAST_WINDOW_MS } from "@/lib/sunForecastWindow";
 import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
 import { extraJsonFor } from "@/lib/history/extra";
@@ -15,6 +15,28 @@ import { extraJsonFor } from "@/lib/history/extra";
 export function hourUtcOf(ms: number): string {
   const floored = Math.floor(ms / 3_600_000) * 3_600_000;
   return new Date(floored).toISOString();
+}
+
+// One Intl.DateTimeFormat per zone, reused. Building a formatter is the slow
+// part of `localHourParts` (most of the ~2.3 ms the archiver spent ordering
+// 63 candidates a minute); formatting with a built one is cheap.
+const FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+function localFormatter(tz: string): Intl.DateTimeFormat {
+  let dtf = FORMATTERS.get(tz);
+  if (!dtf) {
+    dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+    FORMATTERS.set(tz, dtf);
+  }
+  return dtf;
 }
 
 /**
@@ -29,17 +51,7 @@ export function localHourParts(
   tz: string,
   ms: number,
 ): { date: string; hour: number; offsetMinutes: number } {
-  const dtf = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  });
-  const parts = dtf.formatToParts(new Date(ms));
+  const parts = localFormatter(tz).formatToParts(new Date(ms));
   const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
   const year = get("year");
   const month = get("month");
@@ -260,19 +272,100 @@ export function sunWindowPriority(
   candidate: Pick<ArchiveCandidate, "lat" | "lon" | "timezone">,
   nowMs: number,
 ): boolean {
-  if (!Number.isFinite(nowMs)) return false;
+  return sunWindowEventMs(candidate, nowMs) !== null;
+}
+
+/**
+ * The instant of the sun event whose forecast opens in `nowMs`'s UTC hour
+ * (the rule in `sunWindowPriority`), or null when there is none. The archiver
+ * builds the earliest event first (`orderArchiveCandidates`).
+ */
+export function sunWindowEventMs(
+  candidate: Pick<ArchiveCandidate, "lat" | "lon" | "timezone">,
+  nowMs: number,
+): number | null {
+  if (!Number.isFinite(nowMs)) return null;
   const hour = Math.floor(nowMs / HOUR_MS);
   const [y, m, d] = localHourParts(candidate.timezone, nowMs).date.split("-").map(Number);
-  if (!y || !m || !d) return false;
+  if (!y || !m || !d) return null;
+  let found: number | null = null;
   for (const offset of [-1, 0, 1]) {
-    const day = new Date(Date.UTC(y, m - 1, d + offset));
-    const t = computeSunTimes(candidate.lat, candidate.lon, day.getUTCFullYear(), day.getUTCMonth() + 1, day.getUTCDate());
-    for (const event of [t.sunrise, t.sunset]) {
-      if (!event) continue;
-      if (Math.floor((event.getTime() - SUN_FORECAST_WINDOW_MS) / HOUR_MS) === hour) return true;
+    for (const eventMs of sunEventsOn(candidate.lat, candidate.lon, y, m, d + offset)) {
+      if (sunForecastHour(eventMs) === hour && (found === null || eventMs < found)) found = eventMs;
     }
   }
-  return false;
+  return found;
+}
+
+/** The UTC hour number (ms / 1 h, floored) in which `eventMs`'s forecast opens. */
+function sunForecastHour(eventMs: number): number {
+  return Math.floor((eventMs - SUN_FORECAST_WINDOW_MS) / HOUR_MS);
+}
+
+// Sun times are a pure function of (lat, lon, date), so one cache serves every
+// call in this isolate. Bounded: 63 beaches touch about 4 dates each a day.
+const SUN_TIMES = new Map<string, SunTimes>();
+const SUN_TIMES_MAX = 2048;
+
+/** Sunrise and sunset (ms) for calendar date y-m-d (d may overflow; it is normalized). */
+function sunEventsOn(lat: number, lon: number, y: number, m: number, d: number): number[] {
+  const day = new Date(Date.UTC(y, m - 1, d));
+  const yy = day.getUTCFullYear();
+  const mm = day.getUTCMonth() + 1;
+  const dd = day.getUTCDate();
+  const key = `${lat},${lon},${yy}-${mm}-${dd}`;
+  let t = SUN_TIMES.get(key);
+  if (!t) {
+    if (SUN_TIMES.size >= SUN_TIMES_MAX) SUN_TIMES.clear();
+    t = computeSunTimes(lat, lon, yy, mm, dd);
+    SUN_TIMES.set(key, t);
+  }
+  const out: number[] = [];
+  if (t.sunrise) out.push(t.sunrise.getTime());
+  if (t.sunset) out.push(t.sunset.getTime());
+  return out;
+}
+
+/**
+ * How many sun-forecast builds are still due in `nowMs`'s UTC day: one per
+ * (beach, forecast hour) under the `sunWindowPriority` rule, for every forecast
+ * hour from the current UTC hour to the end of the UTC day. A beach whose
+ * forecast hour is the CURRENT hour counts only while it still has no row for
+ * that hour — `pendingThisHour` holds those slugs; pass null to count them all.
+ *
+ * The archiver keeps this many budget units (plus a little slack) back from
+ * ordinary builds, so the day's remaining sun forecasts can always be built.
+ * Late in the UTC day the number is small, so ordinary builds run almost to
+ * the daily max. Pure; sun times are cached per beach and date.
+ */
+export function sunBuildsDueToday(
+  locations: ReadonlyArray<{ slug: string; lat: number; lon: number }>,
+  nowMs: number,
+  pendingThisHour: ReadonlySet<string> | null,
+): number {
+  if (!Number.isFinite(nowMs)) return 0;
+  const hour = Math.floor(nowMs / HOUR_MS);
+  const now = new Date(nowMs);
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth() + 1;
+  const d = now.getUTCDate();
+  const endHour = Date.UTC(y, m - 1, d + 1) / HOUR_MS; // first hour of the next UTC day
+  let due = 0;
+  for (const loc of locations) {
+    // Dates either side of the UTC date: a far-west beach's sunset belongs to
+    // the previous calendar date, a far-east sunrise to the next one.
+    const hours = new Set<number>();
+    for (const offset of [-1, 0, 1]) {
+      for (const eventMs of sunEventsOn(loc.lat, loc.lon, y, m, d + offset)) {
+        const h = sunForecastHour(eventMs);
+        if (h < hour || h >= endHour) continue;
+        if (h === hour && pendingThisHour && !pendingThisHour.has(loc.slug)) continue;
+        hours.add(h);
+      }
+    }
+    due += hours.size;
+  }
+  return due;
 }
 
 /**
@@ -280,8 +373,12 @@ export function sunWindowPriority(
  * drop beaches that already have a row this UTC hour; keep beaches the
  * daylight rule allows OR that are in their sun-forecast hour
  * (`sunWindowPriority` — the hour before sunrise is still dark for an auto
- * beach); then put sun-window beaches first and order each group fairly
- * (`compareByLastHourThenSlug`).
+ * beach); then put sun-window beaches first, earliest event first (so an early
+ * event is built before its lead drops under 30 min), and order the rest — and
+ * any sun-window tie — fairly (`compareByLastHourThenSlug`).
+ *
+ * Each returned sun-window candidate carries `sunEventMs`, worked out once
+ * here, so the caller need not recompute it.
  */
 export function orderArchiveCandidates(
   all: ArchiveCandidate[],
@@ -291,13 +388,27 @@ export function orderArchiveCandidates(
 ): ArchiveCandidate[] {
   return all
     .filter((c) => !archivedThisHour.has(c.slug))
-    .map((c) => ({ c, sun: sunWindowPriority(c, nowMs) }))
-    .filter(({ c, sun }) => sun || shouldArchiveNow(c, nowMs))
+    .map((c) => ({ c, sunMs: sunWindowEventMs(c, nowMs) }))
+    .filter(({ c, sunMs }) => sunMs !== null || shouldArchiveNow(c, nowMs))
     .sort((a, b) => {
-      if (a.sun !== b.sun) return a.sun ? -1 : 1;
+      if ((a.sunMs === null) !== (b.sunMs === null)) return a.sunMs !== null ? -1 : 1;
+      if (a.sunMs !== null && b.sunMs !== null && a.sunMs !== b.sunMs) return a.sunMs - b.sunMs;
       return compareByLastHourThenSlug(lastHourBySlug.get(a.c.slug), a.c.slug, lastHourBySlug.get(b.c.slug), b.c.slug);
     })
-    .map(({ c }) => c);
+    .map(({ c, sunMs }) => (sunMs === null ? c : { ...c, sunEventMs: sunMs }));
+}
+
+/**
+ * How far back `listArchiveCandidates` looks for each beach's latest row. The
+ * archiver runs once a minute, so this keeps that read to the rows of the last
+ * two days instead of the whole table. A beach with no row in the window
+ * sorts as never archived.
+ */
+export const ARCHIVE_LAST_HOUR_WINDOW_MS = 48 * HOUR_MS;
+
+/** The `hour_utc` cutoff (same format as `hourUtcOf`) for that look-back. */
+export function archiveLastHourCutoff(nowMs: number): string {
+  return hourUtcOf(nowMs - ARCHIVE_LAST_HOUR_WINDOW_MS);
 }
 
 /**

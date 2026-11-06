@@ -217,8 +217,13 @@ function fetchRaw(days: number, now: Date): RawData {
         (a.as_of_hour_utc < b.as_of_hour_utc ? -1 : a.as_of_hour_utc > b.as_of_hour_utc ? 1 : 0),
     );
     raw.sunPredictions = merged;
-    if (paired.length >= SUN_ROW_LIMIT || calls.length >= SUN_ROW_LIMIT || near.length >= SUN_NEAR_ROW_LIMIT) {
-      raw.errors.sunPredictions = `Row limit of ${SUN_ROW_LIMIT} reached; the oldest events in the last ${SUN_WINDOW_DAYS} days may be missing.`;
+    const hit = [
+      paired.length >= SUN_ROW_LIMIT ? `${SUN_ROW_LIMIT} paired rows (SUN_ROW_LIMIT)` : null,
+      calls.length >= SUN_ROW_LIMIT ? `${SUN_ROW_LIMIT} call rows (SUN_ROW_LIMIT)` : null,
+      near.length >= SUN_NEAR_ROW_LIMIT ? `${SUN_NEAR_ROW_LIMIT} near-event rows (SUN_NEAR_ROW_LIMIT)` : null,
+    ].filter(Boolean);
+    if (hit.length) {
+      raw.errors.sunPredictions = `Row limit reached: ${hit.join(", ")}; the oldest events in the last ${SUN_WINDOW_DAYS} days may be missing.`;
     }
     log(`  sunPredictions: ${merged.length} rows (${paired.length} paired, ${near.length} near the event)`);
   } catch (e) {
@@ -285,6 +290,16 @@ const daylight: DaylightFn = (slug, date) => {
   return { from: localHour(loc.timezone, t.sunrise.getTime()), to: localHour(loc.timezone, t.sunset.getTime()) };
 };
 
+/** An event's local date in its beach's own time zone (UTC date for an unknown beach). */
+const eventLocalDate = (slug: string, eventIso: string): string => {
+  const loc = getLocation(slug);
+  const ms = Date.parse(eventIso);
+  if (!loc || !Number.isFinite(ms)) return eventIso.slice(0, 10);
+  return new Intl.DateTimeFormat("en-CA", { timeZone: loc.timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(
+    new Date(ms),
+  );
+};
+
 const tierOf = (slug: string): "curated" | "auto" | undefined => {
   const loc = getLocation(slug);
   return loc ? (loc.tier ?? "curated") : undefined;
@@ -318,12 +333,15 @@ function main(): void {
   }
 
   const facing = new Map(SUN_CAMS.map((c) => [c.id, camFacing(c)]));
+  const camMiles = new Map(SUN_CAMS.flatMap((c) => c.beaches.map((b) => [`${c.id}|${b.slug}`, b.distance_mi] as const)));
   const card = buildScorecard(raw, {
     daylight,
     tierOf,
     expectedPerDay: expectedPerDayAt(raw.asOf),
     currentSunVersion: SUN_QUALITY_VERSION,
     camFacing: (id) => facing.get(id),
+    camDistance: (cam, slug) => camMiles.get(`${cam}|${slug}`),
+    localDateOf: eventLocalDate,
   });
   const md = renderMarkdown(card);
 

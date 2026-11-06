@@ -420,7 +420,7 @@ describe("buildScorecard — the fair sun grade", () => {
   const afterglow = Array.from({ length: 12 }, (_, i) => ({
     slug: "boca-raton",
     event_kind: "sunset" as const,
-    event_date_local: "2026-10-08",
+    event_date_local: new Date(Date.parse("2026-10-08T22:30:00Z") + i * 86_400_000).toISOString().slice(0, 10),
     cam_id: "deerfield-beach-cam",
     event_iso: new Date(Date.parse("2026-10-08T22:30:00Z") + i * 86_400_000).toISOString(),
     view: "antisolar",
@@ -445,6 +445,7 @@ describe("buildScorecard — the fair sun grade", () => {
     // The Deerfield forecast never moved (95 every day): no spread, no correlation.
     expect(md).toContain("| 2026-10-15.1 | deerfield-beach-cam | Sunrise | 12 | no spread |");
     expect(md).toContain("| Sunrise | 12 | 12 | 100% | 12 | 12 | 100% |");
+    expect(md).toContain("Each reading counts once, for the beach nearest the cam (Deerfield Beach).");
   });
 
   it("labels the old tables as raw-scale and lists the fixes from the numbers", () => {

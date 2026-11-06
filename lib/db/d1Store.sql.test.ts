@@ -16,6 +16,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import {
+  ARCHIVE_LAST_HOURS_SQL,
+  ARCHIVE_THIS_HOUR_SQL,
   d1Store,
   HISTORY_RECORDS_UNION,
   HISTORY_WATER_RECORDS_UNION,
@@ -700,6 +702,32 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       expect(flags.indexOf(true)).toBe(0);
       expect(flags.indexOf(false)).toBeGreaterThan(flags.lastIndexOf(true));
       expect(flags.indexOf(false)).toBeGreaterThan(slugs.indexOf("boca-raton"));
+    });
+
+    it("listArchiveCandidates looks back 48 h only: an older last row sorts as never archived", async () => {
+      const nowMs = Date.parse("2026-11-05T17:00:00Z"); // midday, no sun-forecast hour on the East Coast
+      await store.upsertBeachHourly(hourlyRow({ hour_utc: "2026-11-03T16:00:00.000Z" })); // boca-raton, 49 h back
+      await store.upsertBeachHourly(hourlyRow({ slug: "deerfield-beach", hour_utc: "2026-11-03T18:00:00.000Z" })); // 47 h back
+      const slugs = (await store.listArchiveCandidates(nowMs)).map((c) => c.slug);
+      expect(slugs.indexOf("boca-raton")).toBeLessThan(slugs.indexOf("fort-lauderdale"));
+      expect(slugs.indexOf("fort-lauderdale")).toBeLessThan(slugs.indexOf("deerfield-beach"));
+    });
+
+    it("the last-hour read runs once a minute, so it searches the hour_utc index and never scans beach_hourly", async () => {
+      const raw = freshRawDb();
+      const plan = ((await raw!.prepare(`EXPLAIN QUERY PLAN ${ARCHIVE_LAST_HOURS_SQL}`).bind("2026-11-03T17:00:00.000Z").all<{ detail: string }>()).results ?? [])
+        .map((r) => r.detail)
+        .join("\n");
+      expect(plan).toMatch(/SEARCH beach_hourly USING (COVERING )?INDEX beach_hourly_hour_utc \(hour_utc>\?\)/);
+      expect(plan).not.toMatch(/SCAN beach_hourly/);
+    });
+
+    it("the current-hour read also searches the hour_utc index", async () => {
+      const raw = freshRawDb();
+      const plan = ((await raw!.prepare(`EXPLAIN QUERY PLAN ${ARCHIVE_THIS_HOUR_SQL}`).bind("2026-11-05T17:00:00.000Z").all<{ detail: string }>()).results ?? [])
+        .map((r) => r.detail)
+        .join("\n");
+      expect(plan).toMatch(/SEARCH beach_hourly USING (COVERING )?INDEX beach_hourly_hour_utc/);
     });
   });
 

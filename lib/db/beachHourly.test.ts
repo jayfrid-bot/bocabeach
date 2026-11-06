@@ -142,6 +142,18 @@ describe("listArchiveCandidates — fair ordering (Codex round-3 finding #1)", (
     expect(indexOf("fort-lauderdale")).toBeLessThan(indexOf("deerfield-beach"));
   });
 
+  it("only looks back 48 h: a beach whose last row is older sorts as never archived", async () => {
+    const store = await getStore();
+    const nowMs = Date.parse("2026-09-20T17:00:00Z");
+    // boca-raton's only row is 49 h old; deerfield-beach's is 47 h old.
+    await store.upsertBeachHourly(row({ slug: "boca-raton", hour_utc: hourUtcOf(nowMs - 49 * 3_600_000) }));
+    await store.upsertBeachHourly(row({ slug: "deerfield-beach", hour_utc: hourUtcOf(nowMs - 47 * 3_600_000) }));
+    const slugs = (await store.listArchiveCandidates(nowMs)).map((c) => c.slug);
+    // fort-lauderdale has no row at all; boca-raton now ties with it (slug order).
+    expect(slugs.indexOf("boca-raton")).toBeLessThan(slugs.indexOf("fort-lauderdale"));
+    expect(slugs.indexOf("fort-lauderdale")).toBeLessThan(slugs.indexOf("deerfield-beach"));
+  });
+
   it("ties among never-archived beaches (and among equal last-hour beaches) break by slug", async () => {
     const store = await getStore();
     const nowMs = Date.parse("2026-09-20T17:00:00Z");

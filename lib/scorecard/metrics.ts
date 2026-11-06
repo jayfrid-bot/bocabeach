@@ -458,6 +458,10 @@ export const FIX_MIN_COVERAGE = 0.5;
 export const FIX_CAM_RHO = -0.3;
 /** "What to fix next": an afterglow correlation at or beyond this size is listed as a signal. */
 export const FIX_SIGNAL_RHO = 0.3;
+/** "What to fix next": a cam's own correlation (backwards cam, afterglow signal) needs this many
+ *  events before it can make a line. A cam shows its number from MIN_CAM_RANK_EVENTS (8), but at
+ *  n = 8 a Spearman's standard error is about 0.38, so one number that small is mostly noise. */
+export const FIX_MIN_CAM_EVENTS = 15;
 /** A camera reading belongs to a forecast event within this much time (the server's own rule). */
 const MATCH_MS = 15 * 60_000;
 
@@ -645,15 +649,60 @@ function rankSummary(cams: CamRank[]): RankSummary {
   };
 }
 
+/** A beach's distance (miles) from a sun cam, from config/sun-cams.json. */
+export type CamDistanceFn = (camId: string, slug: string) => number | undefined;
+/** The local calendar date (YYYY-MM-DD) of an event at a beach. */
+export type EventLocalDateFn = (slug: string, eventIso: string) => string;
+
+/** Fallback when no local-date function is given: the UTC date. Beaches that share
+ *  a cam are a few miles apart, so their events seconds apart share it too. */
+const utcDateOf: EventLocalDateFn = (_slug, eventIso) => eventIso.slice(0, 10);
+
+/**
+ * Shared cams: one cam can be the truth for two beaches (Boca Raton and
+ * Deerfield Beach share the Deerfield cams), so the same reading would count
+ * twice. Of the items in each group (same cam, event kind and local date),
+ * keep only the beach nearest that cam (`distanceOf`; unknown counts as
+ * farthest), ties to the first slug. Returns the items kept.
+ */
+export function nearestBeachPerCamEvent<T>(
+  items: T[],
+  of: (t: T) => { cam: string; kind: string; date: string; slug: string },
+  distanceOf?: CamDistanceFn,
+): Set<T> {
+  const best = new Map<string, { item: T; d: number; slug: string }>();
+  for (const item of items) {
+    const { cam, kind, date, slug } = of(item);
+    const k = `${cam}|${kind}|${date}`;
+    const d = distanceOf?.(cam, slug);
+    const dist = typeof d === "number" && Number.isFinite(d) ? d : Infinity;
+    const cur = best.get(k);
+    if (!cur || dist < cur.d || (dist === cur.d && slug < cur.slug)) best.set(k, { item, d: dist, slug });
+  }
+  return new Set([...best.values()].map((b) => b.item));
+}
+
 /**
  * The fair sun grade, one block per model version (newest first): the forecast
  * people see (closest to 60 min ahead, 30–120 min) against the event's one solar
  * truth cam, by rank inside each cam and against each cam's own top tier. Also
  * the coverage of that forecast per event kind. Afterglow never enters.
+ *
+ * A cam reading shared by two beaches is graded once, for the beach nearest
+ * the cam (`nearestBeachPerCamEvent`): in the grade, the cam's percentile
+ * scale and the top-tier calls. Coverage still counts each beach.
  */
 export function sunFairMetrics(
   rows: SunPredictionRow[],
-  opts: { nowMs?: number; currentVersion?: string; min?: number; camMin?: number; rateMin?: number } = {},
+  opts: {
+    nowMs?: number;
+    currentVersion?: string;
+    min?: number;
+    camMin?: number;
+    rateMin?: number;
+    camDistance?: CamDistanceFn;
+    localDateOf?: EventLocalDateFn;
+  } = {},
 ): SunFairResult {
   const min = opts.min ?? MIN_SUN_EVENTS;
   const camMin = opts.camMin ?? MIN_CAM_RANK_EVENTS;
@@ -670,6 +719,15 @@ export function sunFairMetrics(
   const eventsByVersion = new Map<string, number>();
   const pairsByVersion = new Map<string, Pair[]>();
 
+  type Ev = {
+    key: string;
+    kind: SunKind;
+    slug: string;
+    eventIso: string;
+    head: SunPredictionRow | null;
+    truth: { score: number; cam: string } | null;
+  };
+  const evs: Ev[] = [];
   for (const [key, evRows] of groupBy(rows, eventKey)) {
     const first = evRows[0];
     if (opts.nowMs != null && Date.parse(first.event_iso) > opts.nowMs) continue;
@@ -683,6 +741,21 @@ export function sunFairMetrics(
     if (truth) {
       cov.pairedEvents++;
       if (head) cov.pairedWithHeadline++;
+    }
+    evs.push({ key, kind, slug: first.slug, eventIso: first.event_iso, head, truth });
+  }
+  const localDateOf = opts.localDateOf ?? utcDateOf;
+  const graded = nearestBeachPerCamEvent(
+    evs.filter((e) => e.truth),
+    (e) => ({ cam: (e.truth as { cam: string }).cam, kind: e.kind, date: localDateOf(e.slug, e.eventIso), slug: e.slug }),
+    opts.camDistance,
+  );
+  for (const ev of evs) {
+    const { key, kind, head } = ev;
+    // A shared cam's reading counts only for the nearest beach; the other
+    // beach's forecast still counts as an event, but without a truth.
+    const truth = ev.truth && graded.has(ev) ? ev.truth : null;
+    if (truth) {
       const sk = `${truth.cam}|${kind}`;
       const a = scale.get(sk) ?? [];
       a.push({ key, obs: truth.score });
@@ -794,6 +867,8 @@ export interface AfterglowReading {
   event_iso: string;
   view: string;
   observed_score: number;
+  /** The event's local date, as stored. Without it the local-date function (or the UTC date) is used. */
+  event_date_local?: string;
 }
 
 export interface AfterglowCell {
@@ -856,14 +931,34 @@ function satelliteAntiOf(eventRows: SunPredictionRow[]): number | null {
  * graded here by rank against our sunset forecast and the satellite's anti-solar
  * mid/high cloud, per cam. It is never the truth for an event's color and never
  * enters the solar numbers. `facingOf` comes from config/sun-cams.json; without
- * it the view and the event kind imply the facing.
+ * it the view and the event kind imply the facing. A reading shared by two
+ * beaches counts once, for the beach nearest the cam (`nearestBeachPerCamEvent`).
  */
 export function afterglowMetrics(
   rows: SunPredictionRow[],
   readings: AfterglowReading[],
-  opts: { facingOf?: (camId: string) => "east" | "west" | undefined; nowMs?: number; camMin?: number } = {},
+  opts: {
+    facingOf?: (camId: string) => "east" | "west" | undefined;
+    nowMs?: number;
+    camMin?: number;
+    camDistance?: CamDistanceFn;
+    localDateOf?: EventLocalDateFn;
+  } = {},
 ): { sunset: AfterglowSide; sunrise: AfterglowSide } {
   const camMin = opts.camMin ?? MIN_CAM_RANK_EVENTS;
+  // A shared cam's reading counts once, for the beach nearest the cam (as in sunFairMetrics).
+  const localDateOf = opts.localDateOf ?? utcDateOf;
+  const kept = nearestBeachPerCamEvent(
+    readings,
+    (o) => ({
+      cam: o.cam_id,
+      kind: `${o.event_kind}|${o.view}`,
+      date: o.event_date_local ?? localDateOf(o.slug, o.event_iso),
+      slug: o.slug,
+    }),
+    opts.camDistance,
+  );
+  readings = readings.filter((o) => kept.has(o));
   const byEvent = groupBy(rows, eventKey);
   const index = new Map<string, { ms: number; key: string }[]>();
   for (const [key, evRows] of byEvent) {
@@ -956,10 +1051,12 @@ const fmtPct = (v: number): string => `${Math.round(v * 100)}%`;
  * line quotes the number that tripped it. Rules (README "What to fix next"):
  * the live model still collecting; a forecast band whose raw bias is beyond
  * ±15 points on 10+ events; a version that ranks skies the wrong way round
- * (fair correlation at or below 0); a cam at or below −0.3; Great calls that
- * land in the cam's top 25% less often than chance (25%); an event kind with
- * a 30–120 min forecast on under 50% of events; an afterglow correlation of
- * ±0.3 or more on 8+ events (evidence for a future afterglow forecast).
+ * (fair correlation at or below 0); a cam at or below −0.3 on 15+ pairs; Great
+ * calls that land in the cam's top 25% less often than chance (25%); an event
+ * kind with a 30–120 min forecast on under 50% of events; an afterglow
+ * correlation of ±0.3 or more on 15+ events (evidence for a future afterglow
+ * forecast). A cam shows its correlation from 8 events, but a line needs 15
+ * (FIX_MIN_CAM_EVENTS).
  */
 export function sunFixList(
   fair: SunFairResult,
@@ -985,7 +1082,7 @@ export function sunFixList(
     }
     if (v.ready) {
       for (const c of v.cams) {
-        if (c.rho == null || c.rho > FIX_CAM_RHO) continue;
+        if (c.rho == null || c.rho > FIX_CAM_RHO || c.pairs < FIX_MIN_CAM_EVENTS) continue;
         out.push(`Model ${v.version} ranks ${c.kind}s backwards at ${c.cam}: correlation ${fmtSigned(c.rho, 2)} on ${plainCount(c.pairs, "event")}.`);
       }
     }
@@ -1009,7 +1106,7 @@ export function sunFixList(
     for (const s of [afterglow.sunset, afterglow.sunrise]) {
       for (const cam of s.cams) {
         const r = cam.cloud.rho;
-        if (r == null || Math.abs(r) < FIX_SIGNAL_RHO) continue;
+        if (r == null || Math.abs(r) < FIX_SIGNAL_RHO || cam.cloud.n < FIX_MIN_CAM_EVENTS) continue;
         out.push(
           `Afterglow signal at ${cam.cam} (${s.kind}s): the satellite's mid/high cloud away from the sun has a rank correlation of ${fmtSigned(r, 2)} with the afterglow on ${plainCount(cam.cloud.n, "event")}. A candidate input for an afterglow forecast.`,
         );

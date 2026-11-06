@@ -50,7 +50,7 @@ import type {
 } from "@/lib/history/types";
 import { isNewerSunScore, sunCamObservedSource } from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
-import { hourUtcOf, orderArchiveCandidates } from "@/lib/history/archive";
+import { archiveLastHourCutoff, hourUtcOf, orderArchiveCandidates } from "@/lib/history/archive";
 import { CLARITY_TRUSTED_FROM, WATER_RECORD_MIN_HOURS, WATER_TEMP_MAX_F, WATER_TEMP_MIN_F } from "@/lib/history/recordRules";
 import type {
   LiveActivityRow,
@@ -759,7 +759,7 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
     },
 
     // Fair ordering, mirroring d1Store (Codex round-3 finding #1): compute
-    // each slug's most recent beach_hourly row from the in-memory map, then
+    // each slug's most recent beach_hourly row (last 48 h) from the in-memory map, then
     // let the shared `orderArchiveCandidates` filter and sort (sun-forecast
     // beaches first, then never-archived-first, oldest-last-row-first, slug).
     async listArchiveCandidates(nowMs: number) {
@@ -768,8 +768,12 @@ export function createMemoryStore(opts: { file?: string | null } = {}): DeviceSt
       const archivedThisHour = new Set(
         [...beachHourly.values()].filter((r) => r.hour_utc === hourUtc).map((r) => r.slug),
       );
+      // Same 48-hour look-back as d1Store's ARCHIVE_LAST_HOURS_SQL: a beach
+      // with no row in the window sorts as never archived.
+      const cutoff = archiveLastHourCutoff(nowMs);
       const lastHourBySlug = new Map<string, string>();
       for (const r of beachHourly.values()) {
+        if (r.hour_utc < cutoff) continue;
         const cur = lastHourBySlug.get(r.slug);
         if (cur === undefined || r.hour_utc > cur) lastHourBySlug.set(r.slug, r.hour_utc);
       }

@@ -18,16 +18,23 @@ cam's event, so the re-scored series carries the same instants as the first uplo
 
 USAGE (on the home server, from the repo root):
   /opt/homebrew/bin/python3 scripts/sun_cam_rescore.py --dry-run --stored FILE                 # print old vs new, upload nothing
-  /opt/homebrew/bin/python3 scripts/sun_cam_rescore.py --stored FILE --changed-only            # upload only what the new rules change
-  /opt/homebrew/bin/python3 scripts/sun_cam_rescore.py --stored FILE                           # re-score and upload every older row
+  /opt/homebrew/bin/python3 scripts/sun_cam_rescore.py --stored FILE                           # upload only what the new rules change
+  /opt/homebrew/bin/python3 scripts/sun_cam_rescore.py --stored FILE --all                     # re-score and upload every older row
   Options: --since YYYY-MM-DD  --until YYYY-MM-DD  --cams a,b  --events sunrise,sunset
-           --frames-root DIR  --stored FILE  --changed-only  --verbose
+           --frames-root DIR  --stored FILE  --all  --verbose
 
-  --changed-only: upload only the beach-events whose score under the new rules differs
-    from the score of the same saved frames under the 2026-10-15.1 rules. The rest keep
-    their stored row, which was scored on the full-quality originals (see "JPEG
-    quality" in the report: re-scoring the low-quality copies moves a few events by
-    more than 5 points for no reason but the compression).
+  Changed only (the default; --changed-only says so explicitly): upload only the
+    beach-events whose score under the new rules differs from the score of the same
+    saved frames under the 2026-10-15.1 rules, plus every beach-event with NO stored
+    row at all (lost, e.g. during a rollout). The rest keep their stored row, which was
+    scored on the full-quality originals (see "JPEG quality" in the report:
+    re-scoring the low-quality copies moves a few events by more than 5 points for no
+    reason but the compression). --all uploads every older row instead.
+
+  scored_at: a re-score is posted with the earliest scored_at the route accepts (one
+    second after the last series frame, never before the event), not the time of the
+    run. The route keeps the newer (score_version, scored_at), so a same-version row
+    from the live job, scored after its capture ended, always wins over a re-score.
 
   --stored FILE (REQUIRED for a real run): the stored scores to compare with, as the JSON that
     npx wrangler d1 execute isitbeachday-plus --remote --json --command \\
@@ -133,11 +140,41 @@ def score_event_dir(d: Path, cam: Dict[str, Any], local_date: date, kind: str) -
     return frames, jpeg
 
 
+def rescore_scored_at(result: Dict[str, Any], event_t: datetime) -> datetime:
+    """The earliest scored_at the route accepts for this result: one second after the last series
+    frame, and never before the event. The live job scores after its capture ends, so its row for the
+    same score_version always carries a later scored_at and wins."""
+    last = max(sc.parse_iso(f["t"]) for f in result["series"])
+    return max(last, event_t) + timedelta(seconds=1)
+
+
+def skip_reason(
+    old: Optional[Dict[str, Any]],
+    current: Optional[Tuple[str, int]],
+    new_res: Optional[Dict[str, Any]],
+    old_res: Optional[Dict[str, Any]],
+    changed_only: bool,
+    info: Dict[str, Any],
+) -> Optional[str]:
+    """Why this beach-event is NOT uploaded, or None to upload it. `old` is its stored row (None when
+    there is none at all)."""
+    stored_v = version_key(old.get("score_version")) if old else None
+    if stored_v is not None and current is not None and stored_v >= current:
+        return "already at this score version"
+    if new_res is None:
+        return "incomplete under the new rules: " + info.get("reason", "?")
+    unchanged = old_res is not None and abs(new_res["observed_score"] - old_res["observed_score"]) < 0.05
+    # A beach-event with no stored row at all was lost (e.g. during a rollout): always upload it.
+    if changed_only and unchanged and old is not None:
+        return "the new rules change nothing"
+    return None
+
+
 def fmt(v: Any) -> str:
     return "-" if v is None else (f"{v:.1f}" if isinstance(v, (int, float)) else str(v))
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Re-score saved sun-cam frames with the current rules and re-upload.")
     ap.add_argument("--dry-run", action="store_true", help="print old vs new per event; upload nothing")
     ap.add_argument("--since", help="first local date to re-score (YYYY-MM-DD)")
@@ -146,9 +183,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--events", default="sunrise,sunset", help="sunrise, sunset or both (default)")
     ap.add_argument("--frames-root", default=str(sc.FRAMES_ROOT), help=f"default {sc.FRAMES_ROOT}")
     ap.add_argument("--stored", help="JSON export of sun_event_observations to compare with (see the header)")
-    ap.add_argument("--changed-only", action="store_true", help="upload only beach-events the new rules change")
+    which = ap.add_mutually_exclusive_group()
+    which.add_argument("--changed-only", dest="changed_only", action="store_true",
+                       help="the default: upload only beach-events the new rules change, plus any with no stored row")
+    which.add_argument("--all", dest="changed_only", action="store_false", help="upload every beach-event with an older stored row")
+    ap.set_defaults(changed_only=True)
     ap.add_argument("--verbose", action="store_true", help="also list each dropped dark frame")
-    args = ap.parse_args(argv)
+    return ap.parse_args(argv)
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = parse_args(argv)
     try:
         import PIL  # noqa: F401
     except ImportError:
@@ -215,7 +260,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     if ev is None:
                         continue
                     key = sc.state_key(b["slug"], kind, local_date.isoformat(), cam["id"])
-                    old = stored.get(key, {})
+                    stored_row = stored.get(key)
+                    old = stored_row or {}
                     old_res, _ = sc.build_result(frames, ev, dark_rule=False)
                     new_res, info = sc.build_result(frames, ev)
                     row = {
@@ -224,18 +270,17 @@ def main(argv: Optional[List[str]] = None) -> int:
                         "old_saved": old_res["observed_score"] if old_res else None,
                         "new": new_res["observed_score"] if new_res else None, "dark": info.get("dark", 0),
                     }
-                    unchanged = old_res is not None and abs(new_res["observed_score"] - old_res["observed_score"]) < 0.05 if new_res else False
-                    stored_v = version_key(old.get("score_version"))
-                    if stored_v is not None and current is not None and stored_v >= current:
-                        row["status"] = ("dry run: " if args.dry_run else "") + "already at this score version, not uploaded"
-                    elif new_res is None:
-                        row["status"] = "incomplete under the new rules, not uploaded: " + info["reason"]
-                    elif args.changed_only and unchanged:
-                        row["status"] = ("dry run: " if args.dry_run else "") + "the new rules change nothing, not uploaded"
+                    skip = skip_reason(stored_row, current, new_res, old_res, args.changed_only, info)
+                    no_row = "" if stored_row is not None else " (no stored row)"
+                    if skip is not None:
+                        row["status"] = ("dry run: " if args.dry_run else "") + skip + ", not uploaded"
                     elif args.dry_run:
-                        row["status"] = "dry run: would upload"
+                        row["status"] = "dry run: would upload" + no_row
                     else:
-                        payload = sc.payload_for(cam, b, kind, local_date.isoformat(), sc.iso_z(ev), view, new_res)
+                        payload = sc.payload_for(
+                            cam, b, kind, local_date.isoformat(), sc.iso_z(ev), view, new_res,
+                            scored_at=rescore_scored_at(new_res, ev),
+                        )
                         ok, msg = sc.post_observation(payload, token or "")
                         row["status"] = ("uploaded " if ok else "FAILED ") + msg
                         failures += 0 if ok else 1

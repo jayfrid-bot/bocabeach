@@ -25,7 +25,9 @@ import {
   windowMetrics,
   type AfterglowSide,
   type CallCell,
+  type CamDistanceFn,
   type DaylightFn,
+  type EventLocalDateFn,
   type FairVersion,
   type ErrorGroup,
   type HealthResult,
@@ -96,6 +98,11 @@ export interface BuildOptions {
   currentSunVersion?: string;
   /** A sun cam's facing from config/sun-cams.json (east or west). */
   camFacing?: (camId: string) => "east" | "west" | undefined;
+  /** A beach's distance from a sun cam (config/sun-cams.json): a shared cam's reading
+   *  is graded once, for the nearest beach. */
+  camDistance?: CamDistanceFn;
+  /** The local date of an event at a beach (its own time zone). */
+  localDateOf?: EventLocalDateFn;
 }
 
 // --- Output -----------------------------------------------------------------
@@ -225,12 +232,17 @@ export function buildScorecard(raw: RawData, opts: BuildOptions = {}): Scorecard
         const m = sunColorMetrics(raw.sunPredictions as SunPredictionRow[], { nowMs });
         const pairedRows = (raw.sunPredictions as SunPredictionRow[]).filter((r) => r.observed_score != null);
         const obs = raw.sunObservations;
-        const fair = sunFairMetrics(raw.sunPredictions as SunPredictionRow[], { nowMs, currentVersion: opts.currentSunVersion });
+        const fair = sunFairMetrics(raw.sunPredictions as SunPredictionRow[], {
+          nowMs,
+          currentVersion: opts.currentSunVersion,
+          camDistance: opts.camDistance,
+          localDateOf: opts.localDateOf,
+        });
         const afterglow = obs
           ? afterglowMetrics(
               raw.sunPredictions as SunPredictionRow[],
               obs.filter((o) => o.view === "antisolar"),
-              { nowMs, facingOf: opts.camFacing },
+              { nowMs, facingOf: opts.camFacing, camDistance: opts.camDistance, localDateOf: opts.localDateOf },
             )
           : null;
         return {
@@ -610,7 +622,7 @@ function fairBlocks(r: SunSection): string[] {
       "### Rank correlation per cam",
       "",
       `Our forecast (30–120 min out) against the cam's own score, by rank. Each cam needs ${f.camMin} pairs. ` +
-        "Boca Raton and Deerfield Beach share the Deerfield cams, so those cams count both beaches.",
+        "Boca Raton and Deerfield Beach share the Deerfield cams. Each reading counts once, for the beach nearest the cam (Deerfield Beach).",
       "",
       table(["Model version", "Cam", "Event", "Pairs", "Rank correlation"], camRows),
     );

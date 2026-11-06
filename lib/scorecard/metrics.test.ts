@@ -6,6 +6,7 @@ import {
   dataHealth,
   headlineRowOf,
   midRankPercentiles,
+  nearestBeachPerCamEvent,
   solarCamOf,
   spearman,
   sunFairMetrics,
@@ -1571,6 +1572,73 @@ describe("sunFairMetrics", () => {
   });
 });
 
+// Boca Raton and Deerfield Beach share the Deerfield cams (config/sun-cams.json):
+// Deerfield is 0.0 mi from deerfield-beach-cam, Boca 2.9 mi. One cam reading
+// must enter the grade once, for the nearer beach.
+describe("shared cams count once (nearest beach)", () => {
+  const miles: Record<string, number> = { "deerfield-beach-cam|deerfield-beach": 0, "deerfield-beach-cam|boca-raton": 2.9 };
+  const camDistance = (cam: string, slug: string) => miles[`${cam}|${slug}`];
+  const shared = (n: number, slug: string, score: number, observed: number) =>
+    pred(n, 60, score, observed, { slug, observed_source: "sun-cam:deerfield-beach-cam:solar" });
+  // 10 days; both beaches carry the same cam reading each day. Boca's forecast
+  // orders the days backwards, so counting it would drag the correlation down.
+  const rows = Array.from({ length: 10 }, (_, i) => [shared(i, "deerfield-beach", 10 + i * 8, i * 5), shared(i, "boca-raton", 90 - i * 8, i * 5)]).flat();
+
+  it("grades each cam reading once, for the nearest beach", () => {
+    const r = sunFairMetrics(rows, { camDistance });
+    const v = r.versions[0];
+    expect(v.pairs).toBe(10);
+    expect(v.cams).toEqual([expect.objectContaining({ cam: "deerfield-beach-cam", pairs: 10, rho: 1 })]);
+    expect(r.camScales).toEqual([{ cam: "deerfield-beach-cam", kind: "sunrise", events: 10, counted: true }]);
+    expect(v.tiers.events).toBe(10);
+    // Both beaches still had a forecast: the coverage and the event count keep both.
+    expect(v.events).toBe(20);
+    expect(r.coverage.find((c) => c.kind === "sunrise")).toMatchObject({ pastEvents: 20, pairedEvents: 20 });
+  });
+
+  it("breaks a distance tie (or no distances at all) by slug", () => {
+    const v = sunFairMetrics(rows).versions[0];
+    expect(v.pairs).toBe(10);
+    // boca-raton sorts first, so its (backwards) forecast is the one kept.
+    expect(v.cams[0].rho).toBe(-1);
+  });
+
+  it("keeps both beaches when they read different cams", () => {
+    const own = rows.map((r) => (r.slug === "boca-raton" ? { ...r, observed_source: "sun-cam:boca-cam:solar" } : r));
+    expect(sunFairMetrics(own, { camDistance }).versions[0].pairs).toBe(20);
+  });
+
+  it("keeps one item per cam, kind and local date: the nearest beach", () => {
+    // Two beaches on one cam and date: the nearer one (b) survives. The next date is its own event.
+    const items = [
+      { cam: "c", kind: "sunset", date: "2026-11-05", slug: "b" },
+      { cam: "c", kind: "sunset", date: "2026-11-05", slug: "a" },
+      { cam: "c", kind: "sunset", date: "2026-11-06", slug: "b" },
+    ];
+    const kept = nearestBeachPerCamEvent(items, (x) => x, (_c, slug) => (slug === "b" ? 0.1 : 0.5));
+    expect([...kept]).toEqual([items[0], items[2]]);
+  });
+
+  it("counts a shared afterglow reading once, for the nearest beach", () => {
+    const sunsetRow = (n: number, slug: string, score: number) => pred(n, 60, score, null, { slug, event_kind: "sunset" });
+    const reading = (n: number, slug: string, score: number): AfterglowReading => ({
+      slug,
+      event_kind: "sunset",
+      cam_id: "deerfield-beach-cam",
+      event_iso: new Date(EVENT_BASE + n * 86_400_000).toISOString(),
+      event_date_local: new Date(EVENT_BASE + n * 86_400_000).toISOString().slice(0, 10),
+      view: "antisolar",
+      observed_score: score,
+    });
+    const preds = Array.from({ length: 10 }, (_, i) => [sunsetRow(i, "deerfield-beach", 10 + i * 8), sunsetRow(i, "boca-raton", 90 - i * 8)]).flat();
+    const obs = Array.from({ length: 10 }, (_, i) => [reading(i, "deerfield-beach", i * 9), reading(i, "boca-raton", i * 9)]).flat();
+    const r = afterglowMetrics(preds, obs, { facingOf: () => "east", camDistance });
+    expect(r.sunset.readings).toBe(10);
+    expect(r.sunset.cams[0]).toMatchObject({ readings: 10, matched: 10 });
+    expect(r.sunset.cams[0].headline[0]).toMatchObject({ n: 10, rho: 1 });
+  });
+});
+
 describe("afterglowMetrics", () => {
   const sunset = (n: number, lead: number, score: number, over: Partial<SunPredictionRow> = {}) =>
     pred(n, lead, score, null, { event_kind: "sunset", ...over });
@@ -1653,9 +1721,9 @@ describe("sunFixList", () => {
     );
   });
 
-  it("names an afterglow signal, and says nothing when no rule trips", () => {
-    const rows = Array.from({ length: 10 }, (_, i) => pred(i, 20, 50, null, { event_kind: "sunset", anti_mid_high_pct: i * 10 }));
-    const obs: AfterglowReading[] = Array.from({ length: 10 }, (_, i) => ({
+  const glowOf = (n: number) => {
+    const rows = Array.from({ length: n }, (_, i) => pred(i, 20, 50, null, { event_kind: "sunset", anti_mid_high_pct: i * 10 }));
+    const obs: AfterglowReading[] = Array.from({ length: n }, (_, i) => ({
       slug: "boca-raton",
       event_kind: "sunset",
       cam_id: "ftl-elbo-beach-cam",
@@ -1663,11 +1731,34 @@ describe("sunFixList", () => {
       view: "antisolar",
       observed_score: 100 - i * 10,
     }));
-    const glow = afterglowMetrics(rows, obs);
-    const fixes = sunFixList(sunFairMetrics([]), glow);
+    return afterglowMetrics(rows, obs);
+  };
+
+  it("names an afterglow signal, and says nothing when no rule trips", () => {
+    const fixes = sunFixList(sunFairMetrics([]), glowOf(15));
     expect(fixes).toEqual([
-      "Afterglow signal at ftl-elbo-beach-cam (sunsets): the satellite's mid/high cloud away from the sun has a rank correlation of -1.00 with the afterglow on 10 events. A candidate input for an afterglow forecast.",
+      "Afterglow signal at ftl-elbo-beach-cam (sunsets): the satellite's mid/high cloud away from the sun has a rank correlation of -1.00 with the afterglow on 15 events. A candidate input for an afterglow forecast.",
     ]);
     expect(sunFixList(sunFairMetrics([]), null)).toEqual([]);
+  });
+
+  it("shows a cam's correlation from 8 events, but needs 15 before it makes a line", () => {
+    const glow = glowOf(14);
+    expect(glow.sunset.cams[0].cloud).toMatchObject({ n: 14, rho: -1 });
+    expect(sunFixList(sunFairMetrics([]), glow)).toEqual([]);
+  });
+
+  it("lists a cam that ranks backwards only from 15 pairs", () => {
+    // Cam "good" keeps the version ready and its pooled correlation positive; cam "bad" runs backwards.
+    const rows = (bad: number) => [
+      ...Array.from({ length: 40 }, (_, i) => pred(i, 60, i * 2, i, { observed_source: "sun-cam:good:solar" })),
+      ...Array.from({ length: bad }, (_, i) => pred(i, 60, i * 5, 100 - i, { slug: "jupiter", observed_source: "sun-cam:bad:solar" })),
+    ];
+    const at14 = sunFairMetrics(rows(14));
+    expect(at14.versions[0].cams.find((c) => c.cam === "bad")).toMatchObject({ pairs: 14, rho: -1 });
+    expect(sunFixList(at14, null).some((f) => f.includes("backwards at bad"))).toBe(false);
+    expect(sunFixList(sunFairMetrics(rows(15)), null)).toContain(
+      "Model 2026-10-06.2 ranks sunrises backwards at bad: correlation -1.00 on 15 events.",
+    );
   });
 });

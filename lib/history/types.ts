@@ -312,6 +312,9 @@ export interface ArchiveCandidate {
   timezone: string;
   /** 'curated' beaches archive every hour; 'auto' beaches only in daylight. */
   tier: "curated" | "auto";
+  /** Set by `orderArchiveCandidates` on a beach in its sun-forecast hour: the
+   *  instant (ms) of that sun event. Absent for every other beach. */
+  sunEventMs?: number;
 }
 
 // --- Lifetime records (Plus "Last N days" history feature) -----------------

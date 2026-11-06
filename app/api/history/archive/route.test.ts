@@ -4,8 +4,8 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { scorableResponse } from "@/lib/alerts/fixtures";
-import { hourUtcOf, rowFromConditions, sunWindowPriority } from "@/lib/history/archive";
-import { getLocation } from "@/config/locations";
+import { hourUtcOf, rowFromConditions, sunBuildsDueToday, sunWindowPriority } from "@/lib/history/archive";
+import { getLocation, listLocations } from "@/config/locations";
 
 const ctl = vi.hoisted(() => ({
   conditionsCalls: [] as string[],
@@ -70,7 +70,6 @@ beforeEach(() => {
   ctl.exhaust = new Set();
   process.env.CRON_SECRET = SECRET;
   delete process.env.HISTORY_MAX_BUILDS_PER_DAY;
-  delete process.env.HISTORY_SUN_RESERVE;
   delete process.env.HISTORY_ENABLED;
 });
 
@@ -293,58 +292,127 @@ describe("head-of-line blocking (Codex round-3 finding #2)", () => {
     expect(json.archived).toBe(0);
     expect(ctl.conditionsCalls.length).toBe(0);
   });
+
+  it("tries at most 20 claims per call (D1 Free: 50 queries per invocation)", async () => {
+    // Midday, so all 63 beaches are candidates (curated + daylight auto).
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-05T17:00:00Z"));
+    const store = await getStore();
+    const nowMs = Date.now();
+    const candidates = await store.listArchiveCandidates(nowMs);
+    expect(candidates.length).toBeGreaterThan(20);
+    const hourUtc = hourUtcOf(nowMs);
+    for (const c of candidates.slice(0, 20)) expect(await store.claimHistoryBuild(c.slug, hourUtc, nowMs)).toBe(true);
+    const claimSpy = vi.spyOn(store, "claimHistoryBuild");
+    try {
+      const json = (await (await post()).json()) as { claimed: number; skipped: number };
+      // The 21st candidate is free, but this call never reaches it.
+      expect(claimSpy).toHaveBeenCalledTimes(20);
+      expect(json.claimed).toBe(0);
+      expect(json.skipped).toBe(20);
+      expect(ctl.conditionsCalls).toEqual([]);
+    } finally {
+      claimSpy.mockRestore();
+    }
+  });
 });
 
 describe("budget reporting shape", () => {
   it("reports a single day/used/max when the run never crosses a UTC day boundary", async () => {
     const res = await post();
     const json = (await res.json()) as {
-      budget: { day: string; used: number; max: number; sunReserve: number; alsoDay?: string };
+      budget: { day: string; used: number; max: number; sunReserve: number | null; alsoDay?: string };
     };
     expect(json.budget.day).toBe(new Date().toISOString().slice(0, 10));
     expect(json.budget.max).toBe(600);
-    expect(json.budget.sunReserve).toBe(140);
     expect(json.budget.alsoDay).toBeUndefined();
   });
 
-  it("clamps the sun reserve to the daily max", async () => {
-    process.env.HISTORY_MAX_BUILDS_PER_DAY = "50";
-    process.env.HISTORY_SUN_RESERVE = "500";
-    const json = (await (await post()).json()) as { budget: { max: number; sunReserve: number } };
-    expect(json.budget).toMatchObject({ max: 50, sunReserve: 50 });
+  it("a failed budget read for the report never turns a finished pass into a 500", async () => {
+    const store = await getStore();
+    const spy = vi.spyOn(store, "getHistoryBudget").mockRejectedValue(new Error("D1 down (test)"));
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const res = await post();
+      expect(res.status).toBe(200);
+      const json = (await res.json()) as { archived: number; budget: { used: number | null } };
+      expect(json.archived).toBe(1);
+      expect(json.budget.used).toBeNull();
+    } finally {
+      spy.mockRestore();
+      errors.mockRestore();
+    }
   });
 });
 
-// Sun reserve (see the route header): ordinary builds stop at max − reserve,
-// sun-forecast builds may go on to max. The clock is pinned to Boca Raton's
-// sunset forecast hour (sunset 22:35Z, forecast opens 21:35Z on 2026-11-05).
+// Sun reserve (see the route header): ordinary builds stop at
+// max − (sun builds still due today) − 5; sun-forecast builds may go on to
+// max. The clock is pinned to Boca Raton's sunset forecast hour (sunset
+// 22:35Z, forecast opens 21:35Z on 2026-11-05).
 describe("sun reserve — the budget split", () => {
   const NOW = "2026-11-05T21:10:00Z";
   const DAY = "2026-11-05";
+  const SLACK = 5;
 
   async function spend(n: number): Promise<void> {
     const store = await getStore();
     for (let i = 0; i < n; i++) expect(await store.reserveHistoryBuild(DAY, n)).toBe(true);
   }
 
+  /** The reserve the route will apply, from the same pure function and inputs. */
+  async function expectedReserve(): Promise<number> {
+    const store = await getStore();
+    const pending = new Set((await store.listArchiveCandidates(Date.now())).map((c) => c.slug));
+    return sunBuildsDueToday(listLocations(), Date.now(), pending) + SLACK;
+  }
+
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(NOW));
-    process.env.HISTORY_MAX_BUILDS_PER_DAY = "10";
-    process.env.HISTORY_SUN_RESERVE = "4";
   });
 
-  it("refuses an ordinary build once max − reserve is spent", async () => {
+  async function onlyOrdinary(): Promise<string> {
     const store = await getStore();
     const ordinary = (await store.listArchiveCandidates(Date.now())).find((c) => !sunWindowPriority(c, Date.now()));
     expect(ordinary).toBeDefined();
     await onlyCandidate(ordinary!.slug);
+    return ordinary!.slug;
+  }
+
+  it("refuses an ordinary build once max − (sun builds due + slack) is spent", async () => {
+    const store = await getStore();
+    await onlyOrdinary();
+    const reserve = await expectedReserve();
+    // Late on the UTC day only this evening's forecasts are left: far fewer
+    // than the old fixed 140, but more than none.
+    expect(reserve).toBeGreaterThan(SLACK);
+    expect(reserve).toBeLessThan(140);
+    process.env.HISTORY_MAX_BUILDS_PER_DAY = String(reserve + 6);
     await spend(6);
-    const json = (await (await post()).json()) as { archived: number; sunWindowBuilds: number; note?: string };
+    const json = (await (await post()).json()) as {
+      archived: number;
+      sunWindowBuilds: number;
+      note?: string;
+      budget: { sunReserve: number | null };
+    };
     expect(json.archived).toBe(0);
     expect(json.sunWindowBuilds).toBe(0);
     expect(json.note).toMatch(/ordinary build budget/);
+    expect(json.budget.sunReserve).toBe(reserve);
     expect(ctl.conditionsCalls).toEqual([]);
+    expect(await store.getHistoryBudget(DAY)).toBe(6);
+  });
+
+  it("still builds an ordinary beach one unit under that cap", async () => {
+    const store = await getStore();
+    const slug = await onlyOrdinary();
+    const reserve = await expectedReserve();
+    process.env.HISTORY_MAX_BUILDS_PER_DAY = String(reserve + 6);
+    await spend(5);
+    const json = (await (await post()).json()) as { archived: number; budget: { sunReserve: number | null } };
+    expect(json.archived).toBe(1);
+    expect(json.budget.sunReserve).toBe(reserve);
+    expect(ctl.conditionsCalls).toEqual([slug]);
     expect(await store.getHistoryBudget(DAY)).toBe(6);
   });
 
@@ -352,18 +420,27 @@ describe("sun reserve — the budget split", () => {
     const store = await getStore();
     expect(sunWindowPriority(getLocation("boca-raton")!, Date.now())).toBe(true);
     await onlyCandidate("boca-raton");
-    await spend(6);
-    const json = (await (await post()).json()) as { archived: number; sunWindowBuilds: number; note?: string };
+    process.env.HISTORY_MAX_BUILDS_PER_DAY = "10";
+    await spend(9);
+    const json = (await (await post()).json()) as {
+      archived: number;
+      sunWindowBuilds: number;
+      note?: string;
+      budget: { sunReserve: number | null };
+    };
     expect(json.archived).toBe(1);
     expect(json.sunWindowBuilds).toBe(1);
     expect(json.note).toBeUndefined();
+    // A sun-forecast build never needs the reserve worked out.
+    expect(json.budget.sunReserve).toBeNull();
     expect(ctl.conditionsCalls).toEqual(["boca-raton"]);
-    expect(await store.getHistoryBudget(DAY)).toBe(7);
+    expect(await store.getHistoryBudget(DAY)).toBe(10);
   });
 
   it("refuses a sun-forecast build too once the whole max is spent", async () => {
     const store = await getStore();
     await onlyCandidate("boca-raton");
+    process.env.HISTORY_MAX_BUILDS_PER_DAY = "10";
     await spend(10);
     const json = (await (await post()).json()) as { archived: number; note?: string };
     expect(json.archived).toBe(0);
@@ -373,6 +450,7 @@ describe("sun reserve — the budget split", () => {
   });
 
   it("picks the sun-forecast beach first even when ordinary beaches are also waiting", async () => {
+    process.env.HISTORY_MAX_BUILDS_PER_DAY = "10";
     await spend(6);
     const json = (await (await post()).json()) as { archived: number; sunWindowBuilds: number };
     expect(json.archived).toBe(1);

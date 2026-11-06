@@ -153,8 +153,12 @@ warm band of a clear sky at 70 to 97
   kind. +1 means our order matched the cam's order exactly. 0 means no skill.
   A cam needs 8 pairs. The pooled number is the average of the cam numbers,
   weighted by each cam's pairs. Cams under 8 pairs are left out of it. A cam
-  whose forecasts or scores never changed shows "no spread". Boca Raton and
-  Deerfield Beach share the Deerfield cams, so those cams count both beaches.
+  whose forecasts or scores never changed shows "no spread".
+- **Shared cams.** Boca Raton and Deerfield Beach share the Deerfield cams.
+  One cam reading counts once: for each cam, event kind and local date, only
+  the beach nearest the cam (`distance_mi` in config/sun-cams.json; a tie goes
+  to the first slug) enters the grade, the cam's scale, the top-tier calls and
+  the afterglow section. Coverage still counts both beaches.
 - **Top tier.** Each cam's scale is the mid-rank percentile of every event it is
   the truth for (all versions, same event kind). A real Great is in the cam's
   top 25% (percentile 0.75 or more). A real Amazing is in its top 10% (0.90 or
@@ -193,14 +197,16 @@ computed numbers. It adds no other text.
 - A forecast band (Poor to Amazing) on the 30–120 min forecast has a raw bias
   beyond ±15 points, on 10 or more events.
 - A version's pooled fair rank correlation is 0 or below.
-- A cam's rank correlation is −0.3 or below (8+ pairs, version at its minimum).
+- A cam's rank correlation is −0.3 or below (15+ pairs, version at its minimum).
 - A version's Great calls land in the cam's top 25% less than 25% of the time
   (10+ calls).
 - Fewer than 50% of past sunrises (or sunsets) have a forecast 30–120 min out.
-- An afterglow correlation with the satellite cloud is ±0.3 or more, on 8+
+- An afterglow correlation with the satellite cloud is ±0.3 or more, on 15+
   events.
 
-If no rule trips, the list says so.
+A cam shows its own correlation from 8 events. A line about one cam needs 15:
+at 8 events a rank correlation has a standard error of about 0.38, so a single
+cam's number is still mostly noise. If no rule trips, the list says so.
 
 ### Rain forecast
 
