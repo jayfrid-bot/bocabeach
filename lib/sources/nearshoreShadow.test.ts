@@ -7,7 +7,7 @@ import { summarizeBusyness, type CamFeed } from "@/lib/sources/busyness";
  * NEAR-SHORE SHADOW (scripts/cam_seaweed.py, 2026-11-06): the reader adds extra
  * fields to the cam feed — `waterNear` on each cam reading, `nearMedian` on a
  * capture group, a sparse `near` on history entries and a top-level
- * `nearScoredAt` map. They are shadow data only. This test proves the app's
+ * `nearAttemptedAt` map. They are shadow data only. This test proves the app's
  * three feed readers give the SAME output with and without them.
  */
 
@@ -52,7 +52,7 @@ function withShadow() {
     };
   }
   f.history = f.history.map((e, i) => (i === 1 ? { ...e, near: "a_bit_sandy" } : e));
-  (f as Record<string, unknown>).nearScoredAt = { "boca-inlet-surf": "2026-11-06T19:20:00Z" };
+  (f as Record<string, unknown>).nearAttemptedAt = { "boca-inlet-surf": "2026-11-06T19:20:00Z" };
   return f;
 }
 

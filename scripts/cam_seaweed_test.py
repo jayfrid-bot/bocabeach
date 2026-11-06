@@ -4617,8 +4617,8 @@ class NearShadowPassTests(unittest.TestCase):
         return {("boca-raton", cid): {"img": b"img-" + cid.encode(), "provider": provider, "model": model}
                 for cid in ("boca-inlet-surf", "boca-south-surf", "boca-south")}
 
-    def run_pass(self, group, prev=None, stills=None, near_model="gemini-3.5-flash-lite", fail=None, key="k"):
-        def fake_assess_near(crop, model=None):
+    def run_pass(self, group, prev=None, stills=None, near_model="gemini-3.5-flash-lite", fail=None, key="k", now=None):
+        def fake_assess_near(crop):
             self.calls.append(crop)
             if fail:
                 raise RuntimeError(fail)
@@ -4631,10 +4631,14 @@ class NearShadowPassTests(unittest.TestCase):
                 mock.patch.object(cs, "NEAR_MODEL", near_model), mock.patch.object(cs, "API_KEY", key), \
                 mock.patch.object(cs.time, "sleep", lambda s: None), \
                 contextlib.redirect_stdout(self.out), contextlib.redirect_stderr(self.err):
-            n = cs.nearshore_pass({"boca-raton": group}, {"boca-raton": prev or {}}, self.now,
+            n = cs.nearshore_pass({"boca-raton": group}, {"boca-raton": prev or {}}, now or self.now,
                                   {"boca-raton": BOCA_BOXES}, stills if stills is not None else self.stills(),
-                                  self.FIRST, {"called": True})
+                                  {"called": True})
         return n
+
+    def build(self, group, prev=None, now=None):
+        return cs.build_beach_output("boca-raton", "America/New_York", (now or self.now).astimezone(ZONE),
+                                     [self.FIRST], prev or {}, group, None, None)
 
     def test_fresh_reads_get_waterNear_and_a_median_and_main_fields_do_not_move(self):
         g = self.group()
@@ -4659,38 +4663,82 @@ class NearShadowPassTests(unittest.TestCase):
         e_plain, e = doc_plain["history"][-1], doc["history"][-1]
         self.assertEqual(e["near"], "a_bit_sandy")
         self.assertEqual({k: v for k, v in e.items() if k != "near"}, e_plain)
-        self.assertEqual(set(doc["nearScoredAt"]), {"boca-inlet-surf", "boca-south-surf", "boca-south"})
-        self.assertNotIn("nearScoredAt", doc_plain)
+        self.assertEqual(doc["nearAttemptedAt"], {c: cs._utc_iso(self.now)
+                                                  for c in ("boca-inlet-surf", "boca-south-surf", "boca-south")})
+        self.assertNotIn("nearAttemptedAt", doc_plain)
+        self.assertNotIn("_nearAttempts", doc["latest"])  # tick-private, never published
         for key in ("water", "waterPct"):
             self.assertEqual([c[key] for c in doc["latest"]["cams"]], [c[key] for c in doc_plain["latest"]["cams"]])
 
-    def test_shared_bucket_skips_after_any_failed_call_this_tick(self):
-        cs._count_vision_call("gemini", "gemini-2.5-flash", False)
-        g = self.group()
-        self.assertEqual(self.run_pass(g, near_model="gemini-2.5-flash-lite"), 0)
-        self.assertNotIn("nearMedian", g)
-        self.assertIn("quota sign", self.out.getvalue())
+    def test_only_the_allowlisted_model_is_ever_used(self):
+        for m in ("gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.8-flash", "", "anything"):
+            self.calls.clear()
+            g = self.group()
+            self.assertEqual(self.run_pass(g, near_model=m), 0, m)
+            self.assertEqual(self.calls, [])
+            self.assertIn("off: model", self.out.getvalue())
+            self.assertNotIn("nearMedian", g)
 
-    def test_shared_bucket_skips_a_cam_whose_main_read_fell_back(self):
-        g = self.group()
-        self.assertEqual(self.run_pass(g, stills=self.stills(provider="clef", model="@cf/cloudflare/clef"),
-                                       near_model="gemini-2.5-flash-lite"), 0)
-        self.assertEqual(self.run_pass(self.group(), stills=self.stills(), near_model="gemini-2.5-flash-lite"), 3)
+    def test_allowlisted_model_inside_the_main_chain_is_refused(self):
+        with mock.patch.object(cs, "GEMINI_MODELS", ["gemini-2.5-flash", "gemini-3.5-flash-lite"]):
+            self.assertEqual(self.run_pass(self.group()), 0)
+            self.assertIn("main chain", self.out.getvalue())
 
-    def test_own_bucket_reads_even_when_the_main_read_fell_back(self):
+    def test_assess_near_itself_refuses_without_a_call(self):
+        for m in ("gemini-2.5-flash", "gemini-2.5-flash-lite"):
+            with mock.patch.object(cs, "NEAR_MODEL", m), \
+                    mock.patch.object(cs, "assess_with", side_effect=AssertionError("no call allowed")):
+                with self.assertRaisesRegex(RuntimeError, "refused"):
+                    cs.assess_near(b"crop")
+        seen = []
+        with mock.patch.object(cs, "assess_with", lambda *a, **k: seen.append(k["model"]) or {"level": "clear"}):
+            cs.assess_near(b"crop")
+        self.assertEqual(seen, ["gemini-3.5-flash-lite"])
+
+    def test_reads_even_when_the_main_read_fell_back(self):
         cs._count_vision_call("gemini", "gemini-2.5-flash", False)
         g = self.group()
         self.assertEqual(self.run_pass(g, stills=self.stills(provider="clef", model="@cf/cloudflare/clef")), 3)
 
-    def test_a_failed_shadow_call_stops_the_pass_and_never_raises(self):
-        g = self.group()
-        self.assertEqual(self.run_pass(g, fail="HTTP 429 (daily quota spent): x"), 1)
-        self.assertFalse(any("waterNear" in c for c in g["cams"]))
-        self.assertNotIn("nearMedian", g)
+    def test_a_failed_shadow_call_waits_the_full_gap_on_the_next_ticks(self):
+        # Tick 1: the first call (inlet) answers 429; the pass stops.
+        g1 = self.group()
+        self.assertEqual(self.run_pass(g1, fail="HTTP 429 (daily quota spent): x"), 1)
+        self.assertFalse(any("waterNear" in c for c in g1["cams"]))
+        self.assertNotIn("nearMedian", g1)
+        doc1 = self.build(g1)
+        self.assertEqual(doc1["nearAttemptedAt"], {"boca-inlet-surf": cs._utc_iso(self.now)})
+        # Tick 2, 10 minutes later: the inlet is NOT tried again; the two cams never tried are.
+        self.calls.clear()
+        t2 = self.now + dt.timedelta(minutes=10)
+        g2 = self.group()
+        self.assertEqual(self.run_pass(g2, prev=doc1, now=t2), 2)
+        self.assertNotIn(b"crop:img-boca-inlet-surf", self.calls)
+        doc2 = self.build(g2, doc1, t2)
+        self.assertEqual(doc2["nearAttemptedAt"]["boca-inlet-surf"], cs._utc_iso(self.now))
+        # Tick 3, 29 minutes after the failure: still waiting. Tick 4, 30 minutes after: tried again.
+        self.calls.clear()
+        self.assertEqual(self.run_pass(self.group(), prev=doc2, now=self.now + dt.timedelta(minutes=29)), 0)
+        self.assertEqual(self.run_pass(self.group(), prev=doc2, now=self.now + dt.timedelta(minutes=30)), 1)
+        self.assertEqual(self.calls, [b"crop:img-boca-inlet-surf"])
+
+    def test_gap_never_goes_under_30_minutes(self):
+        for v in ("5", "0", "-1", "nan", "junk", "45"):
+            with env(NEARSHORE_MIN_GAP_MIN=v):
+                self.assertEqual(cs._near_gap_min(), 45.0 if v == "45" else 30.0, v)
+        prev = {"nearAttemptedAt": {c: cs._utc_iso(self.now - dt.timedelta(minutes=12))
+                                    for c in ("boca-inlet-surf", "boca-south-surf", "boca-south")}}
+        with mock.patch.object(cs, "NEAR_MIN_GAP_MIN", 5.0):  # even a patched-low value is floored
+            self.assertEqual(self.run_pass(self.group(), prev=prev), 0)
+
+    def test_a_future_attempt_stamp_blocks(self):
+        prev = {"nearAttemptedAt": {c: cs._utc_iso(self.now + dt.timedelta(minutes=3))
+                                    for c in ("boca-inlet-surf", "boca-south-surf", "boca-south")}}
+        self.assertEqual(self.run_pass(self.group(), prev=prev), 0)
 
     def test_gap_gate_and_carry_from_prev_latest(self):
         old = {"level": "murky", "scoredAt": cs._utc_iso(self.now - dt.timedelta(minutes=10))}
-        prev = {"nearScoredAt": {"boca-inlet-surf": old["scoredAt"]},
+        prev = {"nearAttemptedAt": {"boca-inlet-surf": old["scoredAt"]},
                 "latest": {"cams": [{"id": "boca-inlet-surf", "waterNear": old}]}}
         g = self.group()
         self.assertEqual(self.run_pass(g, prev), 2)  # the inlet was read 10 min ago
@@ -4752,12 +4800,13 @@ class ShadowTestModeTests(unittest.TestCase):
 
         def fake_assess_with(name, img, prompt=cs.PROMPT, parse=cs._parse_out, model=None, kind=None, single_attempt=False):
             seen.append((name, model, prompt is cs.NEAR_PROMPT))
+            self.assertEqual(model, "gemini-3.5-flash-lite")  # never a main-chain model
             if parse is cs._parse_near:
                 return {**parse({"level": "a_bit_sandy", "color": "sandy_green"}), "provider": name, "model": model}
             return {**parse({"seaweed": "none", "water": "clear", "water_pct": 74}), "provider": name, "model": model}
 
         out = io.StringIO()
-        with tempfile.TemporaryDirectory() as d, env(NEARSHORE_TEST_MODELS="m1,m2"), \
+        with tempfile.TemporaryDirectory() as d, \
                 mock.patch.object(cs, "API_KEY", "k"), mock.patch.object(cs, "assess_with", fake_assess_with), \
                 mock.patch.object(cs, "OUT_DIR", d), mock.patch.object(cs, "archive_frame", side_effect=AssertionError), \
                 mock.patch.object(cs.time, "sleep", lambda s: None), contextlib.redirect_stdout(out):
@@ -4766,9 +4815,22 @@ class ShadowTestModeTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         text = out.getvalue()
         self.assertIn("SHADOW_TEST_RESULTS", text)
-        self.assertIn("OLD full-frame (m1): water=clear waterPct=74", text)
-        self.assertEqual(sum(1 for s in seen if s[2]), 6)  # 3 crops x 2 models
-        self.assertEqual(sum(1 for s in seen if not s[2]), 6)  # the old full-frame control, per cam and model
+        self.assertIn("OLD full-frame (gemini-3.5-flash-lite): water=clear waterPct=74", text)
+        self.assertEqual(sum(1 for s in seen if s[2]), 3)  # 3 crops, one model
+        self.assertEqual(sum(1 for s in seen if not s[2]), 3)  # the old-prompt control, same model
+
+    def test_a_refused_model_makes_no_call(self):
+        for m in ("gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.8-flash"):
+            with mock.patch.object(cs, "NEAR_MODEL", m), mock.patch.object(cs, "API_KEY", "k"), \
+                    mock.patch.object(cs, "assess_with", side_effect=AssertionError("no call allowed")), \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(cs.shadow_test_main(["x", "--shadow-test", str(TRUTH_DIR)]), 2)
+
+    def test_workflow_has_no_model_input(self):
+        wf = (ROOT / ".github" / "workflows" / "sargassum.yml").read_text()
+        self.assertNotIn("shadow_models", wf)
+        self.assertNotIn("NEARSHORE_TEST_MODELS", wf)
+        self.assertNotIn("NEARSHORE_MODEL:", wf)
 
     def test_no_key_is_exit_1(self):
         with mock.patch.object(cs, "API_KEY", ""), contextlib.redirect_stdout(io.StringIO()), \

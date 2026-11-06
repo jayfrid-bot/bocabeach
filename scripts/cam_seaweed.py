@@ -1908,7 +1908,7 @@ def median_water(group: dict | None) -> dict | None:
 # only (config/nearshore-boxes.json), with its own observable-only prompt
 # (NEAR_PROMPT) and parser (_parse_near). Shadow means: it is written to the feed
 # as EXTRA fields (`waterNear` on a cam reading, `nearMedian` on a capture group,
-# sparse `near` on a history entry, top-level `nearScoredAt`) and nothing the app
+# sparse `near` on a history entry, top-level `nearAttemptedAt`) and nothing the app
 # reads changes: `water`, `waterPct`, `clr` and every roll-up stay the main read's.
 #
 # It must never hurt the main read:
@@ -1922,14 +1922,30 @@ def median_water(group: dict | None) -> dict | None:
 #    spent by 7 AM (429, so the live read ran on Clef all day) and 3.8-flash
 #    answered 503 or timed out;
 #  - a 429 or any other error on a shadow call stops the rest of the pass;
-#  - if NEARSHORE_MODEL is set to one of GEMINI_MODELS (a SHARED bucket), the strict
-#    rule applies too: no shadow call after any failed vision call this tick, and
-#    only for a cam whose main read came from the chain's first provider/model;
-#  - at most once per NEAR_MIN_GAP_MIN per cam, only on a fresh main read, never at
-#    low sun; every error is caught and printed, never raised.
+#  - ONE model only, hard-allowlisted (NEAR_ALLOWED_MODELS), in the live pass AND
+#    in the --shadow-test mode: any other NEARSHORE_MODEL, or the allowlisted one if
+#    it ever appears in the main chain's GEMINI_MODELS, turns the shadow OFF (no
+#    call). Nothing in this job can spend a main-chain model on a shadow read;
+#  - at most one ATTEMPT per NEAR_MIN_GAP_MIN (never under 30 min) per cam: the
+#    attempt time is recorded BEFORE the call and published as `nearAttemptedAt`,
+#    so a 429 or a timeout waits the full gap too; only on a fresh main read, never
+#    at low sun; every error is caught and printed, never raised.
 NEAR_BOXES_PATH = os.environ.get("NEARSHORE_BOXES", "config/nearshore-boxes.json")
-NEAR_MODEL = os.environ.get("NEARSHORE_MODEL", "gemini-3.5-flash-lite")
-NEAR_MIN_GAP_MIN = float(os.environ.get("NEARSHORE_MIN_GAP_MIN", "30"))
+NEAR_ALLOWED_MODELS = ("gemini-3.5-flash-lite",)
+NEAR_MODEL = os.environ.get("NEARSHORE_MODEL", NEAR_ALLOWED_MODELS[0]).strip()
+NEAR_MIN_GAP_FLOOR_MIN = 30.0
+
+
+def _near_gap_min() -> float:
+    """NEARSHORE_MIN_GAP_MIN, never under NEAR_MIN_GAP_FLOOR_MIN (a bad value = the floor)."""
+    try:
+        v = float(os.environ.get("NEARSHORE_MIN_GAP_MIN", NEAR_MIN_GAP_FLOOR_MIN))
+    except ValueError:
+        v = NEAR_MIN_GAP_FLOOR_MIN
+    return max(NEAR_MIN_GAP_FLOOR_MIN, v) if v == v else NEAR_MIN_GAP_FLOOR_MIN
+
+
+NEAR_MIN_GAP_MIN = _near_gap_min()
 # A cam's last shadow read stays on its reading (marked carried) for this long, so
 # `nearMedian` on a tick between two shadow reads still covers the cams.
 NEAR_CARRY_MIN = float(os.environ.get("NEARSHORE_CARRY_MIN", "60"))
@@ -2043,9 +2059,24 @@ def crop_nearshore(img: bytes, box: list) -> "bytes | None":
         return None
 
 
-def assess_near(crop: bytes, model: "str | None" = None) -> dict:
-    """ONE shadow read of a near-shore crop: Gemini only, one HTTP attempt."""
-    return assess_with("gemini", crop, NEAR_PROMPT, _parse_near, model=model or NEAR_MODEL, single_attempt=True)
+def near_model_refusal(model: "str | None" = None) -> "str | None":
+    """Why `model` may NOT be used for a shadow read, or None when it may. Allowed: a model
+    on NEAR_ALLOWED_MODELS that is not one of the main chain's GEMINI_MODELS."""
+    m = NEAR_MODEL if model is None else model
+    if m not in NEAR_ALLOWED_MODELS:
+        return f"model {m!r} is not on the shadow allowlist {list(NEAR_ALLOWED_MODELS)}"
+    if m in GEMINI_MODELS:
+        return f"model {m!r} is in the main chain (GEMINI_MODELS)"
+    return None
+
+
+def assess_near(crop: bytes) -> dict:
+    """ONE shadow read of a near-shore crop: Gemini, the allowlisted NEAR_MODEL only, one
+    HTTP attempt. Raises (no call made) when the model is refused."""
+    why = near_model_refusal()
+    if why:
+        raise RuntimeError(f"near-shore shadow refused: {why}")
+    return assess_with("gemini", crop, NEAR_PROMPT, _parse_near, model=NEAR_MODEL, single_attempt=True)
 
 
 def near_median(cams: list, boxes: "dict | None") -> "dict | None":
@@ -2077,51 +2108,37 @@ def _near_age_min(stamp: object, now: dt.datetime) -> "float | None":
     return (now_utc - at).total_seconds() / 60
 
 
-def near_shares_main_bucket(model: "str | None" = None) -> bool:
-    """True when the shadow model is one of the main chain's Gemini models (Google meters
-    the free tier per model, so the same model = the same daily bucket)."""
-    return (model or NEAR_MODEL) in GEMINI_MODELS and "gemini" in PROVIDER_ORDER
-
-
-def _tick_had_failed_call() -> bool:
-    with _VISION_CALLS_LOCK:
-        return any(bad for _, (ok, bad) in _VISION_CALLS.items())
-
-
 def nearshore_pass(groups: dict, prevs: dict, now: dt.datetime, boxes: "dict | None" = None,
-                   stills: "dict | None" = None, first_provider: "tuple[str, str] | None" = None,
-                   gap_state: "dict | None" = None) -> int:
+                   stills: "dict | None" = None, gap_state: "dict | None" = None) -> int:
     """Add the shadow near-shore fields to this tick's capture groups, in place. Returns
     how many shadow calls were made. Never raises (see the NEAR-SHORE SHADOW note).
 
-    For each beach group: a cam with a fresh main read, a box, and no shadow read in the
-    last NEAR_MIN_GAP_MIN gets ONE shadow read of its crop, stamped `fresh`. Any other cam
+    For each beach group: a cam with a fresh main read, a box, and no shadow ATTEMPT in the
+    last NEAR_MIN_GAP_MIN gets ONE shadow read of its crop. The attempt time is put on the
+    group as `_nearAttempts` {cam id: UTC} BEFORE the call (build_beach_output moves it to
+    the file's `nearAttemptedAt`), so a failed call also waits the full gap. Any other cam
     keeps its previous `waterNear` (marked carried) while it is younger than NEAR_CARRY_MIN.
     Then the group gets `nearMedian` (None-free: absent when no cam counts)."""
     calls = 0
     try:
         boxes = load_near_boxes() if boxes is None else boxes
         stills = NEAR_STILLS if stills is None else stills
-        if first_provider is None:
-            enabled = _enabled_providers()
-            first_provider = enabled[0] if enabled else None
-        # Does the shadow model share a daily bucket with the main chain? Then the
-        # strict rule: no shadow call at all after any failed call this tick, and only
-        # for a cam whose main read came from the chain's FIRST provider/model.
-        shared = near_shares_main_bucket()
         stop = None
+        refused = near_model_refusal()
+        gap = max(NEAR_MIN_GAP_FLOOR_MIN, NEAR_MIN_GAP_MIN)
         if NEAR_OFF:
             stop = "off (NEARSHORE_OFF=1)"
+        elif refused:
+            stop = f"off: {refused}"
         elif not API_KEY:
             stop = "no Gemini key"
-        elif shared and _tick_had_failed_call():
-            stop = "a vision call failed this tick (quota sign)"
         for slug, group in (groups or {}).items():
             beach_boxes = boxes.get(slug) or {}
             if not group or not beach_boxes:
                 continue
             prev = prevs.get(slug) or {}
-            prev_at = prev.get("nearScoredAt") if isinstance(prev.get("nearScoredAt"), dict) else {}
+            prev_at = prev.get("nearAttemptedAt") if isinstance(prev.get("nearAttemptedAt"), dict) else {}
+            attempts = group.setdefault("_nearAttempts", {})
             prev_latest = prev.get("latest") if isinstance(prev.get("latest"), dict) else {}
             prev_near = {c.get("id"): c.get("waterNear") for c in (prev_latest.get("cams") or [])
                          if isinstance(c, dict) and isinstance(c.get("waterNear"), dict)}
@@ -2137,13 +2154,11 @@ def nearshore_pass(groups: dict, prevs: dict, now: dt.datetime, boxes: "dict | N
                 why_not = stop
                 if why_not is None and fresh_still is None:
                     why_not = "no fresh main read"
-                if why_not is None and shared and first_provider and (
-                        fresh_still.get("provider"), fresh_still.get("model")) != tuple(first_provider):
-                    why_not = f"main read fell back to {fresh_still.get('provider')}/{fresh_still.get('model')}"
                 if why_not is None:
                     age = _near_age_min(prev_at.get(cid), now)
-                    if age is not None and 0 <= age < NEAR_MIN_GAP_MIN:
-                        why_not = f"last shadow read {age:.0f} min ago"
+                    # A stamp in the future (clock skew) also blocks: never read early.
+                    if age is not None and age < gap:
+                        why_not = f"last shadow attempt {age:.0f} min ago"
                 if why_not is None:
                     crop = crop_nearshore(fresh_still["img"], beach_boxes[cid]["box"])
                     if crop is None:
@@ -2153,6 +2168,7 @@ def nearshore_pass(groups: dict, prevs: dict, now: dt.datetime, boxes: "dict | N
                         time.sleep(CAM_GAP_S)
                     if gap_state is not None:
                         gap_state["called"] = True
+                    attempts[cid] = _utc_iso(now)  # recorded BEFORE the call: a failure waits the gap too
                     calls += 1
                     try:
                         r = assess_near(crop)
@@ -2173,6 +2189,8 @@ def nearshore_pass(groups: dict, prevs: dict, now: dt.datetime, boxes: "dict | N
                     cam["waterNear"] = {**old, "carried": True}
                 else:
                     cam.pop("waterNear", None)
+            if not attempts:
+                group.pop("_nearAttempts", None)
             nm = near_median(group.get("cams", []), beach_boxes)
             if nm:
                 nm["fresh"] = sum(1 for c in group.get("cams", [])
@@ -2191,17 +2209,21 @@ def nearshore_pass(groups: dict, prevs: dict, now: dt.datetime, boxes: "dict | N
 
 def shadow_test_main(argv: list) -> int:
     """`--shadow-test <dir>`: read every <cam id>-full.jpg in <dir> whose cam has a box in
-    NEAR_BOXES_PATH, crop it, and print what each model in NEARSHORE_TEST_MODELS
-    (default NEAR_MODEL and the main MODEL) says through NEAR_PROMPT, plus the
-    OLD full-frame water grade (the live PROMPT, same model) for comparison. Writes NO feed and
-    touches no archive. Exit 1 only when no read at all succeeded."""
+    NEAR_BOXES_PATH, crop it, and print what the ONE allowlisted shadow model (NEAR_MODEL)
+    says through NEAR_PROMPT, plus the OLD full-frame water grade (the live PROMPT, the
+    SAME shadow model) as a control. No other model can be called from here: a refused
+    NEAR_MODEL is exit 2 with no call. Writes NO feed and touches no archive. Exit 1 only
+    when no read at all succeeded."""
     try:
         d = argv[argv.index("--shadow-test") + 1]
     except (ValueError, IndexError):
         print("usage: cam_seaweed.py --shadow-test <dir of <cam id>-full.jpg>", file=sys.stderr)
         return 2
-    models = [m.strip() for m in os.environ.get(
-        "NEARSHORE_TEST_MODELS", f"{NEAR_MODEL},{MODEL}").split(",") if m.strip()]
+    refused = near_model_refusal()
+    if refused:
+        print(f"near-shore shadow test refused: {refused}", file=sys.stderr)
+        return 2
+    models = [NEAR_MODEL]
     boxes = {cid: cfg for beach in load_near_boxes().values() for cid, cfg in beach.items()}
     print(f"near-shore shadow test: dir={d} models={models} boxes={NEAR_BOXES_PATH}")
     print(f"NEAR_PROMPT: {NEAR_PROMPT}")
@@ -2228,14 +2250,14 @@ def shadow_test_main(argv: list) -> int:
         for m in models:
             # The control: the LIVE prompt on the full frame, same model.
             try:
-                old = assess_with("gemini", img, PROMPT, _parse_out, model=m, single_attempt=True)
+                old = assess_with("gemini", img, PROMPT, _parse_out, model=NEAR_MODEL, single_attempt=True)
                 print(f"  OLD full-frame ({m}): water={old.get('water')} waterPct={old.get('waterPct')} "
                       f"note={old.get('waterNote')!r}")
             except Exception as e:  # noqa: BLE001
                 print(f"  OLD full-frame ({m}): FAILED {str(e)[:200]}")
             time.sleep(CAM_GAP_S)
             try:
-                r = assess_near(crop, m)
+                r = assess_near(crop)
                 ok += 1
                 results.append({"cam": cid, "model": m, **{k: r.get(k) for k in
                                 ("level", "color", "sand", "bottom", "foam", "note")}})
@@ -3045,13 +3067,14 @@ def build_beach_output(
             if c.get("frameSha") and not c.get("carried"):
                 frame_shas[c["id"]] = c["frameSha"]
 
-    # When each cam last got a FRESH near-shore shadow read (NEAR_MIN_GAP_MIN gate).
-    near_at = dict(prev.get("nearScoredAt")) if isinstance(prev.get("nearScoredAt"), dict) else {}
+    # When each cam last ATTEMPTED a near-shore shadow read, success or not (the
+    # NEAR_MIN_GAP_MIN gate). nearshore_pass leaves this tick's attempts on the group
+    # as `_nearAttempts`; they move here and never stay in the published group.
+    near_at = dict(prev.get("nearAttemptedAt")) if isinstance(prev.get("nearAttemptedAt"), dict) else {}
     if current:
-        for c in current["cams"]:
-            wn = c.get("waterNear")
-            if isinstance(wn, dict) and not wn.get("carried") and not c.get("carried") and wn.get("scoredAt"):
-                near_at[c["id"]] = wn["scoredAt"]
+        tick_attempts = current.pop("_nearAttempts", None)
+        if isinstance(tick_attempts, dict):
+            near_at.update(tick_attempts)
 
     now_iso = (dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
                .isoformat().replace("+00:00", "Z"))
@@ -3091,9 +3114,9 @@ def build_beach_output(
     # Disputed cams of the beach-local day: {cam id: {since, reason, date, claims, resolvedAt?}}.
     if disputes:
         doc["disputedCams"] = disputes
-    # Near-shore SHADOW gate state {cam id: last fresh shadow read, UTC}; shadow only.
+    # Near-shore SHADOW gate state {cam id: last shadow ATTEMPT, UTC}; shadow only.
     if near_at:
-        doc["nearScoredAt"] = near_at
+        doc["nearAttemptedAt"] = near_at
     # Owner alerts whose POST failed, retried every tick until the app answers (dropped after 24 h).
     if outbox:
         doc["pendingAlerts"] = outbox

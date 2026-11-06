@@ -89,10 +89,6 @@ on:
         description: "Run only the near-shore shadow test (no feed, no push)"
         type: boolean
         default: false
-      shadow_models:
-        description: "Gemini models for the shadow test, comma separated (blank = script default)"
-        type: string
-        default: ""
       shadow_dirs:
         description: "Frame folders for the shadow test, space separated (each holds <cam id>-full.jpg)"
         type: string
@@ -155,10 +151,11 @@ jobs:
       - name: Near-shore shadow test on committed frames (prints only)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          NEARSHORE_TEST_MODELS: ${{ inputs.shadow_models }}
           SHADOW_DIRS: ${{ inputs.shadow_dirs }}
         run: |
-          if [ -z "$NEARSHORE_TEST_MODELS" ]; then unset NEARSHORE_TEST_MODELS; fi
+          # No model input on purpose: the script reads with the ONE allowlisted shadow
+          # model (NEAR_ALLOWED_MODELS) and refuses anything else, main-chain models too.
+          unset NEARSHORE_MODEL
           rc=0
           for d in ${SHADOW_DIRS:-docs/research/clarity-truth/2026-11-06/cams}; do
             case "$d" in docs/research/clarity-truth/*) ;; *) echo "skip $d (only docs/research/clarity-truth/*)"; continue ;; esac

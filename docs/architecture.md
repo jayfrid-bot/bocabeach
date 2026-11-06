@@ -592,16 +592,19 @@ sandy"; see `docs/research/clarity-truth/`). `cam_seaweed.py` now also reads a
 crop of the strip by the water line (`config/nearshore-boxes.json`) with its own
 prompt (`NEAR_PROMPT`: colour, suspended sand, bottom visible, foam, then one of
 `clear | a_bit_sandy | murky | churned | cant_tell`). The model is
-`gemini-3.5-flash-lite`, which is not in the main chain, so it has its own
-free-tier bucket; one attempt, no fallback, the pass stops at its first error. It writes extra fields only:
+`gemini-3.5-flash-lite`, hard-allowlisted in the live pass and in the test mode
+(any other model, or that one put in the main chain, turns the shadow off), so
+it has its own free-tier bucket; one attempt, no fallback, the pass stops at its
+first error. It writes extra fields only:
 `waterNear` on a cam reading (`carried: true` when it is the last read, up to 60
 min old), `nearMedian` `{level, n, fresh, cams}` on a capture group (cams with
 `inMedian: false`, now `boca-south`, are left out; with two cams, the murkier),
 a sparse `near` on a history entry (ticks with a fresh shadow read only), and a
-top-level `nearScoredAt` map (the 30-minute gate). No app reader uses them:
+top-level `nearAttemptedAt` map (each cam's last shadow ATTEMPT, success or
+not; the gate is never under 30 minutes, so a failed call waits too). No app reader uses them:
 `clarity.ts` and `busyness.ts` pick fields by name, and `sargassum.ts` drops
-`waterNear` from the cams it passes on. The hourly archiver keeps them inside
-`raw_json` in D1. `sargassum.yml` has a read-only `shadow_test` dispatch mode
+`waterNear` from the cams it passes on. The hourly archiver keeps a fresh `waterNear` in the per-cam
+`raw_json` in D1 (a carried one is dropped). `sargassum.yml` has a read-only `shadow_test` dispatch mode
 (its own concurrency group, no feed write, no push, no handoff).
 
 **The webcam archive keeps one shot per cam per slot: one per hour, about one per 10 minutes in golden hour.** `scripts/cam_seaweed.py`
