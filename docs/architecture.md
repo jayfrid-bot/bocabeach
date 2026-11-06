@@ -389,7 +389,7 @@ flowchart LR
   OWNER["owner's Mac"] -->|"POST /api/push/test — Bearer INGEST_TOKEN, {deviceId}:<br/>one real APNs alert to one device, writes no alert state"| PUSHTEST["/api/push/test"]
   SUNOBS -->|"sun_event_observations (migrations/0015)<br/>upsert only when (score_version, scored_at) is newer —<br/>duplicates and stale replays are no-ops; credit stored"| D1
   SUNOBS -->|"observed_score / observed_source / observed_at on the<br/>sun_event_predictions rows (event within 15 min; best cam:<br/>solar view first, then nearest; never a hand label)"| D1
-  SCORECARD["scripts/scorecard.ts — daily launchd job on the owner's laptop<br/>(scripts/scorecard_daily.sh, 10:30 AM, own worktree; pushes docs/scorecards only)<br/>read-only wrangler SELECTs, then lib/scorecard/metrics.ts (pure maths)<br/>and report.ts (Markdown); reads config/sun-cams.json for each cam's facing;<br/>never writes to D1"]
+  SCORECARD["scripts/scorecard.ts — daily launchd job on the owner's laptop<br/>(scripts/scorecard_daily.sh, 10:30 AM, own worktree; pushes docs/scorecards only)<br/>read-only wrangler SELECTs, plus uw-frame /cams and the county latest.json feeds (offline cams, lib/camStatus.ts),<br/>then lib/scorecard/metrics.ts (pure maths)<br/>and report.ts (Markdown); reads config/sun-cams.json for each cam's facing;<br/>never writes to D1"]
   D1 -->|"beach_hourly (extra_json blocks), sun_event_predictions,<br/>sun_event_observations, cam_observations"| SCORECARD
   SCORECARD -->|"docs/scorecards/YYYY-MM-DD.md + latest.md<br/>predicted vs what happened: sun color (fair per-cam rank by model version,<br/>coverage, east-coast afterglow), rain, best window,<br/>safety vs flags, data health"| SCARDS[(docs/scorecards)]
   UWFRAME -->|one headless-Chrome launch/tick,<br/>reused across every cam + the flag read| UWKV[(UW_FRAME KV<br/>frame:&lt;id&gt;, meta:&lt;id&gt;, attempt:&lt;id&gt;,<br/>flags:deerfield-beach, flags:fort-lauderdale)]
@@ -457,6 +457,54 @@ bad frame stored before the guard existed does not stay "good". On the reading s
 `scripts/cam_seaweed.py` runs the same check (same JSON file) on courier cams before
 it archives or reads a frame, so a black picture is never read as "no seaweed, empty
 beach" and never takes an archive hour slot from the real frame.
+
+**Offline cams are hidden (2026-11-06).** A dead stream sends no new frames: the
+frame guard refuses its slate with 422 and the last good frame just gets older. So
+`lib/camStatus.ts` judges each cam on the age of its newest GOOD frame, counted only
+in the hours that cam is expected to deliver one, and `lib/conditions.ts` leaves the
+offline cams out of the response. One pure rule, `camStatus(cadence, lastGoodFrameAt,
+lastAttempt, now)`, gives `online`, `stale` (still shown) or `offline` (hidden):
+
+| Cam kind | Expected interval | Live hours (clock stops outside them) | Stale after | Offline after |
+|---|---|---|---|---|
+| Courier cam (`snapshotMetaUrl`, uw-frame KV) | 60 min | 06:00-21:00 Eastern, the courier's daylight gate | 2 live h | 6 live h, or meta `ok:false` |
+| County feed cam (`snapshotFeed`, video-monitoring.com) | 30 min | 08:00-17:30 local | 1 live h | 6 live h, or the view gone from latest.json |
+
+Offline = max(3 x interval, 6 h) of live time with no good frame. A blank refusal newer
+than the newest good frame only makes a cam `stale`, never `offline` by itself: dark
+dusk frames are refused as blank too (New Smyrna, most evenings). No stored state, so
+no flapping and nothing to reset: between good frames the age only grows, the clock
+stops at night, and the first good frame puts a cam straight back to `online`. A failed
+lookup (`undefined`) is not evidence: the cam stays shown, as before. The rule reuses
+the capture-time lookups the cam card already made (one uw-frame `/meta` or one shared
+`latest.json` per cam), so it costs no subrequests; the CPU is a few `Intl` calls per cam.
+
+```mermaid
+flowchart LR
+  COURIER["home-server courier<br/>(keeps trying dead cams: cooldown 10 min doubling to 2 h, never stops)"] -->|"POST /ingest; blank = 422"| UWF["workers/uw-frame<br/>meta:&lt;id&gt; ok / grabbedAtUtc,<br/>attempt:&lt;id&gt;"]
+  FEED["video-monitoring.com<br/>latest.json per county cam"]
+  UWF -->|"GET /meta?cam=id"| CAMS["lib/cams.ts buildCamViewsWithStatus<br/>(the same lookup as the capture time)"]
+  FEED -->|"GET latest.json"| CAMS
+  CAMS --> RULE["lib/camStatus.ts camStatus<br/>online / stale / offline"]
+  RULE -->|"visibleCamViews: offline left out"| COND["lib/conditions.ts getConditionsForLocation<br/>(score built from the snapshot only: unchanged)"]
+  COND --> PAGE["beach page: CamGrid + CamLightbox<br/>(no cams left = no cam section)"]
+  COND --> API["/api/conditions/&lt;slug&gt; and /lean"]
+  UWF -->|"GET /cams (one call)"| SCORE["scripts/scorecard.ts<br/>data health: offline cams + since when"]
+  FEED --> SCORE
+  SCORE -->|"listOfflineCams, same rule"| RULE
+```
+
+Every surface that shows a cam still or link is built from that one cam list: the cam
+grid, the zoom viewer, `/api/conditions/<slug>` and its lean copy. The agent feeds
+(`/api/v1/*`, `/mcp`, `/llms.txt`), the watch feed and the share card carry no cam
+stills, so they need no change. The Plus day view lists archived past shots, which are
+real pictures, so an offline cam's earlier shots stay there. How fast a change shows:
+the 120-s conditions cache plus the edge cache (fresh 60 s, served stale up to 10 min
+while one background refresh runs) means a few minutes, at most about 12. A returning
+courier cam is also waiting on the courier's next try: up to 2 hours in cooldown
+(`scripts/courier_schedule.py`), within an hour once it is out of cooldown. The daily
+scorecard (`lib/scorecard`, data health) lists the hidden cams with since-when from
+the same rule.
 
 **Picture size (2026-10-18).** The courier asks yt-dlp for the best stream up to 1080p
 (`best[height<=1080]/best[height<=720]/best`, `STREAM_FORMAT` in `scripts/yt_pacer.py`).

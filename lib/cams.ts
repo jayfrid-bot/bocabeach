@@ -2,6 +2,7 @@ import type { CamConfig, CamView, Location } from "@/lib/types";
 import { pickFeedTimestamp, pickMetaTimestamp } from "@/lib/camSnapshots";
 import { fetchSpotWeather } from "@/lib/sources/spotWeather";
 import { fetchWithTimeout } from "@/lib/util";
+import { camCadence, camOfflineSince, camStatus, type CamStatus } from "@/lib/camStatus";
 
 // --- Resolving a cam's capture time -----------------------------------------
 //
@@ -57,13 +58,40 @@ async function fetchCamJsonWithRetry(url: string): Promise<unknown | undefined> 
 const fetchFeedLatest = (base: string): Promise<unknown | undefined> =>
   fetchCamJsonWithRetry(`${base}/latest.json`);
 
+/** A built cam view plus what the offline rule (lib/camStatus.ts) says about it. */
+export interface CamViewWithStatus {
+  view: CamView;
+  status: CamStatus;
+  /** When the cam went offline (ISO), or null (not offline, or not known). */
+  offlineSince: string | null;
+}
+
 /**
  * Build the cam list for a location, attaching the live weather/wind at each
  * cam's own coordinates (falling back to the town's lat/lon). Fetches run in
  * parallel; cams sharing a rounded coordinate (or a latest.json feed) reuse the
- * same request.
+ * same request. Every cam is returned, offline ones included: see
+ * {@link buildCamViewsWithStatus} and {@link visibleCamViews}.
  */
 export async function buildCamViews(loc: Location): Promise<CamView[]> {
+  return (await buildCamViewsWithStatus(loc)).map((c) => c.view);
+}
+
+/** The cams the page may show: every cam whose status is not "offline". A beach
+ *  whose cams are all offline gets an empty list, so it shows no cam section. */
+export function visibleCamViews(cams: readonly CamViewWithStatus[]): CamView[] {
+  return cams.filter((c) => c.status !== "offline").map((c) => c.view);
+}
+
+/**
+ * {@link buildCamViews} plus each cam's status. The status reuses the capture-time
+ * lookups the cam card already makes (no extra requests): a feed cam's latest.json,
+ * or a courier cam's uw-frame meta.
+ */
+export async function buildCamViewsWithStatus(
+  loc: Location,
+  nowMs: number = Date.now(),
+): Promise<CamViewWithStatus[]> {
   // Cams that share a latest.json share ONE fetch AND its retry: every view
   // lives inside that same document, so a second request would only repeat it
   // (and would double the retry cost of a provider outage).
@@ -77,33 +105,50 @@ export async function buildCamViews(loc: Location): Promise<CamView[]> {
     return pending;
   };
 
-  /** Exact capture time of a feed cam's current frame, or undefined. */
-  const feedCapturedAt = async (cam: CamConfig): Promise<string | undefined> => {
+  // The newest good frame's time, for the offline rule: an ISO string, null when
+  // the source answered but holds no good frame, undefined when it could not be
+  // asked (lib/camStatus.ts shows a cam it cannot judge).
+  type FrameTime = { capturedAt: string | undefined; lastGood: string | null | undefined };
+  const UNKNOWN: FrameTime = { capturedAt: undefined, lastGood: undefined };
+
+  /** Exact capture time of a feed cam's current frame. */
+  const feedFrameTime = async (cam: CamConfig): Promise<FrameTime> => {
     const feed = cam.snapshotFeed;
-    if (!feed) return undefined;
+    if (!feed) return UNKNOWN;
     const json = await latestFor(feed.base);
-    return json === undefined ? undefined : pickFeedTimestamp(json, feed.view);
+    if (json === undefined) return UNKNOWN;
+    const capturedAt = pickFeedTimestamp(json, feed.view);
+    // A feed that lists other views but not this one has dropped it (nothing to
+    // show); an empty or odd document says nothing, so the cam is not judged.
+    const listsViews = !!json && typeof json === "object" && Object.keys(json).length > 0;
+    return { capturedAt, lastGood: capturedAt ?? (listsViews ? null : undefined) };
   };
 
   /** Exact capture time of a courier-grabbed still, via its meta endpoint. */
-  const metaCapturedAt = async (cam: CamConfig): Promise<string | undefined> => {
+  const metaFrameTime = async (cam: CamConfig): Promise<FrameTime> => {
     const metaUrl = cam.snapshotMetaUrl;
-    if (!metaUrl) return undefined;
+    if (!metaUrl) return UNKNOWN;
     const json = await fetchCamJsonWithRetry(metaUrl);
-    return json === undefined ? undefined : pickMetaTimestamp(json);
+    if (json === undefined) return UNKNOWN;
+    const capturedAt = pickMetaTimestamp(json);
+    // ok:false = the uw-frame Worker holds no good frame for this cam (the stream
+    // shows a blank slate, or never delivered). Any other shape is not judged.
+    const saysNone = (json as { ok?: unknown } | null)?.ok === false;
+    return { capturedAt, lastGood: capturedAt ?? (saysNone ? null : undefined) };
   };
 
   /** Resolve whichever capture-time source this cam config declares. */
-  const camCapturedAt = (cam: CamConfig): Promise<string | undefined> =>
-    cam.snapshotMetaUrl ? metaCapturedAt(cam) : feedCapturedAt(cam);
+  const camFrameTime = (cam: CamConfig): Promise<FrameTime> =>
+    cam.snapshotMetaUrl ? metaFrameTime(cam) : cam.snapshotFeed ? feedFrameTime(cam) : Promise.resolve(UNKNOWN);
 
   return Promise.all(
-    loc.cams.map(async (cam): Promise<CamView> => {
-      const [weather, capturedAt] = await Promise.all([
+    loc.cams.map(async (cam): Promise<CamViewWithStatus> => {
+      const [weather, { capturedAt, lastGood }] = await Promise.all([
         fetchSpotWeather(cam.lat ?? loc.lat, cam.lon ?? loc.lon),
-        camCapturedAt(cam),
+        camFrameTime(cam),
       ]);
-      return {
+      const cadence = camCadence(cam, loc.timezone);
+      const view: CamView = {
         id: cam.id,
         name: cam.name,
         provider: cam.provider,
@@ -121,6 +166,11 @@ export async function buildCamViews(loc: Location): Promise<CamView[]> {
         capturedAt,
         attribution: cam.attribution,
         weather,
+      };
+      return {
+        view,
+        status: camStatus(cadence, lastGood, null, nowMs),
+        offlineSince: camOfflineSince(cadence, lastGood, nowMs),
       };
     }),
   );

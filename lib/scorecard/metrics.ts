@@ -12,6 +12,7 @@
 // beach), not forecast rows — one event has dozens of hourly rows that all
 // share one observation.
 
+import type { OfflineCam } from "@/lib/camStatus";
 import type { FlagColor } from "@/lib/types";
 
 // --- Minimum samples --------------------------------------------------------
@@ -1837,6 +1838,8 @@ export interface HealthInput {
   rows: HealthRow[];
   /** Latest cam_observations capture per beach. */
   camLatest: { slug: string; captured_at_utc: string }[] | null;
+  /** Cams the offline rule hides on the page right now (lib/camStatus.ts); null = not checked. */
+  camsOffline?: OfflineCam[] | null;
   /** sun_event_observations summary. */
   sunObs: { count: number; latestScoredAt: string | null; latestEventIso: string | null } | null;
   /** sun_event_predictions rows archived in the last 24 h (null = unknown). */
@@ -1885,6 +1888,8 @@ export interface HealthResult {
   blockPct24h: Record<string, number | null>;
   cams: { slug: string; latest: string; ageHours: number }[] | null;
   camsStale: { slug: string; latest: string; ageHours: number }[];
+  /** Cams hidden on the page as offline, longest-down first; null = not checked. */
+  camsOffline: OfflineCam[] | null;
   sunObs: HealthInput["sunObs"];
   sunPredictionsLast24h: number | null;
 }
@@ -1993,6 +1998,7 @@ export function dataHealth(input: HealthInput): HealthResult {
     blockPct24h,
     cams,
     camsStale: (cams ?? []).filter((c) => c.ageHours > CAM_STALE_HOURS),
+    camsOffline: input.camsOffline ?? null,
     sunObs: input.sunObs,
     sunPredictionsLast24h: input.sunPredictionsLast24h,
   };

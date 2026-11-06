@@ -40,6 +40,7 @@ import {
   type SunPredictionRow,
   type WindowResult,
 } from "@/lib/scorecard/metrics";
+import { listOfflineCams, type CamEvidence, type OfflineCam, type RosterCam } from "@/lib/camStatus";
 
 // --- Input ------------------------------------------------------------------
 
@@ -59,6 +60,7 @@ export type RawDatasetName =
   | "sunPredictions"
   | "sunObservations"
   | "camLatest"
+  | "camEvidence"
   | "sunPredictionsLast24h"
   | "sunLifetime";
 
@@ -81,6 +83,9 @@ export interface RawData {
   sunPredictions: SunPredictionRow[] | null;
   sunObservations: RawSunObservation[] | null;
   camLatest: { slug: string; captured_at_utc: string }[] | null;
+  /** What each cam's source said about its newest good frame, read when the report ran
+   *  (uw-frame /cams and the county latest.json feeds). Missing in older saved files. */
+  camEvidence?: CamEvidence[] | null;
   sunPredictionsLast24h: number | null;
   /** Days back the sun-color forecasts and camera readings were read (events in this window). */
   sunWindowDays?: number;
@@ -103,6 +108,8 @@ export interface BuildOptions {
   camDistance?: CamDistanceFn;
   /** The local date of an event at a beach (its own time zone). */
   localDateOf?: EventLocalDateFn;
+  /** Every cam the offline rule judges (lib/camStatus.ts camRoster over config/locations.ts). */
+  camRoster?: RosterCam[];
 }
 
 // --- Output -----------------------------------------------------------------
@@ -217,6 +224,35 @@ function matchesForecast(o: RawSunObservation, paired: SunPredictionRow[]): bool
   );
 }
 
+/** The cams hidden on the page as offline when the report ran; null when not checked. */
+function offlineCamsOf(raw: RawData, roster: RosterCam[] | undefined, nowMs: number): OfflineCam[] | null {
+  if (!roster || !raw.camEvidence) return null;
+  return listOfflineCams(roster, raw.camEvidence, nowMs);
+}
+
+/** "Nov 6, 2:05 PM ET" — the owner reads the scorecard in Eastern time. */
+function etTime(iso: string): string {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return iso;
+  return `${new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(ms))} ET`;
+}
+
+/** One offline cam, for the data-health list. */
+export function offlineCamLine(c: OfflineCam): string {
+  const since = c.since ? `offline since ${etTime(c.since)}` : "no good frame stored";
+  const last = c.lastGoodFrameAt ? `, last good frame ${etTime(c.lastGoodFrameAt)}` : "";
+  const tried = c.lastAttempt
+    ? `, last try ${etTime(c.lastAttempt.at)}${c.lastAttempt.blank ? " (blank)" : ""}`
+    : "";
+  return `${c.id} (${c.slug}): ${since}${last}${tried}`;
+}
+
 export function buildScorecard(raw: RawData, opts: BuildOptions = {}): Scorecard {
   const nowMs = Date.parse(raw.asOf);
   const warnings: string[] = [];
@@ -272,6 +308,7 @@ export function buildScorecard(raw: RawData, opts: BuildOptions = {}): Scorecard
     dataHealth({
       rows: rows ?? [],
       camLatest: raw.camLatest,
+      camsOffline: offlineCamsOf(raw, opts.camRoster, nowMs),
       sunObs: raw.sunObservations
         ? {
             count: raw.sunObservations.length,
@@ -401,6 +438,7 @@ function healthHeadline(s: Section<HealthResult>): string {
     parts.push(`Beaches that should archive all day miss local hours ${hourList(r.hourGaps.missing.map((m) => m.hour))} on most days.`);
   }
   if (r.camsStale.length) parts.push(`${plural(r.camsStale.length, "camera")} silent for over ${CAM_STALE_HOURS} hours.`);
+  if (r.camsOffline?.length) parts.push(`${plural(r.camsOffline.length, "camera")} offline and hidden on the page.`);
   return parts.join(" ");
 }
 
@@ -917,6 +955,16 @@ function healthSection(s: Section<HealthResult>): string {
         .map((c) => `${c.slug} ${c.ageHours} h ago`)
         .join(", ")}${r.cams.length > 5 ? `, and ${r.cams.length - 5} more` : ""}.` +
         (r.camsStale.length ? ` Silent for over ${CAM_STALE_HOURS} hours: ${r.camsStale.map((c) => c.slug).join(", ")}.` : ""),
+    );
+  }
+  if (r.camsOffline == null) {
+    out.push("- Cameras hidden as offline: not checked.");
+  } else if (r.camsOffline.length === 0) {
+    out.push("- Cameras hidden as offline: none.");
+  } else {
+    out.push(
+      `- Cameras hidden as offline (they come back on their own with the first good frame): ${r.camsOffline.length}`,
+      ...r.camsOffline.map((c) => `  - ${offlineCamLine(c)}`),
     );
   }
   out.push(

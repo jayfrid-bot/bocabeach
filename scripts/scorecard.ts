@@ -24,7 +24,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getLocation } from "@/config/locations";
+import { LOCATIONS, getLocation } from "@/config/locations";
+import { camRoster, type CamAttempt, type CamEvidence } from "@/lib/camStatus";
+import { pickFeedTimestamp, pickMetaTimestamp } from "@/lib/camSnapshots";
 import { computeSunTimes } from "@/lib/sources/sun";
 import { buildScorecard, renderMarkdown, type RawData, type RawDatasetName } from "@/lib/scorecard/report";
 import { errorLineOf, parseWranglerJson } from "@/lib/scorecard/wrangler";
@@ -270,6 +272,55 @@ function fetchRaw(days: number, now: Date): RawData {
   return raw;
 }
 
+// --- Which cams are hidden as offline (read-only, the same reads the page makes) ---
+
+const UW_FRAME_CAMS_URL = "https://uw-frame.entwined-app.workers.dev/cams";
+
+async function getJson(url: string): Promise<unknown | undefined> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    return res.ok ? await res.json() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Each configured cam's newest good frame, as its source reports it now. One request
+ *  to uw-frame /cams for the courier cams, one latest.json per county feed. */
+async function fetchCamEvidence(): Promise<CamEvidence[] | null> {
+  const out: CamEvidence[] = [];
+  const uw = (await getJson(UW_FRAME_CAMS_URL)) as { cams?: Record<string, unknown>[] } | undefined;
+  const uwById = new Map((uw?.cams ?? []).map((c) => [String(c.id), c]));
+  const feeds = new Map<string, Promise<unknown | undefined>>();
+  for (const loc of LOCATIONS) {
+    for (const cam of loc.cams) {
+      if (!cam.id || cam.embedType !== "image") continue;
+      if (cam.snapshotMetaUrl) {
+        const c = uwById.get(cam.id);
+        if (!c) {
+          out.push({ id: cam.id, lastGoodFrameAt: undefined });
+          continue;
+        }
+        const good = pickMetaTimestamp(c);
+        const att = c.lastAttempt as { grabbedAtUtc?: unknown; error?: unknown } | null | undefined;
+        const lastAttempt: CamAttempt | null =
+          att && typeof att.grabbedAtUtc === "string"
+            ? { at: att.grabbedAtUtc, blank: /blank/i.test(String(att.error ?? "")) }
+            : null;
+        out.push({ id: cam.id, lastGoodFrameAt: good ?? (c.ok === false ? null : undefined), lastAttempt });
+      } else if (cam.snapshotFeed) {
+        const { base, view } = cam.snapshotFeed;
+        if (!feeds.has(base)) feeds.set(base, getJson(`${base}/latest.json`));
+        const json = await feeds.get(base);
+        const good = json === undefined ? undefined : pickFeedTimestamp(json, view);
+        const listsViews = !!json && typeof json === "object" && Object.keys(json).length > 0;
+        out.push({ id: cam.id, lastGoodFrameAt: good ?? (listsViews ? null : undefined) });
+      }
+    }
+  }
+  return uw === undefined && out.every((e) => e.lastGoodFrameAt === undefined) ? null : out;
+}
+
 // --- Beach facts from config -------------------------------------------------
 
 const localHour = (tz: string, ms: number): number => {
@@ -316,7 +367,7 @@ const expectedPerDayAt =
 
 // --- Main --------------------------------------------------------------------
 
-function main(): void {
+async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const abs = (p: string) => (isAbsolute(p) ? p : join(ROOT, p));
 
@@ -326,6 +377,9 @@ function main(): void {
     log(`Scoring saved results from ${args.fromJson} (as of ${raw.asOf}).`);
   } else {
     raw = fetchRaw(args.days, new Date());
+    log("Reading which cameras are offline...");
+    raw.camEvidence = await fetchCamEvidence();
+    if (raw.camEvidence == null) raw.errors.camEvidence = "no camera source answered";
   }
   if (args.saveRaw) {
     writeFileSync(abs(args.saveRaw), JSON.stringify(raw));
@@ -342,6 +396,7 @@ function main(): void {
     camFacing: (id) => facing.get(id),
     camDistance: (cam, slug) => camMiles.get(`${cam}|${slug}`),
     localDateOf: eventLocalDate,
+    camRoster: camRoster(LOCATIONS),
   });
   const md = renderMarkdown(card);
 
@@ -364,9 +419,7 @@ function main(): void {
   if (args.json) process.stdout.write(`\n--- metrics (json) ---\n${JSON.stringify(card, null, 2)}\n`);
 }
 
-try {
-  main();
-} catch (e) {
+main().catch((e: unknown) => {
   process.stderr.write(`scorecard: ${e instanceof Error ? e.message : String(e)}\n`);
   process.exitCode = 1;
-}
+});

@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-11-06",
+    title: "Cameras that are down are hidden until they come back",
+    details:
+      "When a beach camera stops sending pictures, we now take it off the page instead of showing an old or blank picture. We keep checking it, and it comes back on its own as soon as it sends a good picture again. Cameras that only run in the daytime are not hidden at night. Hiding a camera never changes the Beach Day score.",
+    tag: "improved",
+  },
+  {
     date: "2026-11-05",
     title: "More honest sunrise and sunset forecasts",
     details:
