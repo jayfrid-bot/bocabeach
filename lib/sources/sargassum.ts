@@ -118,6 +118,16 @@ function hasSeaweedLevel(c: unknown): c is CamSeaweedReading {
   const r = c as CamSeaweedReading | null | undefined;
   return !!r && typeof r.level === "string" && r.level in RANK;
 }
+/** The cam reading as the app passes it on, minus the reader's SHADOW-only fields
+ *  (`waterNear`, the near-shore water read of scripts/cam_seaweed.py, 2026-11-06).
+ *  `cams` goes out verbatim in the seaweed data, so a shadow field would otherwise
+ *  reach the page payload. Unchanged object when there is none. */
+function withoutShadowFields(c: CamSeaweedReading): CamSeaweedReading {
+  if (!c || !("waterNear" in c)) return c;
+  const { waterNear: _shadow, ...rest } = c as CamSeaweedReading & { waterNear?: unknown };
+  return rest as CamSeaweedReading;
+}
+
 export interface CamSeaweedFeed {
   /** When the off-Netlify job generated this snapshot (ISO) — the real freshness. */
   generatedAt?: string;
@@ -287,7 +297,7 @@ export function summarizeSeaweed(
         nextRead.timezone,
       )?.iso
     : undefined;
-  const cams = (group?.cams ?? []).filter(hasSeaweedLevel);
+  const cams = (group?.cams ?? []).filter(hasSeaweedLevel).map(withoutShadowFields);
   if (!cams.length) {
     // No current reading, but still surface the historical charts if we have any.
     // An open claim alone is enough to answer (a first-ever held observation has no

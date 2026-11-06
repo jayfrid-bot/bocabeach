@@ -2189,7 +2189,7 @@ def shadow_test_main(argv: list) -> int:
     """`--shadow-test <dir>`: read every <cam id>-full.jpg in <dir> whose cam has a box in
     NEAR_BOXES_PATH, crop it, and print what each model in NEARSHORE_TEST_MODELS
     (default gemini-2.5-flash,gemini-2.5-flash-lite) says through NEAR_PROMPT, plus the
-    OLD full-frame water grade (PROMPT, first model) for comparison. Writes NO feed and
+    OLD full-frame water grade (the live PROMPT, same model) for comparison. Writes NO feed and
     touches no archive. Exit 1 only when no read at all succeeded."""
     try:
         d = argv[argv.index("--shadow-test") + 1]
@@ -2221,13 +2221,14 @@ def shadow_test_main(argv: list) -> int:
             continue
         print(f"{cid}: frame {jpeg_dimensions(img)} -> crop {jpeg_dimensions(crop)} ({len(crop)} bytes), "
               f"inMedian={boxes[cid]['inMedian']}")
-        try:
-            old = assess_with("gemini", img, PROMPT, _parse_out, model=models[0])
-            print(f"  OLD full-frame ({models[0]}): water={old.get('water')} waterPct={old.get('waterPct')} "
-                  f"note={old.get('waterNote')!r}")
-        except Exception as e:  # noqa: BLE001
-            print(f"  OLD full-frame ({models[0]}): FAILED {str(e)[:200]}")
         for m in models:
+            # The control: the LIVE prompt on the full frame, same model.
+            try:
+                old = assess_with("gemini", img, PROMPT, _parse_out, model=m, single_attempt=True)
+                print(f"  OLD full-frame ({m}): water={old.get('water')} waterPct={old.get('waterPct')} "
+                      f"note={old.get('waterNote')!r}")
+            except Exception as e:  # noqa: BLE001
+                print(f"  OLD full-frame ({m}): FAILED {str(e)[:200]}")
             time.sleep(CAM_GAP_S)
             try:
                 r = assess_near(crop, m)

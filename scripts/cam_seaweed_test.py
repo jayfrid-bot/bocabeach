@@ -4481,5 +4481,299 @@ class VisionAndArchiveSizeTests(unittest.TestCase):
 
 ZONE = __import__("zoneinfo").ZoneInfo("America/New_York")
 
+
+TRUTH_DIR = ROOT / "docs" / "research" / "clarity-truth" / "2026-11-06" / "cams"
+BOCA_BOXES = {"boca-inlet-surf": {"box": [0.24, 0.45, 1.0, 0.64], "inMedian": True},
+              "boca-south-surf": {"box": [0.27, 0.40, 1.0, 0.75], "inMedian": True},
+              "boca-south": {"box": [0.40, 0.49, 1.0, 0.66], "inMedian": False}}
+
+
+class NearParseTests(unittest.TestCase):
+    """_parse_near: the near-shore shadow reply, validated like _parse_out/_parse_uw."""
+
+    def test_valid_reply(self):
+        r = cs._parse_near({"color": "sandy_green", "suspended_sand": "some", "bottom_visible": "no",
+                            "foam": "some", "level": "a_bit_sandy", "note": "olive water, sand in it"})
+        self.assertEqual(r, {"level": "a_bit_sandy", "color": "sandy_green", "sand": "some", "bottom": "no",
+                             "foam": "some", "note": "olive water, sand in it"})
+
+    def test_level_is_required_and_on_the_scale(self):
+        for bad in ({}, {"level": "slightly_murky"}, {"level": 55}, {"level": "clear-ish"}):
+            with self.assertRaises(ValueError):
+                cs._parse_near(bad)
+
+    def test_bad_observables_become_none_and_note_is_capped(self):
+        r = cs._parse_near({"level": "CLEAR", "color": "purple", "suspended_sand": 3, "bottom_visible": None,
+                            "foam": "LOTS", "note": "x" * 200})
+        self.assertEqual(r["level"], "clear")
+        self.assertIsNone(r["color"])
+        self.assertIsNone(r["sand"])
+        self.assertIsNone(r["bottom"])
+        self.assertEqual(r["foam"], "lots")
+        self.assertEqual(len(r["note"]), 80)
+
+    def test_british_colour_key_is_accepted(self):
+        self.assertEqual(cs._parse_near({"level": "murky", "colour": "brown"})["color"], "brown")
+
+    def test_prompt_has_no_number_scale_or_anchor(self):
+        self.assertNotIn("0-100", cs.NEAR_PROMPT)
+        self.assertNotIn("Most days", cs.NEAR_PROMPT)
+        for lv in cs.NEAR_LEVELS:
+            self.assertIn(lv, cs.NEAR_PROMPT)
+
+    def test_extract_json_then_parse(self):
+        raw = cs._extract_json('```json\n{"level":"murky","color":"brown","foam":"none"}\n```')
+        self.assertEqual(cs._parse_near(raw)["level"], "murky")
+
+
+class NearBoxTests(unittest.TestCase):
+    def test_repo_config_has_the_three_boca_cams(self):
+        boxes = cs.load_near_boxes(str(ROOT / "config" / "nearshore-boxes.json"))
+        self.assertEqual(boxes, {"boca-raton": BOCA_BOXES})
+
+    def test_every_box_cam_is_a_registry_cam(self):
+        reg = json.loads((ROOT / "config" / "vision-cams.json").read_text())
+        for slug, cams in cs.load_near_boxes(str(ROOT / "config" / "nearshore-boxes.json")).items():
+            ids = {c["id"] for c in reg[slug]["cams"]}
+            self.assertTrue(set(cams) <= ids, (slug, set(cams) - ids))
+
+    def test_bad_boxes_and_missing_file(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "b.json")
+            with open(p, "w") as fh:
+                json.dump({"_about": "x", "b": {"ok": {"box": [0, 0, 1, 1]}, "flip": {"box": [0.5, 0, 0.2, 1]},
+                                                "short": {"box": [0, 0, 1]}, "big": {"box": [0, 0, 1.2, 1]},
+                                                "bool": {"box": [0, 0, True, 1]}, "off": {"box": [0, 0, 1, 1], "inMedian": False}}}, fh)
+            self.assertEqual(cs.load_near_boxes(p), {"b": {"ok": {"box": [0, 0, 1, 1], "inMedian": True},
+                                                           "off": {"box": [0, 0, 1, 1], "inMedian": False}}})
+            self.assertEqual(cs.load_near_boxes(os.path.join(d, "missing.json")), {})
+
+
+class NearCropTests(unittest.TestCase):
+    def test_wide_strip_keeps_size_or_caps_the_long_side(self):
+        (l, t, r, b), out = cs.near_crop_size(1920, 1280, BOCA_BOXES["boca-inlet-surf"]["box"])
+        self.assertEqual((l, t, r, b), (461, 576, 1920, 819))
+        self.assertEqual(out, (1536, 256))  # 1459 x 243 enlarged toward 300 tall, capped at 1536 wide
+
+    def test_thin_strip_is_enlarged_at_most_2x(self):
+        _, out = cs.near_crop_size(400, 300, [0, 0.5, 0.5, 0.6])  # 200 x 30
+        self.assertEqual(out, (400, 60))
+
+    def test_never_bigger_than_the_cap(self):
+        _, out = cs.near_crop_size(4000, 3000, [0, 0, 1, 1])
+        self.assertEqual(max(out), cs.NEAR_MAX_LONG)
+
+    @unittest.skipUnless(cs._pillow_image() is not None or shutil.which("ffmpeg"), "needs Pillow or ffmpeg")
+    def test_crop_of_a_real_truth_frame(self):
+        img = (TRUTH_DIR / "boca-south-surf-full.jpg").read_bytes()
+        crop = cs.crop_nearshore(img, BOCA_BOXES["boca-south-surf"]["box"])
+        self.assertIsNotNone(crop)
+        self.assertEqual(cs.jpeg_dimensions(crop), (876, 315))
+        self.assertLess(len(crop), len(img))
+
+    def test_crop_of_garbage_is_none(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertIsNone(cs.crop_nearshore(b"not a jpeg", [0, 0, 1, 1]))
+
+
+class NearMedianTests(unittest.TestCase):
+    def cams(self, **levels):
+        return [{"id": cid.replace("_", "-"), "waterNear": {"level": lv}} for cid, lv in levels.items()]
+
+    def test_two_cams_take_the_murkier(self):
+        nm = cs.near_median(self.cams(boca_inlet_surf="a_bit_sandy", boca_south_surf="murky"), BOCA_BOXES)
+        self.assertEqual(nm["level"], "murky")
+        self.assertEqual(nm["n"], 2)
+
+    def test_low_weight_cam_and_cant_tell_are_left_out(self):
+        nm = cs.near_median(self.cams(boca_inlet_surf="a_bit_sandy", boca_south_surf="cant_tell",
+                                      boca_south="churned"), BOCA_BOXES)
+        self.assertEqual(nm, {"level": "a_bit_sandy", "n": 1, "cams": {"boca-inlet-surf": "a_bit_sandy"}})
+
+    def test_none_when_nothing_counts(self):
+        self.assertIsNone(cs.near_median(self.cams(boca_south="clear"), BOCA_BOXES))
+        self.assertIsNone(cs.near_median([], BOCA_BOXES))
+
+
+class NearShadowPassTests(unittest.TestCase):
+    """nearshore_pass: shadow-only, after the main reads, skipped on any quota sign, never raises."""
+
+    FIRST = ("gemini", "gemini-2.5-flash")
+
+    def setUp(self):
+        with cs._VISION_CALLS_LOCK:
+            cs._VISION_CALLS.clear()
+        self.now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        self.calls = []
+
+    def group(self, **extra):
+        cams = [dict({"id": cid, "name": cid, "level": "none", "water": "clear", "waterPct": 74,
+                      "provider": "clef", "scoredAt": cs._utc_iso(self.now)}, **extra.get(cid, {}))
+                for cid in ("boca-inlet-surf", "boca-south-surf", "boca-south")]
+        return {"capturedAtLocal": self.now.astimezone(ZONE).isoformat(timespec="minutes"),
+                "hour": self.now.astimezone(ZONE).hour, "cams": cams}
+
+    def stills(self, model="gemini-2.5-flash", provider="gemini"):
+        return {("boca-raton", cid): {"img": b"img-" + cid.encode(), "provider": provider, "model": model}
+                for cid in ("boca-inlet-surf", "boca-south-surf", "boca-south")}
+
+    def run_pass(self, group, prev=None, stills=None, near_model="gemini-3.5-flash-lite", fail=None, key="k"):
+        def fake_assess_near(crop, model=None):
+            self.calls.append(crop)
+            if fail:
+                raise RuntimeError(fail)
+            return {"level": "a_bit_sandy", "color": "sandy_green", "sand": "some", "bottom": "no",
+                    "foam": "some", "note": "olive", "provider": "gemini", "model": near_model}
+
+        self.out, self.err = io.StringIO(), io.StringIO()
+        with mock.patch.object(cs, "assess_near", fake_assess_near), \
+                mock.patch.object(cs, "crop_nearshore", lambda img, box: b"crop:" + img), \
+                mock.patch.object(cs, "NEAR_MODEL", near_model), mock.patch.object(cs, "API_KEY", key), \
+                mock.patch.object(cs.time, "sleep", lambda s: None), \
+                contextlib.redirect_stdout(self.out), contextlib.redirect_stderr(self.err):
+            n = cs.nearshore_pass({"boca-raton": group}, {"boca-raton": prev or {}}, self.now,
+                                  {"boca-raton": BOCA_BOXES}, stills if stills is not None else self.stills(),
+                                  self.FIRST, {"called": True})
+        return n
+
+    def test_fresh_reads_get_waterNear_and_a_median_and_main_fields_do_not_move(self):
+        g = self.group()
+        before = json.loads(json.dumps(g))
+        self.assertEqual(self.run_pass(g), 3)
+        for c, b in zip(g["cams"], before["cams"]):
+            self.assertEqual(c["waterNear"]["level"], "a_bit_sandy")
+            self.assertEqual(c["waterNear"]["scoredAt"], cs._utc_iso(self.now))
+            self.assertEqual({k: v for k, v in c.items() if k != "waterNear"}, b)
+        self.assertEqual(g["nearMedian"]["level"], "a_bit_sandy")
+        self.assertEqual(g["nearMedian"]["n"], 2)  # boca-south is out of the median
+        self.assertEqual(g["nearMedian"]["fresh"], 3)
+
+    def test_build_beach_output_adds_sparse_near_and_keeps_water_and_clr(self):
+        g_plain = self.group()
+        doc_plain = cs.build_beach_output("boca-raton", "America/New_York", self.now.astimezone(ZONE),
+                                          [self.FIRST], {}, json.loads(json.dumps(g_plain)), None, None)
+        g = self.group()
+        self.run_pass(g)
+        doc = cs.build_beach_output("boca-raton", "America/New_York", self.now.astimezone(ZONE),
+                                    [self.FIRST], {}, g, None, None)
+        e_plain, e = doc_plain["history"][-1], doc["history"][-1]
+        self.assertEqual(e["near"], "a_bit_sandy")
+        self.assertEqual({k: v for k, v in e.items() if k != "near"}, e_plain)
+        self.assertEqual(set(doc["nearScoredAt"]), {"boca-inlet-surf", "boca-south-surf", "boca-south"})
+        self.assertNotIn("nearScoredAt", doc_plain)
+        for key in ("water", "waterPct"):
+            self.assertEqual([c[key] for c in doc["latest"]["cams"]], [c[key] for c in doc_plain["latest"]["cams"]])
+
+    def test_shared_bucket_skips_after_any_failed_call_this_tick(self):
+        cs._count_vision_call("gemini", "gemini-2.5-flash", False)
+        g = self.group()
+        self.assertEqual(self.run_pass(g, near_model="gemini-2.5-flash-lite"), 0)
+        self.assertNotIn("nearMedian", g)
+        self.assertIn("quota sign", self.out.getvalue())
+
+    def test_shared_bucket_skips_a_cam_whose_main_read_fell_back(self):
+        g = self.group()
+        self.assertEqual(self.run_pass(g, stills=self.stills(provider="clef", model="@cf/cloudflare/clef"),
+                                       near_model="gemini-2.5-flash-lite"), 0)
+        self.assertEqual(self.run_pass(self.group(), stills=self.stills(), near_model="gemini-2.5-flash-lite"), 3)
+
+    def test_own_bucket_reads_even_when_the_main_read_fell_back(self):
+        cs._count_vision_call("gemini", "gemini-2.5-flash", False)
+        g = self.group()
+        self.assertEqual(self.run_pass(g, stills=self.stills(provider="clef", model="@cf/cloudflare/clef")), 3)
+
+    def test_a_failed_shadow_call_stops_the_pass_and_never_raises(self):
+        g = self.group()
+        self.assertEqual(self.run_pass(g, fail="HTTP 429 (daily quota spent): x"), 1)
+        self.assertFalse(any("waterNear" in c for c in g["cams"]))
+        self.assertNotIn("nearMedian", g)
+
+    def test_gap_gate_and_carry_from_prev_latest(self):
+        old = {"level": "murky", "scoredAt": cs._utc_iso(self.now - dt.timedelta(minutes=10))}
+        prev = {"nearScoredAt": {"boca-inlet-surf": old["scoredAt"]},
+                "latest": {"cams": [{"id": "boca-inlet-surf", "waterNear": old}]}}
+        g = self.group()
+        self.assertEqual(self.run_pass(g, prev), 2)  # the inlet was read 10 min ago
+        inlet = g["cams"][0]["waterNear"]
+        self.assertEqual(inlet["level"], "murky")
+        self.assertTrue(inlet["carried"])
+        self.assertEqual(g["nearMedian"]["fresh"], 2)
+
+    def test_old_shadow_reads_are_not_carried(self):
+        old = {"level": "murky", "scoredAt": cs._utc_iso(self.now - dt.timedelta(minutes=cs.NEAR_CARRY_MIN + 5))}
+        g = self.group(**{"boca-inlet-surf": {"carried": True, "waterNear": old}})
+        self.run_pass(g, stills={})
+        self.assertNotIn("waterNear", g["cams"][0])
+
+    def test_low_sun_and_no_still_and_no_key(self):
+        g = self.group(**{"boca-inlet-surf": {"lowSun": True}})
+        self.assertEqual(self.run_pass(g), 2)
+        self.assertNotIn("waterNear", g["cams"][0])
+        self.assertEqual(self.run_pass(self.group(), stills={}), 0)
+        self.assertEqual(self.run_pass(self.group(), key=""), 0)
+
+    def test_crash_inside_is_swallowed(self):
+        with mock.patch.object(cs, "near_median", side_effect=KeyError("boom")), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.run_pass(self.group())  # no exception
+
+
+class NearStillsFromCaptureTests(WithManifest):
+    """capture_beach keeps the stills of fresh boxed reads and never makes a shadow call itself."""
+
+    def test_capture_stashes_boxed_cams_only(self):
+        cs.NEAR_STILLS.clear()
+        cams = [{"id": "boca-inlet-surf", "name": "Inlet", "source": {"kind": "feed", "base": "http://x", "view": "s16"}},
+                {"id": "boca-inlet", "name": "Other", "source": {"kind": "feed", "base": "http://x", "view": "s1"}}]
+
+        def fake_fetch(cam, info=None, feed_cache=None):
+            info["frameAt"] = iso_ago(2)
+            return jpeg() + cam["id"].encode()
+
+        def no_shadow(*a, **k):
+            raise AssertionError("capture_beach must not make a shadow call")
+
+        with mock.patch.object(cs, "fetch_still", fake_fetch), \
+                mock.patch.object(cs, "archive_frame", lambda *a, **k: "stored"), \
+                mock.patch.object(cs, "assess", lambda img: {"level": "none", "water": "clear", "waterPct": 70,
+                                                             "provider": "gemini", "model": "gemini-2.5-flash"}), \
+                mock.patch.object(cs, "assess_near", no_shadow), mock.patch.object(cs.time, "sleep", lambda s: None), \
+                mock.patch.object(cs, "solar_elevation_deg", lambda *a: 45.0), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            cs.capture_beach("boca-raton", cams, dt.datetime.now(ZONE), {"called": False}, {})
+        self.assertEqual(set(cs.NEAR_STILLS), {("boca-raton", "boca-inlet-surf")})
+        self.assertEqual(cs.NEAR_STILLS[("boca-raton", "boca-inlet-surf")]["model"], "gemini-2.5-flash")
+        cs.NEAR_STILLS.clear()
+
+
+class ShadowTestModeTests(unittest.TestCase):
+    def test_reads_truth_frames_prints_and_writes_nothing(self):
+        seen = []
+
+        def fake_assess_with(name, img, prompt=cs.PROMPT, parse=cs._parse_out, model=None, kind=None, single_attempt=False):
+            seen.append((name, model, prompt is cs.NEAR_PROMPT))
+            if parse is cs._parse_near:
+                return {**parse({"level": "a_bit_sandy", "color": "sandy_green"}), "provider": name, "model": model}
+            return {**parse({"seaweed": "none", "water": "clear", "water_pct": 74}), "provider": name, "model": model}
+
+        out = io.StringIO()
+        with tempfile.TemporaryDirectory() as d, env(NEARSHORE_TEST_MODELS="m1,m2"), \
+                mock.patch.object(cs, "API_KEY", "k"), mock.patch.object(cs, "assess_with", fake_assess_with), \
+                mock.patch.object(cs, "OUT_DIR", d), mock.patch.object(cs, "archive_frame", side_effect=AssertionError), \
+                mock.patch.object(cs.time, "sleep", lambda s: None), contextlib.redirect_stdout(out):
+            rc = cs.shadow_test_main(["x", "--shadow-test", str(TRUTH_DIR)])
+            self.assertEqual(os.listdir(d), [])
+        self.assertEqual(rc, 0)
+        text = out.getvalue()
+        self.assertIn("SHADOW_TEST_RESULTS", text)
+        self.assertIn("OLD full-frame (m1): water=clear waterPct=74", text)
+        self.assertEqual(sum(1 for s in seen if s[2]), 6)  # 3 crops x 2 models
+        self.assertEqual(sum(1 for s in seen if not s[2]), 6)  # the old full-frame control, per cam and model
+
+    def test_no_key_is_exit_1(self):
+        with mock.patch.object(cs, "API_KEY", ""), contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(cs.shadow_test_main(["x", "--shadow-test", str(TRUTH_DIR)]), 1)
+
 if __name__ == "__main__":
     unittest.main()
