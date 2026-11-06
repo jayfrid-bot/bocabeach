@@ -199,11 +199,14 @@ describe("buildScorecard — enough data", () => {
     }),
   );
 
-  it("sun: reports error numbers once there are 10 pairs", () => {
+  it("sun: the raw tables score 10+ pairs, but the headline waits for the forecast people see", () => {
     expect(card.sun.ok && card.sun.result.ready).toBe(true);
-    expect(card.headlines.sun).toContain("12 pairs");
-    expect(card.headlines.sun).toContain("Typical miss 10.0 points");
-    expect(card.headlines.sun).toContain("bias +10.0");
+    const md = renderMarkdown(card);
+    expect(md).toContain("| All pairs | 12 | 12 | 10.0 | +10.0 |");
+    // Every row is 3 hours out, so no event has a 30–120 min forecast: the headline says collecting.
+    expect(card.headlines.sun).toContain("Model 2026-10-06.2: collecting — 0 of 10 pairs (0 events with a forecast 30–120 min out).");
+    // The other 7 events come after asOf, so they are not past events yet.
+    expect(card.headlines.sun).toContain("A forecast 30–120 min out exists for 0 of 5 past sunrises (0%).");
   });
 
   it("sun: counts a camera reading with no forecast, and matches within 15 minutes", () => {
@@ -389,5 +392,73 @@ describe("buildScorecard — sun evaluation window", () => {
     const md = renderMarkdown(card);
     expect(md).toContain("last 90 days");
     expect(md).toContain("Lifetime: 400 events and 5000 forecast rows logged since 2026-10-06; 120 rows paired; 9 camera readings.");
+  });
+});
+
+describe("buildScorecard — the fair sun grade", () => {
+  /** Event `n` at `slug`, forecast 60 min out, with the truth from `cam`. */
+  const row = (n: number, slug: string, kind: "sunrise" | "sunset", score: number, observed: number, cam: string): SunPredictionRow => {
+    const eventMs = Date.parse("2026-10-08T10:30:00Z") + n * 86_400_000 + (kind === "sunset" ? 12 * 3_600_000 : 0);
+    return {
+      slug,
+      event_kind: kind,
+      event_iso: new Date(eventMs).toISOString(),
+      as_of_hour_utc: new Date(eventMs - 3_600_000).toISOString(),
+      lead_minutes: 60,
+      score,
+      band: null,
+      algo_version: "2026-10-15.1",
+      observed_score: observed,
+      observed_source: `sun-cam:${cam}:solar`,
+    };
+  };
+  // Holmes reads everything high, White Sands everything low; the order is right on both.
+  const sun = [
+    ...Array.from({ length: 12 }, (_, i) => row(i, "anna-maria-island", "sunset", 20 + i * 6, 70 + i * 2, "holmes-beach-cam")),
+    ...Array.from({ length: 12 }, (_, i) => row(i, "boca-raton", "sunrise", 95, 5 + i, "deerfield-beach-cam")),
+  ];
+  const afterglow = Array.from({ length: 12 }, (_, i) => ({
+    slug: "boca-raton",
+    event_kind: "sunset" as const,
+    event_date_local: "2026-10-08",
+    cam_id: "deerfield-beach-cam",
+    event_iso: new Date(Date.parse("2026-10-08T22:30:00Z") + i * 86_400_000).toISOString(),
+    view: "antisolar",
+    observed_score: 50,
+    scored_at: "2026-10-30T00:00:00Z",
+  }));
+  const card = buildScorecard(
+    emptyRaw({ asOf: "2026-11-01T00:00:00.000Z", sunPredictions: sun, sunObservations: afterglow }),
+    { currentSunVersion: "2026-11-05.1", camFacing: (id) => (id === "holmes-beach-cam" ? "west" : "east") },
+  );
+  const md = renderMarkdown(card);
+
+  it("puts the live version first, collecting, then the fair grade of the old one", () => {
+    expect(card.headlines.sun).toMatch(/^Model 2026-11-05\.1 \(live now\): collecting — 0 of 10 pairs/);
+    expect(card.headlines.sun).toContain("Model 2026-10-15.1: 24 pairs; fair rank correlation");
+    expect(md).toContain("### The fair grade, by model version");
+    expect(md.indexOf("| 2026-11-05.1 (live now) |")).toBeLessThan(md.indexOf("| 2026-10-15.1 |"));
+  });
+
+  it("shows the per-cam correlation and the coverage table", () => {
+    expect(md).toContain("| 2026-10-15.1 | holmes-beach-cam | Sunset | 12 | +1.00 |");
+    // The Deerfield forecast never moved (95 every day): no spread, no correlation.
+    expect(md).toContain("| 2026-10-15.1 | deerfield-beach-cam | Sunrise | 12 | no spread |");
+    expect(md).toContain("| Sunrise | 12 | 12 | 100% | 12 | 12 | 100% |");
+  });
+
+  it("labels the old tables as raw-scale and lists the fixes from the numbers", () => {
+    expect(md).toContain("### Error overall and by group (raw camera scale)");
+    expect(md).toContain("### Our call versus what happened (raw camera scale)");
+    expect(md).toContain("### What to fix next");
+    expect(md).toContain("- Model 2026-10-15.1 runs high when it says Amazing: bias +84.5 points on 12 events (raw camera scale).");
+  });
+
+  it("keeps the afterglow apart, in its own section, out of the solar numbers", () => {
+    expect(md).toContain("### East-coast sunsets: the afterglow over the ocean");
+    expect(md).toContain("### Gulf sunrises: the afterglow over the Gulf");
+    // 12 afterglow readings with no forecast event: unmatched, and no sunset pairs appear in the fair grade.
+    expect(card.sun.ok && card.sun.result.afterglow?.sunset).toMatchObject({ readings: 12, unmatched: 12 });
+    expect(card.sun.ok && card.sun.result.pairedEvents).toBe(24);
   });
 });

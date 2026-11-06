@@ -96,6 +96,9 @@ export interface SunPredictionRow {
   algo_version: string;
   observed_score: number | null;
   observed_source: string | null;
+  /** breakdown_json.satellite.antiMidHighPct: the satellite's mid + high cloud along the
+   *  path AWAY from the sun (null or absent when the row had no satellite read). */
+  anti_mid_high_pct?: number | null;
 }
 
 /** lib/sunQuality.ts band cutoffs: dud <20, plain 20-44, good 45-69, vivid 70-89, epic 90+. */
@@ -252,16 +255,29 @@ function callCell(
   ready: boolean,
   rateMin: number,
 ): CallCell {
+  return cellOf(
+    cutoff,
+    pairs.map((p) => ({ called: p.pred >= cutoff, real: p.obs >= cutoff })),
+    ready,
+    rateMin,
+  );
+}
+
+/** A hit/false-alarm/miss table from (did we call it, did it happen) pairs. */
+function cellOf(
+  cutoff: number,
+  items: { called: boolean; real: boolean }[],
+  ready: boolean,
+  rateMin: number,
+): CallCell {
   let hits = 0;
   let falseAlarms = 0;
   let misses = 0;
   let correctNegatives = 0;
-  for (const p of pairs) {
-    const called = p.pred >= cutoff;
-    const real = p.obs >= cutoff;
-    if (called && real) hits++;
-    else if (called) falseAlarms++;
-    else if (real) misses++;
+  for (const p of items) {
+    if (p.called && p.real) hits++;
+    else if (p.called) falseAlarms++;
+    else if (p.real) misses++;
     else correctNegatives++;
   }
   const calls = hits + falseAlarms;
@@ -349,9 +365,10 @@ export function sunColorMetrics(
     .map(([k, v]) => errorGroup(k, v, min))
     .sort((a, b) => b.events - a.events || (a.key < b.key ? -1 : 1));
 
+  // Newest model version first.
   const byAlgo = [...groupBy(paired, (r) => r.algo_version)]
     .map(([k, v]) => errorGroup(k, v, min))
-    .sort((a, b) => (a.key < b.key ? -1 : 1));
+    .sort((a, b) => compareAlgoVersions(b.key, a.key));
 
   const byView = [...groupBy(paired, (r) => sunViewOf(r.observed_source))]
     .map(([k, v]) => errorGroup(k, v, min))
@@ -412,6 +429,597 @@ export function sunColorMetrics(
     },
   };
 }
+
+// ============================================================================
+// 1b. Sun color: the fair grade, coverage, afterglow and the fix list
+// ============================================================================
+//
+// Each cam has its own raw scale: on the same Anna Maria sunsets Holmes Beach
+// averages 74 and White Sands 5, and a thin horizon strip scores a clear sky's
+// warm band at 70–97 (docs/benchmarks/2026-11-05-sun-recalibration). So a raw
+// "Great on the cam" is mostly a property of the cam. The fair grade asks only
+// about ORDER inside one cam: did the skies we scored higher really look better
+// on that cam? And it grades a "Great" call against the cam's own top 25%.
+
+/** The forecast people see opens this many minutes before the event. */
+export const HEADLINE_LEAD_TARGET_MIN = 60;
+/** The headline forecast is the row closest to 60 min ahead, within this lead range (inclusive). */
+export const HEADLINE_LEAD_MIN = 30;
+export const HEADLINE_LEAD_MAX = 120;
+/** A cam's rank correlation, and its own scale, count once it has this many events. */
+export const MIN_CAM_RANK_EVENTS = 8;
+/** A real "Great" is in the cam's own top 25% for that event kind; a real "Amazing" in its top 10%. */
+export const TOP_TIER = { great: 0.75, amazing: 0.9 } as const;
+/** "What to fix next": a band's bias beyond this many points is listed. */
+export const FIX_BIAS_PTS = 15;
+/** "What to fix next": an event kind with a 30–120 min forecast on less than this share is listed. */
+export const FIX_MIN_COVERAGE = 0.5;
+/** "What to fix next": a cam whose rank correlation is at or below this is listed. */
+export const FIX_CAM_RHO = -0.3;
+/** "What to fix next": an afterglow correlation at or beyond this size is listed as a signal. */
+export const FIX_SIGNAL_RHO = 0.3;
+/** A camera reading belongs to a forecast event within this much time (the server's own rule). */
+const MATCH_MS = 15 * 60_000;
+
+type SunKind = "sunrise" | "sunset";
+const SUN_KINDS: readonly SunKind[] = ["sunrise", "sunset"];
+const BAND_NAME: Record<string, string> = { dud: "Poor", plain: "Fair", good: "Good", vivid: "Great", epic: "Amazing" };
+
+/** Ranks 1..n; tied values share the average of their ranks. */
+function averageRanks(xs: number[]): number[] {
+  const order = xs.map((v, i) => [v, i] as const).sort((a, b) => a[0] - b[0]);
+  const ranks = new Array<number>(xs.length);
+  for (let i = 0; i < order.length; ) {
+    let j = i;
+    while (j + 1 < order.length && order[j + 1][0] === order[i][0]) j++;
+    const r = (i + j) / 2 + 1;
+    for (let k = i; k <= j; k++) ranks[order[k][1]] = r;
+    i = j + 1;
+  }
+  return ranks;
+}
+
+/**
+ * Spearman rank correlation: Pearson on average ranks, so ties are handled.
+ * null with fewer than 3 pairs, or when either side has no spread.
+ */
+export function spearman(xs: number[], ys: number[]): number | null {
+  const n = Math.min(xs.length, ys.length);
+  if (n < 3) return null;
+  const rx = averageRanks(xs.slice(0, n));
+  const ry = averageRanks(ys.slice(0, n));
+  const mx = mean(rx) as number;
+  const my = mean(ry) as number;
+  let sxy = 0;
+  let sxx = 0;
+  let syy = 0;
+  for (let i = 0; i < n; i++) {
+    sxy += (rx[i] - mx) * (ry[i] - my);
+    sxx += (rx[i] - mx) ** 2;
+    syy += (ry[i] - my) ** 2;
+  }
+  if (sxx === 0 || syy === 0) return null;
+  return sxy / Math.sqrt(sxx * syy);
+}
+
+/** Each value's mid-rank percentile in its own list, 0 to 1: (values below + half the ties) / n. */
+export function midRankPercentiles(xs: number[]): number[] {
+  const n = xs.length;
+  return xs.map((v) => {
+    let below = 0;
+    let same = 0;
+    for (const x of xs) {
+      if (x < v) below++;
+      else if (x === v) same++;
+    }
+    return (below + same / 2) / n;
+  });
+}
+
+/** Model versions "YYYY-MM-DD.N" by date, then N as a number. Use with sort for oldest first. */
+export function compareAlgoVersions(a: string, b: string): number {
+  const pa = /^(\d{4}-\d{2}-\d{2})\.(\d+)$/.exec(a);
+  const pb = /^(\d{4}-\d{2}-\d{2})\.(\d+)$/.exec(b);
+  if (pa && pb && pa[1] !== pb[1]) return pa[1] < pb[1] ? -1 : 1;
+  if (pa && pb) return Number(pa[2]) - Number(pb[2]);
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * The forecast people see: the scored row closest to 60 minutes before the event,
+ * with a lead from 30 to 120 minutes. A tie goes to the shorter lead (the newer
+ * forecast). null when the event has no such row.
+ */
+export function headlineRowOf(eventRows: SunPredictionRow[]): SunPredictionRow | null {
+  let best: SunPredictionRow | null = null;
+  for (const r of eventRows) {
+    if (!finite(r.score) || !(r.lead_minutes >= HEADLINE_LEAD_MIN && r.lead_minutes <= HEADLINE_LEAD_MAX)) continue;
+    if (!best) {
+      best = r;
+      continue;
+    }
+    const d = Math.abs(r.lead_minutes - HEADLINE_LEAD_TARGET_MIN);
+    const bd = Math.abs(best.lead_minutes - HEADLINE_LEAD_TARGET_MIN);
+    if (d < bd || (d === bd && r.lead_minutes < best.lead_minutes)) best = r;
+  }
+  return best;
+}
+
+/** "sun-cam:holmes-beach-cam:solar" -> "holmes-beach-cam". Any other source (afterglow, hand labels) -> null. */
+export function solarCamOf(observedSource: string | null): string | null {
+  const m = /^sun-cam:([^:]+):solar$/.exec(observedSource ?? "");
+  return m ? m[1] : null;
+}
+
+/**
+ * The event's one truth cam and its score. The server already picked it when it
+ * filled the rows (solar view only; smallest distance_mi, then cam_id; see
+ * docs/SUN_CAM_CHECK.md "Filling the predictions"), so every row of an event
+ * carries the same one. Like observedOf above, the preferred row is read first.
+ */
+function solarTruthOf(
+  eventRows: SunPredictionRow[],
+  prefer: SunPredictionRow | null,
+): { score: number; cam: string } | null {
+  const ok = (r: SunPredictionRow) => finite(r.observed_score) && solarCamOf(r.observed_source) != null;
+  const row = prefer && ok(prefer) ? prefer : eventRows.find(ok);
+  return row ? { score: row.observed_score as number, cam: solarCamOf(row.observed_source) as string } : null;
+}
+
+export interface CamRank {
+  cam: string;
+  kind: SunKind;
+  /** Events with a 30–120 min forecast and this cam as the truth. */
+  pairs: number;
+  /** Spearman between our forecast and this cam's score. null under the minimum or with no spread. */
+  rho: number | null;
+  collecting: string | null;
+}
+
+export interface RankSummary {
+  /** Average of the per-cam correlations, weighted by each cam's pairs. Only cams at the minimum count. */
+  rho: number | null;
+  /** Events on the cams that count. */
+  events: number;
+  cams: number;
+}
+
+export interface FairVersion {
+  version: string;
+  /** The model version live in the app now (passed in by the runner). */
+  current: boolean;
+  /** Forecast rows loaded with this version (any lead, any event). */
+  rows: number;
+  /** Past events whose 30–120 min forecast came from this version. */
+  events: number;
+  /** Of those, the events with a solar camera reading. */
+  pairs: number;
+  ready: boolean;
+  collecting: string | null;
+  rank: RankSummary & { byKind: Record<SunKind, RankSummary>; collecting: string | null };
+  cams: CamRank[];
+  /** Calls against each cam's own top tier. Only events on a cam with its own scale (8+ events) count. */
+  tiers: { events: number; great: CallCell; amazing: CallCell };
+  /** The 30–120 min forecast against the raw camera score (raw scale: read with care). */
+  raw: ErrorGroup;
+  rawByBand: ErrorGroup[];
+}
+
+export interface SunCoverage {
+  kind: SunKind;
+  /** Past events loaded. */
+  pastEvents: number;
+  /** Of those, the events with a forecast 30–120 min before them. */
+  withHeadline: number;
+  share: number | null;
+  /** Past events with a solar camera reading. */
+  pairedEvents: number;
+  pairedWithHeadline: number;
+  pairedShare: number | null;
+}
+
+export interface CamScale {
+  cam: string;
+  kind: SunKind;
+  /** Events this cam is the truth for (all versions, any forecast). */
+  events: number;
+  /** Whether the cam has enough events for its own percentiles. */
+  counted: boolean;
+}
+
+export interface SunFairResult {
+  min: number;
+  camMin: number;
+  versions: FairVersion[];
+  coverage: SunCoverage[];
+  camScales: CamScale[];
+}
+
+function rankSummary(cams: CamRank[]): RankSummary {
+  const used = cams.filter((c) => c.rho != null);
+  const events = used.reduce((a, c) => a + c.pairs, 0);
+  return {
+    rho: events > 0 ? used.reduce((a, c) => a + (c.rho as number) * c.pairs, 0) / events : null,
+    events,
+    cams: used.length,
+  };
+}
+
+/**
+ * The fair sun grade, one block per model version (newest first): the forecast
+ * people see (closest to 60 min ahead, 30–120 min) against the event's one solar
+ * truth cam, by rank inside each cam and against each cam's own top tier. Also
+ * the coverage of that forecast per event kind. Afterglow never enters.
+ */
+export function sunFairMetrics(
+  rows: SunPredictionRow[],
+  opts: { nowMs?: number; currentVersion?: string; min?: number; camMin?: number; rateMin?: number } = {},
+): SunFairResult {
+  const min = opts.min ?? MIN_SUN_EVENTS;
+  const camMin = opts.camMin ?? MIN_CAM_RANK_EVENTS;
+  const rateMin = opts.rateMin ?? MIN_RATE_CALLS;
+
+  type Pair = { key: string; kind: SunKind; cam: string; pred: number; row: SunPredictionRow };
+  const coverage = new Map<SunKind, SunCoverage>(
+    SUN_KINDS.map((k) => [
+      k,
+      { kind: k, pastEvents: 0, withHeadline: 0, share: null, pairedEvents: 0, pairedWithHeadline: 0, pairedShare: null },
+    ]),
+  );
+  const scale = new Map<string, { key: string; obs: number }[]>(); // cam|kind -> truth per event
+  const eventsByVersion = new Map<string, number>();
+  const pairsByVersion = new Map<string, Pair[]>();
+
+  for (const [key, evRows] of groupBy(rows, eventKey)) {
+    const first = evRows[0];
+    if (opts.nowMs != null && Date.parse(first.event_iso) > opts.nowMs) continue;
+    const kind = first.event_kind;
+    const cov = coverage.get(kind);
+    if (!cov) continue;
+    const head = headlineRowOf(evRows);
+    const truth = solarTruthOf(evRows, head);
+    cov.pastEvents++;
+    if (head) cov.withHeadline++;
+    if (truth) {
+      cov.pairedEvents++;
+      if (head) cov.pairedWithHeadline++;
+      const sk = `${truth.cam}|${kind}`;
+      const a = scale.get(sk) ?? [];
+      a.push({ key, obs: truth.score });
+      scale.set(sk, a);
+    }
+    if (!head) continue;
+    eventsByVersion.set(head.algo_version, (eventsByVersion.get(head.algo_version) ?? 0) + 1);
+    if (!truth) continue;
+    const list = pairsByVersion.get(head.algo_version) ?? [];
+    list.push({ key, kind, cam: truth.cam, pred: head.score as number, row: { ...head, observed_score: truth.score } });
+    pairsByVersion.set(head.algo_version, list);
+  }
+  for (const c of coverage.values()) {
+    c.share = share(c.withHeadline, c.pastEvents);
+    c.pairedShare = share(c.pairedWithHeadline, c.pairedEvents);
+  }
+
+  // Each cam's own scale: the percentile of every event it is the truth for.
+  const pctOf = new Map<string, number>();
+  const camScales: CamScale[] = [];
+  for (const [sk, list] of scale) {
+    const [cam, kind] = sk.split("|") as [string, SunKind];
+    const counted = list.length >= camMin;
+    camScales.push({ cam, kind, events: list.length, counted });
+    if (!counted) continue;
+    const p = midRankPercentiles(list.map((x) => x.obs));
+    list.forEach((x, i) => pctOf.set(x.key, p[i]));
+  }
+  camScales.sort((a, b) => (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : a.cam < b.cam ? -1 : a.cam > b.cam ? 1 : 0));
+
+  const rowsByVersion = new Map<string, number>();
+  for (const r of rows) rowsByVersion.set(r.algo_version, (rowsByVersion.get(r.algo_version) ?? 0) + 1);
+  const versionSet = new Set([...rowsByVersion.keys()]);
+  if (opts.currentVersion) versionSet.add(opts.currentVersion);
+  const bandOf = (r: SunPredictionRow) => r.band ?? sunBandOf(r.score as number);
+
+  const versions: FairVersion[] = [...versionSet]
+    .sort((a, b) => compareAlgoVersions(b, a))
+    .map((version) => {
+      const pairs = pairsByVersion.get(version) ?? [];
+      const ready = pairs.length >= min;
+      const cams: CamRank[] = [...groupBy(pairs, (p) => `${p.cam}|${p.kind}`)]
+        .map(([k, ps]) => {
+          const [cam, kind] = k.split("|") as [string, SunKind];
+          const enough = ps.length >= camMin;
+          const rho = enough ? spearman(ps.map((p) => p.pred), ps.map((p) => p.row.observed_score as number)) : null;
+          return {
+            cam,
+            kind,
+            pairs: ps.length,
+            rho: rho == null ? null : Math.round(rho * 100) / 100,
+            collecting: !enough ? collectingText(ps.length, camMin, "pairs") : rho == null ? "no spread" : null,
+          };
+        })
+        .sort((a, b) => (a.kind < b.kind ? -1 : a.kind > b.kind ? 1 : b.pairs - a.pairs || (a.cam < b.cam ? -1 : 1)));
+      const all = rankSummary(cams);
+      const most = Math.max(0, ...cams.map((c) => c.pairs));
+      const rankCollecting = !ready
+        ? collectingText(pairs.length, min, "pairs")
+        : all.rho == null
+          ? collectingText(most, camMin, "pairs on the best cam")
+          : null;
+      const byKind = Object.fromEntries(SUN_KINDS.map((k) => [k, rankSummary(cams.filter((c) => c.kind === k))])) as Record<
+        SunKind,
+        RankSummary
+      >;
+      const round2 = (v: number | null) => (v == null ? null : Math.round(v * 100) / 100);
+      const gate = (s: RankSummary): RankSummary => ({ ...s, rho: ready ? round2(s.rho) : null });
+
+      const tierPairs = pairs.filter((p) => pctOf.has(p.key));
+      const tiersReady = ready && tierPairs.length >= min;
+      const items = (cut: number, level: number) =>
+        tierPairs.map((p) => ({ called: p.pred >= cut, real: (pctOf.get(p.key) as number) >= level }));
+
+      const headRows = pairs.map((p) => p.row);
+      const byBandMap = groupBy(headRows, bandOf);
+      return {
+        version,
+        current: version === opts.currentVersion,
+        rows: rowsByVersion.get(version) ?? 0,
+        events: eventsByVersion.get(version) ?? 0,
+        pairs: pairs.length,
+        ready,
+        collecting: ready ? null : collectingText(pairs.length, min, "pairs"),
+        rank: { ...gate(all), byKind: { sunrise: gate(byKind.sunrise), sunset: gate(byKind.sunset) }, collecting: rankCollecting },
+        cams,
+        tiers: {
+          events: tierPairs.length,
+          great: cellOf(GREAT_CUTOFF, items(GREAT_CUTOFF, TOP_TIER.great), tiersReady, rateMin),
+          amazing: cellOf(AMAZING_CUTOFF, items(AMAZING_CUTOFF, TOP_TIER.amazing), tiersReady, rateMin),
+        },
+        raw: errorGroup("all", headRows, min),
+        rawByBand: (["dud", "plain", "good", "vivid", "epic"] as const)
+          .filter((b) => byBandMap.has(b))
+          .map((b) => errorGroup(b, byBandMap.get(b)!, min)),
+      };
+    });
+
+  return { min, camMin, versions, coverage: SUN_KINDS.map((k) => coverage.get(k) as SunCoverage), camScales };
+}
+
+// --- Afterglow ---------------------------------------------------------------
+
+/** One afterglow (antisolar) reading from sun_event_observations. */
+export interface AfterglowReading {
+  slug: string;
+  event_kind: SunKind;
+  cam_id: string;
+  event_iso: string;
+  view: string;
+  observed_score: number;
+}
+
+export interface AfterglowCell {
+  version: string;
+  n: number;
+  rho: number | null;
+  collecting: string | null;
+}
+
+export interface AfterglowCam {
+  cam: string;
+  facing: "east" | "west";
+  /** Afterglow readings from this cam in the window. */
+  readings: number;
+  /** Of those, the readings that match a forecast event (same beach and kind, within 15 min). */
+  matched: number;
+  /** Our 30–120 min forecast against the afterglow, per model version (newest first). */
+  headline: AfterglowCell[];
+  /** Our call (latest forecast 60+ min ahead) against the afterglow, per model version. */
+  call: AfterglowCell[];
+  /** The satellite's mid + high cloud away from the sun against the afterglow (any version). */
+  cloud: { n: number; rho: number | null; collecting: string | null };
+}
+
+export interface AfterglowSide {
+  /** sunset: east cams look away from the sun, over the ocean. sunrise: Gulf cams look away from the sun, over the Gulf. */
+  kind: SunKind;
+  readings: number;
+  /** Readings that match no forecast event. */
+  unmatched: number;
+  /** Readings from a cam whose registry facing does not fit this side (left out). */
+  wrongFacing: number;
+  cams: AfterglowCam[];
+}
+
+function afterglowCell(version: string, xs: number[], ys: number[], camMin: number): AfterglowCell {
+  const n = xs.length;
+  const rho = n >= camMin ? spearman(xs, ys) : null;
+  return {
+    version,
+    n,
+    rho: rho == null ? null : Math.round(rho * 100) / 100,
+    collecting: n < camMin ? collectingText(n, camMin, "events") : rho == null ? "no spread" : null,
+  };
+}
+
+/** The event's satellite read: the row with an anti-solar cloud value closest to the event. */
+function satelliteAntiOf(eventRows: SunPredictionRow[]): number | null {
+  let best: SunPredictionRow | null = null;
+  for (const r of eventRows) {
+    if (!finite(r.anti_mid_high_pct)) continue;
+    if (!best || Math.abs(r.lead_minutes) < Math.abs(best.lead_minutes)) best = r;
+  }
+  return best ? (best.anti_mid_high_pct as number) : null;
+}
+
+/**
+ * Afterglow: what a cam saw when it looked AWAY from the sun. For an east-coast
+ * beach at sunset, that afterglow over the ocean is what a beachgoer sees. It is
+ * graded here by rank against our sunset forecast and the satellite's anti-solar
+ * mid/high cloud, per cam. It is never the truth for an event's color and never
+ * enters the solar numbers. `facingOf` comes from config/sun-cams.json; without
+ * it the view and the event kind imply the facing.
+ */
+export function afterglowMetrics(
+  rows: SunPredictionRow[],
+  readings: AfterglowReading[],
+  opts: { facingOf?: (camId: string) => "east" | "west" | undefined; nowMs?: number; camMin?: number } = {},
+): { sunset: AfterglowSide; sunrise: AfterglowSide } {
+  const camMin = opts.camMin ?? MIN_CAM_RANK_EVENTS;
+  const byEvent = groupBy(rows, eventKey);
+  const index = new Map<string, { ms: number; key: string }[]>();
+  for (const [key, evRows] of byEvent) {
+    const r = evRows[0];
+    const k = `${r.slug}|${r.event_kind}`;
+    const a = index.get(k) ?? [];
+    a.push({ ms: Date.parse(r.event_iso), key });
+    index.set(k, a);
+  }
+  const findEvent = (o: AfterglowReading): SunPredictionRow[] | null => {
+    const t = Date.parse(o.event_iso);
+    let best: { d: number; key: string } | null = null;
+    for (const e of index.get(`${o.slug}|${o.event_kind}`) ?? []) {
+      const d = Math.abs(e.ms - t);
+      if (d <= MATCH_MS + 10 && (!best || d < best.d)) best = { d, key: e.key };
+    }
+    return best ? (byEvent.get(best.key) as SunPredictionRow[]) : null;
+  };
+
+  const side = (kind: SunKind): AfterglowSide => {
+    const want: "east" | "west" = kind === "sunset" ? "east" : "west";
+    const mine = readings.filter(
+      (o) =>
+        o.view === "antisolar" &&
+        o.event_kind === kind &&
+        finite(o.observed_score) &&
+        (opts.nowMs == null || Date.parse(o.event_iso) <= opts.nowMs),
+    );
+    let unmatched = 0;
+    let wrongFacing = 0;
+    type Item = { head: SunPredictionRow | null; call: SunPredictionRow | null; anti: number | null; obs: number };
+    const perCam = new Map<string, { readings: number; items: Item[] }>();
+    for (const o of mine) {
+      const facing = opts.facingOf?.(o.cam_id) ?? want;
+      if (facing !== want) {
+        wrongFacing++;
+        continue;
+      }
+      const c = perCam.get(o.cam_id) ?? { readings: 0, items: [] };
+      c.readings++;
+      perCam.set(o.cam_id, c);
+      const ev = findEvent(o);
+      if (!ev) {
+        unmatched++;
+        continue;
+      }
+      c.items.push({ head: headlineRowOf(ev), call: callOf(ev), anti: satelliteAntiOf(ev), obs: o.observed_score });
+    }
+    const cells = (items: Item[], pick: (i: Item) => SunPredictionRow | null): AfterglowCell[] => {
+      const byV = new Map<string, { x: number[]; y: number[] }>();
+      for (const i of items) {
+        const r = pick(i);
+        if (!r) continue;
+        const a = byV.get(r.algo_version) ?? { x: [], y: [] };
+        a.x.push(r.score as number);
+        a.y.push(i.obs);
+        byV.set(r.algo_version, a);
+      }
+      return [...byV.keys()]
+        .sort((a, b) => compareAlgoVersions(b, a))
+        .map((v) => afterglowCell(v, byV.get(v)!.x, byV.get(v)!.y, camMin));
+    };
+    const cams: AfterglowCam[] = [...perCam]
+      .map(([cam, c]) => {
+        const sat = c.items.filter((i) => i.anti != null);
+        const cloud = afterglowCell("any", sat.map((i) => i.anti as number), sat.map((i) => i.obs), camMin);
+        return {
+          cam,
+          facing: want,
+          readings: c.readings,
+          matched: c.items.length,
+          headline: cells(c.items, (i) => i.head),
+          call: cells(c.items, (i) => i.call),
+          cloud: { n: cloud.n, rho: cloud.rho, collecting: cloud.collecting },
+        };
+      })
+      .sort((a, b) => b.readings - a.readings || (a.cam < b.cam ? -1 : 1));
+    return { kind, readings: mine.length - wrongFacing, unmatched, wrongFacing, cams };
+  };
+  return { sunset: side("sunset"), sunrise: side("sunrise") };
+}
+
+// --- What to fix next ---------------------------------------------------------
+
+const fmtSigned = (v: number, d = 1): string => `${v > 0 ? "+" : ""}${v.toFixed(d)}`;
+const fmtPct = (v: number): string => `${Math.round(v * 100)}%`;
+
+/**
+ * "What to fix next": plain rules over the computed numbers, nothing else. Each
+ * line quotes the number that tripped it. Rules (README "What to fix next"):
+ * the live model still collecting; a forecast band whose raw bias is beyond
+ * ±15 points on 10+ events; a version that ranks skies the wrong way round
+ * (fair correlation at or below 0); a cam at or below −0.3; Great calls that
+ * land in the cam's top 25% less often than chance (25%); an event kind with
+ * a 30–120 min forecast on under 50% of events; an afterglow correlation of
+ * ±0.3 or more on 8+ events (evidence for a future afterglow forecast).
+ */
+export function sunFixList(
+  fair: SunFairResult,
+  afterglow: { sunset: AfterglowSide; sunrise: AfterglowSide } | null,
+): string[] {
+  const out: string[] = [];
+  for (const v of fair.versions) {
+    if (v.current && !v.ready) {
+      out.push(
+        `Model ${v.version} (live now) is still collecting: ${v.pairs} of ${fair.min} pairs with a forecast 30–120 min out (${plainCount(v.events, "event")} so far). Check again next week.`,
+      );
+    }
+    for (const g of v.rawByBand) {
+      if (g.bias == null || Math.abs(g.bias) <= FIX_BIAS_PTS) continue;
+      out.push(
+        `Model ${v.version} runs ${g.bias > 0 ? "high" : "low"} when it says ${BAND_NAME[g.key] ?? g.key}: bias ${fmtSigned(g.bias)} points on ${plainCount(g.events, "event")} (raw camera scale).`,
+      );
+    }
+    if (v.rank.rho != null && v.rank.rho <= 0) {
+      out.push(
+        `Model ${v.version} ranks skies the wrong way round: fair rank correlation ${fmtSigned(v.rank.rho, 2)} over ${plainCount(v.rank.events, "event")} on ${plainCount(v.rank.cams, "cam")}.`,
+      );
+    }
+    if (v.ready) {
+      for (const c of v.cams) {
+        if (c.rho == null || c.rho > FIX_CAM_RHO) continue;
+        out.push(`Model ${v.version} ranks ${c.kind}s backwards at ${c.cam}: correlation ${fmtSigned(c.rho, 2)} on ${plainCount(c.pairs, "event")}.`);
+      }
+    }
+    const hr = v.tiers.great.hitRate;
+    if (hr.value != null && hr.value < 1 - TOP_TIER.great) {
+      out.push(
+        `Model ${v.version}'s Great calls land in the cam's own top 25% only ${fmtPct(hr.value)} of the time (${v.tiers.great.hits} of ${v.tiers.great.calls}); chance alone gives 25%.`,
+      );
+    }
+  }
+  for (const c of fair.coverage) {
+    if (c.share == null || c.share >= FIX_MIN_COVERAGE) continue;
+    out.push(
+      `${c.kind === "sunrise" ? "Sunrise" : "Sunset"} coverage is low: ${fmtPct(c.share)} of ${plainCount(c.pastEvents, `past ${c.kind}`)} have a forecast 30–120 min before the event (${c.withHeadline})` +
+        (c.pairedShare != null
+          ? `; of those with a camera reading, ${c.pairedWithHeadline} of ${c.pairedEvents} (${fmtPct(c.pairedShare)}).`
+          : "."),
+    );
+  }
+  if (afterglow) {
+    for (const s of [afterglow.sunset, afterglow.sunrise]) {
+      for (const cam of s.cams) {
+        const r = cam.cloud.rho;
+        if (r == null || Math.abs(r) < FIX_SIGNAL_RHO) continue;
+        out.push(
+          `Afterglow signal at ${cam.cam} (${s.kind}s): the satellite's mid/high cloud away from the sun has a rank correlation of ${fmtSigned(r, 2)} with the afterglow on ${plainCount(cam.cloud.n, "event")}. A candidate input for an afterglow forecast.`,
+        );
+      }
+    }
+  }
+  return out;
+}
+
+const plainCount = (n: number, one: string): string => `${n} ${n === 1 ? one : `${one}s`}`;
 
 // ============================================================================
 // Hourly archive rows (shared by the rain, window, safety and health metrics)

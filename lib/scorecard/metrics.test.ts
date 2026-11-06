@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  afterglowMetrics,
   collectingText,
+  compareAlgoVersions,
   dataHealth,
+  headlineRowOf,
+  midRankPercentiles,
+  solarCamOf,
+  spearman,
+  sunFairMetrics,
+  sunFixList,
   dayCoverageOk,
   dominantFlag,
   forecastStateAt,
@@ -14,6 +22,7 @@ import {
   sunBandOf,
   sunColorMetrics,
   windowMetrics,
+  type AfterglowReading,
   type HealthRow,
   type HourlyRow,
   type RainBlock,
@@ -191,7 +200,8 @@ describe("sunColorMetrics — error numbers", () => {
     expect(deer.events).toBe(1);
     expect(deer.mae).toBeNull();
     expect(deer.collecting).toBe("collecting — 1 of 10 pairs");
-    expect(m.byAlgo.map((g) => g.key)).toEqual(["2026-10-06.2", "2026-11-01.1"]);
+    // Newest model version first.
+    expect(m.byAlgo.map((g) => g.key)).toEqual(["2026-11-01.1", "2026-10-06.2"]);
     // The big group is still reported.
     expect(m.byBeach[0].key).toBe("boca-raton");
     expect(m.byBeach[0].mae).not.toBeNull();
@@ -1371,5 +1381,293 @@ describe("dataHealth", () => {
     expect(r.camsStale.map((c) => c.slug)).toEqual(["stale"]);
     expect(r.sunObs?.count).toBe(1);
     expect(r.sunPredictionsLast24h).toBe(216);
+  });
+});
+
+// --- Fair sun grade -----------------------------------------------------------
+
+describe("spearman", () => {
+  it("is +1 for the same order and −1 for the reverse, whatever the scale", () => {
+    expect(spearman([1, 2, 3, 4], [5, 70, 80, 99])).toBeCloseTo(1, 10);
+    expect(spearman([1, 2, 3, 4], [9, 7, 3, 1])).toBeCloseTo(-1, 10);
+  });
+
+  it("handles ties with average ranks", () => {
+    // ranks x: 1, 2.5, 2.5, 4; y: 1, 2, 3, 4
+    expect(spearman([1, 5, 5, 9], [1, 2, 3, 4])).toBeCloseTo(0.9486833, 6);
+  });
+
+  it("is null with under 3 pairs or no spread", () => {
+    expect(spearman([1, 2], [1, 2])).toBeNull();
+    expect(spearman([5, 5, 5], [1, 2, 3])).toBeNull();
+  });
+});
+
+describe("midRankPercentiles", () => {
+  it("puts each value at the middle of its own rank", () => {
+    expect(midRankPercentiles([10, 20, 30, 40])).toEqual([0.125, 0.375, 0.625, 0.875]);
+  });
+
+  it("gives tied values the same percentile", () => {
+    expect(midRankPercentiles([0, 0, 50, 100])).toEqual([0.25, 0.25, 0.625, 0.875]);
+  });
+});
+
+describe("compareAlgoVersions", () => {
+  it("orders by date, then by the number after the dot", () => {
+    const vs = ["2026-10-15.1", "2026-11-05.1", "2026-10-06.10", "2026-10-06.2"];
+    expect([...vs].sort(compareAlgoVersions)).toEqual(["2026-10-06.2", "2026-10-06.10", "2026-10-15.1", "2026-11-05.1"]);
+  });
+});
+
+describe("headlineRowOf", () => {
+  it("takes the scored row closest to 60 min ahead, within 30–120 min", () => {
+    const rows = [pred(0, 150, 10, null), pred(0, 100, 20, null), pred(0, 45, 30, null), pred(0, 20, 40, null)];
+    expect(headlineRowOf(rows)?.score).toBe(30);
+  });
+
+  it("breaks a tie toward the shorter lead, and skips unscored rows", () => {
+    expect(headlineRowOf([pred(0, 90, 10, null), pred(0, 30, 20, null)])?.score).toBe(20);
+    expect(headlineRowOf([pred(0, 60, null, null), pred(0, 100, 15, null)])?.score).toBe(15);
+  });
+
+  it("is null when no row is 30–120 min ahead (both ends count)", () => {
+    expect(headlineRowOf([pred(0, 29, 10, null), pred(0, 121, 10, null)])).toBeNull();
+    expect(headlineRowOf([pred(0, 120, 10, null)])?.score).toBe(10);
+  });
+});
+
+describe("solarCamOf", () => {
+  it("reads the cam of a solar reading only", () => {
+    expect(solarCamOf("sun-cam:holmes-beach-cam:solar")).toBe("holmes-beach-cam");
+    expect(solarCamOf("sun-cam:deerfield-beach-cam:antisolar")).toBeNull();
+    expect(solarCamOf("manual")).toBeNull();
+    expect(solarCamOf(null)).toBeNull();
+  });
+});
+
+describe("sunFairMetrics", () => {
+  const NEW = "2026-11-05.1";
+  const OLD = "2026-10-15.1";
+  // Two cams with very different raw scales. Our forecast orders the skies
+  // right on both. Cam "dim" scores 0–22, cam "bright" 72–94.
+  const twoCams = (version = OLD, start = 0) =>
+    Array.from({ length: 12 }, (_, i) => [
+      pred(start + i, 60, 20 + i * 6, i * 2, { observed_source: "sun-cam:dim:solar", algo_version: version }),
+      pred(start + i, 60, 20 + i * 6, 72 + i * 2, {
+        slug: "anna-maria-island",
+        event_kind: "sunset",
+        observed_source: "sun-cam:bright:solar",
+        algo_version: version,
+      }),
+    ]).flat();
+
+  it("grades order inside each cam, so the raw scale does not matter", () => {
+    const r = sunFairMetrics(twoCams());
+    const v = r.versions[0];
+    expect(v.version).toBe(OLD);
+    expect(v.pairs).toBe(24);
+    expect(v.ready).toBe(true);
+    expect(v.cams.map((c) => [c.cam, c.kind, c.pairs, c.rho])).toEqual([
+      ["dim", "sunrise", 12, 1],
+      ["bright", "sunset", 12, 1],
+    ]);
+    expect(v.rank.rho).toBe(1);
+    expect(v.rank).toMatchObject({ events: 24, cams: 2 });
+    expect(v.rank.byKind.sunrise).toMatchObject({ rho: 1, events: 12, cams: 1 });
+    // The raw error still sees the scale gap.
+    expect(v.raw.bias).not.toBe(0);
+  });
+
+  it("calls Great against each cam's own top 25%, not a raw 70", () => {
+    const v = sunFairMetrics(twoCams()).versions[0];
+    // Forecasts 74, 80, 86 (events 9-11) are our Great calls on each cam; they are each cam's top 3 of 12.
+    expect(v.tiers.events).toBe(24);
+    expect(v.tiers.great).toMatchObject({ calls: 6, hits: 6, falseAlarms: 0, misses: 0 });
+    // 6 calls: under the 10 a rate needs, so the rate waits.
+    expect(v.tiers.great.hitRate).toMatchObject({ value: null, collecting: "n=6, collecting" });
+    // Amazing (90+): no call reaches 90. Each cam's top 10% (its best event of 12) is a miss.
+    expect(v.tiers.amazing.calls).toBe(0);
+    expect(v.tiers.amazing.misses).toBe(2);
+  });
+
+  it("weights the pooled correlation by each cam's pairs", () => {
+    const rows = [
+      ...Array.from({ length: 10 }, (_, i) => pred(i, 60, i * 10, i, { observed_source: "sun-cam:a:solar" })),
+      ...Array.from({ length: 30 }, (_, i) =>
+        pred(i, 60, i * 3, 100 - i, { slug: "deerfield-beach", observed_source: "sun-cam:b:solar" }),
+      ),
+    ];
+    const v = sunFairMetrics(rows).versions[0];
+    expect(v.cams.find((c) => c.cam === "a")?.rho).toBe(1);
+    expect(v.cams.find((c) => c.cam === "b")?.rho).toBe(-1);
+    expect(v.rank.rho).toBe(-0.5); // (10 × 1 + 30 × −1) / 40
+  });
+
+  it("leaves out a cam under 8 pairs, with its count", () => {
+    const rows = [
+      ...Array.from({ length: 10 }, (_, i) => pred(i, 60, i * 10, i, { observed_source: "sun-cam:a:solar" })),
+      ...Array.from({ length: 5 }, (_, i) => pred(i, 60, i * 10, 50 - i, { slug: "jupiter", observed_source: "sun-cam:small:solar" })),
+    ];
+    const r = sunFairMetrics(rows);
+    const v = r.versions[0];
+    expect(v.cams.find((c) => c.cam === "small")).toMatchObject({ pairs: 5, rho: null, collecting: "collecting — 5 of 8 pairs" });
+    expect(v.rank).toMatchObject({ rho: 1, events: 10, cams: 1 });
+    expect(r.camScales.find((c) => c.cam === "small")).toMatchObject({ events: 5, counted: false });
+    // Events on a cam with no scale of its own are not in the top-tier counts.
+    expect(v.tiers.events).toBe(10);
+  });
+
+  it("splits by model version, newest first, and shows the live version while it collects", () => {
+    const rows = [...twoCams(OLD), ...twoCams("2026-10-06.2", 20).slice(0, 4)];
+    const r = sunFairMetrics(rows, { currentVersion: NEW });
+    expect(r.versions.map((v) => v.version)).toEqual([NEW, OLD, "2026-10-06.2"]);
+    const live = r.versions[0];
+    expect(live).toMatchObject({ current: true, rows: 0, events: 0, pairs: 0, ready: false, collecting: "collecting — 0 of 10 pairs" });
+    expect(live.rank.rho).toBeNull();
+    const old = r.versions[2];
+    expect(old).toMatchObject({ pairs: 4, ready: false });
+    // Under the version minimum no correlation is shown, even per kind.
+    expect(old.rank.rho).toBeNull();
+    expect(old.rank.byKind.sunrise.rho).toBeNull();
+    expect(old.raw.mae).toBeNull();
+  });
+
+  it("uses the forecast people see: an event's version is its 30–120 min row's", () => {
+    const rows = [
+      // Event 0: the 60-min row is the new model; a 300-min row is the old one.
+      pred(0, 60, 50, 40, { algo_version: NEW }),
+      pred(0, 300, 90, 40, { algo_version: OLD }),
+      // Event 1: only a 300-min row: no headline, so in no version's pairs.
+      pred(1, 300, 90, 40, { algo_version: OLD }),
+    ];
+    const r = sunFairMetrics(rows);
+    expect(r.versions.find((v) => v.version === NEW)).toMatchObject({ events: 1, pairs: 1 });
+    expect(r.versions.find((v) => v.version === OLD)).toMatchObject({ rows: 2, events: 0, pairs: 0 });
+  });
+
+  it("counts coverage per kind, and leaves future events out", () => {
+    const rows = [
+      pred(0, 60, 50, 40), // sunrise, headline, paired
+      pred(1, 300, 50, 40), // sunrise, paired, no headline
+      pred(2, 300, 50, null), // sunrise, no reading, no headline
+      pred(3, 45, 50, null, { event_kind: "sunset" }), // sunset, headline, no reading
+      pred(30, 60, 50, null), // in the future
+    ];
+    const r = sunFairMetrics(rows, { nowMs: EVENT_BASE + 10 * 86_400_000 });
+    expect(r.coverage).toEqual([
+      { kind: "sunrise", pastEvents: 3, withHeadline: 1, share: 1 / 3, pairedEvents: 2, pairedWithHeadline: 1, pairedShare: 0.5 },
+      { kind: "sunset", pastEvents: 1, withHeadline: 1, share: 1, pairedEvents: 0, pairedWithHeadline: 0, pairedShare: null },
+    ]);
+  });
+
+  it("never uses an afterglow reading as the truth", () => {
+    const rows = Array.from({ length: 12 }, (_, i) =>
+      pred(i, 60, i * 8, 90 - i, { observed_source: "sun-cam:deerfield-beach-cam:antisolar" }),
+    );
+    const r = sunFairMetrics(rows);
+    expect(r.versions[0]).toMatchObject({ events: 12, pairs: 0 });
+    expect(r.coverage[0]).toMatchObject({ pastEvents: 12, pairedEvents: 0 });
+  });
+});
+
+describe("afterglowMetrics", () => {
+  const sunset = (n: number, lead: number, score: number, over: Partial<SunPredictionRow> = {}) =>
+    pred(n, lead, score, null, { event_kind: "sunset", ...over });
+  const reading = (n: number, score: number, over: Partial<AfterglowReading> = {}): AfterglowReading => ({
+    slug: "boca-raton",
+    event_kind: "sunset",
+    cam_id: "deerfield-beach-cam",
+    event_iso: new Date(EVENT_BASE + n * 86_400_000 + 4 * 60_000).toISOString(), // 4 min off: still matches
+    view: "antisolar",
+    observed_score: score,
+    ...over,
+  });
+
+  it("grades an east cam's sunset afterglow by rank against our forecast and the satellite cloud", () => {
+    const rows = Array.from({ length: 10 }, (_, i) => [
+      sunset(i, 60, 10 + i * 5),
+      // The satellite read, 20 min out: more anti-solar cloud on the better afterglows.
+      sunset(i, 20, 30, { anti_mid_high_pct: i * 10 }),
+    ]).flat();
+    const obs = Array.from({ length: 10 }, (_, i) => reading(i, i * 9));
+    const r = afterglowMetrics(rows, obs, { facingOf: () => "east" });
+    expect(r.sunset.readings).toBe(10);
+    const cam = r.sunset.cams[0];
+    expect(cam).toMatchObject({ cam: "deerfield-beach-cam", facing: "east", readings: 10, matched: 10 });
+    expect(cam.headline).toEqual([{ version: "2026-10-06.2", n: 10, rho: 1, collecting: null }]);
+    expect(cam.cloud).toEqual({ n: 10, rho: 1, collecting: null });
+    expect(r.sunrise.cams).toHaveLength(0);
+  });
+
+  it("counts unmatched readings, skips solar ones, and leaves out a cam whose facing does not fit", () => {
+    const rows = [sunset(0, 60, 50)];
+    const obs = [
+      reading(0, 30),
+      reading(5, 30), // no forecast event that day
+      reading(0, 30, { view: "solar" }),
+      reading(0, 30, { cam_id: "holmes-beach-cam" }), // a west cam cannot see a sunset afterglow
+    ];
+    const r = afterglowMetrics(rows, obs, { facingOf: (id) => (id === "holmes-beach-cam" ? "west" : "east") });
+    expect(r.sunset).toMatchObject({ readings: 2, unmatched: 1, wrongFacing: 1 });
+    expect(r.sunset.cams[0]).toMatchObject({ readings: 2, matched: 1 });
+    expect(r.sunset.cams[0].headline[0]).toMatchObject({ n: 1, rho: null, collecting: "collecting — 1 of 8 events" });
+  });
+
+  it("puts Gulf sunrise afterglow on its own side", () => {
+    const rows = [pred(0, 60, 50, null)];
+    const r = afterglowMetrics(rows, [reading(0, 30, { event_kind: "sunrise", cam_id: "siesta-beach-cam" })]);
+    expect(r.sunrise.cams.map((c) => [c.cam, c.facing, c.matched])).toEqual([["siesta-beach-cam", "west", 1]]);
+    expect(r.sunset.readings).toBe(0);
+  });
+});
+
+describe("sunFixList", () => {
+  it("lists only what the numbers trip, quoting them", () => {
+    // Old model: 12 pairs said Amazing (95) while the cam saw 30: bias +65.
+    const rows = Array.from({ length: 12 }, (_, i) => pred(i, 60, 95, 30 + i, { algo_version: "2026-10-15.1" }));
+    // 12 more sunrises with no 30–120 min forecast: coverage 50% exactly, so not listed.
+    rows.push(...Array.from({ length: 12 }, (_, i) => pred(40 + i, 300, 50, null, { algo_version: "2026-10-15.1" })));
+    // Sunsets: 1 of 3 covered.
+    rows.push(
+      pred(70, 60, 50, null, { event_kind: "sunset" }),
+      pred(71, 300, 50, null, { event_kind: "sunset" }),
+      pred(72, 300, 50, null, { event_kind: "sunset" }),
+    );
+    const fair = sunFairMetrics(rows, { currentVersion: "2026-11-05.1" });
+    const fixes = sunFixList(fair, null);
+    expect(fixes).toContain(
+      "Model 2026-11-05.1 (live now) is still collecting: 0 of 10 pairs with a forecast 30–120 min out (0 events so far). Check again next week.",
+    );
+    expect(fixes).toContain("Model 2026-10-15.1 runs high when it says Amazing: bias +59.5 points on 12 events (raw camera scale).");
+    expect(fixes).toContain(
+      "Sunset coverage is low: 33% of 3 past sunsets have a forecast 30–120 min before the event (1).",
+    );
+    expect(fixes.some((f) => f.startsWith("Sunrise coverage"))).toBe(false);
+  });
+
+  it("adds the camera-reading share to a low-coverage line", () => {
+    const rows = [pred(0, 60, 50, 40), pred(1, 300, 50, 40), pred(2, 300, 50, 40), pred(3, 300, 50, null)];
+    expect(sunFixList(sunFairMetrics(rows), null)).toContain(
+      "Sunrise coverage is low: 25% of 4 past sunrises have a forecast 30–120 min before the event (1); of those with a camera reading, 1 of 3 (33%).",
+    );
+  });
+
+  it("names an afterglow signal, and says nothing when no rule trips", () => {
+    const rows = Array.from({ length: 10 }, (_, i) => pred(i, 20, 50, null, { event_kind: "sunset", anti_mid_high_pct: i * 10 }));
+    const obs: AfterglowReading[] = Array.from({ length: 10 }, (_, i) => ({
+      slug: "boca-raton",
+      event_kind: "sunset",
+      cam_id: "ftl-elbo-beach-cam",
+      event_iso: new Date(EVENT_BASE + i * 86_400_000).toISOString(),
+      view: "antisolar",
+      observed_score: 100 - i * 10,
+    }));
+    const glow = afterglowMetrics(rows, obs);
+    const fixes = sunFixList(sunFairMetrics([]), glow);
+    expect(fixes).toEqual([
+      "Afterglow signal at ftl-elbo-beach-cam (sunsets): the satellite's mid/high cloud away from the sun has a rank correlation of -1.00 with the afterglow on 10 events. A candidate input for an afterglow forecast.",
+    ]);
+    expect(sunFixList(sunFairMetrics([]), null)).toEqual([]);
   });
 });

@@ -4,9 +4,18 @@
 
 export const sqlStr = (s: string): string => `'${s.replace(/'/g, "''")}'`;
 
-/** Only the sun-forecast columns the metrics read. */
-export const SUN_PRED_COLS =
-  "slug, event_kind, event_iso, as_of_hour_utc, lead_minutes, score, band, algo_version, observed_score, observed_source";
+/**
+ * Only the sun-forecast columns the metrics read, with an optional table alias.
+ * `anti_mid_high_pct` is the satellite's mid + high cloud away from the sun
+ * (breakdown_json.satellite.antiMidHighPct, lib/sunAlert.ts), for the afterglow check.
+ */
+export function sunPredCols(alias = ""): string {
+  const p = alias ? `${alias}.` : "";
+  const plain = ["slug", "event_kind", "event_iso", "as_of_hour_utc", "lead_minutes", "score", "band", "algo_version", "observed_score", "observed_source"];
+  return [...plain.map((c) => `${p}${c}`), `json_extract(${p}breakdown_json, '$.satellite.antiMidHighPct') AS anti_mid_high_pct`].join(", ");
+}
+
+export const SUN_PRED_COLS = sunPredCols();
 
 /**
  * Hourly archive rows for a UTC range. json_extract pulls only the blocks the
@@ -44,16 +53,27 @@ LIMIT ${limit}`;
  * can never hide the real call. Newest events first.
  */
 export function sunCallsQuery(sinceIso: string, limit: number): string {
-  const cols = SUN_PRED_COLS.split(", ")
-    .map((c) => `p.${c}`)
-    .join(", ");
-  return `SELECT ${cols} FROM sun_event_predictions p
+  return `SELECT ${sunPredCols("p")} FROM sun_event_predictions p
 WHERE p.score IS NOT NULL AND p.lead_minutes >= 60 AND p.event_iso >= ${sqlStr(sinceIso)}
   AND p.as_of_hour_utc = (
     SELECT MAX(q.as_of_hour_utc) FROM sun_event_predictions q
     WHERE q.slug = p.slug AND q.event_kind = p.event_kind AND q.event_iso = p.event_iso
       AND q.score IS NOT NULL AND q.lead_minutes >= 60)
 ORDER BY p.event_iso DESC, p.slug, p.event_kind
+LIMIT ${limit}`;
+}
+
+/**
+ * Every scored forecast row made close to the event (lead from -60 to 120
+ * minutes), for events in the window. This holds the forecast people see (the
+ * row closest to 60 min ahead, 30–120 min) and the satellite reads (they exist
+ * only within 60 min of the event), for events with no camera reading too.
+ * About 3 rows an event. Newest events first.
+ */
+export function sunNearQuery(sinceIso: string, limit: number): string {
+  return `SELECT ${SUN_PRED_COLS} FROM sun_event_predictions
+WHERE score IS NOT NULL AND lead_minutes BETWEEN -60 AND 120 AND event_iso >= ${sqlStr(sinceIso)}
+ORDER BY event_iso DESC, slug, event_kind, as_of_hour_utc DESC
 LIMIT ${limit}`;
 }
 
