@@ -8,7 +8,9 @@ import {
   camRoster,
   camStatus,
   listOfflineCams,
+  courierFleet,
   liveInstantAfter,
+  newestCourierFrame,
   offlineAfterMin,
   type CamCadence,
 } from "@/lib/camStatus";
@@ -137,10 +139,71 @@ describe("camRoster and listOfflineCams", () => {
         { id: "boca-south", lastGoodFrameAt: undefined },
       ],
       now,
+      { down: false },
     );
     expect(list.map((c) => c.id)).toEqual(["deerfield-spinner-uw", "fort-zachary-taylor-cam"]);
     expect(list[0].since).toBeNull();
     // 8 PM ET Nov 5: one live hour that night, then five from 6:00 AM = 11:00 AM ET.
     expect(list[1]).toMatchObject({ slug: "key-west", since: "2026-11-06T16:00:00.000Z" });
+  });
+});
+
+describe("more clock edges", () => {
+  it("counts live hours right across the spring-forward DST change (Mar 8 2026)", () => {
+    // 8:00 PM EST Mar 7 = 01:00Z Mar 8. 60 live min that night, then from 6:00 EDT (10:00Z).
+    const at = liveInstantAfter(COURIER, t("2026-03-08T01:00:00Z"), 360);
+    expect(new Date(at).toISOString()).toBe("2026-03-08T15:00:00.000Z"); // 11:00 AM EDT
+  });
+
+  it("a Central-time feed opens and closes on Central time", () => {
+    const central: CamCadence = { ...FEED_CADENCE, tz: "America/Chicago" };
+    // 5:00 PM CST Nov 6 = 23:00Z: 30 live min to 5:30 PM, the rest from 8:00 AM CST (14:00Z).
+    const at = liveInstantAfter(central, t("2026-11-06T23:00:00Z"), 60);
+    expect(new Date(at).toISOString()).toBe("2026-11-07T14:30:00.000Z");
+  });
+
+  it("a Pensacola (Central) courier cam still runs on the Eastern courier clock", () => {
+    // 7:30 PM CST = 8:30 PM EST = 01:30Z: 30 live min, then 330 from 6:00 AM EST (11:00Z).
+    const since = camOfflineSince(COURIER, "2026-11-07T01:30:00Z", t("2026-11-08T00:00:00Z"));
+    expect(since).toBe("2026-11-07T16:30:00.000Z");
+  });
+});
+
+describe("the courier circuit breaker", () => {
+  const now = t("2026-11-06T19:00:00Z"); // 2 PM ET
+  it("reads the fleet from the newest courier frame", () => {
+    expect(courierFleet("2026-11-06T18:30:00Z", now)).toEqual({ down: false });
+    expect(courierFleet("2026-11-06T16:00:00Z", now)).toEqual({ down: true, sinceMs: t("2026-11-06T18:00:00Z") });
+    expect(courierFleet(null, now)).toEqual({ down: true, sinceMs: null });
+    expect(courierFleet(undefined, now)).toEqual({ down: "unknown" });
+  });
+
+  it("finds the newest courier-delivered good frame in a /cams answer", () => {
+    expect(
+      newestCourierFrame({
+        cams: [
+          { ok: true, source: "courier", grabbedAtUtc: "2026-11-06T18:00:00Z" },
+          { ok: true, source: "browser", grabbedAtUtc: "2026-11-06T18:59:00Z" },
+          { ok: false, source: "courier", grabbedAtUtc: "2026-11-06T18:58:00Z" },
+          { ok: true, source: "courier", grabbedAtUtc: "2026-11-06T18:20:00Z" },
+        ],
+      }),
+    ).toBe("2026-11-06T18:20:00.000Z");
+    expect(newestCourierFrame({ cams: [] })).toBeNull();
+    expect(newestCourierFrame({})).toBeUndefined();
+  });
+
+  it("courier down: the owner list keeps only cams with no good frame, and feed cams", () => {
+    const roster = camRoster(LOCATIONS);
+    const evidence = roster
+      .filter((c) => c.cadence.source === "courier")
+      .map((c) => ({ id: c.id, lastGoodFrameAt: "2026-11-05T22:00:00Z" as string | null }));
+    evidence.push({ id: "deerfield-spinner-uw", lastGoodFrameAt: null });
+    evidence.push({ id: "boca-south", lastGoodFrameAt: "2026-11-05T15:00:00Z" });
+    const down = courierFleet("2026-11-05T22:00:00Z", now);
+    const list = listOfflineCams(roster, evidence, now, down);
+    expect(list.map((c) => c.id)).toEqual(["deerfield-spinner-uw", "boca-south"]);
+    // With the courier up, every aged courier cam is listed.
+    expect(listOfflineCams(roster, evidence, now, { down: false }).length).toBe(new Set(evidence.map((e) => e.id)).size);
   });
 });

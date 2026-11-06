@@ -82,6 +82,33 @@ export function pickMetaTimestamp(json: unknown): string | undefined {
 }
 
 /**
+ * The newest good frame of a feed view, for the offline rule (lib/camStatus.ts):
+ * its capture time; null only when the feed lists other views but NOT this one
+ * (the provider dropped it, nothing to show); undefined when it cannot be judged
+ * (no document, an empty one, or the view is there without a usable time: shown,
+ * unverified, never offline on that evidence).
+ */
+export function feedLastGood(json: unknown, view: string): string | null | undefined {
+  const ts = pickFeedTimestamp(json, view);
+  if (ts) return ts;
+  if (!json || typeof json !== "object") return undefined;
+  const entry = (json as Record<string, unknown>)[view];
+  if (entry !== undefined && entry !== null) return undefined;
+  return Object.keys(json).length > 0 ? null : undefined;
+}
+
+/**
+ * The newest good frame of a uw-frame courier cam, for the offline rule: its time
+ * when the meta says ok:true; null when it says ok:false (the Worker holds no good
+ * frame); undefined for any other shape.
+ */
+export function metaLastGood(json: unknown): string | null | undefined {
+  const ts = pickMetaTimestamp(json);
+  if (ts) return ts;
+  return (json as { ok?: unknown } | null)?.ok === false ? null : undefined;
+}
+
+/**
  * Resolve a feed's (relative) frame path against its base dir, rejecting anything
  * that escapes that dir — so a tampered latest.json can't redirect the proxy to
  * another host or path (SSRF guard). Returns an absolute URL.

@@ -44,8 +44,16 @@ const loc = (cams: CamConfig[]): Location => ({
 const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();
 const HOUR = 3_600_000;
 
-/** meta?cam=<id> answers from `metas`; latest.json from `views`; weather gets {}. */
-function stub(metas: Record<string, unknown>, views: Record<string, unknown> | "fail") {
+/** The uw-frame /cams answer while the courier is healthy: one cam fresh from it. */
+const HEALTHY_FLEET = { cams: [{ id: "x", ok: true, source: "courier", grabbedAtUtc: iso(10 * 60_000) }] };
+
+/** meta?cam=<id> answers from `metas`; latest.json from `views`; /cams from `fleet`;
+ *  weather gets {}. */
+function stub(
+  metas: Record<string, unknown>,
+  views: Record<string, unknown> | "fail",
+  fleet: unknown | "fail" = HEALTHY_FLEET,
+) {
   const calls: string[] = [];
   vi.stubGlobal(
     "fetch",
@@ -55,6 +63,10 @@ function stub(metas: Record<string, unknown>, views: Record<string, unknown> | "
       if (url.includes("/meta?cam=")) {
         const id = new URL(url).searchParams.get("cam")!;
         return id in metas ? json(metas[id]) : new Response("no", { status: 404 });
+      }
+      if (url.endsWith("/cams")) {
+        if (fleet === "fail") throw new Error("ETIMEDOUT");
+        return json(fleet);
       }
       if (url.includes("latest.json")) {
         if (views === "fail") throw new Error("ECONNRESET");
@@ -149,7 +161,73 @@ describe("cam list with the offline rule", () => {
     stub({ old: { id: "old", grabbedAtUtc: "2026-11-06T11:00:00.000Z", ok: true } }, {}); // 6:00 AM ET
     const [cam] = await run(buildCamViewsWithStatus(loc([meta("old")]), Date.parse("2026-11-06T18:00:00Z")));
     expect(cam.status).toBe("offline");
-    expect(cam.offlineSince).toBe("2026-11-06T17:00:00.000Z");
+    expect(cam.reason).toBe("aged");
+  });
+});
+
+describe("the courier circuit breaker", () => {
+  const AT = Date.parse("2026-11-06T18:00:00Z"); // 1 PM ET
+  const aged = (id: string) => ({ id, grabbedAtUtc: "2026-11-06T11:00:00.000Z", ok: true }); // 6 AM ET: 7 live h
+
+  it("courier down (no courier frame for 2+ live hours): no courier cam is hidden for age", async () => {
+    vi.useFakeTimers();
+    const down = { cams: [{ id: "x", ok: true, source: "courier", grabbedAtUtc: "2026-11-06T11:00:00.000Z" }] };
+    stub({ a: aged("a"), b: aged("b"), c: aged("c"), none: { id: "none", grabbedAtUtc: iso(0), ok: false } }, {}, down);
+    const cams = await run(buildCamViewsWithStatus(loc([meta("a"), meta("b"), meta("c"), meta("none")]), AT));
+    expect(cams.map((c) => c.status)).toEqual(["stale", "stale", "stale", "offline"]);
+    // Shown with their "paused" stamp; only the cam with no good frame at all is hidden.
+    expect(visibleCamViews(cams).map((c) => c.id)).toEqual(["a", "b", "c"]);
+  });
+
+  it("most cams aged but a few fresh: the courier is up, so the aged ones are hidden", async () => {
+    vi.useFakeTimers();
+    const fleet = {
+      cams: [
+        { id: "a", ok: true, source: "courier", grabbedAtUtc: "2026-11-06T11:00:00.000Z" },
+        { id: "b", ok: true, source: "courier", grabbedAtUtc: "2026-11-06T11:00:00.000Z" },
+        { id: "fresh", ok: true, source: "courier", grabbedAtUtc: "2026-11-06T17:40:00.000Z" },
+      ],
+    };
+    stub({ a: aged("a"), b: aged("b"), fresh: { id: "fresh", grabbedAtUtc: "2026-11-06T17:40:00.000Z", ok: true } }, {}, fleet);
+    const cams = await run(buildCamViewsWithStatus(loc([meta("a"), meta("b"), meta("fresh")]), AT));
+    expect(cams.map((c) => c.status)).toEqual(["offline", "offline", "online"]);
+    expect(visibleCamViews(cams).map((c) => c.id)).toEqual(["fresh"]);
+  });
+
+  it("browser-grabbed frames do not count as the courier being up", async () => {
+    vi.useFakeTimers();
+    const fleet = { cams: [{ id: "y", ok: true, source: "browser", grabbedAtUtc: "2026-11-06T17:50:00.000Z" }] };
+    stub({ a: aged("a") }, {}, fleet);
+    const [cam] = await run(buildCamViewsWithStatus(loc([meta("a")]), AT));
+    expect(cam.status).toBe("stale");
+  });
+
+  it("an unreadable fleet state fails open (shown)", async () => {
+    vi.useFakeTimers();
+    stub({ a: aged("a") }, {}, "fail");
+    const [cam] = await run(buildCamViewsWithStatus(loc([meta("a")]), AT));
+    expect(cam.status).toBe("stale");
+  });
+
+  it("asks for the fleet only when a courier cam has aged out", async () => {
+    vi.useFakeTimers();
+    const calls = stub({ live: { id: "live", grabbedAtUtc: iso(60_000), ok: true }, none: { id: "none", ok: false, grabbedAtUtc: iso(0) } }, {});
+    await run(buildCamViewsWithStatus(loc([meta("live"), meta("none")]), NOW));
+    expect(calls.some((u) => u.endsWith("/cams"))).toBe(false);
+  });
+});
+
+describe("a county feed view without a capture time", () => {
+  it("is shown (unverified), never offline; only an absent view counts as dropped", async () => {
+    vi.useFakeTimers();
+    // Same shape as lib/camSnapshots.test.ts: views with image paths and no timestamp.
+    stub({}, { s4: { hr: "pics/s4/x/a.jpg", mr: "pics/s4/x/a_.jpg" }, s8: { mr: "pics/s8/x/b_.jpg" } });
+    const cams = await run(buildCamViewsWithStatus(loc([feed("no-time", "s4"), feed("gone", "s9")]), NOW));
+    expect(cams.map((c) => [c.view.id, c.status])).toEqual([
+      ["no-time", "online"],
+      ["gone", "offline"],
+    ]);
+    expect(cams[0].view.capturedAt).toBeUndefined();
   });
 });
 

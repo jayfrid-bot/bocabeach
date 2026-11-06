@@ -468,7 +468,7 @@ lastAttempt, now)`, gives `online`, `stale` (still shown) or `offline` (hidden):
 | Cam kind | Expected interval | Live hours (clock stops outside them) | Stale after | Offline after |
 |---|---|---|---|---|
 | Courier cam (`snapshotMetaUrl`, uw-frame KV) | 60 min | 06:00-21:00 Eastern, the courier's daylight gate | 2 live h | 6 live h, or meta `ok:false` |
-| County feed cam (`snapshotFeed`, video-monitoring.com) | 30 min | 08:00-17:30 local | 1 live h | 6 live h, or the view gone from latest.json |
+| County feed cam (`snapshotFeed`, video-monitoring.com) | 30 min | 08:00-17:30 local | 1 live h | 6 live h, or the view gone from latest.json (a view that is there without a timestamp is shown, unverified) |
 
 Offline = max(3 x interval, 6 h) of live time with no good frame. A blank refusal newer
 than the newest good frame only makes a cam `stale`, never `offline` by itself: dark
@@ -477,13 +477,30 @@ no flapping and nothing to reset: between good frames the age only grows, the cl
 stops at night, and the first good frame puts a cam straight back to `online`. A failed
 lookup (`undefined`) is not evidence: the cam stays shown, as before. The rule reuses
 the capture-time lookups the cam card already made (one uw-frame `/meta` or one shared
-`latest.json` per cam), so it costs no subrequests; the CPU is a few `Intl` calls per cam.
+`latest.json` per cam), so a healthy beach costs no subrequests. CPU: one walk over the
+days per cam, one `Intl` call per day; about 30 µs for a 4-cam beach warm, under 1 ms the
+first time in an isolate (plus the one-time ~10 ms time-zone data load the rest of the
+build already pays).
+
+**Courier circuit breaker.** All courier cams come from one home server. If it stops,
+uw-frame keeps serving every cam's last good frame and they all age out together. So a
+courier cam that aged out is hidden only while the courier as a whole is up: some cam in
+uw-frame `/cams` holds a courier-delivered good frame (`source: "courier"`) less than 2
+live hours old (`COURIER_FLEET_STALE_MIN`, courier clock). Otherwise, or when `/cams`
+cannot be read, aged courier cams stay on the page with their "paused" stamp. A cam
+whose meta says `ok:false` is still hidden: it has nothing to show. `/cams` is asked
+only when one of the beach's courier cams has aged out, and the answer (just the newest
+courier frame time) is kept in the Workers Cache for 10 minutes, because `/cams` reads
+two KV keys per cam. The scorecard applies the same breaker and says "Courier down since
+..." once instead of listing every courier cam.
 
 ```mermaid
 flowchart LR
   COURIER["home-server courier<br/>(keeps trying dead cams: cooldown 10 min doubling to 2 h, never stops)"] -->|"POST /ingest; blank = 422"| UWF["workers/uw-frame<br/>meta:&lt;id&gt; ok / grabbedAtUtc,<br/>attempt:&lt;id&gt;"]
   FEED["video-monitoring.com<br/>latest.json per county cam"]
   UWF -->|"GET /meta?cam=id"| CAMS["lib/cams.ts buildCamViewsWithStatus<br/>(the same lookup as the capture time)"]
+  UWF -->|"GET /cams, only when a courier cam aged out;<br/>Workers Cache 10 min"| BREAKER["courier breaker<br/>newest courier frame &lt; 2 live h = courier up"]
+  BREAKER --> RULE
   FEED -->|"GET latest.json"| CAMS
   CAMS --> RULE["lib/camStatus.ts camStatus<br/>online / stale / offline"]
   RULE -->|"visibleCamViews: offline left out"| COND["lib/conditions.ts getConditionsForLocation<br/>(score built from the snapshot only: unchanged)"]

@@ -476,6 +476,7 @@ describe("buildScorecard — cameras hidden as offline", () => {
       { id: "fort-zachary-taylor-cam", lastGoodFrameAt: "2026-11-06T01:08:19Z" },
       { id: "deerfield-pier-cam", lastGoodFrameAt: "2026-11-06T18:30:00Z" },
     ],
+    courierNewestGoodAt: "2026-11-06T18:30:00Z",
   });
 
   it("lists each offline cam with since-when, in the headline and the details", () => {
@@ -493,6 +494,24 @@ describe("buildScorecard — cameras hidden as offline", () => {
     expect(md).toContain(
       "  - fort-zachary-taylor-cam (key-west): offline since Nov 6, 11:08 AM ET, last good frame Nov 5, 8:08 PM ET",
     );
+  });
+
+  it("courier down: says so once instead of listing every courier cam", () => {
+    const courierIds = roster.filter((c) => c.cadence.source === "courier").map((c) => c.id);
+    const down = emptyRaw({
+      asOf,
+      camEvidence: [
+        ...courierIds.map((id) => ({ id, lastGoodFrameAt: "2026-11-06T13:00:00Z" as string | null })),
+        { id: "boca-south", lastGoodFrameAt: "2026-11-06T18:40:00Z" },
+      ],
+      courierNewestGoodAt: "2026-11-06T13:00:00Z", // 8 AM ET
+    });
+    const card = buildScorecard(down, { camRoster: roster });
+    expect(card.headlines.health).toContain("The home-server courier is down since Nov 6, 10:00 AM ET.");
+    expect(card.headlines.health).not.toContain("offline and hidden");
+    const md = renderMarkdown(card);
+    expect(md).toContain("- Courier down since Nov 6, 10:00 AM ET (newest courier frame Nov 6, 8:00 AM ET)");
+    expect(md).toContain("- Cameras hidden as offline: none.");
   });
 
   it("says none, or not checked, plainly", () => {

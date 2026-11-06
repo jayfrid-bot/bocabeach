@@ -40,7 +40,7 @@ import {
   type SunPredictionRow,
   type WindowResult,
 } from "@/lib/scorecard/metrics";
-import { listOfflineCams, type CamEvidence, type OfflineCam, type RosterCam } from "@/lib/camStatus";
+import { courierFleet, listOfflineCams, type CamEvidence, type OfflineCam, type RosterCam } from "@/lib/camStatus";
 
 // --- Input ------------------------------------------------------------------
 
@@ -86,6 +86,9 @@ export interface RawData {
   /** What each cam's source said about its newest good frame, read when the report ran
    *  (uw-frame /cams and the county latest.json feeds). Missing in older saved files. */
   camEvidence?: CamEvidence[] | null;
+  /** The newest courier-delivered good frame in uw-frame /cams (ISO), null = none;
+   *  missing = /cams was not read. Drives the courier breaker (lib/camStatus.ts). */
+  courierNewestGoodAt?: string | null;
   sunPredictionsLast24h: number | null;
   /** Days back the sun-color forecasts and camera readings were read (events in this window). */
   sunWindowDays?: number;
@@ -227,7 +230,15 @@ function matchesForecast(o: RawSunObservation, paired: SunPredictionRow[]): bool
 /** The cams hidden on the page as offline when the report ran; null when not checked. */
 function offlineCamsOf(raw: RawData, roster: RosterCam[] | undefined, nowMs: number): OfflineCam[] | null {
   if (!roster || !raw.camEvidence) return null;
-  return listOfflineCams(roster, raw.camEvidence, nowMs);
+  return listOfflineCams(roster, raw.camEvidence, nowMs, courierFleet(raw.courierNewestGoodAt, nowMs));
+}
+
+/** The courier breaker as the report states it; null when the courier is up or /cams was not read. */
+function courierDownOf(raw: RawData, nowMs: number): { since: string | null; newest: string | null } | null {
+  if (!raw.camEvidence || raw.courierNewestGoodAt === undefined) return null;
+  const f = courierFleet(raw.courierNewestGoodAt, nowMs);
+  if (f.down !== true) return null;
+  return { since: f.sinceMs == null ? null : new Date(f.sinceMs).toISOString(), newest: raw.courierNewestGoodAt };
 }
 
 /** "Nov 6, 2:05 PM ET" — the owner reads the scorecard in Eastern time. */
@@ -309,6 +320,7 @@ export function buildScorecard(raw: RawData, opts: BuildOptions = {}): Scorecard
       rows: rows ?? [],
       camLatest: raw.camLatest,
       camsOffline: offlineCamsOf(raw, opts.camRoster, nowMs),
+      courierDown: courierDownOf(raw, nowMs),
       sunObs: raw.sunObservations
         ? {
             count: raw.sunObservations.length,
@@ -438,6 +450,9 @@ function healthHeadline(s: Section<HealthResult>): string {
     parts.push(`Beaches that should archive all day miss local hours ${hourList(r.hourGaps.missing.map((m) => m.hour))} on most days.`);
   }
   if (r.camsStale.length) parts.push(`${plural(r.camsStale.length, "camera")} silent for over ${CAM_STALE_HOURS} hours.`);
+  if (r.courierDown) {
+    parts.push(`The home-server courier is down${r.courierDown.since ? ` since ${etTime(r.courierDown.since)}` : ""}.`);
+  }
   if (r.camsOffline?.length) parts.push(`${plural(r.camsOffline.length, "camera")} offline and hidden on the page.`);
   return parts.join(" ");
 }
@@ -955,6 +970,13 @@ function healthSection(s: Section<HealthResult>): string {
         .map((c) => `${c.slug} ${c.ageHours} h ago`)
         .join(", ")}${r.cams.length > 5 ? `, and ${r.cams.length - 5} more` : ""}.` +
         (r.camsStale.length ? ` Silent for over ${CAM_STALE_HOURS} hours: ${r.camsStale.map((c) => c.slug).join(", ")}.` : ""),
+    );
+  }
+  if (r.courierDown) {
+    out.push(
+      `- Courier down${r.courierDown.since ? ` since ${etTime(r.courierDown.since)}` : ""}` +
+        (r.courierDown.newest ? ` (newest courier frame ${etTime(r.courierDown.newest)})` : " (no courier frame on record)") +
+        ": its cameras stay on the page with an old picture and are not hidden one by one. Check the home server.",
     );
   }
   if (r.camsOffline == null) {

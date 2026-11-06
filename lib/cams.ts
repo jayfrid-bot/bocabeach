@@ -1,8 +1,18 @@
 import type { CamConfig, CamView, Location } from "@/lib/types";
-import { pickFeedTimestamp, pickMetaTimestamp } from "@/lib/camSnapshots";
+import { feedLastGood, metaLastGood, pickFeedTimestamp, pickMetaTimestamp } from "@/lib/camSnapshots";
 import { fetchSpotWeather } from "@/lib/sources/spotWeather";
 import { fetchWithTimeout } from "@/lib/util";
-import { camCadence, camOfflineSince, camStatus, type CamStatus } from "@/lib/camStatus";
+import {
+  camCadence,
+  camVerdict,
+  courierFleet,
+  isCourierCadence,
+  newestCourierFrame,
+  withCourierBreaker,
+  type CamStatus,
+  type CamVerdict,
+  type CourierFleet,
+} from "@/lib/camStatus";
 
 // --- Resolving a cam's capture time -----------------------------------------
 //
@@ -62,8 +72,8 @@ const fetchFeedLatest = (base: string): Promise<unknown | undefined> =>
 export interface CamViewWithStatus {
   view: CamView;
   status: CamStatus;
-  /** When the cam went offline (ISO), or null (not offline, or not known). */
-  offlineSince: string | null;
+  /** Why it is offline ("none-stored" or "aged"), else null. */
+  reason: CamVerdict["reason"];
 }
 
 /**
@@ -117,11 +127,7 @@ export async function buildCamViewsWithStatus(
     if (!feed) return UNKNOWN;
     const json = await latestFor(feed.base);
     if (json === undefined) return UNKNOWN;
-    const capturedAt = pickFeedTimestamp(json, feed.view);
-    // A feed that lists other views but not this one has dropped it (nothing to
-    // show); an empty or odd document says nothing, so the cam is not judged.
-    const listsViews = !!json && typeof json === "object" && Object.keys(json).length > 0;
-    return { capturedAt, lastGood: capturedAt ?? (listsViews ? null : undefined) };
+    return { capturedAt: pickFeedTimestamp(json, feed.view), lastGood: feedLastGood(json, feed.view) };
   };
 
   /** Exact capture time of a courier-grabbed still, via its meta endpoint. */
@@ -130,19 +136,15 @@ export async function buildCamViewsWithStatus(
     if (!metaUrl) return UNKNOWN;
     const json = await fetchCamJsonWithRetry(metaUrl);
     if (json === undefined) return UNKNOWN;
-    const capturedAt = pickMetaTimestamp(json);
-    // ok:false = the uw-frame Worker holds no good frame for this cam (the stream
-    // shows a blank slate, or never delivered). Any other shape is not judged.
-    const saysNone = (json as { ok?: unknown } | null)?.ok === false;
-    return { capturedAt, lastGood: capturedAt ?? (saysNone ? null : undefined) };
+    return { capturedAt: pickMetaTimestamp(json), lastGood: metaLastGood(json) };
   };
 
   /** Resolve whichever capture-time source this cam config declares. */
   const camFrameTime = (cam: CamConfig): Promise<FrameTime> =>
     cam.snapshotMetaUrl ? metaFrameTime(cam) : cam.snapshotFeed ? feedFrameTime(cam) : Promise.resolve(UNKNOWN);
 
-  return Promise.all(
-    loc.cams.map(async (cam): Promise<CamViewWithStatus> => {
+  const built = await Promise.all(
+    loc.cams.map(async (cam) => {
       const [weather, { capturedAt, lastGood }] = await Promise.all([
         fetchSpotWeather(cam.lat ?? loc.lat, cam.lon ?? loc.lon),
         camFrameTime(cam),
@@ -167,11 +169,80 @@ export async function buildCamViewsWithStatus(
         attribution: cam.attribution,
         weather,
       };
-      return {
-        view,
-        status: camStatus(cadence, lastGood, null, nowMs),
-        offlineSince: camOfflineSince(cadence, lastGood, nowMs),
-      };
+      return { view, cadence, verdict: camVerdict(cadence, lastGood, null, nowMs) };
     }),
   );
+
+  // The courier breaker (lib/camStatus.ts): a courier cam that aged out is only
+  // hidden when the courier as a whole is up. Asked only when such a cam exists, so
+  // a healthy beach makes no extra request; the answer is shared for 10 minutes.
+  const agedCourier = built.find((b) => b.verdict.reason === "aged" && isCourierCadence(b.cadence));
+  const metaUrl = agedCourier ? loc.cams.find((c) => c.id === agedCourier.view.id)?.snapshotMetaUrl : undefined;
+  const fleet: CourierFleet = metaUrl ? await courierFleetFor(metaUrl, nowMs) : { down: false };
+
+  return built.map(({ view, cadence, verdict }) => {
+    const v = withCourierBreaker(verdict, isCourierCadence(cadence), fleet);
+    return { view, status: v.status, reason: v.reason };
+  });
+}
+
+// --- The courier fleet state (uw-frame /cams), shared through the Workers Cache ---
+
+/** How long one /cams answer is reused. /cams reads two KV keys per cam, so it is
+ *  asked at most once per 10 minutes per data center, and only while a courier cam
+ *  has aged out. */
+export const FLEET_CACHE_TTL_SEC = 600;
+const FLEET_KEY_PREFIX = "https://cache.isitbeachday.internal/courierfleet/";
+
+interface CacheLike {
+  match(key: string): Promise<Response | undefined>;
+  put(key: string, res: Response): Promise<void>;
+}
+function defaultCache(): CacheLike | null {
+  try {
+    const d = (globalThis as { caches?: { default?: CacheLike } }).caches?.default;
+    return d && typeof d.match === "function" && typeof d.put === "function" ? d : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The courier fleet's state at `nowMs`. Never throws; an unreadable answer is "unknown". */
+async function courierFleetFor(metaUrl: string, nowMs: number): Promise<CourierFleet> {
+  let camsUrl: string;
+  try {
+    camsUrl = new URL("/cams", metaUrl).href;
+  } catch {
+    return { down: "unknown" };
+  }
+  const key = `${FLEET_KEY_PREFIX}${encodeURIComponent(camsUrl)}`;
+  const cache = defaultCache();
+  let newest: string | null | undefined;
+  try {
+    const hit = await cache?.match(key);
+    if (hit) newest = ((await hit.json()) as { newest?: string | null }).newest;
+  } catch {
+    newest = undefined;
+  }
+  if (newest === undefined) {
+    try {
+      const res = await fetchWithTimeout(camsUrl, { timeoutMs: ATTEMPT_TIMEOUT_MS });
+      newest = res.ok ? newestCourierFrame(await res.json()) : undefined;
+    } catch {
+      newest = undefined;
+    }
+    if (newest !== undefined) {
+      try {
+        await cache?.put(
+          key,
+          new Response(JSON.stringify({ newest }), {
+            headers: { "Content-Type": "application/json", "Cache-Control": `public, max-age=${FLEET_CACHE_TTL_SEC}` },
+          }),
+        );
+      } catch {
+        /* a cache write failure only costs the next build one request */
+      }
+    }
+  }
+  return courierFleet(newest, nowMs);
 }

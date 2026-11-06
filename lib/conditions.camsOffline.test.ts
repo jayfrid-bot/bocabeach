@@ -73,6 +73,18 @@ describe("offline cams in the conditions response", () => {
     expect(wire).not.toContain("meta?cam=deerfield-spinner-uw");
   });
 
+  it("a hidden cam comes back in the response on its first good frame", async () => {
+    stubFetch(["deerfield-spinner-uw"]);
+    const hidden = await build("deerfield-beach");
+    expect(hidden.cams.map((c) => c.id)).not.toContain("deerfield-spinner-uw");
+    stubFetch([]); // the stream is back: uw-frame now holds a fresh good frame
+    const back = await build("deerfield-beach");
+    expect(back.cams.map((c) => c.id)).toContain("deerfield-spinner-uw");
+    const cam = back.cams.find((c) => c.id === "deerfield-spinner-uw")!;
+    expect(cam.imageUrl).toBe("/api/cam/deerfield-spinner-uw");
+    expect(cam.attribution).toBeTruthy();
+  });
+
   it("a beach whose cams are all down sends no cams at all", async () => {
     const ids = getLocation("deerfield-beach")!.cams.map((c) => c.id!);
     stubFetch(ids);

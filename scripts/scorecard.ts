@@ -25,8 +25,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { LOCATIONS, getLocation } from "@/config/locations";
-import { camRoster, type CamAttempt, type CamEvidence } from "@/lib/camStatus";
-import { pickFeedTimestamp, pickMetaTimestamp } from "@/lib/camSnapshots";
+import { camRoster, newestCourierFrame, type CamEvidence } from "@/lib/camStatus";
+import { camEvidenceFromSources } from "@/lib/camEvidence";
 import { computeSunTimes } from "@/lib/sources/sun";
 import { buildScorecard, renderMarkdown, type RawData, type RawDatasetName } from "@/lib/scorecard/report";
 import { errorLineOf, parseWranglerJson } from "@/lib/scorecard/wrangler";
@@ -285,40 +285,17 @@ async function getJson(url: string): Promise<unknown | undefined> {
   }
 }
 
-/** Each configured cam's newest good frame, as its source reports it now. One request
- *  to uw-frame /cams for the courier cams, one latest.json per county feed. */
-async function fetchCamEvidence(): Promise<CamEvidence[] | null> {
-  const out: CamEvidence[] = [];
-  const uw = (await getJson(UW_FRAME_CAMS_URL)) as { cams?: Record<string, unknown>[] } | undefined;
-  const uwById = new Map((uw?.cams ?? []).map((c) => [String(c.id), c]));
-  const feeds = new Map<string, Promise<unknown | undefined>>();
-  for (const loc of LOCATIONS) {
-    for (const cam of loc.cams) {
-      if (!cam.id || cam.embedType !== "image") continue;
-      if (cam.snapshotMetaUrl) {
-        const c = uwById.get(cam.id);
-        if (!c) {
-          out.push({ id: cam.id, lastGoodFrameAt: undefined });
-          continue;
-        }
-        const good = pickMetaTimestamp(c);
-        const att = c.lastAttempt as { grabbedAtUtc?: unknown; error?: unknown } | null | undefined;
-        const lastAttempt: CamAttempt | null =
-          att && typeof att.grabbedAtUtc === "string"
-            ? { at: att.grabbedAtUtc, blank: /blank/i.test(String(att.error ?? "")) }
-            : null;
-        out.push({ id: cam.id, lastGoodFrameAt: good ?? (c.ok === false ? null : undefined), lastAttempt });
-      } else if (cam.snapshotFeed) {
-        const { base, view } = cam.snapshotFeed;
-        if (!feeds.has(base)) feeds.set(base, getJson(`${base}/latest.json`));
-        const json = await feeds.get(base);
-        const good = json === undefined ? undefined : pickFeedTimestamp(json, view);
-        const listsViews = !!json && typeof json === "object" && Object.keys(json).length > 0;
-        out.push({ id: cam.id, lastGoodFrameAt: good ?? (listsViews ? null : undefined) });
-      }
-    }
-  }
-  return uw === undefined && out.every((e) => e.lastGoodFrameAt === undefined) ? null : out;
+/** Each configured cam's newest good frame, as its source reports it now, and the
+ *  courier's newest frame (the breaker). One request to uw-frame /cams for the
+ *  courier cams, one latest.json per county feed. */
+async function fetchCamEvidence(): Promise<{ evidence: CamEvidence[]; courierNewest: string | null | undefined } | null> {
+  const uw = await getJson(UW_FRAME_CAMS_URL);
+  const bases = [...new Set(LOCATIONS.flatMap((l) => l.cams.flatMap((c) => (c.snapshotFeed ? [c.snapshotFeed.base] : []))))];
+  const feeds = new Map<string, unknown>();
+  await Promise.all(bases.map(async (b) => feeds.set(b, await getJson(`${b}/latest.json`))));
+  const evidence = camEvidenceFromSources(LOCATIONS, uw, feeds);
+  if (evidence.every((e) => e.lastGoodFrameAt === undefined)) return null;
+  return { evidence, courierNewest: uw === undefined ? undefined : newestCourierFrame(uw) };
 }
 
 // --- Beach facts from config -------------------------------------------------
@@ -378,8 +355,11 @@ async function main(): Promise<void> {
   } else {
     raw = fetchRaw(args.days, new Date());
     log("Reading which cameras are offline...");
-    raw.camEvidence = await fetchCamEvidence();
-    if (raw.camEvidence == null) raw.errors.camEvidence = "no camera source answered";
+    const cams = await fetchCamEvidence();
+    raw.camEvidence = cams?.evidence ?? null;
+    // null = /cams answered with no courier frame; leave it out when /cams did not answer.
+    if (cams && cams.courierNewest !== undefined) raw.courierNewestGoodAt = cams.courierNewest;
+    if (cams == null) raw.errors.camEvidence = "no camera source answered";
   }
   if (args.saveRaw) {
     writeFileSync(abs(args.saveRaw), JSON.stringify(raw));
