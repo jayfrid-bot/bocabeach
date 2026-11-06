@@ -51,3 +51,19 @@ describe("camEvidenceFromSources", () => {
     ]);
   });
 });
+
+describe("camEvidenceFromSources agrees with the page", () => {
+  it("a /cams row with no metadata (ok:null, grabbedAtUtc:null) is 'none stored', like /meta's ok:false", () => {
+    const uw = {
+      cams: [
+        { id: "never", ok: null, grabbedAtUtc: null, lastAttempt: null },
+        { id: "odd", ok: true, grabbedAtUtc: "not a date", lastAttempt: null },
+      ],
+    };
+    const ev = camEvidenceFromSources([{ cams: [metaCam("never"), metaCam("odd")] }], uw, new Map());
+    expect(ev.map((e) => [e.id, e.lastGoodFrameAt])).toEqual([
+      ["never", null],
+      ["odd", undefined],
+    ]);
+  });
+});

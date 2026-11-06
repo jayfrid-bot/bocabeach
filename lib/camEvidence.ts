@@ -36,7 +36,13 @@ export function camEvidenceFromSources(
           att && typeof att.grabbedAtUtc === "string"
             ? { at: att.grabbedAtUtc, blank: /blank/i.test(String(att.error ?? "")) }
             : null;
-        out.push({ id: cam.id, lastGoodFrameAt: metaLastGood(c), lastAttempt });
+        // /cams lists every registered cam; a row with no good frame (ok:false, or
+        // ok:null / grabbedAtUtc:null when the cam never delivered) is "none stored",
+        // exactly as the page reads /meta (which answers ok:false then). Only an ok:true
+        // row with an unreadable time stays unknown, as on the page.
+        const good = metaLastGood(c);
+        const lastGoodFrameAt = good !== undefined ? good : c.ok === true ? undefined : null;
+        out.push({ id: cam.id, lastGoodFrameAt, lastAttempt });
       } else if (cam.snapshotFeed) {
         const json = feeds.get(cam.snapshotFeed.base);
         out.push({

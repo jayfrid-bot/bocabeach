@@ -81,20 +81,27 @@ export function pickMetaTimestamp(json: unknown): string | undefined {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
 }
 
+/** A latest.json entry that looks like a real camera view: an object with a frame path. */
+function isFeedEntry(v: unknown): boolean {
+  if (!v || typeof v !== "object") return false;
+  const e = v as Record<string, unknown>;
+  return (typeof e.mr === "string" && e.mr.length > 0) || (typeof e.hr === "string" && e.hr.length > 0);
+}
+
 /**
  * The newest good frame of a feed view, for the offline rule (lib/camStatus.ts):
- * its capture time; null only when the feed lists other views but NOT this one
- * (the provider dropped it, nothing to show); undefined when it cannot be judged
- * (no document, an empty one, or the view is there without a usable time: shown,
- * unverified, never offline on that evidence).
+ * its capture time; null only when the document is a real feed list (at least one
+ * entry shaped like a camera view) that does NOT have this view at all (the provider
+ * dropped it, nothing to show); undefined when it cannot be judged: no document, an
+ * empty or odd one (`{error: ...}`), or the view is there (even as null) without a
+ * usable time. Undefined means shown, unverified, never offline on that evidence.
  */
 export function feedLastGood(json: unknown, view: string): string | null | undefined {
   const ts = pickFeedTimestamp(json, view);
   if (ts) return ts;
-  if (!json || typeof json !== "object") return undefined;
-  const entry = (json as Record<string, unknown>)[view];
-  if (entry !== undefined && entry !== null) return undefined;
-  return Object.keys(json).length > 0 ? null : undefined;
+  if (!json || typeof json !== "object" || Array.isArray(json)) return undefined;
+  if (Object.prototype.hasOwnProperty.call(json, view)) return undefined;
+  return Object.values(json as Record<string, unknown>).some(isFeedEntry) ? null : undefined;
 }
 
 /**

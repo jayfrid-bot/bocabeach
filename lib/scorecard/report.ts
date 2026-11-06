@@ -976,7 +976,7 @@ function healthSection(s: Section<HealthResult>): string {
     out.push(
       `- Courier down${r.courierDown.since ? ` since ${etTime(r.courierDown.since)}` : ""}` +
         (r.courierDown.newest ? ` (newest courier frame ${etTime(r.courierDown.newest)})` : " (no courier frame on record)") +
-        ": its cameras stay on the page with an old picture and are not hidden one by one. Check the home server.",
+        ": its cameras that only went quiet stay on the page with an old picture and are not hidden one by one (a camera with no good frame stored is still hidden). Check the home server.",
     );
   }
   if (r.camsOffline == null) {

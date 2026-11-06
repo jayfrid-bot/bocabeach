@@ -514,6 +514,24 @@ describe("buildScorecard — cameras hidden as offline", () => {
     expect(md).toContain("- Cameras hidden as offline: none.");
   });
 
+  it("courier down with a camera that has no good frame: that one is still listed, and the wording says so", () => {
+    const courierIds = roster.filter((c) => c.cadence.source === "courier").map((c) => c.id);
+    const mixed = emptyRaw({
+      asOf,
+      camEvidence: courierIds.map((id) => ({
+        id,
+        lastGoodFrameAt: (id === "deerfield-spinner-uw" ? null : "2026-11-06T13:00:00Z") as string | null,
+      })),
+      courierNewestGoodAt: "2026-11-06T13:00:00Z",
+    });
+    const card = buildScorecard(mixed, { camRoster: roster });
+    expect(card.health.ok && card.health.result.camsOffline?.map((c) => c.id)).toEqual(["deerfield-spinner-uw"]);
+    const md = renderMarkdown(card);
+    expect(md).toContain("its cameras that only went quiet stay on the page");
+    expect(md).toContain("(a camera with no good frame stored is still hidden)");
+    expect(md).toContain("  - deerfield-spinner-uw (deerfield-beach): no good frame stored");
+  });
+
   it("says none, or not checked, plainly", () => {
     const none = renderMarkdown(buildScorecard(emptyRaw({ asOf, camEvidence: [] }), { camRoster: roster }));
     expect(none).toContain("- Cameras hidden as offline: none.");

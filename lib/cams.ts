@@ -192,9 +192,19 @@ export async function buildCamViewsWithStatus(
  *  asked at most once per 10 minutes per data center, and only while a courier cam
  *  has aged out. */
 export const FLEET_CACHE_TTL_SEC = 600;
-const FLEET_KEY_PREFIX = "https://cache.isitbeachday.internal/courierfleet/";
+// Bump the version when the stored shape changes, so an old entry is never read as a new one.
+const FLEET_KEY_PREFIX = "https://cache.isitbeachday.internal/courierfleet/v2/";
 
-interface CacheLike {
+/** A newest-courier-frame value we can trust: null, or an ISO time not in the future
+ *  (5 minutes of clock skew allowed). Anything else is undefined (a miss). */
+export function validFleetNewest(v: unknown, nowMs: number): string | null | undefined {
+  if (v === null) return null;
+  if (typeof v !== "string") return undefined;
+  const t = Date.parse(v);
+  return Number.isFinite(t) && t <= nowMs + 5 * 60_000 ? new Date(t).toISOString() : undefined;
+}
+
+export interface CacheLike {
   match(key: string): Promise<Response | undefined>;
   put(key: string, res: Response): Promise<void>;
 }
@@ -207,8 +217,13 @@ function defaultCache(): CacheLike | null {
   }
 }
 
-/** The courier fleet's state at `nowMs`. Never throws; an unreadable answer is "unknown". */
-async function courierFleetFor(metaUrl: string, nowMs: number): Promise<CourierFleet> {
+/** The courier fleet's state at `nowMs`. Never throws; an unreadable answer is "unknown".
+ *  `cache` is the Workers Cache (injectable for tests; null = none). */
+export async function courierFleetFor(
+  metaUrl: string,
+  nowMs: number,
+  cache: CacheLike | null = defaultCache(),
+): Promise<CourierFleet> {
   let camsUrl: string;
   try {
     camsUrl = new URL("/cams", metaUrl).href;
@@ -216,18 +231,18 @@ async function courierFleetFor(metaUrl: string, nowMs: number): Promise<CourierF
     return { down: "unknown" };
   }
   const key = `${FLEET_KEY_PREFIX}${encodeURIComponent(camsUrl)}`;
-  const cache = defaultCache();
   let newest: string | null | undefined;
   try {
     const hit = await cache?.match(key);
-    if (hit) newest = ((await hit.json()) as { newest?: string | null }).newest;
+    // A malformed entry is a miss: it is read again from /cams, never trusted.
+    if (hit) newest = validFleetNewest(((await hit.json()) as { newest?: unknown } | null)?.newest, nowMs);
   } catch {
     newest = undefined;
   }
   if (newest === undefined) {
     try {
       const res = await fetchWithTimeout(camsUrl, { timeoutMs: ATTEMPT_TIMEOUT_MS });
-      newest = res.ok ? newestCourierFrame(await res.json()) : undefined;
+      newest = res.ok ? validFleetNewest(newestCourierFrame(await res.json()), nowMs) : undefined;
     } catch {
       newest = undefined;
     }
