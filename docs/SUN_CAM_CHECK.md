@@ -215,6 +215,12 @@ score = 100 * C * (0.55 W + 0.20 K + 0.25 P)
 
 Per-frame scores are rounded to 1 decimal before the event score is taken.
 
+**Sky brightness** (since `2026-11-06.1`). Each frame also gets `sky_median_v`: the median V
+(0 to 1) over every pixel of the shrunk sky region, taken BEFORE the near-black, glare and
+glow exclusions (the upper median: the sorted values' element `n // 2`). It is rounded to 3
+decimals in the series. It does not change a frame's score. It decides whether the frame is
+too dark to use (see "Usable frames and coverage").
+
 ### The sun glow mask
 
 The orange glow around the sun is not colorful sky. A perfectly clear sunrise has
@@ -256,7 +262,26 @@ frame stayed at 0.6.
 ### Usable frames and coverage
 
 A frame with `valid_frac < 0.10` (nearly all dark or blown out) is an artifact. It
-is dropped from the series. The usable frames must also cover the event: at least 3
+is dropped from the series.
+
+**Dark frames** (since `2026-11-06.1`). A frame is also dropped when its sky is still dark
+and it is far from the event:
+
+- `sky_median_v` (the 3-decimal value in the series) is under **0.30**, and
+- the frame is **15 or more minutes** from the event, before or after (compared in whole
+  milliseconds, so the script and the server agree at the edge).
+
+Why: before dawn the Deerfield pier cam sees its sodium lamps and the Elbo Room cam sees its
+floodlit red flags. In a dark frame those are "warm sky". The 2026-10-18 pier sunrise was
+stored as 80 from a frame at −32.5 minutes; without its three dark frames it is 17.7. Near
+the event a dark sky is real (a gray overcast), so the rule leaves it alone. A dropped dark
+frame is not in the series, counts toward no bucket, and cannot be the peak. The threshold
+comes from the saved frames (see "Re-scoring saved frames"): every dropped frame that scored
+over 10 had a sky V from 0.10 to 0.298, and at 15 minutes from the event the median sky V of
+every cam is 0.50 or more. The gap is narrow: the 10/18 pier frame at −25 minutes (sky V 0.32)
+still holds some lamp haze and is now that event's peak, at 17.7.
+
+The usable frames must also cover the event: at least 3
 frames in EACH of three buckets, by minutes from the event.
 
 | Bucket | Range |
@@ -337,6 +362,11 @@ The route (`app/api/sun-observations/route.ts`, `lib/sunObservations.ts`):
   `facing_azimuth_deg`): an east cam is solar at a sunrise and antisolar at a sunset,
   and a west cam is the reverse;
 - accepts an optional `glow_masked_frac` (0 to 1) on each series frame and keeps it;
+- accepts `sky_median_v` (0 to 1) on each series frame and keeps it. It is optional for a
+  `score_version` before `2026-11-06.1` (those keep their old rules) and REQUIRED on every
+  frame from `2026-11-06.1` on. From that version the route drops each dark frame (the rule
+  above) before it checks coverage and the peak, and it does not store it. The script never
+  sends one, so this changes nothing for an honest upload;
 - checks the event time against the beach's own computed sunrise or sunset (5
   minutes), and the local date against the beach's time zone;
 - recomputes the temporal coverage from the series and rejects an upload with fewer
@@ -389,6 +419,72 @@ WHERE observed_score IS NOT NULL
 ORDER BY event_iso, as_of_hour_utc;
 ```
 
+## Re-scoring saved frames
+
+`scripts/sun_cam_rescore.py` re-reads the saved frames in `~/Projects/bocabeach-sunframes`,
+scores every frame again with the current rules (with `sky_median_v`), takes the robust peak
+again, and posts the result with the current `score_version`. It never touches the state file.
+
+- A real run needs `--stored`, a fresh export of `sun_event_observations`. A row already at the
+  current `score_version` (or newer) is never re-uploaded: the live job scored it from the
+  full-quality frames, and the route would let a later `scored_at` replace it. So a second run,
+  with a fresh export, uploads nothing.
+
+- It scores every event from the low-quality `HHMMSSZ.jpg` frames, the peak too, so one
+  series never mixes two JPEG qualities.
+- It snaps each file's time (whole seconds) back to the original 2.5-minute sample time, so
+  the series carries the same instants as the first upload.
+- An event that is incomplete under the new rules is not uploaded. Its old row stays.
+
+Run it on the home server, from the repo, with the Python that has Pillow:
+
+```
+cd ~/Projects/bocabeach
+npx wrangler d1 execute isitbeachday-plus --remote --json \
+  --command "SELECT slug, event_kind, event_date_local, cam_id, observed_score, score_version FROM sun_event_observations" \
+  > /tmp/sun-obs.json                       # optional: the stored scores to compare with (on any Mac with wrangler)
+/opt/homebrew/bin/python3 scripts/sun_cam_rescore.py --dry-run --changed-only --stored /tmp/sun-obs.json --verbose
+/opt/homebrew/bin/python3 scripts/sun_cam_rescore.py --changed-only --stored /tmp/sun-obs.json
+```
+
+A dry run without `--stored` takes the "stored" column from the state file (last 14 days only).
+`--since`, `--until`, `--cams` and `--events` narrow the run. `--changed-only` uploads only the
+beach-events whose score under the new rules differs from the same saved frames under the
+old rules. Use it: the other rows were scored on the full-quality originals, and re-scoring
+their low-quality copies only adds JPEG noise.
+
+**The 2026-11-06.1 dry run** (`docs/benchmarks/2026-11-06-lamp-fix/dry-run.txt`, run on the
+home server on 2026-11-05 against 720 stored rows): 734 beach-events re-scored, 718 complete.
+
+- The dark rule changes 11 beach-events. Six are Deerfield pier sunrises (three mornings, each
+  for Deerfield Beach and Boca Raton), stored → new: 10/18 80.0 → 17.7, 10/20 29.8 → 2.8,
+  11/03 44.1 → 11.8. One is the Elbo Room 10/24 sunrise: 70.4 → 65.4 (its −35 minute frame is
+  gone; the frames at −32.5 to −22.5 are lit flags plus real dawn glow and stay). The other
+  four are Marathon sunrises (afterglow view) that move by under 1 point.
+- The other dark frames (Elbo 10/18, 10/26, 11/01 and more) were not the peak, so those
+  events keep their score.
+- Two beach-events become incomplete, both on the Fort Zachary Taylor cam. The 10/18 sunrise
+  (afterglow view, stored 0) and the 10/27 sunset (solar view, stored 90.1): that sunset's sky
+  goes dark from +15 minutes, so only +10 and +12.5 are left after the event. Their old rows
+  stay. The rest of the cams keep a median sky V of 0.50 or more at ±15 minutes, so a normal
+  event keeps its coverage.
+- `--changed-only` would upload the 11 changed beach-events and nothing else.
+- Threshold check: the same dry run at 0.35 changes 15 beach-events (two more pier mornings,
+  11/01 60.2 → 25.6 and 11/04 23.4 → 11.7) but makes 5 incomplete, not 2 (four Fort Zachary
+  Taylor events and the 11/02 Elbo Room sunset). 0.30 stays.
+
+**JPEG quality.** The saved non-peak frames are JPEG quality 40. For 624 events the full-quality
+peak frame and its quality-40 copy score a median 0.0 apart (median absolute 0.1). Six differ by
+more than 5 points, the worst 17.0 (the 2026-10-28 Deerfield pier sunset, an afterglow view, 26.1
+full vs 9.1 low) and 10.8 (the 2026-10-21 Holmes Beach sunset, 94.5 vs 83.7). Re-scoring every
+event under the OLD rules from the saved frames matches the stored score to a median 0.0 (median
+absolute 0.1), with 14 beach-events more than 5 points off. Four are old `2026-10-06.2` rows
+(scored before the glow mask). The other ten are JPEG noise, on the peak frame or on a frame
+beside it. Dark frames suffer most: the 10/20 pier sunrise's −32.5 minute lamp frame scored
+14.9 in the stored series and 40.6 from its saved copy (the rule now drops it either way). So
+the low quality is fine in bulk but not for one event, which is why `--changed-only` is the
+advice.
+
 ## Credit
 
 Elbo Room gave permission to use its stream as long as it is credited. The string
@@ -436,6 +532,7 @@ Logs: `~/Library/Logs/sun-cam-check.log`. State:
 python3 scripts/sun_cam_check.py --dry-run          # score and print, upload nothing
 python3 scripts/sun_cam_check.py --force            # ignore the state file and the age window
 python3 scripts/sun_cam_check.py --from-dir DIR     # score saved frames (DIR = .../<date>/<event>/<cam>/); exit 3, no upload, if they do not cover the event
+python3 scripts/sun_cam_rescore.py --dry-run         # re-score every saved event with the current rules; see "Re-scoring saved frames"
 python3 -m unittest discover -s scripts -p "*_test.py"
 ```
 
@@ -460,13 +557,18 @@ python3 scripts/sun_cam_check.py \
 - The score version must be bumped when the formula changes. Old rows keep their
   own version so they can be re-scored from the saved frames.
 - Found in the 2026-11-05 recalibration (docs/benchmarks/2026-11-05-sun-recalibration):
-  - Pre-dawn lamps. In a dark frame at −35 minutes, the Deerfield pier cam's sodium
-    lights and the Elbo Room cam's red lights count as warm sky. Eight pier-cam
-    sunrises and one Elbo sunrise took their peak from such a frame (10/18 pier: 80
-    stored, about 18 without the dark frames). A fix: drop frames whose sky is still
-    dark (median V under 0.30) 15 or more minutes from the event, and bump
-    `SUN_CAM_SCORE_VERSION`. Not done yet: the server recomputes the peak from the
-    series, so the series needs a sky-brightness field first.
+  - DONE in `2026-11-06.1`: pre-dawn lamps. In a dark frame at −35 minutes, the Deerfield
+    pier cam's sodium lights and the Elbo Room cam's red lights counted as warm sky (10/18
+    pier: 80 stored, 17.7 without the dark frames). Each series frame now carries
+    `sky_median_v`, and dark frames 15 or more minutes from the event are dropped (see "Usable
+    frames and coverage"). The past events need `scripts/sun_cam_rescore.py --changed-only`.
+  - Elbo Room's "red lights" are mostly its floodlit red Florida Panthers flags. They fly at
+    about 36% to 49% of the frame width, so they reach into the second sky region
+    (`[.40, 0, .90, .55]`). The dark rule drops only the darkest frames; the flags still add
+    warm pixels in the dim frames from −32.5 to −22.5 minutes (10/24: 62.6, 61.0, 61.9). A
+    left edge at 0.50 for that region would remove them. Not done: it is a new score version.
+  - A sky that goes dark 15 minutes after a sunset leaves only 2 frames in the post bucket,
+    so the capture is incomplete. The Fort Zachary Taylor cam did this on 2026-10-27.
   - The Deerfield beach cam switches to black and white on dim mornings, for up to
     half the window. Those frames score 0.
   - Each cam has its own scale. On the same sunsets Holmes Beach averages 74 and

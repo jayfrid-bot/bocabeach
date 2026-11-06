@@ -83,9 +83,18 @@ SCORING (deterministic; bump SUN_CAM_SCORE_VERSION whenever any of this changes)
        valid_frac < 0.10).
   glow_masked_frac (diagnostic, kept in the series) = masked pixels that would
   otherwise have counted / region pixels.
+  sky_median_v (kept in the series, 3 decimals) = the median V over ALL the sky-region
+  pixels of the shrunk frame, taken BEFORE the near-black, glare and glow exclusions
+  (the upper median: sorted values, element n // 2). It says how bright the sky is.
 
   USABLE frames: a frame whose valid_frac is below 0.10 (nearly all dark or blown
-  out) is an artifact and is dropped from the series.
+  out) is an artifact and is dropped from the series. So is a DARK frame (since
+  2026-11-06.1): sky_median_v (rounded to 3 decimals) below 0.30 while the frame is
+  15 or more minutes from the event. Before dawn and after dusk the sky is still
+  dark, and a lamp in view (the Deerfield pier's sodium lights, Elbo Room's floodlit
+  red flags) is then "warm" sky: the pier sunrises of 2026-10-18, 10-20 and 11-03
+  took their peak from such a frame (10/18: 80 stored, 17.7 without it).
+  Near the event a dark sky is real (a gray overcast), so the rule leaves it alone.
 
   COVERAGE: the usable frames must put at least 3 frames in EACH of three buckets,
   by minutes from the event: pre [-35, -12), around [-12, +8], post (+8, +25].
@@ -129,6 +138,7 @@ USAGE:
       HHMMSSZ.jpg frames; date, event and cam come from the path (override with
       --date/--event/--cam/--slug). Add --dry-run to print without uploading.
   Other flags: --cams a,b  --now ISO  --json  --verbose
+  Re-score saved events after a rules change: scripts/sun_cam_rescore.py (--dry-run first).
 
 PACING: every yt-dlp call (the manifest issue, the fallback search) goes through
 scripts/yt_pacer.py, the call budget shared by all jobs on the box (docs/courier-pacing.md).
@@ -195,7 +205,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import yt_pacer  # noqa: E402
 
 # YYYY-MM-DD.N: the server orders re-scores by this (date, then N as a number), then by scored_at.
-SUN_CAM_SCORE_VERSION = "2026-10-15.1"
+# 2026-11-06.1: each series frame carries sky_median_v, and dark frames far from the event are dropped.
+SUN_CAM_SCORE_VERSION = "2026-11-06.1"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = REPO_ROOT / "config" / "sun-cams.json"
@@ -226,6 +237,12 @@ PRE_END_MIN = -12.0
 AROUND_END_MIN = 8.0
 MIN_FRAMES_PER_BUCKET = 3
 MIN_USABLE_VALID_FRAC = 0.10  # a frame with less usable sky than this is an artifact (dark/blown out) and is dropped
+# --- Dark frames (lib/sunObservations.ts mirrors these exactly) ---
+# A frame whose sky is still dark (sky_median_v, rounded to 3 decimals, below DARK_SKY_V) and that sits
+# DARK_RULE_MIN_OFFSET_MIN or more from the event is dropped like an artifact: before dawn and after dusk a
+# lamp in view counts as warm sky. Compared in whole milliseconds, so Python and TypeScript agree at the edge.
+DARK_SKY_V = 0.30
+DARK_RULE_MIN_OFFSET_MIN = 15
 
 # --- Robust peak (lib/sunObservations.ts robustPeak mirrors this exactly) ---
 PEAK_NEIGHBOR_SECONDS = 301  # one 2.5-min sample either side, and the 5-min saved backfill frames
@@ -488,6 +505,7 @@ def score_image(img: Any, regions: List[List[float]], glow: bool = True) -> Dict
     total = 0
     n = 0
     masked = 0
+    sky_v: List[int] = []  # every region pixel's V (0..255), before any exclusion: for sky_median_v
     warm = 0
     warm_s = 0.0
     sum_rg = sum_yb = sum_rg2 = sum_yb2 = 0.0
@@ -499,6 +517,7 @@ def score_image(img: Any, regions: List[List[float]], glow: bool = True) -> Dict
         cw = crop.size[0]
         rgb_bytes = crop.tobytes()
         hsv_bytes = crop.convert("HSV").tobytes()
+        sky_v.extend(hsv_bytes[2::3])
         for i in range(0, len(rgb_bytes), 3):
             total += 1
             v = hsv_bytes[i + 2] / 255.0
@@ -527,8 +546,9 @@ def score_image(img: Any, regions: List[List[float]], glow: bool = True) -> Dict
                 warm += 1
                 warm_s += s
     glow_masked_frac = masked / total if total else 0.0
+    sky_median_v = sorted(sky_v)[len(sky_v) // 2] / 255.0 if sky_v else 0.0
     if total == 0 or n == 0:
-        return {"valid_frac": 0.0, "warm_frac": 0.0, "colorfulness": 0.0, "warm_sat": 0.0, "glow_masked_frac": glow_masked_frac, "score": 0.0}
+        return {"valid_frac": 0.0, "warm_frac": 0.0, "colorfulness": 0.0, "warm_sat": 0.0, "glow_masked_frac": glow_masked_frac, "sky_median_v": sky_median_v, "score": 0.0}
     mean_rg, mean_yb = sum_rg / n, sum_yb / n
     std_rg = math.sqrt(max(0.0, sum_rg2 / n - mean_rg * mean_rg))
     std_yb = math.sqrt(max(0.0, sum_yb2 / n - mean_yb * mean_yb))
@@ -542,6 +562,7 @@ def score_image(img: Any, regions: List[List[float]], glow: bool = True) -> Dict
         "colorfulness": colorfulness,
         "warm_sat": warm_sat,
         "glow_masked_frac": glow_masked_frac,
+        "sky_median_v": sky_median_v,
         "score": combine_score(warm_frac, colorfulness, warm_sat, valid_frac),
     }
 
@@ -1021,23 +1042,37 @@ def top_frame_corroborated(series: List[Dict[str, Any]]) -> bool:
     return any(f["score"] == top and nb[i] is not None for i, f in enumerate(series))
 
 
-def build_result(frames: List[Dict[str, Any]], event_t: datetime) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+def is_dark_frame(f: Dict[str, Any], event_t: datetime) -> bool:
+    """The dark-frame rule (lib/sunObservations.ts isDarkFrame mirrors it): the sky is still dark
+    (sky_median_v, rounded to 3 decimals as it is sent, below DARK_SKY_V) and the frame is
+    DARK_RULE_MIN_OFFSET_MIN or more from the event. Offsets are compared in whole milliseconds of
+    the ISO times that are uploaded, exactly as the server sees them."""
+    if round(f["sky_median_v"], 3) >= DARK_SKY_V:
+        return False
+    offset_ms = _ms(iso_z(f["t"])) - _ms(iso_z(event_t))
+    return abs(offset_ms) >= DARK_RULE_MIN_OFFSET_MIN * 60_000
+
+
+def build_result(frames: List[Dict[str, Any]], event_t: datetime, dark_rule: bool = True) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
     """Collapse scored frames to the event result relative to `event_t`.
     Returns (result, info); result is None when the capture is incomplete, and
     info['reason'] says why. `frames` holds dicts with t (datetime) plus the
     per-frame metrics; only usable frames inside the window (with 1 min of slack)
-    reach the series."""
+    reach the series. Unusable means valid_frac < 0.10 or a dark frame (is_dark_frame).
+    dark_rule=False reproduces the 2026-10-15.1 rules (for the re-score report only:
+    its result is never uploaded, and frames need no sky_median_v)."""
     in_window = [
         f for f in frames
         if -(WINDOW_BEFORE_MIN + 1) <= (f["t"] - event_t).total_seconds() / 60.0 <= WINDOW_AFTER_MIN + 1
     ]
-    usable = [f for f in in_window if f["valid_frac"] >= MIN_USABLE_VALID_FRAC]
+    dark = [f for f in in_window if dark_rule and f["valid_frac"] >= MIN_USABLE_VALID_FRAC and is_dark_frame(f, event_t)]
+    usable = [f for f in in_window if f["valid_frac"] >= MIN_USABLE_VALID_FRAC and not (dark_rule and is_dark_frame(f, event_t))]
     cov = coverage_counts([f["t"] for f in usable], event_t)
-    info: Dict[str, Any] = {"recovered": len(frames), "usable": len(usable), "coverage": cov}
+    info: Dict[str, Any] = {"recovered": len(frames), "usable": len(usable), "dark": len(dark), "coverage": cov}
     if min(cov.values()) < MIN_FRAMES_PER_BUCKET:
         info["reason"] = (
             f"coverage {cov['pre']} pre / {cov['around']} around / {cov['post']} post usable frames "
-            f"(need {MIN_FRAMES_PER_BUCKET} in each; {len(frames) - len(usable)} of {len(frames)} recovered frames were unusable or outside the window)"
+            f"(need {MIN_FRAMES_PER_BUCKET} in each; {len(frames) - len(usable)} of {len(frames)} recovered frames were unusable, dark ({len(dark)}) or outside the window)"
         )
         return None, info
     series = [
@@ -1048,6 +1083,7 @@ def build_result(frames: List[Dict[str, Any]], event_t: datetime) -> Tuple[Optio
             "colorfulness": round(f["colorfulness"], 1),
             "warm_sat": round(f["warm_sat"], 3),
             "glow_masked_frac": round(f.get("glow_masked_frac", 0.0), 4),
+            **({"sky_median_v": round(f["sky_median_v"], 3)} if dark_rule else {}),
         }
         for f in usable
     ]
@@ -1133,7 +1169,7 @@ def read_token() -> Optional[str]:
 
 def print_series(label: str, frames: List[Dict[str, Any]], peak_t: Optional[datetime], event_t: Optional[datetime] = None) -> None:
     print(f"\n{label}")
-    print(f"  {'frame (UTC)':<22}{'warm':>7}{'color':>8}{'wsat':>7}{'valid':>7}{'glow':>6}{'score':>8}")
+    print(f"  {'frame (UTC)':<22}{'warm':>7}{'color':>8}{'wsat':>7}{'valid':>7}{'glow':>6}{'skyV':>6}{'score':>8}")
     for f in frames:
         mark = " <- PEAK" if peak_t is not None and f["t"] == peak_t else ""
         notes = []
@@ -1143,9 +1179,11 @@ def print_series(label: str, frames: List[Dict[str, Any]], peak_t: Optional[date
                 notes.append("outside window")
         if f["valid_frac"] < MIN_USABLE_VALID_FRAC:
             notes.append("unusable")
+        elif event_t is not None and is_dark_frame(f, event_t):
+            notes.append("dark, dropped")
         out = f"  ({', '.join(notes)})" if notes else ""
         print(
-            f"  {iso_z(f['t']):<22}{f['warm_frac']:>7.3f}{f['colorfulness']:>8.1f}{f['warm_sat']:>7.2f}{f['valid_frac']:>7.2f}{f.get('glow_masked_frac', 0.0):>6.2f}{f['score']:>8.1f}{mark}{out}"
+            f"  {iso_z(f['t']):<22}{f['warm_frac']:>7.3f}{f['colorfulness']:>8.1f}{f['warm_sat']:>7.2f}{f['valid_frac']:>7.2f}{f.get('glow_masked_frac', 0.0):>6.2f}{f.get('sky_median_v', 0.0):>6.2f}{f['score']:>8.1f}{mark}{out}"
         )
 
 
@@ -1155,7 +1193,7 @@ def print_peak(result: Dict[str, Any], info: Dict[str, Any]) -> None:
         f"\nROBUST PEAK: observed_score={result['observed_score']}  reported frame {result['peak_frame_iso']} "
         f"(that frame alone scored {result['peak_frame_score']})  warm_frac={result['warm_frac']}  colorfulness={result['colorfulness']}"
     )
-    print(f"coverage: {cov['pre']} pre / {cov['around']} around / {cov['post']} post usable frames ({info['usable']} usable of {info['recovered']} recovered)")
+    print(f"coverage: {cov['pre']} pre / {cov['around']} around / {cov['post']} post usable frames ({info['usable']} usable of {info['recovered']} recovered; {info.get('dark', 0)} dark frames dropped)")
 
 
 # ---------------------------------------------------------------------------

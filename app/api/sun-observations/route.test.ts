@@ -426,3 +426,32 @@ describe("filling the prediction rows", () => {
     expect(await store.sunEventObservationsFor("fort-lauderdale", "sunrise", "2026-10-06")).toHaveLength(1);
   });
 });
+
+describe("sky brightness (score_version 2026-11-06.1)", () => {
+  const NEW_NOW = "2026-11-06T12:00:00.000Z";
+  it("200s a new-version body with sky_median_v on every frame, and 400s one without it", async () => {
+    vi.setSystemTime(new Date(NEW_NOW));
+    const base = sunObservationBody({ version: "2026-11-06.1" });
+    const withV = { ...base, series: (base.series as Record<string, unknown>[]).map((f) => ({ ...f, sky_median_v: 0.55 })) };
+    const missing = await post(base);
+    expect(missing.status).toBe(400);
+    expect(String((await json(missing)).detail)).toMatch(/needs sky_median_v/);
+    const ok = await post(withV);
+    expect(ok.status).toBe(200);
+    const store = await getStore();
+    const [row] = await store.sunEventObservationsFor("fort-lauderdale", "sunrise", "2026-10-06");
+    expect(row.score_version).toBe("2026-11-06.1");
+    expect((JSON.parse(row.series_json) as { sky_median_v: number }[])[0].sky_median_v).toBe(0.55);
+  });
+
+  it("a re-score with the new version replaces an old-version row", async () => {
+    expect((await post(sunObservationBody())).status).toBe(200); // 2026-10-06.1, no sky_median_v
+    vi.setSystemTime(new Date(NEW_NOW));
+    const base = sunObservationBody({ version: "2026-11-06.1", scoredAt: NEW_NOW });
+    const res = await post({ ...base, series: (base.series as Record<string, unknown>[]).map((f) => ({ ...f, sky_median_v: 0.55 })) });
+    expect((await json(res)).stored).toBe(true);
+    const store = await getStore();
+    const [row] = await store.sunEventObservationsFor("fort-lauderdale", "sunrise", "2026-10-06");
+    expect(row.score_version).toBe("2026-11-06.1");
+  });
+});
