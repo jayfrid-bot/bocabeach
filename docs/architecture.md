@@ -389,7 +389,7 @@ flowchart LR
   OWNER["owner's Mac"] -->|"POST /api/push/test — Bearer INGEST_TOKEN, {deviceId}:<br/>one real APNs alert to one device, writes no alert state"| PUSHTEST["/api/push/test"]
   SUNOBS -->|"sun_event_observations (migrations/0015)<br/>upsert only when (score_version, scored_at) is newer —<br/>duplicates and stale replays are no-ops; credit stored"| D1
   SUNOBS -->|"observed_score / observed_source / observed_at on the<br/>sun_event_predictions rows (event within 15 min; best cam:<br/>solar view first, then nearest; never a hand label)"| D1
-  SCORECARD["scripts/scorecard.ts — by hand or a weekly Claude scheduled task<br/>read-only wrangler SELECTs, then lib/scorecard/metrics.ts (pure maths)<br/>and report.ts (Markdown); reads config/sun-cams.json for each cam's facing;<br/>never writes to D1"]
+  SCORECARD["scripts/scorecard.ts — daily launchd job on the owner's laptop<br/>(scripts/scorecard_daily.sh, 10:30 AM, own worktree; pushes docs/scorecards only)<br/>read-only wrangler SELECTs, then lib/scorecard/metrics.ts (pure maths)<br/>and report.ts (Markdown); reads config/sun-cams.json for each cam's facing;<br/>never writes to D1"]
   D1 -->|"beach_hourly (extra_json blocks), sun_event_predictions,<br/>sun_event_observations, cam_observations"| SCORECARD
   SCORECARD -->|"docs/scorecards/YYYY-MM-DD.md + latest.md<br/>predicted vs what happened: sun color (fair per-cam rank by model version,<br/>coverage, east-coast afterglow), rain, best window,<br/>safety vs flags, data health"| SCARDS[(docs/scorecards)]
   UWFRAME -->|one headless-Chrome launch/tick,<br/>reused across every cam + the flag read| UWKV[(UW_FRAME KV<br/>frame:&lt;id&gt;, meta:&lt;id&gt;, attempt:&lt;id&gt;,<br/>flags:deerfield-beach, flags:fort-lauderdale)]
@@ -505,8 +505,13 @@ carries the cam owner's credit string (Elbo Room asked for one; the ten Gulf and
 `docs/SUN_CAM_CHECK.md`.
 
 **The scorecard closes the loop: predict, measure, score.**
-`scripts/scorecard.ts` runs by hand or from a weekly Claude scheduled task
-(`npx vite-node -c vitest.config.ts scripts/scorecard.ts`). It only reads D1,
+`scripts/scorecard.ts` runs every day at 10:30 AM from a launchd job on the
+owner's laptop (`scripts/scorecard_daily.sh`, `scripts/com.isitbeachday.scorecard.plist`),
+or by hand (`npx vite-node -c vitest.config.ts scripts/scorecard.ts`). The job
+works in its own worktree at origin/main, commits only `docs/scorecards/`, and
+raises a macOS notification when it fails. (Until 2026-11-05 a weekly Claude
+scheduled task ran it; every unattended run from 2026-10-20 on stopped at its
+first shell command, so no report was written for three weeks.) It only reads D1,
 through read-only `wrangler d1 execute --remote` queries, so it adds no route,
 no job, and no write. It scores the sun-color forecasts against the cam
 readings, the rain nowcast against the MRMS radar, the best-window and
