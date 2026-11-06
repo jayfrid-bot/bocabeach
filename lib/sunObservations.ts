@@ -21,7 +21,7 @@ const ALLOWED_KEYS = new Set([
   "slug", "event_kind", "event_date_local", "event_iso", "cam_id", "view", "distance_mi",
   "observed_score", "warm_frac", "colorfulness", "peak_frame_iso", "series", "score_version", "scored_at", "credit",
 ]);
-const SERIES_KEYS = new Set(["t", "score", "warm_frac", "colorfulness", "warm_sat", "glow_masked_frac"]);
+const SERIES_KEYS = new Set(["t", "score", "warm_frac", "colorfulness", "warm_sat", "glow_masked_frac", "sky_median_v"]);
 
 /** The event instant must sit within this of the beach's own computed time. */
 const EVENT_TOLERANCE_MS = 5 * 60_000;
@@ -57,6 +57,18 @@ export const WINDOW_END_MIN = 25;
 export const PRE_END_MIN = -12; // pre: [-35, -12)
 export const AROUND_END_MIN = 8; // around: [-12, +8]; post: (+8, +25]
 export const MIN_FRAMES_PER_BUCKET = 3;
+
+// --- Dark frames (scripts/sun_cam_check.py is_dark_frame mirrors this exactly) ---
+// Before dawn and after dusk the sky is still dark, and a lamp in view (the Deerfield pier's
+// sodium lights, Elbo Room's red lights) counts as warm sky. So from score_version
+// SKY_V_REQUIRED_FROM_VERSION on, every series frame carries sky_median_v (the median V over the
+// sky region, before any exclusion, 3 decimals), and a frame with sky_median_v < DARK_SKY_V that is
+// DARK_RULE_MIN_OFFSET_MIN or more from the event is dropped like an artifact: it is not stored, it
+// counts toward no coverage bucket, and it cannot be the peak. Older versions may omit the field
+// (it is validated and kept when present) and keep their old rules.
+export const DARK_SKY_V = 0.3;
+export const DARK_RULE_MIN_OFFSET_MIN = 15;
+export const SKY_V_REQUIRED_FROM_VERSION = "2026-11-06.1";
 /** Frames outside [-35, +25] min are not part of the capture. The script keeps this much slack
  *  (a beach's event differs from the cam's by seconds), and so does the server: anything beyond is
  *  rejected, so it can never reach the peak. */
@@ -85,6 +97,21 @@ export function scoreVersionProblem(version: unknown, nowMs: number): string | n
   }
   if (ms > nowMs + VERSION_MAX_AHEAD_MS) return "score_version is dated in the future";
   return null;
+}
+
+/** Does `version` (already valid YYYY-MM-DD.N) order at or after `floor`? Date first, then N as a number. */
+export function versionAtLeast(version: string, floor: string): boolean {
+  const parts = (v: string): [string, number] => [v.slice(0, 10), Number(v.slice(11))];
+  const [ad, an] = parts(version);
+  const [bd, bn] = parts(floor);
+  return ad !== bd ? ad > bd : an >= bn;
+}
+
+/** The dark-frame rule: a still-dark sky (sky_median_v < DARK_SKY_V) 15 or more minutes from the event.
+ *  Offsets are whole milliseconds, as in the script. A frame without sky_median_v is never dark. */
+export function isDarkFrame(frame: { t: string; sky_median_v?: number }, eventMs: number): boolean {
+  if (frame.sky_median_v === undefined || frame.sky_median_v >= DARK_SKY_V) return false;
+  return Math.abs(Date.parse(frame.t) - eventMs) >= DARK_RULE_MIN_OFFSET_MIN * 60_000;
 }
 
 export interface SunCamBeach {
@@ -162,6 +189,8 @@ export interface SeriesFrame {
   warm_sat: number;
   /** Diagnostic: share of the sky region left out as sun glow (absent in series scored before 2026-10-15.1). */
   glow_masked_frac?: number;
+  /** Median V (0-1) over the sky region before any exclusion; required from SKY_V_REQUIRED_FROM_VERSION. */
+  sky_median_v?: number;
 }
 
 /** For each frame, the best score among the OTHER frames within PEAK_NEIGHBOR_SECONDS; null when none is that close. */
@@ -287,7 +316,9 @@ export function parseSunObservation(body: unknown, nowMs: number): SunObservatio
   if (!Array.isArray(series) || series.length < 1 || series.length > SUN_OBSERVATION_MAX_SERIES) {
     return fail(`series must hold 1-${SUN_OBSERVATION_MAX_SERIES} frames`);
   }
+  const needsSkyV = versionAtLeast(version, SKY_V_REQUIRED_FROM_VERSION);
   const frames: SeriesFrame[] = [];
+  let darkDropped = 0;
   let prevMs = -Infinity;
   for (const raw of series) {
     if (!isRecord(raw)) return fail("series entries must be objects");
@@ -302,28 +333,46 @@ export function parseSunObservation(body: unknown, nowMs: number): SunObservatio
     if (tMs === null || fs === null || fw === null || fc === null || fp === null) return fail("a series entry is malformed");
     const fg = raw.glow_masked_frac === undefined ? undefined : numIn(raw.glow_masked_frac, 0, 1);
     if (fg === null) return fail("a series entry is malformed");
+    if (raw.sky_median_v === undefined && needsSkyV) {
+      return fail(`every series frame needs sky_median_v from score_version ${SKY_V_REQUIRED_FROM_VERSION}`);
+    }
+    const fv = raw.sky_median_v === undefined ? undefined : numIn(raw.sky_median_v, 0, 1);
+    if (fv === null) return fail("a series entry is malformed");
+    // The script rounds it to 3 decimals and applies the dark rule to that value; a finer value could
+    // fall on the other side of 0.30 here than there, so it is refused.
+    if (fv !== undefined && Math.abs(fv * 1000 - Math.round(fv * 1000)) > 1e-6) return fail("sky_median_v must have at most 3 decimals");
     const offsetMin = (tMs - eventMs) / 60_000;
     if (offsetMin < WINDOW_START_MIN - WINDOW_SLACK_MIN || offsetMin > WINDOW_END_MIN + WINDOW_SLACK_MIN) {
       return fail(`a series frame is outside the event window (${WINDOW_START_MIN - WINDOW_SLACK_MIN}..+${WINDOW_END_MIN + WINDOW_SLACK_MIN} min)`);
     }
     if (tMs <= prevMs) return fail("series frames must be in strictly increasing time order");
     prevMs = tMs;
-    frames.push({
+    const f: SeriesFrame = {
       t: new Date(tMs).toISOString(),
       score: fs,
       warm_frac: fw,
       colorfulness: fc,
       warm_sat: fp,
       ...(fg === undefined ? {} : { glow_masked_frac: fg }),
-    });
+      ...(fv === undefined ? {} : { sky_median_v: fv }),
+    };
+    // From the version that carries sky_median_v, a dark frame far from the event is unusable, exactly
+    // as the script drops it: not stored, not counted for coverage, never the peak.
+    if (needsSkyV && isDarkFrame(f, eventMs)) {
+      darkDropped += 1;
+      continue;
+    }
+    frames.push(f);
   }
+  if (frames.length === 0) return fail(`series holds no usable frame (${darkDropped} dark frames dropped)`);
   if (scoredMs < prevMs) return fail("scored_at is before the last series frame");
 
   // Temporal coverage: recomputed here, never trusted from the client.
   const cov = coverageCounts(frames.map((f) => Date.parse(f.t)), eventMs);
   if (cov.pre < MIN_FRAMES_PER_BUCKET || cov.around < MIN_FRAMES_PER_BUCKET || cov.post < MIN_FRAMES_PER_BUCKET) {
     return fail(
-      `series does not cover the event: ${cov.pre} pre, ${cov.around} around, ${cov.post} post frames (need ${MIN_FRAMES_PER_BUCKET} in each)`,
+      `series does not cover the event: ${cov.pre} pre, ${cov.around} around, ${cov.post} post frames (need ${MIN_FRAMES_PER_BUCKET} in each` +
+        (darkDropped ? `; ${darkDropped} dark frames dropped)` : ")"),
     );
   }
 

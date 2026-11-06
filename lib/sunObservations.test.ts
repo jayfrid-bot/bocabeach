@@ -5,17 +5,21 @@
 import { describe, it, expect } from "vitest";
 import {
   AROUND_END_MIN,
+  DARK_SKY_V,
   MIN_FRAMES_PER_BUCKET,
+  SKY_V_REQUIRED_FROM_VERSION,
   PRE_END_MIN,
   SUN_OBSERVATION_MAX_SERIES,
   camFacing,
   coverageCounts,
   expectedView,
+  isDarkFrame,
   localDateOf,
   parseSunObservation,
   robustPeak,
   scoreVersionProblem,
   topFrameCorroborated,
+  versionAtLeast,
 } from "@/lib/sunObservations";
 import { ELBO_SUNRISE_ISO, NOW_AFTER_OCT6_SUNRISE, eventIso, sunObservationBody, sunSeries } from "@/lib/sunObservations.fixtures";
 
@@ -461,5 +465,158 @@ describe("the real uploader payload (cross-language contract)", () => {
     const peak = robustPeak(series)!;
     expect(r.row.observed_score).toBe(peak.value);
     expect(r.row.peak_frame_iso).toBe(series[peak.index].t);
+  });
+});
+
+describe("dark frames (score_version 2026-11-06.1): pre-dawn and post-dusk lamps", () => {
+  // The new version is dated 2026-11-06, so the clock must be at most a day before that.
+  const NOW_NEW = Date.parse("2026-11-06T12:00:00.000Z");
+  const V = SKY_V_REQUIRED_FROM_VERSION;
+  type DFrame = Frame & { sky_median_v?: number; glow_masked_frac?: number };
+  const lit = (series: Frame[], v = 0.6): DFrame[] => series.map((f) => ({ ...f, sky_median_v: v }));
+  /** An honest new-version body: the top-level numbers are the robust peak of the frames the rule keeps. */
+  function newBody(series: DFrame[], over: Record<string, unknown> = {}): Record<string, unknown> {
+    const kept = series.filter((f) => !isDarkFrame(f, EVENT_MS));
+    const rp = robustPeak(kept);
+    const pf = rp ? kept[rp.index] : kept[0];
+    return {
+      ...sunObservationBody({ version: V }),
+      series,
+      observed_score: Math.round((rp?.value ?? 0) * 10) / 10,
+      warm_frac: pf.warm_frac,
+      colorfulness: pf.colorfulness,
+      peak_frame_iso: pf.t,
+      ...over,
+    };
+  }
+  /** The fixture series with the three frames at -35, -32.5 and -30 turned into lamp frames: dark sky, score 99. */
+  function withLamps(): DFrame[] {
+    return lit(sunObservationBody().series as Frame[]).map((f) =>
+      Date.parse(f.t) - EVENT_MS <= -30 * 60_000 ? { ...f, score: 99, warm_frac: 0.5, sky_median_v: 0.24 } : f,
+    );
+  }
+
+  it("versionAtLeast orders by date, then the counter as a number", () => {
+    expect(versionAtLeast("2026-11-06.1", V)).toBe(true);
+    expect(versionAtLeast("2026-11-06.10", "2026-11-06.9")).toBe(true);
+    expect(versionAtLeast("2026-11-07.1", V)).toBe(true);
+    expect(versionAtLeast("2026-11-05.9", V)).toBe(false);
+    expect(versionAtLeast("2026-10-15.1", V)).toBe(false);
+  });
+
+  it("isDarkFrame: a dark sky (below 0.30) 15 or more minutes from the event, on either side", () => {
+    expect(DARK_SKY_V).toBe(0.3);
+    expect(isDarkFrame({ t: at(-35), sky_median_v: 0.24 }, EVENT_MS)).toBe(true);
+    expect(isDarkFrame({ t: at(-15), sky_median_v: 0.299 }, EVENT_MS)).toBe(true);
+    expect(isDarkFrame({ t: at(15), sky_median_v: 0.299 }, EVENT_MS)).toBe(true);
+    expect(isDarkFrame({ t: new Date(EVENT_MS - 15 * 60_000 + 1).toISOString(), sky_median_v: 0.1 }, EVENT_MS)).toBe(false);
+    expect(isDarkFrame({ t: at(-35), sky_median_v: 0.3 }, EVENT_MS)).toBe(false);
+    expect(isDarkFrame({ t: at(-35) }, EVENT_MS)).toBe(false);
+  });
+
+  it("accepts the new version with sky_median_v on every frame and stores it", () => {
+    const r = parseSunObservation(newBody(lit(sunObservationBody().series as Frame[])), NOW_NEW);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const stored = JSON.parse(r.row.series_json) as { sky_median_v: number }[];
+    expect(stored).toHaveLength(25);
+    expect(stored.every((f) => f.sky_median_v === 0.6)).toBe(true);
+    expect(r.row.score_version).toBe(V);
+  });
+
+  it("rejects the new version when any frame lacks sky_median_v", () => {
+    const series = lit(sunObservationBody().series as Frame[]).map((f, i) => {
+      if (i !== 7) return f;
+      const { sky_median_v: _drop, ...rest } = f;
+      return rest;
+    });
+    expect(bad(newBody(series), NOW_NEW)).toMatch(/needs sky_median_v from score_version 2026-11-06\.1/);
+    expect(bad(newBody(sunObservationBody().series as Frame[]), NOW_NEW)).toMatch(/needs sky_median_v/);
+  });
+
+  it("rejects a sky_median_v out of 0-1 or of the wrong type", () => {
+    for (const v of [-0.01, 1.01, "0.5", null, Number.NaN]) {
+      const series = lit(sunObservationBody().series as Frame[]).map((f, i) => (i === 3 ? { ...f, sky_median_v: v as number } : f));
+      expect(bad(newBody(series), NOW_NEW)).toMatch(/malformed|needs sky_median_v/);
+    }
+  });
+
+  it("rejects a sky_median_v with more than 3 decimals (the script judges the 3-decimal value)", () => {
+    const series = lit(sunObservationBody().series as Frame[]).map((f, i) => (i === 0 ? { ...f, sky_median_v: 0.2996 } : f));
+    expect(bad(newBody(series), NOW_NEW)).toMatch(/at most 3 decimals/);
+    const ok = lit(sunObservationBody().series as Frame[]).map((f, i) => (i === 0 ? { ...f, sky_median_v: 0.299 } : f));
+    expect(parseSunObservation(newBody(ok), NOW_NEW).ok).toBe(true);
+  });
+
+  it("old versions without the field are still accepted; with it, it is validated and kept, and the old rules apply", () => {
+    expect(parseSunObservation(sunObservationBody(), NOW).ok).toBe(true);
+    const r = parseSunObservation(honestBody(withLamps()), NOW);
+    expect(r.ok).toBe(true); // 2026-10-06.1: no dark rule, so the lamp frames ARE the peak, as they were
+    if (!r.ok) return;
+    expect(r.row.observed_score).toBe(99);
+    expect((JSON.parse(r.row.series_json) as unknown[]).length).toBe(25);
+    const broken = withLamps().map((f, i) => (i === 4 ? { ...f, sky_median_v: 2 } : f));
+    expect(bad(honestBody(broken))).toMatch(/malformed/);
+  });
+
+  it("drops dark frames far from the event: they are not stored and cannot be the peak", () => {
+    const series = withLamps();
+    const r = parseSunObservation(newBody(series), NOW_NEW);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const stored = JSON.parse(r.row.series_json) as DFrame[];
+    expect(stored).toHaveLength(22);
+    expect(stored.some((f) => f.score === 99)).toBe(false);
+    expect(r.row.observed_score).toBeCloseTo(94.3, 1);
+    // A client that claims the lamp frame as its peak is refused.
+    const lampPeak = { observed_score: 99, warm_frac: 0.5, colorfulness: series[1].colorfulness, peak_frame_iso: series[1].t };
+    expect(bad({ ...newBody(series), ...lampPeak }, NOW_NEW)).toMatch(/robust peak/);
+  });
+
+  it("dark frames count toward no coverage bucket", () => {
+    // From +15 on the sky is dark (say an east cam's sunset): +10 and +12.5 are all that is left after the event.
+    const series = lit(sunObservationBody().series as Frame[]).map((f) =>
+      Date.parse(f.t) - EVENT_MS >= 15 * 60_000 ? { ...f, sky_median_v: 0.2 } : f,
+    );
+    expect(bad(newBody(series), NOW_NEW)).toMatch(/does not cover the event: 10 pre, 8 around, 2 post .*5 dark frames dropped/);
+    // a series that is nothing but dark frames is refused outright
+    const allDark = lit(sunObservationBody().series as Frame[], 0.1).filter((f) => Math.abs(Date.parse(f.t) - EVENT_MS) >= 15 * 60_000);
+    expect(bad({ ...newBody(lit(sunObservationBody().series as Frame[])), series: allDark }, NOW_NEW)).toMatch(/no usable frame \(14 dark/);
+  });
+
+  it("keeps a dark sky near the event (a gray overcast is the truth)", () => {
+    const series = lit(sunObservationBody().series as Frame[]).map((f) =>
+      Math.abs(Date.parse(f.t) - EVENT_MS) < 15 * 60_000 ? { ...f, sky_median_v: 0.1 } : f,
+    );
+    const r = parseSunObservation(newBody(series), NOW_NEW);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect((JSON.parse(r.row.series_json) as unknown[]).length).toBe(25);
+  });
+
+  it("cross-language: the script's real 2026-10-18 Deerfield pier sunrise lands on the same numbers in TypeScript", async () => {
+    // lib/__fixtures__/sunCamOct18PierLampFixture.json: payload = what scripts/sun_cam_check.py uploads (its lamp frames
+    // already dropped); dark_frames = the frames it dropped. scripts/sun_cam_check_test.py rebuilds the payload from both.
+    const fx = (await import("@/lib/__fixtures__/sunCamOct18PierLampFixture.json")).default as unknown as {
+      payload: Record<string, unknown> & { series: DFrame[] };
+      dark_frames: DFrame[];
+      old_rules_score: number;
+    };
+    const pl = fx.payload;
+    expect(pl.score_version).toBe(V);
+    const direct = parseSunObservation(pl, NOW_NEW);
+    expect(direct.ok).toBe(true);
+    // Put the dark frames back: the server drops exactly those and reaches the same peak.
+    const merged = { ...pl, series: [...pl.series, ...fx.dark_frames].sort((a, b) => Date.parse(a.t) - Date.parse(b.t)) };
+    const r = parseSunObservation(merged, NOW_NEW);
+    expect(r.ok).toBe(true);
+    if (!r.ok || !direct.ok) return;
+    expect(r.row.series_json).toBe(direct.row.series_json);
+    expect(r.row.observed_score).toBe(pl.observed_score);
+    expect(r.row.peak_frame_iso).toBe(pl.peak_frame_iso);
+    expect(fx.dark_frames.every((f) => isDarkFrame(f, Date.parse(pl.event_iso as string)))).toBe(true);
+    // Under the old rules the same frames peak on a lamp frame, so the honest new score no longer matches.
+    const oldRules = robustPeak(merged.series)!;
+    expect(oldRules.value).toBe(fx.old_rules_score);
+    expect(bad({ ...merged, score_version: "2026-10-15.1" }, NOW_NEW)).toMatch(/robust peak/);
   });
 });

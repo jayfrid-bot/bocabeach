@@ -1,0 +1,1110 @@
+sun-cam re-score | rules 2026-11-06.1 | frames /Users/yitzfrid/Projects/bocabeach-sunframes | stored scores from stored.json | dark rule: sky_median_v < 0.30 at 15+ min from the event | DRY RUN
+date       event   cam                         beach               view       stored version       old@saved    new dark  status
+2026-10-13 sunrise deerfield-beach-cam         deerfield-beach     solar        81.0 2026-10-06.2       79.8   79.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-13 sunrise deerfield-beach-cam         boca-raton          solar        81.0 2026-10-06.2       79.8   79.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-13 sunrise deerfield-pier-cam          deerfield-beach     solar        91.6 2026-10-06.2       90.2   90.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-13 sunrise deerfield-pier-cam          boca-raton          solar        91.6 2026-10-06.2       90.2   90.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-13 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        49.7 2026-10-06.2       46.1   46.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-13 sunset  deerfield-beach-cam         deerfield-beach     antisolar    34.4 2026-10-06.2       34.5   34.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-13 sunset  deerfield-beach-cam         boca-raton          antisolar    34.4 2026-10-06.2       34.5   34.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-13 sunset  deerfield-pier-cam          deerfield-beach     antisolar    18.3 2026-10-06.2       15.7   15.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-13 sunset  deerfield-pier-cam          boca-raton          antisolar    18.3 2026-10-06.2       15.7   15.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-13 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    59.5 2026-10-06.2       58.4   58.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-14 sunrise deerfield-beach-cam         deerfield-beach     solar        87.3 2026-10-06.2       86.6   86.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-14 sunrise deerfield-beach-cam         boca-raton          solar        87.3 2026-10-06.2       86.6   86.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-14 sunrise deerfield-pier-cam          deerfield-beach     solar        92.0 2026-10-06.2       90.9   90.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-14 sunrise deerfield-pier-cam          boca-raton          solar        92.0 2026-10-06.2       90.9   90.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-14 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        50.6 2026-10-06.2       38.3   38.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-14 sunset  deerfield-beach-cam         deerfield-beach     antisolar    20.7 2026-10-06.2       18.0   18.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-14 sunset  deerfield-beach-cam         boca-raton          antisolar    20.7 2026-10-06.2       18.0   18.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-14 sunset  deerfield-pier-cam          deerfield-beach     antisolar     4.0 2026-10-06.2        7.3    7.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-14 sunset  deerfield-pier-cam          boca-raton          antisolar     4.0 2026-10-06.2        7.3    7.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-14 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    49.2 2026-10-06.2       46.4   46.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-15 sunrise deerfield-beach-cam         deerfield-beach     solar        54.3 2026-10-06.2       53.7   53.7    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-15T10:44:36.523Z (-35.0 min): sky V 0.271, score 0.0
+    dark frame 2026-10-15T10:47:06.523Z (-32.5 min): sky V 0.267, score 3.6
+2026-10-15 sunrise deerfield-beach-cam         boca-raton          solar        54.3 2026-10-06.2       53.7   53.7    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-15T10:44:36.523Z (-35.0 min): sky V 0.271, score 0.0
+    dark frame 2026-10-15T10:47:06.523Z (-32.5 min): sky V 0.267, score 3.6
+2026-10-15 sunrise deerfield-pier-cam          deerfield-beach     solar        51.8 2026-10-06.2       46.7   46.7    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-15T10:44:36.458Z (-35.0 min): sky V 0.247, score 0.0
+    dark frame 2026-10-15T10:47:06.458Z (-32.5 min): sky V 0.286, score 3.8
+2026-10-15 sunrise deerfield-pier-cam          boca-raton          solar        51.8 2026-10-06.2       46.7   46.7    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-15T10:44:36.458Z (-35.0 min): sky V 0.247, score 0.0
+    dark frame 2026-10-15T10:47:06.458Z (-32.5 min): sky V 0.286, score 3.8
+2026-10-15 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        45.4 2026-10-06.2       53.1   53.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-15 sunset  deerfield-beach-cam         deerfield-beach     antisolar    40.6 2026-10-06.2       40.1   40.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-15 sunset  deerfield-beach-cam         boca-raton          antisolar    40.6 2026-10-06.2       40.1   40.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-15 sunset  deerfield-pier-cam          deerfield-beach     antisolar    19.1 2026-10-06.2       17.7   17.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-15 sunset  deerfield-pier-cam          boca-raton          antisolar    19.1 2026-10-06.2       17.7   17.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-15 sunset  fort-myers-beach-cam        fort-myers-beach    solar        56.2 2026-10-15.1       53.7   53.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-15 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    32.2 2026-10-06.2       32.0   32.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-15 sunset  pensacola-sria-west-cam     pensacola-beach     solar        75.1 2026-10-15.1       75.7   75.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-16 sunrise deerfield-beach-cam         deerfield-beach     solar        59.3 2026-10-15.1       58.3   58.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-16 sunrise deerfield-beach-cam         boca-raton          solar        59.3 2026-10-15.1       58.3   58.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-16 sunrise deerfield-pier-cam          deerfield-beach     solar        33.0 2026-10-15.1       32.1   32.1    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-16T10:45:07.988Z (-35.0 min): sky V 0.298, score 0.0
+2026-10-16 sunrise deerfield-pier-cam          boca-raton          solar        33.0 2026-10-15.1       32.1   32.1    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-16T10:45:07.988Z (-35.0 min): sky V 0.298, score 0.0
+2026-10-16 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     1.8 2026-10-15.1        1.7    1.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-16 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        47.0 2026-10-15.1       46.7   46.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-16 sunrise pensacola-sria-west-cam     pensacola-beach     antisolar    26.3 2026-10-15.1       26.3   26.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-16 sunset  deerfield-beach-cam         deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-16 sunset  deerfield-beach-cam         boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-16 sunset  deerfield-pier-cam          deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-16 sunset  deerfield-pier-cam          boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-16 sunset  fort-myers-beach-cam        fort-myers-beach    solar        23.9 2026-10-15.1       22.1   22.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-16 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    33.6 2026-10-15.1       33.9   33.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunrise deerfield-beach-cam         deerfield-beach     solar        84.1 2026-10-15.1       83.2   83.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunrise deerfield-beach-cam         boca-raton          solar        84.1 2026-10-15.1       83.2   83.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunrise deerfield-pier-cam          deerfield-beach     solar        85.9 2026-10-15.1       84.9   84.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunrise deerfield-pier-cam          boca-raton          solar        85.9 2026-10-15.1       84.9   84.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     1.2 2026-10-15.1        1.0    1.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        45.4 2026-10-15.1       45.4   45.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  deerfield-beach-cam         deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  deerfield-beach-cam         boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  deerfield-pier-cam          deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  deerfield-pier-cam          boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        39.5 2026-10-15.1       39.6   39.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  enco-sterling-reef-cam      panama-city-beach   solar        32.4 2026-10-15.1       32.5   32.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  fort-myers-beach-cam        fort-myers-beach    solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  fort-zachary-taylor-cam     key-west            solar        72.8 2026-10-15.1       72.0   72.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    13.0 2026-10-15.1       13.2   13.2    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-17T23:08:15.610Z (+17.5 min): sky V 0.227, score 0.0
+    dark frame 2026-10-17T23:10:45.610Z (+20.0 min): sky V 0.141, score 22.9
+2026-10-17 sunset  holmes-beach-cam            anna-maria-island   solar        13.2 2026-10-15.1       13.2   13.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  margaritaville-fmb-cam      fort-myers-beach    solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  pensacola-sria-west-cam     pensacola-beach     solar           - -                     -      -    0  incomplete under the new rules, not uploaded: coverage 0 pre / 0 around / 0 post usable frames (need 3 in each; 1 of 1 recovered frames were unusable, dark (0) or outside the window)
+2026-10-17 sunset  pink-shell-fmb-cam          fort-myers-beach    solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  sharkys-pcb-cam             panama-city-beach   solar        85.2 2026-10-15.1       85.0   85.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  siesta-beach-cam            siesta-key          solar         4.2 2026-10-15.1        4.3    4.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  sunset-grille-marathon-cam  marathon            solar         9.4 2026-10-15.1        7.8    7.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-17 sunset  white-sands-ami-cam         anna-maria-island   solar         5.7 2026-10-15.1        5.6    5.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunrise deerfield-beach-cam         deerfield-beach     solar         0.0 2026-10-15.1        0.0    0.0    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-18T10:51:12.365Z (-30.0 min): sky V 0.169, score 0.0
+    dark frame 2026-10-18T10:53:42.365Z (-27.5 min): sky V 0.220, score 0.0
+    dark frame 2026-10-18T10:56:12.365Z (-25.0 min): sky V 0.278, score 0.0
+2026-10-18 sunrise deerfield-beach-cam         boca-raton          solar         0.0 2026-10-15.1        0.0    0.0    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-18T10:51:12.365Z (-30.0 min): sky V 0.169, score 0.0
+    dark frame 2026-10-18T10:53:42.365Z (-27.5 min): sky V 0.220, score 0.0
+    dark frame 2026-10-18T10:56:12.365Z (-25.0 min): sky V 0.278, score 0.0
+2026-10-18 sunrise deerfield-pier-cam          deerfield-beach     solar        80.0 2026-10-15.1       79.6   17.7    3  dry run: would upload
+    dark frame 2026-10-18T10:46:12.304Z (-35.0 min): sky V 0.239, score 72.5
+    dark frame 2026-10-18T10:48:42.304Z (-32.5 min): sky V 0.247, score 79.6
+    dark frame 2026-10-18T10:51:12.304Z (-30.0 min): sky V 0.243, score 53.8
+2026-10-18 sunrise deerfield-pier-cam          boca-raton          solar        80.0 2026-10-15.1       79.6   17.7    3  dry run: would upload
+    dark frame 2026-10-18T10:46:12.304Z (-35.0 min): sky V 0.239, score 72.5
+    dark frame 2026-10-18T10:48:42.304Z (-32.5 min): sky V 0.247, score 79.6
+    dark frame 2026-10-18T10:51:12.304Z (-30.0 min): sky V 0.243, score 53.8
+2026-10-18 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar    48.2 2026-10-15.1       47.6   47.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar    10.3 2026-10-15.1       10.2   10.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunrise fort-zachary-taylor-cam     key-west            antisolar     0.0 2026-10-15.1        0.0      -    2  incomplete under the new rules, not uploaded: coverage 2 pre / 8 around / 7 post usable frames (need 3 in each; 8 of 25 recovered frames were unusable, dark (2) or outside the window)
+    dark frame 2026-10-18T11:06:42.277Z (-20.0 min): sky V 0.180, score 0.0
+    dark frame 2026-10-18T11:09:12.277Z (-17.5 min): sky V 0.239, score 0.0
+2026-10-18 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        57.1 2026-10-15.1       57.3   57.3    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-18T10:48:39.608Z (-32.5 min): sky V 0.102, score 41.8
+    dark frame 2026-10-18T10:51:09.608Z (-30.0 min): sky V 0.184, score 49.1
+2026-10-18 sunrise holmes-beach-cam            anna-maria-island   antisolar     5.8 2026-10-15.1        6.0    6.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunrise jax-beach-bw-cam            jacksonville-beach  solar         4.8 2026-10-15.1        5.3    5.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     5.5 2026-10-15.1        5.4    5.4    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-18T10:53:50.547Z (-35.0 min): sky V 0.220, score 0.0
+    dark frame 2026-10-18T10:56:20.547Z (-32.5 min): sky V 0.247, score 0.0
+    dark frame 2026-10-18T10:58:50.547Z (-30.0 min): sky V 0.294, score 0.0
+2026-10-18 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar    15.8 2026-10-15.1       16.1   16.1    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-18T10:58:53.512Z (-30.0 min): sky V 0.176, score 0.0
+    dark frame 2026-10-18T11:01:23.512Z (-27.5 min): sky V 0.294, score 0.0
+2026-10-18 sunrise sharkys-pcb-cam             panama-city-beach   antisolar    49.7 2026-10-15.1       50.8   50.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunrise siesta-beach-cam            siesta-key          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunrise sunset-grille-marathon-cam  marathon            antisolar     0.2 2026-10-15.1        0.4    0.4    5  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-18T10:49:05.236Z (-35.0 min): sky V 0.188, score 0.0
+    dark frame 2026-10-18T10:51:35.236Z (-32.5 min): sky V 0.200, score 0.0
+    dark frame 2026-10-18T10:54:05.236Z (-30.0 min): sky V 0.220, score 0.0
+    dark frame 2026-10-18T10:56:35.236Z (-27.5 min): sky V 0.231, score 0.0
+    dark frame 2026-10-18T10:59:05.236Z (-25.0 min): sky V 0.255, score 0.0
+2026-10-18 sunrise white-sands-ami-cam         anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  deerfield-beach-cam         deerfield-beach     antisolar    25.1 2026-10-15.1       25.1   25.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  deerfield-beach-cam         boca-raton          antisolar    25.1 2026-10-15.1       25.1   25.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  deerfield-pier-cam          deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  deerfield-pier-cam          boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        40.4 2026-10-15.1       40.4   40.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  enco-sterling-reef-cam      panama-city-beach   solar        31.1 2026-10-15.1       31.1   31.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  fort-myers-beach-cam        fort-myers-beach    solar        76.0 2026-10-15.1       75.9   75.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  fort-zachary-taylor-cam     key-west            solar        25.5 2026-10-15.1       25.3   25.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    60.8 2026-10-15.1       60.5   60.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  holmes-beach-cam            anna-maria-island   solar        89.5 2026-10-15.1       89.8   89.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        30.9 2026-10-15.1       31.3   31.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  pink-shell-fmb-cam          fort-myers-beach    solar        55.1 2026-10-15.1       53.4   53.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  sharkys-pcb-cam             panama-city-beach   solar        85.6 2026-10-15.1       85.4   85.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  siesta-beach-cam            siesta-key          solar        79.2 2026-10-15.1       78.5   78.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  sunset-grille-marathon-cam  marathon            solar        22.7 2026-10-15.1       22.4   22.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-18 sunset  white-sands-ami-cam         anna-maria-island   solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunrise deerfield-beach-cam         deerfield-beach     solar        75.1 2026-10-15.1       74.2   74.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunrise deerfield-beach-cam         boca-raton          solar        75.1 2026-10-15.1       74.2   74.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunrise deerfield-pier-cam          deerfield-beach     solar        70.4 2026-10-15.1       70.4   70.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunrise deerfield-pier-cam          boca-raton          solar        70.4 2026-10-15.1       70.4   70.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunrise fort-zachary-taylor-cam     key-west            antisolar     0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-19T10:59:41.672Z (-27.5 min): sky V 0.176, score 0.0
+    dark frame 2026-10-19T11:02:11.672Z (-25.0 min): sky V 0.259, score 0.0
+2026-10-19 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        41.6 2026-10-15.1       40.3   40.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunrise holmes-beach-cam            anna-maria-island   antisolar     4.9 2026-10-15.1       10.2   10.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunrise jax-beach-bw-cam            jacksonville-beach  solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     0.2 2026-10-15.1        0.2    0.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-19T10:54:26.596Z (-35.0 min): sky V 0.247, score 0.0
+    dark frame 2026-10-19T10:56:56.596Z (-32.5 min): sky V 0.255, score 0.0
+2026-10-19 sunrise sharkys-pcb-cam             panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunrise siesta-beach-cam            siesta-key          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunrise sunset-grille-marathon-cam  marathon            antisolar     2.2 2026-10-15.1        2.3    2.3    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-19T10:49:34.935Z (-35.0 min): sky V 0.243, score 0.1
+    dark frame 2026-10-19T10:52:04.935Z (-32.5 min): sky V 0.259, score 0.0
+2026-10-19 sunrise white-sands-ami-cam         anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  deerfield-beach-cam         deerfield-beach     antisolar    11.8 2026-10-15.1       11.0   11.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  deerfield-beach-cam         boca-raton          antisolar    11.8 2026-10-15.1       11.0   11.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  deerfield-pier-cam          deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  deerfield-pier-cam          boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        40.8 2026-10-15.1       40.7   40.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  enco-sterling-reef-cam      panama-city-beach   solar        27.5 2026-10-15.1       27.4   27.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  fort-myers-beach-cam        fort-myers-beach    solar        80.1 2026-10-15.1       79.9   79.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  fort-zachary-taylor-cam     key-west            solar        94.7 2026-10-15.1       94.7   94.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    39.0 2026-10-15.1       38.9   38.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  holmes-beach-cam            anna-maria-island   solar        97.2 2026-10-15.1       97.2   97.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        33.7 2026-10-15.1       33.3   33.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  pink-shell-fmb-cam          fort-myers-beach    solar        63.7 2026-10-15.1       63.7   63.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  sharkys-pcb-cam             panama-city-beach   solar        82.2 2026-10-15.1       81.9   81.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  siesta-beach-cam            siesta-key          solar        76.0 2026-10-15.1       75.6   75.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  sunset-grille-marathon-cam  marathon            solar        17.6 2026-10-15.1       17.6   17.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-19 sunset  white-sands-ami-cam         anna-maria-island   solar        12.0 2026-10-15.1       12.2   12.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunrise deerfield-beach-cam         deerfield-beach     solar        11.8 2026-10-15.1       11.7   11.7    4  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-20T10:47:18.403Z (-35.0 min): sky V 0.176, score 0.0
+    dark frame 2026-10-20T10:49:48.403Z (-32.5 min): sky V 0.212, score 0.0
+    dark frame 2026-10-20T10:52:18.403Z (-30.0 min): sky V 0.251, score 0.0
+    dark frame 2026-10-20T10:54:48.403Z (-27.5 min): sky V 0.286, score 0.0
+2026-10-20 sunrise deerfield-beach-cam         boca-raton          solar        11.8 2026-10-15.1       11.7   11.7    4  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-20T10:47:18.403Z (-35.0 min): sky V 0.176, score 0.0
+    dark frame 2026-10-20T10:49:48.403Z (-32.5 min): sky V 0.212, score 0.0
+    dark frame 2026-10-20T10:52:18.403Z (-30.0 min): sky V 0.251, score 0.0
+    dark frame 2026-10-20T10:54:48.403Z (-27.5 min): sky V 0.286, score 0.0
+2026-10-20 sunrise deerfield-pier-cam          deerfield-beach     solar        29.8 2026-10-15.1       40.6    2.8    4  dry run: would upload
+    dark frame 2026-10-20T10:47:18.345Z (-35.0 min): sky V 0.184, score 34.2
+    dark frame 2026-10-20T10:49:48.345Z (-32.5 min): sky V 0.227, score 40.6
+    dark frame 2026-10-20T10:52:18.345Z (-30.0 min): sky V 0.275, score 12.6
+    dark frame 2026-10-20T10:54:48.345Z (-27.5 min): sky V 0.298, score 15.2
+2026-10-20 sunrise deerfield-pier-cam          boca-raton          solar        29.8 2026-10-15.1       40.6    2.8    4  dry run: would upload
+    dark frame 2026-10-20T10:47:18.345Z (-35.0 min): sky V 0.184, score 34.2
+    dark frame 2026-10-20T10:49:48.345Z (-32.5 min): sky V 0.227, score 40.6
+    dark frame 2026-10-20T10:52:18.345Z (-30.0 min): sky V 0.275, score 12.6
+    dark frame 2026-10-20T10:54:48.345Z (-27.5 min): sky V 0.298, score 15.2
+2026-10-20 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar    51.6 2026-10-15.1       51.0   51.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunrise fort-zachary-taylor-cam     key-west            antisolar     0.0 2026-10-15.1        0.2    0.2    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-20T10:55:11.519Z (-32.5 min): sky V 0.169, score 0.0
+    dark frame 2026-10-20T10:57:41.519Z (-30.0 min): sky V 0.220, score 0.0
+    dark frame 2026-10-20T11:00:11.519Z (-27.5 min): sky V 0.298, score 0.0
+2026-10-20 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        48.9 2026-10-15.1       48.4   48.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunrise holmes-beach-cam            anna-maria-island   antisolar    52.5 2026-10-15.1       48.7   48.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunrise jax-beach-bw-cam            jacksonville-beach  solar        49.0 2026-10-15.1       41.8   41.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     0.5 2026-10-15.1        1.0    1.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar       - -                     -      -    0  incomplete under the new rules, not uploaded: coverage 7 pre / 8 around / 1 post usable frames (need 3 in each; 9 of 25 recovered frames were unusable, dark (0) or outside the window)
+2026-10-20 sunrise sharkys-pcb-cam             panama-city-beach   antisolar    43.5 2026-10-15.1       46.5   46.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunrise siesta-beach-cam            siesta-key          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunrise sunset-grille-marathon-cam  marathon            antisolar     0.2 2026-10-15.1        0.1    0.0    2  dry run: would upload
+    dark frame 2026-10-20T10:50:05.084Z (-35.0 min): sky V 0.227, score 0.1
+    dark frame 2026-10-20T10:52:35.084Z (-32.5 min): sky V 0.243, score 0.1
+2026-10-20 sunrise white-sands-ami-cam         anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  deerfield-beach-cam         deerfield-beach     antisolar    24.6 2026-10-15.1       24.7   24.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  deerfield-beach-cam         boca-raton          antisolar    24.6 2026-10-15.1       24.7   24.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  deerfield-pier-cam          deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  deerfield-pier-cam          boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  deerfield-surf-cam          deerfield-beach     antisolar       - -                     -      -    0  incomplete under the new rules, not uploaded: coverage 0 pre / 0 around / 0 post usable frames (need 3 in each; 1 of 1 recovered frames were unusable, dark (0) or outside the window)
+2026-10-20 sunset  deerfield-surf-cam          boca-raton          antisolar       - -                     -      -    0  incomplete under the new rules, not uploaded: coverage 0 pre / 0 around / 0 post usable frames (need 3 in each; 1 of 1 recovered frames were unusable, dark (0) or outside the window)
+2026-10-20 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        43.6 2026-10-15.1       43.4   43.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  enco-sterling-reef-cam      panama-city-beach   solar        33.2 2026-10-15.1       33.3   33.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  fort-myers-beach-cam        fort-myers-beach    solar        91.5 2026-10-15.1       91.3   91.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  fort-zachary-taylor-cam     key-west            solar        90.6 2026-10-15.1       90.3   90.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    58.2 2026-10-15.1       58.0   58.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  holmes-beach-cam            anna-maria-island   solar        97.8 2026-10-15.1       97.7   97.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        33.0 2026-10-15.1       32.8   32.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  pensacola-sria-west-cam     pensacola-beach     solar        79.3 2026-10-15.1       79.3   79.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  pink-shell-fmb-cam          fort-myers-beach    solar        56.8 2026-10-15.1       57.4   57.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  sharkys-pcb-cam             panama-city-beach   solar        87.0 2026-10-15.1       87.0   87.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  siesta-beach-cam            siesta-key          solar        89.1 2026-10-15.1       88.8   88.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  sunset-grille-marathon-cam  marathon            solar        10.4 2026-10-15.1        9.8    9.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-20 sunset  white-sands-ami-cam         anna-maria-island   solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunrise deerfield-beach-cam         deerfield-beach     solar        62.9 2026-10-15.1       62.3   62.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunrise deerfield-beach-cam         boca-raton          solar        62.9 2026-10-15.1       62.3   62.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunrise deerfield-pier-cam          deerfield-beach     solar        54.3 2026-10-15.1       53.6   53.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunrise deerfield-pier-cam          boca-raton          solar        54.3 2026-10-15.1       53.6   53.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar    48.0 2026-10-15.1       47.7   47.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     0.1 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunrise fort-zachary-taylor-cam     key-west            antisolar     8.6 2026-10-15.1        8.1    8.1    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-21T10:53:11.824Z (-35.0 min): sky V 0.161, score 0.0
+    dark frame 2026-10-21T10:55:41.824Z (-32.5 min): sky V 0.208, score 0.0
+2026-10-21 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        29.9 2026-10-15.1       29.0   29.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunrise holmes-beach-cam            anna-maria-island   antisolar    66.5 2026-10-15.1       66.8   66.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunrise jax-beach-bw-cam            jacksonville-beach  solar       100.0 2026-10-15.1      100.0  100.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     1.0 2026-10-15.1        1.6    1.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunrise pensacola-sria-west-cam     pensacola-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar       - -                     -      -    1  incomplete under the new rules, not uploaded: coverage 9 pre / 8 around / 2 post usable frames (need 3 in each; 6 of 25 recovered frames were unusable, dark (1) or outside the window)
+    dark frame 2026-10-21T10:55:34.080Z (-35.0 min): sky V 0.227, score 0.0
+2026-10-21 sunrise sharkys-pcb-cam             panama-city-beach   antisolar    41.5 2026-10-15.1       43.2   43.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunrise siesta-beach-cam            siesta-key          antisolar     4.9 2026-10-15.1        5.6    5.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunrise sunset-grille-marathon-cam  marathon            antisolar     4.4 2026-10-15.1        4.3    4.3    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-21T10:50:35.690Z (-35.0 min): sky V 0.208, score 0.0
+    dark frame 2026-10-21T10:53:05.690Z (-32.5 min): sky V 0.239, score 0.0
+    dark frame 2026-10-21T10:55:35.690Z (-30.0 min): sky V 0.278, score 0.1
+2026-10-21 sunrise white-sands-ami-cam         anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  deerfield-beach-cam         deerfield-beach     antisolar     1.3 2026-10-15.1        1.2    1.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  deerfield-beach-cam         boca-raton          antisolar     1.3 2026-10-15.1        1.2    1.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  deerfield-pier-cam          deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  deerfield-pier-cam          boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        42.8 2026-10-15.1       42.8   42.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  enco-sterling-reef-cam      panama-city-beach   solar        28.7 2026-10-15.1       28.7   28.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  fort-myers-beach-cam        fort-myers-beach    solar        80.7 2026-10-15.1       80.5   80.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  fort-zachary-taylor-cam     key-west            solar        80.2 2026-10-15.1       80.0   80.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    50.8 2026-10-15.1       50.5   50.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  holmes-beach-cam            anna-maria-island   solar        94.5 2026-10-15.1       83.7   83.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        36.8 2026-10-15.1       36.7   36.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  pensacola-sria-west-cam     pensacola-beach     solar        79.4 2026-10-15.1       79.6   79.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  pink-shell-fmb-cam          fort-myers-beach    solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  sharkys-pcb-cam             panama-city-beach   solar        87.4 2026-10-15.1       87.5   87.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  siesta-beach-cam            siesta-key          solar        77.1 2026-10-15.1       77.1   77.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  sunset-grille-marathon-cam  marathon            solar        12.7 2026-10-15.1       13.2   13.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-21 sunset  white-sands-ami-cam         anna-maria-island   solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunrise deerfield-beach-cam         deerfield-beach     solar         3.6 2026-10-15.1        3.6    3.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunrise deerfield-beach-cam         boca-raton          solar         3.6 2026-10-15.1        3.6    3.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunrise deerfield-pier-cam          deerfield-beach     solar         0.0 2026-10-15.1        0.0    0.0    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-22T10:48:26.159Z (-35.0 min): sky V 0.247, score 0.0
+2026-10-22 sunrise deerfield-pier-cam          boca-raton          solar         0.0 2026-10-15.1        0.0    0.0    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-22T10:48:26.159Z (-35.0 min): sky V 0.247, score 0.0
+2026-10-22 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar    50.2 2026-10-15.1       49.3   49.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunrise fort-zachary-taylor-cam     key-west            antisolar    31.6 2026-10-15.1       31.9   31.9    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-22T10:56:12.593Z (-32.5 min): sky V 0.169, score 0.0
+    dark frame 2026-10-22T10:58:42.593Z (-30.0 min): sky V 0.200, score 0.0
+    dark frame 2026-10-22T11:01:12.593Z (-27.5 min): sky V 0.239, score 0.0
+2026-10-22 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        56.5 2026-10-15.1       56.2   56.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunrise holmes-beach-cam            anna-maria-island   antisolar    77.5 2026-10-15.1       77.5   77.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunrise jax-beach-bw-cam            jacksonville-beach  solar       100.0 2026-10-15.1      100.0  100.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunrise pensacola-sria-west-cam     pensacola-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunrise sharkys-pcb-cam             panama-city-beach   antisolar    44.0 2026-10-15.1       46.1   46.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunrise siesta-beach-cam            siesta-key          antisolar    13.5 2026-10-15.1       14.3   14.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunrise sunset-grille-marathon-cam  marathon            antisolar     3.8 2026-10-15.1        4.1    4.1    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-22T10:51:06.758Z (-35.0 min): sky V 0.212, score 0.0
+    dark frame 2026-10-22T10:53:36.758Z (-32.5 min): sky V 0.243, score 0.1
+2026-10-22 sunrise white-sands-ami-cam         anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  deerfield-beach-cam         deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  deerfield-beach-cam         boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  deerfield-pier-cam          deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  deerfield-pier-cam          boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        46.3 2026-10-15.1       46.1   46.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  enco-sterling-reef-cam      panama-city-beach   solar        34.1 2026-10-15.1       34.2   34.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  fort-myers-beach-cam        fort-myers-beach    solar        81.3 2026-10-15.1       80.7   80.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  fort-zachary-taylor-cam     key-west            solar        89.7 2026-10-15.1       89.7   89.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    49.7 2026-10-15.1       49.3   49.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  holmes-beach-cam            anna-maria-island   solar       100.0 2026-10-15.1      100.0  100.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        24.3 2026-10-15.1       24.1   24.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  pensacola-sria-west-cam     pensacola-beach     solar        85.4 2026-10-15.1       85.8   85.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  pink-shell-fmb-cam          fort-myers-beach    solar        73.2 2026-10-15.1       73.1   73.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  sharkys-pcb-cam             panama-city-beach   solar        91.3 2026-10-15.1       91.4   91.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  siesta-beach-cam            siesta-key          solar        90.4 2026-10-15.1       90.1   90.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  sunset-grille-marathon-cam  marathon            solar        24.2 2026-10-15.1       24.6   24.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-22 sunset  white-sands-ami-cam         anna-maria-island   solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunrise deerfield-beach-cam         deerfield-beach     solar        69.7 2026-10-15.1       69.0   69.0    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-23T10:49:00.797Z (-35.0 min): sky V 0.196, score 0.0
+    dark frame 2026-10-23T10:51:30.797Z (-32.5 min): sky V 0.255, score 0.0
+    dark frame 2026-10-23T10:54:00.797Z (-30.0 min): sky V 0.282, score 0.0
+2026-10-23 sunrise deerfield-beach-cam         boca-raton          solar        69.7 2026-10-15.1       69.0   69.0    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-23T10:49:00.797Z (-35.0 min): sky V 0.196, score 0.0
+    dark frame 2026-10-23T10:51:30.797Z (-32.5 min): sky V 0.255, score 0.0
+    dark frame 2026-10-23T10:54:00.797Z (-30.0 min): sky V 0.282, score 0.0
+2026-10-23 sunrise deerfield-pier-cam          deerfield-beach     solar        86.8 2026-10-15.1       86.2   86.2    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-23T10:49:00.743Z (-35.0 min): sky V 0.243, score 19.4
+2026-10-23 sunrise deerfield-pier-cam          boca-raton          solar        86.8 2026-10-15.1       86.2   86.2    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-23T10:49:00.743Z (-35.0 min): sky V 0.243, score 19.4
+2026-10-23 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar    47.9 2026-10-15.1       48.1   48.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     5.6 2026-10-15.1        6.6    6.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunrise fort-zachary-taylor-cam     key-west            antisolar     7.3 2026-10-15.1        9.0    9.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-23T10:59:13.830Z (-30.0 min): sky V 0.216, score 0.0
+    dark frame 2026-10-23T11:01:43.830Z (-27.5 min): sky V 0.298, score 0.0
+2026-10-23 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        30.9 2026-10-15.1       30.1   30.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunrise holmes-beach-cam            anna-maria-island   antisolar    75.3 2026-10-15.1       75.1   75.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunrise jax-beach-bw-cam            jacksonville-beach  solar        94.7 2026-10-15.1       94.5   94.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     1.4 2026-10-15.1        1.2    1.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunrise pensacola-sria-west-cam     pensacola-beach     antisolar     0.2 2026-10-15.1        0.1    0.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar       - -                   0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunrise sharkys-pcb-cam             panama-city-beach   antisolar    41.1 2026-10-15.1       39.1   39.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunrise siesta-beach-cam            siesta-key          antisolar     0.6 2026-10-15.1        2.4    2.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunrise sunset-grille-marathon-cam  marathon            antisolar     0.0 2026-10-15.1        0.0    0.0    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-23T10:51:38.293Z (-35.0 min): sky V 0.220, score 0.0
+    dark frame 2026-10-23T10:54:08.293Z (-32.5 min): sky V 0.247, score 0.0
+    dark frame 2026-10-23T10:56:38.293Z (-30.0 min): sky V 0.255, score 0.0
+2026-10-23 sunrise white-sands-ami-cam         anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  deerfield-beach-cam         deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  deerfield-beach-cam         boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  deerfield-pier-cam          deerfield-beach     antisolar     0.4 2026-10-15.1        0.6    0.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  deerfield-pier-cam          boca-raton          antisolar     0.4 2026-10-15.1        0.6    0.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        45.3 2026-10-15.1       45.1   45.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  enco-sterling-reef-cam      panama-city-beach   solar        33.3 2026-10-15.1       33.4   33.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  fort-myers-beach-cam        fort-myers-beach    solar        77.6 2026-10-15.1       77.6   77.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  fort-zachary-taylor-cam     key-west            solar        97.4 2026-10-15.1       97.5   97.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    54.3 2026-10-15.1       53.9   53.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  holmes-beach-cam            anna-maria-island   solar       100.0 2026-10-15.1      100.0  100.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        27.9 2026-10-15.1       27.8   27.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  pensacola-sria-west-cam     pensacola-beach     solar        83.5 2026-10-15.1       83.6   83.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  pink-shell-fmb-cam          fort-myers-beach    solar        89.6 2026-10-15.1       90.1   90.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  sharkys-pcb-cam             panama-city-beach   solar        82.3 2026-10-15.1       82.4   82.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  siesta-beach-cam            siesta-key          solar        91.2 2026-10-15.1       91.1   91.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  sunset-grille-marathon-cam  marathon            solar        18.3 2026-10-15.1       18.4   18.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-23 sunset  white-sands-ami-cam         anna-maria-island   solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunrise deerfield-beach-cam         deerfield-beach     solar        69.3 2026-10-15.1       67.8   67.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunrise deerfield-beach-cam         boca-raton          solar        69.3 2026-10-15.1       67.8   67.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunrise deerfield-pier-cam          deerfield-beach     solar        85.0 2026-10-15.1       84.4   84.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunrise deerfield-pier-cam          boca-raton          solar        85.0 2026-10-15.1       84.4   84.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar    53.2 2026-10-15.1       52.9   52.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunrise fort-zachary-taylor-cam     key-west            antisolar     0.7 2026-10-15.1        0.6    0.6    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-24T11:04:45.541Z (-25.0 min): sky V 0.169, score 0.0
+    dark frame 2026-10-24T11:07:15.541Z (-22.5 min): sky V 0.239, score 0.0
+    dark frame 2026-10-24T11:09:45.541Z (-20.0 min): sky V 0.298, score 0.0
+2026-10-24 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        70.4 2026-10-15.1       69.5   65.4    1  dry run: would upload
+    dark frame 2026-10-24T10:49:30.798Z (-35.0 min): sky V 0.235, score 69.5
+2026-10-24 sunrise holmes-beach-cam            anna-maria-island   antisolar    10.9 2026-10-15.1       11.4   11.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunrise jax-beach-bw-cam            jacksonville-beach  solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunrise pensacola-sria-west-cam     pensacola-beach     antisolar     4.2 2026-10-15.1        4.1    4.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunrise sharkys-pcb-cam             panama-city-beach   antisolar    44.9 2026-10-15.1       45.7   45.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunrise siesta-beach-cam            siesta-key          antisolar     1.8 2026-10-15.1        1.0    1.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunrise sunset-grille-marathon-cam  marathon            antisolar     0.0 2026-10-15.1        0.0    0.0    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-24T10:52:10.301Z (-35.0 min): sky V 0.290, score 0.0
+2026-10-24 sunrise white-sands-ami-cam         anna-maria-island   antisolar     7.8 2026-10-15.1        8.0    8.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  deerfield-beach-cam         deerfield-beach     antisolar    19.4 2026-10-15.1       17.9   17.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  deerfield-beach-cam         boca-raton          antisolar    19.4 2026-10-15.1       17.9   17.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  deerfield-pier-cam          deerfield-beach     antisolar     4.3 2026-10-15.1        3.3    3.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  deerfield-pier-cam          boca-raton          antisolar     4.3 2026-10-15.1        3.3    3.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        42.5 2026-10-15.1       42.4   42.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  enco-sterling-reef-cam      panama-city-beach   solar        29.7 2026-10-15.1       29.7   29.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  fort-myers-beach-cam        fort-myers-beach    solar        84.1 2026-10-15.1       83.8   83.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  fort-zachary-taylor-cam     key-west            solar        87.1 2026-10-15.1       87.0   87.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    65.7 2026-10-15.1       66.1   66.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  holmes-beach-cam            anna-maria-island   solar       100.0 2026-10-15.1      100.0  100.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        30.7 2026-10-15.1       30.7   30.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  pensacola-sria-west-cam     pensacola-beach     solar        78.2 2026-10-15.1       77.6   77.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  pink-shell-fmb-cam          fort-myers-beach    solar        80.4 2026-10-15.1       81.1   81.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  sharkys-pcb-cam             panama-city-beach   solar        81.6 2026-10-15.1       81.4   81.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  siesta-beach-cam            siesta-key          solar        93.9 2026-10-15.1       93.8   93.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  sunset-grille-marathon-cam  marathon            solar        13.7 2026-10-15.1       14.0   14.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-24 sunset  white-sands-ami-cam         anna-maria-island   solar         4.8 2026-10-15.1        4.8    4.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunrise deerfield-beach-cam         deerfield-beach     solar        70.3 2026-10-15.1       69.7   69.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunrise deerfield-beach-cam         boca-raton          solar        70.3 2026-10-15.1       69.7   69.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunrise deerfield-pier-cam          deerfield-beach     solar        82.4 2026-10-15.1       81.9   81.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunrise deerfield-pier-cam          boca-raton          solar        82.4 2026-10-15.1       81.9   81.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar    16.8 2026-10-15.1       16.9   16.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunrise fort-zachary-taylor-cam     key-west            antisolar     7.3 2026-10-15.1        5.7    5.7    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-25T10:57:47.729Z (-32.5 min): sky V 0.180, score 0.0
+    dark frame 2026-10-25T11:00:17.729Z (-30.0 min): sky V 0.227, score 0.0
+2026-10-25 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        51.6 2026-10-15.1       51.1   51.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunrise holmes-beach-cam            anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunrise jax-beach-bw-cam            jacksonville-beach  solar         1.6 2026-10-15.1        1.6    1.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     1.3 2026-10-15.1        1.3    1.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunrise pensacola-sria-west-cam     pensacola-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar       - -                     -      -    1  incomplete under the new rules, not uploaded: coverage 9 pre / 8 around / 0 post usable frames (need 3 in each; 8 of 25 recovered frames were unusable, dark (1) or outside the window)
+    dark frame 2026-10-25T10:57:54.445Z (-35.0 min): sky V 0.290, score 0.0
+2026-10-25 sunrise sharkys-pcb-cam             panama-city-beach   antisolar     5.9 2026-10-15.1        6.1    6.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunrise siesta-beach-cam            siesta-key          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunrise sunset-grille-marathon-cam  marathon            antisolar     0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-25T10:52:42.783Z (-35.0 min): sky V 0.224, score 0.0
+    dark frame 2026-10-25T10:55:12.783Z (-32.5 min): sky V 0.243, score 0.0
+2026-10-25 sunrise white-sands-ami-cam         anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  deerfield-beach-cam         deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  deerfield-beach-cam         boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  deerfield-pier-cam          deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  deerfield-pier-cam          boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        38.8 2026-10-15.1       38.8   38.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  enco-sterling-reef-cam      panama-city-beach   solar        26.4 2026-10-15.1       26.4   26.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  fort-myers-beach-cam        fort-myers-beach    solar        80.1 2026-10-15.1       80.0   80.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  fort-zachary-taylor-cam     key-west            solar        85.6 2026-10-15.1       85.4   85.4    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-25T23:14:41.767Z (+22.5 min): sky V 0.235, score 0.0
+    dark frame 2026-10-25T23:17:11.767Z (+25.0 min): sky V 0.173, score 0.0
+2026-10-25 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    36.9 2026-10-15.1       36.5   36.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  holmes-beach-cam            anna-maria-island   solar        97.2 2026-10-15.1       97.2   97.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-25T23:06:49.471Z (+22.5 min): sky V 0.294, score 0.0
+    dark frame 2026-10-25T23:09:19.471Z (+25.0 min): sky V 0.267, score 0.0
+2026-10-25 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        20.9 2026-10-15.1       20.8   20.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  pensacola-sria-west-cam     pensacola-beach     solar        61.8 2026-10-15.1       62.6   62.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  pink-shell-fmb-cam          fort-myers-beach    solar        59.2 2026-10-15.1       59.3   59.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  sharkys-pcb-cam             panama-city-beach   solar        72.4 2026-10-15.1       72.4   72.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  siesta-beach-cam            siesta-key          solar        76.4 2026-10-15.1       76.3   76.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  sunset-grille-marathon-cam  marathon            solar        29.5 2026-10-15.1       28.5   28.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-25 sunset  white-sands-ami-cam         anna-maria-island   solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunrise deerfield-beach-cam         deerfield-beach     solar         0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-26T10:50:47.291Z (-35.0 min): sky V 0.220, score 0.0
+    dark frame 2026-10-26T10:53:17.291Z (-32.5 min): sky V 0.259, score 0.0
+2026-10-26 sunrise deerfield-beach-cam         boca-raton          solar         0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-26T10:50:47.291Z (-35.0 min): sky V 0.220, score 0.0
+    dark frame 2026-10-26T10:53:17.291Z (-32.5 min): sky V 0.259, score 0.0
+2026-10-26 sunrise deerfield-pier-cam          deerfield-beach     solar        30.2 2026-10-15.1       30.4   30.4    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-26T10:50:47.241Z (-35.0 min): sky V 0.247, score 23.8
+    dark frame 2026-10-26T10:53:17.241Z (-32.5 min): sky V 0.294, score 22.4
+2026-10-26 sunrise deerfield-pier-cam          boca-raton          solar        30.2 2026-10-15.1       30.4   30.4    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-26T10:50:47.241Z (-35.0 min): sky V 0.247, score 23.8
+    dark frame 2026-10-26T10:53:17.241Z (-32.5 min): sky V 0.294, score 22.4
+2026-10-26 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar    51.0 2026-10-15.1       50.2   50.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunrise fort-zachary-taylor-cam     key-west            antisolar     9.2 2026-10-15.1        9.2    9.2    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-26T10:58:20.396Z (-32.5 min): sky V 0.161, score 0.0
+    dark frame 2026-10-26T11:00:50.396Z (-30.0 min): sky V 0.180, score 0.0
+    dark frame 2026-10-26T11:03:20.396Z (-27.5 min): sky V 0.235, score 0.0
+2026-10-26 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        44.4 2026-10-15.1       44.4   44.4    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-26T10:50:41.508Z (-35.0 min): sky V 0.263, score 41.6
+2026-10-26 sunrise holmes-beach-cam            anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunrise jax-beach-bw-cam            jacksonville-beach  solar         0.0 2026-10-15.1        0.2    0.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     0.0 2026-10-15.1        0.6    0.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunrise pensacola-sria-west-cam     pensacola-beach     antisolar     0.7 2026-10-15.1        1.1    1.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-26T10:58:30.677Z (-35.0 min): sky V 0.294, score 0.0
+2026-10-26 sunrise sharkys-pcb-cam             panama-city-beach   antisolar     0.2 2026-10-15.1        0.2    0.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunrise siesta-beach-cam            siesta-key          antisolar     1.0 2026-10-15.1        1.0    1.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunrise sunset-grille-marathon-cam  marathon            antisolar     0.7 2026-10-15.1        0.8    0.3    2  dry run: would upload
+    dark frame 2026-10-26T10:53:15.743Z (-35.0 min): sky V 0.235, score 0.8
+    dark frame 2026-10-26T10:55:45.743Z (-32.5 min): sky V 0.275, score 0.8
+2026-10-26 sunrise white-sands-ami-cam         anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  deerfield-beach-cam         deerfield-beach     antisolar    57.0 2026-10-15.1       56.9   56.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  deerfield-beach-cam         boca-raton          antisolar    57.0 2026-10-15.1       56.9   56.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  deerfield-pier-cam          deerfield-beach     antisolar     4.1 2026-10-15.1        3.4    3.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  deerfield-pier-cam          boca-raton          antisolar     4.1 2026-10-15.1        3.4    3.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        33.6 2026-10-15.1       33.7   33.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  enco-sterling-reef-cam      panama-city-beach   solar        29.9 2026-10-15.1       29.4   29.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  fort-myers-beach-cam        fort-myers-beach    solar        82.5 2026-10-15.1       82.2   82.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  fort-zachary-taylor-cam     key-west            solar        93.3 2026-10-15.1       93.5   93.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    15.5 2026-10-15.1       12.6   12.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  holmes-beach-cam            anna-maria-island   solar        97.2 2026-10-15.1       97.2   97.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        19.8 2026-10-15.1       19.3   19.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  pensacola-sria-west-cam     pensacola-beach     solar        76.9 2026-10-15.1       77.4   77.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  pink-shell-fmb-cam          fort-myers-beach    solar           - -                     -      -    0  incomplete under the new rules, not uploaded: coverage 10 pre / 8 around / 1 post usable frames (need 3 in each; 5 of 25 recovered frames were unusable, dark (0) or outside the window)
+2026-10-26 sunset  sharkys-pcb-cam             panama-city-beach   solar        82.1 2026-10-15.1       81.9   81.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  siesta-beach-cam            siesta-key          solar        79.1 2026-10-15.1       78.8   78.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  sunset-grille-marathon-cam  marathon            solar         7.7 2026-10-15.1        7.9    7.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-26 sunset  white-sands-ami-cam         anna-maria-island   solar         6.6 2026-10-15.1        6.8    6.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunrise deerfield-beach-cam         deerfield-beach     solar        30.0 2026-10-15.1       29.9   29.9    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-27T10:51:23.710Z (-35.0 min): sky V 0.298, score 0.0
+2026-10-27 sunrise deerfield-beach-cam         boca-raton          solar        30.0 2026-10-15.1       29.9   29.9    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-27T10:51:23.710Z (-35.0 min): sky V 0.298, score 0.0
+2026-10-27 sunrise deerfield-pier-cam          deerfield-beach     solar        84.0 2026-10-15.1       83.9   83.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunrise deerfield-pier-cam          boca-raton          solar        84.0 2026-10-15.1       83.9   83.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar    39.9 2026-10-15.1       39.7   39.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunrise fort-zachary-taylor-cam     key-west            antisolar     0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-27T10:58:53.544Z (-32.5 min): sky V 0.188, score 0.0
+    dark frame 2026-10-27T11:01:23.544Z (-30.0 min): sky V 0.267, score 0.0
+2026-10-27 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        14.5 2026-10-15.1       14.6   14.6    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-27T10:51:17.557Z (-35.0 min): sky V 0.298, score 0.0
+2026-10-27 sunrise holmes-beach-cam            anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunrise jax-beach-bw-cam            jacksonville-beach  solar         5.0 2026-10-15.1        5.4    5.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     0.1 2026-10-15.1        0.1    0.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunrise pensacola-sria-west-cam     pensacola-beach     antisolar     0.7 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunrise sharkys-pcb-cam             panama-city-beach   antisolar    20.0 2026-10-15.1       21.2   21.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunrise siesta-beach-cam            siesta-key          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunrise sunset-grille-marathon-cam  marathon            antisolar     0.0 2026-10-15.1        0.1    0.0    2  dry run: would upload
+    dark frame 2026-10-27T10:53:49.183Z (-35.0 min): sky V 0.243, score 0.1
+    dark frame 2026-10-27T10:56:19.183Z (-32.5 min): sky V 0.271, score 0.1
+2026-10-27 sunrise white-sands-ami-cam         anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  deerfield-beach-cam         deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  deerfield-beach-cam         boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  deerfield-pier-cam          deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  deerfield-pier-cam          boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        37.2 2026-10-15.1       37.4   37.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  enco-sterling-reef-cam      panama-city-beach   solar        32.2 2026-10-15.1       32.2   32.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  fort-myers-beach-cam        fort-myers-beach    solar        84.0 2026-10-15.1       83.7   83.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  fort-zachary-taylor-cam     key-west            solar        90.1 2026-10-15.1       90.2      -    4  incomplete under the new rules, not uploaded: coverage 10 pre / 8 around / 2 post usable frames (need 3 in each; 4 of 24 recovered frames were unusable, dark (4) or outside the window)
+    dark frame 2026-10-27T23:05:41.807Z (+15.0 min): sky V 0.220, score 0.0
+    dark frame 2026-10-27T23:08:11.807Z (+17.5 min): sky V 0.165, score 0.0
+    dark frame 2026-10-27T23:10:41.807Z (+20.0 min): sky V 0.137, score 0.0
+    dark frame 2026-10-27T23:13:11.807Z (+22.5 min): sky V 0.110, score 0.0
+2026-10-27 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    35.1 2026-10-15.1       40.5   40.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  holmes-beach-cam            anna-maria-island   solar        94.3 2026-10-15.1       94.1   94.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        27.0 2026-10-15.1       27.0   27.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  pensacola-sria-west-cam     pensacola-beach     solar        70.4 2026-10-15.1       70.4   70.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  pink-shell-fmb-cam          fort-myers-beach    solar        34.4 2026-10-15.1       33.0   33.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  sharkys-pcb-cam             panama-city-beach   solar        79.2 2026-10-15.1       79.3   79.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  siesta-beach-cam            siesta-key          solar        79.9 2026-10-15.1       79.6   79.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  sunset-grille-marathon-cam  marathon            solar         3.0 2026-10-15.1        3.2    3.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-27 sunset  white-sands-ami-cam         anna-maria-island   solar         3.9 2026-10-15.1        3.9    3.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunrise deerfield-beach-cam         deerfield-beach     solar        79.7 2026-10-15.1       75.4   75.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunrise deerfield-beach-cam         boca-raton          solar        79.7 2026-10-15.1       75.4   75.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunrise deerfield-pier-cam          deerfield-beach     solar        24.5 2026-10-15.1       23.9   23.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunrise deerfield-pier-cam          boca-raton          solar        24.5 2026-10-15.1       23.9   23.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar    29.9 2026-10-15.1       29.6   29.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunrise fort-zachary-taylor-cam     key-west            antisolar     0.0 2026-10-15.1        0.0    0.0    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-28T11:04:27.174Z (-27.5 min): sky V 0.169, score 0.0
+    dark frame 2026-10-28T11:06:57.174Z (-25.0 min): sky V 0.216, score 0.0
+    dark frame 2026-10-28T11:09:27.174Z (-22.5 min): sky V 0.278, score 0.0
+2026-10-28 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        33.3 2026-10-15.1       32.5   32.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunrise holmes-beach-cam            anna-maria-island   antisolar     0.2 2026-10-15.1        0.1    0.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunrise jax-beach-bw-cam            jacksonville-beach  solar         4.8 2026-10-15.1        4.9    4.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunrise pensacola-sria-west-cam     pensacola-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-28T10:59:44.520Z (-35.0 min): sky V 0.247, score 0.0
+    dark frame 2026-10-28T11:02:14.520Z (-32.5 min): sky V 0.286, score 0.0
+2026-10-28 sunrise sharkys-pcb-cam             panama-city-beach   antisolar    19.9 2026-10-15.1       16.7   16.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunrise siesta-beach-cam            siesta-key          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunrise sunset-grille-marathon-cam  marathon            antisolar     0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-28T10:54:23.101Z (-35.0 min): sky V 0.224, score 0.0
+    dark frame 2026-10-28T10:56:53.101Z (-32.5 min): sky V 0.255, score 0.0
+2026-10-28 sunrise white-sands-ami-cam         anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  deerfield-beach-cam         deerfield-beach     antisolar    37.4 2026-10-15.1       42.9   42.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  deerfield-beach-cam         boca-raton          antisolar    37.4 2026-10-15.1       42.9   42.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  deerfield-pier-cam          deerfield-beach     antisolar    26.1 2026-10-15.1       17.8   17.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  deerfield-pier-cam          boca-raton          antisolar    26.1 2026-10-15.1       17.8   17.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        37.5 2026-10-15.1       37.3   37.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  enco-sterling-reef-cam      panama-city-beach   solar        36.8 2026-10-15.1       36.7   36.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  fort-myers-beach-cam        fort-myers-beach    solar        22.5 2026-10-15.1       21.4   21.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  fort-zachary-taylor-cam     key-west            solar        88.2 2026-10-15.1       88.1   88.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar     4.9 2026-10-15.1        4.0    4.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  holmes-beach-cam            anna-maria-island   solar        34.7 2026-10-15.1       33.9   33.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        39.5 2026-10-15.1       38.3   38.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  pink-shell-fmb-cam          fort-myers-beach    solar         1.1 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  sharkys-pcb-cam             panama-city-beach   solar        75.4 2026-10-15.1       75.4   75.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  siesta-beach-cam            siesta-key          solar        77.9 2026-10-15.1       77.9   77.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  sunset-grille-marathon-cam  marathon            solar        16.0 2026-10-15.1       15.9   15.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-28 sunset  white-sands-ami-cam         anna-maria-island   solar         1.4 2026-10-15.1        1.4    1.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunrise deerfield-beach-cam         deerfield-beach     solar        50.6 2026-10-15.1       49.1   49.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunrise deerfield-beach-cam         boca-raton          solar        50.6 2026-10-15.1       49.1   49.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunrise deerfield-pier-cam          deerfield-beach     solar        48.3 2026-10-15.1       46.9   46.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunrise deerfield-pier-cam          boca-raton          solar        48.3 2026-10-15.1       46.9   46.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar    10.3 2026-10-15.1       10.6   10.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunrise fort-zachary-taylor-cam     key-west            antisolar     0.3 2026-10-15.1        0.2    0.2    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-29T10:57:31.284Z (-35.0 min): sky V 0.188, score 0.0
+    dark frame 2026-10-29T11:00:01.284Z (-32.5 min): sky V 0.263, score 0.0
+2026-10-29 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        38.6 2026-10-15.1       37.8   37.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunrise holmes-beach-cam            anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunrise jax-beach-bw-cam            jacksonville-beach  solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunrise sharkys-pcb-cam             panama-city-beach   antisolar     1.5 2026-10-15.1        1.3    1.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunrise siesta-beach-cam            siesta-key          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunrise sunset-grille-marathon-cam  marathon            antisolar     0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-29T10:54:57.499Z (-35.0 min): sky V 0.243, score 0.0
+    dark frame 2026-10-29T10:57:27.499Z (-32.5 min): sky V 0.282, score 0.0
+2026-10-29 sunrise white-sands-ami-cam         anna-maria-island   antisolar     0.6 2026-10-15.1        0.4    0.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  deerfield-beach-cam         deerfield-beach     antisolar     5.9 2026-10-15.1        5.7    5.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  deerfield-beach-cam         boca-raton          antisolar     5.9 2026-10-15.1        5.7    5.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  deerfield-pier-cam          deerfield-beach     antisolar     3.0 2026-10-15.1        3.6    3.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  deerfield-pier-cam          boca-raton          antisolar     3.0 2026-10-15.1        3.6    3.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        50.4 2026-10-15.1       50.0   50.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  enco-sterling-reef-cam      panama-city-beach   solar        25.1 2026-10-15.1       25.0   25.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  fort-myers-beach-cam        fort-myers-beach    solar        85.0 2026-10-15.1       84.6   84.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  fort-zachary-taylor-cam     key-west            solar        89.4 2026-10-15.1       89.3   89.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar     2.3 2026-10-15.1        2.4    2.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  holmes-beach-cam            anna-maria-island   solar        86.0 2026-10-15.1       90.7   90.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-29T23:05:39.675Z (+25.0 min): sky V 0.267, score 0.0
+2026-10-29 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        39.1 2026-10-15.1       38.6   38.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  pink-shell-fmb-cam          fort-myers-beach    solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  sharkys-pcb-cam             panama-city-beach   solar        86.2 2026-10-15.1       85.8   85.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  siesta-beach-cam            siesta-key          solar        89.1 2026-10-15.1       88.6   88.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  sunset-grille-marathon-cam  marathon            solar         9.9 2026-10-15.1        9.6    9.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-29 sunset  white-sands-ami-cam         anna-maria-island   solar         6.2 2026-10-15.1        6.1    6.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunrise deerfield-beach-cam         deerfield-beach     solar        16.4 2026-10-15.1       14.9   14.9    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-30T10:53:15.721Z (-35.0 min): sky V 0.278, score 0.0
+    dark frame 2026-10-30T10:55:45.721Z (-32.5 min): sky V 0.278, score 0.0
+2026-10-30 sunrise deerfield-beach-cam         boca-raton          solar        16.4 2026-10-15.1       14.9   14.9    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-30T10:53:15.721Z (-35.0 min): sky V 0.278, score 0.0
+    dark frame 2026-10-30T10:55:45.721Z (-32.5 min): sky V 0.278, score 0.0
+2026-10-30 sunrise deerfield-pier-cam          deerfield-beach     solar         0.0 2026-10-15.1        0.0    0.0    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-30T10:53:15.676Z (-35.0 min): sky V 0.263, score 0.0
+    dark frame 2026-10-30T10:55:45.676Z (-32.5 min): sky V 0.275, score 0.0
+    dark frame 2026-10-30T10:58:15.676Z (-30.0 min): sky V 0.282, score 0.0
+2026-10-30 sunrise deerfield-pier-cam          boca-raton          solar         0.0 2026-10-15.1        0.0    0.0    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-30T10:53:15.676Z (-35.0 min): sky V 0.263, score 0.0
+    dark frame 2026-10-30T10:55:45.676Z (-32.5 min): sky V 0.275, score 0.0
+    dark frame 2026-10-30T10:58:15.676Z (-30.0 min): sky V 0.282, score 0.0
+2026-10-30 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar    11.0 2026-10-15.1       11.1   11.1    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunrise fort-zachary-taylor-cam     key-west            antisolar     4.0 2026-10-15.1        4.1    4.1    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-30T10:58:05.875Z (-35.0 min): sky V 0.173, score 0.0
+    dark frame 2026-10-30T11:00:35.875Z (-32.5 min): sky V 0.235, score 0.0
+    dark frame 2026-10-30T11:03:05.875Z (-30.0 min): sky V 0.298, score 0.0
+2026-10-30 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        33.3 2026-10-15.1       32.6   32.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunrise holmes-beach-cam            anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunrise jax-beach-bw-cam            jacksonville-beach  solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-30T11:01:00.191Z (-35.0 min): sky V 0.208, score 0.0
+    dark frame 2026-10-30T11:03:30.191Z (-32.5 min): sky V 0.278, score 0.0
+2026-10-30 sunrise sharkys-pcb-cam             panama-city-beach   antisolar     3.4 2026-10-15.1        3.4    3.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunrise siesta-beach-cam            siesta-key          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunrise sunset-grille-marathon-cam  marathon            antisolar     0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-30T10:55:32.375Z (-35.0 min): sky V 0.212, score 0.0
+    dark frame 2026-10-30T10:58:02.375Z (-32.5 min): sky V 0.271, score 0.0
+2026-10-30 sunrise white-sands-ami-cam         anna-maria-island   antisolar     0.6 2026-10-15.1        0.6    0.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  deerfield-beach-cam         deerfield-beach     antisolar     3.6 2026-10-15.1        3.5    3.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  deerfield-beach-cam         boca-raton          antisolar     3.6 2026-10-15.1        3.5    3.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  deerfield-pier-cam          deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  deerfield-pier-cam          boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        42.2 2026-10-15.1       42.2   42.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  enco-sterling-reef-cam      panama-city-beach   solar        26.7 2026-10-15.1       26.7   26.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  fort-myers-beach-cam        fort-myers-beach    solar        49.1 2026-10-15.1       47.6   47.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  fort-zachary-taylor-cam     key-west            solar        90.4 2026-10-15.1       90.0   90.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    32.0 2026-10-15.1       31.5   31.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  holmes-beach-cam            anna-maria-island   solar        84.6 2026-10-15.1       84.6   84.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-30T23:02:17.575Z (+22.5 min): sky V 0.294, score 0.0
+    dark frame 2026-10-30T23:04:47.575Z (+25.0 min): sky V 0.239, score 0.0
+2026-10-30 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        14.0 2026-10-15.1       13.0   13.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  pink-shell-fmb-cam          fort-myers-beach    solar        40.9 2026-10-15.1       38.0   38.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  sharkys-pcb-cam             panama-city-beach   solar        86.6 2026-10-15.1       86.3   86.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  siesta-beach-cam            siesta-key          solar        71.3 2026-10-15.1       71.4   71.4    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  sunset-grille-marathon-cam  marathon            solar        31.8 2026-10-15.1       32.2   32.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-30 sunset  white-sands-ami-cam         anna-maria-island   solar         2.8 2026-10-15.1        2.8    2.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunrise deerfield-beach-cam         deerfield-beach     solar        52.6 2026-10-15.1       52.5   52.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunrise deerfield-beach-cam         boca-raton          solar        52.6 2026-10-15.1       52.5   52.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunrise deerfield-pier-cam          deerfield-beach     solar        45.0 2026-10-15.1       44.7   44.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunrise deerfield-pier-cam          boca-raton          solar        45.0 2026-10-15.1       44.7   44.7    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     3.1 2026-10-15.1        3.5    3.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar    21.6 2026-10-15.1       21.3   21.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunrise fort-zachary-taylor-cam     key-west            antisolar    19.5 2026-10-15.1       18.3   18.3    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-31T11:01:10.943Z (-32.5 min): sky V 0.169, score 0.0
+    dark frame 2026-10-31T11:03:40.943Z (-30.0 min): sky V 0.208, score 0.0
+    dark frame 2026-10-31T11:06:10.943Z (-27.5 min): sky V 0.247, score 0.0
+2026-10-31 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        69.0 2026-10-15.1       68.6   68.6    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-31T10:53:46.364Z (-35.0 min): sky V 0.251, score 34.6
+2026-10-31 sunrise holmes-beach-cam            anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunrise jax-beach-bw-cam            jacksonville-beach  solar        78.3 2026-10-15.1       77.9   77.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunrise pensacola-sria-west-cam     pensacola-beach     antisolar       - -                     -      -    0  incomplete under the new rules, not uploaded: coverage 0 pre / 0 around / 0 post usable frames (need 3 in each; 1 of 1 recovered frames were unusable, dark (0) or outside the window)
+2026-10-31 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunrise sharkys-pcb-cam             panama-city-beach   antisolar    10.4 2026-10-15.1       10.3   10.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunrise siesta-beach-cam            siesta-key          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunrise sunset-grille-marathon-cam  marathon            antisolar     0.2 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-31T10:56:07.727Z (-35.0 min): sky V 0.196, score 0.0
+    dark frame 2026-10-31T10:58:37.727Z (-32.5 min): sky V 0.263, score 0.1
+2026-10-31 sunrise white-sands-ami-cam         anna-maria-island   antisolar    24.5 2026-10-15.1       24.2   24.2    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunset  deerfield-beach-cam         deerfield-beach     antisolar     6.0 2026-10-15.1        5.6    5.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunset  deerfield-beach-cam         boca-raton          antisolar     6.0 2026-10-15.1        5.6    5.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunset  deerfield-pier-cam          deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunset  deerfield-pier-cam          boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunset  enco-shores-of-panama-cam   panama-city-beach   solar         1.6 2026-10-15.1        1.5    1.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunset  enco-sterling-reef-cam      panama-city-beach   solar         2.6 2026-10-15.1        2.6    2.6    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunset  fort-myers-beach-cam        fort-myers-beach    solar        74.6 2026-10-15.1       74.3   74.3    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunset  fort-zachary-taylor-cam     key-west            solar         0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-31T23:07:54.588Z (+20.0 min): sky V 0.243, score 0.0
+    dark frame 2026-10-31T23:10:24.588Z (+22.5 min): sky V 0.200, score 0.0
+2026-10-31 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunset  holmes-beach-cam            anna-maria-island   solar        14.2 2026-10-15.1       14.9   14.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     4.5 2026-10-15.1        4.8    4.8    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        23.8 2026-10-15.1       23.9   23.9    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunset  pensacola-sria-west-cam     pensacola-beach     solar           - -                     -      -    0  incomplete under the new rules, not uploaded: coverage 0 pre / 0 around / 0 post usable frames (need 3 in each; 1 of 1 recovered frames were unusable, dark (0) or outside the window)
+2026-10-31 sunset  pink-shell-fmb-cam          fort-myers-beach    solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunset  sharkys-pcb-cam             panama-city-beach   solar         6.4 2026-10-15.1        5.5    5.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunset  siesta-beach-cam            siesta-key          solar        37.4 2026-10-15.1       36.5   36.5    0  dry run: the new rules change nothing, not uploaded
+2026-10-31 sunset  sunset-grille-marathon-cam  marathon            solar         0.9 2026-10-15.1        1.0    1.0    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-10-31T23:04:58.293Z (+20.0 min): sky V 0.294, score 0.0
+    dark frame 2026-10-31T23:07:28.293Z (+22.5 min): sky V 0.247, score 0.0
+    dark frame 2026-10-31T23:09:58.293Z (+25.0 min): sky V 0.220, score 0.1
+2026-10-31 sunset  white-sands-ami-cam         anna-maria-island   solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunrise deerfield-beach-cam         deerfield-beach     solar         0.0 2026-10-15.1        0.0    0.0    4  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-01T10:54:32.665Z (-35.0 min): sky V 0.220, score 0.0
+    dark frame 2026-11-01T10:57:02.665Z (-32.5 min): sky V 0.227, score 0.0
+    dark frame 2026-11-01T10:59:32.665Z (-30.0 min): sky V 0.247, score 0.0
+    dark frame 2026-11-01T11:02:02.665Z (-27.5 min): sky V 0.282, score 0.0
+2026-11-01 sunrise deerfield-beach-cam         boca-raton          solar         0.0 2026-10-15.1        0.0    0.0    4  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-01T10:54:32.665Z (-35.0 min): sky V 0.220, score 0.0
+    dark frame 2026-11-01T10:57:02.665Z (-32.5 min): sky V 0.227, score 0.0
+    dark frame 2026-11-01T10:59:32.665Z (-30.0 min): sky V 0.247, score 0.0
+    dark frame 2026-11-01T11:02:02.665Z (-27.5 min): sky V 0.282, score 0.0
+2026-11-01 sunrise deerfield-pier-cam          deerfield-beach     solar        60.5 2026-10-15.1       60.2   60.2    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-01T10:54:32.623Z (-35.0 min): sky V 0.271, score 58.2
+    dark frame 2026-11-01T10:57:02.623Z (-32.5 min): sky V 0.290, score 54.9
+2026-11-01 sunrise deerfield-pier-cam          boca-raton          solar        60.5 2026-10-15.1       60.2   60.2    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-01T10:54:32.623Z (-35.0 min): sky V 0.271, score 58.2
+    dark frame 2026-11-01T10:57:02.623Z (-32.5 min): sky V 0.290, score 54.9
+2026-11-01 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    5  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-01T11:22:33.245Z (-35.0 min): sky V 0.259, score 0.0
+    dark frame 2026-11-01T11:25:03.245Z (-32.5 min): sky V 0.271, score 0.0
+    dark frame 2026-11-01T11:27:33.245Z (-30.0 min): sky V 0.251, score 0.0
+    dark frame 2026-11-01T11:30:03.245Z (-27.5 min): sky V 0.259, score 0.0
+    dark frame 2026-11-01T11:32:33.245Z (-25.0 min): sky V 0.278, score 0.0
+2026-11-01 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    5  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-01T11:22:31.428Z (-35.0 min): sky V 0.227, score 0.0
+    dark frame 2026-11-01T11:25:01.428Z (-32.5 min): sky V 0.200, score 0.0
+    dark frame 2026-11-01T11:27:31.428Z (-30.0 min): sky V 0.247, score 0.0
+    dark frame 2026-11-01T11:30:01.428Z (-27.5 min): sky V 0.220, score 0.0
+    dark frame 2026-11-01T11:32:31.428Z (-25.0 min): sky V 0.259, score 0.0
+2026-11-01 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunrise fort-zachary-taylor-cam     key-west            antisolar     1.4 2026-10-15.1        1.0    1.0    5  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-01T11:04:16.485Z (-30.0 min): sky V 0.106, score 0.0
+    dark frame 2026-11-01T11:06:46.485Z (-27.5 min): sky V 0.129, score 0.0
+    dark frame 2026-11-01T11:09:16.485Z (-25.0 min): sky V 0.141, score 0.0
+    dark frame 2026-11-01T11:11:46.485Z (-22.5 min): sky V 0.169, score 0.0
+    dark frame 2026-11-01T11:14:16.485Z (-20.0 min): sky V 0.247, score 0.0
+2026-11-01 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar         0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-01T10:56:54.704Z (-32.5 min): sky V 0.259, score 0.0
+    dark frame 2026-11-01T10:59:24.704Z (-30.0 min): sky V 0.224, score 0.3
+2026-11-01 sunrise holmes-beach-cam            anna-maria-island   antisolar       - -                     -      -    3  incomplete under the new rules, not uploaded: coverage 1 pre / 2 around / 0 post usable frames (need 3 in each; 3 of 6 recovered frames were unusable, dark (3) or outside the window)
+    dark frame 2026-11-01T11:11:37.679Z (-30.0 min): sky V 0.267, score 0.0
+    dark frame 2026-11-01T11:16:37.679Z (-25.0 min): sky V 0.267, score 0.0
+    dark frame 2026-11-01T11:56:37.679Z (+15.0 min): sky V 0.267, score 0.0
+2026-11-01 sunrise jax-beach-bw-cam            jacksonville-beach  solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-01T11:02:14.541Z (-35.0 min): sky V 0.290, score 0.0
+2026-11-01 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-01T11:02:17.665Z (-35.0 min): sky V 0.224, score 0.0
+2026-11-01 sunrise sharkys-pcb-cam             panama-city-beach   antisolar    16.2 2026-10-15.1       16.4   16.4    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-01T11:22:50.301Z (-34.7 min): sky V 0.145, score 0.0
+    dark frame 2026-11-01T11:25:20.301Z (-32.2 min): sky V 0.184, score 0.0
+    dark frame 2026-11-01T11:27:50.301Z (-29.7 min): sky V 0.255, score 0.0
+2026-11-01 sunrise siesta-beach-cam            siesta-key          antisolar     0.0 2026-10-15.1        0.0    0.0    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-01T11:05:40.761Z (-35.0 min): sky V 0.176, score 0.0
+    dark frame 2026-11-01T11:08:10.761Z (-32.5 min): sky V 0.212, score 0.0
+    dark frame 2026-11-01T11:10:40.761Z (-30.0 min): sky V 0.263, score 0.0
+2026-11-01 sunrise sunset-grille-marathon-cam  marathon            antisolar    98.6 2026-10-15.1       98.6   98.6    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-01T10:56:43.550Z (-35.0 min): sky V 0.216, score 0.1
+    dark frame 2026-11-01T10:59:13.550Z (-32.5 min): sky V 0.251, score 16.0
+    dark frame 2026-11-01T11:01:43.550Z (-30.0 min): sky V 0.282, score 41.5
+2026-11-01 sunrise white-sands-ami-cam         anna-maria-island   antisolar     0.6 2026-10-15.1        1.2    1.2    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  deerfield-beach-cam         deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  deerfield-beach-cam         boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  deerfield-pier-cam          deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  deerfield-pier-cam          boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        12.8 2026-10-15.1       12.3   12.3    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  enco-sterling-reef-cam      panama-city-beach   solar        22.4 2026-10-15.1       21.8   21.8    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  fort-myers-beach-cam        fort-myers-beach    solar        46.6 2026-10-15.1       45.7   45.7    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  fort-zachary-taylor-cam     key-west            solar        56.7 2026-10-15.1       55.6   55.6    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar     6.0 2026-10-15.1        5.9    5.9    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  holmes-beach-cam            anna-maria-island   solar           - -                     -      -    6  incomplete under the new rules, not uploaded: coverage 0 pre / 2 around / 0 post usable frames (need 3 in each; 6 of 8 recovered frames were unusable, dark (6) or outside the window)
+    dark frame 2026-11-01T22:22:08.101Z (-25.0 min): sky V 0.267, score 0.0
+    dark frame 2026-11-01T22:27:08.101Z (-20.0 min): sky V 0.267, score 0.0
+    dark frame 2026-11-01T22:32:08.101Z (-15.0 min): sky V 0.267, score 0.0
+    dark frame 2026-11-01T23:02:08.101Z (+15.0 min): sky V 0.267, score 0.0
+    dark frame 2026-11-01T23:07:08.101Z (+20.0 min): sky V 0.267, score 0.0
+    dark frame 2026-11-01T23:12:08.101Z (+25.0 min): sky V 0.267, score 0.0
+2026-11-01 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     3.7 2026-10-15.1        4.4    4.4    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  margaritaville-fmb-cam      fort-myers-beach    solar         6.3 2026-10-15.1        6.2    6.2    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  pink-shell-fmb-cam          fort-myers-beach    solar        15.1 2026-10-15.1       15.0   15.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  sharkys-pcb-cam             panama-city-beach   solar        39.4 2026-10-15.1       39.0   39.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  siesta-beach-cam            siesta-key          solar         0.4 2026-10-15.1        0.2    0.2    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  sunset-grille-marathon-cam  marathon            solar         9.6 2026-10-15.1        9.3    9.3    0  dry run: the new rules change nothing, not uploaded
+2026-11-01 sunset  white-sands-ami-cam         anna-maria-island   solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunrise deerfield-beach-cam         deerfield-beach     solar        55.8 2026-10-15.1       55.3   55.3    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunrise deerfield-beach-cam         boca-raton          solar        55.8 2026-10-15.1       55.3   55.3    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunrise deerfield-pier-cam          deerfield-beach     solar        36.6 2026-10-15.1       35.9   35.9    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunrise deerfield-pier-cam          boca-raton          solar        36.6 2026-10-15.1       35.9   35.9    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-02T11:23:17.779Z (-35.0 min): sky V 0.271, score 0.0
+2026-11-02 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunrise fort-zachary-taylor-cam     key-west            antisolar     8.4 2026-10-15.1        7.1    7.1    4  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-02T11:02:22.497Z (-32.5 min): sky V 0.141, score 0.0
+    dark frame 2026-11-02T11:04:52.497Z (-30.0 min): sky V 0.169, score 0.0
+    dark frame 2026-11-02T11:07:22.497Z (-27.5 min): sky V 0.208, score 0.0
+    dark frame 2026-11-02T11:09:52.497Z (-25.0 min): sky V 0.278, score 0.0
+2026-11-02 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        49.7 2026-10-15.1       49.2   49.2    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunrise holmes-beach-cam            anna-maria-island   antisolar    17.5 2026-10-15.1       17.5   17.5    4  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-02T11:07:18.972Z (-35.0 min): sky V 0.184, score 0.0
+    dark frame 2026-11-02T11:09:48.972Z (-32.5 min): sky V 0.200, score 0.0
+    dark frame 2026-11-02T11:12:18.972Z (-30.0 min): sky V 0.247, score 0.0
+    dark frame 2026-11-02T11:14:48.972Z (-27.5 min): sky V 0.278, score 0.0
+2026-11-02 sunrise jax-beach-bw-cam            jacksonville-beach  solar        17.1 2026-10-15.1       17.7   17.7    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     1.4 2026-10-15.1        1.4    1.4    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-02T11:02:53.931Z (-35.0 min): sky V 0.259, score 0.0
+2026-11-02 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar     2.2 2026-10-15.1        2.6    2.6    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-02T11:02:57.065Z (-35.0 min): sky V 0.188, score 0.0
+    dark frame 2026-11-02T11:05:27.065Z (-32.5 min): sky V 0.243, score 0.0
+2026-11-02 sunrise sharkys-pcb-cam             panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunrise siesta-beach-cam            siesta-key          antisolar     0.0 2026-10-15.1        0.0    0.0    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-02T11:16:21.624Z (-25.0 min): sky V 0.176, score 0.0
+    dark frame 2026-11-02T11:18:51.624Z (-22.5 min): sky V 0.204, score 0.0
+    dark frame 2026-11-02T11:21:21.624Z (-20.0 min): sky V 0.255, score 0.0
+2026-11-02 sunrise sunset-grille-marathon-cam  marathon            antisolar     0.0 2026-10-15.1        0.1    0.0    4  dry run: would upload
+    dark frame 2026-11-02T10:57:19.840Z (-35.0 min): sky V 0.192, score 0.1
+    dark frame 2026-11-02T10:59:49.840Z (-32.5 min): sky V 0.212, score 0.0
+    dark frame 2026-11-02T11:02:19.840Z (-30.0 min): sky V 0.231, score 0.1
+    dark frame 2026-11-02T11:04:49.840Z (-27.5 min): sky V 0.251, score 0.0
+2026-11-02 sunrise white-sands-ami-cam         anna-maria-island   antisolar    17.2 2026-10-15.1       17.5   17.5    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunset  deerfield-beach-cam         deerfield-beach     antisolar     1.0 2026-10-15.1        1.1    1.1    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-02T23:02:25.043Z (+25.0 min): sky V 0.239, score 0.0
+2026-11-02 sunset  deerfield-beach-cam         boca-raton          antisolar     1.0 2026-10-15.1        1.1    1.1    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-02T23:02:25.043Z (+25.1 min): sky V 0.239, score 0.0
+2026-11-02 sunset  deerfield-pier-cam          deerfield-beach     antisolar    22.4 2026-10-15.1       23.0   23.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunset  deerfield-pier-cam          boca-raton          antisolar    22.4 2026-10-15.1       23.0   23.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        55.6 2026-10-15.1       55.5   55.5    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunset  enco-sterling-reef-cam      panama-city-beach   solar        28.7 2026-10-15.1       28.5   28.5    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunset  fort-myers-beach-cam        fort-myers-beach    solar        56.0 2026-10-15.1       54.7   54.7    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunset  fort-zachary-taylor-cam     key-west            solar        83.2 2026-10-15.1       82.8   82.8    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar     0.0 2026-10-15.1        0.0    0.0    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-02T22:57:47.422Z (+20.0 min): sky V 0.267, score 0.0
+    dark frame 2026-11-02T23:00:17.422Z (+22.5 min): sky V 0.212, score 0.0
+    dark frame 2026-11-02T23:02:47.422Z (+25.0 min): sky V 0.153, score 0.0
+2026-11-02 sunset  holmes-beach-cam            anna-maria-island   solar       100.0 2026-10-15.1      100.0  100.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        82.3 2026-10-15.1       82.3   82.3    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunset  pink-shell-fmb-cam          fort-myers-beach    solar         0.0 2026-10-15.1        0.6    0.6    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunset  sharkys-pcb-cam             panama-city-beach   solar       100.0 2026-10-15.1      100.0  100.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunset  siesta-beach-cam            siesta-key          solar        88.4 2026-10-15.1       86.8   86.8    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunset  sunset-grille-marathon-cam  marathon            solar        30.0 2026-10-15.1       30.0   30.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-02 sunset  white-sands-ami-cam         anna-maria-island   solar        39.5 2026-10-15.1       39.8   39.8    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunrise deerfield-beach-cam         deerfield-beach     solar         2.0 2026-10-15.1        1.0    1.0    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-03T10:55:51.379Z (-35.0 min): sky V 0.196, score 0.0
+    dark frame 2026-11-03T10:58:21.379Z (-32.5 min): sky V 0.220, score 0.0
+    dark frame 2026-11-03T11:00:51.379Z (-30.0 min): sky V 0.259, score 0.0
+2026-11-03 sunrise deerfield-beach-cam         boca-raton          solar         2.0 2026-10-15.1        1.0    1.0    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-03T10:55:51.379Z (-35.0 min): sky V 0.196, score 0.0
+    dark frame 2026-11-03T10:58:21.379Z (-32.5 min): sky V 0.220, score 0.0
+    dark frame 2026-11-03T11:00:51.379Z (-30.0 min): sky V 0.259, score 0.0
+2026-11-03 sunrise deerfield-pier-cam          deerfield-beach     solar        44.1 2026-10-15.1       43.1   11.8    3  dry run: would upload
+    dark frame 2026-11-03T10:55:51.339Z (-35.0 min): sky V 0.224, score 43.1
+    dark frame 2026-11-03T10:58:21.339Z (-32.5 min): sky V 0.243, score 37.1
+    dark frame 2026-11-03T11:00:51.339Z (-30.0 min): sky V 0.278, score 37.6
+2026-11-03 sunrise deerfield-pier-cam          boca-raton          solar        44.1 2026-10-15.1       43.1   11.8    3  dry run: would upload
+    dark frame 2026-11-03T10:55:51.339Z (-35.0 min): sky V 0.224, score 43.1
+    dark frame 2026-11-03T10:58:21.339Z (-32.5 min): sky V 0.243, score 37.1
+    dark frame 2026-11-03T11:00:51.339Z (-30.0 min): sky V 0.278, score 37.6
+2026-11-03 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar     7.2 2026-10-15.1        7.4    7.4    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     3.4 2026-10-15.1        3.5    3.5    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunrise fort-zachary-taylor-cam     key-west            antisolar     1.8 2026-10-15.1        1.6    1.6    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-03T11:05:28.973Z (-30.0 min): sky V 0.157, score 0.0
+    dark frame 2026-11-03T11:07:58.973Z (-27.5 min): sky V 0.208, score 0.0
+    dark frame 2026-11-03T11:10:28.973Z (-25.0 min): sky V 0.267, score 0.0
+2026-11-03 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar         8.5 2026-10-15.1        8.5    8.5    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-03T10:58:12.714Z (-32.5 min): sky V 0.204, score 0.0
+2026-11-03 sunrise holmes-beach-cam            anna-maria-island   antisolar    20.0 2026-10-15.1       20.0   20.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-03T11:08:00.682Z (-35.0 min): sky V 0.243, score 0.0
+    dark frame 2026-11-03T11:10:30.682Z (-32.5 min): sky V 0.278, score 0.0
+2026-11-03 sunrise jax-beach-bw-cam            jacksonville-beach  solar        13.2 2026-10-15.1       13.7   13.7    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     9.0 2026-10-15.1        9.2    9.2    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-03T11:03:33.754Z (-35.0 min): sky V 0.180, score 0.0
+    dark frame 2026-11-03T11:06:03.754Z (-32.5 min): sky V 0.227, score 0.0
+    dark frame 2026-11-03T11:08:33.754Z (-30.0 min): sky V 0.278, score 0.0
+2026-11-03 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar    11.5 2026-10-15.1       11.5   11.5    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-03T11:03:36.899Z (-35.0 min): sky V 0.165, score 0.0
+    dark frame 2026-11-03T11:06:06.899Z (-32.5 min): sky V 0.173, score 0.0
+    dark frame 2026-11-03T11:08:36.899Z (-30.0 min): sky V 0.286, score 0.0
+2026-11-03 sunrise sharkys-pcb-cam             panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunrise siesta-beach-cam            siesta-key          antisolar     0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-03T11:07:02.908Z (-35.0 min): sky V 0.180, score 0.0
+    dark frame 2026-11-03T11:09:32.908Z (-32.5 min): sky V 0.243, score 0.0
+2026-11-03 sunrise sunset-grille-marathon-cam  marathon            antisolar     5.1 2026-10-15.1        5.3    5.3    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-03T10:57:56.591Z (-35.0 min): sky V 0.231, score 0.0
+    dark frame 2026-11-03T11:00:26.591Z (-32.5 min): sky V 0.259, score 0.0
+2026-11-03 sunrise white-sands-ami-cam         anna-maria-island   antisolar     6.0 2026-10-15.1        6.6    6.6    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  deerfield-beach-cam         deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  deerfield-beach-cam         boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  deerfield-pier-cam          deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  deerfield-pier-cam          boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        19.6 2026-10-15.1       19.1   19.1    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  enco-sterling-reef-cam      panama-city-beach   solar        22.5 2026-10-15.1       20.0   20.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  fort-myers-beach-cam        fort-myers-beach    solar        28.5 2026-10-15.1       26.8   26.8    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    10.2 2026-10-15.1        9.1    9.1    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  holmes-beach-cam            anna-maria-island   solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  margaritaville-fmb-cam      fort-myers-beach    solar         1.5 2026-10-15.1        2.1    2.1    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  pink-shell-fmb-cam          fort-myers-beach    solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  sharkys-pcb-cam             panama-city-beach   solar        84.2 2026-10-15.1       83.0   83.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  siesta-beach-cam            siesta-key          solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  sunset-grille-marathon-cam  marathon            solar        36.7 2026-10-15.1       36.5   36.5    0  dry run: the new rules change nothing, not uploaded
+2026-11-03 sunset  white-sands-ami-cam         anna-maria-island   solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunrise deerfield-beach-cam         deerfield-beach     solar         6.1 2026-10-15.1        5.6    5.6    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-04T10:56:31.382Z (-35.0 min): sky V 0.259, score 0.0
+    dark frame 2026-11-04T10:59:01.382Z (-32.5 min): sky V 0.298, score 0.0
+2026-11-04 sunrise deerfield-beach-cam         boca-raton          solar         6.1 2026-10-15.1        5.6    5.6    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-04T10:56:31.382Z (-35.0 min): sky V 0.259, score 0.0
+    dark frame 2026-11-04T10:59:01.382Z (-32.5 min): sky V 0.298, score 0.0
+2026-11-04 sunrise deerfield-pier-cam          deerfield-beach     solar        23.2 2026-10-15.1       23.4   23.4    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunrise deerfield-pier-cam          boca-raton          solar        23.2 2026-10-15.1       23.4   23.4    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     0.0 2026-10-15.1        0.0    0.0    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-04T11:24:53.433Z (-35.0 min): sky V 0.294, score 0.0
+2026-11-04 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar     1.8 2026-10-15.1        1.7    1.7    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-04T11:24:51.591Z (-35.0 min): sky V 0.200, score 0.0
+    dark frame 2026-11-04T11:27:21.591Z (-32.5 min): sky V 0.227, score 0.0
+    dark frame 2026-11-04T11:29:51.591Z (-30.0 min): sky V 0.286, score 0.0
+2026-11-04 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     5.3 2026-10-15.1        5.6    5.6    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunrise fort-zachary-taylor-cam     key-west            antisolar     3.1 2026-10-15.1        3.1    3.1    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-04T11:06:05.905Z (-30.0 min): sky V 0.188, score 0.0
+    dark frame 2026-11-04T11:08:35.905Z (-27.5 min): sky V 0.278, score 0.0
+2026-11-04 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar         0.0 2026-10-15.1        0.0    0.0    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-04T11:01:22.369Z (-30.0 min): sky V 0.227, score 0.0
+2026-11-04 sunrise holmes-beach-cam            anna-maria-island   antisolar     5.1 2026-10-15.1        5.2    5.2    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunrise jax-beach-bw-cam            jacksonville-beach  solar         0.0 2026-10-15.1        0.7    0.7    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     5.9 2026-10-15.1        5.9    5.9    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar       - -                     -      -    2  incomplete under the new rules, not uploaded: coverage 8 pre / 8 around / 2 post usable frames (need 3 in each; 6 of 25 recovered frames were unusable, dark (2) or outside the window)
+    dark frame 2026-11-04T11:04:17.159Z (-35.0 min): sky V 0.169, score 0.0
+    dark frame 2026-11-04T11:06:47.159Z (-32.5 min): sky V 0.216, score 0.0
+2026-11-04 sunrise sharkys-pcb-cam             panama-city-beach   antisolar     0.8 2026-10-15.1        0.8    0.8    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunrise siesta-beach-cam            siesta-key          antisolar     0.0 2026-10-15.1        0.0    0.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-04T11:07:44.603Z (-35.0 min): sky V 0.204, score 0.0
+    dark frame 2026-11-04T11:10:14.603Z (-32.5 min): sky V 0.275, score 0.0
+2026-11-04 sunrise sunset-grille-marathon-cam  marathon            antisolar     5.9 2026-10-15.1        5.8    5.8    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-04T10:58:33.797Z (-35.0 min): sky V 0.247, score 0.0
+    dark frame 2026-11-04T11:01:03.797Z (-32.5 min): sky V 0.251, score 0.0
+2026-11-04 sunrise white-sands-ami-cam         anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  deerfield-beach-cam         deerfield-beach     antisolar    11.2 2026-10-15.1       11.2   11.2    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  deerfield-beach-cam         boca-raton          antisolar    11.2 2026-10-15.1       11.2   11.2    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  deerfield-pier-cam          deerfield-beach     antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  deerfield-pier-cam          boca-raton          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        55.1 2026-10-15.1       54.8   54.8    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  enco-sterling-reef-cam      panama-city-beach   solar        30.8 2026-10-15.1       30.7   30.7    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  fort-myers-beach-cam        fort-myers-beach    solar        86.3 2026-10-15.1       85.5   85.5    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  fort-zachary-taylor-cam     key-west            solar        78.6 2026-10-15.1       78.0   78.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar     1.6 2026-10-15.1        1.4    1.4    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  holmes-beach-cam            anna-maria-island   solar        42.5 2026-10-15.1       42.0   42.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     4.4 2026-10-15.1        3.0    3.0    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-04T23:00:45.574Z (+25.0 min): sky V 0.282, score 0.0
+2026-11-04 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        41.5 2026-10-15.1       41.3   41.3    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  pink-shell-fmb-cam          fort-myers-beach    solar        66.2 2026-10-15.1       61.8   61.8    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  sharkys-pcb-cam             panama-city-beach   solar        85.6 2026-10-15.1       84.9   84.9    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  siesta-beach-cam            siesta-key          solar        82.2 2026-10-15.1       81.9   81.9    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  sunset-grille-marathon-cam  marathon            solar        34.4 2026-10-15.1       34.2   34.2    0  dry run: the new rules change nothing, not uploaded
+2026-11-04 sunset  white-sands-ami-cam         anna-maria-island   solar         8.8 2026-10-15.1        8.9    8.9    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunrise deerfield-beach-cam         deerfield-beach     solar        86.7 2026-10-15.1       85.7   85.7    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunrise deerfield-beach-cam         boca-raton          solar        86.7 2026-10-15.1       85.7   85.7    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunrise deerfield-pier-cam          deerfield-beach     solar        77.7 2026-10-15.1       77.3   77.3    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunrise deerfield-pier-cam          boca-raton          solar        77.7 2026-10-15.1       77.3   77.3    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunrise enco-shores-of-panama-cam   panama-city-beach   antisolar     1.2 2026-10-15.1        1.2    1.2    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunrise enco-sterling-reef-cam      panama-city-beach   antisolar    37.6 2026-10-15.1       37.2   37.2    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunrise fort-myers-beach-cam        fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunrise fort-zachary-taylor-cam     key-west            antisolar    17.4 2026-10-15.1       15.0   15.0    4  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-05T11:04:13.286Z (-32.5 min): sky V 0.141, score 0.0
+    dark frame 2026-11-05T11:06:43.286Z (-30.0 min): sky V 0.180, score 0.0
+    dark frame 2026-11-05T11:09:13.286Z (-27.5 min): sky V 0.220, score 0.0
+    dark frame 2026-11-05T11:11:43.286Z (-25.0 min): sky V 0.275, score 0.0
+2026-11-05 sunrise ftl-elbo-beach-cam          fort-lauderdale     solar        44.6 2026-10-15.1       44.0   44.0    2  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-05T10:57:02.446Z (-35.0 min): sky V 0.180, score 7.5
+    dark frame 2026-11-05T10:59:32.446Z (-32.5 min): sky V 0.298, score 8.0
+2026-11-05 sunrise holmes-beach-cam            anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunrise jax-beach-bw-cam            jacksonville-beach  solar         0.2 2026-10-15.1        0.4    0.4    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunrise margaritaville-fmb-cam      fort-myers-beach    antisolar     1.0 2026-10-15.1        0.8    0.8    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunrise pink-shell-fmb-cam          fort-myers-beach    antisolar     0.0 2026-10-15.1        0.0    0.0    1  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-05T11:04:57.834Z (-35.0 min): sky V 0.294, score 0.0
+2026-11-05 sunrise sharkys-pcb-cam             panama-city-beach   antisolar     4.8 2026-10-15.1        4.9    4.9    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunrise siesta-beach-cam            siesta-key          antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunrise sunset-grille-marathon-cam  marathon            antisolar     3.1 2026-10-15.1        3.2    3.2    3  dry run: the new rules change nothing, not uploaded
+    dark frame 2026-11-05T10:59:11.448Z (-35.0 min): sky V 0.212, score 0.0
+    dark frame 2026-11-05T11:01:41.448Z (-32.5 min): sky V 0.220, score 0.0
+    dark frame 2026-11-05T11:04:11.448Z (-30.0 min): sky V 0.267, score 0.0
+2026-11-05 sunrise white-sands-ami-cam         anna-maria-island   antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunset  deerfield-beach-cam         deerfield-beach     antisolar    16.2 2026-10-15.1       16.2   16.2    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunset  deerfield-beach-cam         boca-raton          antisolar    16.2 2026-10-15.1       16.2   16.2    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunset  deerfield-pier-cam          deerfield-beach     antisolar     7.1 2026-10-15.1        8.8    8.8    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunset  deerfield-pier-cam          boca-raton          antisolar     7.1 2026-10-15.1        8.8    8.8    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunset  enco-shores-of-panama-cam   panama-city-beach   solar        35.2 2026-10-15.1       34.6   34.6    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunset  enco-sterling-reef-cam      panama-city-beach   solar        21.8 2026-10-15.1       21.6   21.6    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunset  fort-myers-beach-cam        fort-myers-beach    solar        86.4 2026-10-15.1       86.3   86.3    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunset  fort-zachary-taylor-cam     key-west            solar           - -                     -      -    0  incomplete under the new rules, not uploaded: coverage 1 pre / 3 around / 3 post usable frames (need 3 in each; 0 of 7 recovered frames were unusable, dark (0) or outside the window)
+2026-11-05 sunset  ftl-elbo-beach-cam          fort-lauderdale     antisolar    46.8 2026-10-15.1       45.8   45.8    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunset  holmes-beach-cam            anna-maria-island   solar        95.8 2026-10-15.1       95.3   95.3    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunset  jax-beach-bw-cam            jacksonville-beach  antisolar     0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunset  margaritaville-fmb-cam      fort-myers-beach    solar        35.9 2026-10-15.1       40.6   40.6    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunset  pink-shell-fmb-cam          fort-myers-beach    solar           - -                     -      -    0  incomplete under the new rules, not uploaded: coverage 10 pre / 7 around / 2 post usable frames (need 3 in each; 6 of 25 recovered frames were unusable, dark (0) or outside the window)
+2026-11-05 sunset  sharkys-pcb-cam             panama-city-beach   solar        68.9 2026-10-15.1       67.3   67.3    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunset  siesta-beach-cam            siesta-key          solar        83.0 2026-10-15.1       82.8   82.8    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunset  sunset-grille-marathon-cam  marathon            solar        28.3 2026-10-15.1       28.1   28.1    0  dry run: the new rules change nothing, not uploaded
+2026-11-05 sunset  white-sands-ami-cam         anna-maria-island   solar         0.0 2026-10-15.1        0.0    0.0    0  dry run: the new rules change nothing, not uploaded
+
+=== Summary ===
+beach-events re-scored: 734; complete under the new rules: 718
+complete under the old rules but INCOMPLETE under the new: 2
+  2026-10-18 sunrise fort-zachary-taylor-cam key-west: old 0.0; incomplete under the new rules, not uploaded: coverage 2 pre / 8 around / 7 post usable frames (need 3 in each; 8 of 25 recovered frames were unusable, dark (2) or outside the window)
+  2026-10-27 sunset fort-zachary-taylor-cam key-west: old 90.2; incomplete under the new rules, not uploaded: coverage 10 pre / 8 around / 2 post usable frames (need 3 in each; 4 of 24 recovered frames were unusable, dark (4) or outside the window)
+
+The dark rule alone (old rules vs new rules, same saved frames): 11 of 718 beach-events change
+  2026-10-18 sunrise deerfield-pier-cam          deerfield-beach       79.6 ->   17.7 (-61.9), 3 dark frames dropped
+  2026-10-18 sunrise deerfield-pier-cam          boca-raton            79.6 ->   17.7 (-61.9), 3 dark frames dropped
+  2026-10-20 sunrise deerfield-pier-cam          deerfield-beach       40.6 ->    2.8 (-37.8), 4 dark frames dropped
+  2026-10-20 sunrise deerfield-pier-cam          boca-raton            40.6 ->    2.8 (-37.8), 4 dark frames dropped
+  2026-11-03 sunrise deerfield-pier-cam          deerfield-beach       43.1 ->   11.8 (-31.3), 3 dark frames dropped
+  2026-11-03 sunrise deerfield-pier-cam          boca-raton            43.1 ->   11.8 (-31.3), 3 dark frames dropped
+  2026-10-24 sunrise ftl-elbo-beach-cam          fort-lauderdale       69.5 ->   65.4 (-4.1), 1 dark frames dropped
+  2026-10-26 sunrise sunset-grille-marathon-cam  marathon               0.8 ->    0.3 (-0.5), 2 dark frames dropped
+  2026-10-20 sunrise sunset-grille-marathon-cam  marathon               0.1 ->    0.0 (-0.1), 2 dark frames dropped
+  2026-10-27 sunrise sunset-grille-marathon-cam  marathon               0.1 ->    0.0 (-0.1), 2 dark frames dropped
+  2026-11-02 sunrise sunset-grille-marathon-cam  marathon               0.1 ->    0.0 (-0.1), 4 dark frames dropped
+
+Stored vs new (rule + re-scoring the low-quality saved frames): 717 beach-events with a stored score; 401 change; 18 by more than 5; median change +0.0
+Re-scoring alone (old rules on the saved frames vs stored): median +0.0, median |diff| 0.1, max |diff| 12.3, 14 beach-events off by more than 5
+deerfield-pier-cam sunrises: 6 of 48 beach-events change under the dark rule; mean old 54.6 -> mean new 49.2
+ftl-elbo-beach-cam sunrises: 1 of 24 beach-events change under the dark rule; mean old 39.3 -> mean new 39.1
+
+JPEG quality: the full-quality peak frame vs its low-quality copy, 624 events: median +0.0, median |diff| 0.1, max |diff| 17.0, 6 off by more than 5
+  2026-10-28 sunset deerfield-pier-cam: full 26.1, low 9.1 (-17.0)
+  2026-10-21 sunset holmes-beach-cam: full 94.5, low 83.7 (-10.8)
+  2026-11-04 sunset pink-shell-fmb-cam: full 66.2, low 57.7 (-8.5)
+  2026-10-28 sunrise sharkys-pcb-cam: full 19.9, low 13.7 (-6.2)
+  2026-10-28 sunset deerfield-beach-cam: full 37.4, low 42.9 (+5.5)
+  2026-10-27 sunset ftl-elbo-beach-cam: full 35.1, low 40.5 (+5.4)
+  2026-10-28 sunrise deerfield-beach-cam: full 79.7, low 75.4 (-4.3)
+  2026-10-20 sunrise holmes-beach-cam: full 52.5, low 48.7 (-3.8)
+  2026-10-30 sunset pink-shell-fmb-cam: full 40.9, low 37.4 (-3.5)
+  2026-10-20 sunrise sharkys-pcb-cam: full 43.5, low 46.5 (+3.0)
+
+Median sky_median_v by minutes from the cam's event (n events), dark under 0.30:
+  cam                         event             -35         -25         -15          +0         +15         +25
+  deerfield-beach-cam         sunrise     0.38 (23)   0.61 (24)   0.66 (24)   0.67 (24)   0.68 (24)   0.66 (24)
+  deerfield-beach-cam         sunset      0.66 (24)   0.66 (24)   0.67 (24)   0.63 (24)   0.62 (24)   0.60 (24)
+  deerfield-pier-cam          sunrise     0.31 (24)   0.61 (24)   0.78 (24)   0.80 (24)   0.82 (24)   0.82 (24)
+  deerfield-pier-cam          sunset      0.79 (24)   0.79 (24)   0.79 (24)   0.79 (24)   0.78 (24)   0.76 (24)
+  deerfield-surf-cam          sunset              -           -           -           -           -           -
+  enco-shores-of-panama-cam   sunrise     0.36 (19)   0.71 (19)   0.73 (19)   0.75 (19)   0.76 (19)   0.75 (19)
+  enco-shores-of-panama-cam   sunset      0.59 (20)   0.60 (20)   0.64 (20)   0.72 (20)   0.71 (20)   0.72 (20)
+  enco-sterling-reef-cam      sunrise     0.42 (19)   0.52 (19)   0.70 (19)   0.89 (19)   0.89 (19)   0.89 (19)
+  enco-sterling-reef-cam      sunset      0.51 (20)   0.53 (20)   0.61 (20)   0.70 (20)   0.54 (20)   0.51 (20)
+  fort-myers-beach-cam        sunrise     0.45 (21)   0.70 (21)   0.73 (21)   0.76 (21)   0.75 (20)   0.74 (21)
+  fort-myers-beach-cam        sunset      0.76 (22)   0.76 (22)   0.76 (22)   0.74 (22)   0.72 (22)   0.67 (22)
+  fort-zachary-taylor-cam     sunrise     0.13 (19)   0.31 (19)   0.59 (18)   0.67 (19)   0.67 (18)   0.67 (18)
+  fort-zachary-taylor-cam     sunset      0.77 (15)   0.75 (17)   0.73 (17)   0.75 (19)   0.66 (18)   0.63 (15)
+  ftl-elbo-beach-cam          sunrise     0.41 (24)   0.58 (24)   0.61 (24)   0.70 (24)   0.67 (24)   0.62 (24)
+  ftl-elbo-beach-cam          sunset      0.73 (23)   0.74 (24)   0.74 (24)   0.73 (24)   0.73 (24)   0.58 (24)
+  holmes-beach-cam            sunrise     0.44 (18)   0.63 (19)   0.72 (17)   0.75 (18)   0.82 (19)   0.84 (18)
+  holmes-beach-cam            sunset      0.76 (19)   0.72 (20)   0.75 (20)   0.78 (19)   0.79 (19)   0.84 (20)
+  jax-beach-bw-cam            sunrise     0.38 (19)   0.67 (19)   0.82 (19)   0.86 (19)   0.86 (19)   0.81 (19)
+  jax-beach-bw-cam            sunset      0.79 (20)   0.83 (20)   0.81 (20)   0.78 (19)   0.71 (20)   0.62 (20)
+  margaritaville-fmb-cam      sunrise     0.33 (19)   0.67 (19)   0.78 (19)   0.80 (19)   0.81 (19)   0.80 (19)
+  margaritaville-fmb-cam      sunset      0.73 (20)   0.73 (20)   0.75 (20)   0.78 (20)   0.76 (20)   0.73 (20)
+  pensacola-sria-west-cam     sunrise     0.38 ( 9)   0.48 ( 9)   0.50 ( 9)   0.70 ( 9)   0.68 ( 9)   0.69 ( 9)
+  pensacola-sria-west-cam     sunset      0.61 ( 9)   0.61 ( 9)   0.61 ( 9)   0.69 ( 9)   0.66 ( 9)   0.60 ( 9)
+  pink-shell-fmb-cam          sunrise     0.29 (19)   0.65 (19)   0.80 (19)   0.96 (19)   0.99 (19)   0.99 (19)
+  pink-shell-fmb-cam          sunset      0.79 (20)   0.84 (20)   0.90 (20)   0.99 (20)   0.95 (20)   0.95 (20)
+  sharkys-pcb-cam             sunrise     0.47 (19)   0.78 (19)   0.84 (19)   0.86 (19)   0.87 (19)   0.87 (18)
+  sharkys-pcb-cam             sunset      0.72 (20)   0.75 (19)   0.75 (18)   0.86 (20)   0.84 (20)   0.82 (20)
+  siesta-beach-cam            sunrise     0.38 (19)   0.65 (19)   0.65 (19)   0.73 (19)   0.73 (19)   0.69 (19)
+  siesta-beach-cam            sunset      0.70 (20)   0.73 (20)   0.74 (20)   0.79 (20)   0.75 (20)   0.74 (20)
+  sunset-grille-marathon-cam  sunrise     0.22 (19)   0.47 (19)   0.69 (19)   0.75 (18)   0.75 (19)   0.77 (19)
+  sunset-grille-marathon-cam  sunset      0.65 (20)   0.67 (20)   0.70 (20)   0.76 (20)   0.69 (20)   0.64 (20)
+  white-sands-ami-cam         sunrise     0.73 (19)   0.78 (19)   0.78 (19)   0.75 (19)   0.77 (19)   0.78 (19)
+  white-sands-ami-cam         sunset      0.76 (20)   0.76 (20)   0.76 (20)   0.75 (20)   0.75 (20)   0.77 (20)

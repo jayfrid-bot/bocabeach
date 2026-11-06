@@ -309,6 +309,7 @@ flowchart LR
     CAMCOURIER["scripts/cam_courier_local.sh — no cam list in the script<br/>routine job: every 5 min (:03, :08 …), a few due cams per run<br/>stream size: 1080p if the stream has it, else 720p (STREAM_FORMAT in yt_pacer.py), ffmpeg -q:v 4<br/>golden job: every 10 min all day, only cams whose own beach is in a sunrise/sunset window<br/>residential IP"]
     CSCHED["scripts/courier_schedule.py<br/>builds the cam list from config, picks the due cams, golden stride, cooldowns, daylight gate"]
     SUNCAM["scripts/sun_cam_check.py<br/>every 30 min, residential IP<br/>(YouTube blocks datacenter IPs)"]
+    SUNRESCORE["scripts/sun_cam_rescore.py (by hand)<br/>re-scores saved frames with the current rules;<br/>--dry-run prints old vs new, --changed-only"]
     PACER["scripts/yt_pacer.py — ONE yt-dlp call budget for all three jobs<br/>ledger + backoff + cache in ytpace/state.json under an flock<br/>cap 60 calls / 15 min (golden 60, sun 48, routine 36), 4 s apart,<br/>20-min stop for every job after a bot check"]
     PLAN["scripts/courier_plan.py<br/>dry run: the day's call timeline, no network"]
   end
@@ -381,7 +382,10 @@ flowchart LR
   REMOVE["scripts/cam_archive_remove.ts (by hand; dry run unless --yes)<br/>lists the cam prefix through the R2 S3 API when R2 keys are set,<br/>wrangler r2 object delete + D1 DELETE for one cam"] -->|"erase one cam on a request"| CAMR2
   REMOVE --> D1
   SUNCAM -->|"ONE yt-dlp -J per cam-event → HLS playlist (~4 h DVR); all segments downloaded in parallel inside ~22 s,<br/>one frame every 2.5 min, event −35 … +25 min, per config/sun-cams.json cam"| YTLIVE[["YouTube livestream DVR<br/>Elbo Room + 3 Deerfield cams + Jacksonville Beach cam (east); Fort Myers Beach + Pensacola Beach cams and ten owner-credited Gulf and Keys cams (west)"]]
-  SUNCAM -->|"POST /api/sun-observations — Bearer INGEST_TOKEN<br/>robust-peak score + series + scored_at, per beach / event / cam;<br/>incomplete captures are never sent"| SUNOBS["/api/sun-observations<br/>constant-time auth, bounded 32 KB read, strict validation<br/>that recomputes coverage + robust peak (lib/sunObservations.ts)"]
+  SUNCAM -->|"POST /api/sun-observations — Bearer INGEST_TOKEN<br/>robust-peak score + series + scored_at, per beach / event / cam;<br/>incomplete captures are never sent"| SUNOBS["/api/sun-observations<br/>constant-time auth, bounded 32 KB read, strict validation<br/>that recomputes coverage + robust peak (lib/sunObservations.ts);<br/>from 2026-11-06.1 every frame carries sky_median_v and dark frames<br/>15+ min from the event are dropped"]
+  SUNCAM -->|"every frame, peak at full quality"| SUNFRAMES[(~/Projects/bocabeach-sunframes<br/>date / event / cam)]
+  SUNFRAMES -->|"reads"| SUNRESCORE
+  SUNRESCORE -->|"POST /api/sun-observations, new score_version<br/>(replaces a row only when the version is newer)"| SUNOBS
   OWNER["owner's Mac"] -->|"POST /api/push/test — Bearer INGEST_TOKEN, {deviceId}:<br/>one real APNs alert to one device, writes no alert state"| PUSHTEST["/api/push/test"]
   SUNOBS -->|"sun_event_observations (migrations/0015)<br/>upsert only when (score_version, scored_at) is newer —<br/>duplicates and stale replays are no-ops; credit stored"| D1
   SUNOBS -->|"observed_score / observed_source / observed_at on the<br/>sun_event_predictions rows (event within 15 min; best cam:<br/>solar view first, then nearest; never a hand label)"| D1
@@ -489,7 +493,10 @@ cannot run in a Worker or Action). It reads the 24/7 livestreams in
 minutes before to 25 minutes after the event, each scored 0-100 on how much of
 the sky is lit warm. The event's score is a robust peak (a frame counts for at
 most twice its best neighbor, so one glitch frame cannot win), and a capture
-without enough frames before, around, and after the event is never uploaded. The result goes to
+without enough frames before, around, and after the event is never uploaded. Since score version
+2026-11-06.1 each frame carries its sky brightness (`sky_median_v`), and a frame whose sky is still dark
+15 or more minutes from the event is dropped, so a pre-dawn lamp cannot be the peak. When the rules
+change, `scripts/sun_cam_rescore.py` (by hand) re-scores the saved frames and re-uploads them. The result goes to
 `POST /api/sun-observations` with the courier's `INGEST_TOKEN`, lands in
 `sun_event_observations` (migrations/0015), and the best observation (solar view
 first, then nearest cam) is copied onto the matching `sun_event_predictions`

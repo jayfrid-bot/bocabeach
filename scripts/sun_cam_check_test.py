@@ -222,7 +222,7 @@ class GlowMaskTests(unittest.TestCase):
         frames = []
         for k in range(25):
             t = event + timedelta(seconds=150 * (k - 14))
-            frames.append({"t": t, "valid_frac": 0.8, "warm_frac": 0.2, "colorfulness": 50.0, "warm_sat": 0.4, "score": 40.0, "glow_masked_frac": 0.123456})
+            frames.append({"t": t, "valid_frac": 0.8, "warm_frac": 0.2, "colorfulness": 50.0, "warm_sat": 0.4, "score": 40.0, "glow_masked_frac": 0.123456, "sky_median_v": 0.6})
         result, _info = sc.build_result(frames, event)
         self.assertIsNotNone(result)
         self.assertTrue(all(f["glow_masked_frac"] == 0.1235 for f in result["series"]))
@@ -359,8 +359,8 @@ class WindowTests(unittest.TestCase):
 EVENT = datetime(2026, 10, 6, 11, 15, tzinfo=timezone.utc)
 
 
-def frame(minutes, score, valid=0.9):
-    return {"t": EVENT + timedelta(minutes=minutes), "score": score, "warm_frac": 0.1, "colorfulness": 40.0, "warm_sat": 0.4, "valid_frac": valid}
+def frame(minutes, score, valid=0.9, sky_v=0.6):
+    return {"t": EVENT + timedelta(minutes=minutes), "score": score, "warm_frac": 0.1, "colorfulness": 40.0, "warm_sat": 0.4, "valid_frac": valid, "sky_median_v": sky_v}
 
 
 def grid(scores_by_minute=None, start=-35.0, end=25.0, step=2.5, base=20.0):
@@ -507,6 +507,220 @@ class CoverageAndResultTests(unittest.TestCase):
         self.assertEqual(payload["credit"], cam["credit"])
 
 
+class DarkFrameTests(unittest.TestCase):
+    """Pre-dawn and post-dusk lamps (2026-11-06.1): a frame whose sky is still dark and that sits
+    15 or more minutes from the event is dropped like an artifact. lib/sunObservations.ts mirrors it."""
+
+    FIXTURE = Path(__file__).resolve().parent.parent / "lib/__fixtures__/sunCamOct18PierLampFixture.json"
+
+    @unittest.skipIf(Image is None, "Pillow missing")
+    def test_score_image_reports_the_median_sky_brightness_before_any_exclusion(self):
+        self.assertAlmostEqual(sc.score_image(solid((128, 128, 128)), FULL)["sky_median_v"], 128 / 255, places=4)
+        # A dark sky with a bright orange lamp in a quarter of it: the lamp is warm "sky" and scores,
+        # but the median V says the sky is dark. Near-black pixels count in the median (they are excluded only from the score).
+        im = solid((20, 20, 30), (160, 90))
+        im.paste((255, 140, 20), (0, 0, 80, 45))
+        m = sc.score_image(im, FULL)
+        self.assertGreater(m["score"], 40)
+        self.assertAlmostEqual(m["sky_median_v"], 30 / 255, places=4)
+        self.assertEqual(sc.score_image(solid((0, 0, 0)), FULL)["sky_median_v"], 0.0)
+
+    def test_the_rule_needs_a_dark_sky_and_15_minutes_from_the_event(self):
+        def f(minutes, v):
+            return {"t": EVENT + timedelta(minutes=minutes), "sky_median_v": v}
+
+        self.assertTrue(sc.is_dark_frame(f(-35, 0.24), EVENT))
+        self.assertTrue(sc.is_dark_frame(f(-15, 0.299), EVENT))
+        self.assertTrue(sc.is_dark_frame(f(15, 0.299), EVENT))  # after a sunset, or late in a sunrise window
+        self.assertFalse(sc.is_dark_frame(f(-14.99, 0.10), EVENT))  # near the event a dark (overcast) sky is real
+        self.assertFalse(sc.is_dark_frame(f(-35, 0.30), EVENT))
+        self.assertFalse(sc.is_dark_frame(f(-35, 0.29962), EVENT))  # judged on the 3-decimal value that is sent: 0.3
+
+    def test_lamp_frames_before_dawn_are_dropped_and_cannot_be_the_peak(self):
+        frames = grid({-5.0: 30.0, -2.5: 25.0})
+        for f in frames:
+            m = (f["t"] - EVENT).total_seconds() / 60
+            if m <= -30:
+                f.update(score=80.0, sky_median_v=0.24)  # the Deerfield pier's sodium lights in a dark sky
+        old, _ = sc.build_result(frames, EVENT, dark_rule=False)
+        self.assertEqual(old["observed_score"], 80.0)
+        result, info = sc.build_result(frames, EVENT)
+        self.assertEqual(result["observed_score"], 30.0)
+        self.assertEqual(result["peak_frame_iso"], sc.iso_z(EVENT - timedelta(minutes=5)))
+        self.assertEqual(info["dark"], 3)
+        self.assertEqual(info["coverage"], {"pre": 7, "around": 8, "post": 7})
+        self.assertEqual(len(result["series"]), 22)
+        self.assertTrue(all(f["sky_median_v"] == 0.6 for f in result["series"]))
+
+    def test_dark_frames_do_not_count_toward_coverage(self):
+        # a dark tail after a sunset: from +15 the sky is dark, so only +10 and +12.5 are left in the post bucket
+        frames = grid()
+        for f in frames:
+            if (f["t"] - EVENT).total_seconds() / 60 >= 15:
+                f["sky_median_v"] = 0.2
+        result, info = sc.build_result(frames, EVENT)
+        self.assertIsNone(result)
+        self.assertEqual(info["coverage"]["post"], 2)
+        self.assertIn("dark (5)", info["reason"])
+
+    def test_a_dark_sky_near_the_event_is_kept(self):
+        frames = grid({0.0: 8.0})
+        for f in frames:
+            f["sky_median_v"] = 0.15  # a gray overcast at the event: dark, but the truth
+        result, info = sc.build_result(frames, EVENT)
+        self.assertIsNone(result)  # every frame 15+ min out is dark, so the pre bucket is short
+        self.assertEqual(info["coverage"], {"pre": 1, "around": 8, "post": 2})  # only -12.5 and +10, +12.5 are under 15 min out
+        for f in frames:
+            if abs((f["t"] - EVENT).total_seconds() / 60) >= 15:
+                f["sky_median_v"] = 0.4
+        result, info = sc.build_result(frames, EVENT)
+        self.assertEqual(info["dark"], 0)
+        self.assertEqual(len(result["series"]), 25)
+
+    def test_the_score_version_carries_the_dark_rule(self):
+        self.assertGreaterEqual(sc.SUN_CAM_SCORE_VERSION, "2026-11-06.1")
+
+    def test_the_cross_language_fixture_rebuilds_to_the_uploaded_payload(self):
+        # lib/__fixtures__/sunCamOct18PierLampFixture.json: the real 2026-10-18 pier sunrise. vitest feeds the
+        # same frames (dark ones put back) to the route's parser and must land on the same numbers.
+        import json
+
+        fx = json.loads(self.FIXTURE.read_text())
+        pl = fx["payload"]
+        self.assertEqual(pl["score_version"], "2026-11-06.1")
+        series = sorted(pl["series"] + fx["dark_frames"], key=lambda f: f["t"])
+        frames = [dict(f, t=sc.parse_iso(f["t"]), valid_frac=0.9) for f in series]
+        event = sc.parse_iso(pl["event_iso"])
+        result, info = sc.build_result(frames, event)
+        self.assertEqual(info["dark"], len(fx["dark_frames"]))
+        self.assertEqual(result["series"], pl["series"])
+        self.assertEqual((result["observed_score"], result["peak_frame_iso"]), (pl["observed_score"], pl["peak_frame_iso"]))
+        self.assertEqual((result["warm_frac"], result["colorfulness"]), (pl["warm_frac"], pl["colorfulness"]))
+        self.assertEqual(sc.build_result(frames, event, dark_rule=False)[0]["observed_score"], fx["old_rules_score"])
+        self.assertLess(pl["observed_score"], 25)
+        self.assertGreater(fx["old_rules_score"], 75)
+
+
+@unittest.skipIf(Image is None, "Pillow missing")
+class RescoreTests(unittest.TestCase):
+    """scripts/sun_cam_rescore.py over a synthetic saved-frames folder."""
+
+    def setUp(self):
+        import tempfile
+
+        import sun_cam_rescore as rs
+
+        self.rs = rs
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cam = next(c for c in sc.load_config()["cams"] if c["id"] == "ftl-elbo-beach-cam")
+        self.day = date(2026, 10, 24)
+        self.cam_event = sc.sun_times(self.cam["lat"], self.cam["lon"], self.day)["sunrise"]
+        d = Path(self.tmp.name) / "frames" / "2026-10-24" / "sunrise" / "ftl-elbo-beach-cam"
+        d.mkdir(parents=True)
+        for t in sc.sample_times(self.cam_event):
+            m = (t - self.cam_event).total_seconds() / 60
+            if m <= -30:  # dark sky with a lamp in the left sky region
+                im = solid((20, 20, 30), (320, 180))
+                im.paste((255, 140, 20), (0, 18, 96, 83))
+            elif -7.5 <= m <= -2.5:
+                im = solid((230, 120, 150), (320, 180))  # lit pink cloud
+            else:
+                im = solid((90, 120, 170), (320, 180))
+            im.save(d / sc.frame_name(t), "JPEG", quality=40)
+            if m == -5:
+                im.save(d / ("peak-" + sc.frame_name(t)), "JPEG", quality=95)
+        self.stored = Path(self.tmp.name) / "stored.json"
+        self.stored.write_text('[{"results": [{"slug": "fort-lauderdale", "event_kind": "sunrise", "event_date_local": "2026-10-24", '
+                               '"cam_id": "ftl-elbo-beach-cam", "observed_score": 99.0, "score_version": "2026-10-15.1"}]}]')
+        self.saved = (sc.post_observation, sc.TOKEN_FILE)
+        self.addCleanup(lambda: (setattr(sc, "post_observation", self.saved[0]), setattr(sc, "TOKEN_FILE", self.saved[1])))
+        self.posts = []
+        sc.post_observation = lambda payload, token: (self.posts.append(payload) or True, "ok")
+
+    def run_rescore(self, *extra):
+        import contextlib
+        import io
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = self.rs.main(["--frames-root", str(Path(self.tmp.name) / "frames"), "--cams", "ftl-elbo-beach-cam", "--stored", str(self.stored), *extra])
+        return code, out.getvalue()
+
+    def test_frame_names_snap_back_to_the_original_sample_times(self):
+        samples = sc.sample_times(self.cam_event)
+        t = self.rs.frame_time(sc.frame_name(samples[3]), self.day, self.cam_event, samples)
+        self.assertEqual(t, samples[3])  # the milliseconds the name dropped are back
+        self.assertIsNone(self.rs.frame_time("notes.txt", self.day, self.cam_event, samples))
+
+    def test_dry_run_prints_old_and_new_and_uploads_nothing(self):
+        code, out = self.run_rescore("--dry-run")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.posts, [])
+        row = next(line for line in out.splitlines() if line.startswith("2026-10-24"))
+        cols = row.split()
+        self.assertEqual(cols[:5], ["2026-10-24", "sunrise", "ftl-elbo-beach-cam", "fort-lauderdale", "solar"])
+        stored, version, old, new, dark = cols[5], cols[6], float(cols[7]), float(cols[8]), int(cols[9])
+        self.assertEqual((stored, version), ("99.0", "2026-10-15.1"))
+        self.assertGreater(old, new)  # the lamp frames were the old peak
+        self.assertEqual(dark, 3)
+        self.assertIn("JPEG quality", out)
+        self.assertIn("Median sky_median_v", out)
+
+    def test_a_real_run_uploads_the_new_version_with_sky_brightness_on_every_frame(self):
+        sc.TOKEN_FILE = Path(self.tmp.name) / "token"
+        sc.TOKEN_FILE.write_text("t")
+        code, _out = self.run_rescore()
+        self.assertEqual(code, 0)
+        self.assertEqual(len(self.posts), 1)
+        pl = self.posts[0]
+        self.assertEqual(pl["score_version"], sc.SUN_CAM_SCORE_VERSION)
+        self.assertEqual(len(pl["series"]), 22)
+        self.assertTrue(all(0 <= f["sky_median_v"] <= 1 for f in pl["series"]))
+        self.assertEqual(pl["series"][0]["t"], sc.iso_z(self.cam_event - timedelta(minutes=27.5)))  # snapped, not whole seconds
+
+    def test_changed_only_uploads_only_what_the_dark_rule_changes(self):
+        sc.TOKEN_FILE = Path(self.tmp.name) / "token"
+        sc.TOKEN_FILE.write_text("t")
+        self.assertEqual(self.run_rescore("--changed-only")[0], 0)
+        self.assertEqual(len(self.posts), 1)  # the lamp frames were the old peak, so this event changes
+        self.posts.clear()
+        self.assertEqual(self.run_rescore("--changed-only", "--since", "2026-10-25")[0], 0)
+        self.assertEqual(self.posts, [])  # nothing on or after that date
+        # an event the rule does not touch is skipped: turn the lamp frames into plain sky
+        d = Path(self.tmp.name) / "frames" / "2026-10-24" / "sunrise" / "ftl-elbo-beach-cam"
+        for t in sc.sample_times(self.cam_event):
+            if (t - self.cam_event).total_seconds() / 60 <= -30:
+                solid((90, 120, 170), (320, 180)).save(d / sc.frame_name(t), "JPEG", quality=40)
+        code, out = self.run_rescore("--changed-only")
+        self.assertEqual((code, self.posts), (0, []))
+        self.assertIn("the new rules change nothing, not uploaded", out)
+
+    def test_a_row_already_at_this_version_is_never_reuploaded(self):
+        sc.TOKEN_FILE = Path(self.tmp.name) / "token"
+        sc.TOKEN_FILE.write_text("t")
+        self.stored.write_text(self.stored.read_text().replace("2026-10-15.1", sc.SUN_CAM_SCORE_VERSION))
+        code, out = self.run_rescore()
+        self.assertEqual((code, self.posts), (0, []))
+        self.assertIn("already at this score version, not uploaded", out)
+
+    def test_a_real_run_needs_the_stored_versions(self):
+        import contextlib
+        import io
+
+        sc.TOKEN_FILE = Path(self.tmp.name) / "token"
+        sc.TOKEN_FILE.write_text("t")
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = self.rs.main(["--frames-root", str(Path(self.tmp.name) / "frames")])
+        self.assertEqual((code, self.posts), (2, []))
+
+    def test_a_real_run_without_a_token_does_nothing(self):
+        sc.TOKEN_FILE = Path(self.tmp.name) / "missing-token"
+        code, _out = self.run_rescore()
+        self.assertEqual(code, 1)
+        self.assertEqual(self.posts, [])
+
+
 class IncompleteHandlingTests(unittest.TestCase):
     """run_normal against a fake DVR that only holds half the window."""
 
@@ -541,7 +755,7 @@ class IncompleteHandlingTests(unittest.TestCase):
                 return None
 
         sc.DvrSession = FakeDvr
-        sc.score_file = lambda path, regions: {"valid_frac": 0.9, "warm_frac": 0.1, "colorfulness": 40.0, "warm_sat": 0.4, "score": 30.0}
+        sc.score_file = lambda path, regions: {"valid_frac": 0.9, "warm_frac": 0.1, "colorfulness": 40.0, "warm_sat": 0.4, "sky_median_v": 0.6, "score": 30.0}
         sc.post_observation = lambda payload, token: (self.posts.append(payload) or True, "ok")
         sc.save_frames = lambda *a, **k: None
         self.cfg = sc.load_config()
