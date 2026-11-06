@@ -562,6 +562,46 @@ UW_PROMPT = (
 )
 
 
+# NEAR-SHORE SHADOW prompt (2026-11-06). Read on a CROP of the frame (the strip
+# from the wash line out past the breakers, config/nearshore-boxes.json), never
+# the full frame: the Boca cams sit high and look out to sea, so a full-frame
+# grade judges the deep offshore water, which mostly mirrors the sky. Asks only
+# for things one can see, and ends on a short fixed scale with no 0-100 number
+# and no "most days are ..." anchor. Owner truth that day: olive/khaki water with
+# visible suspended sand inside ~50 ft, while the old full-frame read said 74.
+NEAR_PROMPT = (
+    "This image is a CROP from a high beach webcam. It shows only the strip of sea "
+    "nearest the shore: the wet sand and wash at the bottom, then the shallow water "
+    "and breaking waves, and perhaps a thin band of deeper water at the top. "
+    "Describe the water in this strip as a person standing in it would see it. "
+    "Return strict JSON only: "
+    '{"color":"brown|sandy_green|green|blue_green|cant_tell",'
+    '"suspended_sand":"none|some|lots|cant_tell",'
+    '"bottom_visible":"yes|partly|no|cant_tell",'
+    '"foam":"none|some|lots",'
+    '"level":"clear|a_bit_sandy|murky|churned|cant_tell",'
+    '"note":"<=8 words"}. '
+    "Rules. Judge the water from about knee deep to waist deep: just inside and "
+    "between the breaking waves. Ignore three things that fool a viewer: the thin "
+    "ankle-deep wash at the edge (it looks clear only because it is inches deep), "
+    "the deep water beyond the breakers (it mirrors the blue sky), and the white "
+    "foam itself (judge the water between the foam). "
+    "color: brown = tea or coffee; sandy_green = olive, khaki or yellow-green; "
+    "green = plain green; blue_green = turquoise or aqua. "
+    "suspended_sand: a cloudy, milky or grainy look in the water itself. "
+    "bottom_visible: can you see sand or ripples on the bottom where the water is "
+    "knee deep or deeper (not in the ankle-deep wash)? People standing in the water "
+    "are a depth guide: if their legs fade out just under the surface, the answer is no. "
+    "level: clear = see-through, blue_green, no visible suspended sand; "
+    "a_bit_sandy = tinted sandy_green or green, or some suspended sand, and the "
+    "bottom is not clearly visible past knee depth; murky = brown or lots of "
+    "suspended sand; churned = whitewater and stirred-up sand over most of the "
+    "strip; cant_tell = glare, darkness, too far or too small to judge, or the "
+    "crop shows mostly sand. If the water is green or sandy_green and you cannot "
+    "see the bottom at knee depth, the level is not clear."
+)
+
+
 def _get(url: str, timeout: int = 25) -> bytes:
     req = urllib.request.Request(url, headers={"User-Agent": "boca-beach-rats"})
     return urllib.request.urlopen(req, timeout=timeout).read()
@@ -1863,6 +1903,349 @@ def median_water(group: dict | None) -> dict | None:
     return {"level": closest["water"], "pct": med}
 
 
+# --- NEAR-SHORE SHADOW (2026-11-06) --------------------------------------------
+# A second, SHADOW water-clarity read per cam, on a crop of the near-shore strip
+# only (config/nearshore-boxes.json), with its own observable-only prompt
+# (NEAR_PROMPT) and parser (_parse_near). Shadow means: it is written to the feed
+# as EXTRA fields (`waterNear` on a cam reading, `nearMedian` on a capture group,
+# sparse `near` on a history entry, top-level `nearScoredAt`) and nothing the app
+# reads changes: `water`, `waterPct`, `clr` and every roll-up stay the main read's.
+#
+# It must never hurt the main read:
+#  - it runs AFTER every main read, the underwater read and the archive pass of the
+#    tick (main() -> nearshore_pass), so it cannot delay or reorder them;
+#  - one provider only: Gemini, model NEAR_MODEL (default gemini-2.5-flash-lite, a
+#    separate daily bucket from the main read's gemini-2.5-flash), ONE attempt, no
+#    retry, no fall-through to Clef/Groq (those are the main read's fallbacks);
+#  - skipped for the whole tick on any quota sign: a vision call that failed this
+#    tick, or a main read of the cam that was NOT served by the first provider and
+#    model of the chain (a fallback means a quota is spent somewhere); and a 429 or
+#    any error on a shadow call stops the rest of the pass;
+#  - at most once per NEAR_MIN_GAP_MIN per cam, only on a fresh main read, never at
+#    low sun; every error is caught and printed, never raised.
+NEAR_BOXES_PATH = os.environ.get("NEARSHORE_BOXES", "config/nearshore-boxes.json")
+NEAR_MODEL = os.environ.get("NEARSHORE_MODEL", "gemini-2.5-flash-lite")
+NEAR_MIN_GAP_MIN = float(os.environ.get("NEARSHORE_MIN_GAP_MIN", "30"))
+# A cam's last shadow read stays on its reading (marked carried) for this long, so
+# `nearMedian` on a tick between two shadow reads still covers the cams.
+NEAR_CARRY_MIN = float(os.environ.get("NEARSHORE_CARRY_MIN", "60"))
+NEAR_OFF = os.environ.get("NEARSHORE_OFF", "").strip() == "1"
+# Crop sizing: a thin strip is enlarged until its short side reaches NEAR_MIN_SHORT
+# (at most 2x), never past NEAR_MAX_LONG on the long side. Keeps the image at or
+# under the full frame's size, so the call costs no more than the main read.
+NEAR_MIN_SHORT = 300
+NEAR_MAX_LONG = 1536
+NEAR_MAX_UPSCALE = 2.0
+
+NEAR_LEVELS = ("clear", "a_bit_sandy", "murky", "churned", "cant_tell")
+NEAR_RANK = {lv: i for i, lv in enumerate(NEAR_LEVELS[:4])}  # cant_tell has no rank
+NEAR_COLORS = ("brown", "sandy_green", "green", "blue_green", "cant_tell")
+NEAR_SAND = ("none", "some", "lots", "cant_tell")
+NEAR_BOTTOM = ("yes", "partly", "no", "cant_tell")
+NEAR_FOAM = ("none", "some", "lots")
+
+# Stills of this tick's fresh main reads, for the shadow pass:
+# {(slug, cam id): {"img": bytes, "provider": str, "model": str}}. Filled by
+# capture_beach only for cams that have a near-shore box; cleared every tick.
+NEAR_STILLS: dict[tuple[str, str], dict] = {}
+
+
+def load_near_boxes(path: "str | None" = None) -> dict:
+    """{slug: {cam id: {"box": [x0, y0, x1, y1], "inMedian": bool}}}; {} when the file is
+    missing or bad (no shadow reads at all). Keys starting with "_" are comments. A box
+    that is not 4 fractions with x0 < x1 and y0 < y1 is dropped. Pure apart from the read."""
+    try:
+        with open(path or NEAR_BOXES_PATH) as fh:
+            raw = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    out: dict = {}
+    for slug, cams in (raw or {}).items():
+        if slug.startswith("_") or not isinstance(cams, dict):
+            continue
+        for cid, cfg in cams.items():
+            box = (cfg or {}).get("box") if isinstance(cfg, dict) else None
+            if (not isinstance(box, list) or len(box) != 4
+                    or not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in box)):
+                continue
+            x0, y0, x1, y1 = (float(v) for v in box)
+            if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
+                continue
+            out.setdefault(slug, {})[cid] = {"box": [x0, y0, x1, y1], "inMedian": cfg.get("inMedian", True) is not False}
+    return out
+
+
+def _parse_near(out: dict) -> dict:
+    """Validate a raw near-shore reply. `level` must be one of NEAR_LEVELS (else
+    ValueError, so the call counts as failed); the observable fields become None when
+    missing or not on their list."""
+    lv = str(out.get("level", "")).lower().strip()
+    if lv not in NEAR_LEVELS:
+        raise ValueError(f"bad near level: {lv!r}")
+
+    def pick(key: str, allowed: tuple) -> "str | None":
+        v = str(out.get(key, "")).lower().strip()
+        return v if v in allowed else None
+
+    return {
+        "level": lv,
+        "color": pick("color", NEAR_COLORS) or pick("colour", NEAR_COLORS),
+        "sand": pick("suspended_sand", NEAR_SAND),
+        "bottom": pick("bottom_visible", NEAR_BOTTOM),
+        "foam": pick("foam", NEAR_FOAM),
+        "note": str(out.get("note", ""))[:80],
+    }
+
+
+def near_crop_size(w: int, h: int, box: list) -> "tuple[tuple[int, int, int, int], tuple[int, int]]":
+    """((left, top, right, bottom) pixel crop, (out_w, out_h)) for a frame of w x h. The
+    output is the crop enlarged (at most NEAR_MAX_UPSCALE) until its short side reaches
+    NEAR_MIN_SHORT, and never past NEAR_MAX_LONG on its long side. Pure."""
+    left, top = int(round(box[0] * w)), int(round(box[1] * h))
+    right, bottom = max(left + 1, int(round(box[2] * w))), max(top + 1, int(round(box[3] * h)))
+    cw, ch = right - left, bottom - top
+    short, long_ = min(cw, ch), max(cw, ch)
+    scale = min(NEAR_MAX_UPSCALE, NEAR_MIN_SHORT / short) if short < NEAR_MIN_SHORT else 1.0
+    if long_ * scale > NEAR_MAX_LONG:
+        scale = NEAR_MAX_LONG / long_
+    return (left, top, right, bottom), (max(1, int(round(cw * scale))), max(1, int(round(ch * scale))))
+
+
+def crop_nearshore(img: bytes, box: list) -> "bytes | None":
+    """The near-shore strip of a frame as a JPEG, sized by near_crop_size. Pillow when
+    installed, else ffmpeg. None on any failure (no shadow read for that cam)."""
+    try:
+        dims = jpeg_dimensions(img)
+        if not dims:
+            return None
+        (l, t, r, b), (ow, oh) = near_crop_size(dims[0], dims[1], box)
+        Image = _pillow_image()
+        if Image is not None:
+            with Image.open(io.BytesIO(img)) as im:
+                part = im.convert("RGB").crop((l, t, r, b))
+                if part.size != (ow, oh):
+                    part = part.resize((ow, oh), Image.LANCZOS)
+                buf = io.BytesIO()
+                part.save(buf, "JPEG", quality=VISION_SHRINK_QUALITY)
+                return buf.getvalue()
+        proc = subprocess.run(
+            ["ffmpeg", "-loglevel", "error", "-f", "image2pipe", "-i", "pipe:0",
+             "-vf", f"crop={r - l}:{b - t}:{l}:{t},scale={ow}:{oh}:flags=lanczos",
+             "-frames:v", "1", "-q:v", "3", "-f", "image2", "pipe:1"],
+            input=img, capture_output=True, timeout=20)
+        return proc.stdout if proc.returncode == 0 and proc.stdout else None
+    except Exception as e:  # noqa: BLE001 - shadow only
+        print(f"  warn near-shore crop: {e}", file=sys.stderr)
+        return None
+
+
+def assess_near(crop: bytes, model: "str | None" = None) -> dict:
+    """ONE shadow read of a near-shore crop: Gemini only, one HTTP attempt."""
+    return assess_with("gemini", crop, NEAR_PROMPT, _parse_near, model=model or NEAR_MODEL, single_attempt=True)
+
+
+def near_median(cams: list, boxes: "dict | None") -> "dict | None":
+    """The capture-level shadow roll-up: {level, n, cams: {id: level}} over the cams whose
+    `waterNear` has a ranked level (cant_tell is left out) and whose box has inMedian. The
+    MEDIAN by rank (clear < a_bit_sandy < murky < churned); with an even count the murkier
+    of the middle two. None when no cam counts. Pure."""
+    boxes = boxes or {}
+    levels = {}
+    for c in cams or []:
+        wn = c.get("waterNear") if isinstance(c, dict) else None
+        if not isinstance(wn, dict) or wn.get("level") not in NEAR_RANK:
+            continue
+        if not (boxes.get(c.get("id")) or {}).get("inMedian", False):
+            continue
+        levels[c["id"]] = wn["level"]
+    if not levels:
+        return None
+    ranked = sorted(levels.values(), key=lambda lv: NEAR_RANK[lv])
+    return {"level": ranked[len(ranked) // 2], "n": len(ranked), "cams": levels}
+
+
+def _near_age_min(stamp: object, now: dt.datetime) -> "float | None":
+    try:
+        at = dt.datetime.strptime(str(stamp), "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+    except ValueError:
+        return None
+    now_utc = now if now.tzinfo else now.replace(tzinfo=dt.timezone.utc)
+    return (now_utc - at).total_seconds() / 60
+
+
+def near_shares_main_bucket(model: "str | None" = None) -> bool:
+    """True when the shadow model is one of the main chain's Gemini models (Google meters
+    the free tier per model, so the same model = the same daily bucket)."""
+    return (model or NEAR_MODEL) in GEMINI_MODELS and "gemini" in PROVIDER_ORDER
+
+
+def _tick_had_failed_call() -> bool:
+    with _VISION_CALLS_LOCK:
+        return any(bad for _, (ok, bad) in _VISION_CALLS.items())
+
+
+def nearshore_pass(groups: dict, prevs: dict, now: dt.datetime, boxes: "dict | None" = None,
+                   stills: "dict | None" = None, first_provider: "tuple[str, str] | None" = None,
+                   gap_state: "dict | None" = None) -> int:
+    """Add the shadow near-shore fields to this tick's capture groups, in place. Returns
+    how many shadow calls were made. Never raises (see the NEAR-SHORE SHADOW note).
+
+    For each beach group: a cam with a fresh main read, a box, and no shadow read in the
+    last NEAR_MIN_GAP_MIN gets ONE shadow read of its crop, stamped `fresh`. Any other cam
+    keeps its previous `waterNear` (marked carried) while it is younger than NEAR_CARRY_MIN.
+    Then the group gets `nearMedian` (None-free: absent when no cam counts)."""
+    calls = 0
+    try:
+        boxes = load_near_boxes() if boxes is None else boxes
+        stills = NEAR_STILLS if stills is None else stills
+        if first_provider is None:
+            enabled = _enabled_providers()
+            first_provider = enabled[0] if enabled else None
+        # Does the shadow model share a daily bucket with the main chain? Then the
+        # strict rule: no shadow call at all after any failed call this tick, and only
+        # for a cam whose main read came from the chain's FIRST provider/model.
+        shared = near_shares_main_bucket()
+        stop = None
+        if NEAR_OFF:
+            stop = "off (NEARSHORE_OFF=1)"
+        elif not API_KEY:
+            stop = "no Gemini key"
+        elif shared and _tick_had_failed_call():
+            stop = "a vision call failed this tick (quota sign)"
+        for slug, group in (groups or {}).items():
+            beach_boxes = boxes.get(slug) or {}
+            if not group or not beach_boxes:
+                continue
+            prev = prevs.get(slug) or {}
+            prev_at = prev.get("nearScoredAt") if isinstance(prev.get("nearScoredAt"), dict) else {}
+            prev_latest = prev.get("latest") if isinstance(prev.get("latest"), dict) else {}
+            prev_near = {c.get("id"): c.get("waterNear") for c in (prev_latest.get("cams") or [])
+                         if isinstance(c, dict) and isinstance(c.get("waterNear"), dict)}
+            for cam in group.get("cams", []):
+                cid = cam.get("id")
+                if cid not in beach_boxes:
+                    cam.pop("waterNear", None)
+                    continue
+                if cam.get("lowSun"):
+                    cam.pop("waterNear", None)  # no shadow read, and no carried one, at low sun
+                    continue
+                fresh_still = None if cam.get("carried") else stills.get((slug, cid))
+                why_not = stop
+                if why_not is None and fresh_still is None:
+                    why_not = "no fresh main read"
+                if why_not is None and shared and first_provider and (
+                        fresh_still.get("provider"), fresh_still.get("model")) != tuple(first_provider):
+                    why_not = f"main read fell back to {fresh_still.get('provider')}/{fresh_still.get('model')}"
+                if why_not is None:
+                    age = _near_age_min(prev_at.get(cid), now)
+                    if age is not None and 0 <= age < NEAR_MIN_GAP_MIN:
+                        why_not = f"last shadow read {age:.0f} min ago"
+                if why_not is None:
+                    crop = crop_nearshore(fresh_still["img"], beach_boxes[cid]["box"])
+                    if crop is None:
+                        why_not = "crop failed"
+                if why_not is None:
+                    if gap_state is not None and gap_state.get("called"):
+                        time.sleep(CAM_GAP_S)
+                    if gap_state is not None:
+                        gap_state["called"] = True
+                    calls += 1
+                    try:
+                        r = assess_near(crop)
+                        cam["waterNear"] = {k: r.get(k) for k in ("level", "color", "sand", "bottom", "foam", "note")} | {
+                            "model": r.get("model"), "scoredAt": _utc_iso(now)}
+                        print(f"  [{slug}] {cid}: near-shore SHADOW level={r['level']} color={r.get('color')} "
+                              f"sand={r.get('sand')} bottom={r.get('bottom')} foam={r.get('foam')} via {r.get('model')}")
+                        continue
+                    except Exception as e:  # noqa: BLE001 - shadow only: stop the pass, keep the run
+                        stop = f"shadow call failed ({str(e)[:100]})"
+                        print(f"  [{slug}] {cid}: near-shore SHADOW failed, no more shadow reads this tick: {str(e)[:160]}",
+                              file=sys.stderr)
+                        why_not = stop
+                # No fresh shadow read: keep the last one while it is young enough.
+                old = cam.get("waterNear") if cam.get("carried") else prev_near.get(cid)
+                age = _near_age_min((old or {}).get("scoredAt"), now)
+                if isinstance(old, dict) and age is not None and -VISION_MAX_FUTURE_MIN <= age <= NEAR_CARRY_MIN:
+                    cam["waterNear"] = {**old, "carried": True}
+                else:
+                    cam.pop("waterNear", None)
+            nm = near_median(group.get("cams", []), beach_boxes)
+            if nm:
+                nm["fresh"] = sum(1 for c in group.get("cams", [])
+                                  if isinstance(c.get("waterNear"), dict) and not c["waterNear"].get("carried"))
+                group["nearMedian"] = nm
+            else:
+                group.pop("nearMedian", None)
+        if stop and calls == 0 and boxes:
+            print(f"near-shore shadow: skipped ({stop})")
+        else:
+            print(f"near-shore shadow: {calls} call(s) this tick")
+    except Exception as e:  # noqa: BLE001 - the shadow must never fail the run
+        print(f"  warn near-shore shadow pass: {e}", file=sys.stderr)
+    return calls
+
+
+def shadow_test_main(argv: list) -> int:
+    """`--shadow-test <dir>`: read every <cam id>-full.jpg in <dir> whose cam has a box in
+    NEAR_BOXES_PATH, crop it, and print what each model in NEARSHORE_TEST_MODELS
+    (default gemini-2.5-flash,gemini-2.5-flash-lite) says through NEAR_PROMPT, plus the
+    OLD full-frame water grade (PROMPT, first model) for comparison. Writes NO feed and
+    touches no archive. Exit 1 only when no read at all succeeded."""
+    try:
+        d = argv[argv.index("--shadow-test") + 1]
+    except (ValueError, IndexError):
+        print("usage: cam_seaweed.py --shadow-test <dir of <cam id>-full.jpg>", file=sys.stderr)
+        return 2
+    models = [m.strip() for m in os.environ.get(
+        "NEARSHORE_TEST_MODELS", "gemini-2.5-flash,gemini-2.5-flash-lite").split(",") if m.strip()]
+    boxes = {cid: cfg for beach in load_near_boxes().values() for cid, cfg in beach.items()}
+    print(f"near-shore shadow test: dir={d} models={models} boxes={NEAR_BOXES_PATH}")
+    print(f"NEAR_PROMPT: {NEAR_PROMPT}")
+    if not API_KEY:
+        print("no GEMINI_API_KEY: nothing to test", file=sys.stderr)
+        return 1
+    ok = 0
+    results = []
+    for name in sorted(os.listdir(d)):
+        if not name.endswith("-full.jpg"):
+            continue
+        cid = name[: -len("-full.jpg")]
+        if cid not in boxes:
+            print(f"{cid}: no near-shore box, skipped")
+            continue
+        with open(os.path.join(d, name), "rb") as fh:
+            img = fh.read()
+        crop = crop_nearshore(img, boxes[cid]["box"])
+        if not crop:
+            print(f"{cid}: crop failed")
+            continue
+        print(f"{cid}: frame {jpeg_dimensions(img)} -> crop {jpeg_dimensions(crop)} ({len(crop)} bytes), "
+              f"inMedian={boxes[cid]['inMedian']}")
+        try:
+            old = assess_with("gemini", img, PROMPT, _parse_out, model=models[0])
+            print(f"  OLD full-frame ({models[0]}): water={old.get('water')} waterPct={old.get('waterPct')} "
+                  f"note={old.get('waterNote')!r}")
+        except Exception as e:  # noqa: BLE001
+            print(f"  OLD full-frame ({models[0]}): FAILED {str(e)[:200]}")
+        for m in models:
+            time.sleep(CAM_GAP_S)
+            try:
+                r = assess_near(crop, m)
+                ok += 1
+                results.append({"cam": cid, "model": m, **{k: r.get(k) for k in
+                                ("level", "color", "sand", "bottom", "foam", "note")}})
+                print(f"  NEAR ({m}): level={r['level']} color={r.get('color')} sand={r.get('sand')} "
+                      f"bottom={r.get('bottom')} foam={r.get('foam')} note={r.get('note')!r}")
+            except Exception as e:  # noqa: BLE001
+                print(f"  NEAR ({m}): FAILED {str(e)[:200]}")
+    for m in models:
+        cams = [{"id": r["cam"], "waterNear": r} for r in results if r["model"] == m]
+        print(f"nearMedian ({m}): {near_median(cams, boxes)}")
+    print("SHADOW_TEST_RESULTS " + json.dumps(results, separators=(",", ":")))
+    print(vision_call_summary())
+    return 0 if ok else 1
+
+
 class PrevFetchError(Exception):
     """The beach's last published file could not be read for a reason other than "it does not exist"
     (a network error, a 5xx, a document that does not parse)."""
@@ -2310,6 +2693,7 @@ def capture_beach(
     imgs: dict[str, bytes] = {}  # stills of moderate/high reads, as fetched (and as archived, bar a size re-encode)
     vimgs: dict[str, bytes] = {}  # the same stills as the vision providers saw them (a second opinion reads these)
     coords = beach_coords(slug)  # for the low-sun gate; None -> gate off
+    near_boxes = load_near_boxes().get(slug) or {}  # NEAR-SHORE SHADOW: which stills to keep
     for cam in cams:
         src = cam.get("source") or {}
         frame_at = None
@@ -2405,6 +2789,9 @@ def capture_beach(
                     coords[0], coords[1], _frame_time(reading.get("frameAt"), now_local))
             reading = apply_low_sun_gate(reading, elev)
             readings.append(reading)
+            if cam["id"] in near_boxes and not reading.get("lowSun"):
+                # Kept for the shadow pass, which runs after every main read of the tick.
+                NEAR_STILLS[(slug, cam["id"])] = {"img": img, "provider": r.get("provider"), "model": r.get("model")}
             if reading.get("lowSun"):
                 print(f"  [{slug}] {cam['id']}: seaweed/water not graded (sun {reading['sunElevDeg']} deg "
                       f"< {LOW_SUN_DEG:g}) crowd={r.get('crowd')}({r.get('crowdPct')}%) "
@@ -2628,6 +3015,12 @@ def build_beach_output(
                   if c.get("frameAt") and not c.get("frameSha") and not c.get("carried")}
         if frames:
             entry["frames"] = frames
+        # SPARSE near-shore SHADOW roll-up — present only on ticks where at least one
+        # cam got a FRESH shadow read (see nearshore_pass), so a carried value is
+        # never recorded twice. Not read by the app (shadow only).
+        nm = current.get("nearMedian")
+        if isinstance(nm, dict) and nm.get("fresh"):
+            entry["near"] = nm.get("level")
         history = history + [entry]
         # No cap — keep every raw read forever. Growth is trivial: ~60 reads/day ×
         # ~110 bytes ≈ 7 KB/day ≈ 2.4 MB/year, negligible for years. The full
@@ -2646,6 +3039,14 @@ def build_beach_output(
         for c in current["cams"]:
             if c.get("frameSha") and not c.get("carried"):
                 frame_shas[c["id"]] = c["frameSha"]
+
+    # When each cam last got a FRESH near-shore shadow read (NEAR_MIN_GAP_MIN gate).
+    near_at = dict(prev.get("nearScoredAt")) if isinstance(prev.get("nearScoredAt"), dict) else {}
+    if current:
+        for c in current["cams"]:
+            wn = c.get("waterNear")
+            if isinstance(wn, dict) and not wn.get("carried") and not c.get("carried") and wn.get("scoredAt"):
+                near_at[c["id"]] = wn["scoredAt"]
 
     now_iso = (dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
                .isoformat().replace("+00:00", "Z"))
@@ -2685,6 +3086,9 @@ def build_beach_output(
     # Disputed cams of the beach-local day: {cam id: {since, reason, date, claims, resolvedAt?}}.
     if disputes:
         doc["disputedCams"] = disputes
+    # Near-shore SHADOW gate state {cam id: last fresh shadow read, UTC}; shadow only.
+    if near_at:
+        doc["nearScoredAt"] = near_at
     # Owner alerts whose POST failed, retried every tick until the app answers (dropped after 24 h).
     if outbox:
         doc["pendingAlerts"] = outbox
@@ -2801,6 +3205,7 @@ def main() -> int:
     with _VISION_CALLS_LOCK:
         _VISION_CALLS.clear()
     _SECOND_OPINIONS["n"] = 0
+    NEAR_STILLS.clear()
     registry = load_registry()
     # (slug, cam id) of every cam the vision/underwater paths go after this tick;
     # archive_pass() archives the manifest cams NOT in here.
@@ -2900,6 +3305,12 @@ def main() -> int:
     # every tick, whether or not any vision provider is configured.
     _run_archive_pass(attempted, archive_run)
 
+    # NEAR-SHORE SHADOW — last of all, after every main read, the underwater read and
+    # the archive pass, so it can never delay or starve them. Never raises.
+    if providers:
+        nearshore_pass(current_by_slug, prevs, dt.datetime.now(dt.timezone.utc), gap_state=gap_state)
+    NEAR_STILLS.clear()
+
     if providers:
         print(vision_call_summary())
 
@@ -2954,4 +3365,6 @@ def main() -> int:
 if __name__ == "__main__":
     if "--window-state" in sys.argv[1:]:
         raise SystemExit(window_state_main())
+    if "--shadow-test" in sys.argv[1:]:
+        raise SystemExit(shadow_test_main(sys.argv))
     raise SystemExit(main())
