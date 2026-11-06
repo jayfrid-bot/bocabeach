@@ -17,7 +17,8 @@
 
   To check status / force a run:
     launchctl print gui/$(id -u)/com.isitbeachday.scorecard
-    launchctl kickstart -k gui/$(id -u)/com.isitbeachday.scorecard
+    launchctl kickstart gui/$(id -u)/com.isitbeachday.scorecard
+  (Not "kickstart -k": that kills a run in progress and can leave git locks.)
 -->
 <plist version="1.0">
 <dict>

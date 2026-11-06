@@ -419,6 +419,22 @@ WHERE observed_score IS NOT NULL
 ORDER BY event_iso, as_of_hour_utc;
 ```
 
+## Deploy order when the upload changes
+
+When the script starts sending a new field or a new `score_version`, deploy
+in this order:
+
+1. Deploy the app (the `/api/sun-observations` route) first.
+2. Only then run `git pull` on the home server, so the launchd job picks up
+   the new script.
+
+The new route still accepts the old script's uploads, but the old route
+rejects the new script's uploads ("unknown series field"). If the script goes
+first, every event is retried until its DVR window closes (each retry spends
+YouTube calls from the shared pacer), and is then marked closed. The frames
+are saved before the upload, so the re-score tool can upload those events
+later (it uploads any event that has no stored row).
+
 ## Re-scoring saved frames
 
 `scripts/sun_cam_rescore.py` re-reads the saved frames in `~/Projects/bocabeach-sunframes`,
@@ -448,10 +464,14 @@ npx wrangler d1 execute isitbeachday-plus --remote --json \
 ```
 
 A dry run without `--stored` takes the "stored" column from the state file (last 14 days only).
-`--since`, `--until`, `--cams` and `--events` narrow the run. `--changed-only` uploads only the
-beach-events whose score under the new rules differs from the same saved frames under the
-old rules. Use it: the other rows were scored on the full-quality originals, and re-scoring
-their low-quality copies only adds JPEG noise.
+`--since`, `--until`, `--cams` and `--events` narrow the run. By default (changed-only) the
+tool uploads only the beach-events whose score under the new rules differs from the same
+saved frames under the old rules, plus any event that has no stored row at all (for example,
+one lost during a rollout). The other rows were scored on the full-quality originals, and
+re-scoring their low-quality copies only adds JPEG noise. `--all` re-uploads every event;
+`--changed-only` is still accepted and changes nothing. Each upload carries the earliest legal
+`scored_at` (one second after its last frame), so a row the live job uploads at the same
+version always wins over a re-score.
 
 **The 2026-11-06.1 dry run** (`docs/benchmarks/2026-11-06-lamp-fix/dry-run.txt`, run on the
 home server on 2026-11-05 against 720 stored rows): 734 beach-events re-scored, 718 complete.
@@ -482,8 +502,8 @@ absolute 0.1), with 14 beach-events more than 5 points off. Four are old `2026-1
 (scored before the glow mask). The other ten are JPEG noise, on the peak frame or on a frame
 beside it. Dark frames suffer most: the 10/20 pier sunrise's −32.5 minute lamp frame scored
 14.9 in the stored series and 40.6 from its saved copy (the rule now drops it either way). So
-the low quality is fine in bulk but not for one event, which is why `--changed-only` is the
-advice.
+the low quality is fine in bulk but not for one event, which is why changed-only is the
+default.
 
 ## Credit
 
