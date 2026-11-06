@@ -662,22 +662,29 @@ const utcDateOf: EventLocalDateFn = (_slug, eventIso) => eventIso.slice(0, 10);
  * Shared cams: one cam can be the truth for two beaches (Boca Raton and
  * Deerfield Beach share the Deerfield cams), so the same reading would count
  * twice. Of the items in each group (same cam, event kind and local date),
- * keep only the beach nearest that cam (`distanceOf`; unknown counts as
- * farthest), ties to the first slug. Returns the items kept.
+ * keep one: first an item that can be graded (`usable`, e.g. it has a
+ * forecast to pair with), then the beach nearest that cam (`distanceOf`;
+ * unknown counts as farthest), then the first slug. So a reading is never
+ * dropped for a beach that cannot use it while another beach could.
+ * Returns the items kept.
  */
 export function nearestBeachPerCamEvent<T>(
   items: T[],
   of: (t: T) => { cam: string; kind: string; date: string; slug: string },
   distanceOf?: CamDistanceFn,
+  usable?: (t: T) => boolean,
 ): Set<T> {
-  const best = new Map<string, { item: T; d: number; slug: string }>();
+  const best = new Map<string, { item: T; u: number; d: number; slug: string }>();
   for (const item of items) {
     const { cam, kind, date, slug } = of(item);
     const k = `${cam}|${kind}|${date}`;
     const d = distanceOf?.(cam, slug);
     const dist = typeof d === "number" && Number.isFinite(d) ? d : Infinity;
+    const u = usable && !usable(item) ? 1 : 0;
     const cur = best.get(k);
-    if (!cur || dist < cur.d || (dist === cur.d && slug < cur.slug)) best.set(k, { item, d: dist, slug });
+    const better =
+      !cur || u < cur.u || (u === cur.u && (dist < cur.d || (dist === cur.d && slug < cur.slug)));
+    if (better) best.set(k, { item, u, d: dist, slug });
   }
   return new Set([...best.values()].map((b) => b.item));
 }
@@ -749,6 +756,7 @@ export function sunFairMetrics(
     evs.filter((e) => e.truth),
     (e) => ({ cam: (e.truth as { cam: string }).cam, kind: e.kind, date: localDateOf(e.slug, e.eventIso), slug: e.slug }),
     opts.camDistance,
+    (e) => e.head != null,
   );
   for (const ev of evs) {
     const { key, kind, head } = ev;
@@ -946,19 +954,6 @@ export function afterglowMetrics(
   } = {},
 ): { sunset: AfterglowSide; sunrise: AfterglowSide } {
   const camMin = opts.camMin ?? MIN_CAM_RANK_EVENTS;
-  // A shared cam's reading counts once, for the beach nearest the cam (as in sunFairMetrics).
-  const localDateOf = opts.localDateOf ?? utcDateOf;
-  const kept = nearestBeachPerCamEvent(
-    readings,
-    (o) => ({
-      cam: o.cam_id,
-      kind: `${o.event_kind}|${o.view}`,
-      date: o.event_date_local ?? localDateOf(o.slug, o.event_iso),
-      slug: o.slug,
-    }),
-    opts.camDistance,
-  );
-  readings = readings.filter((o) => kept.has(o));
   const byEvent = groupBy(rows, eventKey);
   const index = new Map<string, { ms: number; key: string }[]>();
   for (const [key, evRows] of byEvent) {
@@ -977,6 +972,21 @@ export function afterglowMetrics(
     }
     return best ? (byEvent.get(best.key) as SunPredictionRow[]) : null;
   };
+  // A shared cam's reading counts once: for a beach that has a forecast to pair it
+  // with, then the beach nearest the cam (as in sunFairMetrics).
+  const localDateOf = opts.localDateOf ?? utcDateOf;
+  const kept = nearestBeachPerCamEvent(
+    readings,
+    (o) => ({
+      cam: o.cam_id,
+      kind: `${o.event_kind}|${o.view}`,
+      date: o.event_date_local ?? localDateOf(o.slug, o.event_iso),
+      slug: o.slug,
+    }),
+    opts.camDistance,
+    (o) => findEvent(o) != null,
+  );
+  readings = readings.filter((o) => kept.has(o));
 
   const side = (kind: SunKind): AfterglowSide => {
     const want: "east" | "west" = kind === "sunset" ? "east" : "west";

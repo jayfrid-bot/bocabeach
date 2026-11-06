@@ -399,19 +399,6 @@ export function orderArchiveCandidates(
 }
 
 /**
- * How far back `listArchiveCandidates` looks for each beach's latest row. The
- * archiver runs once a minute, so this keeps that read to the rows of the last
- * two days instead of the whole table. A beach with no row in the window
- * sorts as never archived.
- */
-export const ARCHIVE_LAST_HOUR_WINDOW_MS = 48 * HOUR_MS;
-
-/** The `hour_utc` cutoff (same format as `hourUtcOf`) for that look-back. */
-export function archiveLastHourCutoff(nowMs: number): string {
-  return hourUtcOf(nowMs - ARCHIVE_LAST_HOUR_WINDOW_MS);
-}
-
-/**
  * Fair candidate ordering (Codex round-3 finding #1): a beach with NO
  * beach_hourly row at all (`lastHour` undefined) sorts before every beach
  * that has one; among beaches that do, the one whose most recent row is

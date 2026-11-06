@@ -29,6 +29,8 @@ export PATH="$NODE_DIR:$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bi
 
 # Absolute path of this copy, taken before any cd (for the re-run check).
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+# The re-run copy (see below) deletes itself; bash keeps the open file.
+if [ -n "${SCORECARD_REEXEC:-}" ] && [ "${SELF#"${TMPDIR:-/tmp}"}" != "$SELF" ]; then rm -f "$SELF"; fi
 ERR_FILE="${TMPDIR:-/tmp}/beachday-scorecard.err"
 PUSH_LOG="${TMPDIR:-/tmp}/beachday-scorecard-push.log"
 
@@ -72,7 +74,7 @@ WT_TOP="$(git -C "$WT" rev-parse --show-toplevel 2>/dev/null)" || fail "$WT is n
 # Read the list into a variable: piping into `grep -q` would end git early
 # with SIGPIPE, and pipefail would turn that into a false "not a worktree".
 WT_LIST="$(git -C "$REPO" worktree list --porcelain)" || fail "git worktree list failed"
-printf '%s\n' "$WT_LIST" | grep -qx "worktree $WT_TOP" \
+printf '%s\n' "$WT_LIST" | grep -qxF "worktree $WT_TOP" \
   || fail "$WT_TOP is not a worktree of $REPO; refusing to touch it"
 # Only a worktree this job created carries the marker. Any other worktree
 # (a feature branch, a deploy checkout) is refused before git touches it.
@@ -80,22 +82,44 @@ printf '%s\n' "$WT_LIST" | grep -qx "worktree $WT_TOP" \
   || fail "$WT_TOP was not created by this job (no marker); refusing to touch it"
 cd "$WT_TOP" || fail "cannot cd to $WT_TOP"
 
+# One run at a time, even if started by hand while launchd runs it. A lock
+# older than 2 hours is from a run that died.
+JOB_LOCK="$(git rev-parse --absolute-git-dir)/beachday-scorecard.lock"
+if ! mkdir "$JOB_LOCK" 2>/dev/null; then
+  if [ -n "$(find "$JOB_LOCK" -maxdepth 0 -mmin +120 2>/dev/null)" ]; then
+    rmdir "$JOB_LOCK" 2>/dev/null; mkdir "$JOB_LOCK" 2>/dev/null || fail "could not take the job lock"
+  else
+    log "another run is in progress; stopping"; exit 0
+  fi
+fi
+trap 'rmdir "$JOB_LOCK" 2>/dev/null' EXIT
+
 # Clear a rebase or merge an earlier run left half done.
 git rebase --abort >/dev/null 2>&1 || true
 git merge --abort >/dev/null 2>&1 || true
 # A run killed mid-git leaves index.lock behind and blocks every later run.
+# The job lock above means no git of ours is running now; still, remove it
+# only when it is more than 10 minutes old.
 LOCK="$(git rev-parse --git-path index.lock)"
-if [ -f "$LOCK" ] && ! pgrep -f "git .*$WT_TOP" >/dev/null 2>&1; then rm -f "$LOCK"; fi
+if [ -n "$(find "$LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then rm -f "$LOCK"; fi
 
 # A report an earlier run committed but could not push: push it first, so
-# switching to origin/main below does not drop it.
+# switching to origin/main below does not drop it. Only report commits may
+# leave this worktree: anything else stops the run and is left alone.
 if [ -z "${SCORECARD_NO_PUSH:-}" ] && [ -n "$(git rev-list origin/main..HEAD 2>/dev/null)" ]; then
-  log "pushing $(git rev-list --count origin/main..HEAD) report commit(s) left by an earlier run"
+  n_left="$(git rev-list --count origin/main..HEAD)"
+  other_paths="$(git diff --name-only origin/main...HEAD | grep -v '^docs/scorecards/' || true)"
+  other_authors="$(git log --format='%ae' origin/main..HEAD | grep -vxF 'jayfrid-bot@users.noreply.github.com' || true)"
+  if [ -n "$other_paths" ] || [ -n "$other_authors" ]; then
+    fail "$n_left unpushed commit(s) in $WT_TOP are not reports ($(echo "$other_paths" | head -3 | tr '\n' ' ')); left alone, check by hand"
+  fi
+  log "pushing $n_left report commit(s) left by an earlier run"
   if git rebase -q origin/main && git push -q origin HEAD:main > "$PUSH_LOG" 2>&1; then
     git fetch -q origin main
   else
     git rebase --abort >/dev/null 2>&1 || true
-    log "could not push the earlier report: $(tail -2 "$PUSH_LOG" 2>/dev/null | tr '\n' ' ')"
+    # Stop here: switching to origin/main would drop these reports.
+    fail "could not push $n_left earlier report commit(s); kept in $WT_TOP for the next run: $(tail -2 "$PUSH_LOG" 2>/dev/null | tr '\n' ' ')"
   fi
 fi
 
@@ -112,6 +136,7 @@ if [ -z "${SCORECARD_REEXEC:-}" ] && [ -f "$WT_TOP/scripts/scorecard_daily.sh" ]
   RUN_COPY="${TMPDIR:-/tmp}/beachday-scorecard-daily.$$.sh"
   cp "$WT_TOP/scripts/scorecard_daily.sh" "$RUN_COPY" || fail "could not copy the fetched script"
   log "re-running from the fetched copy"
+  rmdir "$JOB_LOCK" 2>/dev/null; trap - EXIT   # the copy takes its own lock
   SCORECARD_REEXEC=1 exec /bin/bash "$RUN_COPY"
 fi
 

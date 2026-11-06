@@ -346,13 +346,13 @@ describe("budget reporting shape", () => {
 });
 
 // Sun reserve (see the route header): ordinary builds stop at
-// max − (sun builds still due today) − 5; sun-forecast builds may go on to
+// max − (sun builds still due today) − 15; sun-forecast builds may go on to
 // max. The clock is pinned to Boca Raton's sunset forecast hour (sunset
 // 22:35Z, forecast opens 21:35Z on 2026-11-05).
 describe("sun reserve — the budget split", () => {
   const NOW = "2026-11-05T21:10:00Z";
   const DAY = "2026-11-05";
-  const SLACK = 5;
+  const SLACK = 15;
 
   async function spend(n: number): Promise<void> {
     const store = await getStore();

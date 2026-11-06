@@ -1619,6 +1619,19 @@ describe("shared cams count once (nearest beach)", () => {
     expect([...kept]).toEqual([items[0], items[2]]);
   });
 
+  it("keeps a usable item over a nearer one that cannot be graded", () => {
+    // b is nearer but has no forecast to pair with; a has one, so a keeps the reading.
+    const items = [
+      { cam: "c", kind: "sunset", date: "2026-11-05", slug: "b", head: false },
+      { cam: "c", kind: "sunset", date: "2026-11-05", slug: "a", head: true },
+    ];
+    const kept = nearestBeachPerCamEvent(items, (x) => x, (_c, slug) => (slug === "b" ? 0.1 : 0.5), (x) => x.head);
+    expect([...kept]).toEqual([items[1]]);
+    // When both can be graded, the nearer still wins.
+    const both = items.map((x) => ({ ...x, head: true }));
+    expect([...nearestBeachPerCamEvent(both, (x) => x, (_c, slug) => (slug === "b" ? 0.1 : 0.5), (x) => x.head)]).toEqual([both[0]]);
+  });
+
   it("counts a shared afterglow reading once, for the nearest beach", () => {
     const sunsetRow = (n: number, slug: string, score: number) => pred(n, 60, score, null, { slug, event_kind: "sunset" });
     const reading = (n: number, slug: string, score: number): AfterglowReading => ({

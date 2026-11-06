@@ -94,7 +94,7 @@
 // graded (2026-11: sunset rows for ~11 of 63 beaches a day). So part of the
 // budget is kept back. The ONE daily counter has two caps:
 //   - an ordinary build may reserve only while
-//     builds < max − (sun builds still due today) − SUN_RESERVE_SLACK;
+//     builds < max − (sun builds still due today) − SUN_RESERVE_SLACK (15);
 //   - a sun-forecast build (`sunWindowPriority` at claim time) may reserve
 //     while builds < max (600).
 // "Sun builds still due today" is `sunBuildsDueToday` (lib/history/archive.ts):
@@ -148,7 +148,10 @@ const ARCHIVE_BUILD_SUBREQUESTS = 44;
 const ARCHIVE_SCAN_CAP = 20;
 
 /** Budget units kept back on top of the sun builds still due (see header). */
-const SUN_RESERVE_SLACK = 5;
+// A sun build that fails after it reserves a unit still spends that unit, and
+// its beach stays due, so it can spend several units in its hour. 15 covers a
+// bad hour of retries without holding back much daytime archiving.
+const SUN_RESERVE_SLACK = 15;
 
 function secretEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);

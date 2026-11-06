@@ -54,7 +54,7 @@ import type {
   SunEventPredictionRow,
 } from "@/lib/history/types";
 import { listLocations } from "@/config/locations";
-import { archiveLastHourCutoff, hourUtcOf, orderArchiveCandidates } from "@/lib/history/archive";
+import { hourUtcOf, orderArchiveCandidates } from "@/lib/history/archive";
 import { CLARITY_TRUSTED_FROM, WATER_RECORD_MIN_HOURS, WATER_TEMP_MAX_F, WATER_TEMP_MIN_F } from "@/lib/history/recordRules";
 import type {
   LiveActivityRow,
@@ -273,6 +273,20 @@ async function insertOrIgnoreRows<R extends object>(
   return { written: results.reduce((n, r) => n + Number(r?.meta?.changes ?? 0), 0) };
 }
 
+/**
+ * Each served beach's latest archived hour (bind: a JSON array of slugs). The
+ * archiver runs it once a minute, so it must stay cheap: one primary-key seek
+ * per slug (MAX over the (slug, hour_utc) key), about 2 rows read per beach,
+ * whatever the table's size. On prod (63 beaches) it read 126 rows; the old
+ * `GROUP BY slug` over the whole table read all of them (33.8M rows a day at
+ * 21,911 rows) and a 48 h windowed version still read ~2,400 per call.
+ * A beach whose latest hour is the current hour already has a row this hour.
+ * d1Store.sql.test.ts checks the plan.
+ */
+export const ARCHIVE_LAST_HOURS_SQL =
+  "SELECT j.value AS slug, (SELECT MAX(b.hour_utc) FROM beach_hourly b WHERE b.slug = j.value) AS last_hour " +
+  "FROM json_each(?) j";
+
 /** Lifetime records — one UNION ALL of four parenthesized single-row
  *  subqueries (see `historyRecords` below for the tie-break/window
  *  rationale). One numbered parameter: ?1 = slug. (The water records are the
@@ -280,20 +294,6 @@ async function insertOrIgnoreRows<R extends object>(
  *  beach's WHOLE archive and every scoring formula version: a row keeps the
  *  score it was given, and the best of them stands even after a later formula
  *  change. (`engine_version` is returned for information only.) */
-/**
- * Each slug's latest archived hour, over a bounded window only (bind:
- * `archiveLastHourCutoff(nowMs)`). The archiver runs it once a minute.
- * `INDEXED BY` is on purpose: without it SQLite prefers a full scan of the
- * (slug, hour_utc) primary key, because that scan hands back rows already
- * grouped by slug. The range on beach_hourly_hour_utc reads only the rows
- * inside the window (d1Store.sql.test.ts checks the plan).
- */
-/** The slugs that already have a row for one UTC hour (bind: `hourUtcOf(nowMs)`). */
-export const ARCHIVE_THIS_HOUR_SQL = "SELECT slug FROM beach_hourly WHERE hour_utc = ?";
-
-export const ARCHIVE_LAST_HOURS_SQL =
-  "SELECT slug, MAX(hour_utc) AS last_hour FROM beach_hourly INDEXED BY beach_hourly_hour_utc " +
-  "WHERE hour_utc >= ? GROUP BY slug";
 
 export const HISTORY_RECORDS_UNION = `
 SELECT * FROM (
@@ -1433,36 +1433,33 @@ export function d1Store(db: D1Like): DeviceStore {
     // Fair ordering instead: never-archived beaches first, then the beach
     // whose most recent beach_hourly row is OLDEST, ties broken by slug — so
     // every beach gets a turn instead of the same prefix winning every hour.
-    // `last_hour` is each slug's MAX(hour_utc) over the last
-    // ARCHIVE_LAST_HOUR_WINDOW_MS (48 h) only — ARCHIVE_LAST_HOURS_SQL. This
-    // runs once a minute; the old unbounded GROUP BY read the whole table
-    // each time (33.8M rows read a day at 21,911 rows). A beach with no row
-    // in the window counts as never archived, which is still the right
-    // answer: it is the most starved beach either way.
+    // `last_hour` is each slug's MAX(hour_utc), one primary-key seek per
+    // slug (ARCHIVE_LAST_HOURS_SQL). This runs once a minute; the old
+    // unbounded GROUP BY read the whole table each time (33.8M rows read a
+    // day at 21,911 rows). The same read says which beaches already have a
+    // row for the current hour.
     // Ahead of that order come the beaches in their sun-forecast hour
     // (lib/history/archive.ts `sunWindowPriority`); the filter and sort live
     // in `orderArchiveCandidates`, shared with memoryStore.
     async listArchiveCandidates(nowMs: number) {
       const hourUtc = hourUtcOf(nowMs);
-      const currentHourRows =
-        (
-          await db
-            .prepare(ARCHIVE_THIS_HOUR_SQL)
-            .bind(hourUtc)
-            .all<{ slug: string }>()
-        ).results ?? [];
-      const archivedThisHour = new Set(currentHourRows.map((r) => r.slug));
-
+      const locations = listLocations();
       const lastHourRows =
         (
           await db
             .prepare(ARCHIVE_LAST_HOURS_SQL)
-            .bind(archiveLastHourCutoff(nowMs))
-            .all<{ slug: string; last_hour: string }>()
+            .bind(JSON.stringify(locations.map((l) => l.slug)))
+            .all<{ slug: string; last_hour: string | null }>()
         ).results ?? [];
-      const lastHourBySlug = new Map(lastHourRows.map((r) => [r.slug, r.last_hour]));
+      const lastHourBySlug = new Map<string, string>();
+      const archivedThisHour = new Set<string>();
+      for (const r of lastHourRows) {
+        if (r.last_hour == null) continue;
+        lastHourBySlug.set(r.slug, r.last_hour);
+        if (r.last_hour >= hourUtc) archivedThisHour.add(r.slug);
+      }
 
-      const all = listLocations().map((l): ArchiveCandidate => ({
+      const all = locations.map((l): ArchiveCandidate => ({
         slug: l.slug,
         lat: l.lat,
         lon: l.lon,

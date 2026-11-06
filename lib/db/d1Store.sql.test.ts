@@ -17,7 +17,6 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import {
   ARCHIVE_LAST_HOURS_SQL,
-  ARCHIVE_THIS_HOUR_SQL,
   d1Store,
   HISTORY_RECORDS_UNION,
   HISTORY_WATER_RECORDS_UNION,
@@ -704,30 +703,32 @@ describe.skipIf(!DatabaseSyncCtor)("d1Store against real SQLite (the actual SQL,
       expect(flags.indexOf(false)).toBeGreaterThan(slugs.indexOf("boca-raton"));
     });
 
-    it("listArchiveCandidates looks back 48 h only: an older last row sorts as never archived", async () => {
+    it("listArchiveCandidates: never archived first, then the oldest last row; a row this hour drops out", async () => {
       const nowMs = Date.parse("2026-11-05T17:00:00Z"); // midday, no sun-forecast hour on the East Coast
-      await store.upsertBeachHourly(hourlyRow({ hour_utc: "2026-11-03T16:00:00.000Z" })); // boca-raton, 49 h back
-      await store.upsertBeachHourly(hourlyRow({ slug: "deerfield-beach", hour_utc: "2026-11-03T18:00:00.000Z" })); // 47 h back
+      await store.upsertBeachHourly(hourlyRow({ hour_utc: "2026-10-20T16:00:00.000Z" })); // boca-raton, weeks back
+      await store.upsertBeachHourly(hourlyRow({ slug: "deerfield-beach", hour_utc: "2026-11-05T15:00:00.000Z" })); // 2 h back
+      await store.upsertBeachHourly(hourlyRow({ slug: "fort-lauderdale", hour_utc: "2026-11-05T17:00:00.000Z" })); // this hour
       const slugs = (await store.listArchiveCandidates(nowMs)).map((c) => c.slug);
-      expect(slugs.indexOf("boca-raton")).toBeLessThan(slugs.indexOf("fort-lauderdale"));
-      expect(slugs.indexOf("fort-lauderdale")).toBeLessThan(slugs.indexOf("deerfield-beach"));
+      expect(slugs).not.toContain("fort-lauderdale");
+      const neverArchived = slugs.findIndex((s) => s !== "boca-raton" && s !== "deerfield-beach");
+      expect(neverArchived).toBeLessThan(slugs.indexOf("boca-raton"));
+      expect(slugs.indexOf("boca-raton")).toBeLessThan(slugs.indexOf("deerfield-beach"));
     });
 
-    it("the last-hour read runs once a minute, so it searches the hour_utc index and never scans beach_hourly", async () => {
+    it("the last-hour read runs once a minute, so it seeks the primary key per slug and never scans beach_hourly", async () => {
       const raw = freshRawDb();
-      const plan = ((await raw!.prepare(`EXPLAIN QUERY PLAN ${ARCHIVE_LAST_HOURS_SQL}`).bind("2026-11-03T17:00:00.000Z").all<{ detail: string }>()).results ?? [])
+      const plan = ((await raw!.prepare(`EXPLAIN QUERY PLAN ${ARCHIVE_LAST_HOURS_SQL}`).bind(JSON.stringify(["boca-raton", "deerfield-beach"])).all<{ detail: string }>()).results ?? [])
         .map((r) => r.detail)
         .join("\n");
-      expect(plan).toMatch(/SEARCH beach_hourly USING (COVERING )?INDEX beach_hourly_hour_utc \(hour_utc>\?\)/);
-      expect(plan).not.toMatch(/SCAN beach_hourly/);
+      expect(plan).toMatch(/SEARCH b USING (COVERING )?INDEX sqlite_autoindex_beach_hourly_1 \(slug=\?\)|SEARCH b USING PRIMARY KEY \(slug=\?\)/);
+      expect(plan).not.toMatch(/SCAN (b|beach_hourly)\b/);
     });
 
-    it("the current-hour read also searches the hour_utc index", async () => {
+    it("the last-hour read returns every slug asked for, with null when a beach has no rows", async () => {
       const raw = freshRawDb();
-      const plan = ((await raw!.prepare(`EXPLAIN QUERY PLAN ${ARCHIVE_THIS_HOUR_SQL}`).bind("2026-11-05T17:00:00.000Z").all<{ detail: string }>()).results ?? [])
-        .map((r) => r.detail)
-        .join("\n");
-      expect(plan).toMatch(/SEARCH beach_hourly USING (COVERING )?INDEX beach_hourly_hour_utc/);
+      const rows = ((await raw!.prepare(ARCHIVE_LAST_HOURS_SQL).bind(JSON.stringify(["boca-raton", "nowhere"])).all<{ slug: string; last_hour: string | null }>()).results ?? []);
+      expect(rows.map((r) => r.slug)).toEqual(["boca-raton", "nowhere"]);
+      expect(rows.every((r) => r.last_hour === null)).toBe(true);
     });
   });
 
