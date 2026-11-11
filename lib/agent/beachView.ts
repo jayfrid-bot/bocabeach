@@ -33,9 +33,10 @@ export interface BeachConditions {
   waterTempF: number | null;
   /** Best window today, e.g. "4–6 PM", or null (see lines for "No good window today"). */
   bestTime: string | null;
-  /** The next sunrise or sunset and when its color forecast opens (an hour
-   *  before). While pending, `text` is the line to say, e.g. "Sunset forecast
-   *  at 5:52 PM". Never carries a color score. Null without sun times. */
+  /** The next sunrise or sunset and when its forecast opens (two hours before,
+   *  as an early look; it firms up an hour before). While pending, `text` is
+   *  the line to say, e.g. "Sunset forecast ready at 4:52 PM". Never carries a
+   *  color score. Null without sun times. */
   sunForecast: SunForecastField | null;
   /** When the server built the conditions snapshot. */
   generatedAt: string | null;

@@ -52,8 +52,9 @@ describe("sun color score on the card front", () => {
   });
 });
 
-describe("forecast window on the card (no score before an hour out)", () => {
-  // Sunset 6:30 PM EDT (22:30Z). The forecast opens at 5:30 PM EDT (21:30Z).
+describe("forecast window on the card (no score before two hours out; an early look until one hour out)", () => {
+  // Sunset 6:30 PM EDT (22:30Z). The forecast opens at 4:30 PM EDT (20:30Z) as an early look
+  // and firms up at 5:30 PM EDT (21:30Z).
   const SUNSET = "2026-10-15T22:30:00.000Z";
   const SUNRISE = "2026-10-15T11:09:00.000Z";
   const TOMORROW = "2026-10-16T11:10:00.000Z";
@@ -88,15 +89,16 @@ describe("forecast window on the card (no score before an hour out)", () => {
 
   it("midday: the card says when the sunset forecast opens and shows no score anywhere, front or back", () => {
     const html = render("2026-10-15T17:00:00.000Z"); // 1 PM EDT
-    expect(html).toContain("Sunset forecast ready at 5:30 PM");
-    expect(html).not.toMatch(/out of 100|\/100|No forecast yet/);
+    expect(html).toContain("Sunset forecast ready at 4:30 PM");
+    expect(html).toContain("2 hours before sunset at 6:30 PM");
+    expect(html).not.toMatch(/out of 100|\/100|No forecast yet|Early look/);
     expect(html).not.toMatch(/→ \d+/); // the back's arrow line with the score
     expect(html).not.toMatch(/Peak color ~/);
   });
 
   it("before dawn: the sunrise line", () => {
     const html = render("2026-10-15T07:00:00.000Z"); // 3 AM EDT
-    expect(html).toContain("Sunrise forecast ready at 6:09 AM");
+    expect(html).toContain("Sunrise forecast ready at 5:09 AM");
     expect(html).not.toMatch(/out of 100|\/100/);
   });
 
@@ -104,11 +106,22 @@ describe("forecast window on the card (no score before an hour out)", () => {
     const html = render("2026-10-15T21:45:00.000Z"); // 5:45 PM EDT, 45 min out
     expect(html).not.toContain("forecast at");
     expect(html).toMatch(/Sunset color \d+ out of 100/);
+    expect(html).not.toContain("Early look");
   });
 
   it("right at the window's first minute the score shows; one minute before it does not", () => {
-    expect(render("2026-10-15T21:29:00.000Z")).toContain("Sunset forecast ready at 5:30 PM");
-    expect(render("2026-10-15T21:30:00.000Z")).toMatch(/out of 100/);
+    expect(render("2026-10-15T20:29:00.000Z")).toContain("Sunset forecast ready at 4:30 PM");
+    expect(render("2026-10-15T20:30:00.000Z")).toMatch(/out of 100/);
+  });
+
+  it("from two hours to one hour out the score carries the early-look line", () => {
+    const html = render("2026-10-15T20:45:00.000Z"); // 4:45 PM EDT, 105 min out
+    expect(html).toMatch(/Sunset color \d+ out of 100/);
+    expect(html).toContain("Early look. Firms up at 5:30 PM");
+    expect(html).not.toMatch(/color forecast|\bAI\b/);
+    // The line goes away at the firm mark.
+    expect(render("2026-10-15T21:29:00.000Z")).toContain("Early look. Firms up at 5:30 PM");
+    expect(render("2026-10-15T21:30:00.000Z")).not.toContain("Early look. Firms up");
   });
 
   it("after the sunset passes (golden hour still on screen) the score stays", () => {

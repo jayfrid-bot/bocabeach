@@ -17,6 +17,7 @@ import {
   nearestHourlyPoint,
   nextSunEvent,
   peakColorTime,
+  sunBandForScore,
   sunEventQuality,
   type GoldenWindowIso,
   type HorizonPath,
@@ -56,6 +57,16 @@ export const IR_MAX_GRANULE_AGE_MINUTES = 35;
 /** The IR read speaks only for an event this close (minutes) to `nowMs`: a
  *  live observation cannot vouch for a sunrise hours away. */
 export const IR_EVENT_WINDOW_MINUTES = 60;
+/** The EARLY LOOK: from this many minutes before the event down to
+ *  IR_EVENT_WINDOW_MINUTES, the satellite read is not used alone. Its score is
+ *  averaged with the hourly forecast's score. Same as the opening of the
+ *  forecast window (lib/sunForecastWindow.ts SUN_FORECAST_WINDOW_MINUTES; a test
+ *  holds the two together). Why a mean, and why 120:
+ *  docs/benchmarks/2026-11-11-sun-lead-time/REPORT.md. On 243 cam-graded events
+ *  the satellite carried forward ranks skies as well 90 min out as 60, but less
+ *  well 120 min out; the mean of the two scores at 120 min matches the 60-min
+ *  satellite score. The weight is a plain half: it was not fitted. */
+export const IR_EARLY_WINDOW_MINUTES = 120;
 /** The IR path read belongs to an event only if the feed's event time and the
  *  one being scored agree to within this (both come from the same NOAA solver,
  *  so they differ by seconds; the slack is for a stale golden-window pick). */
@@ -90,13 +101,15 @@ export interface IrObservation {
 /**
  * The satellite's event-time sky for `event`, or undefined when it cannot speak
  * for it: no IR read, the granule is more than IR_MAX_GRANULE_AGE_MINUTES
- * before `nowMs`, the event is more than IR_EVENT_WINDOW_MINUTES from `nowMs`,
- * or too few of its cloudy pixels have a height. Pure.
+ * before `nowMs`, the event is more than `windowMinutes` (default
+ * IR_EVENT_WINDOW_MINUTES) from `nowMs`, or too few of its cloudy pixels have
+ * a height. Pure.
  */
 export function resolveIrObservation(
   goes: GoesCloudInput,
   event: { event: SunEventKind; timeIso: string },
   nowMs: number,
+  windowMinutes: number = IR_EVENT_WINDOW_MINUTES,
 ): IrObservation | undefined {
   const ir = goes?.ir;
   if (!ir) return undefined;
@@ -107,7 +120,7 @@ export function resolveIrObservation(
   // A granule a couple of minutes "after" now is clock skew between the feed
   // and the snapshot; anything further ahead is not trusted.
   if (ageMin > IR_MAX_GRANULE_AGE_MINUTES || ageMin < -2) return undefined;
-  if (Math.abs(eventMs - nowMs) > IR_EVENT_WINDOW_MINUTES * 60_000) return undefined;
+  if (Math.abs(eventMs - nowMs) > windowMinutes * 60_000) return undefined;
   if (ir.unclassifiedPct != null && ir.unclassifiedPct > IR_MAX_UNCLASSIFIED_PCT) return undefined;
 
   const path = ir.events?.[event.event];
@@ -206,10 +219,13 @@ export interface SunEventAssembly {
   /** The cloud mix the model was handed: the satellite's when a fresh
    *  cloud-top read speaks for the event, else the forecast point's. */
   cloud: CloudMix | undefined;
-  /** What fed `cloud`: "satellite-ir", "forecast", or null (no cloud at all).
+  /** What fed the score: "satellite-ir", "forecast", "satellite+forecast" (the
+   *  early look: `cloud` is the satellite's mix, and the score is the mean of
+   *  the satellite's and the forecast's), or null (no cloud at all).
    *  Also written into `result.breakdown.source`. */
   source: SunModelSource | null;
-  /** The satellite observation behind the model, when `source` is "satellite-ir". */
+  /** The satellite observation behind the model, when `source` is "satellite-ir"
+   *  or "satellite+forecast". */
   ir: IrObservation | undefined;
   /** The horizon the model scored (the IR path read) or, with no fresh IR, the
    *  Clear Sky Mask horizon that is only recorded. */
@@ -248,9 +264,28 @@ export function assembleSunEventQuality(
   // low cloud along the sun's azimuth at the event is the horizon, scored as
   // verified. The hourly forecast is the fallback only (docs/benchmarks/
   // sun-leadtime-2026-10-15: the forecast layers missed real cloud both days).
-  const ir = resolveIrObservation(inputs.goesCloud, event, inputs.nowMs);
+  const firmIr = resolveIrObservation(inputs.goesCloud, event, inputs.nowMs);
+  // EARLY LOOK (60 to 120 min before the event): the satellite read is two
+  // hours of weather away from the event, so it does not speak alone. It is
+  // scored, the hourly forecast is scored, and the early look is the mean.
+  const eventMs = Date.parse(event.timeIso);
+  const earlyIr =
+    !firmIr && Number.isFinite(eventMs) && eventMs - inputs.nowMs > IR_EVENT_WINDOW_MINUTES * 60_000
+      ? resolveIrObservation(inputs.goesCloud, event, inputs.nowMs, IR_EARLY_WINDOW_MINUTES)
+      : undefined;
+  const forecastScored = earlyIr
+    ? sunEventQuality({
+        cloud: point?.cloud,
+        humidityPct: point?.humidityPct,
+        aod: inputs.airQuality?.aod,
+        pm2_5: inputs.airQuality?.pm2_5,
+      })
+    : undefined;
+  // With no forecast score to average with, the early satellite read is not used: the forecast path stands.
+  const early = earlyIr && forecastScored?.score != null ? earlyIr : undefined;
+  const ir = firmIr ?? early;
   const cloud = ir ? ir.cloud : point?.cloud;
-  const source: SunModelSource | null = ir ? "satellite-ir" : point?.cloud ? "forecast" : null;
+  const source: SunModelSource | null = firmIr ? "satellite-ir" : early ? "satellite+forecast" : point?.cloud ? "forecast" : null;
   // Without IR the Clear Sky Mask horizon is recorded (horizon / horizonSource,
   // archived to sun_event_predictions) but NOT scored: the mask cannot tell
   // cloud heights apart, and near sunrise/sunset (sun < 5 deg) there is no
@@ -262,13 +297,17 @@ export function assembleSunEventQuality(
   const horizon = ir ? ir.horizon : maskHorizon.horizon;
   const horizonSource: HorizonSource | null = ir ? ir.horizonSource : maskHorizon.source;
 
-  const scored = sunEventQuality({
+  const satScored = sunEventQuality({
     cloud,
     humidityPct: point?.humidityPct,
     aod: inputs.airQuality?.aod,
     pm2_5: inputs.airQuality?.pm2_5,
     horizon: ir?.horizon,
   });
+  const scored: SunEventQuality =
+    early && satScored.score != null && forecastScored?.score != null
+      ? earlyLook(satScored, forecastScored as SunEventQuality & { score: number }, point?.cloud)
+      : satScored;
   // Say which source fed the model, in the breakdown the archive stores
   // (no migration: breakdown_json already holds it). The total-only path has no
   // breakdown; it only ever runs on the forecast.
@@ -316,6 +355,53 @@ export function assembleSunEventQuality(
   });
 
   return { point, cloud, source, ir, horizon, horizonSource, result, peak };
+}
+
+/** How far apart the two halves of an early look may be before the note says so. */
+export const EARLY_LOOK_DISAGREE_PTS = 20;
+
+/**
+ * The early look: the mean of the satellite's score and the forecast's score
+ * (each from the same model), with the satellite's breakdown and both halves
+ * recorded. The note is the satellite's when the two agree; when they are far
+ * apart it says so in plain words.
+ */
+function earlyLook(
+  sat: SunEventQuality,
+  forecast: SunEventQuality & { score: number },
+  forecastCloud: CloudMix | undefined,
+): SunEventQuality {
+  const satScore = sat.score as number;
+  const score = Math.round((satScore + forecast.score) / 2);
+  const gap = forecast.score - satScore;
+  const note =
+    Math.abs(gap) < EARLY_LOOK_DISAGREE_PTS
+      ? sat.note
+      : gap < 0
+        ? "The sky looks better now than the hourly forecast expects it to be at the event, so this is a middle guess."
+        : "The hourly forecast expects a better sky at the event than the satellite sees now, so this is a middle guess.";
+  const fin = (v: number | undefined): number | null => (v != null && Number.isFinite(v) ? v : null);
+  return {
+    score,
+    band: sunBandForScore(score),
+    note,
+    // A satellite read always has the full split, so the factor model ran and a breakdown exists.
+    breakdown: sat.breakdown
+      ? {
+          ...sat.breakdown,
+          early: {
+            satelliteScore: satScore,
+            forecastScore: forecast.score,
+            forecastCloud: {
+              lowPct: fin(forecastCloud?.lowPct),
+              midPct: fin(forecastCloud?.midPct),
+              highPct: fin(forecastCloud?.highPct),
+              totalPct: fin(forecastCloud?.totalPct),
+            },
+          },
+        }
+      : undefined,
+  };
 }
 
 export interface SunEventPrediction {
@@ -412,7 +498,7 @@ export function predictNextSunEvent(res: ConditionsResponse, nowMs: number): Sun
  * snapshot's own clock (`snapshotMs`), so a snapshot built long before the
  * event reads as forecast-only even though the satellite window has since
  * opened; and a cached snapshot's satellite read can have aged past its limit.
- *   - forecast-sourced, the event is inside the satellite window NOW, but it
+ *   - forecast-sourced (or an early look), the event is inside the satellite window NOW, but it
  *     was outside it when the snapshot was built: the satellite never had a
  *     chance to speak, so the number is a stale forecast. SKIP. (A snapshot
  *     built INSIDE the window that is still forecast-sourced means the feed was
@@ -432,7 +518,7 @@ export function sunColorLiveGuard(
   if (!Number.isFinite(eventMs)) return null;
   const windowMs = IR_EVENT_WINDOW_MINUTES * 60_000;
   if (
-    prediction.source === "forecast" &&
+    (prediction.source === "forecast" || prediction.source === "satellite+forecast") &&
     Math.abs(eventMs - nowMs) <= windowMs &&
     Number.isFinite(snapshotMs) &&
     Math.abs(eventMs - snapshotMs) > windowMs

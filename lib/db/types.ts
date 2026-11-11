@@ -84,8 +84,9 @@ export type SunColorMinBand = "vivid" | "epic";
 export const DEFAULT_SUN_COLOR_MIN_BAND: SunColorMinBand = "vivid"; // "Great or better"
 
 /** How long before the event to send the alert — the only choices the
- *  settings sheet offers (components/plus/PlusSettingsSheet.tsx). The color
- *  forecast opens 60 minutes before the event (lib/sunForecastWindow.ts), so
+ *  settings sheet offers (components/plus/PlusSettingsSheet.tsx). The
+ *  forecast firms up 60 minutes before the event (lib/sunForecastWindow.ts;
+ *  the earlier "early look" is never pushed), so
  *  nothing longer than 60 is offered: 2 h and 3 h leads were removed
  *  2026-10-15 because they promised a score before we could see the sky. */
 export const SUN_COLOR_LEAD_OPTIONS = [30, 60] as const;

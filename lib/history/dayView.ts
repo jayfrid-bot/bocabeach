@@ -9,7 +9,7 @@ import type { BeachHourlyRow } from "@/lib/history/types";
 import type { DaySummary, HistoryVersions } from "@/lib/history/summary";
 import type { GoldenWindowIso, SlotKind } from "@/lib/camFrames/golden";
 import type { SunQualityBand } from "@/lib/sunQuality";
-import { sunForecastOpen } from "@/lib/sunForecastWindow";
+import { sunForecastFirm } from "@/lib/sunForecastWindow";
 
 /** What the day view shows for one hour. A value the archive never kept is null. */
 export interface DayReadings {
@@ -117,8 +117,9 @@ const SUN_BANDS: readonly string[] = ["dud", "plain", "good", "vivid", "epic"];
  * unreadable gives null for that event; if two events of one kind fall on the
  * date, the later one wins.
  *
- * `nowMs` (the real clock): an event whose forecast window has not opened yet
- * (lib/sunForecastWindow.ts: 60 minutes before the event) is dropped, so a day
+ * `nowMs` (the real clock): an event whose forecast has not firmed up yet
+ * (lib/sunForecastWindow.ts: 60 minutes before the event; the earlier "early
+ * look" lives on the sun card only) is dropped, so a day
  * view of today never shows a color score for a sunset that is still hours
  * away. Past events keep their archived score: that is a record, not a
  * prediction. Without `nowMs` nothing is dropped (archive-only callers).
@@ -143,7 +144,7 @@ export function shapeSun(
     if (typeof r.eventIso !== "string" || localDateOf(r.eventIso) !== date) continue;
     if (typeof r.score !== "number" || !Number.isFinite(r.score)) continue;
     if (typeof r.band !== "string" || !SUN_BANDS.includes(r.band)) continue;
-    if (nowMs !== undefined && !sunForecastOpen(r.eventIso, nowMs)) continue;
+    if (nowMs !== undefined && !sunForecastFirm(r.eventIso, nowMs)) continue;
     const prev = out[r.kind];
     if (prev && prev.eventIso >= r.eventIso) continue;
     out[r.kind] = { score: Math.round(r.score), band: r.band as SunQualityBand, eventIso: r.eventIso };

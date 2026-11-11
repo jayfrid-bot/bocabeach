@@ -90,7 +90,7 @@ describe("sunEventRowsFromConditions — 2026-10-06 Boca sunrise fixture", () =>
     expect(sunrise.model_path).toBe("factor");
     expect(sunrise.seasonal_prior).toBe(55);
     expect(sunrise.algo_version).toBe(SUN_QUALITY_VERSION);
-    expect(SUN_QUALITY_VERSION).toBe("2026-11-05.1");
+    expect(SUN_QUALITY_VERSION).toBe("2026-11-11.1");
     expect(sunrise.engine_version).toBeTruthy();
     expect(JSON.parse(sunrise.breakdown_json!)).toHaveProperty("horizonPath");
     expect(sunrise.note).toBeTruthy();

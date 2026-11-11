@@ -20,6 +20,13 @@ scan it reads the cloud along the sun's azimuth at the event. When the scan is a
 most 35 minutes old and the event is at most 60 minutes away, `lib/sunAlert.ts`
 feeds those numbers to the model. Otherwise the hourly forecast feeds it.
 
+Since 2026-11-11.1 there is one more case, the early look. From 120 to 60
+minutes before the event the model runs twice, once on the satellite read and
+once on the hourly forecast, and the score is the mean of the two
+(`breakdown_json.source` = `satellite+forecast`, both halves in
+`breakdown_json.early`). The study behind it is
+`docs/benchmarks/2026-11-11-sun-lead-time/REPORT.md`.
+
 Each `sun_event_predictions` row says which: `breakdown_json.source` is
 `satellite-ir` or `forecast` (the total-only path has no breakdown and only runs
 on the forecast). For a satellite row, `breakdown_json.satellite` also holds the

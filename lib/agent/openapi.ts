@@ -61,13 +61,15 @@ const schemas: Record<string, JsonSchema> = {
   },
   SunForecast: {
     type: "object",
-    required: ["kind", "state", "availableAt", "eventAt", "text"],
+    required: ["kind", "state", "availableAt", "eventAt", "text", "early", "firmAt"],
     properties: {
       kind: { type: "string", enum: ["sunrise", "sunset"] },
-      state: { type: "string", enum: ["pending", "available"], description: "pending until 60 minutes before the event, then available." },
+      state: { type: "string", enum: ["pending", "available"], description: "pending until 120 minutes before the event, then available." },
+      early: { type: "boolean", description: "True from 120 to 60 minutes before the event: the forecast is an early look and may still move." },
+      firmAt: { type: "string", description: "When the forecast firms up, 60 minutes before the event (ISO 8601)." },
       availableAt: { type: "string", description: "When the sunrise or sunset forecast is ready (ISO 8601)." },
       eventAt: { type: "string", description: "The sunrise or sunset itself (ISO 8601)." },
-      text: { ...nullable("string"), description: 'While pending, e.g. "Sunset forecast ready at 5:52 PM" (beach-local time). Null once available.' },
+      text: { ...nullable("string"), description: 'While pending, e.g. "Sunset forecast ready at 4:52 PM" (beach-local time). Null once available.' },
     },
   },
   BeachConditions: {
@@ -96,7 +98,7 @@ const schemas: Record<string, JsonSchema> = {
       bestTime: { ...nullable("string"), description: 'Best window today in the beach\'s own time zone, e.g. "4–6 PM".' },
       sunForecast: {
         description:
-          "The next sunrise or sunset and when its forecast opens, 60 minutes before the event. While state is pending, text is the line to say. Never carries a color score. Null without sun times.",
+          "The next sunrise or sunset and when its forecast opens, 120 minutes before the event, as an early look; it firms up 60 minutes before (early is true until firmAt). While state is pending, text is the line to say. Never carries a color score. Null without sun times.",
         oneOf: [ref("SunForecast"), { type: "null" }],
       },
       generatedAt: nullable("string"),

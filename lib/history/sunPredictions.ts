@@ -155,7 +155,8 @@ export function sunEventRowsFromConditions(
       breakdown_json: result.breakdown ? JSON.stringify(result.breakdown) : null,
 
       // The cloud mix the model was handed: the satellite's when a fresh IR
-      // read fed it (breakdown_json.source = "satellite-ir"), else the forecast
+      // read fed it (breakdown_json.source = "satellite-ir", or the early look's
+      // "satellite+forecast", whose forecast mix is in breakdown_json.early), else the forecast
       // point's. The total-only path has no breakdown_json and only ever runs
       // on the forecast.
       low_cloud_pct: numOrNull(cloud?.lowPct),

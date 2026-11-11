@@ -596,6 +596,7 @@ function fairBlocks(r: SunSection): string[] {
     "Each camera has its own raw scale. On the same sunsets Holmes Beach averages 74 and White Sands 5, so a raw 70 means different skies on different cams. " +
       "The fair grade asks only about order inside one cam. " +
       `It uses the forecast people see: the one closest to 60 minutes before the event, made ${HEADLINE_LEAD_MIN} to ${HEADLINE_LEAD_MAX} minutes ahead. ` +
+      "From model 2026-11-11.1 a forecast made 60 to 120 minutes ahead is the early look (satellite and hourly forecast averaged); in older versions it was the hourly forecast alone. " +
       "Each event has one truth cam, the one the server picked: a cam that looks at the sun, the nearest one, then by cam id. " +
       "Rank correlation runs from −1 to +1. 0 means no skill; a plus means our higher forecasts went with better skies on that cam. " +
       `A cam counts once it has ${f.camMin} pairs. The pooled number is the average over cams, weighted by each cam's pairs. ` +

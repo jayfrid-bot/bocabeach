@@ -21,7 +21,7 @@ import { fmtTime } from "@/lib/format";
 import { assembleSunEventQuality, sunQualityHourlyPoints } from "@/lib/sunAlert";
 import { nextSunEventsBoth } from "@/lib/history/sunPredictions";
 import { sunQualityBandMeta } from "@/lib/sunQuality";
-import { SUN_FORECAST_WINDOW_MS, sunForecastPendingShort, sunForecastWindow } from "@/lib/sunForecastWindow";
+import { SUN_FORECAST_FIRM_MS, SUN_FORECAST_WINDOW_MS, sunForecastPendingShort, sunForecastWindow } from "@/lib/sunForecastWindow";
 import { CONDITIONS_MAX_STALE_MS } from "@/lib/conditionsFreshness";
 
 export interface ShareCardTile {
@@ -455,20 +455,23 @@ export function shareCardModel(
   };
 }
 
-/** The next moment the sun tile's note can change: the event itself, or, when
- *  the color forecast is still pending, the moment its window opens
- *  (lib/sunForecastWindow.ts), whichever comes first. */
+/** The next moment the sun tile's note can change: the moment the forecast
+ *  window opens (pending -> early look), the moment it firms up (early look ->
+ *  forecast), or the event itself, whichever comes first
+ *  (lib/sunForecastWindow.ts). */
 function sunTileChangeAt(eventMs: number, nowMs: number): number {
   const opensAt = eventMs - SUN_FORECAST_WINDOW_MS;
-  return opensAt > nowMs ? opensAt : eventMs;
+  const firmAt = eventMs - SUN_FORECAST_FIRM_MS;
+  return opensAt > nowMs ? opensAt : firmAt > nowMs ? firmAt : eventMs;
 }
 
 /** The tile's small line for one sunrise/sunset.
  *
- *  - Before the forecast window opens (60 minutes ahead of the event): no
+ *  - Before the forecast window opens (120 minutes ahead of the event): no
  *    score at all, only when it will be ready: "Forecast ready at 5:52 PM" (the tile label names the event).
  *    The score must never look like a prediction before we can see the sky.
- *  - Inside the window: the sky-color forecast, "Good color · 78/100". The word
+ *  - From 120 to 60 minutes ahead: the early look, "Early: Good color · 58/100".
+ *  - From 60 minutes ahead: the sky-color forecast, "Good color · 78/100". The word
  *    says what kind of rating it is (the colors of the sky), so a bare "78 Good"
  *    is never left to guess at. Scored exactly as the sun card and the push
  *    alert score it (the same assembly, off the snapshot's own clock).
@@ -501,7 +504,8 @@ function sunColorNote(
       nowMs: anchorMs,
     });
     if (result.score == null || result.band == null) return undefined;
-    return `${sunQualityBandMeta(result.band).label} color · ${result.score}/100`;
+    const line = `${sunQualityBandMeta(result.band).label} color · ${result.score}/100`;
+    return window.early ? `Early: ${line}` : line;
   } catch {
     return undefined;
   }

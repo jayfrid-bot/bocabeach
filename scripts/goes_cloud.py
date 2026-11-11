@@ -221,10 +221,10 @@ RUN WINDOW
 ----------
 `python scripts/goes_cloud.py --window-state` prints one word for the workflow
 loop (.github/workflows/goes-cloud.yml), like cam_seaweed.py --window-state:
-  day      now is inside ANY beach's window: sunrise - 75 min .. sunset + 45
+  day      now is inside ANY beach's window: sunrise - 150 min .. sunset + 45
            min, computed per beach for its local yesterday, today and tomorrow
            (beaches in the CONUS sector only; the zones overlap, so the union is
-           ~20 h on a June day and ~15-16 h in December): the loop reads;
+           ~22.5 h on a June day and ~16 h in December): the loop reads;
   dusk     within 20 minutes after any window's end: a loop that STARTS then
            still owes the one carry-forward read for the night;
   night    otherwise: the loop idles;
@@ -551,9 +551,11 @@ IR_MIN_PATH_SAMPLES = 3
 EVENT_SUN_ELEV_DEG = 0.0
 # 4/3 of the earth radius: the standard-refraction "effective" radius.
 EFFECTIVE_EARTH_RADIUS_KM = 8495.0
-# Only events within this many minutes of the IR granule are published; the app
-# uses an IR read only within 60 min of its event.
-IR_EVENT_WINDOW_MIN = 120
+# Only events within this many minutes of the IR granule are published. The app
+# uses an IR read alone within 60 min of its event, and in its early look from
+# 120 min before (lib/sunAlert.ts IR_EARLY_WINDOW_MINUTES). A scan can be 35 min
+# old when the app reads it, so the path read must reach 155 min; 180 leaves room.
+IR_EVENT_WINDOW_MIN = 180
 DEFAULT_TZ_NAME = "America/New_York"
 
 
@@ -834,7 +836,9 @@ def load_ir_grid(acm_buf: bytes, height_buf: bytes) -> IrGrid:
 
 
 # --- run window (which ticks the workflow loop spends) -----------------------
-RUN_WINDOW_BEFORE_MIN = 75
+# 150 since 2026-11-11 (was 75): the app's early look opens 120 min before
+# sunrise and needs a scan by then, so the morning reads start 30 min sooner.
+RUN_WINDOW_BEFORE_MIN = 150
 RUN_WINDOW_AFTER_MIN = 45
 RUN_DUSK_GRACE_MIN = 20
 # The GOES-East CONUS sector, roughly. A beach outside it (Hawaii) never gets a

@@ -205,7 +205,7 @@ describe("tools/call happy paths", () => {
     expect(f).not.toBeUndefined();
     if (f) {
       expect(["sunrise", "sunset"]).toContain(f.kind);
-      expect(Object.keys(f).sort()).toEqual(["availableAt", "eventAt", "kind", "state", "text"]);
+      expect(Object.keys(f).sort()).toEqual(["availableAt", "early", "eventAt", "firmAt", "kind", "state", "text"]);
       if (f.state === "pending") expect(r.content[0].text).toContain(f.text);
     }
   });

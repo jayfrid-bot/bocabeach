@@ -52,9 +52,10 @@ const VIEW_KEYS = [
   "v", "slug", "name", "score", "rating", "band", "limitedData", "lines",
   "waterTempF", "sunForecast", "generatedAt", "capturedAt", "validUntil",
 ].sort();
-const SUN_FORECAST_KEYS = ["availableAt", "eventAt", "kind", "state", "text"];
+const SUN_FORECAST_KEYS = ["availableAt", "early", "eventAt", "firmAt", "kind", "state", "text"];
 
-/** `sunForecast` is null or exactly { kind, state, availableAt, eventAt, text } (no score, ever). */
+/** `sunForecast` is null or exactly { kind, state, availableAt, eventAt, text, early, firmAt } (no score, ever).
+ *  An entry stored before `early` and `firmAt` existed (2026-11-11) is a miss and is rebuilt. */
 function isSunForecast(v: unknown): boolean {
   if (v === null) return true;
   if (!v || typeof v !== "object" || Array.isArray(v)) return false;
@@ -66,6 +67,9 @@ function isSunForecast(v: unknown): boolean {
     (o.state === "pending" || o.state === "available") &&
     isDate(o.availableAt) &&
     isDate(o.eventAt) &&
+    isDate(o.firmAt) &&
+    typeof o.early === "boolean" &&
+    !(o.early && o.state === "pending") &&
     (o.state === "pending" ? isStr(o.text) && o.text.length <= 200 : o.text === null)
   );
 }

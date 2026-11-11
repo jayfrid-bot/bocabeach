@@ -16,8 +16,8 @@
 // no longer starves the beaches at the end of a fixed config order (Codex
 // round-3 finding #1). Ahead of that fair order come the beaches in their
 // SUN-FORECAST HOUR (`sunWindowPriority`): the UTC clock hour that contains
-// sunrise or sunset minus 60 min, when the app's sun-color score opens
-// (lib/sunForecastWindow.ts). Such a beach is a candidate even before
+// sunrise or sunset minus 60 min, when the app's sun score firms up
+// (lib/sunForecastWindow.ts; a build in that hour is 0-120 min ahead, inside the shown window). Such a beach is a candidate even before
 // daylight, so the sunrise forecast of an auto beach gets archived too.
 //
 // SCANNING vs BUILDING (Codex round-3 finding #2 — head-of-line blocking):

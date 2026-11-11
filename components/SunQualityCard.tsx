@@ -24,7 +24,7 @@ import {
 import { FlipCard, NerdBack } from "@/components/FlipCard";
 import { assembleSunEventQuality } from "@/lib/sunAlert";
 import {
-  SUN_FORECAST_WINDOW_MINUTES,
+  sunForecastEarlyText, sunForecastEarlyWhy,
   sunForecastPendingText, sunForecastPendingWhy,
   sunForecastWindow,
   type SunForecastWindow,
@@ -114,24 +114,39 @@ function buildSunQualityNerdInfo(args: {
   /** "Sunset forecast ready at 5:52 PM" while the forecast window is closed (the
    *  color number is withheld everywhere, back included); null once open. */
   pendingText: string | null;
+  /** "Early look. Firms up at 5:52 PM" while the score on screen is the early
+   *  look (120 to 60 min before the event); null otherwise. */
+  earlyText: string | null;
 }): NerdInfo {
-  const { event, timeIso, tz, cloud, humidityPct, result, peakLine, goldenLine, pendingText } = args;
+  const { event, timeIso, tz, cloud, humidityPct, result, peakLine, goldenLine, pendingText, earlyText } = args;
   const meta = result.band ? sunQualityBandMeta(result.band) : null;
   const time = fmtTime(timeIso, tz);
   const knownTotalOnly = !hasCompleteLevelSplit(cloud) && !!cloud && cloud.totalPct != null;
   const b = result.breakdown;
   const fromSatellite = b?.source === "satellite-ir";
+  // The early look: the mean of a satellite score and an hourly-forecast score.
+  const earlyMix = b?.source === "satellite+forecast" ? b.early : undefined;
+  const earlyLines: string[] = earlyText
+    ? [
+        earlyText,
+        sunForecastEarlyWhy(event),
+        ...(earlyMix
+          ? [`Satellite now: ${earlyMix.satelliteScore}/100. Hourly forecast for the ${event}: ${earlyMix.forecastScore}/100. Early look: the average.`]
+          : []),
+      ]
+    : [];
 
   const computation: string[] = pendingText
     ? [
         pendingText,
-        `The ${event} forecast is ready ${SUN_FORECAST_WINDOW_MINUTES} minutes before the ${event}. Until then any number would be a guess.`,
+        `The first look at the ${event} forecast is ready 2 hours before the ${event}. It firms up 1 hour before. Earlier than that, any number would be a guess.`,
         goldenLine,
       ]
     : result.score == null
       ? ["No forecast cloud reading for this hour yet."]
       : b
         ? [
+            ...earlyLines,
             // Transparent factor-by-factor breakdown — each shown plainly.
             `Horizon path: ${b.horizonPath}`,
             `Cloud canvas: ${b.cloudCanvas}`,
@@ -143,6 +158,7 @@ function buildSunQualityNerdInfo(args: {
             ...(peakLine ? [peakLine] : []),
           ]
         : [
+            ...earlyLines,
             `${cloudLine(cloud)} at ${time}`,
             ...(humidityPct != null ? [`${humidityPct}% humidity`] : []),
             `→ ${result.score}/100 (${result.band})`,
@@ -179,10 +195,10 @@ function buildSunQualityNerdInfo(args: {
     explainer:
       "How colorful will this sunrise or sunset be? The best ones have some mid or high cloud (about 20-70% of the sky) with open sky around it and a clear path to the sun: the low sun lights the cloud red and orange. A clear sky is still a good one, with clean warm light at the horizon. As the sky fills toward overcast the show fades: a solid deck at any height mutes the sun to gray. Low cloud in the sun's path costs a little, but lit low cloud can glow too. Golden hour here runs while the sun is between 6° above and 4° below the horizon (about 20 minutes either side when that can't be computed). Where we have a beach cam, we check the forecast against what it sees.",
     formula:
-      "score = canvas × overcast × path × aerosol × humidity. canvas comes from the mid/high cloud cover (a screen blend of the two): 62 for a clear sky, rising to 86 from 20% to 70%, then down to 60 at 100%. overcast = 1.0 while total cover is 60% or less, then falls in a straight line to 0.45 at 100%. path = 0.75 + 0.25 × clearPath ÷ 100, where clearPath = 100 for low cloud toward the sun of 20% or less, falling to 0 at 90% (the satellite's read along the sun's path when fresh, else the overhead low cloud). Modifiers: clean air (AOD < 0.15) +5%, haze and PM2.5 penalties (−25%/−35% caps); humidity only when there's no aerosol reading, and only above 92% (−8% cap). Fitted in November 2026 on 148 sunrises and sunsets at 8 beaches, scored against the beach cams. Peak color lags to the sun's −2°→−4° window when there's a high-cloud deck. Without the low/mid/high split, a flatter total-cloud curve is used instead. Golden hour is the sun between +6° and −4° (a ±20-min window only as a fallback); blue hour comes from a solar-elevation solve (sun at −6°) out to the golden window's edge.",
+      "score = canvas × overcast × path × aerosol × humidity. canvas comes from the mid/high cloud cover (a screen blend of the two): 62 for a clear sky, rising to 86 from 20% to 70%, then down to 60 at 100%. overcast = 1.0 while total cover is 60% or less, then falls in a straight line to 0.45 at 100%. path = 0.75 + 0.25 × clearPath ÷ 100, where clearPath = 100 for low cloud toward the sun of 20% or less, falling to 0 at 90% (the satellite's read along the sun's path when fresh, else the overhead low cloud). Modifiers: clean air (AOD < 0.15) +5%, haze and PM2.5 penalties (−25%/−35% caps); humidity only when there's no aerosol reading, and only above 92% (−8% cap). Fitted in November 2026 on 148 sunrises and sunsets at 8 beaches, scored against the beach cams. Peak color lags to the sun's −2°→−4° window when there's a high-cloud deck. Without the low/mid/high split, a flatter total-cloud curve is used instead. Golden hour is the sun between +6° and −4° (a ±20-min window only as a fallback); blue hour comes from a solar-elevation solve (sun at −6°) out to the golden window's edge. Early look (2 hours to 1 hour before): the same score is worked out twice, once on the satellite's cloud read and once on the hourly forecast, and the two are averaged; from 1 hour before, the satellite read is used alone.",
     computation,
     sources: [
-      ...(fromSatellite
+      ...(fromSatellite || earlyMix
         ? [
             b?.satellite?.horizon === "ir-overhead"
               ? "NOAA GOES-19 cloud-top height (2 km, read within the last 35 min) — cloud by level overhead; the sun's path was not read"
@@ -195,7 +211,9 @@ function buildSunQualityNerdInfo(args: {
       "Open-Meteo air quality — aerosol optical depth (CAMS) + PM2.5",
       "Sun/golden-hour times — computed locally (NOAA solar-position algorithm)",
     ],
-    notes: fromSatellite
+    notes: earlyMix
+      ? "This is an early look. The sky can change in two hours, so the satellite's read is averaged with the hourly forecast. From one hour before, the satellite read is used alone."
+      : fromSatellite
       ? b?.satellite?.horizon === "ir-overhead"
         ? "The cloud mix comes from the satellite's cloud-top heights overhead, read within the last 35 minutes; the sun's path itself was not read, so the horizon is an estimate. Peak-color timing and the modifiers are research-informed heuristics, not guarantees."
         : "The cloud mix and the horizon come from the satellite's cloud-top heights, read within the last 35 minutes, not from the forecast. Peak-color timing and the modifiers are research-informed heuristics, not guarantees."
@@ -401,6 +419,12 @@ export function SunForecastPendingHeadline({
   );
 }
 
+/** The line under an early-look score: "Early look. Firms up at 5:52 PM".
+ *  Exported for tests. */
+export function SunForecastEarlyLine({ text }: { text: string }) {
+  return <div className="mt-1 text-xs font-semibold leading-snug text-slate-600 dark:text-slate-300">{text}</div>;
+}
+
 function SunQualityFront({
   timing,
   nowMs,
@@ -408,6 +432,7 @@ function SunQualityFront({
   scored,
   result,
   forecast,
+  earlyText,
 }: {
   /** Where we stand relative to the next golden window. */
   timing: GoldenHourTiming;
@@ -421,6 +446,8 @@ function SunQualityFront({
   /** The forecast window for `scored` (lib/sunForecastWindow.ts): while
    *  "pending" the score is withheld and the headline says when it opens. */
   forecast: SunForecastWindow | null;
+  /** "Early look. Firms up at 5:52 PM" under an early-look score; null otherwise. */
+  earlyText?: string | null;
 }) {
   const target = timing.target;
   const during = timing.phase === "during";
@@ -456,6 +483,7 @@ function SunQualityFront({
         ) : (
           <SunScoreHeadline kind={kind} result={result} />
         )}
+        {earlyText && forecast?.state === "available" ? <SunForecastEarlyLine text={earlyText} /> : null}
 
         {/* Wraps freely at every width: these lines are the point of the card. */}
         <div
@@ -567,12 +595,14 @@ export function SunQualityCard({
     : `Golden hour ${fmtTime(scored.goldenStartIso, tz)}–${fmtTime(scored.goldenEndIso, tz)} (20 min either side of the ${scored.event}, estimated)`;
 
   // The forecast window (lib/sunForecastWindow.ts): the color score shows only
-  // from 60 minutes before the event. Judged on the live clock once mounted
+  // from 120 minutes before the event (an early look until 60). Judged on the live clock once mounted
   // (the pinned snapshot time on the server and first paint, so hydration
   // matches). Pending: no number anywhere on the card, front or back.
   const forecast = sunForecastWindow(scored.timeIso, clientNowMs ?? nowD.getTime());
   const pendingText =
     forecast?.state === "pending" ? sunForecastPendingText(scored.event, forecast.availableAtIso, tz) : null;
+  // The early look (120 to 60 min before the event): the score shows, with these words under it.
+  const earlyText = forecast?.early && result.score != null ? sunForecastEarlyText(forecast.firmAtIso, tz) : null;
 
   const info = buildSunQualityNerdInfo({
     event: scored.event,
@@ -584,6 +614,7 @@ export function SunQualityCard({
     peakLine: pendingText ? null : peakLine,
     goldenLine,
     pendingText,
+    earlyText,
   });
 
   return (
@@ -597,6 +628,7 @@ export function SunQualityCard({
           scored={scored}
           result={result}
           forecast={forecast}
+          earlyText={earlyText}
         />
       }
       back={() => <NerdBack info={info} />}

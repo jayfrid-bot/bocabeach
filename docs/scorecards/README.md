@@ -133,11 +133,16 @@ warm band of a clear sky at 70 to 97
 70 on the camera does not mean the same sky on every cam. The tables marked
 "raw camera scale" are a rough guide only. The fair grade is the main grade.
 
-- **The forecast people see.** The sun card opens 60 minutes before the event.
-  So the headline uses, for each event, the scored forecast row closest to 60
+- **The forecast people see.** The sun card opens 120 minutes before the event
+  with an early look and firms up 60 minutes before it (until 2026-11-11 it
+  opened at 60 minutes). The headline uses, for each event, the scored forecast row closest to 60
   minutes before it, with a lead from 30 to 120 minutes (both ends count). A
   tie goes to the shorter lead. An event with no such row is not graded. It
-  counts in the coverage table instead.
+  counts in the coverage table instead. The window did not move with the
+  early look, so old and new versions are graded on the same leads. From
+  model 2026-11-11.1 a row made 60 to 120 minutes ahead is the early look
+  (`breakdown_json.source` = `satellite+forecast`); before that it was the
+  forecast alone.
 - **One truth cam per event.** The server already picked it when it filled the
   forecast rows: a cam that looks at the sun, the smallest `distance_mi`, then
   `cam_id` (`docs/SUN_CAM_CHECK.md`, "Filling the predictions"). The report
@@ -330,4 +335,5 @@ Read each week's numbers against these dates. Archived rows carry `engine_versio
 - **2026-10-06 — scoring 2026-10-06.1:** comfort (dew point) curve retuned for the shore: free up to 65°F, −2.5 points per °F above (was free to 60°F, −5 per °F). Expected effect from history: average daytime score +1.9, Excellent hours roughly doubled.
 - **2026-10-06 — sun color 2026-10-06.2:** satellite overhead cloud no longer scored as a horizon blocker; canvas plateau 35–80; humidity only without an aerosol reading.
 - **2026-10-15 — sun color 2026-10-15.1:** the cloud mix and the horizon come from the GOES cloud-top-height read when its scan is at most 35 min old and the event at most 60 min away; the forecast is the fallback. Curves, weights and band cutoffs are unchanged. Rows carry `breakdown_json.source` (`satellite-ir` or `forecast`).
+- **2026-11-11 — sun color 2026-11-11.1:** the early look. From 120 to 60 minutes before the event the score is the mean of the model's score on the satellite read and its score on the hourly forecast (`breakdown_json.source` = `satellite+forecast`; both halves are in `breakdown_json.early`, and the row's cloud columns hold the satellite's mix). Inside 60 minutes nothing changed. No curve, weight or cutoff changed. The card shows the score from 120 minutes out (was 60). docs/benchmarks/2026-11-11-sun-lead-time.
 - **2026-11-05 — sun color 2026-11-05.1:** recalibrated on the sun cams: canvas × overcast × path; clear sky 62 (was ~29), a solid deck ~20-30 (a 100% high deck was 98); seasonal prior no longer scored. docs/benchmarks/2026-11-05-sun-recalibration.

@@ -19,9 +19,9 @@ import { localHourParts } from "@/lib/history/archive";
 import { computeSunTimes } from "@/lib/sources/sun";
 import { buildAlert, type AlertDecision, type SunColorSubject } from "@/lib/alerts/catalog";
 import {
-  SUN_FORECAST_WINDOW_MINUTES,
-  SUN_FORECAST_WINDOW_MS,
-  sunForecastWindow,
+  SUN_FORECAST_FIRM_MINUTES,
+  SUN_FORECAST_FIRM_MS,
+  sunForecastFirm,
 } from "@/lib/sunForecastWindow";
 
 /**
@@ -60,12 +60,14 @@ export function sunColorCutoffFor(minBand: SunColorMinBand): number {
   return minBand === "epic" ? SUN_COLOR_AMAZING_CUTOFF : SUN_COLOR_GREAT_CUTOFF;
 }
 
-/** No sun-color push of any kind before the forecast window opens: the color
- *  score is shown from SUN_FORECAST_WINDOW_MINUTES (60) before the event
- *  (lib/sunForecastWindow.ts), and an alert must never carry a number the app
- *  itself would still be hiding. This was 4 hours until 2026-10-15; the
- *  benchmark showed the forecast is not trustworthy at ANY lead. */
-export const SUN_COLOR_MAX_LEAD_MS = SUN_FORECAST_WINDOW_MS;
+/** No sun-color push of any kind before the forecast FIRMS UP: the score is
+ *  firm from SUN_FORECAST_FIRM_MINUTES (60) before the event
+ *  (lib/sunForecastWindow.ts). The early look (120 to 60 min) is shown in the
+ *  app with the words "Early look"; a push has no room for that caveat, so it
+ *  waits. This was 4 hours until 2026-10-15; the benchmark showed the forecast
+ *  is not trustworthy at ANY lead. Opening the early look on 2026-11-11 did not
+ *  move this. */
+export const SUN_COLOR_MAX_LEAD_MS = SUN_FORECAST_FIRM_MS;
 
 /**
  * The send window's width: `[event - lead, event - lead + 10 min)`. Back to
@@ -107,11 +109,11 @@ export const SUN_COLOR_ESTIMATE_HORIZON_TOLERANCE_MS = 15 * 60 * 1000;
 export const SUN_COLOR_MISMATCH_DEFER_MAX_MS = 15 * 60 * 1000;
 
 /** A device's lead time as it actually applies: never longer than the
- *  forecast window (60 min). A device that still has a legacy 2 h / 3 h lead
- *  stored is treated as 60 — the alert can fire no earlier than the window
- *  opens. Every window calculation below goes through this. */
+ *  firm forecast (60 min). A device that still has a legacy 2 h / 3 h lead
+ *  stored is treated as 60 — the alert can fire no earlier than the forecast
+ *  firms up. Every window calculation below goes through this. */
 export function effectiveSunColorLeadMin(leadMin: number): number {
-  return Math.min(leadMin, SUN_FORECAST_WINDOW_MINUTES);
+  return Math.min(leadMin, SUN_FORECAST_FIRM_MINUTES);
 }
 
 /** The send window for one event/lead pair, as `[start, end)` epoch ms. The
@@ -214,8 +216,8 @@ export function sunColorDecision(input: SunColorAlertInput): AlertDecision | nul
   if (!device.homeSlug) return null;
   if (!prediction || prediction.score == null || prediction.band == null) return null;
 
-  // Never before the forecast window opens (lib/sunForecastWindow.ts).
-  if (sunForecastWindow(prediction.eventIso, nowMs)?.state !== "available") return null;
+  // Never before the forecast firms up (lib/sunForecastWindow.ts): an early look is not pushed.
+  if (!sunForecastFirm(prediction.eventIso, nowMs)) return null;
 
   const cutoff = sunColorCutoffFor(device.sunColor.minBand);
   if (prediction.score < cutoff) return null;

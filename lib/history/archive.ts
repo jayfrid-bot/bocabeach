@@ -6,7 +6,7 @@
 import type { ConditionsResponse, Location } from "@/lib/types";
 import { deriveMetrics, SCORING_CONFIG_VERSION, SCORING_ENGINE_VERSION } from "@/lib/score";
 import { computeSunTimes, type SunTimes } from "@/lib/sources/sun";
-import { SUN_FORECAST_WINDOW_MS } from "@/lib/sunForecastWindow";
+import { SUN_FORECAST_FIRM_MS } from "@/lib/sunForecastWindow";
 import type { ArchiveCandidate, BeachHourlyRow } from "@/lib/history/types";
 import { extraJsonFor } from "@/lib/history/extra";
 
@@ -251,17 +251,23 @@ export function shouldArchiveNow(candidate: ArchiveCandidate, nowMs: number): bo
 const HOUR_MS = 3_600_000;
 
 /**
- * Is this the clock hour in which one of the beach's sun forecasts OPENS?
+ * Is this the clock hour in which one of the beach's sun forecasts is graded?
  *
- * The sunrise/sunset color score shows from `event − SUN_FORECAST_WINDOW_MS`
- * (60 min, lib/sunForecastWindow.ts). To grade that forecast, every beach needs
- * an archived build (and so a `sun_event_predictions` row) in the UTC clock
- * hour that contains that instant. This returns true for exactly that hour, so
- * the archiver can build the beach first and from its sun reserve
- * (app/api/history/archive/route.ts).
+ * The sunrise/sunset score shows from 120 min before the event as an early
+ * look and firms up at `event − SUN_FORECAST_FIRM_MS` (60 min,
+ * lib/sunForecastWindow.ts). To grade the forecast people see, every beach
+ * needs an archived build (and so a `sun_event_predictions` row) while it is on
+ * screen. The sun hour is the UTC clock hour that contains the FIRM mark. This
+ * returns true for exactly that hour, so the archiver can build the beach first
+ * and from its sun reserve (app/api/history/archive/route.ts).
  *
- * In that hour the event is always 0–120 min ahead. The answer stays the same
- * for the whole hour, so a beach never switches class in the middle of one.
+ * In that hour the event is always 0–120 min ahead: inside the shown window
+ * whatever minute the build runs (the hour that holds the 120-min OPENING would
+ * put the build up to 180 min ahead, before anything is shown). Sun builds run
+ * first in the hour, so most rows land 60–120 min ahead: the early look. That
+ * is also the lead the scorecard has always graded (30–120 min), so old and new
+ * rows stay comparable. The answer stays the same for the whole hour, so a
+ * beach never switches class in the middle of one.
  *
  * Events come from `computeSunTimes` for the beach's local date and the days
  * either side, so an event on the next local day (or one that falls on the next
@@ -276,7 +282,7 @@ export function sunWindowPriority(
 }
 
 /**
- * The instant of the sun event whose forecast opens in `nowMs`'s UTC hour
+ * The instant of the sun event whose forecast firms up in `nowMs`'s UTC hour
  * (the rule in `sunWindowPriority`), or null when there is none. The archiver
  * builds the earliest event first (`orderArchiveCandidates`).
  */
@@ -297,9 +303,9 @@ export function sunWindowEventMs(
   return found;
 }
 
-/** The UTC hour number (ms / 1 h, floored) in which `eventMs`'s forecast opens. */
+/** The UTC hour number (ms / 1 h, floored) in which `eventMs`'s forecast firms up. */
 function sunForecastHour(eventMs: number): number {
-  return Math.floor((eventMs - SUN_FORECAST_WINDOW_MS) / HOUR_MS);
+  return Math.floor((eventMs - SUN_FORECAST_FIRM_MS) / HOUR_MS);
 }
 
 // Sun times are a pure function of (lat, lon, date), so one cache serves every

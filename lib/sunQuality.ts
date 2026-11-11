@@ -33,7 +33,14 @@
  * tell which formula produced which score. BUMP IT whenever a curve, weight,
  * threshold, or band cutoff in this module changes.
  */
-export const SUN_QUALITY_VERSION = "2026-11-05.1";
+export const SUN_QUALITY_VERSION = "2026-11-11.1";
+// 2026-11-11.1: the EARLY LOOK. From 120 to 60 minutes before the event the
+// score is the mean of two scores from this same model: one on the satellite
+// read, one on the hourly forecast (lib/sunAlert.ts assembleSunEventQuality,
+// source "satellite+forecast"). No curve, weight or cutoff changed; inside 60
+// minutes the score is what it was. On 243 cam-graded events the mean ranks
+// skies as well two hours out as the satellite alone does one hour out
+// (docs/benchmarks/2026-11-11-sun-lead-time/REPORT.md).
 // 2026-11-05.1: recalibrated on the sun cams (docs/benchmarks/
 // 2026-11-05-sun-recalibration). Score = canvas(mid/high cover) x overcast(total
 // cover) x path(low cloud toward the sun) x air. A clear sky starts at 62
@@ -107,9 +114,10 @@ export interface SunEventQualityInput {
   seasonalPrior?: number;
 }
 
-/** What fed the model's cloud mix: a fresh satellite cloud-top read, or the
- *  hourly forecast. */
-export type SunModelSource = "satellite-ir" | "forecast";
+/** What fed the model's cloud mix: a fresh satellite cloud-top read, the hourly
+ *  forecast, or (the early look, 60 to 120 minutes before the event) both: the
+ *  mean of the two scores. */
+export type SunModelSource = "satellite-ir" | "forecast" | "satellite+forecast";
 
 /** Transparent per-factor breakdown (the spinoff app's differentiator) — each
  *  string is a plain-English one-liner for the flip-card back. Only populated
@@ -139,6 +147,14 @@ export interface SunFactorBreakdown {
     /** Mid + high cloud toward and away from the sun (not scored). */
     sunwardMidHighPct: number | null;
     antiMidHighPct: number | null;
+  };
+  /** The early look's two halves (source "satellite+forecast"; recording only).
+   *  The row's cloud columns hold the satellite's mix; the forecast's is here,
+   *  so a later study can re-score both. */
+  early?: {
+    satelliteScore: number;
+    forecastScore: number;
+    forecastCloud: { lowPct: number | null; midPct: number | null; highPct: number | null; totalPct: number | null };
   };
 }
 
@@ -448,6 +464,12 @@ const BAND_CUTOFFS: readonly { min: number; band: SunQualityBand }[] = [
 function bandFor(score: number): SunQualityBand {
   for (const c of BAND_CUTOFFS) if (score >= c.min) return c.band;
   return "dud";
+}
+
+/** The band for a 0-100 score (the model's own cutoffs), for a score that was
+ *  not produced by one call of `sunEventQuality` (the early look's mean). */
+export function sunBandForScore(score: number): SunQualityBand {
+  return bandFor(score);
 }
 
 /** A NaN or Infinity reading is treated as missing, so no input can turn the

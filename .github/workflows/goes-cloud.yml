@@ -23,7 +23,7 @@ name: GOES Cloud Feed
 # started 4-5 h late, so the handoff (not the cron) is what keeps it live.
 #
 # RUN WINDOW: the loop reads while the clock is inside ANY beach's window of
-# sunrise - 75 min to sunset + 45 min (each beach on its own local dates),
+# sunrise - 150 min to sunset + 45 min (each beach on its own local dates),
 # asked of the script itself: `python scripts/goes_cloud.py
 # --window-state` (the same idea as sargassum.yml's cam_seaweed.py
 # --window-state). The old fixed 05:55-20:35 ET clock window ended before a
@@ -132,7 +132,7 @@ jobs:
           }
 
           # Where we are in today's reading window, from the script itself:
-          #   day   = inside ANY beach's own window (its sunrise - 75 min to
+          #   day   = inside ANY beach's own window (its sunrise - 150 min to
           #           its sunset + 45 min, on its local yesterday/today/tomorrow);
           #   dusk  = the 20 min after that, for a loop that STARTS then;
           #   night = otherwise.
@@ -210,7 +210,7 @@ jobs:
               # 4-5 h late on Sep 26-28 2026. One read right at dusk still
               # publishes the night carry-forward; no other reads until morning.
               if [ "$did_day" -eq 1 ] || { [ "$first" -eq 1 ] && just_after_dusk; }; then
-                echo "outside the reading window (sunrise-75 min to sunset+45 min) — one final read for the night carry-forward, then idling until morning"
+                echo "outside the reading window (sunrise-150 min to sunset+45 min) — one final read for the night carry-forward, then idling until morning"
                 run_cycle
                 if [ "$consecutive_fail" -ge 5 ]; then
                   echo "5 consecutive cycle failures (last one the dusk read) — bailing so this shows as a red run"

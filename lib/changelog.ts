@@ -17,6 +17,13 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    date: "2026-11-11",
+    title: "Sunrise and sunset forecasts now start 2 hours ahead",
+    details:
+      "Golden hour starts before the sun sets, so one hour of notice was not enough. The sunset and sunrise forecast now shows 2 hours ahead as an early look. It mixes what the satellite sees now with the hourly forecast. One hour ahead it firms up, the same as before. We checked this against the beach cameras on 243 sunrises and sunsets: the early look sorts good skies from dull ones about as well as the one-hour forecast. It can still move, and about 1 in 4 early looks changes to another word (such as Good to Fair) by the time it firms up, so it is marked \"Early look\".",
+    tag: "improved",
+  },
+  {
     date: "2026-11-06",
     title: "Cameras that are down are hidden until they come back",
     details:

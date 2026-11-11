@@ -19,9 +19,11 @@ const view = (over: Partial<WatchView> = {}): WatchView => ({
   sunForecast: {
     kind: "sunset",
     state: "pending",
-    availableAt: "2026-10-14T21:52:00.000Z",
+    availableAt: "2026-10-14T20:52:00.000Z",
     eventAt: "2026-10-14T22:52:00.000Z",
-    text: "Sunset forecast ready at 5:52 PM",
+    text: "Sunset forecast ready at 4:52 PM",
+    early: false,
+    firmAt: "2026-10-14T21:52:00.000Z",
   },
   generatedAt: "2026-10-14T15:00:00.000Z",
   capturedAt: "2026-10-14T15:01:00.000Z",
@@ -53,7 +55,7 @@ describe("toBeachConditions", () => {
   });
   it("passes the sun forecast through: the state and the line, never a color score", () => {
     const c = toBeachConditions(view())!;
-    expect(c.sunForecast).toMatchObject({ kind: "sunset", state: "pending", text: "Sunset forecast ready at 5:52 PM" });
+    expect(c.sunForecast).toMatchObject({ kind: "sunset", state: "pending", text: "Sunset forecast ready at 4:52 PM" });
     expect(c.sunForecast).not.toHaveProperty("score");
     expect(c).not.toHaveProperty("sunScore");
     expect(toBeachConditions(view({ sunForecast: null }))!.sunForecast).toBeNull();

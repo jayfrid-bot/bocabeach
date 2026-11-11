@@ -271,20 +271,21 @@ class SunEvents(unittest.TestCase):
 
 
 class RunWindow(unittest.TestCase):
-    # Boca 2026-10-15: sunrise 11:19:37Z, sunset 22:52:20Z. Window = 10:04:37Z .. 23:37:20Z.
+    # Boca 2026-10-15: sunrise 11:19:37Z, sunset 22:52:20Z. Window = 08:49:37Z .. 23:37:20Z.
     LA = {"slug": "santa-monica", "lat": 34.01, "lon": -118.5, "timezone": "America/Los_Angeles"}
 
-    def test_a_beachs_window_is_sunrise_minus_75_to_sunset_plus_45(self):
+    def test_a_beachs_window_is_sunrise_minus_150_to_sunset_plus_45(self):
         wins = gc.beach_windows(BOCA, utc(2026, 10, 15, 15, 0))
         self.assertEqual(len(wins), 3)  # yesterday, today, tomorrow
         start, end = wins[1]
-        self.assertEqual(start.replace(microsecond=0), utc(2026, 10, 15, 10, 4, 37))
+        self.assertEqual(start.replace(microsecond=0), utc(2026, 10, 15, 8, 49, 37))
         self.assertEqual(end.replace(microsecond=0), utc(2026, 10, 15, 23, 37, 20))
 
     def test_states_across_the_day(self):
         cases = [
-            (utc(2026, 10, 15, 10, 0), "night"),
-            (utc(2026, 10, 15, 10, 10), "day"),  # inside the 75 min before sunrise
+            (utc(2026, 10, 15, 8, 45), "night"),
+            (utc(2026, 10, 15, 8, 55), "day"),  # inside the 150 min before sunrise (the early look opens at -120)
+            (utc(2026, 10, 15, 10, 10), "day"),
             (utc(2026, 10, 15, 11, 19), "day"),
             (utc(2026, 10, 15, 22, 52), "day"),
             (utc(2026, 10, 15, 23, 30), "day"),  # inside the 45 min after sunset
@@ -298,8 +299,8 @@ class RunWindow(unittest.TestCase):
     def test_across_zones_the_night_between_eastern_sunset_and_sunrise_stays_night(self):
         # The bug: after Eastern midnight but before Pacific midnight the code paired
         # tomorrow's Eastern sunset with today's Pacific sunrise and read "day".
-        # Boca's window ends 2026-10-16 ~23:37Z the day before and starts 10:04Z; LA's runs
-        # ~13:20Z .. 02:20Z. Between LA's end and Boca's start nothing is open.
+        # Boca's window ends 2026-10-16 ~23:37Z the day before and starts 08:50Z; LA's runs
+        # ~12:05Z .. 02:20Z. Between LA's end and Boca's start nothing is open.
         for now in (utc(2026, 10, 16, 4, 0), utc(2026, 10, 16, 6, 59), utc(2026, 10, 16, 8, 0)):
             self.assertEqual(gc.window_state(now, [BOCA, self.LA]), "night", now.isoformat())
         # ...and it is day when either beach's window is open.
@@ -317,8 +318,8 @@ class RunWindow(unittest.TestCase):
         return sum(5 for m in range(0, 1440, 5) if gc.window_state(t0 + dt.timedelta(minutes=m), beaches) == "day") / 60
 
     def test_total_daily_coverage_is_bounded(self):
-        # One zone: a long June day plus the 2 h of margin stays under 17 h.
-        self.assertLess(self._day_hours([BOCA], dt.date(2026, 6, 21)), 17)
+        # One zone: a long June day plus the 3 h 15 min of margin stays under 18 h.
+        self.assertLess(self._day_hours([BOCA], dt.date(2026, 6, 21)), 18)
         self.assertLess(self._day_hours([BOCA], dt.date(2026, 10, 15)), 15)
         # Boca + Los Angeles: the zones overlap, so the union is longer, but never ~24 h
         # (the cross-zone date mixing gave ~23 h on 2026-06-21) and the night gap survives.
@@ -330,8 +331,9 @@ class RunWindow(unittest.TestCase):
         beaches = gc.load_beaches()
         for day in (dt.date(2026, 6, 21), dt.date(2026, 10, 16), dt.date(2026, 12, 21)):
             hours = self._day_hours(beaches, day)
-            self.assertLess(hours, 22, f"{day}: {hours} h")
-            self.assertGreater(24 - hours, 2, f"{day}: {hours} h")
+            # 23 and 1 since 2026-11-11 (were 22 and 2): the morning reads start 75 min sooner.
+            self.assertLess(hours, 23, f"{day}: {hours} h")
+            self.assertGreater(24 - hours, 1, f"{day}: {hours} h")
         # The two dates the reviewer flagged are night at 04:00Z / 06:59Z on 2026-10-16.
         for t in (utc(2026, 10, 16, 4, 0), utc(2026, 10, 16, 6, 59)):
             self.assertEqual(gc.window_state(t, beaches), "night", t.isoformat())

@@ -10,12 +10,14 @@ import {
   resolveSunHorizon,
   sunQualityHourlyPoints,
   BEAM_IMMINENT_MINUTES,
+  EARLY_LOOK_DISAGREE_PTS,
+  IR_EARLY_WINDOW_MINUTES,
   IR_EVENT_WINDOW_MINUTES,
   IR_MAX_GRANULE_AGE_MINUTES,
   IR_MAX_UNCLASSIFIED_PCT,
   sunColorLiveGuard,
 } from "@/lib/sunAlert";
-import type { HourlyCloudPoint } from "@/lib/sunQuality";
+import { sunEventQuality, type HourlyCloudPoint } from "@/lib/sunQuality";
 import { FIXTURE_SUNRISE, FIXTURE_SUNSET, scorableResponse } from "@/lib/alerts/fixtures";
 import type { ConditionsResponse, GoesIrData } from "@/lib/types";
 
@@ -358,6 +360,90 @@ describe("assembleSunEventQuality — source selection", () => {
   });
 });
 
+describe("assembleSunEventQuality — the early look (120 to 60 min before the event)", () => {
+  const sunset = { event: "sunset" as const, timeIso: EVENT_ISO };
+  const at = (min: number) => ms(minutesBefore(EVENT_ISO, min));
+  /** A scan 15 min old at `min` minutes before the event. */
+  const irAt = (min: number, over: Partial<GoesIrData> = {}) => ir({ granuleStartIso: minutesBefore(EVENT_ISO, min + 15), ...over });
+  const OVERCAST_FORECAST: HourlyCloudPoint[] = [
+    { time: "2026-10-15T23:00:00.000Z", cloud: { lowPct: 20, midPct: 90, highPct: 90, totalPct: 100 }, humidityPct: 70 },
+  ];
+  const satAlone = sunEventQuality({ cloud: { lowPct: 5, midPct: 45, highPct: 10, totalPct: 60 }, humidityPct: 70, horizon: { cloudPct: 6, fresh: true } });
+
+  it("is the mean of the satellite's score and the forecast's score, from the same model", () => {
+    const a = assembleSunEventQuality(sunset, { hourly: EMPTY_FORECAST, goesCloud: { ir: irAt(90) }, nowMs: at(90) });
+    const fc = sunEventQuality({ cloud: EMPTY_FORECAST[0].cloud, humidityPct: 70 });
+    expect(a.source).toBe("satellite+forecast");
+    expect(a.result.score).toBe(Math.round((satAlone.score! + fc.score!) / 2));
+    expect(a.result.score!).toBeLessThan(satAlone.score!);
+    expect(a.result.score!).toBeGreaterThan(fc.score!);
+    // The band follows the mean, and both halves are recorded for the archive.
+    expect(a.result.band).toBe("vivid");
+    expect(a.result.breakdown!.source).toBe("satellite+forecast");
+    expect(a.result.breakdown!.early).toEqual({
+      satelliteScore: satAlone.score,
+      forecastScore: fc.score,
+      forecastCloud: { lowPct: 0, midPct: 0, highPct: 0, totalPct: 0 },
+    });
+    expect(a.result.breakdown!.satellite!.granuleAgeMinutes).toBe(15);
+    // The cloud columns hold the satellite's mix; the horizon is its path read.
+    expect(a.cloud).toEqual({ lowPct: 5, midPct: 45, highPct: 10, totalPct: 60 });
+    expect(a.horizon).toEqual({ cloudPct: 6, fresh: true });
+  });
+
+  it("covers the whole 120-60 min span, and hands over to the satellite alone at 60", () => {
+    for (const min of [IR_EARLY_WINDOW_MINUTES, 100, 61]) {
+      const a = assembleSunEventQuality(sunset, { hourly: EMPTY_FORECAST, goesCloud: { ir: irAt(min) }, nowMs: at(min) });
+      expect(a.source, `${min} min`).toBe("satellite+forecast");
+    }
+    const firm = assembleSunEventQuality(sunset, { hourly: EMPTY_FORECAST, goesCloud: { ir: irAt(60) }, nowMs: at(IR_EVENT_WINDOW_MINUTES) });
+    expect(firm.source).toBe("satellite-ir");
+    expect(firm.result.score).toBe(satAlone.score);
+    expect(firm.result.breakdown!.early).toBeUndefined();
+  });
+
+  it("before 120 min the satellite does not speak: the forecast stands alone, as before", () => {
+    const a = assembleSunEventQuality(sunset, { hourly: EMPTY_FORECAST, goesCloud: { ir: irAt(121) }, nowMs: at(121) });
+    expect(a.source).toBe("forecast");
+    expect(a.ir).toBeUndefined();
+    expect(a.result.breakdown!.early).toBeUndefined();
+  });
+
+  it("needs a fresh scan: a stale or low-quality read leaves the forecast alone", () => {
+    const stale = ir({ granuleStartIso: minutesBefore(EVENT_ISO, 90 + IR_MAX_GRANULE_AGE_MINUTES + 1) });
+    const lowQ = irAt(90, { unclassifiedPct: 40, classifiedPct: 10 });
+    for (const goes of [{ ir: stale }, { ir: lowQ }, { status: "ok" }]) {
+      const a = assembleSunEventQuality(sunset, { hourly: OVERCAST_FORECAST, goesCloud: goes, nowMs: at(90) });
+      expect(a.source).toBe("forecast");
+      expect(a.cloud).toEqual(OVERCAST_FORECAST[0].cloud);
+    }
+  });
+
+  it("with no forecast to average with, there is no early satellite score either", () => {
+    const a = assembleSunEventQuality(sunset, { hourly: [], goesCloud: { ir: irAt(90) }, nowMs: at(90) });
+    expect(a.source).toBeNull();
+    expect(a.result.score).toBeNull();
+  });
+
+  it("never applies after the event: the satellite alone speaks for the minutes after it", () => {
+    const after = ms(EVENT_ISO) + 20 * 60_000;
+    const a = assembleSunEventQuality(sunset, { hourly: EMPTY_FORECAST, goesCloud: { ir: ir({ granuleStartIso: minutesBefore(EVENT_ISO, 0) }) }, nowMs: after });
+    expect(a.source).toBe("satellite-ir");
+  });
+
+  it("when the two halves are far apart the note says it is a middle guess, in plain words", () => {
+    const a = assembleSunEventQuality(sunset, { hourly: OVERCAST_FORECAST, goesCloud: { ir: irAt(90) }, nowMs: at(90) });
+    const { satelliteScore, forecastScore } = a.result.breakdown!.early!;
+    expect(satelliteScore - forecastScore).toBeGreaterThanOrEqual(EARLY_LOOK_DISAGREE_PTS);
+    expect(a.result.note).toMatch(/middle guess/);
+    expect(a.result.note).toMatch(/better now than the hourly forecast expects/);
+    expect(a.result.note).not.toMatch(/color forecast|\bAI\b/);
+    // Close halves keep the satellite's own note.
+    const close = assembleSunEventQuality(sunset, { hourly: [{ time: "2026-10-15T23:00:00.000Z", cloud: { lowPct: 5, midPct: 40, highPct: 10, totalPct: 55 }, humidityPct: 70 }], goesCloud: { ir: irAt(90) }, nowMs: at(90) });
+    expect(close.result.note).toBe(satAlone.note);
+  });
+});
+
 describe("overhead-only IR read: not a verified horizon", () => {
   const NOW = ms(minutesBefore(EVENT_ISO, 30));
   const sunset = { event: "sunset" as const, timeIso: EVENT_ISO };
@@ -386,6 +472,10 @@ describe("sunColorLiveGuard — the alert reads the live clock", () => {
   it("skips a forecast score from a snapshot built before the satellite window, once the window is open", () => {
     expect(sunColorLiveGuard(pred(), live, builtHoursEarlier)).toMatch(/stale forecast/);
     expect(sunColorLiveGuard(pred(), ms(minutesBefore(EVENT_ISO, IR_EVENT_WINDOW_MINUTES)), builtHoursEarlier)).toMatch(/stale forecast/);
+  });
+  it("skips an early look the same way: built before the satellite window, read inside it", () => {
+    const early = pred({ source: "satellite+forecast", irGranuleStartIso: minutesBefore(EVENT_ISO, 100) });
+    expect(sunColorLiveGuard(early, live, ms(minutesBefore(EVENT_ISO, 90)))).toMatch(/stale forecast/);
   });
   it("lets a forecast score through while the event is still far out on the live clock", () => {
     expect(sunColorLiveGuard(pred(), ms(minutesBefore(EVENT_ISO, IR_EVENT_WINDOW_MINUTES + 30)), builtHoursEarlier)).toBeNull();

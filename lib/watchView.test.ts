@@ -283,28 +283,37 @@ describe("rip model works even when the NWS feed failed", () => {
 });
 
 describe("sun forecast window", () => {
-  // The fixture's sunset is 7:36:55 PM EDT, so its color forecast opens at 6:36 PM.
+  // The fixture's sunset is 7:36:55 PM EDT, so its forecast opens at 5:36 PM (early look) and firms up at 6:36 PM.
   it("is pending in mid-afternoon, with the line and no score", () => {
     const v = buildWatchView(res(), NOW);
     expect(v.sunForecast).toEqual({
       kind: "sunset",
       state: "pending",
-      availableAt: "2026-09-04T22:36:55.497Z",
+      availableAt: "2026-09-04T21:36:55.497Z",
       eventAt: "2026-09-04T23:36:55.497Z",
-      text: "Sunset forecast ready at 6:36 PM",
+      text: "Sunset forecast ready at 5:36 PM",
+      early: false,
+      firmAt: "2026-09-04T22:36:55.497Z",
     });
     expect(JSON.stringify(v)).not.toMatch(/"sun(Score|Color)|color ·|\/100/);
   });
 
   it("is available inside the hour before sunset: state only, no line, still no score", () => {
     const v = buildWatchView(res(), Date.parse("2026-09-04T23:00:00.000Z"));
-    expect(v.sunForecast).toMatchObject({ kind: "sunset", state: "available", text: null });
+    expect(v.sunForecast).toMatchObject({ kind: "sunset", state: "available", early: false, text: null });
     expect(v.sunForecast).not.toHaveProperty("score");
+  });
+
+  it("is an early look from two hours to one hour before sunset: flagged early, no line, no score", () => {
+    const v = buildWatchView(res(), Date.parse("2026-09-04T22:00:00.000Z"));
+    expect(v.sunForecast).toMatchObject({ kind: "sunset", state: "available", early: true, text: null, firmAt: "2026-09-04T22:36:55.497Z" });
+    expect(v.sunForecast).not.toHaveProperty("score");
+    expect(JSON.stringify(v)).not.toMatch(/"sun(Score|Color)|color ·|\/100/);
   });
 
   it("rolls to tomorrow's sunrise once the sunset has passed", () => {
     const v = buildWatchView(res(), Date.parse("2026-09-05T00:30:00.000Z"));
-    expect(v.sunForecast).toMatchObject({ kind: "sunrise", state: "pending", text: "Sunrise forecast ready at 6:01 AM" });
+    expect(v.sunForecast).toMatchObject({ kind: "sunrise", state: "pending", text: "Sunrise forecast ready at 5:01 AM" });
   });
 
   it("is null when the beach has no sun times", () => {

@@ -50,9 +50,10 @@ export interface WatchView {
    *  more were cut, then water and best time. */
   lines: WatchLine[];
   waterTempF: number | null;
-  /** The next sunrise or sunset and when its color forecast opens (60 minutes
-   *  before the event). While `state` is "pending", `text` is the one line to
-   *  show, e.g. "Sunset forecast ready at 5:52 PM". There is never a color score in
+  /** The next sunrise or sunset and when its forecast opens (120 minutes before
+   *  the event, as an early look; `early` is true until it firms up at `firmAt`,
+   *  60 minutes before). While `state` is "pending", `text` is the one line to
+   *  show, e.g. "Sunset forecast ready at 4:52 PM". There is never a color score in
    *  this field, pending or not: the number lives only in the app. Null when
    *  the beach has no usable sun times. */
   sunForecast: SunForecastField | null;
@@ -223,9 +224,10 @@ export function computeValidUntil(res: ConditionsResponse, nowMs: number): numbe
   if (snap.ripNwps?.data) candidates.push(Math.floor(nowMs / 3_600_000) * 3_600_000 + 3_600_000);
   // Today's best window ending.
   add(res.multiDayWindows?.[0]?.best?.endIso);
-  // The sun color forecast window opening (pending -> available).
+  // The sun forecast window opening (pending -> early look) and firming up (early look -> forecast).
   const sunForecast = nextSunForecastField(snap.sun?.data, nowMs, snap.location.timezone);
   if (sunForecast?.state === "pending") add(sunForecast.availableAt);
+  else if (sunForecast?.early) add(sunForecast.firmAt);
   return Math.min(...candidates);
 }
 

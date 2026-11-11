@@ -1,0 +1,7603 @@
+{
+ "lead": {
+  "generatedFor": "docs/benchmarks/2026-11-11-sun-lead-time",
+  "model": "2026-11-11.1",
+  "data": {
+   "gradedEvents": 274,
+   "gradedAfterSharedCamRule": 244,
+   "sunrise": 86,
+   "sunset": 158,
+   "days": 31,
+   "firstDay": "2026-10-06",
+   "lastDay": "2026-11-11",
+   "truthCams": 11,
+   "storedRows": 4345,
+   "storedRowsAfterglowTruthLeftOut": 110,
+   "truthMismatchRows": 0,
+   "liveModelReproducesStoredScore": {
+    "version": "2026-11-05.1",
+    "rows": 808,
+    "exact": 808
+   },
+   "satelliteReads": 1366,
+   "forecastRunReads": 548
+  },
+  "A": {
+   "byLead": [
+    {
+     "bucket": "0–30 min",
+     "medianLead": 22,
+     "rescored": {
+      "all": {
+       "rho": 0.39,
+       "lo": 0.15,
+       "hi": 0.59,
+       "pPositive": 1,
+       "events": 74,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 74,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 29,
+         "rho": 0.12
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.61
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 15,
+         "rho": 0.49
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.39,
+       "lo": 0.15,
+       "hi": 0.59,
+       "pPositive": 1,
+       "events": 74,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 74,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 29,
+         "rho": 0.12
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.61
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 15,
+         "rho": 0.49
+        }
+       ]
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      }
+     },
+     "asStored": {
+      "rho": -0.04,
+      "lo": -0.28,
+      "hi": 0.2,
+      "pPositive": 0.42,
+      "events": 74,
+      "cams": 3,
+      "days": 30,
+      "pairsLoaded": 74,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 29,
+        "rho": 0.21
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": -0.27
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 15,
+        "rho": -0.03
+       }
+      ]
+     },
+     "satellite": {
+      "all": {
+       "rho": 0.41,
+       "lo": 0.18,
+       "hi": 0.6,
+       "pPositive": 1,
+       "events": 68,
+       "cams": 3,
+       "days": 27,
+       "pairsLoaded": 68,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 26,
+         "rho": 0.13
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 27,
+         "rho": 0.62
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 15,
+         "rho": 0.49
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.41,
+       "lo": 0.18,
+       "hi": 0.6,
+       "pPositive": 1,
+       "events": 68,
+       "cams": 3,
+       "days": 27,
+       "pairsLoaded": 68,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 26,
+         "rho": 0.13
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 27,
+         "rho": 0.62
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 15,
+         "rho": 0.49
+        }
+       ]
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      }
+     },
+     "forecast": {
+      "all": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 3,
+       "pairsLoaded": 6,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 3,
+         "rho": null
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 3,
+         "rho": null
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 3,
+       "pairsLoaded": 6,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 3,
+         "rho": null
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 3,
+         "rho": null
+        }
+       ]
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      }
+     }
+    },
+    {
+     "bucket": "30–60 min",
+     "medianLead": 31,
+     "rescored": {
+      "all": {
+       "rho": 0.18,
+       "lo": -0.51,
+       "hi": 0.8,
+       "pPositive": 0.66,
+       "events": 9,
+       "cams": 1,
+       "days": 11,
+       "pairsLoaded": 13,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 9,
+         "rho": 0.18
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 2,
+         "rho": null
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.18,
+       "lo": -0.51,
+       "hi": 0.82,
+       "pPositive": 0.66,
+       "events": 9,
+       "cams": 1,
+       "days": 9,
+       "pairsLoaded": 11,
+       "perCam": [
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 9,
+         "rho": 0.18
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 2,
+         "rho": null
+        }
+       ]
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 2,
+       "pairsLoaded": 2,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        }
+       ]
+      }
+     },
+     "asStored": {
+      "rho": 0.31,
+      "lo": -0.37,
+      "hi": 0.85,
+      "pPositive": 0.77,
+      "events": 9,
+      "cams": 1,
+      "days": 11,
+      "pairsLoaded": 13,
+      "perCam": [
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 2,
+        "rho": null
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 9,
+        "rho": 0.31
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 2,
+        "rho": null
+       }
+      ]
+     },
+     "satellite": {
+      "all": {
+       "rho": 0.18,
+       "lo": -0.51,
+       "hi": 0.8,
+       "pPositive": 0.66,
+       "events": 9,
+       "cams": 1,
+       "days": 11,
+       "pairsLoaded": 13,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 9,
+         "rho": 0.18
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 2,
+         "rho": null
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.18,
+       "lo": -0.51,
+       "hi": 0.82,
+       "pPositive": 0.66,
+       "events": 9,
+       "cams": 1,
+       "days": 9,
+       "pairsLoaded": 11,
+       "perCam": [
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 9,
+         "rho": 0.18
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 2,
+         "rho": null
+        }
+       ]
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 2,
+       "pairsLoaded": 2,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        }
+       ]
+      }
+     },
+     "forecast": {
+      "all": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunrise": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      }
+     }
+    },
+    {
+     "bucket": "60–90 min",
+     "medianLead": 80,
+     "rescored": {
+      "all": {
+       "rho": 0.1,
+       "lo": -0.12,
+       "hi": 0.35,
+       "pPositive": 0.78,
+       "events": 79,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 108,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": -0.11
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.23
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 19,
+         "rho": 0.23
+        },
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 4,
+         "rho": null
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.1,
+       "lo": -0.12,
+       "hi": 0.32,
+       "pPositive": 0.76,
+       "events": 79,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 79,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": -0.11
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.23
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 19,
+         "rho": 0.23
+        }
+       ]
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 5,
+       "pairsLoaded": 29,
+       "perCam": [
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 4,
+         "rho": null
+        }
+       ]
+      }
+     },
+     "asStored": {
+      "rho": 0.17,
+      "lo": -0.03,
+      "hi": 0.39,
+      "pPositive": 0.91,
+      "events": 79,
+      "cams": 3,
+      "days": 30,
+      "pairsLoaded": 108,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": -0.08
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.23
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 19,
+        "rho": 0.46
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 5,
+        "rho": null
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 5,
+        "rho": null
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 5,
+        "rho": null
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 5,
+        "rho": null
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 5,
+        "rho": null
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 4,
+        "rho": null
+       }
+      ]
+     },
+     "satellite": {
+      "all": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunrise": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      }
+     },
+     "forecast": {
+      "all": {
+       "rho": 0.1,
+       "lo": -0.12,
+       "hi": 0.35,
+       "pPositive": 0.78,
+       "events": 79,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 108,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": -0.11
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.23
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 19,
+         "rho": 0.23
+        },
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 4,
+         "rho": null
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.1,
+       "lo": -0.12,
+       "hi": 0.32,
+       "pPositive": 0.76,
+       "events": 79,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 79,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": -0.11
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.23
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 19,
+         "rho": 0.23
+        }
+       ]
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 5,
+       "pairsLoaded": 29,
+       "perCam": [
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 5,
+         "rho": null
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 4,
+         "rho": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "bucket": "90–120 min",
+     "medianLead": 92,
+     "rescored": {
+      "all": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 9,
+       "pairsLoaded": 11,
+       "perCam": [
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 3,
+         "rho": null
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 6,
+         "rho": null
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 7,
+       "pairsLoaded": 9,
+       "perCam": [
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 3,
+         "rho": null
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 6,
+         "rho": null
+        }
+       ]
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 2,
+       "pairsLoaded": 2,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        }
+       ]
+      }
+     },
+     "asStored": {
+      "rho": null,
+      "lo": null,
+      "hi": null,
+      "pPositive": null,
+      "events": 0,
+      "cams": 0,
+      "days": 9,
+      "pairsLoaded": 11,
+      "perCam": [
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 3,
+        "rho": null
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 2,
+        "rho": null
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 6,
+        "rho": null
+       }
+      ]
+     },
+     "satellite": {
+      "all": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunrise": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      }
+     },
+     "forecast": {
+      "all": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 9,
+       "pairsLoaded": 11,
+       "perCam": [
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 3,
+         "rho": null
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 6,
+         "rho": null
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 7,
+       "pairsLoaded": 9,
+       "perCam": [
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 3,
+         "rho": null
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 6,
+         "rho": null
+        }
+       ]
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 2,
+       "pairsLoaded": 2,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "bucket": "2–3 h",
+     "medianLead": 145,
+     "rescored": {
+      "all": {
+       "rho": 0.17,
+       "lo": -0.03,
+       "hi": 0.36,
+       "pPositive": 0.92,
+       "events": 85,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 87,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": -0.06
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.43
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": 0.13
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.17,
+       "lo": -0.03,
+       "hi": 0.36,
+       "pPositive": 0.92,
+       "events": 85,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 85,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": -0.06
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.43
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": 0.13
+        }
+       ]
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 2,
+       "pairsLoaded": 2,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        }
+       ]
+      }
+     },
+     "asStored": {
+      "rho": 0.18,
+      "lo": -0.02,
+      "hi": 0.38,
+      "pPositive": 0.93,
+      "events": 85,
+      "cams": 3,
+      "days": 30,
+      "pairsLoaded": 87,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": -0.07
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.36
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 2,
+        "rho": null
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.27
+       }
+      ]
+     },
+     "satellite": {
+      "all": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunrise": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      }
+     },
+     "forecast": {
+      "all": {
+       "rho": 0.17,
+       "lo": -0.03,
+       "hi": 0.36,
+       "pPositive": 0.92,
+       "events": 85,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 87,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": -0.06
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.43
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": 0.13
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.17,
+       "lo": -0.03,
+       "hi": 0.36,
+       "pPositive": 0.92,
+       "events": 85,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 85,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": -0.06
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.43
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": 0.13
+        }
+       ]
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 2,
+       "pairsLoaded": 2,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "bucket": "3–6 h",
+     "medianLead": 265,
+     "rescored": {
+      "all": {
+       "rho": 0.13,
+       "lo": -0.07,
+       "hi": 0.32,
+       "pPositive": 0.85,
+       "events": 85,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 87,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": -0.06
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.43
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": -0.01
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.13,
+       "lo": -0.07,
+       "hi": 0.32,
+       "pPositive": 0.85,
+       "events": 85,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 85,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": -0.06
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.43
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": -0.01
+        }
+       ]
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 2,
+       "pairsLoaded": 2,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        }
+       ]
+      }
+     },
+     "asStored": {
+      "rho": 0.16,
+      "lo": -0.05,
+      "hi": 0.36,
+      "pPositive": 0.91,
+      "events": 85,
+      "cams": 3,
+      "days": 30,
+      "pairsLoaded": 87,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.02
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.32
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 2,
+        "rho": null
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.15
+       }
+      ]
+     },
+     "satellite": {
+      "all": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunrise": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      }
+     },
+     "forecast": {
+      "all": {
+       "rho": 0.13,
+       "lo": -0.07,
+       "hi": 0.32,
+       "pPositive": 0.85,
+       "events": 85,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 87,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": -0.06
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.43
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": -0.01
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.13,
+       "lo": -0.07,
+       "hi": 0.32,
+       "pPositive": 0.85,
+       "events": 85,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 85,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": -0.06
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.43
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": -0.01
+        }
+       ]
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 2,
+       "pairsLoaded": 2,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 2,
+         "rho": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "bucket": "6–12 h",
+     "medianLead": 559,
+     "rescored": {
+      "all": {
+       "rho": 0.27,
+       "lo": 0.11,
+       "hi": 0.41,
+       "pPositive": 1,
+       "events": 235,
+       "cams": 10,
+       "days": 30,
+       "pairsLoaded": 236,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.22
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.45
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 26,
+         "rho": 0.52
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": 0.07
+        },
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": -0.12
+        },
+        {
+         "cam": "fort-zachary-taylor-cam",
+         "kind": "sunset",
+         "pairs": 17,
+         "rho": 0.25
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.43
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 23,
+         "rho": 0.54
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.3
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 12,
+         "rho": -0.37
+        },
+        {
+         "cam": "white-sands-ami-cam",
+         "kind": "sunset",
+         "pairs": 1,
+         "rho": null
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.26,
+       "lo": 0.06,
+       "hi": 0.43,
+       "pPositive": 0.98,
+       "events": 85,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 85,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.22
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.45
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": 0.07
+        }
+       ]
+      },
+      "sunset": {
+       "rho": 0.27,
+       "lo": 0.08,
+       "hi": 0.45,
+       "pPositive": 0.99,
+       "events": 150,
+       "cams": 7,
+       "days": 26,
+       "pairsLoaded": 151,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 26,
+         "rho": 0.52
+        },
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": -0.12
+        },
+        {
+         "cam": "fort-zachary-taylor-cam",
+         "kind": "sunset",
+         "pairs": 17,
+         "rho": 0.25
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.43
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 23,
+         "rho": 0.54
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.3
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 12,
+         "rho": -0.37
+        },
+        {
+         "cam": "white-sands-ami-cam",
+         "kind": "sunset",
+         "pairs": 1,
+         "rho": null
+        }
+       ]
+      }
+     },
+     "asStored": {
+      "rho": 0.23,
+      "lo": 0.07,
+      "hi": 0.39,
+      "pPositive": 0.99,
+      "events": 235,
+      "cams": 10,
+      "days": 30,
+      "pairsLoaded": 236,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.39
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.38
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 26,
+        "rho": 0.48
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": -0.05
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": -0.07
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 17,
+        "rho": 0.23
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.37
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 23,
+        "rho": 0.48
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.26
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 12,
+        "rho": -0.72
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     },
+     "satellite": {
+      "all": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunrise": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      }
+     },
+     "forecast": {
+      "all": {
+       "rho": 0.27,
+       "lo": 0.11,
+       "hi": 0.41,
+       "pPositive": 1,
+       "events": 235,
+       "cams": 10,
+       "days": 30,
+       "pairsLoaded": 236,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.22
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.45
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 26,
+         "rho": 0.52
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": 0.07
+        },
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": -0.12
+        },
+        {
+         "cam": "fort-zachary-taylor-cam",
+         "kind": "sunset",
+         "pairs": 17,
+         "rho": 0.25
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.43
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 23,
+         "rho": 0.54
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.3
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 12,
+         "rho": -0.37
+        },
+        {
+         "cam": "white-sands-ami-cam",
+         "kind": "sunset",
+         "pairs": 1,
+         "rho": null
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.26,
+       "lo": 0.06,
+       "hi": 0.43,
+       "pPositive": 0.98,
+       "events": 85,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 85,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.22
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.45
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": 0.07
+        }
+       ]
+      },
+      "sunset": {
+       "rho": 0.27,
+       "lo": 0.08,
+       "hi": 0.45,
+       "pPositive": 0.99,
+       "events": 150,
+       "cams": 7,
+       "days": 26,
+       "pairsLoaded": 151,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 26,
+         "rho": 0.52
+        },
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": -0.12
+        },
+        {
+         "cam": "fort-zachary-taylor-cam",
+         "kind": "sunset",
+         "pairs": 17,
+         "rho": 0.25
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.43
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 23,
+         "rho": 0.54
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.3
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 12,
+         "rho": -0.37
+        },
+        {
+         "cam": "white-sands-ami-cam",
+         "kind": "sunset",
+         "pairs": 1,
+         "rho": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "bucket": "12–24 h",
+     "medianLead": 1085.5,
+     "rescored": {
+      "all": {
+       "rho": 0.2,
+       "lo": 0.07,
+       "hi": 0.33,
+       "pPositive": 0.99,
+       "events": 235,
+       "cams": 10,
+       "days": 30,
+       "pairsLoaded": 236,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.12
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.22
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 26,
+         "rho": 0.41
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": -0.16
+        },
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.1
+        },
+        {
+         "cam": "fort-zachary-taylor-cam",
+         "kind": "sunset",
+         "pairs": 17,
+         "rho": 0.09
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.27
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 23,
+         "rho": 0.34
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.49
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 12,
+         "rho": 0.11
+        },
+        {
+         "cam": "white-sands-ami-cam",
+         "kind": "sunset",
+         "pairs": 1,
+         "rho": null
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.07,
+       "lo": -0.12,
+       "hi": 0.27,
+       "pPositive": 0.71,
+       "events": 85,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 85,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.12
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.22
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": -0.16
+        }
+       ]
+      },
+      "sunset": {
+       "rho": 0.28,
+       "lo": 0.09,
+       "hi": 0.44,
+       "pPositive": 0.99,
+       "events": 150,
+       "cams": 7,
+       "days": 26,
+       "pairsLoaded": 151,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 26,
+         "rho": 0.41
+        },
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.1
+        },
+        {
+         "cam": "fort-zachary-taylor-cam",
+         "kind": "sunset",
+         "pairs": 17,
+         "rho": 0.09
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.27
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 23,
+         "rho": 0.34
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.49
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 12,
+         "rho": 0.11
+        },
+        {
+         "cam": "white-sands-ami-cam",
+         "kind": "sunset",
+         "pairs": 1,
+         "rho": null
+        }
+       ]
+      }
+     },
+     "asStored": {
+      "rho": 0.11,
+      "lo": 0,
+      "hi": 0.22,
+      "pPositive": 0.95,
+      "events": 235,
+      "cams": 10,
+      "days": 30,
+      "pairsLoaded": 236,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.33
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 26,
+        "rho": 0.13
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": -0.05
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.03
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 17,
+        "rho": 0.01
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.3
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 23,
+        "rho": 0.05
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.2
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 12,
+        "rho": 0
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     },
+     "satellite": {
+      "all": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunrise": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      }
+     },
+     "forecast": {
+      "all": {
+       "rho": 0.2,
+       "lo": 0.07,
+       "hi": 0.33,
+       "pPositive": 0.99,
+       "events": 235,
+       "cams": 10,
+       "days": 30,
+       "pairsLoaded": 236,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.12
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.22
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 26,
+         "rho": 0.41
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": -0.16
+        },
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.1
+        },
+        {
+         "cam": "fort-zachary-taylor-cam",
+         "kind": "sunset",
+         "pairs": 17,
+         "rho": 0.09
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.27
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 23,
+         "rho": 0.34
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.49
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 12,
+         "rho": 0.11
+        },
+        {
+         "cam": "white-sands-ami-cam",
+         "kind": "sunset",
+         "pairs": 1,
+         "rho": null
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.07,
+       "lo": -0.12,
+       "hi": 0.27,
+       "pPositive": 0.71,
+       "events": 85,
+       "cams": 3,
+       "days": 30,
+       "pairsLoaded": 85,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.12
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.22
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": -0.16
+        }
+       ]
+      },
+      "sunset": {
+       "rho": 0.28,
+       "lo": 0.09,
+       "hi": 0.44,
+       "pPositive": 0.99,
+       "events": 150,
+       "cams": 7,
+       "days": 26,
+       "pairsLoaded": 151,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 26,
+         "rho": 0.41
+        },
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.1
+        },
+        {
+         "cam": "fort-zachary-taylor-cam",
+         "kind": "sunset",
+         "pairs": 17,
+         "rho": 0.09
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.27
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 23,
+         "rho": 0.34
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.49
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 12,
+         "rho": 0.11
+        },
+        {
+         "cam": "white-sands-ami-cam",
+         "kind": "sunset",
+         "pairs": 1,
+         "rho": null
+        }
+       ]
+      }
+     }
+    },
+    {
+     "bucket": ">24 h",
+     "medianLead": null,
+     "rescored": {
+      "all": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunrise": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      }
+     },
+     "asStored": {
+      "rho": null,
+      "lo": null,
+      "hi": null,
+      "pPositive": null,
+      "events": 0,
+      "cams": 0,
+      "days": 0,
+      "pairsLoaded": 0,
+      "perCam": []
+     },
+     "satellite": {
+      "all": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunrise": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      }
+     },
+     "forecast": {
+      "all": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunrise": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      },
+      "sunset": {
+       "rho": null,
+       "lo": null,
+       "hi": null,
+       "pPositive": null,
+       "events": 0,
+       "cams": 0,
+       "days": 0,
+       "pairsLoaded": 0,
+       "perCam": []
+      }
+     }
+    }
+   ],
+   "sameSunrises": {
+    "events": 74,
+    "days": 30,
+    "byLead": [
+     {
+      "bucket": "0–30 min",
+      "rho": 0.39,
+      "lo": 0.15,
+      "hi": 0.59,
+      "events": 74,
+      "cams": 3
+     },
+     {
+      "bucket": "60–90 min",
+      "rho": 0.12,
+      "lo": -0.11,
+      "hi": 0.34,
+      "events": 74,
+      "cams": 3
+     },
+     {
+      "bucket": "2–3 h",
+      "rho": 0.21,
+      "lo": 0,
+      "hi": 0.41,
+      "events": 74,
+      "cams": 3
+     },
+     {
+      "bucket": "3–6 h",
+      "rho": 0.18,
+      "lo": -0.04,
+      "hi": 0.39,
+      "events": 74,
+      "cams": 3
+     },
+     {
+      "bucket": "6–12 h",
+      "rho": 0.37,
+      "lo": 0.15,
+      "hi": 0.55,
+      "events": 74,
+      "cams": 3
+     },
+     {
+      "bucket": "12–24 h",
+      "rho": 0.18,
+      "lo": -0.04,
+      "hi": 0.38,
+      "events": 74,
+      "cams": 3
+     }
+    ],
+    "vs60to90": [
+     {
+      "bucket": "0–30 min",
+      "a": 0.39,
+      "b": 0.12,
+      "diff": 0.27,
+      "lo": 0.05,
+      "hi": 0.49,
+      "pPositive": 0.98,
+      "events": 74,
+      "days": 30
+     },
+     {
+      "bucket": "2–3 h",
+      "a": 0.2,
+      "b": 0.1,
+      "diff": 0.1,
+      "lo": -0.02,
+      "hi": 0.21,
+      "pPositive": 0.91,
+      "events": 79,
+      "days": 30
+     },
+     {
+      "bucket": "3–6 h",
+      "a": 0.16,
+      "b": 0.1,
+      "diff": 0.05,
+      "lo": -0.12,
+      "hi": 0.23,
+      "pPositive": 0.7,
+      "events": 79,
+      "days": 30
+     },
+     {
+      "bucket": "6–12 h",
+      "a": 0.31,
+      "b": 0.1,
+      "diff": 0.21,
+      "lo": 0.01,
+      "hi": 0.42,
+      "pPositive": 0.96,
+      "events": 79,
+      "days": 30
+     },
+     {
+      "bucket": "12–24 h",
+      "a": 0.13,
+      "b": 0.1,
+      "diff": 0.03,
+      "lo": -0.17,
+      "hi": 0.22,
+      "pPositive": 0.59,
+      "events": 79,
+      "days": 30
+     }
+    ]
+   }
+  },
+  "B": {
+   "satelliteByScanAge": [
+    {
+     "scanAgeMin": 20,
+     "appLead": "about 5 min",
+     "all": {
+      "rho": 0.28,
+      "lo": 0.12,
+      "hi": 0.44,
+      "pPositive": 1,
+      "events": 243,
+      "cams": 10,
+      "days": 31,
+      "pairsLoaded": 244,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.26
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.51
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.44
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.38
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.35
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.45
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.09
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.05
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.29
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.44
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     },
+     "sunrise": {
+      "rho": 0.4,
+      "lo": 0.19,
+      "hi": 0.57,
+      "pPositive": 1,
+      "events": 86,
+      "cams": 3,
+      "days": 31,
+      "pairsLoaded": 86,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.26
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.51
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.44
+       }
+      ]
+     },
+     "sunset": {
+      "rho": 0.22,
+      "lo": 0,
+      "hi": 0.42,
+      "pPositive": 0.95,
+      "events": 157,
+      "cams": 7,
+      "days": 27,
+      "pairsLoaded": 158,
+      "perCam": [
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.44
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.38
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.35
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.45
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.09
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.05
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.29
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     }
+    },
+    {
+     "scanAgeMin": 75,
+     "appLead": "60 min (today's opening)",
+     "all": {
+      "rho": 0.31,
+      "lo": 0.16,
+      "hi": 0.44,
+      "pPositive": 1,
+      "events": 243,
+      "cams": 10,
+      "days": 31,
+      "pairsLoaded": 244,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.22
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.74
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.24
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.42
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.03
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.34
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.34
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.38
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.43
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.4
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     },
+     "sunrise": {
+      "rho": 0.45,
+      "lo": 0.27,
+      "hi": 0.61,
+      "pPositive": 1,
+      "events": 86,
+      "cams": 3,
+      "days": 31,
+      "pairsLoaded": 86,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.22
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.74
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.4
+       }
+      ]
+     },
+     "sunset": {
+      "rho": 0.23,
+      "lo": 0.02,
+      "hi": 0.42,
+      "pPositive": 0.97,
+      "events": 157,
+      "cams": 7,
+      "days": 27,
+      "pairsLoaded": 158,
+      "perCam": [
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.24
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.42
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.03
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.34
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.34
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.38
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.43
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     }
+    },
+    {
+     "scanAgeMin": 105,
+     "appLead": "90 min",
+     "all": {
+      "rho": 0.29,
+      "lo": 0.1,
+      "hi": 0.46,
+      "pPositive": 1,
+      "events": 242,
+      "cams": 10,
+      "days": 31,
+      "pairsLoaded": 243,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.32
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.65
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.26
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.17
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.22
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.33
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.3
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.31
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.2
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 24,
+        "rho": 0.16
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     },
+     "sunrise": {
+      "rho": 0.39,
+      "lo": 0.19,
+      "hi": 0.56,
+      "pPositive": 1,
+      "events": 85,
+      "cams": 3,
+      "days": 31,
+      "pairsLoaded": 85,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.32
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.65
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 24,
+        "rho": 0.16
+       }
+      ]
+     },
+     "sunset": {
+      "rho": 0.23,
+      "lo": -0.02,
+      "hi": 0.46,
+      "pPositive": 0.93,
+      "events": 157,
+      "cams": 7,
+      "days": 27,
+      "pairsLoaded": 158,
+      "perCam": [
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.26
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.17
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.22
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.33
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.3
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.31
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.2
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     }
+    },
+    {
+     "scanAgeMin": 135,
+     "appLead": "120 min",
+     "all": {
+      "rho": 0.19,
+      "lo": 0.01,
+      "hi": 0.36,
+      "pPositive": 0.96,
+      "events": 243,
+      "cams": 10,
+      "days": 31,
+      "pairsLoaded": 244,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.18
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.62
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.13
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.24
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.24
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.32
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.14
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": -0.07
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.27
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.1
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     },
+     "sunrise": {
+      "rho": 0.31,
+      "lo": 0.09,
+      "hi": 0.5,
+      "pPositive": 0.99,
+      "events": 86,
+      "cams": 3,
+      "days": 31,
+      "pairsLoaded": 86,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.18
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.62
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.1
+       }
+      ]
+     },
+     "sunset": {
+      "rho": 0.13,
+      "lo": -0.1,
+      "hi": 0.35,
+      "pPositive": 0.81,
+      "events": 157,
+      "cams": 7,
+      "days": 27,
+      "pairsLoaded": 158,
+      "perCam": [
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.13
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.24
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.24
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.32
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.14
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": -0.07
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.27
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     }
+    },
+    {
+     "scanAgeMin": 195,
+     "appLead": "180 min",
+     "all": {
+      "rho": 0.19,
+      "lo": 0.03,
+      "hi": 0.34,
+      "pPositive": 0.97,
+      "events": 241,
+      "cams": 10,
+      "days": 31,
+      "pairsLoaded": 242,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.19
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 29,
+        "rho": 0.46
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.19
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.03
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.15
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.19
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.06
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.15
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.25
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.16
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     },
+     "sunrise": {
+      "rho": 0.27,
+      "lo": 0.07,
+      "hi": 0.46,
+      "pPositive": 0.99,
+      "events": 85,
+      "cams": 3,
+      "days": 31,
+      "pairsLoaded": 85,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.19
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 29,
+        "rho": 0.46
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.16
+       }
+      ]
+     },
+     "sunset": {
+      "rho": 0.15,
+      "lo": -0.06,
+      "hi": 0.35,
+      "pPositive": 0.86,
+      "events": 156,
+      "cams": 7,
+      "days": 27,
+      "pairsLoaded": 157,
+      "perCam": [
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.19
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.03
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.15
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.19
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.06
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.15
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.25
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     }
+    }
+   ],
+   "satelliteSameEvents": {
+    "events": 241,
+    "byScanAge": [
+     {
+      "scanAgeMin": 20,
+      "rho": 0.28,
+      "lo": 0.11,
+      "hi": 0.43,
+      "events": 240
+     },
+     {
+      "scanAgeMin": 75,
+      "rho": 0.31,
+      "lo": 0.15,
+      "hi": 0.44,
+      "events": 240
+     },
+     {
+      "scanAgeMin": 105,
+      "rho": 0.29,
+      "lo": 0.11,
+      "hi": 0.46,
+      "events": 240
+     },
+     {
+      "scanAgeMin": 135,
+      "rho": 0.19,
+      "lo": 0.01,
+      "hi": 0.36,
+      "events": 240
+     },
+     {
+      "scanAgeMin": 195,
+      "rho": 0.19,
+      "lo": 0.03,
+      "hi": 0.35,
+      "events": 240
+     }
+    ],
+    "vsAge75": [
+     {
+      "scanAgeMin": 20,
+      "all": {
+       "a": 0.28,
+       "b": 0.31,
+       "diff": -0.03,
+       "lo": -0.1,
+       "hi": 0.05,
+       "pPositive": 0.28,
+       "events": 243,
+       "days": 31
+      },
+      "sunrise": {
+       "a": 0.4,
+       "b": 0.45,
+       "diff": -0.06,
+       "lo": -0.16,
+       "hi": 0.04,
+       "pPositive": 0.19,
+       "events": 86,
+       "days": 31
+      },
+      "sunset": {
+       "a": 0.22,
+       "b": 0.23,
+       "diff": -0.01,
+       "lo": -0.12,
+       "hi": 0.09,
+       "pPositive": 0.41,
+       "events": 157,
+       "days": 27
+      }
+     },
+     {
+      "scanAgeMin": 105,
+      "all": {
+       "a": 0.29,
+       "b": 0.3,
+       "diff": -0.02,
+       "lo": -0.09,
+       "hi": 0.06,
+       "pPositive": 0.37,
+       "events": 242,
+       "days": 31
+      },
+      "sunrise": {
+       "a": 0.39,
+       "b": 0.44,
+       "diff": -0.05,
+       "lo": -0.21,
+       "hi": 0.11,
+       "pPositive": 0.31,
+       "events": 85,
+       "days": 31
+      },
+      "sunset": {
+       "a": 0.23,
+       "b": 0.23,
+       "diff": 0,
+       "lo": -0.13,
+       "hi": 0.12,
+       "pPositive": 0.51,
+       "events": 157,
+       "days": 27
+      }
+     },
+     {
+      "scanAgeMin": 135,
+      "all": {
+       "a": 0.19,
+       "b": 0.31,
+       "diff": -0.12,
+       "lo": -0.21,
+       "hi": -0.01,
+       "pPositive": 0.04,
+       "events": 243,
+       "days": 31
+      },
+      "sunrise": {
+       "a": 0.31,
+       "b": 0.45,
+       "diff": -0.15,
+       "lo": -0.31,
+       "hi": 0.02,
+       "pPositive": 0.07,
+       "events": 86,
+       "days": 31
+      },
+      "sunset": {
+       "a": 0.13,
+       "b": 0.23,
+       "diff": -0.1,
+       "lo": -0.26,
+       "hi": 0.06,
+       "pPositive": 0.15,
+       "events": 157,
+       "days": 27
+      }
+     },
+     {
+      "scanAgeMin": 195,
+      "all": {
+       "a": 0.19,
+       "b": 0.31,
+       "diff": -0.12,
+       "lo": -0.24,
+       "hi": 0,
+       "pPositive": 0.05,
+       "events": 241,
+       "days": 31
+      },
+      "sunrise": {
+       "a": 0.27,
+       "b": 0.45,
+       "diff": -0.18,
+       "lo": -0.35,
+       "hi": 0,
+       "pPositive": 0.05,
+       "events": 85,
+       "days": 31
+      },
+      "sunset": {
+       "a": 0.15,
+       "b": 0.24,
+       "diff": -0.09,
+       "lo": -0.25,
+       "hi": 0.07,
+       "pPositive": 0.17,
+       "events": 156,
+       "days": 27
+      }
+     }
+    ]
+   },
+   "forecastRuns": {
+    "late": {
+     "all": {
+      "rho": 0.25,
+      "lo": 0.1,
+      "hi": 0.38,
+      "pPositive": 1,
+      "events": 243,
+      "cams": 10,
+      "days": 31,
+      "pairsLoaded": 244,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.08
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.35
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.33
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.08
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.29
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.42
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.49
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.24
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.16
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.17
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     },
+     "sunrise": {
+      "rho": 0.2,
+      "lo": -0.04,
+      "hi": 0.41,
+      "pPositive": 0.92,
+      "events": 86,
+      "cams": 3,
+      "days": 31,
+      "pairsLoaded": 86,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.08
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.35
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.17
+       }
+      ]
+     },
+     "sunset": {
+      "rho": 0.28,
+      "lo": 0.07,
+      "hi": 0.46,
+      "pPositive": 0.99,
+      "events": 157,
+      "cams": 7,
+      "days": 27,
+      "pairsLoaded": 158,
+      "perCam": [
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.33
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.08
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.29
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.42
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.49
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.24
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.16
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     }
+    },
+    "early": {
+     "all": {
+      "rho": 0.32,
+      "lo": 0.19,
+      "hi": 0.43,
+      "pPositive": 1,
+      "events": 243,
+      "cams": 10,
+      "days": 31,
+      "pairsLoaded": 244,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.14
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.45
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.37
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.17
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.04
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.7
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.3
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.52
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.65
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.14
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     },
+     "sunrise": {
+      "rho": 0.25,
+      "lo": 0.07,
+      "hi": 0.41,
+      "pPositive": 0.99,
+      "events": 86,
+      "cams": 3,
+      "days": 31,
+      "pairsLoaded": 86,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.14
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.45
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.14
+       }
+      ]
+     },
+     "sunset": {
+      "rho": 0.37,
+      "lo": 0.21,
+      "hi": 0.5,
+      "pPositive": 1,
+      "events": 157,
+      "cams": 7,
+      "days": 27,
+      "pairsLoaded": 158,
+      "perCam": [
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.37
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.17
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.04
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.7
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.3
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.52
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.65
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     }
+    },
+    "lateRunHoursBeforeEvent": 5,
+    "checkAgainstStored": {
+     "events": 113,
+     "pearson": 0.76,
+     "meanAbsDiff": 6.32,
+     "sameBandShare": 0.84
+    }
+   },
+   "candidates2h": {
+    "note": "forecast = hourly forecast from the model run about 5 to 11 h before the event; satellite = the scan 135 min before the event (what the app holds 120 min out), carried forward; blend = the mean of the two scores",
+    "forecast": {
+     "all": {
+      "rho": 0.25,
+      "lo": 0.1,
+      "hi": 0.38,
+      "pPositive": 1,
+      "events": 243,
+      "cams": 10,
+      "days": 31,
+      "pairsLoaded": 244,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.08
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.35
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.33
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.08
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.29
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.42
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.49
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.24
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.16
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.17
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     },
+     "sunrise": {
+      "rho": 0.2,
+      "lo": -0.04,
+      "hi": 0.41,
+      "pPositive": 0.92,
+      "events": 86,
+      "cams": 3,
+      "days": 31,
+      "pairsLoaded": 86,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.08
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.35
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.17
+       }
+      ]
+     },
+     "sunset": {
+      "rho": 0.28,
+      "lo": 0.07,
+      "hi": 0.46,
+      "pPositive": 0.99,
+      "events": 157,
+      "cams": 7,
+      "days": 27,
+      "pairsLoaded": 158,
+      "perCam": [
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.33
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.08
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.29
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.42
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.49
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.24
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.16
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     }
+    },
+    "satellitePersistence": {
+     "all": {
+      "rho": 0.19,
+      "lo": 0.01,
+      "hi": 0.36,
+      "pPositive": 0.96,
+      "events": 243,
+      "cams": 10,
+      "days": 31,
+      "pairsLoaded": 244,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.18
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.62
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.13
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.24
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.24
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.32
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.14
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": -0.07
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.27
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.1
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     },
+     "sunrise": {
+      "rho": 0.31,
+      "lo": 0.09,
+      "hi": 0.5,
+      "pPositive": 0.99,
+      "events": 86,
+      "cams": 3,
+      "days": 31,
+      "pairsLoaded": 86,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.18
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.62
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.1
+       }
+      ]
+     },
+     "sunset": {
+      "rho": 0.13,
+      "lo": -0.1,
+      "hi": 0.35,
+      "pPositive": 0.81,
+      "events": 157,
+      "cams": 7,
+      "days": 27,
+      "pairsLoaded": 158,
+      "perCam": [
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.13
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.24
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.24
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.32
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.14
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": -0.07
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.27
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     }
+    },
+    "blend": {
+     "all": {
+      "rho": 0.32,
+      "lo": 0.18,
+      "hi": 0.45,
+      "pPositive": 1,
+      "events": 243,
+      "cams": 10,
+      "days": 31,
+      "pairsLoaded": 244,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.09
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.51
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.44
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.19
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.39
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.5
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.47
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.4
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.27
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.15
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     },
+     "sunrise": {
+      "rho": 0.26,
+      "lo": 0.03,
+      "hi": 0.45,
+      "pPositive": 0.97,
+      "events": 86,
+      "cams": 3,
+      "days": 31,
+      "pairsLoaded": 86,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 31,
+        "rho": 0.09
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.51
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.15
+       }
+      ]
+     },
+     "sunset": {
+      "rho": 0.36,
+      "lo": 0.14,
+      "hi": 0.54,
+      "pPositive": 1,
+      "events": 157,
+      "cams": 7,
+      "days": 27,
+      "pairsLoaded": 158,
+      "perCam": [
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 27,
+        "rho": 0.44
+       },
+       {
+        "cam": "pensacola-sria-west-cam",
+        "kind": "sunset",
+        "pairs": 13,
+        "rho": -0.19
+       },
+       {
+        "cam": "sunset-grille-marathon-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.39
+       },
+       {
+        "cam": "fort-zachary-taylor-cam",
+        "kind": "sunset",
+        "pairs": 18,
+        "rho": 0.5
+       },
+       {
+        "cam": "siesta-beach-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.47
+       },
+       {
+        "cam": "holmes-beach-cam",
+        "kind": "sunset",
+        "pairs": 24,
+        "rho": 0.4
+       },
+       {
+        "cam": "enco-shores-of-panama-cam",
+        "kind": "sunset",
+        "pairs": 25,
+        "rho": 0.27
+       },
+       {
+        "cam": "white-sands-ami-cam",
+        "kind": "sunset",
+        "pairs": 1,
+        "rho": null
+       }
+      ]
+     }
+    },
+    "storedForecastRow2to3h": {
+     "all": {
+      "rho": 0.17,
+      "lo": -0.03,
+      "hi": 0.36,
+      "pPositive": 0.92,
+      "events": 85,
+      "cams": 3,
+      "days": 30,
+      "pairsLoaded": 87,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": -0.06
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.43
+       },
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 2,
+        "rho": null
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.13
+       }
+      ]
+     },
+     "sunrise": {
+      "rho": 0.17,
+      "lo": -0.03,
+      "hi": 0.36,
+      "pPositive": 0.92,
+      "events": 85,
+      "cams": 3,
+      "days": 30,
+      "pairsLoaded": 85,
+      "perCam": [
+       {
+        "cam": "ftl-elbo-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": -0.06
+       },
+       {
+        "cam": "deerfield-beach-cam",
+        "kind": "sunrise",
+        "pairs": 30,
+        "rho": 0.43
+       },
+       {
+        "cam": "jax-beach-bw-cam",
+        "kind": "sunrise",
+        "pairs": 25,
+        "rho": 0.13
+       }
+      ]
+     },
+     "sunset": {
+      "rho": null,
+      "lo": null,
+      "hi": null,
+      "pPositive": null,
+      "events": 0,
+      "cams": 0,
+      "days": 2,
+      "pairsLoaded": 2,
+      "perCam": [
+       {
+        "cam": "fort-myers-beach-cam",
+        "kind": "sunset",
+        "pairs": 2,
+        "rho": null
+       }
+      ]
+     }
+    },
+    "reference": {
+     "at60min_satellite": {
+      "all": {
+       "rho": 0.31,
+       "lo": 0.16,
+       "hi": 0.44,
+       "pPositive": 1,
+       "events": 243,
+       "cams": 10,
+       "days": 31,
+       "pairsLoaded": 244,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 31,
+         "rho": 0.22
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.74
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 27,
+         "rho": 0.24
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 13,
+         "rho": -0.42
+        },
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 25,
+         "rho": 0.03
+        },
+        {
+         "cam": "fort-zachary-taylor-cam",
+         "kind": "sunset",
+         "pairs": 18,
+         "rho": 0.34
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 25,
+         "rho": 0.34
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.38
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 25,
+         "rho": 0.43
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": 0.4
+        },
+        {
+         "cam": "white-sands-ami-cam",
+         "kind": "sunset",
+         "pairs": 1,
+         "rho": null
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.45,
+       "lo": 0.27,
+       "hi": 0.61,
+       "pPositive": 1,
+       "events": 86,
+       "cams": 3,
+       "days": 31,
+       "pairsLoaded": 86,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 31,
+         "rho": 0.22
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.74
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": 0.4
+        }
+       ]
+      },
+      "sunset": {
+       "rho": 0.23,
+       "lo": 0.02,
+       "hi": 0.42,
+       "pPositive": 0.97,
+       "events": 157,
+       "cams": 7,
+       "days": 27,
+       "pairsLoaded": 158,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 27,
+         "rho": 0.24
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 13,
+         "rho": -0.42
+        },
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 25,
+         "rho": 0.03
+        },
+        {
+         "cam": "fort-zachary-taylor-cam",
+         "kind": "sunset",
+         "pairs": 18,
+         "rho": 0.34
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 25,
+         "rho": 0.34
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.38
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 25,
+         "rho": 0.43
+        },
+        {
+         "cam": "white-sands-ami-cam",
+         "kind": "sunset",
+         "pairs": 1,
+         "rho": null
+        }
+       ]
+      }
+     },
+     "at5min_satellite": {
+      "all": {
+       "rho": 0.28,
+       "lo": 0.12,
+       "hi": 0.44,
+       "pPositive": 1,
+       "events": 243,
+       "cams": 10,
+       "days": 31,
+       "pairsLoaded": 244,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 31,
+         "rho": 0.26
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.51
+        },
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 27,
+         "rho": 0.44
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 13,
+         "rho": -0.38
+        },
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 25,
+         "rho": 0.35
+        },
+        {
+         "cam": "fort-zachary-taylor-cam",
+         "kind": "sunset",
+         "pairs": 18,
+         "rho": 0.45
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 25,
+         "rho": 0.09
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.05
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 25,
+         "rho": 0.29
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": 0.44
+        },
+        {
+         "cam": "white-sands-ami-cam",
+         "kind": "sunset",
+         "pairs": 1,
+         "rho": null
+        }
+       ]
+      },
+      "sunrise": {
+       "rho": 0.4,
+       "lo": 0.19,
+       "hi": 0.57,
+       "pPositive": 1,
+       "events": 86,
+       "cams": 3,
+       "days": 31,
+       "pairsLoaded": 86,
+       "perCam": [
+        {
+         "cam": "ftl-elbo-beach-cam",
+         "kind": "sunrise",
+         "pairs": 31,
+         "rho": 0.26
+        },
+        {
+         "cam": "deerfield-beach-cam",
+         "kind": "sunrise",
+         "pairs": 30,
+         "rho": 0.51
+        },
+        {
+         "cam": "jax-beach-bw-cam",
+         "kind": "sunrise",
+         "pairs": 25,
+         "rho": 0.44
+        }
+       ]
+      },
+      "sunset": {
+       "rho": 0.22,
+       "lo": 0,
+       "hi": 0.42,
+       "pPositive": 0.95,
+       "events": 157,
+       "cams": 7,
+       "days": 27,
+       "pairsLoaded": 158,
+       "perCam": [
+        {
+         "cam": "fort-myers-beach-cam",
+         "kind": "sunset",
+         "pairs": 27,
+         "rho": 0.44
+        },
+        {
+         "cam": "pensacola-sria-west-cam",
+         "kind": "sunset",
+         "pairs": 13,
+         "rho": -0.38
+        },
+        {
+         "cam": "sunset-grille-marathon-cam",
+         "kind": "sunset",
+         "pairs": 25,
+         "rho": 0.35
+        },
+        {
+         "cam": "fort-zachary-taylor-cam",
+         "kind": "sunset",
+         "pairs": 18,
+         "rho": 0.45
+        },
+        {
+         "cam": "siesta-beach-cam",
+         "kind": "sunset",
+         "pairs": 25,
+         "rho": 0.09
+        },
+        {
+         "cam": "holmes-beach-cam",
+         "kind": "sunset",
+         "pairs": 24,
+         "rho": 0.05
+        },
+        {
+         "cam": "enco-shores-of-panama-cam",
+         "kind": "sunset",
+         "pairs": 25,
+         "rho": 0.29
+        },
+        {
+         "cam": "white-sands-ami-cam",
+         "kind": "sunset",
+         "pairs": 1,
+         "rho": null
+        }
+       ]
+      }
+     }
+    },
+    "paired": {
+     "all": {
+      "satellite_minus_forecast": {
+       "a": 0.19,
+       "b": 0.25,
+       "diff": -0.06,
+       "lo": -0.23,
+       "hi": 0.09,
+       "pPositive": 0.28,
+       "events": 243,
+       "days": 31
+      },
+      "blend_minus_forecast": {
+       "a": 0.32,
+       "b": 0.25,
+       "diff": 0.07,
+       "lo": 0,
+       "hi": 0.13,
+       "pPositive": 0.95,
+       "events": 243,
+       "days": 31
+      },
+      "blend_minus_satellite": {
+       "a": 0.32,
+       "b": 0.19,
+       "diff": 0.13,
+       "lo": 0.01,
+       "hi": 0.26,
+       "pPositive": 0.97,
+       "events": 243,
+       "days": 31
+      },
+      "satellite120_minus_satellite60": {
+       "a": 0.19,
+       "b": 0.31,
+       "diff": -0.12,
+       "lo": -0.21,
+       "hi": -0.01,
+       "pPositive": 0.04,
+       "events": 243,
+       "days": 31
+      },
+      "blend120_minus_satellite60": {
+       "a": 0.32,
+       "b": 0.31,
+       "diff": 0.01,
+       "lo": -0.09,
+       "hi": 0.13,
+       "pPositive": 0.58,
+       "events": 243,
+       "days": 31
+      },
+      "forecast_minus_satellite60": {
+       "a": 0.25,
+       "b": 0.31,
+       "diff": -0.06,
+       "lo": -0.18,
+       "hi": 0.09,
+       "pPositive": 0.24,
+       "events": 243,
+       "days": 31
+      },
+      "satellite60_minus_satellite5": {
+       "a": 0.31,
+       "b": 0.28,
+       "diff": 0.03,
+       "lo": -0.05,
+       "hi": 0.1,
+       "pPositive": 0.72,
+       "events": 243,
+       "days": 31
+      }
+     },
+     "sunrise": {
+      "satellite_minus_forecast": {
+       "a": 0.31,
+       "b": 0.2,
+       "diff": 0.11,
+       "lo": -0.11,
+       "hi": 0.32,
+       "pPositive": 0.8,
+       "events": 86,
+       "days": 31
+      },
+      "blend_minus_forecast": {
+       "a": 0.26,
+       "b": 0.2,
+       "diff": 0.06,
+       "lo": -0.08,
+       "hi": 0.19,
+       "pPositive": 0.74,
+       "events": 86,
+       "days": 31
+      },
+      "blend_minus_satellite": {
+       "a": 0.26,
+       "b": 0.31,
+       "diff": -0.05,
+       "lo": -0.17,
+       "hi": 0.06,
+       "pPositive": 0.25,
+       "events": 86,
+       "days": 31
+      },
+      "satellite120_minus_satellite60": {
+       "a": 0.31,
+       "b": 0.45,
+       "diff": -0.15,
+       "lo": -0.31,
+       "hi": 0.02,
+       "pPositive": 0.07,
+       "events": 86,
+       "days": 31
+      },
+      "blend120_minus_satellite60": {
+       "a": 0.26,
+       "b": 0.45,
+       "diff": -0.2,
+       "lo": -0.38,
+       "hi": 0,
+       "pPositive": 0.05,
+       "events": 86,
+       "days": 31
+      },
+      "forecast_minus_satellite60": {
+       "a": 0.2,
+       "b": 0.45,
+       "diff": -0.25,
+       "lo": -0.48,
+       "hi": -0.03,
+       "pPositive": 0.03,
+       "events": 86,
+       "days": 31
+      },
+      "satellite60_minus_satellite5": {
+       "a": 0.45,
+       "b": 0.4,
+       "diff": 0.06,
+       "lo": -0.04,
+       "hi": 0.16,
+       "pPositive": 0.81,
+       "events": 86,
+       "days": 31
+      }
+     },
+     "sunset": {
+      "satellite_minus_forecast": {
+       "a": 0.13,
+       "b": 0.28,
+       "diff": -0.15,
+       "lo": -0.38,
+       "hi": 0.06,
+       "pPositive": 0.12,
+       "events": 157,
+       "days": 27
+      },
+      "blend_minus_forecast": {
+       "a": 0.36,
+       "b": 0.28,
+       "diff": 0.08,
+       "lo": 0,
+       "hi": 0.15,
+       "pPositive": 0.95,
+       "events": 157,
+       "days": 27
+      },
+      "blend_minus_satellite": {
+       "a": 0.36,
+       "b": 0.13,
+       "diff": 0.23,
+       "lo": 0.05,
+       "hi": 0.41,
+       "pPositive": 0.98,
+       "events": 157,
+       "days": 27
+      },
+      "satellite120_minus_satellite60": {
+       "a": 0.13,
+       "b": 0.23,
+       "diff": -0.1,
+       "lo": -0.26,
+       "hi": 0.06,
+       "pPositive": 0.15,
+       "events": 157,
+       "days": 27
+      },
+      "blend120_minus_satellite60": {
+       "a": 0.36,
+       "b": 0.23,
+       "diff": 0.13,
+       "lo": -0.04,
+       "hi": 0.31,
+       "pPositive": 0.9,
+       "events": 157,
+       "days": 27
+      },
+      "forecast_minus_satellite60": {
+       "a": 0.28,
+       "b": 0.23,
+       "diff": 0.05,
+       "lo": -0.12,
+       "hi": 0.24,
+       "pPositive": 0.67,
+       "events": 157,
+       "days": 27
+      },
+      "satellite60_minus_satellite5": {
+       "a": 0.23,
+       "b": 0.22,
+       "diff": 0.01,
+       "lo": -0.09,
+       "hi": 0.12,
+       "pPositive": 0.59,
+       "events": 157,
+       "days": 27
+      }
+     }
+    },
+    "blendWeightSweep": [
+     {
+      "satelliteWeight": 0,
+      "rho": 0.25
+     },
+     {
+      "satelliteWeight": 0.25,
+      "rho": 0.28
+     },
+     {
+      "satelliteWeight": 0.5,
+      "rho": 0.32
+     },
+     {
+      "satelliteWeight": 0.75,
+      "rho": 0.25
+     },
+     {
+      "satelliteWeight": 1,
+      "rho": 0.19
+     }
+    ]
+   },
+   "inputBlend": {
+    "all": {
+     "rho": 0.24,
+     "lo": 0.06,
+     "hi": 0.39,
+     "pPositive": 0.99,
+     "events": 243,
+     "cams": 10,
+     "days": 31,
+     "pairsLoaded": 244,
+     "perCam": [
+      {
+       "cam": "ftl-elbo-beach-cam",
+       "kind": "sunrise",
+       "pairs": 31,
+       "rho": 0.19
+      },
+      {
+       "cam": "deerfield-beach-cam",
+       "kind": "sunrise",
+       "pairs": 30,
+       "rho": 0.36
+      },
+      {
+       "cam": "fort-myers-beach-cam",
+       "kind": "sunset",
+       "pairs": 27,
+       "rho": 0.03
+      },
+      {
+       "cam": "pensacola-sria-west-cam",
+       "kind": "sunset",
+       "pairs": 13,
+       "rho": -0.51
+      },
+      {
+       "cam": "sunset-grille-marathon-cam",
+       "kind": "sunset",
+       "pairs": 25,
+       "rho": 0.43
+      },
+      {
+       "cam": "fort-zachary-taylor-cam",
+       "kind": "sunset",
+       "pairs": 18,
+       "rho": 0.36
+      },
+      {
+       "cam": "siesta-beach-cam",
+       "kind": "sunset",
+       "pairs": 25,
+       "rho": 0.36
+      },
+      {
+       "cam": "holmes-beach-cam",
+       "kind": "sunset",
+       "pairs": 24,
+       "rho": 0.43
+      },
+      {
+       "cam": "enco-shores-of-panama-cam",
+       "kind": "sunset",
+       "pairs": 25,
+       "rho": 0.19
+      },
+      {
+       "cam": "jax-beach-bw-cam",
+       "kind": "sunrise",
+       "pairs": 25,
+       "rho": 0.2
+      },
+      {
+       "cam": "white-sands-ami-cam",
+       "kind": "sunset",
+       "pairs": 1,
+       "rho": null
+      }
+     ]
+    },
+    "sunrise": {
+     "rho": 0.25,
+     "lo": 0.04,
+     "hi": 0.45,
+     "pPositive": 0.97,
+     "events": 86,
+     "cams": 3,
+     "days": 31,
+     "pairsLoaded": 86,
+     "perCam": [
+      {
+       "cam": "ftl-elbo-beach-cam",
+       "kind": "sunrise",
+       "pairs": 31,
+       "rho": 0.19
+      },
+      {
+       "cam": "deerfield-beach-cam",
+       "kind": "sunrise",
+       "pairs": 30,
+       "rho": 0.36
+      },
+      {
+       "cam": "jax-beach-bw-cam",
+       "kind": "sunrise",
+       "pairs": 25,
+       "rho": 0.2
+      }
+     ]
+    },
+    "sunset": {
+     "rho": 0.23,
+     "lo": 0.01,
+     "hi": 0.43,
+     "pPositive": 0.96,
+     "events": 157,
+     "cams": 7,
+     "days": 27,
+     "pairsLoaded": 158,
+     "perCam": [
+      {
+       "cam": "fort-myers-beach-cam",
+       "kind": "sunset",
+       "pairs": 27,
+       "rho": 0.03
+      },
+      {
+       "cam": "pensacola-sria-west-cam",
+       "kind": "sunset",
+       "pairs": 13,
+       "rho": -0.51
+      },
+      {
+       "cam": "sunset-grille-marathon-cam",
+       "kind": "sunset",
+       "pairs": 25,
+       "rho": 0.43
+      },
+      {
+       "cam": "fort-zachary-taylor-cam",
+       "kind": "sunset",
+       "pairs": 18,
+       "rho": 0.36
+      },
+      {
+       "cam": "siesta-beach-cam",
+       "kind": "sunset",
+       "pairs": 25,
+       "rho": 0.36
+      },
+      {
+       "cam": "holmes-beach-cam",
+       "kind": "sunset",
+       "pairs": 24,
+       "rho": 0.43
+      },
+      {
+       "cam": "enco-shores-of-panama-cam",
+       "kind": "sunset",
+       "pairs": 25,
+       "rho": 0.19
+      },
+      {
+       "cam": "white-sands-ami-cam",
+       "kind": "sunset",
+       "pairs": 1,
+       "rho": null
+      }
+     ]
+    },
+    "minusScoreBlend": {
+     "a": 0.24,
+     "b": 0.32,
+     "diff": -0.09,
+     "lo": -0.19,
+     "hi": 0.02,
+     "pPositive": 0.08,
+     "events": 243,
+     "days": 31
+    }
+   },
+   "noSweetSpot": {
+    "satelliteByScanAge": [
+     {
+      "scanAgeMin": 20,
+      "rho": 0.39,
+      "lo": 0.25,
+      "hi": 0.53,
+      "events": 243
+     },
+     {
+      "scanAgeMin": 75,
+      "rho": 0.42,
+      "lo": 0.27,
+      "hi": 0.55,
+      "events": 243
+     },
+     {
+      "scanAgeMin": 105,
+      "rho": 0.43,
+      "lo": 0.28,
+      "hi": 0.55,
+      "events": 242
+     },
+     {
+      "scanAgeMin": 135,
+      "rho": 0.36,
+      "lo": 0.2,
+      "hi": 0.5,
+      "events": 243
+     },
+     {
+      "scanAgeMin": 195,
+      "rho": 0.37,
+      "lo": 0.19,
+      "hi": 0.51,
+      "events": 241
+     }
+    ],
+    "forecast": {
+     "rho": 0.33,
+     "lo": 0.19,
+     "hi": 0.45,
+     "events": 243
+    },
+    "blend120": {
+     "rho": 0.37,
+     "lo": 0.22,
+     "hi": 0.5,
+     "events": 243
+    },
+    "blend120_minus_satellite60": {
+     "a": 0.37,
+     "b": 0.42,
+     "diff": -0.05,
+     "lo": -0.12,
+     "hi": 0.03,
+     "pPositive": 0.15,
+     "events": 243,
+     "days": 31
+    },
+    "satellite120_minus_satellite60": {
+     "a": 0.36,
+     "b": 0.42,
+     "diff": -0.06,
+     "lo": -0.12,
+     "hi": 0,
+     "pPositive": 0.05,
+     "events": 243,
+     "days": 31
+    },
+    "blend_minus_forecast": {
+     "a": 0.37,
+     "b": 0.33,
+     "diff": 0.05,
+     "lo": 0,
+     "hi": 0.09,
+     "pPositive": 0.96,
+     "events": 243,
+     "days": 31
+    },
+    "blend_minus_satellite": {
+     "a": 0.37,
+     "b": 0.36,
+     "diff": 0.01,
+     "lo": -0.05,
+     "hi": 0.07,
+     "pPositive": 0.61,
+     "events": 243,
+     "days": 31
+    }
+   },
+   "allCams": {
+    "satellite5min": {
+     "rho": 0.29,
+     "lo": 0.12,
+     "hi": 0.44,
+     "events": 393,
+     "cams": 16
+    },
+    "satellite60min": {
+     "rho": 0.29,
+     "lo": 0.15,
+     "hi": 0.43,
+     "events": 393,
+     "cams": 16
+    },
+    "satellite120min": {
+     "rho": 0.22,
+     "lo": 0.05,
+     "hi": 0.37,
+     "events": 393,
+     "cams": 16
+    },
+    "forecast": {
+     "rho": 0.2,
+     "lo": 0.07,
+     "hi": 0.31,
+     "events": 393,
+     "cams": 16
+    },
+    "blend120min": {
+     "rho": 0.28,
+     "lo": 0.14,
+     "hi": 0.41,
+     "events": 393,
+     "cams": 16
+    }
+   }
+  },
+  "outlook": {
+   "note": "the forecast's score cut at 45 (Good or better against Fair or Poor), against each event's percentile on its own cam",
+   "stored6to12h": {
+    "events": 235,
+    "saidGoodOrBetter": {
+     "events": 136,
+     "meanCamPercentile": 0.57
+    },
+    "saidFairOrPoor": {
+     "events": 99,
+     "meanCamPercentile": 0.43,
+     "inCamsBottomThird": 0.44
+    },
+    "difference": {
+     "diff": 0.14,
+     "lo": 0.05,
+     "hi": 0.23,
+     "pPositive": 1
+    }
+   },
+   "stored12to24h": {
+    "events": 235,
+    "saidGoodOrBetter": {
+     "events": 122,
+     "meanCamPercentile": 0.56
+    },
+    "saidFairOrPoor": {
+     "events": 113,
+     "meanCamPercentile": 0.45,
+     "inCamsBottomThird": 0.4
+    },
+    "difference": {
+     "diff": 0.11,
+     "lo": 0.03,
+     "hi": 0.17,
+     "pPositive": 0.99
+    }
+   },
+   "rebuiltRun5to11hBefore": {
+    "events": 243,
+    "saidGoodOrBetter": {
+     "events": 163,
+     "meanCamPercentile": 0.56
+    },
+    "saidFairOrPoor": {
+     "events": 80,
+     "meanCamPercentile": 0.38,
+     "inCamsBottomThird": 0.54
+    },
+    "difference": {
+     "diff": 0.17,
+     "lo": 0.1,
+     "hi": 0.24,
+     "pPositive": 1
+    }
+   },
+   "rebuiltRun11to17hBefore": {
+    "events": 243,
+    "saidGoodOrBetter": {
+     "events": 138,
+     "meanCamPercentile": 0.56
+    },
+    "saidFairOrPoor": {
+     "events": 105,
+     "meanCamPercentile": 0.41,
+     "inCamsBottomThird": 0.49
+    },
+    "difference": {
+     "diff": 0.15,
+     "lo": 0.07,
+     "hi": 0.23,
+     "pPositive": 1
+    }
+   },
+   "earlyLook120min": {
+    "events": 243,
+    "saidGoodOrBetter": {
+     "events": 188,
+     "meanCamPercentile": 0.54
+    },
+    "saidFairOrPoor": {
+     "events": 55,
+     "meanCamPercentile": 0.35,
+     "inCamsBottomThird": 0.6
+    },
+    "difference": {
+     "diff": 0.2,
+     "lo": 0.08,
+     "hi": 0.3,
+     "pPositive": 1
+    }
+   },
+   "satellite60min": {
+    "events": 243,
+    "saidGoodOrBetter": {
+     "events": 191,
+     "meanCamPercentile": 0.56
+    },
+    "saidFairOrPoor": {
+     "events": 52,
+     "meanCamPercentile": 0.29,
+     "inCamsBottomThird": 0.67
+    },
+    "difference": {
+     "diff": 0.27,
+     "lo": 0.17,
+     "hi": 0.37,
+     "pPositive": 1
+    }
+   }
+  },
+  "stability": {
+   "stored": {
+    "all": {
+     "2–3 h → 60–90 min": {
+      "n": 681,
+      "medianAbs": 0,
+      "meanAbs": 5.02,
+      "p90Abs": 18,
+      "bandChangeShare": 0.12,
+      "move15Share": 0.11,
+      "twoBandShare": 0.03
+     },
+     "60–90 min → 0–30 min": {
+      "n": 511,
+      "medianAbs": 4,
+      "meanAbs": 11.9,
+      "p90Abs": 40,
+      "bandChangeShare": 0.3,
+      "move15Share": 0.28,
+      "twoBandShare": 0.09
+     },
+     "2–3 h → 0–30 min": {
+      "n": 472,
+      "medianAbs": 4,
+      "meanAbs": 12.64,
+      "p90Abs": 40,
+      "bandChangeShare": 0.32,
+      "move15Share": 0.3,
+      "twoBandShare": 0.11
+     }
+    },
+    "sunrise": {
+     "2–3 h → 60–90 min": {
+      "n": 606,
+      "medianAbs": 0,
+      "meanAbs": 5.02,
+      "p90Abs": 19,
+      "bandChangeShare": 0.12,
+      "move15Share": 0.11,
+      "twoBandShare": 0.03
+     },
+     "60–90 min → 0–30 min": {
+      "n": 423,
+      "medianAbs": 5,
+      "meanAbs": 12.13,
+      "p90Abs": 39,
+      "bandChangeShare": 0.3,
+      "move15Share": 0.28,
+      "twoBandShare": 0.09
+     },
+     "2–3 h → 0–30 min": {
+      "n": 407,
+      "medianAbs": 5,
+      "meanAbs": 12.98,
+      "p90Abs": 40.4,
+      "bandChangeShare": 0.32,
+      "move15Share": 0.31,
+      "twoBandShare": 0.11
+     }
+    },
+    "sunset": {
+     "2–3 h → 60–90 min": {
+      "n": 75,
+      "medianAbs": 0,
+      "meanAbs": 5,
+      "p90Abs": 15.4,
+      "bandChangeShare": 0.16,
+      "move15Share": 0.11,
+      "twoBandShare": 0.03
+     },
+     "60–90 min → 0–30 min": {
+      "n": 88,
+      "medianAbs": 1,
+      "meanAbs": 10.81,
+      "p90Abs": 40.9,
+      "bandChangeShare": 0.28,
+      "move15Share": 0.26,
+      "twoBandShare": 0.07
+     },
+     "2–3 h → 0–30 min": {
+      "n": 65,
+      "medianAbs": 2,
+      "meanAbs": 10.49,
+      "p90Abs": 39.2,
+      "bandChangeShare": 0.32,
+      "move15Share": 0.22,
+      "twoBandShare": 0.09
+     }
+    }
+   },
+   "rebuilt": {
+    "all": {
+     "today: satellite at 60 min → at 5 min": {
+      "n": 274,
+      "medianAbs": 1,
+      "meanAbs": 5.04,
+      "p90Abs": 15,
+      "bandChangeShare": 0.22,
+      "move15Share": 0.11,
+      "twoBandShare": 0.02
+     },
+     "satellite at 120 min → at 60 min": {
+      "n": 274,
+      "medianAbs": 1,
+      "meanAbs": 6.34,
+      "p90Abs": 22,
+      "bandChangeShare": 0.22,
+      "move15Share": 0.16,
+      "twoBandShare": 0.06
+     },
+     "satellite at 120 min → at 5 min": {
+      "n": 274,
+      "medianAbs": 2,
+      "meanAbs": 6.9,
+      "p90Abs": 23.7,
+      "bandChangeShare": 0.27,
+      "move15Share": 0.16,
+      "twoBandShare": 0.06
+     },
+     "forecast at 120 min → satellite at 60 min": {
+      "n": 274,
+      "medianAbs": 4,
+      "meanAbs": 11.92,
+      "p90Abs": 38,
+      "bandChangeShare": 0.34,
+      "move15Share": 0.31,
+      "twoBandShare": 0.08
+     },
+     "forecast at 120 min → satellite at 5 min": {
+      "n": 274,
+      "medianAbs": 6,
+      "meanAbs": 12.41,
+      "p90Abs": 38,
+      "bandChangeShare": 0.36,
+      "move15Share": 0.3,
+      "twoBandShare": 0.09
+     },
+     "blend at 120 min → satellite at 60 min": {
+      "n": 274,
+      "medianAbs": 3,
+      "meanAbs": 7.58,
+      "p90Abs": 22,
+      "bandChangeShare": 0.26,
+      "move15Share": 0.22,
+      "twoBandShare": 0.03
+     },
+     "blend at 120 min → satellite at 5 min": {
+      "n": 274,
+      "medianAbs": 4,
+      "meanAbs": 8.13,
+      "p90Abs": 22.7,
+      "bandChangeShare": 0.32,
+      "move15Share": 0.2,
+      "twoBandShare": 0.03
+     },
+     "satellite at 180 min → at 5 min": {
+      "n": 271,
+      "medianAbs": 2,
+      "meanAbs": 7.53,
+      "p90Abs": 21,
+      "bandChangeShare": 0.27,
+      "move15Share": 0.19,
+      "twoBandShare": 0.04
+     }
+    },
+    "sunrise": {
+     "today: satellite at 60 min → at 5 min": {
+      "n": 116,
+      "medianAbs": 3,
+      "meanAbs": 5.09,
+      "p90Abs": 13,
+      "bandChangeShare": 0.18,
+      "move15Share": 0.08,
+      "twoBandShare": 0.03
+     },
+     "satellite at 120 min → at 60 min": {
+      "n": 116,
+      "medianAbs": 2,
+      "meanAbs": 6.42,
+      "p90Abs": 20.5,
+      "bandChangeShare": 0.18,
+      "move15Share": 0.13,
+      "twoBandShare": 0.03
+     },
+     "satellite at 120 min → at 5 min": {
+      "n": 116,
+      "medianAbs": 4,
+      "meanAbs": 7.2,
+      "p90Abs": 23.5,
+      "bandChangeShare": 0.26,
+      "move15Share": 0.17,
+      "twoBandShare": 0.05
+     },
+     "forecast at 120 min → satellite at 60 min": {
+      "n": 116,
+      "medianAbs": 5.5,
+      "meanAbs": 12.16,
+      "p90Abs": 37,
+      "bandChangeShare": 0.34,
+      "move15Share": 0.28,
+      "twoBandShare": 0.07
+     },
+     "forecast at 120 min → satellite at 5 min": {
+      "n": 116,
+      "medianAbs": 7,
+      "meanAbs": 11.24,
+      "p90Abs": 31,
+      "bandChangeShare": 0.34,
+      "move15Share": 0.27,
+      "twoBandShare": 0.04
+     },
+     "blend at 120 min → satellite at 60 min": {
+      "n": 116,
+      "medianAbs": 4,
+      "meanAbs": 7.8,
+      "p90Abs": 23,
+      "bandChangeShare": 0.24,
+      "move15Share": 0.2,
+      "twoBandShare": 0.03
+     },
+     "blend at 120 min → satellite at 5 min": {
+      "n": 116,
+      "medianAbs": 4,
+      "meanAbs": 7.54,
+      "p90Abs": 18,
+      "bandChangeShare": 0.3,
+      "move15Share": 0.17,
+      "twoBandShare": 0.02
+     },
+     "satellite at 180 min → at 5 min": {
+      "n": 114,
+      "medianAbs": 4,
+      "meanAbs": 7.46,
+      "p90Abs": 20.7,
+      "bandChangeShare": 0.24,
+      "move15Share": 0.19,
+      "twoBandShare": 0.02
+     }
+    },
+    "sunset": {
+     "today: satellite at 60 min → at 5 min": {
+      "n": 158,
+      "medianAbs": 0,
+      "meanAbs": 5,
+      "p90Abs": 18,
+      "bandChangeShare": 0.25,
+      "move15Share": 0.14,
+      "twoBandShare": 0.02
+     },
+     "satellite at 120 min → at 60 min": {
+      "n": 158,
+      "medianAbs": 0,
+      "meanAbs": 6.28,
+      "p90Abs": 22.3,
+      "bandChangeShare": 0.25,
+      "move15Share": 0.18,
+      "twoBandShare": 0.08
+     },
+     "satellite at 120 min → at 5 min": {
+      "n": 158,
+      "medianAbs": 1,
+      "meanAbs": 6.68,
+      "p90Abs": 22.6,
+      "bandChangeShare": 0.28,
+      "move15Share": 0.15,
+      "twoBandShare": 0.07
+     },
+     "forecast at 120 min → satellite at 60 min": {
+      "n": 158,
+      "medianAbs": 2,
+      "meanAbs": 11.75,
+      "p90Abs": 38,
+      "bandChangeShare": 0.34,
+      "move15Share": 0.32,
+      "twoBandShare": 0.08
+     },
+     "forecast at 120 min → satellite at 5 min": {
+      "n": 158,
+      "medianAbs": 4.5,
+      "meanAbs": 13.27,
+      "p90Abs": 43,
+      "bandChangeShare": 0.38,
+      "move15Share": 0.33,
+      "twoBandShare": 0.13
+     },
+     "blend at 120 min → satellite at 60 min": {
+      "n": 158,
+      "medianAbs": 2,
+      "meanAbs": 7.41,
+      "p90Abs": 22,
+      "bandChangeShare": 0.27,
+      "move15Share": 0.23,
+      "twoBandShare": 0.03
+     },
+     "blend at 120 min → satellite at 5 min": {
+      "n": 158,
+      "medianAbs": 3,
+      "meanAbs": 8.56,
+      "p90Abs": 26.3,
+      "bandChangeShare": 0.34,
+      "move15Share": 0.22,
+      "twoBandShare": 0.04
+     },
+     "satellite at 180 min → at 5 min": {
+      "n": 157,
+      "medianAbs": 1,
+      "meanAbs": 7.58,
+      "p90Abs": 21.4,
+      "bandChangeShare": 0.29,
+      "move15Share": 0.19,
+      "twoBandShare": 0.06
+     }
+    }
+   }
+  }
+ },
+ "tune": {
+  "model": "2026-11-11.1",
+  "input": "satellite read from the scan 20 min before the event",
+  "events": 244,
+  "days": 31,
+  "cams": 11,
+  "split": {
+   "firstHalf": "2026-10-06 to 2026-10-27",
+   "secondHalf": "2026-10-28 to 2026-11-11"
+  },
+  "parametricCopyMatchesLiveModel": {
+   "inputs": 244,
+   "same": 244
+  },
+  "shippedParams": {
+   "c0": 62,
+   "tail": 60,
+   "ovcStart": 60,
+   "ovcFloor": 0.45,
+   "pathFloor": 0.75,
+   "floor": "max"
+  },
+  "shipped": {
+   "all": {
+    "rho": 0.28,
+    "lo": 0.12,
+    "hi": 0.44,
+    "events": 243,
+    "cams": 10,
+    "days": 31
+   },
+   "sunrise": {
+    "rho": 0.4,
+    "lo": 0.2,
+    "hi": 0.56,
+    "events": 86,
+    "cams": 3,
+    "days": 31
+   },
+   "sunset": {
+    "rho": 0.22,
+    "lo": 0,
+    "hi": 0.42,
+    "events": 157,
+    "cams": 7,
+    "days": 27
+   },
+   "firstHalf": {
+    "rho": 0.25,
+    "lo": 0.09,
+    "hi": 0.4,
+    "events": 118,
+    "cams": 10,
+    "days": 16
+   },
+   "secondHalf": {
+    "rho": 0.31,
+    "lo": 0.03,
+    "hi": 0.55,
+    "events": 114,
+    "cams": 8,
+    "days": 15
+   },
+   "afterItShipped": {
+    "rho": null,
+    "lo": null,
+    "hi": null,
+    "events": 0,
+    "cams": 0,
+    "days": 6,
+    "pairs": 47,
+    "note": "per-cam minimum is 8 pairs; with 6 days no cam reaches it"
+   },
+   "afterItShippedPooledRanks": {
+    "rho": 0.15,
+    "lo": -0.04,
+    "hi": 0.39,
+    "events": 47,
+    "days": 6
+   }
+  },
+  "skyTypes": {
+   "note": "mean of each event's percentile on its own cam (0 = that cam's dullest, 1 = its best); 0.5 is average",
+   "all": [
+    {
+     "sky": "clear (total < 15%)",
+     "events": 110,
+     "days": 25,
+     "meanCamPercentile": 0.62,
+     "lo": 0.56,
+     "hi": 0.66,
+     "meanModelScore": 65.2
+    },
+    {
+     "sky": "thin mid/high (under 20%)",
+     "events": 8,
+     "days": 8,
+     "meanCamPercentile": 0.46,
+     "lo": 0.34,
+     "hi": 0.61,
+     "meanModelScore": 72
+    },
+    {
+     "sky": "low cloud, little above",
+     "events": 46,
+     "days": 20,
+     "meanCamPercentile": 0.49,
+     "lo": 0.43,
+     "hi": 0.54,
+     "meanModelScore": 64.02
+    },
+    {
+     "sky": "sweet spot (20–70% mid/high, total ≤ 60%)",
+     "events": 7,
+     "days": 4,
+     "meanCamPercentile": 0.29,
+     "lo": 0.14,
+     "hi": 0.35,
+     "meanModelScore": 86.86
+    },
+    {
+     "sky": "heavy mid/high (total 60–90%, or mid/high > 70%)",
+     "events": 13,
+     "days": 9,
+     "meanCamPercentile": 0.51,
+     "lo": 0.4,
+     "hi": 0.63,
+     "meanModelScore": 68
+    },
+    {
+     "sky": "solid deck (total ≥ 90%)",
+     "events": 59,
+     "days": 20,
+     "meanCamPercentile": 0.32,
+     "lo": 0.24,
+     "hi": 0.41,
+     "meanModelScore": 32.81
+    }
+   ],
+   "sunrise": [
+    {
+     "sky": "clear (total < 15%)",
+     "events": 27,
+     "days": 16,
+     "meanCamPercentile": 0.71,
+     "lo": 0.64,
+     "hi": 0.77,
+     "meanModelScore": 64.52
+    },
+    {
+     "sky": "thin mid/high (under 20%)",
+     "events": 1,
+     "days": 1,
+     "meanCamPercentile": 0.52,
+     "lo": 0.52,
+     "hi": 0.52,
+     "meanModelScore": 61
+    },
+    {
+     "sky": "low cloud, little above",
+     "events": 22,
+     "days": 16,
+     "meanCamPercentile": 0.37,
+     "lo": 0.32,
+     "hi": 0.43,
+     "meanModelScore": 61.32
+    },
+    {
+     "sky": "sweet spot (20–70% mid/high, total ≤ 60%)",
+     "events": 0,
+     "days": 0,
+     "meanCamPercentile": null,
+     "lo": null,
+     "hi": null,
+     "meanModelScore": null
+    },
+    {
+     "sky": "heavy mid/high (total 60–90%, or mid/high > 70%)",
+     "events": 6,
+     "days": 6,
+     "meanCamPercentile": 0.71,
+     "lo": 0.58,
+     "hi": 0.84,
+     "meanModelScore": 63
+    },
+    {
+     "sky": "solid deck (total ≥ 90%)",
+     "events": 30,
+     "days": 17,
+     "meanCamPercentile": 0.37,
+     "lo": 0.28,
+     "hi": 0.46,
+     "meanModelScore": 34.33
+    }
+   ],
+   "sunset": [
+    {
+     "sky": "clear (total < 15%)",
+     "events": 83,
+     "days": 23,
+     "meanCamPercentile": 0.59,
+     "lo": 0.53,
+     "hi": 0.64,
+     "meanModelScore": 65.42
+    },
+    {
+     "sky": "thin mid/high (under 20%)",
+     "events": 7,
+     "days": 7,
+     "meanCamPercentile": 0.45,
+     "lo": 0.3,
+     "hi": 0.61,
+     "meanModelScore": 73.57
+    },
+    {
+     "sky": "low cloud, little above",
+     "events": 24,
+     "days": 12,
+     "meanCamPercentile": 0.59,
+     "lo": 0.52,
+     "hi": 0.68,
+     "meanModelScore": 66.5
+    },
+    {
+     "sky": "sweet spot (20–70% mid/high, total ≤ 60%)",
+     "events": 7,
+     "days": 4,
+     "meanCamPercentile": 0.29,
+     "lo": 0.14,
+     "hi": 0.35,
+     "meanModelScore": 86.86
+    },
+    {
+     "sky": "heavy mid/high (total 60–90%, or mid/high > 70%)",
+     "events": 7,
+     "days": 6,
+     "meanCamPercentile": 0.33,
+     "lo": 0.19,
+     "hi": 0.49,
+     "meanModelScore": 72.29
+    },
+    {
+     "sky": "solid deck (total ≥ 90%)",
+     "events": 29,
+     "days": 11,
+     "meanCamPercentile": 0.28,
+     "lo": 0.16,
+     "hi": 0.42,
+     "meanModelScore": 31.24
+    }
+   ],
+   "sweetSpotMinusClear": {
+    "all": {
+     "diff": -0.33,
+     "lo": -0.46,
+     "hi": -0.23,
+     "pPositive": 0
+    },
+    "sunrise": {
+     "diff": null,
+     "lo": null,
+     "hi": null,
+     "pPositive": null
+    },
+    "sunset": {
+     "diff": -0.3,
+     "lo": -0.43,
+     "hi": -0.19,
+     "pPositive": 0
+    }
+   },
+   "anyPartialMidHighMinusClear": {
+    "diff": -0.19,
+    "lo": -0.28,
+    "hi": -0.08,
+    "pPositive": 0
+   },
+   "pathLow": {
+    "bins": [
+     {
+      "pathLowCloud": "under 20%",
+      "events": 187,
+      "days": 30,
+      "meanCamPercentile": 0.52
+     },
+     {
+      "pathLowCloud": "20–50%",
+      "events": 43,
+      "days": 19,
+      "meanCamPercentile": 0.46
+     },
+     {
+      "pathLowCloud": "50–90%",
+      "events": 13,
+      "days": 8,
+      "meanCamPercentile": 0.37
+     },
+     {
+      "pathLowCloud": "90% and over",
+      "events": 0,
+      "days": 0,
+      "meanCamPercentile": null
+     }
+    ],
+    "binsLittleMidHigh": [
+     {
+      "pathLowCloud": "under 20%",
+      "events": 123,
+      "meanCamPercentile": 0.61
+     },
+     {
+      "pathLowCloud": "20–50%",
+      "events": 35,
+      "meanCamPercentile": 0.47
+     },
+     {
+      "pathLowCloud": "50–90%",
+      "events": 8,
+      "meanCamPercentile": 0.38
+     },
+     {
+      "pathLowCloud": "90% and over",
+      "events": 0,
+      "meanCamPercentile": null
+     }
+    ]
+   }
+  },
+  "families": [
+   {
+    "family": "clear-sky value only (is there a sweet spot?)",
+    "freeNumbers": 1,
+    "gridPoints": 10,
+    "inSample": {
+     "best": {
+      "c0": 92,
+      "tail": 60,
+      "ovcStart": 60,
+      "ovcFloor": 0.45,
+      "pathFloor": 0.75,
+      "floor": "max"
+     },
+     "candidate": {
+      "rho": 0.42,
+      "lo": 0.28,
+      "hi": 0.53,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     "shipped": {
+      "rho": 0.28,
+      "lo": 0.12,
+      "hi": 0.44,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     }
+    },
+    "timeSplit": {
+     "fittedOn": "118 events, 16 days to 2026-10-27",
+     "best": {
+      "c0": 92,
+      "tail": 60,
+      "ovcStart": 60,
+      "ovcFloor": 0.45,
+      "pathFloor": 0.75,
+      "floor": "max"
+     },
+     "trainCandidate": 0.31,
+     "trainShipped": 0.25,
+     "testCandidate": {
+      "rho": 0.51,
+      "lo": 0.3,
+      "hi": 0.68,
+      "events": 114,
+      "cams": 8,
+      "days": 15
+     },
+     "testShipped": {
+      "rho": 0.31,
+      "lo": 0.03,
+      "hi": 0.55,
+      "events": 114,
+      "cams": 8,
+      "days": 15
+     },
+     "testCandidateMinusShipped": {
+      "diff": 0.2,
+      "lo": 0.03,
+      "hi": 0.41,
+      "pPositive": 0.98
+     }
+    },
+    "leaveOneDayOut": {
+     "candidate": {
+      "rho": 0.42,
+      "lo": 0.28,
+      "hi": 0.53,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     "shipped": {
+      "rho": 0.28,
+      "lo": 0.12,
+      "hi": 0.44,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     "candidateMinusShipped": {
+      "diff": 0.14,
+      "lo": 0.02,
+      "hi": 0.26,
+      "pPositive": 0.97
+     },
+     "distinctFits": 1,
+     "mostCommonFit": {
+      "params": {
+       "c0": 92,
+       "tail": 60,
+       "ovcStart": 60,
+       "ovcFloor": 0.45,
+       "pathFloor": 0.75,
+       "floor": "max"
+      },
+      "days": 31
+     }
+    }
+   },
+   {
+    "family": "path cost only (low cloud toward the sun)",
+    "freeNumbers": 1,
+    "gridPoints": 4,
+    "inSample": {
+     "best": {
+      "c0": 62,
+      "tail": 60,
+      "ovcStart": 60,
+      "ovcFloor": 0.45,
+      "pathFloor": 0.25,
+      "floor": "max"
+     },
+     "candidate": {
+      "rho": 0.32,
+      "lo": 0.16,
+      "hi": 0.45,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     "shipped": {
+      "rho": 0.28,
+      "lo": 0.12,
+      "hi": 0.44,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     }
+    },
+    "timeSplit": {
+     "fittedOn": "118 events, 16 days to 2026-10-27",
+     "best": {
+      "c0": 62,
+      "tail": 60,
+      "ovcStart": 60,
+      "ovcFloor": 0.45,
+      "pathFloor": 0.5,
+      "floor": "max"
+     },
+     "trainCandidate": 0.28,
+     "trainShipped": 0.25,
+     "testCandidate": {
+      "rho": 0.31,
+      "lo": 0.05,
+      "hi": 0.55,
+      "events": 114,
+      "cams": 8,
+      "days": 15
+     },
+     "testShipped": {
+      "rho": 0.31,
+      "lo": 0.03,
+      "hi": 0.55,
+      "events": 114,
+      "cams": 8,
+      "days": 15
+     },
+     "testCandidateMinusShipped": {
+      "diff": 0,
+      "lo": -0.03,
+      "hi": 0.04,
+      "pPositive": 0.5
+     }
+    },
+    "leaveOneDayOut": {
+     "candidate": {
+      "rho": 0.32,
+      "lo": 0.16,
+      "hi": 0.45,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     "shipped": {
+      "rho": 0.28,
+      "lo": 0.12,
+      "hi": 0.44,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     "candidateMinusShipped": {
+      "diff": 0.04,
+      "lo": 0,
+      "hi": 0.09,
+      "pPositive": 0.91
+     },
+     "distinctFits": 1,
+     "mostCommonFit": {
+      "params": {
+       "c0": 62,
+       "tail": 60,
+       "ovcStart": 60,
+       "ovcFloor": 0.45,
+       "pathFloor": 0.25,
+       "floor": "max"
+      },
+      "days": 31
+     }
+    }
+   },
+   {
+    "family": "overcast fade only (start, floor)",
+    "freeNumbers": 2,
+    "gridPoints": 30,
+    "inSample": {
+     "best": {
+      "c0": 62,
+      "tail": 60,
+      "ovcStart": 60,
+      "ovcFloor": 0.45,
+      "pathFloor": 0.75,
+      "floor": "max"
+     },
+     "candidate": {
+      "rho": 0.28,
+      "lo": 0.12,
+      "hi": 0.44,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     "shipped": {
+      "rho": 0.28,
+      "lo": 0.12,
+      "hi": 0.44,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     }
+    },
+    "timeSplit": {
+     "fittedOn": "118 events, 16 days to 2026-10-27",
+     "best": {
+      "c0": 62,
+      "tail": 60,
+      "ovcStart": 60,
+      "ovcFloor": 0.25,
+      "pathFloor": 0.75,
+      "floor": "max"
+     },
+     "trainCandidate": 0.26,
+     "trainShipped": 0.25,
+     "testCandidate": {
+      "rho": 0.3,
+      "lo": 0.03,
+      "hi": 0.54,
+      "events": 114,
+      "cams": 8,
+      "days": 15
+     },
+     "testShipped": {
+      "rho": 0.31,
+      "lo": 0.03,
+      "hi": 0.55,
+      "events": 114,
+      "cams": 8,
+      "days": 15
+     },
+     "testCandidateMinusShipped": {
+      "diff": -0.01,
+      "lo": -0.05,
+      "hi": 0.01,
+      "pPositive": 0.25
+     }
+    },
+    "leaveOneDayOut": {
+     "candidate": {
+      "rho": 0.26,
+      "lo": 0.1,
+      "hi": 0.42,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     "shipped": {
+      "rho": 0.28,
+      "lo": 0.12,
+      "hi": 0.44,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     "candidateMinusShipped": {
+      "diff": -0.02,
+      "lo": -0.04,
+      "hi": 0,
+      "pPositive": 0.09
+     },
+     "distinctFits": 3,
+     "mostCommonFit": {
+      "params": {
+       "c0": 62,
+       "tail": 60,
+       "ovcStart": 60,
+       "ovcFloor": 0.45,
+       "pathFloor": 0.75,
+       "floor": "max"
+      },
+      "days": 26
+     }
+    }
+   },
+   {
+    "family": "all five numbers",
+    "freeNumbers": 5,
+    "gridPoints": 3600,
+    "inSample": {
+     "best": {
+      "c0": 92,
+      "tail": 86,
+      "ovcStart": 40,
+      "ovcFloor": 0.45,
+      "pathFloor": 0.25,
+      "floor": "max"
+     },
+     "candidate": {
+      "rho": 0.43,
+      "lo": 0.3,
+      "hi": 0.54,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     "shipped": {
+      "rho": 0.28,
+      "lo": 0.12,
+      "hi": 0.44,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     }
+    },
+    "timeSplit": {
+     "fittedOn": "118 events, 16 days to 2026-10-27",
+     "best": {
+      "c0": 86,
+      "tail": 86,
+      "ovcStart": 70,
+      "ovcFloor": 0.8,
+      "pathFloor": 1,
+      "floor": "max"
+     },
+     "trainCandidate": 0.37,
+     "trainShipped": 0.25,
+     "testCandidate": {
+      "rho": 0.44,
+      "lo": 0.19,
+      "hi": 0.66,
+      "events": 114,
+      "cams": 8,
+      "days": 15
+     },
+     "testShipped": {
+      "rho": 0.31,
+      "lo": 0.03,
+      "hi": 0.55,
+      "events": 114,
+      "cams": 8,
+      "days": 15
+     },
+     "testCandidateMinusShipped": {
+      "diff": 0.13,
+      "lo": -0.01,
+      "hi": 0.28,
+      "pPositive": 0.94
+     }
+    },
+    "leaveOneDayOut": {
+     "candidate": {
+      "rho": 0.36,
+      "lo": 0.21,
+      "hi": 0.48,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     "shipped": {
+      "rho": 0.28,
+      "lo": 0.12,
+      "hi": 0.44,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     "candidateMinusShipped": {
+      "diff": 0.08,
+      "lo": -0.06,
+      "hi": 0.22,
+      "pPositive": 0.82
+     },
+     "distinctFits": 8,
+     "mostCommonFit": {
+      "params": {
+       "c0": 92,
+       "tail": 60,
+       "ovcStart": 40,
+       "ovcFloor": 0.45,
+       "pathFloor": 0.25,
+       "floor": "max"
+      },
+      "days": 13
+     }
+    }
+   }
+  ],
+  "noSweetSpot": {
+   "params": {
+    "c0": 86,
+    "tail": 60,
+    "ovcStart": 60,
+    "ovcFloor": 0.45,
+    "pathFloor": 0.75,
+    "floor": "max"
+   },
+   "all": {
+    "candidate": {
+     "rho": 0.39,
+     "lo": 0.24,
+     "hi": 0.52,
+     "events": 243,
+     "cams": 10,
+     "days": 31
+    },
+    "shipped": {
+     "rho": 0.28,
+     "lo": 0.12,
+     "hi": 0.44,
+     "events": 243,
+     "cams": 10,
+     "days": 31
+    },
+    "candidateMinusShipped": {
+     "diff": 0.11,
+     "lo": 0.01,
+     "hi": 0.21,
+     "pPositive": 0.98
+    }
+   },
+   "sunrise": {
+    "candidate": {
+     "rho": 0.4,
+     "lo": 0.19,
+     "hi": 0.57,
+     "events": 86,
+     "cams": 3,
+     "days": 31
+    },
+    "shipped": {
+     "rho": 0.4,
+     "lo": 0.2,
+     "hi": 0.56,
+     "events": 86,
+     "cams": 3,
+     "days": 31
+    },
+    "candidateMinusShipped": {
+     "diff": 0.01,
+     "lo": -0.09,
+     "hi": 0.11,
+     "pPositive": 0.51
+    }
+   },
+   "sunset": {
+    "candidate": {
+     "rho": 0.39,
+     "lo": 0.18,
+     "hi": 0.57,
+     "events": 157,
+     "cams": 7,
+     "days": 27
+    },
+    "shipped": {
+     "rho": 0.22,
+     "lo": 0,
+     "hi": 0.42,
+     "events": 157,
+     "cams": 7,
+     "days": 27
+    },
+    "candidateMinusShipped": {
+     "diff": 0.17,
+     "lo": 0.04,
+     "hi": 0.31,
+     "pPositive": 0.99
+    }
+   },
+   "firstHalf": {
+    "candidate": {
+     "rho": 0.31,
+     "lo": 0.13,
+     "hi": 0.45,
+     "events": 118,
+     "cams": 10,
+     "days": 16
+    },
+    "shipped": {
+     "rho": 0.25,
+     "lo": 0.09,
+     "hi": 0.4,
+     "events": 118,
+     "cams": 10,
+     "days": 16
+    },
+    "candidateMinusShipped": {
+     "diff": 0.06,
+     "lo": -0.13,
+     "hi": 0.21,
+     "pPositive": 0.7
+    }
+   },
+   "secondHalf": {
+    "candidate": {
+     "rho": 0.5,
+     "lo": 0.27,
+     "hi": 0.69,
+     "events": 114,
+     "cams": 8,
+     "days": 15
+    },
+    "shipped": {
+     "rho": 0.31,
+     "lo": 0.03,
+     "hi": 0.55,
+     "events": 114,
+     "cams": 8,
+     "days": 15
+    },
+    "candidateMinusShipped": {
+     "diff": 0.19,
+     "lo": 0.04,
+     "hi": 0.37,
+     "pPositive": 0.99
+    }
+   },
+   "perCam": [
+    {
+     "cam": "ftl-elbo-beach-cam",
+     "kind": "sunrise",
+     "pairs": 31,
+     "shipped": 0.26,
+     "noSweetSpot": 0.13
+    },
+    {
+     "cam": "deerfield-beach-cam",
+     "kind": "sunrise",
+     "pairs": 30,
+     "shipped": 0.51,
+     "noSweetSpot": 0.64
+    },
+    {
+     "cam": "fort-myers-beach-cam",
+     "kind": "sunset",
+     "pairs": 27,
+     "shipped": 0.44,
+     "noSweetSpot": 0.64
+    },
+    {
+     "cam": "pensacola-sria-west-cam",
+     "kind": "sunset",
+     "pairs": 13,
+     "shipped": -0.38,
+     "noSweetSpot": -0.26
+    },
+    {
+     "cam": "sunset-grille-marathon-cam",
+     "kind": "sunset",
+     "pairs": 25,
+     "shipped": 0.35,
+     "noSweetSpot": 0.09
+    },
+    {
+     "cam": "fort-zachary-taylor-cam",
+     "kind": "sunset",
+     "pairs": 18,
+     "shipped": 0.45,
+     "noSweetSpot": 0.52
+    },
+    {
+     "cam": "siesta-beach-cam",
+     "kind": "sunset",
+     "pairs": 25,
+     "shipped": 0.09,
+     "noSweetSpot": 0.46
+    },
+    {
+     "cam": "holmes-beach-cam",
+     "kind": "sunset",
+     "pairs": 24,
+     "shipped": 0.05,
+     "noSweetSpot": 0.5
+    },
+    {
+     "cam": "enco-shores-of-panama-cam",
+     "kind": "sunset",
+     "pairs": 25,
+     "shipped": 0.29,
+     "noSweetSpot": 0.49
+    },
+    {
+     "cam": "jax-beach-bw-cam",
+     "kind": "sunrise",
+     "pairs": 25,
+     "shipped": 0.44,
+     "noSweetSpot": 0.47
+    }
+   ],
+   "camsBetter": 8,
+   "camsWorse": 2,
+   "eventsWithMidHighUnder20": 166,
+   "eventsInSweetSpotBand": 27,
+   "bandsIfFlatAt62": {
+    "Good": 176,
+    "Poor": 12,
+    "Fair": 56
+   },
+   "bandsShipped": {
+    "Great": 32,
+    "Good": 155,
+    "Fair": 55,
+    "Amazing": 2
+   }
+  },
+  "greatCalls": {
+   "calls": 34,
+   "days": 21,
+   "sunrise": 5,
+   "sunset": 29,
+   "meanCamPercentile": 0.51,
+   "lo": 0.43,
+   "hi": 0.59,
+   "inCamsTopQuarter": 10,
+   "topQuarterShare": 0.29,
+   "chance": 0.25
+  },
+  "profiles": {
+   "c0": [
+    {
+     "value": 50,
+     "shipped": false,
+     "all": 0.24,
+     "sunrise": 0.38,
+     "sunset": 0.16,
+     "firstHalf": 0.14,
+     "secondHalf": 0.31
+    },
+    {
+     "value": 56,
+     "shipped": false,
+     "all": 0.27,
+     "sunrise": 0.39,
+     "sunset": 0.21,
+     "firstHalf": 0.24,
+     "secondHalf": 0.31
+    },
+    {
+     "value": 62,
+     "shipped": true,
+     "all": 0.28,
+     "sunrise": 0.4,
+     "sunset": 0.22,
+     "firstHalf": 0.25,
+     "secondHalf": 0.31
+    },
+    {
+     "value": 68,
+     "shipped": false,
+     "all": 0.28,
+     "sunrise": 0.38,
+     "sunset": 0.22,
+     "firstHalf": 0.26,
+     "secondHalf": 0.3
+    },
+    {
+     "value": 74,
+     "shipped": false,
+     "all": 0.3,
+     "sunrise": 0.37,
+     "sunset": 0.26,
+     "firstHalf": 0.3,
+     "secondHalf": 0.33
+    },
+    {
+     "value": 80,
+     "shipped": false,
+     "all": 0.31,
+     "sunrise": 0.37,
+     "sunset": 0.28,
+     "firstHalf": 0.28,
+     "secondHalf": 0.37
+    },
+    {
+     "value": 86,
+     "shipped": false,
+     "all": 0.39,
+     "sunrise": 0.4,
+     "sunset": 0.39,
+     "firstHalf": 0.31,
+     "secondHalf": 0.5
+    },
+    {
+     "value": 92,
+     "shipped": false,
+     "all": 0.42,
+     "sunrise": 0.43,
+     "sunset": 0.41,
+     "firstHalf": 0.31,
+     "secondHalf": 0.51
+    },
+    {
+     "value": 98,
+     "shipped": false,
+     "all": 0.4,
+     "sunrise": 0.42,
+     "sunset": 0.39,
+     "firstHalf": 0.29,
+     "secondHalf": 0.49
+    },
+    {
+     "value": 104,
+     "shipped": false,
+     "all": 0.38,
+     "sunrise": 0.37,
+     "sunset": 0.39,
+     "firstHalf": 0.31,
+     "secondHalf": 0.47
+    }
+   ],
+   "tail": [
+    {
+     "value": 40,
+     "shipped": false,
+     "all": 0.28,
+     "sunrise": 0.39,
+     "sunset": 0.22,
+     "firstHalf": 0.25,
+     "secondHalf": 0.31
+    },
+    {
+     "value": 60,
+     "shipped": true,
+     "all": 0.28,
+     "sunrise": 0.4,
+     "sunset": 0.22,
+     "firstHalf": 0.25,
+     "secondHalf": 0.31
+    },
+    {
+     "value": 86,
+     "shipped": false,
+     "all": 0.29,
+     "sunrise": 0.4,
+     "sunset": 0.22,
+     "firstHalf": 0.27,
+     "secondHalf": 0.31
+    }
+   ],
+   "ovcStart": [
+    {
+     "value": 40,
+     "shipped": false,
+     "all": 0.26,
+     "sunrise": 0.34,
+     "sunset": 0.21,
+     "firstHalf": 0.22,
+     "secondHalf": 0.29
+    },
+    {
+     "value": 50,
+     "shipped": false,
+     "all": 0.27,
+     "sunrise": 0.36,
+     "sunset": 0.22,
+     "firstHalf": 0.25,
+     "secondHalf": 0.3
+    },
+    {
+     "value": 60,
+     "shipped": true,
+     "all": 0.28,
+     "sunrise": 0.4,
+     "sunset": 0.22,
+     "firstHalf": 0.25,
+     "secondHalf": 0.31
+    },
+    {
+     "value": 70,
+     "shipped": false,
+     "all": 0.27,
+     "sunrise": 0.39,
+     "sunset": 0.21,
+     "firstHalf": 0.23,
+     "secondHalf": 0.32
+    },
+    {
+     "value": 80,
+     "shipped": false,
+     "all": 0.23,
+     "sunrise": 0.38,
+     "sunset": 0.15,
+     "firstHalf": 0.13,
+     "secondHalf": 0.32
+    }
+   ],
+   "ovcFloor": [
+    {
+     "value": 0.25,
+     "shipped": false,
+     "all": 0.27,
+     "sunrise": 0.38,
+     "sunset": 0.22,
+     "firstHalf": 0.26,
+     "secondHalf": 0.3
+    },
+    {
+     "value": 0.35,
+     "shipped": false,
+     "all": 0.28,
+     "sunrise": 0.38,
+     "sunset": 0.22,
+     "firstHalf": 0.25,
+     "secondHalf": 0.3
+    },
+    {
+     "value": 0.45,
+     "shipped": true,
+     "all": 0.28,
+     "sunrise": 0.4,
+     "sunset": 0.22,
+     "firstHalf": 0.25,
+     "secondHalf": 0.31
+    },
+    {
+     "value": 0.6,
+     "shipped": false,
+     "all": 0.26,
+     "sunrise": 0.4,
+     "sunset": 0.18,
+     "firstHalf": 0.18,
+     "secondHalf": 0.33
+    },
+    {
+     "value": 0.8,
+     "shipped": false,
+     "all": 0.14,
+     "sunrise": 0.32,
+     "sunset": 0.04,
+     "firstHalf": 0.01,
+     "secondHalf": 0.25
+    },
+    {
+     "value": 1,
+     "shipped": false,
+     "all": -0.02,
+     "sunrise": 0.06,
+     "sunset": -0.06,
+     "firstHalf": -0.11,
+     "secondHalf": 0.09
+    }
+   ],
+   "pathFloor": [
+    {
+     "value": 0.25,
+     "shipped": false,
+     "all": 0.32,
+     "sunrise": 0.43,
+     "sunset": 0.26,
+     "firstHalf": 0.27,
+     "secondHalf": 0.37
+    },
+    {
+     "value": 0.5,
+     "shipped": false,
+     "all": 0.29,
+     "sunrise": 0.41,
+     "sunset": 0.23,
+     "firstHalf": 0.28,
+     "secondHalf": 0.31
+    },
+    {
+     "value": 0.75,
+     "shipped": true,
+     "all": 0.28,
+     "sunrise": 0.4,
+     "sunset": 0.22,
+     "firstHalf": 0.25,
+     "secondHalf": 0.31
+    },
+    {
+     "value": 1,
+     "shipped": false,
+     "all": 0.26,
+     "sunrise": 0.38,
+     "sunset": 0.2,
+     "firstHalf": 0.23,
+     "secondHalf": 0.28
+    }
+   ]
+  },
+  "byKind": {
+   "sunrise": {
+    "ownFit": {
+     "family": "all five numbers",
+     "freeNumbers": 5,
+     "gridPoints": 3600,
+     "inSample": {
+      "best": {
+       "c0": 92,
+       "tail": 60,
+       "ovcStart": 80,
+       "ovcFloor": 0.25,
+       "pathFloor": 0.25,
+       "floor": "max"
+      },
+      "candidate": {
+       "rho": 0.46,
+       "lo": 0.26,
+       "hi": 0.63,
+       "events": 86,
+       "cams": 3,
+       "days": 31
+      },
+      "shipped": {
+       "rho": 0.4,
+       "lo": 0.2,
+       "hi": 0.56,
+       "events": 86,
+       "cams": 3,
+       "days": 31
+      }
+     },
+     "timeSplit": {
+      "fittedOn": "41 events, 16 days to 2026-10-27",
+      "best": {
+       "c0": 56,
+       "tail": 86,
+       "ovcStart": 40,
+       "ovcFloor": 0.45,
+       "pathFloor": 0.25,
+       "floor": "max"
+      },
+      "trainCandidate": 0.43,
+      "trainShipped": 0.3,
+      "testCandidate": {
+       "rho": 0.42,
+       "lo": 0.13,
+       "hi": 0.63,
+       "events": 45,
+       "cams": 3,
+       "days": 15
+      },
+      "testShipped": {
+       "rho": 0.42,
+       "lo": 0.16,
+       "hi": 0.61,
+       "events": 45,
+       "cams": 3,
+       "days": 15
+      },
+      "testCandidateMinusShipped": {
+       "diff": 0,
+       "lo": -0.11,
+       "hi": 0.1,
+       "pPositive": 0.46
+      }
+     },
+     "leaveOneDayOut": {
+      "candidate": {
+       "rho": 0.2,
+       "lo": 0.02,
+       "hi": 0.37,
+       "events": 86,
+       "cams": 3,
+       "days": 31
+      },
+      "shipped": {
+       "rho": 0.4,
+       "lo": 0.2,
+       "hi": 0.56,
+       "events": 86,
+       "cams": 3,
+       "days": 31
+      },
+      "candidateMinusShipped": {
+       "diff": -0.2,
+       "lo": -0.4,
+       "hi": -0.01,
+       "pPositive": 0.04
+      },
+      "distinctFits": 7,
+      "mostCommonFit": {
+       "params": {
+        "c0": 92,
+        "tail": 60,
+        "ovcStart": 80,
+        "ovcFloor": 0.25,
+        "pathFloor": 0.25,
+        "floor": "max"
+       },
+       "days": 15
+      }
+     }
+    },
+    "pooledFitLeaveOneDayOut": {
+     "rho": 0.38,
+     "lo": 0.16,
+     "hi": 0.56,
+     "events": 86,
+     "cams": 3,
+     "days": 31
+    }
+   },
+   "sunset": {
+    "ownFit": {
+     "family": "all five numbers",
+     "freeNumbers": 5,
+     "gridPoints": 3600,
+     "inSample": {
+      "best": {
+       "c0": 86,
+       "tail": 86,
+       "ovcStart": 40,
+       "ovcFloor": 0.35,
+       "pathFloor": 0.25,
+       "floor": "max"
+      },
+      "candidate": {
+       "rho": 0.44,
+       "lo": 0.24,
+       "hi": 0.61,
+       "events": 157,
+       "cams": 7,
+       "days": 27
+      },
+      "shipped": {
+       "rho": 0.22,
+       "lo": 0,
+       "hi": 0.42,
+       "events": 157,
+       "cams": 7,
+       "days": 27
+      }
+     },
+     "timeSplit": {
+      "fittedOn": "77 events, 13 days to 2026-10-27",
+      "best": {
+       "c0": 86,
+       "tail": 40,
+       "ovcStart": 80,
+       "ovcFloor": 0.25,
+       "pathFloor": 1,
+       "floor": "max"
+      },
+      "trainCandidate": 0.46,
+      "trainShipped": 0.23,
+      "testCandidate": {
+       "rho": 0.43,
+       "lo": 0.15,
+       "hi": 0.68,
+       "events": 69,
+       "cams": 5,
+       "days": 14
+      },
+      "testShipped": {
+       "rho": 0.24,
+       "lo": -0.1,
+       "hi": 0.56,
+       "events": 69,
+       "cams": 5,
+       "days": 14
+      },
+      "testCandidateMinusShipped": {
+       "diff": 0.2,
+       "lo": 0.04,
+       "hi": 0.38,
+       "pPositive": 0.98
+      }
+     },
+     "leaveOneDayOut": {
+      "candidate": {
+       "rho": 0.4,
+       "lo": 0.21,
+       "hi": 0.55,
+       "events": 157,
+       "cams": 7,
+       "days": 27
+      },
+      "shipped": {
+       "rho": 0.22,
+       "lo": 0,
+       "hi": 0.42,
+       "events": 157,
+       "cams": 7,
+       "days": 27
+      },
+      "candidateMinusShipped": {
+       "diff": 0.18,
+       "lo": 0.01,
+       "hi": 0.34,
+       "pPositive": 0.96
+      },
+      "distinctFits": 7,
+      "mostCommonFit": {
+       "params": {
+        "c0": 86,
+        "tail": 86,
+        "ovcStart": 40,
+        "ovcFloor": 0.35,
+        "pathFloor": 0.25,
+        "floor": "max"
+       },
+       "days": 21
+      }
+     }
+    },
+    "pooledFitLeaveOneDayOut": {
+     "rho": 0.35,
+     "lo": 0.14,
+     "hi": 0.52,
+     "events": 157,
+     "cams": 7,
+     "days": 27
+    }
+   }
+  },
+  "totalFloor": {
+   "rebuiltForecastLateRun": {
+    "inputs": 244,
+    "totalBelowLargestLayer": 0,
+    "totalBelowScreenBlend": 31,
+    "scoresChangedIfNoFloor": 0,
+    "scoresChangedIfScreenBlend": 19,
+    "meanChangeIfScreenBlend": -4.05,
+    "grade": [
+     {
+      "floor": "max",
+      "shipped": true,
+      "rho": 0.25,
+      "lo": 0.1,
+      "hi": 0.38,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     {
+      "floor": "none",
+      "shipped": false,
+      "rho": 0.25,
+      "lo": 0.1,
+      "hi": 0.38,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     {
+      "floor": "blend",
+      "shipped": false,
+      "rho": 0.25,
+      "lo": 0.1,
+      "hi": 0.38,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     }
+    ],
+    "blendMinusShipped": {
+     "diff": 0,
+     "lo": -0.01,
+     "hi": 0.01,
+     "pPositive": 0.44
+    }
+   },
+   "rebuiltForecastEarlyRun": {
+    "inputs": 244,
+    "totalBelowLargestLayer": 0,
+    "totalBelowScreenBlend": 22,
+    "scoresChangedIfNoFloor": 0,
+    "scoresChangedIfScreenBlend": 11,
+    "meanChangeIfScreenBlend": -9.55,
+    "grade": [
+     {
+      "floor": "max",
+      "shipped": true,
+      "rho": 0.32,
+      "lo": 0.19,
+      "hi": 0.43,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     {
+      "floor": "none",
+      "shipped": false,
+      "rho": 0.32,
+      "lo": 0.19,
+      "hi": 0.43,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     },
+     {
+      "floor": "blend",
+      "shipped": false,
+      "rho": 0.31,
+      "lo": 0.19,
+      "hi": 0.42,
+      "events": 243,
+      "cams": 10,
+      "days": 31
+     }
+    ],
+    "blendMinusShipped": {
+     "diff": -0.01,
+     "lo": -0.03,
+     "hi": 0,
+     "pPositive": 0.19
+    }
+   },
+   "everyStoredForecastRow": {
+    "inputs": 4238,
+    "totalBelowLargestLayer": 26,
+    "totalBelowScreenBlend": 481,
+    "scoresChangedIfNoFloor": 14,
+    "scoresChangedIfScreenBlend": 227,
+    "meanChangeIfScreenBlend": -7.1
+   }
+  }
+ }
+}

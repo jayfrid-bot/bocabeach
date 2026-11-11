@@ -24,7 +24,7 @@ import {
   type SunColorAlertInput,
 } from "@/lib/alerts/sunColor";
 import { defaultPrefs, type DeviceRecord } from "@/lib/db/types";
-import { SUN_FORECAST_WINDOW_MS } from "@/lib/sunForecastWindow";
+import { SUN_FORECAST_FIRM_MS, SUN_FORECAST_WINDOW_MS } from "@/lib/sunForecastWindow";
 import type { SunEventPrediction } from "@/lib/sunAlert";
 
 const TZ = "America/New_York";
@@ -114,9 +114,10 @@ describe("sunColorEventKey (round-2 item 3 — beach-local date, not UTC date-ho
 describe("the forecast window caps every sun-color alert (no early alerts)", () => {
   const eventMs = Date.parse(EVENT_ISO);
 
-  it("SUN_COLOR_MAX_LEAD_MS is the 60-minute forecast window, not the old 4 hours", () => {
+  it("SUN_COLOR_MAX_LEAD_MS is the 60-minute firm mark, not the 120-minute early look and not the old 4 hours", () => {
     expect(SUN_COLOR_MAX_LEAD_MS).toBe(60 * 60_000);
-    expect(SUN_FORECAST_WINDOW_MS).toBe(60 * 60_000);
+    expect(SUN_FORECAST_FIRM_MS).toBe(60 * 60_000);
+    expect(SUN_FORECAST_WINDOW_MS).toBe(120 * 60_000);
   });
 
   it("effective lead never exceeds 60 minutes", () => {
