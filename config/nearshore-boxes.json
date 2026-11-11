@@ -1,0 +1,8 @@
+{
+  "_about": "SHADOW near-shore water-clarity reader (scripts/cam_seaweed.py, NEAR-SHORE SHADOW). Per beach, per cam: the near-shore strip as fractions of the frame [x0, y0, x1, y1] (0,0 = top left). Only these cams get a shadow read. inMedian=false keeps a cam's read in the feed but out of nearMedian. Started from docs/research/clarity-truth/2026-11-06/nearshore-boxes.json; the bottom edges were moved down after a check of archived frames from 2026-11-04 to 11-06 (8 frames per cam, 8 AM to 5 PM), so the wash line stays inside the box at the higher tides.",
+  "boca-raton": {
+    "boca-inlet-surf": { "box": [0.24, 0.45, 1.0, 0.64], "inMedian": true },
+    "boca-south-surf": { "box": [0.27, 0.40, 1.0, 0.75], "inMedian": true },
+    "boca-south": { "box": [0.40, 0.49, 1.0, 0.66], "inMedian": false }
+  }
+}

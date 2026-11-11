@@ -122,6 +122,17 @@ describe("camReadRow / camReadRowsFromFeed (per-cam detail)", () => {
     expect(JSON.parse(row.raw_json).provider).toBe("gemini");
   });
 
+  it("keeps a FRESH near-shore shadow read in raw_json but never a carried one", () => {
+    const g = { capturedAtLocal: "2026-11-06T14:20-05:00" };
+    const near = { level: "a_bit_sandy", color: "sandy_green", scoredAt: "2026-11-06T19:20:00Z" };
+    const fresh = camReadRow("boca-raton", g, { ...cam("a"), waterNear: near })!;
+    expect(JSON.parse(fresh.raw_json).waterNear).toEqual(near);
+    const carried = camReadRow("boca-raton", g, { ...cam("a"), waterNear: { ...near, carried: true } })!;
+    const plain = camReadRow("boca-raton", g, cam("a"))!;
+    expect(JSON.parse(carried.raw_json)).not.toHaveProperty("waterNear");
+    expect(carried).toEqual(plain); // every column, raw_json included
+  });
+
   it("dedupes the same capture shared by morning and latest", () => {
     const g = { capturedAtLocal: "2026-10-06T07:00-04:00", cams: [cam("a"), cam("b")] };
     expect(camReadRowsFromFeed("boca-raton", { morning: g, latest: g })).toHaveLength(2);
