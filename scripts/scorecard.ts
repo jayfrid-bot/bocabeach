@@ -24,7 +24,9 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { getLocation } from "@/config/locations";
+import { LOCATIONS, getLocation } from "@/config/locations";
+import { camRoster, newestCourierFrame, type CamEvidence } from "@/lib/camStatus";
+import { camEvidenceFromSources } from "@/lib/camEvidence";
 import { computeSunTimes } from "@/lib/sources/sun";
 import { buildScorecard, renderMarkdown, type RawData, type RawDatasetName } from "@/lib/scorecard/report";
 import { errorLineOf, parseWranglerJson } from "@/lib/scorecard/wrangler";
@@ -270,6 +272,32 @@ function fetchRaw(days: number, now: Date): RawData {
   return raw;
 }
 
+// --- Which cams are hidden as offline (read-only, the same reads the page makes) ---
+
+const UW_FRAME_CAMS_URL = "https://uw-frame.entwined-app.workers.dev/cams";
+
+async function getJson(url: string): Promise<unknown | undefined> {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    return res.ok ? await res.json() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Each configured cam's newest good frame, as its source reports it now, and the
+ *  courier's newest frame (the breaker). One request to uw-frame /cams for the
+ *  courier cams, one latest.json per county feed. */
+async function fetchCamEvidence(): Promise<{ evidence: CamEvidence[]; courierNewest: string | null | undefined } | null> {
+  const uw = await getJson(UW_FRAME_CAMS_URL);
+  const bases = [...new Set(LOCATIONS.flatMap((l) => l.cams.flatMap((c) => (c.snapshotFeed ? [c.snapshotFeed.base] : []))))];
+  const feeds = new Map<string, unknown>();
+  await Promise.all(bases.map(async (b) => feeds.set(b, await getJson(`${b}/latest.json`))));
+  const evidence = camEvidenceFromSources(LOCATIONS, uw, feeds);
+  if (evidence.every((e) => e.lastGoodFrameAt === undefined)) return null;
+  return { evidence, courierNewest: uw === undefined ? undefined : newestCourierFrame(uw) };
+}
+
 // --- Beach facts from config -------------------------------------------------
 
 const localHour = (tz: string, ms: number): number => {
@@ -316,7 +344,7 @@ const expectedPerDayAt =
 
 // --- Main --------------------------------------------------------------------
 
-function main(): void {
+async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
   const abs = (p: string) => (isAbsolute(p) ? p : join(ROOT, p));
 
@@ -326,6 +354,12 @@ function main(): void {
     log(`Scoring saved results from ${args.fromJson} (as of ${raw.asOf}).`);
   } else {
     raw = fetchRaw(args.days, new Date());
+    log("Reading which cameras are offline...");
+    const cams = await fetchCamEvidence();
+    raw.camEvidence = cams?.evidence ?? null;
+    // null = /cams answered with no courier frame; leave it out when /cams did not answer.
+    if (cams && cams.courierNewest !== undefined) raw.courierNewestGoodAt = cams.courierNewest;
+    if (cams == null) raw.errors.camEvidence = "no camera source answered";
   }
   if (args.saveRaw) {
     writeFileSync(abs(args.saveRaw), JSON.stringify(raw));
@@ -342,6 +376,7 @@ function main(): void {
     camFacing: (id) => facing.get(id),
     camDistance: (cam, slug) => camMiles.get(`${cam}|${slug}`),
     localDateOf: eventLocalDate,
+    camRoster: camRoster(LOCATIONS),
   });
   const md = renderMarkdown(card);
 
@@ -364,9 +399,7 @@ function main(): void {
   if (args.json) process.stdout.write(`\n--- metrics (json) ---\n${JSON.stringify(card, null, 2)}\n`);
 }
 
-try {
-  main();
-} catch (e) {
+main().catch((e: unknown) => {
   process.stderr.write(`scorecard: ${e instanceof Error ? e.message : String(e)}\n`);
   process.exitCode = 1;
-}
+});

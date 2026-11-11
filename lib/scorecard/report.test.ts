@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { buildScorecard, renderMarkdown, type RawData } from "@/lib/scorecard/report";
 import type { HourlyRow, SunPredictionRow } from "@/lib/scorecard/metrics";
+import { camRoster } from "@/lib/camStatus";
+import { LOCATIONS } from "@/config/locations";
 
 const AS_OF = "2026-10-20T14:00:00.000Z";
 
@@ -461,5 +463,79 @@ describe("buildScorecard — the fair sun grade", () => {
     // 12 afterglow readings with no forecast event: unmatched, and no sunset pairs appear in the fair grade.
     expect(card.sun.ok && card.sun.result.afterglow?.sunset).toMatchObject({ readings: 12, unmatched: 12 });
     expect(card.sun.ok && card.sun.result.pairedEvents).toBe(24);
+  });
+});
+
+describe("buildScorecard — cameras hidden as offline", () => {
+  const roster = camRoster(LOCATIONS);
+  const asOf = "2026-11-06T19:00:00.000Z"; // 2 PM ET
+  const raw = emptyRaw({
+    asOf,
+    camEvidence: [
+      { id: "deerfield-spinner-uw", lastGoodFrameAt: null, lastAttempt: { at: "2026-11-06T17:18:10Z", blank: true } },
+      { id: "fort-zachary-taylor-cam", lastGoodFrameAt: "2026-11-06T01:08:19Z" },
+      { id: "deerfield-pier-cam", lastGoodFrameAt: "2026-11-06T18:30:00Z" },
+    ],
+    courierNewestGoodAt: "2026-11-06T18:30:00Z",
+  });
+
+  it("lists each offline cam with since-when, in the headline and the details", () => {
+    const card = buildScorecard(raw, { camRoster: roster });
+    expect(card.health.ok).toBe(true);
+    if (card.health.ok) {
+      expect(card.health.result.camsOffline?.map((c) => c.id)).toEqual(["deerfield-spinner-uw", "fort-zachary-taylor-cam"]);
+    }
+    expect(card.headlines.health).toContain("2 cameras offline and hidden on the page.");
+    const md = renderMarkdown(card);
+    expect(md).toContain("- Cameras hidden as offline (they come back on their own with the first good frame): 2");
+    expect(md).toContain(
+      "  - deerfield-spinner-uw (deerfield-beach): no good frame stored, last try Nov 6, 12:18 PM ET (blank)",
+    );
+    expect(md).toContain(
+      "  - fort-zachary-taylor-cam (key-west): offline since Nov 6, 11:08 AM ET, last good frame Nov 5, 8:08 PM ET",
+    );
+  });
+
+  it("courier down: says so once instead of listing every courier cam", () => {
+    const courierIds = roster.filter((c) => c.cadence.source === "courier").map((c) => c.id);
+    const down = emptyRaw({
+      asOf,
+      camEvidence: [
+        ...courierIds.map((id) => ({ id, lastGoodFrameAt: "2026-11-06T13:00:00Z" as string | null })),
+        { id: "boca-south", lastGoodFrameAt: "2026-11-06T18:40:00Z" },
+      ],
+      courierNewestGoodAt: "2026-11-06T13:00:00Z", // 8 AM ET
+    });
+    const card = buildScorecard(down, { camRoster: roster });
+    expect(card.headlines.health).toContain("The home-server courier is down since Nov 6, 10:00 AM ET.");
+    expect(card.headlines.health).not.toContain("offline and hidden");
+    const md = renderMarkdown(card);
+    expect(md).toContain("- Courier down since Nov 6, 10:00 AM ET (newest courier frame Nov 6, 8:00 AM ET)");
+    expect(md).toContain("- Cameras hidden as offline: none.");
+  });
+
+  it("courier down with a camera that has no good frame: that one is still listed, and the wording says so", () => {
+    const courierIds = roster.filter((c) => c.cadence.source === "courier").map((c) => c.id);
+    const mixed = emptyRaw({
+      asOf,
+      camEvidence: courierIds.map((id) => ({
+        id,
+        lastGoodFrameAt: (id === "deerfield-spinner-uw" ? null : "2026-11-06T13:00:00Z") as string | null,
+      })),
+      courierNewestGoodAt: "2026-11-06T13:00:00Z",
+    });
+    const card = buildScorecard(mixed, { camRoster: roster });
+    expect(card.health.ok && card.health.result.camsOffline?.map((c) => c.id)).toEqual(["deerfield-spinner-uw"]);
+    const md = renderMarkdown(card);
+    expect(md).toContain("its cameras that only went quiet stay on the page");
+    expect(md).toContain("(a camera with no good frame stored is still hidden)");
+    expect(md).toContain("  - deerfield-spinner-uw (deerfield-beach): no good frame stored");
+  });
+
+  it("says none, or not checked, plainly", () => {
+    const none = renderMarkdown(buildScorecard(emptyRaw({ asOf, camEvidence: [] }), { camRoster: roster }));
+    expect(none).toContain("- Cameras hidden as offline: none.");
+    const old = renderMarkdown(buildScorecard(emptyRaw({ asOf }), { camRoster: roster }));
+    expect(old).toContain("- Cameras hidden as offline: not checked.");
   });
 });

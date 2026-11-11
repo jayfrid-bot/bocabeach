@@ -81,6 +81,40 @@ export function pickMetaTimestamp(json: unknown): string | undefined {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
 }
 
+/** A latest.json entry that looks like a real camera view: an object with a frame path. */
+function isFeedEntry(v: unknown): boolean {
+  if (!v || typeof v !== "object") return false;
+  const e = v as Record<string, unknown>;
+  return (typeof e.mr === "string" && e.mr.length > 0) || (typeof e.hr === "string" && e.hr.length > 0);
+}
+
+/**
+ * The newest good frame of a feed view, for the offline rule (lib/camStatus.ts):
+ * its capture time; null only when the document is a real feed list (at least one
+ * entry shaped like a camera view) that does NOT have this view at all (the provider
+ * dropped it, nothing to show); undefined when it cannot be judged: no document, an
+ * empty or odd one (`{error: ...}`), or the view is there (even as null) without a
+ * usable time. Undefined means shown, unverified, never offline on that evidence.
+ */
+export function feedLastGood(json: unknown, view: string): string | null | undefined {
+  const ts = pickFeedTimestamp(json, view);
+  if (ts) return ts;
+  if (!json || typeof json !== "object" || Array.isArray(json)) return undefined;
+  if (Object.prototype.hasOwnProperty.call(json, view)) return undefined;
+  return Object.values(json as Record<string, unknown>).some(isFeedEntry) ? null : undefined;
+}
+
+/**
+ * The newest good frame of a uw-frame courier cam, for the offline rule: its time
+ * when the meta says ok:true; null when it says ok:false (the Worker holds no good
+ * frame); undefined for any other shape.
+ */
+export function metaLastGood(json: unknown): string | null | undefined {
+  const ts = pickMetaTimestamp(json);
+  if (ts) return ts;
+  return (json as { ok?: unknown } | null)?.ok === false ? null : undefined;
+}
+
 /**
  * Resolve a feed's (relative) frame path against its base dir, rejecting anything
  * that escapes that dir — so a tampered latest.json can't redirect the proxy to

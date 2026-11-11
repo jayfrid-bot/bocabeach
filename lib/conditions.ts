@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { getLocation, toPublicLocation } from "@/config/locations";
 import type { ConditionsResponse, ConditionsSnapshot, HourlyMetrics, Location } from "@/lib/types";
-import { buildCamViews } from "@/lib/cams";
+import { buildCamViewsWithStatus, visibleCamViews } from "@/lib/cams";
 import { fetchAirQuality } from "@/lib/sources/airQuality";
 import { fetchBusyness } from "@/lib/sources/busyness";
 import { fetchClarity } from "@/lib/sources/clarity";
@@ -554,10 +554,15 @@ export async function getConditions(
 export async function getConditionsForLocation(
   loc: Location,
 ): Promise<ConditionsResponse> {
-  const [snapshot, cams] = await Promise.all([
+  const [snapshot, camsWithStatus] = await Promise.all([
     getSnapshotForLocation(loc),
-    buildCamViews(loc).catch(() => []),
+    buildCamViewsWithStatus(loc).catch(() => []),
   ]);
+  // A cam that is down (lib/camStatus.ts) is left out of every surface built from
+  // this response: the page's cam grid and zoom viewer, /api/conditions/<slug> and
+  // its lean copy. It comes back on its first good frame, with no deploy. The cams
+  // never feed the score, so hiding one changes no number.
+  const cams = visibleCamViews(camsWithStatus);
   // Score against the snapshot's OWN time, not the request clock. The snapshot
   // is served from a ~2-min cache, and components/ConditionsDashboard.tsx
   // hydrates its first render from `snap.generatedAt` (the hydration-stable
