@@ -1,23 +1,23 @@
-# Prediction scorecard — 2026-11-17
+# Prediction scorecard — 2026-11-18
 
-Data as of 2026-11-17 15:30 UTC. Hourly rows cover the last 14 days. Sun-color events cover the last 90 days; lifetime counts are shown in that section. A system with too little data says "collecting" and shows counts only. That is expected early on. See docs/scorecards/README.md for definitions and minimums.
+Data as of 2026-11-18 15:30 UTC. Hourly rows cover the last 14 days. Sun-color events cover the last 90 days; lifetime counts are shown in that section. A system with too little data says "collecting" and shows counts only. That is expected early on. See docs/scorecards/README.md for definitions and minimums.
 
 ## At a glance
 
-- **Sunrise and sunset color:** Model 2026-11-11.1 (live now): 38 pairs; fair rank correlation collecting — 5 of 8 pairs on the best cam; Great calls in the cam's own top 25%: n=5, collecting. Model 2026-11-05.1: 53 pairs; fair rank correlation collecting — 6 of 8 pairs on the best cam; Great calls in the cam's own top 25%: n=8, collecting. Model 2026-10-15.1: 63 pairs; fair rank correlation +0.04 (61 events on 3 cams); Great calls in the cam's own top 25%: 1 of 12. Model 2026-10-06.2: collecting — 6 of 10 pairs (397 events with a forecast 30–120 min out). A forecast 30–120 min out exists for 1314 of 2387 past sunrises (55%) and 1369 of 2362 past sunsets (58%).
-- **Rain forecast:** Of 5530 "dry for the next 2+ hrs" calls, 465 (8%) saw radar rain within 2 hours.
+- **Sunrise and sunset color:** Model 2026-11-11.1 (live now): 47 pairs; fair rank correlation collecting — 6 of 8 pairs on the best cam; Great calls in the cam's own top 25%: n=5, collecting. Model 2026-11-05.1: 53 pairs; fair rank correlation collecting — 6 of 8 pairs on the best cam; Great calls in the cam's own top 25%: n=8, collecting. Model 2026-10-15.1: 63 pairs; fair rank correlation +0.04 (61 events on 3 cams); Great calls in the cam's own top 25%: 1 of 12. Model 2026-10-06.2: collecting — 6 of 10 pairs (397 events with a forecast 30–120 min out). A forecast 30–120 min out exists for 1377 of 2450 past sunrises (56%) and 1432 of 2425 past sunsets (59%).
+- **Rain forecast:** Of 5348 "dry for the next 2+ hrs" calls, 420 (8%) saw radar rain within 2 hours.
 - **Best time to go:** collecting — 0 of 10 days. (0 complete days; 921 days left out for missing hours.)
 - **Safety message and flags:** 30 beach-days with a flag. Green/yellow agreement: collecting — 24 of 30 beach-days.
-- **Data health:** 63 beaches archiving. Extra data on 100% of the last 24 hours' rows. 35 beaches under 12 rows a day (0 of them curated). Beaches that should archive all day miss local hours 9, 10, 11, 12, 13, 14, 15, 17, 18 on most days. 2 cameras silent for over 6 hours. 3 cameras offline and hidden on the page.
+- **Data health:** 63 beaches archiving. Extra data on 100% of the last 24 hours' rows. 35 beaches under 12 rows a day (0 of them curated). Beaches that should archive all day miss local hours 9, 10, 11, 12, 13, 14, 15, 17, 18 on most days. 3 cameras silent for over 6 hours. 4 cameras offline and hidden on the page.
 
 ## Sunrise and sunset color
 
 We forecast the color of each sunrise and sunset. Then we compare with what the beach cameras saw. One pair is one event (one beach, one sunrise or sunset) that has both a forecast and a camera reading.
 
-- Events loaded (with a scored forecast row or a camera reading), last 90 days: 4865.
-- Pairs: 316 (5103 forecast rows). Enough to score.
-- Lifetime: 4865 events and 48350 forecast rows logged since 2026-10-06; 5213 rows paired; 1065 camera readings.
-- Camera readings in the window: 1065; 528 are afterglow (the cam looked away from the sun), kept but never scored; 11 matched no forecast row, so they cannot be scored.
+- Events loaded (with a scored forecast row or a camera reading), last 90 days: 4991.
+- Pairs: 326 (5258 forecast rows). Enough to score.
+- Lifetime: 4991 events and 49520 forecast rows logged since 2026-10-06; 5368 rows paired; 1099 camera readings.
+- Camera readings in the window: 1099; 545 are afterglow (the cam looked away from the sun), kept but never scored; 11 matched no forecast row, so they cannot be scored.
 
 ### The fair grade, by model version
 
@@ -25,7 +25,7 @@ Each camera has its own raw scale. On the same sunsets Holmes Beach averages 74 
 
 | Model version | Forecast rows loaded | Past events with a 30–120 min forecast | Pairs | Fair rank correlation | Sunrises | Sunsets | Great calls in the cam's top 25% | Amazing calls in the cam's top 10% | Raw typical miss (pts) | Raw bias (pts) |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2026-11-11.1 (live now) | 1805 | 702 | 38 | collecting — 5 of 8 pairs on the best cam | — | — | 2 of 5 (n=5, collecting) | 0 of 0 (n=0, collecting) | 19.8 | +2.9 |
+| 2026-11-11.1 (live now) | 2144 | 828 | 47 | collecting — 6 of 8 pairs on the best cam | — | — | 2 of 5 (n=5, collecting) | 0 of 0 (n=0, collecting) | 20.7 | +7.0 |
 | 2026-11-05.1 | 1948 | 755 | 53 | collecting — 6 of 8 pairs on the best cam | — | — | 2 of 8 (n=8, collecting) | 1 of 4 (n=4, collecting) | 28.5 | -2.3 |
 | 2026-10-15.1 | 7179 | 829 | 63 | +0.04 (61 events, 3 cams) | +0.04 (n=61) | — | 1 of 12 (8%) | 1 of 8 (n=8, collecting) | 35.9 | +0.1 |
 | 2026-10-06.2 | 1838 | 397 | 6 | collecting — 6 of 10 pairs | — | — | 0 of 0 (n=0, collecting) | 0 of 0 (n=0, collecting) | collecting — 6 of 10 pairs | — |
@@ -40,8 +40,8 @@ How many past events have a forecast made 30 to 120 minutes before them. An even
 
 | Event | Past events | With a 30–120 min forecast | Share | With a camera reading | Of those, with the forecast | Share |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Sunrise | 2387 | 1314 | 55% | 135 | 131 | 97% |
-| Sunset | 2362 | 1369 | 58% | 181 | 61 | 34% |
+| Sunrise | 2450 | 1377 | 56% | 139 | 135 | 97% |
+| Sunset | 2425 | 1432 | 59% | 187 | 67 | 36% |
 
 ### Rank correlation per cam
 
@@ -49,15 +49,15 @@ Our forecast (30–120 min out) against the cam's own score, by rank. Each cam n
 
 | Model version | Cam | Event | Pairs | Rank correlation |
 | --- | ---: | ---: | ---: | ---: |
-| 2026-11-11.1 (live now) | deerfield-beach-cam | Sunrise | 5 | collecting — 5 of 8 pairs |
-| 2026-11-11.1 (live now) | jax-beach-bw-cam | Sunrise | 5 | collecting — 5 of 8 pairs |
-| 2026-11-11.1 (live now) | ftl-elbo-beach-cam | Sunrise | 4 | collecting — 4 of 8 pairs |
-| 2026-11-11.1 (live now) | enco-shores-of-panama-cam | Sunset | 4 | collecting — 4 of 8 pairs |
-| 2026-11-11.1 (live now) | fort-myers-beach-cam | Sunset | 4 | collecting — 4 of 8 pairs |
-| 2026-11-11.1 (live now) | holmes-beach-cam | Sunset | 4 | collecting — 4 of 8 pairs |
-| 2026-11-11.1 (live now) | pensacola-sria-west-cam | Sunset | 4 | collecting — 4 of 8 pairs |
-| 2026-11-11.1 (live now) | siesta-beach-cam | Sunset | 4 | collecting — 4 of 8 pairs |
-| 2026-11-11.1 (live now) | sunset-grille-marathon-cam | Sunset | 4 | collecting — 4 of 8 pairs |
+| 2026-11-11.1 (live now) | deerfield-beach-cam | Sunrise | 6 | collecting — 6 of 8 pairs |
+| 2026-11-11.1 (live now) | jax-beach-bw-cam | Sunrise | 6 | collecting — 6 of 8 pairs |
+| 2026-11-11.1 (live now) | ftl-elbo-beach-cam | Sunrise | 5 | collecting — 5 of 8 pairs |
+| 2026-11-11.1 (live now) | enco-shores-of-panama-cam | Sunset | 5 | collecting — 5 of 8 pairs |
+| 2026-11-11.1 (live now) | fort-myers-beach-cam | Sunset | 5 | collecting — 5 of 8 pairs |
+| 2026-11-11.1 (live now) | holmes-beach-cam | Sunset | 5 | collecting — 5 of 8 pairs |
+| 2026-11-11.1 (live now) | pensacola-sria-west-cam | Sunset | 5 | collecting — 5 of 8 pairs |
+| 2026-11-11.1 (live now) | siesta-beach-cam | Sunset | 5 | collecting — 5 of 8 pairs |
+| 2026-11-11.1 (live now) | sunset-grille-marathon-cam | Sunset | 5 | collecting — 5 of 8 pairs |
 | 2026-11-05.1 | deerfield-beach-cam | Sunrise | 6 | collecting — 6 of 8 pairs |
 | 2026-11-05.1 | ftl-elbo-beach-cam | Sunrise | 6 | collecting — 6 of 8 pairs |
 | 2026-11-05.1 | jax-beach-bw-cam | Sunrise | 6 | collecting — 6 of 8 pairs |
@@ -80,7 +80,7 @@ Each band needs 10 events. Bias is forecast minus the raw camera score.
 
 | Model version | We said | Events | Typical miss (pts) | Bias (pts) |
 | --- | ---: | ---: | ---: | ---: |
-| 2026-11-11.1 (live now) | Fair (20–44) | 17 | 15.8 | +2.3 |
+| 2026-11-11.1 (live now) | Fair (20–44) | 26 | 18.8 | +10.0 |
 | 2026-11-11.1 (live now) | Good (45–69) | 16 | 22.5 | +1.1 |
 | 2026-11-11.1 (live now) | Great (70–89) | 5 | collecting — 5 of 10 pairs | — |
 | 2026-11-05.1 | Fair (20–44) | 19 | 30.9 | -20.5 |
@@ -100,34 +100,34 @@ These tables use each cam's raw score, every lead time and every model version m
 
 |  | Events | Forecasts | Typical miss (pts) | Bias (pts) |
 | --- | ---: | ---: | ---: | ---: |
-| All pairs | 316 | 5103 | 34.6 | -14.5 |
+| All pairs | 326 | 5258 | 34.3 | -13.4 |
 | Lead: After the event (golden window) | 3 | 3 | collecting — 3 of 10 pairs | — |
-| Lead: 0–2 h before | 192 | 322 | 31.2 | +1.1 |
-| Lead: 2–6 h before | 133 | 528 | 29.0 | -7.2 |
-| Lead: 6–12 h before | 315 | 1617 | 34.4 | -16.5 |
-| Lead: 12–24 h before | 315 | 2633 | 36.3 | -16.6 |
+| Lead: 0–2 h before | 202 | 336 | 30.9 | +2.1 |
+| Lead: 2–6 h before | 137 | 544 | 28.7 | -6.5 |
+| Lead: 6–12 h before | 325 | 1663 | 34.1 | -15.4 |
+| Lead: 12–24 h before | 325 | 2712 | 36.0 | -15.4 |
 | We said: Poor (under 20) | 152 | 1194 | 36.2 | -31.6 |
-| We said: Fair (20–44) | 269 | 2554 | 34.6 | -25.3 |
-| We said: Good (45–69) | 116 | 749 | 24.0 | +4.4 |
+| We said: Fair (20–44) | 279 | 2703 | 33.9 | -22.7 |
+| We said: Good (45–69) | 118 | 754 | 24.1 | +4.7 |
 | We said: Great (70–89) | 77 | 202 | 35.8 | +28.8 |
-| We said: Amazing (90+) | 95 | 404 | 49.4 | +48.1 |
-| Beach: boca-raton | 35 | 548 | 29.4 | -11.1 |
-| Beach: deerfield-beach | 35 | 608 | 31.4 | -15.9 |
-| Beach: fort-lauderdale | 34 | 592 | 24.5 | -6.6 |
-| Beach: fort-myers-beach | 31 | 512 | 41.7 | -29.2 |
-| Beach: jacksonville-beach | 31 | 476 | 37.3 | +0.9 |
-| Beach: anna-maria-island | 29 | 478 | 46.5 | -34.3 |
-| Beach: marathon | 29 | 453 | 28.3 | +23.9 |
-| Beach: panama-city-beach | 29 | 452 | 23.4 | +0.4 |
-| Beach: siesta-key | 29 | 451 | 44.3 | -36.6 |
+| We said: Amazing (90+) | 96 | 405 | 49.5 | +48.2 |
+| Beach: boca-raton | 36 | 564 | 29.3 | -10.0 |
+| Beach: deerfield-beach | 36 | 624 | 31.2 | -14.9 |
+| Beach: fort-lauderdale | 35 | 608 | 24.6 | -5.8 |
+| Beach: fort-myers-beach | 32 | 528 | 41.3 | -27.5 |
+| Beach: jacksonville-beach | 32 | 491 | 36.4 | +1.1 |
+| Beach: anna-maria-island | 30 | 494 | 45.6 | -32.5 |
+| Beach: marathon | 30 | 468 | 28.4 | +24.1 |
+| Beach: panama-city-beach | 30 | 467 | 23.3 | +1.2 |
+| Beach: siesta-key | 30 | 466 | 43.7 | -34.5 |
+| Beach: pensacola-beach | 18 | 277 | 33.1 | -20.7 |
 | Beach: key-west | 17 | 271 | 49.6 | -43.5 |
-| Beach: pensacola-beach | 17 | 262 | 33.9 | -23.0 |
-| Model version: 2026-11-11.1 | 43 | 655 | 21.7 | +0.4 |
+| Model version: 2026-11-11.1 | 53 | 810 | 22.0 | +4.8 |
 | Model version: 2026-11-05.1 | 62 | 911 | 30.3 | -5.9 |
 | Model version: 2026-10-15.1 | 209 | 3330 | 38.2 | -18.4 |
 | Model version: 2026-10-06.2 | 12 | 207 | 37.4 | -35.7 |
 | Camera view: afterglow (not scored) | 6 | 110 | afterglow, not used as truth | — |
-| Camera view: solar | 316 | 5103 | 34.6 | -14.5 |
+| Camera view: solar | 326 | 5258 | 34.3 | -13.4 |
 
 ### Our call versus what happened (raw camera scale)
 
@@ -135,11 +135,11 @@ The call is our last forecast made at least 60 minutes before the event. Great m
 
 |  | Great (70+) | Amazing (90+) |
 | --- | ---: | ---: |
-| Events with a call | 316 | 316 |
+| Events with a call | 326 | 326 |
 | We called it, and it happened (hit) | 13 | 1 |
 | We called it, and it did not (false alarm) | 21 | 17 |
 | It happened, and we did not call it (miss) | 105 | 38 |
-| Neither | 177 | 260 |
+| Neither | 187 | 270 |
 | Hit rate (share of our calls that happened) | 38% | 6% |
 | False-alarm rate (share of our calls that did not) | 62% | 94% |
 | Miss rate (share of real ones we did not call) | 89% | 97% |
@@ -151,70 +151,70 @@ The model is built so about 20% of events are Great or better, and about 10% are
 |  | Events | Forecast Great+ | Forecast Amazing | Paired events | Forecast Great+ (paired) | Camera Great+ | Camera Amazing |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Design target |  | 20% | 10% |  |  | 20% | 10% |
-| All beaches | 4748 | 12% | 8% | 316 | 11% | 37% | 12% |
-| anna-maria-island | 61 | 11% | 8% | 29 | 14% | 69% | 59% |
-| asbury-park | 84 | 17% | 13% | 0 | — | — | — |
-| biloxi | 84 | 19% | 17% | 0 | — | — | — |
-| boca-raton | 84 | 13% | 7% | 35 | 6% | 31% | 3% |
-| cannon-beach | 84 | 10% | 10% | 0 | — | — | — |
-| cape-may | 84 | 12% | 10% | 0 | — | — | — |
-| cocoa-beach | 84 | 8% | 5% | 0 | — | — | — |
-| coney-island | 84 | 12% | 11% | 0 | — | — | — |
-| crescent-bay-park | 84 | 10% | 5% | 0 | — | — | — |
-| dania-beach | 61 | 7% | 3% | 0 | — | — | — |
-| daytona-beach | 84 | 10% | 8% | 0 | — | — | — |
-| deerfield-beach | 84 | 13% | 8% | 35 | 11% | 31% | 3% |
-| dunlawton-beach | 61 | 8% | 5% | 0 | — | — | — |
-| folly-beach | 84 | 13% | 11% | 0 | — | — | — |
-| fort-lauderdale | 84 | 12% | 8% | 34 | 12% | 0% | 0% |
-| fort-myers-beach | 65 | 11% | 8% | 31 | 16% | 65% | 10% |
-| galveston | 84 | 12% | 11% | 0 | — | — | — |
-| grand-isle | 84 | 23% | 17% | 0 | — | — | — |
-| gulf-shores | 84 | 17% | 13% | 0 | — | — | — |
-| hammonasset-beach | 84 | 18% | 15% | 0 | — | — | — |
-| hampton-beach | 84 | 12% | 8% | 0 | — | — | — |
-| hobe-sound | 61 | 10% | 3% | 0 | — | — | — |
-| hollywood-beach | 61 | 15% | 7% | 0 | — | — | — |
-| huntington-beach | 84 | 11% | 6% | 0 | — | — | — |
-| jacksonville-beach | 85 | 7% | 5% | 31 | 6% | 29% | 16% |
-| jensen-beach | 61 | 10% | 7% | 0 | — | — | — |
-| jupiter | 61 | 13% | 3% | 0 | — | — | — |
-| key-west | 61 | 10% | 3% | 17 | 6% | 82% | 35% |
-| key-west-south | 61 | 11% | 5% | 0 | — | — | — |
-| la-jolla | 84 | 10% | 8% | 0 | — | — | — |
-| long-beach | 84 | 4% | 4% | 0 | — | — | — |
-| marathon | 61 | 5% | 2% | 29 | 7% | 0% | 0% |
-| miami-beach | 84 | 14% | 10% | 0 | — | — | — |
-| misquamicut | 84 | 19% | 13% | 0 | — | — | — |
-| montauk | 84 | 17% | 12% | 0 | — | — | — |
-| myrtle-beach | 84 | 12% | 7% | 0 | — | — | — |
-| nags-head | 84 | 14% | 13% | 0 | — | — | — |
-| naples | 84 | 15% | 11% | 0 | — | — | — |
-| new-smyrna-beach | 61 | 8% | 2% | 0 | — | — | — |
-| ocean-shores | 84 | 15% | 12% | 0 | — | — | — |
-| old-orchard-beach | 84 | 14% | 10% | 0 | — | — | — |
-| ormond-beach | 61 | 8% | 3% | 0 | — | — | — |
-| panama-city-beach | 61 | 16% | 10% | 29 | 10% | 0% | 0% |
-| pensacola-beach | 65 | 20% | 12% | 17 | 24% | 65% | 6% |
-| pismo-beach | 84 | 10% | 7% | 0 | — | — | — |
-| ponce-inlet | 61 | 10% | 3% | 0 | — | — | — |
-| rehoboth-beach | 84 | 13% | 10% | 0 | — | — | — |
-| santa-cruz | 84 | 13% | 11% | 0 | — | — | — |
-| santa-monica | 84 | 10% | 5% | 0 | — | — | — |
-| seaside | 84 | 12% | 8% | 0 | — | — | — |
-| sebastian-inlet | 61 | 8% | 5% | 0 | — | — | — |
-| siesta-key | 61 | 13% | 7% | 29 | 10% | 76% | 17% |
-| singer-island | 61 | 7% | 5% | 0 | — | — | — |
-| sombrero-beach | 61 | 3% | 0% | 0 | — | — | — |
-| south-padre-island | 84 | 13% | 7% | 0 | — | — | — |
-| st-augustine-beach | 61 | 7% | 0% | 0 | — | — | — |
-| stuart-bathtub-beach | 61 | 10% | 3% | 0 | — | — | — |
-| tybee-island | 84 | 15% | 8% | 0 | — | — | — |
-| vilano-beach | 61 | 7% | 2% | 0 | — | — | — |
-| virginia-beach | 84 | 10% | 4% | 0 | — | — | — |
-| wabasso-beach | 61 | 11% | 7% | 0 | — | — | — |
-| waikiki | 83 | 22% | 10% | 0 | — | — | — |
-| wrightsville-beach | 84 | 10% | 8% | 0 | — | — | — |
+| All beaches | 4874 | 12% | 8% | 326 | 10% | 36% | 12% |
+| anna-maria-island | 63 | 11% | 8% | 30 | 13% | 67% | 57% |
+| asbury-park | 86 | 17% | 13% | 0 | — | — | — |
+| biloxi | 86 | 19% | 16% | 0 | — | — | — |
+| boca-raton | 86 | 13% | 7% | 36 | 6% | 31% | 3% |
+| cannon-beach | 86 | 10% | 9% | 0 | — | — | — |
+| cape-may | 86 | 12% | 9% | 0 | — | — | — |
+| cocoa-beach | 86 | 8% | 5% | 0 | — | — | — |
+| coney-island | 86 | 12% | 10% | 0 | — | — | — |
+| crescent-bay-park | 86 | 9% | 5% | 0 | — | — | — |
+| dania-beach | 63 | 6% | 3% | 0 | — | — | — |
+| daytona-beach | 86 | 9% | 8% | 0 | — | — | — |
+| deerfield-beach | 86 | 13% | 8% | 36 | 11% | 31% | 3% |
+| dunlawton-beach | 63 | 8% | 5% | 0 | — | — | — |
+| folly-beach | 86 | 13% | 10% | 0 | — | — | — |
+| fort-lauderdale | 86 | 12% | 8% | 35 | 11% | 0% | 0% |
+| fort-myers-beach | 67 | 10% | 7% | 32 | 16% | 63% | 9% |
+| galveston | 86 | 12% | 10% | 0 | — | — | — |
+| grand-isle | 86 | 22% | 16% | 0 | — | — | — |
+| gulf-shores | 86 | 16% | 13% | 0 | — | — | — |
+| hammonasset-beach | 86 | 17% | 15% | 0 | — | — | — |
+| hampton-beach | 86 | 12% | 8% | 0 | — | — | — |
+| hobe-sound | 63 | 10% | 3% | 0 | — | — | — |
+| hollywood-beach | 63 | 14% | 6% | 0 | — | — | — |
+| huntington-beach | 86 | 10% | 6% | 0 | — | — | — |
+| jacksonville-beach | 87 | 7% | 5% | 32 | 6% | 28% | 16% |
+| jensen-beach | 63 | 10% | 6% | 0 | — | — | — |
+| jupiter | 63 | 13% | 3% | 0 | — | — | — |
+| key-west | 63 | 10% | 3% | 17 | 6% | 82% | 35% |
+| key-west-south | 63 | 11% | 5% | 0 | — | — | — |
+| la-jolla | 86 | 9% | 8% | 0 | — | — | — |
+| long-beach | 86 | 3% | 3% | 0 | — | — | — |
+| marathon | 63 | 5% | 2% | 30 | 7% | 0% | 0% |
+| miami-beach | 86 | 14% | 9% | 0 | — | — | — |
+| misquamicut | 86 | 20% | 13% | 0 | — | — | — |
+| montauk | 86 | 17% | 13% | 0 | — | — | — |
+| myrtle-beach | 86 | 12% | 7% | 0 | — | — | — |
+| nags-head | 86 | 14% | 13% | 0 | — | — | — |
+| naples | 86 | 15% | 10% | 0 | — | — | — |
+| new-smyrna-beach | 63 | 8% | 2% | 0 | — | — | — |
+| ocean-shores | 86 | 15% | 12% | 0 | — | — | — |
+| old-orchard-beach | 86 | 14% | 9% | 0 | — | — | — |
+| ormond-beach | 63 | 8% | 3% | 0 | — | — | — |
+| panama-city-beach | 63 | 16% | 10% | 30 | 10% | 0% | 0% |
+| pensacola-beach | 67 | 19% | 12% | 18 | 22% | 61% | 6% |
+| pismo-beach | 86 | 9% | 7% | 0 | — | — | — |
+| ponce-inlet | 63 | 10% | 3% | 0 | — | — | — |
+| rehoboth-beach | 86 | 14% | 9% | 0 | — | — | — |
+| santa-cruz | 86 | 13% | 10% | 0 | — | — | — |
+| santa-monica | 86 | 10% | 5% | 0 | — | — | — |
+| seaside | 86 | 12% | 8% | 0 | — | — | — |
+| sebastian-inlet | 63 | 8% | 5% | 0 | — | — | — |
+| siesta-key | 63 | 13% | 6% | 30 | 10% | 73% | 17% |
+| singer-island | 63 | 6% | 5% | 0 | — | — | — |
+| sombrero-beach | 63 | 3% | 0% | 0 | — | — | — |
+| south-padre-island | 86 | 13% | 7% | 0 | — | — | — |
+| st-augustine-beach | 63 | 6% | 0% | 0 | — | — | — |
+| stuart-bathtub-beach | 63 | 10% | 3% | 0 | — | — | — |
+| tybee-island | 86 | 15% | 8% | 0 | — | — | — |
+| vilano-beach | 63 | 6% | 2% | 0 | — | — | — |
+| virginia-beach | 86 | 9% | 3% | 0 | — | — | — |
+| wabasso-beach | 63 | 11% | 6% | 0 | — | — | — |
+| waikiki | 85 | 24% | 9% | 0 | — | — | — |
+| wrightsville-beach | 86 | 9% | 8% | 0 | — | — | — |
 
 ### East-coast sunsets: the afterglow over the ocean
 
@@ -222,19 +222,19 @@ An east-facing cam looks away from the sun at sunset. It sees the afterglow on t
 
 | Cam | Afterglow readings | Matched to a forecast event | Model version | Forecast 30–120 min out vs afterglow | Call (60+ min out) vs afterglow | Satellite cloud away from the sun vs afterglow |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| deerfield-beach-cam | 34 | 34 | 2026-11-11.1 | collecting — 4 of 8 events | collecting — 4 of 8 events | collecting — 6 of 8 events |
+| deerfield-beach-cam | 35 | 35 | 2026-11-11.1 | collecting — 5 of 8 events | collecting — 5 of 8 events | collecting — 7 of 8 events |
 |  |  |  | 2026-11-05.1 | collecting — 6 of 8 events | collecting — 6 of 8 events |  |
 |  |  |  | 2026-10-15.1 | collecting — 2 of 8 events | +0.25 (n=21) |  |
 |  |  |  | 2026-10-06.2 | collecting — 3 of 8 events | collecting — 3 of 8 events |  |
-| deerfield-pier-cam | 34 | 34 | 2026-11-11.1 | collecting — 4 of 8 events | collecting — 4 of 8 events | collecting — 6 of 8 events |
+| deerfield-pier-cam | 35 | 35 | 2026-11-11.1 | collecting — 5 of 8 events | collecting — 5 of 8 events | collecting — 7 of 8 events |
 |  |  |  | 2026-11-05.1 | collecting — 6 of 8 events | collecting — 6 of 8 events |  |
 |  |  |  | 2026-10-15.1 | collecting — 2 of 8 events | +0.16 (n=21) |  |
 |  |  |  | 2026-10-06.2 | collecting — 3 of 8 events | collecting — 3 of 8 events |  |
-| ftl-elbo-beach-cam | 33 | 33 | 2026-11-11.1 | collecting — 3 of 8 events | collecting — 3 of 8 events | collecting — 6 of 8 events |
+| ftl-elbo-beach-cam | 34 | 34 | 2026-11-11.1 | collecting — 4 of 8 events | collecting — 4 of 8 events | collecting — 7 of 8 events |
 |  |  |  | 2026-11-05.1 | collecting — 6 of 8 events | collecting — 6 of 8 events |  |
 |  |  |  | 2026-10-15.1 | collecting — 2 of 8 events | +0.41 (n=21) |  |
 |  |  |  | 2026-10-06.2 | collecting — 3 of 8 events | collecting — 3 of 8 events |  |
-| jax-beach-bw-cam | 29 | 29 | 2026-11-11.1 | collecting — 4 of 8 events | collecting — 4 of 8 events | collecting — 5 of 8 events |
+| jax-beach-bw-cam | 30 | 30 | 2026-11-11.1 | collecting — 5 of 8 events | collecting — 5 of 8 events | collecting — 6 of 8 events |
 |  |  |  | 2026-11-05.1 | collecting — 5 of 8 events | collecting — 5 of 8 events |  |
 |  |  |  | 2026-10-15.1 | collecting — 1 of 8 events | -0.03 (n=20) |  |
 
@@ -244,40 +244,40 @@ The same check for west-facing Gulf cams at sunrise. The sun rises behind them, 
 
 | Cam | Afterglow readings | Matched to a forecast event | Model version | Forecast 30–120 min out vs afterglow | Call (60+ min out) vs afterglow | Satellite cloud away from the sun vs afterglow |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| fort-myers-beach-cam | 31 | 31 | 2026-11-11.1 | collecting — 5 of 8 events | collecting — 5 of 8 events | +0.27 (n=31) |
+| fort-myers-beach-cam | 32 | 32 | 2026-11-11.1 | collecting — 6 of 8 events | collecting — 6 of 8 events | +0.29 (n=32) |
 |  |  |  | 2026-11-05.1 | collecting — 5 of 8 events | collecting — 5 of 8 events |  |
 |  |  |  | 2026-10-15.1 | +0.05 (n=21) | +0.11 (n=21) |  |
-| enco-shores-of-panama-cam | 30 | 30 | 2026-11-11.1 | collecting — 5 of 8 events | collecting — 5 of 8 events | +0.03 (n=24) |
+| enco-shores-of-panama-cam | 31 | 31 | 2026-11-11.1 | collecting — 6 of 8 events | collecting — 6 of 8 events | +0.02 (n=25) |
 |  |  |  | 2026-11-05.1 | collecting — 6 of 8 events | collecting — 6 of 8 events |  |
 |  |  |  | 2026-10-15.1 | +0.18 (n=19) | -0.31 (n=19) |  |
-| margaritaville-fmb-cam | 30 | 30 | 2026-11-11.1 | collecting — 5 of 8 events | collecting — 5 of 8 events | +0.28 (n=30) |
+| margaritaville-fmb-cam | 31 | 31 | 2026-11-11.1 | collecting — 6 of 8 events | collecting — 6 of 8 events | +0.33 (n=31) |
 |  |  |  | 2026-11-05.1 | collecting — 6 of 8 events | collecting — 6 of 8 events |  |
 |  |  |  | 2026-10-15.1 | +0.26 (n=19) | +0.34 (n=19) |  |
-| sharkys-pcb-cam | 30 | 30 | 2026-11-11.1 | collecting — 5 of 8 events | collecting — 5 of 8 events | -0.35 (n=24) |
+| sharkys-pcb-cam | 31 | 31 | 2026-11-11.1 | collecting — 6 of 8 events | collecting — 6 of 8 events | -0.35 (n=25) |
 |  |  |  | 2026-11-05.1 | collecting — 6 of 8 events | collecting — 6 of 8 events |  |
 |  |  |  | 2026-10-15.1 | -0.10 (n=19) | +0.35 (n=19) |  |
-| sunset-grille-marathon-cam | 30 | 30 | 2026-11-11.1 | collecting — 5 of 8 events | collecting — 5 of 8 events | +0.22 (n=29) |
+| sunset-grille-marathon-cam | 31 | 31 | 2026-11-11.1 | collecting — 6 of 8 events | collecting — 6 of 8 events | +0.17 (n=30) |
 |  |  |  | 2026-11-05.1 | collecting — 6 of 8 events | collecting — 6 of 8 events |  |
 |  |  |  | 2026-10-15.1 | -0.08 (n=19) | -0.06 (n=19) |  |
-| white-sands-ami-cam | 30 | 30 | 2026-11-11.1 | collecting — 5 of 8 events | collecting — 5 of 8 events | +0.58 (n=20) |
+| white-sands-ami-cam | 31 | 31 | 2026-11-11.1 | collecting — 6 of 8 events | collecting — 6 of 8 events | +0.56 (n=21) |
 |  |  |  | 2026-11-05.1 | collecting — 6 of 8 events | collecting — 6 of 8 events |  |
 |  |  |  | 2026-10-15.1 | +0.14 (n=19) | +0.26 (n=19) |  |
-| enco-sterling-reef-cam | 29 | 29 | 2026-11-11.1 | collecting — 5 of 8 events | collecting — 5 of 8 events | -0.42 (n=24) |
+| enco-sterling-reef-cam | 30 | 30 | 2026-11-11.1 | collecting — 6 of 8 events | collecting — 6 of 8 events | -0.44 (n=25) |
 |  |  |  | 2026-11-05.1 | collecting — 5 of 8 events | collecting — 5 of 8 events |  |
 |  |  |  | 2026-10-15.1 | +0.03 (n=19) | +0.61 (n=19) |  |
-| holmes-beach-cam | 29 | 29 | 2026-11-11.1 | collecting — 5 of 8 events | collecting — 5 of 8 events | -0.18 (n=19) |
+| holmes-beach-cam | 30 | 30 | 2026-11-11.1 | collecting — 6 of 8 events | collecting — 6 of 8 events | -0.18 (n=20) |
 |  |  |  | 2026-11-05.1 | collecting — 6 of 8 events | collecting — 6 of 8 events |  |
 |  |  |  | 2026-10-15.1 | -0.13 (n=18) | -0.11 (n=18) |  |
-| siesta-beach-cam | 29 | 29 | 2026-11-11.1 | collecting — 3 of 8 events | collecting — 4 of 8 events | -0.20 (n=29) |
+| siesta-beach-cam | 30 | 30 | 2026-11-11.1 | collecting — 4 of 8 events | collecting — 5 of 8 events | -0.23 (n=30) |
 |  |  |  | 2026-11-05.1 | collecting — 6 of 8 events | collecting — 6 of 8 events |  |
 |  |  |  | 2026-10-15.1 | +0.19 (n=19) | +0.19 (n=19) |  |
-| pink-shell-fmb-cam | 24 | 24 | 2026-11-11.1 | collecting — 5 of 8 events | collecting — 5 of 8 events | +0.68 (n=24) |
+| pink-shell-fmb-cam | 25 | 25 | 2026-11-11.1 | collecting — 6 of 8 events | collecting — 6 of 8 events | +0.69 (n=25) |
 |  |  |  | 2026-11-05.1 | collecting — 4 of 8 events | collecting — 4 of 8 events |  |
 |  |  |  | 2026-10-15.1 | +0.44 (n=15) | +0.48 (n=15) |  |
-| fort-zachary-taylor-cam | 19 | 19 | 2026-10-15.1 | +0.07 (n=19) | +0.07 (n=19) | +0.15 (n=19) |
-| pensacola-sria-west-cam | 19 | 19 | 2026-11-11.1 | collecting — 5 of 8 events | collecting — 5 of 8 events | -0.17 (n=13) |
+| pensacola-sria-west-cam | 20 | 20 | 2026-11-11.1 | collecting — 6 of 8 events | collecting — 6 of 8 events | -0.21 (n=14) |
 |  |  |  | 2026-11-05.1 | collecting — 5 of 8 events | collecting — 5 of 8 events |  |
 |  |  |  | 2026-10-15.1 | -0.11 (n=9) | -0.11 (n=9) |  |
+| fort-zachary-taylor-cam | 19 | 19 | 2026-10-15.1 | +0.07 (n=19) | +0.07 (n=19) | +0.15 (n=19) |
 
 ### What to fix next
 
@@ -286,38 +286,39 @@ Made from the numbers above by fixed rules (see docs/scorecards/README.md).
 - Model 2026-11-05.1 runs low when it says Fair: bias -20.5 points on 19 events (raw camera scale).
 - Model 2026-10-15.1 runs low when it says Poor: bias -21.9 points on 20 events (raw camera scale).
 - Model 2026-10-15.1's Great calls land in the cam's own top 25% only 8% of the time (1 of 12); chance alone gives 25%.
-- Afterglow signal at sharkys-pcb-cam (sunrises): the satellite's mid/high cloud away from the sun has a rank correlation of -0.35 with the afterglow on 24 events. A candidate input for an afterglow forecast.
-- Afterglow signal at white-sands-ami-cam (sunrises): the satellite's mid/high cloud away from the sun has a rank correlation of +0.58 with the afterglow on 20 events. A candidate input for an afterglow forecast.
-- Afterglow signal at enco-sterling-reef-cam (sunrises): the satellite's mid/high cloud away from the sun has a rank correlation of -0.42 with the afterglow on 24 events. A candidate input for an afterglow forecast.
-- Afterglow signal at pink-shell-fmb-cam (sunrises): the satellite's mid/high cloud away from the sun has a rank correlation of +0.68 with the afterglow on 24 events. A candidate input for an afterglow forecast.
+- Afterglow signal at margaritaville-fmb-cam (sunrises): the satellite's mid/high cloud away from the sun has a rank correlation of +0.33 with the afterglow on 31 events. A candidate input for an afterglow forecast.
+- Afterglow signal at sharkys-pcb-cam (sunrises): the satellite's mid/high cloud away from the sun has a rank correlation of -0.35 with the afterglow on 25 events. A candidate input for an afterglow forecast.
+- Afterglow signal at white-sands-ami-cam (sunrises): the satellite's mid/high cloud away from the sun has a rank correlation of +0.56 with the afterglow on 21 events. A candidate input for an afterglow forecast.
+- Afterglow signal at enco-sterling-reef-cam (sunrises): the satellite's mid/high cloud away from the sun has a rank correlation of -0.44 with the afterglow on 25 events. A candidate input for an afterglow forecast.
+- Afterglow signal at pink-shell-fmb-cam (sunrises): the satellite's mid/high cloud away from the sun has a rank correlation of +0.69 with the afterglow on 25 events. A candidate input for an afterglow forecast.
 
 ## Rain forecast
 
 The app says "dry" or "raining" from a weather model, with a note on when that changes. We turn that into a forecast for one hour ahead and two hours ahead. "Dry, rain in 25 min" is a rain forecast for both. "Raining, easing in 25 min" is a dry forecast for both. A change at or before the hour has happened by then. Then we check each forecast against the radar reading one and two hours later. Radar rain means a rate above 0 mm/hr, or a fresh frame that saw rain at or near the beach in the last 20 minutes. A radar frame older than 25 minutes is not used.
 
-- Hours with a rain call: 8757.
-- Scored (radar available one and two hours later): 5925. Enough to score.
+- Hours with a rain call: 8742.
+- Scored (radar available one and two hours later): 5845. Enough to score.
 - Each rate needs enough cases in its own denominator (10 for the matrices, 30 for the headline); until then it shows "n=<count>, collecting".
 
-Headline, the promise "Dry for the next 2+ hrs" (dry now, no rain forecast for 2 hours): 5530 calls scored; 465 saw radar rain within 2 hours (8%).
+Headline, the promise "Dry for the next 2+ hrs" (dry now, no rain forecast for 2 hours): 5348 calls scored; 420 saw radar rain within 2 hours (8%).
 
 **Forecast one hour ahead, against radar one hour later**
 
 | Forecast said | Radar saw rain | Radar saw no rain |
 | --- | ---: | ---: |
-| Rain | 101 | 85 |
-| Dry | 425 | 5314 |
+| Rain | 163 | 96 |
+| Dry | 423 | 5163 |
 
-When we forecast rain: radar confirmed it 54% of the time, and did not 46%. Of the times radar saw rain, we had forecast dry 81%. Of our dry forecasts, 7% got rained on.
+When we forecast rain: radar confirmed it 63% of the time, and did not 37%. Of the times radar saw rain, we had forecast dry 72%. Of our dry forecasts, 8% got rained on.
 
 **Forecast two hours ahead, against radar two hours later**
 
 | Forecast said | Radar saw rain | Radar saw no rain |
 | --- | ---: | ---: |
-| Rain | 111 | 154 |
-| Dry | 407 | 5253 |
+| Rain | 183 | 156 |
+| Dry | 404 | 5102 |
 
-When we forecast rain: radar confirmed it 42% of the time, and did not 58%. Of the times radar saw rain, we had forecast dry 79%. Of our dry forecasts, 7% got rained on.
+When we forecast rain: radar confirmed it 54% of the time, and did not 46%. Of the times radar saw rain, we had forecast dry 69%. Of our dry forecasts, 7% got rained on.
 
 ## Best time to go
 
@@ -333,14 +334,13 @@ Days ahead: no outlook rows with a finished target day yet.
 
 We compare our swim message (safe, caution, stay out) with the lifeguard flag that was flying. The City posts one flag a beach a day, so we count beach-days, not hours. A beach-day's flag is its most common flag. Our message is its most common swim level; a tie goes to the more serious one. Only beaches with a posted flag count.
 
-- Beach-days with a swim message and a known flag: 30 (from 126 hourly rows). Enough to score.
+- Beach-days with a swim message and a known flag: 30 (from 124 hourly rows). Enough to score.
 
 ### Swim message by flag (beach-days)
 
 | Flag | Safe | Caution | Stay out |
 | --- | ---: | ---: | ---: |
-| double-red | 0 | 0 | 1 |
-| red | 0 | 0 | 5 |
+| red | 0 | 0 | 6 |
 | yellow | 5 | 10 | 0 |
 | green | 9 | 0 | 0 |
 
@@ -356,15 +356,15 @@ A red or double-red flag sets "stay out" directly (lib/safetyLine.ts). Those row
 ## Data health
 
 - Beaches with rows in the last 7 days: 63.
-- Extra data (the prediction blocks) is on 100% of rows in this report's window, 100% of the last 24 hours, and 100% of rows since the first one (2026-11-03 00Z).
+- Extra data (the prediction blocks) is on 100% of rows in this report's window, 100% of the last 24 hours, and 100% of rows since the first one (2026-11-04 00Z).
 - Share of the last 24 hours' extra rows with each block: window 73.8%, rain 100%, flags 100%, outlook 100%, safety 100%, rip 100%.
 - Local hours missing on beaches that should archive all 24 (28 beaches, 168 beach-days): 9 (25% present), 10 (0% present), 11 (0% present), 12 (0% present), 13 (0% present), 14 (0% present), 15 (7.1% present), 17 (0% present), 18 (7.1% present). "Best time to go" cannot score these hours, and sunset forecasts close to the event are missing.
 - Beaches under 12 rows a day (finished days, last 7 days), worst first. Auto-tier beaches archive daylight hours only, so their full count is the Expected column:
 
 | Beach | Tier | Rows per day | Expected | Fewest in a day | Days counted |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| santa-cruz | auto | 2.7 | 10 | 2 | 6 |
-| seaside | auto | 2.7 | 10 | 2 | 6 |
+| santa-cruz | auto | 2.8 | 10 | 2 | 6 |
+| seaside | auto | 2.8 | 10 | 2 | 6 |
 | crescent-bay-park | auto | 3 | 10 | 3 | 6 |
 | huntington-beach | auto | 3 | 10 | 3 | 6 |
 | la-jolla | auto | 3 | 10 | 3 | 6 |
@@ -376,12 +376,13 @@ A red or double-red flag sets "stay out" directly (lib/safetyLine.ts). Those row
 
   And 25 more (4 to 6 rows a day).
 
-- Latest camera capture per beach (oldest first): key-west 281.2 h ago, vilano-beach 17.7 h ago, hollywood-beach 3.5 h ago, jacksonville-beach 3 h ago, hobe-sound 2.7 h ago, and 22 more. Silent for over 6 hours: key-west, vilano-beach.
-- Cameras hidden as offline (they come back on their own with the first good frame): 3
-  - deerfield-surf-cam (deerfield-beach): no good frame stored, last try Nov 17, 10:13 AM ET (blank)
+- Latest camera capture per beach (oldest first): key-west 305.2 h ago, vilano-beach 41.7 h ago, key-west-south 16.3 h ago, jacksonville-beach 3.2 h ago, panama-city-beach 2.7 h ago, and 22 more. Silent for over 6 hours: key-west, vilano-beach, key-west-south.
+- Cameras hidden as offline (they come back on their own with the first good frame): 4
+  - deerfield-surf-cam (deerfield-beach): no good frame stored, last try Nov 17, 6:33 PM ET (blank)
   - fort-zachary-taylor-cam (key-west): offline since Nov 6, 11:08 AM ET, last good frame Nov 5, 8:08 PM ET, last try Nov 5, 2:00 PM ET
-  - deerfield-spinner-uw (deerfield-beach): offline since Nov 16, 4:00 PM ET, last good frame Nov 16, 10:00 AM ET, last try Nov 17, 10:13 AM ET (blank)
-- Sun camera readings: 1065; latest event 2026-11-17T12:16:09.606Z, scored 2026-11-17T13:13:48.097Z.
+  - deerfield-spinner-uw (deerfield-beach): offline since Nov 16, 4:00 PM ET, last good frame Nov 16, 10:00 AM ET, last try Nov 18, 10:00 AM ET
+  - vilano-surf-station-cam (vilano-beach): offline since Nov 17, 11:28 AM ET, last good frame Nov 16, 8:28 PM ET, last try Nov 5, 2:00 PM ET
+- Sun camera readings: 1099; latest event 2026-11-18T12:17:00.102Z, scored 2026-11-18T12:52:36.249Z.
 - Sun-color forecast rows in the last 24 hours: 1170.
 
 ---
